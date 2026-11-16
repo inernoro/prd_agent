@@ -580,14 +580,15 @@ public sealed class McpUsageService
     }
 
     /// <summary>入参摘要：够用户看懂它当时要干什么，又不至于把整篇正文存进记录。</summary>
-    public static string? SummarizeArguments(JsonObject? args)
+    public static string? SummarizeArguments(JsonObject? args, string? toolName = null)
     {
         if (args == null || args.Count == 0) return null;
         var parts = new List<string>();
         foreach (var kv in args)
         {
             var name = BoundName(kv.Key);
-            if (IsSensitiveArgumentName(kv.Key))
+            if (IsSensitiveArgumentName(kv.Key)
+                || (toolName?.StartsWith("map_speech_", StringComparison.Ordinal) == true && kv.Key is "text" or "instructions"))
             {
                 // 连长度都不透出：短口令的长度本身就是线索
                 parts.Add($"{name}={Redacted}");

@@ -89,10 +89,24 @@ public class LlmRequestLog
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    /// <summary>来自网关核验后的任务事实，不存储许可密钥或用户输入。</summary>
+    public string? TaskPermitId { get; set; }
+    public string? TaskLeaseRunId { get; set; }
+    public long? TaskLeaseFence { get; set; }
+    public string? ExecutionOrigin { get; set; }
+    public string? TriggerCredentialId { get; set; }
+    public string? TriggerActorUserId { get; set; }
+    public string? SourceDeployment { get; set; }
+    public string? SourceTask { get; set; }
+
     /// <summary>一次用户动作或异步任务的稳定关联 ID；同一任务的 submit/status/download 共用。</summary>
     public string? LogicalRequestId { get; set; }
     /// <summary>供应商异步任务 ID；与每次 HTTP 往返的 ProviderRequestId 分开。</summary>
     public string? ProviderTaskId { get; set; }
+    /// <summary>serving 写入实例。缺失时不能按日志年龄推断进程已经死亡。</summary>
+    public string? WriterInstanceId { get; set; }
+    public string? LifecycleReason { get; set; }
+    public DateTime? LifecycleReconciledAt { get; set; }
     public string? UserId { get; set; }
     public string? ViewRole { get; set; }
 
@@ -399,6 +413,14 @@ public class LlmImageReference
 
 public class LlmProviderAttempt
 {
+    public string? AttemptId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
+    public int? InputTokens { get; set; }
+    public int? OutputTokens { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+
     public int Order { get; set; }
     public string Stage { get; set; } = "send";
     public string? Provider { get; set; }

@@ -1,3 +1,5 @@
+import { TCP_DISABLED_DESCRIPTION } from '@/lib/resourceTcpStatus';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Loader2, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,11 +11,17 @@ interface Pass {
   status:string;allowlist:string[];ttlMinutes:number;expiresAt:string;reason?:string;
 }
 interface Overview {
-  capability:{enabled:boolean;host:string;defaultTtlMinutes:number;reason:string};
+  capability:{enabled:boolean;host:string;defaultTtlMinutes:number;reason?:string};
   currentIp:string;passes:Pass[];events:Array<{ts:string;passId:string;event:string;ip?:string;reason?:string;count?:number}>;
 }
 const statusNames:Record<string,string>={prepared:'待放行',active:'已放行',expired:'已到期并回收',revoked:'已撤销并回收','cleanup-failed':'入口关闭，账号回收重试中',preparing:'准备中'};
 const eventNames:Record<string,string>={'review-approved':'范围审查通过','account-prepared':'独立账号已准备','credentials-copied':'复制凭据','activation-approved':'放行审查通过',activated:'入口已放行','connection-accepted':'网络连接通过白名单','connection-denied':'网络连接被拒','connection-closed':'连接已断开','account-reclaimed':'账号已回收','account-cleanup-failed':'账号回收待重试','authentication-denied':'账号或协议不匹配，连接被拒','connection-denials-summarized':'重复拒绝连接汇总','connection-lifecycle-summarized':'重复连接生命周期事件汇总','audit-record-damaged':'部分审计记录不完整，原始证据已保留'};
+
+/** 直连说明在加载、禁用与启用之间只呈现实际状态。 */
+export function DatabasePassCapability({capability, loadError = ''}: {capability: Overview['capability'] | null; loadError?: string}): JSX.Element {
+  if(capability?.enabled) return <p className="text-xs">直连主机：<code>{capability.host}</code>。网络需能访问该地址；内网地址仅供内网验收。MySQL / PostgreSQL 仅授权签发时已有的基本表，不包含视图或后续新表。</p>;
+  return <p className="text-xs text-muted-foreground">{capability ? capability.reason || TCP_DISABLED_DESCRIPTION : !loadError ? <ContentLoading label="读取通行证配置" variant="inline" /> : null}</p>;
+}
 
 export function DatabasePassPanel({branchId,resourceId,allowed,onCopy}:{branchId:string;resourceId:string;allowed:boolean;onCopy:(value:string)=>Promise<void>}):JSX.Element {
   const base=`/api/branches/${encodeURIComponent(branchId)}/resources/${encodeURIComponent(resourceId)}/database-passes`;
@@ -44,7 +52,7 @@ export function DatabasePassPanel({branchId,resourceId,allowed,onCopy}:{branchId
   return <section className="space-y-3 rounded-md border border-border bg-background/50 p-3" aria-label="数据库通行证">
     <div className="flex flex-wrap items-center gap-2"><ShieldCheck className="h-4 w-4"/><h3 className="text-sm font-semibold">数据库通行证 · 本地工具直连</h3><span className="text-xs text-muted-foreground">默认只读 · 30 分钟 · 独立临时账号</span></div>
     <p className="text-xs leading-5 text-muted-foreground">申请后复制账号、密码和 TLS 证书，再放行白名单。期限从成功放行开始；到期断开现有连接并回收账号。当前 IP 是本次页面访问的来源，数据库工具经 VPN 或内网访问时可能不同，请核对。</p>
-    {overview?.capability.enabled?<p className="text-xs">直连主机：<code>{overview.capability.host}</code>。网络需能访问该地址；内网地址仅供内网验收。MySQL / PostgreSQL 仅授权签发时已有的基本表，不包含视图或后续新表。</p>:<p className="text-xs text-muted-foreground">{overview?.capability.reason||'正在读取实例通行证配置…'}</p>}
+    <DatabasePassCapability capability={overview?.capability || null} loadError={loadError} />
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_9rem]">
       <label className="grid min-w-0 gap-1 text-xs">白名单 IP（每行一个 IPv4/CIDR）<textarea aria-label="通行证白名单 IP" disabled={!!busy||!!current} value={current?current.allowlist.join('\n'):ip} onChange={e=>setIp(e.target.value)} className="h-10 min-h-10 min-w-0 rounded border border-border bg-background px-2 py-2 font-mono" rows={1}/></label>
       <label className="grid min-w-0 gap-1 text-xs">有效期（分钟）<input aria-label="通行证有效期" disabled={!!busy||!!current} type="number" min={1} max={30} value={current?String(current.ttlMinutes):ttl} onChange={e=>setTtl(e.target.value)} className="h-10 min-w-0 rounded border border-border bg-background px-2 font-mono"/></label>

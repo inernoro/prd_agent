@@ -93,7 +93,8 @@ describe('站内大预览的 PDF 接线', () => {
     expect(source).toContain('supportsNativePdfViewer');
     expect(source).not.toMatch(/nativePdfViewer:\s*true/);
     // 768px 断点会把 iPad / 横屏手机 / 平板 WebView 一并算成桌面，它们照样白屏
-    expect(source).not.toContain('useIsMobile');
+    // 响应式讨论面板可以使用断点；PDF 判定的输入必须始终独立探测。
+    expect(source).toMatch(/nativePdfViewer:\s*supportsNativePdfViewer\(\)/);
   });
 });
 

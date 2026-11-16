@@ -153,29 +153,17 @@ OpenRouter 默认**不向客户端转发 reasoning 内容**。即使上游模型
 - 我们的 Gateway 收到第一个 Text chunk 要 50+ 秒
 - 之间 48 秒是 OpenRouter hold 住 reasoning 的时间
 
-**修复**：在 `RequestBody` 里显式设置两个字段：
+**职责边界**：业务层只设置 `GatewayRequest.IncludeThinking = true`，不在 `RequestBody` 中手写 OpenRouter 扩展。Gateway 先检查模型推理能力，再将有效意图交给实际发送的协议适配器；Intent 类型仍强制关闭思考输出。
+
+`OpenAIGatewayAdapter` 仅在真实 HTTPS 目标 Host 精确为 `openrouter.ai` 时编码：
 ```csharp
-RequestBody = new JsonObject
-{
-    ["messages"] = ...,
-    ["temperature"] = ...,
-    ["include_reasoning"] = true,                               // 旧字段，仍然生效
-    ["reasoning"] = new JsonObject { ["exclude"] = false },     // 新字段
-},
+requestBody["include_reasoning"] = true;                    // OpenRouter 旧扩展
+requestBody["reasoning"] = new JsonObject { ["exclude"] = false }; // OpenRouter 扩展
 ```
 
-两个都要加，因为 OpenRouter 对不同模型/时期支持的字段名不一致。
+该双字段兼容行为集中在适配器，保留不同 OpenRouter 上游的推理输出。严格原生 OpenAI 和其他 OpenAI 兼容目标不注入这些未知扩展；不能根据模型名字或 URL 子串猜供应商。经自建代理转发的 OpenRouter 目标尚无显式能力声明时，也不自动注入扩展。
 
-同时服务层必须设置：
-```csharp
-IncludeThinking = true,  // Gateway 决定是否向调用方 yield Thinking chunk
-```
-
-这是两个独立的开关：
-- `include_reasoning: true` 让**上游**愿意往下流 reasoning
-- `IncludeThinking = true` 让**Gateway 内部**把 Thinking chunk 透传给调用方
-
-只设一个不够，必须都设。
+`IncludeThinking` 同时表达请求推理输出与向调用方透传 Thinking chunk 的意图，并不保证模型一定产生推理内容；能力不支持时保留 `THINKING_UNSUPPORTED` 等结构化错误，禁止为此静默切换模型。
 
 ### 3. Reasoning 字段名不统一
 

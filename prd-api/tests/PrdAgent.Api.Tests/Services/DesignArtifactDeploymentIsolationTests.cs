@@ -1,3 +1,5 @@
+using PrdAgent.Api.Tests.Gateway;
+using PrdAgent.Infrastructure.Security;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -60,6 +62,58 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             Environment.SetEnvironmentVariable(name, value);
         }
         Assert.Equal(CurrentScope, DeploymentScope.Current);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task HtmlPptQueue_PreservesAdmittedIntentAcrossRecovery_AndCancellationRevokesGrantIssuance()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://gateway",
+            ["DesignArtifactRuntime:Model"] = "default-chat-curated",
+        }).Build();
+        var admitted = Run("ppt-admitted-queue", RunStatuses.Queued);
+        admitted.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        admitted.Operation = DesignArtifactOperations.Generate;
+        var identity = await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, admitted);
+        var compatibility = new MdToPptRun
+        {
+            Id = admitted.Id, UserId = admitted.UserId, TaskPermitId = admitted.TaskPermitId,
+            Op = "convert", Status = RunStatuses.Queued,
+        };
+        await _db.MdToPptRuns.InsertOneAsync(compatibility);
+        var provider = new Mock<IDesignArtifactProviderCatalog>();
+        provider.Setup(item => item.FindAsync(admitted.UserId, DesignArtifactRuntimes.OpenDesign, default))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                DesignArtifactRuntimes.OpenDesign, "合成执行器", DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactExecutionOwners.CdsRemoteAgent, DesignArtifactIsolationModes.SessionContainer,
+                [DesignArtifactTypes.HtmlPpt], [DesignArtifactOperations.Generate],
+                [DesignArtifactSourceSurfaces.HtmlPpt], true, true, true, null));
+        var settings = new Mock<IDesignGenerationSettingsService>();
+        settings.Setup(item => item.FreezeCatalogStyleAsync(It.IsAny<string>(), default))
+            .ReturnsAsync(new DesignArtifactDesignDirection());
+        var queue = new HtmlPptOpenDesignRunService(_db, provider.Object, _queue, _events,
+            settings.Object, configuration, NullLogger<HtmlPptOpenDesignRunService>.Instance);
+        using (PrdAgent.Core.Security.TaskExecutionContext.Enter(new(Guid.NewGuid().ToString("N"))))
+            await queue.QueueAsync(compatibility,
+                new("冻结来源", "{\"pages\":[{\"title\":\"第一章\"}]}", 1, "swiss-minimal", "制作演示稿"), default);
+
+        var recovered = await Read(admitted.Id);
+        Assert.Equal(admitted.TaskPermitId, recovered.TaskPermitId);
+        Assert.Equal(admitted.TaskPermitId, (await _events.GetRunAsync(RunKinds.DesignArtifact, admitted.Id))!.TaskPermitId);
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(item => item.EnvironmentName).Returns("Production");
+        var grants = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object,
+            new TaskExecutionAuthorizer(_gateway, configuration));
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(identity);
+        var issued = await grants.IssueAsync(recovered, Now.AddMinutes(5), default);
+        Assert.False(string.IsNullOrWhiteSpace(issued.Id));
+        await new TaskExecutionCoordinator(_gateway).RevokeAsync(admitted.TaskPermitId!, admitted.Id, default);
+        var rejected = await Assert.ThrowsAsync<PrdAgent.Core.Security.TaskExecutionAdmissionException>(() =>
+            grants.IssueAsync(recovered, Now.AddMinutes(5), default));
+        Assert.Equal("TASK_EXECUTION_LEASE_INVALID", rejected.Code);
+        Assert.Equal(1, await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(_ => true));
     }
 
     [DesignScopeMongoFact]
@@ -725,8 +779,28 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         }).Build();
         var environment = new Mock<IHostEnvironment>();
         environment.SetupGet(item => item.EnvironmentName).Returns("Production");
-        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object);
+        run.TaskPermitId = Guid.NewGuid().ToString("N");
+        var permit = new GatewayTaskPermitRecord
+        {
+            Id = run.TaskPermitId,
+            TenantId = GatewayTenantDefaults.InternalTenantId,
+            ActorUserId = run.UserId,
+            TriggerCredentialId = "synthetic-session",
+            Origin = TaskExecutionOrigins.Interactive,
+            SourceDeployment = TaskPermitDeployment.Resolve(configuration),
+            SourceTask = "design-grant-fixture",
+            AllowedAppCallerCodes = [AppCallerRegistry.Admin.WebHosting.GenerateHtml],
+            MaxCalls = 256,
+            MaxRuns = 1,
+            CreatedAt = Now.AddMinutes(-1),
+            ExpiresAt = Now.AddMinutes(15),
+        };
+        await _gateway.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
+            .InsertOneAsync(PlatformExecutionFixture.Prepare(permit));
+        var authorizer = new TaskExecutionAuthorizer(_gateway, configuration);
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object, authorizer);
 
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, run.Id));
         var issued = await service.IssueAsync(run, Now.AddMinutes(15), default);
         var stored = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .Find(item => item.Id == issued.Id)
@@ -737,6 +811,12 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal("http://gateway/gw/v1", issued.BaseUrl);
         Assert.Equal("default-chat-curated", issued.Model);
         Assert.Equal("pool-chat-premium", stored.ModelPoolId);
+        Assert.Equal(run.TaskPermitId, stored.TaskPermitId);
+        Assert.Equal(256, stored.MaxCalls);
+        var admitted = await _gateway.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
+            .Find(item => item.Id == permit.Id).SingleAsync();
+        Assert.Equal([run.Id], admitted.BoundRunIds);
+        Assert.Equal(0, admitted.CallCount);
         Assert.Equal(AppCallerRegistry.Admin.WebHosting.GenerateHtml, issued.AppCallerCode);
         Assert.Equal(expectedHash, stored.KeyHash);
         Assert.Equal(expectedHash[..12], stored.KeyPrefix);
@@ -927,8 +1007,11 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         }).Build();
         var environment = new Mock<IHostEnvironment>();
         environment.SetupGet(item => item.EnvironmentName).Returns("Production");
-        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object);
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object,
+            new TaskExecutionAuthorizer(_gateway, configuration));
 
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, designRun));
         var issued = await service.IssueAsync(designRun, Now.AddMinutes(15), default);
         var grant = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .Find(item => item.Id == issued.Id)
@@ -993,9 +1076,12 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             SourcePlanJson = overlayJson, SourcePlanHash = MdToPptSourcePlan.Hash(overlayJson),
         };
         await InsertAsync(competingDesign, CurrentScope);
+        using var competingExecution = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, competingDesign));
         var competing = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
             service.IssueAsync(competingDesign, Now.AddMinutes(15), default));
         Assert.Equal("task_budget_manual_phase_unavailable", competing.Code);
+        competingExecution.Dispose();
 
         var grantCount = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .CountDocumentsAsync(_ => true);
@@ -1156,8 +1242,11 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         }).Build();
         var environment = new Mock<IHostEnvironment>();
         environment.SetupGet(item => item.EnvironmentName).Returns("Production");
-        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object);
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object,
+            new TaskExecutionAuthorizer(_gateway, configuration));
 
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, retryDesign));
         var issued = await service.IssueAsync(retryDesign, Now.AddMinutes(15), default);
         var stored = await _gateway.Database
             .GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
@@ -1196,6 +1285,8 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         };
         competingDesign.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "default-chat-curated" };
         await InsertAsync(competingDesign, CurrentScope);
+        using var competingExecution = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, competingDesign));
         var rejected = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
             service.IssueAsync(competingDesign, Now.AddMinutes(15), default));
         Assert.Equal("task_budget_generation_phase_unavailable", rejected.Code);

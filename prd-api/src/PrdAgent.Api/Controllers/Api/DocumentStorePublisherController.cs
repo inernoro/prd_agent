@@ -330,7 +330,7 @@ public sealed class DocumentStorePublisherController : ControllerBase
         await _mentions.CascadeDeleteAsync(MentionEntityType.Document, new[] { entry.Id }, CancellationToken.None);
         if (!string.IsNullOrWhiteSpace(entry.DocumentId))
         {
-            var otherReferences = await _db.DocumentEntries.CountDocumentsAsync(
+            var otherReferences = await _db.DocumentEntriesIncludingTrash.CountDocumentsAsync(
                 candidate => candidate.DocumentId == entry.DocumentId, cancellationToken: CancellationToken.None);
             if (otherReferences == 0)
                 await _db.Documents.DeleteOneAsync(document => document.Id == entry.DocumentId, CancellationToken.None);
@@ -687,7 +687,7 @@ public sealed class DocumentStorePublisherController : ControllerBase
 
     private async Task DeleteUnreferencedDocumentAsync(string documentId)
     {
-        var references = await _db.DocumentEntries.CountDocumentsAsync(
+        var references = await _db.DocumentEntriesIncludingTrash.CountDocumentsAsync(
             entry => entry.DocumentId == documentId,
             cancellationToken: CancellationToken.None);
         if (references == 0)

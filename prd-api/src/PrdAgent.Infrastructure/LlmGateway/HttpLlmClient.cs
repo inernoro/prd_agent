@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.ModelPool;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -35,6 +37,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
     private readonly ILogger _logger;
     private readonly ILLMRequestContextAccessor? _ctxAccessor;
     private readonly IPoolFailoverNotifier? _failoverNotifier;
+    private readonly ITaskExecutionAuthorizer? _taskAuthorizer;
 
     public HttpLlmClient(
         IHttpClientFactory httpFactory,
@@ -52,7 +55,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         ILogger logger,
         ILLMRequestContextAccessor? ctxAccessor = null,
         bool defaultEnablePromptCache = true,
-        IPoolFailoverNotifier? failoverNotifier = null)
+        IPoolFailoverNotifier? failoverNotifier = null,
+        ITaskExecutionAuthorizer? taskAuthorizer = null)
     {
         _httpFactory = httpFactory;
         _baseUrl = baseUrl;
@@ -70,6 +74,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         _ctxAccessor = ctxAccessor;
         _defaultEnablePromptCache = defaultEnablePromptCache;
         _failoverNotifier = failoverNotifier;
+        _taskAuthorizer = taskAuthorizer;
     }
 
     public string Provider => "gateway-http";
@@ -128,22 +133,22 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             Context = context,
         };
 
-        var http = _httpFactory.CreateClient();
+        var http = _httpFactory.CreateClient(AuthorizedGatewayRequest.HttpClientName);
         http.Timeout = Timeout.InfiniteTimeSpan;
         HttpResponseMessage? resp = null;
         Stream? stream = null;
         StreamReader? reader = null;
         string? earlyError = null;
+        string? earlyErrorCode = null;
         try
         {
-            using var reqMsg = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/client-stream")
-            {
-                Content = new StringContent(JsonSerializer.Serialize(payload, _jsonOpts), Encoding.UTF8, "application/json"),
-            };
+            using var reqMsg = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/client-stream");
             reqMsg.Headers.Add("X-Gateway-Key", _gatewayKey);
             reqMsg.Headers.Add("X-Gateway-App-Caller", _appCallerCode);
             reqMsg.Headers.Add("X-Gateway-Source", "map");
             reqMsg.Headers.Add("X-Request-Id", context.RequestId);
+            await AuthorizedGatewayRequest.PrepareAsync(reqMsg, _taskAuthorizer, _appCallerCode, context, cancellationToken);
+            reqMsg.Content = new StringContent(JsonSerializer.Serialize(payload, _jsonOpts), Encoding.UTF8, "application/json");
 
             resp = await http.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!resp.IsSuccessStatusCode)
@@ -156,6 +161,11 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
                 stream = await resp.Content.ReadAsStreamAsync(cancellationToken);
                 reader = new StreamReader(stream, Encoding.UTF8);
             }
+        }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            earlyError = ex.Message;
+            earlyErrorCode = ex.Code;
         }
         catch (Exception ex)
         {
@@ -176,7 +186,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             stream?.Dispose();
             resp?.Dispose();
             http.Dispose();
-            yield return new LLMStreamChunk { Type = "error", ErrorMessage = earlyError };
+            yield return new LLMStreamChunk { Type = "error", ErrorMessage = earlyError, ErrorCode = earlyErrorCode };
             yield break;
         }
 

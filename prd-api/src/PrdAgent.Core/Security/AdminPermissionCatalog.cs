@@ -17,6 +17,9 @@ public static class AdminPermissionCatalog
 
     /// <summary>进入独立模型网关控制台的权限</summary>
     public const string LlmGatewayAccess = "llm-gateway.access";
+    public const string McpSpeechRead = "mcp-speech.read";
+    public const string McpSpeechGenerate = "mcp-speech.generate";
+    public const string McpSpeechManage = "mcp-speech.manage";
 
     public const string UsersRead = "users.read";
     public const string UsersWrite = "users.write";
@@ -495,6 +498,9 @@ public static class AdminPermissionCatalog
         new(EmergenceAgentUse, "涌现探索智能体", "可视化功能涌现与创意探索（创建/探索/涌现）"),
 
         new(SpeechAgentUse, "演讲智能体", "把长文本/文档转成思维导图风格的可演讲 PPT（首期 mindmap 模式）"),
+        new(McpSpeechRead, "基础语音-读", "查看可用音色、自己的声音预设和生成历史"),
+        new(McpSpeechGenerate, "基础语音-生成", "生成语音并保存自己的声音预设"),
+        new(McpSpeechManage, "基础语音-配置", "配置当前环境的语音模型、音色、参数与额度"),
 
         new(TaskTreeUse, "个人任务树智能体", "分层任务管理、对话摘取任务、卡点上报（创建/编辑/查看）"),
         new(TaskTreeViewAll, "个人任务树-全员卡点", "卡点墙聚合查看所有人的卡点（管理层/上级；普通成员只看自己）"),

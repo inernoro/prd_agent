@@ -42,6 +42,9 @@ function executeOwnedShellCommand(command: string, options: ExecOptions | undefi
     let stderrBytes = 0;
     // exec/execFile 不下传 detached；必须用 spawn 创建独立进程组才能回收 shell 的子进程。
     const child = spawn(command, { shell: true, detached: !owned.processGroup && process.platform !== 'win32', cwd: options?.cwd, env: owned.env });
+    let cleanup: Promise<void> | undefined;
+    const confirmChildren = (): Promise<void> => cleanup ??= owned.processGroup
+      ? cleanObservationGroup(owned.processGroup, owned.processGroup) : Promise.resolve();
     const kill = (): void => {
       if (!child.pid) return;
       try { process.kill(owned.processGroup || process.platform === 'win32' ? child.pid : -child.pid, 'SIGKILL'); } catch { /* 已退出 */ }
@@ -63,12 +66,14 @@ function executeOwnedShellCommand(command: string, options: ExecOptions | undefi
       options?.onData?.(chunk, 'stderr');
     });
     child.on('error', () => { failed = true; });
+    // 后代可能仍持有输出管道；先在shell退出时清理，close再复用同一确认，避免双重扫描互杀。
+    child.once('exit', () => { void confirmChildren().catch(reject); });
     child.stdin?.on('error', () => { /* 子进程提前退出时以 close 结果为准 */ });
     child.on('close', (code) => {
       clearInterval(poll);
       kill();
-      void (owned.processGroup ? cleanObservationGroup(owned.processGroup, owned.processGroup) : Promise.resolve()).then(() => {
-        if (cancelled) reject(new Error('Observation execution cancelled'));
+      void confirmChildren().then(() => {
+        if (cancelled) reject(Object.assign(new Error('Observation execution cancelled'), { code: 'cancelled' }));
         else resolve({ stdout, stderr: failed ? 'Process error' : stderr, exitCode: failed || overflow ? 1 : code ?? 1 });
       }, reject);
     });

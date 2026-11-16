@@ -1,3 +1,4 @@
+import { PublicStatusSkeleton } from '@/components/skeletons/PublicStatusSkeleton';
 /*
  * 公开状态页 `/s/:token`。
  *
@@ -8,9 +9,10 @@
  * 它是「对内那一屏」的同一批观测记录的另一个出口，不另跑一套探测：
  * 两边跑两套，迟早会说出不一样的话。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Activity, CheckCircle2, HelpCircle, RefreshCw } from 'lucide-react';
 
+import { useParams } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
 type PublicStatus = 'ok' | 'degraded' | 'down' | 'unknown';
@@ -59,30 +61,37 @@ function formatClock(ms: number): string {
 }
 
 export function PublicStatusPage(): JSX.Element {
-  // 刻意不用 useParams：这一页不挂在控制台路由树上时也要能独立跑。
-  const token = window.location.pathname.split('/').filter(Boolean)[1] || '';
-  const [board, setBoard] = useState<PublicBoardPayload | null>(null);
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'gone'>('loading');
+  const { token: routeToken } = useParams<{ token: string }>();
+  const token = routeToken || window.location.pathname.split('/').filter(Boolean)[1] || '';
+  type BoardState = { token: string; phase: 'loading' | 'ready' | 'gone' | 'error'; board: PublicBoardPayload | null };
+  const [snapshot, setSnapshot] = useState<BoardState>({ token, phase: 'loading', board: null });
+  // 同一链接刷新保留旧结果；切换链接立即隔离旧内容，不把别的状态页借给新 token。
+  const board = snapshot.token === token ? snapshot.board : null;
+  const phase = snapshot.token === token ? snapshot.phase : 'loading';
   const [refreshing, setRefreshing] = useState(false);
+  const request = useRef<AbortController | null>(null);
 
   const load = useCallback(async (): Promise<void> => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setRefreshing(true);
+    setSnapshot(previous => previous.token === token && previous.board ? previous : { token, phase: 'loading', board: null });
     try {
-      const res = await fetch(`/api/public/status/${encodeURIComponent(token)}`, { headers: { accept: 'application/json' } });
-      if (res.status === 404) { setPhase('gone'); return; }
+      const res = await fetch(`/api/public/status/${encodeURIComponent(token)}`, { headers: { accept: 'application/json' }, signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (res.status === 404) { setSnapshot({ token, phase: 'gone', board: null }); return; }
       if (!res.ok) throw new Error(String(res.status));
-      setBoard(await res.json() as PublicBoardPayload);
-      setPhase('ready');
+      const next = await res.json() as PublicBoardPayload;
+      if (!controller.signal.aborted) setSnapshot({ token, phase: 'ready', board: next });
     } catch {
-      // 一次刷新失败保留上一份数据：对外页宁可显示旧结论 + 旧时间，
-      // 也不要把一屏已经看到的内容换成错误页。
-      if (!board) setPhase('loading');
+      if (!controller.signal.aborted) setSnapshot(previous => previous.token === token && previous.board ? previous : { token, phase: 'error', board: null });
     } finally {
-      setRefreshing(false);
+      if (request.current === controller) { request.current = null; setRefreshing(false); }
     }
-  }, [token, board]);
+  }, [token]);
 
-  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [token]);
+  useEffect(() => { void load(); return () => request.current?.abort(); }, [load]);
 
   useEffect(() => {
     if (phase !== 'ready' || !board) return undefined;
@@ -104,21 +113,14 @@ export function PublicStatusPage(): JSX.Element {
     );
   }
 
-  if (phase === 'loading' || !board) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-6">
-        <div className="w-full max-w-2xl">
-          <div className="cds-loading-skeleton-line h-6 w-40 rounded" />
-          <div className="mt-4 cds-loading-skeleton-line h-14 w-full rounded-lg" />
-          <div className="mt-4 space-y-3">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="cds-loading-skeleton-line h-12 w-full rounded-lg" style={{ animationDelay: `${i * 90}ms` }} />
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (phase === 'error') return <div className="flex min-h-screen items-center justify-center bg-background px-6">
+    <div role="alert" className="w-full max-w-2xl space-y-4">
+      <p>暂时无法读取状态，请重试。</p>
+      <button type="button" className="rounded-md border border-border px-4 py-2 text-sm" disabled={refreshing} onClick={() => void load()}>重新读取</button>
+    </div>
+  </div>;
+
+  if (phase === 'loading' || !board) return <PublicStatusSkeleton />;
 
   const BannerIcon = BANNER_ICON[board.status];
 

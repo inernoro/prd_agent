@@ -17,6 +17,26 @@ function profile(id: string, dependsOn?: string[]): BuildProfile {
 }
 
 describe('normalizeProjectProfileDependencies', () => {
+  it('等待本分支私有数据库就绪后才进入 API 层，不修改项目底座', () => {
+    const baseline = [profile('api-project-a'), profile('fresh-mysql')];
+    const normalized = normalizeProjectProfileDependencies(baseline, '-project-a', {
+      'api-project-a': { dependsOn: ['fresh-mysql'] },
+    });
+    const result = topoSortLayers(normalized, p => p.id, p => p.dependsOn || []);
+    expect(result.warnings).toEqual([]);
+    expect(result.layers.map(layer => layer.items.map(p => p.id))).toEqual([
+      ['fresh-mysql'], ['api-project-a'],
+    ]);
+    expect(baseline[0].dependsOn).toBeUndefined();
+  });
+
+  it('默认项目同样使用分支依赖，允许显式清空并保留未覆盖服务', () => {
+    const baseline = [profile('api', ['shared-db']), profile('other', ['shared-db'])];
+    const normalized = normalizeProjectProfileDependencies(baseline, '', { api: { dependsOn: [] } });
+    expect(normalized[0].dependsOn).toEqual([]);
+    expect(normalized[1]).toBe(baseline[1]);
+    expect(baseline[0].dependsOn).toEqual(['shared-db']);
+  });
   it('rewrites only dependencies that resolve to a scoped application profile', () => {
     const profiles = [
       profile('api-project-a'),

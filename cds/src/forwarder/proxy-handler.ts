@@ -19,14 +19,16 @@
  */
 
 import http from 'node:http';
+import { ControlPlaneStreams, type WidgetStreamRecoveryOptions } from './control-plane-stream.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from '../services/hosted-site-preview-log-policy.js';
 import zlib from 'node:zlib';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
-import { buildWidgetScript } from '../widget-script.js';
+import { buildWidgetScript, isPreviewWidgetNavigation } from '../widget-script.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
+import { PreviewActivityCollector, type PreviewActivitySnapshot } from './preview-activity.js';
 import {
   classifyHttpRequestKind,
   createBodyCapture,
@@ -40,8 +42,11 @@ import {
 } from '../services/http-log-store.js';
 
 export interface ProxyHandlerOptions {
-  /** upstream 连接超时 ms,默认 5000(connect 5s 无应答 → 504) */
+  widgetStreamRecovery?: WidgetStreamRecoveryOptions;
+  /** upstream socket 空闲超时 ms，默认 5000(5s 无应答 → 504) */
   upstreamTimeoutMs?: number;
+  /** 标准 POST 模型生成端点的有界空闲超时 ms，默认 300000(5 分钟)。 */
+  llmUpstreamTimeoutMs?: number;
   /** 等候页文案 */
   waitingPageHtml?: string;
   /** keepalive agent(可注入测试) */
@@ -75,9 +80,14 @@ export interface ProxyHandlerOptions {
 
 const DEFAULT_WAITING_HTML = 'CDS waiting';
 const LONG_RUNNING_IMAGE_TIMEOUT_MS = 600_000;
+const DEFAULT_LLM_UPSTREAM_TIMEOUT_MS = 300_000;
 
 function isLongRunningImageRequest(path: string): boolean {
   return /^\/v1\/images\/(?:generations|edits)(?:\/|\?|$)/i.test(path);
+}
+
+function isLlmGenerationRequest(method: string | undefined, path: string): boolean {
+  return method === 'POST' && /^\/v1\/(?:chat\/completions|responses|completions|messages)(?:\?|$)/.test(path);
 }
 
 /** 滑动窗口最近 60 秒的请求时间戳 + 最近 N 条延迟。 */
@@ -133,6 +143,7 @@ class StatsCollector {
 
 interface ResolvedProxyOptions {
   upstreamTimeoutMs: number;
+  llmUpstreamTimeoutMs: number;
   waitingPageHtml: string;
   masterPassthroughHost: string;
   masterPassthroughPort: number;
@@ -147,10 +158,15 @@ export class ProxyHandler {
   private agent: http.Agent;
   private opts: ResolvedProxyOptions;
   private stats = new StatsCollector();
+  private readonly previewActivity = new PreviewActivityCollector();
+  private readonly widgetStreams: ControlPlaneStreams;
 
   constructor(opts: ProxyHandlerOptions = {}) {
+    this.widgetStreams = new ControlPlaneStreams(opts.widgetStreamRecovery);
     this.opts = {
       upstreamTimeoutMs: opts.upstreamTimeoutMs ?? 5000,
+      llmUpstreamTimeoutMs: opts.llmUpstreamTimeoutMs != null && Number.isFinite(opts.llmUpstreamTimeoutMs) && opts.llmUpstreamTimeoutMs > 0
+        ? opts.llmUpstreamTimeoutMs : DEFAULT_LLM_UPSTREAM_TIMEOUT_MS,
       waitingPageHtml: opts.waitingPageHtml ?? DEFAULT_WAITING_HTML,
       masterPassthroughHost: opts.masterPassthroughHost ?? '127.0.0.1',
       masterPassthroughPort: opts.masterPassthroughPort ?? 9900,
@@ -182,6 +198,7 @@ export class ProxyHandler {
     // 不污染 req 共享对象。Cursor Bugbot Low:之前 mutate req.url 让 forward 日志
     // 显示 strip 后的 path,debug 时无法关联客户端原请求。
     const originalUrl = req.url ?? '/';
+    const sourceBranchId = route?.branchId;
     let outgoingPath = originalUrl;
     let extraHeaders: Record<string, string> | null = null;
 
@@ -234,6 +251,7 @@ export class ProxyHandler {
       route = masterRoute;
     }
 
+    this.previewActivity.record(route?.branchId, req.headers);
     // 服务没在跑（building / starting / error）时不把请求打到死端口（plan.cds.service-relations 第二批）：
     // 转给 master 让它按分支与服务状态出等待页 / 错误页。此前默认站重建期间用户看到的是上游错误，
     // 或被发布器塞给碰巧在跑的另一个服务。healthState 缺省（老路由表 / 测试桩）按 running 对待。
@@ -310,6 +328,7 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
+    this.previewActivity.record(route.branchId, req.headers);
     const requestKind = classifyHttpRequestKind({
       layer: 'forwarder',
       method: req.method || 'GET',
@@ -355,8 +374,9 @@ export class ProxyHandler {
       response: { bodyPreview?: string; bodyBytes?: number } = {},
       outcome?: 'ok' | 'client-error' | 'server-error' | 'upstream-error' | 'timeout',
       error?: { code?: string; message?: string },
+      complete = true,
     ) => {
-      completeActiveRequest();
+      if (complete) completeActiveRequest();
       this.opts.httpLogStore?.record({
         layer: 'forwarder',
         requestKind,
@@ -438,6 +458,28 @@ export class ProxyHandler {
       fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
     }
 
+    // 仅已解析到分支的两条挂件只读流；未知来源、普通 API 和业务流沿用原契约。
+    if (sourceBranchId && req.method === 'GET'
+      && String(req.headers.accept || '').includes('text/event-stream')
+      && /^\/_cds\/api\/(?:branches\/stream|activity-stream)(?:\?|$)/.test(originalUrl)) {
+      let failed = false;
+      return this.widgetStreams.serve(req, res, {
+        host: upstreamHost, port: upstreamPort, path: outgoingPath,
+        headers: { ...fwdHeaders, 'accept-encoding': 'identity' }, agent: this.agent,
+        unavailable: code => {
+          failed = true;
+          this.stats.record(host, 503, Date.now() - t0);
+          this.opts.logger?.warn?.(`[forward] widget stream upstream unavailable: ${code}`);
+          // 传输层恢复不抹去真实上游失败；持久日志供常设自检消费。
+          logHttp(503, {}, 'upstream-error', { code, message: 'widget control plane stream unavailable' }, false);
+        },
+        completed: status => {
+          completeActiveRequest();
+          if (!failed) { logHttp(status); this.stats.record(host, status, Date.now() - t0); }
+        },
+      });
+    }
+
     return new Promise<void>((resolve) => {
       let resolved = false;
       const finish = (status: number) => {
@@ -455,11 +497,15 @@ export class ProxyHandler {
       const acceptHdr = String(req.headers['accept'] || '').toLowerCase();
       const isLikelySSE = acceptHdr.includes('text/event-stream') ||
         /\/(stream|events|sse)(\?|$|\/)/i.test(outgoingPath);
+      // 非流式模型可能在完整推理结束前一直没有响应字节；标准生成端点
+      // 使用独立的有界窗口，避免被普通 API 的 30 秒空闲超时提前终止。
       const requestTimeoutMs = isLikelySSE
         ? 0
         : isLongRunningImageRequest(outgoingPath)
           ? Math.max(this.opts.upstreamTimeoutMs, LONG_RUNNING_IMAGE_TIMEOUT_MS)
-          : this.opts.upstreamTimeoutMs;
+          : isLlmGenerationRequest(req.method, outgoingPath)
+            ? Math.max(this.opts.upstreamTimeoutMs, this.opts.llmUpstreamTimeoutMs)
+            : this.opts.upstreamTimeoutMs;
 
       const upstream = http.request(
         {
@@ -540,6 +586,7 @@ export class ProxyHandler {
           const shouldInjectWidget =
             !!route.branchId &&
             !!route.branchName &&
+            isPreviewWidgetNavigation(req) &&
             contentType.includes('text/html') &&
             status >= 200 && status < 300;
 
@@ -733,6 +780,7 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
+    this.previewActivity.record(route.branchId, req.headers);
 
     // 透传 headers + 合并 passthrough 注入(本地变量,不 mutate req)
     const fwdHeaders: Record<string, string | string[]> = {};
@@ -835,8 +883,17 @@ export class ProxyHandler {
     });
   }
 
-  getStats(): ProxyStats {
-    return this.stats.snapshot();
+  /** 调度只读有限收据，不构造随公网 Host 基数增长的完整统计。 */
+  getPreviewActivity(): PreviewActivitySnapshot {
+    return this.previewActivity.snapshot();
+  }
+
+  getStats(): ProxyStats & { previewActivity: PreviewActivitySnapshot } {
+    return { ...this.stats.snapshot(), previewActivity: this.previewActivity.snapshot(), widgetStreams: this.widgetStreams.snapshot() };
+  }
+
+  reconcilePreviewActivityRoutes(routes: readonly RouteRecord[]): void {
+    this.previewActivity.retainBranches(new Set(routes.map(route => route.branchId).filter((id): id is string => typeof id === 'string')));
   }
 
   getActiveRequests(filter: HttpActiveRequestFilter = {}): ActiveHttpRequestRecord[] {
@@ -1022,6 +1079,7 @@ export class ProxyHandler {
 
   /** 关闭 keepalive agent(测试 / shutdown 用)。 */
   destroy(): void {
+    this.widgetStreams.destroy();
     try {
       this.agent.destroy();
     } catch {

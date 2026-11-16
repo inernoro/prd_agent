@@ -21,6 +21,7 @@ import {
   streamHostedSiteEditRun,
   type HostedSite,
   type HostedSiteRevision,
+  type DesignArtifactRunSummary,
   type DesignRuntimeCapability,
 } from '@/services/real/webPages';
 import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
@@ -42,6 +43,7 @@ import {
 } from '../siteEditPreview';
 import {
   GATEWAY_PLATFORM_FALLBACK,
+  completedRunDurationSeconds,
   resolvePersistedRunPreview,
   resolveRunModelBadge,
   runtimeFailureRecoveryMessage,
@@ -183,6 +185,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   const [phase, setPhase] = useState('告诉我你想改什么，系统会先生成草稿，不会直接覆盖线上页面。');
   const [progress, setProgress] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [previewDurationSeconds, setPreviewDurationSeconds] = useState<number | null>(null);
   const [runStartedAtMs, setRunStartedAtMs] = useState<number | null>(null);
   const [activeRunRuntime, setActiveRunRuntime] = useState<string | null>(null);
   const [resolvedModel, setResolvedModel] = useState<{ model: string; platform: string } | null>(null);
@@ -341,17 +344,26 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     };
   }, [recoveryNotice?.action, runtimeRecoveryGate?.runtimeId]);
 
-  const openRevision = useCallback(async (revisionId: string) => {
+  const openRevision = useCallback(async (revisionId: string, completedRunId?: string, completedRun?: DesignArtifactRunSummary) => {
     const requestId = ++previewRequestRef.current;
+    // 恢复已经读到同一任务与版本的持久化完成记录，不再读取一次后把已知用时丢掉。
+    const knownCompleted = completedRun
+      && completedRun.runId === completedRunId
+      && completedRun.status.toLowerCase() === 'done'
+      && completedRun.artifactRevisionId === revisionId
+      && completedRunDurationSeconds(completedRun) != null ? completedRun : null;
+    setPreviewDurationSeconds(knownCompleted ? completedRunDurationSeconds(knownCompleted) : null);
     setPreviewUrl(null);
     setPreviewExpiresAt(null);
     setPreviewHtml('');
     setPreviewedRevision(null);
     setDraftRevisionId(null);
     setDraftRevisionStatus(null);
-    const [result, access] = await Promise.all([
+    const [result, access, completed] = await Promise.all([
       previewHostedSiteRevision(site.id, revisionId),
       createHostedSiteRevisionPreviewAccess(site.id, revisionId),
+      knownCompleted ? Promise.resolve({ success: true, data: knownCompleted, error: null })
+        : completedRunId ? getHostedSiteEditRun(site.id, completedRunId) : Promise.resolve(null),
     ]);
     if (!isLatestPreviewRequest(requestId, previewRequestRef.current)) return;
     if (!result.success) {
@@ -372,6 +384,12 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     setPreviewUrl(access.data.available ? access.data.previewUrl || null : null);
     setPreviewExpiresAt(access.data.available ? access.data.expiresAt || null : null);
     setPreviewedRevision(result.data.revision);
+    // 只有同一完成任务、同一产物版本的持久化起止才代表生成用时。
+    if (completed?.success && completed.data.runId === completedRunId
+      && completed.data.status.toLowerCase() === 'done'
+      && completed.data.artifactRevisionId === revisionId) {
+      setPreviewDurationSeconds(completedRunDurationSeconds(completed.data));
+    }
     const publishable = canPublishRevision(result.data.revision);
     if (prefillFromDraftRef.current && publishable && result.data.revision.instruction) {
       setInstruction((current) => current.trim() ? current : result.data.revision.instruction || current);
@@ -506,7 +524,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       if (status === 'done' && result.data.artifactRevisionId) {
         clearRecovery();
         setGenerating(false);
-        await openRevision(result.data.artifactRevisionId);
+        await openRevision(result.data.artifactRevisionId, result.data.runId, result.data);
         await loadHistory();
         return;
       }
@@ -581,6 +599,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     busyRef.current = true;
     setGenerating(true);
     setElapsedSeconds(0);
+    setPreviewDurationSeconds(null);
     setRunStartedAtMs(Date.now());
     setActiveRunRuntime(requestRuntime.id);
     // 徽章必须在进入 generating 的同一拍清掉。原先它排在 createHostedSiteEditRun 之后，
@@ -704,7 +723,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
             setProgress(siteEditDisplayProgress('draft-ready'));
             setPhase('草稿已生成，请预览确认后再发布');
             setRecoveryNotice(null);
-            void openRevision(data.revisionId);
+            void openRevision(data.revisionId, created.data.runId);
             void loadHistory();
             return;
           }
@@ -961,6 +980,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     progress,
     setProgress,
     elapsedSeconds,
+    previewDurationSeconds,
     resolvedModel,
     previewHtml,
     previewUrl,

@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * 就地发布：在发布中心里选分支 → 发布前检查 → 开始发布 → 看实时日志。
  *
@@ -243,12 +244,7 @@ export function StartReleaseDialog({
                     <span className="text-xs text-muted-foreground">分支</span>
                     {intent.expectedCommitSha ? (
                       <span className="truncate font-mono text-xs leading-9">{branch?.branch || intent.branchId || '-'}</span>
-                    ) : branchesLoading ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs leading-9 text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        正在读取分支
-                      </span>
-                    ) : (
+                    ) : branchesLoading ? <ContentLoading label="读取待发布分支" variant="inline" /> : (
                       <select
                         value={branchId}
                         onChange={(event) => { setBranchId(event.target.value); setPreflight(null); }}

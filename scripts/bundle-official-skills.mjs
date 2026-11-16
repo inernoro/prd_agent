@@ -46,6 +46,7 @@ const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.py', '.csv', '.json', '.
 // 需要人工同步，已经开始漂移）。下载时只做一处替换：把 PRD_AGENT_BASE
 // 的默认值设为该实例地址。
 const INCLUDE = new Set([
+  'map-agent',               // MAP MCP 配套技能与可更新安装器
   'findmapskills',           // 海鲜市场操作技能（AI bootstrap 入口）
   'sdd-init',                // 骨架落地：把套装变成一套能用的工作方法（角色套装的入口技能）
   'phase0-guard',            // 底座阶段护栏 + 面向老板/PM 的六段式沟通规范
@@ -75,6 +76,7 @@ const INCLUDE = new Set([
 // 友好显示名（key → 中文备注名）。缺省用 frontmatter name（多为英文 key）。
 // 卡片标题展示这个，像 findmapskills 那样「英文 · 中文一句话」。
 const DISPLAY_NAME = {
+  'map-agent': 'MAP 智能体接入与托管',
   'acceptance-checklist': 'acceptance-checklist · 真人验收清单',
   'acceptance-scenario-orchestrator': 'acceptance-scenario-orchestrator · 验收场景编排',
   'acceptance-test-design': 'acceptance-test-design · 验收测试设计',
@@ -107,6 +109,7 @@ const DISPLAY_NAME = {
 // 给中文非技术用户看一段英文等于没写。这里只覆盖对外展示的 description，
 // **不动 frontmatter**（那是 harness 的触发依据，改了会影响技能识别准确度）。
 const DISPLAY_SUMMARY = {
+  'map-agent': '连接 MAP、安装更新技能、原样托管网站并管理公开永久分享',
   'acceptance-checklist': '生成真人逐步打勾的验收清单，每步带预期结果和失败排查手册',
   'acceptance-test-design': '把需求或代码变化转成风险假设、融合用例和可审计证据矩阵',
   'acceptance-scenario-orchestrator': '复杂验收目标的范围编排：场景识别、结果映射、指差法清单、证据链契约',
@@ -177,6 +180,7 @@ const TAG_OVERRIDE = {
 
 // 不可移植文件排除：官方包面向外部用户，不能夹带绑定本仓库数据/第三方 URL 的临时取证 driver。
 const EXCLUDE_FILES_BY_SKILL = {
+  'map-agent': new Set(['scripts/test_skill_manager.py']),
   'create-visual-test-to-kb': new Set([
     'scripts/sv-card-view.mjs',
     'scripts/sv-driver.mjs',

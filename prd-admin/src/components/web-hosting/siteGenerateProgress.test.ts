@@ -4,6 +4,8 @@ import path from 'node:path';
 import type { DesignArtifactRunSummary } from '@/services/real/webPages';
 import {
   GATEWAY_PLATFORM_FALLBACK,
+  completedRunDurationSeconds,
+  formatCompletedRunDuration,
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
   resolvePersistedRunPreview,
@@ -45,6 +47,15 @@ function readPanelSource(file: string): string {
 const generationRunSource = () => readFileSync(path.resolve(__dirname, 'workbench/useSiteGenerationRun.ts'), 'utf8');
 
 describe('生成工作台的进度契约', () => {
+  it('完成耗时只取持久化起止，缺失或倒序保持未知', () => {
+    const completed = run({ createdAt: '2026-10-27T03:13:13.144Z', completedAt: '2026-10-27T03:17:18.946Z' });
+    expect(completedRunDurationSeconds(completed)).toBe(245.802);
+    expect(formatCompletedRunDuration(completedRunDurationSeconds(completed))).toBe('4 分 06 秒');
+    expect(completedRunDurationSeconds({ ...completed, completedAt: null })).toBeNull();
+    expect(completedRunDurationSeconds({ ...completed, completedAt: '2026-10-27T03:12:00Z' })).toBeNull();
+    expect(formatCompletedRunDuration(null)).toBe('未知');
+  });
+
   it('consumes the MAP phase, incremental content, and terminal site event', () => {
     expect(parseSiteGenerationProgressEvent({
       event: 'phase',

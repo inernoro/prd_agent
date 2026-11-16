@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import zlib from 'node:zlib';
 import type { AddressInfo } from 'node:net';
-import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
+import { ProxyHandler, type ProxyHandlerOptions } from '../../src/forwarder/proxy-handler.js';
 import type { RouteRecord } from '../../src/forwarder/types.js';
 
 interface UpstreamHandle {
@@ -61,8 +61,9 @@ interface ForwarderHandle {
 
 async function startForwarder(
   routeFor: (host: string, path: string) => RouteRecord | null,
+  options: Pick<ProxyHandlerOptions, 'upstreamTimeoutMs' | 'llmUpstreamTimeoutMs'> = {},
 ): Promise<ForwarderHandle> {
-  const proxy = new ProxyHandler({ upstreamTimeoutMs: 500 });
+  const proxy = new ProxyHandler({ upstreamTimeoutMs: 500, ...options });
   const sockets: import('node:net').Socket[] = [];
   const server = http.createServer((req, res) => {
     const host = (req.headers.host ?? '').split(':')[0];
@@ -106,7 +107,7 @@ async function startForwarder(
 
 function clientReq(
   port: number,
-  options: Partial<http.RequestOptions> & { host?: string; path?: string } = {},
+  options: Partial<http.RequestOptions> & { host?: string; path?: string; body?: string } = {},
 ): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -125,7 +126,7 @@ function clientReq(
       },
     );
     req.on('error', reject);
-    req.end();
+    req.end(options.body);
   });
 }
 
@@ -361,6 +362,58 @@ describe('ProxyHandler — HTTP 透传', () => {
     expect(idxScript).toBeLessThan(idxBody);
     // content-length 已重算(不应保留原始小值)
     expect(Number(r.headers['content-length'])).toBeGreaterThan(50);
+  });
+
+  it.each(['empty', 'script', 'style'])('HTML 子资源 %s 原样透传，避免 srcDoc 混入预览脚本', async (destination) => {
+    const original = '<html><body><h1>Owned preview content</h1></body></html>';
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(original);
+    });
+    upstreams.push(u);
+    const f = await startForwarder(() => ({
+      _id: 'owned', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    }));
+    forwarders.push(f);
+    const response = await clientReq(f.port, { headers: { 'sec-fetch-dest': destination } });
+    expect(response.status).toBe(200);
+    expect(response.body).toBe(original);
+  });
+
+  it.each(['document', 'iframe'])('HTML 导航 %s 仍注入分支预览脚本', async (destination) => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<html><body>Owned document</body></html>');
+    });
+    upstreams.push(u);
+    const f = await startForwarder(() => ({
+      _id: 'owned', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    }));
+    forwarders.push(f);
+    const response = await clientReq(f.port, { headers: { 'sec-fetch-dest': destination } });
+    expect(response.body).toContain('data-cds-widget');
+  });
+
+  it.each(['iframe', 'document', ''])('API HTML 文件在 %s 导航中保持原始正文，不注入挂件', async (destination) => {
+    const original = '<html><body>Owned API HTML</body></html>';
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(original);
+    });
+    upstreams.push(u);
+    const f = await startForwarder(() => ({
+      _id: 'owned', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    }));
+    forwarders.push(f);
+    const response = await clientReq(f.port, {
+      path: '/api/hosted-site-preview-files/owned/index.html',
+      headers: { 'sec-fetch-dest': destination },
+    });
+    expect(response.status).toBe(200);
+    expect(response.body).toBe(original);
   });
 
   it('[C-3.3] gzip 压缩 HTML 200 → 解压 + 注入 + 重新写 content-length', async () => {
@@ -1035,10 +1088,73 @@ describe('ProxyHandler — 故障与降级', () => {
 
     const ordinary = await clientReq(f.port, {
       method: 'POST',
-      path: '/v1/chat/completions',
+      path: '/api/ordinary',
     });
     expect(ordinary.status).toBe(504);
   }, 10000);
+
+  it.each(['/v1/chat/completions', '/v1/responses?mode=test', '/v1/completions', '/v1/messages'])('非流式 POST %s 等待模型超过普通窗口仍透传真实 200', async (path) => {
+    const received: Array<{ method: string | undefined; accept: string | undefined; path: string | undefined; body: string }> = [];
+    const u = await startUpstream((req, res) => {
+      let body = '';
+      req.setEncoding('utf8'); req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        received.push({ method: req.method, accept: req.headers.accept, path: req.url, body });
+        setTimeout(() => {
+          if (res.destroyed) return;
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('{"choices":[{"message":{"content":"review finished"}}]}');
+        }, 225);
+      });
+    });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: 'llm', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route, { upstreamTimeoutMs: 75, llmUpstreamTimeoutMs: 1000 });
+    forwarders.push(f);
+    const body = JSON.stringify({ model: 'review-model', messages: [{ role: 'user', content: 'Review the code' }], stream: false });
+    const result = await clientReq(f.port, { method: 'POST', path, body, headers: { accept: 'application/json', 'content-type': 'application/json' } });
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.body).choices[0].message.content).toBe('review finished');
+    expect(received).toEqual([{ method: 'POST', accept: 'application/json', path, body }]);
+  });
+
+  it('默认模型超时允许非流式生成超过普通窗口，普通接口仍返回 504', async () => {
+    const u = await startUpstream((_req, res) => {
+      setTimeout(() => {
+        if (res.destroyed) return;
+        res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}');
+      }, 225);
+    });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: 'llm', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route, { upstreamTimeoutMs: 75 });
+    forwarders.push(f);
+    expect((await clientReq(f.port, { method: 'POST', path: '/v1/chat/completions' })).status).toBe(200);
+    expect((await clientReq(f.port, { method: 'POST', path: '/api/ordinary' })).status).toBe(504);
+  });
+
+  it.each([
+    { method: 'GET', path: '/v1/chat/completions' },
+    { method: 'POST', path: '/api/v1/chat/completions' },
+    { method: 'POST', path: '/v1/chat/completions/other' },
+    { method: 'POST', path: '/v1/responses-other' },
+  ])('方法或路径不精确匹配 $method $path 时保持普通超时', async ({ method, path }) => {
+    const u = await startUpstream(() => { /* no response */ });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: 'ordinary', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route, { upstreamTimeoutMs: 75, llmUpstreamTimeoutMs: 1000 });
+    forwarders.push(f);
+    expect((await clientReq(f.port, { method, path })).status).toBe(504);
+  });
+
+  it('非流式模型生成超时仍有边界，不响应时返回 504', async () => {
+    const u = await startUpstream(() => { /* no response */ });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: 'llm', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route, { upstreamTimeoutMs: 75, llmUpstreamTimeoutMs: 150 });
+    forwarders.push(f);
+    expect((await clientReq(f.port, { method: 'POST', path: '/v1/responses' })).status).toBe(504);
+  });
 
   it('[C-5.1] upstream 中途 reset → 给客户端 502 + 错误响应', async () => {
     const u = await startUpstream((_req, _res) => {

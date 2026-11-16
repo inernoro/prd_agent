@@ -117,19 +117,19 @@ export class SubprocessBrowserQualityRunner implements BrowserQualityRunner {
       };
       const aborted = () => finish(new DOMException('Browser quality check aborted', 'AbortError'));
       const timeout = setTimeout(() => finish(new AgentWorkspaceRuntimeError(
-        'browser_quality_unavailable',
+        'browser_quality_runtime_unavailable',
         `Isolated browser quality worker exceeded ${BROWSER_CHECK_TIMEOUT_MS}ms`,
         true,
       )), BROWSER_CHECK_TIMEOUT_MS);
       signal.addEventListener('abort', aborted, { once: true });
       worker.once('error', (error) => finish(new AgentWorkspaceRuntimeError(
-        'browser_quality_unavailable',
+        'browser_quality_runtime_unavailable',
         `Isolated browser quality worker could not start: ${error.message.slice(0, 200)}`,
         true,
       )));
       worker.once('exit', (code, exitSignal) => {
         if (!settled) finish(new AgentWorkspaceRuntimeError(
-          'browser_quality_unavailable',
+          'browser_quality_runtime_unavailable',
           `Isolated browser quality worker exited before returning evidence (code=${code ?? 'none'}, signal=${exitSignal ?? 'none'}, observation=${stderr.trim().slice(0, 200) || 'none'})`,
           true,
         ));

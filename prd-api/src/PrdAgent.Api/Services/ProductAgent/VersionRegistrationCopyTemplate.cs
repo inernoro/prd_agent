@@ -24,13 +24,13 @@ internal static class VersionRegistrationCopyTemplate
         record.Code,
     });
 
-    private static string BuildFormal(VersionRegistration record) => string.Join("\n", new[]
+    internal static string BuildFormal(VersionRegistration record, string? tapdSources = null) => string.Join("\n", new[]
     {
         "【版本上线】",
         $"项目类别：{ProjectTypeLabel(record.ProjectType)}",
         $"版本类别：{VersionTypeLabel(record.VersionType)}",
         $"是否全域开放：{BooleanLabel(record.IsGlobalOpen)}",
-        $"需求来源：{Text(record.DemandSource)}",
+        $"需求来源：{tapdSources ?? Text(record.DemandSource)}",
         $"产品方案名称：{Text(record.PlanName)}",
         $"方案地址：{Text(record.PlanUrl)}",
         $"项目组成员：{string.Join("、", record.ProjectMemberNames)}",
@@ -51,6 +51,7 @@ internal static class VersionRegistrationCopyTemplate
         "major" => "大版本",
         "medium" => "中版本",
         "minor" => "小版本",
+        "temporary" => "临时优化需求",
         _ => string.Empty,
     };
 

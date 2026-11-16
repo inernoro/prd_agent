@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -691,6 +692,12 @@ public class ShortcutsController : ControllerBase
             request.Url = videoUrl;
         }
 
+        // 收藏的普通数据操作不需要模型许可；已校验绑定的额外任务按外部触发准入。
+        using var admittedShortcut = shortcut.BindingType == ShortcutBindingType.Collect ? null
+            : PrdAgent.Core.Security.TaskExecutionContext.Enter(await HttpContext.RequestServices
+                .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                .AdmitVerifiedIntegrationAsync(HttpContext, shortcut.UserId, $"shortcut:{shortcut.Id}", CancellationToken.None));
+
         // 创建收藏
         var collection = new UserCollection
         {
@@ -775,6 +782,7 @@ public class ShortcutsController : ControllerBase
 
             var execution = new WorkflowExecution
             {
+                TaskPermitId = TaskExecutionContext.Current?.PermitId,
                 WorkflowId = shortcut.BindingTargetId,
                 WorkflowName = shortcut.BindingTargetName ?? "",
                 TriggerType = "shortcut",
@@ -1121,6 +1129,7 @@ public class ShortcutsController : ControllerBase
 
         return new ShortVideoMaterialRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             UserId = shortcut.UserId,
             OwnerInstanceId = InstanceIdentity.Get(_config),
             VideoUrl = videoUrl,

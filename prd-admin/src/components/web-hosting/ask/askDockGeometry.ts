@@ -15,6 +15,7 @@ export interface AskDockViewport {
   isMobile: boolean;
   /** iOS 手势条高度（env(safe-area-inset-bottom) 的实测值，非 iOS 为 0） */
   safeBottom: number;
+  chatWidth?: number;
 }
 
 export interface AskDockBox {
@@ -30,6 +31,11 @@ export interface AskDockBox {
 /** 起手长条的目标宽度。窄屏按视口收，不然两端会顶死甚至溢出 */
 export function askBarWidth(v: AskDockViewport): number {
   return v.isMobile ? Math.max(220, v.width - 24) : Math.min(660, Math.max(320, v.width - 80));
+}
+
+export function clampAskWidth(width: number, viewportWidth: number): number {
+  const max = Math.max(0, Math.min(960, viewportWidth - 40));
+  return Math.min(max, Math.max(Math.min(320, max), width));
 }
 
 export function askDockGeometry(state: AskDockState, v: AskDockViewport): AskDockBox {
@@ -66,7 +72,7 @@ export function askDockGeometry(state: AskDockState, v: AskDockViewport): AskDoc
         : {
             right: 0,
             bottom: 0,
-            width: Math.min(400, Math.max(280, v.width - 40)),
+            width: clampAskWidth(v.chatWidth ?? 480, v.width),
             height: v.height,
             radius: '18px 0px 0px 18px',
           };

@@ -241,6 +241,11 @@ public class WebPageAskController : ControllerBase
         if (reason != null)
             return BadRequest(ApiResponse<object>.Fail("ASK_UNSUPPORTED", reason));
 
+        // 生成只能依据已保存的有效开关；未开启时在清除手写保护和版本戳之前拒绝。
+        // 前端的开关可能还只是草稿，不能把一次点击理解为隐式保存或开启提问。
+        if (!await IsAskOnAsync(site))
+            return BadRequest(ApiResponse<object>.Fail("ASK_DISABLED", "请先开启并保存提问，再生成开场问题。"));
+
         // 先记下原样。下面那两笔清除是「重新生成」的前提，但这一发**可能一个字都不写**
         // （模型不通 / 已经有一次在跑 / 算完发现被顶掉）。那时如果不把标记还回去，
         // owner 手写的那份题还躺在库里、却已经没了保护：NeedsGeneration 随即判 true，
@@ -327,7 +332,7 @@ public class WebPageAskController : ControllerBase
             AskOpenerOutcome.ModelUnavailable => "模型这会儿调不通（网关没有可用模型池或暂时不可达）。这是暂时的，过一会儿再点一次。",
             AskOpenerOutcome.Busy => "这个站点已经有一次生成在跑了，等它写完就会出现，不用重复点。",
             AskOpenerOutcome.Superseded => "生成期间这个站点的内容被换过（或题库被改成手写），这一批题按旧内容算的，没有保存。可以再点一次按最新内容生成。",
-            _ => "这个站点现在不需要生成（提问没开，或题库已经是你自己写的）。",
+            _ => "提问配置或题库状态已变化，本次未生成。请重新打开设置确认后重试。",
         };
 
         return Ok(ApiResponse<object>.Ok(new
@@ -476,6 +481,11 @@ public class WebPageAskController : ControllerBase
             return;
         }
 
+        using var admittedShare = viewerUserId is null
+            ? PrdAgent.Core.Security.TaskExecutionContext.Enter(await HttpContext.RequestServices
+                .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                .AdmitVerifiedIntegrationAsync(HttpContext, site.OwnerUserId, $"site-share:{resolved.Share!.Id}", CancellationToken.None))
+            : null;
         await RunAskAsync(site, req, viewerUserId, shareToken: token);
     }
 
@@ -599,7 +609,7 @@ public class WebPageAskController : ControllerBase
             {
                 phase = "preparing",
                 message = snapshot.Truncated
-                    ? $"已读取本页前 {snapshot.Text.Length} 字内容，正在思考…"
+                    ? "已读取本页部分内容，正在核对相关段落…"
                     : "已读取本页内容，正在思考…",
             });
 
@@ -614,9 +624,10 @@ public class WebPageAskController : ControllerBase
                     .Where(h => h != null)
                     .Select(h => (h.Role, h.Content)));
 
+            var evidence = new WebPageAskEvidence(snapshot.Text);
             var messages = new JsonArray
             {
-                new JsonObject { ["role"] = "system", ["content"] = BuildSystemPrompt(site, snapshot) },
+                new JsonObject { ["role"] = "system", ["content"] = WebPageAskPrompt.Build(site, snapshot, evidence) },
             };
             foreach (var (role, content) in history)
                 messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
@@ -648,7 +659,7 @@ public class WebPageAskController : ControllerBase
                     ["messages"] = messages,
                     // 这是"照着这一页回答"，不是创作：温度压低，减少发散编造
                     ["temperature"] = 0.2,
-                    ["max_tokens"] = 2048,
+                    ["max_tokens"] = WebPageAskPrompt.MaxOutputTokens,
                 },
             };
 
@@ -693,8 +704,9 @@ public class WebPageAskController : ControllerBase
                     await RefundIfNothingProducedAsync();
                     await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                         snapshot.Text.Length, model, platform, Elapsed(startedAt), err);
-                    // 详情只进日志与消息记录，**不回给访客**：见 PublicErrorMessage
-                    await WriteSseAsync("error", new { code = "ASK_UPSTREAM_ERROR", message = PublicErrorMessage });
+                    // 只复用网关已有的有限错误码与用户文案，原始诊断仍不回给访客。
+                    var publicError = PublicGatewayError(chunk.ErrorCode, "ASK_UPSTREAM_ERROR");
+                    await WriteSseAsync("error", new { code = publicError.Code, message = publicError.Message });
                     return;
                 }
             }
@@ -714,8 +726,10 @@ public class WebPageAskController : ControllerBase
                 return;
             }
 
-            await PersistMessageAsync(session, site, "assistant", answer.ToString(),
-                snapshot.Text.Length, model, platform, Elapsed(startedAt), null);
+            var finalText = evidence.CompleteAnswer(answer.ToString());
+            var ratingToken = AskAnswerRating.CreateToken();
+            var savedAnswer = await PersistMessageAsync(session, site, "assistant", finalText,
+                snapshot.Text.Length, model, platform, Elapsed(startedAt), null, AskAnswerRating.Hash(ratingToken));
 
             try
             {
@@ -723,6 +737,11 @@ public class WebPageAskController : ControllerBase
                 {
                     elapsedMs = Elapsed(startedAt),
                     truncated = snapshot.Truncated,
+                    // 流结束时以服务端核对编号并附原文后的版本替换临时文本。
+                    text = finalText,
+                    // 消息落库失败时仍返回答案，但不签发无法保存的评分控件。
+                    messageId = savedAnswer?.Id,
+                    ratingToken = savedAnswer == null ? null : ratingToken,
                 });
             }
             catch (ObjectDisposedException) { }
@@ -736,7 +755,9 @@ public class WebPageAskController : ControllerBase
             if (session != null)
                 await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                     snapshot.Text.Length, model, platform, Elapsed(startedAt), ex.Message);
-            await WriteSseAsync("error", new { code = "ASK_FAILED", message = PublicErrorMessage });
+            var publicError = PublicGatewayError(
+                (ex as GatewayRouteFailureException)?.FailureCode, "ASK_FAILED");
+            await WriteSseAsync("error", new { code = publicError.Code, message = publicError.Message });
         }
         finally
         {
@@ -745,32 +766,6 @@ public class WebPageAskController : ControllerBase
             heartbeatCts.Cancel();
             try { await heartbeat; } catch { /* 收尾异常不该盖掉真正的失败原因 */ }
         }
-    }
-
-    /// <summary>
-    /// 系统提示词：把回答范围死死钉在这一页正文上。
-    ///
-    /// 一期没有知识库检索，所以这里必须写清"材料没覆盖就说不知道"——
-    /// 不许模型拿公开知识冒充页面内容（no-rootless-tree：做不到的事不装能做）。
-    /// </summary>
-    private static string BuildSystemPrompt(HostedSite site, SiteContentSnapshot snapshot)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("你是这个网页的问答助手，帮访客理解页面内容。");
-        sb.AppendLine();
-        sb.AppendLine("规则：");
-        sb.AppendLine("1. 只能依据下面【页面内容】回答。页面里没有的信息，直接说「这个页面里没有提到」，不要用你的其它知识补充，也不要猜。");
-        sb.AppendLine("2. 回答用中文，简洁直接，能一句话说清就不要三句。");
-        sb.AppendLine("3. 涉及页面里的原文时，可以引用原句，便于访客自己核对。");
-        sb.AppendLine("4. 不要复述这段规则，也不要提及「页面内容」这个标记本身。");
-        if (snapshot.Truncated)
-            sb.AppendLine("5. 下面的【页面内容】只是这个页面的一部分（内容过长被截断，或有文件没能读取）。被问到可能落在未读部分的信息时，如实说明「只读到了一部分，这部分里没有」，不要断言页面里不存在。");
-        sb.AppendLine();
-        sb.AppendLine($"【页面标题】{site.Title}");
-        sb.AppendLine();
-        sb.AppendLine("【页面内容】");
-        sb.AppendLine(snapshot.Text);
-        return sb.ToString();
     }
 
     private async Task<HostedSiteAskSession> EnsureSessionAsync(
@@ -806,16 +801,16 @@ public class WebPageAskController : ControllerBase
         return session;
     }
 
-    private async Task PersistMessageAsync(
+    private async Task<HostedSiteAskMessage?> PersistMessageAsync(
         HostedSiteAskSession session, HostedSite site, string role, string content,
-        int contextChars, string? model, string? platform, int? elapsedMs, string? error)
+        int contextChars, string? model, string? platform, int? elapsedMs, string? error, string? ratingTokenHash = null)
     {
         // 空答案且没有错误 = 什么都没发生，不值得落一条空记录
-        if (string.IsNullOrWhiteSpace(content) && error == null) return;
+        if (string.IsNullOrWhiteSpace(content) && error == null) return null;
 
         try
         {
-            await _db.HostedSiteAskMessages.InsertOneAsync(new HostedSiteAskMessage
+            var message = new HostedSiteAskMessage
             {
                 SessionId = session.Id,
                 SiteId = site.Id,
@@ -826,12 +821,17 @@ public class WebPageAskController : ControllerBase
                 ContextChars = contextChars,
                 ElapsedMs = elapsedMs,
                 Error = error,
-            });
+                RatingTokenHash = ratingTokenHash,
+                DeploymentSlug = DeploymentScope.Current,
+            };
+            await _db.HostedSiteAskMessages.InsertOneAsync(message, cancellationToken: CancellationToken.None);
+            return message;
         }
         catch (Exception ex)
         {
             // 落库失败不该让已经答完的内容丢给用户一个错误
             _logger.LogWarning(ex, "网页托管提问：消息落库失败 session={SessionId}", session.Id);
+            return null;
         }
     }
 
@@ -863,6 +863,12 @@ public class WebPageAskController : ControllerBase
     /// 详情照旧进日志和消息记录（owner 在会话审计里看得到），访客只拿一句稳定文案 + 错误码。
     /// </summary>
     private const string PublicErrorMessage = "回答失败了，请稍后再试。";
+
+    /// <summary>匿名访客只拿现有白名单码；未知码与异常正文不能作为公开错误透传。</summary>
+    private static (string Code, string Message) PublicGatewayError(string? failureCode, string fallbackCode)
+        => GatewayRouteFailure.All.Contains(failureCode ?? string.Empty, StringComparer.Ordinal)
+            ? (failureCode!, GatewayRouteFailure.UserMessage(failureCode))
+            : (fallbackCode, PublicErrorMessage);
 
     /// <summary>等首字期间的心跳间隔。取 5 秒：远小于常见反代 60s 空闲超时，又不会把流刷成噪音。</summary>
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);

@@ -87,7 +87,7 @@ public class DataSyncScopeCoverageTests
             "agent_api_keys", "console_sso_tickets", "external_authorizations", "workflow_secrets",
             "github_user_connections", "sessions", "openplatformapps", "invitecodes",
             "desktop_asset_keys", "peer_pairing_codes", "short_links",
-            "product_permission_configurations",
+            "product_permission_configurations", "product_scheduled_notifications",
         };
         var leaked = mustNeverExport.Where(n => DataSyncScope.AllExportableCollections.Contains(n)).ToList();
         Assert.True(leaked.Count == 0, "凭据类集合出现在可导出清单里：" + string.Join(", ", leaked));
@@ -100,7 +100,7 @@ public class DataSyncScopeCoverageTests
         var required = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["users"] = new[] { "PasswordHash", "NotificationIdentityProtected" },
-            ["product_agent_settings"] = new[] { "ClaimWebhook" },
+            ["product_agent_settings"] = new[] { "ClaimWebhook", "ScheduledNotificationDebugWebhook", "ScheduledNotificationGroups" },
             ["product_initiations"] = new[] { "ClaimNotification" },
             ["product_releases"] = new[] { "ClaimNotification" },
             ["llmplatforms"] = new[] { "ApiKeyEncrypted" },

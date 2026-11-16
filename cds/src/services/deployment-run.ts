@@ -5,11 +5,15 @@ import type {
   DeploymentRunEvent,
   DeploymentRunStatus,
   DeploymentRunTrigger,
+  PersistedDeploymentIntent,
 } from '../types.js';
 import type { StateService } from './state.js';
-import type { BranchOperationCoordinator, BranchOperationLease } from './branch-operation-coordinator.js';
+import type { BranchOperationCoordinator, BranchOperationLease, PendingWebhookDeploy } from './branch-operation-coordinator.js';
 import { cancelsBranchDeployments } from './branch-operation-coordinator.js';
 import { captureDeploymentIntent, readDeploymentIntent, type DeploymentExecutionInput } from './deployment-intent.js';
+import { isLocallyOwned } from './executor-ownership.js';
+import { isSealedSecret } from '../infra/secret-seal.js';
+import { remoteIdentity, RemoteExecutionWaits, sameRemoteOwner, type RemoteDeploymentIdentity } from './remote-deployment-owner.js';
 
 /**
  * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
@@ -52,6 +56,8 @@ export interface DeploymentRunServiceOptions {
   now?: () => Date;
   idFactory?: () => string;
   maxEvents?: number;
+  /** 仅认可持有原代次资格、未超过截止时间的实际阶段待办，不续写假心跳。 */
+  isExecutionWaiting?: (run: DeploymentRun, now: Date) => boolean;
 }
 
 export interface DeploymentRunEventsAfter {
@@ -64,8 +70,11 @@ export class DeploymentRunService {
   private readonly now: () => Date;
   private readonly idFactory: () => string;
   private readonly maxEvents: number;
+  private readonly isExecutionWaiting: NonNullable<DeploymentRunServiceOptions['isExecutionWaiting']>;
   private readonly acceptanceWrites = new Map<string, Promise<void>>();
+  private readonly acceptedQueuedIntents = new Map<string, string>();
   private readonly boundCoordinators = new Set<BranchOperationCoordinator>();
+  private readonly remoteWaits = new RemoteExecutionWaits();
 
   constructor(
     private readonly stateService: StateService,
@@ -74,6 +83,7 @@ export class DeploymentRunService {
     this.now = options.now || (() => new Date());
     this.idFactory = options.idFactory || (() => `dr_${crypto.randomBytes(12).toString('hex')}`);
     this.maxEvents = Math.max(1, options.maxEvents || 500);
+    this.isExecutionWaiting = options.isExecutionWaiting || (() => false);
   }
 
   async begin(input: BeginDeploymentRunInput): Promise<DeploymentRun> {
@@ -108,15 +118,74 @@ export class DeploymentRunService {
         message: this.normalizeMessage(input.message || '部署请求已受理'),
       }],
     };
-    const persisted = this.stateService.addDeploymentRun(run, input.executionInput ? captureDeploymentIntent(run, input.executionInput) : undefined);
-    const write = this.stateService.flushDeploymentRun(persisted.id);
-    this.acceptanceWrites.set(persisted.id, write);
-    try { await write; return persisted; }
-    finally { this.acceptanceWrites.delete(persisted.id); }
+    const intent = input.executionInput ? captureDeploymentIntent(run, input.executionInput) : undefined;
+    const persisted = this.stateService.addDeploymentRun(run, intent);
+    await this.confirmAcceptance(persisted, intent);
+    return persisted;
+  }
+
+  private async confirmAcceptance(run: DeploymentRun, intent?: PersistedDeploymentIntent): Promise<void> {
+    const fingerprint = intent && isSealedSecret(intent.inputPayload) ? this.intentFingerprint(intent) : undefined;
+    this.acceptedQueuedIntents.delete(run.id);
+    const write = this.stateService.flushDeploymentRun(run.id);
+    this.acceptanceWrites.set(run.id, write);
+    try {
+      await write;
+      const currentIntent = this.stateService.getDeploymentIntents().find(item => item.runId === run.id);
+      if (fingerprint && this.get(run.id) === run && run.status === 'queued'
+        && currentIntent && this.intentFingerprint(currentIntent) === fingerprint) {
+        this.acceptedQueuedIntents.set(run.id, fingerprint);
+      }
+    }
+    finally { if (this.acceptanceWrites.get(run.id) === write) this.acceptanceWrites.delete(run.id); }
   }
 
   getForOperation(operationId: string, generation: number): DeploymentRun | undefined {
     return this.stateService.getDeploymentRunForOperation(operationId, generation);
+  }
+
+  private hasLocalOwner(run: DeploymentRun): boolean {
+    const branch = this.stateService.getBranch(run.branchId);
+    return !!branch && (branch.projectId || 'default') === run.projectId
+      && isLocallyOwned(run.executorId) && isLocallyOwned(branch.executorId);
+  }
+
+  /** 只有本节点归属和原操作作用域均明确时，才可豁免等待或撤销实际执行资格。 */
+  private hasLocalExecution(run: DeploymentRun): boolean {
+    return this.hasLocalOwner(run) && !!run.operationId && run.operationGeneration !== undefined && [...this.boundCoordinators].some(coordinator =>
+      coordinator.getActiveOperations(run.branchId).some(active => active.operationId === run.operationId
+        && active.generation === run.operationGeneration && !active.cancelled
+        && active.request.branchId === run.branchId && (active.request.projectId || 'default') === run.projectId
+        && (active.request.profileId || undefined) === run.profileId));
+  }
+
+  private remoteOwner(run: DeploymentRun): RemoteDeploymentIdentity | undefined {
+    const branch = this.stateService.getBranch(run.branchId), owner = branch?.remoteDeployment;
+    if (!owner || owner.revoked || owner.deploymentRunId !== run.id || owner.executorId !== run.executorId
+      || branch?.executorId !== run.executorId || owner.projectId !== run.projectId || owner.branchId !== run.branchId
+      || owner.operationId !== run.operationId || owner.operationGeneration !== run.operationGeneration
+      || (branch.projectId || 'default') !== run.projectId || ![...this.boundCoordinators].some(coordinator =>
+        coordinator.getActiveOperations(run.branchId).some(active => active.operationId === owner.operationId && active.generation === owner.operationGeneration
+          && !active.cancelled && (active.request.projectId || 'default') === run.projectId && (active.request.profileId || undefined) === run.profileId))) return;
+    return owner;
+  }
+
+  observeRemoteExecutionWait(owner: RemoteDeploymentIdentity, input: unknown): boolean {
+    const run = this.get(owner.deploymentRunId);
+    if (!run || TERMINAL_STATUSES.has(run.status) || !sameRemoteOwner(this.remoteOwner(run), owner)) return false;
+    return this.remoteWaits.observe(owner, input, this.now().getTime());
+  }
+
+  clearRemoteExecutionWait(id: string): void { this.remoteWaits.clear(id); }
+
+  /** 排空和收割共用当前账本、原节点/作用域租约及有界阶段等待，不续写心跳。 */
+  hasQualifiedExecutionWait(id: string, now = this.now()): boolean {
+    const run = this.get(id);
+    if (!run || TERMINAL_STATUSES.has(run.status)) return false;
+    const remote = this.remoteOwner(run);
+    if (remote) return this.remoteWaits.waiting(remote, now.getTime());
+    if (!this.hasLocalExecution(run)) return false;
+    try { return this.isExecutionWaiting(run, now); } catch { return false; }
   }
 
   async waitForAcceptance(id: string): Promise<void> {
@@ -158,6 +227,11 @@ export class DeploymentRunService {
     this.bindOperationCoordinator(coordinator);
     const runs = this.list();
     for (const run of runs) if (run.operationGeneration !== undefined) coordinator.seedGeneration(run.branchId, run.operationGeneration);
+    for (const branch of this.stateService.getAllBranches()) {
+      const owner = remoteIdentity(branch.remoteDeployment);
+      if (owner && owner.branchId === branch.id && owner.projectId === (branch.projectId || 'default')
+        && owner.executorId === branch.executorId) coordinator.seedGeneration(branch.id, owner.operationGeneration);
+    }
     const restored: DeploymentRun[] = [];
     const intents = this.stateService.getDeploymentIntents().sort((a, b) => a.admissionGeneration - b.admissionGeneration);
     for (const intent of intents) {
@@ -174,6 +248,10 @@ export class DeploymentRunService {
         if (newer) { this.cancel(run.id, '已有较新的覆盖范围部署，旧待办不再恢复', 'superseded'); continue; }
         coordinator.restorePendingDeployment({ operationId: intent.operationId, generation: intent.generation, branchId: run.branchId,
           request: intent.request, mergedCount: 1, updatedAt: run.startedAt }, input);
+        // 同实例已确认的原sealed意图不重复保存或撤销回执；冷启动仍须等待实际保存。
+        if (!this.acceptanceWrites.has(run.id) && this.acceptedQueuedIntents.get(run.id) !== this.intentFingerprint(intent)) {
+          void this.confirmAcceptance(run, intent).catch(() => {});
+        }
         restored.push(run);
       } catch {
         this.fail(run.id, { code: 'cds.intent.unrecoverable', owner: 'cds', retryable: true,
@@ -186,6 +264,7 @@ export class DeploymentRunService {
   bindOperationCoordinator(coordinator: BranchOperationCoordinator): void {
     if (this.boundCoordinators.has(coordinator)) return;
     this.boundCoordinators.add(coordinator);
+    coordinator.onNormalShutdownPending(pending => this.canPreservePending(pending));
     coordinator.onOperationEnded((operationId, generation, status) => {
       const run = this.getForOperation(operationId, generation);
       if (!run || TERMINAL_STATUSES.has(run.status)) return;
@@ -193,6 +272,35 @@ export class DeploymentRunService {
       else this.fail(run.id, { code: `cds.operation.${status}`, owner: 'cds', retryable: true,
         summary: '部署操作未能继续执行，请查看最新部署结果', phase: 'operation-ended', evidenceRefs: [] });
     });
+  }
+
+  /** 与正常交接共用原保存回执，未领取的可靠待办不要求在关闸期间开始执行。 */
+  canPreserveQueuedRun(id: string, coordinator: BranchOperationCoordinator): boolean {
+    const run = this.get(id);
+    if (!run?.operationId || run.operationGeneration === undefined) return false;
+    const pending = coordinator.getUnclaimedPending(run.operationId, run.operationGeneration);
+    return Boolean(pending && this.canPreservePending(pending));
+  }
+
+  /** 只承认 begin 或恢复后已实际确认保存的原 sealed 意图；未确认或失败均拒绝。 */
+  private canPreservePending(pending: PendingWebhookDeploy): boolean {
+    const run = this.getForOperation(pending.operationId, pending.generation);
+    if (!run || run.status !== 'queued' || pending.branchId !== run.branchId || !this.hasLocalOwner(run)
+      || !this.stateService.getProject(run.projectId) || this.acceptanceWrites.has(run.id)) return false;
+    const intent = this.stateService.getDeploymentIntents().find(item => item.runId === run.id);
+    if (!intent || !isSealedSecret(intent.inputPayload)
+      || this.acceptedQueuedIntents.get(run.id) !== this.intentFingerprint(intent)) return false;
+    try {
+      readDeploymentIntent(run, intent);
+      if (JSON.stringify({ ...pending.request, pendingReplay: null }) !== JSON.stringify(intent.request)) return false;
+      return !this.list({ projectId: run.projectId, branchId: run.branchId }).some(candidate =>
+        candidate.operationAdmissionGeneration !== undefined && candidate.operationAdmissionGeneration > intent.admissionGeneration
+        && (!candidate.profileId || candidate.profileId === run.profileId));
+    } catch { return false; }
+  }
+
+  private intentFingerprint(intent: object): string {
+    return crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex');
   }
 
   get(id: string): DeploymentRun | undefined {
@@ -232,6 +340,7 @@ export class DeploymentRunService {
   ): DeploymentRun {
     return this.stateService.updateDeploymentRun(id, (run) => {
       this.assertTransition(run, nextStatus);
+      if (nextStatus !== 'queued') this.acceptedQueuedIntents.delete(run.id);
       const at = this.nowIso();
       run.status = nextStatus;
       run.phase = input.phase;
@@ -340,6 +449,8 @@ export class DeploymentRunService {
       if (TERMINAL_STATUSES.has(run.status)) continue;
       const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
       if (!Number.isFinite(heartbeat) || now.getTime() - heartbeat < staleAfterMs) continue;
+      const localExecution = this.hasLocalExecution(run) || !!this.remoteOwner(run);
+      if (this.hasQualifiedExecutionWait(run.id, now)) continue;
       reconciled.push(this.fail(run.id, {
         code: 'cds.run.interrupted',
         owner: 'cds',
@@ -349,6 +460,12 @@ export class DeploymentRunService {
         evidenceRefs: [],
         suggestedAction: '确认执行器与容器状态后重新部署',
       }));
+      if (localExecution && run.operationId && run.operationGeneration !== undefined) {
+        for (const coordinator of this.boundCoordinators) coordinator.revokeInterrupted({
+          operationId: run.operationId, generation: run.operationGeneration,
+          branchId: run.branchId, projectId: run.projectId, profileId: run.profileId,
+        });
+      }
     }
     return reconciled;
   }

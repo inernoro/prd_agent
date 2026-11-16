@@ -22,26 +22,22 @@ describe('BranchListPage preview contract', () => {
     expect(source).not.toContain('openPreview(branch, true)');
   });
 
+  it('keeps preview visually primary and quick start visually secondary', () => {
+    expect(source).toContain("className={isAiOperated ? '' : 'min-w-0'}");
+    expect(source).toContain("previewLabel={isAiOperated ? undefined : '预览'}");
+    expect(source).toContain('className="cursor-pointer border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"');
+  });
+
   const cardActionContract = (source: string) => {
-    const middleAt = source.indexOf('<div data-card-info');
-    const footerAt = source.indexOf('<footer', middleAt);
-    expect(middleAt).toBeGreaterThan(-1);
-    expect(footerAt).toBeGreaterThan(middleAt);
-    const middle = source.slice(middleAt, footerAt);
-    expect(middle).toContain('<PreviewActionSplitButton');
-    expect(middle).toContain('onRelease={onRelease}');
-    expect(middle).toContain('previewConfirmDescription={previewCapacityWarning && !isAiOperated ? previewCapacityWarning : undefined}');
-    const quickStart = middle.slice(middle.indexOf('aria-label={`一键启动'));
+    const footer = source.slice(source.indexOf('<footer'), source.indexOf('</footer>'));
+    expect(footer).toContain(') : showsIssue || failedPhase ? (');
+    expect(footer).toContain(') : isRunning ? (');
+    expect(footer).toContain('<PreviewActionSplitButton');
+    const quickStart = footer.slice(footer.indexOf('aria-label={`一键启动'));
     expect(quickStart).toMatch(/onClick=\{\(event\) => \{\s+event\.stopPropagation\(\);\s+onRestart\(\);/);
-    expect(middle).toContain('不拉取代码、不重建镜像');
-    const footer = source.slice(footerAt, source.indexOf('</footer>', footerAt));
-    expect(footer).not.toContain('<PreviewActionSplitButton');
-    expect(footer).toContain('onDeploy();');
-    expect(footer).toContain('!buildPhase && (showsIssue || failedPhase)');
-    expect(footer).toContain('disabled={busy || Boolean(buildPhase)}');
   };
 
-  it('keeps preview, release and quick start separate from issue-only footer deployment', () => {
+  it('keeps deployment issue-only and isolates quick start from card detail', () => {
     cardActionContract(source);
   });
 
@@ -52,7 +48,7 @@ describe('BranchListPage preview contract', () => {
 
   it('rejects an unconditional footer deployment action', () => {
     expectGuardRedOnMutation(cardActionContract, source,
-      mutate(source, '!buildPhase && (showsIssue || failedPhase)', 'true'));
+      mutate(source, ') : showsIssue || failedPhase ? (', ') : true ? ('));
   });
 
   it('keeps commit history separate from the current commit summary', () => {
@@ -121,8 +117,10 @@ describe('BranchListPage preview contract', () => {
   it('exposes an optional config-source (派生) selector wired into the create-branch POST body', () => {
     // 波3 补 UI:新建分支支持「配置来源分支」——UI 入口 + 透传 sourceBranchId。
     // 选择器控件常驻建议下拉,默认「项目模板(不派生)」。
-    expect(source).toContain('配置来源');
-    expect(source).toContain('项目模板(默认,不派生)');
+    const picker = fs.readFileSync(path.resolve(process.cwd(), 'web/src/components/branch/BranchSearchDropdown.tsx'), 'utf8');
+    expect(source).toContain("import { BranchSearchDropdown } from '@/components/branch/BranchSearchDropdown'");
+    expect(picker).toContain('配置来源');
+    expect(picker).toContain('项目模板(默认,不派生)');
     expect(source).toContain('onChangeConfigSource={setConfigSourceBranchId}');
     // 两条创建路径(手输/回车 + 选远程分支)都必须把选中的来源分支透传给后端。
     expect(source).toContain('void previewBranchByName(manualBranchName, configSourceBranchId)');

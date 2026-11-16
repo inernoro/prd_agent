@@ -12,6 +12,11 @@
     "qa": "测试与验收"
   },
   "skillRoles": {
+    "map-agent": [
+      "pm",
+      "dev",
+      "qa"
+    ],
     "sdd-init": [
       "pm",
       "dev",

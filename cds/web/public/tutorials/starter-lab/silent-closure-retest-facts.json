@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-20",
+  "reportUrl": "https://cds.miduo.org/reports?project=f9e8b956d3dd&folder=fef6349ec32b418c8e69a09a123ee8ad&report=e1205a070caf478994799941592f9e4d",
+  "scope": "一个最小临时项目，验完清理",
+  "sampleRepository": "https://github.com/inernoro/cds-small-steps-closure-lab",
+  "platformRepository": "https://github.com/inernoro/prd_agent",
+  "projectStatus": "deleted-after-acceptance",
+  "A": {
+    "sha": "12c8ab6169fc97d582d70b8152478b39a0f00bab",
+    "ciRun": 39394495130
+  },
+  "E": {
+    "sha": "07fdfff7284f453416e5e6a9b6291d1e3036235e",
+    "ciRun": 39395159680,
+    "result": "failure-keeps-A"
+  },
+  "B": {
+    "sha": "93973e71f25b425bb901402f2f712a02eb26f6df",
+    "ciRun": 39395453196
+  },
+  "rollback": "A固定摘要恢复；B前后两条任务完整相等",
+  "identity": "同一原账号与原项目；丢失、撤销、停用、整体撤权恢复实测通过",
+  "continuousRecording": "deferred-by-user; historical videos remain dated",
+  "cleanupEvidence": "见报告，不提供永久临时应用入口"
+}

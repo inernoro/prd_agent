@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertCurrentSourceQualification } from './current-source-qualification.js';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs/promises';
@@ -190,7 +191,7 @@ async function main() {
     report.inheritedProductionSources = git(['diff', '--name-only', referenceHead, inheritedCandidateHead, '--', ':(top)cds/src']).split('\n').filter(Boolean).sort();
     assert.deepEqual(report.inheritedProductionSources, changedSources.map(name => `cds/${name}`).sort());
     report.changedProductionSources = git(['diff', '--name-only', inheritedCandidateHead, '--', ':(top)cds/src']).split('\n').filter(Boolean).sort();
-    assert.deepEqual(report.changedProductionSources, currentSourceChanges.map(name => `cds/${name}`).sort());
+    assertCurrentSourceQualification(currentSourceChanges, report, native);
     assert.equal(git(['diff', '--name-only', referenceHead, '--', ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml']), '');
     const old = path.join(temp, 'reference-runtime'); await fs.cp(path.resolve('dist'), old, { recursive: true });
     await fs.writeFile(path.join(old, 'package.json'), '{"type":"module"}\n'); await fs.symlink(path.resolve('node_modules'), path.join(old, 'node_modules'), 'dir');

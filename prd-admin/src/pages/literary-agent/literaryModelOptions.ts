@@ -13,6 +13,8 @@ export type LiteraryModelOption = {
   isDedicated: boolean;
   isDefault: boolean;
   isAutoResolved?: boolean;
+  aliases?: string[];
+  selectionIds?: string[];
 };
 
 const INTERNAL_ROUTE_ID = /^(?:default-|pool[_-]|logical[_-])/i;
@@ -33,10 +35,14 @@ function officialModelId(pool: LiteraryAgentModelPool): string | null {
  * 业务选择器只展示实际上游型号。pool.code/default-* 是路由契约，不是模型名称。
  */
 export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): LiteraryModelOption[] {
-  const seenActualModels = new Set<string>();
+  const poolsWithMembers = pools.filter((pool) => pool.models && pool.models.length > 0);
+  const availabilityRank = new Map(poolsWithMembers.map((pool) => [
+    pool.id, pool.models.some((model) => model.healthStatus === 'Healthy') ? 0
+      : pool.models.some((model) => model.healthStatus === 'Degraded') ? 1 : 2,
+  ]));
+  const bestActualModels = new Map<string, LiteraryModelOption>();
 
-  return pools
-    .filter((pool) => pool.models && pool.models.length > 0)
+  const candidates = poolsWithMembers
     .map((pool): LiteraryModelOption | null => {
       const first = pool.models[0]!;
       const displayModelId = officialModelId(pool);
@@ -54,15 +60,26 @@ export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): Lite
         enabled: pool.models.some(isModelAvailableForRequest),
         isDedicated: pool.isDedicated,
         isDefault: pool.isDefault,
+        aliases: pool.aliases ?? [],
+        selectionIds: (pool.legacyPoolIds ?? []).map(id => `pool_${id}`),
       };
     })
-    .filter((model): model is LiteraryModelOption => model !== null && model.enabled)
-    .filter((model) => {
-      const identity = `${model.actualPlatformId}:${model.actualModelId}`;
-      if (seenActualModels.has(identity)) return false;
-      seenActualModels.add(identity);
-      return true;
-    });
+    .filter((model): model is LiteraryModelOption => model !== null && model.enabled);
+  for (const model of candidates) {
+    const identity = `${model.actualPlatformId}:${model.actualModelId}`;
+    const previous = bestActualModels.get(identity);
+    const rank = availabilityRank.get(model.poolId)!;
+    const previousRank = previous && availabilityRank.get(previous.poolId)!;
+    const winsTie = previous && (model.isDefault !== previous.isDefault
+      ? model.isDefault : model.poolId < previous.poolId);
+    if (!previous || rank < previousRank! || (rank === previousRank && winsTie)) {
+      bestActualModels.set(identity, model);
+    }
+  }
+  for (const model of candidates.filter((model) => model.isDefault)) {
+    bestActualModels.get(`${model.actualPlatformId}:${model.actualModelId}`)!.isDefault = true;
+  }
+  return [...bestActualModels.values()];
 }
 
 /**
@@ -73,6 +90,18 @@ export function selectLiteraryModelOption(
   options: LiteraryModelOption[],
   selectedId?: string | null,
 ): LiteraryModelOption | null {
-  const selected = selectedId ? options.find((model) => model.id === selectedId) : null;
-  return selected ?? options.find((model) => model.isDefault) ?? options[0] ?? null;
+  const selected = selectedId ? options.find((model) => model.id === selectedId || model.selectionIds?.includes(selectedId)) : null;
+  if (selectedId) return selected ?? null;
+  return options.find((model) => model.isDefault) ?? options[0] ?? null;
+}
+
+/** 提交前重新读取目录，只接受原身份或明确继承关系，不能因旧项消失而任意换模型。 */
+export function selectFreshLiteraryModel(
+  options: LiteraryModelOption[], previous: LiteraryModelOption | null,
+): LiteraryModelOption | null {
+  if (!previous || previous.isAutoResolved) return selectLiteraryModelOption(options);
+  const key = previous.modelName.trim().toLowerCase();
+  const matches = options.filter(model => model.modelName.trim().toLowerCase() === key
+    || model.aliases?.some(alias => alias.trim().toLowerCase() === key));
+  return matches.length === 1 ? matches[0] : null;
 }

@@ -55,6 +55,9 @@ public static class DocumentStoreRunFailureCopy
     /// </summary>
     public static Copy Resolve(DocumentStoreAgentRun run, Exception ex)
     {
+        if (ex is KnowledgeIndexRefreshException refreshFailure)
+            return new Copy(refreshFailure.Code, refreshFailure.Message, AutomaticRetryAllowed: false);
+
         var routeFailureCode = ExtractRouteFailureCode(ex);
         if (GatewayRouteFailure.IsConfigurationFault(routeFailureCode)
             || (routeFailureCode == null && LooksLikeMissingModel(ex)))

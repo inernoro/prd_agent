@@ -1,11 +1,13 @@
 {
-  "checkedAt": "2026-10-14T09:33:45.033539+00:00",
+  "checkedAt": "2026-10-14T11:05:17.552384+00:00",
   "verdict": "pass",
   "scope": "已有管理登录和仓库权限下的三案例桌面/CLI功能流程；教程资源随后按同功能代码发布",
-  "functionalAcceptanceCommit": "0ad65ae3db114c4abf372b7721ef62a53fced681",
+  "functionalAcceptanceCommit": "abd1aa5e284eafa3d1626b0a339533965f3edd16",
+  "functionalIntegrationCommit": "c7a7e5690418d743f8576011aeb3580770737135",
   "releaseLineage": {
-    "previousLiveCommit": "6e92dea1b787ba0d2f28184450e038fcd0514fd9",
-    "mergedMainCommit": "4e2ed3cd6ddc700e6209a9925734097b1d16e4f8",
+    "previousLiveCommit": "abd1aa5e284eafa3d1626b0a339533965f3edd16",
+    "originalLiveCommit": "6e92dea1b787ba0d2f28184450e038fcd0514fd9",
+    "mergedMainCommit": "f42255b11efc5c1d82b56f86684d283722089699",
     "bothPreservedAsAncestors": true
   },
   "authorization": {
@@ -39,8 +41,18 @@
   },
   "authorizationCodeProvenance": {
     "firstApprovalCommit": "301a9ecb0edc955d79125d08754ebeba7e3948c4",
-    "latestFunctionalCommit": "0ad65ae3db114c4abf372b7721ef62a53fced681",
+    "latestFunctionalCommit": "abd1aa5e284eafa3d1626b0a339533965f3edd16",
     "authorizationFilesByteIdentical": true,
+    "paths": [
+      "cds/src/middleware/github-auth.ts",
+      "cds/src/domain/auth.ts",
+      "cds/src/infra/auth-store",
+      "cds/src/routes/projects.ts",
+      "cds/src/routes/access-requests.ts",
+      "cds/src/routes/auth.ts",
+      "cds/src/services/auth-service.ts",
+      "cds/web/src/components/AccessRequestInbox.tsx"
+    ],
     "latestScopedKeyReuseRetested": true
   },
   "oneTimePermissionRevocation": {
@@ -50,19 +62,20 @@
     "revokedAt": "2026-10-14T07:04:24.466Z"
   },
   "failedCandidate": {
-    "commit": "e1f7315295103eb36c8fa9a41444667d0eb74ccc",
-    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38539845701",
+    "commit": "d431a08c06a20c42c9364e3a45650baf50e0c0a2",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38552293750",
     "passed": true,
-    "imageSkipped": true,
-    "sameAStillRunning": true,
+    "runningA": true,
     "noNewDeploymentRun": true,
-    "fourTasksUnchanged": true
+    "fourTaskObjectsUnchanged": true,
+    "ciFailed": true,
+    "platform": "abd1aa5e284eafa3d1626b0a339533965f3edd16"
   },
   "recoveredCandidate": {
-    "commit": "ec8b8f9fd15bc5df503ca86ead57b322c968f3e7",
-    "versionId": "dv_b33d73bf7045ebfad60e3b43",
-    "runId": "dr_08f5caeef3838893cc60f2ac",
-    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38540259943",
+    "commit": "19a68dd37842c32118aa27b78aab0ad5673d5757",
+    "versionId": "dv_229e4814aca623ee4a0cb910",
+    "runId": "dr_9742c3f5681b383af9e253af",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38552670434",
     "automaticWebhookDeployment": true,
     "manualDrawerRefreshUsed": false
   },
@@ -70,18 +83,19 @@
     "id": "small-steps-closure-main",
     "status": "running",
     "runningCommitSha": "83dfdf3a1d4c45353e29af204e300d9b773274ed",
-    "targetCommitSha": "ec8b8f9fd15bc5df503ca86ead57b322c968f3e7",
+    "targetCommitSha": "19a68dd37842c32118aa27b78aab0ad5673d5757",
     "ciImageStatus": "ready",
-    "ciTargetSha": "ec8b8f9fd15bc5df503ca86ead57b322c968f3e7",
+    "ciTargetSha": "19a68dd37842c32118aa27b78aab0ad5673d5757",
     "currentVersionId": "dv_f4a58820a3f95a66b2f65eda",
-    "lastDeploymentRunId": "dr_b67a153b2f4a9f3441595746",
+    "lastDeploymentRunId": "dr_086fab8baf3a4266ea6fed81",
     "previewUrl": "https://main-small-steps-closure.miduo.org",
     "passed": true,
+    "platform": "abd1aa5e284eafa3d1626b0a339533965f3edd16",
     "runningA": true,
     "targetRemainsF": true,
-    "fourTaskIdsTitlesAndDoneUnchanged": true,
-    "sameVerifiedVersionSelected": true,
-    "newRunId": "dr_b67a153b2f4a9f3441595746"
+    "fourCompleteTaskObjectsUnchanged": true,
+    "newDeploymentRun": "dr_086fab8baf3a4266ea6fed81",
+    "selectedVersion": "dv_f4a58820a3f95a66b2f65eda"
   },
   "rollbackArtifactQualification": {
     "sourceCommit": "83dfdf3a1d4c45353e29af204e300d9b773274ed",
@@ -130,7 +144,7 @@
   ],
   "receiptDismissal": "当前标签页会话内保存；跨页面及刷新保持，新标签页可能重新显示；其他项目不显示完成浮卡",
   "tests": {
-    "passed": 9797,
+    "passed": 9815,
     "skipped": 19,
     "command": "pnpm --dir cds test --maxWorkers=2 --minWorkers=1 --retry=1",
     "frontendLint": "占位脚本，不能当作实际 ESLint 校验",
@@ -147,21 +161,22 @@
     },
     {
       "file": "closure-source.zip",
-      "sourceCommit": "ec8b8f9fd15bc5df503ca86ead57b322c968f3e7",
-      "sha256": "fa7c0445bdbf9dca4e6e708b8b2d5b71d0cb367b8b5da3c11c36ffeda0009cd0",
+      "sourceCommit": "19a68dd37842c32118aa27b78aab0ad5673d5757",
+      "sha256": "7319e13f250defe15f8fbff5673fdc38c2b4341befaa22844dd3923654c2ed7a",
       "root": "仓库根目录",
       "credentialFiles": 0,
       "fileCount": 76
     }
   ],
   "video": {
-    "seconds": 50.87,
-    "segments": 12,
-    "frames": 85,
-    "bytes": 584731,
+    "seconds": 43.8,
+    "segments": 15,
+    "frames": 65,
+    "bytes": 690397,
     "kind": "真实浏览器帧，按实际顺序剪去等待；无音轨、无界面重绘；排查失败段另存本地",
+    "timelineSeconds": 43.19,
     "path": "media/postmerge-walkthrough.mp4",
-    "sha256": "715be8444a1a6b0f95ef2e2fe1c60ae01b08f233e867bf5acba09afe3155fdc4"
+    "sha256": "0506706217a5b7a6a34ca4ff6a4b311159da1845c6241ec83dfac43da64ed65c"
   },
   "reportFolderUrl": "https://cds.miduo.org/reports?project=f9e8b956d3dd&folder=ddb0fcc29d6b47a3ac2f7e8837ee5495",
   "limits": [

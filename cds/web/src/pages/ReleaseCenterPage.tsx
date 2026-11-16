@@ -1,3 +1,5 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { ReleaseCenterSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
 /**
  * 站点发布中心 v2 —— 环境是骨架，不是一堆等权重的配置方框。
  *
@@ -17,7 +19,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, RefreshCw, Rocket } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -39,7 +41,7 @@ import {
   type EnvironmentSection,
 } from '@/lib/releaseEnvironments';
 import type { PreviewMode, PreviewUrlConfig } from '@/lib/previewUrl';
-import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { ErrorBlock } from '@/pages/cds-settings/components';
 import { ConfigTab } from '@/pages/release-center/ConfigTab';
 import {
   ArchiveTargetDialog,
@@ -68,6 +70,7 @@ import {
   strategyFromDraft,
 } from '@/pages/release-center/SiteWizardDialog';
 import { StartReleaseDialog, type StartReleaseIntent } from '@/pages/release-center/StartReleaseDialog';
+import { BatchReleasePanel } from '@/pages/release-center/BatchReleasePanel';
 import type {
   BranchOption,
   CenterResponse,
@@ -132,6 +135,11 @@ export function ReleaseCenterPage(): JSX.Element {
   const [projectId, setProjectId] = useState(initialProject);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const loadedScope = useRef(projectId);
+  const [refreshing, setRefreshing] = useState(false);
+  const [sectionRefresh, setSectionRefresh] = useState(0);
+  const [refreshError, setRefreshError] = useState('');
+  const request = useRef<AbortController | null>(null);
   const [archivedTargets, setArchivedTargets] = useState<ReleaseTarget[]>([]);
   // 通知深链 `?target=&run=` 指名要看哪个目标的哪次发布。只在首次挂载时取一次：
   // 之后用户在页面里切目标不该被 URL 上的旧参数拽回去。
@@ -174,21 +182,38 @@ export function ReleaseCenterPage(): JSX.Element {
   const [previewConfig, setPreviewConfig] = useState<PreviewUrlConfig>({});
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (opts?.silent && request.current) return;
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     // silent：后台轮询用——不闪 loading 骨架，数据到了原地替换（变化可感知但不清屏）。
-    if (!opts?.silent) setState({ status: 'loading' });
+    if (!opts?.silent) setState(previous => previous.status === 'ok' && loadedScope.current === projectId ? previous : { status: 'loading' });
+    if (!opts?.silent) setSectionRefresh(value => value + 1);
+    if (!opts?.silent) setRefreshError('');
+    // 后台轮询不能禁用手动刷新；用户可以取消卡住的静默请求。
+    if (!opts?.silent) setRefreshing(true);
     try {
       const [center, targets] = await Promise.all([
-        apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`),
-        apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`),
+        apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`, {signal:controller.signal}),
+        apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`, {signal:controller.signal}),
       ]);
+      if (controller.signal.aborted) return;
+      loadedScope.current = projectId;
       setState({ status: 'ok', center, hosts: targets.remoteHosts || [] });
       setArchivedTargets(targets.archivedTargets || []);
     } catch (err) {
-      if (!opts?.silent) setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      if (controller.signal.aborted) return;
+      if (!opts?.silent) {
+        const message = err instanceof ApiError ? err.message : String(err);
+        setRefreshError(message);
+        setState(previous => previous.status === 'ok' && loadedScope.current === projectId ? previous : {status:'error',message});
+      }
+    } finally {
+      if (request.current === controller) { request.current = null; setRefreshing(false); }
     }
   }, [projectId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { request.current?.abort(); }; }, [load]);
   useEffect(() => {
     rememberReleaseCenterProject(projectId, typeof window === 'undefined' ? undefined : window.localStorage);
   }, [projectId]);
@@ -630,8 +655,8 @@ export function ReleaseCenterPage(): JSX.Element {
           right={(
             <>
               <PaletteHint />
-              <Button variant="outline" size="sm" onClick={() => void load()}>
-                <RefreshCw />
+              <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
+                <RefreshCw className={refreshing ? 'animate-spin' : ''} />
                 刷新
               </Button>
               <Button variant="outline" size="sm" onClick={openCreateWizard}>
@@ -639,8 +664,7 @@ export function ReleaseCenterPage(): JSX.Element {
                 新建环境
               </Button>
               {/*
-                去发布控制台的主入口。发布中心不执行发布——所有「真的要发了」的动作
-                都在控制台完成，所以这个按钮是主按钮，不是一条不起眼的链接。
+                逐目标操作继续由发布控制台承接；批次入口在全环境矩阵中。
                 带上当前项目，进去不用重选。
               */}
               <Button size="sm" asChild>
@@ -656,6 +680,7 @@ export function ReleaseCenterPage(): JSX.Element {
     >
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
         <div ref={rootRef} className="flex h-full min-h-0 flex-col">
+          {state.status === 'loading' ? <ReleaseCenterSkeleton /> : <>
           {/* 分区导航。设计稿是 sticky；这一页在 CDS 里是固定外壳 + 内容区内滚，
               导航天然常驻，效果相同而且不会在滚动时抖。 */}
           <nav className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[hsl(var(--hairline))] px-6 py-2.5">
@@ -687,17 +712,16 @@ export function ReleaseCenterPage(): JSX.Element {
               </div>
             ) : null}
 
-            {state.status === 'loading' ? <LoadingBlock label="正在加载发布环境" /> : null}
             {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+            {state.status === 'ok' && refreshError ? <div role="alert" className="mb-4 space-y-2 rounded-md border border-destructive/30 p-3 text-sm">
+              <p>刷新失败，保留上次结果：{refreshError}</p>
+              <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试</Button>
+            </div> : null}
 
-            {state.status === 'ok' && rows.length === 0 ? (
-              <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} />
-            ) : null}
-
-            {state.status === 'ok' && rows.length > 0 ? (
+            {state.status === 'ok' ? (
               <div className="flex flex-col gap-[1.125rem]">
                 {/* ══ 监控条：常驻所有分区，页面第一块 ══ */}
-                <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
+                {rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
                   <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-3">
                     <span
                       className={`mt-2 h-[0.5625rem] w-[0.5625rem] shrink-0 rounded-full ${
@@ -766,11 +790,13 @@ export function ReleaseCenterPage(): JSX.Element {
                       去处理 {fleetEnvs.find((env) => env.id === verdict.actionEnvId)?.name || verdict.actionEnvId}
                     </Button>
                   ) : null}
-                </section>
+                </section> : null}
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
+                {section === 'fleet' ? <BatchReleasePanel key={projectId} projectId={projectId} targets={rows.map((row) => row.target)} onOpenLogs={setLogRun} /> : null}
+                {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
                 {section === 'fleet' ? (
-                  <FleetMatrix
+                  rows.length > 0 ? <FleetMatrix
                     envs={fleetEnvs}
                     sort={fleetSort}
                     onSort={setFleetSort}
@@ -778,11 +804,11 @@ export function ReleaseCenterPage(): JSX.Element {
                     wide={wide}
                     onInspect={inspectEnv}
                     onExecute={executeRowAction}
-                  />
+                  /> : null
                 ) : null}
 
                 {/* ══ 分区二~五：都落到单个环境上，左边一列选环境 ══ */}
-                {section !== 'fleet' ? (
+                {section !== 'fleet' && rows.length > 0 ? (
                   <div className={wide ? 'grid grid-cols-[16.25rem_minmax(0,1fr)] items-start gap-4' : 'flex flex-col gap-4'}>
                     <EnvironmentSidebar
                       sections={sections}
@@ -844,8 +870,9 @@ export function ReleaseCenterPage(): JSX.Element {
                             稿子没画不等于可以删掉，它是另一种触发面。 */}
                         {section === 'rules' ? (
                           <div className="flex min-w-0 flex-col gap-4">
-                            <AutoRulesSection projectId={projectId} rows={rows} onToast={setToast} />
+                            <AutoRulesSection projectId={projectId} rows={rows} onToast={setToast} refreshVersion={sectionRefresh} />
                             <AutoReleaseTab
+                              refreshVersion={sectionRefresh}
                               row={selectedRow}
                               otherRows={otherRows}
                               branches={branches}
@@ -855,7 +882,7 @@ export function ReleaseCenterPage(): JSX.Element {
                         ) : null}
 
                         {section === 'health' ? (
-                          <HealthSection envs={fleetEnvs} selected={fleetEnvs.find((env) => env.id === selectedRow.target.id)} />
+                          <HealthSection refreshVersion={sectionRefresh} envs={fleetEnvs} selected={fleetEnvs.find((env) => env.id === selectedRow.target.id)} />
                         ) : null}
 
                         {/* 稿子 §6 的六列表是唯一的证据表。这里曾经把旧的
@@ -864,6 +891,7 @@ export function ReleaseCenterPage(): JSX.Element {
                             看失败原因、回滚到此版本、提交说明）已折进这一张表。 */}
                         {section === 'evidence' ? (
                           <EvidenceSection
+                            refreshVersion={sectionRefresh}
                             row={selectedRow}
                             rows={rows}
                             runs={runs}
@@ -882,6 +910,7 @@ export function ReleaseCenterPage(): JSX.Element {
               </div>
             ) : null}
           </div>
+          </>}
         </div>
       </Workspace>
 

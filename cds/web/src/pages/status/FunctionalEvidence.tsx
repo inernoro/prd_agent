@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * 功能监控的证据区：本次判定 + 历史产物画廊。
  *
@@ -26,6 +27,7 @@ interface Observation {
   code?: number;
   results: AssertionResult[];
   artifactUrl?: string;
+  artifactProtected?: boolean;
   requestBody?: string;
   err?: string;
 }
@@ -51,7 +53,7 @@ function ArtifactThumb({ observation, size }: { observation: Observation; size: 
           failed ? 'border-destructive/50' : 'border-dashed border-[hsl(var(--hairline))]',
         )}
       >
-        无产物
+        {observation.artifactProtected ? '产物链接受保护' : '无产物'}
       </div>
     );
   }
@@ -120,7 +122,7 @@ export function FunctionalEvidence({ monitorId }: { monitorId: string }): JSX.El
     return <p className="text-xs text-destructive">观测证据读取失败：{error}</p>;
   }
   if (!observations) {
-    return <p className="text-xs text-muted-foreground">正在读取观测证据…</p>;
+    return <ContentLoading label="读取观测证据" />;
   }
   if (observations.length === 0) {
     // 说清是「还没跑过」而不是「没有这个能力」——两者的下一步完全不同。
@@ -143,6 +145,7 @@ export function FunctionalEvidence({ monitorId }: { monitorId: string }): JSX.El
         </span>
       </div>
 
+      {current.artifactProtected ? <p className="text-xs text-muted-foreground">产物地址包含鉴权参数，已隐藏地址。请从已有授权的制品入口查看，不能据此判断未生成产物。</p> : null}
       <div className="flex gap-3">
         <ArtifactThumb observation={current} size={168} />
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">

@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * ReferencesPanel — 配置页签「引用」分区（plan.cds.service-relations 第三批）。
  *
@@ -154,7 +155,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
   };
 
   if (state.status === 'loading') {
-    return <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在从环境变量里抽出地址类引用…</div>;
+    return <ContentLoading label="读取地址引用" variant="table" />;
   }
   if (state.status === 'error') {
     return <div className="text-xs text-destructive">读取引用失败：{state.message} <Button size="sm" variant="ghost" onClick={() => void load()}>重试</Button></div>;
@@ -248,7 +249,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
             <Button size="sm" variant="ghost" className="h-6 text-[0.6875rem]" onClick={() => setPicker(null)}>取消</Button>
           </div>
           {picker.branches === null ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取目标项目的分支…</div>
+            <ContentLoading label="读取目标项目分支" />
           ) : (
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" className="h-7 text-[0.6875rem]" disabled={busy} onClick={() => void switchTo(null)} title="不钉分支，跟随目标项目的默认分支">默认分支</Button>

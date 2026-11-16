@@ -165,7 +165,7 @@ public class GatewayPinnedModelTests
                 };
             }))),
             Config("http://llmgw-serve.test"),
-            NullLogger<HttpLlmGatewayClient>.Instance);
+            NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
 
         var client = httpGateway.CreateClient(
             AppCallerRegistry.Desktop.Arena.BattleChat,

@@ -8,6 +8,26 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class DesignArtifactBrowserQualityTests
 {
     [Fact]
+    public void WebDelivery_KeepsVisualFindingsAsObservationsWithoutRequiringAPass()
+    {
+        var json = """
+        {
+          "schemaVersion":"map-browser-quality-evidence-v1",
+          "ruleVersion":"browser-hard-gate-v1",
+          "heuristicVersion":"browser-aesthetic-heuristic-v1",
+          "firstPassPassed":false,"repairAttempts":0,"repairSucceeded":false,
+          "finalHardPassed":false,"finalScore":40,
+          "attempts":[{"viewports":[{"viewport":"desktop"},{"viewport":"mobile"}],
+            "evidenceRefs":["assets/quality/attempt-0-desktop.png","assets/quality/attempt-0-mobile.png"]}]
+        }
+        """;
+        var summary = HostedSiteEditRunWorker.ParseBrowserQualitySummary(Package(json, 1));
+        Assert.NotNull(summary);
+        Assert.False(summary!.FinalHardPassed);
+        Assert.Equal(0, summary.RepairAttempts);
+    }
+
+    [Fact]
     public void ParseBrowserQualitySummary_ProjectsOnlyBoundedMetricsAndEvidenceReference()
     {
         var json = """

@@ -4,6 +4,11 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 
 internal static class OpenRouterAttribution
 {
+    internal static bool IsOpenRouterEndpoint(string? endpoint)
+        => Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps
+            && string.Equals(uri.Host, "openrouter.ai", StringComparison.OrdinalIgnoreCase);
+
     internal static string? ResolveReferer(IConfiguration? configuration)
     {
         var raw = configuration?["OpenRouter:Referer"]
@@ -25,8 +30,7 @@ internal static class OpenRouterAttribution
         string appCallerCode,
         string? referer)
     {
-        if (string.IsNullOrWhiteSpace(apiUrl)
-            || apiUrl.IndexOf("openrouter.ai", StringComparison.OrdinalIgnoreCase) < 0)
+        if (!IsOpenRouterEndpoint(apiUrl))
         {
             return;
         }

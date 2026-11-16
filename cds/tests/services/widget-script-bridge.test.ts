@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildWidgetScript } from '../../src/widget-script.js';
+import { readFileSync, mkdtempSync, rmdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import ts from 'typescript';
 
 describe('widget bridge polling gate', () => {
   const original = process.env.CDS_BRIDGE_ENABLED;
@@ -29,19 +34,25 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('return window.innerWidth<=640?88:12;');
     expect(script).toContain('var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};');
     expect(script).toContain('@media (max-width:640px)');
-    expect(script).toContain('#cds-widget .cds-branch,#cds-widget .cds-mode{display:none}');
-    expect(script).toContain('#cds-widget .cds-badge:not(.is-expanded){width:44px;height:44px;min-width:44px;max-width:44px');
-    expect(script).toContain('#cds-widget .cds-badge:not(.is-expanded) .cds-badge-main>:not(button[data-action="toggle"]){display:none}');
+    expect(script).toContain('#cds-widget .cds-branch,#cds-widget .cds-mode,#cds-widget .cds-tag{display:none}');
+    // 44px 和同步/失败可读性由真实 IIFE/CSS 夹具断言，不再把错误的通配隐藏规则锁成合同。
     expect(script).toContain('#cds-widget .cds-panel{width:calc(100vw - 24px)');
     expect(script).toContain('max-height:calc(100vh - 176px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain');
     expect(script).toContain('data-action="close-panel" title="关闭 CDS 诊断面板" aria-label="关闭 CDS 诊断面板"');
     // 断行为不断字面排版：合并 main 的手机端收起之后，关闭钮同样要安排重新收成徽章，
     // 否则同样是「收起」，走 toggle 会收、走关闭钮不会收。
-    const closeHandler = script.slice(script.indexOf("if(action==='close-panel')"));
-    expect(closeHandler.slice(0, 160)).toContain('expanded=false;');
-    expect(closeHandler.slice(0, 160)).toContain('render();');
-    expect(closeHandler.slice(0, 160), '关闭面板后没有安排手机端重新收起')
-      .toContain('scheduleMobileCompact(8000);');
+    const code = script.replace(/^\s*<script[^>]*>/, '').replace(/<\/script>\s*$/, '');
+    const file = ts.createSourceFile('widget.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    let closeHandler = '', setExpanded = '';
+    const visit = (node: ts.Node) => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === 'setPanelExpanded') setExpanded = node.getText(file);
+      if (ts.isIfStatement(node) && node.expression.getText(file) === "action==='close-panel'") closeHandler = node.thenStatement.getText(file);
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    expect(closeHandler).not.toBe(''); expect(setExpanded).not.toBe('');
+    const close = new Function(`var expanded=true,pos={x:12,y:46},panelOrigin={x:12,y:88},renders=0,delay=0;${setExpanded};function render(){renders++}function scheduleMobileCompact(ms){delay=ms}(function()${closeHandler})();return {expanded,pos,renders,delay};`);
+    expect(close()).toEqual({ expanded: false, pos: { x: 12, y: 88 }, renders: 1, delay: 8000 });
     expect(script).toContain('#cds-widget button{min-width:44px;min-height:44px}');
     expect(script).toContain('#cds-widget .cds-mode-select{min-height:44px}');
   });
@@ -97,5 +108,33 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('  render();\n  scheduleMobileCompact(4000);');
     expect(script).toContain('if(!isMobileViewport()||expanded)return;');
     expect(script).toContain('if(!expanded)scheduleMobileCompact(8000);');
+  });
+
+  it('把生产徽标浏览器夹具接在已安装 Chromium 的既有离线入口', () => {
+    const smoke = readFileSync(new URL('../../scripts/mobile-layout-smoke.mjs', import.meta.url), 'utf8');
+    const fixture = readFileSync(new URL('../../scripts/widget-mobile-status-fixture.ts', import.meta.url), 'utf8');
+    expect(smoke).toContain('if (OFFLINE && !only) execFileSync(');
+    expect(smoke).toContain("new URL('./widget-mobile-status-fixture.ts', import.meta.url)");
+    expect(fixture).toContain('buildWidgetScript(');
+    expect(fixture).toContain("provenance: 'deterministic-fixture'");
+  });
+
+  it('浏览器夹具沿用父入口的PWPATH优先、原包兜底及明确失败合同', () => {
+    const source = readFileSync(new URL('../../scripts/widget-mobile-status-fixture.ts', import.meta.url), 'utf8');
+    const file = ts.createSourceFile('fixture.ts', source, ts.ScriptTarget.Latest, true);
+    const loader = file.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'loadPlaywright');
+    expect(loader).toBeDefined();
+    const compiled = ts.transpileModule(loader!.getText(file), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } });
+    const actualRequire = createRequire(new URL('../../package.json', import.meta.url));
+    const externalPackage = actualRequire.resolve('playwright'), chromium = actualRequire('playwright').chromium;
+    const directory = mkdtempSync(path.join(tmpdir(), 'cds-widget-pwpath-'));
+    const isolatedRequire = createRequire(path.join(directory, 'entry.cjs'));
+    const load = (require: NodeRequire, PWPATH: string) => new Function('require', 'process', `${compiled.outputText}\nreturn loadPlaywright;`)(require, { env: { PWPATH } })();
+    try {
+      expect(() => isolatedRequire.resolve('playwright')).toThrow();
+      expect(load(isolatedRequire, externalPackage).chromium).toBe(chromium);
+      expect(load(actualRequire, path.join(directory, 'missing')).chromium).toBe(chromium);
+      expect(() => load(isolatedRequire, path.join(directory, 'missing'))).toThrow('Unable to load Playwright. Tried');
+    } finally { rmdirSync(directory); }
   });
 });

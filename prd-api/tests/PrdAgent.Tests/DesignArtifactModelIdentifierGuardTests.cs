@@ -59,7 +59,7 @@ public class DesignArtifactModelIdentifierGuardTests
     private static string ReadRepoFile(string relativePath)
     {
         var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
-        while (dir is not null && !System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, ".git")))
+        while (dir is not null && !(System.IO.Directory.Exists(System.IO.Path.Combine(dir.FullName, ".git")) || System.IO.File.Exists(System.IO.Path.Combine(dir.FullName, ".git"))))
             dir = dir.Parent;
         Assert.NotNull(dir);
         return System.IO.File.ReadAllText(System.IO.Path.Combine(dir!.FullName, relativePath));

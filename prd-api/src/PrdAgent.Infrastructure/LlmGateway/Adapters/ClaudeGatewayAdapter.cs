@@ -33,7 +33,8 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
         string endpoint,
         string? apiKey,
         JsonObject requestBody,
-        bool enablePromptCache = false)
+        bool enablePromptCache = false,
+        bool includeThinking = false)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
 
@@ -369,6 +370,21 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
 
             switch (eventType)
             {
+                case "message_start":
+                    if (root.TryGetProperty("message", out var message) &&
+                        message.TryGetProperty("usage", out var initialUsage) &&
+                        initialUsage.ValueKind == JsonValueKind.Object)
+                    {
+                        // Opening usage is nonterminal metadata. An empty text chunk is
+                        // accumulated without completing the protocol or first-output wait.
+                        return new GatewayStreamChunk
+                        {
+                            Type = GatewayChunkType.Text,
+                            TokenUsage = ParseUsageElement(initialUsage)
+                        };
+                    }
+                    break;
+
                 case "content_block_start":
                     if (root.TryGetProperty("content_block", out var contentBlock) &&
                         contentBlock.ValueKind == JsonValueKind.Object &&

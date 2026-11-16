@@ -1,9 +1,11 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * BranchRelationsPage — 全屏关系图（plan.cds.service-relations 第四批）。独立路由，可分享。
  * 与总览关系卡、展开视图、cdscli topology 读同一份 service-graph 数据。
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { Copy, Minimize2, RefreshCw } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -13,7 +15,7 @@ import { relationHeadline } from '@/components/branch/RelationGraph';
 export function BranchRelationsPage(): JSX.Element {
   const { branchId } = useParams<{ branchId: string }>();
   const navigate = useNavigate();
-  const { state, reload } = useRelationPayload(branchId);
+  const { state, reload, refreshing, refreshError } = useRelationPayload(branchId);
   const [onlyProblems, setOnlyProblems] = useState(false);
   const data = state.status === 'ok' ? state.data : null;
   return (
@@ -33,7 +35,7 @@ export function BranchRelationsPage(): JSX.Element {
               ) : null}
               <Button variant={onlyProblems ? 'default' : 'outline'} size="sm" onClick={() => setOnlyProblems((v) => !v)} title="只列错误与警告">只看问题</Button>
               <Button variant="outline" size="sm" onClick={() => { void navigator.clipboard?.writeText(window.location.href); }} title="复制本页链接"><Copy />复制链接</Button>
-              <Button variant="outline" size="sm" onClick={reload}><RefreshCw />刷新</Button>
+              <Button variant="outline" size="sm" onClick={reload} disabled={refreshing}><RefreshCw className={refreshing ? 'animate-spin' : ''} />刷新</Button>
               <Button variant="outline" size="sm" onClick={() => navigate(branchId ? `/branch-panel/${encodeURIComponent(branchId)}` : '/branch-list')}><Minimize2 />退出全屏</Button>
             </>
           )}
@@ -41,7 +43,8 @@ export function BranchRelationsPage(): JSX.Element {
       )}
     >
       <Workspace fluid className="cds-workspace--fill">
-        {state.status === 'loading' ? <div className="p-6 text-xs text-muted-foreground">正在算服务关系与体检…</div> : null}
+        {refreshError && data ? <p role="alert" className="py-3 text-sm text-destructive">刷新失败：{refreshError}；当前显示上次读取的内容。</p> : null}
+        {state.status === 'loading' ? <ContentLoading label="读取服务关系" variant="panel" /> : null}
         {state.status === 'error' ? <div className="p-6 text-xs text-destructive">读取失败：{state.message}</div> : null}
         {data ? (
           <div className="flex h-full min-h-0 flex-col gap-3">

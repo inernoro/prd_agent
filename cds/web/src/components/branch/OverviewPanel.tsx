@@ -359,10 +359,9 @@ export function MetricsSkeleton({
           </div>
           {/* 呼吸着的占位色带：形状就是将要出现的那张堆叠图，不是转圈 */}
           <div
-            className="absolute inset-x-0 bottom-0 animate-pulse rounded-t"
+            className="cds-loading-skeleton-panel absolute inset-x-0 bottom-0 rounded-t"
             style={{
               height: '38%',
-              background: `linear-gradient(180deg, hsl(var(--series-4) / 0.16), hsl(var(--series-1) / 0.16))`,
             }}
             aria-hidden
           />
@@ -373,8 +372,8 @@ export function MetricsSkeleton({
           <span key={i} className="flex gap-2">
             <span className="w-[3px] rounded-full bg-[hsl(var(--hairline-strong))]" aria-hidden />
             <span className="flex flex-col gap-1">
-              <span className="h-2 w-24 animate-pulse rounded bg-[hsl(var(--hairline-strong))]" />
-              <span className="h-3.5 w-12 animate-pulse rounded bg-[hsl(var(--hairline-strong))]" />
+              <span className="cds-loading-skeleton-line h-2 w-24 rounded" />
+              <span className="cds-loading-skeleton-line h-3.5 w-12 rounded" />
             </span>
           </span>
         ))}

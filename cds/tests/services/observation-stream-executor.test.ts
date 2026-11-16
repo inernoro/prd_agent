@@ -1,3 +1,4 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
 import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -10,6 +11,8 @@ import { ShellExecutor } from '../../src/services/shell-executor.js';
 import { ContainerService } from '../../src/services/container.js';
 import { shellQuoteArg } from '../../src/services/secure-database-cli.js';
 import type { CdsConfig } from '../../src/types.js';
+import { deploymentPhaseBudget, setDeploymentPhaseMemoryProvider } from '../../src/services/deployment-phase-budget.js';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 
 vi.mock('node:child_process', async original => {
   const actual = await original<typeof import('node:child_process')>();
@@ -20,7 +23,7 @@ const dirs: string[] = [];
 const originalPath = process.env.PATH;
 const command = (program: string): string => ['exec', process.execPath, '-e', program].map((x, i) => i ? shellQuoteArg(x) : x).join(' ');
 async function streams(count = 1): Promise<ObservationStreamExecutor> {
-  const pool = new ObservationStreamExecutor(count); pools.push(pool); await pool.start(); return pool;
+  const pool = traceExecutor(new ObservationStreamExecutor(count), 'startup-stream'); pools.push(pool); await pool.start(); return pool;
 }
 async function directory(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'cds-startup-stream-')); dirs.push(dir); return dir;
@@ -29,10 +32,17 @@ async function until(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 300; i++) { if (predicate()) return; await new Promise(r => setTimeout(r, 10)); }
   throw new Error('Stream fixture did not become ready');
 }
+async function reserveStartup(): Promise<void> {
+  setDeploymentPhaseMemoryProvider(() => 10000);
+  setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
+  (await deploymentPhaseBudget.acquire('start', { projectId: 'fixture' }, { reservationKey: 'owned-fixture' }))();
+}
 afterEach(async () => {
   await Promise.all(pools.splice(0).map(p => p.close()));
   await Promise.all(dirs.splice(0).map(p => rm(p, { recursive: true, force: true })));
   if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+  deploymentPhaseBudget.releaseMemory('owned-fixture');
+  setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
   vi.clearAllMocks();
 });
 
@@ -120,10 +130,12 @@ describe('独立启动日志执行槽真实进程', () => {
     const pool = await streams(); vi.clearAllMocks();
     const container = new ContainerService(new ShellExecutor(), {} as CdsConfig, undefined, undefined, pool, undefined, unitBindMountInspector);
     const progress: string[] = [];
+    await reserveStartup();
     const ready = await container.waitForStartupSignal('owned-fixture', 'startup-ready', chunk => { progress.push(chunk); }, 2);
     if (!ready) console.error(JSON.stringify({ scope: 'owned-startup-signal-fixture', progress, stats: pool.getStats(),
       producer: await readFile(trace, 'utf8').catch(() => 'not-started') }));
     expect(ready).toBe(true);
+    expect(deploymentPhaseBudget.memorySnapshot().some(item => item.key === 'owned-fixture')).toBe(false);
     const view = JSON.parse(await readFile(trace, 'utf8'));
     expect(view.ppid).not.toBe(process.pid); expect(view.args).toEqual(['logs', '-f', 'owned-fixture']);
     expect(childProcess.spawn).not.toHaveBeenCalled(); expect(pool.getStats().admitted).toBe(0);
@@ -134,6 +146,26 @@ describe('独立启动日志执行槽真实进程', () => {
       options.onData('ready'); throw Object.assign(new Error('fixture cleanup unknown'), { code: 'cleanup' });
     } } as unknown as ObservationStreamExecutor;
     const container = new ContainerService(new ShellExecutor(), {} as CdsConfig, undefined, undefined, failed, undefined, unitBindMountInspector);
+    await reserveStartup();
     expect(await container.waitForStartupSignal('owned-fixture', 'ready')).toBe(false);
+    expect(deploymentPhaseBudget.memorySnapshot().some(item => item.key === 'owned-fixture')).toBe(true);
+  });
+
+  it('启动信号迟到成功不能退役等待期间替换的同名新预约', async () => {
+    let confirm!: () => void, entered!: () => void;
+    const pending = new Promise<void>(resolve => { confirm = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const stream = { exec: async (_command: string, options: { onData: (chunk: string) => void }) => {
+      options.onData('ready'); entered(); await pending;
+      throw Object.assign(new Error('fixture cancelled'), { code: 'cancelled' });
+    } } as unknown as ObservationStreamExecutor;
+    const container = new ContainerService(new ShellExecutor(), {} as CdsConfig, undefined, undefined, stream, undefined, unitBindMountInspector);
+    await reserveStartup();
+    const ready = container.waitForStartupSignal('owned-fixture', 'ready');
+    await started;
+    deploymentPhaseBudget.reserveKnownMemory('owned-fixture', 512, { projectId: 'new-owner' });
+    const newer = deploymentPhaseBudget.memorySnapshot().find(item => item.key === 'owned-fixture');
+    confirm(); expect(await ready).toBe(true);
+    expect(deploymentPhaseBudget.memorySnapshot().find(item => item.key === 'owned-fixture')).toEqual(newer);
   });
 });

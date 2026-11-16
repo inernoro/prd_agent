@@ -1,4 +1,4 @@
-// 一次设计任务的完整执行：取任务包 → 铺工作区 → 驱动 OpenDesign 设计、终审、按闸门修复 → 收产物 →
+// 一次设计任务的完整执行：取任务包 → 铺工作区 → 驱动 OpenDesign 设计与原生自查 → 收产物 →
 // 向 MAP 交结果包，运行期间推实时预览。
 //
 // 搬迁自 cds/src/services/agent-workspace-session-runtime.ts 的 create() + execute()（第 1 阶段：只改归属、
@@ -42,25 +42,16 @@ import {
   OPEN_DESIGN_WEB_PROTOTYPE_SKILL,
   buildOpenDesignCodexConfig,
   buildPlatformRules,
-  buildRepairMessage,
   buildReviewMessage,
   collectDesignTaskContext,
   composeOpenDesignPrompts,
 } from './prompts.js';
 import {
-  MAX_QUALITY_REPAIR_ATTEMPTS,
-  assertRequiredFactualCoverage,
   canAcceptUntrackedWorkspaceEdit,
-  classifyQualityRepairReason,
-  collectArtifactQualityEvidence,
-  collectVisibleTextOccurrenceConstraints,
   createArtifactQualityGate,
 } from './quality/gate.js';
 import {
-  MAX_BROWSER_REPAIR_ATTEMPTS,
-  browserRepairMessage,
   buildBrowserQualityEvidence,
-  buildBrowserQualityFailureEvidence,
   summarizeAttempt,
   type BrowserQualityAttemptEvidence,
 } from './quality/browser-contract.js';
@@ -117,25 +108,6 @@ function preparePresentationRepairCandidate(workspaceDir: string): string | unde
   return candidate;
 }
 
-function traceableDeterministicQualityRejection(
-  error: AgentWorkspaceRuntimeError,
-  issueCode: string,
-  repairAttempts: number,
-  repairBudgetExhausted: boolean,
-): AgentWorkspaceRuntimeError {
-  return new AgentWorkspaceRuntimeError(
-    error.code,
-    error.message,
-    error.retryable,
-    {
-      ...error.details,
-      issueCodes: [issueCode],
-      repairAttempts,
-      repairBudgetExhausted,
-    },
-  );
-}
-
 /**
  * OpenDesign 自己认定的交付文件，不是 `index.html`（DELIVERABLE_ENTRY_NOTE）。
  *
@@ -147,7 +119,7 @@ function traceableDeterministicQualityRejection(
 const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.html$/;
 
 // 十五分钟是产品总承诺，不是每个 OpenDesign run 各自可用的预算。最后 10% 固定留给
-// 浏览器硬门禁与向 MAP 提交；终审或定向修复等单轮模型质量工作最多占 1/15，且至少要有
+// 浏览器观察取证与向 MAP 提交；终审或定向修复等单轮模型质量工作最多占 1/15，且至少要有
 // 1/30 才值得启动。默认 900 秒对应 90 秒收尾、30–60 秒单轮质量工作。短任务按同一比例缩放，
 // 因硬编码分钟数失去全部执行时间。
 const FINALIZATION_RESERVE_RATIO = 0.1;
@@ -170,18 +142,6 @@ function buildExecutionBudget(startedAt: number, timeoutSeconds: number): Execut
     minimumQualityPassMs: Math.max(1, Math.floor(totalMs * MIN_MODEL_QUALITY_PASS_RATIO)),
     maximumQualityPassMs: Math.max(1, Math.floor(totalMs * MAX_MODEL_QUALITY_PASS_RATIO)),
   };
-}
-
-function allotBrowserRepairMs(
-  remainingMs: number,
-  minimumPassMs: number,
-  maximumPassMs: number,
-  remainingRepairSlots: number,
-): number {
-  if (remainingMs <= 0 || remainingRepairSlots <= 0) return 0;
-  const evenShare = Math.floor(remainingMs / remainingRepairSlots);
-  if (evenShare < minimumPassMs) return evenShare;
-  return Math.min(maximumPassMs, evenShare);
 }
 
 export interface ExecutorPaths {
@@ -499,18 +459,8 @@ export class DesignTaskExecutor {
       .sort();
     const currentIndexPath = path.join(workspaceDir, 'current', 'index.html');
     const editingExistingPage = fs.existsSync(currentIndexPath);
-    // One execution owns its frozen evidence and repair-retention state. Neither
-    // a later model edit nor another session can redefine the facts being checked.
-    // 证据口径与 MAP 发布闸（HostedSiteEditRunWorker.BuildQualityEvidence）一致：用户写的标题与要求是
-    // 生成请求，不是能证明日期、联系方式、网址或数值的证据。此前这里把它们算进证据，同一页在这里通过、
-    // 到 MAP 最后一步才被拒，白等一整轮（判据与接线纪律 形状 3，Codex P2，2026-09-24）。
-    const qualityEvidence = collectArtifactQualityEvidence(workspaceDir, false);
-    const checkArtifactQuality = createArtifactQualityGate(
-      qualityEvidence,
-      collectVisibleTextOccurrenceConstraints(workspaceDir),
-      qualityEvidence,
-      !isPresentation,
-    );
+    // MAP 只验证隔离交付与完整包；正文、事实和设计由原生技能自查，不触发平台修复轮。
+    const checkArtifactQuality = createArtifactQualityGate('', [], '', false);
     let activeRunId: string | undefined;
     let previewPusher: PreviewPusher | undefined;
     const browserEvidenceDir = path.join(
@@ -581,7 +531,7 @@ export class DesignTaskExecutor {
       if (Date.now() >= executionDeadline) {
         throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
       }
-      // 自查强度（MAP 设置冻结进任务书）：off 跳过模型终审，只留确定性发布闸门与修复回路；
+      // 显式冻结的上游自查配置仍生效，但不得按平台评分追加付费修复；
       // light 一轮终审；strict 在终审之后再加一轮只看视觉质量的审美复查。旧运行没有方向，按 light。
       if (reviewPasses > 0) {
         // Quality work needs the same project and live workspace, but not the generation transcript.
@@ -663,373 +613,56 @@ export class DesignTaskExecutor {
           break;
         }
       }
-      let collectedFiles: WorkspacePackageFile[] = [];
-      let indexFile: WorkspacePackageFile | undefined;
-      let hardenedHtml = '';
-      for (let qualityRepairAttempt = 0; ; qualityRepairAttempt += 1) {
-        onStage('workspace_collecting');
-        assertExecutionDeadline(executionDeadline);
-        // 成品未必叫 index.html：OpenDesign 在 run 状态里指名了这一轮的交付文件，按它指的搬。
-        this.promoteDeliverableEntry(deliverableEntryFile, onStage);
-        assertExecutionDeadline(executionDeadline);
-        this.exportOutputs(transfer, prepared);
-        assertExecutionDeadline(executionDeadline);
-        collectedFiles = this.collectOutputs(transfer);
-        assertExecutionDeadline(executionDeadline);
-        indexFile = collectedFiles.find((file) => file.path === 'index.html');
-        if (!indexFile) {
-          // 「没有 index.html」有好几种完全不同的成因：模型一个文件都没产出、产出了但
-          // OpenDesign 没指名、指名了但名字不在允许的输出路径里……只报一句「没有」，
-          // 读的人无从下手（`external-cause-first.md`）。所以把这一刻的现场一起交出来。
-          throw new AgentWorkspaceRuntimeError(
-            'design_output_missing',
-            'OpenDesign completed without index.html',
-            false,
-            {
-              stage: 'collect_outputs',
-              collectedPaths: collectedFiles.map((file) => file.path).slice(0, 40),
-              workspaceRootEntries: this.listWorkspaceRootEntries(),
-              deliverableValid: runOutcome.deliverableValid,
-              deliverableValidation: runOutcome.deliverableValidation || null,
-              deliverableEntryFile: deliverableEntryFile || null,
-              // 模型这一轮到底干了什么——没有这份记录，「没有 index.html」永远只能靠猜。
-              runTranscriptDigest: await client.captureRunTranscriptDigest(
-                [runId, finalRunId],
-                () => remainingExecutionMs(executionDeadline),
-              ),
-            },
-          );
-        }
-        const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
-        const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
-        if (
-          !runOutcome.deliverableValid
-          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)
-        ) {
-          throw new AgentWorkspaceRuntimeError(
-            'open_design_deliverable_invalid',
-            runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable',
-          );
-        }
-        try {
-          const materializedHtml = outputHtml.toString('utf8');
-          hardenedHtml = checkArtifactQuality(
-            materializedHtml,
-            collectedFiles.map((file) => file.path),
-          );
-          if (!isPresentation) {
-            assertRequiredFactualCoverage(
-              hardenedHtml,
-              designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
-            );
-          }
-          break;
-        } catch (error) {
-          if (
-            !(error instanceof AgentWorkspaceRuntimeError)
-            || error.code !== 'design_output_quality_rejected'
-          ) {
-            throw error;
-          }
-          const repairReason = classifyQualityRepairReason(error);
-          if (!repairReason) throw error;
-          const maximumRepairAttempts = isPresentation ? 1 : MAX_QUALITY_REPAIR_ATTEMPTS;
-          if (qualityRepairAttempt >= maximumRepairAttempts) {
-            throw traceableDeterministicQualityRejection(
-              error,
-              repairReason.code,
-              qualityRepairAttempt,
-              false,
-            );
-          }
-          if (Date.now() >= executionDeadline) {
-            throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
-          }
-          const preserveMeasuredFacts = repairReason.code === 'measured_claim_context_unresolved'
-            || repairReason.code === 'retained_measured_claim_missing';
-          const stableRunId = finalRunId;
-          const stableOutcome = runOutcome;
-          const stableDeliverableEntryFile = deliverableEntryFile;
-          const remainingRepairMs = budget.finalizationDeadline - Date.now();
-          const allottedRepairMs = Math.min(budget.maximumQualityPassMs, remainingRepairMs);
-          if (allottedRepairMs < budget.minimumQualityPassMs) {
-            onStage('open_design_quality_repair_budget_exhausted', {
-              kind: 'deterministic-quality-gate',
-              attempt: qualityRepairAttempt + 1,
-              remainingSeconds: Math.max(0, Math.floor(remainingRepairMs / 1000)),
-              issueCodes: [repairReason.code],
-            });
-            throw traceableDeterministicQualityRejection(
-              error,
-              repairReason.code,
-              qualityRepairAttempt,
-              true,
-            );
-          }
-          const repairDeadline = Date.now() + allottedRepairMs;
-          try {
-            const repair = await client.odJson('/api/runs', {
-              method: 'POST',
-              body: buildRunBody(buildRepairMessage({
-                repairReason,
-                preserveMeasuredFacts,
-                knowledgeFiles,
-                editingExistingPage,
-                presentation: designContext.presentation,
-              })),
-              signal: signalForDeadline(repairDeadline, signal),
-              acceptedStatuses: [200, 202],
-            });
-            finalRunId = typeof repair.runId === 'string'
-              ? repair.runId
-              : typeof repair.id === 'string'
-                ? repair.id
-                : '';
-            if (!finalRunId) {
-              throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign quality repair run returned no run id');
-            }
-            activeRunId = finalRunId;
-            onStage('open_design_quality_repairing', {
-              runId: finalRunId,
-              attempt: qualityRepairAttempt + 1,
-              kind: 'deterministic-quality-gate',
-              issueCodes: [repairReason.code],
-              allottedSeconds: Math.floor(allottedRepairMs / 1000),
-            });
-            runOutcome = await client.waitForRun(finalRunId, repairDeadline, signal, onStage, previewPusher.poll);
-            deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
-          } catch (repairError) {
-            const repairBudgetExpired = repairError instanceof AgentWorkspaceRuntimeError
-              && repairError.code === 'open_design_run_timeout'
-              && !signal.aborted
-              && Date.now() < executionDeadline;
-            if (!repairBudgetExpired) throw repairError;
-            // The timed-out repair may already have written a better, still non-final candidate.
-            // Persist that exact byte stream as a failed-run preview before workspace cleanup. A
-            // later presentation-only restart may use it only after revalidating the frozen source
-            // contract; it is never committed or treated as the previous successful artifact.
-            await previewPusher?.poll();
-            await previewPusher?.flush();
-            finalRunId = stableRunId;
-            runOutcome = stableOutcome;
-            deliverableEntryFile = stableDeliverableEntryFile;
-            onStage('open_design_quality_repair_budget_exhausted', {
-              kind: 'deterministic-quality-gate',
-              attempt: qualityRepairAttempt + 1,
-              allottedSeconds: Math.floor(allottedRepairMs / 1000),
-              retainedRunId: activeRunId,
-              repairCandidateCheckpointed: true,
-              issueCodes: [repairReason.code],
-            });
-            throw traceableDeterministicQualityRejection(
-              error,
-              repairReason.code,
-              qualityRepairAttempt + 1,
-              true,
-            );
-          }
-        }
+      onStage('workspace_collecting');
+      assertExecutionDeadline(executionDeadline);
+      this.promoteDeliverableEntry(deliverableEntryFile, onStage);
+      this.exportOutputs(transfer, prepared);
+      let collectedFiles = this.collectOutputs(transfer);
+      const indexFile = collectedFiles.find((file) => file.path === 'index.html');
+      if (!indexFile) {
+        throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html', false, {
+          stage: 'collect_outputs', collectedPaths: collectedFiles.map((file) => file.path).slice(0, 40),
+          workspaceRootEntries: this.listWorkspaceRootEntries(), deliverableValid: runOutcome.deliverableValid,
+          deliverableValidation: runOutcome.deliverableValidation || null, deliverableEntryFile: deliverableEntryFile || null,
+          runTranscriptDigest: await client.captureRunTranscriptDigest([runId, finalRunId], () => remainingExecutionMs(executionDeadline)),
+        });
       }
-      const browserAttempts: BrowserQualityAttemptEvidence[] = [];
-      let bestBrowserCandidate = { score: Number.NEGATIVE_INFINITY, html: hardenedHtml, repairAttempt: 0 };
-      let browserVersion = '';
-      let browserRepairBudgetExhausted = false;
+      const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
+      const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
+      if (!runOutcome.deliverableValid
+          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)) {
+        throw new AgentWorkspaceRuntimeError('open_design_deliverable_invalid', runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable');
+      }
+      const hardenedHtml = checkArtifactQuality(outputHtml.toString('utf8'), collectedFiles.map((file) => file.path));
+      // 浏览器只提供可追溯观察，分数和布局发现不得触发额外模型调用或阻断安全成品。
       fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
       fs.mkdirSync(browserEvidenceDir, { recursive: true, mode: 0o700 });
       this.chownForEngine(browserEvidenceDir);
-      const rejectBrowserQuality = async (
-        evidence: BrowserQualityAttemptEvidence,
-        repairAttempt: number,
-        repairBudgetExhausted: boolean,
-      ): Promise<never> => {
-        if (bestBrowserCandidate.html !== hardenedHtml) {
-          const indexPath = path.join(workspaceDir, 'index.html');
-          fs.writeFileSync(indexPath, bestBrowserCandidate.html);
-          this.chownForEngine(indexPath);
-        }
-        await previewPusher?.flush();
-        throw new AgentWorkspaceRuntimeError(
-          'design_browser_quality_rejected',
-          'The isolated browser quality gate still found hard layout or usability issues after bounded targeted repair',
-          false,
-          {
-            ruleVersion: evidence.viewports[0]?.issues[0]?.ruleVersion ?? null,
-            repairAttempts: repairAttempt,
-            issueCodes: evidence.issueCodes,
-            bestScore: Math.max(...browserAttempts.map((attempt) => attempt.score)),
-            bestRepairAttempt: bestBrowserCandidate.repairAttempt,
-            repairBudgetExhausted,
-            browserQualityEvidence: buildBrowserQualityFailureEvidence(browserAttempts, repairBudgetExhausted),
-          },
-        );
-      };
-      for (let browserRepairAttempt = 0; ; browserRepairAttempt += 1) {
-        assertExecutionDeadline(executionDeadline);
-        const indexPath = path.join(workspaceDir, 'index.html');
-        fs.writeFileSync(indexPath, hardenedHtml);
-        this.chownForEngine(indexPath);
-        onStage('open_design_browser_quality_checking', {
-          repairAttempt: browserRepairAttempt,
-          viewports: ['desktop-1440', 'mobile-390'],
-        });
-        const checked = await this.browserQualityRunner.run({
-          workspaceDir,
-          evidenceDir: browserEvidenceDir,
-          repairAttempt: browserRepairAttempt,
-        }, signalForDeadline(executionDeadline, signal));
+      const indexPath = path.join(workspaceDir, 'index.html');
+      fs.writeFileSync(indexPath, hardenedHtml);
+      this.chownForEngine(indexPath);
+      onStage('open_design_browser_quality_checking', { repairAttempt: 0, viewports: ['desktop-1440', 'mobile-390'] });
+      let browserVersion = '';
+      const browserAttempts: BrowserQualityAttemptEvidence[] = [];
+      try {
+        const checked = await this.browserQualityRunner.run({ workspaceDir, evidenceDir: browserEvidenceDir, repairAttempt: 0 }, signalForDeadline(executionDeadline, signal));
         browserVersion = checked.browserVersion;
-        const evidence = summarizeAttempt(browserRepairAttempt, browserVersion, checked.measurements);
+        const evidence = summarizeAttempt(0, browserVersion, checked.measurements);
         browserAttempts.push(evidence);
-        if (evidence.score > bestBrowserCandidate.score) {
-          bestBrowserCandidate = { score: evidence.score, html: hardenedHtml, repairAttempt: browserRepairAttempt };
-        }
-        onStage('open_design_browser_quality_checked', {
-          repairAttempt: browserRepairAttempt,
-          hardPassed: evidence.hardPassed,
-          issueCodes: evidence.issueCodes,
-          score: evidence.score,
-        });
-        if (evidence.hardPassed || isPresentation) break;
-        if (browserRepairBudgetExhausted || browserRepairAttempt >= MAX_BROWSER_REPAIR_ATTEMPTS) {
-          await rejectBrowserQuality(evidence, browserRepairAttempt, browserRepairBudgetExhausted);
-        }
-        const stableRunId = finalRunId;
-        const stableOutcome = runOutcome;
-        const stableDeliverableEntryFile = deliverableEntryFile;
-        const stableOutputs = collectedFiles.map((file) => ({ ...file }));
-        const stableIndexFile = stableOutputs.find((file) => file.path === 'index.html');
-        if (!stableIndexFile) {
-          throw new AgentWorkspaceRuntimeError('design_output_missing', 'Trusted browser quality checkpoint has no index.html');
-        }
-        const remainingRepairMs = budget.finalizationDeadline - Date.now();
-        const remainingRepairSlots = MAX_BROWSER_REPAIR_ATTEMPTS - browserRepairAttempt;
-        const allottedRepairMs = allotBrowserRepairMs(
-          remainingRepairMs,
-          budget.minimumQualityPassMs,
-          budget.maximumQualityPassMs,
-          remainingRepairSlots,
-        );
-        if (allottedRepairMs < budget.minimumQualityPassMs) {
-          onStage('open_design_quality_repair_budget_exhausted', {
-            kind: 'browser-hard-gate',
-            attempt: browserRepairAttempt + 1,
-            remainingSeconds: Math.max(0, Math.floor(remainingRepairMs / 1000)),
-            issueCodes: evidence.issueCodes,
-            retainedRunId: stableRunId,
-          });
-          await rejectBrowserQuality(evidence, browserRepairAttempt, true);
-        }
-        const repairDeadline = Date.now() + allottedRepairMs;
-        try {
-          const repair = await client.odJson('/api/runs', {
-            method: 'POST',
-            body: buildRunBody(browserRepairMessage(evidence, browserAttempts.at(-2))),
-            signal: signalForDeadline(repairDeadline, signal),
-            acceptedStatuses: [200, 202],
-          });
-          finalRunId = typeof repair.runId === 'string'
-            ? repair.runId
-            : typeof repair.id === 'string'
-              ? repair.id
-              : '';
-          if (!finalRunId) {
-            throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign browser quality repair run returned no run id');
-          }
-          activeRunId = finalRunId;
-          onStage('open_design_quality_repairing', {
-            runId: finalRunId,
-            attempt: browserRepairAttempt + 1,
-            kind: 'browser-hard-gate',
-            issueCodes: evidence.issueCodes,
-            allottedSeconds: Math.floor(allottedRepairMs / 1000),
-          });
-          runOutcome = await client.waitForRun(finalRunId, repairDeadline, signal, onStage, previewPusher.poll);
-          deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
-        } catch (error) {
-          const repairBudgetExpired = error instanceof AgentWorkspaceRuntimeError
-            && error.code === 'open_design_run_timeout'
-            && !signal.aborted
-            && Date.now() < executionDeadline;
-          if (!repairBudgetExpired) throw error;
-          await previewPusher?.poll();
-          await previewPusher?.flush();
-          this.restoreOutputCheckpoint(transfer, stableOutputs);
-          finalRunId = stableRunId;
-          runOutcome = stableOutcome;
-          deliverableEntryFile = stableDeliverableEntryFile;
-          collectedFiles = stableOutputs.map((file) => ({ ...file }));
-          indexFile = collectedFiles.find((file) => file.path === 'index.html');
-          hardenedHtml = checkArtifactQuality(
-            Buffer.from(stableIndexFile.contentBase64, 'base64').toString('utf8'),
-            collectedFiles.map((file) => file.path),
-          );
-          assertRequiredFactualCoverage(
-            hardenedHtml,
-            designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
-          );
-          const remainingAfterTimeoutMs = budget.finalizationDeadline - Date.now();
-          const remainingSlotsAfterTimeout = MAX_BROWSER_REPAIR_ATTEMPTS - browserRepairAttempt - 1;
-          const nextAllottedRepairMs = allotBrowserRepairMs(
-            remainingAfterTimeoutMs,
-            budget.minimumQualityPassMs,
-            budget.maximumQualityPassMs,
-            remainingSlotsAfterTimeout,
-          );
-          browserRepairBudgetExhausted = remainingSlotsAfterTimeout <= 0
-            || nextAllottedRepairMs < budget.minimumQualityPassMs;
-          if (browserRepairBudgetExhausted) {
-            onStage('open_design_quality_repair_budget_exhausted', {
-              kind: 'browser-hard-gate',
-              attempt: browserRepairAttempt + 1,
-              allottedSeconds: Math.floor(allottedRepairMs / 1000),
-              issueCodes: evidence.issueCodes,
-              retainedRunId: stableRunId,
-              repairCandidateCheckpointed: true,
-            });
-          }
-          continue;
-        }
-        this.promoteDeliverableEntry(deliverableEntryFile, onStage);
-        this.exportOutputs(transfer, prepared);
-        collectedFiles = this.collectOutputs(transfer);
-        indexFile = collectedFiles.find((file) => file.path === 'index.html');
-        if (!indexFile) {
-          throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign browser repair completed without index.html');
-        }
-        const repairedBytes = Buffer.from(indexFile.contentBase64, 'base64');
-        const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
-        if (
-          !runOutcome.deliverableValid
-          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, repairedBytes)
-        ) {
-          throw new AgentWorkspaceRuntimeError(
-            'open_design_deliverable_invalid',
-            runOutcome.deliverableValidation || 'OpenDesign rejected its browser quality repair deliverable',
-          );
-        }
-        const materializedRepairHtml = repairedBytes.toString('utf8');
-        hardenedHtml = checkArtifactQuality(
-          materializedRepairHtml,
-          collectedFiles.map((file) => file.path),
-        );
-        if (!isPresentation) {
-          assertRequiredFactualCoverage(
-            hardenedHtml,
-            designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
-          );
-        }
+        onStage('open_design_browser_quality_checked', { repairAttempt: 0, hardPassed: evidence.hardPassed, issueCodes: evidence.issueCodes, score: evidence.score });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        assertExecutionDeadline(executionDeadline);
+        if (!(error instanceof AgentWorkspaceRuntimeError) || error.code !== 'browser_quality_runtime_unavailable') throw error;
+        onStage('open_design_browser_quality_unavailable', { observationAvailable: false, reasonCode: error.code });
       }
       activeRunId = undefined;
-      const browserQuality = buildBrowserQualityEvidence(browserVersion, browserAttempts);
       const browserEvidenceFiles: WorkspacePackageFile[] = [];
-      const reportBytes = Buffer.from(`${JSON.stringify(browserQuality, null, 2)}\n`);
-      browserEvidenceFiles.push({
-        path: BROWSER_QUALITY_REPORT_PATH,
-        contentBase64: reportBytes.toString('base64'),
-        sha256: sha256(reportBytes),
-        size: reportBytes.byteLength,
-        mediaType: mediaTypeForFile(BROWSER_QUALITY_REPORT_PATH),
-      });
+      if (browserAttempts.length > 0) {
+        const browserQuality = buildBrowserQualityEvidence(browserVersion, browserAttempts);
+        const reportBytes = Buffer.from(`${JSON.stringify(browserQuality, null, 2)}\n`);
+        browserEvidenceFiles.push({ path: BROWSER_QUALITY_REPORT_PATH, contentBase64: reportBytes.toString('base64'), sha256: sha256(reportBytes), size: reportBytes.byteLength, mediaType: mediaTypeForFile(BROWSER_QUALITY_REPORT_PATH) });
+      }
       for (const evidenceRef of [...new Set(browserAttempts.flatMap((attempt) => attempt.evidenceRefs))]) {
         const screenshot = fs.readFileSync(path.join(browserEvidenceDir, path.basename(evidenceRef)));
         browserEvidenceFiles.push({

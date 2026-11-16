@@ -39,6 +39,7 @@ public sealed class SidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
     {
         var sidecarRequest = new SidecarRunRequest
         {
+            SubjectUserId = request.UserId,
             RunId = request.RunId,
             Model = request.Model,
             SystemPrompt = request.SystemPrompt,

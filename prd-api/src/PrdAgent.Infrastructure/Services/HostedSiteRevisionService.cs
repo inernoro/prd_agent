@@ -34,6 +34,29 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         _storage = storage;
     }
 
+    public static async Task CaptureReviewSnapshotAsync(MongoDbContext db, IAssetStorage storage,
+        IHostedSiteRevisionService revisions, HostedSite site, string actorUserId, CancellationToken ct = default)
+    {
+        var version = HostedSiteService.EffectiveContentVersion(site);
+        var saved = await db.HostedSiteRevisions.Find(r => r.SiteId == site.Id
+            && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == version)
+            .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Include(r => r.PublishedEntryCosKey)).FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrWhiteSpace(saved?.PublishedEntryCosKey)) return;
+        var entry = site.Files.FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        if (entry == null || string.IsNullOrWhiteSpace(entry.CosKey))
+            throw new InvalidOperationException("网页入口缺失，无法保留当前版本");
+        var html = string.Empty;
+        if (entry.Size <= HostedSiteRevisionRules.MaxHtmlBytes)
+        {
+            var bytes = await storage.TryDownloadBytesAsync(entry.CosKey, ct)
+                ?? throw new InvalidOperationException("网页入口读取失败，未覆盖当前版本");
+            if (bytes.Length <= HostedSiteRevisionRules.MaxHtmlBytes)
+                html = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+        }
+        await revisions.EnsureCurrentSnapshotAsync(site.Id, actorUserId,
+            new HostedSiteEditableEntry(site, html, version), ct);
+    }
+
     public Task<HostedSiteRevision> EnsureCurrentSnapshotAsync(
         string siteId,
         string userId,
@@ -94,7 +117,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
 
         var baseline = new HostedSiteRevision
         {
-            Id = $"baseline_{siteId}_{entry.ContentVersion.Ticks}",
+            Id = $"baseline_{siteId}_{entry.ContentVersion.Ticks / TimeSpan.TicksPerMillisecond * TimeSpan.TicksPerMillisecond}",
             SiteId = siteId,
             CreatedByUserId = userId,
             Status = HostedSiteRevisionStatuses.Published,
@@ -107,6 +130,9 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 .Distinct(StringComparer.Ordinal)
                 .ToList(),
             Html = entry.Html,
+            PublishedAssetKeys = entry.Site.Files.Select(f => f.CosKey).Where(k => !string.IsNullOrWhiteSpace(k)).Distinct(StringComparer.Ordinal).ToList(),
+            PublishedEntryCosKey = entry.Site.Files.FirstOrDefault(f => string.Equals(f.Path, entry.Site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey,
+            PublishedEntryFile = entry.Site.EntryFile,
             VerifiedFiles = verifiedFiles.Select(file => new HostedSiteRevisionFile
             {
                 Path = file.Path,
@@ -155,6 +181,31 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         IReadOnlyCollection<string>? knowledgeEntryIds,
         CancellationToken ct)
     {
+        // Captured asset references are immutable here; only the migration path may relocate them.
+        var entryKey = entry.Site.Files.FirstOrDefault(f => string.Equals(f.Path, entry.Site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
+        var keys = entry.Site.Files.Select(f => f.CosKey).Where(k => !string.IsNullOrWhiteSpace(k)).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count > 0 && string.IsNullOrEmpty(existing.PublishedEntryCosKey) && existing.PublishedAssetKeys.Count == 0)
+        {
+            await _db.HostedSiteRevisions.UpdateOneAsync(r => r.Id == existing.Id && r.SiteId == entry.Site.Id
+                    && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == entry.ContentVersion
+                    && (r.PublishedEntryCosKey == null || r.PublishedEntryCosKey == "")
+                    && (r.PublishedAssetKeys == null || r.PublishedAssetKeys.Count == 0),
+                Builders<HostedSiteRevision>.Update.Set(r => r.PublishedAssetKeys, keys)
+                    .Set(r => r.PublishedEntryCosKey, entryKey).Set(r => r.PublishedEntryFile, entry.Site.EntryFile),
+                cancellationToken: CancellationToken.None);
+            // A concurrent migration may have won the CAS; return its references rather than the stale input.
+            existing = await _db.HostedSiteRevisions.Find(r => r.Id == existing.Id).FirstAsync(ct);
+        }
+        if (string.IsNullOrEmpty(existing.PublishedEntryCosKey) && entryKey != null && existing.PublishedAssetKeys.Contains(entryKey))
+        {
+            // Legacy snapshots may have resource references but no entry field. Never add a new reference here.
+            await _db.HostedSiteRevisions.UpdateOneAsync(r => r.Id == existing.Id && r.SiteId == entry.Site.Id
+                    && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == entry.ContentVersion
+                    && (r.PublishedEntryCosKey == null || r.PublishedEntryCosKey == "") && r.PublishedAssetKeys.Contains(entryKey),
+                Builders<HostedSiteRevision>.Update.Set(r => r.PublishedEntryCosKey, entryKey).Set(r => r.PublishedEntryFile, entry.Site.EntryFile),
+                cancellationToken: CancellationToken.None);
+            existing = await _db.HostedSiteRevisions.Find(r => r.Id == existing.Id).FirstAsync(ct);
+        }
         if (string.IsNullOrWhiteSpace(sourceRunId)) return existing;
 
         var expectedRunId = sourceRunId.Trim();

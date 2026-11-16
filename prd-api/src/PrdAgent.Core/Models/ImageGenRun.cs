@@ -10,8 +10,12 @@ namespace PrdAgent.Core.Models;
 [AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 [AppOwnership(AppNames.LiteraryAgent, AppNames.LiteraryAgentDisplay)]
 [AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay)]
-public class ImageGenRun
+public class ImageGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string OwnerAdminId { get; set; } = string.Empty;
@@ -42,6 +46,9 @@ public class ImageGenRun
     /// 平台侧模型 ID（业务语义 modelId）。
     /// </summary>
     public string? ModelId { get; set; }
+
+    /// <summary>MCP 调用方明确提交的公开标识或兼容别名；省略时为空，幂等重放保留原选择。</summary>
+    public string? RequestedModelId { get; set; }
 
     /// <summary>
     /// 用户在视觉创作模型列表中选择的逻辑模型公开 ID。

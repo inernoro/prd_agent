@@ -33,6 +33,8 @@ export interface AgentApiKeyDto {
   /** 跟随用户面板，或由这把密钥固定一个文学配图逻辑模型 */
   mcpLiteraryImageModelMode: 'follow-user-panel' | 'fixed';
   mcpLiteraryImageModelPublicId?: string | null;
+  /** 用户在 MAP 中单独授予的公开发布权限；旧密钥缺省关闭。 */
+  webPublicExposureAllowed?: boolean;
   isActive: boolean;
   createdAt: string;
   expiresAt?: string | null;
@@ -75,6 +77,8 @@ export type UpdateAgentApiKeyContract = (input: {
   name?: string;
   description?: string;
   scopes?: string[];
+  /** 仅更新指定平台能力，保留其他存储授权；不与 scopes 或 auto 同传。 */
+  mcpCapabilityAccess?: Record<string, 'none' | 'read' | 'write'>;
   /** 显式切模式。不传时：**存了 scopes 就自动钉成 manual**（存清单那一刻就是动过高级设置那一刻） */
   scopeMode?: 'auto' | 'manual';
   isActive?: boolean;
@@ -86,6 +90,8 @@ export type UpdateAgentApiKeyContract = (input: {
   mcpRateLimitPerMin?: number;
   mcpLiteraryImageModelMode?: 'follow-user-panel' | 'fixed';
   mcpLiteraryImageModelPublicId?: string;
+  /** 仅用户登录态可修改的独立公开发布授权；不传表示保持原值。 */
+  webPublicExposureAllowed?: boolean;
 }) => Promise<ApiResponse<{ item: AgentApiKeyDto | null }>>;
 
 export type RenewAgentApiKeyContract = (input: {

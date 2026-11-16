@@ -56,9 +56,6 @@ public class PmAgentService
                     new JsonObject { ["role"] = "user", ["content"] = userMessage }
                 },
                 ["temperature"] = 0.5,
-                // 让推理模型实时回传思考内容，避免首字长时间空白（见 .claude/rules/llm-gateway.md）
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 120,
             IncludeThinking = true,
@@ -190,8 +187,6 @@ public class PmAgentService
                     new JsonObject { ["role"] = "user", ["content"] = statsSummary }
                 },
                 ["temperature"] = 0.5,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 180,
             IncludeThinking = true,
@@ -227,8 +222,6 @@ public class PmAgentService
                     new JsonObject { ["role"] = "user", ["content"] = statsSummary }
                 },
                 ["temperature"] = 0.4,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 180,
             IncludeThinking = true,
@@ -263,8 +256,6 @@ public class PmAgentService
                     new JsonObject { ["role"] = "user", ["content"] = userMessage }
                 },
                 ["temperature"] = 0.4,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 180,
             IncludeThinking = true,
@@ -305,8 +296,6 @@ public class PmAgentService
                     new JsonObject { ["role"] = "user", ["content"] = sb.ToString() }
                 },
                 ["temperature"] = 0.4,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 180,
             IncludeThinking = true,
@@ -516,8 +505,6 @@ public class PmAgentService
                     new JsonObject { ["role"] = "user", ["content"] = BuildGoalDecomposeUserMessage(project, parentGoal, ancestorChain) }
                 },
                 ["temperature"] = 0.6,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 120,
             IncludeThinking = true,
@@ -577,8 +564,6 @@ public class PmAgentService
                     new JsonObject { ["role"] = "user", ["content"] = BuildMilestoneSuggestUserMessage(project, goals, taskTitles) }
                 },
                 ["temperature"] = 0.5,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 120,
             IncludeThinking = true,

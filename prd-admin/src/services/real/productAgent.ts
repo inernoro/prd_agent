@@ -10,9 +10,25 @@ import { apiRequest } from './apiClient';
 export interface ProductAnnouncementSyncStatus {
   status: string; runId: string; message: string; pages: number; discovered: number;
   updated: number; conflicts: number; lastSuccessAt?: string | null; nextRunAt?: string | null; calendarError?: string | null;
+  total: number; detailSucceeded: number; failed: number; matched: number; pending: number;
+  nextPage: number; listingComplete: boolean;
 }
 export const getProductAnnouncementSyncStatus = () => apiRequest<ProductAnnouncementSyncStatus>('/api/product/version-workflow/announcements/status');
 export const updateProductAnnouncements = () => apiRequest<ProductAnnouncementSyncStatus>('/api/product/version-workflow/announcements/update', { method: 'POST' });
+export interface ProductAnnouncementRecord {
+  id: string; url: string; title: string; applicationName: string; version: string;
+  publishedAtRaw: string; footerTimeRaw: string; publishedAt?: string | null; footerTime?: string | null;
+  status: 'pending' | 'running' | 'succeeded' | 'failed'; statusLabel: string; error?: string | null;
+  fetchedAt: string; detailFetchedAt?: string | null; attempts: number; matchedCount: number;
+  matchStatus: 'pending' | 'matched' | 'unmatched' | 'conflict'; matchStatusLabel: string;
+}
+export interface ProductAnnouncementRecordPage {
+  items: ProductAnnouncementRecord[]; total: number; page: number; pageSize: number; totalPages: number;
+}
+export function getProductAnnouncementRecords(page = 1, failedOnly = false) {
+  const query = new URLSearchParams({ page: String(page), pageSize: '20', failedOnly: String(failedOnly) });
+  return apiRequest<ProductAnnouncementRecordPage>(`/api/product/version-workflow/announcements/records?${query}`);
+}
 import type { VersionRegistration, VersionRegistrationMessageParseResult } from './productVersionRegistry';
 import type { ApiResponse } from '@/types/api';
 import type {
@@ -194,8 +210,14 @@ export function updateInitiation(id: string, body: {
 export function syncInitiationReview(id: string, submissionId: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/review`, { method: 'POST', body: { submissionId } });
 }
-export function deleteInitiation(id: string) {
-  return apiRequest<{ deleted: boolean }>(`/api/product/initiations/${id}`, { method: 'DELETE' });
+export function voidProductVersion(kind: 'T' | 'V', id: string, reason: string) {
+  return apiRequest<{ voided: boolean; notificationQueued?: boolean | null }>('/api/product/version-workflow/void', { method: 'POST', body: { kind, id, reason } });
+}
+export function deleteInitiation(id: string, reason: string) {
+  return apiRequest<{ deleted: boolean; notificationQueued?: boolean | null }>(`/api/product/initiations/${id}`, { method: 'DELETE', body: { reason } });
+}
+export function deleteRelease(id: string, reason: string) {
+  return apiRequest<{ deleted: boolean; notificationQueued?: boolean | null }>(`/api/product/releases/${id}`, { method: 'DELETE', body: { reason } });
 }
 export function decideInitiation(id: string, body: {
   reviewMeetingRequired: boolean;
@@ -216,6 +238,8 @@ export function createRelease(productId: string, body: {
   historyConfirmationToken?: string;
   initiationId?: string;
   isTemporaryOptimization: boolean;
+  noTapdLinks?: boolean;
+  tapdLinks?: Array<{ title: string; url: string }>;
   planName?: string;
   ownerId: string;
   openBrandScope?: string;
@@ -272,6 +296,28 @@ export function getProductVersionCopyTemplate(kind: 'initiation' | 'release', id
 }
 export function getRelease(id: string) {
   return apiRequest<ProductRelease>(`/api/product/releases/${id}`);
+}
+export type ReleaseBasicUpdate = {
+  noTapdLinks?: boolean;
+  tapdLinks?: Array<{ title: string; url: string }>;
+  expectedUpdatedAt: string;
+  planName?: string;
+  ownerId?: string;
+  teamMemberIds?: string[];
+  demandSource?: string;
+  departmentName?: string;
+  planUrl?: string;
+  requirementDescription?: string;
+  contractParty?: string;
+  remark?: string;
+  openBrandScope?: string;
+  isGlobalOpen?: boolean;
+  plannedReleaseAt?: string;
+  releasedAt?: string;
+  plannedTrainingMinutes?: number;
+};
+export function updateRelease(id: string, body: ReleaseBasicUpdate) {
+  return apiRequest<ProductRelease>(`/api/product/releases/${id}`, { method: 'PATCH', body });
 }
 export function getInheritReleaseManifest(productId: string) {
   return apiRequest<{ previousReleaseId: string | null; previousVCode?: string | null; items: ReleaseFeatureItem[] }>(
@@ -1163,10 +1209,14 @@ export function getOverviewReleases(params?: { keyword?: string }) {
   const qs = q.toString();
   return apiRequest<ListWrap<OverviewReleaseRow>>(`/api/product/overview/releases${qs ? `?${qs}` : ''}`);
 }
-export type WorkflowVersionRecord<T> = T & { legacyRegistration?: VersionRegistration | null };
+export type WorkflowVersionExportFields = { systemName?: string | null; ownerId?: string | null; teamMemberIds: string[]; releaseOrigin?: string | null };
+export type WorkflowVersionRecord<T> = T & {
+  legacyRegistration?: VersionRegistration | null;
+  exportFields?: WorkflowVersionExportFields | null;
+};
 type WorkflowVersionList<T> = {
   applicationAliases?: Record<string, string>;
-  items: Array<{ record: T; legacyRegistration?: VersionRegistration | null }>;
+  items: Array<{ record: T } & Pick<WorkflowVersionRecord<T>, 'legacyRegistration' | 'exportFields'>>;
   requirementNames: Record<string, string>;
 };
 export function getWorkflowInitiations() {
@@ -1245,6 +1295,7 @@ export interface VersionDebugClearPreview {
   kind: VersionDebugClearKind;
   kindLabel: string;
   recordCount: number;
+  legacyRecordCount: number;
   confirmPhrase: string;
   token: string;
 }
@@ -1253,6 +1304,8 @@ export interface VersionDebugClearResult {
   clearedCount: number;
   skippedCount: number;
   backupId: string | null;
+  legacyBackupId: string | null;
+  remainingCount: number;
 }
 export function previewVersionDebugClear(kind: VersionDebugClearKind) {
   return apiRequest<VersionDebugClearPreview>(`/api/product/settings/debug/version-records?kind=${kind}`);

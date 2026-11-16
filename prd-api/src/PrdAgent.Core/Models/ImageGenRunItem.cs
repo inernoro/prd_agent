@@ -32,6 +32,9 @@ public class ImageGenRunItem
     public string? DisplaySha256 { get; set; }
     public string? RevisedPrompt { get; set; }
 
+    /// <summary>该张图真实执行的模型，由上游执行结果写入；历史缺失时保持为空。</summary>
+    public string? ActualModel { get; set; }
+
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
 

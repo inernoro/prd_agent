@@ -28,6 +28,8 @@ type AuthState = {
   token: string | null;
   refreshToken: string | null;
   sessionKey: string | null;
+  /** 仅内存的会话代次；换号、登出及重新登录使旧异步结果失效。 */
+  authSessionEpoch: number;
   permissions: string[];
   permissionsLoaded: boolean;
   /** 是否为 root 用户（超级管理员） */
@@ -38,6 +40,7 @@ type AuthState = {
   menuCatalogLoaded: boolean;
   /** CDN 基础地址（从后端 /api/authz/me 获取） */
   cdnBaseUrl: string;
+  legacyCdnBaseUrl: string;
   /** 权限指纹（后端基于权限目录+角色定义计算的哈希，用于检测部署/角色变更后的缓存失效） */
   permFingerprint: string;
   login: (user: AuthUser, token: string) => void;
@@ -47,7 +50,7 @@ type AuthState = {
   setIsRoot: (isRoot: boolean) => void;
   setMenuCatalog: (items: AdminMenuItem[]) => void;
   setMenuCatalogLoaded: (loaded: boolean) => void;
-  setCdnBaseUrl: (url: string) => void;
+  setCdnBaseUrl: (url: string, legacyUrl?: string | null) => void;
   setPermFingerprint: (fp: string) => void;
   patchUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
@@ -59,12 +62,14 @@ const INITIAL_STATE = {
   token: null,
   refreshToken: null,
   sessionKey: null,
+  authSessionEpoch: 0,
   permissions: [] as string[],
   permissionsLoaded: false,
   isRoot: false,
   menuCatalog: [] as AdminMenuItem[],
   menuCatalogLoaded: false,
   cdnBaseUrl: '',
+  legacyCdnBaseUrl: '',
   permFingerprint: '',
 };
 
@@ -142,7 +147,7 @@ export const useAuthStore = create<AuthState>()(
         // 刷新令牌）不清，否则会把他自己没推上去的本地改动一并抹掉。
         const prev = useAuthStore.getState().user;
         if (prev && prev.userId !== user.userId) runUserScopedCleanup();
-        set({ isAuthenticated: true, user, token });
+        set((state) => ({ isAuthenticated: true, user, token, authSessionEpoch: state.authSessionEpoch + 1 }));
       },
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
       setPermissions: (permissions) => set({ permissions: Array.isArray(permissions) ? permissions : [] }),
@@ -150,7 +155,10 @@ export const useAuthStore = create<AuthState>()(
       setIsRoot: (isRoot) => set({ isRoot: !!isRoot }),
       setMenuCatalog: (items) => set({ menuCatalog: Array.isArray(items) ? items : [], menuCatalogLoaded: true }),
       setMenuCatalogLoaded: (loaded) => set({ menuCatalogLoaded: !!loaded }),
-      setCdnBaseUrl: (url) => set({ cdnBaseUrl: (url ?? '').trim().replace(/\/+$/, '') }),
+      setCdnBaseUrl: (url, legacyUrl) => set({
+        cdnBaseUrl: (url ?? '').trim().replace(/\/+$/, ''),
+        legacyCdnBaseUrl: (legacyUrl ?? '').trim().replace(/\/+$/, ''),
+      }),
       setPermFingerprint: (fp) => set({ permFingerprint: fp || '' }),
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
@@ -158,11 +166,16 @@ export const useAuthStore = create<AuthState>()(
         // 清什么、为什么清，都在 runUserScopedCleanup 里。登出与换号共用同一段，
         // 别在这里再补一份——那正是这件事被修了四次的原因。
         runUserScopedCleanup();
-        set({ ...INITIAL_STATE });
+        set((state) => ({ ...INITIAL_STATE, authSessionEpoch: state.authSessionEpoch + 1 }));
       },
     }),
     {
       name: AUTH_STORAGE_KEY,
+      partialize: (state) => {
+        const persisted: Partial<AuthState> = { ...state };
+        delete persisted.authSessionEpoch;
+        return persisted;
+      },
       storage: createJSONStorage(() => {
         migrateLegacyAuthToLocalStorage();
         return localStorage;

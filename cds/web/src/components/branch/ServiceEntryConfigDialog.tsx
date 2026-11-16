@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * WebEntryConfigDialog —— 手动配置多出口（2026-08-31）。
  *
@@ -325,9 +326,7 @@ export function ServiceEntryConfigDialog({
             </Button>
           </div>
 
-          {loading && !config ? (
-            <div className="px-1 py-6 text-sm text-muted-foreground">正在扫描本分支的服务与端口…</div>
-          ) : null}
+          {loading && !config ? <ContentLoading label="读取服务与端口" variant="rows" /> : null}
 
           {rows.length === 0 && !loading ? (
             <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-3 py-6 text-center text-sm text-muted-foreground">

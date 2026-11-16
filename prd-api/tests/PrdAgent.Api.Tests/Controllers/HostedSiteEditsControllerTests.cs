@@ -495,6 +495,7 @@ public sealed class HostedSiteEditsControllerTests
             Operation = DesignArtifactOperations.Edit,
             Status = RunStatuses.Running,
             Progress = 42,
+            CreatedAt = new DateTime(2026, 11, 5, 1, 0, 0, DateTimeKind.Utc),
             Phase = "正在生成修改草稿",
         };
         await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
@@ -504,6 +505,15 @@ public sealed class HostedSiteEditsControllerTests
         var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Equal(run.Id, payload.GetProperty("data").GetProperty("runId").GetString());
         Assert.Equal(42, payload.GetProperty("data").GetProperty("progress").GetInt32());
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("data").GetProperty("completedAt").ValueKind);
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Done)
+                .Set(item => item.CompletedAt, run.CreatedAt.AddSeconds(142)));
+        var completed = Assert.IsType<OkObjectResult>(await BuildController(fixture.Db, "owner-user").GetRun("site-a", run.Id));
+        var completedData = JsonSerializer.SerializeToElement(completed.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("data");
+        Assert.Equal(142d, (completedData.GetProperty("completedAt").GetDateTime()
+            - completedData.GetProperty("createdAt").GetDateTime()).TotalSeconds);
 
         var wrongSite = await BuildController(fixture.Db, "owner-user").GetRun("site-b", run.Id);
         Assert.IsType<NotFoundObjectResult>(wrongSite);

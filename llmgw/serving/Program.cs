@@ -41,7 +41,11 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmGatewayDatabase
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
 builder.Services.AddSingleton<IGatewayRuntimeGrantCallCounter, GatewayRuntimeGrantCallCounter>();
+builder.Services.AddSingleton<ITaskExecutionCoordinator, PrdAgent.Infrastructure.Security.TaskExecutionCoordinator>();
+builder.Services.AddSingleton<IGatewayTaskAdmission, GatewayTaskAdmission>();
+builder.Services.AddSingleton<IGatewayInvocationAuthority, GatewayInvocationAuthority>();
 builder.Services.AddSingleton<GatewayBudgetCoordinator>();
+builder.Services.AddSingleton<GatewayMinimumProtectionCoordinator>();
 builder.Services.AddSingleton<GatewayRequestExecutionStore>();
 builder.Services.AddSingleton<GatewayCancellationRegistry>();
 builder.Services.AddSingleton<GatewayProviderConcurrencyCoordinator>();
@@ -90,6 +94,9 @@ builder.Services.AddMemoryCache();
 
 // LLM 请求上下文 + 旁路日志写入
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
+builder.Services.AddSingleton<LlmLogOwner>();
+builder.Services.AddSingleton<LlmLogLifecycleReconciler>();
+builder.Services.AddHostedService<GatewayLogLifecycleWorker>();
 builder.Services.AddSingleton(sp =>
     new LlmRequestLogBackground(
         sp.GetRequiredService<LlmGatewayDataContext>().Context,
@@ -105,7 +112,8 @@ builder.Services.AddSingleton<ILlmRequestLogWriter>(sp =>
         sp.GetRequiredService<PrdAgent.Core.Interfaces.IAppSettingsService>(),
         sp.GetRequiredService<IAssetStorage>(),
         sp.GetRequiredService<IConfiguration>(),
-        sp.GetRequiredService<IHttpContextAccessor>()));
+        sp.GetRequiredService<IHttpContextAccessor>(),
+        sp.GetRequiredService<LlmLogOwner>()));
 
 // GW-owned 运行设置（LlmRequestLogWriter 依赖 IAppSettingsService）。首次只复制 MAP 非敏感日志字段，
 // MAP 不可达时使用默认值，不阻断 serving 启动。
@@ -297,13 +305,18 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifi
         sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>>()));
 
 // 模型调度执行器
-builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, CodeReviewUserKeyResolver>();
 
 // LLM Gateway 统一守门员（HOST 既有实现）
-builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, TaskBudgetGateway>();
 builder.Services.AddScoped<DoubaoStreamAsrService>();
 builder.Services.AddScoped<LiveAsrBatchFallbackService>();
-builder.Services.AddScoped<LiveAsrSessionOrchestrator>();
+builder.Services.AddScoped(sp => new LiveAsrSessionOrchestrator(
+    sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>(), sp.GetRequiredService<DoubaoStreamAsrService>(),
+    sp.GetRequiredService<LiveAsrBatchFallbackService>(), sp.GetRequiredService<ILogger<LiveAsrSessionOrchestrator>>(),
+    sp.GetRequiredService<IGatewayInvocationAuthority>(), builder.Configuration));
 
 // serving 侧平台密钥自检（消盲区：serving 到底能不能解密真实平台密文）。
 // 此前密钥完整性 Worker 只在 MAP(api) 侧注册，serving 缺钥时静默用 stub 兜底、无任何自检。
@@ -382,6 +395,7 @@ gwApiKey ??= DevServeKey; // 非生产保留便利回落
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? string.Empty;
 
 app.MapGatewayServingEndpoints(jsonOpts, gwApiKey, gitCommit);
+app.MapCodeReviewUserKeys();
 app.MapLiveAsrGatewayEndpoint();
 
 app.Run();

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { BranchEntry, BuildProfile, CdsConfig, InfraService, IShellExecutor, StorageBinding } from '../types.js';
+import { boundedStorageOptions, boundedStorageProvider, validateBoundedStorageProof, type BoundedStorageProof } from './bounded-storage-provider.js';
 
 export class UnsafeDeploymentStorageError extends Error {
   readonly code = 'unsafe_deployment_storage';
@@ -28,6 +29,7 @@ export function assertStorageDeclaration(mount: { readOnly?: boolean; storage?: 
     || !['branch-private', 'project-shared'].includes(s.scope)
     || ![s.instanceId, s.projectId, s.serviceId, s.mountKey].every(validKey)
     || (s.scope === 'branch-private' ? !validKey(s.branchId) : s.branchId !== undefined)) fail('storage-contract-invalid');
+  if (s.policy !== undefined && (s.policy !== 'xxl-task-logs-v1' || s.purpose !== 'persistent' || s.scope !== 'branch-private' || s.mountKey !== 'xxl-task-logs')) fail('storage-policy-invalid');
 }
 
 export function stableStorageVolumeName(s: StorageBinding): string {
@@ -57,6 +59,7 @@ function seal(mounts: PlannedMount[], identity: {instanceId?: string; projectId:
         || s.serviceId !== identity.serviceId || s.scope !== (identity.branchId ? 'branch-private' : 'project-shared')
         || s.branchId !== identity.branchId) fail('storage-owner-mismatch');
       if (m.source !== stableStorageVolumeName(s)) fail('storage-name-mismatch');
+      if (s.policy && (m.readOnly || m.target !== '/data/applogs/xxl-job')) fail('storage-policy-target');
     }
   }
   const frozen = mounts.map(m => Object.freeze({...m, ...(m.storage ? {storage: Object.freeze({...m.storage})} : {})}));
@@ -112,7 +115,7 @@ export function withReadOnlyTools(plan: DeploymentStoragePlan, tools: ReadonlyAr
   return Object.freeze({...plan, version: 1, mounts: Object.freeze(mounts), digest: createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
 }
 
-export type StorageBirthRequirements = Record<string, {birthNonce:string;daemonId:string;mountpoint:string;createdAt:string}>;
+export type StorageBirthRequirements = Record<string, {birthNonce:string;daemonId:string;mountpoint:string;createdAt:string;bounded?:BoundedStorageProof}>;
 
 /** Read-only preflight; unknown existing storage is never taken over. Allocation is separate. */
 export async function inspectStoragePlan(shell: IShellExecutor, plan: DeploymentStoragePlan, allowMissing = false, births: StorageBirthRequirements = {}): Promise<void> {
@@ -129,7 +132,7 @@ export async function inspectStoragePlan(shell: IShellExecutor, plan: Deployment
   for (const m of plan.mounts.filter(m => m.kind === 'volume')) {
     const result = await shell.exec(`docker volume inspect ${quote(m.source)}`, {executionLane: 'observation'});
     if (result.exitCode !== 0) {
-      if (/no such volume/i.test(result.stderr)) { if (allowMissing && !proof[m.source]) continue; fail('storage-existing-volume-required'); }
+      if (/no such volume/i.test(result.stderr)) { if (allowMissing && !proof[m.source] && !m.storage?.policy) continue; fail('storage-existing-volume-required'); }
       fail('storage-identity-unknown');
     }
     let info: {Name?: string; Driver?: string; Options?: unknown; Mountpoint?: string; CreatedAt?: string; Labels?: Record<string,string>}[];
@@ -140,8 +143,20 @@ export async function inspectStoragePlan(shell: IShellExecutor, plan: Deployment
     if (nativeBirth !== undefined || birth) {
       if (!birth || nativeBirth !== birth.birthNonce || actual.Mountpoint !== birth.mountpoint || actual.CreatedAt !== birth.createdAt) fail('storage-birth-unconfirmed');
     }
-    if (actual.Driver !== 'local' || (actual.Options !== null && (typeof actual.Options !== 'object' || Array.isArray(actual.Options)
-      || Object.keys(actual.Options!).length !== 0)) || typeof actual.Mountpoint !== 'string'
+    let optionsConfirmed = actual.Options === null || typeof actual.Options === 'object' && !Array.isArray(actual.Options) && Object.keys(actual.Options!).length === 0;
+    if (m.storage?.policy) {
+      if (!birth?.bounded) fail('storage-bounded-birth-required');
+      validateBoundedStorageProof(birth.bounded);
+      const seen = await boundedStorageProvider(shell,'inspect',{name:m.source,birthNonce:birth.birthNonce,daemonId:birth.daemonId,binding:m.storage,target:m.target});
+      if (JSON.stringify(seen) !== JSON.stringify(birth.bounded)) {
+        // Providers may serialize object keys in a different order.
+        if (Object.entries(seen).some(([key,value]) => birth.bounded![key as keyof BoundedStorageProof] !== value)) fail('storage-bounded-receipt-changed');
+      }
+      const expected = boundedStorageOptions(birth.bounded);
+      optionsConfirmed = !!actual.Options && typeof actual.Options === 'object' && !Array.isArray(actual.Options)
+        && Object.keys(actual.Options).length === 3 && Object.entries(expected).every(([k,v]) => (actual.Options as Record<string,unknown>)[k] === v);
+    } else if (birth?.bounded) fail('storage-policy-mismatch');
+    if (actual.Driver !== 'local' || !optionsConfirmed || typeof actual.Mountpoint !== 'string'
       || !path.posix.isAbsolute(actual.Mountpoint) || actual.Mountpoint.split('/').includes('.deployment-sources')
       || !actual.Mountpoint.endsWith('/' + m.source + '/_data')) fail('storage-driver-unconfirmed');
   }

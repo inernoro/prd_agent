@@ -5,8 +5,12 @@ namespace PrdAgent.Core.Models;
 /// 生成在服务端用 CancellationToken.None 执行，客户端断开/刷新不取消；
 /// 结果持久化到此集合，刷新后前端可凭 runId 重连/查看，杜绝「刷新就丢、找不到」。
 /// </summary>
-public class MdToPptRun
+public class MdToPptRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string UserId { get; set; } = string.Empty;

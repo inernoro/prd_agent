@@ -420,6 +420,7 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
             .Set(x => x.EntryPoint, meta.EntryPoint)
             .Set(x => x.Slug, finalSlug)
             .Set(x => x.Version, finalVersion)
+            .Set(x => x.ContentUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
         await _db.MarketplaceSkills.UpdateOneAsync(x => x.Id == existing.Id, update, cancellationToken: ct);
 
@@ -661,7 +662,8 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
             slug = s.Slug,
             version = s.Version,
             createdAt = s.CreatedAt,
-            updatedAt = s.UpdatedAt
+            updatedAt = s.UpdatedAt,
+            contentUpdatedAt = s.ContentUpdatedAt
         };
     }
 }

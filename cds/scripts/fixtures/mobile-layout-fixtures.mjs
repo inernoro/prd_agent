@@ -145,10 +145,19 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
+  '/api/instance-catalog': { version: 1, instances: [
+    { id: 'primary', name: '合成主实例', role: 'primary', url: 'https://primary.example.invalid' },
+    { id: 'standby', name: '合成备用实例', role: 'standby', url: 'https://standby.example.invalid' },
+  ] },
   '/api/auth/status': { authenticated: true, enabled: true, user: { name: '布局冒烟', isSystemOwner: true } },
   '/api/instance-mode': { mode: 'master' },
   '/api/notices': { notices: [] },
+  '/api/notices/read-all': { ok: true, changed: 0 },
   '/api/projects': { projects: [project] },
+  '/api/code-reviews': { tasks: [], totals: { source: 0, report: 0, all: 0 }, newCount: 0, historyCount: 0,
+    snapshotAt: '2026-11-09T00:00:00.000Z', page: { offset: 0, limit: 10, total: 0, nextOffset: null } },
+  '/api/code-reviews/capabilities': { engineConfigured: false, mailConfigured: false,
+    storageConfigured: false, conditionalRetry: true, tools: [] },
   '/api/config': { previewDomain: 'example.invalid', version: 'fixture' },
   '/api/legacy-cleanup/status': { pending: false },
   '/api/access-requests': { requests: [] },
@@ -156,6 +165,8 @@ const EXACT = {
   '/api/infra/catalog': { services: [] },
   '/api/cds-system/operator/requests': { requests: [] },
   '/api/cds-system/perf-health': { status: 'ok', samples: [] },
+  '/api/releases/batches/accepted-versions': { versions: [] },
+  '/api/releases/batches': { batches: [] },
   '/api/releases/targets': { targets: [] },
   '/api/github/app': { configured: false },
   '/api/github/installations': { installations: [] },
@@ -242,6 +253,17 @@ const serviceGraph = (branchId) => ({
 });
 
 const PREFIX = [
+  [/^\/api\/branches\/[^/]+\/db-probe$/, ({ pathname }) => ({
+    branchId: decodeURIComponent(pathname.split('/')[3]), projectId: PROJECT_ID,
+    branch: 'feature/alpha', probedAt: new Date().toISOString(), services: [],
+    summary: { services: 0, match: 0, mismatch: 0, notRunning: 0, probeFailed: 0, noDb: 0 },
+  })],
+  [/^\/api\/branches\/[^/]+\/effective-config$/, ({ pathname }) => ({
+    branchId: decodeURIComponent(pathname.split('/')[3]), projectId: PROJECT_ID,
+    projectSlug: project.slug, branchStatus: 'running', derivedFrom: null,
+    envLayers: [], profiles: [],
+    plan: { stateBasis: 'recorded', containers: [], networks: { isolation: false, branchNetwork: null, sharedNetwork: 'fixture-shared' }, requiredInfra: [] },
+  })],
   [/^\/api\/branches\/([^/]+)\/service-graph$/, (url) => serviceGraph(
     decodeURIComponent(url.pathname.split('/')[3] || 'fixture-branch-alpha'))],
   [/^\/api\/branches\/[^/]+\/references$/, () => ({ references: [] })],
@@ -250,6 +272,21 @@ const PREFIX = [
   [/^\/api\/branches$/, () => ({
     branches,
     capacity: { maxContainers: 40, runningContainers: 9, totalMemGB: 96 },
+  })],
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({
+    ok: true,
+    groups: [
+      {
+        id: 'fixture-active-work',
+        name: '正在开发',
+        color: 'blue',
+        rules: [{ kind: 'prefix', value: 'feature/' }],
+        pinnedBranchIds: [],
+      },
+    ],
+    updatedAt: '2026-09-02T09:40:00.000Z',
+    updatedBy: 'user',
+    readOnly: false,
   })],
   [/^\/api\/projects\/[^/]+$/, () => project],
   [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({

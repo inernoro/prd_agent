@@ -10,6 +10,20 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public static class AppCallerRegistry
 {
+    public static class CdsCodeReview
+    {
+        public const string AppName = "CDS 代码审查";
+        [AppCallerMetadata("代码审查-用户 Key", "使用任务绑定的用户 Key 执行静态代码审查", ModelTypes = new[] { ModelTypes.Chat }, Category = "Chat")]
+        public const string Analyze = "cds.code-review::chat";
+    }
+
+    public static class McpSpeech
+    {
+        public const string AppName = "MCP 基础语音能力";
+        [AppCallerMetadata("MCP-文生语音", "使用已授权的语音模型与音色生成音频资产", ModelTypes = new[] { ModelTypes.Tts }, Category = "Audio")]
+        public const string Synthesize = "mcp-speech.synthesize::tts";
+    }
+
 /// <summary>
 /// Desktop 桌面客户端
 /// </summary>
@@ -1056,6 +1070,12 @@ public static class DocumentStoreAgent
         public const string Vision = "document-store.subtitle::vision";
     }
 
+    public static class Writing
+    {
+        [AppCallerMetadata("知识库按模版成文", "关联资料、识别缺口并生成可审核的结构化草稿", ModelTypes = new[] { ModelTypes.Chat }, Category = "DocumentStore")]
+        public const string Generate = "document-store.writing::chat";
+    }
+
     public static class Reprocess
     {
         [AppCallerMetadata(
@@ -1975,6 +1995,17 @@ public static class ChannelTraceAgent
 public static class InfraAgent
 {
     public const string AppName = "CDS Agent 工作台";
+
+    public static class Runtime
+    {
+        [AppCallerMetadata(
+            "CDS Agent运行对话",
+            "已授权的基础设施任务通过平台网关执行对话，来源与额度关联到实际任务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Infrastructure"
+        )]
+        public const string Chat = "infra-agent.runtime::chat";
+    }
 
     /// <summary>
     /// Lite 只读审查降级路径：当默认 runtime profile 不是 Claude/Anthropic 兼容

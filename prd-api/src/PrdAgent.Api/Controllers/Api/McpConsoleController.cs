@@ -82,6 +82,7 @@ public class McpConsoleController : ControllerBase
         var recentLogs = await RecentLogsAsync(userId, since, 5, ct);
         // 「今天没调用」不等于「从来没接过」，而上面这几个数全是今天的
         var hasHistory = await HasAnyHistoryAsync(userId, ct);
+        var callTrend = await CallTrendAsync(userId, nowUtc, ct);
 
         var capabilities = McpCapabilityCatalog.All.Select(cap =>
         {
@@ -138,6 +139,7 @@ public class McpConsoleController : ControllerBase
             // 旁边却列一串它根本调不动的能力，是同一行自己说两种话。
             scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, nowUtc),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            webPublicExposureAllowed = k.WebPublicExposureAllowed,
             mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
                 ? "fixed"
                 : "follow-user-panel",
@@ -184,6 +186,7 @@ public class McpConsoleController : ControllerBase
                 failed = tally.ByStatus.TryGetValue("error", out var failed) ? failed : 0,
             },
             hasHistory,
+            callTrend,
             recentCalls = recentLogs.Select(ToLogDto),
         }));
     }
@@ -208,22 +211,88 @@ public class McpConsoleController : ControllerBase
             f.Eq(x => x.DeploymentSlug, DeploymentScope.CurrentDurable));
         if (!string.IsNullOrWhiteSpace(keyId)) filter = f.And(filter, f.Eq(x => x.KeyId, keyId));
         if (!string.IsNullOrWhiteSpace(capability)) filter = f.And(filter, f.Eq(x => x.Capability, capability));
-        if (!string.IsNullOrWhiteSpace(status)) filter = f.And(filter, f.Eq(x => x.Status, status));
+        long total;
+        List<McpCallLog> items;
+        if (status is "error" or "success")
+        {
+            // 异步语音的HTTP受理成功不代表成品成功。分页与计数必须读取任务当前状态，
+            // 不能先按HTTP调用状态筛掉失败任务，再让客户端按产物状态补判。
+            var lookup = new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", "speech_runs" },
+                { "let", new BsonDocument { { "runId", "$ArtifactId" }, { "owner", "$OwnerUserId" } } },
+                { "pipeline", new BsonArray
+                    {
+                        new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$eq", new BsonArray { "$_id", "$$runId" }),
+                            new BsonDocument("$eq", new BsonArray { "$OwnerUserId", "$$owner" }),
+                        }))),
+                        new BsonDocument("$project", new BsonDocument("Status", 1)),
+                    }
+                },
+                { "as", "speechOutcome" },
+            });
+            var outcome = status == "error"
+                ? new BsonDocument("$or", new BsonArray
+                {
+                    new BsonDocument("Status", "error"),
+                    new BsonDocument { { "ArtifactKind", "audio-run" }, { "speechOutcome.Status", new BsonDocument("$in", new BsonArray { SpeechRunStatus.Failed, SpeechRunStatus.Unknown }) } },
+                })
+                : new BsonDocument { { "Status", "success" }, { "$or", new BsonArray
+                {
+                    new BsonDocument("ArtifactKind", new BsonDocument("$ne", "audio-run")),
+                    new BsonDocument("speechOutcome.Status", SpeechRunStatus.Completed),
+                } } };
+            var pipeline = _db.McpCallLogs.Aggregate().Match(filter).AppendStage<McpCallLog>(lookup).Match(outcome);
+            total = (await pipeline.Count().FirstOrDefaultAsync(ct))?.Count ?? 0;
+            items = await pipeline.SortByDescending(x => x.CreatedAt).Skip(resolvedSkip).Limit(resolvedLimit).ToListAsync(ct);
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(status)) filter = f.And(filter, f.Eq(x => x.Status, status));
+            total = await _db.McpCallLogs.CountDocumentsAsync(filter, cancellationToken: ct);
+            items = await _db.McpCallLogs.Find(filter).SortByDescending(x => x.CreatedAt).Skip(resolvedSkip).Limit(resolvedLimit).ToListAsync(ct);
+        }
+        await EnrichSpeechArtifactsAsync(items, userId, ct);
 
-        var total = await _db.McpCallLogs.CountDocumentsAsync(filter, cancellationToken: ct);
-        var items = await _db.McpCallLogs.Find(filter)
-            .SortByDescending(x => x.CreatedAt)
-            .Skip(resolvedSkip)
-            .Limit(resolvedLimit)
-            .ToListAsync(ct);
-
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var permissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
+        var keys = (await _keyService.ListByOwnerAsync(userId, ct)).ToDictionary(key => key.Id);
         return Ok(ApiResponse<object>.Ok(new
         {
             total,
             skip = resolvedSkip,
             limit = resolvedLimit,
-            items = items.Select(ToLogDto),
+            items = items.Select(log => ToLogDto(log, McpCallAuthorization.RequiredScope(log, keys.GetValueOrDefault(log.KeyId), permissions, DateTime.UtcNow))),
         }));
+    }
+
+    [HttpPost("calls/{id}/authorize")]
+    public async Task<IActionResult> AuthorizeCall(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var log = await _db.McpCallLogs.Find(log => log.Id == id && log.OwnerUserId == userId
+            && log.DeploymentSlug == DeploymentScope.CurrentDurable).FirstOrDefaultAsync(ct);
+        if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "调用记录不存在或无权访问。"));
+        var key = await _keyService.GetByIdAsync(log.KeyId, ct);
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var permissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
+        var scope = McpCallAuthorization.RequiredScope(log, key, permissions, DateTime.UtcNow);
+        if (scope == null || key == null)
+            return Conflict(ApiResponse<object>.Fail("AUTHORIZATION_UNAVAILABLE", "当前无法直接授权，请刷新后检查凭证状态及已有权限。"));
+        // 原子追加单个 scope，保留其他授权，且不改变自动模式或恢复已撤销的凭证。
+        var keyFilter = Builders<AgentApiKey>.Filter;
+        // 存量密钥可能没有 ScopeMode 字段，模型约定缺省为 Manual。
+        var manual = keyFilter.Or(keyFilter.Eq(item => item.ScopeMode, AgentApiKeyScopeMode.Manual),
+            keyFilter.Exists(item => item.ScopeMode, false));
+        var changed = await _db.AgentApiKeys.UpdateOneAsync(
+            keyFilter.Where(item => item.Id == key.Id && item.OwnerUserId == userId && item.RevokedAt == null
+                && item.IsActive && item.ExpiresAt == key.ExpiresAt) & manual,
+            Builders<AgentApiKey>.Update.AddToSet(item => item.Scopes, scope), cancellationToken: ct);
+        if (changed.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("KEY_CHANGED", "凭证状态已改变，请刷新后重试。"));
+        return Ok(ApiResponse<object>.Ok(new { keyId = key.Id, grantedScope = scope }));
     }
 
     /// <summary>
@@ -317,7 +386,7 @@ public class McpConsoleController : ControllerBase
     /// 于是用户看到「已连接、已授权」，而它发的每个请求都被拒。
     /// </summary>
     private static IReadOnlyList<string> EffectiveScopesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
-        => McpCapabilityCatalog.EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions);
+        => McpCapabilityCatalog.EffectiveScopesForKey(key, ownedPermissions, DateTime.UtcNow);
 
     /// <summary>
     /// 「你自己有、但没开给这台客户端」的能力。只对手动模式成立。
@@ -449,15 +518,54 @@ public class McpConsoleController : ControllerBase
         }
     }
 
-    private async Task<List<McpCallLog>> RecentLogsAsync(string userId, DateTime since, int limit, CancellationToken ct)
-        => await _db.McpCallLogs.Find(TodayFilter(userId, since))
-            .SortByDescending(x => x.CreatedAt)
-            .Limit(limit)
-            .ToListAsync(ct);
+    private async Task<McpCallTrend.Window> CallTrendAsync(string userId, DateTime nowUtc, CancellationToken ct)
+    {
+        var filter = TodayFilter(userId, McpCallTrend.Start(nowUtc))
+                     & Builders<McpCallLog>.Filter.Lte(x => x.CreatedAt, nowUtc);
+        // 对全部匹配日志聚合，不从分页列表或最近五条估算频率。
+        var buckets = await _db.McpCallLogs.Aggregate().Match(filter)
+            .Group(new BsonDocument
+            {
+                { "_id", new BsonDocument("$dateToString", new BsonDocument
+                    { { "format", "%Y-%m-%dT%H:00:00Z" }, { "date", "$CreatedAt" }, { "timezone", "UTC" } }) },
+                { "calls", new BsonDocument("$sum", 1) },
+            }).ToListAsync(ct);
+        var counts = buckets.ToDictionary(
+            bucket => DateTime.Parse(bucket["_id"].AsString, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal),
+            bucket => bucket["calls"].ToInt64());
+        return McpCallTrend.Build(nowUtc, counts);
+    }
 
-    private static object ToLogDto(McpCallLog l) => new
+    private async Task<List<McpCallLog>> RecentLogsAsync(string userId, DateTime since, int limit, CancellationToken ct)
+    {
+        var logs = await _db.McpCallLogs.Find(TodayFilter(userId, since))
+            .SortByDescending(x => x.CreatedAt).Limit(limit).ToListAsync(ct);
+        await EnrichSpeechArtifactsAsync(logs, userId, ct);
+        return logs;
+    }
+
+    private async Task EnrichSpeechArtifactsAsync(List<McpCallLog> logs, string userId, CancellationToken ct)
+    {
+        var ids = logs.Where(x => x.ArtifactKind == "audio-run" && x.ArtifactId != null).Select(x => x.ArtifactId!).Distinct().ToList();
+        if (ids.Count == 0) return;
+        // IDs来自已按当前部署过滤的调用记录，查询再按用户归属限制；不依赖客户端是否轮询过任务。
+        var runs = await _db.SpeechRuns.Find(x => x.OwnerUserId == userId && ids.Contains(x.Id)).ToListAsync(ct);
+        var byId = runs.ToDictionary(x => x.Id, StringComparer.Ordinal);
+        foreach (var log in logs)
+        {
+            if (log.ArtifactKind != "audio-run" || log.ArtifactId == null || !byId.TryGetValue(log.ArtifactId, out var run)) continue;
+            log.ArtifactStatus = McpInputBounds.ForAudit(run.Status, 32);
+            if (run.ErrorMessage != null) log.ErrorMessage = run.ErrorMessage;
+        }
+    }
+
+    private static object ToLogDto(McpCallLog l) => ToLogDto(l, null);
+
+    private static object ToLogDto(McpCallLog l, string? authorizationScope) => new
     {
         id = l.Id,
+        authorizationScope,
         keyId = l.KeyId,
         keyName = l.KeyName,
         toolName = l.ToolName,
@@ -477,6 +585,7 @@ public class McpConsoleController : ControllerBase
             id = l.ArtifactId,
             url = l.ArtifactUrl,
             title = l.ArtifactTitle,
+            status = l.ArtifactStatus,
         },
         createdAt = l.CreatedAt,
     };

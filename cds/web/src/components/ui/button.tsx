@@ -34,11 +34,16 @@ export interface ButtonProps
   asChild?: boolean;
 }
 
+// A dense workspace can choose its default without resizing buttons elsewhere.
+const ButtonSizeContext = React.createContext<NonNullable<ButtonProps['size']>>('default');
+export const ButtonSizeProvider = ButtonSizeContext.Provider;
+
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, ...props }, ref) => {
+    const defaultSize = React.useContext(ButtonSizeContext);
     const Comp = asChild ? Slot : 'button';
     return (
-      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
+      <Comp className={cn(buttonVariants({ variant, size: size ?? defaultSize, className }))} ref={ref} {...props} />
     );
   }
 );

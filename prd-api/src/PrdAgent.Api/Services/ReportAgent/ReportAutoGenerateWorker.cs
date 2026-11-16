@@ -1,6 +1,7 @@
 using System.Globalization;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services.ReportAgent;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services.ReportAgent;
@@ -34,6 +35,16 @@ public class ReportAutoGenerateWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var configuration = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            if (!PrdAgent.Infrastructure.Security.DeploymentAuthority.CanRunSharedScheduledWork(configuration))
+            {
+                _logger.LogInformation("Report schedule disabled: deployment is not authorized for shared scheduled work");
+                return;
+            }
+        }
+
         _logger.LogInformation("ReportAutoGenerateWorker started");
 
         while (!stoppingToken.IsCancellationRequested)
@@ -116,7 +127,15 @@ public class ReportAutoGenerateWorker : BackgroundService
 
                     try
                     {
-                        await generationService.GenerateAsync(
+                        using var admittedTask = PrdAgent.Core.Security.TaskExecutionContext.Enter(await scope.ServiceProvider
+                            .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                            .AdmitScheduledTaskAsync(nameof(ReportAutoGenerateWorker), $"{member.UserId}:{team.Id}:{weekYear}:{weekNumber}", member.UserId, CancellationToken.None));
+                        await using var execution = await PrdAgent.Core.Interfaces.TaskExecutionAttempt.AcquireAsync(
+                            scope.ServiceProvider.GetRequiredService<PrdAgent.Core.Interfaces.ITaskExecutionCoordinator>(),
+                            PrdAgent.Core.Security.TaskExecutionContext.Current!.PermitId, $"report:{member.UserId}:{team.Id}:{weekYear}:{weekNumber}");
+                        if (execution.ShouldSkip) continue;
+                        using var executionScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(execution.Lease?.Identity);
+                        var generatedReport = await generationService.GenerateAsync(
                             member.UserId, team.Id, templateId,
                             weekYear, weekNumber, CancellationToken.None);
 
@@ -130,7 +149,7 @@ public class ReportAutoGenerateWorker : BackgroundService
                             Level = "info",
                             Source = "report-agent",
                             ActionLabel = "查看周报",
-                            ActionUrl = "/report-agent",
+                            ActionUrl = ReportNotificationNavigation.OwnReport(generatedReport.Id),
                             ExpiresAt = DateTime.UtcNow.AddDays(7)
                         };
 
@@ -213,8 +232,10 @@ public class ReportAutoGenerateWorker : BackgroundService
             }
         }
 
-        // 逾期标记：周一之后，上周的 Draft/NotStarted → Overdue
-        if (chinaTime.DayOfWeek == DayOfWeek.Monday && chinaTime.Hour >= 10)
+        // 逾期标记：上周的 Draft/NotStarted → Overdue。
+        // 截止已统一为「周一 24:00 前」(WeeklyReportSubmissionRules)，所以放到周二再标，
+        // 不能像旧规则那样周一上午就把还在截止前的人标成逾期并发通知。
+        if (chinaTime.DayOfWeek == DayOfWeek.Tuesday)
         {
             var prevWeekNumber = weekNumber - 1;
             var prevWeekYear = weekYear;
@@ -247,7 +268,7 @@ public class ReportAutoGenerateWorker : BackgroundService
 
                     overdueMemberNames.Add(report.UserName ?? report.UserId);
                     await notificationService.NotifyOverdueAsync(
-                        report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber);
+                        report.UserId, team?.LeaderUserId, prevWeekYear, prevWeekNumber, report.TeamId);
                 }
 
                 // Webhook 聚合通知：每个团队只发一次
@@ -318,12 +339,19 @@ public class ReportAutoGenerateWorker : BackgroundService
                 var hasContent = report.Sections.Any(s => s.Items.Count > 0);
                 if (!hasContent) continue;
 
+                var autoSubmitNow = DateTime.UtcNow;
+                var autoSubmitUpdate = Builders<WeeklyReport>.Update
+                    .Set(r => r.Status, WeeklyReportStatus.Submitted)
+                    .Set(r => r.SubmittedAt, autoSubmitNow)
+                    .Set(r => r.UpdatedAt, autoSubmitNow);
+                // 首次提交时间只写一次，超时判定只认它
+                var firstSubmittedAt = WeeklyReportSubmissionRules.ResolveFirstSubmittedAtToStamp(report, autoSubmitNow);
+                if (firstSubmittedAt.HasValue)
+                    autoSubmitUpdate = autoSubmitUpdate.Set(r => r.FirstSubmittedAt, firstSubmittedAt);
+
                 await db.WeeklyReports.UpdateOneAsync(
                     r => r.Id == report.Id,
-                    Builders<WeeklyReport>.Update
-                        .Set(r => r.Status, WeeklyReportStatus.Submitted)
-                        .Set(r => r.SubmittedAt, DateTime.UtcNow)
-                        .Set(r => r.UpdatedAt, DateTime.UtcNow),
+                    autoSubmitUpdate,
                     cancellationToken: CancellationToken.None);
                 submitted++;
             }

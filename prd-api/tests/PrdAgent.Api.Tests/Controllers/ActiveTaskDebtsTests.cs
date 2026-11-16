@@ -109,12 +109,12 @@ public class ActiveTaskDebtsTests
     }
 
     [Fact]
-    public void 同步工具走读档_读债务这件事不该只有管理档看得见()
+    public void 同步共享债务需管理档_读取债务仍允许使用档()
     {
         var sync = Assert.Single(McpBuiltinTools.All, t => t.Name == "map_debt_sync");
         var list = Assert.Single(McpBuiltinTools.All, t => t.Name == "map_debt_list");
 
-        Assert.Equal(McpCapabilityCatalog.ScopeTasksUse, sync.RequiredScope);
+        Assert.Equal(McpCapabilityCatalog.ScopeTasksManage, sync.RequiredScope);
         Assert.Equal(McpCapabilityCatalog.ScopeTasksUse, list.RequiredScope);
 
         // 读的那个必须是 GET：POST 会被算进写入额度，读债务不该扣额度

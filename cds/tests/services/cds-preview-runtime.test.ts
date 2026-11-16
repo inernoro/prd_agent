@@ -21,8 +21,9 @@ describe('CDS Self 预构建预览契约', () => {
     expect(effective.command).toBe('cd /app/cds && node dist/index.js');
     expect(effective.env).toMatchObject({ CDS_PREVIEW_INSTANCE: '1', CDS_STORAGE_MODE: 'json', CDS_REPO_ROOT: '/app' });
     const inputs = ['cds/**', '.github/workflows/cds-prebuilt.yml', ...CDS_SKILL_KEYS.map(key => `.claude/skills/${key}/**`)];
-    expect(profile.buildScope).toEqual(inputs);
+    expect(profile.buildScope).toEqual([inputs[0], 'cds-instances.json', ...inputs.slice(1)]);
     expect(effective.buildScope).toEqual(inputs);
+    expect(decideProjectScope(resolveProjectScope(parsed.buildProfiles), ['cds-instances.json']).matched).toBe(true);
     for (const key of CDS_SKILL_KEYS) {
       expect(decideProjectScope(resolveProjectScope(parsed.buildProfiles), [`.claude/skills/${key}/SKILL.md`]).matched).toBe(true);
     }

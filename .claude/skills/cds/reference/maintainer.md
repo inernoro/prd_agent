@@ -249,3 +249,14 @@ push 后：
 | `reference/maintainer.md` | 维护者 | 本文件 —— self-referential |
 | `cds/src/routes/branches.ts` `/api/cli-version` | 维护者 | 实际上不用改，读 cdscli.py 的 VERSION |
 | `cds/src/routes/branches.ts` `/api/export-skill` | 维护者 | 打包逻辑需要变时（新增 reference 子目录等）|
+
+
+## 双站技能同步与收据
+
+主备应分发同一完整五技能包。分别基于各站当前运行提交发布技能范围内的更新，保留各站业务代码；
+下载后比较版本与源码摘要，不能只看主站成功。公开主备快照来自仓库根目录，项目目录可覆盖，
+包内不放任何站点授权；接入与续部署沿用核心技能中的完整流程。
+
+技能改动后执行 `python3 <已安装的CDS技能目录>/scripts/refresh_manifest.py` 刷新包内收据；
+CI 对拍公开目录与收据，匿名安装及登录下载均需覆盖全部五项技能。不要移除另一站已有的 CLI
+命令、自检能力或测试以实现表面版本一致。凭据只在各自站点接入与本地私有存储中管理。

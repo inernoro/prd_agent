@@ -62,7 +62,8 @@ public static class DesignArtifactBriefFactory
         DesignArtifactRun target,
         DesignArtifactRun source,
         string contextSource,
-        string? sourceRevisionId)
+        string? sourceRevisionId,
+        bool pptStyleOverride = false)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(source);
@@ -70,9 +71,13 @@ public static class DesignArtifactBriefFactory
         if (target.DesignBrief != null || target.BrandPackage != null)
             throw new InvalidOperationException("设计简报与品牌包只能在任务开始时冻结一次");
 
-        target.DesignDirection = Clone(source.DesignDirection);
-        target.DesignBrief = Clone(source.DesignBrief)!;
-        target.BrandPackage = Clone(source.BrandPackage)!;
+        if (pptStyleOverride && (target.ArtifactType != DesignArtifactTypes.HtmlPpt || target.DesignDirection == null))
+            throw new InvalidOperationException("明确换风格只适用于已有新方向的 PPT 修改");
+        if (!pptStyleOverride) target.DesignDirection = Clone(source.DesignDirection);
+        target.BrandPackage = pptStyleOverride ? BuildBrandPackage(target, source.BrandPackage)! : Clone(source.BrandPackage)!;
+        target.DesignBrief = pptStyleOverride
+            ? BuildDesignBrief(target, null, target.BrandPackage, source.DesignBrief)
+            : Clone(source.DesignBrief)!;
         target.DesignContextProvenance = new DesignArtifactContextProvenance
         {
             Source = contextSource,
@@ -94,7 +99,8 @@ public static class DesignArtifactBriefFactory
         };
     }
 
-    internal static DesignArtifactBrandPackage? BuildBrandPackage(DesignArtifactRun run)
+    internal static DesignArtifactBrandPackage? BuildBrandPackage(DesignArtifactRun run,
+        DesignArtifactBrandPackage? inheritedIdentity = null)
     {
         var direction = run.DesignDirection;
         if (direction == null) return null;
@@ -126,10 +132,10 @@ public static class DesignArtifactBriefFactory
             Ref = direction.StyleId,
             Source = string.IsNullOrWhiteSpace(direction.BrandSource) ? "design-direction-fallback" : direction.BrandSource,
             DesignSystemId = direction.DesignSystemId,
-            Logo = logo,
+            Logo = inheritedIdentity?.Logo ?? logo,
             ApprovedColors = colors,
             Fonts = fonts,
-            FixedStatements = fixedStatements,
+            FixedStatements = inheritedIdentity?.FixedStatements.ToList() ?? fixedStatements,
             ForbiddenStyles = forbiddenStyles,
             Examples = examples,
             TokenContext = tokenContext,
@@ -155,7 +161,8 @@ public static class DesignArtifactBriefFactory
     internal static DesignArtifactDesignBrief BuildDesignBrief(
         DesignArtifactRun run,
         string? currentHtml,
-        DesignArtifactBrandPackage? brandPackage)
+        DesignArtifactBrandPackage? brandPackage,
+        DesignArtifactDesignBrief? inheritedFacts = null)
     {
         var sourceTexts = SourceTexts(run).ToList();
         var instruction = run.Instruction.Trim();
@@ -171,7 +178,7 @@ public static class DesignArtifactBriefFactory
         var primaryAction = actionMatch.Success
             ? actionMatch.Groups["value"].Value.Trim()
             : "未指定主行动，不新增虚构按钮";
-        var brief = new DesignArtifactDesignBrief
+        var brief = inheritedFacts != null ? Clone(inheritedFacts)! : new DesignArtifactDesignBrief
         {
             Goal = goal,
             Audience = audience,
@@ -205,6 +212,10 @@ public static class DesignArtifactBriefFactory
                     .ToList(),
             },
         };
+        brief.Tone = run.DesignDirection?.StyleName ?? "沿用当前页面语气";
+        brief.VisualIntent = run.DesignDirection?.StyleDescription ?? "沿用当前页面的视觉语言";
+        brief.BrandKitRef = brandPackage?.Ref ?? "personal-style-fallback-unavailable";
+        brief.BrandKitVersion = brandPackage?.Version ?? 1;
         brief.Fingerprint = Fingerprint(new
         {
             brief.SchemaVersion,

@@ -140,7 +140,8 @@ export const updateVisualAgentWorkspaceReal: UpdateVisualAgentWorkspaceContract 
     body: {
       title: input.title,
       memberUserIds: input.memberUserIds,
-      coverAssetId: input.coverAssetId ?? null,
+      coverAssetId: input.coverAssetId,
+      suppressAutoSubmit: input.suppressAutoSubmit,
       articleContent: input.articleContent,
       scenarioType: input.scenarioType,
       folderName: input.folderName,
@@ -398,6 +399,7 @@ export async function updateArticleMarkerReal(params: {
   draftText?: string;
   status?: string;
   runId?: string;
+  generationRequestId?: string;
   errorMessage?: string;
   planItem?: { prompt: string; count: number; size?: string };
   url?: string;

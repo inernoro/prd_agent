@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   acquireBuildSlot,
+  tryAcquireBuildSlot,
   buildGateStatus,
   buildLoadFactor,
   maxConcurrentBuilds,
@@ -14,6 +15,18 @@ import {
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
 describe('build-gate 全局构建并发闸', () => {
+  it('三个项目合格时，积压项目不能使其他项目超过三个释放轮次才准入', async () => {
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+    const first = await acquireBuildSlot({ holder: { projectId: 'a' } });
+    const order: string[] = [];
+    const jobs = [...Array(8).fill('a'), ...Array(8).fill('b'), 'c'].map(projectId =>
+      acquireBuildSlot({ holder: { projectId } }).then(slot => { order.push(projectId); slot.release(); }));
+    first.release(); await Promise.all(jobs);
+    expect(order.indexOf('c')).toBeLessThan(3);
+    expect(order.slice(0, 3).sort()).toEqual(['a', 'b', 'c']);
+    expect(buildGateStatus().active).toBe(0);
+  });
+
   const savedEnv = process.env.CDS_MAX_CONCURRENT_BUILDS;
 
   beforeEach(() => {
@@ -46,6 +59,28 @@ describe('build-gate 全局构建并发闸', () => {
     expect(buildGateStatus().active).toBe(1);
     slot.release();
     expect(buildGateStatus().active).toBe(0);
+  });
+
+  it('配套准入不能越过既有等待者，且失败不占位或入队', async () => {
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+    const first = await acquireBuildSlot();
+    const waiting = acquireBuildSlot({ holder: { projectId: 'older' } });
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '2';
+    expect(tryAcquireBuildSlot({ holder: { projectId: 'cold' } })).toBeUndefined();
+    expect(buildGateStatus()).toMatchObject({ active: 1, queued: 1 });
+    pumpWaiters(); const second = await waiting;
+    expect(buildGateStatus().holders.some(item => item.projectId === 'older')).toBe(true);
+    expect(tryAcquireBuildSlot()).toBeUndefined();
+    first.release(); second.release();
+    const own = tryAcquireBuildSlot()!; expect(buildGateStatus().active).toBe(1);
+    own.release(); own.release(); expect(buildGateStatus().active).toBe(0);
+  });
+
+  it('配套准入先核对取消，失效调用既不占槽也不入队', () => {
+    const ac = new AbortController(); ac.abort();
+    expect(() => tryAcquireBuildSlot({ signal: ac.signal })).toThrow(BuildSlotCancelledError);
+    expect(() => tryAcquireBuildSlot({ isCancelled: () => true })).toThrow(BuildSlotCancelledError);
+    expect(buildGateStatus()).toMatchObject({ active: 0, queued: 0 });
   });
 
   it('超过上限时排队，并报告正确的 ahead 位置', async () => {
@@ -128,6 +163,18 @@ describe('build-gate 全局构建并发闸', () => {
     s.release();
     s.release();
     s.release();
+    expect(buildGateStatus().active).toBe(0);
+  });
+
+  it('三个项目合格时，积压项目不能使其他项目超过三个释放轮次才准入', async () => {
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+    const first = await acquireBuildSlot({ holder: { projectId: 'a' } });
+    const order: string[] = [];
+    const jobs = [...Array(8).fill('a'), ...Array(8).fill('b'), 'c'].map(projectId =>
+      acquireBuildSlot({ holder: { projectId } }).then(slot => { order.push(projectId); slot.release(); }));
+    first.release(); await Promise.all(jobs);
+    expect(order.indexOf('c')).toBeLessThan(3);
+    expect(order.slice(0, 3).sort()).toEqual(['a', 'b', 'c']);
     expect(buildGateStatus().active).toBe(0);
   });
 

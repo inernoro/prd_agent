@@ -2,7 +2,7 @@ import type { IShellExecutor } from '../types.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 
 export type ReleaseGitRunner = (args: readonly string[]) => string | Promise<string>;
-const READ_TIMEOUT_MS = 3000;
+export const READ_TIMEOUT_MS = 3000;
 const MAX_QUEUED_READS = 16;
 const MAX_INPUT_BYTES = 1024 * 1024;
 interface ReadJob {

@@ -470,7 +470,8 @@ public class MdToPptSectionSanitizeTests
         Assert.Contains("totalPagesEl.TryGetInt32(out var reportedTotalPages)", source);
         Assert.Contains("源文档只作为内容材料", source);
         Assert.Contains("page 从 index=1", source);
-        Assert.Contains("errorCode = run.ErrorCode", source);
+        Assert.Contains("run.ErrorCode ?? designArtifact?.LifecycleFailureCode", source);
+        Assert.Contains("errorCode = publicCancelled ? \"design_artifact_cancelled\"", source);
     }
 
     [Fact]

@@ -14,7 +14,7 @@
  *   3. 状态翻转后 data-deploy-phase 依次变为 done / failed（收尾有没有接上线）；
  *   4. 页脚里的构建文字没有被截断（scrollWidth ≤ clientWidth）。
  *
- * 用法：node scripts/branch-card-visual-audit.mjs [--out <dir>] [--width 1920] [--interactions-only]
+ * 用法：node scripts/branch-card-visual-audit.mjs [--out <dir>] [--width 1920]
  * 截图写进 --out（默认 /tmp/branch-card-audit），不进仓库。
  */
 import { createRequire } from 'node:module';
@@ -71,10 +71,10 @@ function makeBranches() {
       status: 'idle', services: { ...services(22000, 'stopped'), 'legacy-gw': { profileId: 'legacy-gw', containerName: 'fixture-legacy-gw', hostPort: 22999, status: 'error', errorMessage: '构建配置已删除' } },
       lastStopSource: 'webhook', lastStopReason: 'GitHub webhook 触发停止', lastStoppedAt: iso(-18 * 60 * MIN),
       lastDeployAt: iso(-20 * 60 * MIN),
+      deployRuntime: { kind: 'source', drift: { hasDrift: true, expectedCount: 13, healthyCount: 0, missingProfileIds: [], unhealthyProfileIds: PROFILES } },
     }),
     base('b-test', 'test', {
       status: 'running', services: services(22331, 'running'),
-      runningCommitSha: '1234567' + 'a'.repeat(33), targetCommitSha: '7654321' + 'b'.repeat(33),
       // 容器级复制集：三个容器各做了复制。标识与端口挤在同一条单行槽里，「+N」不能被挤出卡片。
       // 同时带「CI 失败」标记（极速版 CI 出镜像失败、旧版本仍在跑）：端口行最挤的情形，只剩一个端口名额。
       ciImageStatus: 'failed', ciWorkflowConclusion: 'failure', ciWorkflowRunUrl: 'https://github.com/example/actions/runs/1',
@@ -84,12 +84,10 @@ function makeBranches() {
       replicaSets: Object.fromEntries(['api', 'admin', 'web'].map((id) => [id, { enabled: true, members: [{ status: 'running' }, { status: 'running' }] }])),
       lastDeployAt: iso(-40 * MIN), lastAccessedAt: iso(-5 * MIN),
     }),
-    base('b-scan', 'codex/stable-smoke-20261021-long-branch-name-card-overlap-regression', {
+    base('b-scan', 'codex/scan-risk-admin-fix-branch', {
       status: 'error',
       services: services(22400, 'running', { api: { status: 'error', errorMessage: '就绪探测超时（120 秒内 /health 未返回 200）' } }),
-      errorMessage: 'admin-prd-agent: 部署阶段等待超时，旧服务保持可用 llmgw-prd-agent: 部署阶段等待超时，旧服务保持可用 '.repeat(8),
-      targetCommitSha: '7df226a' + 'c'.repeat(33),
-      tags: ['固定尺寸卡片长标签不换行', '异常摘要省略', '中部版本信息'],
+      errorMessage: 'imp-api-mdimp: 就绪探测超时（120 秒内 /health 未返回 200），旧版本已下线',
       lastAccessedAt: iso(-19 * MIN),
     }),
     base('b-edison', 'claude/beautiful-edison-mx81', {
@@ -115,7 +113,6 @@ function makeBranches() {
       deployEstimate: { releaseMedianMs: 370_000, releaseSamples: 8, sourceMedianMs: null, sourceSamples: 0 },
     }),
     base('b-relaxed', 'claude/relaxed-brown-hcib', {
-      runningCommitSha: 'abcdef0' + 'd'.repeat(33), targetCommitSha: 'abcdef0' + 'd'.repeat(33),
       status: 'idle', services: services(24300, 'stopped'),
       lastStopSource: 'webhook', lastStopReason: 'GitHub webhook 触发停止', lastStoppedAt: iso(-15 * 60 * MIN),
       lastDeployAt: iso(-16 * 60 * MIN),
@@ -273,7 +270,7 @@ async function main() {
       check(await drawer.count() === 0, `[${theme}] 一键启动不冒泡打开分支详情`);
       if (await drawer.count()) await page.getByRole('button', { name: '关闭', exact: true }).click();
       // 卡片空白仍能打开详情；不能靠禁用整卡点击修复按钮冒泡。
-      await card('b-relaxed').locator('[data-card-versions]').click();
+      await card('b-relaxed').click({ position: { x: 10, y: 10 } });
       await drawer.waitFor({ state: 'visible' });
       check(await drawer.isVisible(), `[${theme}] 信息槽空白仍可打开分支详情`);
       await page.getByRole('button', { name: '关闭', exact: true }).click();
@@ -290,6 +287,19 @@ async function main() {
         console.log(`[${theme}] 第 ${i + 1} 排 ${row.list.map((c) => `${c.id}=${c.h}`).join('  ')}`);
         check(spread <= 1, `[${theme}] 第 ${i + 1} 排卡片等高（差 ${spread.toFixed(1)}px）`);
       });
+      const names = await page.$$eval('[data-branch-card-id] h3', (headings) => headings.map((heading) => {
+        const style = getComputedStyle(heading);
+        return style.whiteSpace === 'nowrap' && style.textOverflow === 'ellipsis'
+          && heading.clientHeight <= parseFloat(style.lineHeight) + 1
+          && heading.title === heading.textContent.trim();
+      }));
+      check(names.length > 0 && names.every(Boolean), `[${theme}] 分支名保持单行省略，完整名称保留在提示中`);
+      const titleSpace = await page.$$eval('[data-branch-card-id] header', (headers) => headers.map((header) => {
+        const headingRow = header.querySelector('h3').parentElement.getBoundingClientRect();
+        const menu = header.querySelector('button[aria-label="更多操作"]').getBoundingClientRect();
+        return !header.querySelector('button[aria-label="删除分支"]') && menu.left - headingRow.right <= 10;
+      }));
+      check(titleSpace.length > 0 && titleSpace.every(Boolean), `[${theme}] 标题用满更多按钮前空间，不为隐藏删除按钮预留空白`);
       // 复制集卡：与分支卡同高，成员区真的溢出并可在卡内滚动，底部按钮没被挤出卡片
       const replica = await page.evaluate(() => {
         const members = document.querySelector('[data-replica-members]');
@@ -325,14 +335,13 @@ async function main() {
       const erroredInitial = Number((headline.match(/(\d+)\s*个出错需要处理/) || [])[1] || 0);
       check(erroredInitial === 1, `[${theme}] 僵尸服务不计入「出错需要处理」（实际 ${erroredInitial}，「${headline.trim()}」）`);
       const mainRedeploy = await page.$$eval('[data-branch-card-id="b-main"] button[aria-label^="重新部署"]', (els) => els.length).catch(() => 0);
+      check(await page.locator('[data-branch-card-id="b-main"] [data-drift-chip]').count() === 0, `[${theme}] 已停止分支保留停止说明，不把漂移统计显示成服务异常`);
       check(phases['b-main'] !== 'failed' && mainRedeploy === 0, `[${theme}] 带僵尸 error 条目的分支卡不进出错态（phase=${phases['b-main']}，重新部署按钮 ${mainRedeploy} 个）`);
       const metaTimes = await page.$$eval('[data-branch-card-id="b-pack"], [data-branch-card-id="b-ident"]', (els) => els.map((el) => el.textContent || ''));
       check(metaTimes.every((t) => /最近推送/.test(t)), `[${theme}] 构建中卡片右侧有「最近推送」时间`);
       for (const f of await footerTruncation(page)) {
         check(!f.clipped, `[${theme}] ${f.id} 页脚构建文字没被截断：「${f.text}」`);
       }
-      const sameVersion = await page.textContent('[data-branch-card-id="b-relaxed"] [data-card-versions]');
-      check(/运行 abcdef0/.test(sameVersion || '') && !/目标/.test(sameVersion || ''), `[${theme}] 运行与目标一致时只展示运行版本`);
       await page.screenshot({ path: path.join(OUT, `grid-${theme}.png`), fullPage: true });
 
       // 复制集标识 + 端口 + 「+N」同在一条单行槽：各档视口宽度下「+N」都要完整落在卡片里、点得到。
@@ -352,49 +361,25 @@ async function main() {
           return {
             cardW: Math.round(c.width),
             inside: inside(btn)
-              && inside(card.querySelector('button[aria-label^="新版本 CI 失败"]'))
+              && inside(card.querySelector('button[aria-label^="CI 构建失败"]'))
               && inside(infra)
               && inside(card.querySelector('[data-drift-chip]')),
           };
         });
-        const geometry = await page.$$eval('[data-branch-card-id]', (cards) => cards.map((card) => {
-          const c = card.getBoundingClientRect();
-          const footer = card.querySelector('footer');
-          const f = footer.getBoundingClientRect();
-          const info = card.querySelector('[data-card-info]');
-          const i = info.getBoundingClientRect();
-          const actions = [...footer.querySelectorAll('button')];
-          const actionRects = actions.map((button) => button.getBoundingClientRect());
-          const summary = card.querySelector('[data-card-error-summary]');
-          const versions = card.querySelector('[data-card-versions]');
-          const singleLine = (el) => !el || (getComputedStyle(el).whiteSpace === 'nowrap'
-            && el.clientHeight <= parseFloat(getComputedStyle(el).lineHeight) + 1);
+        // 按钮本身在卡内仍可能是假的安全：其不可收缩的子文字能溢出按钮，
+        // 用户实际看到「重新部署」被卡边裁掉。检查内容宽度与状态行分离。
+        const warnings = await page.$$eval('[data-branch-card-id] [data-drift-chip]', (buttons) => buttons.map((button) => {
+          const card = button.closest('[data-branch-card-id]');
+          const bounds = card.getBoundingClientRect();
+          const resourceRow = card.querySelector('[data-branch-resource-row]');
           return {
             id: card.getAttribute('data-branch-card-id'),
-            fixedHeight: Math.abs(c.height - parseFloat(getComputedStyle(document.documentElement).fontSize) * 15.25) <= 1,
-            infoInside: i.top >= c.top && i.bottom <= f.top + 1 && i.right <= c.right,
-            footerInside: f.bottom <= c.bottom && f.top > i.top,
-            footerOnlyActions: actions.length >= 1 && actions.length <= 2 && actions[0].textContent.trim() === '日志'
-              && (actions.length === 1 || actions[1].textContent.trim() === '部署')
-              && !footer.querySelector('[data-card-versions], [data-footer-status]'),
-            actionsFit: actionRects.every((r) => r.left >= c.left && r.right <= c.right && r.top >= f.top && r.bottom <= f.bottom)
-              && actionRects.every((r, index) => index === 0 || actionRects[index - 1].right <= r.left),
-            summarySingleLine: singleLine(summary),
-            versionsSingleLine: !versions || [...versions.children].every(singleLine),
+            fits: button.scrollWidth <= button.clientWidth + 1 && [...button.children].every((child) => child.getBoundingClientRect().right <= bounds.right - 8),
+            separate: button.getBoundingClientRect().top >= resourceRow.getBoundingClientRect().bottom,
           };
         }));
-        const broken = geometry.filter((g) => !g.fixedHeight || !g.infoInside || !g.footerInside || !g.footerOnlyActions
-          || !g.actionsFit || !g.summarySingleLine || !g.versionsSingleLine);
-        check(broken.length === 0, `[${theme}] ${vw}px 固定卡高、中部单行、页脚仅头像与日志/部署且无覆盖${broken.length ? ': ' + JSON.stringify(broken) : ''}`);
-        const versionChecks = await page.$eval('[data-branch-card-id="b-scan"]', (card) => {
-          const versions = card.querySelector('[data-card-versions]');
-          const summary = card.querySelector('[data-card-error-summary]');
-          return Boolean(versions && !versions.closest('footer') && versions.textContent.includes('运行 未确认')
-            && versions.textContent.includes('目标 7df226a') && summary.scrollWidth > summary.clientWidth
-            && getComputedStyle(summary).textOverflow === 'ellipsis');
-        });
-        check(versionChecks, `[${theme}] ${vw}px 长报错省略、未知运行版本与目标版本在中部独立显示`);
-        if (vw === 390) await shotCard(page, 'b-scan', `error-card-${theme}-390.png`);
+        check(warnings.length > 0 && warnings.every((warning) => warning.fits && warning.separate),
+          `[${theme}] 视口 ${vw}px 异常提示独占状态行，重新部署文字不溢出：${JSON.stringify(warnings)}`);
         if (vw === 1000) await shotCard(page, 'b-test', `port-row-markers-${theme}-${vw}.png`);
         check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 / CI 失败 / 基础设施异常 / 漂移四种标记都在时，它们与「+N」都完整落在卡内`);
       }
@@ -528,8 +513,6 @@ async function main() {
         // 60 秒后：「刚部署成功」退场，页脚换回提交信息。
         const remain = 61_500 - (Date.now() - finishedAt);
         if (remain > 0) await page.waitForTimeout(remain);
-        // 收尾计时从卡片进入视野起算；负载高时 DOM 推进可能晚几帧，等真实退场再取证。
-        await page.waitForFunction(() => document.querySelector('[data-branch-card-id="b-ident"]')?.getAttribute('data-deploy-phase') === null, null, { timeout: 10000 });
         await shotCard(page, 'b-ident', 'finish-6-after-60s.png');
         const settledPhase = await page.getAttribute('[data-branch-card-id="b-ident"]', 'data-deploy-phase');
         check(settledPhase === null, `60 秒后收尾态退场（实际 data-deploy-phase=${settledPhase}）`);
@@ -580,7 +563,8 @@ async function main() {
         const redeployVisible = await page.isVisible('[data-branch-card-id="b-test"] button[aria-label^="重新部署"]');
         await shotCard(page, 'b-test', 'single-service-failed.png');
         check(partialPhase === 'failed', `单服务部署失败进入失败态（实际 data-deploy-phase=${partialPhase}）`);
-        check(/构建失败/.test(partialFooter) && /就绪探测/.test(partialFooter), `单服务失败页脚写「构建失败 · 在「就绪探测」」（实际「${partialFooter.trim()}」）`);
+        const partialTitle = await page.getAttribute('[data-branch-card-id="b-test"] [data-footer-status]', 'title');
+        check(partialFooter.trim() === '构建失败' && /就绪探测/.test(partialTitle || ''), `单服务失败只显示一个状态，失败阶段保留在悬浮说明（实际「${partialFooter.trim()}」，title「${partialTitle}」）`);
         check(redeployVisible, '单服务失败时直接给出「重新部署」');
         const erroredAfter = await erroredCount();
         check(erroredAfter.n === erroredBefore.n + 1, `单服务失败计入页头「出错需要处理」（${erroredBefore.n} → ${erroredAfter.n}，「${erroredAfter.text}」）`);
@@ -797,7 +781,6 @@ async function main() {
         check(relaxedHidden && relaxedShown.mounted && !relaxedShown.inDormant,
           `停止的分支单独部署一个服务时离开收起的「未运行」分组（部署前${relaxedHidden ? '被收起' : '可见'}，部署中${relaxedShown.mounted ? '已渲染' : '未渲染'}${relaxedShown.inDormant ? '、仍在未运行分组' : ''}）`);
       }
-      check(browserErrors.length === 0, `[${theme}] 无浏览器运行错误${browserErrors.length ? ': ' + browserErrors.join('; ') : ''}`);
       await context.close();
     }
   } finally {

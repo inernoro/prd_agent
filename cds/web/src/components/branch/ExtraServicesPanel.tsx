@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * ExtraServicesPanel — 分支级临时额外服务管理（波1 W1b，最后一公里）。
  *
@@ -177,12 +178,7 @@ export function ExtraServicesPanel({
         </div>
       ) : null}
 
-      {state.status === 'loading' || state.status === 'idle' ? (
-        <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载临时服务…
-        </div>
-      ) : null}
+      {state.status === 'loading' || state.status === 'idle' ? <ContentLoading label="加载临时服务" variant="rows" /> : null}
 
       {state.status === 'error' ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">

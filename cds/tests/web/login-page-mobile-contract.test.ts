@@ -1,0 +1,31 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const repoRoot = path.resolve(import.meta.dirname, '../../..');
+const loginPage = fs.readFileSync(path.join(repoRoot, 'cds/web/src/pages/LoginPage.tsx'), 'utf8');
+const authFrame = fs.readFileSync(path.join(repoRoot, 'cds/web/src/components/skeletons/AuthPageSkeleton.tsx'), 'utf8');
+const stylesheet = fs.readFileSync(path.join(repoRoot, 'cds/web/src/index.css'), 'utf8');
+
+describe('CDS 登录页手机端主任务契约', () => {
+  it('让登录卡在手机端先于品牌故事出现，并允许舞台内部滚动', () => {
+    expect(loginPage).toContain('<AuthPageFrame>');
+    expect(authFrame).toContain('className="cds-auth-copy"');
+    expect(authFrame).toContain('className="cds-auth-card-wrap"');
+    expect(authFrame.indexOf('className="cds-auth-copy"'))
+      .toBeLessThan(authFrame.indexOf('className="cds-auth-card-wrap'));
+
+    const mobileBlockStart = stylesheet.indexOf('@media (max-width: 640px) {', stylesheet.indexOf('.cds-auth-footer'));
+    const mobileBlock = stylesheet.slice(mobileBlockStart, mobileBlockStart + 900);
+    const mobilePage = mobileBlock.match(/\.cds-auth-page\s*\{([^}]*)\}/)?.[1];
+    expect(mobilePage).toMatch(/(?:^|[;\n])\s*height:\s*100vh;/);
+    expect(mobilePage).toMatch(/(?:^|[;\n])\s*height:\s*100dvh;/);
+    const mobileStage = mobileBlock.match(/\.cds-auth-stage\s*\{([^}]*)\}/)?.[1];
+    expect(mobileStage).toMatch(/(?:^|[;\n])\s*min-height:\s*0;/);
+    expect(mobileBlock).toContain('.cds-auth-stage {');
+    expect(mobileBlock).toContain('justify-content: flex-start;');
+    expect(mobileBlock).toContain('overflow-y: auto;');
+    expect(mobileBlock).toContain('.cds-auth-card-wrap {');
+    expect(mobileBlock).toContain('order: -1;');
+  });
+});

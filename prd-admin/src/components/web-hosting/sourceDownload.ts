@@ -1,3 +1,5 @@
+import { SITE_FORM_REGISTRY, type SiteFormKey } from './siteFormRegistry';
+
 /**
  * 「下载源文件」的形态判定。
  *
@@ -104,7 +106,7 @@ export function planSourceDownload(site: SourceDownloadSite): SourceDownloadPlan
     // 视频这类目前没有把资产地址透到分享数据里。说清现状，不要给一个点了会报错的按钮。
     return {
       kind: 'unavailable',
-      reason: `这是${wrapped === 'video' ? '视频' : wrapped}包装站点，源文件不是网页，暂时不能从这里取。请找分享者要原始文件。`,
+      reason: `这是${SITE_FORM_REGISTRY[wrapped as SiteFormKey]?.label ?? '文件'}包装站点，源文件不是网页，暂时不能从这里取。请找分享者要原始文件。`,
     };
   }
 

@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text;
@@ -21,6 +22,7 @@ namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 /// </summary>
 public class InfraAgentSessionService : IInfraAgentSessionService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private sealed class CdsMessageDispatchUncertainException : InfraAgentSessionException
     {
         public CdsMessageDispatchUncertainException()
@@ -76,8 +78,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         IInfraAgentRuntimeJobQueue runtimeJobs,
         IAgentToolRegistry toolRegistry,
         HttpClient http,
-        AgentRuntime.GatewayReviewRuntimeAdapter? liteReviewAdapter = null)
+        AgentRuntime.GatewayReviewRuntimeAdapter? liteReviewAdapter = null,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _logger = logger;
         _connections = connections;
@@ -812,7 +816,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         session.Id,
                         outboundMessage.Id,
                         request.Content.Trim(),
-                        DateTime.UtcNow),
+                        DateTime.UtcNow) { TaskPermitId = outboundMessage.TaskPermitId },
                     enqueueCt),
                 ex => _logger.LogWarning(
                     ex,
@@ -866,7 +870,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     session.Id,
                     outboundMessage.Id,
                     request.Content.Trim(),
-                    DateTime.UtcNow),
+                    DateTime.UtcNow) { TaskPermitId = outboundMessage.TaskPermitId },
                 enqueueCt),
             ex => _logger.LogWarning(
                 ex,
@@ -1008,6 +1012,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return;
+        var turn = await _db.InfraAgentMessages.Find(message => message.Id == messageId
+            && message.SessionId == id && message.Role == InfraAgentMessageRoles.User).FirstOrDefaultAsync(ct);
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, turn?.TaskPermitId, messageId);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(turn?.TaskPermitId, messageId));
 
         if (!IsMapDirectRuntimeFallbackEnabled())
         {
@@ -2725,6 +2735,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         _ = RequireDispatchableCdsSessionId(sessionStatus, cdsSessionId);
         return new InfraAgentMessage
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             SessionId = sessionId,
             Role = InfraAgentMessageRoles.User,
             Content = content,
@@ -4043,7 +4054,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             MaxTokens = 4096,
             MaxTurns = ResolveMaxTurns(content),
             TimeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
-            AppCallerCode = "infra-agent-session::agent",
+            AppCallerCode = AppCallerRegistry.InfraAgent.Runtime.Chat,
             StickyKey = session.CdsSessionId ?? session.Id,
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
             ApiKey = runtimeProfile?.ApiKey,

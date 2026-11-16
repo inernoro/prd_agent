@@ -410,7 +410,7 @@ export function IdentityTab({ onToast }: Props): JSX.Element {
           <p className="mb-2 text-xs leading-6 text-muted-foreground">
             这些是身份层之前签发的项目级凭证，还没有归属主体。它们照常可用，只是不享受
             「换机器自助补发」和「按主体聚合」。要让某台机器拿到这两样，让它用自己的用户级
-            凭证跑一次自愈、拿一张有主的新凭证，再吊销这张旧的。存量凭证不会自己认领 ——
+            凭证跑一次自愈、拿一张有主的新凭证，再吊销这张旧的。也可在用户管理的“历史匿名凭据归属”核对确切账号后认领，保持原密钥和权限。存量凭证不会自己认领 ——
             光看它被使用，认不出背后是谁。
           </p>
           <div className="flex flex-wrap gap-2 text-xs">

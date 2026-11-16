@@ -8,9 +8,12 @@ using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Security;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -52,27 +55,124 @@ public sealed class ImageGenRunTerminalPersistenceTests
         Assert.Equal("Cancelled", payload.RootElement.GetProperty("status").GetString());
     }
 
-    [Fact]
-    public async Task CancellingRunningRunLeavesTerminalPersistenceToWorker()
+    [Theory]
+    [InlineData(ImageGenRunStatus.Queued)]
+    [InlineData(ImageGenRunStatus.ScopedQueued)]
+    [InlineData(ImageGenRunStatus.Running)]
+    public async Task CancellingAdmittedRunPersistsTerminalOnceAndRejectsRevokedWorker(ImageGenRunStatus status)
     {
         await using var fixture = await MongoFixture.CreateAsync();
-        var run = NewRun(ImageGenRunStatus.Running, failed: 0);
-        await fixture.Db.ImageGenRuns.InsertOneAsync(run);
-
-        var result = await ImageGenRunCancellation.RequestAsync(
-            fixture.Db,
-            fixture.RunStore,
-            run.Id,
-            run.OwnerAdminId,
-            run.AppKey,
-            CancellationToken.None);
-
-        Assert.True(result.Found);
-        Assert.False(result.BecameTerminal);
+        var run = NewRun(status, failed: 0);
+        run.WorkspaceId = "synthetic-workspace";
+        run.ErrorCode = "stale-error"; run.ErrorMessage = "stale-message";
+        var (coordinator, lease) = await fixture.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => ImageGenRunCancellation.RequestAsync(
+            fixture.Db, fixture.RunStore, run.Id, run.OwnerAdminId, run.AppKey, default)));
+        Assert.All(results, result => Assert.True(result.Found));
+        Assert.Single(results, result => result.BecameTerminal);
         var persisted = await fixture.Db.ImageGenRuns.Find(x => x.Id == run.Id).SingleAsync();
         Assert.True(persisted.CancelRequested);
-        Assert.Equal(ImageGenRunStatus.Running, persisted.Status);
-        Assert.Null(persisted.EndedAt);
+        Assert.Equal(ImageGenRunStatus.Cancelled, persisted.Status);
+        Assert.NotNull(persisted.EndedAt);
+        Assert.Null(persisted.ErrorCode); Assert.Null(persisted.ErrorMessage);
+        Assert.False(await coordinator.ValidateAsync(lease.Proof, false, default));
+        using (TaskExecutionContext.Enter(lease.Identity))
+            foreach (var lateStatus in new[] { ImageGenRunStatus.Completed, ImageGenRunStatus.Failed })
+            {
+                var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+                    fixture.Worker.PersistTerminalStateAsync(run, run, lateStatus, default));
+                Assert.Equal("TASK_EXECUTION_LEASE_INVALID", error.Code);
+            }
+        var events = await fixture.RunStore.GetEventsAsync(RunKinds.ImageGen, run.Id, 0, 20);
+        using var payload = JsonDocument.Parse(Assert.Single(events).PayloadJson);
+        Assert.Equal("runDone", payload.RootElement.GetProperty("type").GetString());
+        Assert.Equal("Cancelled", payload.RootElement.GetProperty("status").GetString());
+        Assert.Equal(run.Total, payload.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(run.Done, payload.RootElement.GetProperty("done").GetInt32());
+        Assert.Equal(run.Failed, payload.RootElement.GetProperty("failed").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(ImageGenRunStatus.Completed)]
+    [InlineData(ImageGenRunStatus.Failed)]
+    [InlineData(ImageGenRunStatus.Cancelled)]
+    public async Task CancellingExistingTerminalRunPreservesResultAndLease(ImageGenRunStatus status)
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var run = NewRun(status, failed: status == ImageGenRunStatus.Failed ? 1 : 0);
+        run.EndedAt = DateTime.UtcNow.AddMinutes(-1);
+        run.ErrorCode = "original-code"; run.ErrorMessage = "original-message";
+        var (coordinator, lease) = await fixture.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        var result = await ImageGenRunCancellation.RequestAsync(fixture.Db, fixture.RunStore,
+            run.Id, run.OwnerAdminId, run.AppKey, default);
+        Assert.True(result.Found); Assert.False(result.BecameTerminal);
+        var persisted = await fixture.Db.ImageGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.Equal(status, persisted.Status); Assert.Equal(run.ErrorCode, persisted.ErrorCode);
+        Assert.Equal(run.EndedAt!.Value.ToUniversalTime().Ticks / TimeSpan.TicksPerMillisecond,
+            persisted.EndedAt!.Value.ToUniversalTime().Ticks / TimeSpan.TicksPerMillisecond);
+        Assert.True(await coordinator.ValidateAsync(lease.Proof, false, default));
+        Assert.Empty(await fixture.RunStore.GetEventsAsync(RunKinds.ImageGen, run.Id, 0, 20));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnownedImageCancellationDoesNotRevokeOrPublish(bool wrongOwner)
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var run = NewRun(ImageGenRunStatus.Running, 0);
+        var (coordinator, lease) = await fixture.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        var result = await ImageGenRunCancellation.RequestAsync(fixture.Db, fixture.RunStore, run.Id,
+            wrongOwner ? "other-owner" : run.OwnerAdminId, wrongOwner ? run.AppKey : "other-app", default);
+        Assert.False(result.Found); Assert.False(result.BecameTerminal);
+        Assert.True(await coordinator.ValidateAsync(lease.Proof, false, default));
+        Assert.Equal(ImageGenRunStatus.Running, (await fixture.Db.ImageGenRuns.Find(x => x.Id == run.Id).SingleAsync()).Status);
+        Assert.Empty(await fixture.RunStore.GetEventsAsync(RunKinds.ImageGen, run.Id, 0, 20));
+    }
+
+    [Theory]
+    [InlineData(ImageGenRunStatus.Completed)]
+    [InlineData(ImageGenRunStatus.Failed)]
+    public async Task LateUnscopedWorkerCannotPublishFalseTerminalAfterQueuedCancellation(ImageGenRunStatus lateStatus)
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var run = NewRun(ImageGenRunStatus.Queued, 0);
+        await fixture.Db.ImageGenRuns.InsertOneAsync(run);
+        Assert.True((await ImageGenRunCancellation.RequestAsync(fixture.Db, fixture.RunStore,
+            run.Id, run.OwnerAdminId, run.AppKey, default)).BecameTerminal);
+        await fixture.Worker.PersistTerminalStateAsync(run, run, lateStatus, default);
+        Assert.Equal(ImageGenRunStatus.Cancelled, (await fixture.Db.ImageGenRuns.Find(x => x.Id == run.Id).SingleAsync()).Status);
+        var events = await fixture.RunStore.GetEventsAsync(RunKinds.ImageGen, run.Id, 0, 20);
+        using var payload = JsonDocument.Parse(Assert.Single(events).PayloadJson);
+        Assert.Equal("Cancelled", payload.RootElement.GetProperty("status").GetString());
+    }
+
+    [Theory]
+    [InlineData("owner")]
+    [InlineData("app")]
+    [InlineData("workspace")]
+    [InlineData("permit")]
+    public async Task StaleWorkerCannotFinalizeChangedImageRunIdentity(string changed)
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var run = NewRun(ImageGenRunStatus.Running, 0); run.WorkspaceId = "original-workspace";
+        var (_, lease) = await fixture.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        var update = changed switch
+        {
+            "owner" => Builders<ImageGenRun>.Update.Set(x => x.OwnerAdminId, "new-owner"),
+            "app" => Builders<ImageGenRun>.Update.Set(x => x.AppKey, "new-app"),
+            "workspace" => Builders<ImageGenRun>.Update.Set(x => x.WorkspaceId, "new-workspace"),
+            _ => Builders<ImageGenRun>.Update.Set(x => x.TaskPermitId, "new-permit-generation"),
+        };
+        await fixture.Db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, update);
+        using (TaskExecutionContext.Enter(lease.Identity))
+            await fixture.Worker.PersistTerminalStateAsync(run, run, ImageGenRunStatus.Completed, default);
+        Assert.Equal(ImageGenRunStatus.Running, (await fixture.Db.ImageGenRuns.Find(x => x.Id == run.Id).SingleAsync()).Status);
+        Assert.Empty(await fixture.RunStore.GetEventsAsync(RunKinds.ImageGen, run.Id, 0, 20));
     }
 
     [Fact]
@@ -171,11 +271,13 @@ public sealed class ImageGenRunTerminalPersistenceTests
         private readonly MongoClient _client;
         private readonly ServiceProvider _services;
         private readonly string _databaseName;
+        private readonly string _connectionString;
 
         private MongoFixture(MongoClient client, string connectionString, string databaseName)
         {
             _client = client;
             _databaseName = databaseName;
+            _connectionString = connectionString;
             Db = new MongoDbContext(connectionString, databaseName);
             RunStore = new InMemoryRunEventStore();
             _services = new ServiceCollection().BuildServiceProvider();
@@ -191,6 +293,27 @@ public sealed class ImageGenRunTerminalPersistenceTests
         internal MongoDbContext Db { get; }
         internal InMemoryRunEventStore RunStore { get; }
         internal ImageGenRunWorker Worker { get; }
+
+        internal async Task<(TaskExecutionCoordinator Coordinator, TaskExecutionLease Lease)> SaveAuthorizedRunAsync(ImageGenRun run)
+        {
+            var coordinator = new TaskExecutionCoordinator(new LlmGatewayDataContext(_connectionString, _databaseName));
+            var key = Guid.NewGuid().ToString("N");
+            var permit = new GatewayTaskPermitRecord
+            {
+                Id = TaskExecutionCoordinator.BusinessId(GatewayTenantDefaults.InternalTenantId, run.OwnerAdminId, "image-cancel-fixture", key),
+                TenantId = GatewayTenantDefaults.InternalTenantId, ActorUserId = run.OwnerAdminId, SubjectUserIds = [run.OwnerAdminId],
+                ExecutionContractVersion = TaskExecutionCoordinator.ContractVersion,
+                BusinessKeyHash = TaskExecutionCoordinator.Fingerprint(key), RequestFingerprint = TaskExecutionCoordinator.Fingerprint("synthetic-image"),
+                TriggerCredentialId = "synthetic-session", Origin = TaskExecutionOrigins.Interactive,
+                SourceDeployment = "synthetic-deployment", SourceTask = "image-cancel-fixture",
+                AllowedAppCallerCodes = [AppCallerRegistry.VisualAgent.Image.Text2Img], MaxRuns = 2, MaxCalls = 4,
+                ExpiresAt = DateTime.UtcNow.AddHours(1),
+            };
+            await coordinator.RegisterAsync(permit, false, default);
+            run.TaskPermitId = permit.Id;
+            await Db.ImageGenRuns.InsertOneAsync(run);
+            return (coordinator, await coordinator.AcquireAsync(permit.Id, run.Id, default));
+        }
 
         internal static async Task<MongoFixture> CreateAsync()
         {

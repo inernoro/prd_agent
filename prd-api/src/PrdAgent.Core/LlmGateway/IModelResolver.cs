@@ -24,6 +24,18 @@ public interface IModelResolver
         string? pinnedModelId = null,
         CancellationToken ct = default);
 
+    /// <summary>只读候选元信息，不认领半开租约；未支持时失败关闭。</summary>
+    Task<ModelResolutionResult> ResolveMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+        => Task.FromResult(ModelResolutionResult.NotFound(
+            expectedModel, "当前模型调度器不支持只读模型元信息",
+            GatewayRouteFailure.OfferingUnresolvable, "resolver-capability", appCallerCode));
+
     /// <summary>
     /// 按已经持久化的 Offering ID 恢复精确路由。用于异步任务在提交成功后继续轮询或下载，
     /// 禁止重新进入负载均衡而命中另一个上游。
@@ -71,11 +83,17 @@ public interface IModelResolver
 /// </summary>
 public class ModelResolutionResult
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; set; }
+
     /// <summary>调用方选择的逻辑模型 ID；旧池路径为空。</summary>
     public string? LogicalModelId { get; init; }
 
     /// <summary>调用方稳定使用的逻辑模型公开标识。</summary>
     public string? LogicalModelPublicId { get; init; }
+
+    /// <summary>仅从已授权逻辑模型配置读取，供严格请求身份校验。</summary>
+    public List<string> AcceptedModelAliases { get; set; } = new();
 
     /// <summary>本次实际命中的 Offering ID。</summary>
     public string? OfferingId { get; init; }
@@ -349,6 +367,7 @@ public class ModelResolutionResult
         {
             LogicalModelId = LogicalModelId,
             LogicalModelPublicId = LogicalModelPublicId,
+            AcceptedModelAliases = [.. AcceptedModelAliases],
             OfferingId = OfferingId,
             OfferingTargetKind = OfferingTargetKind,
             OfferingRateLimitPerMinute = OfferingRateLimitPerMinute,
@@ -415,6 +434,7 @@ public class ModelResolutionResult
             ExchangeTransformerType = ExchangeTransformerType,
             // 发送阶段所需字段（compute-then-send 原则）
             ApiKey = ApiKey,
+            UpstreamProxy = UpstreamProxy,
             ExchangeAuthScheme = ExchangeAuthScheme,
             ExchangeTransformerConfig = ExchangeTransformerConfig,
             RetryCandidates = RetryCandidates

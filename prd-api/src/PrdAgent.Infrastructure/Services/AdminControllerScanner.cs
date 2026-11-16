@@ -59,7 +59,7 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
     // 会在 service 鉴权前被中间件提前拦成 403（Codex P2，两轮）。这里只豁免「管理权限检查」，
     // [Authorize] 仍要求登录，业务层 owner/editor/成员鉴权仍在，故是登录态 + 业务层鉴权。
     private static readonly Regex SiteCommentRoute = new(
-        @"^/api/web-pages/[^/]+/comments(-enabled)?/?$",
+        @"^/api/web-pages/[^/]+/comments(-enabled|/[^/]+/resolved)?/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // 站点「向我提问」路由（siteId 同样在路径中段，PublicRoutes 的 StartsWith 命中不了）：
@@ -86,6 +86,11 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
     // [Authorize] 登录要求和业务层用户身份校验仍保留。
     private static readonly Regex WeeklyPosterMarkSeenRoute = new(
         @"^/api/weekly-posters/[^/]+/mark-seen/?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // 回答评分由控制器校验专属回执，仅放行准确的 PUT 路由，不能豁免邻近管理接口。
+    private static readonly Regex SiteAskRatingRoute = new(
+        @"^/api/web-pages/ask/messages/[^/]+/rating/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)
@@ -191,7 +196,7 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
     public string? GetRequiredPermission(string path, string method)
     {
         // 公开路由（无需额外权限）
-        if (IsPublicRoute(path))
+        if (IsPublicRoute(path) || (HttpMethods.IsPut(method) && SiteAskRatingRoute.IsMatch(path)))
         {
             return null;
         }
@@ -213,6 +218,8 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
 
     private bool IsPublicRoute(string path)
     {
+        if (string.Equals(path, "/api/web-pages/annotation-runtime.js", StringComparison.OrdinalIgnoreCase))
+            return true;
         foreach (var publicRoute in PublicRoutes)
         {
             if (path.StartsWith(publicRoute, StringComparison.OrdinalIgnoreCase))
@@ -221,7 +228,8 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
             }
         }
         // 站点维度评论列表/发表（siteId 在路径中段，前缀匹配命中不了）
-        if (SiteCommentRoute.IsMatch(path))
+        if (SiteCommentRoute.IsMatch(path)
+            || Regex.IsMatch(path, @"^/api/web-pages/[^/]+/revisions(?:/[^/]+/preview)?/?$", RegexOptions.IgnoreCase))
         {
             return true;
         }

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { sanitizeStableSmokeArtifactTree } from '../e2e/utils/stableSmokeDiagnostics.mjs';
 import { randomUUID } from 'node:crypto';
 import { existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -707,7 +708,10 @@ function runPlaywright(environment, values, runDir, grep = '') {
   ];
   if (grep) args.push('--grep', grep);
   const result = command('pnpm', args, { env, stdio: 'inherit', encoding: undefined });
-  return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
+  const sanitization = [resultPath, testResultPath]
+    .map(path => sanitizeStableSmokeArtifactTree(path))
+    .reduce((total, item) => ({ scanned: total.scanned + item.scanned, changed: total.changed + item.changed }), { scanned: 0, changed: 0 });
+  return { status: result.status ?? 1, resultPath, htmlPath, testResultPath, sanitization };
 }
 
 const folderRegressionCaseIds = [

@@ -34,7 +34,7 @@ export function VersionCopyActions({ kind, id, code, legacy = false }: {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" onClick={() => void copy(code, '版本号')} className="inline-flex items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-primary hover-bg-soft"><Copy size={13} />复制编号</button>
+      {code && <button type="button" onClick={() => void copy(code, '版本号')} className="inline-flex items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-primary hover-bg-soft"><Copy size={13} />复制编号</button>}
       <button type="button" onClick={() => void copyTemplate()} className="inline-flex items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-primary hover-bg-soft"><Copy size={13} />复制完整通知</button>
       {hint && <span role="status" className="text-xs text-token-muted">{hint}</span>}
     </div>

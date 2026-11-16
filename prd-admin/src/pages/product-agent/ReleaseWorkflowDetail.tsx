@@ -8,6 +8,8 @@ import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { loadProductVersionList } from '@/lib/productVersionList';
 import { ReleasePlanPicker } from './ReleasePlanPicker';
+import { appendReleaseTapdLinks, extractReleaseTapdLinks, invalidReleaseTapdLinks, type ReleaseTapdLink } from './releaseTapdLinks';
+import { ReleaseTapdFields } from './ReleaseTapdFields';
 import { filterReleasePlans } from './releasePlanOptions';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -52,10 +54,13 @@ import type { VersionRegistrationMessageParseResult } from '@/services/real/prod
 import { VersionCopyActions } from './VersionCopyActions';
 import { mergeMemberIds, type PastedMemberMatch } from './releaseMemberMatching';
 import { useReleasePastedMembers } from './useReleasePastedMembers';
+import { ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { ReleaseEditAction } from '@/components/product-agent/ReleaseEditAction';
+import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
-  announcement_pending: '待完成上线',
+  announcement_pending: '待填写上线公告',
   released: '已上线',
 };
 
@@ -67,9 +72,9 @@ export const FEATURE_CHANGE_LABEL: Record<FeatureChangeType, string> = {
 };
 
 const CHANGE_BADGE_CLASS: Record<FeatureChangeType, string> = {
-  added: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
-  modified: 'border-amber-400/30 bg-amber-400/10 text-amber-200',
-  deprecated: 'border-red-400/30 bg-red-400/10 text-red-200',
+  added: 'border-emerald-400/30 bg-emerald-400/10 text-semantic-success',
+  modified: 'border-amber-400/30 bg-amber-400/10 text-semantic-warning',
+  deprecated: 'border-red-400/30 bg-red-400/10 text-semantic-danger',
   unchanged: 'border-token-subtle bg-token-nested text-token-muted',
 };
 
@@ -158,6 +163,9 @@ export function ReleaseWorkflowDetail({
   const [remark, setRemark] = useState('');
   const [isGlobalOpen, setIsGlobalOpen] = useState('');
   const [openBrandScope, setOpenBrandScope] = useState('上线全域开放');
+  const [noTapdLinks, setNoTapdLinks] = useState(false);
+  const [tapdLinks, setTapdLinks] = useState<ReleaseTapdLink[]>([{ title: '', url: '' }]);
+  const tapdInvalid = !temporary && invalidReleaseTapdLinks(noTapdLinks, tapdLinks);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const historyScope = JSON.stringify([productId, initiationId, planName]);
@@ -429,6 +437,15 @@ export function ReleaseWorkflowDetail({
     if (temporary) setProjectMembers((source.projectMemberNames ?? []).join('、'));
   };
 
+  const prepareReleaseNotice = (text: string) => {
+    const extracted = extractReleaseTapdLinks(text);
+    if (extracted.links.length) {
+      setNoTapdLinks(false);
+      setTapdLinks((current) => appendReleaseTapdLinks(current, extracted.links));
+    }
+    return { text: extracted.text, linkCount: extracted.links.length };
+  };
+
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
     const parsedInitiations = parsed.initiationCandidates ?? [];
     const source = !temporary && parsed.matchedInitiationId ? parsedInitiations.find((item) => item.id === parsed.matchedInitiationId)
@@ -478,6 +495,10 @@ export function ReleaseWorkflowDetail({
   };
 
   const saveNew = async () => {
+    if (tapdInvalid) {
+      setMessage('请填写有效的 TAPD 链接，或勾选「无 TAPD 链接」。');
+      return;
+    }
     if (!temporary && !planName.trim()) {
       setMessage('请填写产品方案名称');
       return;
@@ -525,6 +546,8 @@ export function ReleaseWorkflowDetail({
       historyConfirmationToken,
       initiationId: temporary ? undefined : initiationId,
       isTemporaryOptimization: temporary,
+      noTapdLinks: temporary ? undefined : noTapdLinks,
+      tapdLinks: temporary ? undefined : noTapdLinks ? [] : tapdLinks.map(({ title, url }) => ({ title: title.trim(), url: url.trim() })),
       planName: temporary ? temporaryPlanName : planName.trim() || undefined,
       ownerId,
       openBrandScope: effectiveOpenBrandScope,
@@ -555,13 +578,18 @@ export function ReleaseWorkflowDetail({
     }
     let autoCopied = false;
     try {
-      await navigator.clipboard.writeText(res.data.vCode);
-      autoCopied = true;
+      if (res.data.vCode) {
+        await navigator.clipboard.writeText(res.data.vCode);
+        autoCopied = true;
+      }
     } catch {
       // 详情页保留手动复制入口。
     }
     if (onCreated) onCreated(res.data, autoCopied);
-    else navigate(`/product-agent/p/${productId}/release/${res.data.id}`, { replace: true, state: { issuedCode: res.data.vCode, autoCopied } });
+    else navigate(`/product-agent/p/${productId}/release/${res.data.id}`, {
+      replace: true,
+      state: res.data.vCode ? { issuedCode: res.data.vCode, autoCopied } : undefined,
+    });
   };
 
   const saveManifest = async () => {
@@ -662,9 +690,11 @@ export function ReleaseWorkflowDetail({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {!isNew && release && release.createdBy === currentUser?.userId && release.status !== 'voided' && <ReleaseEditAction release={release} userNames={userDisplayNames} onSaved={setRelease} />}
+          {!isNew && release && release.createdBy === currentUser?.userId && <ReleaseDeleteAction id={release.id} code={release.vCode} status={release.status} voidReason={release.voidReason} canDelete={release.canDelete} onDeleted={() => { if (onClose) onClose(); else navigate('/product-agent?section=versions&versionTab=release'); }} />}
           {!isNew && release?.status === 'announcement_pending' && (
             <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-amber)]">
-              待完成上线
+              待填写上线公告
             </span>
           )}
           {!isNew && release && (
@@ -686,6 +716,7 @@ export function ReleaseWorkflowDetail({
           </p>
         )}
         <VersionCopyActions kind="release" id={release.id} code={release.vCode} />
+        <DebugClaimNotificationButton kind="V" id={release.id} visible={release.claimNotification?.status === 'debug_pending'} />
       </>}
 
       {(!isNew || temporary) && <div className="flex border-b border-token-subtle">
@@ -735,7 +766,7 @@ export function ReleaseWorkflowDetail({
                   <button
                     type="button"
                     onClick={() => navigate(`/product-agent/p/${productId}/initiation/${linkedInitiation.id}`)}
-                    className="ml-1 font-mono text-cyan-300 hover:underline"
+                    className="ml-1 font-mono text-semantic-cyan hover:underline"
                   >
                     {linkedInitiation.tCode}
                   </button>
@@ -797,7 +828,8 @@ export function ReleaseWorkflowDetail({
         <div className={isNew && !temporary ? 'space-y-6' : 'space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5'}>
           {isNew ? (
             <>
-              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
+              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion}
+                prepareText={temporary ? undefined : prepareReleaseNotice} />
               {temporary ? <>
                 {ownerField}
                 <InfoBox>临时优化需求请在「需求」标签页选择要上线的需求条目。</InfoBox>
@@ -826,6 +858,8 @@ export function ReleaseWorkflowDetail({
                   {ownerField}
                   {memberField}
                 </section>
+                <ReleaseTapdFields noLinks={noTapdLinks} links={tapdLinks} onNoLinksChange={setNoTapdLinks}
+                  onLinksChange={setTapdLinks} disabled={busy} required />
                 <section aria-label="上线安排" className="space-y-4 border-t border-token-subtle pt-5">
                   <h2 className="text-sm font-semibold text-token-primary">上线安排</h2>
                   {scheduleFields}
@@ -849,7 +883,7 @@ export function ReleaseWorkflowDetail({
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-xs text-token-secondary">追加需求</span>
                     <button type="button" onClick={() => setShowRequirementPicker((v) => !v)} aria-label="搜索并新增需求"
-                      className="flex h-7 w-7 items-center justify-center rounded-md border border-token-subtle bg-token-nested text-token-secondary hover:border-cyan-400/40 hover:text-cyan-200">
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-token-subtle bg-token-nested text-token-secondary hover:border-cyan-400/40 hover-text-semantic-cyan">
                       <Plus size={14} />
                     </button>
                   </div>
@@ -857,7 +891,7 @@ export function ReleaseWorkflowDetail({
                     ? <div className="mb-2 flex flex-wrap gap-2">{selectedAdditionalRequirements.map((r) =>
                         <span key={r.id} className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-blue)]">
                           {r.requirementNo} {r.title}
-                          <button type="button" onClick={() => setExtraIds((ids) => ids.filter((id) => id !== r.id))} className="text-cyan-100/55 hover:text-cyan-100"><X size={12} /></button>
+                          <button type="button" onClick={() => setExtraIds((ids) => ids.filter((id) => id !== r.id))} className="text-token-secondary hover-text-semantic-cyan"><X size={12} /></button>
                         </span>)}
                     </div>
                     : <div className="rounded-lg border border-dashed border-token-subtle px-3 py-3 text-xs text-token-muted-faint">点击右侧 + 搜索并选择需要追加的需求</div>}
@@ -923,7 +957,7 @@ export function ReleaseWorkflowDetail({
             {isNew ? (
               <PrimaryButton
                 onClick={() => void saveNew()}
-                disabled={busy || basicInvalid || (temporary && manifestInvalid)}
+                disabled={busy || basicInvalid || tapdInvalid || (temporary && manifestInvalid)}
               >
                 {busy ? <><Loader2 size={14} className="animate-spin" /> 处理中...</> : '确认并获取正式版本号'}
               </PrimaryButton>
@@ -980,14 +1014,14 @@ function FeatureManifestPanel({
     <div className="flex flex-col gap-4">
       {previousVCode && (
         <InfoBox>
-          已继承上一正式版本 <b className="font-mono text-cyan-200">{previousVCode}</b> 的功能清单。请标注本版相对上一版的变更（新增 / 优化 / 废弃）。
+          已继承上一正式版本 <b className="font-mono text-semantic-cyan">{previousVCode}</b> 的功能清单。请标注本版相对上一版的变更（新增 / 优化 / 废弃）。
         </InfoBox>
       )}
       {!readOnly && (
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-token-secondary">纳入功能</span>
           <button type="button" onClick={() => setShowPicker((v) => !v)}
-            className="flex h-8 items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-2.5 text-xs text-token-secondary hover:border-cyan-400/40 hover:text-cyan-200">
+            className="flex h-8 items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-2.5 text-xs text-token-secondary hover:border-cyan-400/40 hover-text-semantic-cyan">
             <Plus size={14} /> 添加功能
           </button>
         </div>
@@ -1005,7 +1039,7 @@ function FeatureManifestPanel({
               : available.map((f) => (
                   <button key={f.id} type="button" onClick={() => onAdd(f.id)}
                     className="flex w-full items-start gap-2 rounded px-2 py-2 text-left text-xs hover-bg-soft">
-                    <span className="font-mono text-cyan-200/80">{f.featureNo}</span>
+                    <span className="font-mono text-semantic-cyan">{f.featureNo}</span>
                     <span className="text-token-secondary">{f.title}</span>
                   </button>
                 ))}
@@ -1087,7 +1121,7 @@ function ManifestRow({
         <ChangeBadge changeType={item.changeType} />
         <div className="min-w-0 flex-1">
           {onOpen ? (
-            <button type="button" onClick={onOpen} className="text-left text-sm text-cyan-200/90 truncate hover:underline">{title}</button>
+            <button type="button" onClick={onOpen} className="text-left text-sm text-semantic-cyan truncate hover:underline">{title}</button>
           ) : (
             <div className="text-sm text-token-primary truncate">{title}</div>
           )}
@@ -1101,7 +1135,7 @@ function ManifestRow({
                 {FEATURE_CHANGE_LABEL[type]}
               </button>
             ))}
-            <button type="button" onClick={() => onRemove(item.featureId)} className="ml-1 text-token-muted-faint hover:text-red-300" aria-label="移除">
+            <button type="button" onClick={() => onRemove(item.featureId)} className="ml-1 text-token-muted-faint hover-text-error" aria-label="移除">
               <X size={14} />
             </button>
           </div>
@@ -1127,7 +1161,7 @@ function ChangeBadge({ changeType }: { changeType: FeatureChangeType }) {
 
 function TabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button onClick={onClick} className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover-text-primary'}`}>
+    <button onClick={onClick} className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-semantic-cyan' : 'border-transparent text-token-muted hover-text-primary'}`}>
       {children}
     </button>
   );
@@ -1181,7 +1215,7 @@ function RequirementChecks({ requirements, selected, onChange }: {
           <label key={r.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-xs hover-bg-soft">
             <input type="checkbox" className="mt-0.5 accent-cyan-400" checked={selected.includes(r.id)} onChange={() => toggle(r.id)} />
             <span className="min-w-0">
-              <span className="block font-mono text-cyan-200/80">{r.requirementNo}</span>
+              <span className="block font-mono text-semantic-cyan">{r.requirementNo}</span>
               <span className="mt-0.5 block break-words text-token-secondary">{r.title}</span>
             </span>
           </label>
@@ -1201,7 +1235,7 @@ function RequirementSummary({ title, requirements, emptyText }: {
         ? <div className="text-xs text-token-muted-faint">{emptyText}</div>
         : <div className="space-y-1.5">{requirements.map((r) => (
             <div key={r.id} className="rounded-md bg-token-nested px-2.5 py-2 text-xs text-token-secondary">
-              <span className="mr-2 font-mono text-cyan-200">{r.requirementNo}</span>{r.title}
+              <span className="mr-2 font-mono text-semantic-cyan">{r.requirementNo}</span>{r.title}
             </div>))}</div>}
     </div>
   );
@@ -1310,12 +1344,14 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged, tempor
   return <Dialog
     open
     onOpenChange={(open) => { if (!open) close(); }}
-    title={issued ? '正式版本申领结果' : temporary ? '临时优化需求上线' : '申领正式版本号'}
+    title={temporary ? '临时优化需求上线' : issued ? '正式版本申领结果' : '申领正式版本号'}
     maxWidth={960}
     contentStyle={{ height: 'min(780px, calc(100dvh - 64px))', maxHeight: 'calc(100dvh - 64px)' }}
     content={<div style={{ maxHeight: 'min(700px, calc(100dvh - 144px))', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}>
       {issued && <p role="status" className="mb-3 rounded-lg border border-cyan-400/25 bg-cyan-400/5 px-3 py-2 text-sm text-token-secondary">
-        {issued.release.vCode} 已生成{issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。
+        {issued.release.vCode
+          ? `${issued.release.vCode} 已生成${issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。`
+          : '临时优化需求已上线。'}
       </p>}
       <ReleaseWorkflowDetail
         key={issued?.release.id ?? 'new'}

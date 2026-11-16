@@ -4,6 +4,7 @@ export type { StorageProvisionTarget } from './storage-birth-primitive.js';
 import { createHash } from 'node:crypto';
 import type { CdsConfig, InfraService, IShellExecutor, StorageBinding } from '../types.js';
 import { infraStoragePlan, renderStoragePlan, stableStorageVolumeName, resolveStorageImage, inspectStoragePlan, type DeploymentStoragePlan } from './deployment-storage-plan.js';
+import type { BoundedStorageProof } from './bounded-storage-provider.js';
 export interface StorageBirth {
     version: 1;
     target?: StorageProvisionTarget;
@@ -24,6 +25,7 @@ export interface StorageBirth {
         mountpoint: string;
         createdAt: string;
         labels: Record<string, string>;
+        bounded?: BoundedStorageProof;
     };
 }
 export interface StorageProvisionStore {

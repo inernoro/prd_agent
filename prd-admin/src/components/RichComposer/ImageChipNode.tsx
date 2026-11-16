@@ -228,17 +228,18 @@ function ImageChipComponent({
   return (
     <>
       {/* 缩略图 */}
-      <img
+      {src ? <img
         src={src}
         alt=""
         className="border border-token-subtle" style={{ width: 14, height: 14, borderRadius: 3, objectFit: 'cover', flexShrink: 0, opacity: imgOpacity }}
-      />
+      /> : null}
       {/* 标签 */}
       <span
         style={{
           fontSize: 13,
           fontWeight: 500,
-          color: `rgba(255,255,255,${textOpacity})`,
+          color: 'var(--text-primary)',
+          opacity: textOpacity,
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',

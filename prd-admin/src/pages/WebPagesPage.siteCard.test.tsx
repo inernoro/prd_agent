@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { SiteCard } from './WebPagesPage';
+import { SiteCard, SiteListItem } from './WebPagesPage';
 import type { HostedSite } from '@/services/real/webPages';
 import { buildCardActionLayers, canDragSiteCard } from '@/components/web-hosting/SiteCard';
 import type { SiteCaps, SiteCardSize, SiteShareStats } from '@/components/web-hosting/SiteCard';
@@ -35,11 +35,13 @@ function renderSiteCard(
   size: SiteCardSize = 'medium',
   shareStats?: SiteShareStats,
   selected = false,
+  activity?: { editCount: number; isNew: boolean },
 ) {
   return renderToStaticMarkup(
     <SiteCard
       site={site}
       size={size}
+      activity={activity}
       selected={selected}
       shared={shared}
       shareStats={shareStats}
@@ -59,6 +61,41 @@ function renderSiteCard(
 }
 
 describe('WebPagesPage SiteCard', () => {
+  it('仅标记已分享，新建未打开和编辑次数独立表达', () => {
+    const unread = renderSiteCard(baseSite, ownerCaps, false, 'small', undefined, false, { editCount: 0, isNew: true });
+    expect(unread).not.toContain('未分享');
+    expect(unread).not.toContain('data-site-shared-badge');
+    expect(unread).toContain('新创建，尚未打开');
+    expect(unread).toContain('已编辑 0 次');
+    expect(unread).toContain('data-site-edit-badge');
+    const readShared = renderSiteCard(baseSite, ownerCaps, true, 'small', undefined, false, { editCount: 3, isNew: false });
+    expect(readShared).toContain('data-site-shared-badge');
+    expect(readShared).not.toContain('新创建，尚未打开');
+    expect(readShared).toContain('已编辑 3 次');
+    expect(renderSiteCard()).not.toContain('已编辑 0 次');
+    expect(renderSiteCard()).toContain('编辑次数暂不可用');
+    expect(renderSiteCard()).toContain('aria-label="全部访问（含作者）"');
+    expect(renderSiteCard()).toContain('访问统计暂不可用');
+    expect(renderSiteCard()).not.toContain('3 浏览');
+  });
+
+  it('卡片来源移入详情，列表仍沿用旧 api 来源契约', () => {
+    const site = { ...baseSite, sourceType: 'api' as const };
+    const card = renderSiteCard(site);
+    const row = renderToStaticMarkup(<SiteListItem
+      site={site} selected={false} shared={false} caps={ownerCaps}
+      onSelect={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onShare={vi.fn()}
+      onQrCode={vi.fn()} onTogglePublic={vi.fn()}
+    />);
+    expect(card).not.toContain('MCP 生成');
+    expect(card).toContain('查看网页详情');
+    for (const html of [row]) {
+      expect(html).toContain('MCP 生成');
+      expect(html).not.toContain('API');
+      expect(html).toContain('aria-label="更多设置"');
+    }
+  });
+
   it('把高频操作放在常驻层，低频操作留在更多菜单', () => {
     const html = renderSiteCard();
 
@@ -102,10 +139,11 @@ describe('WebPagesPage SiteCard', () => {
     // 容器**不能**在 hover 时整条变可点：它以整条宽度盖住左下角的批量勾选框，
     // 一旦接管指针，勾选框就看得见点不动（2026-08-25 实测，只有真实指针序列会红）。
     // 可点的只能是里面的按钮，它们自带 pointer-events-auto。
-    expect(html).not.toContain('group-hover:pointer-events-auto');
+    const hoverBar = html.match(/data-hoverbar[^>]*>/)?.[0] || '';
+    expect(hoverBar).not.toContain('group-hover:pointer-events-auto');
     expect(html).toContain('pointer-events-auto inline-flex');
     // 键盘 focus 走同一条路：容器只负责显形（opacity/位移），可点性始终在按钮身上
-    expect(html).not.toContain('group-focus-within:pointer-events-auto');
+    expect(hoverBar).not.toContain('group-focus-within:pointer-events-auto');
     expect(html).toContain('group-focus-within:opacity-100');
   });
 
@@ -180,22 +218,22 @@ describe('WebPagesPage SiteCard', () => {
     expect(html).not.toContain('aria-label="分享"');
   });
 
-  it('缩略图层只放「这是什么」，信息层只放「它现在怎么样」', () => {
+  it('缩略图显示状态图标，HTML 与来源不占卡片空间', () => {
     const html = renderSiteCard({ ...baseSite, visibility: 'public', sharedTeamIds: ['team-1'] }, ownerCaps, true, 'medium', {
       activeLinks: 3,
     });
 
     // 形态与来源（缩略图层两角）
-    expect(html).toContain('HTML');
-    expect(html).toContain('手动上传');
+    expect(html).not.toContain('data-site-card-type');
+    expect(html).not.toContain('手动上传');
     // 状态（信息层一行，四种同时成立也不挤进缩略图角落）
     expect(html).toContain('已公开');
     expect(html).toContain('团队共享');
   });
 
   it('形态角标只在有真实数据时出现', () => {
-    // 单页 HTML：有「单页」角标
-    expect(renderSiteCard()).toContain('单页');
+    // 单个 HTML 不再重复标记「单页」
+    expect(renderSiteCard()).not.toContain('单页');
 
     // 视频包装站：前端拿不到时长，不编一个空角标
     const video = renderSiteCard({ ...baseSite, wrappedAssetType: 'video', coverImageUrl: undefined });
@@ -220,10 +258,9 @@ describe('WebPagesPage SiteCard', () => {
 
     // 小卡放不下常驻按钮条，但 kebab 必须在，否则小卡视图下无法操作
     expect(html).toContain('aria-label="更多设置"');
-    // 分享状态：小卡是「绿点 + 已分享」独占一行（设计稿屏 2 小卡形态），
-    // 条数收进 title——不能因为卡片小就把这个状态整个丢掉
+    // 分享状态移入元信息行，小卡保留绿色链接图标与完整说明，不能因尺寸小而丢失状态
     expect(html).toContain('已分享');
-    expect(html).toContain('已分享 1 条链接');
+    expect(html).toContain('查看状态：已分享');
     expect(html).not.toContain('帮我修改');
     expect(html).not.toContain('版本记录');
     expect(html).toContain('height:92px');
@@ -235,7 +272,7 @@ describe('WebPagesPage SiteCard', () => {
       const html = renderSiteCard(baseSite, ownerCaps, false, size);
       expect(html).toContain('hidden [@media(hover:none)]:block');
       expect(html).toContain('aria-label="更多设置"');
-      expect(html).toContain('[@media(hover:none)]:hidden');
+      expect(html).toContain('[@media(hover:hover)]:flex');
     }
   });
 
@@ -266,7 +303,7 @@ describe('WebPagesPage SiteCard', () => {
 
     // 半径必须处处一致：`.site-card-fresh::before` 的光环走 border-radius:inherit，
     // 根节点与内框不同半径时，那圈光环也会错开。
-    const radii = [...html.matchAll(/border-radius:\s*([0-9]+)px/g)].map((m) => m[1]);
+    const radii = [...html.split('data-site-card-thumbnail')[0].matchAll(/border-radius:\s*([0-9]+)px/g)].map((m) => m[1]);
     expect(radii.length).toBeGreaterThanOrEqual(2);
     expect(new Set(radii).size).toBe(1);
   });
@@ -274,8 +311,9 @@ describe('WebPagesPage SiteCard', () => {
   it('大卡的成果数据不把体积当 KPI', () => {
     const html = renderSiteCard(baseSite, ownerCaps, true, 'large', { activeLinks: 2, lastViewedAt: baseSite.updatedAt });
 
-    expect(html).toContain('有效链接');
-    expect(html).toContain('最近访问');
+    expect(html).toContain('data-site-card-meta');
+    expect(html).toContain('aria-label="网页统计"');
+    expect(html).not.toContain('有效链接');
     // 体积只出现在元信息行（1.0 KB），不作为 KPI 标签
     expect(html).not.toContain('>体积<');
   });

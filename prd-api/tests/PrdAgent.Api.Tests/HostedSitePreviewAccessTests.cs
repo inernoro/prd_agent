@@ -19,8 +19,12 @@ public sealed class HostedSitePreviewAccessTests
 {
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
-    [Fact]
-    public async Task AccessAndFileReadBindAuthorizedViewerRevisionAndPackage()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("same-site")]
+    [InlineData("cross-site")]
+    [InlineData("none")]
+    public async Task AccessAndFileReadBindAuthorizedViewerRevisionAndPackage(string? fetchSite)
     {
         var revision = Revision();
         var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
@@ -28,6 +32,7 @@ public sealed class HostedSitePreviewAccessTests
             .ReturnsAsync(revision);
         var access = new HostedSitePreviewAccessService(new EphemeralDataProtectionProvider());
         var accessController = Controller(new HostedSitePreviewAccessController(revisions.Object, access), "viewer-user");
+        if (fetchSite != null) accessController.Request.Headers["Sec-Fetch-Site"] = fetchSite;
 
         var create = Assert.IsType<OkObjectResult>(await accessController.Create(new("site-a", "revision-a")));
         var data = JsonSerializer.SerializeToElement(create.Value, WebJson).GetProperty("data");
@@ -35,6 +40,7 @@ public sealed class HostedSitePreviewAccessTests
         var previewUrl = data.GetProperty("previewUrl").GetString()!;
         const string bootstrapPrefix = "/api/hosted-site-preview-files/bootstrap/";
         Assert.StartsWith(bootstrapPrefix, previewUrl, StringComparison.Ordinal);
+        Assert.True(string.IsNullOrEmpty(accessController.Response.Headers.SetCookie.ToString()));
         var ticket = previewUrl[bootstrapPrefix.Length..];
 
         var fileController = Controller(new HostedSitePreviewFilesController(revisions.Object, access));
@@ -52,6 +58,104 @@ public sealed class HostedSitePreviewAccessTests
         revisions.Verify(x => x.GetAsync("site-a", "revision-a", "viewer-user", CancellationToken.None), Times.Once);
         revisions.Verify(x => x.GetVerifiedFileAsync(
             "site-a", "revision-a", "assets/app.js", "viewer-user", CancellationToken.None), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("/platform")]
+    public async Task SameOriginAccessSetsCookieAndReturnsDirectRevisionEntry(string pathBase)
+    {
+        var revision = Revision();
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(x => x.GetAsync("site-a", "revision-a", "viewer-user", CancellationToken.None))
+            .ReturnsAsync(revision);
+        var access = new HostedSitePreviewAccessService(new EphemeralDataProtectionProvider());
+        var controller = Controller(new HostedSitePreviewAccessController(revisions.Object, access), "viewer-user", pathBase);
+        controller.Request.Headers["Sec-Fetch-Site"] = "same-origin";
+        var startedAt = DateTime.UtcNow;
+
+        var result = Assert.IsType<OkObjectResult>(await controller.Create(new("site-a", "revision-a")));
+        var data = JsonSerializer.SerializeToElement(result.Value, WebJson).GetProperty("data");
+        var previewUrl = data.GetProperty("previewUrl").GetString()!;
+        var setCookie = controller.Response.Headers.SetCookie.ToString();
+        var returnsBootstrap = previewUrl.Contains("/bootstrap/", StringComparison.Ordinal);
+        var cookieSet = !string.IsNullOrEmpty(setCookie);
+        // 红例只输出状态，不让失败消息打印短期预览票据。
+        Assert.True(!returnsBootstrap && cookieSet,
+            $"same-origin returnsBootstrap={returnsBootstrap}; postCookieSet={cookieSet}");
+        const string prefix = "/api/hosted-site-preview-files/";
+        Assert.True(previewUrl.StartsWith(prefix, StringComparison.Ordinal)
+            && previewUrl.EndsWith("/index.html", StringComparison.Ordinal)
+            && !previewUrl.Contains('?') && !previewUrl.Contains('#'));
+        var accessId = previewUrl[prefix.Length..^"/index.html".Length];
+        Assert.Equal(32, accessId.Length);
+        Assert.True(Microsoft.Net.Http.Headers.SetCookieHeaderValue.TryParse(setCookie, out var cookie));
+        Assert.NotNull(cookie);
+        Assert.Equal(HostedSitePreviewFilesController.CookieNamePrefix + accessId, cookie.Name.ToString());
+        Assert.True(cookie.HttpOnly);
+        Assert.True(cookie.Secure);
+        Assert.Equal(Microsoft.Net.Http.Headers.SameSiteMode.Strict, cookie.SameSite);
+        Assert.Equal($"{pathBase}/api/hosted-site-preview-files/{accessId}", cookie.Path.ToString());
+        Assert.True(access.TryRead(cookie.Value.ToString(), out var payload));
+        Assert.Equal("site-a", payload.SiteId);
+        Assert.Equal("revision-a", payload.RevisionId);
+        Assert.Equal("viewer-user", payload.UserId);
+        Assert.Equal(accessId, payload.AccessId);
+        Assert.False(previewUrl.Contains(cookie.Value.ToString(), StringComparison.Ordinal));
+        var expiresAt = data.GetProperty("expiresAt").GetDateTime();
+        Assert.Equal(payload.ExpiresAt, expiresAt);
+        Assert.InRange(expiresAt, startedAt + HostedSitePreviewAccessService.Lifetime,
+            DateTime.UtcNow + HostedSitePreviewAccessService.Lifetime);
+        Assert.NotNull(cookie.Expires);
+        Assert.InRange(Math.Abs((cookie.Expires.Value.UtcDateTime - expiresAt).TotalSeconds), 0, 1);
+        Assert.Equal("private, no-store, max-age=0", controller.Response.Headers.CacheControl);
+        Assert.Equal("no-cache", controller.Response.Headers.Pragma);
+        Assert.Equal("no-referrer", controller.Response.Headers["Referrer-Policy"]);
+
+        var fileController = Controller(new HostedSitePreviewFilesController(revisions.Object, access), pathBase: pathBase);
+        fileController.Request.Headers.Cookie = setCookie.Split(';', 2)[0];
+        foreach (var file in revision.VerifiedFiles)
+        {
+            revisions.Setup(x => x.GetVerifiedFileAsync(
+                    "site-a", "revision-a", file.Path, "viewer-user", CancellationToken.None))
+                .ReturnsAsync(file);
+            var content = Assert.IsType<FileContentResult>(await fileController.Read(accessId, file.Path));
+            Assert.Equal(file.Content, content.FileContents);
+            Assert.Equal(file.MimeType, content.ContentType);
+        }
+        revisions.Verify(x => x.GetAsync("site-a", "revision-a", "viewer-user", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task SameOriginAccessStillRequiresAnAuthorizedRevisionBeforeCookie()
+    {
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(x => x.GetAsync("site-a", "revision-a", "viewer-user", CancellationToken.None))
+            .ThrowsAsync(new KeyNotFoundException());
+        var access = new HostedSitePreviewAccessService(new EphemeralDataProtectionProvider());
+        var controller = Controller(new HostedSitePreviewAccessController(revisions.Object, access), "viewer-user");
+        controller.Request.Headers["Sec-Fetch-Site"] = "same-origin";
+
+        Assert.IsType<NotFoundObjectResult>(await controller.Create(new("site-a", "revision-a")));
+        Assert.True(string.IsNullOrEmpty(controller.Response.Headers.SetCookie.ToString()));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task SameOriginAccessKeepsExistingIssueHashRejectionBeforeCookie()
+    {
+        var revision = Revision();
+        revision.VerifiedFiles[1].Content = Encoding.UTF8.GetBytes("changed without updating its hash");
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(x => x.GetAsync("site-a", "revision-a", "viewer-user", CancellationToken.None))
+            .ReturnsAsync(revision);
+        var access = new HostedSitePreviewAccessService(new EphemeralDataProtectionProvider());
+        var controller = Controller(new HostedSitePreviewAccessController(revisions.Object, access), "viewer-user");
+        controller.Request.Headers["Sec-Fetch-Site"] = "same-origin";
+
+        Assert.IsType<BadRequestObjectResult>(await controller.Create(new("site-a", "revision-a")));
+        Assert.True(string.IsNullOrEmpty(controller.Response.Headers.SetCookie.ToString()));
+        revisions.VerifyAll();
     }
 
     [Fact]

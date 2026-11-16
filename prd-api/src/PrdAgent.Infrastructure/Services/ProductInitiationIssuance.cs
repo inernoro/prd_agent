@@ -6,7 +6,7 @@ using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Infrastructure.Services;
 
-/// <summary>产品 T 号自动发放。新申领与存量待审批共用评审门、永久编号占用和条件更新。</summary>
+/// <summary>产品T号自动发放，按应用串行处理，号码只取当前有效业务记录。</summary>
 public static class ProductInitiationIssuance
 {
     private const string LegacyMigrationKey = "migration:product-initiation-single-auto-issue-20261021";
@@ -42,10 +42,15 @@ public static class ProductInitiationIssuance
         var item = await db.ProductInitiations.Find(eligible).FirstOrDefaultAsync();
         if (item == null) return null;
 
+        var applicationId = string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId;
+        await using var lease = await ProductVersionApplicationLease.AcquireAsync(db, new[] { applicationId });
+        item = await db.ProductInitiations.Find(eligible).FirstOrDefaultAsync();
+        if (item == null) return null;
+        if ((string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId) != applicationId)
+            throw new InvalidOperationException("所属应用已变化，请刷新后重新申领");
+
         var target = "initiation:" + id;
-        // 结果不明确后的重试沿用该记录已占用的编号，不释放或重用编号。
-        var code = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(db, "T", item.VersionType, target,
-            string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId);
+        var code = await ProductVersionClaimGuard.NextWorkflowCodeAsync(db, "T", item.VersionType, target, applicationId, lease);
 
         var update = Builders<ProductInitiation>.Update.Set(x => x.TCode, code).Set(x => x.Status, "approved")
             .Set(x => x.RequirementSyncPending, true).Set(x => x.IssuedAt, DateTime.UtcNow).Set(x => x.UpdatedAt, DateTime.UtcNow);
@@ -61,6 +66,7 @@ public static class ProductInitiationIssuance
         if (decision != null) update = Builders<ProductInitiation>.Update.Combine(decision, update);
         // 发号时重新检查评审、状态和软删除；并发重试不能覆盖已有编号或原资料。
         var unchanged = eligible & Builders<ProductInitiation>.Filter.Eq(x => x.UpdatedAt, item.UpdatedAt);
+        await lease.EnsureHeldAsync();
         var issued = await db.ProductInitiations.FindOneAndUpdateAsync(unchanged, update,
             new FindOneAndUpdateOptions<ProductInitiation> { ReturnDocument = ReturnDocument.After }, CancellationToken.None);
         if (issued == null) return null;

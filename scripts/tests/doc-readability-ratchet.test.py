@@ -4,7 +4,7 @@
 守两件事：
 1. 校验器本身没坏 —— 缺导读、写成黑话、长度超限都必须被抓出来；
    反过来，合规文档不许被误报。
-2. 这条闸真的接上了 —— 基线文件在、七类都在、CI 里有人跑它。
+2. 这条闸真的接上了 —— 基线文件在、已登记类型都在、CI 里有人跑它。
    （`.claude/rules/predicate-and-wiring-discipline.md` 形状 2：
     建了一半的链路删掉不会红。）
 """
@@ -62,6 +62,16 @@ print("[1] 校验器能抓出问题")
 
 check(problems_for("guide.demo.md", GOOD_HEADER) == [],
       "合规文档不被误报")
+
+for decision_type in ("adr", "pdr"):
+    decision_name = f"{decision_type}.platform.001.demo.md"
+    check(problems_for(decision_name, GOOD_HEADER) == [],
+          f"{decision_type} 决策类型接受合规导读")
+    check(any("缺「谁该读」" in p for p in problems_for(
+        decision_name, GOOD_HEADER.replace("**谁该读**：写测试的人，以及想看合规样例的人。\n", ""))),
+          f"{decision_type} 仍执行导读约束，不能借新类型绕过")
+    check(checker.find_bare_refs(f"参见 {decision_name}。", {decision_name}) == [(1, decision_name)],
+          f"{decision_type} 正文裸引用仍会被检测")
 
 check(any("缺「谁该读」" in p for p in problems_for(
     "guide.demo.md", GOOD_HEADER.replace("**谁该读**：写测试的人，以及想看合规样例的人。\n", ""))),
@@ -790,7 +800,7 @@ if os.path.exists(baseline_path):
         baseline = json.load(fh)
     missing = baseline.get("missing", {})
     bare_base = baseline.get("bare_refs", {})
-    check(set(missing) == set(checker.TYPES), "基线覆盖全部七类文档")
+    check(set(missing) == set(checker.TYPES), "基线覆盖全部登记类型")
     check(set(bare_base) == set(checker.TYPES), "基线记录了裸引用欠账")
 
     stats, _, _ = checker.scan()
@@ -1217,11 +1227,11 @@ with tempfile.TemporaryDirectory() as tmp:
                      "**谁该读**：验证判据的人。\n**读完能做什么**：知道前缀非法照样判红。\n")
         _, _, stray_bad = checker.scan()
         check(any("notes.guard-probe" in x for x in stray_bad),
-              "前缀不在七类里的文档会被点名（不再整篇跳过）")
+              "前缀未登记的文档会被点名（不再整篇跳过）")
         probe = subprocess.run(
             [sys.executable, os.path.join(REPO_ROOT, "scripts", "doc-readability-check.py"), "--ratchet"],
             cwd=REPO_ROOT, capture_output=True, text=True)
-        check(probe.returncode != 0 and "七类之外的前缀" in probe.stderr,
+        check(probe.returncode != 0 and "未登记的前缀" in probe.stderr,
               "前缀非法时闸门判失败")
     finally:
         if os.path.exists(stray):

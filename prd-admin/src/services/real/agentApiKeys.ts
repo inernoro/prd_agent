@@ -33,6 +33,7 @@ export const updateAgentApiKeyReal: UpdateAgentApiKeyContract = async (input) =>
       name: input.name,
       description: input.description,
       scopes: input.scopes,
+      ...(input.mcpCapabilityAccess === undefined ? {} : { mcpCapabilityAccess: input.mcpCapabilityAccess }),
       scopeMode: input.scopeMode,
       isActive: input.isActive,
       mcpDailyImageQuota: input.mcpDailyImageQuota,
@@ -40,6 +41,9 @@ export const updateAgentApiKeyReal: UpdateAgentApiKeyContract = async (input) =>
       mcpRateLimitPerMin: input.mcpRateLimitPerMin,
       mcpLiteraryImageModelMode: input.mcpLiteraryImageModelMode,
       mcpLiteraryImageModelPublicId: input.mcpLiteraryImageModelPublicId,
+      ...(input.webPublicExposureAllowed === undefined
+        ? {}
+        : { webPublicExposureAllowed: input.webPublicExposureAllowed }),
     },
   });
 };

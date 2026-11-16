@@ -116,8 +116,7 @@ public class LiteraryAgentImageGenController : ControllerBase
         var appCallerCode = hasReference
             ? LiteraryAgent.Illustration.Img2Img
             : LiteraryAgent.Illustration.Text2Img;
-        var item = (await GatewayImageModelCatalog.ReadAsync(_gateway, appCallerCode, ct))
-            .FirstOrDefault(x => string.Equals(x.Model.Code, requested, StringComparison.Ordinal));
+        var item = GatewayImageModelCatalog.Select(await GatewayImageModelCatalog.ReadAsync(_gateway, appCallerCode, ct), requested);
         var info = item?.ImageCapabilities;
         if (info is null)
             return BadRequest(ApiResponse<object>.Fail("LITERARY_MODEL_CAPABILITIES_UNAVAILABLE",
@@ -190,12 +189,16 @@ public class LiteraryAgentImageGenController : ControllerBase
         var adminId = GetAdminId();
         var idemKey = (Request.Headers["Idempotency-Key"].FirstOrDefault() ?? string.Empty).Trim();
         if (idemKey.Length > 200) idemKey = idemKey[..200];
-        // 幂等键按部署作用域隔离（Codex P1，见 DeploymentScope.ScopeIdempotencyKey 注释）
-        idemKey = DeploymentScope.ScopeIdempotencyKey(idemKey);
+        // 网页恢复只观察原任务，不接管旧 revision 执行；稳定分支内重放相同请求不能再次消耗生图额度。
+        var originalRequestId = idemKey;
+        idemKey = DeploymentScope.ScopeDurableIdempotencyKey(idemKey);
 
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
+            var previous = await _db.ImageGenRuns.Find(RequestLookupFilter(adminId, originalRequestId)).Limit(2).ToListAsync(ct);
+            if (previous.Count > 1)
+                return Conflict(ApiResponse<object>.Fail("IMAGE_GEN_REQUEST_AMBIGUOUS", "原请求对应多个任务，请在任务记录中核对，系统不会再次生成。"));
+            var existed = previous.SingleOrDefault();
             if (existed != null)
             {
                 PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
@@ -391,10 +394,10 @@ public class LiteraryAgentImageGenController : ControllerBase
         // 目录读取不占用半开线路租约；真正的调度留给 Worker 执行一次。
         var catalog = await GatewayImageModelCatalog.ReadAsync(_gateway, resolvedAppCallerCode, ct);
         modelId ??= catalog.FirstOrDefault(x => x.Model.IsDefault)?.Model.Code;
-        var selectedModel = catalog
-            .FirstOrDefault(x => string.Equals(x.Model.Code, modelId, StringComparison.Ordinal));
+        var selectedModel = GatewayImageModelCatalog.Select(catalog, modelId);
         if (selectedModel?.ImageCapabilities is not { } capabilities)
             return BadRequest(ApiResponse<object>.Fail("LITERARY_MODEL_CAPABILITIES_UNAVAILABLE", "无法读取当前配图模型的能力，请刷新后重新选择模型。"));
+        modelId = selectedModel.Model.Code;
         foreach (var item in plan)
         {
             var selectedSize = item.Size ?? size;
@@ -407,6 +410,9 @@ public class LiteraryAgentImageGenController : ControllerBase
 
         var run = new ImageGenRun
         {
+            // _id 的唯一性是 Mongo 固有约束，不依赖历史环境是否正确建立幂等二级索引。
+            Id = RequestRunId(adminId, idemKey) ?? Guid.NewGuid().ToString("N"),
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = adminId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
@@ -457,6 +463,31 @@ public class LiteraryAgentImageGenController : ControllerBase
     /// <summary>
     /// 获取生图任务详情
     /// </summary>
+    [HttpGet("runs/by-request")]
+    public async Task<IActionResult> GetRunByRequest([FromQuery] string requestId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(requestId) || requestId.Length > 200)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请提供原请求标识。"));
+        var owner = GetAdminId();
+        var raw = requestId.Trim();
+        // 仅回查已存在任务，不新建任务或重发供应商请求；旧 revision 的本人任务也可只读恢复。
+        var matches = await _db.ImageGenRuns.Find(RequestLookupFilter(owner, raw)).Project(x => x.Id).Limit(2).ToListAsync(ct);
+        if (matches.Count > 1)
+            return Conflict(ApiResponse<object>.Fail("IMAGE_GEN_REQUEST_AMBIGUOUS", "原请求对应多个任务，请在任务记录中核对；系统不会再次生成。"));
+        return matches.Count == 1 ? Ok(ApiResponse<object>.Ok(new { runId = matches[0] }))
+            : NotFound(ApiResponse<object>.Fail("IMAGE_GEN_REQUEST_PENDING", "尚未查到原任务，请稍后刷新核对，避免重复生成。"));
+    }
+
+    internal static string? RequestRunId(string owner, string? scopedKey)
+        => string.IsNullOrWhiteSpace(scopedKey) ? null
+            : PrdAgent.Api.Mcp.McpIdempotency.Fingerprint("literary-web-image-run", JsonSerializer.Serialize(new[] { owner, scopedKey }));
+
+    private static FilterDefinition<ImageGenRun> RequestLookupFilter(string owner, string requestId)
+        => Builders<ImageGenRun>.Filter.Eq(x => x.OwnerAdminId, owner)
+            & Builders<ImageGenRun>.Filter.Eq(x => x.AppKey, AppKey)
+            & Builders<ImageGenRun>.Filter.Regex(x => x.IdempotencyKey,
+                new MongoDB.Bson.BsonRegularExpression("(^|::)" + System.Text.RegularExpressions.Regex.Escape(requestId) + "$"));
+
     [HttpGet("runs/{runId}")]
     [ProducesResponseType(typeof(ApiResponse<ImageGenRun>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]

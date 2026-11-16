@@ -364,24 +364,16 @@ export function TeamManager() {
               {/* Weekly deadline */}
               <div>
                 <div className="text-[11px] mb-1.5 font-medium" style={{ color: 'var(--text-secondary)' }}>周报提交截止时间</div>
-                <select
+                {/* 截止时间已改为全员统一规则(后端 WeeklyReportSubmissionRules),不再按团队配置;
+                    weeklyDeadline 仍随表单原样提交,只用于统一规则生效前的历史周 */}
+                <div
                   className="w-full px-3 py-2 rounded-lg text-[13px]"
                   style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                  value={weeklyDeadline}
-                  onChange={(e) => setWeeklyDeadline(e.target.value)}
                 >
-                  <option value="friday-12:00">周五 12:00</option>
-                  <option value="friday-18:00">周五 18:00</option>
-                  <option value="friday-20:00">周五 20:00</option>
-                  <option value="saturday-12:00">周六 12:00</option>
-                  <option value="saturday-18:00">周六 18:00</option>
-                  <option value="sunday-18:00">周日 18:00</option>
-                  <option value="sunday-23:59">周日 23:59(默认)</option>
-                  <option value="monday-09:00">下周一 09:00</option>
-                  <option value="monday-10:00">下周一 10:00</option>
-                </select>
+                  每周一 24:00 前（提交上一周的周报）
+                </div>
                 <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                  超过此时间未提交的周报会标记为「已逾期」(中国时区 UTC+8)
+                  全员统一规则，自 2026 年第 46 周起生效；之前的周仍按原设置判定。截止后才提交的周报记为「超时提交」(中国时区 UTC+8)
                 </div>
               </div>
 

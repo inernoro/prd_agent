@@ -13,6 +13,10 @@
  * 真实事件行为测不了，不抽出来就只能退化成「源码里含某段字面量」的反向锁死断言。
  */
 import { describe, it, expect } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { NoticeRecordTimes } from '../../web/src/components/SiteNoticeInbox';
+import { NoticeLedgerService, NOTICE_MERGE_WINDOW_MS } from '../../src/services/notice-ledger';
 import { shouldDismissOnEscape, shouldDismissOnPointerDown } from '../../web/src/lib/outside-dismiss';
 
 /** 极简节点替身：只实现判据会用到的 contains / closest。 */
@@ -115,5 +119,70 @@ describe('信息中心接线', () => {
     expect(src).toContain('shouldDismissOnEscape({ target: event.target, activeElement: document.activeElement })');
     // 刻意不监听 scroll：面板列表区可滚，滚动关闭会误伤
     expect(src).not.toMatch(/addEventListener\('scroll'[^)]*\)\s*;?\s*\/\/\s*close/);
+  });
+});
+
+
+describe('信息中心真实账本记录时间', () => {
+  const input = { id: 'owned-release-notice', dedupeKey: 'release.failed:owned-target',
+    level: 'danger' as const, source: 'release', title: '隔离目标发布失败', body: '门禁未通过' };
+  const render = (times: Parameters<typeof NoticeRecordTimes>[0]) => renderToStaticMarkup(createElement(NoticeRecordTimes, times));
+
+  it('同窗重复展示首次和最近记录，标已读不改变两个记录时间', () => {
+    let now = Date.UTC(2026, 10, 14, 1);
+    const ledger = new NoticeLedgerService({ storePath: '', now: () => now });
+    const first = ledger.upsert(input).record;
+    now += 1000;
+    const merged = ledger.upsert(input).record;
+    expect(merged.occurrences).toBe(2);
+    const html = render(merged);
+    expect(html).toContain('首次记录'); expect(html).toContain('最近记录');
+    expect(html).toContain(`dateTime="${first.createdAt}"`);
+    expect(html).toContain(`title="${merged.updatedAt}"`);
+    expect(html.match(/<time /g)).toHaveLength(2);
+    ledger.markAllRead();
+    expect(ledger.list()[0].readAt).toBeDefined();
+    expect(render(ledger.list()[0])).toBe(html);
+  });
+
+  it('超窗再次发生仍显示原首次记录，最近记录来自新轮次而非已读时间', () => {
+    let now = Date.UTC(2026, 10, 14, 1);
+    const ledger = new NoticeLedgerService({ storePath: '', now: () => now });
+    const first = ledger.upsert(input).record;
+    now += NOTICE_MERGE_WINDOW_MS + 1;
+    const relit = ledger.upsert(input);
+    expect(relit.action).toBe('relit');
+    const html = render(relit.record);
+    expect(html).toContain(`dateTime="${first.createdAt}"`);
+    expect(html).toContain(`dateTime="${relit.record.updatedAt}"`);
+    expect(relit.record.updatedAt).not.toBe(first.createdAt);
+    expect(html).not.toMatch(/本轮首次|故障发生|已恢复/);
+  });
+
+  it.each([
+    { createdAt: '', updatedAt: 'invalid' },
+    { createdAt: undefined, updatedAt: undefined },
+  ])('缺失或无效时间不补当前时间或epoch：%j', times => {
+    const html = render(times as Parameters<typeof NoticeRecordTimes>[0]);
+    expect(html.match(/时间未记录/g)).toHaveLength(2);
+    expect(html).not.toMatch(/<time |Invalid Date|1970/);
+  });
+
+  it('一个字段缺失时不拿另一个字段代替，保留有效ISO供核对', () => {
+    const iso = '2026-11-14T01:02:03.456Z';
+    const html = render({ createdAt: iso, updatedAt: '' });
+    expect(html.match(/<time /g)).toHaveLength(1);
+    expect(html).toContain(`dateTime="${iso}" title="${iso}"`);
+    expect(html).toContain('最近记录：时间未记录');
+  });
+
+  it('实际通用站内卡调用时间元信息，不只导出未接线的组件', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const source = fs.readFileSync(path.resolve(__dirname, '../../web/src/components/SiteNoticeInbox.tsx'), 'utf8');
+    const card = source.slice(source.indexOf('activeNotices.map((notice)'));
+    expect(card).toContain('<NoticeRecordTimes');
+    expect(card).toContain('createdAt={notice.createdAt}');
+    expect(card).toContain('updatedAt={notice.updatedAt}');
   });
 });

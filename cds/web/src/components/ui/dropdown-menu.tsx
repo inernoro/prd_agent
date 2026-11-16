@@ -1,3 +1,5 @@
+import { MotionLink, SurfaceOriginContext, isConsoleHref } from '@/components/layout/RouteMotion';
+import { useInRouterContext } from 'react-router-dom';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
@@ -129,7 +131,7 @@ export function DropdownMenu({
                 setOpen(false);
               }}
             >
-              {children}
+              <SurfaceOriginContext.Provider value={triggerRef.current}>{children}</SurfaceOriginContext.Provider>
             </div>,
             document.body,
           )
@@ -159,11 +161,15 @@ export function DropdownItem({
   target?: string;
   rel?: string;
 }): JSX.Element {
+  const inRouter = useInRouterContext();
   const className = cn(
     'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-[hsl(var(--surface-sunken))]',
     destructive ? 'text-destructive hover:text-destructive' : 'text-foreground',
     disabled ? 'pointer-events-none opacity-50' : null,
   );
+  if (asChild && href && inRouter && isConsoleHref(href)) {
+    return <MotionLink className={className} to={href} download={download} target={target} rel={rel} role="menuitem">{children}</MotionLink>;
+  }
   if (asChild && href) {
     return (
       <a className={className} href={href} download={download} target={target} rel={rel} role="menuitem">

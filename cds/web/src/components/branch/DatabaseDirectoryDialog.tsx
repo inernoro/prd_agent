@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useState } from 'react';
 import { Database, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -27,7 +28,7 @@ export function DatabaseDirectoryDialog({ open, onOpenChange, entries, loading, 
         <input aria-label="搜索数据库或分支" className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索数据库、类型或分支" value={search} onChange={(event) => setSearch(event.target.value)} />
       </label>
       <div className="min-h-0 flex-1 space-y-3 px-4 pb-4" style={{ overflowY: 'auto' }}>
-        {loading ? <p role="status" className="text-sm text-muted-foreground">正在读取项目数据库…</p> : !visible.length ? <p className="text-sm text-muted-foreground">{entries.length ? '没有匹配的数据库，请调整搜索。' : '项目还没有数据库资源。请在项目设置中添加基础设施，再返回此处。'}</p> : visible.map((entry) => {
+        {loading ? <ContentLoading label="读取项目数据库" variant="rows" /> : !visible.length ? <p className="text-sm text-muted-foreground">{entries.length ? '没有匹配的数据库，请调整搜索。' : '项目还没有数据库资源。请在项目设置中添加基础设施，再返回此处。'}</p> : visible.map((entry) => {
           const { resource } = entry;
           return <section key={`${entry.branchId}:${resource.id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-4" aria-label={`${entry.branchName} ${resource.displayName}`}>
             <div className="min-w-0 flex-1">

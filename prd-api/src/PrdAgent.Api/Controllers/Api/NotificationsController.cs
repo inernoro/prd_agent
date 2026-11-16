@@ -1,10 +1,13 @@
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Security;
@@ -17,21 +20,25 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("dashboard", AdminPermissionCatalog.Access)]
 public sealed class NotificationsController : ControllerBase
 {
+    private const string LegacyPersonalDataTransferKeyPattern = @"^data-transfer(?:-accepted|-rejected)?:[0-9a-f]{32}$";
     private readonly MongoDbContext _db;
     private readonly AdminPushNotificationService _pushService;
     private readonly AdminNotificationEventService _eventService;
     private readonly IConfiguration _configuration;
+    private readonly IAdminPermissionService _adminPermissions;
 
     public NotificationsController(
         MongoDbContext db,
         AdminPushNotificationService pushService,
         AdminNotificationEventService eventService,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IAdminPermissionService adminPermissions)
     {
         _db = db;
         _pushService = pushService;
         _eventService = eventService;
         _configuration = configuration;
+        _adminPermissions = adminPermissions;
     }
 
     [HttpGet]
@@ -40,17 +47,30 @@ public sealed class NotificationsController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
-        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled, HasAdminNotificationPermission());
+        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled, await HasAdminNotificationPermissionAsync(ct));
 
         var items = await _db.AdminNotifications
             .Find(filter)
-            .SortByDescending(x => x.CreatedAt)
-            .Limit(200)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(201)
             .ToListAsync(ct);
+
+        var hasMore = items.Count > 200;
+        items = items.Take(200).ToList();
+        var canOpenGateway = await HasGatewayActionPermissionAsync(ct);
+        var openItems = items.Where(x => x.Status == "open").ToList();
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            items = items.Select(ToNotificationDto)
+            items = items.Select(n => ToNotificationDto(n, canOpenGateway)),
+            hasMore,
+            summary = new
+            {
+                notificationCount = openItems.Count,
+                independentIncidentCount = openItems.Where(x => !string.IsNullOrWhiteSpace(x.IncidentId))
+                    .Select(x => (x.Source, x.TargetUserId, x.IncidentId)).Distinct().Count(),
+                unclassifiedCount = openItems.Count(x => string.IsNullOrWhiteSpace(x.IncidentId)),
+            }
         }));
     }
 
@@ -236,7 +256,7 @@ public sealed class NotificationsController : ControllerBase
             userId,
             now,
             includeHandled: false,
-            includeAdmin: HasAdminNotificationPermission());
+            includeAdmin: await HasAdminNotificationPermissionAsync(ct));
         var update = Builders<AdminNotification>.Update
             .Set(x => x.Status, "handled")
             .Set(x => x.HandledAt, now)
@@ -265,14 +285,64 @@ public sealed class NotificationsController : ControllerBase
             userId,
             now,
             includeHandled: false,
-            includeAdmin: HasAdminNotificationPermission());
+            includeAdmin: await HasAdminNotificationPermissionAsync(ct));
         var update = Builders<AdminNotification>.Update
             .Set(x => x.Status, "handled")
             .Set(x => x.HandledAt, now)
             .Set(x => x.UpdatedAt, now);
 
-        await _db.AdminNotifications.UpdateManyAsync(filter, update, cancellationToken: ct);
-        return Ok(ApiResponse<object>.Ok(new { handled = true }));
+        var result = await _db.AdminNotifications.UpdateManyAsync(filter, update, cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { handled = true, count = result.ModifiedCount,
+            effect = "仅确认当前有权查看的通知，不改变故障状态；共享通知对所有有权查看者生效" }));
+    }
+
+    [HttpPost("handle-batch")]
+    public async Task<IActionResult> HandleBatch([FromBody] NotificationBatchHandleRequest request, CancellationToken ct = default)
+    {
+        if (request.Items is not { Count: > 0 and <= 200 }
+            || request.Items.Any(x => x is null || string.IsNullOrWhiteSpace(x.Id) || x.PushEpisode < 0 || x.UpdatedAt == default)
+            || request.Items.Select(x => x.Id).Distinct(StringComparer.Ordinal).Count() != request.Items.Count)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择 1 至 200 条不同通知，刷新列表后重试"));
+        var now = DateTime.UtcNow;
+        var visible = BuildVisibleNotificationFilter(this.GetRequiredUserId(), now, false, await HasAdminNotificationPermissionAsync(ct));
+        var results = new List<object>();
+        var handled = 0;
+        foreach (var item in request.Items)
+        {
+            try
+            {
+                // 快照防止把确认后新发生的一代故障或加载后更新的事实一并吞掉。
+                var filter = visible & Builders<AdminNotification>.Filter.Eq(x => x.Id, item.Id)
+                    & (item.PushEpisode == 0
+                        ? Builders<AdminNotification>.Filter.Eq(x => x.PushEpisode, 0) | Builders<AdminNotification>.Filter.Exists(x => x.PushEpisode, false)
+                        : Builders<AdminNotification>.Filter.Eq(x => x.PushEpisode, item.PushEpisode))
+                    & Builders<AdminNotification>.Filter.Eq(x => x.UpdatedAt, item.UpdatedAt);
+                var update = Builders<AdminNotification>.Update.Set(x => x.Status, "handled")
+                    .Set(x => x.HandledAt, now).Set(x => x.UpdatedAt, now);
+                var result = await _db.AdminNotifications.UpdateOneAsync(filter, update, cancellationToken: ct);
+                var success = result.MatchedCount == 1;
+                if (success) handled++;
+                results.Add(new { item.Id, handled = success,
+                    reason = success ? null : "通知已更新、已确认或无权操作，请刷新后重试" });
+            }
+            catch (MongoException ex)
+            {
+                // 批量中的一项失败不伪装为全部成功；原始诊断不进入用户响应。
+                HttpContext.RequestServices.GetService<ILogger<NotificationsController>>()?
+                    .LogWarning(ex, "批量确认通知失败 notification={NotificationId}", item.Id);
+                results.Add(new { item.Id, handled = false, reason = "通知确认未成功，请刷新后重试" });
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(new { requested = request.Items.Count, handled,
+            failed = request.Items.Count - handled, results }));
+    }
+
+    private async Task<bool> HasGatewayActionPermissionAsync(CancellationToken ct)
+    {
+        var isRoot = User.FindFirst("isRoot")?.Value == "1";
+        if (isRoot) return true;
+        var permissions = await _adminPermissions.GetEffectivePermissionsAsync(this.GetRequiredUserId(), false, ct);
+        return permissions.Contains(AdminPermissionCatalog.Super) || permissions.Contains(AdminPermissionCatalog.LlmGatewayAccess);
     }
 
     private bool HasAdminNotificationEventPermission()
@@ -283,14 +353,10 @@ public sealed class NotificationsController : ControllerBase
             return true;
 
         var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return permissions.Contains(AdminPermissionCatalog.Super)
-            || permissions.Contains(AdminPermissionCatalog.SettingsWrite)
-            || permissions.Contains(AdminPermissionCatalog.OpenPlatformManage)
-            || permissions.Contains(AdminPermissionCatalog.AutomationsManage)
-            || permissions.Contains(AdminPermissionCatalog.DefectAgentManage);
+        return AdminNotificationAudience.HasPermission(permissions);
     }
 
-    private bool HasAdminNotificationPermission()
+    private async Task<bool> HasAdminNotificationPermissionAsync(CancellationToken ct)
     {
         if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal)
             || string.Equals(User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value, "1", StringComparison.Ordinal))
@@ -298,13 +364,13 @@ public sealed class NotificationsController : ControllerBase
             return true;
         }
 
-        var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return User.IsInRole(UserRole.ADMIN.ToString())
-            && (permissions.Contains(AdminPermissionCatalog.Super)
-            || permissions.Contains(AdminPermissionCatalog.SettingsWrite)
-            || permissions.Contains(AdminPermissionCatalog.OpenPlatformManage)
-            || permissions.Contains(AdminPermissionCatalog.AutomationsManage)
-            || permissions.Contains(AdminPermissionCatalog.DefectAgentManage));
+        if (!User.IsInRole(UserRole.ADMIN.ToString())) return false;
+
+        // 通知路径豁免管理权限中间件，正常登录不会注入 permissions；按当前权限回查。
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var effectivePermissions = await _adminPermissions.GetEffectivePermissionsAsync(this.GetRequiredUserId(), isRoot, ct);
+        var permissions = effectivePermissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return AdminNotificationAudience.HasPermission(permissions);
     }
 
     private static FilterDefinition<AdminNotification> BuildVisibleNotificationFilter(
@@ -325,7 +391,7 @@ public sealed class NotificationsController : ControllerBase
 
         if (!includeAdmin)
         {
-            filter &= Builders<AdminNotification>.Filter.Ne(x => x.Section, AdminNotificationSections.Admin);
+            filter &= Builders<AdminNotification>.Filter.Not(BuildAdminSectionFilter());
         }
 
         if (!includeHandled)
@@ -336,10 +402,54 @@ public sealed class NotificationsController : ControllerBase
         return filter;
     }
 
-    private static object ToNotificationDto(AdminNotification n)
+    private static FilterDefinition<AdminNotification> BuildAdminSectionFilter()
     {
-        var section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section);
+        var builder = Builders<AdminNotification>.Filter;
+        var explicitAdmin = builder.Regex(x => x.Section,
+            new BsonRegularExpression($@"^\s*{Regex.Escape(AdminNotificationSections.Admin)}\s*$", "i"));
+        var absentOrBlank = builder.Eq(x => x.Section, null)
+                            | builder.Regex(x => x.Section, new BsonRegularExpression(@"^\s*$"));
+        var adminSources = string.Join("|", AdminNotificationSourceCatalog.Definitions
+            .Where(x => x.Section == AdminNotificationSections.Admin)
+            .Select(x => Regex.Escape(x.Source)));
+        var sourceIsAdmin = builder.Regex(x => x.Source,
+            new BsonRegularExpression($@"^\s*(?:{adminSources})\s*$", "i"));
+
+        // 既有数据分享使用这三个结构化事件Key；不能把所有定向system消息都放行。
+        var personalDataTransfer = builder.Regex(x => x.Source, new BsonRegularExpression(@"^\s*system\s*$", "i"))
+                                   & builder.Regex(x => x.Key, new BsonRegularExpression(LegacyPersonalDataTransferKeyPattern))
+                                   & builder.Regex(x => x.TargetUserId, new BsonRegularExpression(@"\S"));
+        var poolSource = builder.Regex(x => x.Source, new BsonRegularExpression(@"^\s*model-pool-probe\s*$", "i"));
+        var targetedPool = poolSource & builder.Regex(x => x.TargetUserId, new BsonRegularExpression(@"\S"));
+        var globalPool = poolSource & (builder.Eq(x => x.TargetUserId, null) | builder.Regex(x => x.TargetUserId, new BsonRegularExpression(@"^\s*$")));
+        // 显式分区仍优先；只有历史空分区的已知个人业务不采用管理来源默认。
+        return globalPool | explicitAdmin | (absentOrBlank & sourceIsAdmin & builder.Not(personalDataTransfer) & builder.Not(targetedPool));
+    }
+
+    private static object ToNotificationDto(AdminNotification n, bool canOpenGateway = false)
+    {
+        var legacyPersonalDataTransfer = string.IsNullOrWhiteSpace(n.Section)
+                                         && AdminNotificationSourceCatalog.NormalizeSource(n.Source) == "system"
+                                         && !string.IsNullOrWhiteSpace(n.TargetUserId)
+                                         && Regex.IsMatch(n.Key ?? string.Empty, LegacyPersonalDataTransferKeyPattern, RegexOptions.CultureInvariant);
+        var section = AdminNotificationSourceCatalog.ResolveSection(n.Source,
+            legacyPersonalDataTransfer ? AdminNotificationSections.Personal : n.Section, n.TargetUserId);
         var presentation = ToUserReadablePresentation(n);
+        var gatewayDiagnostic = AdminNotificationAudience.RequiresGatewayObjectPermission(n);
+        var restrictDiagnostic = gatewayDiagnostic && !canOpenGateway;
+        if (restrictDiagnostic && !IsLegacyQuotaWithoutStructuredFacts(n))
+        {
+            // 运营通知可见性不授予网关对象查看权；普通运营管理员只看到适用的影响与下一步。
+            presentation = ("模型服务状态需要网关管理员检查", n.IncidentState == "recovered"
+                ? "已有恢复观测；历史失败任务不会自动重做，请核对任务结果后决定是否重试。"
+                : n.RequestOutcome switch
+                {
+                    "fallback_succeeded" => "该次请求已由备用线路成功完成，无需重试。异常线路需由有网关权限的管理员检查。",
+                    "all_failed" => "该次请求已尝试的线路均失败。请联系有网关权限的管理员检查，或切换可用模型后重试。",
+                    "request_failed" => "已记录一次模型调用失败。请联系有网关权限的管理员检查，并核对任务结果后再重试。",
+                    _ => "已记录模型服务异常；该次请求结果与当前可用范围未确认。请联系有网关权限的管理员检查，并先核对任务结果。",
+                });
+        }
         return new
         {
             n.Id,
@@ -348,8 +458,18 @@ public sealed class NotificationsController : ControllerBase
             presentation.Message,
             n.Level,
             n.Status,
+            n.TargetUserId,
+            n.PushEpisode,
+            n.IncidentId,
+            incidentState = n.IncidentState ?? (IsLegacyIncident(n) ? "unknown" : null),
+            requestOutcome = n.RequestOutcome ?? (IsLegacyIncident(n) ? "unknown" : null),
+            n.OccurrenceCount,
+            n.FirstOccurredAt,
+            n.LastOccurredAt,
+            n.RecoveredAt,
+            evidenceRequestId = restrictDiagnostic ? null : n.EvidenceRequestId,
             n.ActionLabel,
-            n.ActionUrl,
+            actionUrl = restrictDiagnostic || n.ActionKind == "llm-gateway" && !canOpenGateway ? null : ReportNotificationNavigation.Resolve(n),
             n.ActionKind,
             n.Source,
             section,
@@ -365,18 +485,36 @@ public sealed class NotificationsController : ControllerBase
 
     internal static (string Title, string? Message) ToUserReadablePresentation(AdminNotification notification)
     {
-        if (string.Equals(notification.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase))
+        if (IsLegacyQuotaWithoutStructuredFacts(notification))
         {
-            if (notification.Key?.StartsWith("llm-quota-exceeded:v2:", StringComparison.Ordinal) == true)
-            {
-                return (notification.Title, notification.Message);
-            }
-
             return (
                 "AI 创作服务需要管理员处理",
-                "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。");
+                "历史通知记录了服务额度异常，对应请求结果和当前状态尚未确认。管理员需要检查服务额度及最近调用记录，请核对结果后再重试。");
         }
 
         return (notification.Title, notification.Message);
     }
+
+    // A current producer may deliberately withhold an unsafe/unknown identity. Its
+    // explicit outcome/state remains current evidence, not proof of a historical row.
+    private static bool IsLegacyQuotaWithoutStructuredFacts(AdminNotification n)
+        => string.IsNullOrWhiteSpace(n.IncidentId)
+           && string.IsNullOrWhiteSpace(n.IncidentState)
+           && string.IsNullOrWhiteSpace(n.RequestOutcome)
+           && string.Equals(n.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLegacyIncident(AdminNotification n) => n.Source is
+        "llm-gateway-quota" or "gateway-alert" or "uptime-alert" or "system-alert" or "api-request-alert" or "model-pool-probe";
+}
+
+public sealed class NotificationBatchHandleRequest
+{
+    public List<NotificationHandleSnapshot> Items { get; set; } = [];
+}
+
+public sealed class NotificationHandleSnapshot
+{
+    public string Id { get; set; } = string.Empty;
+    public long PushEpisode { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }

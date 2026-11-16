@@ -161,6 +161,25 @@ export function resolveNoHeadAvatarUrl(): string {
   return LOCAL_NOHEAD_AVATAR;
 }
 
+/** 当前存储确实加载失败后，按同名文件读取受信旧存储；不重写外部头像或默认头像。 */
+export function resolveLegacyAvatarUrl(failedUrl: string): string | null {
+  const { cdnBaseUrl, legacyCdnBaseUrl } = useAuthStore.getState();
+  const current = normalizePublicAssetBaseUrl(cdnBaseUrl);
+  const legacy = normalizePublicAssetBaseUrl(legacyCdnBaseUrl);
+  if (!current || !legacy || current === legacy || !legacy.startsWith('https://')) return null;
+  try {
+    const failed = new URL(failedUrl);
+    const prefix = `${current}/${AVATAR_PATH_PREFIX}/`;
+    if (!failed.href.startsWith(prefix)) return null;
+    const file = failed.pathname.slice(new URL(prefix).pathname.length);
+    if (!/^[a-z0-9][a-z0-9_.-]*\.(?:png|jpe?g|gif|webp|avif)$/i.test(file)
+      || file.includes('..') || file.toLowerCase() === DEFAULT_NOHEAD_FILE) return null;
+    return `${legacy}/${AVATAR_PATH_PREFIX}/${file}`;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 对象存储上由管理员托管的那张默认头像（资源管理页「无头像兜底」上传的目标）。
  * 管理端页面自己已改用同源打包版，但服务端 `avatarUrl` 仍把它下发给桌面端等其它客户端，

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getSiteContent } from '@/services/real/webPages';
-import { canUseSrcDocPreview, hasFetchableHtml, withPreviewBase } from './previewHtml';
+import { getSiteContent, getShareSiteContent } from '@/services/real/webPages';
+import { canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
 
 /**
  * 取回托管站点入口 HTML，备好可以直接塞进 iframe `srcDoc` 的字符串。
@@ -31,10 +31,14 @@ export interface SitePreviewHtmlSite {
   entryFile?: string;
   wrappedAssetType?: string | null;
   pdfAssetUrl?: string;
+  pdfFilePaths?: readonly string[];
+  contentShape?: 'self-contained-html' | 'multi-file';
+  requiresPreviewBridge?: boolean;
+  shareAccess?: { token: string; password?: string };
 }
 
 function cacheKey(site: SitePreviewHtmlSite) {
-  return `${site.id}::${site.siteUrl}`;
+  return `${site.shareAccess?.token ?? 'account'}::${site.shareAccess?.password ?? ''}::${site.id}::${site.siteUrl}::${site.contentShape ?? ''}::${site.wrappedAssetType ?? ''}::${shouldFetchPreviewHtml(site)}`;
 }
 
 async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
@@ -47,7 +51,9 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
 
   const task = (async (): Promise<CacheEntry> => {
     try {
-      const res = await getSiteContent(site.id);
+      const res = site.shareAccess
+        ? await getShareSiteContent(site.shareAccess.token, site.id, site.shareAccess.password)
+        : await getSiteContent(site.id);
       if (res.success && res.data?.html) {
         const html = res.data.html;
         // 打包型 SPA（入口是外链 module 脚本）必须留在直链：srcDoc 的不透明源会让模块脚本
@@ -80,7 +86,7 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
   const [loading, setLoading] = useState(false);
 
   const key = site ? cacheKey(site) : '';
-  const fetchable = !!site && hasFetchableHtml(site);
+  const fetchable = !!site && shouldFetchPreviewHtml(site);
 
   useEffect(() => {
     if (!site || !enabled || !fetchable) {
@@ -107,7 +113,11 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
   }, [key, enabled, fetchable]);
 
   const current = entryForKey(entry, key);
-  return { srcDoc: current.srcDoc, error: current.error, loading };
+  return {
+    srcDoc: fetchable ? current.srcDoc : null,
+    error: fetchable ? current.error : null,
+    loading: fetchable && loading,
+  };
 }
 
 /**

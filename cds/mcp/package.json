@@ -1,0 +1,19 @@
+{
+  "name": "@cds/code-review-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CDS 项目级代码审查 stdio MCP 桥接",
+  "engines": { "node": ">=20.18.1" },
+  "bin": { "cds-code-review-mcp": "src/server.mjs" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/server.mjs && node --check src/bridge.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "undici": "^7.24.0",
+    "zod": "4.6.7"
+  }
+}

@@ -1,6 +1,6 @@
 /**
  * 趋势爆点曲线（行为洞察 Hero 视图之一）：报错/慢请求随时间的波动曲线，回答「什么时候开始变差」。
- * 数据自取：GET /api/team-activity/experience-trend（按时间桶聚合 apirequestlogs，桶粒度后端自适应 hour/day）。
+ * 数据由父面板共享：GET /api/team-activity/experience-trend（按时间桶聚合 apirequestlogs，桶粒度后端自适应 hour/day）。
  * 报错红线 + 慢琥珀线两条面积曲线叠加；突增桶（环比明显抬升）标「爆点」标记（小圆点 + +N%）。
  * 入场：曲线从左到右画出（stroke-dashoffset），爆点标记依次 pop。冷色海主题，禁止 emoji。
  */
@@ -8,8 +8,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { TrendingUp } from 'lucide-react';
 // 趋势曲线：报错/慢请求随时间的波动。数据不足（桶 < 2 或全 0）时无法成线 → 上报父级以便在四图仪表盘里隐藏本格。
 import { GlassCard } from '@/components/design';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getTeamActivityExperienceTrend } from '@/services';
+import { ActivitySectionState } from './ActivitySectionState';
+import type { ActivityResource } from './useActivityResource';
 import type { ExperienceTrendBucket, TeamActivityExperienceTrendData } from '@/services/contracts/teamActivity';
 
 const ERR = '#f8717a';
@@ -71,14 +71,12 @@ function fmtBucket(iso: string, unit: 'hour' | 'day'): string {
 }
 
 export function ExperienceTrend({
-  from,
-  to,
+  resource,
   onSwitchHeatmap,
   onEmptyChange,
   hideWhenEmpty = false,
 }: {
-  from?: string;
-  to?: string;
+  resource: ActivityResource<TeamActivityExperienceTrendData>;
   /** 空数据引导：一键切回热力图（移动单图视图用，桌面四图仪表盘走 hideWhenEmpty 直接隐藏本格） */
   onSwitchHeatmap?: () => void;
   /** 上报「是否有可绘制趋势」给父级（桌面四图仪表盘据此把本格移出布局，让其余格自适应铺满） */
@@ -86,9 +84,7 @@ export function ExperienceTrend({
   /** 为真时：数据不足直接返回 null（不渲染空壳），交由父级把本格从 grid 移除 */
   hideWhenEmpty?: boolean;
 }) {
-  const [data, setData] = useState<TeamActivityExperienceTrendData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const fetchIdRef = useRef(0);
+  const { data, loading, error, reload } = resource;
   // aspect-aware：量出曲线容器真实宽高比，让曲线几何撑满格子高度（消除底部空白），ResizeObserver 量到前用回退值。
   const svgBoxRef = useRef<HTMLDivElement | null>(null);
   const [boxAspect, setBoxAspect] = useState<number | null>(null);
@@ -96,18 +92,6 @@ export function ExperienceTrend({
     const raw = boxAspect != null ? VW * boxAspect : VH_FALLBACK;
     return Math.min(VH_MAX, Math.max(VH_MIN, Math.round(raw)));
   }, [boxAspect]);
-
-  useEffect(() => {
-    const id = ++fetchIdRef.current;
-    setLoading(true);
-    void getTeamActivityExperienceTrend({ from, to }).then((res) => {
-      if (fetchIdRef.current !== id) return;
-      // 失败时清空旧数据，避免新选择下还残留上一个时间范围的曲线
-      if (res.success) setData(res.data);
-      else setData(null);
-      setLoading(false);
-    });
-  }, [from, to]);
 
   const series = useMemo(() => (data ? buildSeries(data.buckets, VH) : null), [data, VH]);
   const unit = data?.bucketUnit ?? 'day';
@@ -163,19 +147,15 @@ export function ExperienceTrend({
 
   // 数据到达后上报空/非空给父级（仅在数据加载完成后报，加载中不误判为空导致桌面格闪烁）
   useEffect(() => {
-    if (loading && !data) return;
+    if (loading || error) { onEmptyChange?.(false); return; }
     onEmptyChange?.(!hasData);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasData, loading, data]);
+  }, [hasData, loading, data, error]);
 
-  if (loading && !data) {
-    // hideWhenEmpty（桌面四图仪表盘）下加载态也不占位，避免「短暂空壳格」；移动单图显示加载卡。
-    if (hideWhenEmpty) return null;
+  if (loading || error) {
     return (
-      <GlassCard className="h-full" style={{ minHeight: 320 }}>
-        <div className="h-full flex items-center justify-center">
-          <MapSectionLoader text="正在聚合趋势曲线…" />
-        </div>
+      <GlassCard className="h-full" style={{ minHeight: 160 }}>
+        <ActivitySectionState title="趋势爆点曲线" loading={loading} error={error} onRetry={reload} />
       </GlassCard>
     );
   }

@@ -18,6 +18,7 @@ import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
 import { REQUIRED_WEB_PAGE_RUNTIME, displayedDesignRuntime, requiredWebPageRuntime } from '../siteEditPreview';
 import {
   formatGenerationClock,
+  formatCompletedRunDuration,
   generationEtaShort,
   pickGenerationTiming,
   remainingEstimateText,
@@ -80,12 +81,6 @@ export interface GenerationIntro {
 
 const MAX_KNOWLEDGE = 3;
 const DEFAULT_REQUEST = '把这些资料做成一个清晰好读、适合发给客户看的网页';
-
-function durationText(seconds: number): string {
-  const s = Math.max(0, Math.round(seconds));
-  const m = Math.floor(s / 60);
-  return m > 0 ? `${m} 分 ${String(s % 60).padStart(2, '0')} 秒` : `${s} 秒`;
-}
 
 export default function NewSiteStage({
   source,
@@ -253,11 +248,11 @@ export default function NewSiteStage({
     onGenerated(done.id, {
       request: sent?.text || run.recoveredTitle || '生成网页',
       chips: sent?.chips ?? [],
-      durationText: durationText(run.elapsedSeconds),
+      durationText: formatCompletedRunDuration(done.durationSeconds),
       runtimeLabel: sent?.runtimeLabel || (visibleRuntime ? runtimeCardTitle(visibleRuntime) : '设计执行器'),
       styleName: run.runInfo?.styleName ?? sent?.styleName,
     });
-  }, [onGenerated, run.completedSite, run.elapsedSeconds, run.recoveredTitle, run.runInfo?.styleName, sent, visibleRuntime]);
+  }, [onGenerated, run.completedSite, run.recoveredTitle, run.runInfo?.styleName, sent, visibleRuntime]);
 
   const addFiles = (files: File[]) => {
     const rejected = uploads.addFiles(files);

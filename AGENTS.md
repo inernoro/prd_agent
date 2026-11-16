@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > PRD Agent 全栈项目（`prd-api` .NET 8 / `prd-admin` React+Vite / `prd-desktop` Tauri / `prd-video` Remotion / `llmgw` LLM 网关 / `cds` 分支预览部署）。
-> 本文件是全体 AI Agent 的共用规则 SSOT，工具中立。各模块构建命令见子目录同名文件；架构规则见 `.claude/rules/`。
+> 本文件是全体 AI Agent 的共用规则 SSOT，工具中立。各模块构建命令见子目录同名文件；架构规则见 `.claude/rules/`。新增或调整 CDS 页面导航前，必读[页面切换动效规范](.claude/rules/cds-page-motion.md)。
 
 <!--
 为什么这份是 SSOT：本仓库曾经并行维护根 CLAUDE.md 与根 AGENTS.md 两份 95% 相同的副本，
@@ -48,9 +48,12 @@ cd prd-video && pnpm start   # Remotion 4.0
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
 ```
 
-### 3. 任务完成交接
+### 3. 项目执行原则与交接
 
-涉及 3+ 文件 / API 端点 / UI 页面变更时，**必须主动**用 `task-handoff-checklist` 技能生成交接清单。1-2 个文件的小修改无需生成。
+- **一次做好，少让用户操心**：先核实目标与问题、确定验证方法，再统筹实现、回归和交付；已授权且可自行判断的事项不逐步请示，不用口头“完成”代替结果。
+- **未完成就持续推进，只因真实阻塞停下**：正常等待、可自行修复的失败不算阻塞；缺授权、凭据或外部资源、用户预算已尽，或安全/范围熔断需要决策时，一次说明证据、最小所需输入与续接动作，并继续不依赖阻塞的工作；用户暂停或取消立即遵从。
+- **做完回看，清场再走**：交付前亲自检查最终产物和真实用户路径、核对证据与遗留项，按归属安全清理本任务临时资源；保留用户改动、共享资源和必要诊断证据，不把自测甩给用户，不把未验证写成完成。
+- **交接**：涉及 3+ 文件 / API 端点 / UI 页面变更时，必须主动用 `task-handoff-checklist` 生成交接清单；1-2 个文件的小修改可简要交付。PR 收尾与评审修复使用 [game-over](.claude/skills/game-over/SKILL.md)。
 
 ### 4. 更新记录：只写碎片，禁止编辑 CHANGELOG.md
 
@@ -71,11 +74,6 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 ### 5. 提交与 PR 工作流
 
 **5.1 Commit message 必须中文**（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal）和 Conventional Commits 前缀。类型枚举同规则 #4，另加 `build` `release`。
-
-```
-正确：fix(prd-admin): 修复周报弹窗样式错乱
-错误：fix: resolve modal styling issue
-```
 
 **5.2 校验全绿才准 push**，任意一项失败都不得推送：
 
@@ -107,9 +105,9 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 6. LLM 交互过程必须可视化
 
-任何大模型调用功能都要展示交互过程：SSE 流式逐字渲染 / 批量任务推进度事件 / 支持 thinking 就展示思考 / 长任务拆阶段推状态 / 兜底至少给动画 + 预估耗时。
+任何大模型调用功能都要展示交互过程：SSE 流式逐字渲染 / 批量任务推进度事件 / 支持 thinking 就展示思考 / 长任务拆阶段推状态 / 兜底至少给动画 + 预估耗时。用户等待时屏幕必须有持续变化的内容。**静止的「加载中…」超过 2 秒即为体验缺陷。**
 
-原则：用户等待时屏幕必须有持续变化的内容。**静止的「加载中…」超过 2 秒即为体验缺陷。**
+**6.1 产品展示边界**：产品页面只保留用户完成业务所需的操作、结果、当前状态和恢复指引；迁移详情、研发验收报告、覆盖矩阵、交付台账等内部交付记录不得做成产品入口或面板，也不得改名、折叠或放进帮助浮层后继续展示。归档、业务例外与交付自审见 [UI 规则](.claude/rules/chief-designer-usability.md#产品与内部交付记录的边界)。
 
 ### 7. 新增 Model / service 必须对照现有写法
 
@@ -131,7 +129,9 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 声称完成前必须全部满足：后端编译零错误（判据见 `cds-first-verification.md` 的权威位置表：Branch Image 绿 = API 编得出来，CI 的 `Server Build & Test` 绿 = sln 零 error + 非集成非手工 xUnit；CDS 只负责运行、不负责编译）／前端页面能通过预览地址打开并正常渲染／核心业务流程端到端跑通（不是只有 CRUD）／直连预览域名测试（container-exec 是诊断工具不是验收工具）／依赖的外部服务已确认可用。
 
-禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。**理解与纠偏**：先读真实源码、样式和用户素材，明确必留特征；重大视觉改动先自查并展示可运行关键场景，再按已有授权继续扩展，不增设审批（见 `.claude/rules/visual-anchor-first.md`）；收到否定反馈先对照原始要求与证据，说明具体偏差和修正动作，再实施并重跑能暴露偏差的路径，交付验证结果与证据，未验证就明说。禁止反复道歉、换措辞或堆功能代替纠偏，反馈不自动授权扩范围。
+**验收技能自动触发**：用户要求「页面验收、功能验收、回归验收、验收报告」或交付需要这些产物时，即使未写斜杠命令，也必须读取 [create-visual-test-to-kb](.claude/skills/create-visual-test-to-kb/SKILL.md)，按其前置要求执行 [acceptance-test-design](.claude/skills/acceptance-test-design/SKILL.md) → [acceptance-scenario-orchestrator](.claude/skills/acceptance-scenario-orchestrator/SKILL.md) → 取证归档。宿主未列出技能时按这些仓库路径读取；`human-verify`、`/uat`、交接清单和 CDS 上传回执均不能替代。执行类验收报告必须经标准 `archive_report.py` 生成、准入校验和 `verify-open.mjs`；缺步骤保持验收未完成，不得手写 HTML、改档位或补模板标记绕过。禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。**理解与纠偏**：先读真实源码、样式和用户素材，明确必留特征；重大视觉改动先自查并展示可运行关键场景，再按已有授权继续扩展，不增设审批（见 `.claude/rules/visual-anchor-first.md`）；收到否定反馈先对照原始要求与证据，说明具体偏差和修正动作，再实施并重跑能暴露偏差的路径，交付验证结果与证据，未验证就明说。禁止反复道歉、换措辞或堆功能代替纠偏，反馈不自动授权扩范围。
+
+**用户能看懂也是完成门槛。** 面向用户交付时，必须按对话模板逐项回答原始业务目标：现在能做什么、怎样证明、还有什么没做到。主结论要用普通中文直接呈现，不能让用户阅读JSON、源码、日志或Markdown文档链接后自行判断。技术文件仅作佐证。用户明确表示看不懂时，交付状态保持未通过，先改正说明与可见证据，不能用测试数量、提交成功或内部验收标签代替用户验收。
 
 **8.1 自测优先——不得把校验责任先交还给用户。** 提交前必须至少跑通一条自测路径，并在交付消息里**写明走了哪条、断言了什么**：
 
@@ -163,10 +163,10 @@ tsc --noEmit + 单元测试，把「端到端是否真的解决」丢给用户�
 
 两条铁律缺一不可（完整语义见 `doc/rule.doc.naming.md`）：
 
-1. **类型前缀**七选一：`spec.` `design.` `plan.` `rule.` `guide.` `report.` `debt.`
+1. **类型前缀**：`spec.` `design.` `plan.` `rule.` `guide.` `report.` `debt.` `adr.` `pdr.`。类型原则同样放在 `doc/`，以 `guide.doc.pri.<类型>.md` 解释各类文章的作用并纳入统一索引；ADR/PDR 保存重要选择的理由与历史，现行规格与设计通过链接引用。
 2. **appname 优先 + 点分层级**：topic 第一段是应用名，子模块用 `.` 续接，禁止用 `-` 把 appname 和子模块黏死
 
-跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。
+跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。内容层级不授权根目录例外；规则或守卫变更须对照原约束与明确授权，不得扩白名单或豁免索引迁就错误产物。
 
 正确 `spec.cds.settings.md`、`design.cds.agent.runtime.md`；错误 `spec.cds-settings.md`（黏连）、`design.defect-automation-autonomy.md`（appname 不在首段）、`output-xxx.md`（无前缀）。
 
@@ -220,7 +220,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `frontend-modal.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx` | 模态框 3 硬约束：inline style 高度 + createPortal + min-h:0 |
 | `full-height-layout.md` | `prd-admin/src/pages/**/*.tsx`, `prd-desktop/src/pages/**/*.tsx` | 宽屏页面必须撑满视口：根 `h-full min-h-0 flex flex-col`，禁止 `calc(100vh - Npx)` 魔数，滚动发生在最近内容层 |
 | `server-authority.md` | `prd-api/src/**/*.cs` | CancellationToken.None + Run/Worker + SSE 心跳 |
-| `doc-types.md` | `doc/**/*.md` | 7 种文档前缀（spec/design/plan/rule/guide/report/debt） |
+| `doc-types.md` | `doc/**/*.md` | 文档前缀与职责（含 adr/pdr；类型原则同样纳入 doc/ 指南与索引） |
 | `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |
 | `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | 快照反规范化必须有等价覆盖的兜底查询路径 |
 | `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
@@ -269,7 +269,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.skill.issues-system.md` §3） |
 | **issues-visual-create** | `/issues-visual-create` | 创建一条视觉验收子 issue。输入"测什么"(PR#/commit/页面)，按 #605 模板 v0.x 生成 `[visual-test]` issue，挂 `visual-test:pending` 等执行者接单 |
 | **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。完全不开新 issue |
-| **create-visual-test-to-kb** | `/验收` | 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）。三段不可分：标准/模板 → 模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）→ 报告归档进知识库出分享链。归档前强制准入校验（目标/档位/Verdict/截图数/证据完整性不达标直接拒收）。项目无关，改 `acceptance.config.json` 跨仓库复用 |
+| **create-visual-test-to-kb** | `/验收`、页面/功能/回归验收、验收报告、开发交付收尾 | 标准取证与 manifest → `archive_report.py` 生成并校验 → CDS 按项目归档 → `verify-open.mjs`；复杂场景先设计、再编排。不能以通用 HTML 上传或交接报告代替 |
 | **weekly-update-summary** | `/weekly` | 输入时间范围 → 四源聚合（git 提交与 PR + 日报知识库 + CDS 验收中心 + 缺陷台账/发布版本）→ 输出**面向老板/产品经理**的业务周报：质量闸（验收通过率 + 未通过清单）→ 业务价值看板（谁能多做什么）→ 逐日脉络挂日报深链 → 落地对照 → 下周优先级 → 术语表，技术细节降到附录 |
 | **daily-report-summary** | `/daily` | 输入目标日期 → 从 git 历史按单日提交收集改动，按「新增多讲 → 优化/修复次之 → 计划/遗留垫底」分层写日报，find-or-create「日报知识库」发布并出分享链 |
 
@@ -278,7 +278,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | 技能 | 触发词 | 输入 → 输出 |
 |------|--------|-------------|
 | **conflict-resolution** | `/resolve` | 输入当前分支 → 将 main 合并进来，AI 自动解决冲突，避免 PR 时冲突 |
-| **doc-writer** | `/doc` | 输入文档类型 → 校验 `doc/` 下的命名和表头格式，自动套用 7 种标准模板（spec/design/plan/rule/guide/report/debt） |
+| **doc-writer** | `/doc` | 输入文档目的 → 发现仓库约定，按职责选择结构与模板，不强制固定前缀 |
 | **doc-sync** | `/doc-sync` | 无需输入 → 扫描 `doc/` 目录，自动对齐 `index.yml` 和 `guide.list.directory.md` |
 | **code-hygiene** | `/hygiene` | 输入代码变更 → 检测死代码/兼容垫片/命名残留/冗余参数等 10 类技术债，输出清理建议 |
 | **deep-trace** | `/deep-trace` | 输入代码变更 → 跨层（C#→JSON→Rust→React）验证字段名、类型、序列化、空值处理的正确性 |
@@ -343,4 +343,4 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 10. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
 11. **迁移/重构后** → `/hygiene`
 -->
-生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解；首次开发 Agent 走 `/help`。
+生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → `/uat`（仅执行前清单）→ `/验收`（复杂场景先 `/验收设计` → `/验收场景`，标准生成、准入与线上打开验证不可省）→ 交接 `/handoff` → 周报 `/weekly`。常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解；首次开发 Agent 走 `/help`。

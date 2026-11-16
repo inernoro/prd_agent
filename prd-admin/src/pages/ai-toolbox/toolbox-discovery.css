@@ -1,0 +1,94 @@
+/* 已确认画廊稿：两行工具栏、五列插画、独立的名称与用途区。 */
+.toolbox-page.toolbox-gallery { gap: 12px; }
+.toolbox-gallery > .surface-nav-bar:first-child,
+.toolbox-gallery > .surface-nav-bar:first-child > .surface-nav-content { min-height: 50px; }
+.toolbox-header-actions { display: flex; align-items: center; gap: 14px; }
+.toolbox-header-actions > .map-btn { height: 34px; padding: 0 16px; border-radius: 10px; font-size: 13px; }
+.toolbox-gallery > .surface-nav-bar:first-child .surface-nav-button { font-size: 14px; }
+.toolbox-discovery-search {
+  display: flex; align-items: center; gap: 9px;
+  width: 350px; height: 34px; padding: 0 12px;
+  border: 1px solid var(--border-default); border-radius: 18px;
+  background: var(--nested-block-bg); color: var(--text-muted);
+  transition: border-color 150ms ease;
+}
+.toolbox-discovery-search:focus-within { border-color: var(--border-focus); }
+.toolbox-discovery-search > svg { flex-shrink: 0; }
+.toolbox-discovery-search input { flex: 1; min-width: 0; height: 100%; outline: none; background: transparent; color: var(--text-primary); font-size: 13px; }
+.toolbox-discovery-search input::placeholder { color: var(--text-muted); }
+.toolbox-discovery-search input::-webkit-search-cancel-button { display: none; }
+.toolbox-discovery-search button { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; }
+.toolbox-discovery-search button:hover { background: var(--bg-card-hover); }
+.toolbox-gallery .toolbox-filter-bar { min-height: 46px; border-radius: 12px; }
+.toolbox-gallery-toolbar,
+.toolbox-gallery-options { display: flex; align-items: center; gap: 18px; }
+.toolbox-gallery-toolbar { width: 100%; min-width: 0; justify-content: space-between; flex-wrap: wrap; row-gap: 8px; }
+.toolbox-gallery-options { flex-shrink: 0; gap: 14px; margin-left: auto; }
+.toolbox-gallery .toolbox-segmented { align-self: stretch; gap: 12px; overflow: visible; }
+.toolbox-gallery .toolbox-segmented-button { position: relative; height: 46px; padding: 0 10px; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 13px; font-weight: 500; }
+.toolbox-gallery .toolbox-segmented-button[data-active="true"] { background: transparent; box-shadow: none; font-weight: 600; }
+.toolbox-gallery .toolbox-segmented-button[data-active="true"]::after { position: absolute; right: 10px; bottom: 0; left: 10px; height: 2px; border-radius: 2px; background: var(--accent-primary); content: ''; }
+.toolbox-kind-select { position: relative; display: flex; align-items: center; height: 30px; min-width: 144px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--nested-block-bg); color: var(--text-secondary); }
+.toolbox-kind-select select { width: 100%; height: 100%; appearance: none; padding: 0 30px 0 32px; border-radius: inherit; outline: none; background: transparent; color: inherit; font-size: 12px; cursor: pointer; }
+.toolbox-kind-select select:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.toolbox-kind-select option { background: var(--bg-elevated); color: var(--text-primary); }
+.toolbox-kind-select > svg { position: absolute; right: 10px; pointer-events: none; }
+.toolbox-kind-select > .toolbox-kind-icon { right: auto; left: 10px; }
+.toolbox-gallery .toolbox-display-switch { gap: 2px; padding: 2px; border-radius: 8px; }
+.toolbox-gallery .toolbox-display-option { width: 32px; height: 24px; padding: 0; }
+.toolbox-gallery .toolbox-display-option[data-active="true"] { color: var(--accent-primary); border-color: var(--border-subtle); }
+.toolbox-gallery-count { min-width: 65px; white-space: nowrap; text-align: right; color: var(--text-secondary); font-size: 12px; }
+.toolbox-gallery .toolbox-content { overscroll-behavior: contain; }
+.toolbox-gallery .toolbox-card-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 244px), 1fr)); gap: 12px; }
+.toolbox-gallery .toolbox-tool-card { min-height: 0; padding: 0; gap: 0; border-radius: 12px; isolation: isolate; }
+.toolbox-gallery .toolbox-tool-card:hover { box-shadow: var(--media-card-shadow); }
+.toolbox-card-visual { position: relative; flex-shrink: 0; width: 100%; aspect-ratio: 2 / 1; overflow: hidden; }
+.toolbox-gallery .toolbox-tool-card[data-has-artwork="true"] .toolbox-card-heading { position: absolute; top: 12px; right: 12px; }
+.toolbox-gallery .toolbox-card-heading > div > div { align-items: center; }
+.toolbox-gallery-caption { min-width: 0; padding: 9px 42px 10px 16px; border-top: 1px solid var(--media-card-edge); background: var(--media-card-base); }
+.toolbox-gallery-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; line-height: 22px; color: var(--text-on-media); }
+.toolbox-gallery-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; font-size: 12px; line-height: 18px; color: var(--text-on-media-muted); }
+.toolbox-gallery .toolbox-card-footer { padding-top: 0; border-top: 0; }
+.toolbox-gallery .toolbox-tool-card[data-has-footer-details="false"] .toolbox-card-footer { position: absolute; right: 13px; bottom: 19px; margin: 0; }
+.toolbox-gallery .toolbox-card-footer button[aria-pressed] { width: 24px; height: 24px; border-radius: 6px; }
+.toolbox-gallery .toolbox-card-footer button[aria-pressed]:hover { background: var(--media-card-tag-bg); }
+.toolbox-gallery .toolbox-card-footer button[aria-pressed] svg { width: 15px; height: 15px; }
+.toolbox-gallery .toolbox-card-tags { position: absolute; right: 12px; bottom: 76px; left: 12px; margin: 0; padding: 6px; border: 1px solid var(--media-card-tag-border); border-radius: 7px; background: var(--media-card-panel); opacity: 0; pointer-events: none; transform: translateY(4px); transition: opacity 150ms ease, transform 150ms ease; }
+.toolbox-gallery .toolbox-tool-card:hover .toolbox-card-tags,
+.toolbox-gallery .toolbox-tool-card:focus-within .toolbox-card-tags { opacity: 1; pointer-events: auto; transform: translateY(0); }
+.toolbox-gallery .toolbox-tool-card[data-has-artwork="false"] { min-height: 220px; padding: 16px; border: 1px solid var(--border-subtle); }
+.toolbox-gallery .toolbox-tool-card[data-has-artwork="false"] .toolbox-gallery-caption { margin-top: auto; padding: 12px 0; border: 0; background: transparent; }
+.toolbox-gallery .toolbox-tool-card[data-has-artwork="false"] .toolbox-gallery-name { color: var(--text-primary); }
+.toolbox-gallery .toolbox-tool-card[data-has-artwork="false"] .toolbox-gallery-description { color: var(--text-muted); }
+.toolbox-gallery .toolbox-tool-card[data-has-footer-details="true"] .toolbox-card-footer { margin: 0; }
+.toolbox-gallery .toolbox-tool-card:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.toolbox-results-heading,
+.toolbox-results-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.toolbox-results-heading { justify-content: space-between; margin-bottom: 12px; }
+.toolbox-results-title > span { font-size: 12px; color: var(--text-muted); }
+.toolbox-quick-more { display: inline-flex; align-items: center; gap: 4px; padding: 4px; border-radius: 4px; color: var(--text-muted); font-size: 12px; }
+.toolbox-quick-more:hover { color: var(--text-primary); background: var(--bg-card-hover); }
+.toolbox-discovery-empty { min-height: 270px; padding: 24px; }
+.toolbox-empty-icon { display: flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 14px; color: var(--text-muted); background: var(--bg-tertiary); }
+/* 列表复用同一张卡和相同操作，只改变图文排布。 */
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] { grid-template-columns: 1fr; gap: 10px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card { display: grid; grid-template-columns: 148px minmax(0, 1fr) auto; min-height: 90px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-card-visual { height: 90px; aspect-ratio: auto; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-gallery-caption { grid-column: 2; grid-row: 1; align-self: stretch; display: flex; flex-direction: column; justify-content: center; border-top: 0; padding: 12px 140px 12px 20px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-card-heading { z-index: 20; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-card-footer { bottom: 32px; right: 20px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-card-tags { top: 10px; bottom: auto; left: auto; max-width: 280px; right: 70px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-artwork="false"] { padding: 0; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-artwork="false"] .toolbox-card-heading { align-self: center; justify-self: center; grid-column: 1; grid-row: 1; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-footer-details="true"] .toolbox-gallery-caption { padding-right: 16px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-footer-details="true"] .toolbox-card-footer { grid-column: 3; grid-row: 1; align-self: center; position: static; max-width: 260px; min-width: 0; padding: 12px 20px 12px 0; }
+@media (max-width: 1100px) {
+  .toolbox-discovery-search { width: 250px; }
+  .toolbox-header-actions { gap: 10px; }
+  .toolbox-gallery-options { gap: 10px; }
+  .toolbox-gallery .toolbox-segmented { gap: 4px; }
+}
+@media (max-width: 860px) {
+  .toolbox-gallery-options .toolbox-kind-select { min-width: 116px; }
+}
+@media (prefers-reduced-motion: reduce) { .toolbox-gallery .toolbox-card-tags { transition: none; } }

@@ -6,6 +6,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Claims;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -19,10 +21,12 @@ namespace PrdAgent.Api.Controllers.Api;
 public class UserPreferencesController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IModelPoolQueryService? _modelCatalog;
 
-    public UserPreferencesController(MongoDbContext db)
+    public UserPreferencesController(MongoDbContext db, IModelPoolQueryService? modelCatalog = null)
     {
         _db = db;
+        _modelCatalog = modelCatalog;
     }
 
     private string? GetCurrentUserId()
@@ -432,6 +436,15 @@ public class UserPreferencesController : ControllerBase
         if (request.VisualAgentPreferences == null)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "visualAgentPreferences 不能为空"));
 
+        if (request.VisualAgentPreferences.ModelAuto) request.VisualAgentPreferences.ModelId = null;
+        else
+        {
+            var selection = await NormalizeModelSelectionAsync(request.VisualAgentPreferences.ModelId, "generation",
+                ["visual-agent.image.text2img::generation", "visual-agent.image.img2img::generation", "visual-agent.image.vision::generation"]);
+            if (selection.Failure is not null) return selection.Failure;
+            request.VisualAgentPreferences.ModelId = selection.Canonical;
+        }
+
         var update = Builders<UserPreferences>.Update
             .Set(x => x.VisualAgentPreferences, request.VisualAgentPreferences)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
@@ -456,6 +469,14 @@ public class UserPreferencesController : ControllerBase
         if (request.LiteraryAgentPreferences == null)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "literaryAgentPreferences 不能为空"));
 
+        var image = await NormalizeModelSelectionAsync(request.LiteraryAgentPreferences.ImageModelId, "generation",
+            ["literary-agent.illustration.text2img::generation", "literary-agent.illustration.img2img::generation"]);
+        if (image.Failure is not null) return image.Failure;
+        var chat = await NormalizeModelSelectionAsync(request.LiteraryAgentPreferences.ChatModelId, "chat", ["literary-agent.content::chat"]);
+        if (chat.Failure is not null) return chat.Failure;
+        request.LiteraryAgentPreferences.ImageModelId = image.Canonical;
+        request.LiteraryAgentPreferences.ChatModelId = chat.Canonical;
+
         var update = Builders<UserPreferences>.Update
             .Set(x => x.LiteraryAgentPreferences, request.LiteraryAgentPreferences)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
@@ -466,6 +487,23 @@ public class UserPreferencesController : ControllerBase
             new UpdateOptions { IsUpsert = true });
 
         return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    private async Task<(string? Canonical, IActionResult? Failure)> NormalizeModelSelectionAsync(string? value, string type, string[] callers)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return (null, null);
+        try
+        {
+            if (_modelCatalog is null) throw new InvalidOperationException();
+            var rows = await Task.WhenAll(callers.Select(caller => _modelCatalog.GetModelPoolsAsync(caller, type)));
+            return PreferenceModelSelection.TryNormalize(rows.SelectMany(x => x), value, out var canonical)
+                ? (canonical, null)
+                : (null, BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_INVALID", "原模型已变更或暂不可用，请刷新模型菜单重新选择；本次偏好未保存。")));
+        }
+        catch
+        {
+            return (null, StatusCode(503, ApiResponse<object>.Fail("MODEL_CATALOG_UNAVAILABLE", "暂时无法核对模型目录，本次偏好未保存，请稍后重试。")));
+        }
     }
 }
 

@@ -20,9 +20,6 @@ import {
 } from '../src/engine/presentation-skill.js';
 import { listDesignSystems } from '../src/engine/self-check.js';
 import {
-  findTemplateAssertionFailure,
-  patchWebPrototypeLayouts,
-  patchWebPrototypeTemplate,
   prepareWebPrototypeResources,
 } from '../src/engine/web-prototype.js';
 import { OPEN_DESIGN_CODEX_VERSION, buildOpenDesignCodexConfig } from '../src/prompts.js';
@@ -357,26 +354,7 @@ describe('model egress relay', () => {
 describe('web-prototype template preparation', () => {
   const read = (relative: string) => fs.readFileSync(path.join(FIXTURES, 'web-prototype', relative), 'utf8');
 
-  it('patches the starter template into a gate-passing shape and proves it', () => {
-    const original = read('assets/template.html');
-    expect(findTemplateAssertionFailure(original)).toBe('template still contains an empty link or a bare button');
-    const patched = patchWebPrototypeTemplate(original);
-    expect(findTemplateAssertionFailure(patched)).toBeUndefined();
-    expect(patched).toContain('<a href="#hero">[REPLACE] Link 1</a>');
-    expect(patched).toContain('<section class="section hero" id="hero" data-od-id="hero">');
-    expect(patched).toContain('<a class="btn btn-primary" href="#content">[REPLACE] CTA</a>');
-    expect(patched).toContain('[REPLACE] tagline · [REPLACE] contact');
-    expect(patchWebPrototypeLayouts(read('references/layouts.md'))).toContain('href="#content"');
-  });
-
-  it('does not accept data-od-id as a fragment target, nor placeholder emails and dates', () => {
-    expect(findTemplateAssertionFailure('<a href="#hero">x</a><section data-od-id="hero"></section>')).toBe('template anchor #hero has no matching id');
-    expect(findTemplateAssertionFailure('<p>contact@example.com</p>')).toBe('template still contains a placeholder email or date');
-    expect(findTemplateAssertionFailure('<p>2026-09</p>')).toBe('template still contains a placeholder email or date');
-    expect(findTemplateAssertionFailure('<main id="content"><a href="#content">x</a></main>')).toBeUndefined();
-  });
-
-  it('copies both skill copies, patches them, and fails closed when a resource is missing', () => {
+  it('copies both native skill copies byte-for-byte and fails closed when a resource is missing', () => {
     const root = tempDir('design-runtime-template-');
     const workspaceDir = path.join(root, 'workspace');
     fs.mkdirSync(workspaceDir);
@@ -385,7 +363,7 @@ describe('web-prototype template preparation', () => {
       () => undefined,
     );
     for (const copy of [path.join(root, 'templates/web-prototype'), path.join(workspaceDir, '.od-skills/web-prototype')]) {
-      expect(findTemplateAssertionFailure(fs.readFileSync(path.join(copy, 'assets/template.html'), 'utf8'))).toBeUndefined();
+      expect(fs.readFileSync(path.join(copy, 'assets/template.html'), 'utf8')).toBe(read('assets/template.html'));
     }
     // 新建页面不种 index.html。
     expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
@@ -470,7 +448,7 @@ describe('wiring guards', () => {
 
   it('installs a reproducible Chromium and separates browser evidence from the root-only export directory', () => {
     const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
-    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_VERSION=155.0.8059.84');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_VERSION=156.0.8078.79');
     expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_RELEASE=0');
     expect(dockerfile).toContain('apk add --no-cache chromium="${DESIGN_RUNTIME_CHROMIUM_VERSION}-r${DESIGN_RUNTIME_CHROMIUM_RELEASE}"');
     expect(dockerfile).toContain('DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser');
@@ -539,11 +517,62 @@ describe('wiring guards', () => {
       webPrototypeSourceDir: '/app/plugins/_official/examples/web-prototype',
       presentationSkillSourceDir: '/app/plugins/_official/examples/guizang-ppt',
       odPort: 7456,
+      odStartTimeoutSeconds: 180,
       egressPort: 8787,
       engineUid: 1001,
       engineGid: 1001,
     });
     expect(config.odCommand.slice(1)).toEqual(['apps/daemon/dist/cli.js', '--no-open']);
+  });
+});
+
+describe('configured OpenDesign cold-start health deadline', () => {
+  it('loads an explicit deadline and rejects invalid environment values', () => {
+    expect(loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: '90' }).odStartTimeoutSeconds).toBe(90);
+    for (const value of ['-1', '1.5', 'invalid']) {
+      expect(() => loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: value }))
+        .toThrow('DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS');
+    }
+  });
+
+  it('uses the configured deadline in the actual lifecycle before a slow child becomes healthy', async () => {
+    const root = tempDir('design-runtime-cold-deadline-');
+    const script = [
+      "const http = require('node:http');",
+      'const started = Date.now();',
+      "const server = http.createServer((req, res) => {",
+      '  const healthy = Date.now() - started >= 12000;',
+      "  res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });",
+      '  res.end(JSON.stringify({ ok: healthy }));',
+      '});',
+      "server.listen(Number(process.env.OD_PORT), '127.0.0.1');",
+      "process.on('SIGTERM', () => server.close(() => process.exit(0)));",
+    ].join('\n');
+    const config: ServiceConfig = {
+      ...loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: '10' }),
+      apiKey: 'cold-start-test-only',
+      workspaceDir: path.join(root, 'workspace'),
+      odDataDir: path.join(root, 'od'),
+      templatesDir: path.join(root, 'templates'),
+      outputDir: path.join(root, 'output'),
+      webPrototypeSourceDir: path.join(FIXTURES, 'web-prototype'),
+      presentationSkillSourceDir: path.join(FIXTURES, 'presentation-skill'),
+      designSystemsDir: path.join(FIXTURES, 'design-systems'),
+      odPort: await freePort(),
+      odCommand: [process.execPath, '-e', script],
+      odCwd: root,
+      engineHome: root,
+      engineUid: undefined,
+      engineGid: undefined,
+      egressPort: 0,
+    };
+    const runtime = await createDesignRuntime(config, {
+      pollIntervalMs: 20,
+      log: () => undefined,
+      selfCheck: { codexVersion: 'codex-cli 0.143.0', codexMatches: true, codexObservation: '', missingSkillFiles: [], designSystems: [] },
+    });
+    cleanups.push(() => runtime.shutdown());
+    await expect(runtime.lifecycle.reset()).rejects.toMatchObject({ code: 'open_design_not_ready' });
   });
 });
 

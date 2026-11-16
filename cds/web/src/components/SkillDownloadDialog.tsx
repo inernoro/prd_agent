@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Check, Copy, Download, ExternalLink, GraduationCap, Loader2, Package, Rocket, ShieldCheck } from 'lucide-react';
 
@@ -316,9 +317,9 @@ function ConnectTab({ prompt, loading, onCopied }: { prompt: string; loading: bo
             {loading ? '正在确认项目范围' : copied ? '已复制' : '复制短接入口令'}
           </Button>
         </div>
-        <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground" style={{ overscrollBehavior: 'contain' }}>
-          {loading ? '正在读取当前项目范围，随后生成接入口令。' : prompt}
-        </pre>
+        {loading ? <ContentLoading label="读取项目接入说明" /> : <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground" style={{ overscrollBehavior: 'contain' }}>
+          {prompt}
+        </pre>}
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">
         把口令发给当前项目里的 Agent。它会回报 setup-check 的阶段结果；只有实际读取目标成功才算接入完成。技能完整安装，正文按任务加载。
@@ -375,7 +376,7 @@ function MarketplaceTab(): JSX.Element {
   }, []);
 
   if (state === 'loading') {
-    return <p className="text-sm text-muted-foreground">正在读取技能清单…</p>;
+    return <ContentLoading label="读取技能清单" variant="rows" />;
   }
   if (state === 'error') {
     return (

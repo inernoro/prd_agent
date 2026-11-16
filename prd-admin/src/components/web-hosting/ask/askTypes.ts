@@ -6,7 +6,7 @@
  *   phase   { phase, message }   —— 阶段提示，填满"等待期不能静止"
  *   model   { model, platform }  —— 当前回答用的模型，面板顶部必须展示
  *   typing  { text }             —— 增量文本
- *   done    { elapsedMs, truncated }
+ *   done    { elapsedMs, truncated, text? } —— text 是服务端附原文脚注后的最终内容
  *   error   { message }
  *
  * 门禁类失败（未开启 / 需登录 / 超配额 / 无正文）不走 error 事件，而是普通 JSON
@@ -21,6 +21,9 @@ export interface AskMessage {
   content: string;
   /** 仅 assistant：这条是不是还在流式输出中 */
   streaming?: boolean;
+  messageId?: string;
+  ratingToken?: string;
+  rating?: number;
   /** 仅 assistant：失败原因 */
   error?: string;
 }

@@ -12,9 +12,10 @@ export function projectIdentityVersion(project: Project): string {
   return project.identityHistory?.at(-1)?.id || '';
 }
 
-/** 摘要携带版本，完整设置记录只通过独立分页接口读取。 */
+/** 摘要携带版本；设置历史和巡检详情只通过各自受保护的专用接口读取。 */
 export function projectIdentityResponse(project: Project) {
-  const { identityHistory: _history, previewAddressAudit: _addressAudit, ...summary } = project;
+  const { identityHistory: _history, previewAddressAudit: _addressAudit,
+    monitoringInspections: _inspections, ...summary } = project;
   return { ...summary, identityVersion: projectIdentityVersion(project) };
 }
 

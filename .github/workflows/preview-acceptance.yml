@@ -1,6 +1,20 @@
 name: Preview Acceptance
 
 on:
+  push:
+    branches: [main, develop, 'perf/**']
+    paths:
+      - 'prd-api/**'
+      - 'prd-admin/**'
+      - 'e2e/performance/**'
+      - '.github/workflows/preview-acceptance.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'prd-api/**'
+      - 'prd-admin/**'
+      - 'e2e/performance/**'
+      - '.github/workflows/preview-acceptance.yml'
   workflow_dispatch:
     inputs:
       smoke_host:
@@ -15,12 +29,115 @@ on:
         description: 'Playwright E2E 目标 URL；留空则跳过 e2e'
         required: false
         default: ''
+      perf_ref:
+        description: '隔离性能回归的候选提交或 ref；留空跳过，不接受 URL'
+        required: false
+        default: ''
+      perf_base_ref:
+        description: '同机三次校准的基准提交'
+        required: false
+        default: 'origin/main'
+      perf_profile:
+        description: 'normal 为回归门禁；all 另含并发增长和持续运行'
+        type: choice
+        options: [normal, all]
+        default: normal
 
 env:
   NODE_VERSION: '20'
   PNPM_VERSION: '9'
 
 jobs:
+  performance-isolated:
+    name: MAP Performance (Isolated)
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.perf_ref != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      PERF_REF: ${{ github.event.inputs.perf_ref || github.event.pull_request.head.sha || github.sha }}
+      PERF_BASE_REF: ${{ github.event.inputs.perf_base_ref || github.event.pull_request.base.sha || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'origin/main' }}
+      PERF_PROFILE: ${{ github.event.inputs.perf_profile || 'normal' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.428'
+      - name: Install existing E2E dependencies and browser
+        run: |
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C e2e exec playwright install --with-deps chromium
+      - name: Verify regression judge and server timing probe
+        run: |
+          node --test e2e/performance/*.test.mjs
+          dotnet run --project e2e/performance/probe-tests -c Release
+      - name: Calibrate on three clean environments
+        run: |
+          for attempt in 1 2 3; do
+            node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --out "work/performance/base-$attempt"
+          done
+          node e2e/performance/calibrate.mjs work/performance/base-{1,2,3}/result.json --out work/performance/baseline.json
+      - name: Compare candidate commit
+        run: node e2e/performance/run.mjs --ref "$PERF_REF" --profile "$PERF_PROFILE" --baseline work/performance/baseline.json --out work/performance/candidate
+      - name: Verify actual core write workload and raw accounting
+        run: node e2e/performance/prove-write.mjs work/performance/candidate
+      - name: Prove injected application regression is rejected
+        run: |
+          set +e
+          node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --inject-ms 350 --baseline work/performance/baseline.json --out work/performance/injected
+          status=$?
+          set -e
+          test "$status" -eq 1
+          node e2e/performance/prove.mjs work/performance/injected/result.json
+      - name: Prove user-visible homepage regression is rejected with healthy API
+        run: |
+          set +e
+          node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --inject-browser-ms 10000 --baseline work/performance/baseline.json --out work/performance/injected-browser
+          status=$?
+          set -e
+          test "$status" -eq 1
+          node e2e/performance/prove-browser.mjs work/performance/injected-browser/result.json
+      - name: Verify recovery without injected delay in a clean environment
+        run: node e2e/performance/run.mjs --ref "$PERF_BASE_REF" --profile normal --baseline work/performance/baseline.json --out work/performance/recovered
+      - name: Accept real local pages across themes and mobile viewport
+        run: node e2e/performance/local-acceptance.mjs --prepared work/performance/candidate/result.json --out work/performance/local-acceptance
+      - name: Show readable performance results
+        if: always()
+        run: |
+          if [[ -f work/performance/baseline.json && -f work/performance/candidate/result.json ]]; then
+            for name in candidate injected injected-browser recovered; do
+              if [[ -f "work/performance/$name/result.json" ]]; then
+                node e2e/performance/report.mjs "work/performance/$name/result.json" work/performance/baseline.json --out "work/performance/reports/$name.html" --summary "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          else
+            echo 'MAP 性能检查尚未形成完整基线和候选结果，不能判为通过。' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-performance-${{ github.run_id }}
+          retention-days: 14
+          path: |
+            work/performance/baseline.json
+            work/performance/*/result.json
+            work/performance/*/requests.ndjson
+            work/performance/*/fixture.json
+            work/performance/*/browser-*.png
+            work/performance/local-acceptance/*.png
+            work/performance/reports/*.html
+            work/performance/*/*-build.log
+
   smoke-preview:
     name: Smoke (Preview Branch)
     if: github.event.inputs.smoke_host != ''
@@ -55,7 +172,8 @@ jobs:
   e2e-preview:
     name: Playwright E2E (Preview)
     if: github.event.inputs.e2e_base_url != ''
-    runs-on: ubuntu-latest
+    # e2e 锁定的 Playwright 1.59 不支持 Ubuntu 26.04，固定受支持的 LTS。
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: e2e

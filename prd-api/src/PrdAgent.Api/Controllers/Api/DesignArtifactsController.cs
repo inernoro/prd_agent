@@ -280,6 +280,7 @@ public sealed class DesignArtifactsController : ControllerBase
         }
         var run = new DesignArtifactRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Id = runId,
             DeploymentSlug = DeploymentScope.Current,
             UserId = userId,
@@ -317,6 +318,7 @@ public sealed class DesignArtifactsController : ControllerBase
 
         var meta = new RunMeta
         {
+            TaskPermitId = run.TaskPermitId,
             RunId = runId,
             Kind = RunKinds.DesignArtifact,
             Status = RunStatuses.Queued,
@@ -373,7 +375,8 @@ public sealed class DesignArtifactsController : ControllerBase
         var filter = Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current)
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactType, DesignArtifactTypes.WebPage)
-                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.Runtime, DesignArtifactRuntimes.OpenDesign);
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.Runtime, DesignArtifactRuntimes.OpenDesign)
+                     & Builders<DesignArtifactRun>.Filter.Ne(item => item.SourceSurface, DesignArtifactSourceSurfaces.Workflow);
         if (normalizedOperation != null)
             filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.Operation, normalizedOperation);
         if (normalizedSiteId != null)
@@ -416,6 +419,9 @@ public sealed class DesignArtifactsController : ControllerBase
             CancellationToken.None);
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
+        if (source.SourceSurface == DesignArtifactSourceSurfaces.Workflow)
+            return Conflict(ApiResponse<object>.Fail("WORKFLOW_RESTART_REQUIRES_NODE",
+                "请回到原工作流，重新运行对应节点；原输入和报告仍然保留"));
         var isInterruptedRestart = IsRestartableInterrupted(source);
         var isPresentationQualityRepair = IsRestartablePresentationQualityFailure(source);
         if (!isInterruptedRestart && !isPresentationQualityRepair)
@@ -1392,6 +1398,7 @@ public sealed class DesignArtifactsController : ControllerBase
             var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, run.Id, CancellationToken.None)
                        ?? new RunMeta
                        {
+                           TaskPermitId = run.TaskPermitId,
                            RunId = run.Id,
                            Kind = RunKinds.DesignArtifact,
                            CreatedByUserId = run.UserId,

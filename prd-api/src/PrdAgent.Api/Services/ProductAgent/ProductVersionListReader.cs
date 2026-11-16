@@ -5,7 +5,11 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Api.Services.ProductAgent;
 
 // Read DTOs only: legacy rows are never written into the product workflow collections.
-public sealed record ProductVersionListRow<T>(T Record, VersionRegistration? LegacyRegistration = null);
+public sealed record ProductVersionListRow<T>(T Record, VersionRegistration? LegacyRegistration = null,
+    ProductVersionExportFields? ExportFields = null);
+
+public sealed record ProductVersionExportFields(string? SystemName, string? OwnerId, IReadOnlyList<string> TeamMemberIds,
+    string? ReleaseOrigin = null);
 public sealed record ProductVersionListResult<T>(
     List<ProductVersionListRow<T>> Items, Dictionary<string, string> RequirementNames,
     IReadOnlyDictionary<string, string>? ApplicationAliases = null);
@@ -51,6 +55,7 @@ public static class ProductVersionListReader
             Builders<ProductRelease>.Filter.Eq(x => x.IsDeleted, false)
             & Builders<ProductRelease>.Filter.In(x => x.ProductId, ids)).ToListAsync();
         var legacy = await ReadLegacyAsync(db, VersionRegistrationKind.Formal, userId, canViewAllLegacy);
+        await ProductReleaseDeletion.AnnotateAsync(db, current, userId);
         var requirementIds = current.SelectMany(x => x.RequirementIds).Distinct().ToList();
         var names = new Dictionary<string, string>();
         if (requirementIds.Count > 0)
@@ -100,7 +105,8 @@ public static class ProductVersionListReader
                 OwnerName = old.OwnerName ?? old.CreatedByName, ProjectMemberNames = old.ProjectMemberNames,
                 PlannedProjectAt = old.PlannedProjectAt, NeedUiDesign = old.NeedUiDesign, IsAiPoc = old.IsAiPoc,
                 DevelopmentStatus = old.DevelopmentStatus ?? string.Empty, Remark = old.Remark,
-                Status = "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
+                Status = old.Status == "voided" ? "voided" : "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
+                VoidReason = old.VoidReason, VoidedBy = old.VoidedBy, VoidedAt = old.VoidedAt, StatusBeforeVoid = old.StatusBeforeVoid,
                 CreatedAt = old.CreatedAt, UpdatedAt = old.UpdatedAt,
             };
             rows.Add(new(record, old));
@@ -129,7 +135,8 @@ public static class ProductVersionListReader
                 IsGlobalOpen = old.IsGlobalOpen, OpenBrandScope = old.IsGlobalOpen == true ? "上线全域开放" : string.Empty,
                 PlannedReleaseAt = old.PlannedReleaseAt, PlannedTrainingMinutes = old.PlannedTrainingMinutes,
                 AnnouncementUrl = old.AnnouncementUrl,
-                Status = "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
+                Status = old.Status == "voided" ? "voided" : "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
+                VoidReason = old.VoidReason, VoidedBy = old.VoidedBy, VoidedAt = old.VoidedAt, StatusBeforeVoid = old.StatusBeforeVoid,
                 CreatedAt = old.CreatedAt, UpdatedAt = old.UpdatedAt,
             };
             rows.Add(new(record, old));

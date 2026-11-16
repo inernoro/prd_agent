@@ -49,9 +49,9 @@ export function AgentFullscreenLayout<K extends string>({
   });
 
   return (
-    <div className="h-screen min-h-0 flex bg-[#0f1014]">
+    <div className="h-screen min-h-0 flex bg-[var(--bg-base)]">
       {/* 左侧导航（可收起为图标条） */}
-      <aside className={`${collapsed ? 'w-14' : 'w-52'} shrink-0 flex flex-col border-r border-token-subtle bg-[#121317] transition-[width] duration-150`}>
+      <aside className={`${collapsed ? 'w-14' : 'w-52'} shrink-0 flex flex-col border-r border-token-subtle bg-[var(--bg-elevated)] transition-[width] duration-150`}>
         <div className={`${collapsed ? 'px-2' : 'px-4'} py-4 border-b border-token-subtle shrink-0`}>
           {!collapsed && topSlot}
           <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between gap-2'}`}>

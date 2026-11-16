@@ -8,17 +8,16 @@ import { extractDefectTitle } from '@/lib/defectTitle';
 import type { AdminUser } from '@/types/admin';
 import { useDefectStore } from '@/stores/defectStore';
 import {
-  createDefect,
-  submitDefect,
-  addDefectAttachment,
   analyzeDefectImage,
 } from '@/services';
 import { toast } from '@/lib/toast';
+import { resolveApiUrl } from '@/services/real/apiClient';
 import { DefectSeverity } from '@/services/contracts/defectAgent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AiPreviewModal } from '@/components/streaming/AiPreviewModal';
 import { useAiPreviewStream } from '@/lib/useAiPreviewStream';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useDefectSubmission } from '@/hooks/useDefectSubmission';
 import { claimSharedDefectPayload } from '@/lib/sharedDefectFiles';
 import { mergeAiScreenshotDescription } from '@/lib/defectAiFill';
 import {
@@ -73,6 +72,7 @@ export function DefectSubmitPanel() {
     projects,
     setShowSubmitPanel,
     addDefectToList,
+    updateDefectInList,
     loadStats,
   } = useDefectStore();
 
@@ -88,7 +88,22 @@ export function DefectSubmitPanel() {
   const [focused, setFocused] = useState(false);
   const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
   const [attachments, setAttachments] = useState<AnalyzedAttachment[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const submission = useDefectSubmission({
+    onCreated: (defect) => addDefectToList(defect),
+    onSubmitted: (defect) => {
+      updateDefectInList(defect);
+      setShowSubmitPanel(false);
+      void loadStats();
+    },
+    onRecovered: (defect) => {
+      updateDefectInList(defect);
+      void loadStats();
+    },
+  });
+  const { submitting } = submission;
+  const closeIfIdle = () => {
+    if (submission.reset()) setShowSubmitPanel(false);
+  };
   // polishStream.open 跟随通用 modal 的 open 状态: 弹窗打开期间禁用按钮防止重复触发
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [showExample, setShowExample] = useState(false);
@@ -260,7 +275,7 @@ export function DefectSubmitPanel() {
 
   // AI Polish — 流式版 (使用通用 useAiPreviewStream + AiPreviewModal, 替代旧的 polishDefect 一次性 API)
   const polishStream = useAiPreviewStream({
-    url: '/api/defect-agent/defects/polish/stream',
+    url: resolveApiUrl('/api/defect-agent/defects/polish/stream'),
     onApply: (final) => {
       setContent(final);
       toast.success('AI 润色已应用');
@@ -284,62 +299,27 @@ export function DefectSubmitPanel() {
 
   // Submit defect
   const handleSubmit = async () => {
-    if (!content.trim()) {
+    if (!content.trim() && !submission.confirmationPending) {
       toast.warning('请输入问题描述');
       return;
     }
-    if (!assigneeUserId) {
+    if (!assigneeUserId && !submission.confirmationPending) {
       // 用字段级闪烁代替右上角 toast：视觉聚焦到真正需要填写的那个控件
       setAssigneeFlashTick((t) => t + 1);
       toast.warning('请选择提交用户');
       return;
     }
 
-    setSubmitting(true);
-    try {
-      const title = extractDefectTitle(content);
+    const title = extractDefectTitle(content);
+    await submission.submit({
+      templateId: selectedTemplateId || undefined,
+      title: title || undefined,
+      content: content.trim(),
+      assigneeUserId,
+      severity,
+      projectId: projectId || undefined,
+    }, attachments);
 
-      // Create defect
-      const createRes = await createDefect({
-        templateId: selectedTemplateId || undefined,
-        title: title || undefined,
-        content: content.trim(),
-        assigneeUserId,
-        severity,
-        projectId: projectId || undefined,
-      });
-
-      if (!createRes.success || !createRes.data) {
-        toast.error(createRes.error?.message || '创建失败');
-        setSubmitting(false);
-        return;
-      }
-
-      const defect = createRes.data.defect;
-
-      // Upload attachments (with AI image description if available)
-      for (const item of attachments) {
-        await addDefectAttachment({ id: defect.id, file: item.file, description: item.description });
-      }
-
-      // Submit defect
-      const submitRes = await submitDefect({ id: defect.id });
-      if (submitRes.success && submitRes.data) {
-        addDefectToList(submitRes.data.defect);
-        toast.success('缺陷已提交');
-        setShowSubmitPanel(false);
-        loadStats();
-      } else {
-        // Still add to list even if submit fails
-        addDefectToList(defect);
-        toast.warning('缺陷已保存为草稿');
-        setShowSubmitPanel(false);
-      }
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setSubmitting(false);
-    }
   };
 
   const defaultTemplate = templates.find((t) => t.isDefault);
@@ -355,13 +335,16 @@ export function DefectSubmitPanel() {
 
   return createPortal((
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="提交缺陷"
       className={cn(
         // z-[200] 与 GlobalDefectSubmitDialog 一致：必须盖过移动端底部 TabBar(z-100)，
         // 否则手机全屏面板的底部操作行会被导航栏遮挡（E2E 实测踩中）
         'surface-backdrop fixed inset-0 z-[200] flex justify-center',
         isMobile ? 'items-stretch p-0' : 'items-center p-4'
       )}
-      onClick={() => setShowSubmitPanel(false)}
+      onClick={closeIfIdle}
     >
       <GlassCard
         glow
@@ -391,13 +374,25 @@ export function DefectSubmitPanel() {
             </span>
           </div>
           <button
-            onClick={() => setShowSubmitPanel(false)}
+            aria-label="关闭提交缺陷"
+            disabled={submitting || submission.confirmationPending}
+            onClick={closeIfIdle}
             className="p-2 rounded-lg hover-bg-soft transition-colors text-token-muted"
           >
             <X size={18} />
           </button>
         </div>
 
+        <fieldset disabled={submitting} className="flex flex-1 flex-col min-w-0 border-0 p-0 m-0" style={{ minHeight: 0, pointerEvents: submitting ? 'none' : undefined }}>
+        {submission.error && (
+          <div role="alert" className="shrink-0 px-3 py-2 text-[12px] text-token-error">
+            {submission.error}
+            {submission.savedDefect && !submission.unappliedChanges && <div>{submission.confirmationPending
+              ? `缺陷 ${submission.savedDefect.defectNo} 已保存，提交结果待确认；请重试确认，确认后即可关闭。`
+              : `草稿 ${submission.savedDefect.defectNo} 已保存，尚未提交；重试会继续此草稿。`}</div>}
+            {submission.unappliedChanges && <Button variant="ghost" size="sm" onClick={submission.reset}>保留当前内容并开始新提交</Button>}
+          </div>
+        )}
         {/* Selectors - 桌面一排显示，手机端纵向堆叠 */}
         <div className={cn('space-y-3', isMobile ? 'px-3 py-3' : 'px-5 py-4')}>
           <div className={cn('flex', isMobile ? 'flex-col items-stretch gap-2.5' : 'items-center gap-4')}>
@@ -516,16 +511,14 @@ export function DefectSubmitPanel() {
               'surface-inset flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200',
               focused && 'border-[var(--accent-primary)]/50 ring-2 ring-[var(--accent-primary)]/15'
             )}
-            style={{
-              minHeight: isMobile
-                ? undefined
-                : attachments.length > 0 ? '500px' : '380px',
-            }}
+            style={{ minHeight: 0 }}
           >
+            <div className="flex-1 min-h-0 flex flex-col overflow-y-auto overscroll-contain">
             {/* Textarea - 无内部边框，第一行即为标题 */}
             <textarea
               ref={textareaRef}
               data-tour-id="defect-description"
+              aria-label="问题描述"
               value={content}
               onChange={(e) => setContent(e.target.value)}
               onPaste={handlePaste}
@@ -533,7 +526,7 @@ export function DefectSubmitPanel() {
               onBlur={() => setFocused(false)}
               placeholder={'描述您发现的问题...\n\n第一行建议写清问题标题\n\n支持粘贴截图或拖拽文件\n\n提示：点击右下角 AI 按钮可自动润色内容'}
               className={cn(
-                'text-token-primary flex-1 text-[13px] resize-none outline-none no-focus-ring bg-transparent',
+                'text-token-primary flex-1 shrink-0 text-[16px] sm:text-[13px] resize-none outline-none no-focus-ring bg-transparent',
                 isMobile ? 'p-3' : 'p-4'
               )}
               style={{ minHeight: isMobile ? '120px' : '200px' }}
@@ -652,8 +645,9 @@ export function DefectSubmitPanel() {
               </div>
             )}
 
+            </div>
             {/* Input Actions */}
-            <div className="px-4 py-2.5 border-t border-token-subtle flex items-center gap-2 flex-wrap">
+            <div className="shrink-0 px-4 py-2.5 border-t border-token-subtle flex items-center gap-2 flex-wrap">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -718,18 +712,19 @@ export function DefectSubmitPanel() {
                 size="sm"
                 data-tour-id="defect-submit"
                 onClick={handleSubmit}
-                disabled={submitting || !content.trim()}
+                disabled={submitting || (!content.trim() && !submission.confirmationPending)}
               >
                 {submitting ? (
                   <MapSpinner size={14} />
                 ) : (
                   <Send size={14} />
                 )}
-                {submitting ? '提交中...' : '提交缺陷'}
+                {submitting ? submission.progress || '提交中...' : '提交缺陷'}
               </Button>
             </div>
           </div>
         </div>
+        </fieldset>
       </GlassCard>
 
       {/* 流式 AI 润色预览弹窗 (通用基础设施) */}

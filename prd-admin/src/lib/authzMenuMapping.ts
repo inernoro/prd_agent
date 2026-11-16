@@ -120,6 +120,13 @@ export const menuList: MenuDef[] = [
     permissions: ['llm-gateway.access'],
   },
   {
+    // 这里只定义权限矩阵分组；业务入口复用 /mcp-console?tab=speech，不新增独立 Agent。
+    appKey: 'mcp-speech',
+    label: '基础语音（智能体接入台）',
+    icon: 'Plug',
+    permissions: ['mcp-speech.read', 'mcp-speech.generate', 'mcp-speech.manage'],
+  },
+  {
     appKey: 'product-agent',
     label: '产品管理',
     icon: 'Boxes',
@@ -296,6 +303,11 @@ export const allPermissions: PermissionDef[] = [
 
   // 模型网关
   { key: 'llm-gateway.access', label: '模型网关', description: '进入独立模型网关控制台', category: 'access' },
+
+  // 基础语音（智能体接入台）
+  { key: 'mcp-speech.read', label: '基础语音 - 读', description: '查看可用音色、自己的声音预设和生成历史', category: 'read' },
+  { key: 'mcp-speech.generate', label: '基础语音 - 生成', description: '生成语音并保存自己的声音预设', category: 'write' },
+  { key: 'mcp-speech.manage', label: '基础语音 - 配置', description: '配置当前环境的语音模型、音色、参数与额度', category: 'manage' },
 
   // 技能管理
   { key: 'skills.read', label: '技能 - 读', description: '查看技能配置', category: 'read' },

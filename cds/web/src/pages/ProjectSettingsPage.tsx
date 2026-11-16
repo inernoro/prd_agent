@@ -1,5 +1,9 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
+import { ProjectSettingsRefreshContext, useProjectSettingsRefresh, useSettingsReadRequest, type SettingsRead, mergeCleanSettings } from '@/components/project/ProjectSettingsRefresh';
+import { SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -470,20 +474,36 @@ function useProject(projectId: string | undefined): {
   state: ProjectState;
   refresh: () => Promise<void>;
   setProject: (project: ProjectSummary) => void;
+  refreshing: boolean;
+  refreshError: string;
 } {
   const [state, setState] = useState<ProjectState>({ status: 'loading' });
+  const request = useRef<AbortController | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
 
   const refresh = useCallback(async () => {
     if (!projectId) {
       setState({ status: 'error', message: '缺少项目 ID' });
       return;
     }
-    setState({ status: 'loading' });
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setRefreshing(true);
+    setRefreshError('');
+    setState(prev => prev.status === 'ok' && prev.project.id === projectId ? prev : { status: 'loading' });
     try {
-      const project = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
-      setState({ status: 'ok', project });
+      const project = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`, { signal: controller.signal });
+      if (!controller.signal.aborted) setState({ status: 'ok', project });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (!controller.signal.aborted) {
+        const message = messageFromError(err);
+        setRefreshError(message);
+        setState(prev => prev.status === 'ok' && prev.project.id === projectId ? prev : { status: 'error', message });
+      }
+    } finally {
+      if (!controller.signal.aborted) setRefreshing(false);
     }
   }, [projectId]);
 
@@ -511,17 +531,24 @@ function useProject(projectId: string | undefined): {
 
   useEffect(() => {
     void refresh();
+    return () => request.current?.abort();
   }, [refresh]);
 
   return {
-    state,
+    state: state.status === 'ok' && state.project.id !== projectId ? { status: 'loading' } : state,
     refresh,
+    refreshing,
+    refreshError,
     /*
      * 收在这一处，而不是让每个保存回调各自记得补 —— 保存路径有十来条，
      * 「同一份处理抄十遍、改一处忘九处」在这个 PR 里已经栽过好几次。
      * 先带着旧值落地（不闪），再静默取权威值（绑/解绑之后事实变了也能跟上）。
      */
     setProject: (project) => {
+      // 保存结果比保存前发出的 GET 更新；不允许旧快照覆盖刚接受的写入。
+      request.current?.abort();
+      setRefreshing(false);
+      setRefreshError('');
       setState((prev) => ({
         status: 'ok',
         project: preserveRepoSharing(prev.status === 'ok' ? prev.project : null, project),
@@ -533,7 +560,33 @@ function useProject(projectId: string | undefined): {
 
 export function ProjectSettingsPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
-  const { state, refresh, setProject } = useProject(projectId);
+  const { state, refresh: refreshProject, setProject, refreshing: refreshingProject, refreshError } = useProject(projectId);
+  const reads = useRef(new Set<SettingsRead>());
+  const registerRead = useCallback((read: SettingsRead) => {
+    reads.current.add(read);
+    return () => { reads.current.delete(read); };
+  }, []);
+  const [refreshingTabs, setRefreshingTabs] = useState(false);
+  const [tabRefreshError, setTabRefreshError] = useState('');
+  const refreshSequence = useRef(0);
+  useEffect(() => {
+    setRefreshingTabs(false); setTabRefreshError('');
+    return () => { refreshSequence.current++; };
+  }, [projectId]);
+  const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
+    setRefreshingTabs(true);
+    setTabRefreshError('');
+    try {
+      const results = await Promise.allSettled([refreshProject(), ...Array.from(reads.current, read => read())]);
+      if (sequence !== refreshSequence.current) return;
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failed) setTabRefreshError(messageFromError(failed.reason));
+    } finally {
+      if (sequence === refreshSequence.current) setRefreshingTabs(false);
+    }
+  }, [refreshProject]);
+  const refreshing = refreshingProject || refreshingTabs;
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
   const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
@@ -561,7 +614,7 @@ export function ProjectSettingsPage(): JSX.Element {
   }
 
   useEffect(() => {
-    window.history.replaceState(null, '', `#${activeTab}`);
+    window.history.replaceState(window.history.state, '', `#${activeTab}`);
   }, [activeTab]);
 
   useEffect(() => {
@@ -584,6 +637,7 @@ export function ProjectSettingsPage(): JSX.Element {
    * Tab list and content surfaces upgrade to surface-raised tokens.
    */
   return (
+    <ProjectSettingsRefreshContext.Provider value={registerRead}>
     <AppShell
       active="projects"
       topbar={
@@ -629,7 +683,8 @@ export function ProjectSettingsPage(): JSX.Element {
                 variant="ghost"
                 size="icon"
                 onClick={() => void refresh()}
-                aria-label="刷新项目设置"
+                disabled={refreshing}
+                aria-label={refreshing ? '正在刷新项目设置' : '刷新项目设置'}
                 title="刷新"
               >
                 <RefreshCw />
@@ -641,10 +696,9 @@ export function ProjectSettingsPage(): JSX.Element {
       }
     >
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        {(refreshError || tabRefreshError) && state.status === 'ok' ? <p role="alert" className="px-6 py-3 text-sm text-destructive">刷新失败：{refreshError || tabRefreshError}；当前显示上次读取的内容。</p> : null}
         {state.status === 'loading' ? (
-          <div className="p-6">
-            <LoadingBlock label="加载项目设置" />
-          </div>
+          <SettingsPageSkeleton label="加载项目设置" />
         ) : null}
         {state.status === 'error' ? (
           <div className="space-y-4 p-6">
@@ -785,6 +839,7 @@ export function ProjectSettingsPage(): JSX.Element {
         ) : null}
       </Workspace>
     </AppShell>
+    </ProjectSettingsRefreshContext.Provider>
   );
 }
 
@@ -904,8 +959,12 @@ function RuntimeDefaultsTab({
   const [aligning, setAligning] = useState(false);
   const [error, setError] = useState('');
 
+  const previousModes = useRef(project.defaultDeployModes || {});
   useEffect(() => {
-    setModes(project.defaultDeployModes || {});
+    const previous = previousModes.current;
+    const next = project.defaultDeployModes || {};
+    setModes(current => mergeCleanSettings(current, previous, next));
+    previousModes.current = next;
   }, [project.defaultDeployModes]);
 
   // 当前下拉选择是否与「已保存」的项目默认有出入。align-deploy-modes 后端按
@@ -942,22 +1001,19 @@ function RuntimeDefaultsTab({
     }
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  const beginRead = useSettingsReadRequest();
+  const loadProfiles = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setLoading(true);
     setError('');
-    apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`)
-      .then((res) => {
-        if (!cancelled) setProfiles(res.profiles || []);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(messageFromError(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [projectId]);
+    try {
+      const res = await apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`, { signal });
+      if (!signal.aborted) setProfiles(res.profiles || []);
+    } catch (err) { if (!signal.aborted) setError(messageFromError(err)); }
+    finally { if (!signal.aborted) setLoading(false); }
+  }, [projectId, beginRead]);
+  useEffect(() => { void loadProfiles(); }, [loadProfiles]);
+  useProjectSettingsRefresh(() => loadProfiles(true));
 
   async function saveDefaults(): Promise<void> {
     setSaving(true);
@@ -1105,8 +1161,12 @@ function ReadinessFloorSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const previousSeconds = useRef(initial);
   useEffect(() => {
-    setSeconds(Number(project.deployReadinessFloorSeconds) || 0);
+    const previous = previousSeconds.current;
+    const next = Number(project.deployReadinessFloorSeconds) || 0;
+    setSeconds(current => current === previous ? next : current);
+    previousSeconds.current = next;
   }, [project.deployReadinessFloorSeconds]);
 
   async function save(): Promise<void> {
@@ -1194,10 +1254,13 @@ function AutoLifecycleSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const previousPublish = useRef(initialPublish);
   useEffect(() => {
-    const p = Number(project.autoPublishAfterMinutes) || 0;
-    setPublishEnabled(p > 0);
-    setPublishMinutes(p > 0 ? p : 3);
+    const previous = previousPublish.current;
+    const next = Number(project.autoPublishAfterMinutes) || 0;
+    setPublishEnabled(current => current === (previous > 0) ? next > 0 : current);
+    setPublishMinutes(current => current === (previous > 0 ? previous : 3) ? (next > 0 ? next : 3) : current);
+    previousPublish.current = next;
   }, [project.autoPublishAfterMinutes]);
 
   async function save(): Promise<void> {
@@ -1322,15 +1385,25 @@ export function GeneralTab({
     }
   }
 
+  const previousProject = useRef(project);
+  const acceptSavedDraft = useRef(false);
   useEffect(() => {
-    setName(project.name || '');
-    setAliasName(project.aliasName || '');
-    setSlug(project.slug);
-    setDescription(project.description || '');
-    setGitRepoUrl(project.gitRepoUrl || '');
-    setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
-    setAgentPrebuiltOnly(Boolean(project.agentPrebuiltOnly));
-    setResourceChipDisplay(normalizeResourceChipDisplay(project.resourceChipDisplay));
+    const previous = previousProject.current;
+    const changedProject = previous.id !== project.id || acceptSavedDraft.current;
+    acceptSavedDraft.current = false;
+    // 刷新同步远端变化，同时保留用户尚未保存的字段；骨架和后台刷新都不能抹掉输入。
+    setName(value => changedProject || value === (previous.name || '') ? project.name || '' : value);
+    setAliasName(value => changedProject || value === (previous.aliasName || '') ? project.aliasName || '' : value);
+    setSlug(value => changedProject || value === previous.slug ? project.slug : value);
+    setDescription(value => changedProject || value === (previous.description || '') ? project.description || '' : value);
+    setGitRepoUrl(value => changedProject || value === (previous.gitRepoUrl || '') ? project.gitRepoUrl || '' : value);
+    setAutoSmokeEnabled(value => changedProject || value === Boolean(previous.autoSmokeEnabled) ? Boolean(project.autoSmokeEnabled) : value);
+    setAgentPrebuiltOnly(value => changedProject || value === Boolean(previous.agentPrebuiltOnly) ? Boolean(project.agentPrebuiltOnly) : value);
+    setResourceChipDisplay(value => {
+      const old = normalizeResourceChipDisplay(previous.resourceChipDisplay);
+      return changedProject || value.icon === old.icon && value.name === old.name && value.port === old.port ? normalizeResourceChipDisplay(project.resourceChipDisplay) : value;
+    });
+    previousProject.current = project;
   }, [project]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -1361,6 +1434,7 @@ export function GeneralTab({
           resourceChipDisplay,
         },
       });
+      acceptSavedDraft.current = true;
       onSaved(result.project);
       onToast('项目设置已保存');
     } catch (err) {
@@ -1646,26 +1720,22 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
   const [items, setItems] = useState<Item[] | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await apiRequest<{ items: Item[] }>(
-          `/api/projects/${encodeURIComponent(projectId)}/recent-auto-deploys?limit=5`,
-        );
-        if (cancelled) return;
-        setItems(Array.isArray(r?.items) ? r.items : []);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : String(err));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [projectId]);
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async () => {
+    const signal = beginRead(); setError('');
+    try {
+      const r = await apiRequest<{ items: Item[] }>(`/api/projects/${encodeURIComponent(projectId)}/recent-auto-deploys?limit=5`, { signal });
+      if (!signal.aborted) setItems(Array.isArray(r?.items) ? r.items : []);
+    } catch (err) {
+      if (!signal.aborted) setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [projectId, beginRead]);
+  useEffect(() => { void load(); }, [load]);
+  useProjectSettingsRefresh(load);
 
-  if (error) return null; // 旧 CDS 没这个端点,静默不显示
+  if (error && !items) return null; // 旧 CDS 没这个端点,静默不显示
   if (!items) {
-    return <div className="text-xs text-muted-foreground">正在读取自动部署历史…</div>;
+    return <ContentLoading label="读取自动部署历史" />;
   }
   if (items.length === 0) {
     return (
@@ -1783,15 +1853,22 @@ function GithubProjectTab({
   const [botPushFilterSaving, setBotPushFilterSaving] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
 
-  const loadApp = useCallback(async () => {
-    setAppState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const loadApp = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setAppState({ status: 'loading' });
     try {
-      const app = await apiRequest<GithubAppStatus>('/api/github/app');
+      const app = await apiRequest<GithubAppStatus>('/api/github/app', { signal });
+      if (signal.aborted) return;
       setAppState({ status: 'ok', app });
     } catch (err) {
-      setAppState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setAppState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, []);
+  }, [beginRead]);
+  useProjectSettingsRefresh(() => loadApp(true));
 
   useEffect(() => {
     void loadApp();
@@ -2334,25 +2411,36 @@ function CommentTemplateTab({
   const [saving, setSaving] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const savedBody = useRef('');
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<CommentTemplateResponse>(
-        `/api/comment-template?projectId=${encodeURIComponent(projectId)}`,
+        `/api/comment-template?projectId=${encodeURIComponent(projectId)}`, { signal },
       );
-      setState({
+      if (signal.aborted) return;
+      const previous = savedBody.current;
+      const body = data.body || data.defaultBody || '';
+      savedBody.current = body;
+      setState(current => ({
         status: 'ok',
-        body: data.body || data.defaultBody || '',
+        body: preserve && current.status === 'ok' && current.body !== previous ? current.body : body,
         defaultBody: data.defaultBody || '',
         variables: data.variables || [],
         updatedAt: data.updatedAt || null,
         isDefault: Boolean(data.isDefault),
         preview: '',
-      });
+      }));
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2392,6 +2480,8 @@ function CommentTemplateTab({
           body: { body: state.body },
         },
       );
+      beginRead.cancel();
+      savedBody.current = result.body || '';
       setState({ ...state, body: result.body || '', updatedAt: result.updatedAt, isDefault: !result.body });
       onToast(result.body ? '评论模板已保存' : '评论模板已恢复默认');
     } catch (err) {
@@ -2503,15 +2593,22 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
   const [purgeTarget, setPurgeTarget] = useState<DisplayCacheDir | null>(null);
   const [purging, setPurging] = useState(false);
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
-      const data = await apiRequest<CacheStatusResponse>('/api/cache/status');
+      const data = await apiRequest<CacheStatusResponse>('/api/cache/status', { signal });
+      if (signal.aborted) return;
       setState({ status: 'ok', data });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, []);
+  }, [beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2882,15 +2979,22 @@ function BranchStats({ projectId }: { projectId: string }): JSX.Element {
     | { status: 'ok'; branches: BranchSummary[] }
   >({ status: 'loading' });
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
+      if (signal.aborted) return;
       setState({ status: 'ok', branches: data.branches || [] });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2946,17 +3050,24 @@ function ActivityTab({ projectId }: { projectId: string }): JSX.Element {
     | { status: 'ok'; logs: ActivityLogEntry[] }
   >({ status: 'loading' });
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<ActivityLogsResponse>(
         `/api/projects/${encodeURIComponent(projectId)}/activity-logs?limit=50`,
       );
+      if (signal.aborted) return;
       setState({ status: 'ok', logs: data.logs || [] });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -3195,6 +3306,8 @@ const activityTypeLabels: Record<string, string> = {
   'ai-release': 'AI 占用结束',
   'branch-deleted': '删除分支',
   'branch-created': '创建分支',
+  'branch-archived': '归档分支',
+  'branch-restored': '恢复归档',
 };
 
 interface ProjectDeliveryResponse {
@@ -3227,16 +3340,27 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
   const [specText, setSpecText] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const savedSpec = useRef('');
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<ProjectDeliveryResponse>(`/api/projects/${encodeURIComponent(projectId)}/delivery`);
+      if (signal.aborted) return;
       setState({ status: 'ok', data });
-      setSpecText(JSON.stringify(data.managedSpec || { apps: [], capabilities: [] }, null, 2));
+      const previous = savedSpec.current;
+      const next = JSON.stringify(data.managedSpec || { apps: [], capabilities: [] }, null, 2);
+      savedSpec.current = next;
+      setSpecText(current => preserve && current !== previous ? current : next);
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => { void load(); }, [load]);
 
@@ -3423,20 +3547,32 @@ function ProjectComposeTab({
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const savedYaml = useRef('');
+  const [readError, setReadError] = useState('');
+  const beginRefreshRead = useSettingsReadRequest();
+  const refresh = useCallback(async (preserve = false) => {
+    const signal = beginRefreshRead();
+    setReadError('');
     try {
-      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), { credentials: 'include', signal });
       const body = await res.json();
-      if (!res.ok) { onToast(`加载失败:${body.error || res.status}`); return; }
+      if (signal.aborted) return;
+      if (!res.ok) { setReadError(body.error || String(res.status)); onToast(`加载失败:${body.error || res.status}`); return; }
       setData(body as ProjectComposeResponse);
-      setDraft(body.yaml || '');
-      setDirty(false);
+      const previous = savedYaml.current;
+      const next = body.yaml || '';
+      savedYaml.current = next;
+      setDraft(current => preserve && current !== previous ? current : next);
+      if (!preserve) setDirty(false);
     } catch (err) {
+      if (signal.aborted) return;
+      setReadError((err as Error).message);
       onToast(`加载异常:${(err as Error).message}`);
     }
-  }, [projectId, onToast]);
+  }, [projectId, onToast, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(() => refresh(true));
 
   const onSave = useCallback(async () => {
     if (!draft.trim()) { onToast('配置不能为空'); return; }
@@ -3467,6 +3603,7 @@ function ProjectComposeTab({
     }
   }, [draft, projectId, onToast, refresh]);
 
+  if (!data && readError) return <div className="space-y-3"><ErrorBlock message={readError} /><Button onClick={() => void refresh()}>重试</Button></div>;
   if (!data) return <LoadingBlock label="加载项目配置…" />;
 
   // 按权威分组统计
@@ -3578,7 +3715,56 @@ interface DataPlanResult {
   manualBridge: Array<{ store: string; download: string; restore: string; note: string }>;
 }
 
-function ProjectMigrationTab({
+interface StandbyAudit {
+  checkedAt: string;
+  remoteReachable: boolean;
+  protocolReady: boolean;
+  repositoryMatches: boolean;
+  configMatches: boolean;
+  secretKeysMatch: boolean;
+  defaultBranchMatches: boolean;
+  dataSnapshotReady: boolean;
+  currentDataVerified?: boolean;
+  dataReadinessReason?: string;
+  readyForFailover: boolean;
+  missingBranches: string[];
+  divergentBranches: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  performance: {
+    samples: number;
+    healthP50Ms: number | null;
+    healthP95Ms: number | null;
+    fingerprintMs: number | null;
+    localFingerprintMs: number;
+  };
+  error?: string;
+}
+
+interface StandbyConfig {
+  peerId: string;
+  remoteProjectId: string;
+  enabled: boolean;
+  intervalMinutes: number;
+  branchSyncPolicy?: 'audit-only' | 'catalog' | 'warm-running';
+  autoFailover: false;
+  lastAudit?: StandbyAudit;
+  lastBranchSync?: StandbyBranchSyncResult;
+}
+
+interface StandbyBranchSyncResult {
+  completedAt: string;
+  dryRun: boolean;
+  policy: 'audit-only' | 'catalog' | 'warm-running';
+  sourceBranchCount: number;
+  targetBranchCount: number;
+  planned: Array<{ name: string; kind: 'create' | 'deploy' | 'stop' | 'divergent'; reason: string }>;
+  created: string[];
+  deployed: string[];
+  stopped: string[];
+  divergent: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  failed: Array<{ name: string; action: string; error: string }>;
+}
+
+export function ProjectMigrationTab({
   projectId,
   onToast,
 }: {
@@ -3589,6 +3775,7 @@ function ProjectMigrationTab({
 
   const [peers, setPeers] = useState<MigrationPeer[] | null>(null);
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
+  const peerSelectionEdited = useRef(false);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
   const [newKey, setNewKey] = useState('');
@@ -3602,49 +3789,102 @@ function ProjectMigrationTab({
 
   const [scanning, setScanning] = useState(false);
   const [dataPlan, setDataPlan] = useState<DataPlanResult | null>(null);
+  const [standby, setStandby] = useState<StandbyConfig | null>(null);
+  const [standbyRemoteProjectId, setStandbyRemoteProjectId] = useState(projectId);
+  const [standbyEnabled, setStandbyEnabled] = useState(false);
+  const [standbyInterval, setStandbyInterval] = useState(15);
+  const [branchSyncPolicy, setBranchSyncPolicy] = useState<'audit-only' | 'catalog' | 'warm-running'>('audit-only');
+  const [savingStandby, setSavingStandby] = useState(false);
+  const [auditingStandby, setAuditingStandby] = useState(false);
+  const [syncingBranches, setSyncingBranches] = useState<'dry' | 'apply' | null>(null);
+  const [branchSyncResult, setBranchSyncResult] = useState<StandbyBranchSyncResult | null>(null);
+  const [auditElapsedSeconds, setAuditElapsedSeconds] = useState(0);
+  const standbyReadyForFailover = standby?.lastAudit?.readyForFailover && standby.lastAudit.currentDataVerified === true;
 
   // projectId 切换时:① 立刻清空上一个项目的残留(预览 cds-compose 含明文 env,绝不能跨项目串显);
   // ② 旧项目的慢响应到达时用 liveProjectId 丢弃,避免覆盖新项目视图(Bugbot High「Stale migration preview leak」)。
   const liveProjectId = useRef(projectId);
   liveProjectId.current = projectId;
   useEffect(() => {
+    peerSelectionEdited.current = false;
     setPeers(null); setPreview(null); setSelectedPeerId('');
     setReplicateResult(null); setDataPlan(null); setShowYaml(false);
     setReplicating(null); setScanning(false);
+    setStandby(null); setStandbyRemoteProjectId(projectId); setStandbyEnabled(false);
+    setStandbyInterval(15); setBranchSyncPolicy('audit-only'); setBranchSyncResult(null);
+    setSavingStandby(false); setAuditingStandby(false); setSyncingBranches(null);
   }, [projectId]);
 
+  const beginPeersRead = useSettingsReadRequest();
   const loadPeers = useCallback(async () => {
+    const signal = beginPeersRead();
     const reqPid = projectId;
     try {
-      const res = await fetch(apiUrl(`${base}/peers`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`${base}/peers`), { credentials: 'include', signal });
       const body = await res.json();
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应
-      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); setPeers([]); return; }
+      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); setPeers(previous => previous ?? []); return; }
       const list = (body.peers || []) as MigrationPeer[];
       setPeers(list);
       setSelectedPeerId((prev) => prev || (list[0]?.id ?? ''));
     } catch (err) {
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return;
       onToast(`加载异常:${(err as Error).message}`);
-      setPeers([]); // 失败也要退出 loading,否则一直卡在「加载迁移设置…」(Bugbot「Migration tab infinite loading」)
+      setPeers(previous => previous ?? []); // 失败也要退出 loading,否则一直卡在「加载迁移设置…」(Bugbot「Migration tab infinite loading」)
     }
-  }, [base, onToast, projectId]);
+  }, [base, onToast, projectId, beginPeersRead]);
 
+  const beginPreviewRead = useSettingsReadRequest();
   const loadPreview = useCallback(async () => {
+    const signal = beginPreviewRead();
     const reqPid = projectId;
     try {
-      const res = await fetch(apiUrl(`${base}/config-preview`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`${base}/config-preview`), { credentials: 'include', signal });
       const body = await res.json();
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应(防别项目 cds-compose + env 泄露)
       if (!res.ok) { onToast(`加载配置预览失败:${body.error || res.status}`); return; }
       setPreview(body as ConfigPreview);
     } catch (err) {
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return;
       onToast(`加载异常:${(err as Error).message}`);
     }
+  }, [base, onToast, projectId, beginPreviewRead]);
+
+  const loadStandby = useCallback(async () => {
+    const reqPid = projectId;
+    try {
+      const res = await fetch(apiUrl(`${base}/standby`), { credentials: 'include' });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (!res.ok) { onToast(`加载备用站设置失败:${body.error || res.status}`); return; }
+      const config = (body.config || null) as StandbyConfig | null;
+      setStandby(config);
+      if (config) {
+        if (!peerSelectionEdited.current) setSelectedPeerId(config.peerId);
+        setStandbyRemoteProjectId(config.remoteProjectId);
+        setStandbyEnabled(config.enabled);
+        setStandbyInterval(config.intervalMinutes);
+        setBranchSyncPolicy(config.branchSyncPolicy || 'audit-only');
+        setBranchSyncResult(config.lastBranchSync || null);
+      }
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`加载备用站设置异常:${(err as Error).message}`);
+    }
   }, [base, onToast, projectId]);
 
-  useEffect(() => { void loadPeers(); void loadPreview(); }, [loadPeers, loadPreview]);
+  useEffect(() => { void loadPeers(); void loadPreview(); void loadStandby(); }, [loadPeers, loadPreview, loadStandby]);
+  useProjectSettingsRefresh(() => Promise.all([loadPeers(), loadPreview(), loadStandby()]));
+
+  useEffect(() => {
+    if (!auditingStandby) { setAuditElapsedSeconds(0); return undefined; }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setAuditElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1_000);
+    return () => window.clearInterval(timer);
+  }, [auditingStandby]);
 
   const addPeer = useCallback(async () => {
     if (!newUrl.trim()) { onToast('请填写目标节点地址'); return; }
@@ -3660,7 +3900,7 @@ function ProjectMigrationTab({
       onToast('已添加迁移目标');
       setNewName(''); setNewUrl(''); setNewKey('');
       await loadPeers();
-      if (body.peer?.id) setSelectedPeerId(body.peer.id);
+      if (body.peer?.id) { peerSelectionEdited.current = true; setSelectedPeerId(body.peer.id); }
     } catch (err) {
       onToast(`添加异常:${(err as Error).message}`);
     } finally {
@@ -3748,6 +3988,98 @@ function ProjectMigrationTab({
     }
   }, [base, selectedPeerId, onToast]);
 
+  const saveStandby = useCallback(async (): Promise<boolean> => {
+    if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return false; }
+    if (!standbyRemoteProjectId.trim()) { onToast('请填写目标项目 ID'); return false; }
+    const reqPid = projectId;
+    setSavingStandby(true);
+    try {
+      const res = await fetch(apiUrl(`${base}/standby`), {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          peerId: selectedPeerId,
+          remoteProjectId: standbyRemoteProjectId.trim(),
+          enabled: standbyEnabled,
+          intervalMinutes: standbyInterval,
+          branchSyncPolicy,
+        }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return false;
+      if (!res.ok) { onToast(`保存备用站设置失败:${body.error || res.status}`); return false; }
+      setStandby(body.config as StandbyConfig);
+      onToast('备用站设置已保存');
+      return true;
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`保存备用站设置异常:${(err as Error).message}`);
+      return false;
+    } finally {
+      if (reqPid === liveProjectId.current) setSavingStandby(false);
+    }
+  }, [base, branchSyncPolicy, onToast, projectId, selectedPeerId, standbyEnabled, standbyInterval, standbyRemoteProjectId]);
+
+  const auditStandby = useCallback(async () => {
+    if (!(await saveStandby())) return;
+    const reqPid = projectId;
+    setAuditingStandby(true);
+    try {
+      const res = await fetch(apiUrl(`${base}/standby/audit`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: selectedPeerId, remoteProjectId: standbyRemoteProjectId.trim() }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (body.audit) {
+        setStandby((current) => current ? { ...current, lastAudit: body.audit as StandbyAudit } : current);
+      }
+      if (!res.ok) onToast(`备用站核对未通过:${body.audit?.error || body.error || res.status}`);
+      else onToast(body.audit?.readyForFailover ? '备用站已具备切换条件' : '核对完成，仍有未通过项');
+      await loadStandby();
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`备用站核对异常:${(err as Error).message}`);
+    } finally {
+      if (reqPid === liveProjectId.current) setAuditingStandby(false);
+    }
+  }, [base, loadStandby, onToast, projectId, saveStandby, selectedPeerId, standbyRemoteProjectId]);
+
+  const reconcileBranches = useCallback(async (dryRun: boolean) => {
+    if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
+    if (!standbyRemoteProjectId.trim()) { onToast('请填写目标项目 ID'); return; }
+    // 预演只提交临时方案；不能暗中保存 enabled 并触发后台真实同步。
+    if (!dryRun && !(await saveStandby())) return;
+    const reqPid = projectId;
+    setSyncingBranches(dryRun ? 'dry' : 'apply');
+    try {
+      const res = await fetch(apiUrl(`${base}/standby/reconcile`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          peerId: selectedPeerId,
+          remoteProjectId: standbyRemoteProjectId.trim(),
+          policy: branchSyncPolicy,
+          dryRun,
+        }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (body.result) setBranchSyncResult(body.result as StandbyBranchSyncResult);
+      if (!res.ok && res.status !== 207) {
+        onToast(`分支同步失败:${body.error || res.status}`);
+      } else if (body.result?.failed?.length) {
+        onToast(`分支同步部分完成，${body.result.failed.length} 项失败`);
+      } else {
+        onToast(dryRun ? '分支同步预演完成' : '分支同步完成');
+      }
+      if (!dryRun) await loadStandby();
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`分支同步异常:${(err as Error).message}`);
+    } finally {
+      if (reqPid === liveProjectId.current) setSyncingBranches(null);
+    }
+  }, [base, branchSyncPolicy, loadStandby, onToast, projectId, saveStandby, selectedPeerId, standbyRemoteProjectId]);
+
   if (!peers) return <LoadingBlock label="加载迁移设置…" />;
 
   const renderRemotePreview = (result: unknown): JSX.Element | null => {
@@ -3819,7 +4151,7 @@ function ProjectMigrationTab({
                 key={p.id}
                 className={`flex flex-wrap items-center gap-2 rounded-md border p-2.5 ${selectedPeerId === p.id ? 'border-[hsl(var(--primary))]' : 'border-[hsl(var(--hairline))]'}`}
               >
-                <input type="radio" name="migration-peer" checked={selectedPeerId === p.id} onChange={() => setSelectedPeerId(p.id)} />
+                <input type="radio" name="migration-peer" checked={selectedPeerId === p.id} onChange={() => { peerSelectionEdited.current = true; setSelectedPeerId(p.id); }} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     {p.name}
@@ -3895,7 +4227,154 @@ function ProjectMigrationTab({
         ) : null}
       </section>
 
-      {/* 3. 数据迁移(扫描,高级折叠) */}
+      {/* 3. 备用站持续核对 */}
+      <section className="rounded-md border border-[hsl(var(--hairline))] p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" />
+              <h4 className="text-sm font-semibold">备用站核对</h4>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              对比配置指纹、密钥项、主分支提交、数据快照证据与访问耗时。密钥值不会跨节点传输，自动切流保持关闭。
+            </p>
+          </div>
+          <Button type="button" size="sm" onClick={() => void auditStandby()} disabled={auditingStandby || savingStandby || !selectedPeerId}>
+            {auditingStandby ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {auditingStandby ? `正在核对 ${auditElapsedSeconds}s` : '保存并立即核对'}
+          </Button>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            目标项目 ID
+            <input
+              className={monoInputClass}
+              style={{ width: '17.5rem' }}
+              value={standbyRemoteProjectId}
+              onChange={(event) => setStandbyRemoteProjectId(event.target.value)}
+              placeholder={projectId}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            自动核对间隔（分钟）
+            <input
+              className={monoInputClass}
+              style={{ width: '9rem' }}
+              type="number"
+              min={5}
+              max={1440}
+              value={standbyInterval}
+              onChange={(event) => setStandbyInterval(Number(event.target.value))}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            分支同步策略
+            <select
+              className={monoInputClass}
+              style={{ width: '13rem' }}
+              value={branchSyncPolicy}
+              onChange={(event) => setBranchSyncPolicy(event.target.value as typeof branchSyncPolicy)}
+            >
+              <option value="audit-only">只核对</option>
+              <option value="catalog">补齐分支目录</option>
+              <option value="warm-running">补齐并对齐运行态</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 pb-2 text-sm">
+            <input type="checkbox" checked={standbyEnabled} onChange={(event) => setStandbyEnabled(event.target.checked)} />
+            按间隔持续核对
+          </label>
+          <Button type="button" variant="outline" size="sm" onClick={() => void saveStandby()} disabled={savingStandby || auditingStandby || !selectedPeerId}>
+            {savingStandby ? <Loader2 className="animate-spin" /> : <Save />} 保存设置
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => void reconcileBranches(true)} disabled={syncingBranches !== null || savingStandby || !selectedPeerId}>
+            {syncingBranches === 'dry' ? <Loader2 className="animate-spin" /> : <Eye />} 预演分支同步
+          </Button>
+          <Button type="button" size="sm" onClick={() => void reconcileBranches(false)} disabled={syncingBranches !== null || savingStandby || branchSyncPolicy === 'audit-only' || !selectedPeerId}>
+            {syncingBranches === 'apply' ? <Loader2 className="animate-spin" /> : <RefreshCw />} 立即同步分支
+          </Button>
+        </div>
+
+        <p className="mb-3 text-xs text-muted-foreground">
+          “补齐分支目录”只创建缺少的分支，不启动容器；“补齐并对齐运行态”会让备用站跟随源站启动或停止。目标独有分支不会删除，提交不同的分支不会自动覆盖。
+        </p>
+
+        {branchSyncResult ? (
+          <div className="mb-3 overflow-x-auto rounded-md border border-[hsl(var(--hairline))]">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">分支同步</th>
+                  <th className="px-3 py-2 font-medium">数量</th>
+                  <th className="px-3 py-2 font-medium">结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2">源站 / 目标</td>
+                  <td className="px-3 py-2">{branchSyncResult.sourceBranchCount} / {branchSyncResult.targetBranchCount}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{branchSyncResult.dryRun ? '预演' : '已执行'} · {branchSyncResult.policy}</td>
+                </tr>
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2">本轮动作</td>
+                  <td className="px-3 py-2">{branchSyncResult.planned.length}</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    创建 {branchSyncResult.created.length}，启动 {branchSyncResult.deployed.length}，停止 {branchSyncResult.stopped.length}，分叉 {branchSyncResult.divergent.length}，失败 {branchSyncResult.failed.length}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
+        {standby?.lastAudit ? (
+          <div className="overflow-x-auto rounded-md border border-[hsl(var(--hairline))]">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">核对项</th>
+                  <th className="px-3 py-2 font-medium">结果</th>
+                  <th className="px-3 py-2 font-medium">证据</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['目标 CDS', standby.lastAudit.remoteReachable, standby.lastAudit.protocolReady ? '可达，协议兼容' : (standby.lastAudit.error || '不可达')],
+                  ['代码仓库', standby.lastAudit.repositoryMatches, standby.lastAudit.repositoryMatches ? '两端绑定同一仓库' : '仓库身份不同或缺失'],
+                  ['配置与密钥项', standby.lastAudit.configMatches && standby.lastAudit.secretKeysMatch, `配置 ${standby.lastAudit.configMatches ? '一致' : '不一致'}，密钥项 ${standby.lastAudit.secretKeysMatch ? '齐全' : '有差异'}`],
+                  ['主分支提交', standby.lastAudit.defaultBranchMatches, standby.lastAudit.defaultBranchMatches ? '提交一致' : '提交不一致或缺少主分支'],
+                  ['当前数据就绪', standby.lastAudit.currentDataVerified === true, standby.lastAudit.dataReadinessReason
+                    || (standby.lastAudit.dataSnapshotReady ? '已有历史快照，请重新核对当前数据' : '尚无当前数据一致性证据')],
+                ].map(([label, passed, evidence]) => (
+                  <tr key={String(label)} className="border-t border-[hsl(var(--hairline))]">
+                    <td className="px-3 py-2 font-medium">{String(label)}</td>
+                    <td className={`px-3 py-2 ${passed ? 'text-ok' : 'text-warn'}`}>{passed ? '通过' : '未通过'}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{String(evidence)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2 font-medium">控制面耗时</td>
+                  <td className="px-3 py-2">{standby.lastAudit.performance.samples} 次样本</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    目标健康 p50 {standby.lastAudit.performance.healthP50Ms ?? '-'} ms，p95 {standby.lastAudit.performance.healthP95Ms ?? '-'} ms，指纹 {standby.lastAudit.performance.fingerprintMs ?? '-'} ms
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div className={`border-t border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium ${standbyReadyForFailover ? 'text-ok' : 'text-warn'}`}>
+              {standbyReadyForFailover ? '全部门禁通过，可以进入切流演练' : '尚不允许切流，请先处理表格中的未通过项'}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">核对于 {new Date(standby.lastAudit.checkedAt).toLocaleString()}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] p-4 text-center text-sm text-muted-foreground">
+            尚无核对记录。选择上方目标节点，填写目标项目 ID 后运行一次核对。
+          </div>
+        )}
+      </section>
+
+      {/* 4. 数据迁移(扫描,高级折叠) */}
       <details className="rounded-md border border-[hsl(var(--hairline))] p-4">
         <summary className="flex cursor-pointer items-center gap-2">
           <Database className="h-4 w-4" />
@@ -3977,22 +4456,31 @@ function ProjectStorageTab({
   const [data, setData] = useState<ProjectStorageResponse | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [readError, setReadError] = useState('');
+  const beginRefreshRead = useSettingsReadRequest();
   const refresh = useCallback(async () => {
+    const signal = beginRefreshRead();
+    setReadError('');
     setBusy(true);
     try {
-      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/storage`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/storage`), { credentials: 'include', signal });
       const body = await res.json();
-      if (!res.ok) { onToast(`加载失败：${body.error || res.status}`); return; }
+      if (signal.aborted) return;
+      if (!res.ok) { setReadError(body.error || String(res.status)); onToast(`加载失败：${body.error || res.status}`); return; }
       setData(body as ProjectStorageResponse);
     } catch (err) {
+      if (signal.aborted) return;
+      setReadError((err as Error).message);
       onToast(`加载异常：${(err as Error).message}`);
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
-  }, [projectId, onToast]);
+  }, [projectId, onToast, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(refresh);
 
+  if (!data && readError) return <div className="space-y-3"><ErrorBlock message={readError} /><Button onClick={() => void refresh()}>重试</Button></div>;
   if (!data) return <LoadingBlock label="加载存储信息…" />;
 
   const disk = data.diskInfo;
@@ -4124,21 +4612,26 @@ function ProjectInfraTab({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [resyncOpen, setResyncOpen] = useState(false);
 
+  const beginRefreshRead = useSettingsReadRequest();
   const refresh = useCallback(async () => {
+    const signal = beginRefreshRead();
     try {
       setError(null);
       const data = await apiRequest<{ services?: ProjectInfraService[] }>(
-        `/api/infra?project=${encodeURIComponent(projectId)}&live=1`,
+        `/api/infra?project=${encodeURIComponent(projectId)}&live=1`, { signal },
       );
+      if (signal.aborted) return;
       setServices(data.services || []);
     } catch (err) {
+      if (signal.aborted) return;
       const msg = err instanceof ApiError ? err.message : (err as Error).message;
       setError(msg || '加载失败');
-      setServices([]);
+      setServices(previous => previous ?? []);
     }
-  }, [projectId]);
+  }, [projectId, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(refresh);
 
   const doStart = useCallback(async (id: string) => {
     setBusy(id);

@@ -1,77 +1,66 @@
-# CDS 验收报告 / 视觉取证（按需加载）
+# CDS 验收报告传输与取证适配（按需加载）
 
-> 沉淀自 2026-06 的「CDS 这几天修改 MECE 验收」会话：把 **视觉取证 → CDS 自托管验收报告 → 项目/文件夹归类 → 直达深链** 做成可复用流程，以后不必每次重搭。
+**一句话**：正式验收由标准技能执行，CDS 负责保存报告、证据资产与项目归属。
+**谁该读**：从 CDS 部署、页面验收或交付收尾进入报告流程的 Agent。
+**读完能做什么**：调用正确的验收入口，使用 CDS 适配器取证和查询归档结果。
 
-## 何时用
+## 正式验收唯一入口
 
-- 要对 CDS（或经 CDS 部署的应用）做**视觉验收**，并把结论 + 带框截图**逐项留档**、可检索、可分享给登录用户。
-- CDS 报告按设计是**登录态门控**（挂在 CDS 登录之后，无需知识库）。要给未登录第三方看需另起匿名 token 分享（暂未实现）。
+开发交付需要验收报告，或用户提出页面、功能、回归验收时，先读取 [create-visual-test-to-kb](../../create-visual-test-to-kb/SKILL.md)，不等显式 `/验收` 命令。复杂场景按它的前置要求执行 [acceptance-test-design](../../acceptance-test-design/SKILL.md) → [acceptance-scenario-orchestrator](../../acceptance-scenario-orchestrator/SKILL.md) → 取证归档。
 
-## 三步流程
+模板、档位、截图标注、独立触控移动端、manifest、结论与准入规则，以该技能引用的仓库规范为唯一主源；本参考不维护另一套报告流程。
 
-### 1) 取证（真实浏览器，模拟人类）
-`cli/acceptance/` 里：
-- `proxyroute.mjs` —— **关键工程解**：本环境 chromium 自身网络栈穿不过 agent 出口代理（`page.goto` 报 `ERR_CONNECTION_CLOSED`），但 node fetch 在 `NODE_USE_ENV_PROXY=1` 下可以。于是 chromium 不配代理，用 `context.route` 拦截全部请求改由 node fetch 取回 + cookie 双向桥接。
-- `cds-harness.mjs` —— `launchCds(cfg)` 包装：装上 `proxyroute` + 复用 `create-visual-test-to-kb/scripts/harness.mjs` 的 page-helper（`login / gotoByClick / shot / box / stepClick / stepShot / setTheme / writeManifest`）。
-- `cds.config.example.json` —— 取证 CDS 自身用 **CDS admin** 登录（`CDS_USERNAME` / `CDS_PASSWORD`，与应用登录区分）。复制为 `cds.config.json`。
-- `driver.template.mjs` —— 取证剧本模板（登录 → 点导航进入 → 带框截图 → `writeManifest`）。
+正式链路必须保留：
 
-运行：`NODE_USE_ENV_PROXY=1 node your-driver.mjs`（`HTTPS_PROXY` 须在 env）。
-注意：截图必须**真人路径**（登录后点导航进入，禁地址栏直达业务页）；指向性证据务必画框（`stepClick`/`stepShot(highlight)`/`box`）；预览注入页（热重启等待页/墓碑/版本 pill）要用**浏览器导航头**才会出现（curl 裸 GET 只拿到纯文本 503）。
+1. 需求或提交范围、测试设计和必要的场景编排。
+2. 标准 harness 的取证与 manifest，逐图回读；历史图片只能保留原始来源，不补写未执行的标注或移动端事实。
+3. Markdown 写作源交给标准 `archive_report.py`，通过准入后生成模板 HTML 并归档 CDS。
+4. 运行标准 `verify-open.mjs`，验证线上正文、图片、全部内部链接与跳转结果；采用受保护会话时沿标准脚本支持的认证适配执行。
 
-### 2) 组装 HTML
-`build_report_html.py --title --verdict --body-file --manifest --out report.html`
-- body 片段用 `{{IMG:name}}` 占位（name 对应 manifest 的 shots[].name）；脚本把截图 base64 内联进自包含 HTML。
-- 单份 < **10MB**（超了先把 PNG 压成 JPEG / 缩到 ~1280px 宽，否则 base64 撑爆）。
+`human-verify`、`/uat` 和交接报告只提供上游输入，不能替代这条链。`cdscli report create` 是通用存储命令，上传成功不代表验收合格。禁止自行拼 HTML、补模板标记、自定义档位或用抽查图片替代标准准入与打开校验。
 
-### 3) 入库 + 归类 + 直达
-```
-cdscli report-folder create --name "2026-06 这几天 CDS 验收"        # 建文件夹(可 --project)
-cdscli report create --title "CDS · X · 验收报告" --html-file report.html --folder <folderId> [--project <id>]
-cdscli report deeplink <reportId>     # 打印 /reports?folder=&report= 直达深链(点了直接打开该报告)
-cdscli report list --folder <folderId>
-```
-报告页：`https://<CDS_HOST>/reports`（项目卡右上角「验收报告」入口可按项目进入；左侧文件夹栏归类）。
+## CDS 浏览器取证适配
 
-## 后端契约（供排障）
+标准取证工具位于 `create-visual-test-to-kb/scripts/`。CDS 自身的登录与网络适配位于 `../cli/acceptance/`：
 
-- 报告：`POST/GET/PATCH/DELETE /api/reports`，`AcceptanceReportMeta{ id,title,format(html|md),projectId?,branchId?,folderId?,sizeBytes,... }`，正文存盘 `<dataDir>/reports/<id>.<ext>`，10MB/份；HTML 在 sandbox iframe（无 same-origin）渲染。
-- 文件夹：`GET/POST/PATCH/DELETE /api/report-folders`（`ReportFolder{ id,name,projectId?,sortOrder,createdAt }`）；删文件夹其中报告改未归类、不删内容；项目级 key 只能管自己项目（沿用 PR #865 鉴权）。
-- 深链：`/reports?project=&folder=&report=`（前端 `ReportsPage` 读 query 自动选中 + 高亮文件夹）。
+- `cds-harness.mjs`：复用标准 harness 的表单登录、点击导航、标注、截图、主题与 manifest 能力。
+- `driver.template.mjs`：CDS 剧本骨架，不另行定义验收报告结构。
+- `proxyroute.mjs`：仅在浏览器网络确需出口代理适配时使用；不能注入合成业务结果或伪造登录来声明真实流程通过。
+- `cds.config.example.json`：按被测应用指定安全凭据来源。CDS、预览专用凭据与 MAP 凭据分别绑定其真实登录域，不能互用。
 
-## 元数据 + 部署上下文（看板 / 跨系统 / PR 回写）
+`build_report_html.py` 仅保留历史资料兼容或诊断用途，不能用于新的执行类验收报告。旧版“内联图片、自行组装 HTML、直接 report create”流程不再作为验收入口。
 
-`report create` 可带验收元数据，落进报告供 E2 看板、E4 回写 PR、WS3 跨系统展示用：
+被测应用、项目、登录、预览地址和归档文件夹在本次临时配置中确定；不要直接把 MAP 默认配置用于 CDS。凭据只引用安全环境变量，不写入配置、报告或仓库。预览地址从 `cdscli preview-url` 或实际 CDS API 读取。
 
-```
-cdscli report create --title "..." --html-file r.html \
-  --verdict pass|conditional|fail --tier "L2 视觉回归" \
-  --branch <分支> --commit <sha> --pr <PR#> --deploy-mode fast|source \
-  --defects 'p0=0,p1=2'           # 或 JSON '{"p0":0,"p1":2}'
+## 归档结果查询
+
+标准归档脚本负责生成和写入报告；CDS CLI 用于查询归属和真实链接：
+
+```bash
+SKILLS_ROOT=$(for base in .claude .agents; do [ -d "$base/skills/cds" ] && { echo "$base/skills"; break; }; done)
+python3 "$SKILLS_ROOT/cds/cli/cdscli.py" report list --project <projectId>
+python3 "$SKILLS_ROOT/cds/cli/cdscli.py" report-folder list --project <projectId>
+python3 "$SKILLS_ROOT/cds/cli/cdscli.py" report deeplink <reportId>
 ```
 
-- E1：关联分支（`--branch-id`）时后端自动补全 branch/commit 部署上下文。
-- E2 看板：报告页顶部按 verdict 统计通过率，列表行带 verdict 徽章。
-- E4 回写 PR：报告带 `--pr` + 项目已 link GitHub → 报告阅读器「回写 PR」把 verdict 作
-  PR 评论 + check-run（pass→success / conditional→neutral / fail→failure）推回。
-- E6 匿名分享：报告阅读器「匿名分享」生成只读 `/r/<token>`，对外/未登录可看，可撤销。
+归档前从标准技能读取当前命令与必填参数，不复制维护另一条上传示例。报告按项目和文件夹归类；标题、Verdict、L0/L1/L2、分支与完整提交号采用标准技能要求。
 
-## MAP-KBTP peer-sync（让 MAP 等系统拉取 CDS 报告）
+CDS 直达深链默认为登录态门控。只有用户需要对外分享时才创建匿名分享，不为验证方便擅自改变可见性。正文或证据未就绪、标准校验未过时，保持验收未完成；重测生成新报告，不覆写历史证据。
 
-职责分离：验收报告归 CDS，MAP 通过知识库开放协议（MAP-KBTP v1）整库 pull。CDS 作只读源 peer。
+## 存储与接口（排障用）
 
-```
-cdscli peer pairing-code --name "给谁"   # 生成一次性配对码(明文仅一次) + 本 CDS nodeId
-cdscli peer nodes                         # 列出已配对节点
-cdscli peer revoke <id>                   # 撤销节点(其请求立即 401)
-```
+- 报告元数据与正文分开保存；正文的 `storage`、`objectKey` 才是实际存储事实，本地文件只作缓存或明确诊断用途。
+- 截图先进入内容寻址资产库，正文引用不可变 HTTPS URL；10MB 是正文上限，不能靠删减必要证据迁就它。
+- 报告接口为 `/api/reports`，证据资产接口为 `/api/reports/assets`，文件夹接口为 `/api/report-folders`。
+- 实际直达深链由 CLI 返回，前端按 `project`、`folder`、`report` 参数定位。
+- Verdict 和部署上下文供验收看板使用；未经用户授权不回写 PR、不发送通知、不创建公开分享。
 
-操作：在 MAP「同步中心」新增 CDS 节点，填本 CDS 的 peer-sync baseUrl + 上面的配对码，
-选 `document-store` 资源、itemId=CDS 项目 id（全局报告用 `__cds_global__`）→ pull。
-协议端点：`/api/peer-sync/{handshake,ping,capabilities,resources/document-store/{signature,export,apply}}`，
-HMAC-SHA256（`METHOD\npath\nts\nsha256(body)`）+ ±5 分钟时间窗。apply 为 no-op（CDS 只读源）。
+## 跨系统展示
 
-## 已知边界
+报告归 CDS；MAP 等系统可通过知识库开放协议从 CDS 拉取。跨系统展示不改变验收主源、模板或归档完成条件。
 
-- SSE/EventSource 长连接不走 `route.fulfill`（取静态状态截图够用，实时流不适合）。
-- 预览子域名标签 > 63 字符（DNS 上限）会 `ERR_CONNECTION_CLOSED`，与本流程无关，属 `preview-slug` 待办。
+配对与同步操作见核心 CDS 技能，只有用户要求建立该连接时才执行。归档本身不需要新建 MAP 验收知识库。
+
+## 维护此适配说明
+
+本参考和 CDS 核心技能属于五技能分发包，编辑后复用上面解析的技能根，运行 `python3 "$SKILLS_ROOT/cds/scripts/refresh_manifest.py"` 刷新内容摘要清单，并通过 `CDS Skill` 的 CLI 与包一致性检查。文档改动也会改变分发包内容，不能沿用旧摘要。

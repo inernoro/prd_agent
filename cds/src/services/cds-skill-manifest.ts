@@ -3,6 +3,19 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { CDS_SKILL_KEYS } from '../shared/agent-setup.js';
 
+/** Copy only distributable source, excluding machine-generated caches. */
+export async function copyCdsSkillSource(source: string, target: string): Promise<void> {
+  await fs.cp(source, target, {
+    recursive: true,
+    filter: async name => {
+      if (['__pycache__', '.DS_Store'].includes(path.basename(name)) || name.endsWith('.pyc')) return false;
+      const stat = await fs.lstat(name);
+      if (!stat.isDirectory() && !stat.isFile()) throw new Error('CDS skill bundle contains an unsupported file type');
+      return true;
+    },
+  });
+}
+
 /** One distribution receipt for both anonymous installation and authenticated updates. */
 export async function buildCdsSkillManifest(skillsRoot: string) {
   const cli = await fs.readFile(path.join(skillsRoot, 'cds/cli/cdscli.py'), 'utf8');

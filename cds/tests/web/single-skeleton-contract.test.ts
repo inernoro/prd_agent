@@ -1,3 +1,5 @@
+import { DatabasePassCapability } from '../../web/src/components/branch/DatabasePassPanel.js';
+import { mergeCleanSettings } from '../../web/src/components/project/ProjectSettingsRefresh.js';
 /**
  * 「一个界面一副骨架」守卫（2026-09-17）。
  *
@@ -11,7 +13,7 @@
  * 这类回归编译过、渲染过、单看任何一处都对，只有连着看两帧才显形，所以钉成机械判据：
  * 骨架期用的部件必须**就是**就绪期用的那批部件（同一个导出），而不是长得像的复制品。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
@@ -19,14 +21,53 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { BranchDrawerSkeleton } from '../../web/src/components/branch/BranchDrawerSkeleton.js';
 import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCard.js';
 import { drawerTabs } from '../../web/src/components/branch/drawerTabs.js';
-import { pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
-import { branchNoticeVisible } from '../../web/src/components/BranchDetailDrawer.js';
-import { OverviewPanel } from '../../web/src/components/branch/OverviewPanel.js';
+import { ProjectListSkeleton, pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
+import { SettingsPageSkeleton } from '../../web/src/components/skeletons/SettingsSkeleton.js';
+import { branchNoticeVisible, ResourceTcpConnectionStatus, ServiceLogsPanel } from '../../web/src/components/BranchDetailDrawer.js';
+import { BranchDetailLoadingSkeleton, LoadingBlock } from '../../web/src/pages/cds-settings/components.js';
+import { MonitorCenterSkeleton } from '../../web/src/pages/status/primitives.js';
+import { CommonLoadingSkeleton } from '../../web/src/pages/cds-settings/tabs/LoadingPagesTab.js';
+import { MetricsSkeleton, OverviewPanel } from '../../web/src/components/branch/OverviewPanel.js';
 
 const SRC = path.resolve(__dirname, '../../web/src');
 const read = (rel: string): string => fs.readFileSync(path.join(SRC, rel), 'utf8');
 /** 扫源码只扫会执行的部分：注释里为讲病根会原样引用错误写法（predicate-and-wiring-discipline 形状 6）。 */
 const stripComments = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+describe('资源与日志等待只覆盖真实等待状态', () => {
+  it('数据库通行证已禁用且原因缺失时明确结束等待', () => {
+    for (const reason of [undefined, '']) {
+      const html = renderToStaticMarkup(createElement(DatabasePassCapability,{capability:{enabled:false,host:'',defaultTtlMinutes:30,reason}}));
+      expect(html).toContain('当前实例未启用 TCP 直连。');
+      expect(html).not.toContain('aria-busy');
+    }
+    expect(renderToStaticMarkup(createElement(DatabasePassCapability,{capability:null}))).toContain('读取通行证配置');
+    expect(renderToStaticMarkup(createElement(DatabasePassCapability,{capability:null,loadError:'读取失败'}))).not.toContain('aria-busy');
+  });
+
+  it('TCP 配置只有未到达时 busy；关闭且缺少原因时给出确定说明', () => {
+    const render = (capability: Parameters<typeof ResourceTcpConnectionStatus>[0]['capability']) => renderToStaticMarkup(createElement(ResourceTcpConnectionStatus, {capability}));
+    expect(render(null)).toContain('aria-busy="true"');
+    for (const reason of [undefined, '']) {
+      const html = render({enabled:false,host:'',reason});
+      expect(html).toContain('当前实例未启用 TCP 直连。');
+      expect(html).not.toContain('aria-busy');
+    }
+    expect(render({enabled:false,host:'',reason:'实例策略未启用'})).toContain('实例策略未启用');
+    expect(render({enabled:true,host:'fixture.invalid'})).toContain('fixture.invalid');
+  });
+
+  it('日志等待在正常容器内，只有就绪日志进入 pre', () => {
+    const service = {profileId:'api',containerName:'fixture-api',hostPort:3000,status:'running' as const};
+    const loading = renderToStaticMarkup(createElement(ServiceLogsPanel,{service,state:{status:'loading',profileId:'api'}}));
+    expect(loading).toContain('aria-label="读取服务日志"');
+    expect(loading).not.toContain('<pre');
+    const ready = renderToStaticMarkup(createElement(ServiceLogsPanel,{service,state:{status:'ok',profileId:'api',logs:'fixture-ready-log'}}));
+    expect(ready).toContain('<pre');
+    expect(ready).toContain('fixture-ready-log');
+    expect(ready).not.toContain('aria-busy');
+  });
+});
 
 describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () => {
   const drawer = stripComments(read('components/BranchDetailDrawer.tsx'));
@@ -105,7 +146,7 @@ describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () =
 describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件', () => {
   it('外壳的 Suspense fallback 按路由取 pageSkeletonForPath，不再自画固定方块', () => {
     const shell = stripComments(read('components/layout/AppShell.tsx'));
-    expect(shell).toContain('pageSkeletonForPath(pathname)');
+    expect(shell).toContain('pageSkeletonForPath(pathname, { canManageProjects })');
     expect(shell).toContain("from '@/components/skeletons/PageSkeletons'");
     const fallback = shell.slice(shell.indexOf('function ConsoleRouteFallback'), shell.indexOf('function ConsoleRouteFallback') + 1200);
     expect(fallback).not.toContain('cds-loading-skeleton-panel h-40');
@@ -116,16 +157,21 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     const projectList = stripComments(read('pages/ProjectListPage.tsx'));
     expect(branchList).toContain("import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons'");
     expect(branchList).not.toMatch(/function BranchListSkeleton/);
-    expect(projectList).toContain("import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons'");
+    expect(projectList).toMatch(/import\s+\{[^}]*\bProjectListSkeleton\b[^}]*\}\s+from\s+'@\/components\/skeletons\/PageSkeletons'/);
     expect(projectList).not.toMatch(/function ProjectListSkeleton/);
   });
 
-  it('列表骨架顶上不再放一行「加载…」文案：它把骨架撑得比正文高，切换那一帧整片网格往上跳', () => {
+  it('分支骨架为统计和筛选保留与正文相同的布局槽，不额外插入加载文案', () => {
     const src = stripComments(read('components/skeletons/PageSkeletons.tsx'));
     expect(src).not.toContain('CdsLogoLoader');
     const branch = renderToStaticMarkup(pageSkeletonForPath('/branch-list'));
-    // 第一个子元素就是卡片网格，前面没有任何说明行
-    expect(branch).toMatch(/aria-live="polite"[^>]*><div class="cds-branch-card-grid"/);
+    const ready = read('pages/BranchListPage.tsx');
+    expect(ready).toContain('<BranchListOverview summary=');
+    expect(src).toContain('<BranchListOverview loading summary=');
+    expect(branch.indexOf('data-branch-summary-slot')).toBeLessThan(branch.indexOf('cds-branch-card-grid'));
+    expect(branch.indexOf('data-branch-controls-slot')).toBeLessThan(branch.indexOf('cds-branch-card-grid'));
+    expect(branch).toContain('class="mt-6"');
+    expect(branch).not.toMatch(/tabindex="0"/);
     expect(branch).not.toContain('加载项目与本地分支列表</');
   });
 
@@ -136,15 +182,126 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     const project = renderToStaticMarkup(pageSkeletonForPath('/project-list'));
     expect(project).toContain('cds-card-grid');
     expect(project).not.toContain('cds-branch-card-grid');
-    const generic = renderToStaticMarkup(pageSkeletonForPath('/reports'));
+    const generic = renderToStaticMarkup(pageSkeletonForPath('/release-console'));
     expect(generic).not.toContain('cds-card-grid');
     expect(generic).toContain('cds-loading-skeleton-panel');
   });
 
-  it('CDS 系统设置的页签 chunk 骨架与页签数据骨架同形（LoadingBlock 横条，不是居中 logo）', () => {
+  it('设置页签的代码等待保留设置卡片结构', () => {
     const settings = stripComments(read('pages/CdsSettingsPage.tsx'));
     const fallback = settings.slice(settings.indexOf('function SettingsTabFallback'), settings.indexOf('function SettingsTabFallback') + 400);
-    expect(fallback).toContain('<LoadingBlock');
+    expect(fallback).toContain('<SettingsContentSkeleton');
+    expect(fallback).not.toContain('<LoadingBlock');
     expect(fallback).not.toContain('CdsLogoLoader');
+  });
+});
+
+
+describe('统一骨架：路由、数据和预览共用组件', () => {
+  const markup = (node: ReturnType<typeof createElement>) => renderToStaticMarkup(node);
+
+  it('监控、分支详情、通用局部页的路由等待与数据等待轮廓一致', () => {
+    expect(markup(pageSkeletonForPath('/status'))).toBe(markup(createElement(MonitorCenterSkeleton)));
+    expect(markup(pageSkeletonForPath('/branch-panel/fixture'))).toBe(markup(createElement(BranchDetailLoadingSkeleton)));
+    expect(markup(pageSkeletonForPath('/cds-settings'))).toBe(markup(createElement(SettingsPageSkeleton)));
+    for (const route of ['/reports', '/task-schedule']) {
+      expect(markup(pageSkeletonForPath(route))).toBe(markup(createElement(LoadingBlock)));
+    }
+  });
+
+  it('预览展示实际的页面骨架，不再用 Logo 点阵替代', () => {
+    for (const [scenarioId, expected] of [
+      ['project-list', pageSkeletonForPath('/project-list')],
+      ['branch-list', pageSkeletonForPath('/branch-list')],
+      ['branch-detail', createElement(BranchDetailLoadingSkeleton)],
+      ['relation-flow', createElement(RelationCardSkeleton, { variant: 'row' })],
+      ['metrics', createElement(MetricsSkeleton, { filled: 0, windowLabel: '近 30 分钟', note: '正在读取指标历史' })],
+      ['container-logs', createElement(LoadingBlock)],
+    ] as const) {
+      expect(markup(createElement(CommonLoadingSkeleton, { scenarioId }))).toBe(markup(expected));
+    }
+    const source = stripComments(read('pages/cds-settings/tabs/LoadingPagesTab.tsx'));
+    expect(source).not.toContain('ShapeGridSkeletonPreview');
+    expect(source).not.toContain('ShapeGridWaitingPreview');
+    expect(source).not.toContain('CdsLogoLoader');
+  });
+
+  it('关系与指标的占位统一走共享样式，保留真实说明和图表轮廓', () => {
+    const relation = markup(createElement(RelationCardSkeleton, { variant: 'row' }));
+    const metrics = markup(createElement(MetricsSkeleton, { filled: 0, windowLabel: '近 30 分钟', note: '正在读取指标历史' }));
+    for (const html of [relation, metrics]) {
+      expect(html).toContain('cds-loading-skeleton-line');
+      expect(html).toContain('cds-loading-skeleton-panel');
+      expect(html).not.toContain('animate-pulse');
+      expect(html).not.toContain('linear-gradient');
+    }
+    expect(metrics).toContain('height:38%');
+    expect(metrics).toContain('正在读取指标历史');
+  });
+
+  it('监控柱条均分空间，不再每根都占父容器全宽', () => {
+    const monitor = markup(createElement(MonitorCenterSkeleton));
+    expect(monitor).toContain('cds-loading-skeleton-line min-w-0 flex-1');
+    expect(monitor).not.toContain('w-full shrink-0');
+  });
+});
+
+
+describe('项目设置刷新保留草稿并接收未编辑的服务器值', () => {
+  it('保留新建、编辑、删除三类草稿，同时更新干净字段', () => {
+    expect(mergeCleanSettings(
+      { edited: 'draft', clean: 'old', added: 'draft' },
+      { edited: 'old', clean: 'old', removed: 'old' },
+      { edited: 'remote', clean: 'new', removed: 'remote', remote: 'new' },
+    )).toEqual({ edited: 'draft', clean: 'new', added: 'draft', remote: 'new' });
+  });
+  it('数据库初始化对象未改动时跟随服务器，改过时保留本地值', () => {
+    expect(mergeCleanSettings(
+      { clean: { mode: 'empty' }, edited: { mode: 'clone', source: 'draft' } },
+      { clean: { mode: 'empty' }, edited: { mode: 'empty' } },
+      { clean: { mode: 'clone', source: 'remote' }, edited: { mode: 'empty' } },
+    )).toEqual({ clean: { mode: 'clone', source: 'remote' }, edited: { mode: 'clone', source: 'draft' } });
+  });
+});
+
+describe('项目页从骨架到正文保持相同布局', () => {
+  it('加载与就绪页头使用同一个布局组件，窄屏筛选及工具条不再简化成两根横条', () => {
+    const ready = stripComments(read('components/project/ProjectInventoryHeader.tsx'));
+    const skeleton = stripComments(read('components/skeletons/PageSkeletons.tsx'));
+    expect(ready).toContain('<ProjectInventoryLayout');
+    expect(skeleton).toContain('<ProjectInventoryLayout');
+    const html = renderToStaticMarkup(createElement(ProjectListSkeleton, { canManageProjects: true }));
+    for (const label of ['管理项目、分支环境与部署。', '全部项目', '运行中', '已暂停', '已就绪']) expect(html).toContain(label);
+    for (const group of ['cds-project-status-filters', 'cds-project-inventory-tools', 'cds-project-inventory-search', 'cds-project-view-switch']) expect(html).toContain(group);
+    expect((html.match(/<button[^>]*disabled/g) || []).length).toBe(8);
+    expect((html.match(/<select[^>]*disabled/g) || []).length).toBe(2);
+    expect(html).not.toContain('h-8 w-72');
+  });
+
+  it('已保存的列表视图在代码和数据加载阶段都保持列表形状', () => {
+    vi.stubGlobal('window', { localStorage: { getItem: () => JSON.stringify({ view: 'list', pinnedProjectIds: [] }) } });
+    try {
+      for (const html of [renderToStaticMarkup(createElement(ProjectListSkeleton)), renderToStaticMarkup(pageSkeletonForPath('/project-list'))]) {
+        expect(html).toContain('cds-project-inventory--list');
+        expect((html.match(/cds-project-card-link/g) || []).length).toBe(6);
+      }
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+
+describe('项目加载骨架遵从已知管理能力', () => {
+  it('身份未知和普通成员不画管理操作，明确的所有者保留操作轮廓', () => {
+    for (const node of [createElement(ProjectListSkeleton), createElement(ProjectListSkeleton, { canManageProjects: false }), pageSkeletonForPath('/project-list')]) {
+      const html = renderToStaticMarkup(node);
+      expect(html).not.toContain('导入仓库');
+      expect(html).not.toContain('新建项目');
+      expect(html).toContain('cds-project-status-filters');
+    }
+    for (const node of [createElement(ProjectListSkeleton, { canManageProjects: true }), pageSkeletonForPath('/project-list', { canManageProjects: true })]) {
+      const html = renderToStaticMarkup(node);
+      expect(html).toContain('导入仓库');
+      expect(html).toContain('新建项目');
+    }
   });
 });

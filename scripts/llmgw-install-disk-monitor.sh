@@ -12,12 +12,14 @@ fi
 root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 monitor="$root/scripts/llmgw-disk-usage-monitor.sh"
 retention="$root/scripts/llmgw-backup-retention.py"
+native_common="$root/cds/src/services/disk-resource-native.py"
+native_policy="$root/cds/src/services/backup-retention-native.py"
 service="$root/deploy/systemd/llmgw-disk-monitor.service"
 timer="$root/deploy/systemd/llmgw-disk-monitor.timer"
 retention_service="$root/deploy/systemd/llmgw-backup-retention.service"
 retention_timer="$root/deploy/systemd/llmgw-backup-retention.timer"
 
-for file in "$monitor" "$retention" "$service" "$timer" "$retention_service" "$retention_timer"; do
+for file in "$monitor" "$retention" "$native_common" "$native_policy" "$service" "$timer" "$retention_service" "$retention_timer"; do
   if [ ! -f "$file" ]; then
     echo "ERROR: required file missing: $file" >&2
     exit 1
@@ -27,6 +29,7 @@ done
 if [ "$execute" != "1" ]; then
   echo "+ install -m 0755 $monitor /usr/local/sbin/llmgw-disk-usage-monitor"
   echo "+ install -m 0755 $retention /usr/local/sbin/llmgw-backup-retention"
+  echo "+ install shared 15-day policy in /usr/local/lib/cds-disk-retention"
   echo "+ install -m 0644 $service /etc/systemd/system/llmgw-disk-monitor.service"
   echo "+ install -m 0644 $timer /etc/systemd/system/llmgw-disk-monitor.timer"
   echo "+ install -m 0644 $retention_service /etc/systemd/system/llmgw-backup-retention.service"
@@ -43,6 +46,9 @@ fi
 
 install -m 0755 "$monitor" /usr/local/sbin/llmgw-disk-usage-monitor
 install -m 0755 "$retention" /usr/local/sbin/llmgw-backup-retention
+install -d -m 0755 /usr/local/lib/cds-disk-retention
+install -m 0644 "$native_common" /usr/local/lib/cds-disk-retention/disk-resource-native.py
+install -m 0644 "$native_policy" /usr/local/lib/cds-disk-retention/backup-retention-native.py
 install -m 0644 "$service" /etc/systemd/system/llmgw-disk-monitor.service
 install -m 0644 "$timer" /etc/systemd/system/llmgw-disk-monitor.timer
 install -m 0644 "$retention_service" /etc/systemd/system/llmgw-backup-retention.service

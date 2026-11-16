@@ -1,3 +1,5 @@
+using PrdAgent.Core.Security;
+using PrdAgent.Api.Services.MdToPpt;
 using System.Text;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
@@ -16,6 +18,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class HostedSiteEditRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private static readonly TimeSpan RunTtl = TimeSpan.FromHours(24);
     internal static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
     internal static readonly TimeSpan RecoveryInterval = TimeSpan.FromSeconds(15);
@@ -47,8 +50,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IServiceScopeFactory scopeFactory,
         IRunQueue queue,
         IRunEventStore events,
-        ILogger<HostedSiteEditRunWorker> logger)
+        ILogger<HostedSiteEditRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _events = events;
@@ -103,10 +108,15 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             LeaseDuration,
             ct);
         if (run == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         var projection = new RunProjection(_logger, runId);
         var meta = new RunMeta
         {
+            TaskPermitId = run.TaskPermitId,
             RunId = runId,
             Kind = RunKinds.DesignArtifact,
             CreatedByUserId = run.UserId,
@@ -148,7 +158,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             string? presentationHtml = null;
             if (run.Operation == DesignArtifactOperations.Edit)
             {
-                if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                if (run.ArtifactType == DesignArtifactTypes.HtmlPpt && run.PptEditContext is { } frozenBase)
+                {
+                    var continuation = scope.ServiceProvider.GetRequiredService<IHtmlPptContinuationService>();
+                    var resolvedBase = await continuation.ValidateFrozenContextAsync(frozenBase, run.UserId, executionCts.Token);
+                    editable = await sites.GetEditableEntryHtmlAsync(frozenBase.BaseSiteId, run.UserId, executionCts.Token);
+                    if (editable.ContentVersion != frozenBase.BaseContentVersion
+                        || editable.Site.PublishedRevisionId != frozenBase.BasePublishedRevisionId)
+                        throw new InvalidOperationException("演示稿线上版本已变化，修改任务未发送模型请求");
+                    parent = await revisions.GetAsync(frozenBase.BaseSiteId, frozenBase.BaseRevisionId,
+                        run.UserId, executionCts.Token)
+                        ?? throw new InvalidOperationException("演示稿基稿不存在或无权访问");
+                    presentationHtml = resolvedBase.Html;
+                }
+                else if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
                 {
                     var parentRunId = run.PresentationInput?.ParentRunId;
                     if (string.IsNullOrWhiteSpace(parentRunId))
@@ -332,24 +355,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             executionCts.Token.ThrowIfCancellationRequested();
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
-            if (run.ArtifactType == DesignArtifactTypes.WebPage)
-            {
-                var qualityEvidence = BuildQualityEvidence(run, editable);
-                HostedSiteRevisionRules.ValidateGeneratedContentQuality(
-                    html,
-                    qualityEvidence,
-                    allowScriptedControls: verifiedFiles != null);
-            }
             var isOpenDesignPresentation = run.ArtifactType == DesignArtifactTypes.HtmlPpt
                                            && run.Runtime == DesignArtifactRuntimes.OpenDesign;
             var browserQuality = ParseBrowserQualitySummary(
                 verifiedFiles,
-                requireHardPass: !isOpenDesignPresentation);
-            if (run.Runtime == DesignArtifactRuntimes.OpenDesign
-                && run.ContractVersion == DesignArtifactContractVersions.Current
-                && !isOpenDesignPresentation
-                && browserQuality == null)
-                throw new InvalidOperationException("OpenDesign 没有提交浏览器质量证据，请重新生成");
+                requireHardPass: false);
             if (browserQuality != null)
             {
                 run.BrowserQuality = browserQuality;
@@ -378,7 +388,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         sites,
                         verifiedFiles,
                         html,
-                        trustedPresentation: isOpenDesignPresentation);
+                        trustedPresentation: isOpenDesignPresentation,
+                        preserveVerifiedWebPackage: run.ArtifactType == DesignArtifactTypes.WebPage);
                     html = Encoding.UTF8.GetString(Convert.FromBase64String(
                         verifiedFiles.Single(file => file.Path == "index.html").ContentBase64));
                 }
@@ -623,16 +634,56 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
 
     private async Task CompletePresentationAsync(
-        MongoDbContext db,
-        DesignArtifactRun run,
-        string leaseOwner,
-        IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
-        RunProjection projection,
-        RunMeta meta,
-        string html,
-        PersistedDesignArtifact artifact,
-        CancellationToken ct)
+        MongoDbContext db, DesignArtifactRun run, string leaseOwner,
+        IWebPageDesignArtifactLifecycleAdapter publicLifecycle, RunProjection projection, RunMeta meta,
+        string html, PersistedDesignArtifact artifact, CancellationToken ct)
     {
+        var completedAt = await CompletePresentationRecordAsync(db, run,
+            new DesignArtifactLifecycleLeaseAuthority(leaseOwner), publicLifecycle, html, artifact, ct);
+        var htmlHash = ComputeHtmlHash(html);
+        meta.Status = RunStatuses.Done;
+        meta.EndedAt = completedAt;
+        await projection.WriteAsync(() => _events.SetRunAsync(
+            RunKinds.DesignArtifact,
+            meta,
+            RunTtl,
+            ct: CancellationToken.None));
+        await projection.WriteAsync(() => _events.AppendEventAsync(
+            RunKinds.DesignArtifact,
+            run.Id,
+            "done",
+            new
+            {
+                runId = run.Id,
+                siteId = artifact.SiteId,
+                siteUrl = artifact.SiteUrl,
+                revisionId = artifact.RevisionId,
+                total = run.PresentationInput?.TargetPages ?? 0,
+                degraded = 0,
+                htmlHash,
+            },
+            RunTtl,
+            CancellationToken.None));
+    }
+
+    internal static async Task<DateTime> CompletePresentationRecordAsync(
+        MongoDbContext db, DesignArtifactRun run, DesignArtifactLifecycleLeaseAuthority lease,
+        IWebPageDesignArtifactLifecycleAdapter publicLifecycle, string html,
+        PersistedDesignArtifact artifact, CancellationToken ct)
+    {
+        var current = await db.DesignArtifactRuns.Find(item => item.Id == run.Id
+                && item.DeploymentSlug == DeploymentScope.Current && item.UserId == run.UserId
+                && item.ArtifactType == DesignArtifactTypes.HtmlPpt && item.Runtime == DesignArtifactRuntimes.OpenDesign)
+            .SingleOrDefaultAsync(ct) ?? throw new InvalidOperationException("演示稿公共任务不存在");
+        if (current.ProducedArtifactSiteId != artifact.SiteId || current.ProducedArtifactRevisionId != artifact.RevisionId)
+            throw new InvalidOperationException("演示稿完整产物身份尚未保存");
+        var revision = await db.HostedSiteRevisions.Find(item => item.Id == artifact.RevisionId
+                && item.SiteId == artifact.SiteId && item.CreatedByUserId == run.UserId
+                && item.SourceRunId == run.Id && item.Runtime == DesignArtifactRuntimes.OpenDesign)
+            .SingleOrDefaultAsync(ct) ?? throw new InvalidOperationException("演示稿完整版本尚未保存");
+        WebPageDesignArtifactLifecycleAdapter.ValidateSavedPresentation(current, revision);
+        if (!string.Equals(revision.Html, html, StringComparison.Ordinal))
+            throw new InvalidOperationException("演示稿完成正文与已保存文件包不一致");
         var completedAt = DateTime.UtcNow;
         var htmlHash = ComputeHtmlHash(html);
         var update = Builders<MdToPptRun>.Update
@@ -655,12 +706,6 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             .Set(item => item.ErrorCode, null)
             .Set(item => item.ArtifactContractSynchronizedAt, completedAt)
             .Set(item => item.UpdatedAt, completedAt);
-        var compatibilityWrite = await db.MdToPptRuns.UpdateOneAsync(
-            item => item.Id == run.Id && item.UserId == run.UserId && item.Status == "running",
-            update,
-            cancellationToken: ct);
-        if (compatibilityWrite.ModifiedCount != 1)
-            throw new InvalidOperationException("演示稿兼容记录未能进入完成态，请稍后重试");
         run.ArtifactSiteId = artifact.SiteId;
         run.ArtifactRevisionId = artifact.RevisionId;
 
@@ -668,7 +713,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         {
             await publicLifecycle.CompleteAsync(
                 run.Id,
-                new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                lease,
                 ct);
             if (artifact.RevisionStatus == HostedSiteRevisionStatuses.Published)
             {
@@ -704,37 +749,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 }
             }
         }
-        catch (Exception ex)
+        catch
         {
-            // 兼容记录已经保存真实产物；公共账本仍停留在 committing，恢复器可按同一 manifest
-            // 幂等完成。这里不能把已经生成的演示稿反写成失败或重新付费。
-            _logger.LogWarning(ex, "OpenDesign 演示稿公共生命周期待恢复 runId={RunId}", run.Id);
+            // 完整产物已保存；兼容记录保持非终态，恢复器按同一 manifest 收口，不重新付费。
             throw new DesignArtifactRunLeaseLostException(run.Id);
         }
 
-        meta.Status = RunStatuses.Done;
-        meta.EndedAt = completedAt;
-        await projection.WriteAsync(() => _events.SetRunAsync(
-            RunKinds.DesignArtifact,
-            meta,
-            RunTtl,
-            ct: CancellationToken.None));
-        await projection.WriteAsync(() => _events.AppendEventAsync(
-            RunKinds.DesignArtifact,
-            run.Id,
-            "done",
-            new
-            {
-                runId = run.Id,
-                siteId = artifact.SiteId,
-                siteUrl = artifact.SiteUrl,
-                revisionId = artifact.RevisionId,
-                total = run.PresentationInput?.TargetPages ?? 0,
-                degraded = 0,
-                htmlHash,
-            },
-            RunTtl,
-            CancellationToken.None));
+        var compatibilityWrite = await db.MdToPptRuns.UpdateOneAsync(
+            item => item.Id == run.Id && item.UserId == run.UserId && (item.Status == "running" || item.Status == "done"),
+            update,
+            cancellationToken: ct);
+        if (compatibilityWrite.MatchedCount != 1)
+            throw new InvalidOperationException("演示稿兼容记录未能进入完成态，请稍后重试");
+        return completedAt;
     }
 
     internal static string ComputeHtmlHash(string html) =>
@@ -814,6 +841,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string message,
         string phaseCode)
     {
+        // 同一已存结果恢复保存时保留已确认进度，不把读取/保存提示倒退成新一轮执行。
+        if (run.ArtifactType == DesignArtifactTypes.HtmlPpt || !string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+            progress = Math.Max(run.Progress, progress);
         var now = DateTime.UtcNow;
         run.Progress = progress;
         run.PhaseCode = phaseCode;
@@ -943,8 +973,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
 
         var projection = new RunProjection(_logger, runId);
-        var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
-            CreatedByUserId = cancelled.UserId, CreatedAt = cancelled.CreatedAt };
+        var meta = new RunMeta
+        {
+            TaskPermitId = cancelled.TaskPermitId, RunId = runId, Kind = RunKinds.DesignArtifact,
+            CreatedByUserId = cancelled.UserId, CreatedAt = cancelled.CreatedAt,
+        };
         meta.Status = RunStatuses.Cancelled;
         meta.EndedAt = cancelled.CancelledAt ?? DateTime.UtcNow;
         meta.ErrorCode = null;
@@ -1034,8 +1067,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
 
         var projection = new RunProjection(_logger, runId);
-        var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
-            CreatedByUserId = current!.UserId, CreatedAt = current.CreatedAt };
+        var meta = new RunMeta
+        {
+            TaskPermitId = current!.TaskPermitId, RunId = runId, Kind = RunKinds.DesignArtifact,
+            CreatedByUserId = current.UserId, CreatedAt = current.CreatedAt,
+        };
         meta.Status = status;
         meta.EndedAt = DateTime.UtcNow;
         meta.ErrorCode = errorCode;
@@ -1265,39 +1301,62 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             ? null
             : run.Operation == DesignArtifactOperations.Edit && !persistEditAsNewSite
                 ? BuildVerifiedHostedSiteFiles(verifiedFiles, html)
-                : PrepareVerifiedHostedSiteFiles(sites, verifiedFiles, html);
+                : PrepareVerifiedHostedSiteFiles(
+                    sites, verifiedFiles, html,
+                    preserveVerifiedWebPackage: run.ArtifactType == DesignArtifactTypes.WebPage);
 
         if (run.Operation == DesignArtifactOperations.Edit && !persistEditAsNewSite)
         {
             if (string.IsNullOrWhiteSpace(run.TargetSiteId) || parent == null || editable == null)
                 throw new InvalidOperationException("页面修改任务缺少待保存的版本上下文");
             HostedSiteRevision? draft = null;
+            var createdDraft = false;
             try
             {
-                draft = verifiedFiles == null
-                    ? await revisions.CreateDraftAsync(
-                        run.TargetSiteId,
-                        run.UserId,
-                        html,
-                        run.Instruction,
-                        run.Runtime,
-                        run.Id,
-                        parent.Id,
-                        run.KnowledgeReferences.Select(x => x.EntryId).ToList(),
-                        editable.ContentVersion,
-                        ct)
-                    : await revisions.CreateVerifiedDraftAsync(
-                        run.TargetSiteId,
-                        run.UserId,
-                        html,
-                        hostedFiles!,
-                        run.Instruction,
-                        run.Runtime,
-                        run.Id,
-                        parent.Id,
-                        run.KnowledgeReferences.Select(x => x.EntryId).ToList(),
-                        editable.ContentVersion,
-                        ct);
+                if (run.ArtifactType == DesignArtifactTypes.HtmlPpt && hostedFiles != null)
+                {
+                    var existing = await db.HostedSiteRevisions.Find(item => item.SiteId == run.TargetSiteId
+                            && item.CreatedByUserId == run.UserId && item.SourceRunId == run.Id)
+                        .Limit(2).ToListAsync(ct);
+                    if (existing.Count > 1) throw new InvalidOperationException("演示稿恢复版本身份不唯一");
+                    draft = existing.SingleOrDefault();
+                    if (draft != null && (draft.Status != HostedSiteRevisionStatuses.Draft
+                        || draft.Runtime != run.Runtime || draft.ParentRevisionId != parent.Id
+                        || draft.BasedOnContentVersion != editable.ContentVersion || draft.Html != html
+                        || HostedSitePreviewAccessService.ComputePackageFingerprint(draft.VerifiedFiles)
+                            != HostedSitePreviewAccessService.ComputePackageFingerprint(hostedFiles.Select(file =>
+                                new HostedSiteRevisionFile { Path = file.Path, Content = file.Content,
+                                    Sha256 = file.Sha256, MimeType = file.MimeType }).ToArray())))
+                        throw new InvalidOperationException("演示稿恢复版本与完整产物或基稿不一致");
+                }
+                if (draft == null)
+                {
+                    createdDraft = true;
+                    draft = verifiedFiles == null
+                        ? await revisions.CreateDraftAsync(
+                            run.TargetSiteId,
+                            run.UserId,
+                            html,
+                            run.Instruction,
+                            run.Runtime,
+                            run.Id,
+                            parent.Id,
+                            run.KnowledgeReferences.Select(x => x.EntryId).ToList(),
+                            editable.ContentVersion,
+                            ct)
+                        : await revisions.CreateVerifiedDraftAsync(
+                            run.TargetSiteId,
+                            run.UserId,
+                            html,
+                            hostedFiles!,
+                            run.Instruction,
+                            run.Runtime,
+                            run.Id,
+                            parent.Id,
+                            run.KnowledgeReferences.Select(x => x.EntryId).ToList(),
+                            editable.ContentVersion,
+                            ct);
+                }
                 if (!await RenewLeaseAsync(
                         db,
                         run.Id,
@@ -1312,7 +1371,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             {
                 try
                 {
-                    await revisions.CompensateUnpublishedDraftAsync(
+                    if (createdDraft) await revisions.CompensateUnpublishedDraftAsync(
                         run.TargetSiteId,
                         run.Id,
                         run.UserId,
@@ -1495,9 +1554,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IHostedSiteService sites,
         IReadOnlyList<DesignWorkspaceFile> files,
         string hardenedHtml,
-        bool trustedPresentation = false)
+        bool trustedPresentation = false,
+        bool preserveVerifiedWebPackage = false)
     {
         var verified = BuildVerifiedHostedSiteFiles(files, hardenedHtml).ToArray();
+        // 普通网页已由执行器完成安全物化并通过 Broker 验真，和修改草稿一样保留整包字节。
+        // 再套旧上传 HTML 的改写会使 index 与包内 manifest 失配；PPT 原有桥接合同仍单独保留。
+        if (preserveVerifiedWebPackage) return verified;
         var entryIndex = Array.FindIndex(verified, file => file.Path == "index.html");
         var prepared = trustedPresentation
             ? sites.PrepareTrustedPresentationHtmlForHosting(verified[entryIndex].Content, "index.html")
@@ -1514,8 +1577,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IHostedSiteService sites,
         IReadOnlyList<DesignWorkspaceFile> files,
         string hardenedHtml,
-        bool trustedPresentation = false) =>
-        PrepareVerifiedHostedSiteFiles(sites, files, hardenedHtml, trustedPresentation)
+        bool trustedPresentation = false,
+        bool preserveVerifiedWebPackage = false)
+    {
+        var prepared = PrepareVerifiedHostedSiteFiles(sites, files, hardenedHtml, trustedPresentation, preserveVerifiedWebPackage)
             .Select(file => new DesignWorkspaceFile(
                 file.Path,
                 Convert.ToBase64String(file.Content),
@@ -1523,6 +1588,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 file.Content.LongLength,
                 file.MimeType))
             .ToArray();
+        return trustedPresentation ? DesignArtifactWorkspaceContract.RebuildPublicManifest(prepared) : prepared;
+    }
 
     internal static string HardenExecutorOutput(
         string rawHtml,
@@ -1556,7 +1623,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
     internal static DesignArtifactBrowserQualitySummary? ParseBrowserQualitySummary(
         IReadOnlyList<DesignWorkspaceFile>? verifiedFiles,
-        bool requireHardPass = true)
+        bool requireHardPass = false)
     {
         const string evidencePath = "assets/visual-quality-report.json";
         var file = verifiedFiles?.SingleOrDefault(item => item.Path == evidencePath);
@@ -2247,6 +2314,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var meta = await events.GetRunAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None)
                        ?? new RunMeta
                        {
+                           TaskPermitId = candidate.TaskPermitId,
                            RunId = candidate.Id,
                            Kind = RunKinds.DesignArtifact,
                            CreatedByUserId = candidate.UserId,
@@ -2496,6 +2564,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var meta = await events.GetRunAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None)
                        ?? new RunMeta
                        {
+                           TaskPermitId = candidate.TaskPermitId,
                            RunId = candidate.Id,
                            Kind = RunKinds.DesignArtifact,
                            CreatedByUserId = candidate.UserId,

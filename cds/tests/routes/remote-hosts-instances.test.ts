@@ -1789,8 +1789,8 @@ describe('Remote hosts project instances route', () => {
           expect(service.hostPort).toBeGreaterThanOrEqual(19000);
           onOutput?.('managed runtime container started');
         },
-        async waitForReadiness(hostPort, probe, onAttempt) {
-          containerCalls.push({ kind: 'waitForReadiness', hostPort, probe });
+        async waitForReadiness(hostPort, probe, onAttempt, _onOutput, containerName) {
+          containerCalls.push({ kind: 'waitForReadiness', hostPort, probe, containerName });
           expect(probe?.path).toBe('/readyz');
           onAttempt?.({ attempt: 1, max: 1, stage: 'http', ok: true });
           return true;
@@ -1830,6 +1830,7 @@ describe('Remote hosts project instances route', () => {
     });
     expect(JSON.stringify(applied.body)).not.toContain('CDS_REMOTE_HOST');
     expect(containerCalls.map(call => call.kind)).toEqual(['runService', 'waitForReadiness']);
+    expect(containerCalls[1].containerName).toBe(containerCalls[0].service.containerName);
 
     const available = await request(server, 'GET', `/api/projects/${projectId}/runtime-capacity`, longToken);
     expect(available.status).toBe(200);
