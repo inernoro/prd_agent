@@ -5,7 +5,8 @@ import { MotionLink as Link } from '@/components/layout/RouteMotion';
  * 背景:agent 免密直接发起授权申请,用户在右下角一键「批准」即派发一把
  * 全权「授权密钥」,agent 凭它做接下来的所有事(含直接拉项目环境变量/参数),用户
  * 再不用反复手动喂参数。授权属于必须由用户决策的高优先级消息:
- *   - 有 pending 时直接展开首条申请,展示来源、范围和目的
+ *   - 有 pending 时默认直接展开首条申请,展示来源、范围和目的
+ *   - 用户可主动稍后处理,只收起当前提醒,待审批申请仍留在信息中心
  *   - 卡片上直接提供「批准 / 拒绝」按钮,无需先点开一个小徽章
  *   - Dialog 负责查看全部 pending 和补充说明
  *   - 订阅 useCdsEvents.lastAccessRequestEvent → 自动刷新
@@ -73,6 +74,8 @@ export function AccessRequestInbox({
   const [pending, setPending] = useState<AccessRequest[]>([]);
   const [receipts, setReceipts] = useState<AccessRequest[]>([]);
   const [dismissed, setDismissed] = useState<string[]>(() => readDismissedReceipts());
+  // 只收起当前已看过的浮动提醒；申请仍待审批，并留在信息中心。
+  const [deferredRequests, setDeferredRequests] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState('');
@@ -161,7 +164,8 @@ export function AccessRequestInbox({
     return placement === 'floating' ? createPortal(errorNotice, document.body) : errorNotice;
   }
   if (count === 0 && !receipt) return null;
-  const primary = pending[0];
+  const primary = pending.find((item) => placement !== 'floating' || !deferredRequests.includes(item.id));
+  if (!primary && !receipt) return null;
   const primaryBusy = primary && busy === primary.id;
 
   const receiptCard = receipt ? (
@@ -251,6 +255,12 @@ export function AccessRequestInbox({
             {primary.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
           </Button>
         </div>
+        {placement === 'floating' ? <Button
+          type="button"
+          variant="ghost"
+          className="mt-2 min-h-10 w-full"
+          onClick={() => setDeferredRequests((current) => [...new Set([...current, ...pending.map((item) => item.id)])])}
+        >稍后在信息中心处理</Button> : null}
         <button
           type="button"
           onClick={() => setOpen(true)}
