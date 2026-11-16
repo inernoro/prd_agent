@@ -7,13 +7,17 @@ business.log_archive_batches.createIndex({OwnerId: 1, 'Records.RequestId': 1}, {
 // Build bounded source/UI indexes during a quiet window, before enabling migration.
 if (process.env.PRD_ARCHIVE_BUILD_SOURCE_INDEXES === '1') {
   // One collection scan builds all indexes needed by the existing log page.
-  business.apirequestlogs.createIndexes([
+  let existingApiIndexes = [];
+  try { existingApiIndexes = business.apirequestlogs.getIndexes(); }
+  catch (error) { if (error.code !== 26) throw error; }
+  const missingApiIndexes = [
     {ColdArchiveId: 1, StartedAt: 1},
     {Status: 1, StartedAt: -1, Path: 1},
     {Path: 1, Status: 1},
     {AppName: 1},
     {Direction: 1},
-  ], {maxTimeMS: 180000});
+  ].filter(keys => !existingApiIndexes.some(index => JSON.stringify(index.key) === JSON.stringify(keys)));
+  if (missingApiIndexes.length) business.apirequestlogs.createIndexes(missingApiIndexes, {maxTimeMS: 180000});
   business.llmrequestlogs.createIndex({ColdArchiveId: 1, StartedAt: 1}, {name: 'idx_cold_archive_time', maxTimeMS: 180000});
   const gateway = db.getSiblingDB('llm_gateway');
   gateway.llmrequestlogs.createIndex({TenantId: 1, ColdArchiveId: 1, StartedAt: 1}, {name: 'idx_cold_archive_tenant_time', maxTimeMS: 180000});
