@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { HostCapacitySamplingService } from '../../src/services/host-capacity-sampling.js';
@@ -53,7 +54,7 @@ it('collects real allocated source bytes with the unchanged packaged collector a
 });
 it('uses fixed read-only argv without a shell and refuses an overlapping history or unreadable source',async()=>{
   const f=await fixture();await f.service.setEnabled(true);await settle(()=>expect(f.run).toHaveBeenCalledOnce());
-  const args=f.run.mock.calls[0]?.[0] as string[];expect(args.slice(1)).toEqual(['--state-dir',path.join(f.root,'private-history'),'--new-source-baseline','--source','cache='+await fs.realpath(f.source)]);expect(args.join(' ')).not.toMatch(/prune|remove|delete/);
+  const args=f.run.mock.calls[0]?.[0] as string[];expect(args.slice(1)).toEqual(['--state-dir',path.join(f.root,'private-history'),'--new-source-baseline','--new-host-baseline','--source','cache='+await fs.realpath(f.source)]);expect(args.join(' ')).not.toMatch(/prune|remove|delete/);
   const overlap=await fixture();const bad=new HostCapacitySamplingService({enabled:true,external:false,stateDir:path.join(overlap.source,'history'),roots:{cache:overlap.source},observation:overlap.observation,persist:async()=>{},run:overlap.run});stops.push(()=>bad.stop());bad.start();await settle(()=>expect(bad.getStatus().outcome).toBe('unknown'));expect(overlap.run).not.toHaveBeenCalled();
 });
 it('exposes a process failure immediately as unknown and refuses to reuse a formerly normal report',async()=>{
@@ -116,4 +117,24 @@ it('starts a fresh bounded baseline when a known cache appears after the initial
   const history=JSON.parse(await fs.readFile(path.join(f.root,'dynamic-history','history.json'),'utf8'));expect(history.samples).toHaveLength(1);expect(Object.keys(history.roots).sort()).toEqual(['cache','later']);
   service.requestSample();await vi.waitFor(()=>expect(service.getStatus().running).toBe(false));expect(f.observation.getSnapshot().report?.sources.later).toBeDefined();
   expect((await fs.readdir(path.join(f.root,'dynamic-history'))).sort()).toEqual(['history.json','latest.json','lock']);
+});
+
+it('rebuilds a cold bounded managed baseline after a real previous-container hostname history',async()=>{
+  const f=await fixture({run:undefined}),state=path.join(f.root,'private-history');
+  const helper=fileURLToPath(new URL('../../src/services/host-capacity-probe.py',import.meta.url));
+  const seed=spawnSync('python3',['-c',"import socket,sys,runpy; socket.gethostname=lambda:'previous-container'; script=sys.argv.pop(1); runpy.run_path(script,run_name='__main__')",helper,'--state-dir',state,'--source','cache='+f.source],{encoding:'utf8'});
+  expect(seed.status,seed.stderr).toBe(3);expect(JSON.parse(seed.stdout).sources.cache.bytes).toBeGreaterThan(0);
+  expect(JSON.parse(await fs.readFile(path.join(state,'history.json'),'utf8')).host).toBe('previous-container');
+  await f.service.setEnabled(true);await vi.waitFor(()=>expect(f.service.getStatus().running).toBe(false));
+  expect(f.observation.getSnapshot().report?.sources.cache).toBeDefined();expect(f.observation.getSnapshot().status).toBe('unknown');
+  const restarted=JSON.parse(await fs.readFile(path.join(state,'history.json'),'utf8'));expect(restarted.host).toBe(os.hostname());expect(restarted.samples).toHaveLength(1);
+  f.service.requestSample();await vi.waitFor(()=>expect(f.service.getStatus().running).toBe(false));
+  expect(f.observation.getSnapshot().report?.sources.cache).toBeDefined();expect(JSON.parse(await fs.readFile(path.join(state,'history.json'),'utf8')).samples).toHaveLength(1);
+  const corrupt={...restarted,host:'another-old-container',samples:[restarted.samples[0],restarted.samples[0]]};
+  await fs.writeFile(path.join(state,'history.json'),JSON.stringify(corrupt));f.service.requestSample();await vi.waitFor(()=>expect(f.service.getStatus().running).toBe(false));
+  expect(f.observation.getSnapshot().status).toBe('unknown');expect(f.observation.getSnapshot().report).toBeUndefined();
+  expect(JSON.parse(await fs.readFile(path.join(state,'history.json'),'utf8'))).toEqual(corrupt);
+  await fs.writeFile(path.join(state,'history.json'),JSON.stringify(restarted));f.service.requestSample();await vi.waitFor(()=>expect(f.service.getStatus().running).toBe(false));
+  expect(f.observation.getSnapshot().report?.sources.cache).toBeDefined();
+  expect((await fs.readdir(state)).sort()).toEqual(['history.json','latest.json','lock']);
 });
