@@ -145,7 +145,7 @@ describe('release strategy discovery and generation', () => {
     execFileSync('git', ['-C', repo, 'add', '.']);
     execFileSync('git', ['-C', repo, 'commit', '-m', 'first']);
     const firstSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    executeStaticRelease(repo, published, firstSha, 'rel-first');
+    executeStaticRelease(repo, published, firstSha, 'rel_0000000000000001');
     expect(fs.readFileSync(path.join(published, 'current', 'index.html'), 'utf8')).toContain('version-one');
     expect(fs.statSync(published).mode & 0o777).toBe(0o755);
     expect(fs.statSync(path.join(published, '.releases')).mode & 0o777).toBe(0o755);
@@ -156,7 +156,7 @@ describe('release strategy discovery and generation', () => {
     execFileSync('git', ['-C', repo, 'add', '.']);
     execFileSync('git', ['-C', repo, 'commit', '-m', 'second']);
     const secondSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    executeStaticRelease(repo, published, secondSha, 'rel-second');
+    executeStaticRelease(repo, published, secondSha, 'rel_0000000000000002');
 
     expect(fs.readFileSync(path.join(published, 'current', 'index.html'), 'utf8')).toContain('version-two');
     expect(fs.readFileSync(path.join(published, 'previous', 'index.html'), 'utf8')).toContain('version-one');
@@ -165,11 +165,11 @@ describe('release strategy discovery and generation', () => {
     execFileSync('git', ['-C', repo, 'add', '.']);
     execFileSync('git', ['-C', repo, 'commit', '-m', 'bad']);
     const badSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    executeStaticRelease(repo, published, badSha, 'rel-bad');
+    executeStaticRelease(repo, published, badSha, 'rel_0000000000000003');
     expect(fs.readFileSync(path.join(published, 'current', 'index.html'), 'utf8')).toContain('version-bad');
     expect(fs.readFileSync(path.join(published, 'previous', 'index.html'), 'utf8')).toContain('version-two');
 
-    executeStaticRelease(repo, published, secondSha, 'rel-second-auto-restore', true);
+    executeStaticRelease(repo, published, secondSha, 'rel_0000000000000002-auto-restore', true);
     expect(fs.readFileSync(path.join(published, 'current', 'index.html'), 'utf8')).toContain('version-two');
     expect(fs.readFileSync(path.join(published, 'previous', 'index.html'), 'utf8')).toContain('version-two');
   });

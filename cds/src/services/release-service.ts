@@ -1325,8 +1325,9 @@ export class ReleaseService {
       dryRun: options.dryRun === true,
     };
     const command = buildReleaseReclaimCommand(target, strategy, plan, {
-      commits: releaseArtifactCommitProof(runs),
+      commits: { ...Object.fromEntries(Object.entries(state.inventory?.pendingStaticRemovals || {}).map(([id, p]) => [id, p.commit])), ...releaseArtifactCommitProof(runs) },
       identities: state.inventory?.worktreeIdentities,
+      versionIdentities: { ...Object.fromEntries(Object.entries(state.inventory?.pendingStaticRemovals || {}).map(([id, p]) => [id, p.identity])), ...state.inventory?.versionIdentities },
       dryRun: options.dryRun === true,
     });
     if (!command) {
@@ -1341,6 +1342,10 @@ export class ReleaseService {
       // 产出假证据：报告已回收、盘上还在、磁盘继续涨（Codex P2）。
       const outcome = parseRemoteReclaimOutcome(output);
       const failed = [...outcome.failedWorktrees, ...outcome.failedVersions];
+      const failedKeys = new Set([
+        ...outcome.failedWorktrees.map(id => `worktree:${id}`),
+        ...outcome.failedVersions.map(id => `version:${id}`),
+      ]);
       return {
         ...base,
         removedWorktrees: outcome.removedWorktrees,
@@ -1349,9 +1354,9 @@ export class ReleaseService {
         keptReasons: { ...base.keptReasons, ...outcome.heldReasons },
         nativeCounts: {
           succeeded: options.dryRun ? 0 : outcome.removedWorktrees.length + outcome.removedVersions.length,
-          held: Object.keys(outcome.heldReasons || {}).length,
+          held: Object.keys(outcome.heldReasons || {}).filter(key => !failedKeys.has(key)).length,
           failed: failed.length,
-          pending: Math.max(0, plan.removeWorktrees.length + plan.removeVersions.length - outcome.removedWorktrees.length - outcome.removedVersions.length - Object.keys(outcome.heldReasons || {}).length - failed.length),
+          pending: Math.max(0, plan.removeWorktrees.length + plan.removeVersions.length - outcome.removedWorktrees.length - outcome.removedVersions.length - new Set([...Object.keys(outcome.heldReasons || {}), ...failedKeys]).size),
         },
         ...(outcome.queryError ? {readError: outcome.queryError, skippedReason: '原生引用查询未完整确认，相关对象继续保留'} : {}),
         ...(failed.length > 0
