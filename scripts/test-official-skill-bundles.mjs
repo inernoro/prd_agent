@@ -44,6 +44,26 @@ assert(Object.keys(catalog.roleLabels || {}).length > 0, '有角色标签定义'
 assert(Array.isArray(catalog.bundles) && catalog.bundles.length > 0, `至少一个角色套装（实际 ${catalog.bundles?.length ?? 0}）`);
 
 const skillByKey = new Map(catalog.skills.map((s) => [s.key, s]));
+// 这些技能已交付仓库；官方目录也必须能发现并分发，防止只合入源文件却漏上架。
+console.log('[2a] 目标交付与债务技能的官方分发');
+const deliverySkills = {
+  'game-over': ['references/behavior-cases.md'],
+  'work-budget': ['references/estimate-and-calibrate.md'],
+  'kill-debt': ['references/goal-prompts.md'],
+  'create-debt': [],
+  'first-principles': ['references/sources.md'],
+};
+for (const [key, references] of Object.entries(deliverySkills)) {
+  const entry = skillByKey.get(key);
+  assert(Boolean(entry), `${key} 可在官方目录发现`);
+  if (!entry) continue;
+  assert(Boolean(entry.version) && entry.roles.length > 0, `${key} 保留版本与角色筛选入口`);
+  for (const path of ['SKILL.md', 'agents/openai.yaml', ...references]) {
+    const file = entry.files.find((f) => f.path === path);
+    assert(Boolean(file) && !file.truncated && file.content === readFileSync(join(ROOT, '.claude', 'skills', key, path), 'utf8'),
+      `${key}/${path} 完整分发且与源文件一致`);
+  }
+}
 const bundleKeys = new Set(catalog.bundles.map((b) => b.key));
 const collide = [...bundleKeys].filter((k) => skillByKey.has(k));
 assert(collide.length === 0, `套装 key 不与技能 key 相撞${collide.length ? `（撞了：${collide.join(', ')}）` : ''}`);
