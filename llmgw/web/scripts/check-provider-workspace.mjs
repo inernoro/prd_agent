@@ -84,6 +84,16 @@ try {
         check(await entry.evaluate(e => e === document.activeElement), `${width}/${theme}/return restores trigger focus`);
         await p.getByRole('button', { name: '连接配置', exact: true }).first().click();
         await measure('connection');
+        await p.getByRole('button', { name: '编辑连接', exact: true }).click();
+        await measure('connection-edit');
+        const nameField = p.getByRole('textbox', { name: '平台名称', exact: true });
+        const nameRect = await nameField.boundingBox();
+        check(nameRect.y >= 56 && nameRect.y + nameRect.height < 520, `${width}/${theme}/connection editing starts in the first screen`);
+        check(await p.locator('.lg-collection-pane .lg-collection-facts').count() === 0, `${width}/${theme}/edit replaces repeated readonly facts`);
+        check(await nameField.evaluate(e => e === document.activeElement), `${width}/${theme}/edit focuses first field`);
+        await p.locator('.lg-collection-pane').getByRole('button', { name: '取消', exact: true }).click();
+        check(await p.getByRole('button', { name: '编辑连接', exact: true }).evaluate(e => e === document.activeElement), `${width}/${theme}/cancel restores original edit entry focus`);
+
         await p.locator('.lg-collection-close').click();
         mode = 'many';
         await ready();

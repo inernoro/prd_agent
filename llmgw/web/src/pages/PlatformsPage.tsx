@@ -70,6 +70,16 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   const [logicalModels, setLogicalModels] = useState<LogicalModelItem[]>([]);
   const [expandedModelsFor, setExpandedModelsFor] = useState<string | null>(null);
   const [providerTab, setProviderTab] = useState("models");
+  const previousEditId = useRef<string | null>(null);
+  useEffect(() => {
+    if (editId && previousEditId.current !== editId) {
+      document.querySelector<HTMLInputElement>('.lg-provider-connection-editor input[aria-label="平台名称"]')?.focus();
+    }
+    if (previousEditId.current && !editId && expandedModelsFor === previousEditId.current && providerTab === 'connection') {
+      document.querySelector<HTMLButtonElement>('.lg-provider-page .lg-provider-edit-trigger')?.focus({ preventScroll: true });
+    }
+    previousEditId.current = editId;
+  }, [editId, expandedModelsFor, providerTab]);
 
   useEffect(() => {
     let alive = true;
@@ -104,7 +114,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     const p = selectedProvider;
     return <CollectionDetailPane closeLabel="返回上游清单" key={p.id} title={p.name} icon={<Server size={18}/>} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>已接入模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
       <div className={providerTab === 'models' ? 'lg-collection-provider-models' : 'lg-collection-hidden'}>{modelsState === 'error' ? <InlineAlert tone="error">模型加载失败，接入数量与关联状态未知。<Button size="sm" variant="ghost" onClick={() => void refreshOwnedModels()}>重新加载</Button></InlineAlert> : modelsState === 'loading' ? <SectionLoader /> : <ProviderModelsPanel rows={ownedRows(p.id)} onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude' ? () => void openDiscovery(p) : undefined} />}</div>
-      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{ label: '接口类型', value: platformTypeLabel(p.platformType)},{ label: 'API 地址', value: <code>{p.apiUrl || '未配置'}</code>},{ label: '连接方式', value: <ProxyBadge proxy={p.proxy}/>},{ label: '供应方标识', value: p.providerId || '未单独设置'},{ label: '最大并发', value: p.maxConcurrency ?? '未配置'},{ label: '配置来源', value: p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{ label: '密钥状态', value: <>{p.keyStatus === 'unreadable' ? '无法读取' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{ label: '备注', value: p.remark || '无备注'},{ label: '最近更新', value: formatPlatformTime(p.updatedAt)},{ label: '导入时间', value: p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? editId === p.id ? renderConnectionEditor(p) : <Button size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}{canWrite && p.authority === 'llm_gateway' ? <UpstreamNetworkTest kind="platform" id={p.id} revision={p.updatedAt} disabled={editId === p.id} /> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
+      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>{editId === p.id ? '编辑连接' : '连接配置'}</h3>{canWrite && p.authority === 'llm_gateway' && editId === p.id ? renderConnectionEditor(p) : <><CollectionFacts items={[{ label: '接口类型', value: platformTypeLabel(p.platformType)},{ label: 'API 地址', value: <code>{p.apiUrl || '未配置'}</code>},{ label: '连接方式', value: <ProxyBadge proxy={p.proxy}/>},{ label: '供应方标识', value: p.providerId || '未单独设置'},{ label: '最大并发', value: p.maxConcurrency ?? '未配置'},{ label: '配置来源', value: p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{ label: '密钥状态', value: <>{p.keyStatus === 'unreadable' ? '无法读取' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{ label: '备注', value: p.remark || '无备注'},{ label: '最近更新', value: formatPlatformTime(p.updatedAt)},{ label: '导入时间', value: p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? <Button className="lg-provider-edit-trigger" size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}</>}{canWrite && p.authority === 'llm_gateway' ? <UpstreamNetworkTest kind="platform" id={p.id} revision={p.updatedAt} disabled={editId === p.id} /> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
       {providerTab === 'activity' ? <div className="lg-collection-key-facts"><h3>调用记录<HelpPopover label="调用记录">查看这条供应方的真实请求、响应状态与最近调用。</HelpPopover></h3><Link className="lg-text-link" to={`/logs?platformId=${encodeURIComponent(p.id)}`}>查看全部请求记录</Link></div> : null}
     </CollectionDetailPane>;
   }
@@ -303,22 +313,28 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
 
   function renderConnectionEditor(p: PlatformItem) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
+      <div className="lg-provider-connection-editor">
+        <div className="lg-provider-edit-fields">
+        <label style={fieldStyle}><span style={labelStyle}>名称</span>
           <input
+            autoFocus
             aria-label="平台名称"
             value={editDraft.name ?? ''}
             onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
             placeholder="名称"
-            style={{ ...inputStyle, width: 150 }}
+            style={FIELD_INPUT}
           />
+        </label>
+        <label style={fieldStyle}><span style={labelStyle}>备注</span>
           <input
             aria-label="备注"
             value={editDraft.remark ?? ''}
             onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
             placeholder="备注"
-            style={{ ...inputStyle, width: 160 }}
+            style={FIELD_INPUT}
           />
+        </label>
+        </div>
           {/* 接口类型、API 地址、并发收进折叠区：接上游时是选平台带出来的，
               改它们是例外不是常规。默认露在外面的话，每次只想改个备注
               都要从一排输入框里认出哪个是备注（minimal-user-input）。 */}
@@ -521,6 +537,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                 placeholder={preset?.keyPrefixHint ? `以 ${preset.keyPrefixHint} 开头` : '只保存加密结果，不会回显'}
                 style={formInputStyle}
               />
+              <span style={HINT_TEXT}>填写供应方密钥；业务调用使用 gwk_ 密钥。</span>
             </label>
             {preset?.keylessPlaceholder ? (
               <InlineAlert tone="info">

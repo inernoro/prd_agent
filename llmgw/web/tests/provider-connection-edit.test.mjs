@@ -103,8 +103,12 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     assert.equal(document.querySelector('.lg-collection-list').textContent.includes('上游 0'), false);
     await click(button('编辑连接'));
     assert.ok(document.querySelector('.lg-collection-pane input[aria-label="平台名称"]'));
+    assert.equal(document.querySelector('.lg-collection-pane .lg-collection-facts'), null, '编辑态替换只读事实，不将表单追加在十项事实之后');
+    assert.equal(document.activeElement.getAttribute('aria-label'), '平台名称', '编辑从首字段开始键盘操作');
+
     assert.equal(document.querySelector('.lg-collection-list input[aria-label="平台名称"]'), null);
     await click(button('取消', document.querySelector('.lg-collection-pane')));
+    assert.equal(document.activeElement.textContent.trim(), '编辑连接', '取消后回原维护入口');
     assert.equal(fixture.calls.length, 0);
     // 搜索将父列表清空，仍可在窄屏保留的详情节点编辑、保存。
     await input(document.querySelector('input[aria-label="搜索供应方名称或接口"]'), '不存在的供应方');

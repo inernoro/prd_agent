@@ -240,15 +240,15 @@ for (const theme of ["light", "dark"])
       await page.locator(`nav a[href="/llmgw/${path}"]`).click();
     }
     await nav("platforms");
-    await page
-      .getByRole("button", { name: "尚未接入模型", exact: false })
-      .click();
+    const providerEntry = page.getByRole("button", { name: "尚未接入模型", exact: false });
+    await providerEntry.click();
     let pane = page.getByRole("complementary", { name: "清单详情" });
     await pane.getByRole("button", { name: "连接配置", exact: true }).click();
     await reachable(
       pane.getByRole("button", { name: "编辑连接", exact: true }),
     );
-    await pane.getByRole("button", { name: "关闭详情", exact: true }).click();
+    await pane.getByRole("button", { name: "返回上游清单", exact: true }).click();
+    await expect(providerEntry).toBeFocused();
     await nav("service-keys");
     await page
       .getByRole("button", { name: "1 个调用用途", exact: true })
