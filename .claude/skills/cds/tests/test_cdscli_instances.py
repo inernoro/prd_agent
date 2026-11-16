@@ -542,3 +542,27 @@ def test_declared_cluster_cannot_fall_back_to_an_old_member_key(workspace, monke
     code, text = run('instance', 'use', 'standby')
     assert code == 2 and '不会申请或使用独立授权' in text
     assert not (root / '.cds/active-instance.json').exists()
+
+
+def test_member_issued_credentials_switch_back_without_new_approval(workspace, monkeypatch):
+    root, catalog = workspace
+    catalog['cluster'] = {'id': 'fixture-cluster', 'authorityId': 'primary'}
+    (root / 'cds-instances.json').write_text(json.dumps(catalog))
+    save('https://primary.example', 'a', 'cdsp_obsolete_authority_value')
+    save('https://standby.example', 'b', 'cdsp_realm_value')
+    def request(method, path, **kwargs):
+        assert method == 'GET'
+        assert cli._auth_headers().get('X-AI-Access-Key') == 'cdsp_realm_value'
+        if path == '/api/projects/a':
+            return 200, {'id': 'a', 'gitRepoUrl': 'https://github.com/acme/app.git'}, {}
+        assert path == '/api/cluster/identity/status'
+        if cli._cds_base() == 'https://standby.example':
+            return 200, {'enabled': True, 'role': 'member', 'nodeId': 'standby', 'authorityNodeId': 'primary',
+                         'authorityUrl': 'https://primary.example', 'clusterId': 'fixture-cluster', 'projects': {'a': 'b'}}, {}
+        return 200, {'enabled': True, 'role': 'authority', 'clusterId': 'fixture-cluster',
+                     'members': [{'nodeId': 'standby', 'url': 'https://standby.example', 'projects': {'a': 'b'}}]}, {}
+    monkeypatch.setattr(cli, '_request', request)
+    code, text = run('instance', 'connect', 'primary', '--project', 'a')
+    assert code == 0 and '统一授权' in text
+    assert 'cdsp_realm_value' not in text
+    assert json.loads((root / '.cds/credentials.json').read_text())['host'] == 'https://standby.example'

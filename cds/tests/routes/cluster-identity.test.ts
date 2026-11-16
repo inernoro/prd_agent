@@ -196,8 +196,30 @@ describe('cluster identity through two real HTTP control planes', () => {
     expect(member.state.getProjectGrants()).toHaveLength(0);
     primary.state.revokeProjectGrant('human-grant');
     expect((await request(member, '/api/projects/local-a', undefined, 'GET', undefined, cookie)).status).toBe(403);
+    const owner = await login(member);
+    const selection = await request(member, `/api/auth/users/${user.id}/projects`, undefined, 'GET', undefined, owner.cookie);
+    expect(selection.json.projects.map((p: { id: string }) => p.id)).toEqual(['source-a', 'source-b']);
+    expect((await request(member, `/api/auth/users/${user.id}/projects`, undefined, 'PUT', { projectIds: ['source-a'] }, owner.cookie)).status).toBe(200);
+    expect((await request(member, '/api/projects/local-a', undefined, 'GET', undefined, cookie)).status).toBe(200);
+    expect(member.state.getProjectGrants()).toHaveLength(0);
+    expect((await request(member, `/api/auth/users/${user.id}/projects`, undefined, 'PUT', { projectIds: [] }, owner.cookie)).status).toBe(200);
+    expect((await request(member, '/api/projects/local-a', undefined, 'GET', undefined, cookie)).status).toBe(403);
     await auth.setUserStatus(user.id, 'disabled');
     expect((await request(member, '/api/projects/local-a', undefined, 'GET', undefined, cookie)).status).toBe(401);
+  });
+
+  it('creates device recovery only at the authority and preserves canonical owner selectors', async () => {
+    const response = await request(member, '/api/identity-connections', undefined, 'POST', {
+      repository: 'https://github.com/fixture/a.git', projectId: 'local-a', agentName: 'cluster-device-fixture',
+    });
+    expect(response.status).toBe(201);
+    expect(member.state.getIdentityConnections()).toHaveLength(0);
+    expect(primary.state.getIdentityConnections()[0].projectHint).toBe('source-a');
+    const owner = await login(member);
+    const review = await request(member, '/api/identity/connections', undefined, 'GET', undefined, owner.cookie);
+    expect(review.json.requests[0].candidates[0].id).toBe('source-a');
+    expect((await request(member, `/api/identity/connections/${response.json.requestId}/reject`, undefined, 'POST', {}, owner.cookie)).status).toBe(200);
+    expect(primary.state.getIdentityConnections()[0].status).toBe('rejected');
   });
 
   it('maps the user credential discovery grant without copying identities into the member', async () => {

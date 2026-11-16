@@ -10353,13 +10353,54 @@ def _cluster_shared_credentials(entry: dict[str, Any]) -> dict[str, Any] | None:
     if not catalog.get("cluster"):
         return None
     primary = next((item for item in catalog["instances"] if item["id"] == catalog["cluster"]["authorityId"]), None)
-    if not primary or primary["url"] == entry["url"]:
+    if not primary:
         return None
     source = _instance_credentials(primary)
     explicit = _EXPLICIT_CREDENTIAL_ENV
     if explicit.get("CDS_HOST") and _credential_origin(explicit["CDS_HOST"]) == primary["url"]:
         source = {"host": primary["url"], "projectId": explicit.get("CDS_PROJECT_ID"),
                   "projectKey": explicit.get("CDS_PROJECT_KEY"), "bootstrapKey": explicit.get("AI_ACCESS_KEY")}
+    else:
+        current = _read_local_credentials_file()
+        current_host = explicit.get("CDS_HOST") or current.get("host")
+        if current_host and any(item["role"] == "standby" and item["url"] == _credential_origin(current_host) for item in catalog["instances"]):
+            source = None  # Prefer the current member grant over an archived authority key.
+    if primary["url"] == entry["url"] and source and (source.get("projectKey") or source.get("bootstrapKey")):
+        return None  # The existing authority connection needs no cross-node reuse.
+    source_member, member_bindings = None, None
+    if not source or not (source.get("projectKey") or source.get("bootstrapKey")):
+        candidate = _read_local_credentials_file()
+        if explicit.get("CDS_HOST") and _credential_origin(explicit["CDS_HOST"]) != primary["url"]:
+            candidate = {"host": explicit["CDS_HOST"], "projectId": explicit.get("CDS_PROJECT_ID"),
+                         "projectKey": explicit.get("CDS_PROJECT_KEY"), "bootstrapKey": explicit.get("AI_ACCESS_KEY")}
+        source_member = next((item for item in catalog["instances"] if item["role"] == "standby"
+                              and candidate.get("host") and item["url"] == _credential_origin(candidate["host"])), None)
+        if not source_member or not (candidate.get("projectKey") or candidate.get("bootstrapKey")):
+            return None
+        previous = {key: os.environ.get(key) for key in _EXPLICIT_CREDENTIAL_ENV}
+        try:
+            for key in _EXPLICIT_CREDENTIAL_ENV:
+                os.environ.pop(key, None)
+            os.environ["CDS_HOST"] = source_member["url"]
+            for field, key in (("projectKey", "CDS_PROJECT_KEY"), ("bootstrapKey", "AI_ACCESS_KEY")):
+                if candidate.get(field): os.environ[key] = candidate[field]
+            status, proof, _ = _request("GET", "/api/cluster/identity/status", timeout=20,
+                                        fatal_network_errors=False, follow_redirects=False)
+        finally:
+            _restore_auth_env(previous)
+        verified = (status == 200 and isinstance(proof, dict) and proof.get("enabled") is True
+                    and proof.get("role") == "member" and proof.get("nodeId") == source_member["id"]
+                    and proof.get("clusterId") == catalog["cluster"]["id"] and proof.get("authorityUrl") == primary["url"]
+                    and proof.get("authorityNodeId") == primary["id"] and isinstance(proof.get("projects"), dict))
+        _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", {"operation": "cluster-identity-discovery",
+            "host": source_member["url"], "status": status, "verified": verified, "trace": _TRACE_ID})
+        if not verified: return None
+        member_bindings = proof["projects"]
+        project = candidate.get("projectId")
+        matches = [a for a, b in member_bindings.items() if b == project] if project else []
+        if project and len(matches) != 1:
+            die("当前项目的集群绑定未确认，未发送凭据到其他节点；无需申请独立授权。", code=2)
+        source = {**candidate, "host": primary["url"], "projectId": matches[0] if matches else None}
     if not source or not (source.get("projectKey") or source.get("bootstrapKey")):
         return None
     previous = {key: os.environ.get(key) for key in _EXPLICIT_CREDENTIAL_ENV}
@@ -10376,12 +10417,17 @@ def _cluster_shared_credentials(entry: dict[str, Any]) -> dict[str, Any] | None:
     finally:
         _restore_auth_env(previous)
     valid = isinstance(body, dict) and status == 200 and body.get("enabled") is True and body.get("role") == "authority" and body.get("clusterId") == catalog["cluster"]["id"]
-    member = next((m for m in body.get("members", []) if isinstance(m, dict) and m.get("nodeId") == entry["id"]
-                   and m.get("url") == entry["url"]), None) if valid else None
+    target = source_member if entry["url"] == primary["url"] else entry
+    member = next((m for m in body.get("members", []) if isinstance(m, dict) and m.get("nodeId") == target["id"]
+                   and m.get("url") == target["url"]), None) if valid and target else None
     bindings = member.get("projects") if member else None
     valid = bool(valid and member and isinstance(bindings, dict) and len(bindings) <= 1000
                  and all(isinstance(k, str) and isinstance(v, str) and re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", k)
                          and re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", v) for k, v in bindings.items()))
+    if valid and source_member:
+        registered = next((m for m in body.get("members", []) if isinstance(m, dict)
+                           and m.get("nodeId") == source_member["id"] and m.get("url") == source_member["url"]), None)
+        valid = bool(registered and registered.get("projects") == member_bindings)
     _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", {
         "operation": "cluster-identity-membership", "host": primary["url"], "target": entry["url"], "status": status,
         "startedAt": started, "durationMs": round((time.time() - started) * 1000), "trace": _TRACE_ID,
@@ -10392,7 +10438,7 @@ def _cluster_shared_credentials(entry: dict[str, Any]) -> dict[str, Any] | None:
     project = source.get("projectId")
     if project and not bindings.get(project):
         die("当前项目尚未绑定到集群备用节点，请在主 CDS 核对项目绑定；无需另行申请授权。", code=2)
-    return {**source, "host": entry["url"], "projectId": bindings.get(project) if project else None,
+    return {**source, "host": entry["url"], "projectId": project if entry["url"] == primary["url"] else bindings.get(project) if project else None,
             "clusterId": body["clusterId"], "sharedCluster": True, "authorityHost": primary["url"]}
 
 

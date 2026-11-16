@@ -79,7 +79,7 @@ function failure(res: Response, code: string, status = 503): void {
 }
 export function clusterAuthorityPath(pathname: string): boolean {
   pathname = pathname.replace(/\/+$/, '').toLowerCase();
-  return /^\/api\/(?:auth(?:\/|$)|me$|login$|logout$|identity(?:\/|$)|credentials\/self-check$|ai(?:\/|$)|access-requests(?:\/|$)|bootstrap-access-requests(?:\/|$)|global-agent-keys(?:\/|$))/.test(pathname)
+  return /^\/api\/(?:auth(?:\/|$)|me$|login$|logout$|identity(?:-connections)?(?:\/|$)|credentials\/self-check$|ai(?:\/|$)|access-requests(?:\/|$)|bootstrap-access-requests(?:\/|$)|global-agent-keys(?:\/|$))/.test(pathname)
     || /^\/api\/projects\/[^/]+\/(?:agent-keys|access-status|access-requests)(?:\/|$)/.test(pathname);
 }
 
@@ -267,7 +267,12 @@ export class ClusterIdentityService {
       res.locals.cdsSuppressRequestBodyLog = true;
       res.setHeader('Cache-Control', 'no-store');
       try {
-        const reply = await this.call(req, this.authorityPath(req), ['GET', 'HEAD'].includes(req.method) ? undefined : this.translated(req.body, true), req.method,
+        // These selectors and replacement lists are supplied entirely by the
+        // authority. Keep the complete realm, including projects absent here;
+        // translating only selected IDs would silently revoke hidden grants.
+        const canonicalManagement = /^\/api\/(?:auth\/users\/[^/]+\/projects|identity\/(?:connections|legacy-credentials))(?:\/|$)/.test(pathname);
+        const reply = await this.call(req, this.authorityPath(req), ['GET', 'HEAD'].includes(req.method) ? undefined
+          : canonicalManagement ? req.body : this.translated(req.body, true), req.method,
           pathname === '/api/ai/pairing-stream' ? res : undefined);
         if (res.headersSent) return;
         this.copyCookies(res, reply.cookies);
@@ -275,7 +280,8 @@ export class ClusterIdentityService {
           // OAuth/SSO logins use the authority's registered callback, followed by the cluster handoff.
           res.redirect(reply.status, new URL(reply.location, c.authorityUrl).href); return;
         }
-        res.status(reply.status).json(this.translated(reply.json ?? { error: 'cluster_identity_invalid_response' }, false));
+        const value = reply.json ?? { error: 'cluster_identity_invalid_response' };
+        res.status(reply.status).json(canonicalManagement ? value : this.translated(value, false));
       } catch { this.lastErrorAt = new Date().toISOString(); if (res.headersSent) res.end(); else failure(res, 'cluster_identity_unavailable'); }
       return;
     }
