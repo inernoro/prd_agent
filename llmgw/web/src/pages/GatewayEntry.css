@@ -347,3 +347,4 @@ html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chr
   .gateway-entry-help-body { right: 0; max-height: min(350px, 55svh); overflow-y: auto; }
 }
 @media (prefers-reduced-motion: reduce) { .gateway-intent-starters button { transition: none; } }
+.gateway-quickstart-stage:has(.gateway-entry-resume button) .consciousness-ghost > small { display: none; }
