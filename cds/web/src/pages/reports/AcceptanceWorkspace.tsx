@@ -106,8 +106,9 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
   const pendingSubmissions = useRef(new Map<string, { signature: string; id: string }>());
   const caseSelectionIdentity = useRef('');
   const taskMutationGeneration = useRef(0);
+  const [taskMutationVersion, setTaskMutationVersion] = useState(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const updateTask = useCallback((next: AcceptanceTask, source: 'read' | 'write' = 'write') => { if (!mounted.current) return; if (source === 'write') taskMutationGeneration.current += 1; if (activeTaskId.current === next.id) setTask(next); setTasks((current) => current.some((value) => value.id === next.id) ? current.map((value) => value.id === next.id ? next : value) : [next, ...current]); }, []);
+  const updateTask = useCallback((next: AcceptanceTask, source: 'read' | 'write' = 'write') => { if (!mounted.current) return; if (source === 'write') { taskMutationGeneration.current += 1; setTaskMutationVersion((current) => current + 1); } if (activeTaskId.current === next.id) setTask(next); setTasks((current) => current.some((value) => value.id === next.id) ? current.map((value) => value.id === next.id ? next : value) : [next, ...current]); }, []);
   const updateRenewal = useCallback((next: AcceptanceTask) => {
     if (!mounted.current) return;
     setTask((current) => current ? mergeAcceptanceRenewal(current, next) : current);
@@ -133,11 +134,14 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
       setTemplateId((current) => latestTemplates.some((value) => value.id === current) ? current : latestTemplates[0]?.id ?? '');
     } catch (err) { if (generation === requestGeneration.current) setError(errorMessage(err)); }
     finally { if (generation === requestGeneration.current) setLoading(false); }
-  }, [projectId, view, matrixTemplate, matrixEnvironment, updateTask]);
+  }, [projectId, view, matrixTemplate, matrixEnvironment, updateTask, taskMutationVersion]);
   useEffect(() => { void load(); return () => { requestGeneration.current += 1; }; }, [load]);
 
   useEffect(() => {
-    setTask(null); setReportDraft(null); setPendingReportId(''); setBindReportId('');
+    setTask((current) => current?.id === taskId && current.projectId === projectId ? current : null); setReportDraft(null); setPendingReportId(''); setBindReportId('');
+  }, [taskId, projectId]);
+
+  useEffect(() => {
     if (!taskId || !projectId) return;
     let cancelled = false;
     const mutationGeneration = taskMutationGeneration.current;
@@ -147,7 +151,7 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
       updateTask(next, 'read');
     }).catch((err) => { if (!cancelled) setError(errorMessage(err)); });
     return () => { cancelled = true; };
-  }, [taskId, projectId, updateTask]);
+  }, [taskId, projectId, updateTask, taskMutationVersion]);
 
   useEffect(() => {
     if (!lease) return;
