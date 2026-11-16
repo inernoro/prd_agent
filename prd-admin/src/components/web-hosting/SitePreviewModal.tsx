@@ -416,7 +416,7 @@ export default function SitePreviewModal({
           {/* 评论面板 */}
           {(
             <aside
-              style={{ display: showComments ? 'flex' : 'none', position: isMobile ? 'absolute' : 'relative', background: 'var(--bg-elevated)', width: isMobile ? '100%' : reviewSidebar.width, ...(isMobile ? { top: 'auto', height: '70%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
+              style={{ display: showComments ? 'flex' : 'none', position: isMobile ? 'absolute' : 'relative', background: 'var(--bg-elevated)', width: isMobile ? '100%' : reviewSidebar.width, ...(isMobile ? { top: 'auto', height: '100%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
               className="review-sidebar absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:relative sm:inset-auto sm:z-auto sm:shrink-0"
             >
               {!isMobile && <ReviewSidebarResizeHandle {...reviewSidebar} />}
