@@ -66,6 +66,9 @@ describe('验收API真实HTTP与项目隔离', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     vi.stubEnv('CDS_PUBLIC_HEALTH_DETAILS', '1');
     vi.stubEnv('CDS_USERNAME', ''); vi.stubEnv('CDS_PASSWORD', ''); vi.stubEnv('CDS_AUTH_MODE', 'none');
+    // 本用例只验证健康信号隔离；干净 CI checkout 不一定已经生成 Web dist。
+    const fileExists = fs.existsSync;
+    vi.spyOn(fs, 'existsSync').mockImplementation((file) => String(file).replaceAll('\\', '/').endsWith('/cds/web/dist/index.html') || fileExists(file));
     const shell = new MockShellExecutor();
     shell.addResponse('docker version --format "{{.Server.Version}}"', { stdout: 'fixture', stderr: '', exitCode: 0 });
     const config = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'), masterPort: 9900, workerPort: 5500, dockerNetwork: 'fixture', portStart: 10001, sharedEnv: {}, jwt: { secret: 'fixture', issuer: 'fixture' }, mode: 'standalone', executorPort: 9901, rootDomains: ['fixture.example.test'] } as CdsConfig;
