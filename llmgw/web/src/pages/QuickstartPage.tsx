@@ -1,3 +1,4 @@
+import { GatewayQuickstartStage } from '@/components/entry/GatewayQuickstartStage';
 // 自助接入：选客户端 → 生成接入配置 → 自动验证。
 //
 // 按「控制台风格调性 v1.2」原则 6 / 7 迁移（详见
@@ -1229,7 +1230,7 @@ export function QuickstartPage() {
                 第一屏只有一件事：把那句话写下来。整块画布让给输入框，
                 没有第二个控件抢注意力——用户此刻唯一要做的决定就是「我想做什么」。
               */
-              <section className="lg-qs-ask" aria-label="第一步 说清要做什么">
+              <GatewayQuickstartStage>
                 <div className="lg-qs-ask-inner">
                   <h2 className="lg-qs-ask-title">我想做什么</h2>
                   <p className="lg-qs-ask-sub">一句话说清：谁在调用、要做什么。</p>
@@ -1263,7 +1264,7 @@ export function QuickstartPage() {
                   </div>
                   {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
                 </div>
-              </section>
+              </GatewayQuickstartStage>
             ) : stage === 'draft' ? (
               /*
                 第二屏：模型边推边吐，推完把码亮出来。

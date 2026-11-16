@@ -50,7 +50,7 @@ export function ChangePasswordPage() {
         setNotice('口令已修改成功。原会话已到期，请用新口令重新登录。');
         return;
       }
-      navigate('/', { replace: true });
+      navigate('/quickstart', { replace: true });
     } else {
       setError(res.error?.message || '改密失败，请重试');
     }

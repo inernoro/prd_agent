@@ -63,7 +63,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 function RequireChangePassword({ children }: { children: ReactNode }) {
   const { authed, mustChangePassword } = useAuth();
   if (!authed) return <Navigate to="/login" replace />;
-  if (!mustChangePassword) return <Navigate to="/" replace />;
+  if (!mustChangePassword) return <Navigate to="/quickstart" replace />;
   return <>{children}</>;
 }
 

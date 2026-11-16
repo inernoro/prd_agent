@@ -1,3 +1,4 @@
+import { gatewayLoginDestination, markQuickstartArrival } from '@/components/entry/quickstartArrival';
 import { Activity, ArrowLeft, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -42,7 +43,9 @@ export function MapSsoPage() {
     void loginWithMapCode(code).then((result) => {
       if (!active) return;
       if (result.success) {
-        navigate(returnTo, { replace: true });
+        const destination = gatewayLoginDestination(returnTo);
+        if (!result.data?.mustChangePassword && destination.split(/[?#]/)[0] === '/quickstart') markQuickstartArrival();
+        navigate(destination, { replace: true });
         return;
       }
       setError('安全登录未完成。一次性链接可能已使用或已过期，请从 MAP 重新打开。');

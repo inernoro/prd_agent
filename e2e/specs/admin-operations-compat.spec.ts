@@ -40,9 +40,9 @@ async function loginGateway(page: Page) {
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();
   await expect(page.locator(".gateway-entry")).toHaveAttribute("data-phase", "authorized");
-  const enterConsole = page.getByRole("button", { name: "进入控制台", exact: true });
-  await expect(enterConsole).toBeVisible();
-  await enterConsole.click();
+  await expect(page).toHaveURL(/\/llmgw\/quickstart$/);
+  await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toBeEditable();
+  await expect(page.getByRole("button", { name: "进入控制台", exact: true })).toHaveCount(0);
   await expect(page.locator(".lg-console-content")).toBeVisible();
   if (await page.getByLabel("打开导航", { exact: true }).isVisible())
     await page.getByLabel("打开导航", { exact: true }).click();
