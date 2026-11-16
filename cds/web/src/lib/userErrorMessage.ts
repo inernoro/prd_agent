@@ -9,4 +9,3 @@ export function userErrorMessage(error: unknown): string {
   if (error instanceof TypeError) return '网络连接中断，尚未收到可确认的结果';
   return error instanceof Error ? error.message : '暂时无法确认结果';
 }
-

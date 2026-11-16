@@ -26,4 +26,3 @@ export const ConsoleAuthContext = createContext<{
   pending: boolean;
   retry: () => void;
 }>({ status: null, pending: true, retry: () => {} });
-

@@ -13,7 +13,7 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
   for (const name of names) globalThis[name] = dom.window[name];
   globalThis.requestAnimationFrame = callback => callback();
   globalThis.getComputedStyle = dom.window.getComputedStyle;
-  globalThis.IntersectionObserver = class { observe() {} disconnect() {} }; 
+  globalThis.IntersectionObserver = class { observe() {} disconnect() {} };
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   dom.window.HTMLElement.prototype.scrollTo = () => {};
