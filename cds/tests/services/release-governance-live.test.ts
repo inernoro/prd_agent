@@ -88,10 +88,10 @@ it('正常认证、真实 Git 和 SSH 发布：独立审批、连续调试、越
   expect(restored.commitSha).toBe(credentials.main); expect(restored.governance.action).toBe('rollback');
   expect((await call('POST',rollbackRoute,{targetReleaseId:baseline.releaseId,authorizationId:rollbackId})).status).toBe(409);
   // Real wall clock expiry, after human approval; no altered clock or session stamp.
-  const expiring=await call('POST',target+'/authorizations',{branchId:'lab-debug',kind:'debug',allowedPaths:['allowed/'],expiresAt:new Date(Date.now()+2500).toISOString(),reason:'实际有效期到期之后必须阻止再次调试发布'});
+  const expiring=await call('POST',target+'/authorizations',{branchId:'lab-debug',kind:'debug',allowedPaths:['allowed/'],expiresAt:new Date(Date.now()+10000).toISOString(),reason:'实际有效期到期之后必须阻止再次调试发布'});
   expect(expiring.status).toBe(200); const expiryId=expiring.body.authorization.id;
   expect((await call('POST','/releases/authorizations/'+expiryId+'/approve',{reason:'独立核验短期窗口'},cookie)).status).toBe(200);
-  const beforeExpiry=await fs.readFile(credentials.effects,'utf8'); await new Promise(r=>setTimeout(r,2700));
+  const beforeExpiry=await fs.readFile(credentials.effects,'utf8'); await new Promise(r=>setTimeout(r,Math.max(0, Date.parse(expiring.body.authorization.expiresAt)-Date.now()+100)));
   expect((await publish()).status).toBe(409); expect(await fs.readFile(credentials.effects,'utf8')).toBe(beforeExpiry);
   const audit=(await call('GET','/releases/governance?projectId='+credentials.projectId)).body;
   expect(audit.authorizations.find((a:any)=>a.id===id).decisions.map((d:any)=>d.action)).toEqual(['approved','revoked']);

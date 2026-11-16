@@ -260,8 +260,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       isEnabled: body.isEnabled !== false,
       lifecycle: 'active',
       environment: normalizeReleaseEnvironment(body.environment),
-      governance: normalizeReleaseEnvironment(body.environment) === 'production'
-        ? { required: true, enabledAt: now, enabledBy: resolveReleaseActorFromRequest(req) } : undefined,
+      governance: { required: true, enabledAt: now, enabledBy: resolveReleaseActorFromRequest(req) },
       isCanonical: body.isCanonical !== false,
       projectIdentity: releaseProjectIdentity(project),
       strategy,
@@ -356,6 +355,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       isEnabled: body.isEnabled !== false,
       lifecycle: 'active',
       environment: 'production',
+      governance: { required: true, enabledAt: now, enabledBy: resolveReleaseActorFromRequest(req) },
       isCanonical: body.isCanonical !== false,
       projectIdentity: releaseProjectIdentity(project),
       strategy: {

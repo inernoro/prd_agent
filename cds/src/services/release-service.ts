@@ -971,71 +971,71 @@ export class ReleaseService {
     if (preflight.target.governance?.required && !unlock) throw new Error('发布环境正被其他操作占用，请稍后重试');
     let acceptedRunId: string | undefined;
     try {
-    const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
-    const startedAt = this.nowIso();
-    const run: ReleaseRun = {
-      releaseId,
-      batchId: input.batchId,
-      batchAttemptId: input.batchAttemptId,
-      projectId: preflight.target.projectId,
-      branchId: input.branchId,
-      commitSha: preflight.artifact.commitSha,
-      artifact: preflight.artifact,
-      targetId: preflight.target.id,
-      planId: preflight.plan.id,
-      status: 'queued',
-      startedAt,
-      heartbeatAt: startedAt,
-      operator: input.operator,
-      preflightId: preflight.preflightId,
-      previousReleaseId: preflight.previousRelease?.releaseId,
-      logs: [],
-      seq: 0,
-    };
-    const governanceInput: GovernanceAdmission = { runId: releaseId, projectId: run.projectId, targetId: run.targetId,
-      branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: 'release', authorizationId: input.authorizationId };
-    if (preflight.target.governance?.required) {
-      if (!this.governance) throw new Error('发布审批服务不可用，已停止发布');
-      run.governance = await this.governance.authorize(governanceInput);
-      if (releaseTargetConfigFingerprint(this.stateService.getReleaseTarget(run.targetId)) !== acceptedFingerprint) throw new Error('发布环境配置已变化，请重新预检后再发布');
-      run.previousReleaseId = run.governance?.baselineReleaseId || undefined;
-    }
-    const execution = buildReleaseExecution(preflight.target, run);
-    run.executionSnapshot = {
-      mode: execution.mode,
-      scriptSha256: execution.scriptSha256,
-      scriptContent: execution.scriptContent,
-      summary: execution.summary,
-      strategy: effectiveReleaseStrategy(preflight.target),
-    };
-    // run 一入库（queued）就带完整步骤表，UI 立刻能画出「共 M 步」而不是等第一条日志。
-    run.progress = buildReleaseRunProgress(preflight.plan, execution.command);
-    this.stateService.addReleaseRun(run);
-    acceptedRunId = releaseId;
-    this.notifyRunStarted(run);
-    this.emitLog(releaseId, 'info', 'release queued', 'queued');
-    // 把「放行依据是哪一份结论、是复用还是现跑」写进日志：出事时这是第一现场。
-    if (preflight.preflightId) {
-      this.emitLog(
+      const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
+      const startedAt = this.nowIso();
+      const run: ReleaseRun = {
         releaseId,
-        'info',
-        preflight.reused
-          ? `复用发布前检查结论 ${preflight.preflightId}（向导那次的同一份）`
-          : `发布前检查结论 ${preflight.preflightId}`,
-        'queued',
-      );
-    }
-    if (input.batchId) {
-      await this.stateService.flush();
-      try { input.assertDispatchAllowed?.(); }
-      catch (error) { this.cancelRelease(releaseId, input.operator || 'user'); throw error; }
-    }
-    if (run.governance) {
-      await this.governance!.attempt(governanceInput, 'accepted', '批准与累计范围核验通过', run.governance.authorizationId);
-      this.governance!.assertExecution(run);
-    }
-    void this.execute(releaseId, () => this.runRelease(releaseId), 'failed');
-    return this.stateService.getReleaseRun(releaseId)!;
+        batchId: input.batchId,
+        batchAttemptId: input.batchAttemptId,
+        projectId: preflight.target.projectId,
+        branchId: input.branchId,
+        commitSha: preflight.artifact.commitSha,
+        artifact: preflight.artifact,
+        targetId: preflight.target.id,
+        planId: preflight.plan.id,
+        status: 'queued',
+        startedAt,
+        heartbeatAt: startedAt,
+        operator: input.operator,
+        preflightId: preflight.preflightId,
+        previousReleaseId: preflight.previousRelease?.releaseId,
+        logs: [],
+        seq: 0,
+      };
+      const governanceInput: GovernanceAdmission = { runId: releaseId, projectId: run.projectId, targetId: run.targetId,
+        branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: 'release', authorizationId: input.authorizationId };
+      if (preflight.target.governance?.required) {
+        if (!this.governance) throw new Error('发布审批服务不可用，已停止发布');
+        run.governance = await this.governance.authorize(governanceInput);
+        if (releaseTargetConfigFingerprint(this.stateService.getReleaseTarget(run.targetId)) !== acceptedFingerprint) throw new Error('发布环境配置已变化，请重新预检后再发布');
+        run.previousReleaseId = run.governance?.baselineReleaseId || undefined;
+      }
+      const execution = buildReleaseExecution(preflight.target, run);
+      run.executionSnapshot = {
+        mode: execution.mode,
+        scriptSha256: execution.scriptSha256,
+        scriptContent: execution.scriptContent,
+        summary: execution.summary,
+        strategy: effectiveReleaseStrategy(preflight.target),
+      };
+      // run 一入库（queued）就带完整步骤表，UI 立刻能画出「共 M 步」而不是等第一条日志。
+      run.progress = buildReleaseRunProgress(preflight.plan, execution.command);
+      this.stateService.addReleaseRun(run);
+      acceptedRunId = releaseId;
+      this.notifyRunStarted(run);
+      this.emitLog(releaseId, 'info', 'release queued', 'queued');
+      // 把「放行依据是哪一份结论、是复用还是现跑」写进日志：出事时这是第一现场。
+      if (preflight.preflightId) {
+        this.emitLog(
+          releaseId,
+          'info',
+          preflight.reused
+            ? `复用发布前检查结论 ${preflight.preflightId}（向导那次的同一份）`
+            : `发布前检查结论 ${preflight.preflightId}`,
+          'queued',
+        );
+      }
+      if (input.batchId) {
+        await this.stateService.flush();
+        try { input.assertDispatchAllowed?.(); }
+        catch (error) { this.cancelRelease(releaseId, input.operator || 'user'); throw error; }
+      }
+      if (run.governance) {
+        await this.governance!.attempt(governanceInput, 'accepted', '批准与累计范围核验通过', run.governance.authorizationId);
+        this.governance!.assertExecution(run);
+      }
+      void this.execute(releaseId, () => this.runRelease(releaseId), 'failed');
+      return this.stateService.getReleaseRun(releaseId)!;
     } catch (error) {
       if (acceptedRunId && !this.inFlight.has(acceptedRunId)) this.failRun(acceptedRunId, error, 'failed');
       throw error;
@@ -1073,69 +1073,69 @@ export class ReleaseService {
     let acceptedRollbackId: string | undefined;
     try {
 
-    const rollbackId = `rel_${crypto.randomBytes(8).toString('hex')}`;
-    const rollbackStartedAt = this.nowIso();
-    const run: ReleaseRun = {
-      releaseId: rollbackId,
-      batchId: batch?.id,
-      batchAttemptId: batch?.attemptId,
-      projectId: current.projectId,
-      branchId: previous.branchId,
-      commitSha: previous.commitSha,
-      artifact: previous.artifact,
-      executionSnapshot: previous.executionSnapshot,
-      targetId: current.targetId,
-      planId: current.planId,
-      status: 'rollback_running',
-      startedAt: rollbackStartedAt,
-      heartbeatAt: rollbackStartedAt,
-      operator,
-      previousReleaseId: current.releaseId,
-      rollbackOf: current.releaseId,
-      rollbackTargetReleaseId: previous.releaseId,
-      logs: [],
-      seq: 0,
-    };
-    const governanceInput: GovernanceAdmission = { runId: rollbackId, projectId: run.projectId, targetId: run.targetId,
-      branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: 'rollback', authorizationId };
-    if (target.governance?.required) {
-      if (!this.governance) throw new Error('发布审批服务不可用，已停止回滚');
-      run.governance = await this.governance.authorize(governanceInput);
-      run.previousReleaseId = run.governance?.baselineReleaseId || current.releaseId;
-    }
-    const rollbackStrategy = previous.executionSnapshot?.strategy || effectiveReleaseStrategy(target);
-    const rollbackExecution = buildReleaseExecution({ ...target, strategy: rollbackStrategy }, run);
-    run.executionSnapshot = {
-      mode: rollbackExecution.mode,
-      scriptSha256: rollbackExecution.scriptSha256,
-      scriptContent: rollbackExecution.scriptContent,
-      summary: `回滚到 ${previous.releaseId}: ${rollbackExecution.summary}`,
-      strategy: rollbackStrategy,
-    };
-    const useCustomRollback = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand);
-    run.progress = buildRollbackRunProgress(current.planId, rollbackExecution.command, useCustomRollback);
-    const persisted = this.stateService.addReleaseRun(run);
-    acceptedRollbackId = rollbackId;
-    this.notifyRunStarted(persisted);
-    const strategy = useCustomRollback ? 'rollbackCommand' : '重新发布历史版本';
-    // 回滚 run **一落库就是 rollback_running**，不经过 patchStatus，所以整条回滚
-    // 在 cds-events-bus 上一个 start 事件都没有 —— 观测方看到的第一条生命周期事件
-    // 是 release.rolled-back / release.failed，「正在回滚」这个状态根本观测不到
-    // （Codex P2）。这里补发一次 release.status，走的仍是同一条投影链路
-    // （release-events 按 status 映射 + 去重），不另造事件类型。
-    releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId: rollbackId, run: persisted } });
-    this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
-    if (batch) {
-      await this.stateService.flush();
-      try { batch.assertDispatchAllowed(); }
-      catch (error) { this.cancelRelease(rollbackId, operator || 'user'); throw error; }
-    }
-    if (run.governance) {
-      await this.governance!.attempt(governanceInput, 'accepted', '回滚批准核验通过', run.governance.authorizationId);
-      this.governance!.assertExecution(run);
-    }
-    void this.execute(rollbackId, () => this.runRollback(rollbackId, target, previous), 'rollback_failed');
-    return this.stateService.getReleaseRun(rollbackId)!;
+      const rollbackId = `rel_${crypto.randomBytes(8).toString('hex')}`;
+      const rollbackStartedAt = this.nowIso();
+      const run: ReleaseRun = {
+        releaseId: rollbackId,
+        batchId: batch?.id,
+        batchAttemptId: batch?.attemptId,
+        projectId: current.projectId,
+        branchId: previous.branchId,
+        commitSha: previous.commitSha,
+        artifact: previous.artifact,
+        executionSnapshot: previous.executionSnapshot,
+        targetId: current.targetId,
+        planId: current.planId,
+        status: 'rollback_running',
+        startedAt: rollbackStartedAt,
+        heartbeatAt: rollbackStartedAt,
+        operator,
+        previousReleaseId: current.releaseId,
+        rollbackOf: current.releaseId,
+        rollbackTargetReleaseId: previous.releaseId,
+        logs: [],
+        seq: 0,
+      };
+      const governanceInput: GovernanceAdmission = { runId: rollbackId, projectId: run.projectId, targetId: run.targetId,
+        branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: 'rollback', authorizationId };
+      if (target.governance?.required) {
+        if (!this.governance) throw new Error('发布审批服务不可用，已停止回滚');
+        run.governance = await this.governance.authorize(governanceInput);
+        run.previousReleaseId = run.governance?.baselineReleaseId || current.releaseId;
+      }
+      const rollbackStrategy = previous.executionSnapshot?.strategy || effectiveReleaseStrategy(target);
+      const rollbackExecution = buildReleaseExecution({ ...target, strategy: rollbackStrategy }, run);
+      run.executionSnapshot = {
+        mode: rollbackExecution.mode,
+        scriptSha256: rollbackExecution.scriptSha256,
+        scriptContent: rollbackExecution.scriptContent,
+        summary: `回滚到 ${previous.releaseId}: ${rollbackExecution.summary}`,
+        strategy: rollbackStrategy,
+      };
+      const useCustomRollback = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand);
+      run.progress = buildRollbackRunProgress(current.planId, rollbackExecution.command, useCustomRollback);
+      const persisted = this.stateService.addReleaseRun(run);
+      acceptedRollbackId = rollbackId;
+      this.notifyRunStarted(persisted);
+      const strategy = useCustomRollback ? 'rollbackCommand' : '重新发布历史版本';
+      // 回滚 run **一落库就是 rollback_running**，不经过 patchStatus，所以整条回滚
+      // 在 cds-events-bus 上一个 start 事件都没有 —— 观测方看到的第一条生命周期事件
+      // 是 release.rolled-back / release.failed，「正在回滚」这个状态根本观测不到
+      // （Codex P2）。这里补发一次 release.status，走的仍是同一条投影链路
+      // （release-events 按 status 映射 + 去重），不另造事件类型。
+      releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId: rollbackId, run: persisted } });
+      this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
+      if (batch) {
+        await this.stateService.flush();
+        try { batch.assertDispatchAllowed(); }
+        catch (error) { this.cancelRelease(rollbackId, operator || 'user'); throw error; }
+      }
+      if (run.governance) {
+        await this.governance!.attempt(governanceInput, 'accepted', '回滚批准核验通过', run.governance.authorizationId);
+        this.governance!.assertExecution(run);
+      }
+      void this.execute(rollbackId, () => this.runRollback(rollbackId, target, previous), 'rollback_failed');
+      return this.stateService.getReleaseRun(rollbackId)!;
     } catch (error) {
       if (acceptedRollbackId && !this.inFlight.has(acceptedRollbackId)) this.failRun(acceptedRollbackId, error, 'rollback_failed');
       throw error;

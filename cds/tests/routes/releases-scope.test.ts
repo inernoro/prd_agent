@@ -267,6 +267,7 @@ describe('release control plane project-scope isolation', () => {
     expect(res.status).toBe(201);
     expect(res.body.target.ssh.deployCommand).toBe('');
     expect(res.body.target.strategy.mode).toBe('generated-compose');
+    expect(res.body.target.governance.required).toBe(true);
     expect(res.body.target.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
   });
 
@@ -400,6 +401,7 @@ describe('release control plane project-scope isolation', () => {
     expect(res.status).toBe(201);
     expect(res.body.target.projectId).toBe('proj-a');
     expect(res.body.target.name).toBe('www.a.example.test 本机生产');
+    expect(res.body.target.governance.required).toBe(true);
     expect(res.body.target.ssh.host).toBe('127.0.0.1');
     expect(res.body.target.ssh.user).toBe('root');
     expect(res.body.target.ssh.appPath).toBe('/opt/a-prod');
