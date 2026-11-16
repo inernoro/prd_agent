@@ -8,9 +8,11 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import {
   buildReleaseInventoryCommand, buildReleaseReclaimCommand, parseRemoteReleaseInventory,
-  parseRemoteReclaimOutcome,
+  parseRemoteReclaimOutcome, computeReleaseArtifactRetentionPlan,
 } from '../../src/services/release-artifact-retention.js';
 import type { ReleaseStrategy, ReleaseTarget } from '../../src/types.js';
+import { ReleaseService } from '../../src/services/release-service.js';
+import { StateService } from '../../src/services/state.js';
 
 const roots: string[] = [];
 const helper = fileURLToPath(new URL('../../src/services/static-artifact-proof.py', import.meta.url));
@@ -177,4 +179,77 @@ describe('proved static artifact native reclamation',()=>{
     expect(await fs.readdir(store)).toEqual([id(1)+'.json',id(2)+'.json']);
     expect(digest(await fs.readFile(path.join(f.version(1),'index.html')))).toBe(f.protectedHash);
   });
+  it('reclaims proved static versions despite twenty repeatedly held dirty worktrees within the same budget',async()=>{
+    const f=await fixture();for(let n=3;n<=8;n++)await f.make(n);
+    const ledger=Array.from({length:6},(_,i)=>({releaseId:id(i+3),commitSha:f.commit,status:'success',startedAt:new Date(1700000000000+i).toISOString()}));
+    const held:string[]=[];
+    for(let n=100;n<125;n++){
+      const dir=path.join(f.releaseRoot,'worktrees',id(n));execFileSync('git',['-C',f.repo,'worktree','add','--detach',dir,f.commit],{stdio:'pipe'});
+      await fs.writeFile(path.join(dir,'build-output.bin'),Buffer.alloc(65536,n));held.push(dir);
+      ledger.push({releaseId:id(n),commitSha:f.commit,status:'failed',startedAt:new Date(1700000000000+n).toISOString()});
+    }
+    const before=await Promise.all(held.map(async dir=>({dir,hash:digest(await fs.readFile(path.join(dir,'build-output.bin'))),head:execFileSync('git',['-C',dir,'rev-parse','HEAD'],{encoding:'utf8'}).trim()})));
+    const refs=await Promise.all(['current','previous'].map(n=>fs.readlink(path.join(f.publicRoot,n))));
+    const rounds:unknown[]=[],removed:string[]=[];
+    for(let round=0;round<2;round++){
+      const inv=f.inventory(),plan=computeReleaseArtifactRetentionPlan({mode:'generated-static',inventory:inv,ledgerRuns:ledger,hasInFlightRun:false,drift:'in-sync',keepRecent:3,maxRemovals:20});
+      expect(plan.removeWorktrees.length+plan.removeVersions.length).toBeLessThanOrEqual(20);
+      const command=buildReleaseReclaimCommand(f.target,f.strategy,plan,{commits:Object.fromEntries(ledger.map(r=>[r.releaseId,r.commitSha])),identities:inv.worktreeIdentities,versionIdentities:inv.versionIdentities})!;
+      const result=parseRemoteReclaimOutcome(execFileSync('/bin/sh',['-c',command],{env:f.env,encoding:'utf8'}));
+      expect(result.queryError).toBeUndefined();expect(result.removedWorktrees).toEqual([]);expect(result.failedWorktrees).toEqual([]);expect(result.failedVersions).toEqual([]);
+      removed.push(...result.removedVersions);rounds.push({round,plan,result});
+    }
+    const after=await Promise.all(held.map(async dir=>({dir,hash:digest(await fs.readFile(path.join(dir,'build-output.bin'))),head:execFileSync('git',['-C',dir,'rev-parse','HEAD'],{encoding:'utf8'}).trim()})));
+    expect(after).toEqual(before);expect(digest(await fs.readFile(path.join(f.version(1),'index.html')))).toBe(f.protectedHash);
+    expect(await Promise.all(['current','previous'].map(n=>fs.readlink(path.join(f.publicRoot,n))))).toEqual(refs);
+    if(process.env.CAPACITY_STATIC_STARVATION_EVIDENCE)await fs.writeFile(process.env.CAPACITY_STATIC_STARVATION_EVIDENCE,JSON.stringify({rounds,removed,before,after,refs,isolatedOnly:true},null,2));
+    expect(removed.sort()).toEqual([id(3),id(4),id(5)]);expect((await fs.readdir(path.join(f.publicRoot,'.releases'))).length).toBe(5);
+  },30000);
+
+  it('rotates real service windows past held legacy versions and dirty sources without deleting protected bytes',async()=>{
+    const f=await fixture();for(let n=10;n<35;n++)await f.make(n,false);for(let n=50;n<53;n++)await f.make(n);
+    const state=new StateService(path.join(f.root,'cursor-state.json'));state.load();
+    state.addProject({id:'project',slug:'project',name:'Private capacity fixture'} as never);
+    state.addRemoteHost({id:'fixture-host',host:'127.0.0.1',sshPort:22,sshUser:'fixture',sshPrivateKeyEncrypted:'PLAINTEXT-TEST-KEY',sshPrivateKeyFingerprint:'fixture',tags:[],isEnabled:true,createdAt:new Date().toISOString()} as never);
+    const target={...f.target,projectId:'project',type:'ssh',name:'Private capacity fixture',isEnabled:true,createdAt:new Date().toISOString(),strategy:f.strategy,ssh:{...f.target.ssh!,host:'127.0.0.1',port:22,user:'fixture',privateKeyRef:'fixture-host',deployCommand:'',healthcheckUrl:''}} as ReleaseTarget;
+    state.upsertReleaseTarget(target);const held:string[]=[];
+    for(let n=100;n<125;n++){
+      const dir=path.join(f.releaseRoot,'worktrees',id(n));execFileSync('git',['-C',f.repo,'worktree','add','--detach',dir,f.commit],{stdio:'pipe'});
+      await fs.writeFile(path.join(dir,'build-output.bin'),Buffer.alloc(4096,n));held.push(dir);
+    }
+    for(const n of [1,2,...Array.from({length:25},(_,i)=>10+i),50,51,52,...Array.from({length:25},(_,i)=>100+i)]){
+      const at=new Date(Date.now()-(n===1?1000:n===2?2000:3600000+n)).toISOString();
+      state.addReleaseRun({releaseId:id(n),targetId:'fixture',projectId:'project',branchId:'fixture',planId:'fixture',commitSha:f.commit,status:n<3?'success':'failed',startedAt:at,finishedAt:at,logs:[],seq:0,artifact:{type:'branch-preview',commitSha:f.commit,branchId:'fixture',branchName:'fixture'}} as never);
+    }
+    const protectedPaths=[...held.map(dir=>path.join(dir,'build-output.bin')),...Array.from({length:25},(_,i)=>path.join(f.version(10+i),'index.html')),path.join(f.version(1),'index.html'),path.join(f.version(2),'index.html')];
+    const before=await Promise.all(protectedPaths.map(async file=>({file,hash:digest(await fs.readFile(file))})));
+    const commands:string[]=[],service=new ReleaseService(state,{sshExecutor:async req=>{commands.push(req.command);return execFileSync('/bin/sh',['-c',req.command],{env:f.env,encoding:'utf8'});}});
+    const removed:string[]=[],rounds:unknown[]=[];
+    const commandWindow=()=>{
+      const command=commands.at(-1)!;
+      const encoded=command.match(/ '([A-Za-z0-9+/=]+)' <<'CDS_SAFE_RECLAIM_PY'/)?.[1];
+      expect(encoded).toBeTruthy();
+      const spec=JSON.parse(Buffer.from(encoded!,'base64').toString('utf8'));
+      return {worktrees:spec.worktrees,versions:spec.versions};
+    };
+    let previewWindow:ReturnType<typeof commandWindow>|undefined;
+    try{
+      for(let round=0;round<4;round++){
+        const result=await service.reclaimRemoteReleaseArtifacts(target,{maxRemovals:20});
+        expect(result.readError).toBeUndefined();expect(result.removedWorktrees).toEqual([]);
+        expect((result.nativeCounts?.succeeded||0)+(result.nativeCounts?.held||0)+(result.nativeCounts?.failed||0)+(result.nativeCounts?.pending||0)).toBeLessThanOrEqual(20);
+        removed.push(...result.removedVersions);rounds.push(result);
+        if(round===1)expect(commandWindow()).toEqual(previewWindow);
+        if(round===0){
+          const preview=await service.reclaimRemoteReleaseArtifacts(target,{maxRemovals:20,dryRun:true});
+          expect(preview.removedVersions).toEqual([]);expect(preview.removedWorktrees).toEqual([]);
+          previewWindow=commandWindow();
+        }
+      }
+    }finally{await state.flush();}
+    const after=await Promise.all(protectedPaths.map(async file=>({file,hash:digest(await fs.readFile(file))})));expect(after).toEqual(before);
+    if(process.env.CAPACITY_STATIC_CURSOR_EVIDENCE)await fs.writeFile(process.env.CAPACITY_STATIC_CURSOR_EVIDENCE,JSON.stringify({rounds,removed,before,after,isolatedOnly:true,realServiceAndNativeFiles:true},null,2));
+    expect(removed.sort()).toEqual([id(50),id(51),id(52)]);expect((await fs.readdir(path.join(f.publicRoot,'.releases'))).length).toBe(27);
+  },30000);
+
 });
