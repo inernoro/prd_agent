@@ -345,16 +345,31 @@ export class AcceptanceTaskService {
   }
   async bindReport(id: string, reportId: unknown, publicBase = ''): Promise<AcceptanceTask> {
     const rid = text(reportId, '报告编号', false, 120);
-    return this.mutate(async (slice) => {
+    const prepared = await this.mutate((slice) => {
       const t = this.task(slice, id);
       if (t.status !== 'completed') reject('task_incomplete', '任务未完成，不能关联报告', 409);
-      if (t.report) { if (t.report.id !== rid) reject('report_conflict', '已绑定不可变报告，不能替换为另一份', 409); return this.publicTask(t); }
+      if (t.report) { if (t.report.id !== rid) reject('report_conflict', '已绑定不可变报告，不能替换为另一份', 409); return { bound: this.publicTask(t) }; }
       const report = this.state.getAcceptanceReport(rid), source = this.reportSource(id);
       if (!report || report.projectId !== t.projectId || report.sourceId !== t.id) reject('report_mismatch', '报告须属于同项目、同验收任务', 409);
       if (report.storage !== 'object' || !report.objectKey) reject('report_not_durable', '报告未进入线上持久存储，请恢复对象存储后重新归档', 409);
-      if (report.format !== 'md' || report.title !== source.title || report.verdict !== source.verdict
-        || report.defectCounts?.p0 !== source.defectCounts.p0 || report.defectCounts?.p1 !== source.defectCounts.p1
-        || await this.state.readAcceptanceReportContentAsync(rid) !== (await this.state.normalizeReportInlineImages(source.content, report.inlineAssetBaseUrl ?? publicBase)).content) reject('report_mismatch', '报告正文或业务结论与冻结执行结果不一致', 409);
+      return { report: structuredClone(report), source };
+    });
+    if (prepared.bound) return prepared.bound;
+    const { report, source } = prepared;
+    // 远端正文和图片 I/O 不持有领取/续期队列；完成任务和任务报告仍按现有合同不可改写。
+    if (report.format !== 'md' || report.title !== source.title || report.verdict !== source.verdict
+      || report.defectCounts?.p0 !== source.defectCounts.p0 || report.defectCounts?.p1 !== source.defectCounts.p1
+      || await this.state.readAcceptanceReportContentAsync(rid) !== (await this.state.normalizeReportInlineImages(source.content, report.inlineAssetBaseUrl ?? publicBase)).content) reject('report_mismatch', '报告正文或业务结论与冻结执行结果不一致', 409);
+    return this.mutate((slice) => {
+      const t = this.task(slice, id);
+      if (t.status !== 'completed') reject('task_incomplete', '任务未完成，不能关联报告', 409);
+      if (t.report) { if (t.report.id !== rid) reject('report_conflict', '已绑定不可变报告，不能替换为另一份', 409); return this.publicTask(t); }
+      const current = this.state.getAcceptanceReport(rid);
+      if (!current || current.projectId !== report.projectId || current.sourceId !== report.sourceId
+        || current.storage !== report.storage || current.objectKey !== report.objectKey
+        || current.format !== report.format || current.title !== report.title || current.verdict !== report.verdict
+        || current.defectCounts?.p0 !== report.defectCounts?.p0 || current.defectCounts?.p1 !== report.defectCounts?.p1
+        || current.inlineAssetBaseUrl !== report.inlineAssetBaseUrl) reject('report_mismatch', '报告状态已变化，请重新核对后绑定', 409);
       t.report = { id: rid, url: `/reports?report=${encodeURIComponent(rid)}`, verification: 'pending' };
       return this.publicTask(t);
     });

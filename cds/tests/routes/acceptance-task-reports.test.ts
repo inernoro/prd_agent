@@ -132,6 +132,38 @@ describe('结构化任务 → 既有归档 → 绑定：真实 HTTP 闭环', () 
     expect(state.getAcceptanceReport(archived.body.report.id)).toBeDefined();
     expect(tasks.getTask(task.id).report?.id).toBe(archived.body.report.id);
   });
+  it('报告外部读取未完成时其他任务仍可领取、续期和回收租约', async () => {
+    const archived = await request('POST', '/api/reports', payload(source));
+    const other = await tasks.createTask({ projectId: 'p1', templateId: task.templateId, environment: 'production' });
+    let release!: () => void, started!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    const read = vi.spyOn(state, 'readAcceptanceReportContentAsync').mockImplementationOnce(async () => { started(); await waiting; return source.content; });
+    const binding = request('POST', `/api/acceptance/tasks/${task.id}/bind-report`, { reportId: archived.body.report.id });
+    await reading;
+    let claimed: Awaited<ReturnType<AcceptanceTaskService['claim']>> | undefined;
+    const claiming = tasks.claim(other.id, '另一执行者').then((value) => { claimed = value; });
+    try {
+      await vi.waitFor(() => expect(claimed).toBeDefined(), { timeout: 1_000 });
+      expect((await tasks.heartbeat(other.id, claimed!.leaseToken)).status).toBe('running');
+      await tasks.reconcileExpiredLeases();
+    } finally {
+      release(); await claiming; read.mockRestore();
+      expect((await binding).status).toBe(200);
+    }
+  });
+  it('外部读取期间报告身份变化时提交前拒绝绑定', async () => {
+    const archived = await request('POST', '/api/reports', payload(source));
+    let release!: () => void, started!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    const read = vi.spyOn(state, 'readAcceptanceReportContentAsync').mockImplementationOnce(async () => { started(); await waiting; return source.content; });
+    const binding = request('POST', `/api/acceptance/tasks/${task.id}/bind-report`, { reportId: archived.body.report.id });
+    await reading;
+    state.getAcceptanceReport(archived.body.report.id)!.title = '读取期间元数据改变';
+    release(); const bound = await binding; read.mockRestore();
+    expect(bound.status).toBe(409); expect(tasks.getTask(task.id).report).toBeUndefined();
+  });
   it('受限全局身份不能绕过验收任务作用域归档', async () => {
     expect((await request('POST', '/api/reports', payload(source), { 'x-test-global': 'empty' })).status).toBe(403);
     expect(state.listAcceptanceReports('p1')).toHaveLength(0);
