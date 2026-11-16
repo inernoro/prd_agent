@@ -3683,7 +3683,9 @@ def cmd_acceptance(args: argparse.Namespace) -> None:
             payload["projectId"] = project
         body = _call("POST", base + "/templates", body=payload)
     elif action == "create":
-        payload = {"projectId": project, "templateId": args.template, "environment": args.environment}
+        payload = {"templateId": args.template, "environment": args.environment}
+        if project:
+            payload["projectId"] = project
         if args.title:
             payload["title"] = args.title
         if args.case:

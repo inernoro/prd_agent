@@ -15,7 +15,7 @@
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "8933eb6dc877e7d0513ca710becfed8b89bfcf345b847725e280efb11bae4b7d",
+    "cds/cli/cdscli.py": "1756b8f33085be7d71a01171d78ea42d0ec513e1d0466f963c6bf49c5a6fbe96",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "9984c6f896f672df35c43fae33ca3f89a1bfc8fd10f7e0ab2e88f2871e71339f",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -67,5 +67,5 @@
     "cds-release/SKILL.md": "17f4df0330e3b041a9c3d96a825ded21092df8b0e4a2b699930692965eabe2f7",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-16T10:28:33.956Z"
+  "generatedAt": "2026-11-16T14:43:07.639Z"
 }

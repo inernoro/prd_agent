@@ -58,6 +58,14 @@ class AcceptanceCliTests(unittest.TestCase):
         self.assertTrue(body["leaseStored"])
         self.exclude.assert_called_once()
 
+    def test_create_omits_unspecified_project_for_project_key_inference(self):
+        parser = argparse.ArgumentParser()
+        cli._register_acceptance_parser(parser.add_subparsers())
+        args = parser.parse_args(["acceptance", "create", "--template", "template-1"])
+        with patch.dict(os.environ, {"CDS_PROJECT_ID": ""}), patch.object(cli, "_call", return_value={}) as call, patch.object(cli, "ok"):
+            args.func(args)
+        self.assertNotIn("projectId", call.call_args.kwargs["body"])
+
     def test_heartbeat_uses_private_ticket(self):
         self.claim()
         with patch.object(cli, "_call", return_value={}) as call:
