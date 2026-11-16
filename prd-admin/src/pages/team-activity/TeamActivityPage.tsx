@@ -1,4 +1,4 @@
-import { WorkspaceSearch, PersonAvatar } from '@/components/workspace/Workspace';
+import { WorkspaceSearch } from '@/components/workspace/Workspace';
 /**
  * 团队动态 — 团队脉搏 + 全员工作日志时间线（仅管理员，team-activity.read）。
  * 数据由后端 ActivityLogActionFilter 按白名单自动留痕，本页只读：
@@ -212,14 +212,9 @@ export default function TeamActivityPage() {
         actions={<TimeRangePicker value={timeRange} onChange={setTimeRange} />}
       />
 
-      <div className="map-workspace">
-        <div className="workspace-people" aria-label="按成员查看动态">
-          <strong>成员动态</strong><span>{statsLoading ? '读取中' : stats ? `${stats.activeMembers} 人有记录` : '数据尚未就绪'}</span>
-          <div>{stats?.actors.slice(0,8).map(actor=><button type="button" key={actor.actorId} aria-pressed={filterUserId===actor.actorId} onClick={()=>{pickActor(actor.actorId);switchView('feed');}}><PersonAvatar person={{displayName:privacy ? '匿名成员' : actor.actorName || actor.actorId,avatarFileName:privacy ? null : actor.actorAvatarFileName}} size={25}/><span>{privacy ? maskName(actor.actorName || actor.actorId) : actor.actorName || actor.actorId}</span><small>{actor.count}</small></button>)}</div>
-          {filterUserId && <button type="button" className="ws-link" onClick={()=>setFilterUserId('')}>全部成员</button>}
-        </div>
-        {view === 'feed' && <div className="ws-toolbar"><WorkspaceSearch value={feedQuery} onChange={setFeedQuery} placeholder="搜索已载入动态的标题或操作"/><span>已载入 {items.length} / {total} 条 · 支持继续加载</span></div>}
-      </div>
+      {view === 'feed' && <div className="map-workspace">
+        <div className="ws-toolbar"><WorkspaceSearch value={feedQuery} onChange={setFeedQuery} placeholder="搜索已载入动态的标题或操作"/><span>已载入 {items.length} / {total} 条 · 支持继续加载</span></div>
+      </div>}
 
       {/* 下方筛选栏：仅动态流视图保留（成员 / 模块 / 隐私脱敏）。行为洞察视图时间已上移页头，无需此栏。
           手机端合并为一条横滚条（成员选择 + 模块 chips + 匿名开关同行，禁换行），sm 起恢复 wrap。 */}
