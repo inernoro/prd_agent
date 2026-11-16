@@ -51,6 +51,13 @@ function renderAcceptanceCases(manifest) {
 
 export function prepareArchiveReport(report, manifest) {
   const normalizedReport = String(report).replace(/#fig-(\d{3})-[^)\s]+(?=\))/g, '#fig-$1');
+  if (!Array.isArray(manifest)) {
+    throw new Error('视觉证据清单必须是数组');
+  }
+  const productionReadOnlyWithoutVisualEvidence = manifest.length === 0
+    && /##\s+模块覆盖[\s\S]*正式环境只读健康检查\s*\|\s*不适用/.test(normalizedReport)
+    && /##\s+逐模块视觉取证任务[\s\S]*本轮无视觉取证任务。原因：正式环境单独运行仅执行只读健康检查/.test(normalizedReport);
+  if (productionReadOnlyWithoutVisualEvidence) return normalizedReport;
   const start = normalizedReport.indexOf('## 视觉证据图片');
   const end = normalizedReport.indexOf('## 视觉测试方法', start);
   if (start < 0 || end < 0 || end <= start) {

@@ -237,6 +237,8 @@ public class ProfileController : ControllerBase
 
     private static (string errorCode, string errorMessage) MapAvatarGenerationFailure(string? itemErrorCode)
     {
+        if (PrdAgent.Core.LlmGateway.GatewayBillingFailure.FromCode(itemErrorCode) is { } billing)
+            return (billing.Code, billing.UserMessage);
         return (itemErrorCode ?? string.Empty).Trim().ToUpperInvariant() switch
         {
             "IMAGE_GEN_REQUEST_REJECTED" or "CONTENT_REJECTED" or "INVALID_FORMAT" => (
