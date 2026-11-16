@@ -61,6 +61,7 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
   }
 
   [data-theme='dark'] {
+    --cds-select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='hsl(240,4%25,60%25)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
     --background: 240 5% 8%;
     --foreground: 240 6% 90%;
 
@@ -186,6 +187,7 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
   }
 
   [data-theme='light'] {
+    --cds-select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='hsl(24,10%25,40%25)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
     --background: 30 30% 95%;
     --foreground: 24 20% 15%;
 
@@ -347,6 +349,10 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
   }
+  :where(select) {
+    min-width: 0;
+    max-width: 100%;
+  }
   ::-webkit-scrollbar {
     width: 0.75rem;
     height: 0.75rem;
@@ -378,6 +384,30 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     background-color: hsl(var(--surface-base));
   }
 
+}
+
+/* Keep the arrow inside the field across platform-native select renderers.
+   Unlayered so page background/padding shorthands cannot erase the affordance.
+   Custom icon selects and listboxes retain their own presentation. */
+html select:not([multiple]):not([size]):not(.appearance-none) {
+  appearance: none;
+  padding-inline-end: 2.25rem;
+  background-image: var(--cds-select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 0.625rem center;
+  background-size: 1rem 1rem;
+  text-overflow: ellipsis;
+}
+
+html select:not([multiple]):not([size]):not(.appearance-none):dir(rtl) {
+  background-position: left 0.625rem center;
+}
+
+@media (forced-colors: active) {
+  html select:not([multiple]):not([size]):not(.appearance-none) {
+    appearance: auto;
+    background-image: none;
+  }
 }
 
 /*

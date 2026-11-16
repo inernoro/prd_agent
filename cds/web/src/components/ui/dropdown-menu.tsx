@@ -33,7 +33,7 @@ export function DropdownMenu({
   width?: number;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number; maxHeight?: number } | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
 
@@ -61,8 +61,10 @@ export function DropdownMenu({
       // 限高只能取实际剩下的空间：再垫一个最小高度，矮视口（横屏、软键盘弹起）里菜单又会伸出视口底部（Codex P2，PR #1647）
       maxHeight = Math.max(spaceBelow, 0);
     }
-    const left = align === 'end' ? rect.right - width : rect.left;
-    setCoords({ top, left, maxHeight });
+    const menuWidth = Math.min(width, Math.max(0, window.innerWidth - margin * 2));
+    const preferredLeft = align === 'end' ? rect.right - menuWidth : rect.left;
+    const left = Math.max(margin, Math.min(preferredLeft, window.innerWidth - menuWidth - margin));
+    setCoords({ top, left, width: menuWidth, maxHeight });
   };
 
   useLayoutEffect(() => {
@@ -119,10 +121,10 @@ export function DropdownMenu({
               ref={popoverRef}
               className="cds-overlay-anim fixed z-[300] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
               style={{
-                width,
+                width: coords.width,
                 top: coords.top,
                 left: coords.left,
-                ...(coords.maxHeight ? { maxHeight: coords.maxHeight, overflowY: 'auto' as const } : {}),
+                ...(coords.maxHeight !== undefined ? { maxHeight: coords.maxHeight, overflowY: 'auto' as const } : {}),
               }}
               role="menu"
               onClick={(event) => {
