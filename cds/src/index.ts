@@ -837,7 +837,18 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               variables: stateService.getCustomEnv(current.projectId),
               outputPath: out,
               systemMongoUri: process.env.CDS_MONGO_URI,
+              systemMongoBackupUri: process.env.CDS_MONGO_BACKUP_URI,
             });
+            if (invocation.accessCheck) {
+              const authCheck = await shell.exec(invocation.accessCheck.command, {
+                timeout: 30_000, stdin: invocation.accessCheck.stdin,
+              });
+              if (authCheck.exitCode !== 0) {
+                throw new Error(authCheck.exitCode === 43
+                  ? '系统数据库备份权限未确认，本轮未导出；请联系管理员配置独立备份账号后重试。'
+                  : '系统数据库备份认证或权限查询失败，本轮未导出；请联系管理员检查备份账号和连接后重试。');
+              }
+            }
             cmd = invocation.command;
             commandStdin = invocation.stdin;
           } else if (t.kind === 'mysql') {

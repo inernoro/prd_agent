@@ -50,6 +50,7 @@ describe('scrubParentSecretsFromEnv', () => {
       // URI 型连接串同样是父实例入口（Codex P1）：不含 PASSWORD 字样但
       // httpLogStoreFromEnv 等直接消费
       CDS_MONGO_URI: 'mongodb://parent:27017',
+      CDS_MONGO_BACKUP_URI: 'mongodb://backup:fixture-secret@parent:27017',
       DATABASE_URL: 'postgres://parent/db',
       CDS_REDIS_HOST: 'parent-redis',
       ConnectionStrings__Default: 'Server=parent',
@@ -70,7 +71,7 @@ describe('scrubParentSecretsFromEnv', () => {
     };
     const scrubbed = scrubParentSecretsFromEnv(env);
     expect(scrubbed.sort()).toEqual([
-      'AI_ACCESS_KEY', 'CDS_JWT_SECRET', 'CDS_MONGO_URI', 'CDS_PASSWORD',
+      'AI_ACCESS_KEY', 'CDS_JWT_SECRET', 'CDS_MONGO_BACKUP_URI', 'CDS_MONGO_URI', 'CDS_PASSWORD',
       'CDS_PREVIEW_PASSWORD', 'CDS_PREVIEW_PUBLIC_BASE_URL',
       'CDS_PREVIEW_SSO_AUTHORIZATION_URL',
       'CDS_PREVIEW_SSO_CLIENT_SECRET', 'CDS_PREVIEW_SSO_TOKEN_URL', 'CDS_PUBLIC_BASE_URL',
@@ -78,6 +79,7 @@ describe('scrubParentSecretsFromEnv', () => {
       'LLMGW_ADMIN_PASSWORD', 'TENCENT_COS_SECRET_KEY',
     ]);
     expect(env.CDS_MONGO_URI).toBeUndefined();
+    expect(env.CDS_MONGO_BACKUP_URI).toBeUndefined();
     // 父实例门禁密码没有幸存；子实例门禁来自专用键的重映射，auth mode 强制 basic
     expect(env.CDS_PASSWORD).toBe('child-gate');
     expect(env.CDS_USERNAME).toBe('child-admin');

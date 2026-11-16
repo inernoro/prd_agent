@@ -1,8 +1,14 @@
-import {it,afterEach,expect} from 'vitest';
+import {it,beforeAll,afterAll,afterEach,expect} from 'vitest';
+import {acquireDockerSlot,releaseDockerSlot} from '../helpers/docker-container.js';
 import fs from 'node:fs';import path from 'node:path';import os from 'node:os';import {execFileSync} from 'node:child_process';import {randomUUID} from 'node:crypto';
 import {buildReleaseInventoryCommand,parseRemoteReleaseInventory,buildReleaseReclaimCommand,parseRemoteReclaimOutcome,releaseArtifactCommitProof} from '../../src/services/release-artifact-retention.js';
 import type {ReleaseTarget,ReleaseStrategy,ReleaseRun} from '../../src/types.js';
 const roots:string[]=[],containers:string[]=[];
+let acquiredSlot=false;
+// Stable native inventory must not race another test file's Docker teardown.
+// Keep all identity/reference/query-failure assertions unchanged.
+beforeAll(()=>{acquireDockerSlot('remote-release-reclaim');acquiredSlot=true;},1_800_000);
+afterAll(()=>{if(acquiredSlot)releaseDockerSlot();});
 const execute=(command:string)=>execFileSync('bash',['-e','-c',command],{encoding:'utf8',stdio:['pipe','pipe','pipe']});
 const docker=(...args:string[])=>execFileSync('docker',args,{encoding:'utf8',stdio:['pipe','pipe','pipe']}).trim();
 afterEach(()=>{for(const id of containers.splice(0))docker('rm','-f',id);for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});

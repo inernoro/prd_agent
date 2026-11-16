@@ -76,6 +76,7 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_STORAGE_MODE', description: '存储模式（json / mongo / mongo-split / auto）', isSecret: false, group: 'storage' },
   { key: 'CDS_STATE_BOOTSTRAP_MODE', description: '空 Mongo 首启策略（fresh / migrate，默认 fresh 不导入旧 state.json）', isSecret: false, group: 'storage' },
   { key: 'CDS_MONGO_URI', description: 'MongoDB 连接串', isSecret: true, group: 'storage' },
+  { key: 'CDS_MONGO_BACKUP_URI', description: '系统状态库独立备份认证连接串（目标仍为受保护系统容器）', isSecret: true, group: 'storage' },
   { key: 'CDS_MONGO_DB', description: 'MongoDB 数据库名', isSecret: false, group: 'storage' },
   { key: 'CDS_MONGO_CONTAINER', description: 'MongoDB 容器名（exec_cds.sh 启动前置使用）', isSecret: false, group: 'storage' },
   { key: 'CDS_REPOS_BASE', description: '多项目 git clone 根目录（每项目一个子目录）', isSecret: false, group: 'storage' },

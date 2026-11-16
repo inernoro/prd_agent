@@ -459,6 +459,12 @@ describe('首轮实跑暴露的缺陷', () => {
     expect(CODE).toContain('stateService.getInfraServiceForProjectAndId(t.projectId, t.id)');
     expect(CODE).toContain('service: current,');
     expect(CODE).toContain('commandStdin = invocation.stdin;');
+    const access = CODE.indexOf('const authCheck = await shell.exec(invocation.accessCheck.command');
+    const dump = CODE.indexOf('cmd = invocation.command;');
+    expect(access).toBeGreaterThan(0);
+    expect(dump).toBeGreaterThan(access);
+    expect(CODE.slice(access, dump)).toContain('if (authCheck.exitCode !== 0)');
+    expect(CODE.slice(access, dump)).toContain('throw new Error(');
     const mongo = fs.readFileSync(path.resolve(process.cwd(), 'src/services/infra-mongo-backup.ts'), 'utf8');
     expect(mongo).toContain('--config=/dev/stdin');
     expect(mongo).toContain('stdin: `password: ${JSON.stringify(password)}');
