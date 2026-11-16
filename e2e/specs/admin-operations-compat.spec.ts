@@ -425,7 +425,7 @@ for (const width of [390, 1440])
       await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
 
       await page.reload();
-      await expect(page.locator(".gateway-identity-card > strong")).toHaveText("demo");
+      await expect(page.locator(".gateway-identity-card > strong")).toHaveText(/^(早上好|午安|下午好|晚上好|夜深了)，demo。$/);
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
       const sound = page.locator(".gateway-chrome-sound");
       await expect(sound).toHaveAttribute("data-audio-status", "pending");
