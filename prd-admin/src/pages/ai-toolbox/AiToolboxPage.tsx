@@ -1,3 +1,4 @@
+import { TaskDiscovery } from './components/TaskDiscovery';
 import { useEffect, useMemo, useState } from 'react';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { Surface } from '@/components/design/Surface';
@@ -267,6 +268,7 @@ export default function AiToolboxPage() {
         </div>
       }
     >
+      <TaskDiscovery items={items} />
       {hasActiveFilters && (
         <div className="toolbox-results-heading">
           <div className="toolbox-results-title">

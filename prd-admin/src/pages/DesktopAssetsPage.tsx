@@ -1,3 +1,4 @@
+import { AssetSourceFilter } from '@/components/workspace/AssetSourceFilter';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FolderOpen,
@@ -761,6 +762,7 @@ export default function DesktopAssetsPage() {
   const [latestActivity, setLatestActivity] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('date');
   const [sortDesc, setSortDesc] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -830,6 +832,7 @@ export default function DesktopAssetsPage() {
   useEffect(() => {
     fetchAssets(activeTab);
     setSelectedId(null);
+    setSourceFilter('');
   }, [activeTab, fetchAssets]);
 
   // Infinite scroll
@@ -848,7 +851,7 @@ export default function DesktopAssetsPage() {
 
   // Filter + sort
   const filtered = useMemo(() => {
-    let list = assets;
+    let list = sourceFilter ? assets.filter(asset => (asset.source || '未标注来源') === sourceFilter) : assets;
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -863,7 +866,7 @@ export default function DesktopAssetsPage() {
     });
 
     return list;
-  }, [assets, searchQuery, sortBy, sortDesc]);
+  }, [assets, searchQuery, sortBy, sortDesc, sourceFilter]);
 
   const selectedAsset = useMemo(
     () => (selectedId ? assets.find((a) => a.id === selectedId) ?? null : null),
@@ -1042,6 +1045,7 @@ export default function DesktopAssetsPage() {
         </div>
       </div>
 
+      {activeTab !== 'shares' && <AssetSourceFilter items={assets} value={sourceFilter} onChange={setSourceFilter} />}
       {/* ── Content ── */}
       {activeTab === 'shares' ? (
         // 「分享」tab：跨 4 类聚合管理，复用 MySharesPage 完整组件
