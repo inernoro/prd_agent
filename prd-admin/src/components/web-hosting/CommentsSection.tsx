@@ -70,6 +70,8 @@ export default function CommentsSection(props: Props) {
     return '先在网页上选择位置，意见就会留在那里。';
   })();
   const identity = `${mode}:${token ?? ''}:${siteId ?? ''}:${password ?? ''}`;
+  const defaultVersionScope = `${identity}:${versionKey ?? ''}:${props.threadKind ?? 'all'}`;
+  const initialVersionScope = useRef('');
   const confirmedDraftVersion = useRef({ identity, versionKey });
   const identityRef = useRef(identity); identityRef.current = identity;
   const draftScope = `${identity}:${review?.selected?.id ?? ''}:${versionKey ?? ''}:${props.threadKind ?? 'all'}`;
@@ -89,7 +91,9 @@ export default function CommentsSection(props: Props) {
   const openCount = roots.filter(c => !c.isResolved).length;
   const resolvedCount = roots.length - openCount;
   const reportedCount = allRoots.filter(comment => !props.threadKind || (props.threadKind === 'annotation' ? !!comment.anchor : !comment.anchor)).length;
-  useEffect(() => { if (!loading && !error) callbacks.current.onCountChange?.(reportedCount); }, [reportedCount, loading, error]);
+  const currentCount = versionRoots.filter(comment => !props.threadKind || (props.threadKind === 'annotation' ? !!comment.anchor : !comment.anchor)).length;
+  const versionReady = !versionPending && (!review || !!versionKey);
+  useEffect(() => { if (!loading && versionReady && !error) callbacks.current.onCountChange?.(reportedCount); }, [reportedCount, loading, versionReady, error]);
   const annotationCount = versionRoots.filter(comment => !!comment.anchor).length;
   const discussionCount = versionRoots.length - annotationCount;
   useEffect(() => {
@@ -107,6 +111,11 @@ export default function CommentsSection(props: Props) {
     // An unresolved metadata response does not change which publication owns the draft.
     if (previous.identity !== identity || versionKey) confirmedDraftVersion.current = { identity, versionKey };
   }, [identity, versionKey]);
+  useEffect(() => {
+    if (loading || !versionReady || error || !reportedCount || initialVersionScope.current === defaultVersionScope) return;
+    initialVersionScope.current = defaultVersionScope;
+    setOtherVersions(currentCount === 0);
+  }, [loading, versionReady, error, reportedCount, currentCount, defaultVersionScope]);
 
   const load = useCallback(async (silent = false) => {
     const request = ++fetchId.current;
@@ -199,8 +208,8 @@ export default function CommentsSection(props: Props) {
       <div className="review-scope">
         {review && <>
           <div className="review-scope-tabs" role="tablist" aria-label="批注版本范围">
-            <button type="button" role="tab" disabled={versionPending} aria-selected={!otherVersions} onClick={() => setOtherVersions(false)}>本版 <span>{versionPending ? '—' : versionRoots.length}</span></button>
-            <button type="button" role="tab" disabled={versionPending} aria-selected={otherVersions} onClick={() => setOtherVersions(true)}>其他版本 <span>{versionPending ? '—' : outsideRoots.length}</span></button>
+            <button type="button" role="tab" disabled={versionPending} aria-selected={!otherVersions} onClick={() => { initialVersionScope.current = defaultVersionScope; setOtherVersions(false); }}>本版 <span>{versionPending ? '—' : versionRoots.length}</span></button>
+            <button type="button" role="tab" disabled={versionPending} aria-selected={otherVersions} onClick={() => { initialVersionScope.current = defaultVersionScope; setOtherVersions(true); }}>其他版本 <span>{versionPending ? '—' : outsideRoots.length}</span></button>
           </div>
           <div className="review-scope-caption"><span>{review.selected ? `${review.selected.versionLabel} · ${review.historical ? '历史版本' : '当前发布'}` : '正在读取版本归属…'}</span><span>{otherVersions ? '选择版本，回到原内容' : '批注随版本保留'}</span></div>
         </>}

@@ -36,6 +36,26 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('annotation entry availability', () => {
+  it('等版本归属确认后首次展示仅存于历史版本的已解决批注，并保留手动页签选择', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'historical', siteId: 'site', content: '旧版保留的意见', contentVersion: 'old', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },
+    ] } });
+    const count = vi.fn();
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview) => root.render(<CommentsSection mode="share" token="share" review={review} onCountChange={count} />);
+    await act(async () => render({ loading: true, selected: undefined, versions: [] } as unknown as HostedReview));
+    expect(count).not.toHaveBeenCalled();
+    const known = { loading: false, selected: { id: 'v2', versionLabel: 'V2', contentVersionKey: 'current' }, versions: [] } as unknown as HostedReview;
+    await act(async () => render(known));
+    expect(count).toHaveBeenLastCalledWith(1);
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('其他版本');
+    expect(container.querySelector('.review-thread')?.textContent).toContain('旧版保留的意见');
+    expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
+    await act(async () => button('本版 0').click());
+    await act(async () => render({ ...known }));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
+    expect(container.querySelector('.review-thread')).toBeNull();
+  });
   it('首次打开默认展示已解决和未解决批注，不因默认筛选隐藏已有意见', async () => {
     list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
       { id: 'resolved', siteId: 'site', content: '已经解决的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },
