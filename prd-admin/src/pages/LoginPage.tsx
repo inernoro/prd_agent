@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
 import type { SsoLoginOption } from '@/services/contracts/auth';
 import { ConsciousnessHud, ConsciousnessScene, IdentityScanner, markConsciousnessArrival, type IdentityPhase } from '@/components/effects/ConsciousnessScene';
+import { enterWorkspace, prepareEntryScene, profileEntryMotion } from '@/components/effects/entryMotion';
 import { prefersReducedMotion } from '@/lib/themeApplier';
 import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { Reveal } from '@/pages/home/components/Reveal';
@@ -102,6 +103,7 @@ export default function LoginPage() {
     return resolved;
   }, [returnUrlWithRef]);
   const [loading, setLoading] = useState(false);
+  useEffect(() => { void prepareEntryScene(); }, []);
   const [gatePhase, setGatePhase] = useState<IdentityPhase>('idle');
   const completingLogin = useRef(false);
   const mounted = useRef(true);
@@ -228,6 +230,7 @@ export default function LoginPage() {
       setError('当前环境已禁用密码登录，请使用 SSO 登录');
       return;
     }
+    profileEntryMotion();
     setLoading(true);
     setError(null);
     try {
@@ -300,16 +303,19 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
+    // Preparation must not keep a verified user waiting on a failed resource.
+    if (!prefersReducedMotion()) await Promise.race([prepareEntryScene(), new Promise(resolve => window.setTimeout(resolve, 1000))]);
+    if (!mounted.current) return;
     setGatePhase('authorized');
     if (!prefersReducedMotion()) {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 650));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 760));
       if (!mounted.current) return;
       setGatePhase('entering');
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 820));
     }
     if (!mounted.current) return;
     markConsciousnessArrival();
-    navigate(resolveReturnUrl(), { replace: true });
+    enterWorkspace(() => navigate(resolveReturnUrl(), { replace: true }));
   };
 
   const onResetPassword = async () => {
@@ -371,7 +377,7 @@ export default function LoginPage() {
       <ConsciousnessHud login />
       <IdentityScanner phase={phase} />
       <main className="cinema-login-center" aria-label={showResetPassword ? '设置新密码' : '登录 MAP'}>
-        {authorized ? <div className="cinema-identity-result" role="status"><p>{phase === 'entering' ? 'WELCOME TO' : '读取完毕 · 核验通过'}</p><small>{phase === 'entering' ? 'YOUR INTELLIGENCE WORKSPACE' : 'READ COMPLETE / VERIFIED'}</small>{phase === 'entering' && <strong>MAP</strong>}</div> : <>
+        {authorized ? <div className="cinema-identity-result" role="status"><div className="cinema-verified-copy"><p>读取完毕 · 核验通过</p><small>READ COMPLETE / VERIFIED</small></div><div className="cinema-welcome-copy"><p>WELCOME TO</p><small>YOUR INTELLIGENCE WORKSPACE</small><strong>MAP</strong></div></div> : <>
           {!showResetPassword ? (
             <LoginCard
               username={username}

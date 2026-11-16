@@ -20,6 +20,7 @@ vi.mock('@/stores/authStore', async () => {
     logout: () => set({ isAuthenticated: false }),
   })) };
 });
+vi.mock('@/components/effects/entryMotion', () => ({ prepareEntryScene: () => Promise.resolve(), profileEntryMotion: vi.fn(), enterWorkspace: (commit: () => void) => commit() }));
 vi.mock('@/pages/home/components/Reveal', () => ({ Reveal: ({ children }: { children: ReactNode }) => children }));
 let host: HTMLDivElement;
 let root: Root;
@@ -84,7 +85,7 @@ describe('电影式登录真实表单交互', () => {
     await act(async () => authorize({ success: true, data: { effectivePermissions: ['admin.access'] } }));
     expect(host.textContent).toContain('核验通过');
     expect(navigation.navigate).not.toHaveBeenCalled();
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1250)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1700)); });
     expect(navigation.navigate).toHaveBeenCalledWith('/', { replace: true });
   });
 
