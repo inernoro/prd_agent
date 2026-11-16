@@ -5590,6 +5590,9 @@ export function installSpaFallback(
     // 自己是预览实例时往 index.html 注入 window.__CDS_PREVIEW_INSTANCE__=true，
     // web 端据此关闭 /_cds 直通（见 cds/web/src/lib/api.ts shouldPreferCdsPassthrough）。
     // 生产实例走原 sendFile 路径，零改动。
+    // A normal independent CDS hosted behind another CDS also owns its API.
+    // Routing is explicit and separate from preview security/storage behavior.
+    const dashboardSameOriginApi = process.env.CDS_DASHBOARD_API_MODE === 'same-origin';
     let previewInstanceIndexCache: { filePath: string; mtimeMs: number; html: string } | null = null;
     const resolveReactIndex = (): string | null => {
       if (fs.existsSync(reactIndex)) return reactIndex;
@@ -5606,7 +5609,7 @@ export function installSpaFallback(
         res.status(503).type('text/plain').send('CDS web release is switching; retry shortly.');
         return;
       }
-      if (!isPreviewInstance()) {
+      if (!isPreviewInstance() && !dashboardSameOriginApi) {
         res.sendFile(selectedIndex);
         return;
       }
@@ -5622,7 +5625,10 @@ export function installSpaFallback(
           mtimeMs,
           html: raw.replace(
             '<head>',
-            '<head><script>window.__CDS_PREVIEW_INSTANCE__=true</script>',
+            '<head><script>' + [
+              isPreviewInstance() ? 'window.__CDS_PREVIEW_INSTANCE__=true' : '',
+              dashboardSameOriginApi ? 'window.__CDS_SAME_ORIGIN_API__=true' : '',
+            ].filter(Boolean).join(';') + '</script>',
           ),
         };
       }
