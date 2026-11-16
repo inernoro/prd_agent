@@ -20,9 +20,14 @@ public class ApiLogsController : ControllerBase
 {
     private readonly MongoDbContext _db;
 
-    public ApiLogsController(MongoDbContext db)
+    private readonly PrdAgent.Infrastructure.Services.LogArchiveService _archives;
+    private readonly IConfiguration _config;
+
+    public ApiLogsController(MongoDbContext db, PrdAgent.Infrastructure.Services.LogArchiveService archives, IConfiguration config)
     {
         _db = db;
+        _archives = archives;
+        _config = config;
     }
 
     private sealed class MetaUser
@@ -152,6 +157,8 @@ public class ApiLogsController : ControllerBase
         "/api/logs/llm/meta",
         "/api/logs/api",
         "/api/logs/api/meta",
+        "/api/logs/archives",
+        "/api/logs/archives/policy",
     };
 
     [HttpGet]
@@ -286,7 +293,8 @@ public class ApiLogsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> Detail(string id)
     {
-        var log = await _db.ApiRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync();
+        var raw = await _archives.HydrateAsync(PrdAgent.Api.Services.InstanceIdentity.Get(_config), "api", id, HttpContext.RequestAborted);
+        var log = raw == null ? null : MongoDB.Bson.Serialization.BsonSerializer.Deserialize<ApiRequestLog>(raw);
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         // 解析用户名

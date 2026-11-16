@@ -31,9 +31,10 @@ test('dry run preserves every record and reports eligible backlog', async()=>{
   const db=fakeDb(); const r=await scope.retainRequestLogs(db,{now});
   assert.equal(db.deleted(),0); assert.equal(r.backlog,true); assert.equal(r.cutoff,'2026-10-16T00:00:00.000Z');
 });
-test('execution removes only expired rows with bounded batches',async()=>{
-  const db=fakeDb();const r=await scope.retainRequestLogs(db,{now,execute:true,batchSize:1,maxBatches:1});
-  assert.equal(r.deleted,1); assert.equal(db.rows()[0]._id,2);assert.equal(r.backlog,false);
+test('legacy execution refuses direct deletion without an archive',async()=>{
+  const db=fakeDb();
+  await assert.rejects(scope.retainRequestLogs(db,{now,execute:true}),/Direct log deletion disabled/);
+  assert.equal(db.deleted(),0); assert.equal(db.rows().length,2);
 });
 test('missing time index and unsafe retention fail closed', async()=>{
   await assert.rejects(scope.retainRequestLogs(fakeDb(false),{now}),/index required/);

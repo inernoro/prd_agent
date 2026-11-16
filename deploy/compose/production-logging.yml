@@ -9,8 +9,13 @@ services:
   gateway:
     logging: *production-logging
   api:
+    environment:
+      LogArchive__EncryptionKey: ${LOG_ARCHIVE_ENCRYPTION_KEY:-}
+      LogArchive__KeyBackedUp: ${LOG_ARCHIVE_KEY_BACKED_UP:-false}
     logging: *production-logging
   mongodb:
+    # Temporary preservation guard until all historical log TTL indexes are migrated.
+    command: ["mongod", "--setParameter", "ttlMonitorEnabled=false"]
     logging: *production-logging
   redis:
     logging: *production-logging
@@ -19,8 +24,14 @@ services:
   llmgw-web:
     logging: *production-logging
   llmgw-serve:
+    environment:
+      LlmGateway__Retention__ApplyChanges: "false"
+      LlmGateway__Retention__EnableTtlIndexes: "false"
     logging: *production-logging
   llmgw-serve-b:
+    environment:
+      LlmGateway__Retention__ApplyChanges: "false"
+      LlmGateway__Retention__EnableTtlIndexes: "false"
     logging: *production-logging
   design-opendesign:
     logging: *production-logging

@@ -1,3 +1,4 @@
+import LogArchivePanel from './LogArchivePanel';
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -313,6 +314,7 @@ export default function SystemLogsTab() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
+      <LogArchivePanel />
       <GlassCard glow animated className="p-4">
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-4 md:grid-cols-8">
           <UserSearchSelect

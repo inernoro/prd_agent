@@ -9,7 +9,7 @@ case "${1:-}" in
 esac
 root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 if [ "$execute" = 0 ]; then
-  printf '%s\n' 'Install release/cleanup lock, daily artifact retention, 30-day request-log retention every 15 minutes, Nginx rotation and journald limits.'
+  printf '%s\n' 'Install release/cleanup lock, daily artifact retention, request-log age reporting without deletion, Nginx rotation and journald limits.'
   printf '%s\n' 'Existing containers require the explicit per-container log rollout; this installer does not recreate containers or restart Docker.'
   exit 0
 fi
@@ -31,6 +31,7 @@ install -m 0644 "$root/deploy/journald/prd-agent-disk.conf" /etc/systemd/journal
 install -m 0644 "$root/deploy/compose/production-logging.yml" /etc/prd-agent/compose.logging.yml
 logrotate --debug /etc/logrotate.d/prd-agent-nginx
 systemctl daemon-reload
-systemctl enable --now prd-agent-artifact-retention.timer prd-agent-request-log-retention.timer
+systemctl disable --now prd-agent-request-log-retention.timer
+systemctl enable --now prd-agent-artifact-retention.timer
 systemctl restart systemd-journald
 printf '%s\n' 'Disk governance installed; run and verify retention services before handoff.'

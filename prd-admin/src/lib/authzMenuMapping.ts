@@ -81,7 +81,7 @@ export const menuList: MenuDef[] = [
     appKey: 'logs',
     label: '请求日志',
     icon: 'ScrollText',
-    permissions: ['logs.read'],
+    permissions: ['logs.read', 'logs.write'],
   },
   {
     appKey: 'team-activity',
@@ -270,6 +270,7 @@ export const allPermissions: PermissionDef[] = [
 
   // 日志
   { key: 'logs.read', label: '日志 - 读', description: '查看请求日志', category: 'read' },
+  { key: 'logs.write', label: '日志 - 归档管理', description: '管理日志归档策略、校验和恢复', category: 'write' },
 
   // 团队动态
   { key: 'team-activity.read', label: '团队动态 - 读', description: '查看全员工作动态时间线', category: 'read' },

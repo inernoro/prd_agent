@@ -18,6 +18,8 @@
 
 ## 文档列表
 
+- [日志完整保留与冷存储 · 设计](./design.platform.log-cold-storage.md) `design.platform.log-cold-storage`
+
 - [官方上游迁移与管理简化 · 计划](./plan.llmgw.official-upstreams.md) `plan.llmgw.official-upstreams`
 
 - [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`

@@ -14,6 +14,7 @@ async function retainRequestLogs(database, options) {
       !Number.isInteger(maxSeconds) || maxSeconds < 1 || maxSeconds > 600) {
     throw new Error('Invalid bounded request-log retention settings');
   }
+  if (execute) throw new Error('Direct log deletion disabled: verified cold archive migration is required');
   const collection = database.getCollection('apirequestlogs');
   const indexes = await collection.getIndexes();
   if (!indexes.some(i => Object.keys(i.key).length === 1 && i.key.StartedAt)) {
