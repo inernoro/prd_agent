@@ -46,6 +46,8 @@ describe('作者批准具体教学成品', () => {
     await metadata(); await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
     expect(button('批准教学 · 文档 v1').disabled).toBe(false); await click('批准教学 · 文档 v1');
     expect(api.approve).toHaveBeenCalledWith('entry', expect.objectContaining({ revision: 7, artifactFingerprint: 'exact-artifact-hash', sourceFingerprint: 'frozen-source-hash', source: expect.objectContaining({ version: 1 }) }));
+    expect(container.querySelector('.writing-teaching-status')?.textContent).toContain('教学已批准');
+    expect(container.querySelector('.writing-teaching-status')?.textContent).not.toContain('请作者预览并批准');
     expect(container.querySelector('a.btn.pri')?.getAttribute('href')).toContain('learn?version=1&course=course1');
   });
   it('旧预览迟到不能变成另一成品的批准依据', async () => {

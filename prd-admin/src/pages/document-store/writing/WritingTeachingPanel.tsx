@@ -96,7 +96,7 @@ export function WritingTeachingPanel({ entryId, storeId }: { entryId: string; st
   return <section className="rv writing-teaching-production" aria-labelledby="writing-teaching-title"><h4 id="writing-teaching-title">从确认文档生成教学视频</h4>
     <p className="hint">系统按文档编排讲解、画面、旁白与字幕。你预览成品、核对重点后，再批准给读者看。</p>
     {!info && <p role="status">正在读取教学状态…</p>}
-    {teaching && <><p className="writing-teaching-status" role="status">{active && <MapSpinner size={14} />}{info?.recoveryPending ? '正在核对上次恢复状态，原脚本与配音保留' : teaching.phase} · 来源文档 v{teaching.source.version}{active && ` · ${teaching.progress}% · 已等待 ${elapsed} 秒`}</p>
+    {teaching && <><p className="writing-teaching-status" role="status">{active && <MapSpinner size={14} />}{info?.recoveryPending ? '正在核对上次恢复状态，原脚本与配音保留' : teaching.status === 'approved' ? '教学已批准，可供读者学习' : teaching.phase} · 来源文档 v{teaching.source.version}{active && ` · ${teaching.progress}% · 已等待 ${elapsed} 秒`}</p>
       {!info?.sourceCurrent && <p className="hint">此成片对应文档 v{teaching.source.version}，当前文档已是 v{info?.sourceVersion}。批准只适用于该旧版本；新版需要重新制作。</p>}
       {teaching.failure && <p role="alert">{teaching.failure}</p>}
       {teaching.status === 'failed' && !info?.recoveryPending && <button className="btn" disabled={busy} onClick={() => void resume()}>恢复原制作任务</button>}
