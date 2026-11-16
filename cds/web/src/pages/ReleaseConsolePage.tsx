@@ -44,6 +44,7 @@ import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
 import { buildConsoleStance, isShownRunCurrent, planRollbackToVersion, sameCommit } from '@/lib/releaseConsoleState';
 import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { Chip, formatClock, formatDateTime, formatDuration, runTone, statusLabel } from './release-center/shared';
 // BranchOption 复用发布中心那一份：分支的展示名是 `branch` 不是 `name`，
@@ -1299,7 +1300,7 @@ export function ReleaseConsolePage(): JSX.Element {
                               300px 栏里先被吃掉的正好是末尾的耗时（1m42s 截成 1m4…）。 */}
                           <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 cds-ident text-[0.6562rem] text-muted-foreground">
                             <span className="min-w-0">
-                              {item.operator || '-'} · {formatDateTime(item.startedAt)}
+                              {releaseActorLabel(item.operator)} · {formatDateTime(item.startedAt)}
                               {formatDuration(item.startedAt, item.finishedAt) ? ` · ${formatDuration(item.startedAt, item.finishedAt)}` : ''}
                             </span>
                             <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">

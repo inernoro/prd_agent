@@ -21,6 +21,15 @@ describe('固定版本文件比较',()=>{
   const r=await new ReleaseComparisonReader(()=>'/repo',undefined,args=>args.includes('merge-base')?base:'incomplete').read('p',a,b);
   expect(r.reason).toBeTruthy();expect(r.productionFileCount).toBeUndefined();
  });
+ it('长列表先展示双方重叠文件，不被前 200 个单方文件挤掉', async () => {
+  const production = [...Array.from({ length: 205 }, (_, i) => `a-${i}.ts`), 'z-shared.ts'].join('\0') + '\0';
+  const reader = new ReleaseComparisonReader(() => '/repo', undefined, args =>
+   args.includes('merge-base') ? base : args.includes(a) ? 'z-shared.ts\0' : production);
+  const result = await reader.read('p', a, b);
+  expect(result.overlapCount).toBe(1);
+  expect(result.files[0]).toEqual({ path: 'z-shared.ts', side: 'both' });
+  expect(result.truncated).toBe(true);
+ });
  it('无效或选项形状的提交不执行 Git',async()=>{
   let calls=0;const r=await new ReleaseComparisonReader(()=>'/repo',undefined,()=>{calls++;return ''}).read('p','--help',b);
   expect(calls).toBe(0);expect(r.reason).toBeTruthy();

@@ -40,7 +40,9 @@ export class ReleaseComparisonReader {
       result.mainFileCount = main.size;
       result.overlapCount = [...production].filter(p => main.has(p)).length;
       result.truncated = union.size > 200;
-      result.files = [...union].slice(0, 200).map(path => ({ path, side: production.has(path) ? main.has(path) ? 'both' : 'production' : 'main' }));
+      const priority = (path: string): number => production.has(path) ? main.has(path) ? 0 : 1 : 2;
+      result.files = [...union].sort((a, b) => priority(a) - priority(b) || a.localeCompare(b)).slice(0, 200)
+        .map(path => ({ path, side: production.has(path) ? main.has(path) ? 'both' : 'production' : 'main' }));
     } catch {
       result.reason = '本地 Git 比较未完成，请刷新仓库后重试；未判定为无差异';
     }
