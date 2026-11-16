@@ -1333,8 +1333,7 @@ export class ReleaseService {
     if (!command) {
       return {
         ...base,
-        // dry-run 要让调用方看见「本来会删哪些」，否则预演毫无意义。
-        ...(options.dryRun ? { removedWorktrees: plan.removeWorktrees, removedVersions: plan.removeVersions } : {}),
+        nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length },
       };
     }
     try {
@@ -1365,8 +1364,8 @@ export class ReleaseService {
           : {}),
       };
     } catch (err) {
-      // 删除失败不算事故：产物还在，下一轮再来。绝不能把异常抛出去打断整轮巡检。
-      return { ...base, skippedReason: `回收命令执行失败：${errorText(err)}` };
+      // SSH失败不能证明原生删除终态；保留待确认计数，不计成功或打断整轮巡检。
+      return { ...base, readError: errorText(err), nativeCounts: { succeeded: 0, held: 0, failed: 0, pending: plan.removeWorktrees.length + plan.removeVersions.length }, skippedReason: `回收命令未能确认，相关对象保留：${errorText(err)}` };
     }
   }
 
