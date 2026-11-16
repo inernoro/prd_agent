@@ -11,7 +11,8 @@ import {
 import type { AcceptanceReportDraft, AcceptanceTask, AcceptanceTemplate } from '../../web/src/lib/acceptance-api';
 import { AcceptanceTemplateEditor, newAcceptanceCase } from '../../web/src/pages/reports/AcceptanceTemplateEditor';
 import { AcceptanceResultEditor, acceptanceSubmissionProblem, initialAcceptanceSubmission, preparedAcceptanceSubmission } from '../../web/src/pages/reports/AcceptanceResultEditor';
-import { AcceptanceNavigation, AcceptanceSummaryCard } from '../../web/src/pages/reports/AcceptanceWorkspace';
+import { AcceptanceNavigation, AcceptanceSummaryCard, acceptanceLeaseIsInvalid } from '../../web/src/pages/reports/AcceptanceWorkspace';
+import { ApiError } from '../../web/src/lib/api';
 
 const testCase = {
   ...newAcceptanceCase(0), title: '默认模型文字生图', module: '视觉创作', owner: '视觉负责人',
@@ -104,6 +105,13 @@ describe('结构化清单和逐项回填，非 JSON 粘贴框', () => {
 });
 
 describe('验收中心接线和结论语义', () => {
+  it('网络和服务暂时失败不冒充领取失效，只有明确失效响应才丢弃票据', () => {
+    for (const error of [new TypeError('fetch failed'), new ApiError(503, { error: 'acceptance_unavailable' }, ''),
+      new ApiError(409, { error: 'task_claimed' }, ''), new ApiError(401, {}, ''), new ApiError(409, null, '')]) {
+      expect(acceptanceLeaseIsInvalid(error)).toBe(false);
+    }
+    expect(acceptanceLeaseIsInvalid(new ApiError(409, { error: 'lease_invalid' }, ''))).toBe(true);
+  });
   it('现有 reports shell 内导航四视图且 report 深链仍优先', () => {
     const html = render(createElement(AcceptanceNavigation, { view: 'templates', onChange: () => {} }));
     for (const label of ['测试清单', '执行任务', '历史矩阵', '验收报告']) expect(html).toContain(label);

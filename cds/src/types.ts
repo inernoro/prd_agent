@@ -3050,6 +3050,8 @@ export interface AcceptanceReportMeta {
   deployMode?: string | null;
   /** 规范/外部源同步：源文档标识；普通验收报告为空。 */
   sourceId?: string | null;
+  /** 任务报告归档时由服务端固定的图片资源基址，后续绑定/重试不随请求域名改变。 */
+  inlineAssetBaseUrl?: string;
   /** 规范/外部源同步：仓库内源文档路径；普通验收报告为空。 */
   sourcePath?: string | null;
   /** 规范/外部源同步：源内容哈希，如 sha256:...；普通验收报告为空。 */

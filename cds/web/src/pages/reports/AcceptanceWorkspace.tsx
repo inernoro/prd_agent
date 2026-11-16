@@ -37,6 +37,12 @@ function errorMessage(error: unknown): string {
   return '操作未完成，请刷新后重试；若仍失败请联系 CDS 管理员检查验收服务。';
 }
 const TASK_STATUS_LABELS: Record<AcceptanceTask['status'], string> = { pending: '待领取', running: '执行中', completed: '执行结束', cancelled: '已取消' };
+const HEARTBEAT_RETRY_MESSAGE = '续期暂时未完成，将自动重试；请保持页面打开，也可释放任务后重新领取。';
+
+export function acceptanceLeaseIsInvalid(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && typeof error.body === 'object' && error.body !== null
+    && 'error' in error.body && error.body.error === 'lease_invalid';
+}
 const CASE_STATUS_CLASS: Record<AcceptanceCaseStatus, string> = { pass: 'text-primary bg-primary/5 border-primary/30', fail: 'text-destructive bg-destructive/5 border-destructive/30', blocked: 'text-foreground bg-muted border-border', 'not-run': 'text-muted-foreground bg-background border-border' };
 
 export function AcceptanceStatus({ status, flaky }: { status: AcceptanceCaseStatus; flaky?: boolean }): JSX.Element {
@@ -128,10 +134,16 @@ export function AcceptanceWorkspace({ projectId, projects, view, onProjectChange
     if (!lease) return;
     let cancelled = false;
     const timer = window.setInterval(() => {
-      heartbeatAcceptanceTask(lease.taskId, lease.token).then((next) => { if (!cancelled) updateTask(next); }).catch((err) => {
+      heartbeatAcceptanceTask(lease.taskId, lease.token).then((next) => {
+        if (!cancelled) { updateTask(next); setError((current) => current === HEARTBEAT_RETRY_MESSAGE ? '' : current); }
+      }).catch((err) => {
         if (cancelled) return;
-        leaseRef.current = null; setLease(null);
-        setError(`领取心跳未完成，已停止回填。${errorMessage(err)} 请重新领取后从已保存结果继续。`);
+        if (acceptanceLeaseIsInvalid(err)) {
+          leaseRef.current = null; setLease(null);
+          setError('领取已失效，已停止回填。请重新领取后从已保存结果继续。');
+        } else {
+          setError(err instanceof ApiError && [401, 403].includes(err.status) ? errorMessage(err) : HEARTBEAT_RETRY_MESSAGE);
+        }
       });
     }, 30_000);
     return () => {

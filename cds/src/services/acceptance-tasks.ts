@@ -354,7 +354,7 @@ export class AcceptanceTaskService {
       if (report.storage !== 'object' || !report.objectKey) reject('report_not_durable', '报告未进入线上持久存储，请恢复对象存储后重新归档', 409);
       if (report.format !== 'md' || report.title !== source.title || report.verdict !== source.verdict
         || report.defectCounts?.p0 !== source.defectCounts.p0 || report.defectCounts?.p1 !== source.defectCounts.p1
-        || await this.state.readAcceptanceReportContentAsync(rid) !== (await this.state.normalizeReportInlineImages(source.content, publicBase)).content) reject('report_mismatch', '报告正文或业务结论与冻结执行结果不一致', 409);
+        || await this.state.readAcceptanceReportContentAsync(rid) !== (await this.state.normalizeReportInlineImages(source.content, report.inlineAssetBaseUrl ?? publicBase)).content) reject('report_mismatch', '报告正文或业务结论与冻结执行结果不一致', 409);
       t.report = { id: rid, url: `/reports?report=${encodeURIComponent(rid)}`, verification: 'pending' };
       return this.publicTask(t);
     });

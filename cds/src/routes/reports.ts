@@ -625,10 +625,6 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
         message: templateGate.message,
       });
     }
-    // 入库前归一化：把内联 base64 图片抽出、内容寻址存盘、正文改写为 HTTPS 资源链接，
-    // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
-    const { content: normalizedContent } = await normalizeInlineImages(content, publicBaseFromReq(req), stateService);
-
     const scheduledJobRunId = String(req.get('X-CDS-Job-Run-Id') || req.body?.scheduledJobRunId || '').trim() || undefined;
     if (scheduledJobRunId) {
       const run = stateService.getState().scheduledJobRuns?.find(r => r.id === scheduledJobRunId);
@@ -637,8 +633,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       }
     }
     const createReport = async () => {
+      const existing = sourceTask
+        ? stateService.listAcceptanceReports(resolvedProjectId).find((report) => report.sourceId === sourceId)
+        : undefined;
+      // 在任务归档队列内固定结构化基址；重试和绑定共用创建时的地址，不重新解释正文链接。
+      const inlineAssetBaseUrl = existing?.inlineAssetBaseUrl ?? publicBaseFromReq(req);
+      const { content: normalizedContent } = await normalizeInlineImages(content, inlineAssetBaseUrl, stateService);
       if (sourceTask) {
-        const existing = stateService.listAcceptanceReports(resolvedProjectId).find((report) => report.sourceId === sourceId);
         if (existing) {
           const storedContent = await stateService.readAcceptanceReportContentAsync(existing.id);
           if (existing.format !== format || storedContent !== normalizedContent || existing.title !== cleanTitle
@@ -672,6 +673,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
         prNumber: normPrNumber(rawPrNumber),
         deployMode: resolvedDeployMode,
         sourceId,
+        inlineAssetBaseUrl: sourceTask ? inlineAssetBaseUrl : undefined,
         createdBy: resolveActorFromRequest(req),
       });
       return { meta, reused: false };

@@ -52,7 +52,7 @@ describe('结构化任务 → 既有归档 → 绑定：真实 HTTP 闭环', () 
   });
   afterEach(async () => {
     await new Promise<void>((resolve) => { server.close(() => resolve()); server.closeAllConnections(); });
-    await state.flush(); delete process.env.CDS_CACHE_BASE;
+    await state.flush(); delete process.env.CDS_CACHE_BASE; vi.unstubAllEnvs();
     fs.rmSync(dir, { recursive: true, force: true });
   });
   async function request(method: string, route: string, body?: unknown, headers = { 'x-test-project': 'p1' } as Record<string, string>) {
@@ -97,7 +97,8 @@ describe('结构化任务 → 既有归档 → 绑定：真实 HTTP 闭环', () 
     expect((await request('POST', `/api/acceptance/tasks/${task.id}/bind-report`, { reportId: archived.body.report.id })).status).toBe(200);
     expect((await request('PATCH', `/api/reports/${ordinary.body.report.id}`, { content: '# 普通修订' })).status).toBe(200);
   });
-  it('输入和执行描述含图片数据时归档与绑定使用相同规范正文', async () => {
+  it('输入含图片且访问域名变化时归档、绑定和重试仍使用创建时的规范正文', async () => {
+    vi.stubEnv('CDS_PUBLIC_BASE_URL', '');
     const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j+ioAAAAASUVORK5CYII=';
     const template = await tasks.publishTemplate({ projectId: 'p1', title: '图片输入', cases: [{ ...task.cases[0], inputs: [{ name: '参考图', value: image }] }] });
     const imageTask = await tasks.createTask({ projectId: 'p1', templateId: template.id, environment: 'production' });
@@ -105,14 +106,16 @@ describe('结构化任务 → 既有归档 → 绑定：真实 HTTP 闭环', () 
     await tasks.submit(imageTask.id, 'WEB-001', claim.leaseToken, { ...tasks.getTask(task.id).results['WEB-001'], submissionId: 'image-result', actual: `已核对参考图 ${image}。` });
     await tasks.complete(imageTask.id, claim.leaseToken);
     const imageSource = tasks.reportSource(imageTask.id);
-    const archived = await request('POST', '/api/reports', payload(imageSource));
+    const archived = await request('POST', '/api/reports', { ...payload(imageSource), inlineAssetBaseUrl: 'https://untrusted.example.test' }, { 'x-test-project': 'p1', 'x-forwarded-host': 'archive.example.test' });
     expect(archived.status).toBe(201);
     const reportId = archived.body.report.id;
+    expect(archived.body.report.inlineAssetBaseUrl).toBe('http://archive.example.test');
     const content = await state.readAcceptanceReportContentAsync(reportId);
     expect(content).not.toContain('data:image/');
     expect(content).toContain('/api/reports/assets/');
-    expect((await request('POST', `/api/acceptance/tasks/${imageTask.id}/bind-report`, { reportId })).status).toBe(200);
-    const retried = await request('POST', '/api/reports', payload(imageSource));
+    expect(content).toContain('http://archive.example.test/api/reports/assets/');
+    expect((await request('POST', `/api/acceptance/tasks/${imageTask.id}/bind-report`, { reportId }, { 'x-test-project': 'p1', 'x-forwarded-host': 'bind.example.test' })).status).toBe(200);
+    const retried = await request('POST', '/api/reports', payload(imageSource), { 'x-test-project': 'p1', 'x-forwarded-host': 'retry.example.test' });
     expect(retried.status).toBe(200); expect(retried.body.report.id).toBe(reportId);
   });
   it('异步绑定验证期间任务报告不可删除，不留下失效报告关联', async () => {

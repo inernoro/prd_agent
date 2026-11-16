@@ -6764,6 +6764,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     prNumber?: number | null;
     deployMode?: string | null;
     sourceId?: string | null;
+    inlineAssetBaseUrl?: string;
     sourcePath?: string | null;
     contentHash?: string | null;
     publishedAt?: string | null;
@@ -6884,6 +6885,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       prNumber: input.prNumber ?? null,
       deployMode: input.deployMode ?? null,
       sourceId: input.sourceId ?? null,
+      inlineAssetBaseUrl: input.inlineAssetBaseUrl,
       sourcePath: input.sourcePath ?? null,
       contentHash: input.contentHash ?? null,
       publishedAt: input.publishedAt ?? null,
