@@ -93,19 +93,32 @@ export function buildGemStorySvg(mineral: ServerGemMineral, sizePx: number, durS
 }
 
 
-/** 等待页专用常亮宝石：沿用品牌切面，边光流动，不以熄灭表达加载。 */
+/** 等待页沿用品牌组装 / 驻留 / 碎裂动作，仅将中央暗面改为纯黑。 */
 export const WAITING_GEM_CSS = `
-.cds-waiting-gem{display:block;overflow:visible;filter:drop-shadow(0 0 5px rgba(255,255,255,.16))}
-.cds-waiting-gem-edge{fill:none;stroke:#fff;stroke-width:1;stroke-linejoin:round;stroke-dasharray:12 88;animation:cds-waiting-edge 3.6s linear infinite;animation-delay:calc(var(--gi)*-.3s)}
-@keyframes cds-waiting-edge{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
-@media(prefers-reduced-motion:reduce){.cds-waiting-gem-edge{animation:none;stroke-dasharray:none;opacity:.35}}
+${GEM_STORY_CSS}
+.cds-waiting-gem{display:block;filter:none}
+.cds-waiting-gem .cds-waiting-gem-core{animation-name:cds-waiting-core-black}
+@keyframes cds-waiting-core-black{
+  0%{transform:scale(0);opacity:0;fill:var(--cds-waiting-face);stroke:var(--cds-waiting-line)}
+  9%{transform:scale(1.1);opacity:1}
+  13%{transform:scale(1);opacity:1}
+  30%{opacity:1;fill:var(--cds-waiting-face);stroke:var(--cds-waiting-line)}
+  43%,47%{opacity:1;fill:#000000;stroke:#000000}
+  60%{opacity:1;fill:var(--cds-waiting-face);stroke:var(--cds-waiting-line)}
+  76%{transform:scale(1);opacity:1}
+  88%{transform:scale(.5) rotate(-10deg);opacity:0}
+  100%{transform:scale(0);opacity:0}
+}
+@media(prefers-reduced-motion:reduce){.cds-waiting-gem .cds-gem-story-facet{animation:none;transform:none;opacity:1}}
 `.trim();
 
 export function buildWaitingGemSvg(sizePx: number): string {
-  const shades = ['#ffffff', '#eeeeee', '#ffffff', '#303030', '#fafafa', '#202020'];
-  const facets = SERVER_GEM_FACETS.map((f) =>
-    `<polygon points="${f.points}" fill="${shades[f.shadeIdx]}"/>` +
-    `<polygon class="cds-waiting-gem-edge" points="${f.points}" pathLength="100" style="--gi:${f.i}"/>`
-  ).join('');
-  return `<svg class="cds-waiting-gem" width="${sizePx}" height="${sizePx}" viewBox="0 0 64 64" aria-hidden="true">${facets}</svg>`;
+  const shades = ['#f2f2f5', '#efeff3', '#f4f4f7', '#f0f0f4', '#f4f4f7', '#eeeef2'];
+  const facets = SERVER_GEM_FACETS.map((facet) => {
+    const isCore = facet.i % 2 === 0;
+    const color = isCore ? shades[facet.shadeIdx] : '#f8f8fb';
+    const coreClass = isCore ? ' cds-waiting-gem-core' : '';
+    return `<polygon class="cds-gem-story-facet${coreClass}" points="${facet.points}" fill="${color}" stroke="#aaaab7" stroke-width="0.2" stroke-linejoin="round" style="--gi:${facet.i};--cds-waiting-face:${color};--cds-waiting-line:#aaaab7"/>`;
+  }).join('');
+  return `<svg class="cds-gem-story cds-waiting-gem" width="${sizePx}" height="${sizePx}" viewBox="0 0 64 64" aria-hidden="true">${facets}</svg>`;
 }
