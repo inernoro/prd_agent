@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseStat, processTree } from './resources.mjs';
+import { parseStat, processTree, parseCpuStat } from './resources.mjs';
 
 test('进程名含空格和括号时仍读取正确的CPU、RSS及父进程', () => {
   const fields = Array(25).fill('0');
@@ -13,4 +13,11 @@ test('各容器只累计自己进程树，不能重复归属宿主的共享cgrou
     { pid: 30, parent: 1, ticks: 7, rssPages: 9 }];
   assert.deepEqual(processTree(rows, 10), { ticks: 5, rssPages: 9, pids: [10, 20] });
   assert.equal(processTree(rows, 30).ticks, 7);
+});
+
+test('cgroup节流计数必须完整且为非负整数，缺失不能冒充零', () => {
+  assert.deepEqual(parseCpuStat('usage_usec 120\nnr_periods 20\nnr_throttled 3\nthrottled_usec 45000\n'),
+    { usage_usec:120, nr_periods:20, nr_throttled:3, throttled_usec:45000 });
+  assert.throws(() => parseCpuStat('usage_usec 120'));
+  assert.throws(() => parseCpuStat('usage_usec 120\nnr_periods 20\nnr_throttled -1\nthrottled_usec 0'));
 });

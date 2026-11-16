@@ -1,3 +1,4 @@
+import path from 'node:path';
 import fs from 'node:fs/promises';
 
 export function parseStat(text) {
@@ -26,4 +27,26 @@ export async function readProcesses() {
     catch { return null; } // A process may exit between readdir and read.
   }));
   return rows.filter(Boolean);
+}
+
+// Diagnostic branch: host-side counters do not execute in the API cgroup.
+export function parseCpuStat(text) {
+  const values = Object.fromEntries(text.trim().split('\n').map(line => line.trim().split(/\s+/)).map(([key, value]) => [key, Number(value)]));
+  for (const key of ['usage_usec', 'nr_periods', 'nr_throttled', 'throttled_usec'])
+    if (!Number.isSafeInteger(values[key]) || values[key] < 0) throw new Error(`Missing/invalid cgroup counter: ${key}`);
+  return values;
+}
+export async function readCgroupCpu(pid) {
+  try {
+    const membership = await fs.readFile(`/proc/${pid}/cgroup`, 'utf8');
+    const group = membership.split('\n').find(line => line.startsWith('0::/'))?.slice(3);
+    const directories = group && !group.split('/').includes('..') ? [path.join('/sys/fs/cgroup', group)] : [];
+    directories.push(`/proc/${pid}/root/sys/fs/cgroup`);
+    let last;
+    for (const directory of directories) {
+      try { return { available:true, directory, ...parseCpuStat(await fs.readFile(path.join(directory,'cpu.stat'),'utf8')) }; }
+      catch (error) { last=error; }
+    }
+    throw last;
+  } catch (error) { return { available: false, reason: error.code ?? error.message }; }
 }

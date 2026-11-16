@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as pause } from 'node:timers/promises';
 import { chromium, expect } from '@playwright/test';
 import { workload, digest, summarize, compare, capacity, executionErrors, buildIdentityErrors, browserScenarios, stats } from './metrics.mjs';
-import { readProcesses, processTree } from './resources.mjs';
+import { readProcesses, processTree, readCgroupCpu } from './resources.mjs';
 
 const exec = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -52,7 +52,9 @@ const images = {
   redis: 'redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe',
   web: 'nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10',
 };
-const limits = { api: ['1', '1024m'], mongo: ['1', '768m'], redis: ['0.5', '256m'], web: ['0.5', '256m'] };
+const diagnosticCpu = process.env.PERF_DIAGNOSTIC_API_CPUS ?? '1';
+if (!['1', '2'].includes(diagnosticCpu)) throw new Error('Diagnostic CPU must be 1 or 2');
+const limits = { api: [diagnosticCpu, '1024m'], mongo: ['1', '768m'], redis: ['0.5', '256m'], web: ['0.5', '256m'] };
 const contract = { schema: 4, buildMetadataVersion: 2, workload, limits, images, sdkVersion,
   nodeMajor: process.versions.node.split('.')[0], arch: os.arch(), cpu: os.cpus()[0].model,
   probe: digest(await fs.readFile(path.join(here, 'probe/Probe.cs'), 'utf8')),
@@ -370,6 +372,11 @@ try {
   const roots = JSON.parse(await docker(['inspect', ...containers])).map(c => ({
     role: c.Name.split('-').at(-1), pid: c.State.Pid,
   }));
+  if (process.env.PERF_DIAGNOSTIC_API_CPUS) {
+    const counters=await Promise.all(roots.map(async r=>({role:r.role,...await readCgroupCpu(r.pid)})));
+    result.diagnosticCounterPreflight=counters;
+    if(counters.some(c=>!c.available)) throw new Error('诊断cgroup计数不可读取，停止采集并保留原因');
+  }
   contract.effectiveCgroups = {};
   for (const name of containers) {
     const role = name.split('-').at(-1);
@@ -421,13 +428,14 @@ try {
     while (sampling) {
       const table = await readProcesses();
       const now = performance.now();
-      const samples = roots.map(({ role, pid }) => {
+      const counters = await Promise.all(roots.map(({ pid }) => readCgroupCpu(pid)));
+      const samples = roots.map(({ role, pid }, index) => {
         const current = processTree(table, pid), last = previous.get(role);
         if (!current.pids.length) throw new Error(`${role}进程已退出，无法采样`);
         const cpuPercent = last ? Math.max(0, current.ticks - last.ticks) / result.resourceAccounting.clockTicksPerSecond
           / ((now - last.at) / 1000) * 100 : null;
         previous.set(role, { ...current, at: now });
-        return { role, cpuPercent, rssBytes: current.rssPages * result.resourceAccounting.pageBytes,
+        return { role, cpuPercent, cgroupCpu: counters[index], rssBytes: current.rssPages * result.resourceAccounting.pageBytes,
           cpuSeconds: current.ticks / result.resourceAccounting.clockTicksPerSecond, pids: current.pids };
       });
       result.resources.push({ at: new Date().toISOString(), samples });

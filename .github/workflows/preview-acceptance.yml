@@ -50,7 +50,7 @@ env:
 jobs:
   performance-isolated:
     name: MAP Performance (Isolated)
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.perf_ref != ''
+    if: github.ref != 'refs/heads/diag/map-home-latency' && (github.event_name == 'push' || github.event_name == 'pull_request' || github.event.inputs.perf_ref != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -137,6 +137,50 @@ jobs:
             work/performance/local-acceptance/*.png
             work/performance/reports/*.html
             work/performance/*/*-build.log
+
+  diagnose-home:
+    name: Home latency diagnosis (not acceptance)
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diag/map-home-latency'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      PERF_REF: ${{ github.event.inputs.perf_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '9'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.428'
+      - name: Install existing browser and verify diagnostic counters
+        run: |
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C e2e exec playwright install --with-deps chromium
+          node --test e2e/performance/*.test.mjs
+      - name: Collect paired quota and browser-delay controls
+        run: node e2e/performance/diagnose-home.mjs "$PERF_REF"
+      - name: Preserve all diagnostic data, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: home-latency-diagnostic-${{ github.run_id }}
+          retention-days: 14
+          path: |
+            work/home-diagnostic/plan.json
+            work/home-diagnostic/summary.json
+            work/home-diagnostic/*/result.json
+            work/home-diagnostic/*/requests.ndjson
+            work/home-diagnostic/*/fixture.json
+            work/home-diagnostic/*/browser-*.png
+            work/home-diagnostic/*/*-build.log
 
   smoke-preview:
     name: Smoke (Preview Branch)
