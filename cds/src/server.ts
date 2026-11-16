@@ -2792,7 +2792,9 @@ export function createServer(deps: ServerDeps): express.Express {
         res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure));
       }
       if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
-      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService);
+      const legacyMachine = !user && authEnabled && tokenMatches(req.headers['x-cds-token'] as string | undefined, validToken);
+      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService) || (legacyMachine
+        ? { id: 'legacy-machine', agentName: 'AI (legacy machine credential)', token: '', approvedAt: '', expiresAt: '' } : null);
       if (!user && !aiSession) { res.status(401).json({ error: 'cluster_credential_rejected' }); return; }
       const stamps = virtual as express.Request & {
         cdsProjectKey?: ClusterIdentityContext['projectKey']; cdsAccess?: ClusterIdentityContext['access']; cdsPrincipal?: ClusterIdentityContext['principal'];

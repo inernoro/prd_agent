@@ -97,6 +97,14 @@ describe('cluster identity through two real HTTP control planes', () => {
     expect((await request(primary, '/api/cluster/identity/status', primaryKey)).json.members[0].state).toBe('synchronized');
   });
 
+  it('preserves the authority legacy machine header without accepting the old member header or granting human approval', async () => {
+    const legacy = hash('cds:primary-admin:primary-password');
+    for (const n of [primary, member]) expect((await fetch(n.url + '/api/projects', { headers: { 'X-CDS-Token': legacy } })).status).toBe(200);
+    expect((await fetch(member.url + '/api/projects', { headers: { 'X-CDS-Token': hash('cds:old-member-admin:old-member-password') } })).status).toBe(401);
+    const result = await fetch(member.url + '/api/auth/status', { headers: { 'X-CDS-Token': legacy } });
+    expect((await result.json()).approvalCapabilities.operator).toBe(false);
+  });
+
   it('maps project scope, refuses other projects and honors revocation without local fallback', async () => {
     const key = projectKey();
     member.state.addAgentKey('local-a', { id: 'stale-local', label: 'stale', hash: hash(key), scope: 'rw', createdAt: new Date().toISOString() });
