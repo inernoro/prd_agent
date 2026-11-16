@@ -136,6 +136,7 @@ export function ReleaseCenterPage(): JSX.Element {
   const [projectId, setProjectId] = useState(initialProject);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectListAttempt, setProjectListAttempt] = useState(0);
   const projectAvailable = projectsLoaded && Boolean(resolveReleaseProject(projectId, projects));
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const loadedScope = useRef(projectId);
@@ -217,6 +218,16 @@ export function ReleaseCenterPage(): JSX.Element {
     }
   }, [projectId, projectAvailable]);
 
+  const refreshProjectData = (): void => {
+    if (!projectAvailable) {
+      setState({ status: 'loading' });
+      setProjectsLoaded(false);
+      setProjectListAttempt(value => value + 1);
+      return;
+    }
+    void load();
+  };
+
   useEffect(() => { void load(); return () => { request.current?.abort(); }; }, [load]);
   useEffect(() => {
     if (!projectAvailable) return;
@@ -255,7 +266,7 @@ export function ReleaseCenterPage(): JSX.Element {
       .catch((error) => { if (!cancelled) { setProjects([]); setState({ status: 'error', message: error instanceof Error ? error.message : '项目列表读取失败' }); } })
       .finally(() => { if (!cancelled) setProjectsLoaded(true); });
     return () => { cancelled = true; };
-  }, []);
+  }, [projectListAttempt]);
 
   // 就地发布需要分支与预览地址推导所需的配置。三个请求都是 best-effort：
   // 任何一个失败都不该拦住这一页——推导不出预览地址时交给发布前检查说话。
@@ -661,7 +672,7 @@ export function ReleaseCenterPage(): JSX.Element {
           right={(
             <>
               <PaletteHint />
-              <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
+              <Button variant="outline" size="sm" onClick={refreshProjectData} disabled={refreshing || !projectsLoaded}>
                 <RefreshCw className={refreshing ? 'animate-spin' : ''} />
                 刷新
               </Button>
@@ -722,7 +733,7 @@ export function ReleaseCenterPage(): JSX.Element {
             {projectsLoaded && !projectAvailable && state.status !== 'error' ? <div role="alert" className="rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{projects.length ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : '当前实例还没有可用项目，请先创建项目。'}</div> : null}
             {state.status === 'ok' && refreshError ? <div role="alert" className="mb-4 space-y-2 rounded-md border border-destructive/30 p-3 text-sm">
               <p>刷新失败，保留上次结果：{refreshError}</p>
-              <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试</Button>
+              <Button variant="outline" size="sm" disabled={refreshing} onClick={refreshProjectData}>重试</Button>
             </div> : null}
 
             {projectAvailable && state.status === 'ok' ? (

@@ -87,6 +87,8 @@ interface Ssh2ConnectOptions {
   passphrase?: string;
   password?: string;
   readyTimeout?: number;
+  keepaliveInterval?: number;
+  keepaliveCountMax?: number;
 }
 
 // 结论结构的 SSOT 在 types.ts（落库要用同一份），这里转发保住存量 import 路径。
@@ -1961,7 +1963,15 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
         if (req.signal.aborted) onAbort();
       });
     });
-    client.on('error', (err) => settle(() => reject(err as Error)));
+    client.on('error', (err) => {
+      if (settled) return;
+      // 存活探测失败只说明连接丢失，不能把本地取消误记为远端已退出。
+      const failure = stream || execPending
+        ? new Error(`SSH 连接中断，远端执行结果未确认，请核对目标现场后再重试：${errorText(err)}`)
+        : err as Error;
+      if (stream || execPending) req.onOutput('warn', errorText(failure));
+      settle(() => reject(failure));
+    });
     client.on('close', () => settle(() => reject(req.signal.aborted
       ? abortReasonError(req.signal) : new Error('SSH 连接已关闭，未收到远端命令退出确认，请核对目标现场'))));
     client.connect({
@@ -1972,6 +1982,9 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
       passphrase: req.passphrase,
       password: req.password,
       readyTimeout: 10_000,
+      // 最多约20秒无响应就断开；正常长命令仍由远端keepalive回执保持连接。
+      keepaliveInterval: 5_000,
+      keepaliveCountMax: 3,
     });
   });
 };
