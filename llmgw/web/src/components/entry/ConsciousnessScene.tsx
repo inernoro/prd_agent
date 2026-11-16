@@ -1,3 +1,4 @@
+import { entryAsset } from './entryAsset';
 import { useEffect, useRef } from 'react';
 import './consciousness-entry.css';
 import { ConsciousnessPortrait } from './ConsciousnessPortrait';
@@ -5,7 +6,7 @@ import { beginEntryArrival } from './entryArrival';
 const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export type IdentityPhase = 'idle' | 'verifying' | 'authorized' | 'entering';
-export const COMPANION_ART = `${import.meta.env.BASE_URL}media/entry/companion.webp`;
+export const COMPANION_ART = entryAsset('companion.webp');
 let arrivalUntil = 0;
 
 /** Visual handoff only; authentication remains server-authoritative. */

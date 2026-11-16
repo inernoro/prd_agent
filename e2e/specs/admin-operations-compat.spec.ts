@@ -35,6 +35,7 @@ async function loginGateway(page: Page) {
   await page.goto("http://127.0.0.1:8200/llmgw/login", {
     waitUntil: "domcontentloaded",
   });
+  await expect(page.locator(".consciousness-art")).toHaveJSProperty("naturalWidth", 1672);
   await page.locator("#llmgw-username").fill("demo");
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();

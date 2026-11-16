@@ -1,3 +1,4 @@
+import { entryAsset } from './entryAsset';
 type Cue = 'scan' | 'verified' | 'reveal';
 /** Original local UI cues; no network service or recurring background music. */
 export class EntryAudio {
@@ -16,7 +17,7 @@ export class EntryAudio {
       for (const cue of ['scan', 'verified', 'reveal'] as const) {
         if (!this.buffers.has(cue)) {
           const context = this.context;
-          this.buffers.set(cue, fetch(`${import.meta.env.BASE_URL}media/entry/${cue}.wav`)
+          this.buffers.set(cue, fetch(entryAsset(`${cue}.wav`))
             .then(response => { if (!response.ok) throw new Error('audio unavailable'); return response.arrayBuffer(); })
             .then(bytes => context.decodeAudioData(bytes)).catch(() => null));
         }

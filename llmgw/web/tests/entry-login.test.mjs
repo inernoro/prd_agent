@@ -25,6 +25,12 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
   let root;
   try {
     const { createRoot } = await import('react-dom/client');
+    const { entryAsset } = await server.ssrLoadModule('/src/components/entry/entryAsset.ts');
+    assert.equal(entryAsset('companion.webp'), '/media/entry/companion.webp');
+    dom.reconfigure({ url: 'http://localhost/llmgw/login' });
+    assert.equal(entryAsset('companion.webp'), '/llmgw/media/entry/companion.webp');
+    assert.equal(entryAsset('verified.wav'), '/llmgw/media/entry/verified.wav');
+    dom.reconfigure({ url: 'http://localhost/login' });
     const { LoginPage } = await server.ssrLoadModule('/src/pages/LoginPage.tsx');
     root = createRoot(document.getElementById('root'));
     await act(async () => root.render(React.createElement(LoginPage)));

@@ -1,3 +1,4 @@
+import { entryAsset } from './entryAsset';
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { FACE_CLIP, PORTRAIT_LINES, PORTRAIT_MESH } from './portraitGeometry';
 import { PORTRAIT_DURATION, samplePortrait, smoothProgress } from './portraitTimeline';
@@ -69,7 +70,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
   }, [playing, controlled]);
 
   return <div ref={host} className={`consciousness-portrait${playing ? ' is-building' : ''}${fog ? ' is-ambient' : ''}`}>
-    <img className="consciousness-art" src={fog ? `${import.meta.env.BASE_URL}media/entry/companion-sleep.webp` : `${import.meta.env.BASE_URL}media/entry/companion.webp`} alt="" loading="eager" decoding="async" />
+    <img className="consciousness-art" src={fog ? entryAsset('companion-sleep.webp') : entryAsset('companion.webp')} alt="" loading="eager" decoding="async" />
     {playing && <canvas ref={canvas} className="portrait-material" aria-hidden="true" />}
     {(playing || fog) && <svg className="portrait-structure" viewBox="0 0 1672 941" preserveAspectRatio="xMaxYMid slice" fill="none" aria-hidden="true">
       <defs>

@@ -1,3 +1,4 @@
+import { entryAsset } from './entryAsset';
 import { CLOSED_LID, EYE_X, OPEN_UPPER, eyeControlPoints, samplePortrait } from './portraitTimeline';
 
 const VERTEX = `attribute vec2 position; varying vec2 screen;
@@ -75,7 +76,7 @@ export function loadPortraitImages() {
     const image = new Image();
     image.onload = () => { void image.decode().then(() => resolve(image), reject); };
     image.onerror = reject;
-    image.src = `${import.meta.env.BASE_URL}media/entry/${file}`;
+    image.src = entryAsset(file);
   }))).catch(error => { imagesPromise = undefined; throw error; });
 }
 
