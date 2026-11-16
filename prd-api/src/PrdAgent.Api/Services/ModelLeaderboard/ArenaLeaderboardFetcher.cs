@@ -244,11 +244,26 @@ public class ArenaLeaderboardFetcher
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         if (useHtmlProxyHeader)
-            request.Headers.TryAddWithoutValidation("X-Return-Format", "html");
+            request.Headers.TryAddWithoutValidation("X-Respond-With", "html");
 
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStringAsync(ct);
+        var html = await response.Content.ReadAsStringAsync(ct);
+
+        // Reader 会把源站的 Cloudflare 验证页包装成 HTTP 200，旧请求头还会使其返回
+        // Markdown。两种都不是榜单改版，必须归为上游不可达，让调用方保留旧快照。
+        if (Regex.IsMatch(html, @"<title>\s*Just a moment\.\.\.\s*</title>", RegexOptions.IgnoreCase)
+            || Regex.IsMatch(html, @"\ATitle: Just a moment\.\.\.\s*\r?\n", RegexOptions.IgnoreCase)
+            || response.Headers.TryGetValues("cf-mitigated", out var mitigations)
+                && mitigations.Contains("challenge", StringComparer.OrdinalIgnoreCase))
+        {
+            throw new HttpRequestException(
+                $"榜单源站返回 Cloudflare 验证页，未取得榜单；" +
+                $"source={url}, status={(int)response.StatusCode}, chars={html.Length}, reason=upstream_challenge。",
+                null, HttpStatusCode.Forbidden);
+        }
+
+        return html;
     }
 
     /// <summary>
