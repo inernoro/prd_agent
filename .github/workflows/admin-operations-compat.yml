@@ -59,6 +59,23 @@ jobs:
           pnpm -C llmgw/web install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
           pnpm -C e2e exec playwright install --with-deps chromium firefox webkit
+      - name: Start a real system audio output for browser acceptance
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio pulseaudio-utils
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/gateway-audio-runtime"
+          install -d -m 700 "$XDG_RUNTIME_DIR"
+          mkdir -p work/compat/audio-system
+          pulseaudio --start --exit-idle-time=-1 --log-level=info --log-target="file:$GITHUB_WORKSPACE/work/compat/audio-system/pulseaudio.log"
+          export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
+          pactl load-module module-null-sink sink_name=gateway_acceptance rate=48000 channels=2
+          pactl set-default-sink gateway_acceptance
+          pactl set-sink-mute gateway_acceptance 0
+          pactl set-sink-volume gateway_acceptance 100%
+          pactl info > work/compat/audio-system/server.txt
+          pactl list short sinks > work/compat/audio-system/sinks.txt
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "PULSE_SERVER=$PULSE_SERVER" >> "$GITHUB_ENV"
       - name: Build the actual frontend bundles
         run: |
           pnpm -C cds/web typecheck
@@ -70,7 +87,7 @@ jobs:
           BROWSER_SCENARIO: ${{ inputs.scenario }}
         run: |
           if [ "$BROWSER_SCENARIO" = "audio" ]; then
-            pnpm -C e2e exec playwright test -c admin-operations.config.ts gateway-audio.spec.ts --workers=2
+            GATEWAY_AUDIO_MONITOR=gateway_acceptance.monitor pnpm -C e2e exec playwright test -c admin-operations.config.ts gateway-audio.spec.ts --workers=1
           else
             pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
           fi

@@ -28,7 +28,11 @@ export default defineConfig({
   },
   projects: ["chromium", "firefox", "webkit"].map((browserName) => ({
     name: browserName,
-    use: { browserName: browserName as "chromium" | "firefox" | "webkit" },
+    use: {
+      browserName: browserName as "chromium" | "firefox" | "webkit",
+      // Headless Chromium defaults to --mute-audio; keep the real speaker path audible.
+      launchOptions: browserName === "chromium" ? { ignoreDefaultArgs: ["--mute-audio"] } : undefined,
+    },
   })),
   webServer: [
     {
