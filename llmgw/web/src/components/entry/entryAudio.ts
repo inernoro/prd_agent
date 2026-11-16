@@ -19,7 +19,7 @@ export class EntryAudio {
       for (const cue of ['scan', 'verified', 'reveal'] as const) {
         if (!this.buffers.has(cue)) {
           const context = this.context;
-          this.buffers.set(cue, fetch(entryAsset(`${cue}.wav`))
+          this.buffers.set(cue, fetch(`${entryAsset(`${cue}.wav`)}?v=2`)
             .then(response => { if (!response.ok) throw new Error('audio unavailable'); return response.arrayBuffer(); })
             .then(bytes => context.decodeAudioData(bytes)).catch(() => null));
         }

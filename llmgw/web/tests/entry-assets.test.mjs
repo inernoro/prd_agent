@@ -19,9 +19,10 @@ test('进入音效有实际信号、无削波，起止归零且不超过两秒',
     assert.equal(bytes.toString('ascii',0,4),'RIFF');
     const rate = bytes.readUInt32LE(24); const size = bytes.readUInt32LE(40);
     assert.ok(size / 2 / rate <= 2);
-    let peak = 0;
-    for (let i = 44; i < bytes.length; i += 2) peak = Math.max(peak,Math.abs(bytes.readInt16LE(i)));
+    let peak = 0; let energy = 0;
+    for (let i = 44; i < bytes.length; i += 2) { const sample = bytes.readInt16LE(i); peak = Math.max(peak,Math.abs(sample)); energy += sample * sample; }
     assert.ok(peak > 300 && peak < 10000);
+    assert.ok(Math.sqrt(energy / (size / 2)) / 32768 > .04, '提示音有足够的整体能量，而非只有一个瞬时峰值');
     assert.equal(bytes.readInt16LE(44),0); assert.ok(Math.abs(bytes.readInt16LE(bytes.length-2)) < 2);
   }
 });
