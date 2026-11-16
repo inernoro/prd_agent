@@ -245,7 +245,7 @@ export function ConsoleLayout() {
             </button>
           </div>
         </aside>
-        <main className="lg-console-content"><Outlet /></main>
+        <main className={`lg-console-content${location.pathname === '/quickstart' ? ' is-quickstart' : ''}`}><Outlet /></main>
       </div>
     </div>
   );

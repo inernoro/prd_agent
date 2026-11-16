@@ -21,18 +21,43 @@
 .gateway-entry .consciousness-hud-coordinate { bottom: 80px; }
 @media (max-width: 760px) { .gateway-entry .consciousness-hud-brand > span { display: none; } }
 
-/* The quickstart form is the destination, not a welcome screen over it. */
-.gateway-quickstart-stage.gateway-entry { min-height: 520px; height: auto; flex: 1; display: flex; align-items: center; padding: 40px; border-radius: var(--radius-lg, 14px); color: var(--cinema-light); }
+/* The content viewport owns the scene; the page shell stays transparent and unboxed. */
+.lg-console-content.is-quickstart { padding: 0 !important; }
+.gateway-quickstart-stage.gateway-entry {
+  --text-primary: var(--cinema-light);
+  --text-secondary: color-mix(in srgb, var(--cinema-light) 88%, transparent);
+  --text-muted: color-mix(in srgb, var(--cinema-light) 72%, transparent);
+  --bg-page: transparent; --bg-base: var(--cinema-night);
+  --bg-surface: color-mix(in srgb, var(--cinema-night) 82%, transparent);
+  --bg-elevated: color-mix(in srgb, var(--cinema-night) 92%, transparent);
+  --bg-input: color-mix(in srgb, var(--cinema-night) 78%, transparent);
+  --bg-hover: var(--cinema-glass); --border-subtle: var(--cinema-border);
+  --border-strong: color-mix(in srgb, var(--cinema-accent) 50%, transparent);
+  min-height: 0; min-width: 0; height: 100%; width: 100%; flex: 1;
+  display: flex; flex-direction: column; padding: 0; border: 0; border-radius: 0;
+  background: transparent; color: var(--cinema-light); color-scheme: dark;
+}
 .gateway-quickstart-stage .consciousness-ghost { display: none; }
-.gateway-quickstart-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, var(--cinema-night) 0%, color-mix(in srgb, var(--cinema-night) 90%, transparent) 36%, transparent 100%); }
-.gateway-quickstart-stage .lg-qs-ask-inner { position: relative; z-index: 2; width: 58%; max-width: 580px; }
+.gateway-quickstart-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, color-mix(in srgb, var(--cinema-night) 96%, transparent) 0%, color-mix(in srgb, var(--cinema-night) 82%, transparent) 38%, color-mix(in srgb, var(--cinema-night) 12%, transparent) 100%); }
+.gateway-quickstart-stage > .lg-page-shell { position: relative; z-index: 2; width: 100%; padding: 22px 24px; }
+.gateway-quickstart-stage .lg-page-heading { padding-right: 125px; }
+.gateway-quickstart-stage .lg-qs-ask { justify-content: flex-start; padding: 32px 16px; }
+.gateway-quickstart-stage .lg-qs-ask-inner { width: 58%; max-width: 580px; }
 .gateway-quickstart-stage .lg-qs-ask-title { color: var(--cinema-light); }
-.gateway-quickstart-stage .lg-qs-ask-sub { color: color-mix(in srgb, var(--cinema-light) 78%, transparent); }
-.gateway-quickstart-stage .lg-qs-ask-input { color-scheme: dark; color: var(--cinema-light); background: color-mix(in srgb, var(--cinema-night) 78%, transparent); border-color: var(--cinema-border); backdrop-filter: blur(16px); }
-.gateway-quickstart-stage .lg-qs-ask-input::placeholder { color: color-mix(in srgb, var(--cinema-light) 65%, transparent); }
+.gateway-quickstart-stage .lg-qs-ask-sub { color: var(--text-muted); }
+.gateway-quickstart-stage .lg-qs-ask-input { color: var(--cinema-light); background: var(--bg-input); border-color: var(--cinema-border); backdrop-filter: blur(16px); }
+.gateway-quickstart-stage .lg-qs-ask-input::placeholder { color: var(--text-muted); }
 .gateway-quickstart-stage .lg-qs-ask-input:focus { border-color: var(--cinema-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cinema-accent) 12%, transparent); }
-.gateway-quickstart-stage .lg-qs-ask-samples > button { color: color-mix(in srgb, var(--cinema-light) 80%, transparent); border-color: var(--cinema-border); background: color-mix(in srgb, var(--cinema-night) 50%, transparent); text-align: left; }
+.gateway-quickstart-stage .lg-qs-ask-samples > button { color: var(--text-secondary); border-color: var(--cinema-border); background: color-mix(in srgb, var(--cinema-night) 50%, transparent); text-align: left; }
 .gateway-quickstart-stage .lg-qs-ask-samples > button:hover:not(:disabled) { color: var(--cinema-light); border-color: var(--cinema-accent); }
-.gateway-quickstart-stage .lg-qs-primary { background: var(--cinema-accent); color: var(--cinema-night); border-color: var(--cinema-accent); }
-@media (max-width: 960px) { .gateway-quickstart-stage.gateway-entry { padding: 32px 24px 68px; } .gateway-quickstart-stage .lg-qs-ask-inner { width: 72%; } }
-@media (max-width: 600px) { .gateway-quickstart-stage.gateway-entry { min-height: 500px; padding: 28px 18px 70px; } .gateway-quickstart-stage .lg-qs-ask-inner { width: 100%; } .gateway-quickstart-stage .consciousness-camera { opacity: .6; } .gateway-quickstart-shade { background: color-mix(in srgb, var(--cinema-night) 40%, transparent); } }
+.gateway-quickstart-stage > .gateway-sound { top: 25px; right: 24px; bottom: auto; }
+@media (max-width: 960px) { .gateway-quickstart-stage .lg-qs-ask-inner { width: 72%; } }
+@media (max-width: 600px) {
+  .gateway-quickstart-stage > .lg-page-shell { padding: 16px 12px; }
+  .gateway-quickstart-stage .lg-page-heading { padding-right: 52px; }
+  .gateway-quickstart-stage .lg-qs-ask { min-height: 420px; padding: 28px 6px; }
+  .gateway-quickstart-stage .lg-qs-ask-inner { width: 100%; }
+  .gateway-quickstart-stage .consciousness-camera { opacity: .65; }
+  .gateway-quickstart-shade { background: color-mix(in srgb, var(--cinema-night) 45%, transparent); }
+  .gateway-quickstart-stage > .gateway-sound { top: 18px; right: 12px; }
+}

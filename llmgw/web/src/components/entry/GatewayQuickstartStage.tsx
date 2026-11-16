@@ -5,7 +5,7 @@ import { EntryAudio } from './entryAudio';
 import { consumeQuickstartArrival, hasQuickstartArrival, stopQuickstartArrivalSound } from './quickstartArrival';
 import '../../pages/GatewayEntry.css';
 
-/** The real access form remains interactive while its decorative portrait arrives. */
+/** One backdrop covers the entire Quickstart viewport, behind its transparent page shell. */
 export function GatewayQuickstartStage({ children }: { children: ReactNode }) {
   const [arriving] = useState(hasQuickstartArrival);
   const [sound, setSound] = useState(() => { try { return localStorage.getItem('llmgw-entry-sound') !== 'off'; } catch { return true; } });
@@ -24,7 +24,7 @@ export function GatewayQuickstartStage({ children }: { children: ReactNode }) {
       preview.current ??= new EntryAudio(); preview.current.setEnabled(true); preview.current.unlock(); preview.current.play('verified');
     }
   };
-  return <section className={`gateway-entry gateway-quickstart-stage consciousness-home${arriving ? ' is-arriving' : ''}`} aria-label="第一步 说清要做什么">
+  return <section className={`gateway-entry gateway-quickstart-stage consciousness-home${arriving ? ' is-arriving' : ''}`} aria-label="Quickstart 工作空间">
     <ConsciousnessScene arriving={arriving} />
     <div className="gateway-quickstart-shade" aria-hidden="true" />
     {children}

@@ -43,6 +43,15 @@ async function loginGateway(page: Page) {
   await expect(page).toHaveURL(/\/llmgw\/quickstart$/);
   await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toBeEditable();
   await expect(page.getByRole("button", { name: "进入控制台", exact: true })).toHaveCount(0);
+  const coverage = await page.locator('.gateway-quickstart-stage').evaluate(stage => {
+    const main = stage.closest('main')!.getBoundingClientRect();
+    const scene = stage.querySelector('.consciousness-scene')!.getBoundingClientRect();
+    const heading = stage.querySelector('h1')!.getBoundingClientRect();
+    return { gaps: [scene.left-main.left, scene.top-main.top, main.right-scene.right, main.bottom-scene.bottom], headingInside: heading.top >= scene.top && heading.bottom <= scene.bottom, radius: getComputedStyle(stage).borderRadius };
+  });
+  expect(coverage.gaps.every(gap => Math.abs(gap) < 2)).toBe(true);
+  expect(coverage.headingInside).toBe(true);
+  expect(coverage.radius).toBe('0px');
   await expect(page.locator(".lg-console-content")).toBeVisible();
   if (await page.getByLabel("打开导航", { exact: true }).isVisible())
     await page.getByLabel("打开导航", { exact: true }).click();

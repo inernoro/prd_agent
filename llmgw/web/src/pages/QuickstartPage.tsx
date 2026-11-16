@@ -1197,6 +1197,7 @@ export function QuickstartPage() {
     : '';
 
   return (
+    <GatewayQuickstartStage>
     <PageShell>
       <PageHeader
         title="Quickstart"
@@ -1230,7 +1231,7 @@ export function QuickstartPage() {
                 第一屏只有一件事：把那句话写下来。整块画布让给输入框，
                 没有第二个控件抢注意力——用户此刻唯一要做的决定就是「我想做什么」。
               */
-              <GatewayQuickstartStage>
+              <section className="lg-qs-ask" aria-label="第一步 说清要做什么">
                 <div className="lg-qs-ask-inner">
                   <h2 className="lg-qs-ask-title">我想做什么</h2>
                   <p className="lg-qs-ask-sub">一句话说清：谁在调用、要做什么。</p>
@@ -1264,7 +1265,7 @@ export function QuickstartPage() {
                   </div>
                   {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
                 </div>
-              </GatewayQuickstartStage>
+              </section>
             ) : stage === 'draft' ? (
               /*
                 第二屏：模型边推边吐，推完把码亮出来。
@@ -1859,6 +1860,7 @@ export function QuickstartPage() {
         )}
       </PageBody>
     </PageShell>
+    </GatewayQuickstartStage>
   );
 }
 
