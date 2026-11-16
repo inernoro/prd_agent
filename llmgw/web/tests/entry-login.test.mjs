@@ -101,10 +101,13 @@ test('MAP 单点进入受阻时先显示试听，点击真实激活后才声称�
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/quickstart' });
   const keys = ['window','document','localStorage','AudioContext','fetch','IS_REACT_ACT_ENVIRONMENT'];
   const previous = Object.fromEntries(keys.map(key => [key, globalThis[key]]));
-  let permitted = false, started = 0, stopped = 0, root, finish;
+  let permitted = false, started = 0, stopped = 0, root, finish, acknowledgeResume;
   class Context {
     state = 'suspended'; destination = {};
-    resume() { if (permitted) this.state = 'running'; return Promise.resolve(); }
+    resume() {
+      if (!permitted || this.state === 'running') return Promise.resolve();
+      return new Promise(resolve => { acknowledgeResume = () => { this.state = 'running'; resolve(); }; });
+    }
     decodeAudioData() { return Promise.resolve({}); }
     createBufferSource() { return { connect() {}, disconnect() {}, start() { started++; }, stop() { stopped++; }, onended: null }; }
     close() { this.state = 'closed'; return Promise.resolve(); }
@@ -129,6 +132,8 @@ test('MAP 单点进入受阻时先显示试听，点击真实激活后才声称�
     assert.equal(button.dataset.audioStatus, 'pending');
     permitted = true;
     await act(async () => button.click());
+    assert.equal(started, 0, 'resume 尚未完成不能声称已播放');
+    await act(async () => acknowledgeResume());
     assert.equal(started, 1);
     assert.equal(button.dataset.audioStatus, 'ready');
     assert.equal(button.getAttribute('aria-pressed'), 'true');

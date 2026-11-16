@@ -4,6 +4,7 @@ type Cue = EntryCue;
 /** Original local UI cues; no network service or recurring background music. */
 export class EntryAudio {
   private context?: AudioContext;
+  private resuming?: Promise<void>;
   private buffers = new Map<Cue, Promise<AudioBuffer | null>>();
   private sources = new Set<AudioBufferSourceNode>();
   private epoch = 0;
@@ -14,7 +15,7 @@ export class EntryAudio {
     if (this.disposed || !window.AudioContext) return;
     try {
       this.context ??= new AudioContext();
-      void this.context.resume().catch(() => {});
+      this.resuming = this.context.resume().catch(() => {});
       for (const cue of ['scan', 'verified', 'reveal'] as const) {
         if (!this.buffers.has(cue)) {
           const context = this.context;
@@ -31,6 +32,12 @@ export class EntryAudio {
     const epoch = this.epoch;
     try {
       const buffer = await this.buffers.get(cue);
+      if (buffer && this.context && !this.running && this.resuming) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([this.resuming, new Promise<void>(resolve => { timer = setTimeout(resolve, 1200); })]);
+        } finally { clearTimeout(timer); }
+      }
       // Never queue a silent suspended source and call it enabled.
       if (!this.enabled || !buffer || !this.context || !this.running || this.disposed || epoch !== this.epoch || document.visibilityState !== 'visible') return false;
       const source = this.context.createBufferSource();
