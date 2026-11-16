@@ -31,20 +31,28 @@ describe('验收API真实HTTP与项目隔离', () => {
       tasks[projectId] = await service.createTask({ projectId, templateId: templates[projectId].id, environment: 'production' });
     }
     const app = express();
-    app.use((req, _res, next) => {
+    app.use((req, res, next) => {
+      res.setHeader('x-cds-acceptance-fixture', path.basename(dir));
       const id = req.header('x-test-project');
       if (id) (req as any).cdsProjectKey = { projectId: id, keyId: `key-${id}` };
       if (req.header('x-test-global') === 'empty') (req as any).cdsAccess = { keyId: 'global', access: { projects: [] } };
       next();
     });
     app.use('/api/acceptance', createAcceptanceTasksRouter({ service }));
-    server = app.listen(0);
+    await new Promise<void>((resolve, reject) => {
+      server = app.listen(0, '127.0.0.1', resolve);
+      server.once('error', reject);
+    });
+    expect(server.address()).toMatchObject({ address: '127.0.0.1', family: 'IPv4' });
   });
   afterEach(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
   async function request(method: string, route: string, body?: unknown, headers: Record<string, string> = { 'x-test-project': 'p1' }) {
     const port = (server.address() as { port: number }).port;
     return new Promise<{ status: number; body: any }>((resolve, reject) => {
       const req = http.request({ hostname: '127.0.0.1', port, path: `/api/acceptance${route}`, method, headers: { 'content-type': 'application/json', ...headers } }, (res) => {
+        if (res.headers['x-cds-acceptance-fixture'] !== path.basename(dir)) {
+          res.resume(); reject(new Error('HTTP 响应不属于本次独立验收测试')); return;
+        }
         let raw = ''; res.setEncoding('utf8'); res.on('data', (chunk) => { raw += chunk; });
         res.on('end', () => { try { resolve({ status: res.statusCode!, body: JSON.parse(raw) }); } catch (err) { reject(err); } });
       });
