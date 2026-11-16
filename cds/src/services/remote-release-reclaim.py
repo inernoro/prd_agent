@@ -24,15 +24,7 @@ def anchors():
   if not value.is_dir():raise ValueError('reference-target-unconfirmed')
   result.append(value)
  return result
-before=None
-try:
- ordinary(wt);ordinary(wt.parent)
- before=os.statvfs(wt)
- lock_path=wt.parent/'.retention.lock';lock=None
- if not spec.get('dryRun') or os.path.lexists(lock_path):
-  lock=os.open(lock_path,(os.O_RDONLY if spec.get('dryRun') else os.O_RDWR|os.O_CREAT)|os.O_NOFOLLOW,0o600)
-  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-  except BlockingIOError:raise ValueError('release-or-reclaim-in-progress')
+def container_mounts():
  ids=query(['docker','ps','-aq','--no-trunc']).splitlines()
  if len(ids)>5000 or any(not re.fullmatch('[a-f0-9]{64}',v) for v in ids):raise ValueError('container-query-unconfirmed')
  mounts=[]
@@ -49,6 +41,17 @@ try:
     source=m.get('Source')
     if not source or not os.path.isabs(source):raise ValueError('mount-source-unconfirmed')
     mounts.append(pathlib.Path(source).resolve(strict=True))
+ return mounts
+before=None
+try:
+ ordinary(wt);ordinary(wt.parent)
+ before=os.statvfs(wt)
+ lock_path=wt.parent/'.retention.lock';lock=None
+ if not spec.get('dryRun') or os.path.lexists(lock_path):
+  lock=os.open(lock_path,(os.O_RDONLY if spec.get('dryRun') else os.O_RDWR|os.O_CREAT)|os.O_NOFOLLOW,0o600)
+  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  except BlockingIOError:raise ValueError('release-or-reclaim-in-progress')
+ mounts=container_mounts()
  current=anchors()
  common=pathlib.Path(query(['git','-C',str(repo),'rev-parse','--git-common-dir']).strip())
  common=(common if common.is_absolute() else repo/common).resolve(strict=True)
@@ -79,7 +82,28 @@ try:
   except Exception:
    held(name,'native-query-or-removal-unconfirmed')
  for name in versions:
-  if valid(name):emit('CDS_RELEASE_HELD_VERSION',name+'\tstatic-object-content-proof-unconfirmed')
+  if not valid(name):continue
+  p=public/'.releases'/name
+  journal=wt.parent/'static-proofs'/(name+'.deleting')
+  try:
+   commit=spec.get('commits',{}).get(name)
+   identity=spec.get('versionIdentities',{}).get(name)
+   if not isinstance(commit,str) or not re.fullmatch('[a-f0-9]{40}',commit) or not identity or not os.path.lexists(wt.parent/'static-proofs'/(name+'.json')):
+    raise ValueError('static-object-content-proof-unconfirmed')
+   def check_static_live():
+    ordinary(public);ordinary(public/'.releases')
+    live=anchors()
+    if live!=current:raise ValueError('static-references-changed')
+    if any(p==q or p in q.parents or q in p.parents for q in live):raise ValueError('static-current-or-previous')
+    if any(p==q or p in q.parents or q in p.parents for q in container_mounts()):raise ValueError('static-running-or-stopped-container')
+   reclaim_static_artifact(p,wt.parent,spec.get('targetId'),name,commit,identity,spec.get('dryRun'),check_static_live,
+    lambda:emit('CDS_RELEASE_STATIC_RECLAIM_STARTED',name+'\t'+str(os.getpid())))
+   emit('CDS_RELEASE_RECLAIMABLE_VERSION' if spec.get('dryRun') else 'CDS_RELEASE_RECLAIMED_VERSION',name)
+  except Exception as error:
+   reason=str(error) if isinstance(error,ValueError) else 'static-native-proof-or-removal-unconfirmed'
+   emit('CDS_RELEASE_HELD_VERSION',name+'\t'+reason)
+   if os.path.lexists(journal):emit('CDS_RELEASE_RECLAIM_FAILED_VERSION',name)
+
 except Exception as error:
  reason=str(error) if isinstance(error,ValueError) else 'native-reference-query-failed'
  emit('CDS_RELEASE_QUERY_ERROR',reason)

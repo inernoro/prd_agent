@@ -175,6 +175,7 @@ export interface RemoteReleaseInventory {
   releaseRoot: string;
   worktreeRoot: string;
   worktreeIdentities?: Record<string, string>;
+  versionIdentities?: Record<string, string>;
   queryError?: string;
 }
 
@@ -437,7 +438,7 @@ for p,kind in zip(sys.argv[1:],['WORKTREE','VERSION']):
    s=e.stat(follow_symlinks=False)
    if stat.S_ISDIR(s.st_mode):
     print('CDS_RELEASE_'+kind+'='+e.name)
-    if kind=='WORKTREE':print('CDS_RELEASE_WORKTREE_IDENTITY='+e.name+'\\t'+str(s.st_dev)+':'+str(s.st_ino))
+    print('CDS_RELEASE_'+kind+'_IDENTITY='+e.name+'\\t'+str(s.st_dev)+':'+str(s.st_ino))
  except FileNotFoundError:pass
  except Exception:print('CDS_RELEASE_SCAN_ERROR='+kind.lower()+'-inventory-unconfirmed')`)} "$wt"${strategy.mode === 'generated-static' ? ' "$root/.releases"' : ''}`;
   if (strategy.mode === 'generated-compose' || strategy.mode === 'project-script' || strategy.mode === 'managed-script') {
@@ -505,7 +506,7 @@ export function parseRemoteReclaimOutcome(stdout: string): RemoteReclaimOutcome 
     }
     if (!value || !isReleaseArtifactId(value)) continue;
     if (key === 'CDS_RELEASE_RECLAIMED_WORKTREE' || key === 'CDS_RELEASE_RECLAIMABLE_WORKTREE') outcome.removedWorktrees.push(value);
-    else if (key === 'CDS_RELEASE_RECLAIMED_VERSION') outcome.removedVersions.push(value);
+    else if (key === 'CDS_RELEASE_RECLAIMED_VERSION' || key === 'CDS_RELEASE_RECLAIMABLE_VERSION') outcome.removedVersions.push(value);
     else if (key === 'CDS_RELEASE_RECLAIM_FAILED_WORKTREE') outcome.failedWorktrees.push(value);
     else if (key === 'CDS_RELEASE_RECLAIM_FAILED_VERSION') outcome.failedVersions.push(value);
   }
@@ -534,9 +535,12 @@ export function parseRemoteReleaseInventory(stdout: string): RemoteReleaseInvent
     else if (key === 'CDS_RELEASE_WORKTREE_ROOT') inventory.worktreeRoot = value;
     else if (key === 'CDS_RELEASE_WORKTREE' && value) inventory.worktrees.push(value);
     else if (key === 'CDS_RELEASE_VERSION' && value) inventory.versions.push(value);
-    else if (key === 'CDS_RELEASE_WORKTREE_IDENTITY') {
+    else if (key === 'CDS_RELEASE_WORKTREE_IDENTITY' || key === 'CDS_RELEASE_VERSION_IDENTITY') {
       const [name, identity] = value.split('\t');
-      if (isReleaseArtifactId(name) && /^\d+:\d+$/.test(identity || '')) (inventory.worktreeIdentities ||= {})[name] = identity;
+      if (isReleaseArtifactId(name) && /^\d+:\d+$/.test(identity || '')) {
+        if (key === 'CDS_RELEASE_VERSION_IDENTITY') (inventory.versionIdentities ||= {})[name] = identity;
+        else (inventory.worktreeIdentities ||= {})[name] = identity;
+      }
     } else if (key === 'CDS_RELEASE_SCAN_ERROR') inventory.queryError = value;
   }
   return inventory;
@@ -548,14 +552,15 @@ export function buildReleaseReclaimCommand(
   target: ReleaseTarget,
   strategy: ReleaseStrategy,
   plan: Pick<ReleaseArtifactRetentionPlan, 'removeWorktrees' | 'removeVersions'>,
-  proof: { commits?: Record<string,string>; identities?: Record<string,string>; dryRun?: boolean } = {},
+  proof: { commits?: Record<string,string>; identities?: Record<string,string>; versionIdentities?: Record<string,string>; dryRun?: boolean } = {},
 ): string | null {
   if (!target.ssh || strategy.mode === 'existing-script') return null;
   const worktrees = plan.removeWorktrees.filter(isReleaseArtifactId);
   const versions = strategy.mode === 'generated-static' ? plan.removeVersions.filter(isReleaseArtifactId) : [];
   if (!worktrees.length && !versions.length) return null;
-  const source = fs.readFileSync(new URL('./remote-release-reclaim.py', import.meta.url), 'utf8');
-  const spec = Buffer.from(JSON.stringify({worktrees, versions, ...proof})).toString('base64');
+  const source = fs.readFileSync(new URL('./static-artifact-proof.py', import.meta.url), 'utf8') + '\n'
+    + fs.readFileSync(new URL('./remote-release-reclaim.py', import.meta.url), 'utf8');
+  const spec = Buffer.from(JSON.stringify({worktrees, versions, ...proof, targetId: target.id})).toString('base64');
   return `cd ${shellQuote(target.ssh.appPath)} || exit 1
 repo="$PWD"
 parent="$(dirname "$repo")"
