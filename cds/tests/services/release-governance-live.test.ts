@@ -4,7 +4,7 @@ import path from 'node:path';
 import http from 'node:http';
 import os from 'node:os';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const runtime = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 let processUnderTest: ChildProcess | undefined, root: string | undefined, buildRoot: string | undefined;
@@ -40,6 +40,15 @@ it('正常认证、真实 Git 和 SSH 发布：独立审批、连续调试、越
   });
   const meta = await metadata; root = meta.labRoot;
   const credentials = JSON.parse(await fs.readFile(meta.credentialsPath,'utf8'));
+  const fixtureState=JSON.parse(await fs.readFile(path.join(root,'.cds/state.json'),'utf8'));
+  const sshHost=Object.values(fixtureState.remoteHosts).find((host:any)=>host.id==='release-lab-ssh') as any;
+  const {defaultReleaseSshExecutor}=await import(pathToFileURL(path.join(emittedRuntime,'dist/services/release-service.js')).href);
+  const forbidden=path.join(root,'must-not-execute');let authenticated=false;
+  await expect(defaultReleaseSshExecutor({host:sshHost,password:sshHost.sshPasswordEncrypted,
+    command:`touch '${forbidden.replace(/'/g,"'\\''")}'`,signal:new AbortController().signal,onOutput:()=>{},
+    beforeExec:()=>{authenticated=true;throw new Error('鉴权完成后批准已撤销');}})).rejects.toThrow('批准已撤销');
+  expect(authenticated).toBe(true);
+  await expect(fs.stat(forbidden)).rejects.toMatchObject({code:'ENOENT'});
   const base = `http://127.0.0.1:${port}`;
   async function call(method: string, route: string, body?: unknown, cookie?: string) {
     const response = await fetch(base+'/api'+route,{method,headers:{'Content-Type':'application/json',
