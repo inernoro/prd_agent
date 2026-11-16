@@ -1,0 +1,185 @@
+{
+  "createdAt": "2026-11-16T07:07:58.982866+00:00",
+  "originalAcceptanceCandidate": "c97ab1d2ca3147ae3e81d483a21fdb84b50f0d1e",
+  "repairCandidate": "f8fd1280c7e7d01b45ca350c6c2f1757e35fb07c",
+  "baseline": "49b8e320f8c194dd92490e4623635c05f463fcec",
+  "goal": "缺基线与应用计时不足明确拒绝；正常负载保持可比较通过；真实后台/页面退化仍被识别；补足修复提交云端证据",
+  "stages": [
+    {
+      "id": "R1",
+      "goal": "复核两处修复与旧新同数据证明",
+      "success": "24项判定测试通过，旧行为误放行而新行为拒绝，正常与两类故障判定不变",
+      "estimateMinutes": "5-10",
+      "status": "PASS",
+      "evidence": [
+        "judge-tests.log",
+        "old-new-proof.json"
+      ]
+    },
+    {
+      "id": "R2",
+      "goal": "指定修复SHA的GitHub all实跑",
+      "success": "同runner三新基准，normal/ramp/soak实际执行，两类证明器、恢复与真实页面完成；最终状态和归档独立复核",
+      "estimateMinutes": "20-35，排队另计",
+      "status": "PASS",
+      "runId": 43821630330,
+      "url": "https://github.com/inernoro/prd_agent/actions/runs/43821630330",
+      "milestones": {
+        "threeBaselines": "PASS_EXACT_RECALIBRATION",
+        "candidateAll": "PASS",
+        "coreWriteAccounting": "PASS",
+        "bothFaultProofs": "PASS",
+        "cleanBaselineRecovery": "PASS",
+        "candidatePages": "PASS"
+      }
+    },
+    {
+      "id": "R3",
+      "goal": "复核报告与未验收边界，交付可读结论",
+      "success": "摘要/HTML/原始结果/截图归档可信；保留所有失败；明确容量、实际配额和公开预览状态",
+      "estimateMinutes": "5-10",
+      "status": "PASS",
+      "evidence": [
+        "independent-review.json",
+        "artifact-metadata.json",
+        "proof-status.json",
+        "report-visual-check.log"
+      ]
+    }
+  ],
+  "constraints": [
+    "不更换原始验收候选",
+    "修复验证单独固定f8fd1280c",
+    "不放宽阈值、不减少负载、不覆盖失败",
+    "不创建PR、不再次合并、不发布生产、不购买资源、不调用付费模型"
+  ],
+  "blocked": [
+    "指定候选公开入口不可得时保留未验收，继续其余验证",
+    "生产发布强制等待性能检查并未证明，本轮不擅自改发布链路"
+  ],
+  "forecast": "本轮三项修复目标已完成；公开候选入口和生产强制发布拦截未验收，无法给出无依据的完成时间",
+  "currentMainObserved": "f1927c4e05a80ebda8d669a7a3714236592210d6",
+  "publicPreview": "NOT_ACCEPTED: no deployed repair branch from authoritative preview-url query",
+  "completedAt": "2026-11-16T07:36:40.495265+00:00",
+  "resultSummary": {
+    "normal": {
+      "attempts": 122,
+      "errors": 0,
+      "errorRate": 0,
+      "throughput": 2.0002801300505997,
+      "client": {
+        "n": 122,
+        "p50": 54.127565000002505,
+        "p95": 102.15163799998118,
+        "p99": 168.69934699998703,
+        "max": 168.78408399998443,
+        "mean": 62.44309295901597
+      },
+      "app": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "externalHttp": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      }
+    },
+    "soak": {
+      "attempts": 242,
+      "errors": 0,
+      "errorRate": 0,
+      "throughput": 2.0002513917767595,
+      "client": {
+        "n": 242,
+        "p50": 51.869607000029646,
+        "p95": 78.72557100001723,
+        "p99": 82.81752799998503,
+        "max": 95.02837799995905,
+        "mean": 55.78441419421449
+      },
+      "app": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      },
+      "externalHttp": {
+        "n": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0,
+        "mean": 0
+      }
+    },
+    "firstRelativeDegradedUsers": 2,
+    "peakJourneysPerSecond": 37.80800419743386,
+    "resourcePeaks": {
+      "api": {
+        "cpuPercent": 107.02177866936002,
+        "rssMiB": 432.6015625
+      },
+      "mongo": {
+        "cpuPercent": 79.40356748734955,
+        "rssMiB": 489.05859375
+      },
+      "redis": {
+        "cpuPercent": 4.956668295226314,
+        "rssMiB": 75.7734375
+      },
+      "web": {
+        "cpuPercent": 4.9117061679370755,
+        "rssMiB": 10.80078125
+      }
+    },
+    "actualCgroups": {
+      "mongo": {
+        "cpuMax": "100000 100000",
+        "memoryMax": "805306368"
+      },
+      "redis": {
+        "cpuMax": "50000 100000",
+        "memoryMax": "268435456"
+      },
+      "api": {
+        "cpuMax": "100000 100000",
+        "memoryMax": "1073741824"
+      },
+      "web": {
+        "cpuMax": "50000 100000",
+        "memoryMax": "268435456"
+      }
+    },
+    "resourceLimitsEnforced": true,
+    "normalBrowserMaxMs": {
+      "home": 922.7813620000088,
+      "knowledge-list": 179.53472799999872,
+      "document-open": 1912.951304999995,
+      "write": 1051.9521990000212
+    },
+    "ciEvent": "workflow_dispatch",
+    "ciProfile": "all",
+    "artifactId": 14205942128,
+    "artifactSha256": "sha256:47dbf1599de0089e3752241a82366d56f8ca138b1d64c7fa3624dcec02f49186",
+    "artifactExpiresAt": "2026-11-30T07:31:34Z",
+    "repairMerged": false,
+    "productionPublished": false
+  },
+  "scopeNotes": [
+    "原候选c97ab1d2ca3147ae3e81d483a21fdb84b50f0d1e的原始验收不被覆盖",
+    "本轮normal/ramp/soak及真实页面的应用为修复SHA f8fd1280c",
+    "现有工作流的两类注入与恢复使用基准应用49b8e320，均由修复SHA的判定器执行",
+    "本轮为手动all；不得冒称修复分支推送已自动执行all",
+    "仅120秒级持续，普通角色、生产数据分布和所有真机浏览器未覆盖"
+  ]
+}
