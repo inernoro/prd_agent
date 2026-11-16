@@ -99,8 +99,10 @@ describe('actual native Git deletion interruption', () => {
         businessHash: hash(await fs.readFile(path.join(data, '.cds-run-data', 'db'))),
       });
       const protectedBefore = await snapshot();
-      const count = 4096,
-        chunk = Buffer.alloc(4096, 69);
+      // The in-child checkpoint needs only a partial tracked set, not thousands
+      // of tiny files. Keep the same 16MiB content with less fixture setup I/O.
+      const count = 256,
+        chunk = Buffer.alloc(65536, 69);
       await fs.mkdir(path.join(repo, 'many'));
       for (let start = 0; start < count; start += 32)
         await Promise.all(
