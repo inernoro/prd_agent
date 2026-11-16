@@ -53,7 +53,7 @@ it('collects real allocated source bytes with the unchanged packaged collector a
 });
 it('uses fixed read-only argv without a shell and refuses an overlapping history or unreadable source',async()=>{
   const f=await fixture();await f.service.setEnabled(true);await settle(()=>expect(f.run).toHaveBeenCalledOnce());
-  const args=f.run.mock.calls[0]?.[0] as string[];expect(args.slice(1)).toEqual(['--state-dir',path.join(f.root,'private-history'),'--source','cache='+await fs.realpath(f.source)]);expect(args.join(' ')).not.toMatch(/prune|remove|delete/);
+  const args=f.run.mock.calls[0]?.[0] as string[];expect(args.slice(1)).toEqual(['--state-dir',path.join(f.root,'private-history'),'--new-source-baseline','--source','cache='+await fs.realpath(f.source)]);expect(args.join(' ')).not.toMatch(/prune|remove|delete/);
   const overlap=await fixture();const bad=new HostCapacitySamplingService({enabled:true,external:false,stateDir:path.join(overlap.source,'history'),roots:{cache:overlap.source},observation:overlap.observation,persist:async()=>{},run:overlap.run});stops.push(()=>bad.stop());bad.start();await settle(()=>expect(bad.getStatus().outcome).toBe('unknown'));expect(overlap.run).not.toHaveBeenCalled();
 });
 it('exposes a process failure immediately as unknown and refuses to reuse a formerly normal report',async()=>{
@@ -103,4 +103,17 @@ it('requires a report actually published by this run when the real collector exi
   const after=await fs.stat(file);expect(after.ino).toBe(before.ino);expect(JSON.parse(await fs.readFile(file,'utf8')).status).toBe('ok');
   expect(f.observation.getSnapshot().status).toBe('unknown');expect(f.service.getStatus().outcome).toBe('unknown');
   await f.observation.refresh();expect(f.observation.getSnapshot().status).toBe('unknown');
+});
+
+it('starts a fresh bounded baseline when a known cache appears after the initial scan',async()=>{
+  const f=await fixture({run:undefined});const later=path.join(f.root,'lazy-cache');
+  const service=new HostCapacitySamplingService({enabled:true,external:false,stateDir:path.join(f.root,'dynamic-history'),roots:{cache:f.source,later},observation:f.observation,persist:async()=>{}});stops.push(()=>service.stop());
+  service.start();await vi.waitFor(()=>expect(service.getStatus().running).toBe(false));
+  expect(f.observation.getSnapshot().report?.sources.cache).toBeDefined();expect(service.getStatus().unavailableSources).toContain('later');
+  await fs.mkdir(later);await fs.writeFile(path.join(later,'new-cache'),'lazy generated cache');
+  service.requestSample();await vi.waitFor(()=>expect(service.getStatus().running).toBe(false));
+  expect(f.observation.getSnapshot().report?.sources.later).toBeDefined();expect(f.observation.getSnapshot().status).toBe('unknown');
+  const history=JSON.parse(await fs.readFile(path.join(f.root,'dynamic-history','history.json'),'utf8'));expect(history.samples).toHaveLength(1);expect(Object.keys(history.roots).sort()).toEqual(['cache','later']);
+  service.requestSample();await vi.waitFor(()=>expect(service.getStatus().running).toBe(false));expect(f.observation.getSnapshot().report?.sources.later).toBeDefined();
+  expect((await fs.readdir(path.join(f.root,'dynamic-history'))).sort()).toEqual(['history.json','latest.json','lock']);
 });
