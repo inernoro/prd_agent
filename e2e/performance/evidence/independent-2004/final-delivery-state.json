@@ -1,0 +1,48 @@
+{
+  "generatedAt": "2026-11-16T15:17:24.276098+00:00",
+  "deliveryState": "NEEDS_DECISION",
+  "original": {
+    "candidate": "c97ab1d2ca3147ae3e81d483a21fdb84b50f0d1e",
+    "base": "49b8e320f8c194dd92490e4623635c05f463fcec",
+    "run": 43722741724,
+    "conclusion": "success",
+    "profile": "normal"
+  },
+  "merged": {
+    "pr": 2004,
+    "commit": "890d9b0bc3d13c0a6c0ee34d740480b813029b4d",
+    "base": "2eb2995bb6171e4741ba180c85854ddf212883e9",
+    "run": 43877037528,
+    "conclusion": "failure",
+    "reason": "真实知识库教程异步挂载竞态，截图保护正确拒绝，后续页面未执行"
+  },
+  "followup": {
+    "pr": 2029,
+    "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+    "base": "5ba0c3e3e3577286392bccf18f027b1d2ced42e0",
+    "run": 43888850649,
+    "conclusion": "success",
+    "independentRecomputation": true,
+    "originalArtifactSha256": "4d4fcd3749266954e7f092881a7a66c78631906c82550e6adfc0c13fc36191f2",
+    "merged": false,
+    "autoMerge": false,
+    "mainObserved": "64595d2c79f9b8be14b5664865a8e7af4fe54298",
+    "mergeState": "BEHIND",
+    "requires": "追加合并授权、同步主干并对新head及实际合并提交核验CI/review"
+  },
+  "report": "https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=81b8cb6fad67410b8c4b387b223aa9b0",
+  "onlineVerification": {
+    "firstAttempt": true,
+    "brokenLinks": 0,
+    "failedClicks": 0,
+    "actualImagesViewed": 12
+  },
+  "remaining": [
+    "公开精确候选未验收；新分支preview-url只返回非MAP报告项目",
+    "发布前强制等待性能CI未演练",
+    "小时级稳定未验收；持续仅约120秒",
+    "本地及CI默认头像系统资产缺失，同因原始P1四条各自保留"
+  ],
+  "noProductionRelease": true,
+  "nextDecision": "是否追加授权#2029同步主干验证后合并"
+}

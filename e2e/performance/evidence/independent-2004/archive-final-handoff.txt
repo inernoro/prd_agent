@@ -1,0 +1,17 @@
+  上传截图 00-main-M-knowledge-guide-failure (209519B) -> dc72bc0c9a379a4f1ed083396a28a88c99af473dc5d70413f42f9bec9b60b9a5.png
+  上传截图 01-desktop-dark-home (651640B) -> 3da01c2d3a7da590787353fd36ebdb9c83407026e046f48dc1a0d5a2f833a9ec.png
+  上传截图 02-desktop-dark-knowledge-list (178534B) -> 6c0d26aa0521a0df53512c99fa11113e01caf8e04bcb8dc01e55b5407b7b7bcd.png
+  上传截图 03-desktop-dark-document-open (241051B) -> d8814d873d25044279bde1e4d760238d002bf2318e14fababe41b8b3025b8a31.png
+  上传截图 04-desktop-dark-saved-refresh (220076B) -> bfd6e7db511efec1fe2b7318e220330ef3947326e511d15883f4c1dd53c97569.png
+  上传截图 05-desktop-light-home (729414B) -> 183ed63dc7b87e232a425e508c830426044491b60a4a5efc208c4bc414858ca6.png
+  上传截图 06-desktop-light-saved-refresh (203313B) -> 4b6e3136bf4e6818997552fe5703d57ee0a7089d62bef68952e1bd22c694bbd9.png
+  上传截图 07-mobile-dark-home (377739B) -> 7570bad4aeafe4054078f8c737394d6a0a6f297ea356c71a515fedf626d62db7.png
+  上传截图 08-mobile-dark-saved-refresh (267167B) -> 4bdf473cd1f95fa6d33cddccb58ab9ace5b9da8f44e71670c706653cff3e53a8.png
+  上传截图 09-mobile-light-home (370347B) -> 39cfee2b1c918074486f95d5341609c666e0f601ce4d521e87dc6245e6e56cd4.png
+  上传截图 10-mobile-light-saved-refresh (223582B) -> f742abe5e55f4114740d7105aad4a4164557a974c5f1f8c5216573180aa1026e.png
+  上传截图 11-mobile-light-server-restart (224730B) -> c64131c9966f7723da615e3c68f2d29093774e7fa15ff9418080a504e550ea7f.png
+{"mode": "cds", "title": "PR验收 · #2029 / MAP性能独立交付 · 2026-11-16", "report_id": "acc-prd-agent-202611162314-map性能独立验收与修复交付", "cdsReportId": "81b8cb6fad67410b8c4b387b223aa9b0", "projectId": "prd-agent", "folderId": "d6a48bce9a84423483b89853b772407d", "folderPath": "PR验收/2026-11", "format": "html", "verdict": "fail", "deeplink": "https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=81b8cb6fad67410b8c4b387b223aa9b0"}
+
+===== 验收归档完成 · CDS 验收中心 =====
+直达深链（CDS 登录态可达，按项目+文件夹归类）：https://miduo.org/reports?project=prd-agent&folder=d6a48bce9a84423483b89853b772407d&report=81b8cb6fad67410b8c4b387b223aa9b0
+说明：报告已入 CDS（验收能力的唯一归属）；MAP 等系统通过知识库开放协议从 CDS 拉取展示，无需另建验收知识库。

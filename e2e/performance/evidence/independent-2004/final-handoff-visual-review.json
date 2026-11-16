@@ -1,0 +1,69 @@
+{
+  "allImagesActuallyViewed": true,
+  "failureApplication": "890d9b0bc3d13c0a6c0ee34d740480b813029b4d",
+  "positiveApplication": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+  "failureRun": 43877037528,
+  "positiveRun": 43888850649,
+  "files": [
+    {
+      "name": "00-main-M-knowledge-guide-failure",
+      "commit": "890d9b0bc3d13c0a6c0ee34d740480b813029b4d",
+      "sha256": "dc72bc0c9a379a4f1ed083396a28a88c99af473dc5d70413f42f9bec9b60b9a5"
+    },
+    {
+      "name": "01-desktop-dark-home",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "3da01c2d3a7da590787353fd36ebdb9c83407026e046f48dc1a0d5a2f833a9ec"
+    },
+    {
+      "name": "02-desktop-dark-knowledge-list",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "6c0d26aa0521a0df53512c99fa11113e01caf8e04bcb8dc01e55b5407b7b7bcd"
+    },
+    {
+      "name": "03-desktop-dark-document-open",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "d8814d873d25044279bde1e4d760238d002bf2318e14fababe41b8b3025b8a31"
+    },
+    {
+      "name": "04-desktop-dark-saved-refresh",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "bfd6e7db511efec1fe2b7318e220330ef3947326e511d15883f4c1dd53c97569"
+    },
+    {
+      "name": "05-desktop-light-home",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "183ed63dc7b87e232a425e508c830426044491b60a4a5efc208c4bc414858ca6"
+    },
+    {
+      "name": "06-desktop-light-saved-refresh",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "4b6e3136bf4e6818997552fe5703d57ee0a7089d62bef68952e1bd22c694bbd9"
+    },
+    {
+      "name": "07-mobile-dark-home",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "7570bad4aeafe4054078f8c737394d6a0a6f297ea356c71a515fedf626d62db7"
+    },
+    {
+      "name": "08-mobile-dark-saved-refresh",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "4bdf473cd1f95fa6d33cddccb58ab9ace5b9da8f44e71670c706653cff3e53a8"
+    },
+    {
+      "name": "09-mobile-light-home",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "39cfee2b1c918074486f95d5341609c666e0f601ce4d521e87dc6245e6e56cd4"
+    },
+    {
+      "name": "10-mobile-light-saved-refresh",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "f742abe5e55f4114740d7105aad4a4164557a974c5f1f8c5216573180aa1026e"
+    },
+    {
+      "name": "11-mobile-light-server-restart",
+      "commit": "2cdc23cabc45e21dd3b78ef4bb3910aede5caebc",
+      "sha256": "c64131c9966f7723da615e3c68f2d29093774e7fa15ff9418080a504e550ea7f"
+    }
+  ]
+}
