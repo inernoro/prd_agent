@@ -412,6 +412,22 @@ describe('Server route ordering (regression)', () => {
     });
   }
 
+  it('成功查询只记元数据，操作与失败仍有正文且响应原样返回', async () => {
+    const logs: HttpLogRecord[] = [], app = buildRealServerWithHttpLogs(logs, [], undefined, true);
+    server = await startServer(app);
+    const read = await request(server, '/api/projects');
+    expect(read.status).toBe(200); expect(JSON.parse(read.body).projects).toEqual([]);
+    const readLog = logs.find(row => row.path === '/api/projects')!;
+    expect(readLog.response.bodyBytes).toBe(Buffer.byteLength(read.body));
+    expect(readLog.response.bodyPreview).toBeUndefined();
+    const write = await requestJson(server, 'POST', '/api/client-events', { type: 'policy-check', message: 'visible', password: 'private' });
+    expect(write.status).toBe(202);
+    const writeLog = logs.find(row => row.path === '/api/client-events')!;
+    expect(writeLog.request.bodyPreview).toContain('visible'); expect(writeLog.request.bodyPreview).not.toContain('private');
+    const failed = await request(server, '/api/policy-missing-route'); expect(failed.status).toBe(404);
+    expect(logs.find(row => row.path === '/api/policy-missing-route')?.response.bodyPreview).toBeTruthy();
+  });
+
   it.each([68, 512 * 1024])('preserves %i-byte screenshots across asynchronous basic authentication and HTTP logging', async (size) => {
     const logs: HttpLogRecord[] = [];
     vi.stubEnv('CDS_AUTH_MODE', 'basic');

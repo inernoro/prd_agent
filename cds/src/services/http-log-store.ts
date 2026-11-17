@@ -423,19 +423,24 @@ export function selectRequestBodyForHttpLog(
   };
 }
 
+/** 成功只读请求只保留元数据；操作及失败继续保留有界正文。 */
+export function captureHttpLogBody(method: string, status: number): boolean {
+  return status < 200 || status >= 400 || !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
+}
+
 export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType?: unknown): {
-  onChunk(chunk: Buffer | string): void;
-  snapshot(contentTypeOverride?: unknown): { bodyPreview?: string; bodyBytes: number };
+  onChunk(chunk: Buffer | string, capturePreview?: boolean): void;
+  snapshot(contentTypeOverride?: unknown, capturePreview?: boolean): { bodyPreview?: string; bodyBytes: number };
 } {
   let bodyBytes = 0;
   let capturedBytes = 0;
   const chunks: Buffer[] = [];
   const shouldCapturePreview = (type?: unknown) => !isBinaryContentType(type ?? contentType);
   return {
-    onChunk(chunk) {
+    onChunk(chunk, capturePreview = true) {
       if (Buffer.isBuffer(chunk)) {
         bodyBytes += chunk.length;
-        if (shouldCapturePreview() && capturedBytes < maxBytes) {
+        if (capturePreview && shouldCapturePreview() && capturedBytes < maxBytes) {
           const part = chunk.subarray(0, maxBytes - capturedBytes);
           chunks.push(part);
           capturedBytes += part.length;
@@ -445,7 +450,7 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType
 
       const text = String(chunk);
       bodyBytes += Buffer.byteLength(text, 'utf8');
-      if (!shouldCapturePreview()) return;
+      if (!capturePreview || !shouldCapturePreview()) return;
       if (capturedBytes >= maxBytes) return;
 
       // Do not Buffer.from() the full response string. Some JSON endpoints
@@ -458,7 +463,8 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType
       chunks.push(part);
       capturedBytes += part.length;
     },
-    snapshot(contentTypeOverride?: unknown) {
+    snapshot(contentTypeOverride?: unknown, capturePreview = true) {
+      if (!capturePreview) return { bodyBytes };
       if (isBinaryContentType(contentTypeOverride ?? contentType)) {
         return {
           bodyPreview: bodyBytes > 0 ? OMITTED_BINARY_BODY_PREVIEW : undefined,
@@ -602,6 +608,7 @@ export class HttpLogStore {
   record(record: Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string }): void {
     if (!this.collection) return;
     if (!this.shouldPersist(record)) return;
+    const captureBody = captureHttpLogBody(record.method, record.status);
     const doc: HttpLogRecord = {
       ...record,
       path: redactHostedSitePreviewLog(record.path),
@@ -614,8 +621,8 @@ export class HttpLogStore {
       }),
       _id: `${record.requestId}:${Date.now()}:${Math.random().toString(16).slice(2)}`,
       ts: record.ts ? new Date(record.ts) : new Date(),
-      request: sanitizePayload(record.request, isHostedSitePreviewRequest(record.path)),
-      response: sanitizePayload(record.response, isHostedSitePreviewRequest(record.path)),
+      request: sanitizePayload(captureBody ? record.request : { ...record.request, bodyPreview: undefined }, isHostedSitePreviewRequest(record.path)),
+      response: sanitizePayload(captureBody ? record.response : { ...record.response, bodyPreview: undefined }, isHostedSitePreviewRequest(record.path)),
       error: record.error
         ? {
           code: record.error.code,
@@ -784,7 +791,8 @@ export class HttpLogStore {
   private async pruneByCount(): Promise<void> {
     if (!this.collection) return;
     try {
-      const count = await this.collection.countDocuments();
+      // 精确计数只读内建索引，避免扫描历史审计正文。
+      const count = await this.collection.countDocuments({}, { hint: '_id_' });
       if (count <= this.maxDocuments) return;
       const overflow = count - this.maxDocuments;
       const old = await this.collection

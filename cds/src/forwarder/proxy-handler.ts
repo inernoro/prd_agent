@@ -30,6 +30,7 @@ import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
 import { PreviewActivityCollector, type PreviewActivitySnapshot } from './preview-activity.js';
 import {
+  captureHttpLogBody,
   classifyHttpRequestKind,
   createBodyCapture,
   isBinaryContentType,
@@ -377,6 +378,7 @@ export class ProxyHandler {
       complete = true,
     ) => {
       if (complete) completeActiveRequest();
+      const captureBody = captureHttpLogBody(req.method || 'GET', status);
       this.opts.httpLogStore?.record({
         layer: 'forwarder',
         requestKind,
@@ -395,11 +397,11 @@ export class ProxyHandler {
         upstream: `${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? redactHostedSitePreviewLog(outgoingPath) : ''}`,
         request: {
           headers: redactHeaders(req.headers),
-          ...requestCapture.snapshot(req.headers['content-type']),
+          ...requestCapture.snapshot(req.headers['content-type'], captureBody),
         },
         response: {
           headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
-          ...omitHostedSitePreviewBody(response, suppressPreviewBody),
+          ...omitHostedSitePreviewBody(captureBody ? response : { ...response, bodyPreview: undefined }, suppressPreviewBody),
         },
         error: error ? { ...error, message: error.message ? (suppressPreviewBody ? '[preview upstream error omitted]' : redactHostedSitePreviewLog(error.message)) : undefined } : undefined,
       });
@@ -591,12 +593,13 @@ export class ProxyHandler {
             status >= 200 && status < 300;
 
           if (shouldInjectWidget) {
-            this.injectWidgetAndSend(upstreamRes, res, route, finish, logHttp, respHeaders, suppressPreviewBody);
+            this.injectWidgetAndSend(upstreamRes, res, route, finish, logHttp, respHeaders, suppressPreviewBody, captureHttpLogBody(req.method || 'GET', status));
           } else {
             // 非 HTML 或非 2xx:原样透传(保留压缩 / chunked / SSE 等)
             if (!res.headersSent) {
               res.writeHead(status, respHeaders as http.OutgoingHttpHeaders);
             }
+            const captureBody = captureHttpLogBody(req.method || 'GET', status);
             let bodyBytes = 0;
             const previewChunks: Buffer[] = [];
             const shouldLogApiFailure =
@@ -605,7 +608,7 @@ export class ProxyHandler {
               const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
               bodyBytes += buf.length;
               const captured = previewChunks.reduce((n, part) => n + part.length, 0);
-              if (!suppressPreviewBody && captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
+              if (captureBody && !suppressPreviewBody && captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
             });
             upstreamRes.on('end', () => {
               const bodyPreview = isBinaryContentType(contentType)
@@ -924,6 +927,7 @@ export class ProxyHandler {
     ) => void,
     overrideHeaders?: Record<string, string | string[] | undefined>,
     suppressPreviewBody = false,
+    captureBody = true,
   ): void {
     const status = upstreamRes.statusCode ?? 200;
     const headers: Record<string, string | string[] | undefined> = overrideHeaders
@@ -971,7 +975,7 @@ export class ProxyHandler {
       try {
         let body = Buffer.concat(chunks).toString('utf-8');
         const responseForLog = {
-          bodyPreview: suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
+          bodyPreview: !captureBody || suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
           bodyBytes: Buffer.byteLength(body, 'utf8'),
         };
         const widget = buildWidgetScript(route.branchId ?? '', route.branchName ?? '');
