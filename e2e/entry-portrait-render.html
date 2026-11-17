@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8">
+<style>html,body{margin:0;background:black;overflow:hidden}canvas,svg{position:absolute;inset:0;width:1672px;height:941px;display:block}</style>
+<canvas></canvas><svg viewBox="0 0 1672 941" fill="none"></svg>
+<script type="module">
+import {createPortraitRenderer,loadPortraitImages} from '/src/components/entry/portraitRenderer.ts';
+import {FACE_CLIP,PORTRAIT_LINES,PORTRAIT_DETAILS,PORTRAIT_MESH} from '/src/components/entry/portraitGeometry.ts';
+import {samplePortrait,smoothProgress,materialFront} from '/src/components/entry/portraitTimeline.ts';
+const canvas=document.querySelector('canvas'),svg=document.querySelector('svg');
+const paths=(items,offset=0)=>items.map((d,i)=>`<path d="${d}" pathLength="1" stroke-dasharray="1" data-order="${i+offset}"/>`).join('');
+svg.innerHTML=`<defs>
+<linearGradient id="ink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#3481d5"/><stop offset=".5" stop-color="#81caff"/><stop offset="1" stop-color="#3879ce"/></linearGradient>
+<linearGradient id="front" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="-136" y2="-46"><stop stop-color="black"/><stop offset="1" stop-color="white"/></linearGradient>
+<mask id="unbuilt" maskUnits="userSpaceOnUse" x="0" y="0" width="1672" height="941"><rect width="1672" height="941" fill="url(#front)"/></mask>
+<filter id="glow" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.5"/></filter>
+<clipPath id="face"><path d="${FACE_CLIP}"/></clipPath><clipPath id="scan"><rect id="scanrect" width="1672" height="0"/></clipPath></defs>
+<g mask="url(#unbuilt)"><g id="lines" stroke="url(#ink)" stroke-linecap="round" stroke-linejoin="round">
+<g filter="url(#glow)" stroke-width="4" opacity=".32">${paths(PORTRAIT_LINES)}</g>
+<g stroke-width="1.3">${paths(PORTRAIT_LINES)}</g><g stroke-width=".7" opacity=".68">${paths(PORTRAIT_DETAILS,12)}</g></g>
+<g id="mesh" clip-path="url(#face)" stroke="#76b9ef" stroke-width=".65"><g clip-path="url(#scan)">${PORTRAIT_MESH.map(d=>`<path d="${d}"/>`).join('')}</g></g></g>`;
+const renderer=createPortraitRenderer(canvas,await loadPortraitImages());
+if(!renderer)throw new Error('Offline renderer unavailable');
+window.draw=time=>{
+ renderer.draw(time);const state=samplePortrait(time),front=materialFront(state.material);
+ document.querySelector('#lines').setAttribute('opacity',state.lineOpacity);
+ document.querySelector('#mesh').setAttribute('opacity',state.grid);
+ document.querySelector('#scanrect').setAttribute('height',941*smoothProgress(time,.8,1.5));
+ document.querySelector('#front').setAttribute('y1',front-42);document.querySelector('#front').setAttribute('y2',front+48);
+ for(const path of svg.querySelectorAll('[data-order]'))path.setAttribute('stroke-dashoffset',1-Math.max(0,Math.min(1,state.line*1.5-Number(path.dataset.order)*.009)));
+};window.ready=true;
+</script>

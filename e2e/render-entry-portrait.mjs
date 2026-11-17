@@ -1,16 +1,12 @@
 /** Offline asset authoring on CI. Acceptance still records the real public page in real time. */
 import { chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { once } from 'node:events';
 const out = new URL('../work/entry-portrait/',import.meta.url);
 await mkdir(new URL('frames/',out),{recursive:true});
 const document = new URL('../llmgw/web/entry-render.html',import.meta.url);
-await writeFile(document,`<!doctype html><style>html,body{margin:0;background:black;overflow:hidden}canvas{width:1672px;height:941px;display:block}</style><canvas></canvas><script type="module">
-import {createPortraitRenderer,loadPortraitImages} from '/src/components/entry/portraitRenderer.ts';
-const canvas=document.querySelector('canvas');const renderer=createPortraitRenderer(canvas,await loadPortraitImages());
-if(!renderer)throw new Error('Offline renderer unavailable');window.draw=time=>renderer.draw(time);window.ready=true;
-</script>`);
+await writeFile(document,await readFile(new URL('./entry-portrait-render.html',import.meta.url),'utf8'));
 const server=spawn('pnpm',['-C','llmgw/web','exec','vite','--host','127.0.0.1','--port','4173'],{stdio:'inherit'});
 let browser;
 try {
