@@ -45,6 +45,7 @@ export interface ReleaseStrategyDiscovery {
 }
 
 export interface ReleaseTarget {
+  governance?: { required: boolean; enabledAt: string; enabledBy: string };
   id: string;
   projectId: string;
   name: string;
@@ -79,6 +80,7 @@ export interface ReleaseLogEntry {
 }
 
 export interface ReleaseRun {
+  governance?: import('../../../../src/domain/release-governance').ReleaseGovernanceReceipt;
   releaseId: string;
   /** 既有后端审计关联号；不是幂等键。 */
   requestId?: string;
@@ -99,6 +101,7 @@ export interface ReleaseRun {
   startedAt: string;
   finishedAt?: string;
   operator?: string;
+  agentIdentity?: { threadId?: string; confidence?: string };
   previousReleaseId?: string;
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
@@ -147,7 +150,18 @@ export interface ReleasePromotionCandidate {
   blockedReason?: string;
 }
 
+export interface ReleaseComparison {
+  mainSha: string; productionSha: string; baseSha?: string; comparedAt: string;
+  productionFileCount?: number; mainFileCount?: number; overlapCount?: number;
+  files: Array<{path: string; side: 'production' | 'main' | 'both'}>;
+  truncated?: boolean; reason?: string; conflictStatus: 'not-checked';
+}
+
 export interface CenterRow {
+  conflictCheck?: import('../../../../src/domain/release-governance').ReleaseConflictCheck;
+  mergeBack?: import('../../../../src/domain/release-governance').ReleaseMergeBack;
+  currentRun?: ReleaseRun;
+  comparison?: ReleaseComparison;
   target: ReleaseTarget;
   currentVersion: string;
   currentCommit: string;

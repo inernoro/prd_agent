@@ -193,7 +193,13 @@ for (const theme of ['light', 'dark']) test(`${theme} 大字弹窗暂时让预�
   await expect(badge).toBeVisible();
   await page.evaluate(() => document.documentElement.style.fontSize = '100%');
   await page.getByLabel('打开导航菜单', { exact: true }).click();
-  await page.getByRole('link', { name: '发布工作台', exact: true }).first().click();
+  await page.getByRole('link', { name: '发布中心', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/release-center/);
+  await expect(page.getByRole('region', { name: '线上版本与主干追溯' })).toBeVisible();
+  if (!await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().isVisible()) {
+    await page.getByRole('button', { name: '更多操作', exact: true }).click();
+  }
+  await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
   await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
   await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
   await page.getByRole('button', { name: '流水线', exact: true }).click();

@@ -67,11 +67,12 @@ describe('发布控制台 · 路由与入口接线', () => {
     expect(fn).toMatch(/release-console'\)\)\s*return\s*'release-center'/);
   });
 
-  /** 用户 2026-08-13：「肯定是要新版的」——左栏落地页必须是控制台，不是发布中心。 */
-  it('左栏导航落地到发布控制台，发布中心退居管理面', () => {
-    const rail = SHELL.slice(SHELL.indexOf('to="/release-console"'), SHELL.indexOf('<span>Releases</span>'));
-    expect(rail, '左栏 Releases 应指向 /release-console').toContain('preloadReleaseConsolePage');
-    expect(SHELL).not.toContain('to="/release-center"');
+  /** 2026-11-16：用户选择版本追溯作为主页面，执行控制台保留中心内的入口。 */
+  it('左栏先展示发布追溯中心，中心仍可进入执行控制台', () => {
+    const rail = SHELL.slice(SHELL.indexOf('to="/release-center"'), SHELL.indexOf('to="/task-schedule"'));
+    expect(rail).toContain('preloadReleaseCenterPage');
+    expect(rail).toContain('aria-label="发布中心"');
+    expect(CENTER).toContain('to={consoleHref()}');
     // 接入 Agent 的语境识别要认得新落地页，否则在它上面退化成 general
     expect(read('lib/agent-onboarding.ts')).toContain("startsWith('/release-console')");
   });
