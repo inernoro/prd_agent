@@ -47,7 +47,7 @@ await mkdir(join(profile,'Default'),{recursive:true});
 await writeFile(join(profile,'Default','Preferences'),JSON.stringify({credentials_enable_service:false,profile:{password_manager_enabled:false}}));
 const context = await chromium.launchPersistentContext(profile, {
   headless: false, viewport: null, timezoneId: 'Asia/Shanghai', reducedMotion: 'no-preference',
-  ignoreDefaultArgs: ['--enable-automation'],
+  ignoreDefaultArgs: ['--enable-automation'], colorScheme: 'dark',
   args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage', '--disable-gpu-compositing', '--disable-save-password-bubble'],
 });
 // Observe actual scene frames without changing the renderer, clock, auth or API responses.
@@ -147,6 +147,45 @@ try {
       await writeFile(new URL(`${mode}-ffmpeg.log`, output), stderr);
     }
   }
+  // Real menu operations, navigation and reload verify the preference across cinematic and ordinary pages.
+  const themeEvidence = [];
+  for (const theme of ['light', 'dark']) {
+    await page.getByLabel('打开用户菜单', {exact:true}).click();
+    await page.getByRole('button', {name:theme === 'light' ? '切换浅色' : '切换深色', exact:true}).click();
+    await page.waitForFunction(expected => document.documentElement.dataset.theme === expected && !document.querySelector('details.lg-user-menu[open]'),theme);
+    const paint = await page.locator('.gateway-quickstart-stage').evaluate(el => ({scheme:getComputedStyle(el).colorScheme, ink:getComputedStyle(el).color}));
+    assert.equal(paint.scheme,theme);
+    await page.screenshot({path:new URL(`${theme}-conversation.png`,output).pathname});
+    await page.getByLabel('打开用户菜单', {exact:true}).click();
+    await page.locator('.lg-user-popover').getByLabel('切换组织', {exact:true}).click();
+    assert.equal(await page.locator('details.lg-user-menu').getAttribute('open'),'');
+    await page.locator('.lg-console-brand > span:last-child').click();
+    assert.equal(await page.locator('details.lg-user-menu[open], details.gateway-account-organizations[open]').count(),0);
+    await page.getByLabel('打开用户菜单', {exact:true}).click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('details.lg-user-menu[open]').count(),0);
+    await page.locator('.gateway-entry-help > summary').click();
+    await page.locator('.lg-console-brand > span:last-child').click();
+    assert.equal(await page.locator('.gateway-entry-help[open]').count(),0);
+    const starter = page.locator('.gateway-intent-starters button').first();
+    const idle = await starter.evaluate(el => getComputedStyle(el).backgroundColor);
+    await starter.hover(); await page.waitForTimeout(200);
+    const hover = await starter.evaluate(el => getComputedStyle(el).backgroundColor);
+    assert.notEqual(hover,idle); await page.mouse.move(0,0);
+    await page.locator('.lg-console-sidebar nav').getByRole('link',{name:'概览',exact:true}).click();
+    await page.waitForURL(url => url.origin === gateway.origin && url.pathname === '/');
+    assert.equal(await page.locator('html').getAttribute('data-theme'),theme);
+    await page.screenshot({path:new URL(`${theme}-overview.png`,output).pathname});
+    await page.locator('.lg-console-sidebar nav').getByRole('link',{name:'对话',exact:true}).click();
+    await page.reload();
+    await page.getByRole('textbox',{name:'我想做什么',exact:true}).waitFor();
+    assert.equal(await page.locator('html').getAttribute('data-theme'),theme);
+    const stored = await page.evaluate(() => localStorage.getItem('llmgw.theme'));
+    assert.equal(stored,theme);
+    themeEvidence.push({theme,paint,stored,hoverChanged:hover !== idle,outsideDismissed:true,escapeDismissed:true});
+  }
+  assert.notEqual(themeEvidence[0].paint.ink,themeEvidence[1].paint.ink);
+  await writeFile(new URL('theme-menu-journey.json',output),JSON.stringify(themeEvidence,null,2));
 } catch (error) {
   await writeFile(new URL('failure.txt', output), String(error));
   // Do not record credentials, auth storage, SSO URL fragments, or request headers.

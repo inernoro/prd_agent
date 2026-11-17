@@ -1,3 +1,4 @@
+import { useDismissableMenus } from '@/lib/useDismissableMenus';
 import { readSidebarCollapsed, saveSidebarCollapsed } from '@/lib/sidebarPreference';
 import { finishEntryArrival } from '@/components/entry/entryArrival';
 import { GatewaySoundToggle } from '@/components/entry/GatewaySoundToggle';
@@ -60,6 +61,7 @@ export function ConsoleLayout() {
   const { user, tenant, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const menuRoot = useDismissableMenus(location.key);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const isQuickstart = location.pathname === '/quickstart';
@@ -150,7 +152,7 @@ export function ConsoleLayout() {
   }
 
   return (
-    <div className={`lg-console-shell${isQuickstart ? ' is-entry-workspace' : ''}${sidebarCollapsed ? ' has-collapsed-sidebar' : ''}`}>
+    <div ref={menuRoot} className={`lg-console-shell${isQuickstart ? ' is-entry-workspace' : ''}${sidebarCollapsed ? ' has-collapsed-sidebar' : ''}`}>
       <header className="lg-console-header entry-shell-chrome">
         <div className="lg-console-brand">
           <button className="lg-mobile-menu-button" type="button" aria-label="打开导航" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)}><Menu size={18} /></button>

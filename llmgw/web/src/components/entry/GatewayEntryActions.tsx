@@ -22,7 +22,7 @@ export function GatewayEntryCorners({ scope, onChoose, disabled }: { scope: stri
       {previous && <button type="button" disabled={disabled} title={previous.intent} onClick={() => onChoose(previous.intent)}><RotateCcw size={15} aria-hidden="true" /><span><small>继续上次的接入</small><span>{previous.intent}</span></span><ArrowUpRight size={14} aria-hidden="true" /></button>}
     </div>
     <div className="gateway-entry-shortcuts">
-      <details className="gateway-entry-help" onKeyDown={event => { if (event.key === 'Escape') event.currentTarget.open = false; }}>
+      <details className="gateway-entry-help">
         <summary>第一次接入？</summary>
         <div className="gateway-entry-help-body"><span>让想法先有一个起点</span><p>说说谁会使用、想完成什么。细节可以在下一步调整。</p><blockquote>{example}</blockquote><button type="button" disabled={disabled} onClick={event => { onChoose(example); const panel = event.currentTarget.closest('details'); if (panel) panel.open = false; }}>试试这句 <ArrowUpRight size={14} aria-hidden="true" /></button></div>
       </details>
