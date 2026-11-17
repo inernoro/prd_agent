@@ -488,7 +488,7 @@ export function ServiceKeysPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
               <code style={createdKeyStyle}>{created.key}</code>
               <Button size="sm" onClick={() => void copyCreatedKey()}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制'}</Button>
-              <Link className="lg-text-link" to="/quickstart">打开对话</Link>
+              <Link className="lg-text-link" to="/quickstart">对话</Link>
             </div>
           </div>
         ) : null}
