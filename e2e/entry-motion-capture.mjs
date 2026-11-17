@@ -5,7 +5,7 @@ import { mkdir, writeFile, readFile, mkdtemp } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { waitForEntryPreviews } from './entry-preview-readiness.mjs';
 const output = new URL('../work/entry-motion/', import.meta.url);
 await mkdir(output, { recursive: true });
 const motion = JSON.parse(await readFile(new URL('./fixtures/media/portrait-motion.source.json',import.meta.url),'utf8'));
@@ -14,34 +14,9 @@ const map = new URL(target.mapUrl);
 const gateway = new URL(target.gatewayUrl);
 assert.equal(map.protocol, 'https:'); assert.equal(gateway.protocol, 'https:');
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD, 'Missing real preview login credentials');
-// Wait for the real new public bundles; never record an older deployed scene as the result.
-// MAP splits the portrait into lazy chunks; Gateway owns the scene being recorded in its entry bundle.
-for (const destination of [gateway]) {
-  const deadline = Date.now() + 12 * 60_000;
-  while (true) {
-    try {
-      const response = await fetch(destination, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
-      const document = await response.text();
-      const source = document.match(/<script[^>]*type="module"[^>]*src="([^"]+)/)?.[1];
-      // The widget deliberately starts without a version and refreshes it from runtime facts.
-      const branchId = document.match(/var BRANCH_ID=['"]([^'"]+)['"]/i)?.[1];
-      const state = await fetch(new URL('/_cds/api/branches',destination), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
-      const branches = await state.json();
-      const deployed = branches.branches?.find(branch => branch.id === branchId)?.runningCommitSha;
-      if (response.ok && source && deployed === process.env.EXPECTED_COMMIT) {
-        const bundle = await fetch(new URL(source,destination), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
-        const javascript = await bundle.text();
-        if (bundle.ok && javascript.includes(motion.fileName) && javascript.includes('direct-night')) {
-          const media = await fetch(new URL(`/media/entry/${motion.fileName}`,destination), { headers: { 'User-Agent':'Mozilla/5.0' }, signal:AbortSignal.timeout(15000) });
-          if (media.ok && createHash('sha256').update(new Uint8Array(await media.arrayBuffer())).digest('hex') === motion.sha256) break;
-        }
-      }
-    } catch { /* Public deployment may still be switching; bounded below. */ }
-    assert.ok(Date.now() < deadline, 'The new public portrait bundle did not become available');
-    console.log('Waiting for the expected public portrait bundle:', destination.hostname);
-    await new Promise(resolve => setTimeout(resolve,15000));
-  }
-}
+// Bind both public app bundles and the actual film before filling any login form.
+const readiness = await waitForEntryPreviews({ map, gateway, motion, expectedCommit: process.env.EXPECTED_COMMIT });
+await writeFile(new URL('preview-readiness.json', output), JSON.stringify(readiness, null, 2));
 const profile = await mkdtemp(join(tmpdir(),'entry-motion-'));
 await mkdir(join(profile,'Default'),{recursive:true});
 await writeFile(join(profile,'Default','Preferences'),JSON.stringify({credentials_enable_service:false,profile:{password_manager_enabled:false}}));

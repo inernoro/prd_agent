@@ -50,6 +50,7 @@ jobs:
           pnpm build
       - name: Recording script syntax and types
         run: |
+          node --test e2e/entry-preview-readiness.test.mjs
           node --check e2e/entry-motion-capture.mjs
           python3 -m py_compile e2e/entry-motion-compare.py
           pnpm -C e2e typecheck
