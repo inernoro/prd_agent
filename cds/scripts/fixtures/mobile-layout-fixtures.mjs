@@ -145,6 +145,7 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
+  '/api/cluster/identity/status': { enabled: false, state: 'independent' },
   // 主线容量与治理面板的只读合成数据；未采样/部分扫描不表示真实零占用。
   '/api/host-capacity/observation': { status: 'unknown', sampledAt: null, reason: '合成夹具尚未采样，当前风险未知' },
   '/api/host-capacity/sampling': { enabled: false, running: false, external: false, sources: {}, unavailableSources: [], coverage: '合成只读容量采样' },
@@ -163,6 +164,10 @@ const EXACT = {
   '/api/notices': { notices: [] },
   '/api/notices/read-all': { ok: true, changed: 0 },
   '/api/projects': { projects: [project] },
+  '/api/dts/capabilities': { protocolVersion: 1, projectId: PROJECT_ID, configured: false, configureAllowed: false, executeAllowed: false, connectors: [] },
+  '/api/dts/connections': { connections: [], services: [] },
+  '/api/dts/runs': { runs: [] },
+  '/api/dts/policies': { policies: [] },
   '/api/code-reviews': { tasks: [], totals: { source: 0, report: 0, all: 0 }, newCount: 0, historyCount: 0,
     snapshotAt: '2026-11-09T00:00:00.000Z', page: { offset: 0, limit: 10, total: 0, nextOffset: null } },
   '/api/code-reviews/capabilities': { engineConfigured: false, mailConfigured: false,

@@ -343,15 +343,19 @@ def test_fresh_install_discovers_bundled_sites_offline(workspace, monkeypatch):
     assert not (root / 'cds-instances.json').exists()
 
 
-def test_bundled_standby_without_its_grant_never_uses_primary_key(workspace, monkeypatch):
+def test_bundled_standby_without_membership_never_receives_primary_key(workspace, monkeypatch):
     root, _ = workspace
     (root / 'cds-instances.json').unlink()
     save('https://cds.miduo.org', 'source-project', 'primary-only-secret')
     monkeypatch.setenv('CDS_HOST', 'https://cds.miduo.org')
     monkeypatch.setenv('AI_ACCESS_KEY', 'primary-global-secret')
-    monkeypatch.setattr(cli, '_request', lambda *a, **kw: pytest.fail('missing standby grant must stop before any request'))
+    def source_only(method, path, **kwargs):
+        assert cli._cds_base() == 'https://cds.miduo.org'
+        assert (method, path) == ('GET', '/api/cluster/identity/status')
+        return 200, {'enabled': False}, {}
+    monkeypatch.setattr(cli, '_request', source_only)
     code, text = run('instance', 'use', 'standby')
-    assert code == 1 and '尚未接入' in json.loads(text)['error']
+    assert code == 2 and '统一授权尚未核对' in json.loads(text)['error']
     assert 'secret' not in text
     assert not (root / '.cds/active-instance.json').exists()
 
@@ -498,3 +502,67 @@ def test_onboarding_rejects_global_instance_before_requests_or_pointer_changes(w
     assert code == 2
     assert calls == []
     assert all((root / '.cds' / n).read_bytes() == content for n, content in before.items())
+
+
+def test_cluster_member_reuses_only_authenticated_authority_grant(workspace, monkeypatch):
+    root, catalog = workspace
+    catalog['cluster'] = {'id': 'fixture-cluster', 'authorityId': 'primary'}
+    (root / 'cds-instances.json').write_text(json.dumps(catalog))
+    save('https://primary.example', 'a', 'cdsp_source_value')
+    calls = []
+    def request(method, path, **kwargs):
+        host = cli._cds_base()
+        calls.append((host, method, path))
+        assert cli._auth_headers().get('X-AI-Access-Key') == 'cdsp_source_value'
+        if host == 'https://primary.example':
+            assert path == '/api/cluster/identity/status'
+            return 200, {'enabled': True, 'role': 'authority', 'clusterId': 'fixture-cluster',
+                         'members': [{'nodeId': 'standby', 'url': 'https://standby.example', 'projects': {'a': 'b'}}]}, {}
+        assert host == 'https://standby.example' and path == '/api/projects/b'
+        return ready()
+    monkeypatch.setattr(cli, '_request', request)
+    code, text = run('instance', 'connect', 'standby', '--project', 'b')
+    assert code == 0 and '统一授权' in text
+    assert not any(method != 'GET' for _, method, _ in calls)
+    assert 'cdsp_source_value' not in text
+    assert json.loads((root / '.cds/credentials.json').read_text())['host'] == 'https://primary.example'
+    assert all('access-requests' not in route for _, _, route in calls)
+
+
+def test_declared_cluster_cannot_fall_back_to_an_old_member_key(workspace, monkeypatch):
+    root, catalog = workspace
+    catalog['cluster'] = {'id': 'fixture-cluster', 'authorityId': 'primary'}
+    (root / 'cds-instances.json').write_text(json.dumps(catalog))
+    save('https://standby.example', 'b', 'cdsp_old_member')
+    save('https://primary.example', 'a', 'cdsp_source')
+    def request(method, path, **kwargs):
+        assert cli._cds_base() == 'https://primary.example'
+        return 503, {'error': 'unavailable'}, {}
+    monkeypatch.setattr(cli, '_request', request)
+    code, text = run('instance', 'use', 'standby')
+    assert code == 2 and '不会申请或使用独立授权' in text
+    assert not (root / '.cds/active-instance.json').exists()
+
+
+def test_member_issued_credentials_switch_back_without_new_approval(workspace, monkeypatch):
+    root, catalog = workspace
+    catalog['cluster'] = {'id': 'fixture-cluster', 'authorityId': 'primary'}
+    (root / 'cds-instances.json').write_text(json.dumps(catalog))
+    save('https://primary.example', 'a', 'cdsp_obsolete_authority_value')
+    save('https://standby.example', 'b', 'cdsp_realm_value')
+    def request(method, path, **kwargs):
+        assert method == 'GET'
+        assert cli._auth_headers().get('X-AI-Access-Key') == 'cdsp_realm_value'
+        if path == '/api/projects/a':
+            return 200, {'id': 'a', 'gitRepoUrl': 'https://github.com/acme/app.git'}, {}
+        assert path == '/api/cluster/identity/status'
+        if cli._cds_base() == 'https://standby.example':
+            return 200, {'enabled': True, 'role': 'member', 'nodeId': 'standby', 'authorityNodeId': 'primary',
+                         'authorityUrl': 'https://primary.example', 'clusterId': 'fixture-cluster', 'projects': {'a': 'b'}}, {}
+        return 200, {'enabled': True, 'role': 'authority', 'clusterId': 'fixture-cluster',
+                     'members': [{'nodeId': 'standby', 'url': 'https://standby.example', 'projects': {'a': 'b'}}]}, {}
+    monkeypatch.setattr(cli, '_request', request)
+    code, text = run('instance', 'connect', 'primary', '--project', 'a')
+    assert code == 0 and '统一授权' in text
+    assert 'cdsp_realm_value' not in text
+    assert json.loads((root / '.cds/credentials.json').read_text())['host'] == 'https://standby.example'

@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.22.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.23.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3709,6 +3709,118 @@ def _acceptance_lease(task_id: str) -> str:
         return token
     except (OSError, ValueError, AttributeError):
         die("没有可用的领取票据，请先领取任务", code=1)
+
+
+def cmd_dts(args: argparse.Namespace) -> None:
+    project = (getattr(args, "project", None) or os.environ.get("CDS_PROJECT_ID", "")).strip()
+    bound = os.environ.get("CDS_PROJECT_ID", "").strip()
+    if not project:
+        die("数据同步需要项目：请先 cdscli connect，或传 --project <projectId>")
+    if os.environ.get("CDS_PROJECT_KEY", "").strip() and bound and project != bound:
+        die("项目级凭据不能用于其他项目的数据同步")
+    query = "?" + urllib.parse.urlencode({"projectId": project})
+
+    def request(method: str, path: str, payload: Any = None) -> dict:
+        status, result, _ = _request(method, "/api/dts" + path + query,
+                                    body=({**payload, "projectId": project} if payload is not None else None),
+                                    timeout=60, follow_redirects=False)
+        if not 200 <= status < 300:
+            messages = {400: "同步参数不符合要求", 401: "凭据无效或已过期", 403: "当前项目无权执行此操作",
+                        404: "连接或任务不存在", 409: "版本、数据或任务状态已变化，请重新查询原任务后比较",
+                        502: "传输服务未接受操作，请查询原任务", 503: "同步服务暂不可用，请稍后查询原任务"}
+            die(f"HTTP {status}: {messages.get(status, '数据同步请求失败，请查看 CDS 任务详情')}", code=2 if status < 500 else 3)
+        if not isinstance(result, dict):
+            die("CDS 数据同步响应格式错误")
+        return result
+
+    def scope(resource: Any) -> None:
+        if not isinstance(resource, dict) or resource.get("projectId") != project:
+            die("CDS 数据同步返回资源与当前项目不匹配")
+
+    capabilities = request("GET", "/capabilities")
+    scope(capabilities)
+    tools = {"cds_dts_connections", "cds_dts_plan", "cds_dts_start", "cds_dts_runs", "cds_dts_control", "cds_dts_policies"}
+    if (type(capabilities.get("protocolVersion")) is not int or capabilities["protocolVersion"] != 1
+            or not isinstance(capabilities.get("tools"), list)
+            or any(not isinstance(t, str) or t not in tools for t in capabilities["tools"])
+            or len(set(capabilities["tools"])) != len(capabilities["tools"])):
+        die("数据同步协议与当前 cdscli 不兼容，请更新服务或 CLI")
+    action = args.action
+    required = {"connections": "cds_dts_connections", "plan": "cds_dts_plan", "start": "cds_dts_start", "runs": "cds_dts_runs", "get": "cds_dts_runs",
+                "pause": "cds_dts_control", "resume": "cds_dts_control", "cancel": "cds_dts_control", "policies": "cds_dts_policies", "policy": "cds_dts_policies"}
+    if action == "capabilities":
+        ok(capabilities)
+        return
+    if action in required and required[action] not in capabilities["tools"]:
+        die("当前 CDS 未开放此数据同步操作")
+    if action in ("connections", "runs", "policies"):
+        result = request("GET", "/" + action)
+        if not isinstance(result.get(action), list):
+            die("CDS 数据同步列表格式错误")
+        for resource in result[action]:
+            scope(resource)
+        if action == "connections":
+            if not isinstance(result.get("services", []), list):
+                die("CDS 数据服务目录格式错误")
+            for resource in result.get("services", []):
+                scope(resource)
+    elif action in ("engine", "connection"):
+        payload = _acceptance_json_file(args.file)
+        if any(key in payload for key in ("projectId", "host", "password", "uri", "projectKey")):
+            die("连接文件只能引用已有项目配置，不能携带凭据或覆盖项目")
+        result = request("PUT" if action == "engine" else "POST", "/engine" if action == "engine" else "/connections", payload)
+        if action == "connection":
+            scope(result.get("connection"))
+    elif action == "plan":
+        result = request("POST", "/plans", {"sourceId": args.source, "targetId": args.target, "mode": args.mode})
+        scope(result.get("plan"))
+    elif action == "start":
+        result = request("POST", "/runs", {"planId": args.plan, "idempotencyKey": args.idempotency_key})
+        scope(result.get("run"))
+        if result["run"].get("plan", {}).get("id") != args.plan:
+            die("返回任务与比较计划不符")
+    elif action == "policy":
+        if args.disable or args.enable:
+            result = request("PATCH", "/policies/" + urllib.parse.quote(args.disable or args.enable, safe=""), {"enabled": bool(args.enable)})
+        else:
+            if not args.source or not args.target:
+                die("创建账号同步规则需要 --source 与 --target")
+            result = request("POST", "/policies", {"sourceId": args.source, "targetId": args.target})
+        scope(result.get("policy"))
+    else:
+        path = "/runs/" + urllib.parse.quote(args.id, safe="")
+        result = request("GET", path)
+        scope(result.get("run"))
+        if result["run"].get("id") != args.id:
+            die("返回任务与请求编号不符")
+        if action != "get":
+            result = request("POST", path + "/" + action, {})
+            scope(result.get("run"))
+    ok(result)
+
+
+def _register_dts_parser(sub: Any) -> None:
+    commands = sub.add_parser("dts", help="SeaTunnel 数据同步：连接、比较、只追加、账号规则与恢复").add_subparsers(dest="action", required=True)
+    for name in ("capabilities", "connections", "runs", "policies", "engine", "connection", "plan", "start", "get", "pause", "resume", "cancel", "policy"):
+        p = commands.add_parser(name)
+        p.add_argument("--project")
+        if name in ("engine", "connection"):
+            p.add_argument("--file", required=True, help="结构化 JSON；连接密钥只能引用已有项目配置")
+        if name in ("plan", "policy"):
+            p.add_argument("--source", required=name == "plan")
+            p.add_argument("--target", required=name == "plan")
+        if name == "plan":
+            p.add_argument("--mode", choices=["append-only", "account-authority"], default="append-only")
+        if name == "start":
+            p.add_argument("--plan", required=True)
+            p.add_argument("--idempotency-key", required=True)
+        if name in ("get", "pause", "resume", "cancel"):
+            p.add_argument("id")
+        if name == "policy":
+            toggle = p.add_mutually_exclusive_group()
+            toggle.add_argument("--enable")
+            toggle.add_argument("--disable")
+        p.set_defaults(func=cmd_dts)
 
 
 def cmd_acceptance(args: argparse.Namespace) -> None:
@@ -10463,7 +10575,14 @@ def _instance_catalog(value: Any = None, *, strict: bool = True) -> dict[str, An
             ids.add(ident)
             hosts.add(host)
             entries.append({"id": ident, "name": name.strip(), "role": entry["role"], "url": host})
-        return {"version": 1, "instances": entries}
+        result = {"version": 1, "instances": entries}
+        cluster = data.get("cluster")
+        if cluster is not None:
+            if (not isinstance(cluster, dict) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", str(cluster.get("id", "")))
+                    or not any(e["id"] == cluster.get("authorityId") and e["role"] == "primary" for e in entries)):
+                raise ValueError("集群目录无效")
+            result["cluster"] = {"id": cluster["id"], "authorityId": cluster["authorityId"]}
+        return result
     except (ValueError, KeyError, TypeError, AttributeError, OSError):
         if strict:
             die("cds-instances.json 无效，请检查实例标识、名称和 HTTPS 根地址", code=1)
@@ -10552,12 +10671,115 @@ def _instance_credentials(entry: dict[str, Any], *, archived_only: bool = False)
     return candidate
 
 
+def _cluster_shared_credentials(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Only an authenticated authority may authorize forwarding credentials to a member."""
+    catalog = _instance_catalog()
+    if not catalog.get("cluster"):
+        return None
+    primary = next((item for item in catalog["instances"] if item["id"] == catalog["cluster"]["authorityId"]), None)
+    if not primary:
+        return None
+    source = _instance_credentials(primary)
+    explicit = _EXPLICIT_CREDENTIAL_ENV
+    if explicit.get("CDS_HOST") and _credential_origin(explicit["CDS_HOST"]) == primary["url"]:
+        source = {"host": primary["url"], "projectId": explicit.get("CDS_PROJECT_ID"),
+                  "projectKey": explicit.get("CDS_PROJECT_KEY"), "bootstrapKey": explicit.get("AI_ACCESS_KEY")}
+    else:
+        current = _read_local_credentials_file()
+        current_host = explicit.get("CDS_HOST") or current.get("host")
+        if current_host and any(item["role"] == "standby" and item["url"] == _credential_origin(current_host) for item in catalog["instances"]):
+            source = None  # Prefer the current member grant over an archived authority key.
+    if primary["url"] == entry["url"] and source and (source.get("projectKey") or source.get("bootstrapKey")):
+        return None  # The existing authority connection needs no cross-node reuse.
+    source_member, member_bindings = None, None
+    if not source or not (source.get("projectKey") or source.get("bootstrapKey")):
+        candidate = _read_local_credentials_file()
+        if explicit.get("CDS_HOST") and _credential_origin(explicit["CDS_HOST"]) != primary["url"]:
+            candidate = {"host": explicit["CDS_HOST"], "projectId": explicit.get("CDS_PROJECT_ID"),
+                         "projectKey": explicit.get("CDS_PROJECT_KEY"), "bootstrapKey": explicit.get("AI_ACCESS_KEY")}
+        source_member = next((item for item in catalog["instances"] if item["role"] == "standby"
+                              and candidate.get("host") and item["url"] == _credential_origin(candidate["host"])), None)
+        if not source_member or not (candidate.get("projectKey") or candidate.get("bootstrapKey")):
+            return None
+        previous = {key: os.environ.get(key) for key in _EXPLICIT_CREDENTIAL_ENV}
+        try:
+            for key in _EXPLICIT_CREDENTIAL_ENV:
+                os.environ.pop(key, None)
+            os.environ["CDS_HOST"] = source_member["url"]
+            for field, key in (("projectKey", "CDS_PROJECT_KEY"), ("bootstrapKey", "AI_ACCESS_KEY")):
+                if candidate.get(field): os.environ[key] = candidate[field]
+            status, proof, _ = _request("GET", "/api/cluster/identity/status", timeout=20,
+                                        fatal_network_errors=False, follow_redirects=False)
+        finally:
+            _restore_auth_env(previous)
+        verified = (status == 200 and isinstance(proof, dict) and proof.get("enabled") is True
+                    and proof.get("role") == "member" and proof.get("nodeId") == source_member["id"]
+                    and proof.get("clusterId") == catalog["cluster"]["id"] and proof.get("authorityUrl") == primary["url"]
+                    and proof.get("authorityNodeId") == primary["id"] and isinstance(proof.get("projects"), dict))
+        _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", {"operation": "cluster-identity-discovery",
+            "host": source_member["url"], "status": status, "verified": verified, "trace": _TRACE_ID})
+        if not verified: return None
+        member_bindings = proof["projects"]
+        project = candidate.get("projectId")
+        matches = [a for a, b in member_bindings.items() if b == project] if project else []
+        if project and len(matches) != 1:
+            die("当前项目的集群绑定未确认，未发送凭据到其他节点；无需申请独立授权。", code=2)
+        source = {**candidate, "host": primary["url"], "projectId": matches[0] if matches else None}
+    if not source or not (source.get("projectKey") or source.get("bootstrapKey")):
+        return None
+    previous = {key: os.environ.get(key) for key in _EXPLICIT_CREDENTIAL_ENV}
+    started = time.time()
+    try:
+        for key in _EXPLICIT_CREDENTIAL_ENV:
+            os.environ.pop(key, None)
+        os.environ["CDS_HOST"] = primary["url"]
+        for field, key in (("projectKey", "CDS_PROJECT_KEY"), ("bootstrapKey", "AI_ACCESS_KEY")):
+            if source.get(field):
+                os.environ[key] = source[field]
+        status, body, _ = _request("GET", "/api/cluster/identity/status", timeout=15,
+                                   fatal_network_errors=False, follow_redirects=False)
+    finally:
+        _restore_auth_env(previous)
+    valid = isinstance(body, dict) and status == 200 and body.get("enabled") is True and body.get("role") == "authority" and body.get("clusterId") == catalog["cluster"]["id"]
+    target = source_member if entry["url"] == primary["url"] else entry
+    member = next((m for m in body.get("members", []) if isinstance(m, dict) and m.get("nodeId") == target["id"]
+                   and m.get("url") == target["url"]), None) if valid and target else None
+    bindings = member.get("projects") if member else None
+    valid = bool(valid and member and isinstance(bindings, dict) and len(bindings) <= 1000
+                 and all(isinstance(k, str) and isinstance(v, str) and re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", k)
+                         and re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", v) for k, v in bindings.items()))
+    if valid and source_member:
+        registered = next((m for m in body.get("members", []) if isinstance(m, dict)
+                           and m.get("nodeId") == source_member["id"] and m.get("url") == source_member["url"]), None)
+        valid = bool(registered and registered.get("projects") == member_bindings)
+    _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", {
+        "operation": "cluster-identity-membership", "host": primary["url"], "target": entry["url"], "status": status,
+        "startedAt": started, "durationMs": round((time.time() - started) * 1000), "trace": _TRACE_ID,
+        "responseReceived": status != 0, "snapshot": {"registeredMember": valid, "enabled": body.get("enabled") if isinstance(body, dict) and type(body.get("enabled")) is bool else None},
+        "snapshotPolicy": "authenticated authority membership decision; credentials and account data omitted"})
+    if not valid:
+        return None
+    project = source.get("projectId")
+    if project and not bindings.get(project):
+        die("当前项目尚未绑定到集群备用节点，请在主 CDS 核对项目绑定；无需另行申请授权。", code=2)
+    return {**source, "host": entry["url"], "projectId": project if entry["url"] == primary["url"] else bindings.get(project) if project else None,
+            "clusterId": body["clusterId"], "sharedCluster": True, "authorityHost": primary["url"]}
+
+
 def _apply_instance(entry: dict[str, Any], *, require_project: bool = True) -> dict[str, Any]:
-    credentials = _instance_credentials(entry)
-    if not credentials or (require_project and not (credentials.get("projectId") and credentials.get("projectKey"))):
+    shared = _cluster_shared_credentials(entry)
+    if _instance_catalog().get("cluster") and entry["role"] != "primary" and not shared:
+        die("备用节点的集群统一授权尚未核对，请检查主节点连接与成员登记；不会申请或使用独立授权。", code=2)
+    credentials = shared or _instance_credentials(entry)
+    if not credentials and _EXPLICIT_CREDENTIAL_ENV.get("CDS_HOST") and _credential_origin(_EXPLICIT_CREDENTIAL_ENV["CDS_HOST"]) == entry["url"]:
+        credentials = {"host": entry["url"], "projectId": _EXPLICIT_CREDENTIAL_ENV.get("CDS_PROJECT_ID"),
+                       "projectKey": _EXPLICIT_CREDENTIAL_ENV.get("CDS_PROJECT_KEY"), "bootstrapKey": _EXPLICIT_CREDENTIAL_ENV.get("AI_ACCESS_KEY")}
+    system_cluster = credentials and credentials.get("sharedCluster") and credentials.get("bootstrapKey")
+    system_cluster = system_cluster or (credentials and credentials.get("bootstrapKey") and entry["role"] == "primary")
+    if not credentials or (require_project and not system_cluster and not (credentials.get("projectId") and credentials.get("projectKey"))):
         die(f"{entry['name']} 尚未接入当前项目。运行 instance connect {entry['id']} --project <目标项目ID>，"
             "或使用 --new-project --create-project <名称> 创建后再部署。原实例授权未改变。", code=1)
-    # Selection is explicit: never forward the previous host's key, including inherited env keys.
+    # Cross-host reuse is allowed only for a member registered by the authenticated authority.
     for key in _EXPLICIT_CREDENTIAL_ENV:
         os.environ.pop(key, None)
     os.environ["CDS_HOST"] = entry["url"]
@@ -10571,6 +10793,17 @@ def _check_instance(entry: dict[str, Any]) -> dict[str, Any]:
     previous = {key: os.environ.get(key) for key in _EXPLICIT_CREDENTIAL_ENV}
     try:
         creds = _apply_instance(entry)
+        if creds.get("bootstrapKey") and not creds.get("projectId"):
+            status, body, _ = _request("GET", "/api/cluster/identity/status", timeout=20,
+                                      fatal_network_errors=False, follow_redirects=False)
+            ready = status == 200 and isinstance(body, dict) and body.get("enabled") is True and (
+                body.get("state") == "authority" if entry["role"] == "primary" else body.get("clusterId") == creds.get("clusterId") and body.get("state") == "synchronized")
+            result = {"instance": entry["id"], "host": entry["url"], "clusterId": body.get("clusterId") if isinstance(body, dict) else None,
+                      "sharedAuthorization": True, "projectBound": False, "ready": ready, "status": status, "trace": _TRACE_ID}
+            _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", {**result, "operation": "cluster-identity-check"})
+            if not ready:
+                die("集群统一授权尚未验证通过，未切换或部署；请核对主备连接。", code=2)
+            return result
         project_id = str(creds["projectId"])
         started = time.time()
         status, body, headers = _request("GET", f"/api/projects/{urllib.parse.quote(project_id, safe='')}",
@@ -10673,10 +10906,10 @@ def _load_recommendation() -> dict[str, Any]:
     for entry in entries:
         if entry["url"] == host:
             continue
-        credentials = _instance_credentials(entry) or {}
+        credentials = _cluster_shared_credentials(entry) or _instance_credentials(entry) or {}
         # Presence only; no request to an alternative and no claim its key is valid.
-        authorized = bool(credentials.get("projectId") and credentials.get("projectKey"))
-        alternatives.append({**entry, "authorization": "stored-not-verified" if authorized else "required",
+        authorized = bool(credentials.get("sharedCluster") or credentials.get("projectId") and credentials.get("projectKey"))
+        alternatives.append({**entry, "authorization": "shared-cluster" if credentials.get("sharedCluster") else "stored-not-verified" if authorized else "required",
                              "nextCommand": f"instance check {entry['id']}" if authorized else
                                             f"instance connect {entry['id']} --project <目标项目ID>"})
     result = {"host": host, "state": state, "cpu": metrics, "thresholdPercent": 80,
@@ -10705,11 +10938,11 @@ def _notify_high_load(result: dict[str, Any]) -> None:
     if result["state"] != "high":
         return
     options = "；".join(
-        f"{item['name']} {item['url']}（独立授权{'已保存，需校验' if item['authorization'] == 'stored-not-verified' else '尚未申请'}）"
+        f"{item['name']} {item['url']}（{'复用集群授权' if item['authorization'] == 'shared-cluster' else '授权需校验'}）"
         for item in result["alternatives"])
     message = (f"当前 CDS {result['host']} CPU 负载偏高（{result['cpu']['loadPercent']}%）。"
                + (f"可选择备用站点：{options}。" if options else "当前项目未登记备用站点，请先补充实例目录。")
-               + "不同站点使用不同密钥，不能复用当前站点密钥。尚未自动切换或向备用重试；请告知用户并按其选择继续。")
+               + "已注册集群成员复用统一授权，切换前检查身份与项目绑定。尚未自动切换或向备用重试。")
     _LOAD_NOTICES.append({"code": "cds-load-high", "message": message, **result})
     print(f"[cdscli] {message}", file=sys.stderr)
 
@@ -10718,7 +10951,7 @@ def cmd_instance_recommend(args: argparse.Namespace) -> None:
     result = _load_recommendation()
     _notify_high_load(result)
     notes = {"normal": "当前站点负载未达到提示阈值；未检查备用站点健康状态",
-             "high": "请向用户说明备用选择及独立授权要求；尚未切换或部署",
+             "high": "请向用户说明备用选择与集群授权状态；尚未切换或部署",
              "unknown": "无法确定当前负载，不据此认定过载；可用 instance list 查看已登记备用入口"}
     ok(result, note=notes[result["state"]])
 
@@ -10752,6 +10985,13 @@ def cmd_instance_use(args: argparse.Namespace) -> None:
 
 def cmd_instance_connect(args: argparse.Namespace) -> None:
     entry = _instance_entry(args.id)
+    if _cluster_shared_credentials(entry):
+        result = _check_instance(entry)
+        _write_instance_private("active-instance.json", {"id": entry["id"]})
+        ok(result, note="已复用集群统一授权并选择目标节点；未申请独立授权")
+        return
+    if _instance_catalog().get("cluster") and entry["role"] != "primary":
+        die("备用节点尚未完成集群统一授权，请由系统所有者核对成员登记；不再申请独立授权。", code=2)
     previous = {
         name: _read_instance_private(name, {}) if _private_instance_file(name).exists() else None
         for name in ("credentials.json", "connection.json", "active-instance.json")
@@ -10798,7 +11038,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--human", action="store_true", help="人读输出")
     p.add_argument("--trace", help="链路 ID (默认随机 8 hex)")
     p.add_argument("--version", action="version", version=f"cdscli {VERSION}")
-    p.add_argument("--instance", help="仅本次命令使用指定 CDS 实例及其独立项目授权")
+    p.add_argument("--instance", help="仅本次命令使用指定 CDS 节点；已注册集群成员复用统一授权")
     sub = p.add_subparsers(dest="cmd", required=True)
     release_targets = sub.add_parser("release-target", help="Agent 接入发布环境，供分支卡片选择").add_subparsers(dest="release_target_cmd", required=True)
     for command, handler in (("list", cmd_release_target_list), ("register", cmd_release_target_register)):
@@ -10832,7 +11072,7 @@ def _build_parser() -> argparse.ArgumentParser:
         item.set_defaults(func=cmd_release_governance)
     instances = sub.add_parser("instance", help="主备实例发现、接入、检查与选择").add_subparsers(dest="instance_cmd", required=True)
     instances.add_parser("sync", help="从当前已授权 CDS 同步公共实例目录").set_defaults(func=cmd_instance_sync)
-    instances.add_parser("recommend", help="只读检查当前负载并提示备用站点及独立授权要求").set_defaults(func=cmd_instance_recommend)
+    instances.add_parser("recommend", help="只读检查当前负载并提示备用节点及集群授权状态").set_defaults(func=cmd_instance_recommend)
     instances.add_parser("list", help="离线列出已登记实例（不展示密钥）").set_defaults(func=cmd_instance_list)
     for command, handler in (("check", cmd_instance_check), ("use", cmd_instance_use)):
         item = instances.add_parser(command, help="校验目标项目" if command == "check" else "校验并选择后续命令使用的实例")
@@ -11198,6 +11438,7 @@ def _build_parser() -> argparse.ArgumentParser:
     review_upload.set_defaults(func=cmd_code_review_upload_report)
 
     _register_acceptance_parser(sub)
+    _register_dts_parser(sub)
 
     # 验收报告(CDS 自托管 HTML/Markdown,登录态门控,可按项目/文件夹归类)
     rep = sub.add_parser("report", help="验收报告:列出/查看/创建/删除/直达深链").add_subparsers(dest="sub", required=True)

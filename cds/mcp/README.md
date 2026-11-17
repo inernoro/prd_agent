@@ -81,3 +81,23 @@ pnpm --dir cds/mcp check
 `cds_code_review_submit` 可选 `userKey`，包含 `provider`（`openai` / `anthropic` / `openrouter` / `deepseek`）、`model`、`apiKeyEnv`（本地环境变量名）和 `tokenLimit`（默认 200000）。桥接读取该变量后上传，不在 MCP 参数中填写明文 Key，不把 Key 写入 `.cds/credentials.json`。用户 Key 通道不可用时直接失败，不消费平台额度。`cds_code_review_get` 对用户 Key 任务附带 `usage`；权限不足或通道不可用时标注 `usageUnavailable`。
 
 用量只包含同一项目、同一凭据所有者经本系统产生的请求；不是供应商账号余额。无可靠计价数据时费用为未知。
+
+## DTS 数据同步
+
+DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目录，启动参数为 `--dts`：
+
+```json
+{
+  "mcpServers": {
+    "cds-dts": {
+      "command": "node",
+      "args": ["/absolute/path/to/prd_agent/cds/mcp/src/server.mjs", "--dts"],
+      "cwd": "/absolute/path/to/your/project"
+    }
+  }
+}
+```
+
+先在项目中运行 `cdscli connect`。工具支持查看连接、比较、幂等启动、查询、暂停、取消、续传和账号规则。
+数据库连接与传输服务账号由管理员在 CDS 项目配置中登记；MCP 不接收调用方传入的 host、项目或数据库密码覆盖。
+版本不兼容或能力目录失效会阻止写操作。任务必须通过 CDS 独立对账才显示完成；超时继续查询原编号。
