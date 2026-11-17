@@ -4,7 +4,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { HostedReviewSource } from '@/services/real/webPages';
 import { useHostedReview, type HostedReview } from './useHostedReview';
-import { canUseSrcDocPreview, withPreviewBase } from './previewHtml';
+import { canUseSrcDocPreview, directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, withPreviewBase } from './previewHtml';
 import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationBubble } from './AnnotationBubble';
 import CommentsSection from './CommentsSection';
@@ -34,18 +34,18 @@ export function ReviewVersionPreview({ site, source, versionId, commentId, canRe
   const restore = async () => { if (await onRestore(key.current)) onClose(); };
   return <Dialog open onOpenChange={open => { if (!open && !restoring) onClose(); }} title={`${version?.versionLabel ?? '历史版本'} · 版本预览`}
     zIndex={2147483646} maxWidth={920} contentStyle={{ width: 'min(920px, 92vw)', maxHeight: 'calc(100dvh - 32px)' }}
-    titleAction={<button type="button" className="review-tool" aria-label="查看此版本批注" onClick={() => setShowComments(value => !value)}><MessageSquare size={14} />批注 {count || ''}</button>}
+    titleAction={<button type="button" className="review-tool" aria-label="查看此版本批注" disabled={!previewReady} onClick={() => setShowComments(value => !value)}><MessageSquare size={14} />批注 {previewReady && count || ''}</button>}
     content={<div className="review-version-preview" style={{ position: 'relative', height: 'min(460px, 60dvh)', minHeight: 160, overflow: 'hidden' }}>
       {previewReady ? <iframe ref={frame} title={`${version?.versionLabel} 网页预览`} srcDoc={html} src={html ? undefined : review.site?.siteUrl || undefined}
-        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads" referrerPolicy="no-referrer" onLoad={review.annotations.notifyFrame}
+        sandbox={html ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(review.site?.siteUrl ?? '')} referrerPolicy="no-referrer" onLoad={review.annotations.notifyFrame}
         style={{ width: '100%', height: '100%', border: 0, background: 'var(--bg-elevated)' }} />
         : <div className="review-empty" role="status">{review.error ? <><p>{review.error}</p><button type="button" className="review-tool" onClick={() => { if (version) void review.selectVersion(versionId); else void review.refresh(); }}>重试预览</button></> : <><MapSpinner size={20} /><p>正在预览历史版本…</p></>}</div>}
       <AnnotationBubble annotations={review.annotations} hidden={showComments} />
-      <aside className="review-sidebar" style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'min(360px, 100%)', background: 'var(--bg-elevated)', display: showComments ? 'flex' : 'none', flexDirection: 'column' }}>
+      {previewReady && <aside className="review-sidebar" style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'min(360px, 100%)', background: 'var(--bg-elevated)', display: showComments ? 'flex' : 'none', flexDirection: 'column' }}>
         <div className="review-sidebar-heading"><span>此版本批注</span><button type="button" aria-label="收起此版本批注" onClick={() => setShowComments(false)}><X size={16} /></button></div>
         <div style={{ flex: 1, minHeight: 0 }}><CommentsSection {...(source.mode === 'share' ? { mode: 'share', token: source.token, siteId: source.siteId, password: source.password } : { mode: 'site', siteId: source.siteId })}
           annotations={review.annotations} review={review} versionOnly onThreadCountsChange={counts => setCount(counts.annotations + counts.discussions)} onPickElement={() => setShowComments(false)} /></div>
-      </aside>
+      </aside>}
     </div>}
     actions={<div className="review-version-preview-actions">
       {error && <p role="alert">{error}</p>}

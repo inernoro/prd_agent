@@ -143,7 +143,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
   } else {
     await page.goto('/s/wp/qa-native');
   }
-  const preview = options.modal ? page.getByRole('dialog').locator('iframe') : page.locator('iframe[title="临时预览测试"]');
+  const preview = page.locator('iframe[title="临时预览测试"]');
   await expect(preview).toBeVisible();
   return { releaseVersions, requests, contentRequests: () => contentRequests, listRequests: () => listRequests, frame: preview.contentFrame(), preview };
 }
@@ -158,41 +158,67 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
         await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
         await page.getByRole('option', { name: /V1/ }).click();
-        await expect(frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
-        await expect(preview).not.toHaveAttribute('src', '');
-        await expect.poll(() => frame.locator('base').getAttribute('href')).toBe(new URL('.', entry).href);
-        const bind = page.getByRole('button', { name: '绑定页面元素 / 选中文字', exact: true });
-        if (!await bind.isVisible()) await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+        const historical = dialog.locator('iframe');
+        const historicalFrame = historical.contentFrame();
+        await expect(historicalFrame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+        await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
+        await expect(preview).toHaveAttribute('srcdoc', /当前版正文/);
+        await expect.poll(() => historicalFrame.locator('base').getAttribute('href')).toBe(new URL('.', entry).href);
+        expect((await historical.getAttribute('sandbox'))?.split(' ')).not.toContain('allow-same-origin');
+        await dialog.getByRole('button', { name: '查看此版本批注', exact: true }).click();
+        const bind = dialog.getByRole('button', { name: '绑定页面元素 / 选中文字', exact: true });
         await expect(bind).toBeEnabled();
         await bind.click();
-        await frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' }).click();
-        await expect(page.getByText('已选中标题', { exact: true })).toBeVisible();
-        await expect(frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
-        await expect(preview).toHaveAttribute('srcdoc', /仅保留 HTML 的旧版正文/);
-        await expect(frame.locator('script[data-map-pdf-download-bridge], script[data-map-package-download-bridge]')).toHaveCount(0);
-        if (modal) await expect(page.getByRole('button', { name: '新窗口打开', exact: true })).toBeDisabled();
-        else {
-          await page.getByRole('button', { name: '更多', exact: true }).click();
-          const external = page.getByRole('menuitem', { name: '新窗口打开', exact: true });
-          await expect(external).toHaveAttribute('aria-disabled', 'true');
-          await expect(external).not.toHaveAttribute('href');
-        }
+        await historicalFrame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' }).click();
+        await expect(dialog.getByText('已选中标题', { exact: true })).toBeVisible();
+        await expect(historical).toHaveAttribute('srcdoc', /仅保留 HTML 的旧版正文/);
+        await expect(historicalFrame.locator('script[data-map-pdf-download-bridge], script[data-map-package-download-bridge]')).toHaveCount(0);
+        expect(new URL(page.url()).pathname).toBe(modal ? '/web-pages' : '/s/wp/qa-native');
 
       });
     }
 
     for (const modal of [false, true]) {
       test(`${modal ? '站内' : '分享'}的历史多文件版本保留真实来源与同源 fetch`, async ({ page }) => {
-        const { frame, preview } = await serve(page, { modal, inlineHistory: true, multiFileHistory: true, shape: 'multi-file' });
+        const { frame } = await serve(page, { modal, inlineHistory: true, multiFileHistory: true, shape: 'multi-file' });
         await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
         await page.getByRole('option', { name: /V1/ }).click();
-        await expect(page.getByRole('button', { name: '网页版本：V1', exact: true })).toBeVisible();
+        const dialog = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+        const historical = dialog.locator('iframe');
+        const historicalFrame = historical.contentFrame();
+        await expect(page.getByRole('button', { name: '网页版本：V2', exact: true, includeHidden: true })).toBeAttached();
+        await expect(historicalFrame.locator('#result')).toHaveText('fetch-ok:entry');
+        await expect(historical).not.toHaveAttribute('srcdoc');
+        expect(await historicalFrame.locator('body').evaluate(() => location.href)).toBe(entry);
+        await expect(historicalFrame.locator('body')).toHaveAttribute('data-storage', 'ok');
+        await expect(historicalFrame.locator('body')).toHaveAttribute('data-isolation', 'ok');
+        expect(await page.locator('body').getAttribute('data-compromised')).toBeNull();
         await expect(frame.locator('#result')).toHaveText('fetch-ok:entry');
-        await expect(preview).not.toHaveAttribute('srcdoc');
-        expect(await frame.locator('body').evaluate(() => location.href)).toBe(entry);
-        await expect(frame.locator('body')).toHaveAttribute('data-storage', 'ok');
       });
     }
+
+    test('历史快照失败时不展示当前版批注，重试后仍在小窗', async ({ page }) => {
+      const { frame } = await serve(page, { modal: true, inlineHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
+      let failSnapshot = true;
+      await page.route('**/revisions/inline-history/preview', async route => {
+        if (failSnapshot) await route.fulfill({ status: 503, json: { success: false, error: { message: '快照暂不可用，请重试' } } });
+        else await route.fallback();
+      });
+      await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
+      await page.getByRole('option', { name: /V1/ }).click();
+      const dialog = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+      await expect(dialog.getByRole('button', { name: '重试预览', exact: true })).toBeVisible();
+      await expect(dialog.getByRole('button', { name: '查看此版本批注', exact: true })).toBeDisabled();
+      await expect(dialog.locator('.review-sidebar')).toHaveCount(0);
+      await expect(dialog.locator('iframe')).toHaveCount(0);
+      await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
+      failSnapshot = false;
+      await dialog.getByRole('button', { name: '重试预览', exact: true }).click();
+      await expect(dialog.locator('iframe').contentFrame().getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+      await expect(dialog.getByRole('button', { name: '查看此版本批注', exact: true })).toBeEnabled();
+      expect(new URL(page.url()).pathname).toBe('/web-pages');
+    });
 
     test('站内当前版保留输入，不因旧版本记录响应而跳到空白文档', async ({ page }) => {
       const { frame, preview, releaseVersions } = await serve(page, { modal: true, shape: 'multi-file', metadataLag: true });
