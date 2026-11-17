@@ -77,19 +77,18 @@ rng = np.random.default_rng(20261118)
 strokes = []
 for contour in contours:
     points = contour[:,0,:]
-    if len(points)<10: continue
-    for offset in range(0,len(points)-6,180):
-        p = points[offset:offset+185]
-        if len(p)<8: continue
-        p = cv2.approxPolyDP(p.reshape(-1,1,2),.35,False)[:,0,:]
-        if len(p)<3: continue
-        lengths = np.r_[0,np.cumsum(np.linalg.norm(np.diff(p,axis=0),axis=1))]
-        if lengths[-1]<12: continue
-        center = np.mean(p,axis=0)
-        start = .22+1.15*(.65*center[1]/H+.35*rng.random())
-        if center[0]>W*.76 and .31<center[1]/H<.65: start += .22
-        strokes.append({'points':p,'lengths':lengths,'start':start,
-                        'duration':.16+min(.53,lengths[-1]/450),'drawn':0})
+    if len(points)<12: continue
+    # Preserve each complete connected gesture. Cutting every N pixels creates
+    # synchronized fragments across adjacent hair strands and looks like bars.
+    p = cv2.approxPolyDP(points.reshape(-1,1,2),.28,False)[:,0,:]
+    if len(p)<3: continue
+    lengths = np.r_[0,np.cumsum(np.linalg.norm(np.diff(p,axis=0),axis=1))]
+    if lengths[-1]<18: continue
+    center = np.mean(p,axis=0)
+    start = .12+.65*center[1]/H+.12*rng.random()
+    if center[0]>W*.76 and .31<center[1]/H<.65: start += .18
+    strokes.append({'points':p,'lengths':lengths,'start':start,
+                    'duration':.22+min(.58,lengths[-1]/1600),'drawn':0})
 assert len(strokes)>150, f'Insufficient authored linework: {len(strokes)}'
 proof['strokes'] = {'count':len(strokes),'skeletonPixels':int(np.count_nonzero(skeleton)),
                     'source':'generated line-etching.png','uniformVectorSubstitute':False}
@@ -157,9 +156,9 @@ try:
             end = min(len(stroke['points']),int(np.searchsorted(stroke['lengths'],p*stroke['lengths'][-1],side='right')))
             if end>max(1,stroke['drawn']):
                 a = max(0,stroke['drawn']-1)
-                cv2.polylines(mask,[stroke['points'][a:end].reshape(-1,1,2)],False,255,3,cv2.LINE_AA)
+                cv2.polylines(mask,[stroke['points'][a:end].reshape(-1,1,2)],False,255,7,cv2.LINE_AA)
                 stroke['drawn']=end
-        ink = np.maximum(mask.astype(np.float32)/255,smooth(1.28,1.85,t)*.92)
+        ink = np.maximum(cv2.GaussianBlur(mask,(3,3),0).astype(np.float32)/255, .035*smooth(.12,.55,t)+.965*smooth(1.08,1.70,t))
         drawing = line_float*ink[:,:,None]
         grid = smooth(1.38,1.95,t)*(1-smooth(2.18,2.61,t))
         drawing = drawing*(1-grid)+surface*grid
