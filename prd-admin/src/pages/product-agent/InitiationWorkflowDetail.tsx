@@ -15,8 +15,6 @@ import { defectDetailColumns, featureDetailColumns, requirementDetailColumns } f
 import { DetailRecordActions } from './DetailRecordActions';
 import { InitiationWorkflowPanel } from './InitiationWorkflowPanel';
 import { InitiationWizard } from './VersionWorkflowTab';
-import { useAuthStore } from '@/stores/authStore';
-import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { VersionCopyActions } from './VersionCopyActions';
 import { InitiationDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
 
@@ -40,10 +38,6 @@ export function InitiationWorkflowDetail({
   initiationId: string;
 }) {
   const navigate = useNavigate();
-  const currentUserId = useAuthStore((s) => s.user?.userId);
-  const permissions = useAuthStore((s) => s.permissions ?? []);
-  const isRoot = useAuthStore((s) => s.isRoot);
-  const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
   const [tab, setTab] = useState<DetailTab>('basic');
   const [loading, setLoading] = useState(true);
   const [initiation, setInitiation] = useState<ProductInitiation | null>(null);
@@ -98,7 +92,7 @@ export function InitiationWorkflowDetail({
   }, [initiation?.requirementIds, linkedFeatures, tracedDefects]);
 
   const memberNameMap = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
-  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId, canUseProduct);
+  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId);
 
   useEffect(() => {
     const ids = [
@@ -126,11 +120,11 @@ export function InitiationWorkflowDetail({
   );
 
   const displayTitle = initiation?.tCode?.trim() || initiation?.planName?.trim() || '内部版本';
-  const canRetryReview = initiation?.status === 'review_failed' && initiation.createdBy === currentUserId;
-  const canContinueDecision = initiation?.status === 'decision_pending' && initiation.createdBy === currentUserId;
+  const canRetryReview = initiation?.status === 'review_failed';
+  const canContinueDecision = initiation?.status === 'decision_pending';
   const canEditMeeting = Boolean(
     initiation?.reviewMeetingRequired
-    && (initiation.createdBy === currentUserId),
+    && initiation.status !== 'voided',
   );
 
   if (loading) return <MapSectionLoader text="正在加载立项详情…" />;
@@ -174,10 +168,10 @@ export function InitiationWorkflowDetail({
             继续立项决策
           </button>
         )}
-        {initiation.tCode && initiation.createdBy === currentUserId && (
+        {initiation.tCode && initiation.status !== 'voided' && (
           <button type="button" onClick={() => setRetryOpen(true)} className="rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary hover-bg-soft">修改资料</button>
         )}
-        {initiation.tCode && initiation.createdBy === currentUserId && <InitiationDeleteAction id={initiation.id} code={initiation.tCode} status={initiation.status} voidReason={initiation.voidReason} canDelete={initiation.canDelete} onDeleted={() => navigate('/product-agent?section=versions&versionTab=initiation')} />}
+        {initiation.tCode && <InitiationDeleteAction id={initiation.id} code={initiation.tCode} status={initiation.status} voidReason={initiation.voidReason} canDelete={initiation.canDelete} onDeleted={() => navigate('/product-agent?section=versions&versionTab=initiation')} />}
       </div>
 
       {initiation.tCode && <VersionCopyActions kind="initiation" id={initiation.id} code={initiation.tCode} />}
@@ -216,7 +210,7 @@ export function InitiationWorkflowDetail({
           <WorkflowRecordTable
             emptyText="该内部版本暂未关联需求"
             rows={linkedRequirements}
-            onRowClick={canUseProduct ? (id) => navigate(`/product-agent/p/${productId}/requirement/${id}`) : undefined}
+            onRowClick={(id) => navigate(`/product-agent/p/${productId}/requirement/${id}`)}
             columns={requirementDetailColumns(reqWorkflow)}
           />
         </WorkflowDetailCard>
@@ -227,7 +221,7 @@ export function InitiationWorkflowDetail({
           <WorkflowRecordTable
             emptyText="该内部版本暂未关联功能"
             rows={linkedFeatures}
-            onRowClick={canUseProduct ? (id) => navigate(`/product-agent/p/${productId}/feature/${id}`) : undefined}
+            onRowClick={(id) => navigate(`/product-agent/p/${productId}/feature/${id}`)}
             columns={featureDetailColumns()}
           />
         </WorkflowDetailCard>
@@ -238,7 +232,7 @@ export function InitiationWorkflowDetail({
           <WorkflowRecordTable
             emptyText="该内部版本暂未关联缺陷"
             rows={linkedDefects}
-            onRowClick={canUseProduct ? (id) => navigate(`/product-agent/p/${productId}/defect/${id}`) : undefined}
+            onRowClick={(id) => navigate(`/product-agent/p/${productId}/defect/${id}`)}
             columns={defectDetailColumns()}
           />
         </WorkflowDetailCard>
@@ -285,7 +279,7 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
     <button
       type="button"
       onClick={onClick}
-      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-semantic-cyan' : 'border-transparent text-token-muted hover:text-token-secondary'}`}
+      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover:text-token-secondary'}`}
     >
       {children}
     </button>

@@ -15,6 +15,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Core.LlmGateway;
 
@@ -57,10 +58,14 @@ public partial class ProductAgentController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
-    private bool CanNotifyClaims()
+    private bool CanNotifyClaims() => GetClaimNotificationDeploymentBlock() is null;
+
+    private SharedScheduledWorkBlockReason? GetClaimNotificationDeploymentBlock()
     {
         var config = HttpContext?.RequestServices?.GetService<IConfiguration>();
-        return config != null && PrdAgent.Infrastructure.Security.DeploymentAuthority.CanRunSharedScheduledWork(config);
+        return config is null
+            ? SharedScheduledWorkBlockReason.AuthorizationMissing
+            : DeploymentAuthority.GetSharedScheduledWorkBlockReason(config);
     }
 
     /// <summary>是否具备指定权限（super 全通过）。</summary>
@@ -78,12 +83,11 @@ public partial class ProductAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 产品管理应用管理员。首次启用时由原 ProductAgentAdmin 权限持有人接管，
-    /// 一旦管理员名单落库，后续完全以名单为准。
+    /// 真人会话默认拥有产品协作权限。兼容其他调用方既有的应用管理权限。
     /// </summary>
     private async Task<bool> IsProductApplicationAdminAsync(string userId)
     {
-        if (HasPermission(ProductPermissionRules.Scoped) || HasPermission(ProductPermissionRules.MapAdmin))
+        if (IsProductCollaborator() || HasPermission(ProductPermissionRules.MapAdmin))
             return HasPermission(AdminPermissionCatalog.ProductAgentAdmin);
         var settings = await GetProductAgentSettingsAsync();
         return settings == null
@@ -113,6 +117,15 @@ public partial class ProductAgentController : ControllerBase
         }
     }
 
+    private bool IsProductCollaborator() =>
+        User.FindFirst("authType") == null
+            && (User.HasClaim("isRoot", "1") || User.HasClaim("permissions", ProductPermissionRules.OpenAccess));
+
+    private IActionResult? RequireProductOperationsAdmin() =>
+        User.HasClaim("isRoot", "1") || User.HasClaim("permissions", ProductPermissionRules.MapAdmin)
+            ? null
+            : StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅 MAP 管理员可执行此操作。"));
+
     private async Task<IActionResult?> RequireProductApplicationAdminAsync()
     {
         return await IsProductApplicationAdminAsync(GetUserId())
@@ -140,82 +153,15 @@ public partial class ProductAgentController : ControllerBase
         return null;
     }
 
-    // ════════════════════════ 应用管理员 ════════════════════════
-
-    [HttpGet("settings/admins")]
-    public async Task<IActionResult> ListApplicationAdmins()
-    {
-        var userId = GetUserId();
-        var settings = await EnsureProductAgentSettingsAsync(userId);
-        var adminIds = settings?.AdminIds ?? new List<string>();
-        var users = adminIds.Count == 0
-            ? new List<User>()
-            : await _db.Users.Find(u => adminIds.Contains(u.UserId)).ToListAsync();
-        var nameById = users.ToDictionary(u => u.UserId, u => u.DisplayName);
-        var usernameById = users.ToDictionary(u => u.UserId, u => u.Username);
-        var items = adminIds.Select(id => new
-        {
-            userId = id,
-            displayName = nameById.GetValueOrDefault(id, id),
-            username = usernameById.GetValueOrDefault(id, string.Empty),
-        }).ToList();
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            items,
-            canManage = await IsProductApplicationAdminAsync(userId),
-        }));
-    }
-
-    [HttpPost("settings/admins")]
-    public async Task<IActionResult> AddApplicationAdmin([FromBody] ProductApplicationAdminRequest request)
-    {
-        var denied = await RequireProductApplicationAdminAsync();
-        if (denied != null) return denied;
-        if (string.IsNullOrWhiteSpace(request.UserId))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择管理员"));
-        var exists = await _db.Users.Find(u => u.UserId == request.UserId).AnyAsync();
-        if (!exists) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "用户不存在"));
-
-        var userId = GetUserId();
-        await EnsureProductAgentSettingsAsync(userId);
-        await _db.ProductAgentSettings.UpdateOneAsync(
-            x => x.Id == ProductAgentSettings.SingletonId,
-            Builders<ProductAgentSettings>.Update
-                .AddToSet(x => x.AdminIds, request.UserId.Trim())
-                .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedBy, userId));
-        return await ListApplicationAdmins();
-    }
-
-    [HttpDelete("settings/admins/{adminUserId}")]
-    public async Task<IActionResult> RemoveApplicationAdmin(string adminUserId)
-    {
-        var denied = await RequireProductApplicationAdminAsync();
-        if (denied != null) return denied;
-        var settings = await EnsureProductAgentSettingsAsync(GetUserId());
-        if (settings == null || !settings.AdminIds.Contains(adminUserId))
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "管理员不存在"));
-        if (settings.AdminIds.Count <= 1)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少保留一位产品管理应用管理员"));
-
-        await _db.ProductAgentSettings.UpdateOneAsync(
-            x => x.Id == ProductAgentSettings.SingletonId,
-            Builders<ProductAgentSettings>.Update
-                .Pull(x => x.AdminIds, adminUserId)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedBy, GetUserId()));
-        return Ok(ApiResponse<object>.Ok(new { removed = true }));
-    }
-
     /// <summary>
-    /// [调试] 清空产品管理（product-agent）业务数据，保留本应用配置。仅应用管理员可用，上线前移除。
+    /// [调试] 清空产品管理（product-agent）业务数据，保留本应用配置。仅 MAP 管理员可用。
     /// 仅 DeleteMany 本应用 MongoDB 集合中的记录，不修改代码、不改动表单/流程/类型/管理员等配置文档。
     /// 不触碰 defect-agent 独立缺陷、其他 Agent 的 DocumentStore、用户/团队/权限等全局数据。
     /// </summary>
     [HttpPost("settings/debug/reset-all-data")]
     public async Task<IActionResult> ResetProductAgentDemoData([FromBody] ProductAgentDebugResetRequest request)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!string.Equals(request.ConfirmPhrase?.Trim(), "清空演示数据", StringComparison.Ordinal))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "确认语不正确，请输入：清空演示数据"));
@@ -342,7 +288,7 @@ public partial class ProductAgentController : ControllerBase
     [HttpGet("settings/debug/version-records")]
     public async Task<IActionResult> PreviewVersionDebugClear([FromQuery] string kind)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductVersionDebugClear.IsValidKind(kind))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择内部版本或正式版本。"));
@@ -352,7 +298,7 @@ public partial class ProductAgentController : ControllerBase
     [HttpPost("settings/debug/version-records")]
     public async Task<IActionResult> ClearVersionDebugRecords([FromBody] ProductVersionDebugClearRequest request)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductVersionDebugClear.IsValidKind(request.Kind)
             || request.ConfirmPhrase?.Trim() != ProductVersionDebugClear.Confirmation(request.Kind)
@@ -589,15 +535,14 @@ public partial class ProductAgentController : ControllerBase
 
         var users = await _db.Users.Find(u => allIds.Contains(u.UserId)).ToListAsync();
         var nameById = users.ToDictionary(u => u.UserId, u => u.DisplayName);
-        var adminSet = product.AdminIds.ToHashSet();
 
         var members = allIds.Select(id => new
         {
             userId = id,
             displayName = nameById.GetValueOrDefault(id, id),
-            role = ownerSet.Contains(id) ? "owner" : (adminSet.Contains(id) ? "admin" : "member"),
+            role = ownerSet.Contains(id) ? "owner" : "member",
         })
-        .OrderBy(m => m.role == "owner" ? 0 : m.role == "admin" ? 1 : 2)
+        .OrderBy(m => m.role == "owner" ? 0 : 1)
         .ThenBy(m => m.displayName)
         .ToList();
 
@@ -605,7 +550,6 @@ public partial class ProductAgentController : ControllerBase
         {
             members,
             canManageMembers = await CanManageProductMembersAsync(product, userId),
-            canManageAdmins = await CanManageProductAdminsAsync(product, userId),
         }));
     }
 
@@ -628,7 +572,7 @@ public partial class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { added = toAdd.Count }));
     }
 
-    /// <summary>移除团队成员（同步清除其产品管理员身份）。不可移除负责人；移除管理员需指派权限。</summary>
+    /// <summary>移除团队成员（同步清除历史管理员标记）。不可移除负责人。</summary>
     [HttpDelete("products/{productId}/members/{memberUserId}")]
     public async Task<IActionResult> RemoveProductMember(string productId, string memberUserId)
     {
@@ -638,11 +582,7 @@ public partial class ProductAgentController : ControllerBase
         if (product.IsProductOwner(memberUserId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能移除产品负责人"));
 
-        var isAdminTarget = product.AdminIds.Contains(memberUserId);
-        var allowed = isAdminTarget
-            ? await CanManageProductAdminsAsync(product, userId)
-            : await CanManageProductMembersAsync(product, userId);
-        if (!allowed)
+        if (!await CanManageProductMembersAsync(product, userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权移除该成员"));
 
         await _db.Products.UpdateOneAsync(p => p.Id == productId,
@@ -651,32 +591,6 @@ public partial class ProductAgentController : ControllerBase
                 .Pull(p => p.AdminIds, memberUserId)
                 .Set(p => p.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { removed = true }));
-    }
-
-    /// <summary>设置成员角色（admin=指派产品管理员 / member=撤销）。需指派权限，不可改负责人。</summary>
-    [HttpPut("products/{productId}/members/{memberUserId}/role")]
-    public async Task<IActionResult> SetProductMemberRole(string productId, string memberUserId, [FromBody] SetProductMemberRoleRequest request)
-    {
-        var userId = GetUserId();
-        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
-        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (!await CanManageProductAdminsAsync(product, userId))
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅负责人或管理员可指派产品管理员"));
-        if (product.IsProductOwner(memberUserId))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "负责人角色不可更改"));
-
-        var role = (request.Role ?? "").Trim().ToLowerInvariant();
-        UpdateDefinition<Product> update;
-        if (role == "admin")
-            // 指派为产品管理员：并入 AdminIds，同时确保在 MemberIds（维持 AdminIds ⊆ MemberIds 不变量）
-            update = Builders<Product>.Update.AddToSet(p => p.AdminIds, memberUserId).AddToSet(p => p.MemberIds, memberUserId);
-        else if (role == "member")
-            update = Builders<Product>.Update.Pull(p => p.AdminIds, memberUserId);
-        else
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的角色（仅 admin / member）"));
-
-        await _db.Products.UpdateOneAsync(p => p.Id == productId, update.Set(p => p.UpdatedAt, DateTime.UtcNow));
-        return Ok(ApiResponse<object>.Ok(new { role }));
     }
 
     // ════════════════════════ 版本 Version ════════════════════════
@@ -911,7 +825,7 @@ public partial class ProductAgentController : ControllerBase
             filter &= Builders<ProductInitiation>.Filter.Eq(x => x.CreatedBy, userId);
         var items = await _db.ProductInitiations.Find(filter)
             .SortByDescending(x => x.CreatedAt).ToListAsync();
-        await ProductInitiationDeletion.AnnotateAsync(_db, items, userId);
+        await ProductInitiationDeletion.AnnotateAsync(_db, items, IsProductCollaborator() ? null : userId);
         await ProductReleaseTrainingPolicy.AnnotateAsync(_db, items);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
@@ -922,7 +836,7 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
-        await ProductInitiationDeletion.AnnotateAsync(_db, new[] { item }, GetUserId());
+        await ProductInitiationDeletion.AnnotateAsync(_db, new[] { item }, IsProductCollaborator() ? null : GetUserId());
         await ProductReleaseTrainingPolicy.AnnotateAsync(_db, new[] { item });
         return Ok(ApiResponse<object>.Ok(item));
     }
@@ -1027,6 +941,10 @@ public partial class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(item));
     }
 
+    private static bool IsInitiationEditable(ProductInitiation item)
+        => item.Status != "voided" && (!string.IsNullOrWhiteSpace(item.TCode)
+            || item.Status is "draft" or "review_pending" or "review_failed" or "decision_pending");
+
     [HttpPatch("initiations/{id}")]
     public async Task<IActionResult> UpdateInitiation(string id, [FromBody] CreateInitiationRequest request)
     {
@@ -1035,7 +953,7 @@ public partial class ProductAgentController : ControllerBase
         if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
         if (item.CreatedBy != userId && !await CanManageAsync(userId))
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可修改该立项记录"));
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人或产品管理人员可修改该立项记录"));
         var originalApplicationId = string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId;
         var requestedApplicationId = request.LinkedProductId?.Trim() ?? originalApplicationId;
         await using var versionLease = await ProductVersionApplicationLease.AcquireAsync(_db, new[] { originalApplicationId, requestedApplicationId });
@@ -1046,7 +964,7 @@ public partial class ProductAgentController : ControllerBase
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "所属应用已变化，请刷新后核对"));
         if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能修改或重新申领。"));
         var issued = !string.IsNullOrWhiteSpace(item.TCode);
-        if (!issued && item.Status is not ("draft" or "review_pending" or "review_failed" or "decision_pending"))
+        if (!IsInitiationEditable(item))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许修改基础信息"));
         if (issued && (request.LinkedProductId?.Trim() != (item.LinkedProductId ?? item.ProductId)
             || (request.ReviewMeetingRequired ?? false) != (item.ReviewMeetingRequired ?? false)
@@ -1144,7 +1062,7 @@ public partial class ProductAgentController : ControllerBase
         if (saved.MatchedCount == 0)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项状态已变化，请刷新后从原记录继续，不要重复新建"));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
-        if (updated != null) await ProductInitiationDeletion.AnnotateAsync(_db, new[] { updated }, userId);
+        if (updated != null) await ProductInitiationDeletion.AnnotateAsync(_db, new[] { updated }, IsProductCollaborator() ? null : userId);
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -1155,8 +1073,8 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
-        if (item.CreatedBy != userId)
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人本人可删除，管理员和其他人不能代删。"));
+        if (item.CreatedBy != userId && !IsProductCollaborator())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人或产品协作者可删除。"));
         var reason = ProductVersionClaimGuard.NormalizeRemovalReason(request?.Reason);
         if (reason == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写删除理由，去除首尾空白后至少6个字符。"));
@@ -1295,12 +1213,14 @@ public partial class ProductAgentController : ControllerBase
                 .ToList()
             : new List<InitiationMeetingDraftRound>();
 
+        var notificationBlock = GetClaimNotificationDeploymentBlock();
         var updated = await ProductInitiationIssuance.IssueAsync(_db, id, "decision_pending",
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired)
                 .Set(x => x.ExpectedMeetingAt, request.ReviewMeetingRequired ? expectedMeetingAt : null)
                 .Set(x => x.MeetingDraftCount, meetingDraftCount)
-                .Set(x => x.MeetingDraftRounds, meetingRounds), canNotify: CanNotifyClaims());
+                .Set(x => x.MeetingDraftRounds, meetingRounds),
+            canNotify: notificationBlock is null, deploymentBlock: notificationBlock);
         if (updated == null)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已处理，请刷新查看现有 T 号，不要重复提交"));
         return Ok(ApiResponse<object>.Ok(updated));
@@ -1369,7 +1289,7 @@ public partial class ProductAgentController : ControllerBase
                 Builders<ProductRelease>.Filter.Eq(x => x.CreatedBy, userId));
         var items = await _db.ProductReleases.Find(filter)
             .SortByDescending(x => x.CreatedAt).ToListAsync();
-        await ProductReleaseDeletion.AnnotateAsync(_db, items, userId);
+        await ProductReleaseDeletion.AnnotateAsync(_db, items, IsProductCollaborator() ? null : userId);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -1400,7 +1320,7 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
-        await ProductReleaseDeletion.AnnotateAsync(_db, new[] { item }, GetUserId());
+        await ProductReleaseDeletion.AnnotateAsync(_db, new[] { item }, IsProductCollaborator() ? null : GetUserId());
         return Ok(ApiResponse<object>.Ok(item));
     }
 
@@ -1411,8 +1331,8 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
-        if (item.CreatedBy != userId)
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人本人可删除，管理员和其他人不能代删。"));
+        if (item.CreatedBy != userId && !IsProductCollaborator())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人或产品协作者可删除。"));
         var reason = ProductVersionClaimGuard.NormalizeRemovalReason(request?.Reason);
         if (reason == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写删除理由，去除首尾空白后至少6个字符。"));
@@ -1625,7 +1545,9 @@ public partial class ProductAgentController : ControllerBase
         }
         if (!request.IsTemporaryOptimization)
             item.VCode = await ProductVersionClaimGuard.NextWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id, queuedApplicationId, versionLease);
-        item.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(_db, item, item.OwnerId, true, CanNotifyClaims());
+        var notificationBlock = GetClaimNotificationDeploymentBlock();
+        item.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(
+            _db, item, item.OwnerId, true, notificationBlock is null, notificationBlock);
         await versionLease.EnsureHeldAsync();
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, userId,
@@ -4226,7 +4148,7 @@ public partial class ProductAgentController : ControllerBase
 
         if (request.EntityType is ProductEntityType.Requirement or ProductEntityType.Feature or ProductEntityType.Defect)
         {
-            if (!ProductWorkflowTransitionGuard.CanExecuteTransition(userId, transition, product, isGlobalAdmin, entityOwnerId, entityAssigneeId))
+            if (!IsProductCollaborator() && !ProductWorkflowTransitionGuard.CanExecuteTransition(userId, transition, product, isGlobalAdmin, entityOwnerId, entityAssigneeId))
                 return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前用户无权执行该流转"));
 
             var assigneeForCheck = request.AssigneeId ?? entityAssigneeId;
@@ -4810,6 +4732,9 @@ public partial class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    private bool CanManageStandaloneDefects() =>
+        HasPermission(AdminPermissionCatalog.DefectAgentManage) || User.HasClaim("permissions", ProductPermissionRules.MapAdmin);
+
     /// <summary>列出可被关联（追溯）的缺陷：当前用户可见、尚未追溯到任何产品。</summary>
     [HttpGet("products/{productId}/defects/linkable")]
     public async Task<IActionResult> ListLinkableDefects(string productId, [FromQuery] string? keyword = null)
@@ -4823,7 +4748,7 @@ public partial class ProductAgentController : ControllerBase
             b.Eq(d => d.IsDeleted, false),
             b.Eq(d => d.TracedProductId, (string?)null),
         };
-        if (!await CanManageAsync(userId))
+        if (!CanManageStandaloneDefects())
             conds.Add(b.Or(b.Eq(d => d.ReporterId, userId), b.Eq(d => d.AssigneeId, userId)));
         if (!string.IsNullOrWhiteSpace(keyword))
             conds.Add(b.Or(
@@ -4839,17 +4764,25 @@ public partial class ProductAgentController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.DefectId) || string.IsNullOrWhiteSpace(request.ProductId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少缺陷或产品 ID"));
-        if (await FindAccessibleProductAsync(request.ProductId, GetUserId()) == null)
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(request.ProductId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
         var defect = await _db.DefectReports.Find(d => d.Id == request.DefectId && !d.IsDeleted).FirstOrDefaultAsync();
-        if (defect == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "缺陷不存在"));
+        if (defect == null || (string.IsNullOrWhiteSpace(defect.TracedProductId)
+            && defect.ReporterId != userId && defect.AssigneeId != userId && !CanManageStandaloneDefects()))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "缺陷不存在"));
 
         var u = Builders<DefectReport>.Update
             .Set(d => d.TracedProductId, request.ProductId)
             .Set(d => d.TracedRequirementId, request.RequirementId)
             .Set(d => d.TracedVersionId, request.VersionId)
             .Set(d => d.TracedFeatureId, request.FeatureId);
-        await _db.DefectReports.UpdateOneAsync(d => d.Id == request.DefectId, u);
+        var linked = await _db.DefectReports.UpdateOneAsync(d => d.Id == request.DefectId && !d.IsDeleted
+            && d.TracedProductId == defect.TracedProductId, u);
+        if (linked.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "缺陷关联已变化，请刷新后重试。"));
+        if (!string.IsNullOrWhiteSpace(defect.TracedProductId) && defect.TracedProductId != request.ProductId)
+            await RecalcDefectCountAsync(defect.TracedProductId);
         await RecalcDefectCountAsync(request.ProductId);
         return Ok(ApiResponse<object>.Ok(new { traced = true }));
     }
@@ -4950,17 +4883,19 @@ public partial class ProductAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.DefectId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少缺陷 ID"));
         var defect = await _db.DefectReports.Find(d => d.Id == request.DefectId && !d.IsDeleted).FirstOrDefaultAsync();
-        if (defect == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "缺陷不存在"));
-        if (!string.IsNullOrEmpty(defect.TracedProductId) && await FindAccessibleProductAsync(defect.TracedProductId, GetUserId()) == null)
+        if (defect == null || string.IsNullOrWhiteSpace(defect.TracedProductId)) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "缺陷不存在"));
+        if (await FindAccessibleProductAsync(defect.TracedProductId, GetUserId()) == null)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权解除该缺陷追溯"));
         var productId = defect.TracedProductId;
-        await _db.DefectReports.UpdateOneAsync(d => d.Id == request.DefectId,
+        var unlinked = await _db.DefectReports.UpdateOneAsync(d => d.Id == request.DefectId && !d.IsDeleted && d.TracedProductId == productId,
             Builders<DefectReport>.Update
                 .Set(d => d.TracedProductId, (string?)null)
                 .Set(d => d.TracedRequirementId, (string?)null)
                 .Set(d => d.TracedVersionId, (string?)null)
                 .Set(d => d.TracedFeatureId, (string?)null));
-        if (!string.IsNullOrEmpty(productId)) await RecalcDefectCountAsync(productId);
+        if (unlinked.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "缺陷关联已变化，请刷新后重试。"));
+        await RecalcDefectCountAsync(productId);
         return Ok(ApiResponse<object>.Ok(new { untraced = true }));
     }
 
@@ -7219,10 +7154,6 @@ public partial class ProductAgentController : ControllerBase
     private async Task<bool> CanManageProductMembersAsync(Product p, string uid)
         => await CanManageAsync(uid) || p.IsProductOwner(uid) || p.AdminIds.Contains(uid);
 
-    /// <summary>能否指派/撤销产品管理员：全局管理 | 产品负责人（产品管理员不可指派同级）。</summary>
-    private async Task<bool> CanManageProductAdminsAsync(Product p, string uid)
-        => await CanManageAsync(uid) || p.IsProductOwner(uid);
-
     /// <summary>可访问的产品 Id 集合；返回 null 表示"全部"（管理层/管理权限）。</summary>
     private async Task<HashSet<string>?> GetAccessibleProductIdsAsync(string userId)
     {
@@ -7366,7 +7297,7 @@ public partial class ProductAgentController : ControllerBase
         if (workflow)
         {
             var result = await ProductVersionListReader.ReadReleasesAsync(
-                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage));
+                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage), IsProductCollaborator());
             Func<ProductRelease, string>? protectOrigin = await IsProductApplicationAdminAsync(GetUserId())
                 && HttpContext.RequestServices?.GetService<IDataProtectionProvider>() != null ? ProtectReleaseTableOrigin : null;
             return Ok(ApiResponse<object>.Ok(await WithVersionExportFieldsAsync(result, row => new(
@@ -7374,7 +7305,7 @@ public partial class ProductAgentController : ControllerBase
                 row.TeamMemberIds, row.ProjectMemberNames), protectOrigin)));
         }
         var items = await FindInScopeAsync<ProductRelease>(scope, r => r.ProductId, r => r.IsDeleted);
-        await ProductReleaseDeletion.AnnotateAsync(_db, items, GetUserId());
+        await ProductReleaseDeletion.AnnotateAsync(_db, items, IsProductCollaborator() ? null : GetUserId());
         var names = await ProductNamesAsync(items.Select(r => r.ProductId));
         var reqIds = items.SelectMany(r => r.RequirementIds).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList();
         var reqTitles = new Dictionary<string, string>();
@@ -7456,11 +7387,22 @@ public partial class ProductAgentController : ControllerBase
     [HttpGet("overview/initiations")]
     public async Task<IActionResult> OverviewInitiations([FromQuery] string? keyword = null, [FromQuery] bool workflow = false)
     {
-        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var userId = GetUserId();
+        var scope = await GetAccessibleProductIdsAsync(userId);
         if (workflow)
         {
             var result = await ProductVersionListReader.ReadInitiationsAsync(
-                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage));
+                _db, scope, userId, HasPermission(AdminPermissionCatalog.ReviewAgentManage), IsProductCollaborator());
+            var canManage = IsProductCollaborator() || await CanManageAsync(userId);
+            result = result with
+            {
+                Items = result.Items.Select(row => row with
+                {
+                    CanEdit = row.LegacyRegistration is null
+                        && (row.Record.CreatedBy == userId || canManage)
+                        && IsInitiationEditable(row.Record),
+                }).ToList(),
+            };
             return Ok(ApiResponse<object>.Ok(await WithVersionExportFieldsAsync(result, row => new(
                 row.LinkedProductId ?? row.ProductId, row.AppName, row.SystemName, row.OwnerId,
                 row.OwnerName ?? row.LegacyData.GetValueOrDefault("产品负责人"), [], []))));
@@ -8331,11 +8273,6 @@ public class AddProductMembersRequest
     public List<string>? UserIds { get; set; }
 }
 
-public class SetProductMemberRoleRequest
-{
-    public string? Role { get; set; }
-}
-
 public class UpsertVersionRequest
 {
     public string VersionName { get; set; } = string.Empty;
@@ -8757,10 +8694,6 @@ public class ImportSimpleItemRow
     public Dictionary<string, string>? SourceFields { get; set; }
 }
 
-public class ProductApplicationAdminRequest
-{
-    public string UserId { get; set; } = string.Empty;
-}
 
 public class ProductVersionVoidRequest
 {

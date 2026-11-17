@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -33,7 +34,8 @@ public static class ProductInitiationIssuance
     }
 
     public static async Task<ProductInitiation?> IssueAsync(MongoDbContext db, string id,
-        string expectedStatus, UpdateDefinition<ProductInitiation>? decision = null, bool canNotify = false)
+        string expectedStatus, UpdateDefinition<ProductInitiation>? decision = null, bool canNotify = false,
+        SharedScheduledWorkBlockReason? deploymentBlock = null)
     {
         if (expectedStatus is not ("decision_pending" or "owner_pending"))
             throw new ArgumentException("不支持的自动发号来源状态", nameof(expectedStatus));
@@ -61,7 +63,9 @@ public static class ProductInitiationIssuance
             update = update.Set(x => x.PlanName, item.PlanName);
         }
         item.TCode = code;
-        var notification = await ProductClaimNotificationQueue.CreateAsync(db, item, item.OwnerId, false, canNotify && expectedStatus == "decision_pending");
+        var notification = expectedStatus == "decision_pending"
+            ? await ProductClaimNotificationQueue.CreateAsync(db, item, item.OwnerId, false, canNotify, deploymentBlock)
+            : null;
         update = update.Set(x => x.ClaimNotification, notification);
         if (decision != null) update = Builders<ProductInitiation>.Update.Combine(decision, update);
         // 发号时重新检查评审、状态和软删除；并发重试不能覆盖已有编号或原资料。

@@ -59,6 +59,15 @@ public class ReviewAgentController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
+    private Task<Attachment?> FindReviewAttachmentAsync(string attachmentId, string userId, CancellationToken ct)
+    {
+        var filter = Builders<Attachment>.Filter.Eq(x => x.AttachmentId, attachmentId);
+        // 产品入口向全员开放，评审只接受当前用户上传的附件。
+        if (Request.Path.StartsWithSegments("/api/product/review", StringComparison.OrdinalIgnoreCase))
+            filter &= Builders<Attachment>.Filter.Eq(x => x.UploaderId, userId);
+        return _db.Attachments.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
     private string? GetDisplayName()
         => User.FindFirst("displayName")?.Value
            ?? User.FindFirst("name")?.Value
@@ -168,15 +177,15 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        // 验证附件存在
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        var userId = GetUserId();
+        // 校验附件归属
+        var attachment = await FindReviewAttachmentAsync(req.AttachmentId, userId, ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
 
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
 
-        var userId = GetUserId();
         var displayName = GetDisplayName() ?? userId;
 
         var submission = new ReviewSubmission
@@ -638,7 +647,7 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req?.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        var attachment = await FindReviewAttachmentAsync(req.AttachmentId, userId, ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
@@ -686,7 +695,7 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req?.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        var attachment = await FindReviewAttachmentAsync(req.AttachmentId, userId, ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
@@ -955,7 +964,7 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req?.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        var attachment = await FindReviewAttachmentAsync(req.AttachmentId, userId, ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))

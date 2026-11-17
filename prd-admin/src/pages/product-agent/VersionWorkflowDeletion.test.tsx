@@ -72,6 +72,23 @@ describe('末尾操作列只保留编辑、删除、作废', () => {
     expect(host.textContent).not.toContain('T6.19.0');
     expect(buttons()).toHaveLength(0);
   });
+  it('按服务端资格显示他人申领记录的编辑入口，并尊重明确拒绝', async () => {
+    api.getWorkflowInitiations.mockResolvedValue({ success: true, data: { items: [
+      { record: { ...record('editable', 'a', 'T6.18.23', false), createdBy: 'colleague' }, canEdit: true },
+      { record: record('read-only', 'a', 'T6.18.22', false), canEdit: false },
+      { record: { ...record('unknown', 'a', 'T6.18.21', false), createdBy: 'colleague' } },
+    ], requirementNames: {} } });
+    await mount();
+    const rows = [...host.querySelectorAll('tbody tr')];
+    const editButton = (row: Element) => [...row.lastElementChild!.querySelectorAll('button')]
+      .find((button) => button.textContent === '编辑');
+    expect(rows).toHaveLength(3);
+    expect(editButton(rows[0])).toBeDefined();
+    expect(editButton(rows[1])).toBeUndefined();
+    expect(editButton(rows[2])).toBeUndefined();
+    await act(async () => editButton(rows[0])!.click());
+    expect(host.textContent).toContain('修改内部版本资料');
+  });
   it('同一应用最新记录由他人申领时，筛选我的申请不会让旧记录获得删除资格', async () => {
     api.getWorkflowInitiations.mockResolvedValue({ success: true, data: { items: [
       { record: { ...record('latest-other', 'a', 'T1.2.4', false), createdBy: 'colleague' } },

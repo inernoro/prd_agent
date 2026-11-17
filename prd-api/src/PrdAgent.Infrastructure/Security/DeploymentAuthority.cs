@@ -3,6 +3,16 @@ using System.Globalization;
 
 namespace PrdAgent.Infrastructure.Security;
 
+public enum SharedScheduledWorkBlockReason
+{
+    SharedStateOptedOut,
+    BranchPreview,
+    DeploymentIdentityMissing,
+    AuthorizationMissing,
+    AuthorizationDisabled,
+    AuthorizationInvalid,
+}
+
 /// <summary>
 /// 判定当前容器是否为「权威部署」（authoritative deployment），并产出可追溯的来源标签。
 ///
@@ -212,14 +222,18 @@ public static class DeploymentAuthority
     /// 这也正是本类已有的纪律：软开关一票否决可以，一票放行不行。
     /// </summary>
     public static bool CanRunSharedScheduledWork(IConfiguration configuration)
-    {
-        // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决。
-        if (HasOptedOutOfSharedState(configuration)) return false;
+        => GetSharedScheduledWorkBlockReason(configuration) is null;
 
-        return !IsCdsBranchPreview(configuration)
-               && !string.IsNullOrWhiteSpace(configuration[DeploymentIdentityKey])
-               && bool.TryParse(configuration[SharedScheduledWorkEnabledKey], out var enabled)
-               && enabled;
+    public static SharedScheduledWorkBlockReason? GetSharedScheduledWorkBlockReason(IConfiguration configuration)
+    {
+        if (HasOptedOutOfSharedState(configuration)) return SharedScheduledWorkBlockReason.SharedStateOptedOut;
+        if (IsCdsBranchPreview(configuration)) return SharedScheduledWorkBlockReason.BranchPreview;
+        if (string.IsNullOrWhiteSpace(configuration[DeploymentIdentityKey])) return SharedScheduledWorkBlockReason.DeploymentIdentityMissing;
+
+        var authorization = configuration[SharedScheduledWorkEnabledKey];
+        if (string.IsNullOrWhiteSpace(authorization)) return SharedScheduledWorkBlockReason.AuthorizationMissing;
+        if (!bool.TryParse(authorization, out var enabled)) return SharedScheduledWorkBlockReason.AuthorizationInvalid;
+        return enabled ? null : SharedScheduledWorkBlockReason.AuthorizationDisabled;
     }
 
     /// <summary>

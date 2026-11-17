@@ -52,6 +52,23 @@ public class DeploymentAuthorityTests
             })).ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData(null, SharedScheduledWorkBlockReason.AuthorizationMissing)]
+    [InlineData("false", SharedScheduledWorkBlockReason.AuthorizationDisabled)]
+    [InlineData("enabled", SharedScheduledWorkBlockReason.AuthorizationInvalid)]
+    public void SharedScheduledWork_ExplainsWhyTheDeploymentGrantWasRejected(
+        string? value, SharedScheduledWorkBlockReason expected)
+    {
+        var config = Build(new()
+        {
+            [DeploymentAuthority.DeploymentIdentityKey] = "prd-agent:production",
+            [DeploymentAuthority.SharedScheduledWorkEnabledKey] = value,
+        });
+
+        DeploymentAuthority.GetSharedScheduledWorkBlockReason(config).ShouldBe(expected);
+        DeploymentAuthority.CanRunSharedScheduledWork(config).ShouldBeFalse();
+    }
+
     [Fact]
     public void SharedScheduledWork_NotificationTakeoverDoesNotUnlockPreview()
     {

@@ -1,20 +1,17 @@
 /**
- * 产品管理智能体 — 应用配置（TAPD 风格流转矩阵 + 状态条）。
- *
- * 主页左侧一级「应用」入口。矩阵勾选启用流转，设置图标配置角色/必填字段。
+ * 产品管理的工作流编辑器。矩阵控制状态流转，设置图标配置必填字段和联动。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Plus, Save, Settings2, Trash2 } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
-import { listProducts, listWorkflowDefinitions, upsertWorkflowDefinition } from '@/services/real/productAgent';
-import type { Product, WorkflowState, WorkflowTransition, ProductEntityType } from './types';
+import { listWorkflowDefinitions, upsertWorkflowDefinition } from '@/services/real/productAgent';
+import type { WorkflowState, WorkflowTransition, ProductEntityType } from './types';
 import {
   WorkflowTransitionRuleModal,
   createDefaultMatrixTransition,
   findMatrixTransition,
 } from './WorkflowTransitionRuleModal';
-import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
 
 /** 应用配置：需求 / 功能 / 缺陷 三类对象的状态与流转矩阵。 */
 const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
@@ -26,66 +23,6 @@ const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
 function defaultWorkflowName(entityType: ProductEntityType): string {
   const label = ENTITY_TYPES.find((e) => e.value === entityType)?.label ?? '对象';
   return `${label}工作流`;
-}
-
-type WorkflowTab = ProductEntityType | 'admins';
-
-export function WorkflowTemplateSection() {
-  const [activeTab, setActiveTab] = useState<WorkflowTab>('requirement');
-  const [productScope, setProductScope] = useState('');
-  const [products, setProducts] = useState<Product[]>([]);
-
-  useEffect(() => {
-    void listProducts({ pageSize: 200 }).then((res) => {
-      if (res.success) setProducts(res.data.items);
-    });
-  }, []);
-
-  const isAdminsTab = activeTab === 'admins';
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2 flex-wrap">
-        {ENTITY_TYPES.map((e) => (
-          <button
-            key={e.value}
-            type="button"
-            onClick={() => setActiveTab(e.value)}
-            className={`px-2.5 py-1 rounded-md text-xs border ${activeTab === e.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-          >
-            {e.label}
-          </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => setActiveTab('admins')}
-          className={`px-2.5 py-1 rounded-md text-xs border ${isAdminsTab ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-        >
-          产品管理员
-        </button>
-        {!isAdminsTab && (
-          <>
-            <div className="w-px h-6 bg-token-nested" />
-            <select
-              value={productScope}
-              onChange={(e) => setProductScope(e.target.value)}
-              className="px-2 py-1.5 rounded-md text-xs bg-token-nested border border-token-subtle text-token-secondary outline-none"
-            >
-              <option value="">全局默认（所有产品共用）</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>覆盖：{p.name}</option>
-              ))}
-            </select>
-          </>
-        )}
-      </div>
-      {isAdminsTab ? (
-        <ProductAdminOverviewPanel />
-      ) : (
-        <WorkflowEditor key={`${activeTab}-${productScope}`} entityType={activeTab} productId={productScope || null} />
-      )}
-    </div>
-  );
 }
 
 export function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityType; productId: string | null }) {
