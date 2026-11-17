@@ -41,6 +41,7 @@ import { configuredImageCacheGovernance } from './image-cache-governance.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
 import { DOCKER_LOG_LIMIT_FLAGS, hasBoundedDockerLogs } from './docker-log-policy.js';
+import { detectInfraKind } from './infra-exposure-audit.js';
 export { DOCKER_LOG_LIMIT_FLAGS } from './docker-log-policy.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
@@ -4023,6 +4024,10 @@ export class ContainerService {
       ...healthFlags,
       // 同上：基础设施容器同样受日志限额约束（2026-07-27 复盘 P1）
       ...DOCKER_LOG_LIMIT_FLAGS,
+      // Mongo recommends 64000 open files. A daemon's inherited 1024 can exhaust
+      // both connection and WiredTiger handles. Only new containers receive this;
+      // existing databases keep the earlier reuse/start paths without recreation.
+      ...(detectInfraKind(service.dockerImage, service) === 'mongo' ? ['--ulimit nofile=64000:64000'] : []),
       // 共享 infra 也是托管工作负载,一并挂低权重 slice(2026-09-08)。
       ...workloadCgroupFlags(),
       ...(entrypointFlag ? [entrypointFlag] : []),
