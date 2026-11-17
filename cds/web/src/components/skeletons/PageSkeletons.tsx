@@ -1,3 +1,4 @@
+import { DtsSkeleton } from './DtsSkeleton';
 import { CodeReviewsSkeleton } from './CodeReviewsSkeleton';
 import { useState } from 'react';
 import { readProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
@@ -191,6 +192,7 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
     case 'release-center': return <ReleaseCenterSkeleton />;
     case 'monitor': return <MonitorCenterSkeleton />;
     case 'branch-detail': return <BranchDetailLoadingSkeleton />;
+    case 'dts': return <DtsSkeleton />;
     case 'settings': return <SettingsPageSkeleton />;
     case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" />;
     case 'release-console': return <ReleaseConsoleSkeleton />;

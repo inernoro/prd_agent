@@ -313,6 +313,7 @@ docs:
   plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
+  plan.cds.dts: "CDS DTS 数据传输服务与主备账号同步 · 计划"
   plan.platform.product-experience-rework: "LLMGW 与 CDS 用户心智及产品体验整改 · 计划"
   plan.video-agent.acceptance.handoff: "视频制作台新环境验收续接 · 计划"
   plan.cds.code-review-delivery: "CDS 代码审查需求兑现台账 · 计划"
@@ -378,6 +379,7 @@ docs:
   debt.acceptance.system: "功能验收体系 · 债务台账"
   debt.agent-universe: "智能体宇宙 · 债务台账"
   debt.cds.notification: "CDS 通知验收边界 · 债务台账"
+  debt.cds.dts: "CDS DTS 数据传输能力边界 · 债务"
   debt.cds: "CDS 平台杂项 · 债务台账"
   debt.cds.agent: "CDS Agent 工作台 · 债务台账"
   debt.cds.agent.acceptance-smoke-drift: "CDS Agent 验收 smoke 断言漂移 · 债务台账"

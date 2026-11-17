@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.22.3",
+  "version": "0.23.1",
   "skills": [
     "cds",
     "cds-project-scan",
@@ -15,18 +15,18 @@
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "28ec553bcacaca820d222b1b62eb77336837ddd70d990e3b41c4dd96a4236dbc",
+    "cds/cli/cdscli.py": "456d1b4d54a6edaee7f52f0a23af1c95c52cb05f6f7877f135ac03f2fe613dbd",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "9984c6f896f672df35c43fae33ca3f89a1bfc8fd10f7e0ab2e88f2871e71339f",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
-    "cds/reference/instance-catalog.json": "69b7549cf130deafb5b907921288afefa15d1ed417a080d30de845d34604a0ea",
+    "cds/reference/instance-catalog.json": "ba7e9fe58f72fc6eddd2a016ee15ff4cf09d57b588e017d7e99be2f8272fbb92",
     "cds/reference/maintainer.md": "f64b0b7c662ff15d297e56765c0dff8af4d4600338f124092aa23f3553ed739e",
     "cds/reference/scan.md": "caac675caeb87cfa06dd7767926d87a5ba657a9e4739067c889393c8b293b95d",
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/scripts/refresh_manifest.py": "22a4f7d70480a7bd35bc852ea7270fc85f4d12c404c0db49d9a003f009d21e5e",
-    "cds/SKILL.md": "577fff64d0d6fae2cd6489ef3bc3d38f035df348e9b953f0ff3ba527f522757a",
+    "cds/SKILL.md": "bcdd113a65959423538a8bb94e6253e9899a48d78a5d4ad93d35a62e92039f72",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
     "cds/tests/test_cdscli_code_review.py": "9f4b73be9b267351d0588e96d61c90ebe0b9f5fb742739213d4633eee38b53dd",
     "cds/tests/test_cdscli_connect.py": "649a4a6081ad4399b68191447af31705bacb97c29a64b7fdaed62be630f9ab3a",
@@ -35,10 +35,11 @@
     "cds/tests/test_cdscli_deployment_run.py": "f4a4522456d3aeb60b36c30d259c34b1ee09de3f0afb5bc65c5bf15a468e34f1",
     "cds/tests/test_cdscli_deployment_version.py": "9acc9773bba8fe93d1b57781c1b8e6a142820e284d4629e6168ee7ecf20883bf",
     "cds/tests/test_cdscli_disk.py": "9eaa6fd1dc4669f26ba325533fc0497afde5bdda335d35aa6e6f872405f5a42a",
+    "cds/tests/test_cdscli_dts.py": "83bd88247122e23194a4bcfaf1780de6fca0937a5d898f9a2818fb6ecf8906db",
     "cds/tests/test_cdscli_env.py": "1556d0403f60d6f6695f33f96b52db324ce62fe18d4e8fd20ad8c4906c8bfa99",
     "cds/tests/test_cdscli_extra_services.py": "0e211964883584e7168db2662668e681287e688cfd1dc5519cb6f75d9e1679ce",
-    "cds/tests/test_cdscli_instances.py": "33a577cd382a3856cd44d495559507604d3bb2abeb660a67df2f458686bbb217",
-    "cds/tests/test_cdscli_load_advice.py": "3cd55f0a0fd53a1b01b36c4a9c968008d360d013a2a0db3c13c02d140359c883",
+    "cds/tests/test_cdscli_instances.py": "40f93c945eb58974b86ce789830e440d7708534dcc5dd29d08e810a1d2859f87",
+    "cds/tests/test_cdscli_load_advice.py": "8b8b261ef3bcc9c42f1efcfc3484d8591fcaab7c14ad97eb1f3c8b60b2a07de9",
     "cds/tests/test_cdscli_profile_prebuilt_modes.py": "a269f862607531666f6a667dcd49ce2bbf889e23879851b325b611c3f10dc27b",
     "cds/tests/test_cdscli_project_branch_phase16.py": "db90f35ac6b99db15ba5e2324b0d945203f797e145a67f00d8decdece8b69b47",
     "cds/tests/test_cdscli_project_key_handover.py": "b26c7eff46d0f586617c0df1fa026d34e81ed26d986c1f830bbb22554698f4d9",
@@ -67,5 +68,5 @@
     "cds-release/SKILL.md": "d0278ace0a5a49053683488521958ef45eb970a7caffbc2abd0e569f93932192",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-17T09:00:15.568Z"
+  "generatedAt": "2026-11-17T10:15:14.161Z"
 }

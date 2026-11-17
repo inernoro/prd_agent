@@ -103,9 +103,9 @@ function AuthForm(): JSX.Element {
   const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled;
 
   function goToTarget() {
-    // Legacy server 路径(/settings.html?project=… 等)必须 hard-load,让 Express
-    // 的 legacy→React 重定向生效;干净的 React 路由走 SPA navigate + view transition。
-    if (/\.html(?:$|[?#])/i.test(target)) {
+    // Server endpoints (including the cluster login handoff) must reach Express.
+    // Dashboard routes retain SPA navigation and their view transition.
+    if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
       window.location.assign(target);
     } else {
       navigate(target, { replace: true, viewTransition: true });
@@ -313,8 +313,8 @@ export function LoginPage(): JSX.Element {
         setAuthPhase('anon');
         return;
       }
-      if (/\.html(?:$|[?#])/i.test(target)) {
-        // legacy server 路径:hard-load 让 Express 的 legacy→React 重定向生效。
+      if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
+        // Authenticated visits also need the server to perform the handoff.
         window.location.assign(target);
       } else {
         navigate(target, { replace: true, viewTransition: true });
@@ -354,7 +354,7 @@ export function TicketSsoPage(): JSX.Element {
       .then((result) => {
         if (!alive) return;
         const target = result.redirect || '/project-list';
-        if (/\.html(?:$|[?#])/i.test(target)) {
+        if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
           window.location.assign(target);
           return;
         }
