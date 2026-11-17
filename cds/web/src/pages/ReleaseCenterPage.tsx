@@ -31,6 +31,8 @@ import {
   releaseCenterSection,
   normalizeProductionOrigin,
   rememberReleaseCenterProject,
+  resolveReleaseProject,
+  resolveInitialReleaseProject,
 } from '@/lib/releaseCenter';
 import type { ReleaseCenterSection } from '@/lib/releaseCenter';
 import {
@@ -70,7 +72,6 @@ import {
   strategyFromDraft,
 } from '@/pages/release-center/SiteWizardDialog';
 import { StartReleaseDialog, type StartReleaseIntent } from '@/pages/release-center/StartReleaseDialog';
-import { BatchReleasePanel } from '@/pages/release-center/BatchReleasePanel';
 import type {
   BranchOption,
   CenterResponse,
@@ -134,6 +135,9 @@ export function ReleaseCenterPage(): JSX.Element {
   );
   const [projectId, setProjectId] = useState(initialProject);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectListAttempt, setProjectListAttempt] = useState(0);
+  const projectAvailable = projectsLoaded && Boolean(resolveReleaseProject(projectId, projects));
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const loadedScope = useRef(projectId);
   const [refreshing, setRefreshing] = useState(false);
@@ -182,6 +186,7 @@ export function ReleaseCenterPage(): JSX.Element {
   const [previewConfig, setPreviewConfig] = useState<PreviewUrlConfig>({});
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!projectAvailable) { request.current?.abort(); return; }
     if (opts?.silent && request.current) return;
     request.current?.abort();
     const controller = new AbortController();
@@ -211,26 +216,39 @@ export function ReleaseCenterPage(): JSX.Element {
     } finally {
       if (request.current === controller) { request.current = null; setRefreshing(false); }
     }
-  }, [projectId]);
+  }, [projectId, projectAvailable]);
+
+  const refreshProjectData = (): void => {
+    if (!projectAvailable) {
+      setState({ status: 'loading' });
+      setProjectsLoaded(false);
+      setProjectListAttempt(value => value + 1);
+      return;
+    }
+    void load();
+  };
 
   useEffect(() => { void load(); return () => { request.current?.abort(); }; }, [load]);
   useEffect(() => {
+    if (!projectAvailable) return;
     rememberReleaseCenterProject(projectId, typeof window === 'undefined' ? undefined : window.localStorage);
-  }, [projectId]);
+  }, [projectId, projectAvailable]);
 
   // 当前分区回写 URL，「我在看这一屏」就能整条链接发给别人（设计稿 Interactions）。
   // replace 而不是 push：切分区不是导航，不该在浏览器后退键上堆五层历史。
   useEffect(() => {
+    if (!projectAvailable) return;
     setSearchParams((current) => {
-      if (releaseCenterSection(current) === section) return current;
+      if (releaseCenterSection(current) === section && current.get('project') === projectId) return current;
       const next = new URLSearchParams(current);
+      next.set('project', projectId);
       if (section === 'fleet') next.delete('section');
       else next.set('section', section);
       return next;
     }, { replace: true });
-  }, [section, setSearchParams]);
+  }, [section, projectId, projectAvailable, setSearchParams]);
 
-  // 项目列表用于「项目」下拉（best-effort，失败退回手输）。
+  // 项目清单是上下文校验的依据，失效链接不能悄悄换成另一个项目。
   useEffect(() => {
     let cancelled = false;
     apiRequest<{ projects?: ProjectLite[] }>('/api/projects')
@@ -238,22 +256,22 @@ export function ReleaseCenterPage(): JSX.Element {
         if (cancelled) return;
         const list = res.projects ?? [];
         setProjects(list);
-        // 记忆值（localStorage）来自另一个 CDS 实例或已删除的项目时，它是个幽灵：
-        // 拿它去打 /discover 只会换来一串 404，而用户什么也没做错。
-        // 有真实项目就落到第一个，让页面直接可用；一个都没有才走空状态引导。
-        if (list.length > 0 && !list.some((project) => project.id === projectId)) {
-          setProjectId(list[0].id);
+        const resolved = resolveInitialReleaseProject(searchParams, window.localStorage, list);
+        if (resolved !== projectId) {
+          setProjectId(resolved);
           setSelectedTargetId('');
-          setDraft((current) => ({ ...current, projectId: list[0].id }));
+          setDraft((current) => ({ ...current, projectId: resolved }));
         }
       })
-      .catch(() => { if (!cancelled) setProjects([]); });
+      .catch((error) => { if (!cancelled) { setProjects([]); setState({ status: 'error', message: error instanceof Error ? error.message : '项目列表读取失败' }); } })
+      .finally(() => { if (!cancelled) setProjectsLoaded(true); });
     return () => { cancelled = true; };
-  }, []);
+  }, [projectListAttempt]);
 
   // 就地发布需要分支与预览地址推导所需的配置。三个请求都是 best-effort：
   // 任何一个失败都不该拦住这一页——推导不出预览地址时交给发布前检查说话。
   useEffect(() => {
+    if (!projectAvailable) { setBranches([]); setBranchesLoading(false); return; }
     let cancelled = false;
     setBranchesLoading(true);
     void Promise.allSettled([
@@ -268,7 +286,7 @@ export function ReleaseCenterPage(): JSX.Element {
       setBranchesLoading(false);
     });
     return () => { cancelled = true; };
-  }, [projectId]);
+  }, [projectId, projectAvailable]);
 
   const center = state.status === 'ok' ? state.center : undefined;
   const rows = useMemo(() => center?.rows ?? [], [center]);
@@ -358,6 +376,7 @@ export function ReleaseCenterPage(): JSX.Element {
   }, [state, runs]);
 
   const openCreateWizard = (): void => {
+    if (!projectAvailable) { setToast('请先选择当前实例中的有效项目。'); return; }
     const base = emptySiteDraft(projectId);
     const initial = {
       ...base,
@@ -625,24 +644,22 @@ export function ReleaseCenterPage(): JSX.Element {
         <TopBar
           left={(
             <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
-              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布中心' }]} />
+              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布工作台', href: consoleHref() }, { label: '环境管理' }]} />
               <span className="cds-ident text-[0.7188rem] text-muted-foreground">release center · 环境生命周期</span>
               {/* 项目胶囊：这一页所有数字都在某个项目的语境里，项目必须一眼可见可换。 */}
               {projects.length > 0 ? (
                 <select
-                  value={projectId}
+                  value={projectAvailable ? projectId : ''}
                   aria-label="项目"
                   onChange={(event) => {
-                    const next = event.target.value.trim() || 'default';
+                    const next = event.target.value.trim();
                     setProjectId(next);
                     setSelectedTargetId('');
                     setDraft((current) => ({ ...current, projectId: next }));
                   }}
                   className="h-7 max-w-[13.75rem] rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-[0.7812rem] outline-none focus:border-[hsl(var(--hairline-strong))]"
                 >
-                  {!projects.some((project) => project.id === projectId) ? (
-                    <option value={projectId}>{projectId}（未知项目）</option>
-                  ) : null}
+                  <option value="" disabled>请选择当前实例中的项目</option>
                   {projects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {project.name && project.name !== project.id ? `${project.name}（${project.id}）` : project.id}
@@ -655,11 +672,11 @@ export function ReleaseCenterPage(): JSX.Element {
           right={(
             <>
               <PaletteHint />
-              <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
+              <Button variant="outline" size="sm" onClick={refreshProjectData} disabled={refreshing || !projectsLoaded}>
                 <RefreshCw className={refreshing ? 'animate-spin' : ''} />
                 刷新
               </Button>
-              <Button variant="outline" size="sm" onClick={openCreateWizard}>
+              <Button variant="outline" size="sm" disabled={!projectAvailable} onClick={openCreateWizard}>
                 <Plus />
                 新建环境
               </Button>
@@ -670,7 +687,7 @@ export function ReleaseCenterPage(): JSX.Element {
               <Button size="sm" asChild>
                 <Link to={consoleHref()}>
                   <Rocket />
-                  发布控制台
+                  发布工作台
                 </Link>
               </Button>
             </>
@@ -680,7 +697,7 @@ export function ReleaseCenterPage(): JSX.Element {
     >
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
         <div ref={rootRef} className="flex h-full min-h-0 flex-col">
-          {state.status === 'loading' ? <ReleaseCenterSkeleton /> : <>
+          {!projectsLoaded || projectAvailable && state.status === 'loading' ? <ReleaseCenterSkeleton /> : <>
           {/* 分区导航。设计稿是 sticky；这一页在 CDS 里是固定外壳 + 内容区内滚，
               导航天然常驻，效果相同而且不会在滚动时抖。 */}
           <nav className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[hsl(var(--hairline))] px-6 py-2.5">
@@ -713,12 +730,13 @@ export function ReleaseCenterPage(): JSX.Element {
             ) : null}
 
             {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+            {projectsLoaded && !projectAvailable && state.status !== 'error' ? <div role="alert" className="rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{projects.length ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : '当前实例还没有可用项目，请先创建项目。'}</div> : null}
             {state.status === 'ok' && refreshError ? <div role="alert" className="mb-4 space-y-2 rounded-md border border-destructive/30 p-3 text-sm">
               <p>刷新失败，保留上次结果：{refreshError}</p>
-              <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试</Button>
+              <Button variant="outline" size="sm" disabled={refreshing} onClick={refreshProjectData}>重试</Button>
             </div> : null}
 
-            {state.status === 'ok' ? (
+            {projectAvailable && state.status === 'ok' ? (
               <div className="flex flex-col gap-[1.125rem]">
                 {/* ══ 监控条：常驻所有分区，页面第一块 ══ */}
                 {rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
@@ -793,7 +811,6 @@ export function ReleaseCenterPage(): JSX.Element {
                 </section> : null}
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
-                {section === 'fleet' ? <BatchReleasePanel key={projectId} projectId={projectId} targets={rows.map((row) => row.target)} onOpenLogs={setLogRun} /> : null}
                 {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
                 {section === 'fleet' ? (
                   rows.length > 0 ? <FleetMatrix

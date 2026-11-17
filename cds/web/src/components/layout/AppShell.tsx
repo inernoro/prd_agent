@@ -610,14 +610,14 @@ function RailNav({
           to="/release-console"
           className="cds-rail-item"
           data-active={active === 'release-center' ? 'true' : 'false'}
-          aria-label="发布控制台"
-          title="发布控制台（选版本 / 发布 / 实时输出 / 历史）"
+          aria-label="发布工作台"
+          title="发布工作台（批次发布 / 逐目标发布）"
           onClick={onNavigate}
           onMouseEnter={preloadReleaseConsolePage}
           onFocus={preloadReleaseConsolePage}
         >
           <Upload />
-          <span className="cds-rail-full">发布控制台</span>
+          <span className="cds-rail-full">发布工作台</span>
           <span className="cds-rail-short">发布</span>
         </Link>
         <Link

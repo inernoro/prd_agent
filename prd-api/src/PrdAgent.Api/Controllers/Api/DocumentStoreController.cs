@@ -11,6 +11,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Authentication;
+using PrdAgent.Api.Middleware;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -236,6 +237,8 @@ public partial class DocumentStoreController : ControllerBase
     /// </summary>
     private async Task<bool> IsProductKnowledgeMemberAsync(DocumentStore s, string userId)
     {
+        if (Equals(HttpContext.Items[AdminPermissionMiddleware.ProductKnowledgeCollaborationKey], s.Id))
+            return true;
         if (string.IsNullOrEmpty(s.ProductKnowledgeRef)) return false;
         // 与 ProductAgentController.CanManage() 对齐：全局产品管理权限可读写所有产品知识库。
         // 否则管理员能通过 find-or-create 拿到 storeId，却在本控制器被拒（"文档空间不存在"）。
@@ -580,7 +583,14 @@ public partial class DocumentStoreController : ControllerBase
         if (request.Tags != null)
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.Tags, request.Tags));
         if (request.IsPublic.HasValue)
+        {
+            if (Equals(HttpContext.Items[AdminPermissionMiddleware.ProductKnowledgeCollaborationKey], store!.Id)
+                && store.OwnerId != userId
+                && !User.HasClaim("permissions", AdminPermissionCatalog.Super)
+                && !User.HasClaim("permissions", ProductPermissionRules.MapAdmin))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅空间所有者或 MAP 管理员可更改公开状态。"));
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.IsPublic, request.IsPublic.Value));
+        }
         if (request.TemplateKey != null)
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.TemplateKey,
                 string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey.Trim()));

@@ -2,8 +2,8 @@
  * 产品管理 — 统一「设置」中心。
  *
  * 把原先分散在「应用」(WorkflowTemplateSection) 与「设置」(SettingsSection) 的配置
- * 合并为单一设置模块，按七分类组织：权限 / 产品 / 需求 / 功能 / 缺陷 / 客户 / 问策知识库。
- * 复用各底层编辑器（FormTemplateEditor / WorkflowEditor / 类型 / 描述模板 / 管理员），
+ * 合并为单一设置模块，集中维护产品、需求、功能、缺陷、客户与问策知识库。
+ * 复用各底层编辑器（FormTemplateEditor / WorkflowEditor / 类型 / 描述模板），
  * 优先级与严重程度走通用等级目录 GradeCatalogManager。
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
-import { Tabs } from '@/components/ui/Tabs';
 import { toast } from '@/lib/toast';
 import {
   listProducts, upsertGradeOption, deleteGradeOption,
@@ -39,30 +38,26 @@ import {
   RequirementTypeManager,
 } from './SettingsSection';
 import { WorkflowEditor } from './WorkflowTemplateSection';
-import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
 import { useGradeOptions } from './gradeOptions';
-import { ProductPermissionsPanel, type ProductPermissionTab } from './ProductPermissionsPanel';
 import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { PRODUCT_MAP_ADMIN } from './productPermissionAccess';
 import { ProductClaimWebhookPanel } from './ProductClaimWebhookPanel';
 
-type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb' | 'webhook';
+type SettingsCat = 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb' | 'webhook';
 
 const CATS: { key: SettingsCat; label: string; icon: typeof ShieldCheck; desc: string }[] = [
-  { key: 'perm', label: '权限', icon: ShieldCheck, desc: '菜单权限、功能权限与角色权限' },
-  { key: 'product', label: '产品', icon: Boxes, desc: '产品类型与产品管理员指派' },
+  { key: 'product', label: '产品', icon: Boxes, desc: '产品类型' },
   { key: 'requirement', label: '需求', icon: ListChecks, desc: '需求的表单、流程、类型、优先级与严重程度' },
   { key: 'feature', label: '功能', icon: Puzzle, desc: '功能的表单、流程、优先级与严重程度' },
   { key: 'defect', label: '缺陷', icon: Bug, desc: '缺陷的表单、流程、优先级与严重程度' },
   { key: 'customer', label: '客户', icon: Users, desc: '客户表单字段定义' },
   { key: 'consult-kb', label: '问策知识库', icon: BookOpen, desc: '营销问策智能体的专属知识库' },
-  { key: 'webhook', label: 'Webhook 配置', icon: ShieldCheck, desc: '版本申领自动推送、脱敏地址与发送结果' },
+  { key: 'webhook', label: '版本申领通知', icon: ShieldCheck, desc: '版本申领自动推送、脱敏地址与发送结果' },
 ];
 
 export function ProductSettingsHub() {
   const [params, setParams] = useSearchParams();
-  const [cat, setCat] = useState<SettingsCat>(() => params.get('settingsCat') === 'webhook' ? 'webhook' : 'perm');
   const isMapAdmin = useAuthStore(state => state.isRoot || state.permissions.includes(PRODUCT_MAP_ADMIN));
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -72,7 +67,9 @@ export function ProductSettingsHub() {
     });
   }, []);
 
-  const activeCat = CATS.find((c) => c.key === cat)!;
+  const categories = CATS.filter((category) => category.key !== 'webhook' || isMapAdmin);
+  const activeCat = categories.find((category) => category.key === params.get('settingsCat')) ?? CATS[0];
+  const cat = activeCat.key;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -83,13 +80,13 @@ export function ProductSettingsHub() {
       <div className="flex min-h-0 flex-1">
         {/* 左侧分类导航 */}
         <nav className="w-44 shrink-0 overflow-y-auto border-r border-token-subtle px-2 py-3" style={{ overscrollBehavior: 'contain' }}>
-          {CATS.filter(c => c.key !== 'webhook' || isMapAdmin).map((c) => {
+          {categories.map((c) => {
             const Icon = c.icon;
             const on = c.key === cat;
             return (
               <button
                 key={c.key}
-                onClick={() => { setCat(c.key); setParams(previous => { const next = new URLSearchParams(previous); next.set('settingsCat', c.key); return next; }, { replace: true }); }}
+                onClick={() => { setParams(previous => { const next = new URLSearchParams(previous); next.set('settingsCat', c.key); return next; }, { replace: true }); }}
                 className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm ${on ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}
               >
                 <Icon size={15} className="shrink-0" />
@@ -100,56 +97,14 @@ export function ProductSettingsHub() {
         </nav>
         {/* 右侧内容 */}
         <div className="min-h-0 flex-1 overflow-y-auto p-6" style={{ overscrollBehavior: 'contain' }}>
-          {cat === 'perm' && <PermissionPanel />}
-          {cat === 'product' && <ProductCategoryPanel />}
+          {cat === 'product' && <CategoryManager />}
           {(cat === 'requirement' || cat === 'feature' || cat === 'defect' || cat === 'customer') && (
             <EntitySettingsPanel key={cat} entityType={cat} products={products} />
           )}
           {cat === 'consult-kb' && <ConsultKnowledgePanel />}
-          {cat === 'webhook' && (isMapAdmin ? <ProductClaimWebhookPanel /> : <p role="status" className="text-sm text-token-secondary">仅MAP管理员可配置申领Webhook。</p>)}
+          {cat === 'webhook' && (isMapAdmin ? <ProductClaimWebhookPanel /> : <p role="status" className="text-sm text-token-secondary">仅 MAP 管理员可配置版本申领通知。</p>)}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ════════════════════════ 权限 ════════════════════════
-
-const PERMISSION_TABS = [
-  { key: 'menu', label: '菜单权限' },
-  { key: 'function', label: '功能权限' },
-  { key: 'role', label: '角色权限' },
-];
-
-function PermissionPanel() {
-  const [tab, setTab] = useState<ProductPermissionTab>('menu');
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-token-subtle pb-3">
-        <Tabs items={PERMISSION_TABS} activeKey={tab} onChange={(key) => setTab(key as ProductPermissionTab)} className="flex-wrap" />
-      </div>
-      <div className="min-h-0 flex-1 pt-5" aria-label={PERMISSION_TABS.find((item) => item.key === tab)?.label}>
-        <ProductPermissionsPanel tab={tab} />
-      </div>
-    </div>
-  );
-}
-
-// ════════════════════════ 产品 ════════════════════════
-
-function ProductCategoryPanel() {
-  const [tab, setTab] = useState<'category' | 'admins'>('category');
-  return (
-    <div className="flex flex-col gap-4">
-      <SubTabBar
-        tabs={[
-          { key: 'category', label: '产品类型' },
-          { key: 'admins', label: '产品管理员' },
-        ]}
-        active={tab}
-        onChange={(k) => setTab(k as 'category' | 'admins')}
-      />
-      {tab === 'category' ? <CategoryManager /> : <ProductAdminOverviewPanel />}
     </div>
   );
 }
