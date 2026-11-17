@@ -23,6 +23,23 @@ sys.exit(2)
 `, { mode: 0o700 });
 }
 describe('native read-only catalog preview unknown states', () => {
+  it('keeps initialized resource and image previews unknown when the Docker executable is absent, while mutations still fail', () => {
+    const p = root(), input = owned(p);fs.mkdirSync(input.workspaceBase, { recursive: true, mode: 0o700 });fs.mkdirSync(input.catalog, { mode: 0o700 });fs.writeFileSync(path.join(input.catalog, 'lock'), '', { mode: 0o600 });
+    const python = spawnSync('python3', ['-c', 'import sys;print(sys.executable)'], { encoding: 'utf8' });expect(python.status).toBe(0);expect(path.isAbsolute(python.stdout.trim())).toBe(true);
+    const missing = (program: string, request: Record<string, unknown>) => spawnSync(python.stdout.trim(), ['-c', program], { input: JSON.stringify(request), encoding: 'utf8', timeout: 30_000, env: { ...process.env, PATH: p } });
+    const resource = missing(OWNED_RESOURCE_PROGRAM, input);expect(resource.status).toBe(0);expect(JSON.parse(resource.stdout)).toMatchObject({ scanStatus: 'partial', catalogError: 'docker-query-unavailable', usageBytes: null, canExecute: false, counts: { unknown: null, pending: null } });
+    expect(fs.readdirSync(input.catalog)).toEqual(['lock']);expect(fs.readdirSync(input.workspaceBase)).toEqual([]);
+    const imageInput = { action: 'preview', catalog: path.join(p, 'image-cache'), instanceId: 'isolated-test', budgetBytes: 1 };
+    const image = missing(IMAGE_CACHE_PROGRAM, imageInput);expect(image.status).toBe(0);expect(JSON.parse(image.stdout)).toMatchObject({ scanStatus: 'partial', catalogError: 'docker-query-unavailable', imageBytesEstimate: null, canExecute: false });expect(fs.existsSync(imageInput.catalog)).toBe(false);
+    const resourceWrite = missing(OWNED_RESOURCE_PROGRAM, { ...input, action: 'reconcile' });expect(resourceWrite.status).not.toBe(0);expect(resourceWrite.stderr).toContain('FileNotFoundError');expect(fs.existsSync(path.join(input.catalog, 'tasks.json'))).toBe(false);
+    const imageWrite = missing(IMAGE_CACHE_PROGRAM, { ...imageInput, action: 'publish', references: [] });expect(imageWrite.status).not.toBe(0);expect(imageWrite.stderr).toContain('docker-query-unavailable');expect(fs.existsSync(path.join(imageInput.catalog, 'images.json'))).toBe(false);
+  });
+  it('keeps an initialized resource catalog unknown on a failed Docker reference query without writing the catalog', () => {
+    const p = root(), input = owned(p);docker(p);fs.mkdirSync(input.workspaceBase, { recursive: true, mode: 0o700 });fs.mkdirSync(input.catalog, { mode: 0o700 });fs.writeFileSync(path.join(input.catalog, 'lock'), '', { mode: 0o600 });
+    const r = run(OWNED_RESOURCE_PROGRAM, input, p);expect(r.status).toBe(0);expect(JSON.parse(r.stdout)).toMatchObject({ scanStatus: 'partial', catalogError: 'docker-reference-query-unconfirmed', usageBytes: null, canExecute: false });expect(fs.readdirSync(input.catalog)).toEqual(['lock']);expect(fs.readdirSync(input.workspaceBase)).toEqual([]);
+    const write = run(OWNED_RESOURCE_PROGRAM, { ...input, action: 'reconcile' }, p);expect(write.status).not.toBe(0);expect(write.stderr).toContain('docker-reference-query-unconfirmed');expect(fs.existsSync(path.join(input.catalog, 'tasks.json'))).toBe(false);
+  });
+
   it('reports a missing resource root as unknown without creating the catalog or workspace', () => {
     const p = root(), r = run(OWNED_RESOURCE_PROGRAM, owned(p));
     expect(r.status).toBe(0);expect(JSON.parse(r.stdout)).toMatchObject({ scanStatus: 'partial', catalogError: 'catalog-uninitialized', usageBytes: null, canExecute: false, counts: { unknown: null, pending: null } });

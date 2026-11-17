@@ -43,6 +43,7 @@ def docker(args,seconds=8):
  check()
  try:p=subprocess.run(['docker',*args],capture_output=True,text=True,timeout=max(.1,min(seconds,deadline-time.monotonic())))
  except subprocess.TimeoutExpired:preview_unavailable('docker-query-timeout')
+ except OSError:preview_unavailable('docker-query-unavailable')
  if p.returncode:preview_unavailable('docker-query-or-operation-unconfirmed')
  return p.stdout
 info=json.loads(docker(['info','--format','{{json .}}']))
