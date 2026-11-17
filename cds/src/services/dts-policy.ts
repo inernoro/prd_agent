@@ -54,13 +54,14 @@ export function parseDtsConnection(projectId: string, input: unknown): DtsConnec
 }
 export function dtsConnectionUri(connection: DtsConnection, env: Record<string, string | undefined>): string {
   const uri = env[connection.uriEnv];
-  if (!uri || !/^mongodb(?:\+srv)?:\/\//.test(uri)) dtsReject('connection_unavailable', '已有数据库连接不可用，请联系管理员核对服务配置', 503);
+  if (!uri || !(connection.kind === 'mongo' ? /^mongodb(?:\+srv)?:\/\// : connection.kind === 'rabbitmq' ? /^https?:\/\// : connection.kind === 'redis' ? /^redis:\/\// : connection.kind === 'mysql' ? /^mysql:\/\// : /^(?:postgres|postgresql):\/\//).test(uri)) dtsReject('connection_unavailable', '已有数据库连接不可用，请联系管理员核对服务配置', 503);
   return uri;
 }
 export function compatibleDtsFields(source: DtsConnection, target: DtsConnection, mode: DtsMode): Record<string, DtsFieldType> {
   if (!target.allowWrite) dtsReject('target_read_only', '该连接未获准作为写入目标，请由管理员核对后登记', 403);
   if (mode === 'account-authority' && (source.environmentRole !== 'production' || target.environmentRole === 'production')) dtsReject('account_direction_invalid', '账号资料必须由已登记的正式环境向非正式环境同步，不能反向覆盖正式资料', 409);
-  if (source.kind !== 'mongo' || target.kind !== 'mongo') dtsReject('connector_not_verified', '该服务连接器尚未完成本环境验证，暂不允许写入', 409);
+  if (source.kind !== target.kind || !['mongo', 'mysql', 'postgres', 'redis', 'rabbitmq'].includes(source.kind)) dtsReject('connector_not_verified', '该服务连接器尚未完成本环境验证，暂不允许写入', 409);
+  if (['redis','rabbitmq'].includes(source.kind) && source.collection !== target.collection) dtsReject('prefix_mapping_not_verified','源和目标必须使用相同的批准前缀，尚未开放跨前缀重命名写入',409);
   if (source.contract.id !== target.contract.id || !target.contract.accepts.includes(source.contract.version)) {
     dtsReject('incompatible_version', '两端数据版本尚未确认兼容，请先完成版本映射或升级目标环境', 409);
   }

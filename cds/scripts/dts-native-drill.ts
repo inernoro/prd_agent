@@ -52,6 +52,15 @@ try {
   assert.equal(await dst.db(database).collection('records').countDocuments(), 3);
   const repeat = await service.plan(project, source.id, target.id, 'append-only', actor);
   assert.equal(repeat.insertCount, 0);
+  await dst.db(database).collection('records').createIndex({name:1},{unique:true});
+  await src.db(database).collection('records').insertOne({_id:'conflict',name:'production',revision:3} as never);
+  const conflictPlan=await service.plan(project,source.id,target.id,'append-only',actor);
+  const conflictRun=await service.start(project,conflictPlan.id,'native-conflict',actor),failed=await wait(conflictRun.id);
+  assert.equal(failed.status,'failed',failed.message);
+  assert.equal((await dst.db(database).collection('records').findOne({name:'production'}))?._id,'existing');
+  await src.db(database).collection('records').updateOne({_id:'conflict' as never},{$set:{name:'recovered'}});
+  const resumed=await service.control(project,failed.id,'resume',actor),recovered=await wait(resumed.id);assert.equal(recovered.status,'completed',recovered.message);
+  console.log('PASS MongoDB native uniqueness failure preserves target; fresh resume completes');
   // Exercise every admitted BSON type using the official connector, including an Int64 beyond JS safe precision.
   const typedFields = { _id: 'string', text: 'string', flag: 'boolean', count: 'int', big: 'bigint', amount: 'double', at: 'timestamp' };
   await src.db(database).collection('typed').insertOne({ _id: 'types', text: '中文', flag: true, count: 42, big: Long.fromString('9223372036854775806'), amount: 1.25, at: new Date('2026-11-17T00:00:00Z') } as never);

@@ -17,7 +17,7 @@ export function dtsManagedServices(state: StateService, projectId: string): DtsM
     if (!kind || !DTS_KINDS.includes(kind as DtsKind)) return [];
     const uriEnv = `CDS_${cdsEnvPrefix(service.id)}_URL`;
     return [{ id: service.id, projectId, name: service.name, kind: kind as DtsKind, database: service.dbName ?? null,
-      uriEnv, status: service.status, ready: service.status === 'running' && Boolean(derived[uriEnv]) }];
+      uriEnv, status: service.status, ready: kind !== 'rabbitmq' && service.status === 'running' && Boolean(derived[uriEnv]) }];
   });
 }
 /** A managed binding cannot be redirected to an unrelated custom variable or project. */
@@ -30,4 +30,11 @@ export function dtsConnectionEnvironment(state: StateService, c: DtsConnection):
   }
   // Project custom values may configure credential templates; they cannot override the derived endpoint itself.
   return { ...env, [c.uriEnv]: state.getCdsEnvVars(c.projectId)[c.uriEnv] };
+}
+
+/** Include URI userinfo when a native driver reports credentials separately from its connection string. */
+export function dtsEnvironmentSecrets(env:Record<string,string>):string[]{
+ const values=Object.values(env),secrets=values.filter(v=>v.length>3);
+ for(const v of values)try{const u=new URL(v);if(u.password)secrets.push(u.password,decodeURIComponent(u.password));}catch{/* ordinary non-URI project configuration */}
+ return [...new Set(secrets)];
 }

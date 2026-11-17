@@ -1,8 +1,11 @@
+import { prepareDtsRabbitPlan,buildDtsRabbitJob,verifyDtsRabbitPlan } from './dts-rabbitmq.js';
+import { prepareDtsRedisPlan,buildDtsRedisJob,verifyDtsRedisPlan } from './dts-redis.js';
+import { prepareDtsSqlPlan, buildDtsSqlJob, verifyDtsSqlPlan, withDtsSql } from './dts-sql.js';
 import { randomUUID } from 'node:crypto';
 import type { StateService } from './state.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import { createExternalResponseAudit } from './standby-response-audit.js';
-import { dtsConnectionEnvironment, dtsManagedServices, dtsProjectEnvironment } from './dts-connections.js';
+import { dtsConnectionEnvironment, dtsEnvironmentSecrets, dtsManagedServices, dtsProjectEnvironment } from './dts-connections.js';
 import { DtsStore } from './dts-store.js';
 import { DtsSeaTunnel, parseDtsEngine } from './dts-seatunnel.js';
 import { DtsError, buildDtsMongoJob, dtsConnectionUri, dtsHash, dtsReject, parseDtsConnection, prepareDtsPlan, verifyDtsPlan, withDtsMongo } from './dts-policy.js';
@@ -16,16 +19,23 @@ export class DtsService {
   private readonly inFlight = new Map<string, Promise<DtsRun>>();
   private schedulerBusy = false;
   constructor(readonly store: DtsStore, private readonly state: StateService, private readonly sink: ServerEventLogSink | null | undefined,
-    private readonly actorAllowed: (actor: DtsActor, projectId: string) => Promise<boolean>, engine?: DtsSeaTunnel) {
+    private readonly actorAllowed: (actor: DtsActor, projectId: string) => Promise<boolean>, engine?: DtsSeaTunnel, private readonly runtime?: { freeBytes:(c:DtsConnection)=>Promise<number> }) {
     this.engine = engine ?? new DtsSeaTunnel(state, sink);
   }
   async capabilities(projectId: string) {
     const binding = this.store.configured() ? await this.store.get<EngineRow>('engines', projectId, `engine:${projectId}`) : undefined;
     return { protocolVersion: DTS_PROTOCOL_VERSION, projectId, engineVersion: SEATUNNEL_VERSION, configured: Boolean(binding),
       storeConfigured: this.store.configured(), tools: DTS_TOOLS,
-      connectors: DTS_KINDS.map(kind => ({ kind, transport: 'seatunnel', verified: kind === 'mongo',
-        modes: kind === 'mongo' ? ['append-only', 'account-authority'] : [],
-        message: kind === 'mongo' ? '文本主键、已登记字段的受控同步' : '待完成无损与恢复验证，尚未开放写入' })),
+      connectors: DTS_KINDS.map(kind => {
+        const native = ['mongo','mysql','postgres'].includes(kind);
+        const adapter = kind === 'redis' ? 'redis-shake' : 'rabbitmq-definitions';
+        const verified = native || binding?.adapters?.[adapter] === (kind === 'redis' ? '4.7.0' : '1');
+        return { kind, transport: native ? 'seatunnel' : adapter, verified,
+          modes: verified ? native ? ['append-only','account-authority'] : ['append-only'] : [],
+          message: native ? '文本主键、批准字段、原生传输与独立对账'
+            : !verified ? '请先连接已安装该适配器的完整传输服务'
+              : kind === 'redis' ? '批准的 key 前缀，只追加并保留类型与绝对过期时间' : '批准的持久拓扑前缀，仅追加配置，不消费或复制消息' };
+      }),
       maxRecords: 10_000, concurrentNativeWriters: 1 };
   }
   async configureEngine(projectId: string, input: unknown) {
@@ -33,8 +43,15 @@ export class DtsService {
     if ((await this.store.activeRuns<DtsRun>(projectId)).length > 0) dtsReject('engine_busy', '存在未结束的同步任务，请先完成或取消后再更换传输服务', 409);
     const info = await this.engine.call(binding, 'overview');
     if (info.projectVersion !== SEATUNNEL_VERSION) dtsReject('engine_version_mismatch', '传输服务实际版本与已验证版本不一致，请先核对安装版本', 409);
-    await this.store.put('engines', { ...binding, id: `engine:${projectId}` });
+    const declared = info.cdsDtsAdapters as Record<string,unknown> | undefined;
+    const adapters:Record<string,string> = {};
+    for(const [name,version] of [['redis-shake','4.7.0'],['rabbitmq-definitions','1']])if(declared?.[name]===version)adapters[name]=version;
+    await this.store.put('engines', { ...binding, adapters, id: `engine:${projectId}` });
     return { configured: true, version: binding.version };
+  }
+  private prepare(input: Parameters<typeof prepareDtsPlan>[0]) {
+    if(input.source.kind === 'rabbitmq')return prepareDtsRabbitPlan({...input,sink:this.sink});
+    return input.source.kind === 'mongo' ? prepareDtsPlan(input) : (input.source.kind === 'redis' ? prepareDtsRedisPlan : prepareDtsSqlPlan)({ ...input, freeBytes:()=>this.runtime?.freeBytes(input.target) ?? Promise.resolve(NaN) });
   }
   private env(c: DtsConnection) { return dtsConnectionEnvironment(this.state, c); }
   services(projectId: string) { return dtsManagedServices(this.state, projectId); }
@@ -49,7 +66,7 @@ export class DtsService {
       await audit.record({ peerId: action, url: 'http://dts-database.local/' + action, method: 'READ', startedAt: new Date(start).toISOString(),
         durationMs: Date.now() - start, timeoutMs: 10_000, responseReceived: !failure || failure instanceof DtsError,
         httpStatus: null, upstreamRequestId: null, contentType: 'application/bson', json: raw, text: JSON.stringify(raw), parseState: 'json',
-        localDecision: failure ? 'rejected' : 'success', secrets: Object.values(dtsProjectEnvironment(this.state, projectId)).filter(v => v.length > 3) });
+        localDecision: failure ? 'rejected' : 'success', secrets: dtsEnvironmentSecrets(dtsProjectEnvironment(this.state, projectId)) });
     }
   }
   connections(projectId: string) { return this.store.list<DtsConnection>('connections', projectId); }
@@ -59,6 +76,7 @@ export class DtsService {
     if (c.kind === 'mongo') await this.databaseCall(projectId, 'connection', () => withDtsMongo(dtsConnectionUri(c, this.env(c)), async client => {
       await client.db(c.database).command({ ping: 1 }); return true;
     }), () => ({ success: true }), c.id);
+    if (c.kind === 'mysql' || c.kind === 'postgres') await this.databaseCall(projectId, 'connection', () => withDtsSql(c, dtsConnectionUri(c, this.env(c)), async db => { await db.query('SELECT 1'); return true; }), () => ({success:true}), c.id);
     await this.store.put('connections', c); return c;
   }
   private async connection(projectId: string, id: string) {
@@ -69,12 +87,12 @@ export class DtsService {
     if (!await this.actorAllowed(actor, projectId)) dtsReject('actor_revoked', '当前身份已无权执行同步，请重新核对项目授权', 403);
     const source = await this.connection(projectId, sourceId), target = await this.connection(projectId, targetId);
     const planId = randomUUID();
-    const p = await this.databaseCall(projectId, 'plan', () => prepareDtsPlan({ projectId, source, target,
+    const p = await this.databaseCall(projectId, 'plan', () => this.prepare({ projectId, source, target,
       sourceUri: dtsConnectionUri(source, this.env(source)), targetUri: dtsConnectionUri(target, this.env(target)), mode, actor, profileOnly, planId }),
     p => ({ success: true, sourceCount: p.sourceCount, targetCount: p.targetCount, insertCount: p.insertCount, updateCount: p.updateCount, skipCount: p.skipCount }), planId);
     await this.store.put('plans', p); return this.publicPlan(p);
   }
-  publicPlan(p: DtsPlan) { const { keys: _, approvedBy: _actor, ...publicValue } = p; return publicValue; }
+  publicPlan(p: DtsPlan) { const { keys: _, redisEntries: _redis, rabbitObjects: _rabbit, approvedBy: _actor, ...publicValue } = p; return publicValue; }
   publicRun(r: DtsRun) { const { actor: _, engine: _engine, plan, ...value } = r; return { ...value, plan: this.publicPlan(plan) }; }
   publicPolicy(p: DtsPolicy) { const { actor: _, ...value } = p; return value; }
   async runs(projectId: string) { return this.store.list<DtsRun>('runs', projectId); }
@@ -94,6 +112,9 @@ export class DtsService {
     if (!plan || Date.parse(plan.expiresAt) <= Date.now()) dtsReject('plan_expired', '比较结果不存在或已过期，请重新比较后同步', 409);
     const engine = await this.store.get<EngineRow>('engines', projectId, `engine:${projectId}`);
     if (!engine) dtsReject('engine_unavailable', '项目尚未连接传输服务，请联系管理员', 503);
+    const selectedSource = await this.connection(projectId, plan.sourceId);
+    if (selectedSource.kind === 'rabbitmq' && engine.adapters?.['rabbitmq-definitions'] !== '1') dtsReject('adapter_unavailable','当前传输服务尚未安装已验证的 RabbitMQ 拓扑适配器，请先连接完整运行服务',409);
+    if (selectedSource.kind === 'redis' && engine.adapters?.['redis-shake'] !== '4.7.0') dtsReject('adapter_unavailable','当前传输服务尚未安装已验证的 RedisShake 适配器，请先连接完整运行服务',409);
     if (!await this.actorAllowed(actor, projectId)) dtsReject('actor_revoked', '当前同步授权已失效，请核对项目授权', 403);
     const id = randomUUID();
     if (!await this.store.acquire(WRITER_LOCK, projectId, id)) dtsReject('target_busy', '已有同步写入尚未结束或尚未确认停止，请稍后重试', 409);
@@ -111,7 +132,7 @@ export class DtsService {
     try {
       const source = await this.connection(r.projectId, r.plan.sourceId), target = await this.connection(r.projectId, r.plan.targetId);
       const sourceUri = dtsConnectionUri(source, this.env(source)), targetUri = dtsConnectionUri(target, this.env(target));
-      const fresh = await this.databaseCall(r.projectId, 'recheck', () => prepareDtsPlan({ projectId: r.projectId, source, target, sourceUri, targetUri, mode: r.plan.mode, actor: r.actor, profileOnly: r.plan.profileOnly }),
+      const fresh = await this.databaseCall(r.projectId, 'recheck', () => this.prepare({ projectId: r.projectId, source, target, sourceUri, targetUri, mode: r.plan.mode, actor: r.actor, profileOnly: r.plan.profileOnly }),
         p => ({ sourceCount: p.sourceCount, insertCount: p.insertCount, updateCount: p.updateCount }), r.id);
       if (fresh.sourceFingerprint !== r.plan.sourceFingerprint || fresh.targetFingerprint !== r.plan.targetFingerprint
         || fresh.selectedDigest !== r.plan.selectedDigest || dtsHash(fresh.keys) !== dtsHash(r.plan.keys)) {
@@ -122,7 +143,7 @@ export class DtsService {
         r.status = 'completed'; r.message = '数据已符合当前策略，没有需要写入的记录'; r.finishedAt = new Date().toISOString();
         await this.save(r); await this.store.release(WRITER_LOCK, r.id); return r;
       }
-      const config = buildDtsMongoJob(r.plan, source, target, sourceUri, targetUri);
+      const config = (source.kind === 'mongo' ? buildDtsMongoJob : source.kind === 'redis' ? buildDtsRedisJob : source.kind === 'rabbitmq' ? buildDtsRabbitJob : buildDtsSqlJob)(r.plan, source, target, sourceUri, targetUri);
       r.configDigest = dtsHash(config); r.status = 'submitting'; r.message = '正在提交原生数据传输任务'; await this.save(r);
       mayHaveSubmitted = true;
       await this.engine.call(r.engine, 'submit', r.engineJobId, config, r.id);
@@ -158,7 +179,7 @@ export class DtsService {
           r.status = 'verifying'; r.message = '传输已结束，正在核对源数据与目标结果'; await this.save(r);
           const source = await this.connection(projectId, r.plan.sourceId), target = await this.connection(projectId, r.plan.targetId);
           const srcUri = dtsConnectionUri(source, this.env(source)), dstUri = dtsConnectionUri(target, this.env(target));
-          r.appliedCount = await this.databaseCall(projectId, 'verify', () => verifyDtsPlan(r.plan, source, target, srcUri, dstUri), count => ({ success: true, appliedCount: count }), r.id);
+          r.appliedCount = await this.databaseCall(projectId, 'verify', () => source.kind === 'rabbitmq' ? verifyDtsRabbitPlan(r.plan,source,target,srcUri,dstUri,this.sink) : (source.kind === 'mongo' ? verifyDtsPlan : source.kind === 'redis' ? verifyDtsRedisPlan : verifyDtsSqlPlan)(r.plan, source, target, srcUri, dstUri), count => ({ success: true, appliedCount: count }), r.id);
           r.status = 'completed'; r.message = '同步与目标数据核对均已完成';
         }
       } else if (status === 'CANCELED' || status === 'CANCELLED') {

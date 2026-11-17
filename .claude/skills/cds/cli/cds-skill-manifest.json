@@ -26,7 +26,7 @@
     "cds/reference/scan.md": "caac675caeb87cfa06dd7767926d87a5ba657a9e4739067c889393c8b293b95d",
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/scripts/refresh_manifest.py": "22a4f7d70480a7bd35bc852ea7270fc85f4d12c404c0db49d9a003f009d21e5e",
-    "cds/SKILL.md": "be231800424b8a61652795ff56ac23d81c04c0ffecbbd0ec697dce6d695dd7c5",
+    "cds/SKILL.md": "c8545e9a7e338cd8c8312cd902ea077d3e8707ba1450f2a0e38debd057575023",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
     "cds/tests/test_cdscli_code_review.py": "9f4b73be9b267351d0588e96d61c90ebe0b9f5fb742739213d4633eee38b53dd",
     "cds/tests/test_cdscli_connect.py": "649a4a6081ad4399b68191447af31705bacb97c29a64b7fdaed62be630f9ab3a",
@@ -68,5 +68,5 @@
     "cds-release/SKILL.md": "17f4df0330e3b041a9c3d96a825ded21092df8b0e4a2b699930692965eabe2f7",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-16T21:58:33.416Z"
+  "generatedAt": "2026-11-17T08:09:32.548Z"
 }

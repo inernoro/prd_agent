@@ -27,11 +27,14 @@ export interface DtsManagedService {
 export interface DtsEngineBinding {
   projectId: string; baseUrl: string; version: typeof SEATUNNEL_VERSION;
   usernameEnv: string; passwordEnv: string;
+  adapters?: Record<string,string>;
 }
 export interface DtsActor {
   kind: 'static' | 'project-key' | 'user' | 'legacy-owner' | 'principal';
   id: string; fingerprint?: string;
 }
+export interface DtsRabbitObject { kind:'exchange'|'queue'|'binding'; id:string; value:Record<string,unknown> }
+export interface DtsRedisEntry { key:string; type:string; expireAt:number; digest:string; bytes:number }
 export interface DtsPlan {
   id: string; projectId: string; sourceId: string; targetId: string; mode: DtsMode;
   createdAt: string; expiresAt: string; profileOnly?: boolean;
@@ -42,6 +45,8 @@ export interface DtsPlan {
   /** Bounded stable identities; data values and credentials never enter control-plane state. */
   keys: string[]; selectedDigest: string; approvedBy: DtsActor;
   sourceContract: DtsContract; targetContract: DtsContract;
+  redisEntries?: DtsRedisEntry[];
+  rabbitObjects?: DtsRabbitObject[];
 }
 export type DtsRunStatus = 'preparing' | 'submitting' | 'running' | 'verifying' | 'pausing' | 'paused' | 'cancelling' | 'cancelled' | 'completed' | 'failed' | 'uncertain';
 export interface DtsRun {

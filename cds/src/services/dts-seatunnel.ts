@@ -1,4 +1,4 @@
-import { dtsProjectEnvironment } from './dts-connections.js';
+import { dtsEnvironmentSecrets, dtsProjectEnvironment } from './dts-connections.js';
 import type { StateService } from './state.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import type { DtsEngineBinding } from '../shared/dts.js';
@@ -48,7 +48,7 @@ export class DtsSeaTunnel {
       const result: unknown = JSON.parse(raw); parseState = 'json';
       if (!result || typeof result !== 'object' || Array.isArray(result)) dtsReject('invalid_engine_response', '传输服务返回格式不兼容，请核对服务版本', 502);
       parsed = result as Record<string, unknown>;
-      if (!response.ok || parsed.code === 'ERROR' || parsed.status === 'fail' || parsed.errorMsg || parsed.error) {
+      if (!response.ok || parsed.code === 'ERROR' || parsed.status === 'fail' || (parsed.errorMsg && !(operation === 'status' && parsed.jobStatus === 'FAILED')) || parsed.error) {
         decision = 'upstream-rejected'; dtsReject('engine_rejected', '传输服务未接受操作，请查看同步任务后再重试', 502);
       }
       if (operation === 'submit' && String(parsed.jobId) !== jobId) dtsReject('engine_job_mismatch', '传输服务返回了不同的任务编号，请核对任务状态', 502);
@@ -64,8 +64,8 @@ export class DtsSeaTunnel {
       await audit.record({ peerId: 'seatunnel', url: endpoint, method, startedAt: new Date(started).toISOString(), durationMs: Date.now() - started,
         timeoutMs: 20_000, responseReceived: Boolean(response), httpStatus: response?.status ?? null, contentType: response?.headers.get('content-type') ?? null,
         upstreamRequestId: response?.headers.get('x-request-id') ?? null, text: raw, json: { jobId: parsed?.jobId, status: parsed?.jobStatus ?? parsed?.status,
-          code: parsed?.code, message: parsed?.message ?? parsed?.errorMsg ?? parsed?.error, decision }, parseState, localDecision: decision,
-        secrets: [username, password, auth, ...Object.values(env).filter(v => typeof v === 'string' && v.length > 3)] });
+          upstreamReceipts: parsed?.upstreamReceipts, code: parsed?.code, message: parsed?.message ?? parsed?.errorMsg ?? parsed?.error, decision }, parseState, localDecision: decision,
+        secrets: [username, password, auth, ...dtsEnvironmentSecrets(env)] });
     }
   }
 }

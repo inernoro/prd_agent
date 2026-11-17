@@ -3,12 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { randomUUID, createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { MongoClient } from 'mongodb';
 import { createServer, installSpaFallback } from '../src/server.js';
 import { StateService } from '../src/services/state.js';
 import { MockShellExecutor } from '../src/services/shell-executor.js';
 import { WorktreeService } from '../src/services/worktree.js';
-import type { CdsConfig, Project } from '../src/types.js';
+import type { CdsConfig, Project, InfraService } from '../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../src/services/server-event-log-store.js';
 const folder = process.env.DTS_DRILL_DIRECTORY;
 if (!folder || !folder.startsWith('/tmp/')) throw new Error('A disposable DTS_DRILL_DIRECTORY under /tmp is required');
@@ -21,11 +23,32 @@ const state = new StateService(path.join(root, 'state.json'), root); state.load(
 if (!state.getProject(projectId)) state.addProject({ id: projectId, slug: projectId, name: 'DTS 隔离验收', kind: 'git', gitRepoUrl: 'https://github.com/fixture/dts.git', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Project);
 if (!state.getAgentKeys(projectId).some(k => k.id === 'qa-key')) state.addAgentKey(projectId, { id: 'qa-key', label: 'disposable drill', hash: createHash('sha256').update(projectKey).digest('hex'), scope: 'rw', createdAt: new Date().toISOString() });
 state.setCustomEnv({ SOURCE_URI: 'mongodb://127.0.0.1:18881', TARGET_URI: 'mongodb://127.0.0.1:18882', ENGINE_USER: auth.username, ENGINE_PASSWORD: auth.password }, projectId);
+const expanded = process.env.DTS_DRILL_EXPANDED === '1';
+if (expanded) {
+  const redisPort=process.env.DTS_REDIS_DRILL_PORT || '18883';if(!['18883','18894'].includes(redisPort))throw new Error('Only owned Redis fixture ports are allowed');
+  const urls={CDS_MYSQL_QA_URL:'mysql://root:dts_disposable_1117@127.0.0.1:18891',CDS_PG_QA_URL:'postgres://postgres:dts_disposable_1117@127.0.0.1:18892',CDS_REDIS_QA_URL:'redis://127.0.0.1:'+redisPort};
+  const derived=state.getCdsEnvVars.bind(state);
+  state.getCdsEnvVars=(id?:string)=>({...derived(id),...(id===projectId?urls:{})});
+  state.setCustomEnv({...state.getCustomEnv(projectId),RABBIT_HTTP:'http://dts_qa:dts_disposable_1117@127.0.0.1:18893/'},projectId);
+  for(const [id,image,container] of [['mysql-qa','mysql:8.0','cds-dts-qa-mysql-1117'],['pg-qa','postgres:16-alpine','cds-dts-qa-postgres-1117'],['redis-qa','redis:7.4.2-alpine',process.env.DTS_DRILL_LOCAL_DOCKER==='1'?'cds-dts-redis-ci':'cds-dts-qa-redis7-1117']]){
+    if(!state.getInfraServicesForProject(projectId).some(s=>s.id===id))state.addInfraService({id,projectId,name:'隔离服务 '+id,dockerImage:image,containerName:container,status:'running',containerPort:1,hostPort:1,volumes:[],env:{},createdAt:new Date().toISOString()} as InfraService);
+  }
+}
 const file = path.join(root, 'events.jsonl');
 if (!fs.existsSync(file)) fs.writeFileSync(file, '', { mode: 0o600 });
 const sink: ServerEventLogSink = { record: row => fs.appendFileSync(file, JSON.stringify({ ...row, _id: randomUUID(), ts: new Date() }) + '\n'),
   recordImmediate: async row => sink.record(row), findRecent: async filter => fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(s => JSON.parse(s) as ServerEventRecord).filter(row => !filter?.requestId || row.requestId === filter.requestId).slice(-(filter?.limit || 200)) };
 const shell = new MockShellExecutor();
+if(expanded){
+ const fallback=shell.exec.bind(shell);
+ shell.exec=async(command,options)=>{
+  if(/^docker exec '(?:cds-dts-qa-(?:mysql|postgres|redis7)-1117|cds-dts-redis-ci)' df -Pk '\/(?:var\/lib\/(?:mysql|postgresql\/data)|data)'$/.test(command)){
+   const local=process.env.DTS_DRILL_LOCAL_DOCKER==='1';
+   const r=await promisify(execFile)(local?'bash':'ssh',local?['-c',command]:['-o','BatchMode=yes','mycds','sudo -n '+command],{timeout:15000});return {stdout:r.stdout,stderr:r.stderr,exitCode:0};
+  }
+  return fallback(command,options);
+ };
+}
 const config: CdsConfig = { repoRoot: root, worktreeBase: path.join(root, 'worktrees'), masterPort: 18886, workerPort: 18887, dockerNetwork: 'dts-local-drill', portStart: 19901, sharedEnv: {}, jwt: { secret: 'disposable', issuer: 'drill' }, mode: 'standalone', executorPort: 19900 };
 const app = createServer({ stateService: state, shell, config, serverEventLogStore: sink, worktreeService: new WorktreeService(shell, root),
   containerService: { list: async () => [], listContainers: async () => [], getContainers: async () => [] } as never,
@@ -37,7 +60,7 @@ async function call(route: string, body?: unknown, method = 'POST') {
   const r = await fetch(origin + '/api/dts' + route + '?projectId=' + projectId, { method, headers: { 'Content-Type': 'application/json', 'X-AI-Access-Key': rootKey }, body: body === undefined ? undefined : JSON.stringify(body) });
   if (!r.ok) throw new Error(`DTS fixture setup failed: ${r.status} ${await r.text()}`); return r.json();
 }
-await call('/engine', { baseUrl: 'http://127.0.0.1:18885', version: '3.0.0', usernameEnv: 'ENGINE_USER', passwordEnv: 'ENGINE_PASSWORD' }, 'PUT');
+await call('/engine', { baseUrl: 'http://127.0.0.1:'+(process.env.DTS_DRILL_ENGINE_PORT||'18885'), version: '3.0.0', usernameEnv: 'ENGINE_USER', passwordEnv: 'ENGINE_PASSWORD' }, 'PUT');
 const fields = { _id: 'string', name: 'string', revision: 'int' };
 const base = { database: 'dts_interfaces_qa_v2', collection: 'accounts', kind: 'mongo', contract: { id: 'account-profile', version: 1, accepts: [1], fields }, accountFields: ['name', 'revision'] };
 for (const [port, records] of [[18881, [{ _id: 'existing', name: '正式资料', revision: 2 }, { _id: 'new', name: '新账号', revision: 1 }]], [18882, [{ _id: 'existing', name: '备用原值', revision: 1, localOnly: '必须保留' }, { _id: 'target-only', name: '备用验收数据', revision: 1 }]]] as const) {
@@ -48,8 +71,22 @@ let source = connections.connections.find((c: { uriEnv: string }) => c.uriEnv ==
 let target = connections.connections.find((c: { uriEnv: string }) => c.uriEnv === 'TARGET_URI');
 if (!source) source = (await call('/connections', { ...base, environmentRole: 'production', name: '正式账号资料', uriEnv: 'SOURCE_URI' })).connection;
 if (!target) target = (await call('/connections', { ...base, environmentRole: 'standby', allowWrite: true, name: '备用账号资料', uriEnv: 'TARGET_URI' })).connection;
+const pairs:Record<string,{sourceId:string;targetId:string}>={mongo:{sourceId:source.id,targetId:target.id}};
+if(expanded){
+ for(const [kind,uriEnv,infraId,collection,contractFields] of [['mysql','CDS_MYSQL_QA_URL','mysql-qa','cds_dts_qa_records',fields],['postgres','CDS_PG_QA_URL','pg-qa','cds_dts_qa_records',fields],['redis','CDS_REDIS_QA_URL','redis-qa','dtsqa',{_id:'string'}],['rabbitmq','RABBIT_HTTP',undefined,'webqa',{_id:'string'}]] as const){
+  const ids=[];
+  for(const side of ['source','target']){
+   const db=kind==='redis'?(side==='source'?'2':'3'):(side==='source'?'dts_source':'dts_target');
+   const rows=(await call('/connections',undefined,'GET')).connections;
+   let c=rows.find((v:{kind:string;database:string;collection:string})=>v.kind===kind&&v.database===db&&v.collection===collection);
+   if(!c)c=(await call('/connections',{kind,uriEnv,infraId,collection,database:db,name:kind+' '+side,environmentRole:side==='source'?'production':'standby',allowWrite:side==='target',contract:{id:kind+'-interface',version:1,accepts:[1],fields:contractFields},accountFields:kind==='mysql'||kind==='postgres'?['name','revision']:[]})).connection;
+   ids.push(c.id);
+  }
+  pairs[kind]={sourceId:ids[0],targetId:ids[1]};
+ }
+}
 fs.mkdirSync(path.join(root, '.git'), { recursive: true }); fs.mkdirSync(path.join(root, '.cds'), { recursive: true, mode: 0o700 });
 fs.writeFileSync(path.join(root, '.cds/credentials.json'), JSON.stringify({ version: 1, host: origin, projectId, projectKey }), { mode: 0o600 });
-fs.writeFileSync(path.join(folder, 'interface-context.json'), JSON.stringify({ origin, projectId, sourceId: source.id, targetId: target.id, workspace: root }), { mode: 0o600 });
+fs.writeFileSync(path.join(folder, 'interface-context.json'), JSON.stringify({ origin, projectId, sourceId: source.id, targetId: target.id, pairs, workspace: root }), { mode: 0o600 });
 console.log('Local DTS interface fixture ready on loopback 18886; no production services used');
 for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => { server.closeAllConnections(); server.close(); void app.locals.dtsService.store.close().finally(() => process.exit(0)); });

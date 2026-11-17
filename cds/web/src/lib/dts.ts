@@ -1,7 +1,7 @@
 import { apiRequest } from './api';
 import type { DtsConnection, DtsManagedService, DtsPlan, DtsRun, DtsPolicy } from '../../../src/shared/dts';
 export type { DtsConnection, DtsMode } from '../../../src/shared/dts';
-export type Plan = Omit<DtsPlan, 'keys' | 'approvedBy'>;
+export type Plan = Omit<DtsPlan, 'keys' | 'redisEntries' | 'rabbitObjects' | 'approvedBy'>;
 export type Run = Omit<DtsRun, 'actor' | 'engine' | 'plan'> & { plan: Plan };
 export type Policy = Omit<DtsPolicy, 'actor'>;
 export interface Capabilities { projectId: string; configured: boolean; configureAllowed: boolean; executeAllowed: boolean; engineVersion: string; connectors: { kind: string; verified: boolean; message: string }[] }

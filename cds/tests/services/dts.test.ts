@@ -50,6 +50,10 @@ describe('DTS admission and native-job recovery', () => {
     const source = connection('source'), target = connection('target'); source.allowWrite = true;
     expect(() => policy.compatibleDtsFields(target, source, 'account-authority')).toThrow('不能反向');
   });
+  it.each(['redis','rabbitmq'] as const)('rejects unimplemented %s prefix mapping before any native write', kind => {
+    const source={...connection('source'),kind,collection:'source_prefix'},target={...connection('target'),kind,collection:'target_prefix'};
+    expect(()=>policy.compatibleDtsFields(source,target,'append-only')).toThrow('相同的批准前缀');
+  });
   it('requires administrator approval before a connection can become a write target', () => {
     const target = connection('target'); target.allowWrite = false;
     expect(() => policy.compatibleDtsFields(connection('source'), target, 'append-only')).toThrow('未获准');

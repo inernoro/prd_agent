@@ -55,6 +55,7 @@ import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
+import { dtsManagedFreeBytes } from './services/dts-capacity.js';
 import { createDtsRouter } from './routes/dts.js';
 import { DtsService } from './services/dts.js';
 import { dtsCredentialAllowed } from './services/dts-access.js';
@@ -5260,7 +5261,7 @@ export function createServer(deps: ServerDeps): express.Express {
     if (actor.kind === 'legacy-owner') return authEnabled && actor.id === cdsUser;
     const user = await authService?.findUserById(actor.id);
     return Boolean(user?.status === 'active' && user.isSystemOwner);
-  });
+  }, undefined, { freeBytes: c => dtsManagedFreeBytes(deps.stateService, deps.shell, c) });
   app.locals.dtsService = dtsService;
   app.use('/api', createDtsRouter({ service: dtsService, state: deps.stateService, actor: dtsActor }));
   const dtsTimer = setInterval(() => {

@@ -23,6 +23,10 @@ describe('DTS original engine protocol and durable redaction', () => {
     expect(proof.responseSha256).toBe(createHash('sha256').update(raw).digest('hex')); expect(proof.originalBytes).toBe(Buffer.byteLength(raw));
     expect(JSON.stringify(f.records)).not.toContain('fixture-private-password'); expect(String(proof.snapshot)).not.toContain('jobConfig'); expect(f.records[0].severity).toBe('info');
   });
+  it('accepts a pinned failed native terminal even when it carries an error diagnostic', async () => {
+    const f = await fixture(JSON.stringify({jobId:'123',jobName:'cds-dts-run',jobStatus:'FAILED',errorMsg:'native duplicate key'}));
+    expect((await f.engine.call(f.binding,'status','123',undefined,'run')).jobStatus).toBe('FAILED');
+  });
   it('rejects a different native job identity instead of treating its FINISHED as success', async () => {
     const f = await fixture(JSON.stringify({ jobId:'123',jobName:'another-run',jobStatus:'FINISHED' }));
     await expect(f.engine.call(f.binding,'status','123',undefined,'run')).rejects.toThrow('尚未核实');

@@ -1,0 +1,38 @@
+[
+  {
+    "url": "https://archive.apache.org/dist/seatunnel/3.0.0/apache-seatunnel-3.0.0-bin.tar.gz",
+    "file": "seatunnel.tar.gz",
+    "algorithm": "sha512",
+    "digest": "2825b9ef0708dcbb3c2cab238b8ed39b41fce0eb4d01582c026c57cec8cef9b047875c38ea5a03b6483737213cd49f8c6130f59c2ad6b689669ccb10cd5356e6"
+  },
+  {
+    "url": "https://repo.maven.apache.org/maven2/org/apache/seatunnel/connector-mongodb/3.0.0/connector-mongodb-3.0.0.jar",
+    "file": "connector-mongodb-3.0.0.jar",
+    "algorithm": "sha256",
+    "digest": "76fbdebb8274b2d1d6cf67f71a8749b7caee89dbacfd68d9314937982f729667"
+  },
+  {
+    "url": "https://repo.maven.apache.org/maven2/org/apache/seatunnel/connector-jdbc/3.0.0/connector-jdbc-3.0.0.jar",
+    "file": "connector-jdbc-3.0.0.jar",
+    "algorithm": "sha256",
+    "digest": "e60700f09f0ffbdf18ec9744674c87d60a4a5180ad4b5288ae244917771f0f2d"
+  },
+  {
+    "url": "https://repo.maven.apache.org/maven2/org/postgresql/postgresql/42.7.14/postgresql-42.7.14.jar",
+    "file": "postgresql-42.7.14.jar",
+    "algorithm": "sha256",
+    "digest": "73914527305a40cce504b0d3d90b23caf565136912d607ae8ae7c5895512332c"
+  },
+  {
+    "url": "https://repo.maven.apache.org/maven2/com/mysql/mysql-connector-j/26.10.0/mysql-connector-j-26.10.0.jar",
+    "file": "mysql-connector-j-26.10.0.jar",
+    "algorithm": "sha256",
+    "digest": "cef70caf532833c9ab8f41f74773ce22c08bf503fad215c9c2ee1e9db87e759e"
+  },
+  {
+    "url": "https://github.com/tair-opensource/RedisShake/releases/download/v4.7.0/redis-shake-v4.7.0-linux-amd64.tar.gz",
+    "file": "redis-shake.tar.gz",
+    "algorithm": "sha256",
+    "digest": "920b9d256959162b9be972e0b9df43334f473858d21a84acf39d3b1e96eabe26"
+  }
+]
