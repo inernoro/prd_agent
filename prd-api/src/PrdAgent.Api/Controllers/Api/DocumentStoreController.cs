@@ -33,7 +33,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 [AdminController("document-store", AdminPermissionCatalog.DocumentStoreRead,
     WritePermission = AdminPermissionCatalog.DocumentStoreWrite)]
-public class DocumentStoreController : ControllerBase
+public partial class DocumentStoreController : ControllerBase
 {
     /// <summary>AgentApiKey scope：读文档空间（满足 admin 权限 document-store.read，见 AdminPermissionMiddleware.HasScopeGrant）</summary>
     public const string ScopeRead = "document-store:read";
