@@ -50,10 +50,32 @@ describe('versioned webpage review', () => {
     await act(async () => { expect(await review.restoreVersion('v2', 'restore-key')).toBe(false); });
     expect(rollback).not.toHaveBeenCalled();
     await act(async () => { expect(await review.restoreVersion('v1', 'restore-key')).toBe(false); });
-    expect(review.error).toBe('版本冲突'); expect(review.site?.siteUrl).toBe(site.siteUrl);
+    expect(review.restoreError).toBe('版本冲突'); expect(review.site?.siteUrl).toBe(site.siteUrl);
     await act(async () => { expect(await review.restoreVersion('v1', 'restore-key')).toBe(false); });
     expect(rollback.mock.calls.map(call => call[2])).toEqual(['restore-key', 'restore-key']);
-    expect(review.error).toContain('尚未确认');
+    expect(review.restoreError).toContain('尚未确认');
+  });
+  it('恢复错误与上传/版本列表错误隔离，换窗口后清除，重试中不显示旧失败', async () => {
+    upload.mockResolvedValue({ success: false, error: { message: '上传失败，请重新上传' } });
+    rollback.mockResolvedValueOnce({ success: false, error: { message: '版本已更新，请重试恢复' } });
+    await mount();
+    await act(async () => review.upload(new File(['bad'], 'bad.html')));
+    expect(review.error).toBe('上传失败，请重新上传');
+    expect(review.restoreError).toBeNull();
+    await act(async () => review.setVersionPreview({ id: 'v1' }));
+    expect(review.restoreError).toBeNull();
+    await act(async () => review.restoreVersion('v1', 'restore-key'));
+    expect(review.error).toBeNull();
+    expect(review.restoreError).toBe('版本已更新，请重试恢复');
+    let finish!: (value: unknown) => void;
+    rollback.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    let request!: Promise<boolean>;
+    await act(async () => { request = review.restoreVersion('v1', 'restore-key'); });
+    expect(review.restoreError).toBeNull();
+    await act(async () => { finish({ success: false, error: { message: '恢复未完成，请重试' } }); await request; });
+    expect(review.restoreError).toBe('恢复未完成，请重试');
+    await act(async () => review.setVersionPreview(null));
+    expect(review.restoreError).toBeNull();
   });
   it('keeps no-source previews idle without requesting version metadata', async () => {
     await mount(site, false);

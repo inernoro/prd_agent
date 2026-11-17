@@ -39,8 +39,12 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   const [versionsLoading, setVersionsLoading] = useState(!!source);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const [pendingFocus, setPendingFocus] = useState<string | null>(null);
-  const [versionPreview, setVersionPreview] = useState<{ id: string; commentId?: string } | null>(null);
+  const [versionPreview, updateVersionPreview] = useState<{ id: string; commentId?: string } | null>(null);
+  const setVersionPreview = useCallback((next: typeof versionPreview) => {
+    setRestoreError(null); updateVersionPreview(next);
+  }, []);
   const sequence = useRef(0), selectionSequence = useRef(0), mounted = useRef(true);
   const sourceRef = useRef(source); sourceRef.current = source;
   const publishedRef = useRef(onPublished); publishedRef.current = onPublished;
@@ -87,7 +91,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   useEffect(() => {
     selectionSequence.current++; setSelectedId(null); setPreview(null); setOverride(null); setVersions([]); setPendingFocus(null); setVersionPreview(null); setLoading(false);
     void refresh();
-  }, [identity, authToken, refresh]);
+  }, [identity, authToken, refresh, setVersionPreview]);
   useEffect(() => { setOverride(null); void refresh(); }, [live?.siteUrl, refresh]);
 
   const selectVersion = useCallback(async (id: string, commentId?: string) => {
@@ -135,20 +139,20 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
     const version = versions.find(version => version.id === id);
     if (!version || version.isCurrent || !version.canPreview) return false;
     const operation = identity;
-    setUploading(true); setError(null);
+    setUploading(true); setError(null); setRestoreError(null);
     try {
       const result = await rollbackHostedSiteRevision(live.id, id, idempotencyKey);
       if (!mounted.current || operation !== identityRef.current) return false;
-      if (!result.success) { setError(result.error?.message || '恢复未完成，请重试'); return false; }
+      if (!result.success) { setRestoreError(result.error?.message || '恢复未完成，请重试'); return false; }
       selectionSequence.current++; setOverride(result.data.site); setSelectedId(null); setPreview(null); setPendingFocus(null);
       publishedRef.current?.(result.data.site); await refresh(); return true;
     } catch {
-      if (mounted.current && operation === identityRef.current) setError('恢复结果尚未确认，请刷新版本列表核对或重试');
+      if (mounted.current && operation === identityRef.current) setRestoreError('恢复结果尚未确认，请刷新版本列表核对或重试');
       return false;
     } finally { if (mounted.current && operation === identityRef.current) setUploading(false); }
   }, [live, uploading, versions, identity, refresh]);
 
   return { source, versions, selected, historical, preview, versionPreview, setVersionPreview, previewBaseUrl, site: displaySite, liveSite, annotations,
-    loading: loading || (!selectedId && (metadataBehind || (versionsLoading && !published))), uploading, error, selectVersion, upload, restoreVersion, refresh };
+    loading: loading || (!selectedId && (metadataBehind || (versionsLoading && !published))), uploading, error, restoreError, selectVersion, upload, restoreVersion, refresh };
 }
 export type HostedReview = ReturnType<typeof useHostedReview>;

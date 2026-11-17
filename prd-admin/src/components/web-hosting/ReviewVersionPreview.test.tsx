@@ -3,6 +3,8 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ReviewVersionPreview } from './ReviewVersionPreview';
+import { ReviewVersionPreviewHost } from './ReviewVersionBar';
+import type { HostedReview } from './useHostedReview';
 const { useReview } = vi.hoisted(() => ({ useReview: vi.fn() }));
 vi.mock('./useHostedReview', () => ({ useHostedReview: useReview }));
 vi.mock('./CommentsSection', () => ({ default: () => <p data-test-comments>当前绑定的批注</p> }));
@@ -12,7 +14,7 @@ vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, titleAction, conten
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let cleanup = async () => {};
 afterEach(async () => { await cleanup(); vi.clearAllMocks(); });
-async function setup(canRestore = true, failed = false, missingMetadata = false, commentId?: string) {
+async function setup(canRestore = true, failed = false, missingMetadata = false, commentId?: string, parentErrors?: { error: string; restoreError: string | null }) {
   const container = document.createElement('div'); document.body.appendChild(container); const root = createRoot(container);
   const version = { id: 'v1', versionLabel: 'V1', isCurrent: false };
   const selectVersion = vi.fn();
@@ -21,7 +23,9 @@ async function setup(canRestore = true, failed = false, missingMetadata = false,
     preview: failed ? null : { html: '<h1>这是旧版 V1</h1>' }, previewBaseUrl: 'https://storage.example/site/index.html',
     site: { contentShape: 'self-contained-html' }, error: failed ? '预览暂不可用，请重试' : null, annotations: {} });
   const onRestore = vi.fn().mockResolvedValue(false), onClose = vi.fn();
-  await act(async () => root.render(<ReviewVersionPreview site={{ id: 'site', title: '当前 V2', siteUrl: 'https://storage.example/site/index.html?v=2', entryFile: 'index.html', contentShape: 'self-contained-html' }}
+  const site = { id: 'site', title: '当前 V2', siteUrl: 'https://storage.example/site/index.html?v=2', entryFile: 'index.html', contentShape: 'self-contained-html' as const };
+  const parent = { ...parentErrors, liveSite: site, source: { mode: 'site', siteId: 'site' }, versionPreview: { id: 'v1' }, uploading: false, restoreVersion: onRestore, setVersionPreview: onClose } as unknown as HostedReview;
+  await act(async () => root.render(parentErrors ? <ReviewVersionPreviewHost review={parent} canRestore={canRestore} /> : <ReviewVersionPreview site={site}
     source={{ mode: 'site', siteId: 'site' }} versionId="v1" commentId={commentId} canRestore={canRestore} restoring={false} restoreError={null} onRestore={onRestore} onClose={onClose} />));
   cleanup = async () => { await act(async () => root.unmount()); container.remove(); };
   const click = async (text: string) => act(async () => [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === text)!.click());
@@ -57,4 +61,14 @@ it('从批注打开历史小窗后失败重试仍携带原定位目标', async (
   expect(selectVersion).toHaveBeenLastCalledWith('v1', 'target-comment');
   await click('重试预览');
   expect(selectVersion).toHaveBeenLastCalledWith('v1', 'target-comment');
+});
+
+it('成功历史快照不显示父页面上传错误，恢复失败仍在小窗提示', async () => {
+  const { container } = await setup(true, false, false, undefined, { error: '上传失败，请重新上传', restoreError: null });
+  expect(container.querySelector('iframe')?.srcdoc).toContain('这是旧版 V1');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+it('恢复操作自己的错误仍可见，不被父页面其他错误替换', async () => {
+  const { container } = await setup(true, false, false, undefined, { error: '上传失败，请重新上传', restoreError: '版本已更新，请核对后重试恢复' });
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe('版本已更新，请核对后重试恢复');
 });

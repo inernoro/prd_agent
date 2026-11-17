@@ -62,5 +62,5 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true }: { 
 export function ReviewVersionPreviewHost({ review, canRestore, onClose }: { review: HostedReview; canRestore: boolean; onClose?: () => void }) {
   const previewId = review.versionPreview?.id;
   return previewId && review.source && review.liveSite ? <ReviewVersionPreview key={previewId} versionId={previewId} commentId={review.versionPreview?.commentId} site={review.liveSite} source={review.source}
-    canRestore={canRestore} restoring={review.uploading} restoreError={review.error} onRestore={key => review.restoreVersion(previewId, key)} onClose={onClose ?? (() => review.setVersionPreview(null))} /> : null;
+    canRestore={canRestore} restoring={review.uploading} restoreError={review.restoreError} onRestore={key => review.restoreVersion(previewId, key)} onClose={onClose ?? (() => review.setVersionPreview(null))} /> : null;
 }

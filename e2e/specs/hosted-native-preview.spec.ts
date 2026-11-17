@@ -90,6 +90,7 @@ for (const width of [1440, 900, 390]) test(`${width}px 合集两份工具栏只�
     await page.locator('[data-tool="notes"]').click();
     await page.getByRole('button', { name: '网页版本：V2', exact: true }).filter({ visible: true }).click();
     await page.getByRole('option', { name: /^V1/ }).click();
+    await expect(page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true }).frameLocator('iframe').getByRole('heading', { name: '历史只有一份' })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true })).toHaveCount(0);
     await expect(page.getByRole('dialog', { name: '合集阅读面板', exact: true })).toBeVisible();
@@ -196,6 +197,28 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
   test.describe(`托管对抗样本 ${viewport.width}px`, () => {
     test.use({ viewport });
+
+    test('历史小窗隔离之前上传错误，恢复失败保留可操作提示', async ({ page }) => {
+      await serve(page, { modal: true, inlineHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
+      await page.route('**/api/web-pages/qa-native/reupload', route => route.fulfill({ json: { success: false, data: null, error: { code: 'TEST_UPLOAD', message: '上传失败，请重新上传' } } }));
+      await page.route('**/api/web-pages/qa-native/edits/revisions/inline-history/rollback', route => route.fulfill({ json: { success: false, data: null, error: { code: 'VERSION_CONFLICT', message: '版本已更新，请核对后重试恢复' } } }));
+      await page.getByLabel('上传新版本文件', { exact: true }).setInputFiles({ name: 'new.html', mimeType: 'text/html', buffer: Buffer.from('<h1>新版</h1>') });
+      await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
+      await expect(page.getByRole('alert').filter({ hasText: '上传失败，请重新上传' })).toBeVisible();
+      await page.getByRole('option', { name: /^V1/ }).click();
+      const dialog = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+      await expect(dialog.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+      await expect(dialog.getByRole('alert')).toHaveCount(0);
+      await dialog.getByRole('button', { name: '恢复为当前版本', exact: true }).click();
+      await dialog.getByRole('button', { name: '确认恢复并发布', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toHaveText('版本已更新，请核对后重试恢复');
+      await expect(page.locator('iframe[title="临时预览测试"]').contentFrame().getByRole('heading', { name: '当前版正文' })).toBeVisible();
+      await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+      await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
+      await page.getByRole('option', { name: /^V1/ }).click();
+      await expect(dialog.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+      await expect(dialog.getByRole('alert')).toHaveCount(0);
+    });
 
     for (const modal of [false, true]) {
       test(`${modal ? '站内' : '分享'}的无直链历史正文保持内联预览并可绑定批注`, async ({ page }) => {
