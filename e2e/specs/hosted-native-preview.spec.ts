@@ -385,12 +385,12 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     await expect(page.locator('.annotation-chat-bubble').first()).toBeVisible();
     return page.frameLocator(`iframe[title="${title}"]`);
   }
-  async function freePoint(page: Page) {
-    const point = await page.locator(`iframe[title="${title}"]`).evaluate(el => {
+  async function freePoint(page: Page, scrolling = false) {
+    const point = await page.locator(`iframe[title="${title}"]`).evaluate((el, scrolling) => {
       const r = el.getBoundingClientRect();
-      for (const fx of [.95, .05, .5]) for (const fy of [.08, .3, .6, .9]) { const x = r.left + r.width * fx, y = r.top + r.height * fy; if (document.elementFromPoint(x, y) === el) return { x, y }; }
+      for (const fx of [.95, .05, .5]) for (const fy of (scrolling ? [.75, .6, .9] : [.08, .3, .6, .9])) { const x = r.left + r.width * fx, y = r.top + r.height * fy; if (document.elementFromPoint(x, y) === el) return { x, y }; }
       return null;
-    });
+    }, scrolling);
     expect(point).not.toBeNull(); return point!;
   }
   for (const mobile of [false, true]) test.describe(mobile ? '独立触控' : '桌面', () => {
@@ -430,6 +430,14 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await expect.poll(() => frame.locator('body').evaluate(() => document.readyState)).toBe('complete');
       expect(await card.locator('p').innerText()).toHaveLength(281);
       expect((await page.locator('.review-message-body').first().textContent())!.length).toBeLessThanOrEqual(281);
+      // 先把跟踪气泡挪到阅读区内部，避免边缘限位改变本用例的位移期望。
+      const grip = await card.getByRole('button', { name: /移动批注气泡/ }).boundingBox(); expect(grip).not.toBeNull();
+      if (mobile) {
+        const cdp = await context.newCDPSession(page), x = grip!.x + grip!.width / 2, y = grip!.y + grip!.height / 2;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        for (let i = 1; i <= 10; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 160 * i / 10 }] }); await page.waitForTimeout(16); }
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach();
+      } else { await page.mouse.move(grip!.x + 5, grip!.y + 5); await page.mouse.down(); await page.mouse.move(grip!.x + 5, grip!.y + 165, { steps: 10 }); await page.mouse.up(); }
       const before = await card.boundingBox(); expect(before).not.toBeNull();
       await page.evaluate(() => {
         const w = window as typeof window & { __followCard?: Element | null; __followMessages?: number };
@@ -441,8 +449,13 @@ test.describe('长文批注连续跟随与菜单外点', () => {
         const query = document.querySelectorAll.bind(document); document.querySelectorAll = ((...args: Parameters<typeof query>) => { w.__followReads!.scans++; return query(...args); }) as typeof document.querySelectorAll;
         const rect = Element.prototype.getBoundingClientRect; Element.prototype.getBoundingClientRect = function () { w.__followReads!.rects++; return rect.call(this); };
       });
-      const point = await freePoint(page);
-      if (mobile) { const cdp = await context.newCDPSession(page); await cdp.send('Input.synthesizeScrollGesture', { x: point.x, y: point.y, yDistance: -40, speed: 100, gestureSourceType: 'touch' }); await cdp.detach(); }
+      const point = await freePoint(page, true);
+      if (mobile) {
+        const cdp = await context.newCDPSession(page);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        for (let i = 1; i <= 12; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x, y: point.y - 100 * i / 12 }] }); await page.waitForTimeout(16); }
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach();
+      }
       else { await page.mouse.move(point.x, point.y); await page.mouse.wheel(0, 40); }
       await expect.poll(() => frame.locator('body').evaluate(() => scrollY)).toBeGreaterThan(0);
       await expect.poll(async () => {
