@@ -418,7 +418,13 @@ for (const width of [390, 1440])
       await page.setViewportSize({ width, height: 900 });
       const { writes } = await installOperationsFixtures(page, { quickstart: true });
       await observeNativeAudio(page);
-      await page.addInitScript(t => localStorage.setItem("llmgw.theme", t), theme);
+      await page.addInitScript(t => {
+        // Seed only the cold start; reload must exercise the user's persisted choice.
+        if (!sessionStorage.getItem("compat-entry-theme-seeded")) {
+          localStorage.setItem("llmgw.theme", t);
+          sessionStorage.setItem("compat-entry-theme-seeded", "1");
+        }
+      }, theme);
       await page.goto("http://127.0.0.1:8200/llmgw/login");
       await page.locator("#llmgw-username").fill("demo");
       await page.locator("#llmgw-password").fill("demo");
