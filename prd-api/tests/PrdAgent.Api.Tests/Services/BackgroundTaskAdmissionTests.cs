@@ -12,6 +12,15 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class BackgroundTaskAdmissionTests
 {
+    [Fact]
+    public void LogArchiveWorker_IsRegisteredAsMaintenance()
+    {
+        var registry = new BackgroundTaskAdmissionRegistry(Configuration());
+        var state = registry.Check(typeof(LogArchiveWorker));
+        state.Kind.ShouldBe(BackgroundTaskKind.Maintenance);
+        state.Allowed.ShouldBeTrue();
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
