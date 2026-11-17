@@ -32,6 +32,15 @@ describe('host-wide task and image ownership authorization', () => {
     expect((await f.post('/images/adopt')).status).toBe(200);expect(f.images.adopt).toHaveBeenCalledWith({ ...f.adoption, attestedBy: 'owner' });
     expect((await f.post('/images/reconcile')).status).toBe(409);expect(f.images.startReconcile).not.toHaveBeenCalled();
   });
+  it('does not overwrite native unknown readiness with owner permission', async () => {
+    const f = await fixture({ cdsSession: {}, cdsUser: { id: 'owner', isSystemOwner: true } });
+    f.service.inspect.mockResolvedValueOnce({ scanStatus: 'partial', usageBytes: null, catalogError: 'catalog-uninitialized', canExecute: false } as any);
+    expect(await (await fetch(f.url)).json()).toMatchObject({ catalogError: 'catalog-uninitialized', canExecute: false });
+    f.images.options.budgetBytes = 1024;
+    f.images.inspect.mockResolvedValueOnce({ scanStatus: 'partial', catalogError: 'docker-query-timeout', imageBytesEstimate: null, canExecute: false } as any);
+    expect(await (await fetch(f.url + '/images')).json()).toMatchObject({ enabled: true, canAdopt: true, catalogError: 'docker-query-timeout', canExecute: false });
+    expect(f.service.startReconcile).not.toHaveBeenCalled();expect(f.images.startReconcile).not.toHaveBeenCalled();
+  });
   it('rejects missing data attestation and retains an identity that changed before adoption', async () => {
     const f = await fixture({ cdsSession: {}, cdsUser: { id: 'owner', isSystemOwner: true } });
     expect((await f.post('/images/adopt', { ...f.adoption, dataDisposition: 'business-data' })).status).toBe(400);expect(f.images.adopt).not.toHaveBeenCalled();
