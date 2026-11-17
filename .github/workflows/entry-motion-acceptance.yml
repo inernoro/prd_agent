@@ -82,9 +82,9 @@ jobs:
           pnpm -C e2e install --frozen-lockfile
           pnpm -C e2e exec playwright install --with-deps chromium
           sudo apt-get update
-          sudo apt-get install -y ffmpeg xvfb python3-pil
+          sudo apt-get install -y ffmpeg xvfb openbox python3-pil
       - name: Capture the real public preview journey
-        run: xvfb-run -a -s '-screen 0 1920x1080x24 -ac' node e2e/entry-motion-capture.mjs
+        run: xvfb-run -a -s '-screen 0 1920x1080x24 -ac' sh -c 'openbox >/tmp/entry-openbox.log 2>&1 & node e2e/entry-motion-capture.mjs'
       - name: Extract actual quarter-second frames and comparisons
         if: always()
         run: python3 e2e/entry-motion-compare.py

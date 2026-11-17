@@ -1,8 +1,10 @@
 /** Cloud-only public-preview acceptance. No injected auth, mocked routes, or fabricated video frames. */
 import { chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, mkdtemp } from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const output = new URL('../work/entry-motion/', import.meta.url);
 await mkdir(output, { recursive: true });
 const target = JSON.parse(await readFile(new URL('./fixtures/entry-preview.json', import.meta.url), 'utf8'));
@@ -29,8 +31,11 @@ for (const destination of [gateway]) {
     await new Promise(resolve => setTimeout(resolve,15000));
   }
 }
-const browser = await chromium.launch({ headless: false, ignoreDefaultArgs: ['--enable-automation'], args: ['--kiosk', '--window-size=1920,1080', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'] });
-const context = await browser.newContext({ viewport: null, timezoneId: 'Asia/Shanghai', reducedMotion: 'no-preference' });
+const context = await chromium.launchPersistentContext(await mkdtemp(join(tmpdir(),'entry-motion-')), {
+  headless: false, viewport: null, timezoneId: 'Asia/Shanghai', reducedMotion: 'no-preference',
+  ignoreDefaultArgs: ['--enable-automation'],
+  args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'],
+});
 // Observe actual scene frames without changing the renderer, clock, auth or API responses.
 await context.addInitScript(() => {
   window.__entryEvidence = { frames: [], errors: [] };
@@ -50,9 +55,10 @@ await context.addInitScript(() => {
   };
   requestAnimationFrame(observe);
 });
-const page = await context.newPage();
+const page = context.pages()[0] || await context.newPage();
 try {
   await page.goto(new URL('/login', map).href);
+  await page.waitForFunction(() => innerWidth === 1920 && innerHeight === 1080, { timeout: 15000 });
   await page.locator('input[autocomplete="username"]').first().fill(process.env.E2E_USER);
   await page.locator('input[autocomplete="current-password"]').first().fill(process.env.E2E_PASSWORD);
   await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
@@ -105,4 +111,4 @@ try {
   // Do not record credentials, auth storage, SSO URL fragments, or request headers.
   if (new URL(page.url()).pathname !== '/login') await page.screenshot({ path: new URL('failure.png', output).pathname });
   throw error;
-} finally { await context.close(); await browser.close(); }
+} finally { await context.close(); }
