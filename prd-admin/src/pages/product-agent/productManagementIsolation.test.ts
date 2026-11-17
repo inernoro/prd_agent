@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NAV_REGISTRY } from '@/app/navRegistry';
 import { getPermissionsByMenu, menuList } from '@/lib/authzMenuMapping';
-import panel from './ProductPermissionsPanel.tsx?raw';
 import client from '@/services/real/productVersionRegistry.ts?raw';
 
 describe('产品管理与既有评审智能体隔离', () => {
@@ -19,10 +18,10 @@ describe('产品管理与既有评审智能体隔离', () => {
       .toEqual(['review-agent.use', 'review-agent.view-all', 'review-agent.manage']);
   });
 
-  it('产品权限编辑只管理产品权限，不接管原评审权限', () => {
-    expect(panel).toContain('permissions.includes(PRODUCT_MAP_ADMIN)');
-    expect(panel).not.toContain('updateSystemRole');
-    expect(panel).toContain('独立评审智能体仍在原权限管理中配置。');
+  it('产品管理入口可见且子页面不再依赖产品角色', () => {
+    const routes = NAV_REGISTRY.filter((entry) => entry.path === '/product-agent' || entry.path.startsWith('/product-agent/'));
+    expect(routes).not.toHaveLength(0);
+    expect(routes.every((entry) => entry.permission === undefined)).toBe(true);
   });
 
   it('产品历史兼容类型不引入原评审名下的新登记接口', () => {

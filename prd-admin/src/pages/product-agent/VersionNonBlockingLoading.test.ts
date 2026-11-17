@@ -26,7 +26,8 @@ describe('version pages show content without waiting for every dependency', () =
     expect(versions).not.toContain('setArchive');
     expect(versions).toContain('...record, legacyRegistration');
     expect(versions).toContain('onOpenLegacy(item.legacyRegistration)');
-    expect(versions).toContain('!item.legacyRegistration && item.createdBy === currentUserId');
+    expect(versions).toContain("!item.legacyRegistration && item.status !== 'voided'");
+    expect(versions).not.toContain('item.createdBy === currentUserId && item.status');
     expect(versions).toContain('if (!result.success)');
     expect(versions).toContain('版本记录读取失败，请重试');
     expect(client).toContain('/api/product/overview/initiations?workflow=true');

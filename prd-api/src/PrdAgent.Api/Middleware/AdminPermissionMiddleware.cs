@@ -3,6 +3,8 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -223,64 +225,44 @@ public sealed class AdminPermissionMiddleware
         var isRoot = IsRoot(context);
 
         var perms = await permissionService.GetEffectivePermissionsAsync(userId, isRoot);
-        var productRequest = required.StartsWith("product-agent.", StringComparison.Ordinal);
-        if (productRequest)
+        var productRequest = required.StartsWith("product-agent.", StringComparison.Ordinal)
+            && context.Request.Path.StartsWithSegments("/api/product", StringComparison.OrdinalIgnoreCase);
+        var activeColleague = context.User.FindFirst("authType") == null
+            && perms.Contains(ProductPermissionRules.OpenAccess);
+        var productCollaborator = productRequest && activeColleague;
+        string? productKnowledgeStoreId = null;
+        if (activeColleague && (required is AdminPermissionCatalog.DocumentStoreRead or AdminPermissionCatalog.DocumentStoreWrite))
+            productKnowledgeStoreId = await FindProductKnowledgeStoreIdAsync(context);
+        var productKnowledgeCollaborator = productKnowledgeStoreId != null;
+        if (productKnowledgeCollaborator)
+            context.Items[ProductKnowledgeCollaborationKey] = productKnowledgeStoreId;
+        if (productCollaborator)
         {
-            string? entityType = null;
-            if (path.Equals("/api/product/transition", StringComparison.OrdinalIgnoreCase)
-                || path.Equals("/api/product/items/batch", StringComparison.OrdinalIgnoreCase))
-            {
-                context.Request.EnableBuffering();
-                try
-                {
-                    using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
-                    if (body.RootElement.ValueKind == JsonValueKind.Object && body.RootElement.TryGetProperty("entityType", out var kind) && kind.ValueKind == JsonValueKind.String) entityType = kind.GetString();
-                }
-                catch (JsonException) { /* 非法请求不获得菜单准入，交由拒绝路径返回。 */ }
-                finally { context.Request.Body.Position = 0; }
-            }
-            if (!ProductMenuRoutePolicy.Allows(perms.ToArray(), path, method, entityType))
-            {
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                context.Response.ContentType = "application/json; charset=utf-8";
-                await context.Response.WriteAsync(JsonSerializer.Serialize(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
-                    "当前账号未开放此产品管理菜单，请联系MAP管理员调整权限表。"), _jsonOptions));
-                return;
-            }
-            if (perms.Contains(ProductPermissionRules.Scoped) && !perms.Contains(ProductPermissionRules.MapAdmin))
-                perms = perms.Where(p => p != AdminPermissionCatalog.Super).Concat(perms.Contains(AdminPermissionCatalog.Super) ? new[] { AdminPermissionCatalog.Access } : Array.Empty<string>()).Distinct().ToArray();
-            // 产品专用入口复用原评审控制器的方法，不把这些请求级授权写入账号或旧入口。
-            if (path.StartsWith("/api/product/review/", StringComparison.OrdinalIgnoreCase))
-            {
-                var scoped = perms.Contains(ProductPermissionRules.Scoped);
-                if (!scoped && !perms.Contains(ProductPermissionRules.MapAdmin)
-                    && !perms.Contains(AdminPermissionCatalog.ReviewAgentUse) && !perms.Contains(AdminPermissionCatalog.Super))
-                {
-                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    context.Response.ContentType = "application/json; charset=utf-8";
-                    await context.Response.WriteAsync(JsonSerializer.Serialize(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前账号没有评审使用权限。"), _jsonOptions));
-                    return;
-                }
-                if (perms.Contains(ProductPermissionRules.MapAdmin))
-                    perms = perms.Concat(new[] { AdminPermissionCatalog.ReviewAgentUse, AdminPermissionCatalog.ReviewAgentViewAll, AdminPermissionCatalog.ReviewAgentManage, AdminPermissionCatalog.ReviewAgentAppealReview }).Distinct().ToArray();
-                else if (scoped)
-                {
-                    var productPerms = perms.Where(p => !p.StartsWith("review-agent.", StringComparison.Ordinal)).ToList();
-                    productPerms.Add(AdminPermissionCatalog.ReviewAgentUse);
-                    if (perms.Contains(ProductPermissionRules.ReviewViewAll)) productPerms.Add(AdminPermissionCatalog.ReviewAgentViewAll);
-                    if (perms.Contains(ProductPermissionRules.ReviewManage)) productPerms.Add(AdminPermissionCatalog.ReviewAgentManage);
-                    if (perms.Contains(ProductPermissionRules.ReviewAppeal)) productPerms.Add(AdminPermissionCatalog.ReviewAgentAppealReview);
-                    perms = productPerms;
-                }
-            }
+            // 产品协作权限只注入本次请求。评审使用共享数据，沿用平台已有的跨人查看和管理权限。
+            perms = perms.Concat(new[] {
+                AdminPermissionCatalog.ProductAgentUse,
+                AdminPermissionCatalog.ProductAgentManage,
+                AdminPermissionCatalog.ProductAgentAdmin,
+            }).Distinct().ToArray();
         }
-        var has = perms.Contains(AdminPermissionCatalog.Super) ||
+        if (productRequest && perms.Contains(ProductPermissionRules.MapAdmin)
+            && context.Request.Path.StartsWithSegments("/api/product/review", StringComparison.OrdinalIgnoreCase))
+        {
+            perms = perms.Concat(new[] {
+                AdminPermissionCatalog.ReviewAgentUse,
+                AdminPermissionCatalog.ReviewAgentViewAll,
+                AdminPermissionCatalog.ReviewAgentManage,
+                AdminPermissionCatalog.ReviewAgentAppealReview,
+            }).Distinct().ToArray();
+        }
+
+        var has = productCollaborator || productKnowledgeCollaborator || perms.Contains(AdminPermissionCatalog.Super) ||
                   perms.Contains(required) ||
                   (perms.Contains(AdminPermissionCatalog.ProductAgentVersionApply)
                    && ProductVersionApplyRoutePolicy.Allows(path, method, required));
 
         // 所有权限都必须先具备 access 权限（除了 root/super）
-        if (!isRoot &&
+        if (!productCollaborator && !productKnowledgeCollaborator && !isRoot &&
             !perms.Contains(AdminPermissionCatalog.Super) &&
             !perms.Contains(AdminPermissionCatalog.Access))
         {
@@ -291,7 +273,7 @@ public sealed class AdminPermissionMiddleware
         var identity = context.User.Identity as System.Security.Claims.ClaimsIdentity;
         if (identity != null)
         {
-            if (productRequest)
+            if (productRequest || productKnowledgeCollaborator)
                 foreach (var stale in identity.FindAll("permissions").ToList()) identity.RemoveClaim(stale);
             foreach (var p in perms)
             {
@@ -313,6 +295,39 @@ public sealed class AdminPermissionMiddleware
         }
 
         await _next(context);
+    }
+
+    internal static readonly object ProductKnowledgeCollaborationKey = new();
+
+    private static async Task<string?> FindProductKnowledgeStoreIdAsync(HttpContext context)
+    {
+        var request = context.Request;
+        if (!request.Path.StartsWithSegments("/api/document-store", StringComparison.OrdinalIgnoreCase, out var relative))
+            return null;
+
+        var parts = (relative.Value ?? "").Trim('/').Split('/');
+        if (parts.Length is < 2 or > 3 || string.IsNullOrWhiteSpace(parts[1])) return null;
+        var subresource = parts.Length == 3 ? parts[2].ToLowerInvariant() : "";
+        var method = request.Method;
+        var isStore = parts[0].Equals("stores", StringComparison.OrdinalIgnoreCase);
+        var isEntry = parts[0].Equals("entries", StringComparison.OrdinalIgnoreCase);
+        var allowed = isStore
+            ? (HttpMethods.IsGet(method) && subresource is "" or "entries")
+                || (HttpMethods.IsPut(method) && subresource == "")
+                || (HttpMethods.IsPost(method) && subresource is "entries" or "folders" or "upload")
+            : isEntry && ((HttpMethods.IsGet(method) && subresource is "" or "content" or "download")
+                || (HttpMethods.IsPut(method) && subresource is "" or "move" or "content")
+                || (HttpMethods.IsDelete(method) && subresource == "")
+                || (HttpMethods.IsPost(method) && subresource == "replace"));
+        if (!allowed) return null;
+
+        var db = context.RequestServices.GetRequiredService<MongoDbContext>();
+        var ct = context.RequestAborted;
+        var storeId = isStore ? parts[1] : await db.DocumentEntries.Find(x => x.Id == parts[1])
+            .Project(x => x.StoreId).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrEmpty(storeId)) return null;
+        return await db.Products.Find(x => !x.IsDeleted && x.KnowledgeStoreId == storeId).AnyAsync(ct)
+            ? storeId : null;
     }
 
     internal static bool IsDesignArtifactRuntimeDataPlaneRequest(HttpContext context)

@@ -24,7 +24,7 @@ public partial class ProductAgentController
     [HttpGet("settings/scheduled-notifications")]
     public async Task<IActionResult> ListScheduledNotifications([FromServices] IConfiguration configuration)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductScheduledNotificationWorker.CanManage(configuration))
             return Ok(ApiResponse<object>.Ok(new { canManage = false, items = Array.Empty<object>() }));
@@ -48,7 +48,7 @@ public partial class ProductAgentController
     public async Task<IActionResult> SetScheduledNotificationEnabled(string id, ScheduledNotificationEnablementRequest request,
         [FromServices] IConfiguration configuration)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductScheduledNotificationWorker.CanManage(configuration))
             return Conflict(ApiResponse<object>.Fail("NOTIFICATION_PRODUCTION_ONLY", "请在正式环境管理定时通知。"));
@@ -79,7 +79,7 @@ public partial class ProductAgentController
     private async Task<IActionResult> SaveScheduledNotification(string? id, ScheduledNotificationRequest request,
         IDataProtectionProvider protection, IConfiguration configuration)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductScheduledNotificationWorker.CanManage(configuration))
             return Conflict(ApiResponse<object>.Fail("NOTIFICATION_PRODUCTION_ONLY", "请在正式环境管理定时通知。"));

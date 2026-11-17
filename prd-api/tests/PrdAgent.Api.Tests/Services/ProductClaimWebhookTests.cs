@@ -13,6 +13,7 @@ using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.ProductAgent;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
 
@@ -20,7 +21,8 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class ProductClaimWebhookTests
 {
-    private const string TestUrl = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=unit-test-only";
+    private const string TestOnlyWebhookKey = "unit-test-placeholder";
+    private const string TestUrl = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=" + TestOnlyWebhookKey;
 
     [Fact]
     public void VerifiedIdentityIsAccountAndBindingBoundAndNeverUsesDisplayName()
@@ -54,7 +56,7 @@ public class ProductClaimWebhookTests
         Assert.Throws<InvalidOperationException>(() => ProductClaimWebhookPayload.Build("通知", new("userid", "@all")));
         Assert.Throws<InvalidOperationException>(() => ProductClaimWebhookPayload.Build(new string('中', 700), new(kind, identity)));
         Assert.False(ProductClaimWebhookPayload.IsValidWebhook(TestUrl + "&redirect=https://example.test"));
-        Assert.False(ProductClaimWebhookPayload.IsValidWebhook("http://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"));
+        Assert.False(ProductClaimWebhookPayload.IsValidWebhook(TestUrl.Replace("https://", "http://", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -179,7 +181,46 @@ public class ProductClaimWebhookTests
         var saved = await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync();
         Assert.Equal("T1.2.3", saved.TCode);
         Assert.Equal("unknown", saved.ClaimNotification!.Status);
+        Assert.Contains("企微响应异常", saved.ClaimNotification.Error);
         Assert.IsType<ConflictObjectResult>(await f.Controller().Retry("T", "t"));
+    }
+
+    [Fact]
+    public async Task IssuedVersionRetainsDeploymentBlockWithoutCreatingASendableTask()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Db.ProductInitiations.InsertOneAsync(new ProductInitiation
+        {
+            Id = "t", ProductId = "product", Status = "decision_pending", ReviewPassed = true,
+            VersionType = "major", AppName = "测试应用", PlanName = "测试方案", OwnerId = "owner",
+        });
+
+        var issued = await ProductInitiationIssuance.IssueAsync(f.Db, "t", "decision_pending",
+            deploymentBlock: SharedScheduledWorkBlockReason.AuthorizationMissing);
+        Assert.False(string.IsNullOrWhiteSpace(issued?.TCode));
+        var saved = await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync();
+        Assert.Equal(issued!.TCode, saved.TCode);
+        Assert.Equal("blocked", saved.ClaimNotification!.Status);
+        Assert.Equal("当前实例未配置共享后台任务授权", saved.ClaimNotification.Error);
+        Assert.IsType<ConflictObjectResult>(await f.Controller().Retry("T", "t"));
+        await f.ProcessTAsync();
+        Assert.Empty(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task FormalVersionRecordsMissingWebhookWhenDeliveryIsEnabled()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Db.ProductAgentSettings.UpdateOneAsync(_ => true,
+            Builders<ProductAgentSettings>.Update.Set(x => x.ClaimWebhook.ProtectedUrl, (string?)null));
+
+        var result = await ProductClaimNotificationQueue.CreateAsync(f.Db,
+            new ProductRelease { VCode = "V1.0.0" }, "owner", formal: true, canNotify: true);
+        Assert.Equal("blocked", result?.Status);
+        Assert.Equal("尚未配置企微群机器人 Webhook", result!.Error);
+        Assert.Empty(f.Http.Bodies);
     }
 
     [Fact]
@@ -193,7 +234,7 @@ public class ProductClaimWebhookTests
         var get = Assert.IsType<OkObjectResult>(await f.Controller().Get());
         var json = JsonSerializer.Serialize(get.Value);
         Assert.Contains("key=********", json);
-        Assert.DoesNotContain("unit-test-only", json);
+        Assert.DoesNotContain(TestOnlyWebhookKey, json);
         await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true });
         Assert.Equal(config.ProtectedUrl, (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook.ProtectedUrl);
         Assert.IsType<BadRequestObjectResult>(await f.Controller(preview: true).Save(new SaveProductClaimWebhook { Url = TestUrl, Enabled = true }));
@@ -272,7 +313,7 @@ public class ProductClaimWebhookTests
         Assert.True(saved.ClaimWebhook.NotifyInternal && saved.ClaimWebhook.NotifyFormal);
         Assert.NotNull(saved.ClaimWebhook.InitializedAt);
         Assert.Equal(TestUrl, f.Protection.CreateProtector(ProductClaimWebhookController.ProtectionPurpose).Unprotect(saved.ClaimWebhook.ProtectedUrl!));
-        Assert.DoesNotContain("unit-test-only", JsonSerializer.Serialize(saved));
+        Assert.DoesNotContain(TestOnlyWebhookKey, JsonSerializer.Serialize(saved));
         Assert.False(File.Exists(Path.Combine(f.SeedDirectory, "private.pem")));
         Assert.False(File.Exists(Path.Combine(f.SeedDirectory, "url.enc")));
         Assert.Empty(f.Http.Bodies);
@@ -297,8 +338,11 @@ public class ProductClaimWebhookTests
         Assert.False(after.Enabled);
         Assert.False(after.NotifyInternal);
         var json = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await f.Controller().Get()).Value);
-        Assert.Contains("key=********", json);
+        Assert.Contains("key=********ment", json);
         Assert.DoesNotContain("replacement", json);
+        var previewJson = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await f.Controller(preview: true).Get()).Value);
+        Assert.Contains("key=********\"", previewJson);
+        Assert.DoesNotContain("key=********ment", previewJson);
         Assert.Empty(f.Http.Bodies);
     }
 
