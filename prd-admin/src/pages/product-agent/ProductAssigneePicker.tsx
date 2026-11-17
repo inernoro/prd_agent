@@ -1,28 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
-import {
-  listProductApplicationAdmins,
-  listProductMembers,
-  type ProductApplicationAdmin,
-} from '@/services/real/productAgent';
+import { listProductMembers } from '@/services/real/productAgent';
 import type { ProductMember } from './types';
 
 type QuickAssignee = {
   userId: string;
   displayName: string;
-  tag: 'owner' | 'admin' | 'app-admin';
+  tag: 'owner' | 'member';
 };
 
 const TAG_LABEL: Record<QuickAssignee['tag'], string> = {
   owner: '负责人',
-  admin: '产品管理员',
-  'app-admin': '应用管理员',
+  member: '成员',
 };
 
 const TAG_CLASS: Record<QuickAssignee['tag'], string> = {
   owner: 'border-amber-400/35 bg-amber-400/12 text-amber-200',
-  admin: 'border-violet-400/35 bg-violet-400/12 text-violet-200',
-  'app-admin': 'border-cyan-400/35 bg-cyan-400/12 text-cyan-200',
+  member: 'border-violet-400/35 bg-violet-400/12 text-violet-200',
 };
 
 export function ProductAssigneePicker({
@@ -39,18 +33,12 @@ export function ProductAssigneePicker({
   uiSize?: 'sm' | 'md';
 }) {
   const [members, setMembers] = useState<ProductMember[]>([]);
-  const [appAdmins, setAppAdmins] = useState<ProductApplicationAdmin[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     if (!productId) return;
-    void Promise.all([
-      listProductMembers(productId),
-      listProductApplicationAdmins(),
-    ]).then(([memberRes, appRes]) => {
-      if (cancelled) return;
-      if (memberRes.success) setMembers(memberRes.data.members);
-      if (appRes.success) setAppAdmins(appRes.data.items);
+    void listProductMembers(productId).then((result) => {
+      if (!cancelled && result.success) setMembers(result.data.members);
     });
     return () => {
       cancelled = true;
@@ -60,28 +48,14 @@ export function ProductAssigneePicker({
   const quickAssignees = useMemo<QuickAssignee[]>(() => {
     const picked = new Map<string, QuickAssignee>();
     for (const item of members) {
-      if (item.role !== 'owner' && item.role !== 'admin') continue;
       picked.set(item.userId, {
         userId: item.userId,
         displayName: item.displayName,
         tag: item.role,
       });
     }
-    for (const item of appAdmins) {
-      if (picked.has(item.userId)) continue;
-      picked.set(item.userId, {
-        userId: item.userId,
-        displayName: item.displayName,
-        tag: 'app-admin',
-      });
-    }
     return [...picked.values()];
-  }, [appAdmins, members]);
-
-  const appAdminText = useMemo(() => {
-    const names = appAdmins.map((item) => item.displayName).filter(Boolean);
-    return names.join('；');
-  }, [appAdmins]);
+  }, [members]);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -101,9 +75,6 @@ export function ProductAssigneePicker({
             </button>
           ))}
         </div>
-      )}
-      {appAdminText && (
-        <div className="text-[10px] text-token-muted">应用管理员：{appAdminText}</div>
       )}
       <UserSearchSelect
         value={value}

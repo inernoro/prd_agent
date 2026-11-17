@@ -152,7 +152,7 @@ export interface Product {
   updatedAt: string;
 }
 
-export type ProductMemberRole = 'owner' | 'admin' | 'member';
+export type ProductMemberRole = 'owner' | 'member';
 
 export interface ProductMember {
   userId: string;
@@ -163,7 +163,6 @@ export interface ProductMember {
 export interface ProductMembersResult {
   members: ProductMember[];
   canManageMembers: boolean;
-  canManageAdmins: boolean;
 }
 
 export interface ProductVersion {
@@ -197,7 +196,7 @@ export interface ProductInitiation {
   voidedBy?: string | null;
   voidedAt?: string | null;
   statusBeforeVoid?: string | null;
-  claimNotification?: { status: string } | null;
+  claimNotification?: { status: string; error?: string | null } | null;
   releaseTrainingRequired?: boolean | null;
   id: string;
   productId: string;
@@ -272,7 +271,7 @@ export interface ProductRelease {
   voidedBy?: string | null;
   voidedAt?: string | null;
   statusBeforeVoid?: string | null;
-  claimNotification?: { status: string } | null;
+  claimNotification?: { status: string; error?: string | null } | null;
   id: string;
   canDelete?: boolean;
   productId: string;

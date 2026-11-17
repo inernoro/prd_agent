@@ -64,9 +64,8 @@ import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFi
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
 import { useAuthStore } from '@/stores/authStore';
-import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { ReviewAgentPage } from './review/ReviewAgentPage';
-import { hasProductMenu, hasProductReviewPermission, PRODUCT_MAP_ADMIN, PRODUCT_MENU_KEYS, PRODUCT_MENU_SCOPED } from './productPermissionAccess';
+import { PRODUCT_MAP_ADMIN, PRODUCT_MENU_KEYS } from './productPermissionAccess';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'review' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'notifications' | 'settings';
 
@@ -82,12 +81,8 @@ const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#6
 export function OverviewShell({ sectionOverride, children }: { sectionOverride?: Section; children?: ReactNode }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const permissions = useAuthStore((state) => state.permissions ?? []);
-  const isRoot = useAuthStore((state) => state.isRoot);
-  const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
-  const canUseReview = isRoot || hasProductReviewPermission(permissions, 'review-agent.use');
-  // 与 SingleProductView 一致：分区由 URL ?section= 派生，避免 state 与地址栏不同步
-  const active: Section = canUseProduct ? (sectionOverride ?? (searchParams.has('section') ? parseOverviewSection(searchParams.get('section')) : PRODUCT_MENU_KEYS.find((key) => hasProductMenu(permissions, key, isRoot)) ?? 'dashboard')) : 'versions';
+  const canManageNotifications = useAuthStore((state) => state.isRoot || state.permissions.includes(PRODUCT_MAP_ADMIN));
+  const active = sectionOverride ?? parseOverviewSection(searchParams.get('section'));
 
   const selectSection = useCallback((section: Section) => {
     if (sectionOverride) {
@@ -129,23 +124,15 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
   }, []);
 
   useEffect(() => {
-    if (canUseProduct) {
-      if (hasProductMenu(permissions, 'dashboard', isRoot)) void loadStats();
-      else setStatsLoading(false);
-      void loadProducts();
-    } else {
-      setStatsLoading(false);
-    }
-  }, [canUseProduct, loadStats, loadProducts, permissions, isRoot]);
+    void loadStats();
+    void loadProducts();
+  }, [loadStats, loadProducts]);
 
-  const isAdmin = isRoot || permissions.includes(PRODUCT_MAP_ADMIN) || (stats?.isAdmin ?? false);
-  const canManageNotifications = isAdmin || (permissions.includes(PRODUCT_MENU_SCOPED) && permissions.includes('product-agent.admin'));
-
-  const navItems: NavItem<Section>[] = canUseProduct ? [
+  const navItems: NavItem<Section>[] = [
     { key: 'dashboard', label: '概览', icon: LayoutDashboard },
     { key: 'products', label: '产品', icon: Boxes },
     { key: 'requirements', label: '需求', icon: ListChecks },
-    { key: 'review', label: '评审', icon: ClipboardCheck, hidden: !canUseReview },
+    { key: 'review', label: '评审', icon: ClipboardCheck },
     { key: 'features', label: '功能', icon: Puzzle },
     { key: 'defects', label: '缺陷', icon: Bug },
     { key: 'versions', label: '版本', icon: Boxes },
@@ -153,22 +140,22 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
     { key: 'notifications', label: '通知', icon: Bell, hidden: !canManageNotifications },
-    { key: 'settings', label: '设置', icon: Settings, hidden: permissions.includes(PRODUCT_MENU_SCOPED) ? !hasProductMenu(permissions, 'settings', isRoot) : !isAdmin, dividerBefore: true },
-  ] : [{ key: 'versions', label: '版本', icon: Boxes }];
+    { key: 'settings', label: '设置', icon: Settings, dividerBefore: true },
+  ];
 
   return (
     <ProductAgentLayout
-      title={canUseProduct ? '产品管理' : '版本号申领'}
-      subtitle={canUseProduct ? '全局总览' : '内部版本与正式版本'}
+      title="产品管理"
+      subtitle="全局总览"
       topSlot={
-        <button
-          onClick={() => navigate('/')}
-          className="flex items-center gap-1.5 text-[11px] text-token-muted hover-text-primary mb-2"
-        >
-          <ArrowLeft size={13} /> 返回首页
-        </button>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-[11px] text-token-muted hover-text-primary">
+            <ArrowLeft size={13} /> 返回首页
+          </button>
+          {active !== 'versions' && <VersionAppearance />}
+        </div>
       }
-      items={navItems.filter((item) => hasProductMenu(permissions, item.key, isRoot))}
+      items={navItems}
       active={active}
       onSelect={selectSection}
     >
@@ -177,7 +164,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
       ) : (
       <>
       {active === 'dashboard' && (
-        <SectionShell title="概览仪表盘" desc={isAdmin ? '全局视角，跨全部产品' : '全局视角，跨我参与的产品'}>
+        <SectionShell title="概览仪表盘" desc="全局视角，跨全部产品">
           <DashboardSection stats={stats} loading={statsLoading} onGoto={selectSection} />
         </SectionShell>
       )}
@@ -188,12 +175,12 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
       )}
       {active === 'requirements' && (
         <SectionShell title="需求" desc="全部产品的需求汇总；可按产品和处理人筛选，点击进入详情">
-          <RequirementsTable isAdmin={isAdmin} products={products} canUseReview={canUseReview} productsError={productsError} onRetryProducts={() => void loadProducts()} />
+          <RequirementsTable isAdmin products={products} productsError={productsError} onRetryProducts={() => void loadProducts()} />
         </SectionShell>
       )}
       {active === 'review' && (
         <div className="h-full min-h-0">
-          {canUseReview ? <ReviewAgentPage /> : <div className="p-6 text-sm text-token-muted">暂无评审权限，请联系管理员。</div>}
+          <ReviewAgentPage />
         </div>
       )}
       {active === 'features' && (
@@ -203,23 +190,23 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
             <p className="mt-0.5 text-xs text-token-muted">按产品查看功能目录；功能清单归属正式版本。管理员可先选择产品与正式版本，再导入目录结构或新建功能。</p>
           </div>
           <div className="min-h-0 flex-1">
-            <OverviewFeaturesPanel products={products} isAdmin={isAdmin} />
+            <OverviewFeaturesPanel products={products} isAdmin />
           </div>
         </div>
       )}
       {active === 'defects' && (
         <SectionShell title="缺陷" desc="全部产品追溯到产品的缺陷汇总，点击进入缺陷详情">
-          <DefectsTable isAdmin={isAdmin} products={products} />
+          <DefectsTable isAdmin products={products} />
         </SectionShell>
       )}
       {active === 'versions' && (
         <SectionShell title="版本" actions={<VersionAppearance />}>
-          <VersionWorkflowTab isAdmin={isAdmin} />
+          <VersionWorkflowTab isAdmin />
         </SectionShell>
       )}
       {active === 'customers' && (
         <SectionShell title="客户" desc="客户管理（列表 + 详情：基本信息 / 动态跟进）与营销问策两个子模块；需求可关联客户">
-          <CustomerModule isAdmin={isAdmin} />
+          <CustomerModule isAdmin />
         </SectionShell>
       )}
       {active === 'knowledge' && (
@@ -238,7 +225,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
           </div>
         </div>
       )}
-      {active === 'notifications' && (
+      {active === 'notifications' && canManageNotifications && (
         <SectionShell title="通知"><ScheduledNotifications /></SectionShell>
       )}
       {active === 'settings' && <ProductSettingsHub />}
@@ -396,13 +383,11 @@ function AdminImportButton({ onClick, label = '导入历史数据' }: { onClick:
 function RequirementsTable({
   isAdmin,
   products,
-  canUseReview,
   productsError,
   onRetryProducts,
 }: {
   isAdmin: boolean;
   products: Product[];
-  canUseReview: boolean;
   productsError: string;
   onRetryProducts: () => void;
 }) {
@@ -510,11 +495,9 @@ function RequirementsTable({
         </div>
         <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
         <div className="flex shrink-0 items-center gap-2">
-          {canUseReview && (
-            <button type="button" onClick={() => navigate('/product-agent/requirements/assessments')} className="flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-primary hover-bg-soft">
-              <ListOrdered size={13} />需求评估
-            </button>
-          )}
+          <button type="button" onClick={() => navigate('/product-agent/requirements/assessments')} className="flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-primary hover-bg-soft">
+            <ListOrdered size={13} />需求评估
+          </button>
           <button type="button" disabled={!productId} title={productId ? '在所选产品中新建需求' : '请先选择需求所属产品'} onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-primary hover-bg-soft disabled:opacity-40"><Plus size={13} />新建需求</button>
           <button type="button" disabled={loading || Boolean(error) || filtered.length === 0} onClick={() => downloadListCsv('需求-筛选结果.csv', ['ID', '标题', '产品', '分级', '状态', '处理人'], filtered.map((row) => [row.requirementNo, row.title, row.productName, row.grade, row.stateLabel ?? resolveRequirementStateLabel(row.currentState) ?? '', row.assigneeName ?? '']))} className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-secondary hover-bg-soft disabled:opacity-40"><Download size={13} />导出需求</button>
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}

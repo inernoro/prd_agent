@@ -29,9 +29,10 @@ import { Button } from '@/components/design/Button';
 import { InitiationDeleteAction, ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
 import { ReleaseEditAction } from '@/components/product-agent/ReleaseEditAction';
 import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
+import { ClaimNotificationFailure } from '@/components/product-agent/ClaimNotificationFailure';
+import { PRODUCT_MAP_ADMIN } from './productPermissionAccess';
 import { VersionDebugClearButton } from '@/components/product-agent/VersionDebugClearButton';
 import { useProductListScope } from '@/lib/productListScope';
-import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { toProductOptions } from './comboboxOptions';
@@ -62,13 +63,13 @@ import { downloadListCsv } from './listExport';
 import { initiationExportConfig, releaseExportConfig, VERSION_WORKFLOW_STATUS_LABEL as STATUS_LABEL } from './versionWorkflowExport';
 
 type MainTab = 'release' | 'initiation';
-type RecordScope = 'mine' | 'all';
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
+const SCALE_OPTIONS = Object.entries(SCALE_LABEL).map(([id, label]) => ({ id, label }));
 
 export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin = false }: { productId?: string; isAdmin?: boolean }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { productId, setProductId } = useProductListScope(initialProductId);
-  const currentUserId = useAuthStore((state) => state.user?.userId);
+  const canClearRecords = useAuthStore((state) => state.isRoot || state.permissions.includes(PRODUCT_MAP_ADMIN));
   const tab: MainTab = searchParams.get('versionTab') === 'initiation' ? 'initiation' : 'release';
   const [products, setProducts] = useState<VersionApplicationProduct[]>([]);
   const [catalogLoaded, setCatalogLoaded] = useState(false);
@@ -87,8 +88,9 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [importKind, setImportKind] = useState<MainTab | null>(null);
   const [legacyDetail, setLegacyDetail] = useState<VersionRegistration | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
-  const [recordScope, setRecordScope] = useState<RecordScope>('all');
+  const [initiationApplicantId, setInitiationApplicantId] = useState('');
   const [releaseOwnerId, setReleaseOwnerId] = useState('');
+  const [versionTypeFilter, setVersionTypeFilter] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
@@ -125,7 +127,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
         const result = await getWorkflowInitiations();
         if (!isCurrent()) return;
         if (!result.success) { setLoadError(result.error?.message ?? '内部版本读取失败，请重试。'); return; }
-        setInitiations(result.data.items.map(({ record, legacyRegistration, exportFields }) => ({ ...record, legacyRegistration, exportFields })));
+        setInitiations(result.data.items.map(({ record, legacyRegistration, exportFields, canEdit }) => ({ ...record, legacyRegistration, exportFields, canEdit })));
         setApplicationAliases(result.data.applicationAliases ?? {});
       } else {
         const result = await getWorkflowReleases();
@@ -185,16 +187,18 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   };
   const visibleInitiations = useMemo(() => filterByTracked(
     initiations.filter((item) => (!productId || item.productId === productId)
-      && (recordScope === 'all' || item.createdBy === currentUserId)
+      && (!initiationApplicantId || item.createdBy === initiationApplicantId)
+      && (!versionTypeFilter || item.versionType === versionTypeFilter)
       && matchesVersionRecord(item, query, statusFilter, productNames.get(item.productId), applicationAliases)),
     trackedOnly, 'initiation', (item) => ({ productId: item.productId, recordId: item.id }),
-  ), [initiations, productId, recordScope, currentUserId, query, statusFilter, trackedOnly, productNames, applicationAliases]);
+  ), [initiations, productId, initiationApplicantId, versionTypeFilter, query, statusFilter, trackedOnly, productNames, applicationAliases]);
   const visibleReleases = useMemo(() => filterByTracked(
     releases.filter((item) => (!productId || item.productId === productId)
       && (!releaseOwnerId || item.ownerId === releaseOwnerId)
+      && (!versionTypeFilter || item.versionType === versionTypeFilter)
       && matchesVersionRecord(item, query, statusFilter, productNames.get(item.productId), applicationAliases)),
     trackedOnly, 'release', (item) => ({ productId: item.productId, recordId: item.id }),
-  ), [releases, productId, releaseOwnerId, query, statusFilter, trackedOnly, productNames, applicationAliases]);
+  ), [releases, productId, releaseOwnerId, versionTypeFilter, query, statusFilter, trackedOnly, productNames, applicationAliases]);
   const statuses = useMemo(() => Array.from(new Set(
     (tab === 'release' ? releases : initiations)
       .filter((item) => !productId || item.productId === productId).map((item) => item.status),
@@ -216,15 +220,15 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
             clearOptionLabel="全部产品" uiSize="sm" countUnit="个产品" />
         </div>
         <RecordToolbar query={query} onQueryChange={setQuery}
-          scope={recordScope} onScopeChange={setRecordScope}
-          ownerId={tab === 'release' ? releaseOwnerId : undefined}
-          onOwnerChange={tab === 'release' ? setReleaseOwnerId : undefined}
+          ownerId={tab === 'release' ? releaseOwnerId : initiationApplicantId}
+          onOwnerChange={tab === 'release' ? setReleaseOwnerId : setInitiationApplicantId}
+          versionType={versionTypeFilter} onVersionTypeChange={setVersionTypeFilter}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {isAdmin && tab === 'release' && <VersionAnnouncementUpdate onUpdated={reload} />}
-        {isAdmin && <VersionDebugClearButton key={tab} kind={tab === 'initiation' ? 'internal' : 'formal'} onChanged={reload} />}
+        {canClearRecords && <VersionDebugClearButton key={tab} kind={tab === 'initiation' ? 'internal' : 'formal'} onChanged={reload} />}
         {isAdmin && <Secondary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => setImportKind(tab)}><Upload size={14} />导入历史{tab === 'release' ? '正式' : '内部'}版本</Secondary>}
         <Secondary disabled={listLoading || Boolean(catalogError) || Boolean(loadError) || (tab === 'release' ? visibleReleases : visibleInitiations).length === 0}
           onClick={() => tab === 'release'
@@ -241,8 +245,8 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     </div>}
     <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
       {!selectedProductUnavailable && (tab === 'release'
-          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} currentUserId={currentUserId} onOpenLegacy={setLegacyDetail} onChanged={reload} />
-          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
+          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onOpenLegacy={setLegacyDetail} onChanged={reload} />
+          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} onRetryReview={setRetrySeed} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
     </div>
     {dialog === 'temporary' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
       <p className="mb-4 text-sm text-token-secondary">请选择本次申领所属的产品，列表筛选不会改变。</p>
@@ -281,11 +285,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   /** 失败或中断后继续同一立项，保留填写内容与历次评审。 */
   seed?: ProductInitiation;
 }) {
-  const permissions = useAuthStore((state) => state.permissions ?? []);
   const currentUser = useAuthStore((state) => state.user);
   const currentUserId = currentUser?.userId ?? '';
-  const isRoot = useAuthStore((state) => state.isRoot);
-  const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
   const isRetry = Boolean(seed);
   const wizardTitle = seed?.tCode ? '修改内部版本资料' : seed?.status === 'decision_pending'
     ? '继续立项决策'
@@ -454,10 +455,9 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
 
   const availableProducts = applicationProducts ?? catalogProducts;
   // 新建时以表单所选应用作为接口所属产品；既有记录仍沿用原归属和权限边界。
-  const canSelectApplication = canUseProduct || Boolean(applicationProducts && !item);
   const productOptions = useMemo(
-    () => toProductOptions(canSelectApplication ? availableProducts : availableProducts.filter((product) => product.id === productId)),
-    [canSelectApplication, availableProducts, productId],
+    () => toProductOptions(availableProducts),
+    [availableProducts],
   );
   const productOptionsRef = useRef(productOptions);
   productOptionsRef.current = productOptions;
@@ -712,8 +712,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       const match = reviewSources.find((source) => source.title.replace(/\s+/g, '') === parsed.planName?.replace(/\s+/g, ''));
       if (match && !item && sourceMode === 'existing') setReviewSubmissionId(match.id);
       const productMatches = availableProducts.filter((product) =>
-        (canSelectApplication || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
-      if (parsed.matchedApplicationId && availableProducts.some((product) => product.id === parsed.matchedApplicationId && (canSelectApplication || product.id === productId))) setLinkedProductId(parsed.matchedApplicationId);
+        product.name.trim() && parsed.planName?.includes(product.name.trim()));
+      if (parsed.matchedApplicationId && availableProducts.some((product) => product.id === parsed.matchedApplicationId)) setLinkedProductId(parsed.matchedApplicationId);
       else if (parsed.matchedApplicationId) setPendingApplicationId(parsed.matchedApplicationId);
       else if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
     }
@@ -834,18 +834,18 @@ const INITIATION_SOURCE_REJECTION_TITLES: Record<string, string> = {
 function InitiationInput(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className={INITIATION_CONTROL_CLASS} />; }
 function InitiationSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className={INITIATION_CONTROL_CLASS}>{props.children}</select>; }
 
-function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onChanged, pending, onOpenLegacy }: {
+function InitiationTable({ productId, productName, productNames, items, names, onRetryReview, onChanged, pending, onOpenLegacy }: {
   pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
   items: WorkflowVersionRecord<ProductInitiation>[];
   names: ReadonlyMap<string, string>;
-  currentUserId?: string;
   onRetryReview: (item: ProductInitiation) => void;
   onOpenLegacy: (record: VersionRegistration) => void;
   onChanged: () => Promise<void>;
 }) {
+  const currentUserId = useAuthStore((state) => state.user?.userId);
   const navigate = useNavigate();
   const openDetail = (item: WorkflowVersionRecord<ProductInitiation>) => item.legacyRegistration
     ? onOpenLegacy(item.legacyRegistration)
@@ -857,8 +857,8 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
         {items.map((item) => {
           const isOwner = !item.legacyRegistration && item.createdBy === currentUserId;
-          const canEdit = isOwner && item.status !== 'voided' && (Boolean(item.tCode)
-            || ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status));
+          const canEdit = item.canEdit ?? (isOwner && item.status !== 'voided' && (Boolean(item.tCode)
+            || ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status)));
           const reviewScoreText = formatInitiationReviewScore(item);
           return (
         <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle cursor-pointer hover-bg-soft')} onClick={() => openDetail(item)}>
@@ -866,10 +866,12 @@ function InitiationTable({ productId, productName, productNames, items, names, c
           <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
-        ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-semantic-cyan hover:underline">{item.tCode}</button>
-        : '-'}</Td>
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
+        : '-'}
+        <ClaimNotificationFailure notification={item.claimNotification} />
+      </Td>
       <Td>{SCALE_LABEL[item.versionType]}</Td>
-      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-left text-semantic-cyan hover:underline">{item.planName}</button></Td>
+      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.demandSource || '-'}</Td>
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
@@ -877,14 +879,14 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       </Td>
       <Td>{formatDate(item.firstDraftMeetingAt)}</Td><Td>{formatDate(item.secondDraftMeetingAt)}</Td><Td>{formatDate(item.thirdDraftMeetingAt)}</Td>
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatDate(item.plannedProjectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td><Td>{formatBool(item.isAiPoc)}</Td>
-      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-semantic-cyan">查看方案</a> : '-'}</Td>
+      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
       <Td>
         {reviewScoreText === '-' ? (
           <span className="text-token-muted">-</span>
         ) : (
           <span className={
-            item.reviewPassed === true ? 'text-semantic-success'
+            item.reviewPassed === true ? 'text-emerald-300'
               : item.reviewPassed === false ? 'text-rose-300'
                 : 'text-token-secondary'
           }>{reviewScoreText}</span>
@@ -904,13 +906,12 @@ function InitiationTable({ productId, productName, productNames, items, names, c
   );
 }
 
-function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, currentUserId, pending, onOpenLegacy, onChanged }: {
+function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, pending, onOpenLegacy, onChanged }: {
   pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
   items: WorkflowVersionRecord<ProductRelease>[];
-  currentUserId?: string;
   onChanged: () => void | Promise<void>;
   requirementNames: ReadonlyMap<string, string>;
   names: ReadonlyMap<string, string>;
@@ -928,24 +929,27 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
-      <Td mono>{item.vCode ? <button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-semantic-cyan hover:underline">{item.vCode}</button> : '-'}</Td>
+      <Td mono>
+        {item.vCode ? <button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button> : '-'}
+        <ClaimNotificationFailure notification={item.claimNotification} />
+      </Td>
       <Td mono>{item.initiationId && item.tCode
-        ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item); }} className="text-semantic-cyan hover:underline">{item.tCode}</button>
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
         : (item.tCode || '-')}</Td>
       <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{item.isTemporaryOptimization ? '临时优化需求' : SCALE_LABEL[item.versionType]}</Td>
-      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-left text-semantic-cyan hover:underline">{item.planName}</button></Td>
+      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.demandSource || '-'}</Td>
       <Td>{item.departmentName || '-'}</Td><Td>{item.ownerName || names.get(item.ownerId ?? '') || item.legacyData?.['产品负责人'] || item.ownerId || '-'}</Td>
       <Td>{(item.projectMemberNames?.length ? item.projectMemberNames : item.teamMemberIds.map((id) => names.get(id) ?? id)).join('、')}</Td>
-      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-semantic-cyan">查看方案</a> : '-'}</Td>
+      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{formatDate(item.plannedReleaseAt)}</Td>
       <Td>{formatVersionTrainingMinutes(item.plannedTrainingMinutes)}</Td>
       <Td>{formatBool(item.isGlobalOpen)}</Td>
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
-      <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-semantic-cyan" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
+      <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
       <Td onClick={(event) => event.stopPropagation()}><div className="inline-flex items-center gap-2 whitespace-nowrap">
-        {!item.legacyRegistration && item.createdBy === currentUserId && item.status !== 'voided' && <ReleaseEditAction release={item} userNames={names} onSaved={onChanged} />}
+        {!item.legacyRegistration && item.status !== 'voided' && <ReleaseEditAction release={item} userNames={names} onSaved={onChanged} />}
         <ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} />
       </div></Td>
     </tr>)}{items.length === 0 && !pending && <Empty cols={19}>暂无上线记录</Empty>}
@@ -961,20 +965,20 @@ function formatBool(value?: boolean | null) {
   return value == null ? '-' : value ? '是' : '否';
 }
 
-function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, onOwnerChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {
+function RecordToolbar({ query, onQueryChange, ownerId, onOwnerChange, versionType, onVersionTypeChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {
   query: string;
   onQueryChange: (value: string) => void;
-  scope?: RecordScope;
-  onScopeChange?: (value: RecordScope) => void;
-  ownerId?: string;
-  onOwnerChange?: (value: string) => void;
+  ownerId: string;
+  onOwnerChange: (value: string) => void;
+  versionType: string;
+  onVersionTypeChange: (value: string) => void;
   status: string;
   onStatusChange: (value: string) => void;
   statuses: string[];
   trackedOnly?: boolean;
   onTrackedOnlyChange?: (value: boolean) => void;
 }) {
-  const filterClassName = 'h-8 rounded-lg border border-token-subtle bg-token-nested px-3 text-xs text-token-secondary outline-none focus:border-[color:var(--border-focus)]';
+  const filterClassName = 'h-8 rounded-lg border border-token-subtle bg-[#111318] px-3 text-xs text-token-secondary outline-none focus:border-cyan-400/50';
   return <div className="flex flex-wrap items-center gap-2">
     <div className={OVERVIEW_LIST_SEARCH_BOX}>
       <Search size={14} className="shrink-0 text-token-muted" />
@@ -985,19 +989,13 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
         className="min-w-0 flex-1 bg-transparent text-xs text-token-primary outline-none placeholder-token-muted"
       />
     </div>
-    {onOwnerChange
-      ? <div className="h-8 w-52">
-          <UserSearchSelect value={ownerId ?? ''} onChange={onOwnerChange} placeholder="全部负责人" showAllOption allOptionLabel="全部负责人" uiSize="sm" />
-        </div>
-      : <select
-          aria-label="记录范围"
-          value={scope}
-          onChange={(event) => onScopeChange?.(event.target.value as RecordScope)}
-          className={filterClassName}
-        >
-          <option value="mine">我的申请</option>
-          <option value="all">全部申请</option>
-        </select>}
+    <div role="group" aria-label="按版本类型筛选" className="h-8 w-40">
+      <ItemSearchSelect value={versionType} onChange={onVersionTypeChange} options={SCALE_OPTIONS}
+        placeholder="搜索版本类型" clearOptionLabel="全部版本类型" uiSize="sm" />
+    </div>
+    <div role="group" aria-label="按负责人筛选" className="h-8 w-52">
+      <UserSearchSelect value={ownerId} onChange={onOwnerChange} placeholder="全部负责人" showAllOption allOptionLabel="全部负责人" uiSize="sm" />
+    </div>
     <select
       aria-label="状态"
       value={status}
@@ -1018,9 +1016,9 @@ function Modal({ title, onClose, width, children, compact = false }: { title: st
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [onClose]);
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[color:var(--dialog-overlay)] p-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className={`flex w-full ${width} flex-col surface-popover rounded-2xl`}
+        className={`flex w-full ${width} flex-col rounded-2xl border border-token-subtle bg-[#15171c]`}
         style={{ height: compact ? 'auto' : 'min(90vh, 760px)', maxHeight: '90vh' }}
         onClick={(event) => event.stopPropagation()}
       >
@@ -1041,7 +1039,7 @@ function Modal({ title, onClose, width, children, compact = false }: { title: st
 function Field({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) { return <label className={full ? 'md:col-span-2' : ''}><span className="mb-1.5 block text-xs text-token-secondary">{label}</span>{children}</label>; }
 function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
 function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary">{props.children}</button>; }
-function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-semantic-cyan' : 'border-transparent text-token-muted'}`}>{children}</button>; }
+function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted'}`}>{children}</button>; }
 function Table({ headers, children, selection }: {
   headers: string[];
   children: ReactNode;
@@ -1073,7 +1071,7 @@ function Table({ headers, children, selection }: {
   );
 }
 function Td({ children, mono, onClick, className }: { children: React.ReactNode; mono?: boolean; onClick?: React.MouseEventHandler<HTMLTableCellElement>; className?: string }) {
-  return <td className={`max-w-64 px-3 py-3 ${mono ? 'font-mono text-semantic-cyan' : 'text-token-secondary'} ${className ?? ''}`} onClick={onClick}>{children}</td>;
+  return <td className={`max-w-64 px-3 py-3 text-token-secondary ${mono ? 'font-mono text-cyan-200' : ''} ${className ?? ''}`} onClick={onClick}>{children}</td>;
 }
 function Empty({ cols, children }: { cols: number; children: React.ReactNode }) { return <tr><td colSpan={cols} className="px-3 py-12 text-center text-token-muted">{children}</td></tr>; }
-function Status({ value }: { value: string }) { const good = value === 'approved' || value === 'released'; return <span className={`rounded-full border px-2 py-0.5 ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-semantic-success' : 'border-amber-400/20 bg-amber-400/10 text-semantic-warning'}`}>{STATUS_LABEL[value] ?? value}</span>; }
+function Status({ value }: { value: string }) { const good = value === 'approved' || value === 'released'; return <span className={`rounded-full border px-2 py-0.5 ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>{STATUS_LABEL[value] ?? value}</span>; }

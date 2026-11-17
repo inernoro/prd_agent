@@ -156,6 +156,7 @@ export function ReleaseLogDialog({
   onClose,
   onRetry,
   onRollback,
+  readOnly = false,
 }: {
   run: ReleaseRun | null;
   estimate?: ReleaseEtaEstimate;
@@ -164,6 +165,7 @@ export function ReleaseLogDialog({
   onClose: () => void;
   onRetry: (run: ReleaseRun) => void;
   onRollback: (run: ReleaseRun) => void;
+  readOnly?: boolean;
 }): JSX.Element {
   const [current, setCurrent] = useState<ReleaseRun | null>(run);
   useEffect(() => setCurrent(run), [run]);
@@ -230,7 +232,7 @@ export function ReleaseLogDialog({
             .map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`)
             .join('\n')}
         />
-        {current && canActOnFailure ? (
+        {current && canActOnFailure && !readOnly ? (
           <div className="flex flex-wrap justify-end gap-2 border-t border-[hsl(var(--hairline))] pt-3">
             <Button variant="outline" onClick={() => onRollback(current)} disabled={!canRollback}>
               <RotateCcw />
