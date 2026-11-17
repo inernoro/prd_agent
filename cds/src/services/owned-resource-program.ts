@@ -5,11 +5,17 @@ export const OWNED_RESOURCE_PROGRAM = DISK_RESOURCE_NATIVE + String.raw`
 import subprocess,signal,socket,re
 action=req['action'];now=req.get('nowMs',int(time.time()*1000));instance=req['instanceId']
 deadline=time.monotonic()+(120 if action=='reconcile' else 25)
-base,base_identity=directory(req['workspaceBase'],action in ['begin','reconcile'])
-if base.stat().st_uid!=os.getuid() or base.stat().st_mode&0o077:raise ValueError('workspace-base-owner-unconfirmed')
-catalog,catalog_identity=directory(req['catalog'],action!='preview')
-if catalog.stat().st_uid!=os.getuid() or catalog.stat().st_mode&0o077:raise ValueError('catalog-owner-unconfirmed')
-catalog_fd=os.open(catalog,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+def missing_preview_catalog():
+ print(json.dumps({'scanStatus':'partial','catalogError':'catalog-uninitialized','usageBytes':None,'canExecute':False,'counts':{'unknown':None,'pending':None},'unknown':[{'reason':'catalog-uninitialized'}]}));sys.exit(0)
+try:
+ base,base_identity=directory(req['workspaceBase'],action in ['begin','reconcile'])
+ if base.stat().st_uid!=os.getuid() or base.stat().st_mode&0o077:raise ValueError('workspace-base-owner-unconfirmed')
+ catalog,catalog_identity=directory(req['catalog'],action!='preview')
+ if catalog.stat().st_uid!=os.getuid() or catalog.stat().st_mode&0o077:raise ValueError('catalog-owner-unconfirmed')
+ catalog_fd=os.open(catalog,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+except FileNotFoundError:
+ if action!='preview':raise
+ missing_preview_catalog()
 root=catalog
 if action=='cancel':
  execution=req.get('executionId','')
@@ -18,7 +24,10 @@ if action=='cancel':
  s=os.fstat(fd)
  if not stat.S_ISREG(s.st_mode) or s.st_uid!=os.getuid() or s.st_nlink!=1:raise ValueError('cancel-file-identity-unconfirmed')
  os.fsync(fd);os.close(fd);print(json.dumps({'stopRequested':True}));sys.exit(0)
-lock=os.open('lock',(os.O_RDONLY if action=='preview' else os.O_RDWR|os.O_CREAT)|os.O_NOFOLLOW,0o600,dir_fd=catalog_fd)
+try:lock=os.open('lock',(os.O_RDONLY if action=='preview' else os.O_RDWR|os.O_CREAT)|os.O_NOFOLLOW,0o600,dir_fd=catalog_fd)
+except FileNotFoundError:
+ if action!='preview':raise
+ missing_preview_catalog()
 try:
  if action!='preview':fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError:print(json.dumps({'retryable':'catalog-busy'}));sys.exit(3)

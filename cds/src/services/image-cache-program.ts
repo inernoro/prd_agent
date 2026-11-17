@@ -35,9 +35,15 @@ def save():
  name='image-write-'+secrets.token_hex(8);fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=root_fd)
  with os.fdopen(fd,'w') as f:json.dump(state,f,separators=(',',':'));f.flush();os.fsync(f.fileno())
  os.replace(name,'images.json',src_dir_fd=root_fd,dst_dir_fd=root_fd);os.fsync(root_fd)
+def preview_unavailable(reason):
+ if action!='preview':raise ValueError(reason)
+ print(json.dumps({'scanStatus':'partial','catalogError':reason,'budgetBytes':req.get('budgetBytes',0),'imageBytesEstimate':None,'protectedBytesEstimate':None,'canExecute':False,'counts':{'candidates':None,'held':None,'unknown':None,'pending':None},'unknown':[{'reason':reason}]}));sys.exit(0)
 def docker(args,seconds=8):
- check();p=subprocess.run(['docker',*args],capture_output=True,text=True,timeout=max(.1,min(seconds,deadline-time.monotonic())))
- if p.returncode:raise ValueError('docker-query-or-operation-unconfirmed')
+ if time.monotonic()>deadline:preview_unavailable('inspection-budget-exceeded')
+ check()
+ try:p=subprocess.run(['docker',*args],capture_output=True,text=True,timeout=max(.1,min(seconds,deadline-time.monotonic())))
+ except subprocess.TimeoutExpired:preview_unavailable('docker-query-timeout')
+ if p.returncode:preview_unavailable('docker-query-or-operation-unconfirmed')
  return p.stdout
 info=json.loads(docker(['info','--format','{{json .}}']))
 if state.get('daemonId') and state['daemonId']!=info['ID']:raise ValueError('daemon-identity-changed')

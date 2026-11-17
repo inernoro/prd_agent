@@ -16,13 +16,13 @@ export function createOwnedResourceRetentionRouter(service?: OwnedResourceLifecy
     next();
   });
   router.get('/janitor/tasks', async (req, res) => {
-    try { res.json({ ...await service!.inspect(), canExecute: isHumanSystemOwner(req) }); }
+    try { const report = await service!.inspect();res.json({ ...report, canExecute: isHumanSystemOwner(req) && report.canExecute !== false && !report.catalogError }); }
     catch { res.status(503).json({ error: '宿主资源或引用核查未完成，相关对象保持保留。' }); }
   });
   router.get('/janitor/tasks/state', (req, res) => res.json({ execution: service!.getSnapshot(), canExecute: isHumanSystemOwner(req) }));
   router.get('/janitor/tasks/images', async (req, res) => {
     if (!images) { res.status(503).json({ error: '镜像ID盘点未接入，占用未知。' });return; }
-    try { res.json({ ...await images.inspect(), enabled: images.options.budgetBytes > 0, canAdopt: isHumanSystemOwner(req), canExecute: isHumanSystemOwner(req) && images.options.budgetBytes > 0 }); }
+    try { const report = await images.inspect();res.json({ ...report, enabled: images.options.budgetBytes > 0, canAdopt: isHumanSystemOwner(req), canExecute: isHumanSystemOwner(req) && images.options.budgetBytes > 0 && report.canExecute !== false && !report.catalogError }); }
     catch { res.status(503).json({ error: '镜像或引用盘点未完成，未知对象已保留。' }); }
   });
   router.get('/janitor/tasks/images/state', (req, res) => res.json({ execution: images?.getSnapshot(), canAdopt: isHumanSystemOwner(req), canExecute: isHumanSystemOwner(req) && Boolean(images?.options.budgetBytes) }));
