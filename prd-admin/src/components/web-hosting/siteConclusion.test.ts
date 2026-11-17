@@ -25,18 +25,20 @@ function text(links: ShareLinkItem[], visitors?: number): string {
 }
 
 describe('站点结论句', () => {
-  it('没有任何链接时说清「只有你自己能看到」，而不是显示 0', () => {
+  it('公开站点没有分享链接时，只说明链接为空，不推断只有作者可见', () => {
     const c = buildSiteConclusion([], NOW);
     expect(c.empty).toBe(true);
-    expect(text([])).toContain('还没分享出去过');
+    expect(text([])).toBe('这个站点还没有创建分享链接。');
+    expect(text([])).not.toContain('只有你自己');
     expect(text([])).not.toContain('0 条');
   });
 
-  it('链接全部过期或撤销时，结论是「现在没人能打开」而不是「有 N 条」', () => {
+  it('链接全部过期或撤销时，只说明没有有效分享链接，不推断站点无人可访问', () => {
     const links = [link({ isExpired: true }), link({ id: 'l2', isRevoked: true })];
     const c = buildSiteConclusion(links, NOW);
     expect(c.empty).toBe(true);
-    expect(text(links)).toContain('都已过期或撤销');
+    expect(text(links)).toBe('这个站点的分享链接都已过期或撤销，目前没有有效的分享链接。');
+    expect(text(links)).not.toContain('没有人能打开');
   });
 
   it('把条数与累计访问合成一句判断，数字可点进明细', () => {
@@ -75,8 +77,8 @@ describe('站点结论句', () => {
     expect(text(links)).not.toContain('过期');
   });
 
-  it('没人打开过要如实说，不能含糊成「最近一次刚打开过」', () => {
-    expect(text([link({ viewCount: 0 })])).toContain('还没有人打开过');
+  it('有效链接零访问只描述这些链接的记录，不推断其他入口无人访问', () => {
+    expect(text([link({ viewCount: 0 })])).toBe('这个站点有 1 条有效链接；这些有效链接暂无访问记录。');
     expect(text([link({ viewCount: 3, lastViewedAt: '2026-08-20T10:00:00.000Z' })])).toContain('最近一次刚打开过');
   });
 

@@ -14,7 +14,7 @@ export interface ConclusionSegment {
 
 export interface SiteConclusion {
   segments: ConclusionSegment[];
-  /** 没有任何链接时的引导态：此时结论句退化成一句「还没分享出去」+ 主操作 */
+  /** 没有有效分享链接时的引导态：仅说明链接状态，不推断站点可见性 */
   empty: boolean;
 }
 
@@ -56,8 +56,8 @@ export function buildSiteConclusion(
       segments: [
         {
           text: hadLinks
-            ? '这个站点的链接都已过期或撤销，现在没有人能打开它。'
-            : '这个站点还没分享出去过，只有你自己能看到。',
+            ? '这个站点的分享链接都已过期或撤销，目前没有有效的分享链接。'
+            : '这个站点还没有创建分享链接。',
         },
       ],
     };
@@ -86,7 +86,7 @@ export function buildSiteConclusion(
   }
 
   if (views === 0) {
-    segments.push({ text: '；还没有人打开过。' });
+    segments.push({ text: '；这些有效链接暂无访问记录。' });
     return { segments, empty: false };
   }
 
