@@ -1,0 +1,36 @@
+.lg-usage-finance, .lg-usage-ledger, .lg-usage-budget { min-width: 0; }
+.lg-usage-finance { border-block: 1px solid var(--border-subtle); padding-block: 16px; }
+.lg-usage-amounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.lg-usage-amounts h3 { margin: 0 0 12px; font-size: var(--fs-body); font-weight: 600; }
+.lg-usage-amounts dl { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 0; }
+.lg-usage-amounts dl > div { min-width: 0; }
+.lg-usage-amounts dt, .lg-usage-amount-note { color: var(--text-secondary); font-size: var(--fs-secondary); }
+.lg-usage-amounts dd { margin: 4px 0 0; font-size: var(--fs-metric); color: var(--text-primary); font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.lg-usage-amount-note { margin-top: 12px; }
+.lg-usage-evidence-heading { display: flex; align-items: center; gap: 6px; margin-top: 20px; font-size: var(--fs-secondary); }
+.lg-usage-evidence { display: flex; flex-wrap: wrap; gap: 12px 32px; margin: 8px 0 0; font-size: var(--fs-secondary); }
+.lg-usage-evidence > div { display: flex; align-items: baseline; gap: 8px; }
+.lg-usage-evidence dt { color: var(--text-secondary); }
+.lg-usage-evidence dd { margin: 0; font-weight: 600; }
+.lg-usage-budget { padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.lg-usage-limit-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0 0 16px; }
+.lg-usage-limit-facts dt { font-size: var(--fs-secondary); color: var(--text-secondary); }
+.lg-usage-limit-facts dd { margin: 6px 0; font-size: var(--fs-body); font-weight: 600; }
+.lg-usage-limit-facts span { font-size: var(--fs-secondary); color: var(--text-muted); }
+.lg-usage-page .lg-reconciliation-metrics > div { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.lg-usage-page .lg-reconciliation-metrics { gap: 16px; }
+.lg-usage-page .lg-reconciliation-metrics small, .lg-usage-page .lg-reconciliation-metrics span, .lg-usage-page .lg-reconciliation-match, .lg-usage-page .lg-reconciliation-card-head > div span { font-size: var(--fs-secondary); }
+.lg-usage-page .lg-reconciliation-metrics strong { font-size: var(--fs-body); }
+.lg-usage-page .lg-reconciliation-metrics strong, .lg-usage-page .lg-reconciliation-match strong, .lg-usage-page .lg-reconciliation-card-head > div span { overflow: visible; white-space: normal; text-overflow: clip; overflow-wrap: anywhere; }
+@media (max-width: 680px) {
+  .lg-usage-amounts, .lg-usage-limit-facts { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .lg-usage-page .lg-reconciliation-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lg-usage-page .lg-reconciliation-footer { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 680px) { .lg-usage-page .lg-page-actions > a { min-height: 44px; } }
+
+.lg-usage-last-read { margin-left: 12px; color: var(--warn); font-size: var(--fs-secondary); font-weight: 500; }
+
+.lg-usage-page .lg-reconciliation-card-head { align-items: flex-start; flex-direction: row; }
+.lg-usage-page .lg-reconciliation-card-head > div { flex: 1; overflow-wrap: anywhere; }
+.lg-usage-page .lg-reconciliation-status { font-size: var(--fs-secondary); max-width: 45%; overflow-wrap: anywhere; }

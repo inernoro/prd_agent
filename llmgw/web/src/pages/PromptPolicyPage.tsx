@@ -15,88 +15,175 @@
 // 当前版本行的模板字符计数、预览 chip 的生效字符计数、折叠块里那句日志只写元数据的口径。
 // 改这三处措辞会让 CI 的 dotnet test 变红，动手前先读那个测试。
 // （此处刻意不复制那三个字面量：注释里再抄一份，会让守卫在 UI 文案被删后仍然误判通过。）
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { rollbackPromptPolicy, getPromptPolicy, previewPromptPolicy, savePromptPolicy } from '@/lib/api';
-import type { PromptPolicyData, PromptPolicyDraft, PromptPolicyPreview } from '@/lib/types';
+import type { PromptPolicyData, PromptPolicyDraft, PromptPolicyPreview, PromptPolicyVersion } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { CARD_ACTIONS, CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
+import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
+import { formatPlatformTime } from '@/lib/platformTime';
+import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
 import { useDialogs } from '@/components/ConfirmDialog';
+
+// Both endpoints reject these before inserting a new version; duplicate-version CAS is also a no-write rejection.
+const POLICY_WRITE_REJECTED = ['INVALID_INPUT', 'NOT_FOUND', 'PROMPT_POLICY_VERSION_CONFLICT'] as const;
 
 const VARIABLES = ['tenantId', 'teamId', 'appCallerCode', 'requestType', 'sourceSystem'];
 const emptyDraft: PromptPolicyDraft = { expectedVersion: 0, systemPromptPrefix: '', systemPromptSuffix: '', enabled: true, allowedVariables: [], maxChars: 8000 };
 
 export function PromptPolicyPage() {
   const { id = '' } = useParams();
+  const [params] = useSearchParams();
+  const currentId = useRef(id); currentId.current = id;
+  const loadSerial = useRef(0);
+  const operationSerial = useRef(0);
+  const busyRef = useRef(false);
   const { confirm } = useDialogs();
   const [data, setData] = useState<PromptPolicyData | null>(null);
   const [draft, setDraft] = useState<PromptPolicyDraft>(emptyDraft);
   const [sample, setSample] = useState('你是一个可靠的助手。');
-  const [preview, setPreview] = useState<PromptPolicyPreview | null>(null);
+  const [previewRecord, setPreview] = useState<{ input: string; result: PromptPolicyPreview } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeTone, setNoticeTone] = useState<'ok' | 'info'>('ok');
   const [busy, setBusy] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [needsReconcile, setNeedsReconcile] = useState(false);
+  const previewInput = JSON.stringify([id, draft, sample]);
+  const preview = previewRecord?.input === previewInput ? previewRecord.result : null;
+  const dirty = data ? contentKey(draft) !== contentKey(policyDraft(data.current)) : false;
+  function begin(write: boolean) {
+    if (busyRef.current) return null;
+    busyRef.current = true; setBusy(true); setWriting(write); setError(null); setNotice(null);
+    return ++operationSerial.current;
+  }
+  function adoptVersion(version: PromptPolicyVersion) {
+    setData(previous => previous ? { ...previous, current: version, versions: [version, ...previous.versions.filter(item => item.id !== version.id)] } : previous);
+    setDraft(policyDraft(version)); setPreview(null); setConflict(false); setNeedsReconcile(false);
+  }
+  function finish(operation: number) {
+    if (operation !== operationSerial.current) return;
+    busyRef.current = false; setBusy(false); setWriting(false);
+  }
+
 
   const load = async () => {
-    const res = await getPromptPolicy(id);
-    if (!res.success) { setError(res.error?.message || '加载失败'); return; }
-    setData(res.data);
-    const current = res.data.current;
-    setDraft(current ? {
-      expectedVersion: current.version,
-      systemPromptPrefix: current.systemPromptPrefix,
-      systemPromptSuffix: current.systemPromptSuffix,
-      enabled: current.enabled,
-      allowedVariables: current.allowedVariables,
-      maxChars: current.maxChars,
-    } : emptyDraft);
+    if (id !== currentId.current) return;
+    const serial = ++loadSerial.current;
+    setReading(true); setError(null);
+    try {
+      const res = await getPromptPolicy(id);
+      if (serial !== loadSerial.current || id !== currentId.current) return;
+      if (!res.success) { setError(res.error?.message || '加载失败'); return; }
+      setData(res.data); setDraft(policyDraft(res.data.current)); setPreview(null);
+      setConflict(false); setNeedsReconcile(false);
+    } catch { if (serial === loadSerial.current) setError('提示词策略读取失败，请重新读取。'); }
+    finally { if (serial === loadSerial.current) setReading(false); }
   };
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => {
+    operationSerial.current++; busyRef.current = false; setBusy(false); setWriting(false);
+    setData(null); setPreview(null); setNotice(null); setConflict(false); setNeedsReconcile(false);
+    void load();
+    return () => { loadSerial.current++; operationSerial.current++; };
+  }, [id]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const runPreview = async () => {
-    setBusy(true); setError(null); setNotice(null);
-    const res = await previewPromptPolicy(id, { ...draft, sampleSystemPrompt: sample });
-    setBusy(false);
-    if (!res.success) { setError(res.error?.message || '预览失败'); return; }
-    setPreview(res.data);
+    const operation = begin(false); if (operation === null) return;
+    const input = previewInput;
+    try {
+      const res = await previewPromptPolicy(id, { ...draft, sampleSystemPrompt: sample });
+      if (operation !== operationSerial.current) return;
+      if (!res.success) { setError(res.error?.message || '预览失败'); return; }
+      setPreview({ input, result: res.data });
+    } catch { if (operation === operationSerial.current) setError('预览未完成，请重试。'); }
+    finally { finish(operation); }
   };
   const save = async () => {
-    setBusy(true); setError(null); setNotice(null);
-    const res = await savePromptPolicy(id, draft);
-    setBusy(false);
-    if (!res.success) { setError(res.error?.message || '保存失败'); return; }
-    setNotice(`已保存版本 v${res.data.version}`); setPreview(null); await load();
+    if (needsReconcile || conflict) return;
+    const operation = begin(true); if (operation === null) return;
+    try {
+      const res = await savePromptPolicy(id, draft);
+      if (operation !== operationSerial.current) return;
+      if (!res.success) {
+        const versionConflict = res.error?.code === 'PROMPT_POLICY_VERSION_CONFLICT';
+        const unknown = mutationOutcomeUnknown(res.error?.code, POLICY_WRITE_REJECTED);
+        setConflict(versionConflict);
+        setNeedsReconcile(unknown);
+        setError(unknown ? '保存结果未确认，可能已生效；本地草稿已保留，请先核对服务端版本。' : versionConflict ? '服务端版本已变更，本地草稿已保留。请读取最新版本后再编辑。' : res.error?.message || '保存请求被拒绝'); return;
+      }
+      adoptVersion(res.data); setNoticeTone('ok'); setNotice(`已保存版本 v${res.data.version}`); await load();
+    } catch { if (operation === operationSerial.current) { setNeedsReconcile(true); setError('保存结果未知，草稿已保留，请核对服务端版本。'); } }
+    finally { finish(operation); }
   };
   const rollback = async (targetVersion: number) => {
-    if (!data?.current || !await confirm({ title: `回滚到 v${targetVersion}？`, description: '系统会创建一个新版本，不覆盖历史。', confirmLabel: '回滚' })) return;
-    setBusy(true); setError(null);
-    const res = await rollbackPromptPolicy(id, data.current.version, targetVersion);
-    setBusy(false);
-    if (!res.success) { setError(res.error?.message || '回滚失败'); return; }
-    setNotice(`已从 v${targetVersion} 创建 v${res.data.version}`); await load();
+    if (!data?.current || needsReconcile || conflict) return;
+    const operation = begin(true); if (operation === null) return;
+    try {
+      if (!await confirm({ title: `回滚到 v${targetVersion}？`, description: `系统会创建新版本，不覆盖历史。${dirty ? '当前未保存草稿会被替换。' : ''}`, confirmLabel: '回滚' })) return;
+      if (operation !== operationSerial.current) return;
+      const res = await rollbackPromptPolicy(id, data.current.version, targetVersion);
+      if (operation !== operationSerial.current) return;
+      if (!res.success) {
+        const versionConflict = res.error?.code === 'PROMPT_POLICY_VERSION_CONFLICT';
+        const unknown = mutationOutcomeUnknown(res.error?.code, POLICY_WRITE_REJECTED);
+        setConflict(versionConflict);
+        setNeedsReconcile(unknown);
+        setError(unknown ? '回滚结果未确认，可能已生效；本地草稿已保留，请先核对服务端版本。' : versionConflict ? '服务端版本已变更，本地草稿已保留。请读取最新版本后再编辑。' : res.error?.message || '回滚请求被拒绝'); return;
+      }
+      adoptVersion(res.data); setNoticeTone('ok'); setNotice(`已从 v${targetVersion} 创建 v${res.data.version}`); await load();
+    } catch { if (operation === operationSerial.current) { setNeedsReconcile(true); setError('回滚结果未知，草稿已保留，请核对服务端版本。'); } }
+    finally { finish(operation); }
+  };
+  const reconcile = async () => {
+    const operation = begin(true); if (operation === null) return;
+    try {
+      const res = await getPromptPolicy(id);
+      if (operation !== operationSerial.current) return;
+      if (!res.success) { setError(res.error?.message || '版本核对失败'); return; }
+      setData(res.data); setNeedsReconcile(false);
+      if (contentKey(draft) === contentKey(policyDraft(res.data.current))) {
+        setDraft(policyDraft(res.data.current)); setConflict(false);
+        setNoticeTone('info'); setNotice(`当前服务端 v${res.data.current?.version || 0} 内容与草稿一致`);
+      } else {
+        const changed = (res.data.current?.version || 0) !== draft.expectedVersion;
+        setConflict(changed);
+        if (changed) setError('服务端版本已变更，本地草稿保留；复制需要的内容后可丢弃草稿读取最新。');
+        else { setNoticeTone('info'); setNotice('已核对当前版本，草稿尚未保存，可以继续编辑或保存。'); }
+      }
+    } catch { if (operation === operationSerial.current) setError('版本核对未完成，草稿仍保留。'); }
+    finally { finish(operation); }
   };
 
   return (
     <PageShell>
       <PageHeader
         title="提示词策略"
-        subtitle="给这个调用方的每次 chat 与 vision 请求补上固定的开场与收尾要求。"
+        subtitle="为当前调用方的这个请求类型补上固定的开场与收尾要求。"
         summary={data ? (
           <>
             <code style={MONO_META}>{data.appCallerCode}</code>
             <span>请求类型 <strong>{data.requestType}</strong></span>
-            <span>{data.current ? <>当前 <strong>v{data.current.version}</strong></> : '尚未创建'}</span>
+            <span>{data.current ? <>{needsReconcile || conflict ? '上次读取' : '当前'} <strong>v{data.current.version}</strong>{needsReconcile || conflict ? ' · 当前待核' : ''}</> : needsReconcile || conflict ? '上次读取：尚未创建 · 当前待核' : '尚未创建'}</span>
           </>
         ) : undefined}
-        actions={<Link to="/app-callers" style={backLinkStyle}><ArrowLeft size={14} />返回调用方</Link>}
+        actions={<Link to={data ? callerWorkspaceReturnHref(data.appCallerCode, data.requestType, params.get('callerReturn') || '') : '/app-callers'} style={backLinkStyle}><ArrowLeft size={14} />返回调用方</Link>}
       />
 
       <PageBody>
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-        {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
+        {error || needsReconcile || conflict ? <InlineAlert tone="error">{error || (needsReconcile ? '保存结果待核对，本地草稿保留。' : '服务端版本已变更，本地草稿保留。')}{!data ? <Button size="sm" variant="ghost" onClick={() => void load()}>重新读取</Button> : null}{needsReconcile ? <Button size="sm" variant="ghost" disabled={busy || reading} onClick={() => void reconcile()}>核对服务端版本（保留草稿）</Button> : null}{conflict ? <Button size="sm" variant="ghost" disabled={busy || reading} onClick={() => void load()}>丢弃本地草稿并读取最新</Button> : null}</InlineAlert> : null}
+        {notice ? <InlineAlert tone={noticeTone}>{notice}</InlineAlert> : null}
+        {reading && data ? <SectionLoader text="正在读取最新版本…" /> : null}
 
         {!data ? (
           error ? null : <SectionLoader text="正在加载提示词策略…" />
@@ -104,20 +191,20 @@ export function PromptPolicyPage() {
           <>
             <Card style={CARD_BODY}>
               <div style={cardHeadStyle}>
-                <h2 style={SECTION_TITLE}>策略正文</h2>
+                <h2 style={SECTION_TITLE}>策略正文</h2>{dirty ? <span style={HINT_TEXT} role="status">有未保存更改</span> : null}
                 <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
                   <span style={HINT_TEXT}>
-                    {data.current ? `v${data.current.version} · ${data.current.policyHash.slice(0, 12)} · ${data.current.policyChars} 个模板字符` : '尚未创建'}
+                    {needsReconcile || conflict ? '上次读取 · ' : ''}{data.current ? `v${data.current.version} · ${data.current.policyHash.slice(0, 12)} · ${data.current.policyChars} 个模板字符` : '尚未创建'}{needsReconcile || conflict ? ' · 当前待核' : ''}
                   </span>
                   <label style={checkStyle}>
-                    <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />启用
+                    <input type="checkbox" disabled={writing || reading} checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />启用
                   </label>
                 </div>
               </div>
 
               <div className="lg-prompt-policy-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: GAP.section }}>
-                <TextArea label="固定开场要求（System Prompt 前缀）" value={draft.systemPromptPrefix} onChange={(value) => setDraft({ ...draft, systemPromptPrefix: value })} />
-                <TextArea label="固定收尾要求（System Prompt 后缀）" value={draft.systemPromptSuffix} onChange={(value) => setDraft({ ...draft, systemPromptSuffix: value })} />
+                <TextArea disabled={writing || reading} label="固定开场要求（System Prompt 前缀）" value={draft.systemPromptPrefix} onChange={(value) => setDraft({ ...draft, systemPromptPrefix: value })} />
+                <TextArea disabled={writing || reading} label="固定收尾要求（System Prompt 后缀）" value={draft.systemPromptSuffix} onChange={(value) => setDraft({ ...draft, systemPromptSuffix: value })} />
               </div>
 
               <div style={{ marginTop: GAP.section }}>
@@ -135,6 +222,7 @@ export function PromptPolicyPage() {
                     <label key={name} style={checkStyle}>
                       <input
                         type="checkbox"
+                        disabled={writing || reading}
                         checked={draft.allowedVariables.includes(name)}
                         onChange={(e) => setDraft({
                           ...draft,
@@ -158,19 +246,19 @@ export function PromptPolicyPage() {
                       两个数字通常不相等，用了变量就以预览为准。
                     </HelpPopover>
                   </span>
-                  <input type="number" min={1} max={20000} value={draft.maxChars} onChange={(e) => setDraft({ ...draft, maxChars: Number(e.target.value) })} style={FIELD_INPUT} />
+                  <input disabled={writing || reading} type="number" min={1} max={20000} value={draft.maxChars} onChange={(e) => setDraft({ ...draft, maxChars: Number(e.target.value) })} style={FIELD_INPUT} />
                 </label>
               </FormGrid>
 
               <div style={{ ...CARD_ACTIONS, marginTop: GAP.section }}>
-                <Button size="sm" onClick={() => void runPreview()} disabled={busy}>预览</Button>
-                <Button size="sm" variant="primary" onClick={() => void save()} disabled={busy}>保存新版本</Button>
+                <Button size="sm" onClick={() => void runPreview()} disabled={busy || reading}>预览</Button>
+                <Button size="sm" variant="primary" onClick={() => void save()} disabled={busy || reading || needsReconcile || conflict}>保存新版本</Button>
               </div>
             </Card>
 
             <Card style={CARD_BODY}>
               <div style={cardHeadStyle}><h2 style={SECTION_TITLE}>预览</h2></div>
-              <TextArea label="示例请求 system prompt" value={sample} onChange={setSample} />
+              <TextArea disabled={writing || reading} label="示例请求 system prompt" value={sample} onChange={setSample} />
               {preview ? (
                 <div style={{ marginTop: GAP.normal }}>
                   <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap' }}>
@@ -196,8 +284,8 @@ export function PromptPolicyPage() {
                 </span>
               </div>
               {data.versions.length ? (
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <div role="region" aria-label="提示词版本历史，可横向滚动" tabIndex={0} style={{ overflowX: 'auto' }}>
+                  <table className="lg-data-table" style={{ width: '100%', minWidth: 620, borderCollapse: 'collapse' }}>
                     <thead>
                       <tr>{['版本', '状态', 'hash', '模板字符', '更新时间', '操作'].map((x) => <th key={x} style={TABLE_HEAD_CELL}>{x}</th>)}</tr>
                     </thead>
@@ -208,9 +296,9 @@ export function PromptPolicyPage() {
                           <td style={TABLE_CELL}>{item.enabled ? '启用' : '禁用'}</td>
                           <td style={{ ...TABLE_CELL, ...MONO_META }}><code>{item.policyHash.slice(0, 12)}</code></td>
                           <td style={TABLE_CELL}>{item.policyChars}</td>
-                          <td style={TABLE_CELL}>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '—'}</td>
+                          <td style={TABLE_CELL}>{formatPlatformTime(item.updatedAt)}</td>
                           <td style={{ ...TABLE_CELL, textAlign: 'right' }}>
-                            <Button size="sm" variant="ghost" disabled={busy || item.version === data.current?.version} onClick={() => void rollback(item.version)}>回滚</Button>
+                            <Button size="sm" variant="ghost" style={{ whiteSpace: 'nowrap' }} disabled={busy || reading || needsReconcile || conflict || item.version === data.current?.version} onClick={() => void rollback(item.version)}>回滚到 v{item.version}</Button>
                           </td>
                         </tr>
                       ))}
@@ -240,12 +328,18 @@ export function PromptPolicyPage() {
   );
 }
 
+function policyDraft(current?: PromptPolicyVersion | null): PromptPolicyDraft {
+  return current ? { expectedVersion: current.version, systemPromptPrefix: current.systemPromptPrefix, systemPromptSuffix: current.systemPromptSuffix, enabled: current.enabled, allowedVariables: current.allowedVariables, maxChars: current.maxChars } : { ...emptyDraft, allowedVariables: [] };
+}
+function contentKey(draft: PromptPolicyDraft) { return JSON.stringify({ ...draft, expectedVersion: 0 }); }
+
 /** 策略正文与示例：多行输入同样是用户要读的内容，走 FIELD_INPUT 的正文档。 */
-function TextArea({ label: text, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function TextArea({ label: text, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
   return (
     <label style={FIELD_LABEL}>
       <span>{text}</span>
       <textarea
+        disabled={disabled}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={7}

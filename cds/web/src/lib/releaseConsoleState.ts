@@ -31,7 +31,7 @@ export type ConsolePhase =
 
 export interface ConsoleStanceInput {
   /** 本次会话发起的 run（页面里的 `run`）。没有就是 null。 */
-  sessionRun: { status: string } | null;
+  sessionRun: { status: string; commitSha?: string } | null;
   /** 该环境最近一次历史发布（`row.latestRun`）。 */
   latestRun: { status: string; commitSha?: string; operator?: string; startedAt?: string } | null;
   /** 线上正在跑的 commit（`row.currentCommit`）。 */
@@ -167,7 +167,7 @@ export function buildConsoleStance(input: ConsoleStanceInput): ConsoleStance {
       title: failed ? '发布失败' : '发布成功',
       badge: '',
       selectedIsLive,
-      primaryLabel: failed ? '重新发布' : '再发一次',
+      primaryLabel: selectedCommit && sessionRun.commitSha === selectedCommit ? failed ? '重新发布' : '再发一次' : '发布所选版本',
       hint: '',
     };
   }

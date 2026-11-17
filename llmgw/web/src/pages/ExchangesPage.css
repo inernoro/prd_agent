@@ -1,0 +1,13 @@
+.lg-exchange-capability { border-top: 1px solid var(--border-subtle); padding-top: 8px; scroll-margin-top: 24px; }
+.lg-exchange-capability > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; color: var(--text-secondary); font-size: var(--fs-body); }
+.lg-exchange-capability > summary::before { content: '›'; font-size: var(--fs-title); }
+.lg-exchange-capability[open] > summary::before { transform: rotate(90deg); }
+.lg-exchange-capability > summary span { margin-left: auto; font-size: var(--fs-secondary); }
+.lg-exchange-capability > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lg-exchange-unknown { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: var(--fs-secondary); color: var(--text-secondary); }
+.lg-exchange-unknown strong { color: var(--warn); }
+
+.lg-exchange-toolbar > label, .lg-exchange-toolbar > details > summary { min-height: 44px; display: flex; align-items: center; }
+.lg-exchange-toolbar > details[open] { flex-basis: 100%; }
+.lg-exchange-next-actions, .lg-exchange-filter-result { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: var(--fs-secondary); }
+.lg-exchange-next-actions { padding-top: 8px; }

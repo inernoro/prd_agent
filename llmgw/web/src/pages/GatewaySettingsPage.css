@@ -1,0 +1,13 @@
+.lg-gateway-settings .lg-gws-card { padding: 16px; }
+.lg-gateway-settings .lg-gws-sources { gap: 8px 20px; margin-top: 12px; }
+.lg-gateway-settings .lg-gws-sources label { display: flex; gap: 10px; padding-block: 8px; min-height: 44px; cursor: pointer; align-items: flex-start; }
+.lg-gateway-settings .lg-gws-sources input[type='radio'] { margin-top: 5px; accent-color: var(--accent); }
+.lg-gateway-settings .lg-gws-sources strong { font-size: var(--fs-body); font-weight: 600; }
+.lg-gateway-settings .lg-gws-sources small { display: block; color: var(--text-secondary); line-height: 1.6; margin-top: 4px; }
+.lg-gateway-settings .lg-gws-sources .is-active strong { color: var(--accent); }
+.lg-gateway-settings .lg-gws-facts { margin-top: 16px; gap: 20px; }
+.lg-gateway-settings .lg-gws-facts > div { padding: 0; background: transparent !important; border: 0; box-shadow: none; }
+.lg-gws-impact { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--border-subtle); color: var(--text-primary); }
+.lg-gws-current-state, .lg-gws-save-feedback { margin-top: 8px; color: var(--text-secondary); font-size: var(--fs-secondary); }
+.lg-gateway-settings .lg-gws-actions { padding-top: 12px; margin-top: 12px; }
+.lg-gws-test-cost { margin-top: 12px; color: var(--text-secondary); font-size: var(--fs-secondary); }

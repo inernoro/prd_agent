@@ -56,6 +56,9 @@ export function RowActions({
   label?: string;
 }) {
   const rootRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const openAtEnd = useRef(false);
+  const focusedForOpen = useRef(false);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [style, setStyle] = useState<CSSProperties>({ visibility: 'hidden' });
@@ -105,6 +108,15 @@ export function RowActions({
     };
   }, [open, actions.length]);
 
+  useLayoutEffect(() => {
+    if (!open) { focusedForOpen.current = false; return; }
+    if (style.visibility === 'hidden' || focusedForOpen.current) return;
+    const choices = popoverRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)');
+    const initial = openAtEnd.current ? choices?.[choices.length - 1] : choices?.[0];
+    initial?.focus();
+    focusedForOpen.current = true; openAtEnd.current = false;
+  }, [open, style.visibility]);
+
   useEffect(() => {
     if (!open) return undefined;
     const close = (event: MouseEvent) => {
@@ -112,7 +124,15 @@ export function RowActions({
       if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); return; }
+      if (event.key === 'Tab') { setOpen(false); triggerRef.current?.focus(); return; }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      const choices = Array.from(popoverRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') || []);
+      if (!choices.length) return;
+      event.preventDefault();
+      const index = choices.indexOf(document.activeElement as HTMLElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + choices.length) % choices.length;
+      choices[next]?.focus();
     };
     document.addEventListener('mousedown', close);
     window.addEventListener('keydown', closeOnEscape);
@@ -131,11 +151,13 @@ export function RowActions({
         <>
           <button
             type="button"
+            ref={triggerRef}
             className="lg-row-actions-trigger"
             aria-label={label}
             aria-haspopup="menu"
             aria-expanded={open}
             title={label}
+            onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); event.stopPropagation(); openAtEnd.current = event.key === 'ArrowUp'; setOpen(true); } }}
             onClick={() => setOpen((v) => !v)}
           >
             <MoreHorizontal size={15} />
@@ -166,7 +188,7 @@ export function RowActions({
                     className={cls}
                     disabled={action.disabled}
                     title={action.title}
-                    onClick={() => { setOpen(false); action.onSelect?.(); }}
+                    onClick={() => { setOpen(false); triggerRef.current?.focus(); action.onSelect?.(); }}
                   >
                     {action.label}
                   </button>

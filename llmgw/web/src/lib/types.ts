@@ -1589,6 +1589,7 @@ export type CostReconciliationImportRequest = {
 };
 
 export type LegacyKeyCutoverData = {
+  policyRevision: number;
   applicable: boolean;
   status: 'not-applicable' | 'observing' | 'ready' | 'revoked';
   deadlineAt?: string | null;

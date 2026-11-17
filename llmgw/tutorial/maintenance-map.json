@@ -516,9 +516,9 @@
           "tutorial": "服务网关设置"
         },
         {
-          "name": "当场测一次",
-          "product": "测试连接",
-          "tutorial": "测试连接"
+          "name": "测试模型调用",
+          "product": "测试模型调用",
+          "tutorial": "测试模型调用"
         }
       ]
     },

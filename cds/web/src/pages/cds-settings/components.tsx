@@ -12,17 +12,20 @@ export function Section({
   description,
   children,
   tone = 'default',
+  actions,
 }: {
   title: string;
   description?: ReactNode;
   children: ReactNode;
   tone?: 'default' | 'danger';
+  actions?: ReactNode;
 }): JSX.Element {
   return (
     <section className="border-b border-border pb-5 last:border-b-0 last:pb-0">
-      <h2 className={tone === 'danger' ? 'text-lg font-semibold text-destructive' : 'text-lg font-semibold'}>
-        {title}
-      </h2>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className={tone === 'danger' ? 'text-lg font-semibold text-destructive' : 'text-lg font-semibold'}>{title}</h2>
+        {actions}
+      </div>
       {description ? (
         <div className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">{description}</div>
       ) : null}
@@ -241,7 +244,10 @@ export function CodePill({ children }: { children: ReactNode }): JSX.Element {
   );
 }
 
+export function isSensitiveEnvKey(key: string): boolean {
+  return /password|secret|token|key|pat|jwt|credential|private/i.test(key);
+}
+
 export function maskSecret(key: string, value: string): string {
-  if (!/password|secret|token|key|pat/i.test(key) || value.length <= 4) return value;
-  return `****${value.slice(-4)}`;
+  return isSensitiveEnvKey(key) && value ? '••••••••' : value;
 }

@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { Router, type Request } from 'express';
 import type { ManagedProjectSpec, ProjectDeliveryMode } from '../types.js';
 import type { ManagedProjectService } from '../services/managed-project.js';
@@ -15,7 +17,15 @@ export function createManagedProjectsRouter(deps: {
     if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
     const access = deps.assertProjectAccess(req, project.id);
     if (access) { res.status(access.status).json(access.body); return; }
+    const branches = deps.stateService.getBranchesForProject(project.id);
+    const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : '';
+    const sourceBranch = branchId ? branches.find(branch => branch.id === branchId) : undefined;
+    const sourceCommit = sourceBranch ? repositoryHead(sourceBranch.worktreePath) : null;
     res.json({
+      revision: deliveryRevision(project, sourceBranch, sourceCommit),
+      projectRevision: deliveryRevision(project),
+      planBranches: branches.map(branch => ({ id: branch.id, branch: branch.branch })),
+      generationSource: sourceBranch ? { branchId: sourceBranch.id, branch: sourceBranch.branch, commitSha: sourceCommit } : null,
       projectId: project.id,
       mode: project.deliveryMode || 'compose',
       managedSpec: project.managedSpec || { apps: [], capabilities: [] },
@@ -42,6 +52,46 @@ export function createManagedProjectsRouter(deps: {
         res.status(400).json({ error: (err as Error).message });
         return;
       }
+    }
+    if (req.body?.generatePlan === true) {
+      const branchId = typeof req.body.branchId === 'string' ? req.body.branchId : '';
+      const candidateBranch = mode === 'managed' ? deps.stateService.getBranch(branchId) : undefined;
+      const branch = candidateBranch && (candidateBranch.projectId || 'default') === project.id ? candidateBranch : undefined;
+      const sourceCommit = branch ? repositoryHead(branch.worktreePath) : null;
+      if (!req.body.expectedRevision) { res.status(428).json({ error: '请先读取当前项目配置后再保存' }); return; }
+      if (mode === 'managed' && (!branch || (branch.projectId || 'default') !== project.id || !sourceCommit)) {
+        res.status(409).json({ error: '生成依据不属于当前项目，或工作区版本未确认、存在未提交文件。请同步分支并提交或还原变更后重试' }); return;
+      }
+      const revision = deliveryRevision(project, mode === 'managed' ? branch : undefined, mode === 'managed' ? sourceCommit : null);
+      if (req.body.expectedRevision !== revision) { res.status(409).json({ error: '项目配置或生成依据已变化，请重新读取并核对后保存' }); return; }
+      let plan: ReturnType<ManagedProjectService['planForProject']> | null;
+      try {
+        const candidate = { ...project, deliveryMode: mode, managedSpec };
+        plan = mode === 'managed' && branch ? deps.managedProjectService.planForProject(candidate, branch, sourceCommit || undefined) : null;
+      } catch (err) {
+        res.status(422).json({ error: '配置生成失败，原配置保持不变', message: (err as Error).message });
+        return;
+      }
+      const current = deps.stateService.getProject(project.id);
+      const currentBranch = mode === 'managed' ? deps.stateService.getBranch(branchId) : undefined;
+      const currentCommit = currentBranch ? repositoryHead(currentBranch.worktreePath) : null;
+      if (!current || deliveryRevision(current, currentBranch, currentCommit) !== revision) {
+        res.status(409).json({ error: '计算期间项目配置或仓库版本已变化，本次未写入，请重新读取核对' }); return;
+      }
+      // 复核与唯一状态写入之间没有异步窗口。写入阶段异常不能冒充纯计算拒绝。
+      try {
+        deps.stateService.updateProject(project.id, {
+          deliveryMode: mode,
+          managedSpec,
+          managedProfiles: plan?.profiles,
+          managedPlanUpdatedAt: plan?.generatedAt,
+        });
+      } catch {
+        res.status(500).json({ error: '配置写入阶段未能确认保存结果，请重新读取核对，勿重复提交' });
+        return;
+      }
+      res.json({ projectId: project.id, mode, managedSpec: managedSpec || null, plan });
+      return;
     }
     deps.stateService.updateProject(project.id, {
       deliveryMode: mode,
@@ -157,4 +207,22 @@ function cleanString(value: unknown, field: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/** 本地只读获取版本，不触发拉取、构建、部署或外部服务。 */
+function repositoryHead(worktreePath: string): string | null {
+  try {
+    const options = { encoding: 'utf8' as const, timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] as ['ignore', 'pipe', 'ignore'] };
+    if (execFileSync('git', ['-C', worktreePath, 'status', '--porcelain', '--untracked-files=normal'], options).trim()) return null;
+    return execFileSync('git', ['-C', worktreePath, 'rev-parse', '--verify', 'HEAD'], options).trim() || null;
+  }
+  catch { return null; }
+}
+
+function deliveryRevision(project: import('../types.js').Project, branch?: import('../types.js').BranchEntry, sourceCommit: string | null = null): string {
+  return crypto.createHash('sha256').update(JSON.stringify({
+    id: project.id, updatedAt: project.updatedAt, identity: { slug: project.slug, name: project.name, aliasName: project.aliasName, history: project.identityHistory }, gitRepoUrl: project.gitRepoUrl,
+    mode: project.deliveryMode, spec: project.managedSpec, planUpdatedAt: project.managedPlanUpdatedAt,
+    branch: branch ? { id: branch.id, projectId: branch.projectId, path: branch.worktreePath, sha: branch.githubCommitSha, lastPullAt: branch.lastPullAt, sourceCommit } : null,
+  })).digest('hex');
 }

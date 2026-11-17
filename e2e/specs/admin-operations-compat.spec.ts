@@ -3,6 +3,7 @@ import {
   installOperationsFixtures,
   target,
   targetName,
+  run,
 } from "../fixtures/admin-operations.mjs";
 test.beforeEach(async ({ browser, page }, testInfo) => {
   page.on("pageerror", (error) =>
@@ -22,7 +23,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await page.setViewportSize(viewport);
     await installOperationsFixtures(page);
     await page.route('**/api/auth/status', async route => route.fulfill({ json: {
-      authenticated: true, enabled: true, user: { name: '审批操作员', isSystemOwner: true },
+      authenticated: true, enabled: true, activeProvider: 'local',
+      user: { id: 'fixture-approval-operator', username: 'approval-operator', authProvider: 'local', name: '审批操作员', isSystemOwner: true },
       approvalCapabilities: { accessRequests: false, operator: true },
     } }));
     let reads = 0;
@@ -66,7 +68,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await page.setViewportSize(viewport);
     await installOperationsFixtures(page);
     await page.route('**/api/auth/status', async (route) => route.fulfill({ json: {
-      authenticated: true, enabled: true, user: { name: '审批操作员', isSystemOwner: true },
+      authenticated: true, enabled: true, activeProvider: 'local',
+      user: { id: 'fixture-approval-operator', username: 'approval-operator', authProvider: 'local', name: '审批操作员', isSystemOwner: true },
       approvalCapabilities: { accessRequests: true, operator: false },
     } }));
     const targets = [target, { ...target, id: 'compat-target-b', name: '隔离目标 B' }];
@@ -420,15 +423,15 @@ for (const theme of ["light", "dark"])
       await page.locator(`nav a[href="/llmgw/${path}"]`).click();
     }
     await nav("platforms");
-    await page
-      .getByRole("button", { name: "接入模型", exact: false })
-      .click();
+    const providerEntry = page.getByRole("button", { name: "尚未接入模型", exact: false });
+    await providerEntry.click();
     let pane = page.getByRole("complementary", { name: "清单详情" });
     await pane.getByRole("button", { name: "连接配置", exact: true }).click();
     await reachable(
       pane.getByRole("button", { name: "编辑连接", exact: true }),
     );
-    await pane.getByRole("button", { name: "关闭详情", exact: true }).click();
+    await pane.getByRole("button", { name: "返回上游清单", exact: true }).click();
+    await expect(providerEntry).toBeFocused();
     await nav("service-keys");
     await page
       .getByRole("button", { name: "1 个调用用途", exact: true })
@@ -448,9 +451,11 @@ for (const theme of ["light", "dark"])
     );
     await pane.getByRole("button", { name: "关闭详情", exact: true }).click();
     await nav("logs");
-    await page
-      .getByRole("button", { name: /11-12 00:00 compat-model/ })
-      .click({ position: { x: 5, y: 5 } });
+    const requestRow = page.getByRole("button").filter({
+      has: page.getByRole("link", { name: "compat-model", exact: true }),
+    });
+    await expect(requestRow).toHaveCount(1);
+    await requestRow.click({ position: { x: 5, y: 5 } });
     const detail = page.getByRole("dialog", { name: "请求详情" });
     await expect(detail).toBeVisible();
     await detail.getByRole("tab", { name: "请求与响应", exact: true }).click();
@@ -564,7 +569,7 @@ test("390 隔离发布成功闭环", async ({ page }) => {
     {
       path: "/api/releases/branches/compat-branch/runs",
       method: "POST",
-      body: { targetId: "compat-target", previewUrl: "https://example.test" },
+      body: { targetId: "compat-target", previewUrl: "https://example.test", expectedCommitSha: run.commitSha },
     },
   ]);
 });

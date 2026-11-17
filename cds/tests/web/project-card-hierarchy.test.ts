@@ -95,7 +95,8 @@ describe('项目卡片保留运维信号与真实服务组成', () => {
     const failed = render({ cloneStatus: 'error', cloneError: '仓库不可访问' });
     expect(failed).toContain('克隆失败');
     expect(failed).toContain('仓库不可访问');
-    expect(failed).toContain('href="#"');
+    expect(failed).toContain('href="/branches/project-1"');
+    expect(failed).toContain('查看 项目名称完整可见 的分支');
     expect(render({}, false)).not.toContain('项目操作');
   });
 });
