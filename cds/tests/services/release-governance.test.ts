@@ -43,6 +43,19 @@ describe('独立批准与连续调试的服务层约束', () => {
     await expect(service.authorize(input())).rejects.toThrow('独立批准');
     expect(service.list('p').attempts[0]).toMatchObject({ result: 'denied', candidateSha: B, operator: alice });
   });
+  it('启用审批保存失败后重试仍须确认落盘，恢复后重启保留审批门禁',async()=>{
+    const target=state.getReleaseTarget('prod')!;
+    state.upsertReleaseTarget({...target,governance:undefined});await state.flush();
+    const flush=vi.spyOn(state,'flush').mockRejectedValueOnce(new Error('private-storage-path')).mockRejectedValueOnce(new Error('private-storage-path'));
+    await expect(service.enable('prod',reviewer)).rejects.toThrow();
+    await expect(service.enable('prod',reviewer)).rejects.toThrow();
+    expect(flush).toHaveBeenCalledTimes(2);flush.mockRestore();
+    await service.enable('prod',reviewer);
+    const reloaded=new StateService(path.join(root,'state.json'),root);reloaded.load();
+    expect(reloaded.getReleaseTarget('prod')?.governance).toMatchObject({required:true,enabledBy:reviewer});
+    const restarted=new ReleaseGovernanceService(reloaded,git,undefined,()=>new Date(now));
+    await expect(restarted.authorize(input())).rejects.toThrow('独立批准');await reloaded.flush();
+  });
   it('首个调试窗口须包含当前主干，在申请时即拒绝不满足条件的版本',async()=>{
     state.upsertReleaseTarget({...state.getReleaseTarget('prod')!,id:'fresh'});
     const check={projectId:'p',candidateSha:B,mainSha:MAIN,status:'clean' as const,checkedAt:new Date(now).toISOString(),changedPaths:['allowed/file.ts'],conflicts:[],includesBaseline:false};
@@ -206,6 +219,12 @@ describe('独立批准与连续调试的服务层约束', () => {
     vi.mocked(git.includesPr).mockRejectedValue(new Error('offline'));
     const result = await service.refreshMergeBack(linked.id,alice);
     expect(result.state).toBe('unknown'); expect(result.checkedAt).toBe(linked.checkedAt);
+  });
+  it('回并刷新明确不含线上版本时保留上次证据并返回真实拒绝原因',async()=>{
+    const linked=await service.linkMergeBack('prod',12,'负责人',alice,A);
+    vi.mocked(git.includesPr).mockResolvedValue(false);
+    await expect(service.refreshMergeBack(linked.id,alice)).rejects.toThrow('未包含此线上版本');
+    expect(service.list('p').mergeBacks).toEqual([linked]);
   });
   it('路径规则不允许目录前缀逃逸，未知范围不放行', () => {
     expect(pathAllowed('allowed-other/file.ts',['allowed/'])).toBe(false);

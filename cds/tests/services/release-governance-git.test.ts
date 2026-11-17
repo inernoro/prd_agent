@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
+import asyncFs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -33,6 +34,17 @@ describe('发布治理的真实隔离合并', () => {
     reader = new ReleaseGovernanceGit(() => repo, () => 'main', native);
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  it('临时目录清理报错后仍释放核验名额，后续真实合并检查可恢复',async()=>{
+    const remove=asyncFs.rm;
+    const cleanup=vi.spyOn(asyncFs,'rm');
+    const failAfterCleanup:typeof remove=async(...args)=>{await remove(...args);throw new Error('模拟清理完成后的文件系统错误');};
+    try{
+      cleanup.mockImplementationOnce(failAfterCleanup).mockImplementationOnce(failAfterCleanup);
+      await expect(reader.inspect('p',basis,basis)).rejects.toThrow('文件系统错误');
+      await expect(reader.inspect('p',basis,basis)).rejects.toThrow('文件系统错误');
+      expect(await reader.inspect('p',basis,basis)).toMatchObject({status:'clean',includesBaseline:true});
+    }finally{cleanup.mockRestore();}
+  });
   it('迁移的本地项目可核验真实回退仓库，未克隆的远端项目及不存在项目仍不可用',async()=>{
     const state=new StateService(path.join(root,'state.json'),repo);state.load();
     const now=new Date().toISOString();

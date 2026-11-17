@@ -117,8 +117,8 @@ export class ReleaseGovernanceGit {
     } catch {
       result.status = 'unknown'; result.reason = '主干更新或隔离合并未完成，请刷新核验后重试；未判定为无冲突';
     } finally {
-      if (temporary) await fs.rm(temporary, { recursive: true, force: true });
-      this.active--;
+      try { if (temporary) await fs.rm(temporary, { recursive: true, force: true }); }
+      finally { this.active--; }
     }
     return result;
   }

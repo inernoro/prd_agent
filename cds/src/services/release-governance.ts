@@ -66,6 +66,9 @@ export class ReleaseGovernanceService {
       throw new ReleaseGovernanceError('审批历史达到存储上限，已停止新增；请联系管理员导出并迁移历史记录后重试');
     }
     this.state.saveReleaseGovernance(value);
+    await this.confirmPersistence();
+  }
+  private async confirmPersistence(): Promise<void> {
     try { await this.state.flush(); this.writeUnconfirmed = false; }
     catch { this.writeUnconfirmed = true; throw new ReleaseGovernanceError('发布治理记录保存未确认，尚未放行；请恢复存储后重试'); }
   }
@@ -118,13 +121,13 @@ export class ReleaseGovernanceService {
   async enable(targetId: string, actor: string): Promise<void> {
     if (!human(actor)) throw new ReleaseGovernanceError('只能由已登录的人类账号启用发布审批');
     const target = this.target(targetId);
-    if (target.governance?.required) return;
+    if (target.governance?.required) { await this.confirmPersistence(); return; }
     if (peekReleaseTargetLock(targetId) || this.state.getReleaseRuns({ targetId }).some(isReleaseRunInFlight)) {
       throw new ReleaseGovernanceError('本环境仍有进行中的操作，请等待结束后启用审批');
     }
     recordReleaseTargetUpsert({ state: this.state, history: this.history },
       { ...target, governance: { required: true, enabledAt: this.now().toISOString(), enabledBy: actor } }, { actor });
-    await this.state.flush();
+    await this.confirmPersistence();
   }
   async inspect(targetId: string, branchId?: string): Promise<ReleaseConflictCheck> {
     const target = this.target(targetId), current = this.state.getLatestSuccessfulReleaseRun(targetId);
@@ -333,7 +336,8 @@ export class ReleaseGovernanceService {
     const record = this.state.getReleaseGovernance().mergeBacks[recordId];
     if (!record) throw new ReleaseGovernanceError('回并记录不存在');
     try { return await this.linkMergeBack(record.targetId, record.number, record.owner, actor, record.sourceSha); }
-    catch {
+    catch (error) {
+      if (error instanceof ReleaseGovernanceError) throw error;
       const data = this.state.getReleaseGovernance();
       if (JSON.stringify(data.mergeBacks[recordId]) !== JSON.stringify(record)) throw new ReleaseGovernanceError('回并记录已变化，请刷新后重试');
       const unknown: ReleaseMergeBack = { ...record, state: 'unknown', reason: 'PR 状态暂未核实，请检查仓库授权后重试；保留上次核验时间' };
