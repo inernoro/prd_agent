@@ -131,9 +131,6 @@ export function addProductMembers(productId: string, userIds: string[]) {
 export function removeProductMember(productId: string, userId: string) {
   return apiRequest<{ removed: boolean }>(`/api/product/products/${productId}/members/${userId}`, { method: 'DELETE' });
 }
-export function setProductMemberRole(productId: string, userId: string, role: 'admin' | 'member') {
-  return apiRequest<{ role: string }>(`/api/product/products/${productId}/members/${userId}/role`, { method: 'PUT', body: { role } });
-}
 
 // ── 版本 ──
 export function listVersions(productId: string) {
@@ -1213,10 +1210,11 @@ export type WorkflowVersionExportFields = { systemName?: string | null; ownerId?
 export type WorkflowVersionRecord<T> = T & {
   legacyRegistration?: VersionRegistration | null;
   exportFields?: WorkflowVersionExportFields | null;
+  canEdit?: boolean | null;
 };
 type WorkflowVersionList<T> = {
   applicationAliases?: Record<string, string>;
-  items: Array<{ record: T } & Pick<WorkflowVersionRecord<T>, 'legacyRegistration' | 'exportFields'>>;
+  items: Array<{ record: T } & Pick<WorkflowVersionRecord<T>, 'legacyRegistration' | 'exportFields' | 'canEdit'>>;
   requirementNames: Record<string, string>;
 };
 export function getWorkflowInitiations() {
@@ -1266,20 +1264,6 @@ export function getOverviewGraph() {
   return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/product/overview/graph');
 }
 
-export interface ProductApplicationAdmin {
-  userId: string;
-  displayName: string;
-  username: string;
-}
-export function listProductApplicationAdmins() {
-  return apiRequest<{ items: ProductApplicationAdmin[]; canManage: boolean }>('/api/product/settings/admins');
-}
-export function addProductApplicationAdmin(userId: string) {
-  return apiRequest<{ items: ProductApplicationAdmin[]; canManage: boolean }>('/api/product/settings/admins', { method: 'POST', body: { userId } });
-}
-export function removeProductApplicationAdmin(userId: string) {
-  return apiRequest<{ removed: boolean }>(`/api/product/settings/admins/${userId}`, { method: 'DELETE' });
-}
 export function resetProductAgentDemoData(confirmPhrase: string) {
   return apiRequest<{
     scope: string;

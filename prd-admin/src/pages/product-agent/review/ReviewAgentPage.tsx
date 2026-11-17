@@ -43,7 +43,6 @@ export function ReviewAgentPage() {
   const canManage = hasProductReviewPermission(permissions, 'review-agent.manage');
   const [dimsModalOpen, setDimsModalOpen] = useState(false);
   const [webhookModalOpen, setWebhookModalOpen] = useState(false);
-  const canUseProduct = permissions.includes('product-agent.use') || permissions.includes('product-agent.version-apply') || permissions.includes('super');
 
   const [items, setItems] = useState<ReviewSubmission[]>([]);
   const [total, setTotal] = useState(0);
@@ -114,7 +113,7 @@ export function ReviewAgentPage() {
           </div>
           {!reviewNav.inProductManagement && (
             <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-token-subtle pt-3">
-              {canUseProduct && <Button size="sm" variant="ghost" onClick={() => navigate('/product-agent?section=versions')} title="在产品管理的内部与正式版本页申领"><BookOpenCheck className="h-3.5 w-3.5" />到产品管理申领版本号</Button>}
+              <Button size="sm" variant="ghost" onClick={() => navigate('/product-agent?section=versions')} title="在产品管理的内部与正式版本页申领"><BookOpenCheck className="h-3.5 w-3.5" />到产品管理申领版本号</Button>
               <Button size="sm" variant="ghost" onClick={() => navigate(reviewNav.assessments)} title="上传 Excel 需求表并进行优先级评估"><ListOrdered className="h-3.5 w-3.5" />需求评估</Button>
             </div>
           )}

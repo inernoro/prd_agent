@@ -16,6 +16,7 @@ import { QuickActionsCard } from './QuickActionsCard';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
+import { VersionAppearance } from './VersionAppearance';
 import { KnowledgeModule } from './knowledge/KnowledgeModule';
 import { ProductBlueprintTab } from './ProductBlueprintTab';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
@@ -33,7 +34,6 @@ import './product-cards.css';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import {
   getProduct,
-  getOverviewStats,
   listVersions,
   createVersion,
   deleteVersion,
@@ -50,8 +50,6 @@ import { useListFilter, distinctOptions, TIME_PRESETS, inTimeRange, OVERVIEW_LIS
 import { useProductCategories, categoryLabel } from './productCategories';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
-import { useAuthStore } from '@/stores/authStore';
-import { hasProductMenu, productRouteMenu } from './productPermissionAccess';
 
 type Section = 'overview' | 'blueprint' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
@@ -74,14 +72,11 @@ const NAV: NavItem<Section>[] = [
 ];
 
 export function SingleProductView() {
-  const permissions = useAuthStore((s) => s.permissions);
-  const isRoot = useAuthStore((s) => s.isRoot);
   const navigate = useNavigate();
   const { productId = '' } = useParams();
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
   // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -107,10 +102,7 @@ export function SingleProductView() {
 
   useEffect(() => {
     void reload();
-    if (hasProductMenu(permissions, 'dashboard', isRoot)) void getOverviewStats().then((res) => {
-      if (res.success) setIsAdmin(res.data.isAdmin);
-    });
-  }, [reload, permissions, isRoot]);
+  }, [reload]);
 
   if (loading) {
     return (
@@ -135,13 +127,14 @@ export function SingleProductView() {
       title={product.name}
       subtitle={`${product.productNo} · ${categoryLabel(categories, product.grade)}`}
       topSlot={
-        <div className="mb-2">
+        <div className="mb-2 flex items-center justify-between gap-2">
           <button onClick={() => navigate('/product-agent')} className="flex items-center gap-1.5 text-[11px] text-token-muted hover-text-primary">
             <ArrowLeft size={13} /> 产品列表
           </button>
+          <VersionAppearance />
         </div>
       }
-      items={NAV.filter((item) => hasProductMenu(permissions, productRouteMenu('/product-agent/p/' + productId, '?tab=' + item.key) ?? 'unknown', isRoot))}
+      items={NAV}
       active={active}
       onSelect={setActive}
     >
@@ -166,11 +159,11 @@ export function SingleProductView() {
         </div>
       ) : active === 'blueprint' ? (
         <div className="flex-1 min-h-0">
-          <ProductBlueprintTab productId={product.id} isAdmin={isAdmin} />
+          <ProductBlueprintTab productId={product.id} isAdmin />
         </div>
       ) : active === 'features' ? (
         <div className="flex h-full min-h-0 flex-1 flex-col">
-          <FeatureCatalogTab productId={product.id} showImport={isAdmin} />
+          <FeatureCatalogTab productId={product.id} showImport />
         </div>
       ) : active === 'requirements' ? (
         <Navigate to={productListPath('requirements', product.id)} replace />

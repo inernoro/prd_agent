@@ -34,8 +34,7 @@ describe('内部版本在申领表单内选择应用', () => {
     expect(application).toContain('linkedProductId,');
     expect(application).toContain('await updateInitiation(item.id, payload)');
     expect(application).toContain('seed?.productId ?? applicationProductId');
-    expect(application).toContain('canUseProduct || Boolean(applicationProducts && !item)');
-    expect(application).toContain('availableProducts.filter((product) => product.id === productId)');
+    expect(application).toContain('toProductOptions(availableProducts)');
   });
 
   it('复用已有授权目录及企微应用回填，不为新入口再读一份目录', () => {
