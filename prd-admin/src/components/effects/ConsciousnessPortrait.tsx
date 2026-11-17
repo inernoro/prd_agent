@@ -1,6 +1,6 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
-import { FACE_CLIP, PORTRAIT_LINES, PORTRAIT_MESH, PORTRAIT_DETAILS } from './portraitGeometry';
-import { PORTRAIT_DURATION, samplePortrait, smoothProgress } from './portraitTimeline';
+import { useEffect, useId, useRef, useState } from 'react';
+import { FACE_CLIP, PORTRAIT_LINES, PORTRAIT_MESH, PORTRAIT_DETAILS, portraitStrokeProgress, CLOSED_LASHES, HEAD_CLIP, PORTRAIT_HEAD_MESH, PORTRAIT_NODES, PORTRAIT_BRACES } from './portraitGeometry';
+import { PORTRAIT_DURATION, samplePortrait } from './portraitTimeline';
 import { createPortraitRenderer, loadPortraitImages } from './portraitRenderer';
 import { finishEntryArrival, setEntryChrome } from './entryArrival';
 
@@ -12,7 +12,6 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const [motionReady, setMotionReady] = useState(false);
-  const gridClip = useRef<SVGRectElement>(null);
   const [settled, setSettled] = useState(false);
   const id = `portrait-${useId().replace(/:/g, '')}`;
   const controlled = frameTime !== undefined;
@@ -34,7 +33,9 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
         root.style.setProperty(`--portrait-${key}`, String(value));
         owner.style.setProperty(`--portrait-${key}`, String(value));
       }
-      gridClip.current?.setAttribute('height', String(941 * smoothProgress(time, .8, 1.5)));
+      root.querySelectorAll<SVGPathElement>('.portrait-lines path[data-stroke-index]').forEach(path => {
+        path.style.strokeDashoffset = String(1-portraitStrokeProgress(Number(path.dataset.strokeIndex),time,path.dataset.strokeDetail === 'true'));
+      });
       root.dataset.time = time.toFixed(3);
       root.dataset.eyeOpening = state.eye.toFixed(4);
       owner.style.setProperty('--portrait-controls-visibility', state.controls > .01 ? 'visible' : 'hidden');
@@ -122,18 +123,28 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
         <linearGradient id={`${id}-ink`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#3481d5" /><stop offset=".5" stopColor="#81caff" /><stop offset="1" stopColor="#3879ce" /></linearGradient>
         <filter id={`${id}-glow`} x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.5" /></filter>
         <clipPath id={`${id}-face`}><path d={FACE_CLIP} /></clipPath>
-        <clipPath id={`${id}-scan`}><rect ref={gridClip} x="0" y="0" width="1672" height={fog ? '941' : '0'} /></clipPath>
+        <clipPath id={`${id}-head`}><path d={HEAD_CLIP} /></clipPath>
       </defs>
       <g>
         <g className="portrait-lines" stroke={`url(#${id}-ink)`} strokeLinecap="round" strokeLinejoin="round">
           <g className="portrait-line-glow" filter={`url(#${id}-glow)`} strokeWidth="4" opacity=".32">
-            {PORTRAIT_LINES.map((path, index) => <path key={path} d={path} pathLength="1" strokeDasharray="1" style={{ '--trace-order': index } as CSSProperties} />)}
+            {PORTRAIT_LINES.map((path, index) => <path key={path} d={path} pathLength="1" strokeDasharray="1" data-stroke-index={index} />)}
           </g>
-          <g strokeWidth="1.3">{PORTRAIT_LINES.map((path, index) => <path key={path} d={path} pathLength="1" strokeDasharray="1" style={{ '--trace-order': index } as CSSProperties} />)}</g>
-          <g className="portrait-fine-lines" strokeWidth=".7" opacity=".68">{PORTRAIT_DETAILS.map((path, index) => <path key={path} d={path} pathLength="1" strokeDasharray="1" style={{ '--trace-order': index + 12 } as CSSProperties} />)}</g>
+          <g strokeWidth="1.3">{PORTRAIT_LINES.map((path, index) => <path key={path} d={path} pathLength="1" strokeDasharray="1" data-stroke-index={index} />)}</g>
+          <g strokeWidth="1.2">{CLOSED_LASHES.map((path,index) => <path key={path} d={path} pathLength="1" strokeDasharray="1" data-stroke-index={100+index} />)}</g>
+          <g className="portrait-fine-lines" strokeWidth=".7" opacity=".68">{PORTRAIT_DETAILS.map((path, index) => <path key={path} d={path} pathLength="1" strokeDasharray="1" data-stroke-index={index} data-stroke-detail="true" />)}</g>
         </g>
-        <g className="portrait-mesh" clipPath={`url(#${id}-face)`} stroke="#76b9ef" strokeWidth=".65">
-          <g clipPath={`url(#${id}-scan)`}>{PORTRAIT_MESH.map(path => <path key={path} d={path} />)}</g>
+        <g className="portrait-mesh" stroke="#76b9ef" strokeWidth=".7">
+          <g clipPath={`url(#${id}-head)`} opacity=".28">{PORTRAIT_HEAD_MESH.map(path => <path key={path} d={path} />)}</g>
+          <g clipPath={`url(#${id}-face)`} opacity=".82">
+            {PORTRAIT_MESH.map(path => <path key={path} d={path} />)}
+            {PORTRAIT_BRACES.map(path => <path key={path} d={path} opacity=".7" />)}
+            {PORTRAIT_NODES.map(([x,y],index) => <g key={index}>
+              <circle cx={x} cy={y} r="9" fill="#6ebaf5" stroke="none" opacity=".7" filter={`url(#${id}-glow)`} />
+              <path d={`M${x-12} ${y}H${x+12} M${x} ${y-12}V${y+12}`} stroke="#b6eaff" strokeWidth=".65" />
+              <circle cx={x} cy={y} r="1.8" fill="#d8f4ff" stroke="none" />
+            </g>)}
+          </g>
         </g>
       </g>
     </svg>}

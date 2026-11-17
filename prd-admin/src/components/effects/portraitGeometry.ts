@@ -1,3 +1,5 @@
+import { CLOSED_LID, EYE_X, smoothProgress } from './portraitTimeline';
+
 /** Original vector contours traced for our commissioned portrait; no raster edge filter. */
 export const PORTRAIT_LINES = [
   'M1100 -20 C1056 100 1014 240 1018 345 C1018 483 1101 577 1188 610',
@@ -54,10 +56,15 @@ export const PORTRAIT_LINES = [
 ];
 
 /** Projected latitude/longitude follows cheek volume instead of bending graph paper. */
-function surfacePoint(u: number, v: number) {
-  const x = 1465 + Math.sin(u * 1.18) * 284 * Math.cos(v * .32) + v * 23;
-  const y = 505 + v * 345 + 43 * u * u * (1 - v * v);
-  return [x, y];
+function surfacePoint(u: number, v: number, head = false) {
+  const theta = u * 1.18, phi = v * .95, yaw = .42;
+  const x = (head ? 490 : 290) * Math.sin(theta) * Math.cos(phi);
+  const y = (head ? 555 : 350) * Math.sin(phi);
+  const z = (head ? 300 : 230) * Math.cos(theta) * Math.cos(phi);
+  const worldX = x * Math.cos(yaw) + z * Math.sin(yaw);
+  const worldZ = -x * Math.sin(yaw) + z * Math.cos(yaw);
+  const perspective = 900 / (1000 - worldZ);
+  return [(head ? 1350 : 1500) + worldX * perspective, (head ? 440 : 505) + y * perspective];
 }
 function projectedPath(points: number[][]) {
   return points.map(([x,y],i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
@@ -76,11 +83,34 @@ export function buildPortraitMesh() {
 }
 export const PORTRAIT_MESH = buildPortraitMesh();
 export const PORTRAIT_HEAD_MESH = [
-  ...Array.from({length:13},(_,i) => `M790 ${-40+i*73} Q1200 ${100+i*66} 1720 ${-70+i*73}`),
-  ...Array.from({length:17},(_,i) => `M${815+i*55} -40 C${720+i*56} 250 ${800+i*58} 650 ${1140+i*40} 960`),
+  ...Array.from({length:14},(_,r) => projectedPath(Array.from({length:49},(_,i) => surfacePoint(-1.3+i/18,-1.1+r*.17,true)))),
+  ...Array.from({length:17},(_,c) => projectedPath(Array.from({length:49},(_,i) => surfacePoint(-1.2+c*.15,-1.1+i/21,true)))),
 ];
 export const HEAD_CLIP = 'M830 -20 L1700 -20 L1700 950 L1480 880 C1310 825 1190 710 1140 580 C1065 520 1020 350 1075 160 L950 100 L780 270 L750 155 Z';
-export const PORTRAIT_NODES = [[.15,-.3],[.7,.15],[-.55,.35],[.5,.65],[-.45,-.65]].map(([u,v]) => surfacePoint(u,v));
+export const PORTRAIT_NODES = [[4,8],[7,12],[10,5],[12,14],[9,10]].map(([c,r]) => surfacePoint(-1.15+c*.14,-1+r/9));
+export const PORTRAIT_BRACES = [[4,8,7,12],[7,12,12,14],[7,12,9,10]].map(([c1,r1,c2,r2]) => projectedPath([
+  surfacePoint(-1.15+c1*.14,-1+r1/9),surfacePoint(-1.15+c2*.14,-1+r2/9),
+]));
+/** Strokes establish the crown/fringe first, the eye next, then the long lower bundles. */
+export function portraitStrokeProgress(index: number, time: number, detail = false) {
+  let start: number, duration: number;
+  if (detail) { start = .95 + index * .012; duration = .55; }
+  else if (index >= 100) { start = 1.02 + (index-100) * .008; duration = .38; }
+  else if (index >= 18 && index <= 27) { start = .05 + (index-18)*.07; duration = .55; }
+  else if (index < 11) { start = .18 + index*.055; duration = .7; }
+  else if (index === 11 || index === 12) { start = .9; duration = .5; }
+  else if (index >= 28) { start = .55 + (index-28)*.038; duration = .7; }
+  else { start = .8 + (index-13)*.05; duration = .6; }
+  return smoothProgress(time,start,start+duration);
+}
+function cubicPoint(values: readonly number[], t: number) {
+  const s=1-t;return s*s*s*values[0]+3*s*s*t*values[1]+3*s*t*t*values[2]+t*t*t*values[3];
+}
+export const CLOSED_LASHES = Array.from({length:25},(_,i) => {
+  const t=.035+i*.038,x=cubicPoint(EYE_X,t),y=cubicPoint(CLOSED_LID,t);
+  const dx=-17+34*t,dy=22+13*Math.sin(t*Math.PI)+(i%3-1)*4;
+  return `M${x.toFixed(1)} ${y.toFixed(1)} C${(x+dx*.2).toFixed(1)} ${(y+dy*.28).toFixed(1)} ${(x+dx*.6).toFixed(1)} ${(y+dy*.85).toFixed(1)} ${(x+dx).toFixed(1)} ${(y+dy).toFixed(1)}`;
+});
 export const FACE_CLIP = 'M1450 175 C1400 282 1330 330 1250 390 C1260 574 1330 728 1483 815 L1669 941 L1700 300 C1560 308 1510 255 1450 175Z';
 
 /** Fine strands follow separate painted hair bundles, rather than duplicating the silhouette. */

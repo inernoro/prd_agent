@@ -119,8 +119,8 @@
 .portrait-motion { object-fit: cover; object-position: right center; }
 .consciousness-portrait.is-building > .consciousness-art { opacity: 0; }
 .portrait-lines { opacity: var(--portrait-lineOpacity, 1); }
-.portrait-lines path { stroke-dashoffset: calc(1 - clamp(0, calc(var(--portrait-line, 0) * 1.5 - var(--trace-order) * .009), 1)); }
-.portrait-mesh { opacity: var(--portrait-grid, 0); }
+.portrait-lines path { stroke-dashoffset: 1; }
+.portrait-mesh { opacity: calc(var(--portrait-grid, 0) * .5); }
 .consciousness-scene.is-arriving .consciousness-camera { transform: scale(var(--portrait-camera, 1.018)); will-change: transform; }
 .consciousness-home.is-arriving .consciousness-home-center { opacity: var(--portrait-controls, 0); visibility: var(--portrait-controls-visibility, hidden); }
 .consciousness-home.is-arriving .consciousness-shortcuts { opacity: var(--portrait-brandFill, 0); visibility: var(--portrait-shortcuts-visibility, hidden); }

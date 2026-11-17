@@ -84,6 +84,7 @@ void main(){
  // Material is a full, dim volume behind the reconstruction, never a horizontal cut.
  // Keep the face, hair and ornaments present together while the separate lattice dissolves.
  float exposure=smoothstep(0.,1.,material);
+ color*=mix(.74,1.,smoothstep(0.,.5,opening));
  gl_FragColor=vec4(color,exposure*.82);
 }`;
 

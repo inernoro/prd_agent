@@ -1,12 +1,21 @@
+import { portraitStrokeProgress } from './portraitGeometry';
 import { describe, expect, it } from 'vitest';
 import { CLOSED_LID, eyeControlPoints, samplePortrait, PORTRAIT_DURATION } from './portraitTimeline';
 const midpoint = (points: readonly number[]) => (points[0] + 3 * points[1] + 3 * points[2] + points[3]) / 8;
 describe('角色成形的阶段与眼睑几何', () => {
+  it('局部轮廓先建立，闭眼与睫毛随后同步成形，下方长发不抢先铺满', () => {
+    expect(portraitStrokeProgress(0,.75)).toBeGreaterThan(0);
+    expect(portraitStrokeProgress(11,.75)).toBe(0);
+    expect(portraitStrokeProgress(43,.75)).toBe(0);
+    expect(portraitStrokeProgress(11,1.75)).toBe(1);
+    expect(portraitStrokeProgress(100,1.75)).toBe(1);
+  });
   it('白场退去时已有线条，闭眼材质与品牌先于睁眼建立', () => {
     expect(samplePortrait(.25).line).toBeGreaterThan(0);
     expect(samplePortrait(1.1)).toMatchObject({ material: 0, eye: 0, brand: 0, chrome: 0 });
-    expect(samplePortrait(1.5).line).toBe(1);
-    expect(samplePortrait(1.5).grid).toBe(1);
+    expect(samplePortrait(1.9).line).toBe(1);
+    expect(samplePortrait(1.5).grid).toBeGreaterThan(0);
+    expect(samplePortrait(1.5).grid).toBeLessThan(1);
     expect(samplePortrait(2.6)).toMatchObject({ material: 1, eye: 0, chrome: 0 });
     expect(samplePortrait(2.7).grid).toBeGreaterThan(0);
     expect(samplePortrait(3).grid).toBe(0);
