@@ -18,6 +18,9 @@
 
 ## 文档列表
 
+- [日志完整保留与冷存储 · 设计](./design.platform.log-cold-storage.md) `design.platform.log-cold-storage`
+
+
 - [MAP 运营工作区改造目标 · 计划](./plan.frontend.workspace.md) `plan.frontend.workspace`
 - [CDS / LLMGW 磁盘治理与交接 · 计划](./plan.cds.disk-governance-20261113.md) `plan.cds.disk-governance-20261113`
 

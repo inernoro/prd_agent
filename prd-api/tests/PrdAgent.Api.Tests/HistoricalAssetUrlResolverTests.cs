@@ -160,7 +160,11 @@ public class HistoricalAssetUrlResolverTests(ITestOutputHelper output)
                     body.RootElement.GetProperty("upstreamRequestIdSha256").GetString()!.Length.ShouldBe(64);
                     row.ResponseBodyBytes.ShouldBe(0);
                 }
-                var controller = new ApiLogsController(database);
+                var archive = new PrdAgent.Infrastructure.Services.LogArchiveService(database,
+                    new LlmGatewayDataContext(connection, databaseName), new Mock<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>().Object,
+                    new Mock<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorageRuntimeInfo>().Object, Config());
+                var controller = new ApiLogsController(database, archive, Config())
+                { ControllerContext = new ControllerContext { HttpContext = context } };
                 var listing = (await controller.List(requestId: row.RequestId, direction: "outbound")).ShouldBeOfType<OkObjectResult>();
                 var listData = listing.Value.ShouldBeOfType<ApiResponse<object>>().Data;
                 JsonSerializer.SerializeToElement(listData).GetProperty("total").GetInt64().ShouldBe(1);
