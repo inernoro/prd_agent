@@ -14,6 +14,7 @@ try {
   const path=new URL(route.request().url()).pathname;
   if(isEventStream(path))return route.fulfill({contentType:'text/event-stream',body:': fixture\n\n'});
   let body=resolveFixture(path)??{};
+  if(path==='/api/notices')body={outbound:{configured:true},notices:Array.from({length:30},(_,i)=>({id:`fixture-notice-${i}`,dedupeKey:`fixture-notice-${i}`,level:'info',title:`合成通知 ${i}`,body:'仅用于验证信息中心内层滚动。'.repeat(8),createdAt:'2026-11-17T00:00:00Z',updatedAt:'2026-11-17T00:00:00Z',occurrences:1}))};
   if(path==='/api/branches')body={...body,branches:body.branches.map((branch,index)=>{
    if(index)return branch;
    const services={...branch.services,worker:{...branch.services.api},jobs:{...branch.services.api}};
@@ -29,7 +30,8 @@ try {
    const el=document.querySelector(selector);if(!el||getComputedStyle(el).visibility==='hidden')return false;
    const r=el.getBoundingClientRect(),v=visualViewport;
    const left=v?.offsetLeft??0,top=v?.offsetTop??0,right=left+(v?.width??innerWidth),bottom=top+(v?.height??innerHeight);
-   return r.width>0&&r.height>0&&r.left>=left+7&&r.right<=right-7&&r.top>=top+7&&r.bottom<=bottom-7;
+   return r.width>0&&r.height>0&&r.left>=left+7&&r.right<=right-7&&r.top>=top+7&&r.bottom<=bottom-7
+    &&el.contains(document.elementFromPoint(r.left+r.width/2,r.top+Math.min(r.height/2,20)));
   },selector,{timeout:10000}).catch(async error=>{
    console.error('floating boundary geometry',await page.locator(selector).evaluate(el=>({rect:el.getBoundingClientRect().toJSON(),style:el.getAttribute('style'),visibility:getComputedStyle(el).visibility,viewport:{width:innerWidth,height:innerHeight}})));
    await page.screenshot({path:process.env.CDS_FLOATING_FAILURE_SHOT||'/tmp/cds-floating-boundary-failure.png'});
@@ -147,6 +149,31 @@ try {
   assert.ok(await ports.count(),'fixture must expose the folded port menu');
   {await ports.click();await bounded('[data-cds-anchored-popover]');await page.getByRole('menu',{name:'全部服务端口'}).getByRole('menuitem').first().focus();assert.ok(await page.getByRole('menu',{name:'全部服务端口'}).isVisible());await page.keyboard.press('Escape');checks++;}
  }
+ const reviewFailures=[];
+ for(const width of [375,1440]){
+  await page.setViewportSize({width,height:600});await page.goto(`${base}/project-list`);await page.getByLabel('项目排序',{exact:true}).waitFor();
+  const switcher=page.getByLabel('切换 CDS 实例',{exact:true});
+  await switcher.click();await bounded('[aria-label="主备 CDS 入口"]');await switcher.focus();await page.keyboard.press('Tab');
+  if(!await page.evaluate(()=>Boolean(document.querySelector('[aria-label="主备 CDS 入口"]')?.contains(document.activeElement))))reviewFailures.push(`width ${width}: Tab did not enter the instance popover`);
+  else {
+   checks++;await page.keyboard.press('Shift+Tab');assert.ok(await switcher.evaluate(el=>el===document.activeElement));
+   await page.keyboard.press('Tab');assert.ok(await page.evaluate(()=>document.querySelector('[aria-label="主备 CDS 入口"]').contains(document.activeElement)));checks++;
+  }
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:/^信息中心/}).click();
+  const panel=page.getByTestId('cds-information-center-panel');await panel.waitFor();
+  const before=await panel.evaluate(el=>{
+   const body=[...el.children].find(child=>child.classList.contains('overflow-y-auto'));
+   const header=el.querySelector('[aria-label="关闭信息中心"]');
+   return {overflow:getComputedStyle(el).overflowY,headerTop:header.getBoundingClientRect().top,bodyRange:body.scrollHeight-body.clientHeight};
+  });
+  await panel.evaluate(el=>{const body=[...el.children].find(child=>child.classList.contains('overflow-y-auto'));body.scrollTop=body.scrollHeight;});
+  const after=await panel.evaluate(el=>({outerScroll:el.scrollTop,headerTop:el.querySelector('[aria-label="关闭信息中心"]').getBoundingClientRect().top}));
+  if(before.overflow!=='hidden'||before.bodyRange<=0||after.outerScroll!==0||Math.abs(after.headerTop-before.headerTop)>1)reviewFailures.push(`width ${width}: information center scroll shell ${JSON.stringify({before,after})}`);
+  else checks++;
+  await page.getByRole('button',{name:'关闭信息中心',exact:true}).click();
+ }
+ assert.deepEqual(reviewFailures,[],'keyboard portal entry and fixed inbox header');
  assert.deepEqual(errors,[],'no browser runtime errors');
  console.log(`PASS ${checks} floating geometry and interaction checks (including simulated VisualViewport; offline fixtures)`);
 }finally{await browser?.close();server?.stop();}

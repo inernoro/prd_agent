@@ -358,7 +358,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
           ref={panelRef}
           data-testid="cds-information-center-panel"
           className="fixed z-[220] flex flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
-          style={panelPosition}
+          style={{ ...panelPosition, overflowY: 'hidden', overflowX: 'hidden' }}
         >
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
             <div className="min-w-0">

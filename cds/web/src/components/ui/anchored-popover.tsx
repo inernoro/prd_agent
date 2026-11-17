@@ -128,6 +128,19 @@ export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, m
       if (!panelRef.current?.contains(target) && !anchorRef.current?.contains?.(target)) dismissRef.current?.();
     };
     const key = (event: KeyboardEvent): void => {
+      if (event.key === 'Tab' && !event.defaultPrevented) {
+        const panel = panelRef.current, anchor = anchorRef.current;
+        const items = [...(panel?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled),button:not(:disabled),input:not(:disabled),a[href],[tabindex="0"]') ?? [])]
+          .filter(item => item.getClientRects().length && getComputedStyle(item).visibility !== 'hidden' && item.getAttribute('aria-disabled') !== 'true');
+        const active = document.activeElement;
+        const returnTarget = anchor instanceof HTMLElement
+          ? anchor.matches('button,input,summary,[tabindex]') ? anchor : anchor.querySelector<HTMLElement>('input,button,summary,[tabindex]')
+          : null;
+        const target = !event.shiftKey && active && anchor?.contains?.(active) ? items[0]
+          : event.shiftKey && active === items[0] ? returnTarget : null;
+        if (target) { event.preventDefault(); target.focus({ preventScroll: true }); }
+        return;
+      }
       if (event.key !== 'Escape') return;
       event.preventDefault();
       const anchor = anchorRef.current;
