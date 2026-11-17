@@ -2,6 +2,8 @@ import HostedCollectionPage from '@/pages/hosted-collections/HostedCollectionPag
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
+import { useEntrySkinStore } from '@/stores/entrySkinStore';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
 import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
@@ -123,6 +125,7 @@ const PosterDesignerPage = lazy(() => import('@/pages/weekly-poster/PosterDesign
 const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
 
 // 移动端入口
+const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
 const DailyPostPage = lazy(() => import('@/pages/mobile-home/DailyPostPage'));
 const MobileProfilePage = lazy(() => import('@/pages/MobileProfilePage'));
 const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPage'));
@@ -130,10 +133,13 @@ const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPa
 // 首页 Agent Launcher（既是 / 的 IndexPage，也是 /agent-launcher 的目标）
 const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
 
-/** 首页路由：桌面与移动共用沉浸入口，可展开完整工作台。 */
+/** 标准移动首页保持原入口；开启角色皮肤后使用沉浸首页。 */
 function IndexPage() {
   const loaded = useAuthStore((s) => s.permissionsLoaded);
+  const cinematic = useEntrySkinStore((s) => s.skin === 'companion');
+  const { isMobile } = useBreakpoint();
   if (!loaded) return null;
+  if (isMobile && !cinematic) return <MobileHomePage />;
   return <AgentLauncherPage />;
 }
 
