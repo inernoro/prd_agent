@@ -1,0 +1,16 @@
+{
+  "sourceCommit": "bb4813a41d02937f364a8f39dac0c898f8eb26ba",
+  "workflowRun": "https://github.com/inernoro/prd_agent/actions/runs/44048009770",
+  "fps": 60,
+  "sourceFrames": 310,
+  "sourceSize": [
+    1672,
+    941
+  ],
+  "encodedSize": [
+    1672,
+    942
+  ],
+  "sha256": "175c05f2c72c84b02b0290f23eb5cec0a92cd84ad188ed8317abd71db97c502b",
+  "purpose": "原创角色动效预渲染素材；实际页面验收需另录真实预览，不以此素材冒充录屏。"
+}

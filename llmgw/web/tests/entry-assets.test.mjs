@@ -6,7 +6,7 @@ import { samplePortrait as map } from '../../../prd-admin/src/components/effects
 
 test('两个独立构建的角色几何、素材与逐帧轨迹保持一致', () => {
   for (let frame = 0; frame <= 432; frame++) assert.deepEqual(gateway(frame / 60), map(frame / 60));
-  for (const file of ['portraitGeometry.ts','companion.webp','companion-sleep.webp']) {
+  for (const file of ['portraitGeometry.ts','companion.webp','companion-sleep.webp','portrait-motion.mp4']) {
     const code = file.endsWith('.ts');
     const ours = new URL(code ? `../src/components/entry/${file}` : `../public/media/entry/${file}`, import.meta.url);
     const original = new URL(code ? `../../../prd-admin/src/components/effects/${file}` : `../../../prd-admin/public/media/entry/${file}`, import.meta.url);

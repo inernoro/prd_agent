@@ -354,6 +354,6 @@ html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chr
 .gateway-sso-copy h1 { font-size: var(--fs-title); font-weight: 450; letter-spacing: .12em; }
 .gateway-sso-copy p { font-size: var(--fs-body); line-height: 1.8; }
 .gateway-sso-copy a { color: inherit; }
-.gateway-arrival-paper { position: absolute; inset: 0; z-index: 6; pointer-events: none; background: var(--cinema-paper); animation: gateway-paper-reveal 650ms cubic-bezier(.22,.61,.36,1) both; }
+.gateway-arrival-paper { position: absolute; inset: 0; z-index: 6; pointer-events: none; background: var(--cinema-paper); animation: gateway-paper-reveal 350ms cubic-bezier(.22,.61,.36,1) both; }
 @keyframes gateway-paper-reveal { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
 @media (prefers-reduced-motion: reduce) { .gateway-arrival-paper { display: none; } }

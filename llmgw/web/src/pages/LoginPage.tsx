@@ -5,7 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { getHealth } from '@/lib/api';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 import { ConsciousnessHud, ConsciousnessScene, IdentityScanner, type IdentityPhase } from '@/components/entry/ConsciousnessScene';
-import { loadPortraitImages } from '@/components/entry/portraitRenderer';
+import { loadPortraitImages, preloadPortraitMotion } from '@/components/entry/portraitRenderer';
 import { EntryAudio } from '@/components/entry/entryAudio';
 import { gatewayLoginDestination, markQuickstartArrival } from '@/components/entry/quickstartArrival';
 import './GatewayEntry.css';
@@ -36,6 +36,7 @@ export function LoginPage() {
     mounted.current = true;
     audio.current = new EntryAudio();
     audio.current.setEnabled(sound);
+    preloadPortraitMotion();
     void loadPortraitImages().catch(() => {});
     void getHealth().then(res => { if (mounted.current) setHealth(res.success && res.data?.status === 'ok' ? 'Gateway 服务正常' : '暂时无法确认服务状态'); }).catch(() => { if (mounted.current) setHealth('暂时无法确认服务状态'); });
     const silence = () => { if (document.visibilityState !== 'visible') audio.current?.stop(); };

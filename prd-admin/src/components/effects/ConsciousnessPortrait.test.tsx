@@ -17,7 +17,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); finishEntryArrival(); vi.useRealTimers(); });
 it('WebGL 不可用时恢复静态场景、搜索和导航，不留黑场或无限等待', async () => {
   renderers.load.mockResolvedValue([]); renderers.create.mockReturnValue(null); beginEntryArrival();
-  await act(async () => root.render(<ConsciousnessPortrait fog={false} arriving />));
+  await act(async () => root.render(<ConsciousnessPortrait fog={false} arriving frameTime={0} />));
   expect(host.querySelector('canvas')).toBeNull();
   expect(host.querySelector('[data-renderer="static-fallback"]')).not.toBeNull();
   expect(host.style.getPropertyValue('--portrait-controls')).toBe('1');
@@ -26,7 +26,7 @@ it('WebGL 不可用时恢复静态场景、搜索和导航，不留黑场或无�
 });
 it('图片准备挂起时有独立超时，仍恢复可操作首页', async () => {
   vi.useFakeTimers(); renderers.load.mockReturnValue(new Promise(() => {})); beginEntryArrival();
-  await act(async () => root.render(<ConsciousnessPortrait fog={false} arriving />));
+  await act(async () => root.render(<ConsciousnessPortrait fog={false} arriving frameTime={0} />));
   await act(async () => vi.advanceTimersByTime(1800));
   expect(host.querySelector('canvas')).toBeNull();
   expect(host.style.getPropertyValue('--portrait-controls')).toBe('1');
@@ -39,11 +39,23 @@ it('贴图尚未解码时线稿已在首批帧推进，不等待图片 Promise �
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { renderFrame = callback; return 1; });
   renderers.load.mockReturnValue(new Promise(() => {}));
   vi.spyOn(performance, 'now').mockReturnValue(0);
-  await act(async () => root.render(<ConsciousnessPortrait fog={false} arriving />));
+  await act(async () => root.render(<ConsciousnessPortrait fog={false} arriving frameTime={.25} />));
   await act(async () => renderFrame?.(250));
   expect(Number(host.style.getPropertyValue('--portrait-line'))).toBeGreaterThan(0);
   expect(host.querySelectorAll('.portrait-fine-lines path').length).toBeGreaterThan(30);
   expect(renderers.create).not.toHaveBeenCalled();
   expect(host.querySelector('canvas')).not.toBeNull();
+  vi.restoreAllMocks();
+});
+
+it('正常入场使用原生视频且不创建实时 WebGL，播放失败恢复可操作页面', async () => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockRejectedValue(new Error('decode failed'));
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  beginEntryArrival();
+  await act(async () => root.render(<ConsciousnessPortrait fog={false} arriving />));
+  expect(renderers.create).not.toHaveBeenCalled();
+  expect(renderers.load).not.toHaveBeenCalled();
+  expect(host.querySelector('[data-renderer="static-fallback"]')).not.toBeNull();
+  expect(document.documentElement.hasAttribute('data-entry-arriving')).toBe(false);
   vi.restoreAllMocks();
 });

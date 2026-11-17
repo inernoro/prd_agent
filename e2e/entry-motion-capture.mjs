@@ -28,7 +28,7 @@ for (const destination of [gateway]) {
       const deployed = branches.branches?.find(branch => branch.id === branchId)?.runningCommitSha;
       if (response.ok && source && deployed === process.env.EXPECTED_COMMIT) {
         const bundle = await fetch(new URL(source,destination), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
-        if (bundle.ok && (await bundle.text()).includes('uniform vec4 openLowerLid;')) break;
+        if (bundle.ok && (await bundle.text()).includes('portrait-motion.mp4')) break;
       }
     } catch { /* Public deployment may still be switching; bounded below. */ }
     assert.ok(Date.now() < deadline, 'The new public portrait bundle did not become available');
@@ -36,19 +36,34 @@ for (const destination of [gateway]) {
     await new Promise(resolve => setTimeout(resolve,15000));
   }
 }
-const context = await chromium.launchPersistentContext(await mkdtemp(join(tmpdir(),'entry-motion-')), {
+const profile = await mkdtemp(join(tmpdir(),'entry-motion-'));
+await mkdir(join(profile,'Default'),{recursive:true});
+await writeFile(join(profile,'Default','Preferences'),JSON.stringify({credentials_enable_service:false,profile:{password_manager_enabled:false}}));
+const context = await chromium.launchPersistentContext(profile, {
   headless: false, viewport: null, timezoneId: 'Asia/Shanghai', reducedMotion: 'no-preference',
   ignoreDefaultArgs: ['--enable-automation'],
-  args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'],
+  args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage', '--disable-gpu-compositing', '--disable-save-password-bubble'],
 });
 // Observe actual scene frames without changing the renderer, clock, auth or API responses.
 await context.addInitScript(() => {
-  window.__entryEvidence = { frames: [], errors: [] };
+  window.__entryEvidence = { frames: [], videoFrames: [], errors: [] };
   const evidence = window.__entryEvidence;
   window.addEventListener('error', event => evidence.errors.push(event.message));
   let previous = -1;
+  const observedVideos = new WeakSet();
   const observe = () => {
     const portrait = document.querySelector('.consciousness-portrait.is-building');
+    const movie = portrait?.querySelector('video');
+    if (movie && !observedVideos.has(movie) && movie.requestVideoFrameCallback) {
+      observedVideos.add(movie);
+      const presented = (_now, metadata) => {
+        const quality = movie.getVideoPlaybackQuality();
+        evidence.videoFrames.push({ epoch: Date.now(), mediaTime: metadata.mediaTime, presentedFrames: metadata.presentedFrames,
+          decoded: quality.totalVideoFrames, dropped: quality.droppedVideoFrames });
+        if (movie.isConnected) movie.requestVideoFrameCallback(presented);
+      };
+      movie.requestVideoFrameCallback(presented);
+    }
     const t = Number(portrait?.dataset.time);
     if (portrait && Number.isFinite(t) && t !== previous) {
       previous = t;
@@ -83,7 +98,7 @@ try {
     await page.getByLabel('打开用户菜单', { exact: true }).click();
     const raw = new URL(`${mode}.mp4`, output).pathname;
     const recorder = spawn('ffmpeg', ['-hide_banner', '-y', '-f', 'x11grab', '-video_size', '1920x1080', '-framerate', '60', '-i', process.env.DISPLAY,
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', raw], { stdio: ['pipe', 'ignore', 'pipe'] });
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-threads', '1', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', raw], { stdio: ['pipe', 'ignore', 'pipe'] });
     let stderr = ''; recorder.stderr.on('data', data => { stderr += data; });
     const done = new Promise(resolve => recorder.on('close', resolve));
     try {
@@ -106,7 +121,8 @@ try {
       await page.screenshot({ path: new URL(`${mode}-settled.png`, output).pathname });
       await writeFile(new URL(`${mode}.json`, output), JSON.stringify(evidence, null, 2));
       assert.deepEqual(evidence.viewport, { width: 1920, height: 1080, dpr: 1 });
-      assert.ok(evidence.frames.some(frame => frame.renderer === 'webgl'), 'A static fallback is not motion acceptance');
+      assert.ok(evidence.frames.some(frame => frame.renderer === 'native-video'), 'Native motion video must actually play');
+      assert.ok(evidence.videoFrames.length > 120, 'Too few actually presented portrait video frames');
       assert.ok(evidence.frames.some(frame => frame.eye > .15 && frame.eye < .85), 'Missing actual intermediate eyelid frames');
       assert.ok(evidence.frames.filter(frame => frame.t < .5).length > 2, 'Missing first structural frames');
       assert.ok(evidence.body.includes(process.env.EXPECTED_COMMIT.slice(0,7)), 'Public preview is not the expected revision');

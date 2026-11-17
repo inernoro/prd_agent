@@ -164,3 +164,12 @@ export function createPortraitRenderer(canvas: HTMLCanvasElement, images: HTMLIm
     dispose,
   };
 }
+
+let preparedMotion: HTMLVideoElement | undefined;
+/** Warm the native decoder during identity confirmation, without playing sound or motion. */
+export function preloadPortraitMotion() {
+  if (preparedMotion) return;
+  preparedMotion = document.createElement('video');
+  preparedMotion.muted = true; preparedMotion.preload = 'auto'; preparedMotion.playsInline = true;
+  preparedMotion.src = '/media/entry/portrait-motion.mp4'; preparedMotion.load();
+}

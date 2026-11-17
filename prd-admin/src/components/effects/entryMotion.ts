@@ -1,10 +1,11 @@
 import { flushSync } from 'react-dom';
-import { loadPortraitImages } from './portraitRenderer';
+import { loadPortraitImages, preloadPortraitMotion } from './portraitRenderer';
 import { prefersReducedMotion } from '@/lib/themeApplier';
 
 let preparation: Promise<unknown> | undefined;
 /** Decode both plates and load the landing chunk before removing the login scene. */
 export function prepareEntryScene() {
+  preloadPortraitMotion();
   return preparation ??= Promise.allSettled([
     import('@/pages/AgentLauncherPage'),
     loadPortraitImages(),
