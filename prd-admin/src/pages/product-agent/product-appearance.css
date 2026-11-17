@@ -29,14 +29,6 @@ html[data-product-agent-appearance][data-theme="light"] {
   --product-graph-mask: var(--nested-block-bg);
 }
 
-html[data-product-agent-appearance][data-theme="light"] .agent-fullscreen-canvas {
-  background-color: var(--bg-base);
-  color: var(--text-primary);
-}
-
-html[data-product-agent-appearance][data-theme="light"] .agent-fullscreen-sidebar {
-  background-color: var(--panel-solid);
-}
 /* Match the existing background utilities, including in dialogs mounted on body.
    The CSS escape represents the hash character in each utility name. */
 html[data-product-agent-appearance][data-theme="light"] :where(
@@ -52,7 +44,7 @@ html[data-product-agent-appearance][data-theme="light"] :where(
   [class~="bg-[\23 181a22]"],
   [class~="bg-[\23 1a1c22]"],
   [class~="bg-[\23 1b1d22]"]
-):not(.agent-fullscreen-canvas, .agent-fullscreen-sidebar) {
+) {
   background-color: var(--panel-solid);
 }
 

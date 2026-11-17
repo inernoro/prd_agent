@@ -363,9 +363,9 @@ public class ProductVersionClaimGuardTests
         await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
             Id = "imp-plan", ProductId = "product", LinkedProductId = "product", PlanName = "米多总平台（IMP配套方案）",
             TCode = "T3.14.1", Status = "approved", DemandSource = "内部",
-            PlanUrl = "https://miduo1031.yuque.com/rsaesz/oqbs8t/aeoyfh53233d5ssu",
+            PlanUrl = "https://docs.example.test/plans/version-sample",
         });
-        const string notice = "【版本上线】\n项目类别：非定制\n版本类别：小版本\n需求来源：内部\n产品方案名称：米多星球T3.14.1(IMP配套方案)AI文档1-3稿\n方案地址：https://miduo1031.yuque.com/rsaesz/oqbs8t/aeoyfh53233d5ssu\n项目组成员：林坤、石玲\n计划上线时间：2026.10.26";
+        const string notice = "【版本上线】\n项目类别：非定制\n版本类别：小版本\n需求来源：内部\n产品方案名称：米多星球T3.14.1(IMP配套方案)AI文档1-3稿\n方案地址：https://docs.example.test/plans/version-sample\n项目组成员：示例成员甲、示例成员乙\n计划上线时间：2026.10.26";
         foreach (var unused in new[] { 1, 2 })
         {
             var response = Assert.IsType<OkObjectResult>(await fixture.Controller().ParseProductVersionMessage(
@@ -379,9 +379,9 @@ public class ProductVersionClaimGuardTests
             Assert.Equal("standard", data.GetProperty("projectType").GetString());
             Assert.Equal("minor", data.GetProperty("versionType").GetString());
             Assert.Equal("内部", data.GetProperty("demandSource").GetString());
-            Assert.Contains("aeoyfh53233d5ssu", data.GetProperty("planUrl").GetString()!);
+            Assert.Contains("version-sample", data.GetProperty("planUrl").GetString()!);
             Assert.StartsWith("2026-10-26", data.GetProperty("plannedReleaseAt").GetString());
-            Assert.Equal(new[] { "林坤", "石玲" }, data.GetProperty("projectMemberNames").EnumerateArray().Select(x => x.GetString()));
+            Assert.Equal(new[] { "示例成员甲", "示例成员乙" }, data.GetProperty("projectMemberNames").EnumerateArray().Select(x => x.GetString()));
             Assert.Equal(8, data.GetProperty("matchedFields").GetArrayLength());
         }
         Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
@@ -464,7 +464,10 @@ public class ProductVersionClaimGuardTests
     {
         await using var fixture = await Fixture.CreateAsync();
         await SeedWorkflowNumberingAsync(fixture);
-        await fixture.Db.ProductAgentSettings.InsertOneAsync(new ProductAgentSettings { ClaimWebhook = new() { Enabled = true } });
+        await fixture.Db.ProductAgentSettings.InsertOneAsync(new ProductAgentSettings
+        {
+            ClaimWebhook = new() { Enabled = true, ProtectedUrl = "test-protected-value" },
+        });
         await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
             Builders<ProductInitiation>.Update.Set(x => x.PlanName, "历史T原始名称（保持不变）")
                 .Set(x => x.PlanUrl, "https://example.test/stored-t-plan").Set(x => x.DemandSource, "原T需求来源")
@@ -2227,7 +2230,7 @@ public class ProductVersionClaimGuardTests
         {
             var claims = new List<Claim> { new("sub", "me"), new("permissions", AdminPermissionCatalog.ProductAgentUse) };
             if (test) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentVersionClaimTest));
-            if (admin) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentAdmin));
+            if (admin) claims.Add(new("permissions", ProductPermissionRules.MapAdmin));
             var http = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test")) };
             if (notify) http.RequestServices = new ServiceCollection().AddSingleton<IConfiguration>(SharedWorkConfiguration()).BuildServiceProvider();
             return new ProductAgentController(Db, NullLogger<ProductAgentController>.Instance, null!, null!, null!, null!, null!, null!) {

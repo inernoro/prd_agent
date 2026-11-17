@@ -5,11 +5,12 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VersionWorkflowTab } from './VersionWorkflowTab';
 import type { ProductInitiation } from './types';
+import { PRODUCT_MAP_ADMIN } from './productPermissionAccess';
 import detailSource from './InitiationWorkflowDetail.tsx?raw';
 import releaseDetailSource from './ReleaseWorkflowDetail.tsx?raw';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const api = vi.hoisted(() => ({ getWorkflowInitiations: vi.fn(), getWorkflowReleases: vi.fn(), updateRelease: vi.fn() }));
+const api = vi.hoisted(() => ({ getWorkflowInitiations: vi.fn(), getWorkflowReleases: vi.fn(), updateRelease: vi.fn(), permissions: [] as string[] }));
 vi.mock('@/services/real/productAgent', async (original) => ({
   ...await original<typeof import('@/services/real/productAgent')>(),
   getWorkflowInitiations: api.getWorkflowInitiations,
@@ -20,10 +21,16 @@ vi.mock('@/services/real/productAgent', async (original) => ({
   listVersionApplicationProducts: async () => ({ success: true, data: { items: [{ id: 'a', name: '应用甲' }, { id: 'b', name: '应用乙' }] } }),
 }));
 vi.mock('@/services/real/teams', () => ({ getUserCards: async () => ({ success: true, data: { items: [] } }) }));
-vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: unknown) => unknown) => select({ user: { userId: 'me' }, permissions: ['product-agent.use'], isRoot: false }) }));
+vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: unknown) => unknown) => select({ user: { userId: 'me' }, permissions: api.permissions, isRoot: false }) }));
 vi.mock('@/services/real/reviewAgent', async (original) => ({ ...await original<typeof import('@/services/real/reviewAgent')>(), getDimensions: async () => ({ success: true, data: { dimensions: [] } }) }));
 vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, content, actions }: { title: ReactNode; content: ReactNode; actions: ReactNode }) => <div role="dialog"><h3>{title}</h3>{content}{actions}</div> }));
-vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: () => null }));
+vi.mock('@/components/UserSearchSelect', () => ({
+  UserSearchSelect: ({ value, onChange, placeholder, showAllOption }: {
+    value: string; onChange: (value: string) => void; placeholder: string; showAllOption?: boolean;
+  }) => showAllOption ? <select aria-label={placeholder} value={value} onChange={(event) => onChange(event.target.value)}>
+    <option value="">全部</option><option value="me">当前申请人</option>
+  </select> : null,
+}));
 
 let root: Root;
 let host: HTMLDivElement;
@@ -34,9 +41,11 @@ function record(id: string, productId: string, tCode: string, canDelete: boolean
 }
 const buttons = () => [...host.querySelectorAll('button')].filter((button) => button.textContent === '删除');
 async function mount(scope = '', isAdmin = false) {
+  api.permissions = isAdmin ? [PRODUCT_MAP_ADMIN] : [];
   await act(async () => root.render(<MemoryRouter initialEntries={[`/product-agent?section=versions&versionTab=initiation${scope}`]}><VersionWorkflowTab isAdmin={isAdmin} /></MemoryRouter>));
 }
 beforeEach(() => {
+  api.permissions = [];
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
   api.getWorkflowInitiations.mockResolvedValue({ success: true, data: { items: [
     { record: record('latest', 'a', 'T6.19.0', true) }, { record: record('old', 'b', 'T6.18.13', false) },
@@ -97,8 +106,8 @@ describe('末尾操作列只保留编辑、删除、作废', () => {
     ], requirementNames: {} } });
     await mount('&productId=a');
     await act(async () => {
-      const scope = [...host.querySelectorAll('select')].find((select) => select.querySelector('option[value=mine]'))!;
-      scope.value = 'mine'; scope.dispatchEvent(new Event('change', { bubbles: true }));
+      const applicant = host.querySelector<HTMLSelectElement>('select[aria-label="全部负责人"]')!;
+      applicant.value = 'me'; applicant.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(host.textContent).toContain('方案-my-old');
     expect(host.textContent).not.toContain('方案-latest-other');

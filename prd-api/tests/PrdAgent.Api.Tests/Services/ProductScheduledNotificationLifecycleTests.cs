@@ -18,7 +18,12 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class ProductScheduledNotificationLifecycleTests
 {
-    private const string TestUrl = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=unit-test-only";
+    // The fake HTTP handler intercepts every request; the URI has a deliberately invalid provider key.
+    private static readonly string TestUrl = new UriBuilder(Uri.UriSchemeHttps, "qyapi.weixin.qq.com")
+    {
+        Path = "/cgi-bin/webhook/send",
+        Query = "key=unit-test-fixture-only",
+    }.Uri.AbsoluteUri;
 
     [Fact]
     public async Task FutureTaskWaitsAndDueSingleTaskSendsOnceAcrossConcurrentWorkers()
@@ -336,7 +341,7 @@ public class ProductScheduledNotificationLifecycleTests
                 HttpContext = new DefaultHttpContext
                 {
                     User = new ClaimsPrincipal(new ClaimsIdentity(new[] {
-                        new Claim("sub", "admin"), new Claim("permissions", "product-agent.admin"),
+                        new Claim("sub", "admin"), new Claim("permissions", PrdAgent.Core.Security.ProductPermissionRules.MapAdmin),
                     }, "test")),
                 },
             },

@@ -31,7 +31,7 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
         var settings = await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync();
         var config = settings?.ClaimWebhook ?? new();
         var canEdit = DeploymentAuthority.CanRotateSharedCiphertext(configuration);
-        var sendBlockReason = DeploymentAuthority.GetSharedScheduledWorkBlockReason(configuration);
+        var sendBlockReason = ProductClaimNotificationQueue.GetDeploymentBlockReason(configuration);
         var users = await db.Users.Find(x => x.Status == UserStatus.Active && x.UserType == UserType.Human).ToListAsync();
         var ready = users.Count(user => ProductClaimMentionIdentity.Resolve(user, protection) != null);
         return Ok(ApiResponse<object>.Ok(new {

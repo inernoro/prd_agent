@@ -65,7 +65,7 @@ public partial class ProductAgentController : ControllerBase
         var config = HttpContext?.RequestServices?.GetService<IConfiguration>();
         return config is null
             ? SharedScheduledWorkBlockReason.AuthorizationMissing
-            : DeploymentAuthority.GetSharedScheduledWorkBlockReason(config);
+            : ProductClaimNotificationQueue.GetDeploymentBlockReason(config);
     }
 
     /// <summary>是否具备指定权限（super 全通过）。</summary>

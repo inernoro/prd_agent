@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using System.Text.Json;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
@@ -6,8 +7,30 @@ using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.Services;
 
+public enum SharedScheduledWorkBlockReason
+{
+    SharedStateOptedOut,
+    BranchPreview,
+    DeploymentIdentityMissing,
+    AuthorizationMissing,
+    AuthorizationDisabled,
+    AuthorizationInvalid,
+}
+
 public static class ProductClaimNotificationQueue
 {
+    public static SharedScheduledWorkBlockReason? GetDeploymentBlockReason(IConfiguration configuration)
+    {
+        if (DeploymentAuthority.HasOptedOutOfSharedState(configuration)) return SharedScheduledWorkBlockReason.SharedStateOptedOut;
+        if (DeploymentAuthority.IsCdsBranchPreview(configuration)) return SharedScheduledWorkBlockReason.BranchPreview;
+        if (string.IsNullOrWhiteSpace(configuration[DeploymentAuthority.DeploymentIdentityKey])) return SharedScheduledWorkBlockReason.DeploymentIdentityMissing;
+
+        var authorization = configuration[DeploymentAuthority.SharedScheduledWorkEnabledKey];
+        if (string.IsNullOrWhiteSpace(authorization)) return SharedScheduledWorkBlockReason.AuthorizationMissing;
+        if (!bool.TryParse(authorization, out var enabled)) return SharedScheduledWorkBlockReason.AuthorizationInvalid;
+        return enabled ? null : SharedScheduledWorkBlockReason.AuthorizationDisabled;
+    }
+
     public static string DescribeDeploymentBlock(SharedScheduledWorkBlockReason reason) => reason switch
     {
         SharedScheduledWorkBlockReason.SharedStateOptedOut => "当前实例已退出共享任务",
