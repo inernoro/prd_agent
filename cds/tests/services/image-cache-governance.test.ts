@@ -63,7 +63,7 @@ describe('image ID governance native protocol with a simulated Docker CLI', () =
     const f = fixture();f.born();const result = f.request({ action: 'reconcile', targetIdentities: [id], registryProofs: { [digest]: { manifest: { config: { digest: 'sha256:' + 'c'.repeat(64) } }, verifiedAt: Date.now() } } });
     expect(result.removed).toEqual([]);expect(result.failed[0].reason).toBe('registry-rehydration-identity-unconfirmed');
     f.values.referenceDuringRemoval = true;f.save();expect(f.reconcile().removed).toEqual([]);
-    f.values.fail = true;f.save();expect(() => f.request({})).toThrow();
+    f.values.fail = true;f.save();expect(f.request({})).toMatchObject({ scanStatus: 'partial', catalogError: 'docker-query-or-operation-unconfirmed', imageBytesEstimate: null, canExecute: false });expect(() => f.request({ action: 'reconcile' })).toThrow();
   });
   it('reserves peak capacity before pulling and does not invent a budget from released bytes', () => {
     const f = fixture();f.request({ action: 'publish', references: [] });
