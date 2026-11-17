@@ -9,6 +9,7 @@ interface PositionOptions {
   panelRef: RefObject<HTMLElement | null>;
   width?: number | 'anchor';
   widthRem?: number;
+  minWidthRem?: number;
   align?: 'start' | 'end';
   side?: 'bottom' | 'top' | 'right';
   gap?: number;
@@ -18,7 +19,7 @@ const useLayout = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /** Shared geometry for menus, searchable suggestions and pointer-anchored actions.
  * Coordinates and viewport offsets use CSS pixels returned by browser geometry APIs. */
-export function useAnchoredPosition({ open, anchorRef, panelRef, width, widthRem, align = 'start', side = 'bottom', gap = 6, maxHeightRem }: PositionOptions): CSSProperties {
+export function useAnchoredPosition({ open, anchorRef, panelRef, width, widthRem, minWidthRem, align = 'start', side = 'bottom', gap = 6, maxHeightRem }: PositionOptions): CSSProperties {
   const [position, setPosition] = useState<CSSProperties>({ position: 'fixed', visibility: 'hidden' });
   useLayout(() => {
     if (!open) return;
@@ -35,7 +36,7 @@ export function useAnchoredPosition({ open, anchorRef, panelRef, width, widthRem
       const availableWidth = Math.max(0, rightEdge - leftEdge);
       const rootSize = parseFloat(getComputedStyle(document.documentElement).fontSize);
       const requestedWidth = width === 'anchor' ? rect.width : width ?? (widthRem === undefined ? panel.getBoundingClientRect().width : widthRem * rootSize);
-      const panelWidth = Math.min(Math.max(0, requestedWidth), availableWidth);
+      const panelWidth = Math.min(Math.max(0, requestedWidth, (minWidthRem ?? 0) * rootSize), availableWidth);
       // Measure at the clamped width before reading scrollHeight, so wrapping is included.
       panel.style.minWidth = '0';
       panel.style.maxWidth = `${availableWidth}px`;
@@ -99,13 +100,13 @@ export function useAnchoredPosition({ open, anchorRef, panelRef, width, widthRem
       window.removeEventListener('resize', schedule); document.removeEventListener('scroll', scroll, true);
       window.visualViewport?.removeEventListener('resize', schedule); window.visualViewport?.removeEventListener('scroll', schedule);
     };
-  }, [open, anchorRef, panelRef, width, widthRem, align, side, gap, maxHeightRem]);
+  }, [open, anchorRef, panelRef, width, widthRem, minWidthRem, align, side, gap, maxHeightRem]);
   return position;
 }
 
-export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, align, side, gap, maxHeightRem,
+export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, minWidthRem, align, side, gap, maxHeightRem,
   children, style, autoFocus = false, contentRef, ...props }: Omit<HTMLAttributes<HTMLDivElement>, 'autoFocus'> & {
-  open: boolean; anchorRef: PopoverAnchor; onDismiss?: () => void; width?: number | 'anchor'; widthRem?: number;
+  open: boolean; anchorRef: PopoverAnchor; onDismiss?: () => void; width?: number | 'anchor'; widthRem?: number; minWidthRem?: number;
   contentRef?: RefObject<HTMLDivElement>;
   align?: 'start' | 'end'; side?: 'bottom' | 'top' | 'right'; gap?: number; maxHeightRem?: number;
   autoFocus?: false | 'first' | 'last'; children: ReactNode;
@@ -114,7 +115,7 @@ export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, a
   const panelRef = contentRef ?? localRef;
   const focusedOnOpen = useRef(false);
   const dismissRef = useRef(onDismiss); dismissRef.current = onDismiss;
-  const position = useAnchoredPosition({ open, anchorRef, panelRef, width, widthRem, align, side, gap, maxHeightRem });
+  const position = useAnchoredPosition({ open, anchorRef, panelRef, width, widthRem, minWidthRem, align, side, gap, maxHeightRem });
   useEffect(() => {
     if (!open) return;
     const outside = (event: Event): void => {

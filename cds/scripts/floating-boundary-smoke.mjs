@@ -79,6 +79,8 @@ try {
    const selector=kind==='confirm'?'[aria-label="确认测试"]':'[data-cds-anchored-popover]';
    await bounded(selector);
    if(kind==='branch'){
+    await page.getByLabel('测试分支',{exact:true}).evaluate(el=>el.parentElement.style.width='100px');
+    await page.waitForFunction(()=>{const el=document.querySelector('[data-cds-anchored-popover]');return el&&Math.abs(el.getBoundingClientRect().width-Math.min(innerWidth-16,20*parseFloat(getComputedStyle(document.documentElement).fontSize)))<1;});checks++;
     await page.getByLabel('测试分支',{exact:true}).fill('remote-29');
     await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
     await page.waitForFunction(()=>document.querySelector('[data-feedback]').textContent==='remote-29');checks++;
