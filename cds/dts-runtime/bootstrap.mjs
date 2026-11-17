@@ -8,7 +8,9 @@ await fs.writeFile(home+'/config/seatunnel.yaml',`seatunnel:\n  engine:\n    his
 await fs.writeFile(home+'/config/hazelcast.yaml',`hazelcast:\n  cluster-name: cds-dts-engine\n  network:\n    interfaces:\n      enabled: true\n      interfaces: [127.0.0.1]\n    join:\n      auto-detection:\n        enabled: false\n      multicast:\n        enabled: false\n      tcp-ip:\n        enabled: true\n        member-list: [127.0.0.1]\n    port:\n      auto-increment: false\n      port: 5801\n  properties:\n    hazelcast.operation.thread.count: 2\n    hazelcast.operation.generic.thread.count: 2\n    hazelcast.io.input.thread.count: 1\n    hazelcast.io.output.thread.count: 1\n`,{mode:0o600});
 await fs.writeFile(home+'/config/jvm_options','-Xms128m\n-Xmx512m\n-XX:MaxMetaspaceSize=256m\n-XX:+UseG1GC\n-XX:ActiveProcessorCount=2\n');
 captureNativeSecrets({password});
-const java=spawn('bash',[home+'/bin/seatunnel-cluster.sh','-r','master_and_worker'],{stdio:['ignore','pipe','pipe'],detached:true,env:process.env});
+// SeaTunnel 3.0.0 selects MASTER_AND_WORKER when --role is omitted;
+// its Java starter rejects that same role when passed explicitly.
+const java=spawn('bash',[home+'/bin/seatunnel-cluster.sh'],{stdio:['ignore','pipe','pipe'],detached:true,env:process.env});
 forwardNativeLog(java.stdout,process.stdout);forwardNativeLog(java.stderr,process.stderr);
 let shutting=false;
 java.once('exit',code=>{if(!shutting)process.exit(code||1);});
