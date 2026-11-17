@@ -1,6 +1,6 @@
 # findmapskills 技能包
 
-PrdAgent 海鲜市场的官方操作技能。装上之后 AI 就能帮你搜索 / 下载 / 上传 / 订阅市场里的技能。
+PrdAgent 海鲜市场的官方操作技能。支持搜索、下载、用户上传与更新检查；平台维护者还可按仓库官方目录流程同步和验证发布。
 
 版本见 `SKILL.md` 头部的「版本」行。最新版下载：`$PRD_AGENT_BASE/api/official-skills/findmapskills/download`
 （`$PRD_AGENT_BASE` 在下发的技能包里已经预置成实际地址，无需自己设）。
@@ -26,7 +26,7 @@ for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o findmapskills.zip -d "$d"; d
 
 ## 凭据
 
-搜索和下载不需要凭据。**只有上传、收藏、订阅需要 API Key**：
+公开搜索、下载和更新轮询不需要凭据。**上传、收藏需要 API Key**：
 
 ```bash
 mkdir -p ~/.codex/secrets
@@ -47,7 +47,9 @@ Key 只能存在本机 secrets / Keychain / CI Secret，或当前 shell 的临�
 |---|---|---|
 | 从零把一个项目立起来（装齐一个角色需要的全套） | CDS 的「项目初始化」，一条命令 | 不要 |
 | 搜索市场、看详情、按需装单个技能 | 本技能 | **不要** |
-| 上传自己的技能、收藏、订阅更新 | 本技能 | 要 API Key |
+| 上传自己的技能、收藏 | 本技能 | 要 API Key |
+| 公开轮询、检查官方版本 | 本技能 | 不要 |
+| 平台仓库官方同步与上架 | 本技能的官方发布参考 | 搜索下载免凭据；Git/发布权限按现有平台流程 |
 
 读技能一律免凭据 —— 别因为这张表把人劝回注册流程，那正是本次改动要消掉的摩擦。
 
@@ -55,4 +57,4 @@ Key 只能存在本机 secrets / Keychain / CI Secret，或当前 shell 的临�
 
 ## 文档
 
-详见同目录 `SKILL.md`。
+从 [SKILL.md](SKILL.md) 选择操作路径。官方维护读 [同步与发布](references/official-publishing.md)，遇到实际工具、版本与下载问题读 [实战坑与处理](references/field-notes.md)。两个参考文件都随官方 ZIP 分发。
