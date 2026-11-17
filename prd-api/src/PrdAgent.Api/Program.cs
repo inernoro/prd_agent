@@ -156,6 +156,7 @@ builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.S
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
 builder.Services.AddSingleton<IAdminControllerScanner, PrdAgent.Infrastructure.Services.AdminControllerScanner>();
 builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure.Services.SafeOutboundUrlValidator>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.SafeOutboundDiagnosticConnector>();
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
     PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundWebSocketConnector,
