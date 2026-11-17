@@ -87,12 +87,24 @@ try {
     }
   }
   // A trigger spanning the whole short viewport leaves zero space on either side.
+  // Radix modal menus hide the background trigger from the accessibility tree.
+  // Retain its element before opening; the geometry fixture still resizes that same trigger.
+  const coveringTrigger = await page.getByRole('button', { name: '打开菜单' }).elementHandle();
   await page.getByRole('button', { name: '打开菜单' }).click();
-  await page.getByRole('button', { name: '打开菜单' }).evaluate(el => {
+  await coveringTrigger.evaluate(el => {
     el.style.height = '400px';
     window.dispatchEvent(new Event('resize'));
   });
-  await page.waitForFunction(() => getComputedStyle(document.querySelector('[role="menu"]')).maxHeight === '0px');
+  try {
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[role="menu"]')).maxHeight === '0px');
+  } catch (error) {
+    console.error('zero-space menu geometry', await page.evaluate(() => {
+      const menu = document.querySelector('[role="menu"]');
+      const trigger = [...document.querySelectorAll('button')].find(button => button.textContent === '打开菜单');
+      return { viewport: [innerWidth, innerHeight], menu: menu?.getBoundingClientRect().toJSON(), trigger: trigger?.getBoundingClientRect().toJSON(), maxHeight: menu && getComputedStyle(menu).maxHeight, availableHeight: menu && getComputedStyle(menu).getPropertyValue('--radix-dropdown-menu-content-available-height') };
+    }));
+    throw error;
+  }
   checks++;
   // Existing custom arrows and multi-row listboxes must remain opt-outs.
   await page.evaluate(() => {
