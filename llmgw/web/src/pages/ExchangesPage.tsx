@@ -15,10 +15,11 @@ import type { UpstreamProxyDraft, UpstreamProxyView } from '@/lib/types';
 //     原来 .lg-exchange-* 一套 CSS 里混了 9 / 12 / 14 / 24 四种内边距。
 //   - 本路由被 e2e/llmgw-layout-drift.mjs 监测：表单一律内联、DOM 保持扁平，
 //     不许把创建/编辑改成抽屉或对话框（EntityPreviewDrawer 是只读预览，另论）。
-import { useEffect, useState } from 'react';
-import { ArrowRight, AudioLines, CheckCircle2, Image, KeyRound, Layers3, Pencil, Plus, Route, Trash2, Video } from 'lucide-react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import './ExchangesPage.css';
+import { ArrowRight, AudioLines, Image, KeyRound, Layers3, Pencil, Plus, Route, Trash2, Video } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import {
   bulkRotateApiKeys,
   claimExchangeToGateway,
@@ -34,6 +35,7 @@ import {
   updateExchangeProxy,
 } from '@/lib/api';
 import type {
+  ApiResponse,
   CreateExchangeRequest,
   ExchangeItem,
   ExchangeMetaData,
@@ -47,6 +49,7 @@ import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
+import { bindExchangeWriteScope, beginExchangeWriteSession, finishExchangeWriteSession, markExchangeWriteUncertain, readExchangeWriteSession, subscribeExchangeWriteSession } from '@/lib/exchangeWriteSession';
 import { canUseCapability } from '@/lib/access';
 import { CARD_ACTIONS, CARD_BODY, GAP, INSET_BLOCK, INSET_PADDING } from '@/lib/surface';
 import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE } from '@/lib/typography';
@@ -139,8 +142,21 @@ function StatusHelp() {
 }
 
 export function ExchangesPage() {
-  const { tenant } = useAuth();
+  const { tenant, user } = useAuth();
+  const taskScope = JSON.stringify([tenant?.id, tenant?.role, user?.username]);
+  const pendingTask = useSyncExternalStore(subscribeExchangeWriteSession, () => readExchangeWriteSession(taskScope), () => null);
+  const writeToken = useRef<number | null>(null);
+  const renderedScope = useRef(taskScope); renderedScope.current = taskScope;
+  const isScopeCurrent = () => renderedScope.current === taskScope;
+  const [dataScope, setDataScope] = useState(taskScope);
+  useEffect(() => { bindExchangeWriteScope(taskScope); }, [taskScope]);
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const capabilityDisclosure = useRef<HTMLDetailsElement>(null);
+  const [refresh, setRefresh] = useState(0);
+  const [reading, setReading] = useState(false);
+  const [capabilityLoading, setCapabilityLoading] = useState(true);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const focusedExchangeId = searchParams.get('exchangeId')?.trim() || null;
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const { confirm, promptText } = useDialogs();
@@ -155,6 +171,18 @@ export function ExchangesPage() {
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeTone, setNoticeTone] = useState<'info' | 'error' | 'ok'>('info');
+  const writeUncertain = pendingTask?.phase === 'unknown' ? pendingTask.label : null;
+  const uncertainSecret = pendingTask?.secret ?? false;
+  const pendingTarget = useRef<((items: ExchangeItem[]) => boolean) | null>(pendingTask?.matches ?? null);
+  const blocked = !!busyId || !!pendingTask || reading;
+  const beginOperation = (label: string, secret = false, targetId?: string, targetName?: string) => {
+    writeToken.current = beginExchangeWriteSession(taskScope, { label, secret, targetId, targetName, matches: pendingTarget.current || undefined });
+    return writeToken.current !== null;
+  };
+  const finishOperation = () => finishExchangeWriteSession(taskScope, writeToken.current);
+
+
   const [formMode, setFormMode] = useState<'create' | 'edit' | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ExchangeFormState>(emptyForm);
@@ -163,43 +191,99 @@ export function ExchangesPage() {
   const [layeringApiKey, setLayeringApiKey] = useState('');
 
   useEffect(() => {
-    let alive = true;
-    setItems(null);
-    setError(null);
-    getExchanges({ enabled: enabledOnly ? true : undefined }).then((res) => {
-      if (!alive) return;
-      if (res.success) setItems(res.data.items);
-      else setError(res.error?.message || 'Exchange 加载失败');
-    });
-    return () => { alive = false; };
-  }, [enabledOnly]);
+    if (dataScope === taskScope) return;
+    setDataScope(taskScope); setItems(null); setMeta(null); setLayeringCapability(null); setError(null); setNotice(null); setBusyId(null);
+    setFormMode(null); setEditingId(null); setForm(emptyForm()); setKeyEditId(null); setKeyValue(''); setBulkKeyValue(''); setBulkConfirm(false); setLayeringApiKey(''); setSavedItem(null); pendingTarget.current = null;
+  }, [taskScope, dataScope]);
 
   useEffect(() => {
     let alive = true;
-    getExchangeMeta().then((res) => {
+    setReading(true);
+    setError(null);
+    getExchanges({ enabled: pendingTask?.matches ? undefined : enabledOnly ? true : undefined }).catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '转接映射读取中断' } })).then((res) => {
+      if (!alive) return;
+      setReading(false);
+      if (res.success) {
+        setItems(enabledOnly ? res.data.items.filter(item => item.enabled) : res.data.items);
+        if (writeUncertain && pendingTask?.matches?.(res.data.items)) {
+          pendingTarget.current = null; finishExchangeWriteSession(taskScope, pendingTask.token);
+          if (formMode === 'edit' && editingId) {
+            const current = res.data.items.find(item => item.id === editingId);
+            if (current) setForm(draft => ({ ...draft, version: current.version }));
+          }
+          setNoticeTone('info'); setNotice('已读到与本次提交匹配的当前配置，请核对目标与审计；不据此推断具体密钥内容。');
+        }
+      }
+      else setError(res.error?.message || 'Exchange 加载失败');
+    });
+    return () => { alive = false; };
+  }, [enabledOnly, refresh, taskScope]);
+
+  useEffect(() => {
+    let alive = true;
+    getExchangeMeta().catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '转接选项读取中断' } })).then((res) => {
       if (!alive) return;
       if (res.success) setMeta(res.data);
       else setError(res.error?.message || 'Exchange 配置选项加载失败');
     });
     return () => { alive = false; };
-  }, []);
+  }, [refresh, taskScope]);
 
   useEffect(() => {
-    let alive = true;
-    getImageLayeringCapability().then((res) => {
+    let alive = true; setCapabilityLoading(true); setCapabilityError(null);
+    getImageLayeringCapability().catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '专项能力状态读取中断' } })).then((res) => {
       if (!alive) return;
+      setCapabilityLoading(false);
       if (res.success) setLayeringCapability(res.data);
-      else setError(res.error?.message || '图片分层能力状态加载失败');
+      else { setLayeringCapability(null); setCapabilityError(res.error?.message || '图片分层能力状态读取失败'); }
     });
     return () => { alive = false; };
-  }, []);
+  }, [refresh, taskScope]);
 
   useEffect(() => {
     if (!focusedExchangeId || items === null || items.some((item) => item.id === focusedExchangeId)) return;
     setNotice('当前租户中没有找到该 Exchange');
   }, [focusedExchangeId, items]);
 
+  useEffect(() => {
+    if (location.hash !== '#image-layering' || !capabilityDisclosure.current) return;
+    capabilityDisclosure.current.open = true;
+    capabilityDisclosure.current.scrollIntoView?.({ block: 'start' });
+  }, [location.hash]);
+
+  useEffect(() => {
+    if (!notice || noticeTone !== 'ok') return;
+    const timer = window.setTimeout(() => setNotice(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [notice, noticeTone]);
+
+  useEffect(() => {
+    if (!savedItem || enabledOnly && !savedItem.enabled) return;
+    const target = document.getElementById(`exchange-card-${savedItem.id}`);
+    target?.focus({ preventScroll: true }); target?.scrollIntoView?.({ block: 'nearest' });
+  }, [savedItem, items, enabledOnly]);
+
+  function writeFailure(error: { code?: string; message?: string }, operation: string) {
+    setNoticeTone('error');
+    if (!error.code || !EXCHANGE_REJECTIONS.has(error.code)) {
+      markExchangeWriteUncertain(taskScope, writeToken.current);
+      setNotice(`${operation}结果未确认，服务端可能已变更。提交内容已保留，请刷新配置并核对审计，暂不重复提交。`);
+    } else { pendingTarget.current = null; finishOperation(); setNotice(error.code === 'EXCHANGE_CONCURRENTLY_MODIFIED' ? '配置已被其他人修改。输入已保留，请关闭并重新打开最新版本后合并修改。' : error.message || `${operation}被拒绝`); }
+  }
+  async function endUnconfirmedTask() {
+    if (!pendingTask || pendingTask.phase !== 'unknown') return;
+    const task = pendingTask;
+    if (!await confirm({ title: `结束“${task.targetName || task.label}”的本次核对？`, description: '本次写入结果仍未确认。结束只清除控制台待核任务，不撤销或证明服务端变化。请在核对审计或供应商后台后，按已知状态开始新的维护；系统不会重发本次请求。', confirmLabel: '结束核对，不重试本次提交' })) return;
+    const current = readExchangeWriteSession(taskScope);
+    if (!current || current.token !== task.token || current.phase !== 'unknown') return;
+    finishExchangeWriteSession(taskScope, task.token); pendingTarget.current = null;
+    setFormMode(null); setEditingId(null); setForm(emptyForm()); setKeyEditId(null); setKeyValue(''); setBulkKeyValue(''); setBulkConfirm(false); setLayeringApiKey('');
+    setNoticeTone('info'); setNotice('已结束本次核对，不代表服务端成功或已撤销。后续维护请以你核实的状态为准。');
+  }
+
   function openCreate() {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     setForm(emptyForm());
     setEditingId(null);
     setFormMode('create');
@@ -208,6 +292,8 @@ export function ExchangesPage() {
   }
 
   function openEdit(item: ExchangeItem) {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     setForm({
       proxy: proxyDraft(item.proxy),
       storedProxy: item.proxy,
@@ -229,6 +315,7 @@ export function ExchangesPage() {
   }
 
   function closeForm() {
+    if (blocked) return;
     setFormMode(null);
     setEditingId(null);
     setForm(emptyForm());
@@ -248,6 +335,8 @@ export function ExchangesPage() {
   }
 
   async function saveExchange() {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     if (!form.name.trim() || !form.targetUrl.trim()) {
       setNotice('请填写 Exchange 名称和目标地址');
       return;
@@ -275,8 +364,12 @@ export function ExchangesPage() {
       return;
     }
 
+    const submitted = { ...structuredClone(form), apiKey: '', proxy: form.proxy ? { ...form.proxy, password: undefined } : undefined }, submittedId = editingId;
+    pendingTarget.current = formMode === 'edit' && !form.proxy?.password
+      ? latest => latest.some(item => item.id === submittedId && item.version > submitted.version && exchangeMatchesDraft(item, submitted))
+      : null;
     setBusyId(formMode === 'create' ? 'create-exchange' : editingId);
-    setNotice(null);
+    setNotice(null); setSavedItem(null);
     const common = {
       name: form.name.trim(),
       models: form.models.map((model) => ({
@@ -293,77 +386,96 @@ export function ExchangesPage() {
       enabled: form.enabled,
       description: form.description.trim() || null,
     };
+    if (!beginOperation('保存转接映射', formMode === 'create' || !!form.proxy?.password, editingId || undefined, form.name.trim())) { setBusyId(null); return; }
     const res = formMode === 'create'
-      ? await createExchange({ ...common, apiKey: form.apiKey.trim() } satisfies CreateExchangeRequest)
-      : await updateExchange(editingId!, { ...common, version: form.version } satisfies UpdateExchangeRequest);
+      ? await observedExchangeWrite(createExchange({ ...common, apiKey: form.apiKey.trim() } satisfies CreateExchangeRequest))
+      : await observedExchangeWrite(updateExchange(editingId!, { ...common, version: form.version } satisfies UpdateExchangeRequest));
+    if (!isScopeCurrent()) return;
     setBusyId(null);
-    if (!res.success) {
-      setNotice(res.error.code === 'EXCHANGE_CONCURRENTLY_MODIFIED'
-        ? '这条 Exchange 已被其他人修改。你当前填写的内容仍保留在表单中；请先保留需要的内容，再关闭表单并重新打开最新版本后合并修改。'
-        : res.error.message || 'Exchange 保存失败');
-      return;
-    }
+    if (!res.success) { writeFailure(res.error, '保存转接映射'); return; }
+    pendingTarget.current = null; finishOperation(); setNoticeTone('ok');
 
     setItems((current) => {
-      if (!current) return [res.data];
+      if (!current) return enabledOnly && !res.data.enabled ? [] : [res.data];
       const exists = current.some((item) => item.id === res.data.id);
-      return exists ? current.map((item) => item.id === res.data.id ? res.data : item) : [res.data, ...current];
+      const updated = exists ? current.map((item) => item.id === res.data.id ? res.data : item) : [res.data, ...current];
+      return enabledOnly ? updated.filter(item => item.enabled) : updated;
     });
     setSavedItem(res.data);
-    setNotice(formMode === 'create' ? '第一条 Exchange 映射已创建并读回' : 'Exchange 映射已更新并读回');
-    closeForm();
+    setNotice(formMode === 'create' ? `已创建 Exchange“${res.data.name}”` : `已更新 Exchange“${res.data.name}”`);
+    setFormMode(null); setEditingId(null); setForm(emptyForm());
   }
 
   async function claimExchange(item: ExchangeItem) {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     setBusyId(item.id);
-    setNotice(null);
-    const res = await claimExchangeToGateway(item.id);
+    setNotice(null); setSavedItem(null);
+    pendingTarget.current = null;
+    if (!beginOperation('导入旧配置', false, item.id, item.name)) { setBusyId(null); return; }
+    const res = await observedExchangeWrite(claimExchangeToGateway(item.id));
+    if (!isScopeCurrent()) return;
     setBusyId(null);
     if (res.success) {
+      pendingTarget.current = null; finishOperation(); setNoticeTone('ok');
       setItems((current) => current?.map((candidate) => candidate.id === res.data.id ? res.data : candidate) ?? current);
       setNotice(`已将「${res.data.name}」导入平台 Exchange`);
     } else {
-      setNotice(res.error?.message || '旧配置导入失败');
+      writeFailure(res.error, '导入旧配置');
     }
   }
 
   async function saveApiKey(item: ExchangeItem) {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     const apiKey = keyValue.trim();
     if (!apiKey) {
       setNotice('通讯密钥不能为空');
       return;
     }
     setBusyId(item.id);
-    setNotice(null);
-    const res = await rotateExchangeApiKey(item.id, apiKey);
+    setNotice(null); setSavedItem(null);
+    pendingTarget.current = null;
+    if (!beginOperation('更新通讯密钥', true, item.id, item.name)) { setBusyId(null); return; }
+    const res = await observedExchangeWrite(rotateExchangeApiKey(item.id, apiKey));
+    if (!isScopeCurrent()) return;
     setBusyId(null);
     if (res.success) {
+      pendingTarget.current = null; finishOperation(); setNoticeTone('ok');
       setItems((current) => current?.map((candidate) => candidate.id === res.data.id ? res.data : candidate) ?? current);
       setKeyEditId(null);
       setKeyValue('');
       setNotice(`已更新「${res.data.name}」的通讯密钥`);
     } else {
-      setNotice(res.error?.message || '密钥更新失败');
+      writeFailure(res.error, '更新通讯密钥');
     }
   }
 
   async function clearApiKey(item: ExchangeItem) {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     if (!await confirm({ title: `清除「${item.name}」的 Exchange 通讯密钥？`, description: '清除后该映射不能调用上游。', tone: 'danger', confirmLabel: '清除密钥' })) return;
     setBusyId(item.id);
-    setNotice(null);
-    const res = await deleteExchangeApiKey(item.id);
+    setNotice(null); setSavedItem(null);
+    pendingTarget.current = latest => latest.some(candidate => candidate.id === item.id && !candidate.hasKey);
+    if (!beginOperation('清除通讯密钥', false, item.id, item.name)) { setBusyId(null); return; }
+    const res = await observedExchangeWrite(deleteExchangeApiKey(item.id));
+    if (!isScopeCurrent()) return;
     setBusyId(null);
     if (res.success) {
+      pendingTarget.current = null; finishOperation(); setNoticeTone('ok');
       setItems((current) => current?.map((candidate) => candidate.id === res.data.id ? res.data : candidate) ?? current);
       setNotice(`已清除「${res.data.name}」的通讯密钥`);
     } else {
-      setNotice(res.error?.message || '密钥清除失败');
+      writeFailure(res.error, '清除通讯密钥');
     }
   }
 
   // 交换所可能正被模型池成员当上游用（直指 id，或走 __exchange__ 别名匹配）。
   // 后端两种引用都查，这里只负责把它报回来的阻挡原文原样端给运维。
   async function removeExchange(item: ExchangeItem) {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     const typed = await promptText({
       title: `删除 Exchange「${item.name}」`,
       description: `${item.targetUrl || '无地址'}\n它的地址、通讯密钥与全部模型映射一并消失，无法撤销。`,
@@ -375,15 +487,21 @@ export function ExchangesPage() {
     if (typed === null) return;
     if (typed.trim() !== item.name) { setNotice('输入的名称不一致，已取消删除'); return; }
     setBusyId(item.id);
-    setNotice(null);
-    const res = await deleteExchange(item.id);
+    setNotice(null); setSavedItem(null);
+    pendingTarget.current = latest => !latest.some(candidate => candidate.id === item.id);
+    if (!beginOperation('删除转接映射', false, item.id, item.name)) { setBusyId(null); return; }
+    const res = await observedExchangeWrite(deleteExchange(item.id));
+    if (!isScopeCurrent()) return;
     setBusyId(null);
-    if (!res.success) { setNotice(res.error?.message || '删除失败'); return; }
+    if (!res.success) { writeFailure(res.error, '删除转接映射'); return; }
+    pendingTarget.current = null; finishOperation(); setNoticeTone('ok');
     setItems((current) => current?.filter((candidate) => candidate.id !== item.id) ?? current);
     setNotice(`已删除 Exchange「${item.name}」`);
   }
 
   async function applyBulkApiKey() {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     const apiKey = bulkKeyValue.trim();
     if (!apiKey) {
       setNotice('通讯密钥不能为空');
@@ -397,16 +515,20 @@ export function ExchangesPage() {
     const scope = bulkOnlyMissing ? `缺失密钥的${enabledText}Exchange` : `全部${enabledText}Exchange`;
     if (!await confirm({ title: `批量更新${scope}的通讯密钥？`, description: '这会覆盖范围内每一条的现有密钥。', tone: 'danger', confirmLabel: '批量更新' })) return;
     setBusyId('bulk-exchange-api-key');
-    setNotice(null);
-    const res = await bulkRotateApiKeys({
+    setNotice(null); setSavedItem(null);
+    pendingTarget.current = null;
+    if (!beginOperation('批量更新通讯密钥', true, undefined, scope)) { setBusyId(null); return; }
+    const res = await observedExchangeWrite(bulkRotateApiKeys({
       objectType: 'exchange',
       apiKey,
       enabledOnly,
       onlyMissing: bulkOnlyMissing,
       allGwOwned: true,
-    });
+    }));
+    if (!isScopeCurrent()) return;
     setBusyId(null);
     if (res.success) {
+      pendingTarget.current = null; finishOperation(); setNoticeTone('ok');
       setItems((current) => current?.map((item) => (
         item.authority === 'llm_gateway' && (!bulkOnlyMissing || !item.hasKey) ? { ...item, hasKey: true } : item
       )) ?? current);
@@ -414,176 +536,97 @@ export function ExchangesPage() {
       setBulkConfirm(false);
       setNotice(`批量轮换完成：匹配 ${res.data.matchedCount}，更新 ${res.data.modifiedCount}，跳过 ${res.data.skippedCount}`);
     } else {
-      setNotice(res.error?.message || '批量密钥更新失败');
+      writeFailure(res.error, '批量更新通讯密钥');
     }
   }
 
   async function installLayeringCapability() {
+    if (!canWrite || blocked) return;
+    setNoticeTone('info');
     const apiKey = layeringApiKey.trim();
     if (!apiKey) {
       setNotice('请填写 fal.ai API Key');
       return;
     }
     setBusyId('install-image-layering');
-    setNotice(null);
-    const res = await installImageLayeringCapability(apiKey);
+    setNotice(null); setSavedItem(null);
+    pendingTarget.current = null;
+    if (!beginOperation('安装专项能力', true, undefined, 'fal.ai 图片分层')) { setBusyId(null); return; }
+    const res = await observedExchangeWrite(installImageLayeringCapability(apiKey));
+    if (!isScopeCurrent()) return;
     setBusyId(null);
     if (!res.success) {
-      setNotice(res.error?.message || '图片分层能力安装失败');
+      writeFailure(res.error, '安装专项能力');
       return;
     }
+    setNoticeTone('ok'); pendingTarget.current = null; finishOperation();
     setLayeringCapability(res.data);
     setLayeringApiKey('');
     setNotice(res.data.verified
       ? '图片分层能力已更新，并保留真实调用验证状态'
       : '图片分层能力已安装。调用方通过 image-layering 发起首次真实请求后，这里会显示已验证。');
-    const exchanges = await getExchanges({ enabled: enabledOnly ? true : undefined });
+    const exchanges = await observedExchangeWrite(getExchanges({ enabled: enabledOnly ? true : undefined }));
+    if (!isScopeCurrent()) return;
     if (exchanges.success) setItems(exchanges.data.items);
+    else setError('专项能力已确认更新，但映射列表读取失败，请刷新列表核对。');
   }
+
+  if (dataScope !== taskScope) return <SectionLoader text="正在切换组织状态…" />;
 
   return (
     <PageShell>
       <PageHeader
         title="Exchange 映射"
-        subtitle="上游不是 OpenAI 或 Claude 标准协议时，用一条 Exchange 把它接进网关。"
+        subtitle="非标准上游接口映射到网关。"
         summary={items ? (
           <>
-            <span>映射 <strong>{items.length}</strong></span>
+            <span>当前结果 <strong>{items.length}</strong></span>
             <span>已启用 <strong>{items.filter((item) => item.enabled).length}</strong></span>
             <span>缺密钥 <strong>{items.filter((item) => !item.hasKey).length}</strong></span>
           </>
         ) : undefined}
-        actions={canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>新建 Exchange</Button> : undefined}
+        actions={<><Button size="sm" variant="ghost" disabled={reading || !!busyId} onClick={() => setRefresh(value => value + 1)}>{reading ? '正在读取' : '刷新映射'}</Button>{canWrite ? <Button variant="primary" size="sm" disabled={!meta || blocked} onClick={openCreate}>新建 Exchange</Button> : null}</>}
       />
 
       <PageBody>
-        {notice ? <InlineAlert tone="info">{notice}</InlineAlert> : null}
+        {notice ? <InlineAlert tone={noticeTone}>{notice}</InlineAlert> : null}
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
+        {pendingTask ? <div role="status" className="lg-exchange-unknown"><strong>{pendingTask.label}{pendingTask.phase === 'submitting' ? '仍在提交' : '待核实'}{pendingTask.targetName ? ` · ${pendingTask.targetName}` : ''}</strong><span>{uncertainSecret ? '密钥不回显，无法仅凭配置确认本次写入；请核对审计与供应商后台。' : '请刷新核对目标状态与审计。当前读取未匹配前，不重复提交。'}</span><Link className="lg-text-link" to={`/audits?targetType=llmgw_model_exchange${pendingTask.targetId ? `&search=${encodeURIComponent(pendingTask.targetId)}` : ''}`}>核对转接配置审计 <ArrowRight size={13} /></Link>{pendingTask.phase === 'unknown' ? <Button size="sm" variant="ghost" onClick={() => void endUnconfirmedTask()}>结束核对</Button> : null}</div> : null}
+        <fieldset disabled={!!busyId} style={{ display: 'contents', border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
-        <section id="image-layering" aria-labelledby="image-layering-title" style={capabilitySectionStyle}>
-          <div style={sectionHeaderStyle}>
-            <span style={sectionIconStyle}><Layers3 size={16} /></span>
-            <strong id="image-layering-title" style={SECTION_TITLE}>fal.ai 图片分层</strong>
-            <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
-              <Chip
-                label={layeringCapability?.verified
-                  ? '调用已验证'
-                  : layeringCapability?.installed
-                    ? '已安装，等待验证'
-                    : layeringCapability?.state === 'incomplete'
-                      ? '配置不完整'
-                      : '未安装'}
-                color={layeringCapability?.verified ? 'var(--ok)' : layeringCapability?.installed ? 'var(--warn)' : 'var(--text-secondary)'}
-                bg={layeringCapability?.verified ? 'var(--ok-bg)' : layeringCapability?.installed ? 'var(--warn-bg)' : 'var(--bg-elevated)'}
-              />
-            </span>
-          </div>
 
-          <Card style={CARD_BODY}>
-            <div style={capabilityMetaStyle}>
-              <span style={metaPairStyle}><span style={HINT_TEXT}>能力</span><code style={MONO_META}>{layeringCapability?.publicId || 'image-layering'}</code></span>
-              <span style={metaPairStyle}><span style={HINT_TEXT}>模型</span><code style={MONO_META}>{layeringCapability?.modelId || 'fal-qwen-image-layered'}</code></span>
-              {layeringCapability?.lastVerifiedAt ? <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>最近验证 {new Date(layeringCapability.lastVerifiedAt).toLocaleString()}</span> : null}
-            </div>
-
-            {/* 状态角标只有四个词，用户看到「等待验证」并不知道在等什么。
-                这里补一句「下一步是什么」——保持短句，四种状态的完整含义收进右侧 ?。 */}
-            <p style={{ ...HINT_TEXT, marginTop: GAP.section }}>
-              {layeringCapability?.verified
-                ? '已有成功调用记录。'
-                : layeringCapability?.installed
-                  ? '配置已就位，成功调用一次后自动转为已验证。'
-                  : layeringCapability?.state === 'incomplete'
-                    ? '配置缺了一部分，重新提交 Key 可补齐。'
-                    : '提交 Key 后自动完成安装。'}
-              <StatusHelp />
-            </p>
-            {canWrite ? (
-              <div style={capabilityFormStyle}>
-                {/* 卡片不限宽后输入框会一路拉到一千多像素——一个 Key 不需要那么长的槽，
-                    也会把「更新凭据」推到视线之外。限一个上限，按钮就紧跟在它后面。 */}
-                <label htmlFor="fal-image-layering-key" style={{ ...FIELD_LABEL, flex: '1 1 360px', maxWidth: 520 }}>
-                  <span style={rowStyle}>
-                    fal.ai API Key
-                    <HelpPopover label="安装说明">
-                      LLMGW 会创建原生 Exchange、公开逻辑能力和上游供给。它不绑定任何业务系统；保存不调用模型，首次真实请求才产生费用。
-                    </HelpPopover>
-                  </span>
-                  <input
-                    id="fal-image-layering-key"
-                    type="password"
-                    autoComplete="new-password"
-                    value={layeringApiKey}
-                    onChange={(event) => setLayeringApiKey(event.target.value)}
-                    placeholder={layeringCapability?.hasKey ? '输入新 Key 可更新凭据并修复能力配置' : '输入后加密保存，不会回显'}
-                    style={FIELD_INPUT}
-                  />
-                </label>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={busyId === 'install-image-layering'}
-                  onClick={() => void installLayeringCapability()}
-                >
-                  {busyId === 'install-image-layering'
-                    ? '安装中'
-                    : layeringCapability?.installed
-                      ? '更新凭据'
-                      : '安装能力'}
-                </Button>
-              </div>
-            ) : null}
-          </Card>
-        </section>
-
-        {savedItem ? (
-          <Card style={{ ...CARD_BODY, borderColor: 'color-mix(in srgb, var(--ok) 45%, var(--border-subtle))', background: 'var(--ok-bg)' }}>
-            <div style={rowStyle}>
-              <CheckCircle2 size={18} style={{ color: 'var(--ok)', flexShrink: 0 }} />
-              <strong style={SECTION_TITLE}>{savedItem.name} 已保存</strong>
-              <span style={HINT_TEXT}>{savedItem.models.length} 条模型映射已读回</span>
-              <div style={{ ...CARD_ACTIONS, marginLeft: 'auto' }}>
-                <Link className="lg-text-link" to={`/audits?targetType=llmgw_model_exchange&search=${encodeURIComponent(savedItem.id)}`}>打开本次审计 <ArrowRight size={13} /></Link>
-                <Link className="lg-text-link" to="/logical-models">去模型 <ArrowRight size={13} /></Link>
-              </div>
-            </div>
-          </Card>
-        ) : null}
+        {savedItem && enabledOnly && !savedItem.enabled ? <div role="status" className="lg-exchange-filter-result"><span>“{savedItem.name}”已设为停用，不在当前仅启用结果中。</span><Button size="sm" variant="ghost" onClick={() => setEnabledOnly(false)}>显示全部并定位</Button></div> : null}
 
         {/* 创建与编辑一律内联展开：本路由被漂移检测监测，禁止抽屉与对话框。 */}
         {formMode && meta ? (
-          <ExchangeForm
+          <fieldset disabled={!!busyId || !!pendingTask} style={{ display: 'contents', border: 0, margin: 0, padding: 0, minWidth: 0 }}><ExchangeForm
             mode={formMode}
             form={form}
             meta={meta}
-            busy={formMode === 'create'
-              ? busyId === 'create-exchange'
-              : editingId !== null && busyId === editingId}
+            busy={!!busyId}
             onChange={updateForm}
             onUpdateModel={updateModel}
             onSave={() => void saveExchange()}
             onCancel={closeForm}
-          />
+          /></fieldset>
         ) : null}
 
         {/* 标题、筛选、批量操作原本各占一行，三行加起来只承载一个标题和两个控件。
             合并成一行：左边是「这一段是什么 + 怎么筛」，右边是批量操作。 */}
-        <div style={toolbarStyle}>
-          <span style={sectionIconStyle}><Route size={16} /></span>
-          <strong style={SECTION_TITLE}>Exchange</strong>
-          <label style={{ ...checkStyle, marginLeft: GAP.section }}>
+        <div className="lg-exchange-toolbar" style={toolbarStyle}>
+          <label style={checkStyle}>
             <input type="checkbox" checked={enabledOnly} onChange={(event) => setEnabledOnly(event.target.checked)} /> 仅显示启用项
           </label>
           {canWrite ? (
-            <details style={{ ...INSET_BLOCK, marginLeft: 'auto' }}>
+            <details style={{ ...INSET_BLOCK, padding: '0 10px', marginLeft: 'auto' }}>
               <summary style={summaryStyle}>批量维护通讯密钥</summary>
-              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: GAP.normal, marginTop: GAP.normal }}>
+              <fieldset disabled={blocked} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}><div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: GAP.normal, marginTop: GAP.normal }}>
                 <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(event) => setBulkKeyValue(event.target.value)} placeholder="新的通讯密钥" style={{ ...FIELD_INPUT, maxWidth: 220 }} />
                 <label style={checkStyle}><input type="checkbox" checked={bulkOnlyMissing} onChange={(event) => setBulkOnlyMissing(event.target.checked)} /> 只补缺失</label>
                 <label style={checkStyle}><input type="checkbox" checked={bulkConfirm} onChange={(event) => setBulkConfirm(event.target.checked)} /> 确认当前筛选范围</label>
-                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-exchange-api-key'} onClick={() => void applyBulkApiKey()}>{busyId === 'bulk-exchange-api-key' ? '处理中' : '批量轮换'}</Button>
-              </div>
+                <Button size="sm" variant="ghost" disabled={blocked} onClick={() => void applyBulkApiKey()}>{busyId === 'bulk-exchange-api-key' ? '处理中' : '批量轮换'}</Button>
+              </div></fieldset>
             </details>
           ) : null}
         </div>
@@ -602,14 +645,16 @@ export function ExchangesPage() {
             {/* 出口二：空状态。三步引导只在零数据时出现——有配置的人不需要每次进页面都被教一遍。 */}
             <div style={emptyStyle}>
               <Route size={24} />
-              <strong style={SECTION_TITLE}>还没有 Exchange 映射</strong>
+              <strong style={SECTION_TITLE}>{enabledOnly ? '当前筛选没有启用的转接映射' : '还没有 Exchange 映射'}</strong>
+              {enabledOnly ? <Button size="sm" variant="ghost" onClick={() => setEnabledOnly(false)}>清除启用筛选</Button> : <>
               <Prose>保存只建立配置和审计，不会调用上游，也不产生费用。</Prose>
               <ol className="lg-exchange-steps" aria-label="Exchange 三步工作流">
                 <li><strong>创建映射</strong><p style={BODY_TEXT}>填写上游地址、模型标识和通讯密钥。</p></li>
-                <li><strong>挂成线路</strong><p style={BODY_TEXT}>把已启用模型挂到对应用途的对外模型池。</p></li>
-                <li><strong>用 requestId 验证</strong><p style={BODY_TEXT}>从 Quickstart 安全测试，再到审计定位变更。</p></li>
+                <li><strong>关联公开模型</strong><p style={BODY_TEXT}>将已启用映射关联到相应用途的公开模型线路。</p></li>
+                <li><strong>用 requestId 验证</strong><p style={BODY_TEXT}>核对配置和审计；真实模型请求可能计费。</p></li>
               </ol>
-              {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>创建第一条映射</Button> : null}
+              {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>创建映射</Button> : null}
+              </>}
             </div>
           </Card>
         ) : (
@@ -626,7 +671,7 @@ export function ExchangesPage() {
                       让每张卡片一上来就是一串没人读的哈希。 */}
                   <div style={rowStyle}>
                     <span style={sectionIconStyle}><AdapterIcon size={16} /></span>
-                    <strong style={{ ...SECTION_TITLE, minWidth: 0 }}>{item.name || item.id}</strong>
+                    <strong id={`exchange-card-${item.id}`} tabIndex={-1} style={{ ...SECTION_TITLE, minWidth: 0 }}>{item.name || item.id}</strong>
                     <span style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginLeft: 'auto' }}>
                       <Chip label={enabled.label} color={enabled.color} bg={enabled.bg} />
                       <Chip label={key.label} color={key.color} bg={key.bg} />
@@ -651,7 +696,7 @@ export function ExchangesPage() {
                         title={item.name || item.id}
                         icon={<Route size={20} />}
                         initiallyOpen={item.id === focusedExchangeId}
-                        summary="从当前卡片直接查看 adapter 如何把 Gateway 请求转换并发往上游。这里只展示配置与请求边界，不会试连目标地址，也不会读取通讯密钥。"
+                        summary="查看配置，不试连、不读取密钥。"
                         status={[
                           { label: item.enabled ? '已启用' : '已停用', tone: item.enabled ? 'good' : 'warning' },
                           { label: item.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: item.hasKey ? 'good' : 'warning' },
@@ -671,7 +716,7 @@ export function ExchangesPage() {
                           },
                           {
                             title: '模型映射',
-                            description: '上游模型标识先映射为明确用途，再决定能加入哪一类模型池。',
+                            description: '模型用途限定可关联的公开模型。',
                             fields: item.models.map((model) => ({
                               label: model.displayName || model.modelId,
                               value: <><code>{model.modelId}</code> · {meta.modelTypes.find((option) => option.value === model.modelType)?.label || model.modelType} · {model.enabled ? '已启用' : '已停用'}</>,
@@ -717,29 +762,95 @@ export function ExchangesPage() {
                     <code style={{ ...MONO_META, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.id}>{item.id}</code>
                     {canWrite ? (
                       <div style={{ ...CARD_ACTIONS, marginLeft: 'auto' }}>
-                        {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" onClick={() => openEdit(item)}><Pencil size={13} /> 编辑映射</Button> : <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void claimExchange(item)}>导入旧配置</Button>}
-                        {item.authority === 'llm_gateway' && keyEditId !== item.id ? <Button size="sm" variant="ghost" onClick={() => { setKeyEditId(item.id); setKeyValue(''); }}><KeyRound size={13} /> 更新密钥</Button> : null}
-                        {item.authority === 'llm_gateway' && item.hasKey ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void clearApiKey(item)}>清除密钥</Button> : null}
-                        {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void removeExchange(item)}><Trash2 size={13} /> 删除</Button> : null}
+                        {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" disabled={blocked} onClick={() => openEdit(item)}><Pencil size={13} /> 编辑映射</Button> : <Button size="sm" variant="ghost" disabled={blocked} onClick={() => void claimExchange(item)}>导入旧配置</Button>}
+                        {item.authority === 'llm_gateway' && keyEditId !== item.id ? <Button size="sm" variant="ghost" disabled={blocked} onClick={() => { setSavedItem(null); setKeyEditId(item.id); setKeyValue(''); }}><KeyRound size={13} /> 更新密钥</Button> : null}
+                        {item.authority === 'llm_gateway' && item.hasKey ? <Button size="sm" variant="ghost" disabled={blocked} onClick={() => void clearApiKey(item)}>清除密钥</Button> : null}
+                        {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" disabled={blocked} onClick={() => void removeExchange(item)}><Trash2 size={13} /> 删除</Button> : null}
                       </div>
                     ) : <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>只读</span>}
                   </div>
 
+                  {savedItem?.id === item.id ? <div className="lg-exchange-next-actions"><Link className="lg-text-link" to={`/audits?targetType=llmgw_model_exchange&search=${encodeURIComponent(item.id)}`}>查看相关审计 <ArrowRight size={13} /></Link><Link className="lg-text-link" to="/logical-models">关联公开模型 <ArrowRight size={13} /></Link></div> : null}
+
                   {keyEditId === item.id ? (
-                    <div style={{ ...INSET_BLOCK, ...rowStyle, marginTop: GAP.normal, border: '1px solid var(--accent)', background: 'var(--accent-soft)' }}>
+                    <fieldset disabled={blocked} style={{ ...INSET_BLOCK, ...rowStyle, margin: 0, minWidth: 0, marginTop: GAP.normal, border: '1px solid var(--accent)', background: 'var(--accent-soft)' }}>
                       <input type="password" autoComplete="new-password" value={keyValue} onChange={(event) => setKeyValue(event.target.value)} placeholder="输入新的通讯密钥" style={{ ...FIELD_INPUT, maxWidth: 220 }} />
                       <span style={HINT_TEXT}>保存后只返回“已配置”，页面不会读回密钥内容。</span>
                       <div style={{ ...CARD_ACTIONS, marginLeft: 'auto' }}>
-                        <Button size="sm" variant="primary" disabled={busyId === item.id} onClick={() => void saveApiKey(item)}>保存密钥</Button>
+                        <Button size="sm" variant="primary" disabled={blocked} onClick={() => void saveApiKey(item)}>保存密钥</Button>
                         <Button size="sm" variant="ghost" onClick={() => { setKeyEditId(null); setKeyValue(''); }}>取消</Button>
                       </div>
-                    </div>
+                    </fieldset>
                   ) : null}
                 </Card>
               );
             })}
           </div>
         )}
+
+        <details id="image-layering" ref={capabilityDisclosure} className="lg-exchange-capability">
+          <summary><Layers3 size={16} /><strong>fal.ai 图片分层（专项能力）</strong><span>{capabilityLoading ? '正在读取' : capabilityError ? '状态未知' : layeringCapability?.verified ? '调用已验证' : layeringCapability?.installed ? '已安装，等待验证' : layeringCapability?.state === 'incomplete' ? '配置不完整' : '未安装'}</span></summary>
+        <section aria-labelledby="image-layering-title" style={capabilitySectionStyle}>
+          {capabilityError ? <InlineAlert tone="error">{capabilityError} <Button size="sm" variant="ghost" onClick={() => setRefresh(value => value + 1)}>重新读取专项能力</Button></InlineAlert> : null}
+          {capabilityLoading ? <SectionLoader text="正在读取专项能力…" /> : layeringCapability ? <Card style={CARD_BODY}>
+            <div style={capabilityMetaStyle}>
+              <span style={metaPairStyle}><span style={HINT_TEXT}>能力</span><code style={MONO_META}>{layeringCapability?.publicId || 'image-layering'}</code></span>
+              <span style={metaPairStyle}><span style={HINT_TEXT}>模型</span><code style={MONO_META}>{layeringCapability?.modelId || 'fal-qwen-image-layered'}</code></span>
+              {layeringCapability?.lastVerifiedAt ? <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>最近验证 {new Date(layeringCapability.lastVerifiedAt).toLocaleString()}</span> : null}
+            </div>
+
+            {/* 状态角标只有四个词，用户看到「等待验证」并不知道在等什么。
+                这里补一句「下一步是什么」——保持短句，四种状态的完整含义收进右侧 ?。 */}
+            <p style={{ ...HINT_TEXT, marginTop: GAP.section }}>
+              {layeringCapability?.verified
+                ? '已有成功调用记录。'
+                : layeringCapability?.installed
+                  ? '配置已就位，成功调用一次后自动转为已验证。'
+                  : layeringCapability?.state === 'incomplete'
+                    ? '配置缺了一部分，重新提交 Key 可补齐。'
+                    : '提交 Key 后自动完成安装。'}
+              <StatusHelp />
+            </p>
+            {canWrite ? (
+              <div style={capabilityFormStyle}>
+                {/* 卡片不限宽后输入框会一路拉到一千多像素——一个 Key 不需要那么长的槽，
+                    也会把「更新凭据」推到视线之外。限一个上限，按钮就紧跟在它后面。 */}
+                <label htmlFor="fal-image-layering-key" style={{ ...FIELD_LABEL, flex: '1 1 360px', maxWidth: 520 }}>
+                  <span style={rowStyle}>
+                    fal.ai API Key
+                    <HelpPopover label="安装说明">
+                      LLMGW 会创建原生 Exchange、公开逻辑能力和上游供给。它不绑定任何业务系统；保存不调用模型，首次真实请求才产生费用。
+                    </HelpPopover>
+                  </span>
+                  <input
+                    id="fal-image-layering-key"
+                    type="password"
+                    autoComplete="new-password"
+                    disabled={blocked}
+                    value={layeringApiKey}
+                    onChange={(event) => setLayeringApiKey(event.target.value)}
+                    placeholder={layeringCapability?.hasKey ? '输入新 Key 可更新凭据并修复能力配置' : '输入后加密保存，不会回显'}
+                    style={FIELD_INPUT}
+                  />
+                </label>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={blocked}
+                  onClick={() => void installLayeringCapability()}
+                >
+                  {busyId === 'install-image-layering'
+                    ? '安装中'
+                    : layeringCapability?.installed
+                      ? '更新凭据'
+                      : '安装能力'}
+                </Button>
+              </div>
+            ) : null}
+          </Card> : null}
+        </section>
+
+        </details>
 
         <DetailsBlock title="工作原理：Exchange 把非标准上游接成可调度的模型">
           <Prose>
@@ -749,6 +860,7 @@ export function ExchangesPage() {
           </Prose>
           <TutorialLink chapter="chapter-19">查看教程：第 19 章 Exchange 映射</TutorialLink>
         </DetailsBlock>
+        </fieldset>
       </PageBody>
     </PageShell>
   );
@@ -791,7 +903,7 @@ function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave,
     <Card style={{ ...CARD_BODY, borderColor: 'var(--accent)' }}>
       <div style={rowStyle}>
         <h2 id="exchange-form-title" style={SECTION_TITLE}>{mode === 'create' ? '创建 Exchange 映射' : '编辑 Exchange 映射'}</h2>
-        <span style={HINT_TEXT}>保存后立即从服务端读回，保存本身不调用上游。</span>
+        <span style={HINT_TEXT}>保存后显示已确认配置，不调用上游。</span>
         <div style={{ marginLeft: 'auto' }}><Button size="sm" variant="ghost" onClick={onCancel}>关闭</Button></div>
       </div>
 
@@ -846,7 +958,7 @@ function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave,
       <div style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.normal, marginTop: GAP.section }}>
         <div style={rowStyle}>
           <strong style={SECTION_TITLE}>模型映射</strong>
-          <HelpPopover label="模型映射">至少一条。模型用途决定它可以加入哪一种默认池，也决定 Gateway 调度时把它当成什么模型使用。</HelpPopover>
+          <HelpPopover label="模型映射">至少一条。用途限定可关联的公开模型及 Gateway 调度采用的模型类别。</HelpPopover>
         </div>
         {form.models.map((model, index) => (
           <div style={modelRowStyle} key={`model-row-${index}`}>
@@ -892,7 +1004,7 @@ function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave,
         <span style={HINT_TEXT}>{mode === 'edit' ? `正在编辑版本 ${form.version}，旧版本提交会被服务端拒绝。` : '保存只创建配置，不会自动产生上游请求。'}</span>
         <div style={{ ...CARD_ACTIONS, marginLeft: 'auto' }}>
           <Button variant="ghost" size="sm" onClick={onCancel}>取消</Button>
-          <Button variant="primary" size="sm" disabled={busy} onClick={onSave}>{busy ? '保存中' : mode === 'create' ? '创建并读回' : '保存并读回'}</Button>
+          <Button variant="primary" size="sm" disabled={busy} onClick={onSave}>{busy ? '保存中' : mode === 'create' ? '创建映射' : '保存修改'}</Button>
         </div>
       </div>
     </Card>
@@ -934,12 +1046,7 @@ const capabilitySectionStyle: React.CSSProperties = {
   width: '100%',
 };
 
-const sectionHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: GAP.normal,
-  minWidth: 0,
-};
+
 
 const sectionIconStyle: React.CSSProperties = {
   width: 30,
@@ -1025,3 +1132,21 @@ const modelRowStyle: React.CSSProperties = {
 
 /** 模型行里的字段：窄屏折行，宽屏按权重分配。 */
 const modelFieldStyle = (basis: number): React.CSSProperties => ({ ...FIELD_LABEL, flex: `1 1 ${basis}px` });
+
+async function observedExchangeWrite<T>(request: Promise<ApiResponse<T>>): Promise<ApiResponse<T>> {
+  return request.catch(() => ({ success: false, data: null, error: { code: 'NETWORK_ERROR', message: '响应读取中断' } }));
+}
+// These codes are validated before the exchange mutation/CAS. Never infer rejection from HTTP class.
+const EXCHANGE_REJECTIONS = new Set(['INVALID_INPUT', 'INVALID_PROXY', 'UNSAFE_TARGET_URL', 'DUPLICATE_EXCHANGE', 'EXCHANGE_IN_USE', 'NOT_GW_AUTHORITY', 'EXCHANGE_CONCURRENTLY_MODIFIED', 'FORBIDDEN', 'UNAUTHORIZED']);
+function exchangeMatchesDraft(item: ExchangeItem, draft: ExchangeFormState) {
+  const proxy = draft.proxy;
+  if (proxy && ((item.proxy?.mode || 'inherit') !== proxy.mode
+      || proxy.mode === 'custom' && ((item.proxy?.address || '') !== (proxy.address || '').trim() || (item.proxy?.username || '') !== (proxy.username || '').trim())
+      || proxy.clearPassword && item.proxy?.hasPassword)) return false;
+  return item.name === draft.name.trim() && item.targetUrl === draft.targetUrl.trim() && item.targetAuthScheme === draft.targetAuthScheme
+    && item.transformerType === draft.transformerType && item.enabled === draft.enabled && (item.description || '') === draft.description.trim()
+    && (item.resourceId || '') === (draft.transformerType === 'doubao-tts' ? draft.resourceId.trim() : '')
+    && item.models.length === draft.models.length && draft.models.every(model => item.models.some(actual => actual.modelId === model.modelId.trim()
+      && (actual.displayName || '') === (model.displayName || '').trim() && actual.modelType === model.modelType && actual.enabled === model.enabled
+      && (actual.description || '') === (model.description || '').trim()));
+}

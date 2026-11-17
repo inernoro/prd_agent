@@ -201,7 +201,8 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(updateIndex).toBeGreaterThan(pendingIndex);
     expect(commitIndex).toBeGreaterThan(updateIndex);
     expect(shellSource).toContain('id="cds-information-center-host"');
-    expect(shellSource).toContain('<SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} />');
+    expect(shellSource).toContain('<SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}');
+    expect(informationCenterSource).toContain('运维操作待授权');
     expect(informationCenterSource).toContain('信息中心');
     expect(informationCenterSource).toContain('informationCount');
     expect(styles).not.toContain('.cds-bottom-docks');

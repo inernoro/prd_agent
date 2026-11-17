@@ -18,7 +18,7 @@ describe('台账空 ≠ 整页空', () => {
   it('整页让位给空状态的条件不是单看台账', () => {
     expect(page, 'allReports 为空就直接 return 空状态，流水线被一起吞掉')
       .not.toMatch(/if \(allReports\.length === 0\) \{/);
-    expect(page).toMatch(/if \(allReports\.length === 0 && pipelineSettledEmpty\)/);
+    expect(page).toMatch(/if \(allReports\.length === 0 && \(!showOverview \|\| pipelineSettledEmpty\)\)/);
   });
 
   it('让位要求流水线成功返回且真的报了零', () => {

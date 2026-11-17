@@ -71,14 +71,19 @@ try {
     const selector = selectors[scene.kind];
     const result = { route, kind: scene.kind, errors, syntheticApis: true };
     async function inspect(label) {
-      const target = page.locator(`main .cds-workspace ${selector}`).first();
-      const present = await target.count();
-      if (!present) return { present: false };
-      const measured = await target.evaluate(e => {
-        const r = e.getBoundingClientRect(), w = e.closest('.cds-workspace').getBoundingClientRect();
+      // Resolve and measure the current element in one browser tick: React may
+      // replace an identical skeleton between locator resolution and evaluation.
+      const handle = await page.waitForFunction(selector => {
+        const e = document.querySelector(selector);
+        if (!e || !e.isConnected) return false;
+        const workspace = e.closest('.cds-workspace');
+        if (!workspace) throw new Error('Loading target has no original workspace ancestor');
+        const r = e.getBoundingClientRect(), w = workspace.getBoundingClientRect();
         return { present: true, x: r.x - w.x, y: r.y - w.y, width: r.width, height: r.height,
           shape: e.outerHTML.replace(/aria-label="[^"]*"/g, '').replace(/id="[^"]*"/g, '').replace(/class="([^"]*)"/g, (_, cls) => `class="${cls.split(/\s+/).sort().join(' ')}"`) };
-      });
+      }, `main .cds-workspace ${selector}`);
+      let measured;
+      try { measured = await handle.jsonValue(); } finally { await handle.dispose(); }
       if (['settings', 'project-settings', 'release-console'].includes(scene.kind)) await page.screenshot({ path: path.join(out, `${before ? 'before' : 'after'}-${scene.kind}-${label}.jpg`) });
       return measured;
     }

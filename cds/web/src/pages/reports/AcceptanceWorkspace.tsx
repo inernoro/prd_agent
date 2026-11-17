@@ -15,13 +15,7 @@ import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { AcceptanceField, AcceptanceTemplateEditor, acceptanceInputClass, normalizeAcceptanceCases } from './AcceptanceTemplateEditor';
 import { AcceptanceResultEditor } from './AcceptanceResultEditor';
 
-export const ACCEPTANCE_TABS: Array<{ id: AcceptanceView; label: string }> = [
-  { id: 'templates', label: '测试清单' }, { id: 'tasks', label: '执行任务' }, { id: 'matrix', label: '历史矩阵' }, { id: 'reports', label: '验收报告' },
-];
-
-export function AcceptanceNavigation({ view, onChange }: { view: AcceptanceView; onChange: (view: AcceptanceView) => void }): JSX.Element {
-  return <nav className="flex shrink-0 flex-wrap gap-1 border-b border-border pb-2" aria-label="验收中心导航">{ACCEPTANCE_TABS.map((tab) => <Button key={tab.id} size="sm" variant={view === tab.id ? 'secondary' : 'ghost'} aria-current={view === tab.id ? 'page' : undefined} onClick={() => onChange(tab.id)}>{tab.label}</Button>)}</nav>;
-}
+export { ACCEPTANCE_TABS, AcceptanceNavigation } from '@/components/reports/AcceptanceNavigation';
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {

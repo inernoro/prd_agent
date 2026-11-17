@@ -441,7 +441,7 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
                 </td>
                 <td className="w-[11.875rem] px-3 py-3 align-top"><DefectPills counts={c.defectCounts} /></td>
                 <td className="w-[6rem] px-3 py-3 text-right">
-                  <button type="button" className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenCluster(c)}>{c.count} 份</button>
+                  <button type="button" data-report-cluster-target={c.target} title="查看此对象的全部报告，清除其它报告筛选" className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenCluster(c)}>{c.count} 份</button>
                 </td>
               </tr>
             );

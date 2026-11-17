@@ -1,8 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../web/src/lib/api.js';
-import { canReadApproval, createApprovalPollingGate } from '../../web/src/hooks/approvalPolling.js';
+import { canReadApproval, createApprovalPollingGate, nextUnseenApproval } from '../../web/src/hooks/approvalPolling.js';
 
 describe('human approval polling', () => {
+  it('verifies an unknown write outcome with a new GET after the pre-write snapshot has settled', async () => {
+    let finishOld!: (value: string) => void;
+    const oldRead = vi.fn(() => new Promise<string>(resolve => { finishOld = resolve; }));
+    const freshRead = vi.fn(async () => 'completed-after-write');
+    const gate = createApprovalPollingGate<string>();
+    const old = gate.run(oldRead);
+    await Promise.resolve();
+    const verify = gate.runFresh(freshRead);
+    expect(freshRead).not.toHaveBeenCalled();
+    finishOld('pending-before-write');
+    expect(await old).toEqual({ kind: 'ok', data: 'pending-before-write' });
+    expect(await verify).toEqual({ kind: 'ok', data: 'completed-after-write' });
+    expect(freshRead).toHaveBeenCalledTimes(1);
+  });
+  it('does not reopen a deferred request on heartbeat or late refresh, but keeps new requests discoverable', () => {
+    const old = { id: 'old' }, fresh = { id: 'new' };
+    const deferred = new Set(['old']);
+    expect(nextUnseenApproval([old], deferred)).toBeUndefined();
+    expect(nextUnseenApproval([old], deferred)).toBeUndefined();
+    expect(nextUnseenApproval([old, fresh], deferred)).toEqual(fresh);
+    expect(nextUnseenApproval([old, fresh], deferred, 'old')).toEqual(old);
+    expect(nextUnseenApproval([fresh], deferred, 'old')).toEqual(fresh);
+    expect(nextUnseenApproval([], deferred, 'old')).toBeUndefined();
+  });
   it('requires an explicit server capability, including before authentication resolves', () => {
     expect(canReadApproval(undefined, 'operator')).toBe(false);
     expect(canReadApproval(undefined, 'accessRequests')).toBe(false);

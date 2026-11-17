@@ -82,6 +82,8 @@ export interface ReleaseLogEntry {
 export interface ReleaseRun {
   governance?: import('../../../../src/domain/release-governance').ReleaseGovernanceReceipt;
   releaseId: string;
+  /** 既有后端审计关联号；不是幂等键。 */
+  requestId?: string;
   projectId: string;
   branchId: string;
   commitSha: string;

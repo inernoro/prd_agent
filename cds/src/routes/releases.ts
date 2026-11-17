@@ -7,7 +7,7 @@ import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { CdsConfig, IShellExecutor, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
-import { ReleaseService, isReleaseRunTerminal } from '../services/release-service.js';
+import { ReleaseService, ReleaseNotStartedError, isReleaseRunTerminal } from '../services/release-service.js';
 import { readReleaseHealthSnapshot } from '../services/release-health-snapshot.js';
 import {
   discoverReleaseStrategies,
@@ -68,6 +68,11 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   // 那是别人的目录，往里写审计流水会让每次跑测试都在开发者仓库里留一份垃圾。
   // 生产走 server.ts 传进来的完整 CdsConfig，repoRoot 必然有值。
   const batches = new ReleaseBatchService(deps.stateService, service);
+  const replyStartError = (req: Request, res: Response, error: unknown): void => {
+    res.status(409).json({ error: error instanceof Error ? error.message : String(error),
+      ...(error instanceof ReleaseNotStartedError ? { releaseOutcome: 'not-started', requestId: req.get('X-CDS-Request-Id') } : {}),
+    });
+  };
   const stateRoot = deps.config?.repoRoot;
   const history = deps.history ?? new ReleaseTargetHistoryStore({
     storePath: stateRoot ? path.join(stateRoot, '.cds', 'release-target-history.json') : undefined,
@@ -649,7 +654,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       });
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
-      res.status(409).json({ error: (err as Error).message });
+      replyStartError(req, res, err);
     }
   });
 
@@ -683,7 +688,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     }
     if (rejectProjectMismatch(req, res, existing.projectId)) return;
     if (rejectUnscopedAiMutation(req, res)) return;
-    if (existing.batchId) { res.status(409).json({ error: '此记录属于发布批次，请在批次中恢复该目标原版本' }); return; }
+    if (existing.batchId) { replyStartError(req, res, new ReleaseNotStartedError('此记录属于发布批次，请在批次中恢复该目标原版本')); return; }
     try {
       const body = (req.body || {}) as Record<string, unknown>;
       const targetReleaseId = typeof body.targetReleaseId === 'string' && body.targetReleaseId.trim()
@@ -701,7 +706,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         typeof body.authorizationId === 'string' ? body.authorizationId : undefined);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
-      res.status(409).json({ error: (err as Error).message });
+      replyStartError(req, res, err);
     }
   });
 
@@ -713,7 +718,12 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     }
     if (rejectProjectMismatch(req, res, source.projectId)) return;
     if (rejectUnscopedAiMutation(req, res)) return;
-    if (source.batchId) { res.status(409).json({ error: '此记录属于发布批次，请在批次中重试失败目标以保留固定版本' }); return; }
+    if (source.batchId) { replyStartError(req, res, new ReleaseNotStartedError('此记录属于发布批次，请在批次中重试失败目标以保留固定版本')); return; }
+
+    if (!source.commitSha?.trim()) {
+      replyStartError(req, res, new ReleaseNotStartedError('原发布记录缺少可确认的来源版本，不能重发；请重新选择明确的分支版本。'));
+      return;
+    }
     try {
       const run = await service.startRelease({
         branchId: source.branchId,
@@ -725,7 +735,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       });
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
-      res.status(409).json({ error: (err as Error).message });
+      replyStartError(req, res, err);
     }
   });
 

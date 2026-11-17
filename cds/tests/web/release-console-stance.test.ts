@@ -117,9 +117,15 @@ describe('本次真的发起过：照旧说现在时', () => {
   });
 
   it('失败', () => {
-    const stance = buildConsoleStance({ ...base, sessionRun: { status: 'failed' }, failed: true });
+    const stance = buildConsoleStance({ ...base, sessionRun: { status: 'failed', commitSha: 'a'.repeat(40) }, selectedCommit: 'a'.repeat(40), failed: true });
     expect(stance.title).toBe('发布失败');
     expect(stance.primaryLabel).toBe('重新发布');
+  });
+
+  it('已选来源前进时，不把新版本说成重复原版', () => {
+    expect(buildConsoleStance({ ...base, sessionRun: { status: 'success', commitSha: 'a'.repeat(40) }, selectedCommit: 'b'.repeat(40) }).primaryLabel).toBe('发布所选版本');
+    expect(buildConsoleStance({ ...base, sessionRun: { status: 'success', commitSha: 'a'.repeat(40) }, selectedCommit: 'a'.repeat(7) }).primaryLabel).toBe('发布所选版本');
+    expect(buildConsoleStance({ ...base, sessionRun: { status: 'success', commitSha: 'a'.repeat(40) }, selectedCommit: 'a'.repeat(40) }).primaryLabel).toBe('再发一次');
   });
 
   it('进行中压过一切', () => {
@@ -157,7 +163,9 @@ describe('接线：判定必须真的渲染到屏幕上', () => {
    */
   it('标题 / 标签 / 说明 / 主按钮四处都走同一份判定', () => {
     expect(PAGE).toContain('const stance = buildConsoleStance({');
-    expect(PAGE).toContain('const statusTitle = stance.title;');
+    expect(PAGE).toContain("const statusTitle = targetUnconfirmed ? '本次结果待确认' : stance.title;");
+    expect(PAGE).toContain('!targetUnconfirmed && stance.badge');
+    expect(PAGE).toContain('!targetUnconfirmed && stance.hint');
     expect(PAGE).toContain('{stance.badge}');
     expect(PAGE).toContain('{stance.hint}');
     expect(PAGE).toContain(': stance.primaryLabel}');

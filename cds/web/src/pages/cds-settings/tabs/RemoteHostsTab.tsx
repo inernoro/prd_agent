@@ -23,6 +23,8 @@ import {
   XCircle,
 } from 'lucide-react';
 
+import { useSettingsSessionOwner } from '../useSettingsSessionState';
+import { useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { apiRequest, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -55,6 +57,7 @@ interface ListResponse {
 }
 
 interface InstanceResponse {
+  readError?: string;
   instance: {
     deploymentId: string;
     host: string;
@@ -76,38 +79,46 @@ type LoadState =
 type DeployTarget = { host: RemoteHostPublicView } | null;
 
 export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }): JSX.Element {
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const owner = useSettingsSessionOwner();
+  const beginRead = useSettingsReadRequest();
+  const [reading, setReading] = useState(false);
+  const [scopedState, setScopedState] = useState<{ owner: object | null; value: LoadState }>(() => ({ owner, value: { status: 'loading' } }));
+  const state: LoadState = scopedState.owner === owner ? scopedState.value : { status: 'loading' };
+  const setState = (value: LoadState) => setScopedState({ owner, value });
   const [showCreate, setShowCreate] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [deployTarget, setDeployTarget] = useState<DeployTarget>(null);
 
   const reload = async () => {
+    const signal = beginRead(); setReading(true);
     try {
-      const data = await apiRequest<ListResponse>('/api/cds-system/remote-hosts');
+      const data = await apiRequest<ListResponse>('/api/cds-system/remote-hosts', { signal });
       const instances: Record<string, InstanceResponse> = {};
       await Promise.all(
         data.hosts.map(async h => {
           try {
-            instances[h.id] = await apiRequest<InstanceResponse>(
-              `/api/cds-system/remote-hosts/${h.id}/instance`,
-            );
-          } catch {
-            instances[h.id] = { instance: null };
+            const result = await apiRequest<InstanceResponse>(`/api/cds-system/remote-hosts/${h.id}/instance`, { signal });
+            if (!Object.hasOwn(result, 'instance')) throw new Error('服务未返回实例状态');
+            instances[h.id] = result;
+          } catch (err) {
+            instances[h.id] = { instance: null, readError: err instanceof Error ? err.message : String(err) };
           }
         }),
       );
+      if (signal.aborted) return;
       setState({ status: 'ok', hosts: data.hosts, instances });
     } catch (err) {
+      if (signal.aborted) return;
       setState({
         status: 'error',
         message: err instanceof ApiError ? err.message : String(err),
       });
-    }
+    } finally { if (!signal.aborted) setReading(false); }
   };
 
   useEffect(() => {
     void reload();
-  }, []);
+  }, [owner]);
 
   const handleDelete = async (host: RemoteHostPublicView) => {
     try {
@@ -148,6 +159,22 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
     }
   };
 
+  const touchAction = 'min-h-[3.25rem] text-base xl:min-h-0 xl:text-xs';
+  function renderActions(host: RemoteHostPublicView): JSX.Element {
+    return <div className="flex flex-wrap items-center gap-2">
+      <Button type="button" className={touchAction} variant="outline" size="sm" title="测试 SSH 连接" onClick={() => void handleTest(host)} disabled={testingId !== null || reading}>{testingId === host.id ? <Loader2 className="animate-spin" /> : <TestTube2 />}测试 SSH</Button>
+      <Button type="button" className={touchAction} variant="outline" size="sm" title="部署 Sidecar" onClick={() => setDeployTarget({ host })} disabled={!host.isEnabled}><Rocket />部署 Sidecar</Button>
+      <Button type="button" className={touchAction} variant="ghost" size="sm" onClick={() => void handleToggleEnabled(host)}>{host.isEnabled ? '停用' : '启用'}</Button>
+      <ConfirmAction scopeKey={host.id} title={`删除远程主机 ${host.name}？`} description={`编号 ${host.id}，SSH 目标 ${host.sshUser}@${host.host}:${host.sshPort}。此操作不可撤销。`} confirmLabel="删除" onConfirm={() => handleDelete(host)} trigger={<Button type="button" className={touchAction} variant="ghost" size="sm"><Trash2 />删除</Button>} />
+    </div>;
+  }
+  function instanceStatus(response?: InstanceResponse): JSX.Element {
+    if (response?.readError || !response) return <div className="space-y-1"><span className="text-sm text-warn">实例状态未确认</span>{response?.readError ? <details><summary className="cursor-pointer text-xs text-muted-foreground">读取失败详情</summary><p className="mt-1 break-all text-xs text-muted-foreground">{response.readError}</p></details> : null}</div>;
+    const instance = response.instance;
+    if (!instance) return <span className="text-sm text-muted-foreground">未部署</span>;
+    return <div className="space-y-1"><code className="break-all text-sm">{instance.host}:{instance.port}</code><p className={`text-sm ${instance.healthy === true ? 'text-ok' : 'text-warn'}`}>{instance.healthy === true ? '运行正常' : instance.healthy === false ? '健康异常' : '健康未确认'}{instance.version ? ` · ${instance.version}` : ''}</p></div>;
+  }
+
   return (
     <Section
       title="远程主机"
@@ -163,7 +190,7 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
           <div className="text-sm text-muted-foreground">
             {state.status === 'ok' ? `${state.hosts.length} 台已登记` : null}
           </div>
-          <Button size="sm" onClick={() => setShowCreate(v => !v)}>
+          <div className="flex flex-wrap gap-2"><Button type="button" className={touchAction} size="sm" variant="outline" disabled={reading} onClick={() => void reload()}><Loader2 className={reading ? 'animate-spin' : 'hidden'} />重新读取状态</Button><Button className={touchAction} size="sm" onClick={() => setShowCreate(v => !v)}>
             {showCreate ? (
               <>
                 <X className="mr-1" /> 取消新增
@@ -174,7 +201,7 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
               </>
             )}
           </Button>
-        </div>
+        </div></div>
 
         {showCreate ? (
           <CreateHostForm
@@ -195,8 +222,8 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
           </div>
         ) : null}
         {state.status === 'ok' && state.hosts.length > 0 ? (
-          <div className="overflow-hidden rounded-md border border-border">
-            <table className="w-full text-sm">
+          <div className="hidden overflow-x-auto rounded-md border border-border xl:block">
+            <table className="w-full table-fixed text-sm"><colgroup><col style={{width:'18%'}} /><col style={{width:'23%'}} /><col style={{width:'18%'}} /><col style={{width:'10%'}} /><col style={{width:'7%'}} /><col style={{width:'24%'}} /></colgroup>
               <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">名称</th>
@@ -209,7 +236,6 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
               </thead>
               <tbody>
                 {state.hosts.map(h => {
-                  const inst = state.instances[h.id]?.instance ?? null;
                   return (
                     <tr key={h.id} className="border-t border-border align-middle">
                       <td className="px-3 py-2.5">
@@ -217,13 +243,13 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                           <ServerCog className="h-4 w-4 text-muted-foreground" />
                           <div className="min-w-0">
                             <div className="font-medium">{h.name}</div>
-                            <div className="font-mono text-xs text-muted-foreground/70">
+                            <div className="break-all font-mono text-xs text-muted-foreground/70">
                               fp:{h.sshPrivateKeyFingerprint}
                             </div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 font-mono text-xs">
+                      <td className="break-all px-3 py-2.5 font-mono text-xs">
                         {h.sshUser}@{h.host}:{h.sshPort}
                         {h.lastTestOk === true ? (
                           <span className="ml-2 inline-flex items-center gap-1 text-ok">
@@ -236,25 +262,7 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                         ) : null}
                       </td>
                       <td className="px-3 py-2.5">
-                        {inst ? (
-                          <div className="space-y-0.5">
-                            <div className="font-mono text-xs">
-                              {inst.host}:{inst.port}
-                            </div>
-                            <div
-                              className={
-                                inst.healthy
-                                  ? 'text-xs text-ok'
-                                  : 'text-xs text-warn'
-                              }
-                            >
-                              {inst.healthy ? 'running' : 'unhealthy'}
-                              {inst.version ? ` · ${inst.version}` : ''}
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground/60">未部署</span>
-                        )}
+                        {instanceStatus(state.instances[h.id])}
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="flex flex-wrap gap-1">
@@ -274,54 +282,10 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                         </div>
                       </td>
                       <td className="px-3 py-2.5">
-                        <button
-                          type="button"
-                          onClick={() => void handleToggleEnabled(h)}
-                          className={
-                            h.isEnabled
-                              ? 'rounded-full bg-ok-soft px-2.5 py-0.5 text-xs font-medium text-ok hover:bg-ok/25'
-                              : 'rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted/70'
-                          }
-                        >
-                          {h.isEnabled ? '已启用' : '已禁用'}
-                        </button>
+                        <span className={`text-xs ${h.isEnabled ? 'text-ok' : 'text-muted-foreground'}`}>{h.isEnabled ? '已启用' : '已禁用'}</span>
                       </td>
                       <td className="px-3 py-2.5">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => void handleTest(h)}
-                            disabled={testingId === h.id}
-                            title="测试 SSH 连接"
-                          >
-                            {testingId === h.id ? (
-                              <Loader2 className="animate-spin" />
-                            ) : (
-                              <TestTube2 />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setDeployTarget({ host: h })}
-                            disabled={!h.isEnabled}
-                            title="部署 Sidecar"
-                          >
-                            <Rocket />
-                          </Button>
-                          <ConfirmAction
-                            title="删除远程主机"
-                            description={`删除 ${h.name}（${h.host}）。此操作不可撤销。`}
-                            confirmLabel="删除"
-                            onConfirm={() => handleDelete(h)}
-                            trigger={(
-                              <Button variant="ghost" size="sm" title="删除">
-                                <Trash2 />
-                              </Button>
-                            )}
-                          />
-                        </div>
+                        {renderActions(h)}
                       </td>
                     </tr>
                   );
@@ -330,6 +294,7 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
             </table>
           </div>
         ) : null}
+        {state.status === 'ok' && state.hosts.length > 0 ? <div className="divide-y divide-border xl:hidden">{state.hosts.map(host => <article key={host.id} data-remote-host-id={host.id} className="space-y-3 py-4"><header className="flex flex-wrap items-start justify-between gap-2"><h3 className="break-words font-semibold">{host.name}</h3><span className={`text-sm ${host.isEnabled ? 'text-ok' : 'text-muted-foreground'}`}>{host.isEnabled ? '已启用' : '已禁用'}</span></header><p className="break-all font-mono text-sm">{host.sshUser}@{host.host}:{host.sshPort}</p>{instanceStatus(state.instances[host.id])}{host.lastTestOk !== undefined ? <p className={`text-sm ${host.lastTestOk ? 'text-ok' : 'text-warn'}`}>上次 SSH 测试：{host.lastTestOk ? '成功' : host.lastTestError || '失败'}</p> : null}{host.tags.length ? <p className="break-words text-sm text-muted-foreground">标签：{host.tags.join('、')}</p> : null}{renderActions(host)}<details><summary className="min-h-[3.25rem] cursor-pointer text-sm text-muted-foreground">主机编号与 SSH 密钥指纹</summary><p className="mt-2 break-all font-mono text-xs text-muted-foreground">{host.id}<br />{host.sshPrivateKeyFingerprint}</p></details></article>)}</div> : null}
       </div>
 
       {deployTarget ? (
@@ -451,9 +416,11 @@ function DeploySidecarDialog({
         }
       }}
     >
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>
+      <DialogContent className="max-w-2xl border-border [&>button:last-child]:min-h-[3.25rem] [&>button:last-child]:min-w-[3.25rem]">
+
+
+        <DialogHeader className="pr-10">
+          <DialogTitle className="break-all">
             部署 Sidecar 到 {host.name}（{host.host}）
           </DialogTitle>
         </DialogHeader>

@@ -70,3 +70,9 @@ docker run -p 8090:8090 \
   -e LlmGwJwt__Secret="please-change-this-to-a-strong-secret-0001" \
   prdagent-llmgw
 ```
+
+## 密钥维护的并发前置条件
+
+旧共享密钥策略保存必须提交最近读取的 `expectedPolicyRevision`；GET 的新增 `policyRevision` 为策略编辑版本，业务调用观测不改变它。确认客户端切换必须提交用户实际确认的 `expectedSuccessorKeyId`。字段缺失返回 HTTP 428（`LEGACY_POLICY_REVISION_REQUIRED` / `ROTATION_EXPECTATION_REQUIRED`），旧写客户端须先读取并升级请求，服务端不会代填最新值。
+
+策略版本失配返回 `LEGACY_POLICY_CONFLICT`；后继已变化返回 `ROTATION_PAIR_CHANGED`，均在写入前拒绝。旧共享密钥的永久撤销不可被陈旧策略恢复。轮换仍沿用既有两份密钥记录的阶段校验；这项前置条件不提供跨文档事务，写后审计或部分阶段失败仍须读取核对，不能盲重提。

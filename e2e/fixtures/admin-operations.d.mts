@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 export const targetName: string;
+export const run: { commitSha: string };
 export const target: {
   id: string; projectId: string; name: string; type: string; isEnabled: boolean;
   environment: string; isCanonical: boolean; strategy: { mode: string; command: string };

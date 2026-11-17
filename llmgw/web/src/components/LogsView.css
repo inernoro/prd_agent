@@ -1,0 +1,19 @@
+.lg-log-filter-header { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.lg-log-filter-header strong { font-size: var(--fs-body); font-weight: 600; }
+.lg-log-filter-header button { min-height: 36px; padding: 4px 8px; background: transparent; color: var(--accent); border: 0; font: inherit; }
+.lg-log-filter-header button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lg-log-time-result { display: block; font-size: var(--fs-secondary); line-height: 1.4; }
+
+.lg-logs-title-line { display: flex; align-items: baseline; gap: 12px; }
+.lg-logs-title-line > span { color: var(--text-secondary); font-size: var(--fs-secondary); }
+@media (max-width: 767px) {
+  .lg-logs-view .lg-log-page-actions { grid-template-areas: 'filter range refresh'; grid-template-columns: 44px minmax(0, 1fr) 44px; }
+  .lg-logs-view .lg-log-page-actions > button { justify-self: end; }
+}
+
+/* Empty results carry guidance, not a viewport-sized placeholder. */
+.lg-logs-view .lg-log-empty { min-height: 0; padding: 32px 24px; }
+
+/* Keep empty guidance in the viewport while the column header remains horizontally scrollable. */
+.lg-logs-view .lg-log-table-scroll[data-empty] { container-type: inline-size; }
+.lg-logs-view .lg-log-table-scroll[data-empty] .lg-log-empty { width: 100cqw; box-sizing: border-box; position: sticky; left: 0; }
