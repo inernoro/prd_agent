@@ -49,6 +49,7 @@ import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
 import { buildConsoleStance, isShownRunCurrent, planRollbackToVersion, sameCommit } from '@/lib/releaseConsoleState';
 import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { initialReleaseCenterProject, rememberReleaseCenterProject, resolveReleaseProject, resolveInitialReleaseProject } from '@/lib/releaseCenter';
 import { BatchReleasePanel } from './release-center/BatchReleasePanel';
@@ -1403,7 +1404,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                               300px 栏里先被吃掉的正好是末尾的耗时（1m42s 截成 1m4…）。 */}
                           <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 cds-ident text-[0.6562rem] text-muted-foreground">
                             <span className="min-w-0">
-                              {item.operator || '-'} · {formatDateTime(item.startedAt)}
+                              {releaseActorLabel(item.operator)} · {formatDateTime(item.startedAt)}
                               {formatDuration(item.startedAt, item.finishedAt) ? ` · ${formatDuration(item.startedAt, item.finishedAt)}` : ''}
                             </span>
                             <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">

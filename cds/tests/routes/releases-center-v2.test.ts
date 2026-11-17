@@ -146,6 +146,20 @@ describe('发布中心 v2 传输面', () => {
     expect(row.dora.frequency.successCount).toBe(1);
   });
 
+  it('线上版本的操作人始终来自成功记录，而不是最近失败的发布', async () => {
+    stateService.patchReleaseRun('rel-prod-1', { operator: 'user:owner:Alice' });
+    addRun({ releaseId: 'failed-later', targetId: 'target-prod', status: 'failed',
+      startedAt: new Date().toISOString(), operator: 'user:other:Bob', commitSha: STAGE_SHA });
+    const res = await getJson(server, '/api/releases/center?project=proj-a');
+    const row = res.body.rows.find((r: any) => r.target.id === 'target-prod');
+    expect(row.currentCommit).toBe(PROD_SHA);
+    expect(row.lastOperator).toBe('user:owner:Alice');
+    expect(row.currentRun.releaseId).toBe('rel-prod-1');
+    expect(row.latestRun.releaseId).toBe('failed-later');
+    expect(row.comparison.reason).toBeTruthy();
+    expect(row.comparison.overlapCount).toBeUndefined();
+  });
+
   it('台账为空时 commitMeta 是空对象，响应仍然 200', async () => {
     const res = await getJson(server, '/api/releases/center?project=proj-a');
 

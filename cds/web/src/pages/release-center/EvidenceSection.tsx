@@ -23,6 +23,7 @@ import { CheckCircle2, ChevronRight, Circle, FileText, Loader2, RotateCcw, Scrol
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { FailureDiagnosis } from './FailureDiagnosis';
 import { formatDateTime, runTone, statusLabel } from './shared';
 import type { CenterRow, ReleaseRun, ReleaseTargetChange } from './types';
@@ -173,7 +174,7 @@ export function EvidenceSection({
                         合进同一格（说明在上、操作人在下），不额外加一列破坏列宽标注。 */}
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate">{subject || `提交 ${run.commitSha.slice(0, 12)}`}</span>
-                      <span className="truncate text-[0.6875rem] text-muted-foreground">{run.operator || '-'}</span>
+                      <span className="truncate text-[0.6875rem] text-muted-foreground">{releaseActorLabel(run.operator)}</span>
                     </span>
                     <span className="flex flex-wrap items-center justify-end gap-1.5 [&_button]:h-[1.8125rem] [&_button]:px-2.5">
                       {failed ? (

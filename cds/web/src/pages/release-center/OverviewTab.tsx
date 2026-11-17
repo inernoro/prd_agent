@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { describeCommitPosition, formatAgo } from '@/lib/releaseRail';
 import { formatDoraDuration } from '@/lib/releaseDora';
 import { releaseEtaText } from '@/lib/releaseEta';
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { ReleaseTimeline } from './ReleaseTimeline';
 import {
   Chip,
@@ -109,7 +110,7 @@ export function OverviewTab({
           <p className="text-[0.75rem] text-muted-foreground">
             {row.currentVersion ? `${row.currentVersion} · ` : ''}
             {formatDateTime(row.lastReleasedAt)}
-            {row.lastOperator ? ` · ${row.lastOperator}` : ''}
+            {` · ${releaseActorLabel(row.lastOperator)}`}
           </p>
           <p className={`text-[0.75rem] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
             {position.text}

@@ -69,9 +69,16 @@ describe('从发布中心跳过来、本次什么都没做', () => {
     expect(stance.primaryLabel).toBe('重新发布这一版');
   });
 
-  it('归因带上是哪一版、谁发的', () => {
+  it('归因带上版本，旧通用身份明确待核实', () => {
     expect(stance.hint).toContain('c0bc1ee');
-    expect(stance.hint).toContain('user');
+    expect(stance.hint).toContain('发布人待核实');
+  });
+
+  it('认证身份显示当时的名字，不展示内部编码', () => {
+    const named = buildConsoleStance({ ...base,
+      latestRun: { status: 'success', commitSha: 'c0bc1ee9f0', operator: 'user:owner:Alice' } });
+    expect(named.hint).toContain('Alice');
+    expect(named.hint).not.toContain('user:owner:Alice');
   });
 
   /** 缺字段时整段定语不出，不许拼出「（ · ）」这种半截话。 */
