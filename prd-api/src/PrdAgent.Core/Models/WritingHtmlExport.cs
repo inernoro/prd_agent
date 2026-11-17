@@ -39,6 +39,7 @@ public static class WritingHtmlExport
             html.Append("<section id=\"").Append(Anchor("s", section.Id)).Append("\"><h2>").Append(E(section.Title)).Append("</h2>");
             if (!string.IsNullOrWhiteSpace(section.Condition)) html.Append("<blockquote>适用条件：").Append(E(section.Condition)).Append("</blockquote>");
             foreach (var p in section.Paragraphs) {
+                if (p.Status == "auth") html.Append("<div class=\"meta\">作者补充</div>");
                 html.Append("<p id=\"").Append(Anchor("p", p.Id)).Append("\">").Append(E(p.Text)).Append("</p>");
                 foreach (var sourceId in p.Citations) {
                     html.Append("<details><summary><a href=\"#").Append(Anchor("source", sourceId)).Append("\">").Append(E(sourceId)).Append("</a> · 引用原文</summary><blockquote>");

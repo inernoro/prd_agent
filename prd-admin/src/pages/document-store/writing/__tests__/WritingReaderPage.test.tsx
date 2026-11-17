@@ -43,6 +43,27 @@ afterEach(async () => { if (root) await act(async () => root.unmount()); contain
 
 describe('读者来源状态必须真实', () => {
   beforeEach(() => { Object.defineProperty(globalThis, 'IntersectionObserver', { configurable: true, value: class { observe() {} disconnect() {} } }); });
+  it('来源与作者裁定混排时只标记作者补充，保留发布正文和来源引用', async () => {
+    const data = fixture();
+    const paragraphs = [
+      { id: 'p6', text: '少于200份资料可以按单包归档。', status: 'src' as const, citations: ['S1'], confirmed: true },
+      { id: 'p7', text: '恰好200份也必须分包，每包严格少于200份。', status: 'auth' as const, citations: [], confirmed: true },
+      { id: 'p8', text: '任何一包归档失败都必须立即停止。', status: 'src' as const, citations: ['S1'], confirmed: true },
+    ];
+    data.publication.sections = [{ id: 'quantity', title: '数量边界与异常', paragraphs }];
+    data.publication.sources = [{ id: 'S1', entryId: 'source1', title: '归档操作规范', content: '少于200份可以单包归档。', hash: 'source-hash', status: 'read', updatedAt: '2026-11-17T00:00:00Z' }];
+    const original = structuredClone(paragraphs);
+    api.read.mockResolvedValue(ok(data)); await mount(false);
+    for (const paragraph of paragraphs) {
+      const node = container.querySelector(`[data-paragraph-id="${paragraph.id}"]`)!;
+      expect(node.querySelector('p')?.textContent).toBe(paragraph.text);
+      if (paragraph.status === 'auth') expect(node.querySelector('.tag')?.textContent).toBe('作者补充');
+      else expect(node.querySelector('.tag')).toBeNull();
+    }
+    expect(container.querySelectorAll('.writing-reader-body [data-paragraph-id] .tag')).toHaveLength(1);
+    expect(container.querySelector('.srcs')?.textContent).toContain('S1 · 归档操作规范');
+    expect(paragraphs).toEqual(original);
+  });
   it('未编排操作的阅读入口只介绍章节导读，不承诺操作步骤和字幕', async () => {
     await mount(false);
     const card = container.querySelector('.writing-learning-card')?.textContent ?? '';

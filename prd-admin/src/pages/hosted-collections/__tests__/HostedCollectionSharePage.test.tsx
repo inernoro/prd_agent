@@ -23,19 +23,57 @@ const view: HostedCollectionView = { collection: { id: 'c', name: '交接资料'
 const oldLink = (values: Partial<HostedCollectionShare> = {}): HostedCollectionShare => ({ id: 'old', token: 'token', title: '评审用链接', visibility: 'public', accessLevel: 'password', createdAt: '2026-11-01T00:00:00Z', viewCount: 0, isRevoked: false, shareUrl: '/s/collection/token', snapshot: { collectionId: 'c', version: 1, name: '交接资料', description: '', siteIds: ['doc'], mainSiteId: 'doc', sections: [] }, ...values });
 function button(text: string) { const b = [...container.querySelectorAll('button')].find(e => e.textContent === text); expect(b, text).toBeTruthy(); return b!; }
 async function click(text: string) { await act(async () => button(text).click()); }
-async function mount(link = oldLink()) {
+async function mount(link = oldLink(), reopen = true) {
   api.shares.mockResolvedValue(ok({ items: [link] }));
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   await act(async () => root.render(<MemoryRouter initialEntries={['/web-pages/collections/c/share']}><Routes><Route path="/web-pages/collections/:collectionId/share" element={<HostedCollectionSharePage />} /></Routes></MemoryRouter>));
-  await click('按当前成员重新分享');
+  if (reopen) await click('按当前成员重新分享');
 }
 beforeEach(() => {
   vi.clearAllMocks(); api.view.mockResolvedValue(ok(view)); api.permissions.mockResolvedValue(ok({ fingerprint: 'rights', items: [{ id: 'doc', title: '交接说明', canShare: true, canSync: true, matches: true }] }));
   api.members.mockResolvedValue(ok({ items: [] })); api.create.mockResolvedValue(ok({ id: 'new', token: 'new', shareUrl: '/s/collection/new' }));
 });
-afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
+afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); vi.useRealTimers(); });
 
 describe('重新分享必须保留原有访问约束', () => {
+  it('同版本的单文档分享准确标示版本和选定范围，不声称与三份合集全量一致', async () => {
+    api.view.mockResolvedValue(ok({ ...view, collection: { ...view.collection, siteIds: ['doc', 'side-a', 'side-b'] }, items: [
+      ...view.items, { id: 'side-a', title: '副文档甲', canShare: true, canEdit: true }, { id: 'side-b', title: '副文档乙', canShare: true, canEdit: true },
+    ] }));
+    await mount(oldLink({ accessLevel: 'public', snapshot: { ...oldLink().snapshot, version: view.collection.version, siteIds: ['doc'] } }), false);
+    const row = container.querySelectorAll('.hc-link-table .lrow')[1];
+    expect(row.textContent).toContain('当前版本快照');
+    expect(row.textContent).toContain('1 份 · 固定创建时选定的文档');
+    expect(row.textContent).not.toContain('与合集一致');
+    expect([...row.querySelectorAll('button')].some(b => b.textContent === '按当前成员重新分享')).toBe(false);
+    expect(api.create).not.toHaveBeenCalled();
+  });
+  it('成员搜索只接受适用的至少两字查询，清空和切换对象后不保留过期结果', async () => {
+    vi.useFakeTimers();
+    await mount(oldLink({ accessLevel: 'public', visibility: 'logged-in' }));
+    const wait = async (ms = 250) => { await act(async () => vi.advanceTimersByTimeAsync(ms)); };
+    const query = async (value: string) => { await act(async () => {
+      const input = container.querySelector<HTMLInputElement>('[aria-label="查找指定成员"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }); };
+    await wait(); expect(api.members).not.toHaveBeenCalled();
+    await click('指定成员'); await wait(); expect(api.members).not.toHaveBeenCalled();
+    await query('陈'); await wait(); expect(api.members).not.toHaveBeenCalled();
+    api.members.mockResolvedValueOnce(ok({ items: [{ id: 'member-a', name: '陈甲' }] }));
+    await query(' 陈甲 '); await wait(249); expect(api.members).not.toHaveBeenCalled();
+    await wait(1); expect(api.members).toHaveBeenCalledTimes(1); expect(api.members).toHaveBeenCalledWith('陈甲');
+    expect(container.querySelector('.hc-member-search')?.textContent).toContain('陈甲');
+    await query(' '); await wait(); expect(api.members).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.hc-member-search')?.textContent).not.toContain('陈甲');
+    let resolveSearch!: (value: ReturnType<typeof ok<{ items: { id: string; name: string }[] }>>) => void;
+    api.members.mockImplementationOnce(() => new Promise(resolve => { resolveSearch = resolve; }));
+    await query('陈乙'); await wait(); expect(api.members).toHaveBeenCalledTimes(2);
+    await click('组织内所有人');
+    await act(async () => resolveSearch(ok({ items: [{ id: 'late', name: '迟到成员' }] })));
+    await click('指定成员');
+    expect(container.querySelector('.hc-member-search')?.textContent).not.toContain('迟到成员');
+  });
   it('分享页使用原稿纯底，阅读页仍保留动态背景及控制', async () => {
     container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
     await act(async () => root.render(<MemoryRouter><CollectionShell mode="share" name="分享资料"><p>分享内容</p></CollectionShell></MemoryRouter>));

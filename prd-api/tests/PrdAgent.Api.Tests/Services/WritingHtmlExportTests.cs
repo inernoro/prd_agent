@@ -6,6 +6,29 @@ namespace PrdAgent.Api.Tests.Services;
 public class WritingHtmlExportTests
 {
     [Fact]
+    public void MixedSourceAndAuthorParagraphsKeepTheirSeparateOrigins()
+    {
+        const string original = "少于200份可单包；恰好200份尚未规定。";
+        const string supplement = "恰好200份也分包，每包严格少于200份。<保留作者原文>";
+        var publication = new WritingPublication { Sections = new() { new WritingSection {
+            Id = "s4", Title = "数量边界与异常", Paragraphs = new() {
+                new WritingParagraph { Id = "p6", Status = "src", Text = original, Confirmed = true,
+                    Citations = new() { "S1" }, Quotes = new() { ["S1"] = original } },
+                new WritingParagraph { Id = "p7", Status = "auth", Text = supplement, Confirmed = true }
+            }
+        } } };
+        var before = WritingDeliveryPolicy.Hash(publication);
+        var html = WritingHtmlExport.Render(publication);
+        Assert.Contains("<div class=\"meta\">作者补充</div><p id=\"p7037\">恰好200份也分包，每包严格少于200份。&lt;保留作者原文&gt;</p>", html);
+        Assert.DoesNotContain("作者补充</div><p id=\"p7036\">", html);
+        Assert.Contains("<p id=\"p7036\">" + original + "</p><details><summary><a href=\"#source5331\">S1</a> · 引用原文</summary><blockquote>" + original + "</blockquote></details>", html);
+        Assert.Equal(1, html.Split("作者补充</div>").Length - 1);
+        Assert.DoesNotContain("<保留作者原文>", html);
+        Assert.Contains("default-src 'none'", html);
+        Assert.Equal(before, WritingDeliveryPolicy.Hash(publication));
+    }
+
+    [Fact]
     public void ExportKeepsBoundariesRolesExceptionsAndSourceWithoutExecutingInput()
     {
         var publication = new WritingPublication {

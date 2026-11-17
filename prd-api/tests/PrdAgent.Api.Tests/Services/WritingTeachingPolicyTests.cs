@@ -14,6 +14,28 @@ public class WritingTeachingPolicyTests
     };
     private static WritingTeachingScene Scene() => new() { Id = "scene-1", SectionId = "s1", ParagraphIds = new() { "p1" }, IntentIndexes = new() { 0 }, Title = "先确认执行范围", Highlights = new() { "正式租户禁止执行" }, Narration = "只有测试租户可执行，正式租户禁止执行。" };
 
+    [Theory]
+    [InlineData("src", "依据：数量边界与异常 · 来源 S1")]
+    [InlineData("auth", "依据：数量边界与异常 · 作者确认补充")]
+    [InlineData("mixed", "依据：数量边界与异常 · 来源 S1 · 作者确认补充")]
+    public void RenderedSceneSeparatesOriginalSourcesFromConfirmedAuthorSupplements(string kind, string expected)
+    {
+        var source = new WritingPublication { Sections = new() { new WritingSection {
+            Id = "s4", Title = "数量边界与异常", Paragraphs = new() {
+                new WritingParagraph { Id = "p6", Status = "src", Confirmed = true,
+                    Text = "少于200份资料可以按单包归档；超过200份须分包，每包都需复核人明确确认。", Citations = new() { "S1" } },
+                new WritingParagraph { Id = "p7", Status = "auth", Confirmed = true,
+                    Text = "恰好200份也必须分包，每包严格少于200份；超过200份同样每包严格少于200份，每包均需复核人明确确认。" }
+            }
+        } } };
+        var scene = new WritingTeachingScene { Id = "limit", SectionId = "s4", ParagraphIds = kind switch {
+            "src" => new() { "p6" }, "auth" => new() { "p7" }, _ => new() { "p6", "p7" }
+        } };
+        var before = WritingDeliveryPolicy.Hash(source);
+        Assert.Equal(expected, PrdAgent.Api.Services.WritingTeachingRenderer.SourceLabel(source, scene));
+        Assert.Equal(before, WritingDeliveryPolicy.Hash(source));
+    }
+
     [Fact]
     public void ModelCannotAttachAnExistingSpeechOrInventTiming()
     {

@@ -12,6 +12,17 @@ namespace PrdAgent.Api.Services;
 /// <summary>受控图文讲解。模型只提供文本，不生成虚构的产品操作画面。</summary>
 public static class WritingTeachingRenderer
 {
+    internal static string SourceLabel(WritingPublication source, WritingTeachingScene scene)
+    {
+        var section = source.Sections.Single(s => s.Id == scene.SectionId);
+        var paragraphs = scene.ParagraphIds.Select(id => source.Sections.SelectMany(s => s.Paragraphs).Single(p => p.Id == id)).ToList();
+        var citations = paragraphs.SelectMany(p => p.Citations).Distinct().ToList();
+        var origins = new List<string>();
+        if (citations.Count > 0) origins.Add("来源 " + string.Join("、", citations));
+        if (paragraphs.Any(p => p.Status == "auth")) origins.Add("作者确认补充");
+        return "依据：" + section.Title + " · " + (origins.Count > 0 ? string.Join(" · ", origins) : "作者确认正文");
+    }
+
     public static void DrawFrame(WritingTeaching teaching, int index, bool portrait, string output)
     {
         var width = portrait ? 720 : 1280; var height = portrait ? 1280 : 720;
@@ -36,8 +47,7 @@ public static class WritingTeachingRenderer
                 ctx.Fill(Color.ParseHex("ECEEF8"), new RectangleF(30, boxY - 12, width - 60, portrait ? 160 : 85));
                 Write(ctx, "条件：" + section.Condition, portrait ? 28 : 25, 46, boxY, width - 92, portrait ? 135 : 65, accent);
             }
-            var citations = scene.ParagraphIds.SelectMany(id => teaching.Source.Sections.SelectMany(s => s.Paragraphs).Single(p => p.Id == id).Citations).Distinct().ToList();
-            Write(ctx, "依据：" + section.Title + (citations.Count > 0 ? " · 来源 " + string.Join("、", citations) : " · 作者确认正文"), 22, 46, height - 56, width - 92, 45, muted);
+            Write(ctx, SourceLabel(teaching.Source, scene), 22, 46, height - 56, width - 92, 45, muted);
 
             float Write(IImageProcessingContext c, string text, float size, float x, float top, float wrap, float limit, Color color) {
                 var options = new RichTextOptions(family.CreateFont(size)) { Origin = new PointF(x, top), WrappingLength = wrap, LineSpacing = 1.3f, WordBreaking = WordBreaking.BreakAll };

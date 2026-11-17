@@ -11,7 +11,7 @@ import { readWriting, exportWritingHtml, downloadWritingTeaching } from '@/servi
 import { getDocumentContent } from '@/services/real/documentStore';
 import type { WritingReader, WritingSource } from '@/services/contracts/writing';
 import { WritingThemeButton } from './WritingWorkspacePage';
-import { roleReadingSections, writingKnowledgeHref, writingMediaTimeReached, writingSourceHasSnapshot, writingSourceSnapshotDate } from './writingView';
+import { PARAGRAPH_REGISTRY, roleReadingSections, writingKnowledgeHref, writingMediaTimeReached, writingSourceHasSnapshot, writingSourceSnapshotDate } from './writingView';
 import './writingTutorial.css';
 import './writingReader.css';
 
@@ -285,7 +285,7 @@ export function WritingReaderPage({ storeId, entryId, tutorial }: { storeId: str
             <div className="writing-body-skeleton-mobile" aria-hidden>{[[45, 18], [100, 14], [100, 14], [70, 14]].map(([width, height], i) => <div className="sk" key={i} style={{ width: `${width}%`, height }} />)}</div>
           </> : <div className="callout"><span>正文暂未载入。{bodyFailure} 以上概要来自已发布的 v{doc.version}；来源更新状态尚未复核。<span className="writing-body-retry"><button className="btn sm" onClick={() => void loadBody(entryId, doc.version, readGeneration.current)}>重试正文</button><button className="btn sm ghost" onClick={() => void fetchData()}>重新加载文档</button></span></span></div>}
         </section> : <>
-        {doc.sections.map((s, i) => <section className="sec" data-section={s.id} key={s.id}><h2><span className="mono">{String(i + 1).padStart(2, '0')}</span>{s.title}</h2>{s.paragraphs.map(p => <div key={p.id} data-paragraph-id={p.id} tabIndex={-1}><MarkdownViewer compact content={p.text} /></div>)}<WritingSectionConstraints section={s} /><div className="srcs">{s.paragraphs.some(p => p.citations.length > 0) && <span className="cap">来源</span>}{[...new Set(s.paragraphs.flatMap(p => p.citations))].map(id => <button className="sc" key={id} onClick={e => openSource(id, e.currentTarget, s.paragraphs.find(p => p.quotes?.[id])?.quotes?.[id] ?? '')}>{id} · {doc.sources.find(source => source.id === id)?.title}</button>)}</div></section>)}
+        {doc.sections.map((s, i) => <section className="sec" data-section={s.id} key={s.id}><h2><span className="mono">{String(i + 1).padStart(2, '0')}</span>{s.title}</h2>{s.paragraphs.map(p => <div key={p.id} data-paragraph-id={p.id} tabIndex={-1}>{p.status === 'auth' && <span className="tag t-m">{PARAGRAPH_REGISTRY.auth.label}</span>}<MarkdownViewer compact content={p.text} /></div>)}<WritingSectionConstraints section={s} /><div className="srcs">{s.paragraphs.some(p => p.citations.length > 0) && <span className="cap">来源</span>}{[...new Set(s.paragraphs.flatMap(p => p.citations))].map(id => <button className="sc" key={id} onClick={e => openSource(id, e.currentTarget, s.paragraphs.find(p => p.quotes?.[id])?.quotes?.[id] ?? '')}>{id} · {doc.sources.find(source => source.id === id)?.title}</button>)}</div></section>)}
         </>}
 
         {doc.openQuestions.length > 0 && <section className="sec"><h2>待确认事项</h2>{doc.openQuestions.map(q => <p key={q.id}>{q.title}：{q.answer}</p>)}</section>}
