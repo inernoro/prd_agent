@@ -4,8 +4,12 @@ import asyncFs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ReleaseGovernanceGit, resolveReleaseProjectRepository, type GovernanceGitRunner } from '../../src/services/release-governance-git.js';
+import { ReleaseGovernanceGit, governanceGitRunner, resolveReleaseProjectRepository, type GovernanceGitRunner } from '../../src/services/release-governance-git.js';
 import { StateService } from '../../src/services/state.js';
+import { resolveGitAuthEnv } from '../../src/services/git-auth-env.js';
+import { executeShellCommand } from '../../src/services/shell-executor.js';
+import type { IShellExecutor, ExecOptions } from '../../src/types.js';
+import type { GitHubAppClient } from '../../src/services/github-app-client.js';
 
 describe('发布治理的真实隔离合并', () => {
   let root: string, repo: string, basis: string, reader: ReleaseGovernanceGit;
@@ -34,6 +38,36 @@ describe('发布治理的真实隔离合并', () => {
     reader = new ReleaseGovernanceGit(() => repo, () => 'main', native);
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  it.each(['github-app','device-flow'] as const)('治理 fetch 复用当前项目 %s 凭据，真实 Git 核验及 PR 取回可用，隔离本地操作不携带凭据',async(source)=>{
+    const state=new StateService(path.join(root,'auth-state.json'),repo);state.load();const now=new Date().toISOString();
+    state.addProject({id:'p',slug:'p',name:'私有仓库',kind:'git',repoPath:repo,githubInstallationId:source==='github-app'?123:undefined,githubCredentialUserId:'owner',createdAt:now,updatedAt:now});
+    state.addProject({id:'other',slug:'other',name:'其他项目',kind:'git',repoPath:path.join(root,'other'),githubInstallationId:456,createdAt:now,updatedAt:now});
+    await state.setGithubDeviceAuth({token:'fixture-device-token',login:'owner',name:'Owner',avatarUrl:null,scopes:['repo'],connectedAt:now},'owner');
+    const app={getInstallationToken:vi.fn(async(installationId:number)=>{expect(installationId).toBe(123);return 'fixture-installation-token';})} as unknown as GitHubAppClient;
+    const token=source==='github-app'?'fixture-installation-token':'fixture-device-token';
+    const expected='AUTHORIZATION: basic '+Buffer.from('x-access-token:'+token).toString('base64');
+    const calls:Array<{command:string;env?:ExecOptions['env']}>=[];
+    const shell={execBackgroundObservation:async(command:string,options?:ExecOptions)=>{
+      calls.push({command,env:options?.env});
+      if(command.includes("'fetch'")){
+        if(options?.env?.GIT_CONFIG_VALUE_0!==expected)return {stdout:'',stderr:'authentication required',exitCode:128};
+        expect(options?.env?.GIT_CONFIG_KEY_0).toBe('http.https://github.com/.extraheader');
+      }else expect(options?.env?.GIT_CONFIG_VALUE_0).toBeUndefined();
+      return executeShellCommand(command,options);
+    }} as IShellExecutor;
+    const provider=vi.fn((repoRoot:string)=>resolveGitAuthEnv({repoRoot,stateService:state,githubApp:app}));
+    const authenticated=new ReleaseGovernanceGit(()=>repo,()=> 'main',governanceGitRunner(shell,provider));
+    try{
+      expect(await authenticated.inspect('p',basis,basis)).toMatchObject({status:'clean',includesBaseline:true});
+      git('push','origin','HEAD:refs/pull/12/head');
+      expect(await authenticated.includesPr('p',basis,12,basis)).toBe(true);
+      expect(provider).toHaveBeenCalledTimes(2);expect(provider).toHaveBeenCalledWith(repo);
+      expect(calls.filter(c=>c.command.includes("'fetch'")).every(c=>c.env?.GIT_CONFIG_VALUE_0===expected)).toBe(true);
+      expect(calls.every(c=>!c.command.includes(token)&&!c.command.includes(expected))).toBe(true);
+      expect(git('remote','get-url','origin')).toBe(path.join(root,'origin.git'));
+      if(source==='github-app')expect(app.getInstallationToken).toHaveBeenCalledTimes(2);else expect(app.getInstallationToken).not.toHaveBeenCalled();
+    }finally{await state.flush();}
+  });
   it('临时目录清理报错后仍释放核验名额，后续真实合并检查可恢复',async()=>{
     const remove=asyncFs.rm;
     const cleanup=vi.spyOn(asyncFs,'rm');

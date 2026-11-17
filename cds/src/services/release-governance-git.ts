@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { IShellExecutor } from '../types.js';
+import type { IShellExecutor, ExecOptions } from '../types.js';
 import type { ReleaseConflictCheck } from '../domain/release-governance.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import type { StateService } from './state.js';
+import { mergeGitAuthEnv, type GitAuthEnvResult } from './git-auth-env.js';
 
 export function resolveReleaseProjectRepository(state: Pick<StateService, 'getProject' | 'getProjectRepoRoot'>, projectId: string, fallbackRoot: string): string | undefined {
   const project = state.getProject(projectId);
@@ -17,19 +18,23 @@ export interface GovernanceGitResult { stdout: string; exitCode: number | null }
 export type GovernanceGitRunner = (args: string[], cwd: string, isolated?: boolean) => Promise<GovernanceGitResult>;
 
 /** Bounded, non-urgent execution. Merge output is written only into a disposable bare repository. */
-export function governanceGitRunner(shell?: IShellExecutor): GovernanceGitRunner {
+export function governanceGitRunner(shell?: IShellExecutor,
+  gitAuth?: (repoRoot: string) => Promise<GitAuthEnvResult>): GovernanceGitRunner {
   return async (args, cwd, isolated = false) => {
     if (!shell?.execBackgroundObservation) throw new Error('Git 核验执行器不可用');
     let stdout = '', bytes = 0;
     const prefix = 'GIT_TERMINAL_PROMPT=0 GIT_NO_LAZY_FETCH=1 ' + (isolated ? 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null ' : '');
-    const result = await shell.execBackgroundObservation(prefix + ['git', ...args].map(shellQuoteArg).join(' '), {
+    const auth = !isolated && args[0] === '-C' && args[2] === 'fetch' && gitAuth ? await gitAuth(cwd) : undefined;
+    const options: ExecOptions = {
       cwd, timeout: 30_000, captureOutput: false,
       onData: (chunk, channel) => {
         bytes += Buffer.byteLength(chunk);
         if (bytes > 1024 * 1024) throw new Error('Git 核验结果超过容量限制');
         if (channel !== 'stderr') stdout += chunk;
       },
-    });
+    };
+    const result = await shell.execBackgroundObservation(prefix + ['git', ...args].map(shellQuoteArg).join(' '),
+      auth ? mergeGitAuthEnv(options, auth) : options);
     return { stdout, exitCode: result.exitCode };
   };
 }
