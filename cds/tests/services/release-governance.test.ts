@@ -98,6 +98,24 @@ describe('独立批准与连续调试的服务层约束', () => {
     await expect(restarted.authorize(input({ authorizationId: record.id, runId: 'second-run' }))).rejects.toThrow('已使用');
     await reloaded.flush();
   });
+  it('回滚批准绑定所选历史运行，相同提交的其他脚本不能替换，执行前仍复查',async()=>{
+    for(const [releaseId,script] of [['approved-history','echo approved'],['substitute-history','echo substituted']]){
+      state.addReleaseRun(history(releaseId,A,{executionSnapshot:{mode:'managed-script',summary:releaseId,strategy:{mode:'managed-script',script:'#!/bin/sh\n'+script}}}));
+    }
+    state.addReleaseRun(history('current',C,{startedAt:new Date(now).toISOString()}));
+    const record=await approve({action:'rollback',rollbackReleaseId:'approved-history'});
+    const release=new ReleaseService(state,{governance:service});
+    const dispatch=vi.spyOn(release as any,'execute').mockImplementation(()=>{});
+    const count=state.getReleaseRuns({targetId:'prod'}).length;
+    await expect(release.startRollback('current',alice,'substitute-history',undefined,record.id)).rejects.toThrow('回滚历史');
+    expect(dispatch).not.toHaveBeenCalled();expect(state.getReleaseRuns({targetId:'prod'})).toHaveLength(count);
+    expect(state.getReleaseGovernance().authorizations[record.id].consumedBy).toBeUndefined();
+    const accepted=await release.startRollback('current',alice,'approved-history',undefined,record.id);
+    expect(accepted.governance).toMatchObject({authorizationId:record.id,rollbackReleaseId:'approved-history'});
+    expect(state.getReleaseGovernance().authorizations[record.id]).toMatchObject({rollbackReleaseId:'approved-history',consumedBy:accepted.releaseId});
+    state.patchReleaseRun(accepted.releaseId,{rollbackTargetReleaseId:'substitute-history'});
+    expect(()=>service.assertExecution(state.getReleaseRun(accepted.releaseId)!)).toThrow('回滚历史');
+  });
   it.each([
     { operator: 'user:other:Other' }, { branchId: 'other' }, { projectId: 'other' }, { action: 'rollback' as const },
   ])('批准绑定身份、项目、分支和操作 %j', async patch => {
@@ -167,7 +185,8 @@ describe('独立批准与连续调试的服务层约束', () => {
     const record = await approve({ action: 'rollback', rollbackReleaseId: 'baseline' });
     expect(record.candidateSha).toBe(A);
     await expect(service.authorize(input({ authorizationId: record.id, commitSha: A }))).rejects.toThrow('不匹配');
-    expect(await service.authorize(input({ authorizationId: record.id, commitSha: A, action: 'rollback' }))).toMatchObject({ action: 'rollback', candidateSha: A });
+    await expect(service.authorize(input({ authorizationId: record.id, commitSha: A, action: 'rollback' }))).rejects.toThrow('回滚历史');
+    expect(await service.authorize(input({ authorizationId: record.id, commitSha: A, action: 'rollback', rollbackReleaseId:'baseline' }))).toMatchObject({ action: 'rollback', candidateSha: A, rollbackReleaseId:'baseline' });
   });
   it('发布申请不能通过附带历史运行 ID 偷换候选版本', async () => {
     const record = await request({ rollbackReleaseId: 'baseline' }); expect(record.candidateSha).toBe(B);

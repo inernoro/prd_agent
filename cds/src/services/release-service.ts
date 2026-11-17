@@ -1104,7 +1104,8 @@ export class ReleaseService {
         seq: 0,
       };
       const governanceInput: GovernanceAdmission = { runId: rollbackId, projectId: run.projectId, targetId: run.targetId,
-        branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: 'rollback', authorizationId };
+        branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: 'rollback',
+        rollbackReleaseId: previous.releaseId, authorizationId };
       if (target.governance?.required) {
         if (!this.governance) throw new Error('发布审批服务不可用，已停止回滚');
         run.governance = await this.governance.authorize(governanceInput);

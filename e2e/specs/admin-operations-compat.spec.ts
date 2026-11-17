@@ -34,7 +34,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await installOperationsFixtures(page);
     const stamp = new Date().toISOString();
     let authorization = { id:'consumed-single', projectId:target.projectId, targetId:target.id,
-      branchId:'compat-branch', kind:'single', action:'release', status:'approved',
+      branchId:'compat-branch', kind:'single', action:'rollback', rollbackReleaseId:'approved-history', status:'approved',
       requestedBy:'ai:key:fixture-executor', candidateSha:'a'.repeat(40), mainSha:'b'.repeat(40),
       reason:'已受理运行仍在连接时允许真实操作员撤销批准', createdAt:stamp,
       expiresAt:new Date(Date.now()+3600000).toISOString(), allowedPaths:[], consumedBy:'connecting-run',
@@ -49,6 +49,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
     const panel=page.getByRole('region',{name:'发布审批与连续调试'});
     await expect(panel.getByText('本次批准已使用',{exact:true})).toBeVisible();
+    await expect(panel.getByText('回滚目标记录',{exact:true})).toBeVisible();
+    await expect(panel.getByText('approved-history',{exact:true})).toBeVisible();
     await panel.getByRole('button',{name:'刷新记录',exact:true}).click();
     await expect(panel.getByText('已刷新审批记录',{exact:true})).toBeVisible();
     await expect(panel.getByRole('button',{name:'独立批准',exact:true})).toHaveCount(0);

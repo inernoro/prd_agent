@@ -79,6 +79,7 @@ it('正常认证、真实 Git 和 SSH 发布：独立审批、连续调试、越
   }
   const publish = () => call('POST','/releases/branches/lab-debug/runs',{targetId:credentials.targetId,previewUrl:credentials.surfaceUrl+'preview/lab-debug'});
   const baseline=await settle(await call('POST','/releases/branches/lab-main/runs',{targetId:credentials.targetId,previewUrl:credentials.surfaceUrl+'preview/lab-main'}));
+  const sameCommitHistory=await settle(await call('POST','/releases/branches/lab-main/runs',{targetId:credentials.targetId,previewUrl:credentials.surfaceUrl+'preview/lab-main'}));
   expect((await call('POST',target+'/governance/enable',{},cookie)).status).toBe(200);
   const request = await call('POST',target+'/authorizations',{branchId:'lab-debug',kind:'debug',allowedPaths:['allowed/'],expiresAt:new Date(Date.now()+3600000).toISOString(),reason:'自动回归真实发布链路的范围内连续调试'});
   expect(request.status).toBe(200); const id=request.body.authorization.id;
@@ -101,8 +102,12 @@ it('正常认证、真实 Git 和 SSH 发布：独立审批、连续调试、越
   const rollback=await call('POST',target+'/authorizations',{branchId:'lab-main',kind:'single',action:'rollback',rollbackReleaseId:baseline.releaseId,expiresAt:new Date(Date.now()+3600000).toISOString(),reason:'单次回滚同一环境的已成功历史版本'});
   expect(rollback.status).toBe(200); const rollbackId=rollback.body.authorization.id;
   expect((await call('POST','/releases/authorizations/'+rollbackId+'/approve',{reason:'独立核对历史成功版本'},cookie)).status).toBe(200);
+  const beforeWrongHistory=await fs.readFile(credentials.effects,'utf8');
+  expect((await call('POST',rollbackRoute,{targetReleaseId:sameCommitHistory.releaseId,authorizationId:rollbackId})).status).toBe(409);
+  expect(await fs.readFile(credentials.effects,'utf8')).toBe(beforeWrongHistory);
   const restored=await settle(await call('POST',rollbackRoute,{targetReleaseId:baseline.releaseId,authorizationId:rollbackId}));
   expect(restored.commitSha).toBe(credentials.main); expect(restored.governance.action).toBe('rollback');
+  expect(restored.governance.rollbackReleaseId).toBe(baseline.releaseId);
   expect((await call('POST',rollbackRoute,{targetReleaseId:baseline.releaseId,authorizationId:rollbackId})).status).toBe(409);
   // Real wall clock expiry, after human approval; no altered clock or session stamp.
   const expiring=await call('POST',target+'/authorizations',{branchId:'lab-debug',kind:'debug',allowedPaths:['allowed/'],expiresAt:new Date(Date.now()+10000).toISOString(),reason:'实际有效期到期之后必须阻止再次调试发布'});

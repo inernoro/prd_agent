@@ -146,6 +146,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
             {current.scheduledJobId ? <div><dt className="text-xs text-muted-foreground">执行任务</dt><dd className="break-all">{data.scheduledJobs?.find(job => job.id === current.scheduledJobId)?.name || current.scheduledJobId}</dd></div> : null}
             <div><dt className="text-xs text-muted-foreground">审批人</dt><dd>{approval ? releaseActorLabel(approval.by) : current.status === 'approved' && current.decidedBy ? releaseActorLabel(current.decidedBy) : '等待独立批准'}</dd></div>
             <div><dt className="text-xs text-muted-foreground">候选版本</dt><dd className="break-all font-mono text-xs">{current.candidateSha}</dd></div>
+            {current.action === 'rollback' ? <div><dt className="text-xs text-muted-foreground">回滚目标记录</dt><dd className="break-all font-mono text-xs">{current.rollbackReleaseId || '缺少历史记录，请重新申请'}</dd></div> : null}
             <div><dt className="text-xs text-muted-foreground">主干依据</dt><dd className="break-all font-mono text-xs">{current.mainSha}</dd></div>
             <div><dt className="text-xs text-muted-foreground">有效期</dt><dd><Clock className="mr-1 inline h-4 w-4" />截至 {formatDateTime(current.expiresAt)}</dd></div>
             <div><dt className="text-xs text-muted-foreground">范围</dt><dd className="break-all">{current.kind === 'debug' ? current.allowedPaths.join('、') : '仅此固定版本，使用一次'}</dd></div>

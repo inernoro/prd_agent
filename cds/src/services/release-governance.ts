@@ -13,7 +13,7 @@ export class ReleaseGovernanceError extends Error {}
 export type MergeBackReader = (projectId: string, number: number) => Promise<Omit<ReleaseMergeBack,
   'id' | 'projectId' | 'targetId' | 'sourceSha' | 'owner' | 'linkedBy'>>;
 export interface GovernanceAdmission { runId: string; projectId: string; targetId: string; branchId: string;
-  commitSha: string; operator: string; action: 'release' | 'rollback'; authorizationId?: string }
+  commitSha: string; operator: string; action: 'release' | 'rollback'; rollbackReleaseId?: string; authorizationId?: string }
 const human = (actor: string) => /^user:[^:]+:[^:]+$/.test(actor);
 const actorId = (actor: string) => human(actor) ? actor.split(':').slice(0, 2).join(':') : actor;
 const known = (actor: string) => human(actor) || /^ai:key:[A-Za-z0-9_-]+$/.test(actor);
@@ -172,7 +172,7 @@ export class ReleaseGovernanceService {
     if (this.state.getLatestSuccessfulReleaseRun(target.id)?.releaseId !== baseline?.releaseId) throw new ReleaseGovernanceError('生产基线已变化，请重新申请');
     if (input.scheduledJobId && this.scheduledJobFingerprint(input.scheduledJobId, target.projectId, target.id) !== scheduledJobFingerprint) throw new ReleaseGovernanceError('定时发布任务配置已变化，请重新申请');
     const record: ReleaseAuthorization = { id: id('ra_'), projectId: target.projectId, targetId: target.id,
-      branchId: branch.id, branchName: branch.branch, kind: input.kind, action, candidateSha: candidate,
+      branchId: branch.id, branchName: branch.branch, kind: input.kind, action, rollbackReleaseId: previous?.releaseId, candidateSha: candidate,
       basisSha: baseline?.commitSha || check.mainSha, baselineReleaseId: baseline?.releaseId || null, mainSha: check.mainSha,
       targetFingerprint: releaseTargetConfigFingerprint(target), projectFingerprint: projectIdentityFingerprint(this.state.getProject(target.projectId)),
       allowedPaths, requestedBy: input.actor, scheduledJobId: input.scheduledJobId, scheduledJobFingerprint,
@@ -194,12 +194,12 @@ export class ReleaseGovernanceService {
     if (typeof reason !== 'string' || reason.trim().length < 4 || reason.length > 2000) throw new ReleaseGovernanceError('请填写至少 4 字的审批意见');
     if (decision === 'approved') {
       this.validate(original, { projectId: original.projectId, targetId: original.targetId, branchId: original.branchId,
-        commitSha: original.candidateSha, operator: executionActor(original), action: original.action, runId: '' }, false);
+        commitSha: original.candidateSha, operator: executionActor(original), action: original.action, rollbackReleaseId: original.rollbackReleaseId, runId: '' }, false);
       const check = await this.git.inspect(original.projectId, original.candidateSha, original.basisSha);
       await this.saveCheck(original.targetId, check);
       this.validateCheck(original, check);
       this.validate(original, { projectId: original.projectId, targetId: original.targetId, branchId: original.branchId,
-        commitSha: original.candidateSha, operator: executionActor(original), action: original.action, runId: '' }, false);
+        commitSha: original.candidateSha, operator: executionActor(original), action: original.action, rollbackReleaseId: original.rollbackReleaseId, runId: '' }, false);
     }
     const data = this.state.getReleaseGovernance(), current = data.authorizations[authorizationId];
     if (JSON.stringify(current) !== JSON.stringify(original)) throw new ReleaseGovernanceError('申请已被其他操作更新，请刷新后重试');
@@ -215,6 +215,9 @@ export class ReleaseGovernanceService {
     if (!Number.isFinite(Date.parse(record.expiresAt)) || Date.parse(record.expiresAt) <= this.now().getTime()) throw new ReleaseGovernanceError('批准已过期，请重新申请');
     if (record.projectId !== input.projectId || record.targetId !== input.targetId || record.branchId !== input.branchId
       || actorId(executionActor(record)) !== actorId(input.operator) || record.action !== input.action) throw new ReleaseGovernanceError('批准的项目、环境、分支、执行凭据或操作不匹配');
+    if (record.action === 'rollback' && (!record.rollbackReleaseId || record.rollbackReleaseId !== input.rollbackReleaseId)) {
+      throw new ReleaseGovernanceError('回滚历史版本与批准不匹配，请重新选择已批准的历史运行');
+    }
     if (record.scheduledJobId && this.scheduledJobFingerprint(record.scheduledJobId, record.projectId, record.targetId) !== record.scheduledJobFingerprint) {
       throw new ReleaseGovernanceError('定时发布任务配置已变化，请重新申请');
     }
@@ -238,6 +241,7 @@ export class ReleaseGovernanceService {
     if (input.authorizationId) return data.authorizations[input.authorizationId];
     return Object.values(data.authorizations).filter(a => a.status === 'approved' && a.targetId === input.targetId
       && a.branchId === input.branchId && actorId(executionActor(a)) === actorId(input.operator) && a.action === input.action
+      && (a.action !== 'rollback' || a.rollbackReleaseId === input.rollbackReleaseId)
       && (a.kind === 'debug' || a.candidateSha === input.commitSha && !a.consumedBy))
       .sort((a,b) => b.createdAt.localeCompare(a.createdAt)).find(record => {
         try { this.validate(record,input); return true; } catch { return false; }
@@ -264,7 +268,7 @@ export class ReleaseGovernanceService {
       const current = this.state.getReleaseGovernance().authorizations[record.id];
       this.validate(current, input);
       if (JSON.stringify(current) !== JSON.stringify(record)) throw new ReleaseGovernanceError('批准记录已变化，请重新发布');
-      return { authorizationId: record.id, kind: record.kind, action: record.action, requestedBy: record.requestedBy,
+      return { authorizationId: record.id, kind: record.kind, action: record.action, rollbackReleaseId: record.rollbackReleaseId, requestedBy: record.requestedBy,
         approvedBy: record.decidedBy!, approvedAt: record.decidedAt!, expiresAt: record.expiresAt,
         targetFingerprint: record.targetFingerprint, projectFingerprint: record.projectFingerprint,
         baselineReleaseId: this.state.getLatestSuccessfulReleaseRun(input.targetId)?.releaseId || null,
@@ -284,7 +288,8 @@ export class ReleaseGovernanceService {
     }
     const data = this.state.getReleaseGovernance(), record = data.authorizations[run.governance.authorizationId];
     const input: GovernanceAdmission = { runId: current.releaseId, projectId: current.projectId, targetId: current.targetId,
-      branchId: current.branchId, commitSha: current.commitSha, operator: current.operator || 'unknown', action: current.governance!.action };
+      branchId: current.branchId, commitSha: current.commitSha, operator: current.operator || 'unknown', action: current.governance!.action,
+      rollbackReleaseId: current.rollbackTargetReleaseId };
     this.validate(record, input);
     if (record.kind === 'single') record.consumedBy = current.releaseId;
     data.attempts.push({ id: id('gat_'), projectId: input.projectId, targetId: input.targetId, branchId: input.branchId,
@@ -300,7 +305,8 @@ export class ReleaseGovernanceService {
     if (!record) throw new ReleaseGovernanceError('本次批准记录不可用，已停止执行');
     if (record.kind === 'single' && record.consumedBy !== run.releaseId) throw new ReleaseGovernanceError('本次批准尚未确认受理到该运行，已停止执行');
     this.validate(record, { runId: run.releaseId, projectId: run.projectId, targetId: run.targetId,
-      branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: run.governance.action });
+      branchId: run.branchId, commitSha: run.commitSha, operator: run.operator || 'unknown', action: run.governance.action,
+      rollbackReleaseId: run.rollbackTargetReleaseId });
   }
   async attempt(input: GovernanceAdmission, result: 'accepted' | 'denied', reason: string, authorizationId?: string): Promise<void> {
     const data = this.state.getReleaseGovernance();
