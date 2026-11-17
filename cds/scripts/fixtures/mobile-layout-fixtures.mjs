@@ -145,11 +145,20 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
+  // 主线容量与治理面板的只读合成数据；未采样/部分扫描不表示真实零占用。
+  '/api/host-capacity/observation': { status: 'unknown', sampledAt: null, reason: '合成夹具尚未采样，当前风险未知' },
+  '/api/host-capacity/sampling': { enabled: false, running: false, external: false, sources: {}, unavailableSources: [], coverage: '合成只读容量采样' },
+  '/api/janitor/tasks': { scanStatus: 'partial', canExecute: false, counts: {}, tasks: [], held: [], pendingReasons: [], unknown: [], filesystems: [] },
+  '/api/janitor/tasks/data-cases': { cases: [] },
+  '/api/janitor/tasks/state': { execution: null, canExecute: false },
+  '/api/janitor/tasks/images': { scanStatus: 'partial', enabled: false, canExecute: false, canAdopt: false, budgetBytes: 0, imageBytesEstimate: 0, protectedBytesEstimate: 0, capacityGapEstimate: null, counts: {}, candidates: [], held: [], unknown: [] },
+  '/api/janitor/tasks/images/state': { execution: null, canExecute: false, canAdopt: false },
+  '/api/janitor/backups/state': { execution: null, canExecute: false },
   '/api/instance-catalog': { version: 1, instances: [
     { id: 'primary', name: '合成主实例', role: 'primary', url: 'https://primary.example.invalid' },
     { id: 'standby', name: '合成备用实例', role: 'standby', url: 'https://standby.example.invalid' },
   ] },
-  '/api/auth/status': { authenticated: true, enabled: true, user: { name: '布局冒烟', isSystemOwner: true } },
+  '/api/auth/status': { authenticated: true, enabled: true, mode: 'github', activeProvider: 'github', user: { id: 'fixture-owner', authProvider: 'github', githubLogin: 'fixture-owner', name: '布局冒烟', isSystemOwner: true } },
   '/api/instance-mode': { mode: 'master' },
   '/api/notices': { notices: [] },
   '/api/notices/read-all': { ok: true, changed: 0 },

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { buildLogDetailHref, buildLogListHref, getLogTaskContext } from '@/lib/logNavigation';
 import { getLogTrace } from '@/lib/api';
 import type { LogTraceData } from '@/lib/types';
+import { DetailsBlock } from '@/components/PageShell';
 import { Button, Card, Spinner } from '@/components/ui';
 import { fmtCost, fmtDate } from '@/lib/logsHelpers';
 import './LogTracePage.css';
@@ -11,6 +13,8 @@ const statuses: Record<string, string> = { running: '进行中', unknown: '结�
 
 export function LogTracePage() {
   const [params, setParams] = useSearchParams();
+  const context = getLogTaskContext(params.toString());
+  const returnHref = context.source === 'overview' && context.selectedLogId ? buildLogDetailHref(context.selectedLogId, context) : buildLogListHref(context, context.selectedLogId);
   const reference = params.get('reference') || '';
   const anchorId = params.get('anchorId') || undefined;
   const page = Number(params.get('page') || 1);
@@ -38,9 +42,9 @@ export function LogTracePage() {
     query.set('page', String(next)); setParams(query);
   }
   return <div className="lg-log-trace" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-    <div><Link to="/logs">返回调用记录</Link><h1 className="lg-title">调用链排查</h1>
+    <div><Link to={returnHref}>{context.selectedLogId ? '返回原请求' : '返回请求记录'}</Link><h1 className="lg-title">调用链排查</h1>
       <p>从业务操作或请求编号查回已保留的关联记录。</p></div>
-    <form onSubmit={event => { event.preventDefault(); if (draft.trim()) setParams({ reference: draft.trim() }); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+    <form className="lg-trace-search" onSubmit={event => { event.preventDefault(); if (draft.trim()) { const next = new URLSearchParams(params); next.set('reference', draft.trim()); next.delete('anchorId'); next.delete('page'); setParams(next); } }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       <input aria-label="业务操作或请求编号" maxLength={256} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Run ID / Request ID / 上游作业编号" style={{ flex: 1, minWidth: 220 }} />
       <Button type="submit" disabled={busy || !draft.trim()}>查找调用链</Button>
       <Button type="button" variant="ghost" disabled={busy || !reference} onClick={() => setRefresh(value => value + 1)}>刷新</Button>
@@ -48,29 +52,37 @@ export function LogTracePage() {
     {busy ? <div role="status"><Spinner size={16} /> 正在读取关联记录…</div> : null}
     {error ? <div role="alert">{error}</div> : null}
     {data?.ambiguous ? <Card style={{ padding: 16 }}><h2>编号对应多个独立请求，请选择记录</h2><p>相同请求编号不能证明重试或重复记账。</p>
-      {data.candidates?.map(candidate => <p key={candidate.id}><Button variant="ghost" onClick={() => setParams({ reference: candidate.runId || reference, anchorId: candidate.id })}>
+      {data.candidates?.map(candidate => <p key={candidate.id}><Button variant="ghost" onClick={() => { const next = new URLSearchParams(params); next.set('reference', candidate.runId || reference); next.set('anchorId', candidate.id); next.delete('page'); setParams(next); }}>
         {candidate.runId || candidate.logicalRequestId || candidate.requestId || candidate.id} · {candidate.id}
       </Button></p>)}
       {data.hasMoreCandidates ? <p>仅显示前 100 个候选，请使用更明确的日志或业务操作编号。</p> : null}
     </Card> : null}
     {data && !data.ambiguous ? <>
-      <Card style={{ padding: 16 }}><p>共 {data.total} 条关联记录 · 第 {data.page} 页</p>
+      <section className="lg-trace-summary"><p>共 {data.total} 条关联记录{data.total > data.pageSize ? ` · 第 ${data.page} 页` : ''}</p><DetailsBlock title="关联与费用口径">
         <p>每条记录代表一次网关请求；其下按顺序列出调度尝试。相似正文、同一模型和时间接近均不作为重试证据。</p>
         <p>费用逐项保留来源，不累加作业回执或历史汇总。未返回的实际费用显示未知，估算与实际费用分别展示。</p>
+        <p>业务证据仅限当前授权和已保留记录。未取得视频或作业产物证据，不能据此认定业务成功或产物不存在。</p>
+        </DetailsBlock>
         {data.business ? <div><h2>MAP 视频业务结果</h2>
           <p>业务操作：{data.business.runId} · 状态：{data.business.status || '未知'}</p>
           <p>上游作业：{data.business.providerTaskId || '未记录'} · 上游状态：{data.business.upstreamStatus || '未知'}</p>
           <p style={{ overflowWrap: 'anywhere' }}>最终产物 SHA256：{data.business.artifactSha256 || '未记录，请用运行编号核对业务产物'}</p>
-        </div> : <p>暂无授权范围内的 MAP 视频产物证据。</p>}
-      </Card>
+        </div> : null}
+      </section>
+      {!data.total ? <p role="status">未找到关联记录。请核对编号，或返回原请求查看已保留的证据。</p> : null}
       {data.items?.map(item => {
         const log = item.log;
-        return <Card key={log.id} style={{ padding: 16 }}>
-          <h2>{operations[log.operation || 'invoke'] || log.operation} · {item.evidenceGap ? '结果待核实（历史 running）' : statuses[log.status] || log.status} <Link to={`/logs/${encodeURIComponent(log.id)}`}>查看详情</Link></h2>
+        return <article key={log.id} className="lg-trace-record">
+          <h2>{operations[log.operation || 'invoke'] || log.operation} · {item.evidenceGap ? '结果待核实（历史 running）' : statuses[log.status] || log.status} <Link to={buildLogDetailHref(log.id, { ...context, traceReference: reference, traceAnchor: anchorId, tracePage: String(page) })}>查看详情</Link></h2>
           <p>{fmtDate(log.startedAt)} · {log.appCallerCodeDisplayName || log.appCallerCode || '调用用途未知'} · {log.model}</p>
+          {log.error ? <p className="lg-trace-failure">失败原因：{log.error}</p> : null}
+          {item.evidenceGap ? <p className="lg-trace-failure">{item.evidenceGap}</p> : null}
+          {item.lifecycleReason ? <p>收口依据：{item.lifecycleReason}</p> : null}
+          <details><summary>请求身份与关联编号</summary>
           <p>用户 {log.userId || '未知'} · 团队 {log.teamId || '未知'} · 接入身份 {log.clientCode || log.serviceKeyPrefix || log.serviceKeyId || '未知'}</p>
           <p style={{ overflowWrap: 'anywhere' }}>请求 {log.requestId} · 日志 {log.id} · 逻辑请求 {log.logicalRequestId || '未记录'} · 业务操作 {log.runId || '未记录'}</p>
           <p style={{ overflowWrap: 'anywhere' }}>上游作业 {log.providerTaskId || '未记录'} · 上游回执 {log.providerRequestId || '未记录'}</p>
+          </details>
           {item.recordKind === 'legacy-summary' ? <p>历史业务汇总：不代表物理调用，不计入调用与用量统计。</p> : <>
             <p>实际费用：{log.providerReportedCost == null ? '未知' : fmtCost(log.providerReportedCost, log.providerCostCurrency)}{log.providerReportedCost != null && !log.providerCostCurrency ? '（币种未知）' : ''} · Gateway 估算：{log.estimatedCost == null ? '未知' : fmtCost(log.estimatedCost, log.estimatedCostCurrency)}</p>
             <p>输入 / 输出 token：{log.inputTokens ?? '未知'} / {log.outputTokens ?? '未知'} · 用量来源：{log.tokenUsageSource || '未记录'}</p>
@@ -84,13 +96,10 @@ export function LogTracePage() {
               {attempt.error || attempt.reason ? <p>{attempt.error || attempt.reason}</p> : null}
             </li>)}</ol> : <p>缺少逐次上游尝试证据，无法确定物理调用次数。</p>}
           </>}
-          {log.error ? <p>失败原因：{log.error}</p> : null}
-          {item.lifecycleReason ? <p>收口依据：{item.lifecycleReason}</p> : null}
-          {item.evidenceGap ? <p>{item.evidenceGap}</p> : null}
-        </Card>;
+        </article>;
       })}
-      <div style={{ display: 'flex', gap: 8 }}><Button disabled={busy || data.page === 1} onClick={() => selectPage(data.page - 1)}>上一页</Button>
-        <Button disabled={busy || data.page * data.pageSize >= data.total} onClick={() => selectPage(data.page + 1)}>下一页</Button></div>
+      {data.total > data.pageSize ? <div style={{ display: 'flex', gap: 8 }}><Button disabled={busy || data.page === 1} onClick={() => selectPage(data.page - 1)}>上一页</Button>
+        <Button disabled={busy || data.page * data.pageSize >= data.total} onClick={() => selectPage(data.page + 1)}>下一页</Button></div> : null}
     </> : null}
   </div>;
 }

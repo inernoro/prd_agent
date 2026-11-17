@@ -22,14 +22,33 @@ function batch(targets: BatchTarget[], status = 'partial_success'): ReleaseBatch
     createdAt: '2026-11-12T08:00:00Z', updatedAt: '2026-11-12T08:00:10Z', targets,
   };
 }
-function render(result: ReleaseBatch, runs: Record<string, ReleaseRun> = {}, busy = false, rollbackTargetId = ''): string {
+function render(result: ReleaseBatch, runs: Record<string, ReleaseRun> = {}, busy = false, rollbackTargetId = '', lockedTargetIds: string[] = []): string {
   return renderToStaticMarkup(createElement(BatchReleaseResult, {
-    batch: result, runs, busy, rollbackTargetId,
+    batch: result, runs, busy, rollbackTargetId, isTargetUnconfirmed: targetId => lockedTargetIds.includes(targetId),
     onRetry: () => {}, onPrepareRollback: () => {}, onRollback: () => {}, onLogs: () => {},
   }));
 }
 
 describe('批次发布结果 · 保留各目标真实结果', () => {
+  it('单目标原请求尚未确认时只锁该目标重试与恢复，保留日志、记录和其他目标', () => {
+    const html = render(batch([target('A', 'failed', { previousReleaseId: 'before-a' }), target('B', 'failed')]), {}, false, 'A', ['A']);
+    const locked = html.slice(html.indexOf('<h4'), html.indexOf('隔离目标 B'));
+    expect(locked).toContain('此目标有发布请求待核对');
+    const buttonTag = (markup: string, label: string): string => {
+      const button = [...markup.matchAll(/<button\b[\s\S]*?<\/button>/g)].map(match => match[0])
+        .find(element => element.replace(/<[^>]*>/g, '').trim() === label);
+      expect(button, `应有可见操作：${label}`).toBeDefined();
+      return button!.split('>')[0];
+    };
+    expect(buttonTag(locked, '仅重试此目标')).toMatch(/\sdisabled=""/);
+    expect(buttonTag(locked, '恢复原版本')).toMatch(/\sdisabled=""/);
+    expect(buttonTag(locked, '确认恢复此目标')).toMatch(/\sdisabled=""/);
+    expect(locked).toContain('版本记录详情');
+    expect(buttonTag(locked, '发布日志')).not.toMatch(/\sdisabled(?:=|\s|>)/);
+    const other = html.slice(html.indexOf('隔离目标 B'));
+    expect(buttonTag(other, '仅重试此目标')).not.toMatch(/\sdisabled(?:=|\s|>)/);
+  });
+
   it('第二目标失败时保留第一目标成功与实际提交，只给失败目标提供重试', () => {
     const html = render(batch([
       target('A', 'success', { observedCommitSha: COMMIT }),

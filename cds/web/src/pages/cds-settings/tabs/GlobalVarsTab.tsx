@@ -20,7 +20,6 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
     apiRequest<ProjectsResponse>('/api/projects', { signal: ctrl.signal })
       .then((projects) => {
         setProjectsState({ status: 'ok', data: projects });
-        setTargetProjectId(projects.projects?.[0]?.id || '');
       })
       .catch((err: unknown) => {
         if ((err as DOMException)?.name === 'AbortError') return;
@@ -75,6 +74,7 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
     return (
       <PreviewPanel
         data={preview}
+        projectName={(projectsState.status === 'ok' ? projectsState.data.projects?.find(p => p.id === preview.targetProjectId)?.name || preview.targetProjectId : preview.targetProjectId) || '未知项目'}
         onCancel={() => setPreview(null)}
         onExecute={() => void executeMigrate()}
         submitting={submitting}
@@ -84,12 +84,10 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
 
   const projects = projectsState.status === 'ok' ? projectsState.data.projects || [] : [];
   const organizePanel = (
-    <div className="rounded-md border border-warn/30 bg-warn-soft p-4">
-      <div className="text-sm font-semibold text-warn">
-        一键整理：把项目级变量迁到具体项目
-      </div>
+    <details className="border-t border-border pt-3">
+      <summary className="cursor-pointer text-sm font-medium">将全局中的项目变量整理到项目</summary>
       <div className="mt-1 text-sm leading-6 text-muted-foreground">
-        CDS 字典识别：CDS_* 留全局；legacy 复制一份到项目；其他项目级变量从全局移到项目。
+        先选择目标项目并查看逐项预览，再确认复制或移动。移动会移除全局原项；项目同名变量不覆盖。
       </div>
       {projectsState.status === 'loading' ? (
         <div className="mt-3">
@@ -107,22 +105,24 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
       {projects.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
           <select
+            aria-label="整理目标项目"
             value={targetProjectId}
             onChange={(event) => setTargetProjectId(event.target.value)}
             className="min-h-11 rounded-md border border-input bg-background px-3 text-sm"
           >
+            <option value="">请选择目标项目</option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name || project.id}
               </option>
             ))}
           </select>
-          <Button type="button" variant="outline" onClick={() => void previewMigrate()} disabled={submitting}>
+          <Button type="button" variant="outline" onClick={() => void previewMigrate()} disabled={submitting || !targetProjectId}>
             预览整理方案
           </Button>
         </div>
       ) : null}
-    </div>
+    </details>
   );
 
   return (
@@ -131,7 +131,7 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
       title="CDS 全局变量"
       description={
         <>
-          所有项目共享的环境变量（<code>_global</code> scope）。项目独有变量请在{' '}
+          CDS 系统配置与共享变量。只有明确开启“继承 CDS 全局变量”的项目会继承共享变量，同名项目变量优先。项目独有变量请在{' '}
           <Link className="text-primary underline-offset-4 hover:underline" to="/project-list">
             项目列表
           </Link>{' '}
@@ -148,11 +148,13 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
 
 function PreviewPanel({
   data,
+  projectName,
   onCancel,
   onExecute,
   submitting,
 }: {
   data: CategorizeResponse;
+  projectName: string;
   onCancel: () => void;
   onExecute: () => void;
   submitting: boolean;
@@ -163,8 +165,8 @@ function PreviewPanel({
 
   return (
     <Section
-      title={`整理方案预览 -> ${data.targetProjectId || '-'}`}
-      description="CDS 自动识别变量归属：CDS_* 留全局；legacy 复制；项目级搬走。重名以项目原值为准不覆盖。"
+      title={`整理到项目：${projectName}`}
+      description="复制会保留全局原项；移动会删除全局原项，可能影响其他继承全局变量的项目。下列同名冲突均跳过，不覆盖目标项目。确认前请核对目标与变量名。"
     >
       <div className="space-y-5">
         <PreviewKeys label={`复制到项目：${summary.duplicatedCount || 0}`} keys={groups.duplicated || []} />
@@ -175,7 +177,7 @@ function PreviewPanel({
         />
         <PreviewKeys label={`保留全局：${summary.globalOnlyCount || 0}`} keys={groups.globalOnly || []} />
         <div className="flex gap-2">
-          <Button type="button" variant="outline" onClick={onCancel}>
+          <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
             取消
           </Button>
           <Button type="button" onClick={onExecute} disabled={submitting || changeCount === 0}>

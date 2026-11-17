@@ -30,6 +30,11 @@ export class ManagedProjectService {
   planForBranch(branch: BranchEntry, commitSha?: string): ManagedProjectPlan | null {
     const project = this.stateService.getProject(branch.projectId || 'default');
     if (!project || project.deliveryMode !== 'managed') return null;
+    return this.planForProject(project, branch, commitSha);
+  }
+
+  /** 仅计算候选计划；不修改项目、不部署、不执行外部服务调用。 */
+  planForProject(project: Project, branch: BranchEntry, commitSha?: string): ManagedProjectPlan {
     const profiles = this.generateProfiles(project, branch, commitSha);
     const capabilities = this.resolveCapabilities(project);
     return {

@@ -17,7 +17,7 @@ const page = readFileSync(resolve(__dirname, '../..', 'web/src/pages/ReportsPage
 const loadPipeline = (() => {
   const start = page.indexOf('const loadPipeline = useCallback(');
   expect(start, '找不到 loadPipeline').toBeGreaterThan(0);
-  const end = page.indexOf('useEffect(() => { void loadPipeline', start);
+  const end = page.indexOf('useEffect(() => { if (showOverview) void loadPipeline', start);
   expect(end, '找不到 loadPipeline 的副作用').toBeGreaterThan(start);
   return page.slice(start, end);
 })();
@@ -41,7 +41,7 @@ describe('时间窗按钮必须真的改变首页看到的数', () => {
   it('换档时不把已经读得懂的一屏图打回 loading', () => {
     // 首挂时 pipelineState 本来就是 loading，骨架照常显示；
     // 之后换档走 quiet，图表不会凭空消失一下再回来。
-    expect(page).toMatch(/useEffect\(\(\) => \{ void loadPipeline\(true\); \}, \[loadPipeline\]\);/);
+    expect(page).toMatch(/useEffect\(\(\) => \{ if \(showOverview\) void loadPipeline\(true\); \}, \[loadPipeline, showOverview\]\);/);
   });
 
   it('按钮本身仍然只在没选中报告时出现，且三档不变', () => {

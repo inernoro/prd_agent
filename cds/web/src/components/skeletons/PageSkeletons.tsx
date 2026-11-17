@@ -14,6 +14,8 @@ import { SettingsPageSkeleton } from './SettingsSkeleton';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '@/pages/cds-settings/components';
 import { MonitorCenterSkeleton } from '@/pages/status/primitives';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
+import { ACCEPTANCE_LAYOUT_CLASS, AcceptanceNavigation } from '@/components/reports/AcceptanceNavigation';
+import { acceptanceView } from '@/lib/acceptance-api';
 
 /**
  * 页面级加载骨架的 SSOT（2026-09-17）。
@@ -29,7 +31,7 @@ import { BranchListOverview } from '@/components/branch/BranchListOverview';
  * 加页面时：给它的骨架在这里登记，并在 pageSkeletonForPath 里挂上路由；没有专属形状的
  * 页面落到 ConsoleGenericSkeleton。守卫：tests/web/single-skeleton-contract.test.ts。
  */
-/** 分支列表加载骨架:逐张镜像真实 BranchCard(固定 15.25rem + 头/身/尾三段,2026-09-29 等高改版),
+/** 分支列表加载骨架:逐张镜像真实 BranchCard 的头部、端口/摘要/标签与尾部自然节奏,
  *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部保留统计和筛选槽位。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
 const BRANCH_SKELETON_TITLE_WIDTHS = ['52%', '38%', '60%', '44%', '56%', '46%'] as const;
 
@@ -41,7 +43,7 @@ export function ProjectListSummarySkeleton(): JSX.Element {
 export function BranchListSkeleton(): JSX.Element {
   return (
     <div className="mt-6" aria-busy="true" aria-live="polite" aria-label="加载项目与本地分支列表">
-      <BranchListOverview loading summary={<div className="cds-loading-skeleton-line h-6 w-72 max-w-full" />}>
+      <BranchListOverview loading summary={<div className="cds-loading-skeleton-line h-7 w-72 max-w-full" />}>
         <div className="cds-loading-skeleton-line h-7 w-52 shrink-0" />
         <div className="cds-loading-skeleton-line h-8 w-56 shrink-0" />
         <div className="cds-loading-skeleton-line h-8 w-24 shrink-0" />
@@ -50,7 +52,7 @@ export function BranchListSkeleton(): JSX.Element {
         {BRANCH_SKELETON_TITLE_WIDTHS.map((width, index) => (
           <article
             key={index}
-            className="flex h-[15.25rem] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
+            className="flex flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
             {/* 头部:分支名 + 状态徽标 */}
             <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
@@ -60,14 +62,18 @@ export function BranchListSkeleton(): JSX.Element {
               </div>
               <div className="cds-loading-skeleton-line h-8 w-8 shrink-0 rounded-md" />
             </header>
-            {/* 身体:几行元信息 */}
-            <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-5 py-4">
+            {/* 镜像正文的端口、摘要、标签节奏，随内容自然排布，不再把页脚推到固定卡高。 */}
+            <div className="mx-5 mt-3 flex h-7 items-center">
               <div className="cds-loading-skeleton-line h-3 w-1/2" style={{ animationDelay: '0.1s' }} />
+            </div>
+            <div className="mx-5 mt-2.5 mb-3 flex min-h-[1.125rem] items-center">
               <div className="cds-loading-skeleton-line h-3 w-3/4" style={{ animationDelay: '0.18s' }} />
+            </div>
+            <div className="mx-5 mt-2 mb-3 flex min-h-6 items-center">
               <div className="cds-loading-skeleton-line h-3 w-2/5" style={{ animationDelay: '0.26s' }} />
             </div>
             {/* 尾部:操作条 */}
-            <footer className="mt-auto flex h-[3.5rem] shrink-0 items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5">
+            <footer className="flex h-[3.5rem] shrink-0 items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5">
               <div className="cds-loading-skeleton-line h-3 w-24" />
               <div className="cds-loading-skeleton-line h-7 w-20 rounded-md" />
             </footer>
@@ -165,8 +171,16 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 }
 
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
-export function pageSkeletonForPath(pathname: string, capabilities: { canManageProjects?: boolean; monitoringHome?: boolean } = {}): JSX.Element {
-  switch (loadingSceneForPath(pathname)?.kind) {
+export function pageSkeletonForPath(pathname: string, capabilities: { canManageProjects?: boolean; monitoringHome?: boolean; search?: string } = {}): JSX.Element {
+  const scene = loadingSceneForPath(pathname);
+  if (scene?.route === '/reports') {
+    const params = new URLSearchParams(capabilities.search);
+    return <div className={ACCEPTANCE_LAYOUT_CLASS}>
+      <AcceptanceNavigation view={acceptanceView(params.get('view'), params.get('report') || undefined)} />
+      <LoadingBlock label="正在加载验收报告" />
+    </div>;
+  }
+  switch (scene?.kind) {
     case 'auth': return <AuthPageSkeleton />;
     case 'public-status': return <PublicStatusSkeleton />;
     case 'projects': return <ProjectListSkeleton canManageProjects={capabilities.canManageProjects} />;

@@ -1028,7 +1028,7 @@ describe('部署在途不谎报「分支未运行」', () => {
 
   it('running 时一切正常（防修成永远「正在部署」）', () => {
     const html = render('running');
-    expect(html).toContain('一切正常');
+    expect(html).toContain('当前服务运行正常');
     expect(html).toContain('12.0%');
   });
 
@@ -1159,13 +1159,13 @@ describe('分支停了，就绪计数也不算陈旧的 running', () => {
     expect(html, '前提没成立：这一屏本该判定为未运行').toContain('分支未运行');
     expect(html, '健康环仍按陈旧清单报满员，和判断句同屏打架').not.toContain('2 / 2 个服务就绪');
     expect(html, '底部仍写「2 个在跑」').not.toContain('2 个在跑');
-    expect(html, '应当如实写 0 个就绪').toContain('0 / 2 个服务就绪');
+    expect(html, '事实行应如实写0/2就绪').toMatch(/data-testid="kpi-services"[\s\S]*?>0 \/ 2<\/dd>/);
   });
 
   it('分支在跑时照常满员（防归一化写成永远清零）', () => {
     const html = render(true);
-    expect(html).toContain('2 / 2 个服务就绪');
-    expect(html).toContain('一切正常');
+    expect(html).toMatch(/data-testid="kpi-services"[\s\S]*?>2 \/ 2<\/dd>/);
+    expect(html).toContain('当前服务运行正常');
   });
 });
 
@@ -1431,7 +1431,7 @@ describe('入口卡的绿灯与顶部判断句同源', () => {
       windowMinutes: 30,
       onRefreshMetrics: () => {},
     }));
-    expect(html).toContain('一切正常');
+    expect(html).toContain('当前服务运行正常');
     expect(html, '全部就绪却没给绿灯——守卫会因此变成永远绿的摆设').toContain('已就绪');
   });
 });

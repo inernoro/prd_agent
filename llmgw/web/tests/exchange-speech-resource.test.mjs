@@ -63,7 +63,7 @@ test('豆包语音资源可编辑读回，并发冲突保留输入且不回传�
       Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(resource(), 'seed-tts-1.0');
       resource().dispatchEvent(new dom.window.Event('input', { bubbles: true }));
     });
-    await click('保存并读回');
+    await click('保存修改');
     assert.equal(resource().value, 'seed-tts-1.0');
     assert.match(document.body.textContent, /已被其他人修改/);
     assert.equal(fixture.calls[0].draft.version, 7);
@@ -71,7 +71,7 @@ test('豆包语音资源可编辑读回，并发冲突保留输入且不回传�
     assert.equal(Object.hasOwn(fixture.calls[0].draft, 'transformerConfig'), false);
     assert.equal(Object.hasOwn(fixture.calls[0].draft, 'apiKey'), false);
     fixture.conflict = false;
-    await click('保存并读回');
+    await click('保存修改');
     await click('编辑映射');
     assert.equal(resource().value, 'seed-tts-1.0');
     assert.match(document.body.textContent, /正在编辑版本 8/);

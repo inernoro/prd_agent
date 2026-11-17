@@ -1,11 +1,12 @@
 // 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 localStorage（7 天 + 用后自动续期）→ 跳控制台首页。
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Activity, ArrowLeft, BarChart3, Building2, KeyRound, Lock, Rocket, ShieldCheck, User } from 'lucide-react';
+import { Activity, ArrowLeft, Building2, KeyRound, Lock, User } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { getHealth } from '@/lib/api';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 import { Button } from '@/components/ui';
+import './LoginPage.css';
 
 export { resolveMapHomeHref } from '@/lib/mapNavigation';
 
@@ -61,13 +62,13 @@ export function LoginPage() {
   };
 
   const healthCopy = healthState === 'ok'
-    ? 'Gateway 服务正常'
+    ? 'Gateway 服务可连接'
     : healthState === 'checking'
       ? '正在检查 Gateway 服务'
       : '暂时无法确认服务状态';
 
   return (
-    <main className="lg-login-page">
+    <main className="lg-login-page lg-login-task">
       <section className="lg-login-shell" aria-labelledby="llmgw-login-title">
         <div className="lg-login-intro">
           <div className="lg-login-brand">
@@ -78,30 +79,14 @@ export function LoginPage() {
             </div>
           </div>
 
-          <div className="lg-login-hero">
-            <div className={`lg-login-health is-${healthState}`} role="status" aria-live="polite">
-              <span className="lg-login-health-dot" />
-              {healthCopy}
-            </div>
-            <h1 id="llmgw-login-title">登录后，查看属于你的租户数据</h1>
-            <p>这里不是空白演示站。为了避免跨租户泄露，首页、请求、模型、密钥和费用只会在身份校验通过后出现。</p>
+          <h1 id="llmgw-login-title">登录 LLM Gateway</h1>
+          <div className={`lg-login-health is-${healthState}`} role="status" aria-live="polite">
+            <span className="lg-login-health-dot" />{healthCopy}
           </div>
-
-          <div className="lg-login-capabilities" aria-label="登录后可用功能">
-            <div><Rocket size={18} /><span><strong>快速接入</strong><small>生成应用密钥，网页内直接测试四种协议</small></span></div>
-            <div><BarChart3 size={18} /><span><strong>使用与费用</strong><small>查看请求趋势、模型、用户和费用可信度</small></span></div>
-            <div><ShieldCheck size={18} /><span><strong>租户隔离</strong><small>只展示会话所属租户的配置、日志与审计</small></span></div>
-          </div>
-
-          <a href={resolveMapHomeHref()} className="lg-login-back-link">
-            <ArrowLeft size={15} />返回 MAP 首页
-          </a>
         </div>
 
         <div className="lg-login-panel">
           <div className="lg-login-panel-heading">
-            <span>租户工作区</span>
-            <h2>登录 Gateway 控制台</h2>
             <p>使用租户管理员为你创建的控制台账号。</p>
           </div>
 
@@ -148,7 +133,8 @@ export function LoginPage() {
             <div><Building2 size={15} /><span>请让租户 Owner 或 Admin 在“团队与成员”中添加你。</span></div>
             <div><KeyRound size={15} /><span><code>gwk_</code> 是应用调用密钥，不能登录控制台。</span></div>
           </div>
-          <p className="lg-login-security-note">MAP 账号与 Gateway 账号彼此独立。新环境首位管理员首次登录后需要设置自己的密码，请勿共享他人的账号或密钥。</p>
+          <p className="lg-login-security-note">MAP 与 Gateway 账号独立。使用 MAP 登录时，请从 MAP 的网关入口发起。请勿共享账号或密钥。</p>
+          <a href={resolveMapHomeHref()} className="lg-login-back-link"><ArrowLeft size={15} />返回 MAP</a>
         </div>
       </section>
     </main>

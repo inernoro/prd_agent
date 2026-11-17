@@ -131,7 +131,9 @@ describe('验收中心接线和结论语义', () => {
     for (const label of ['测试清单', '执行任务', '历史矩阵', '验收报告']) expect(html).toContain(label);
     expect(pageSource).toContain('<AcceptanceNavigation'); expect(pageSource).toContain('<AcceptanceWorkspace');
     expect(pageSource).toContain('getReport(reportParam)');
-    expect(pageSource).toContain('centerView === \'reports\' && state.status === \'ok\' && selected');
+    expect(pageSource).toContain("const selected = centerView === 'reports' && selectedReport");
+    expect(pageSource).toContain('{selected ? (');
+    expect(pageSource).not.toContain("centerView === 'reports' && state.status === 'ok' && selected");
     expect(acceptanceView('tasks', 'report-1')).toBe('reports');
     expect(acceptanceView('tasks')).toBe('tasks');
     expect(acceptanceView('unknown')).toBe('reports');

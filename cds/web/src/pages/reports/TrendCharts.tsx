@@ -222,7 +222,7 @@ function Chart({ title, unit, say, lines, days, zoom, bars, note, tipFor }: Char
       </div>
       {zoom && say ? <p className="say">{say}</p> : null}
       <div className="capv">
-        <span>上限 {max} 件/日{zoom ? '（当日峰值）' : '（7 日均）'}</span>
+        <span>近 {days.length} 天 · 上限 {max} 件/日{zoom ? '（当日峰值）' : '（7 日均）'}</span>
         <span>
           {md(days[0] ?? '')} 至 {md(days[days.length - 1] ?? '')}
         </span>

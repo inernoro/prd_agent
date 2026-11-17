@@ -9,7 +9,13 @@ if (!/^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/.test(base)) throw Error('Only a
 const out = process.env.CDS_LOADING_EVIDENCE || '/tmp/cds-loading-coverage';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({ headless: true });
-const errors = []; let failOverview = false; let failHealth = true;
+const errors = []; let failOverview = false; let overviewHasProject = false; let failHealth = true;
+const overviewProject = {
+  projectId: 'fixture-project', slug: 'fixture-project', name: '合成关系项目（本地验收）',
+  branch: { id: 'fixture-branch-alpha', name: 'feature/alpha', status: 'running' }, branchCount: 1,
+  counts: { services: 1, sites: 0, apis: 1, webs: 0, workers: 0 },
+  lint: { errors: 0, warnings: 0, infos: 0 }, headline: '合成服务运行中', findings: [], edges: [], inboundEdges: 0,
+};
 try {
   const context = await browser.newContext({ viewport: { width: 1360, height: 900 } });
   await context.route('**/api/**', async route => {
@@ -28,7 +34,7 @@ try {
     }
     if (pathname === '/api/overview/topology') {
       await new Promise(r => setTimeout(r, 1200));
-      return route.fulfill({ status: failOverview ? 500 : 200, contentType: 'application/json', body: JSON.stringify(failOverview ? { error: 'fixture: 读取失败，请刷新重试' } : { generatedAt: new Date().toISOString(), summary: { errors: 0, warnings: 0, infos: 0 }, projects: [] }) });
+      return route.fulfill({ status: failOverview ? 500 : 200, contentType: 'application/json', body: JSON.stringify(failOverview ? { error: 'fixture: 读取失败，请刷新重试' } : { generatedAt: new Date().toISOString(), summary: { errors: 0, warnings: 0, infos: 0 }, projects: overviewHasProject ? [overviewProject] : [] }) });
     }
     if (/\/agent-requests$/.test(pathname)) {
       await new Promise(r => setTimeout(r, 1200));
@@ -61,13 +67,33 @@ try {
   await page.setViewportSize({ width: 1360, height: 900 });
   await page.goto(base + '/overview');
   await page.locator('[data-content-loading="panel"]').waitFor();
-  await page.locator('[data-testid="overview-page"]').waitFor();
+  const overviewCanvas = page.locator('[data-testid="overview-page"]');
+  const overviewEmpty = page.getByText('还没有可展示的项目关系。', { exact: true });
+  await overviewEmpty.waitFor();
+  assert.equal(await overviewCanvas.count(), 0, 'an empty response must not create a fake relationship canvas');
+  assert.equal(await page.locator('[data-content-loading]').count(), 0, 'the confirmed empty response replaces the skeleton');
+  overviewHasProject = true;
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  assert(await overviewEmpty.isVisible(), 'refresh retains the last confirmed empty result while reading');
+  await overviewCanvas.waitFor();
+  await overviewCanvas.locator('[data-project-id="fixture-project"]').getByText(overviewProject.slug, { exact: true }).waitFor();
+  assert((await overviewCanvas.locator('[data-project-id="fixture-project"]').innerText()).includes(overviewProject.name), 'the actual project card displays its name alongside its branch and service counts');
+  assert.equal(await overviewEmpty.count(), 0, 'project data replaces the previous empty result');
   assert.equal(await page.locator('[data-content-loading]').count(), 0, 'data immediately replaces the skeleton');
   failOverview = true; await page.reload();
   await page.getByText(/读取失败/).first().waitFor();
   assert.equal(await page.locator('[data-content-loading]').count(), 0, 'error replaces waiting, rather than an eternal skeleton');
   failOverview = false; await page.getByRole('button', { name: '刷新', exact: true }).click();
-  await page.locator('[data-testid="overview-page"]').waitFor();
+  await overviewCanvas.waitFor();
+  await overviewCanvas.locator('[data-project-id="fixture-project"]').getByText(overviewProject.slug, { exact: true }).waitFor();
+  assert((await overviewCanvas.locator('[data-project-id="fixture-project"]').innerText()).includes(overviewProject.name), 'the actual project card displays its name alongside its branch and service counts');
+  assert.equal(await page.locator('[data-content-loading]').count(), 0, 'successful retry replaces the error with project data');
+  overviewHasProject = false;
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  assert(await overviewCanvas.isVisible(), 'refresh retains the previous project graph while reading');
+  await overviewEmpty.waitFor();
+  assert.equal(await overviewCanvas.count(), 0, 'a later empty response removes the previous project graph');
+  assert.equal(await page.locator('[data-content-loading]').count(), 0, 'confirmed empty result does not leave a waiting skeleton');
   await page.goto(base + '/agent-requests/fixture-project');
   await page.locator('[data-agent-requests-skeleton] [data-content-loading="table"]').waitFor();
   await page.getByText(/还没有 Agent 请求/).waitFor();
@@ -80,11 +106,15 @@ try {
   await page.getByRole('status', { name: '加载发布控制台', exact: true }).waitFor({ state: 'hidden' });
   await page.goto(base + '/cds-settings#alarm-notify');
   await page.getByRole('status', { name: '读取通知身份', exact: true }).waitFor();
-  const notification = page.locator('section').filter({ has: page.getByRole('heading', { name: '通知来源与头像', exact: true }) });
+  const notification = page.getByRole('region', { name: '通知来源', exact: true });
+  assert.equal(await notification.count(), 1, 'the real notification source region exists while its data is pending');
   assert.equal(await notification.locator('input').count(), 0);
-  assert.equal(await notification.getByText('暂未取得发送方式，请刷新后查看。', { exact: true }).count(), 0);
+  assert.equal(await notification.getByText('发送方式暂未确认。', { exact: true }).count(), 0, 'pending is not a failed relay read');
+  assert.equal(await notification.getByRole('button', { name: '重新读取发送方式', exact: true }).count(), 0, 'retry is not offered before a relay read result');
   await page.getByRole('status', { name: '读取通知发送方式', exact: true }).waitFor();
-  await page.getByText('手机通知由当前实例发送。', { exact: true }).waitFor();
+  await notification.getByText('通知由当前实例发送。', { exact: true }).waitFor();
+  assert.equal(await notification.getByRole('status', { name: '读取通知发送方式', exact: true }).count(), 0, 'the confirmed sending mode replaces its own wait');
+  await notification.getByRole('textbox', { name: '实例名称（必填）', exact: true }).waitFor();
   await page.goto(base + '/release-center');
   await page.getByRole('button', { name: /健康监测/ }).click();
   await page.getByRole('status', { name: '读取发布健康数据', exact: true }).waitFor();
@@ -95,6 +125,6 @@ try {
   await page.getByRole('status', { name: '读取发布健康数据', exact: true }).waitFor();
   await page.getByRole('heading', { name: '探测配置', exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  await fs.writeFile(out + '/result.json', JSON.stringify({ sharedStyles: style, slowWaitClearsOnSceneChange: true, dark390: true, reducedMotion: true, dataErrorRetry: true, agentFirstLoadNoBlank: true, releaseConsoleNoPrematureEmpty: true, notificationNoPrematureFailure: true, healthErrorRetry: true, pageErrors: errors, artificialLatency: 'local synthetic API fixtures only', paidModelRequests: 0 }, null, 2));
+  await fs.writeFile(out + '/result.json', JSON.stringify({ sharedStyles: style, slowWaitClearsOnSceneChange: true, dark390: true, reducedMotion: true, dataErrorRetry: true, overviewReadyStates: ['empty', 'project', 'error', 'project', 'empty'], agentFirstLoadNoBlank: true, releaseConsoleNoPrematureEmpty: true, notificationNoPrematureFailure: true, healthErrorRetry: true, pageErrors: errors, artificialLatency: 'local synthetic API fixtures only', paidModelRequests: 0 }, null, 2));
   console.log('PASS shared content skeleton; 6s status; scene cleanup; dark390; reduced motion; data/error/retry; Agent first load; release-console pending/empty separation; no page errors');
 } catch (error) { const pages=browser.contexts().flatMap(c=>c.pages()); if(pages[0]) { await fs.writeFile(out+'/failure.html',await pages[0].content()); await pages[0].screenshot({path:out+'/failure.png',fullPage:true}); } throw error; } finally { await browser.close(); }
