@@ -1,3 +1,4 @@
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Copy, GitBranch, Network, RefreshCw, RotateCw } from 'lucide-react';
@@ -730,20 +731,12 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setSelfStatus({ status: 'ok', data: mapped });
   }, [cdsEvents.snapshot, cdsEvents.lastKnownGood]);
 
-  // 关闭 dropdown 当用户点外面
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const handler = (event: PointerEvent): void => {
-      if (!pickerWrapRef.current?.contains(event.target as Node)) setPickerOpen(false);
-    };
-    document.addEventListener('pointerdown', handler);
-    return () => document.removeEventListener('pointerdown', handler);
-  }, [pickerOpen]);
-
   /** 候选分支列表 — 按 committerDate 倒排,优先用 branchDetails(后端已排好序),
    * fallback 到旧 branches: string[]。当前分支总在最前(便于看到自己在哪)。*/
   const visibleBranches = useMemo<BranchMeta[]>(() => {
     if (branchState.status !== 'ok') return [];
+
+
     const query = selectedBranch.trim().toLowerCase();
     const details = branchState.data.branchDetails;
     const list: BranchMeta[] = details && details.length > 0
@@ -768,6 +761,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     });
     return sorted.slice(0, 80);
   }, [selectedBranch, branchState]);
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const frame = requestAnimationFrame(() => document.getElementById(`cds-update-branch-option-${highlightedIndex}`)?.scrollIntoView({ block: 'nearest' }));
+    return () => cancelAnimationFrame(frame);
+  }, [pickerOpen, highlightedIndex]);
 
   function appendRunLine(line: string): void {
     if (!line.trim()) return;
@@ -993,11 +991,13 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                         role="combobox"
                         aria-expanded={pickerOpen}
                         aria-autocomplete="list"
+                        aria-controls="cds-update-branch-options"
+                        aria-activedescendant={pickerOpen && visibleBranches[highlightedIndex] ? `cds-update-branch-option-${highlightedIndex}` : undefined}
                       />
                       {pickerOpen && visibleBranches.length > 0 ? (
-                        <div
-                          role="listbox"
-                          className="absolute left-0 right-0 top-full z-[100] mt-1 max-h-[22.5rem] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+                        <AnchoredPopover open anchorRef={pickerWrapRef} width="anchor" maxHeightRem={22.5} onDismiss={() => setPickerOpen(false)} tabIntoPanel={false}
+                          id="cds-update-branch-options" role="listbox"
+                          className="z-[300] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
                           style={{ overscrollBehavior: 'contain' }}
                         >
                           {visibleBranches.map((branch, idx) => {
@@ -1009,6 +1009,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                 key={branch.name}
                                 type="button"
                                 role="option"
+                                id={`cds-update-branch-option-${idx}`}
                                 aria-selected={isHighlighted}
                                 onMouseEnter={() => setHighlightedIndex(idx)}
                                 onClick={() => {
@@ -1065,12 +1066,12 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                               </button>
                             );
                           })}
-                        </div>
+                        </AnchoredPopover>
                       ) : null}
                       {pickerOpen && visibleBranches.length === 0 ? (
-                        <div className="absolute left-0 right-0 top-full z-[100] mt-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3 text-xs text-muted-foreground shadow-2xl">
+                        <AnchoredPopover open anchorRef={pickerWrapRef} width="anchor" onDismiss={() => setPickerOpen(false)} className="z-[300] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3 text-xs text-muted-foreground shadow-2xl">
                           没有匹配「{selectedBranch}」的分支。回车将以原值提交(后端会校验 origin/{selectedBranch} 是否存在)。
-                        </div>
+                        </AnchoredPopover>
                       ) : null}
                     </div>
                     <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => void loadBranches()}>

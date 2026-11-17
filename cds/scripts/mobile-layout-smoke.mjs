@@ -470,7 +470,20 @@ async function checkNativeDetailsVisibility(browser) {
       text: el.textContent, painted: el.checkVisibility(), height: el.getBoundingClientRect().height,
     })));
     console.log(`MEASURE native-details-real-closed-menu ${JSON.stringify(hidden)}`);
-    assertOk(hidden.length === 2 && hidden.every(el => !el.painted), '两个关闭菜单入口必须确实未绘制');
+    assertOk(hidden.every(entry => !entry.painted), '关闭的原生折叠入口不得绘制');
+    assertOk(hidden.every(el => !el.painted), '关闭的原生菜单子项必须未绘制');
+    const instanceTrigger = page.getByLabel('切换 CDS 实例', { exact: true }).filter({ visible: true }).first();
+    await instanceTrigger.waitFor();
+    const instancePanel = page.getByLabel('主备 CDS 入口', { exact: true });
+    assertOk(await instancePanel.count() === 0, '关闭的实例浮层必须未挂载');
+    await instanceTrigger.tap();
+    await instancePanel.waitFor();
+    const entries = instancePanel.getByRole('link');
+    assertOk(await entries.count() === 2, '展开实例浮层必须提供两个真实入口');
+    for (const entry of await entries.all()) assertOk(await entry.isVisible(), '展开实例入口必须可见');
+    await page.keyboard.press('Escape');
+    await instancePanel.waitFor({ state: 'detached' });
+    assertOk(await instanceTrigger.evaluate(el => document.activeElement === el), '关闭实例浮层后焦点返回触发器');
     await checkLayout(page, 'native-details-real-closed-menu', '窄屏样例项目');
   } finally { await context.close(); }
 }

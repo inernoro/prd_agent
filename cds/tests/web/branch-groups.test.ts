@@ -234,6 +234,10 @@ describe('前后端枚举一致', () => {
     expect(dropdown).toContain('@radix-ui/react-dropdown-menu');
     expect(dropdown).toContain('var(--radix-dropdown-menu-content-available-height)');
     expect(dropdown).not.toContain('Math.max(spaceBelow, 120)');
+    // 下拉菜单限高只取实际剩余空间，不垫最小高度（矮视口里会伸出视口）
+    const floating = read('components/ui/anchored-popover.tsx');
+    expect(floating).toContain('Math.max(0, bottomEdge - Math.max(topEdge, rect.bottom + gap))');
+    expect(floating).not.toContain('Math.max(120');
     // 「归了别组」的分行按组 id 作 key（组名可重复）
     expect(editor).toContain('<div key={entry.groupId}');
     expect(editor).not.toContain('key={entry.groupName}');

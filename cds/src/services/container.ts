@@ -16,7 +16,8 @@ import type { ObservationStreamExecutor } from './observation-stream-executor.js
 import { shellQuoteArg } from './secure-database-cli.js';
 import { worktreePathActivity } from './worktree-path-activity.js';
 import { assertProfileStorageBoundary, assertInfraStorageBoundary } from './deployment-storage-boundary.js';
-import { profileStoragePlan, infraStoragePlan, inspectStoragePlan, resolveStorageImage, renderStoragePlan, withReadOnlyTools, withRuntimeTmpfs, type DeploymentStoragePlan, type StorageBirthRequirements, UnsafeDeploymentStorageError } from './deployment-storage-plan.js';
+import { profileStoragePlan, infraStoragePlan, inspectStoragePlan, resolveStorageImage, renderStoragePlan, withReadOnlyTools, withRuntimeTmpfs, withPreviewCompatibilityAssets, type DeploymentStoragePlan, type StorageBirthRequirements, UnsafeDeploymentStorageError } from './deployment-storage-plan.js';
+import { preparePreviewCompatibilityAssets } from './preview-compatibility-assets.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
@@ -2143,8 +2144,12 @@ export class ContainerService {
     const runImageReference = storageAdmission?.imageReference || profile.dockerImage;
     profile.dockerImage = await resolveStorageImage(shell, storageAdmission?.imageId || profile.dockerImage, acceptedStoragePlan, !storageAdmission);
     await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
+    const compatibilityAssets = await preparePreviewCompatibilityAssets({
+      repo: this.config.repoRoot, entry, profile, shell, projectEnv: customEnv, scope: process.env.CDS_PREVIEW_COMPAT_SCOPE,
+    });
+    const runtimePlan = compatibilityAssets ? withPreviewCompatibilityAssets(acceptedStoragePlan, compatibilityAssets) : acceptedStoragePlan;
     const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount, runtimeStoragePlan } =
-      await this.buildProfileVolumeFlags(entry, profile, command, onOutput, acceptedStoragePlan);
+      await this.buildProfileVolumeFlags(entry, profile, command, onOutput, runtimePlan);
     const checkRuntimeBinds = this.bindMountInspector(runtimeStoragePlan);
     checkBindMounts();
     shell = guardBindMountShell(shell, checkRuntimeBinds);
@@ -2271,7 +2276,7 @@ export class ContainerService {
       // 修复:隔离时改用 create → connect(infra) → start 时序 —— 进程启动前两张网都已就位,等价于
       // 旧路径下「容器进程开始前就在项目网上」。未隔离(connectNetworks 为空)仍走原 `docker run -d`,零回归。
       const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
-      const mustCreateBeforeStart = attachSharedBeforeStart || acceptedStoragePlan.mounts.some(m => m.kind === 'volume');
+      const mustCreateBeforeStart = attachSharedBeforeStart || runtimeStoragePlan.mounts.some(m => m.kind === 'volume' || m.previewAssets);
       const dockerCreateVerb = mustCreateBeforeStart ? 'docker create' : 'docker run -d';
       attemptRuntime = { containerName: service.containerName, hostPort: service.hostPort };
       const runCmd = [

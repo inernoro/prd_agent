@@ -6,7 +6,7 @@
  * 命中预览走 lib/branchGroups 的 previewGroupHits——与页面分区同一个判定源。
  */
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, GitBranch, Pin, Plus, Tag, X } from 'lucide-react';
+import { GitBranch, Pin, Plus, Tag, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -169,7 +169,7 @@ export function BranchGroupEditorDialog({
                 <label className="relative">
                   <span className="sr-only">规则类型</span>
                   <select
-                    className="h-9 w-full appearance-none rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus:ring-2 focus:ring-ring"
                     value={rule.kind}
                     onChange={(event) => setRule(index, { kind: event.target.value as BranchGroupRuleKind })}
                   >
@@ -180,7 +180,6 @@ export function BranchGroupEditorDialog({
                   <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden>
                     {rule.kind === 'tag' ? <Tag className="h-3.5 w-3.5" /> : <GitBranch className="h-3.5 w-3.5" />}
                   </span>
-                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
                 </label>
                 <label>
                   <span className="sr-only">规则值</span>

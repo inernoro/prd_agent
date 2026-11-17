@@ -154,6 +154,11 @@ jobs:
       - name: Install Chromium for layout probes
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Verify preview asset retention across container replacement
+        run: |
+          docker pull node:20-bookworm-slim
+          node scripts/preview-compatibility-browser.mjs
+
       - name: Task health recovery diagnostic
         run: pnpm run smoke:task-health-recovery
 
@@ -189,6 +194,23 @@ jobs:
         with:
           name: reports-workflow-evidence
           path: work/reports-workflow/
+          if-no-files-found: ignore
+
+      - name: Select and dropdown boundary smoke (offline)
+        run: pnpm run smoke:select-boundary
+
+      - name: Dropdown coverage inventory
+        run: node scripts/dropdown-inventory.mjs --json > "$RUNNER_TEMP/cds-dropdown-coverage.json"
+
+      - name: Shared floating boundary and keyboard smoke
+        run: pnpm run smoke:floating-boundary
+
+      - name: Preserve dropdown coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-dropdown-coverage-${{ github.sha }}
+          path: ${{ runner.temp }}/cds-dropdown-coverage.json
           if-no-files-found: ignore
 
       # 关系视图视觉审计（2026-10-03）。关系图出过的问题全是几何与渲染问题：图被裁、问题卡一词一行、

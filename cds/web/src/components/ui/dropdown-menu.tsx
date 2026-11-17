@@ -20,7 +20,7 @@ export function DropdownMenu({ trigger, children, align = 'end', width = 220 }: 
     <DropdownPrimitive.Portal>
       <DropdownPrimitive.Content ref={contentRef} align={align} sideOffset={6} collisionPadding={8}
         className="cds-overlay-anim z-[300] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
-        style={{ width, maxWidth: 'calc(100vw - 1rem)', maxHeight: 'var(--radix-dropdown-menu-content-available-height)' }}
+        style={{ width, maxWidth: 'var(--radix-dropdown-menu-content-available-width)', maxHeight: 'max(0px, var(--radix-dropdown-menu-content-available-height))' }}
         onClick={event => {
           event.stopPropagation();
           // MotionLink prevents native navigation; close its menu even when Radix skips selection.
