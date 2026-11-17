@@ -4,7 +4,7 @@ import { dtsCredentialAllowed } from '../../src/services/dts-access.js';
 import * as policy from '../../src/services/dts-policy.js';
 import type { DtsStore } from '../../src/services/dts-store.js';
 import type { DtsSeaTunnel } from '../../src/services/dts-seatunnel.js';
-import type { DtsActor, DtsConnection, DtsPlan, DtsRun } from '../../src/shared/dts.js';
+import type { DtsActor, DtsConnection, DtsPlan, DtsPolicy, DtsRun } from '../../src/shared/dts.js';
 import type { StateService } from '../../src/services/state.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
@@ -62,6 +62,35 @@ describe('DTS admission and native-job recovery', () => {
     expect(policy.compatibleDtsFields(connection('source'), connection('target'), 'account-authority')).toEqual({ _id: 'string', name: 'string' });
     const job = policy.buildDtsMongoJob(makePlan(), connection('source'), connection('target'), 'mongodb://source', 'mongodb://target') as { source: Record<string, unknown>[]; sink: Record<string, unknown>[] };
     expect(job.sink[0]['upsert-enable']).toBe(false); expect(JSON.parse(String(job.source[0]['match.query']))).toEqual({ _id: { $in: ['new'] } });
+  });
+  it('keeps all approved fields for new policy accounts while preserving profile direction and update selection', () => {
+    const source = connection('source'), target = connection('target'); source.allowWrite = true;
+    expect(policy.compatibleDtsFields(source, target, 'append-only', true)).toEqual(source.contract.fields);
+    expect(policy.compatibleDtsFields(source, target, 'account-authority', true)).toEqual({ _id: 'string', name: 'string' });
+    expect(() => policy.compatibleDtsFields(target, source, 'append-only', true)).toThrow('不能反向');
+  });
+  it('creates missing accounts before daily profile reconciliation and marks the day only after reconciliation', async () => {
+    const f = setup(); await f.seed();
+    const p: DtsPolicy = { id: 'policy', projectId: 'p', sourceId: 'source', targetId: 'target', enabled: true,
+      newAccountsEverySeconds: 5, reconcileHour: 0, timezone: 'Asia/Shanghai', nextDiscoveryAt: new Date(0).toISOString(), actor };
+    await f.store.put('policies', p);
+    let created = false;
+    const plan = vi.spyOn(f.service, 'plan').mockImplementation(async (_project, _source, _target, mode) => ({ ...makePlan(),
+      id: mode === 'append-only' ? 'new-accounts' : 'daily-profile', mode, fields: mode === 'append-only' ? connection('source').contract.fields : { _id: 'string', name: 'string' },
+      insertCount: created ? 0 : 1, updateCount: mode === 'account-authority' ? 1 : 0 }));
+    const start = vi.spyOn(f.service, 'start').mockImplementation(async (_project, planId) => {
+      const selected = plan.mock.results.filter(r => r.type === 'return').at(-1)!;
+      const value = await selected.value;
+      const run = { id: planId + '-run', projectId: 'p', createdAt: new Date().toISOString(), status: 'completed', plan: value } as DtsRun;
+      await f.store.put('runs', run); if (value.mode === 'append-only') created = true; return run;
+    });
+    try {
+      await f.service.tick(['p']); expect(start.mock.calls[0]?.[1]).toBe('new-accounts');
+      expect((await f.store.get('policies', 'p', p.id) as DtsPolicy).lastReconcileDate).toBeUndefined();
+      const saved = await f.store.get('policies', 'p', p.id) as DtsPolicy; saved.nextDiscoveryAt = new Date(0).toISOString(); await f.store.put('policies', saved);
+      await f.service.tick(['p']); expect(start.mock.calls[1]?.[1]).toBe('daily-profile');
+      expect((await f.store.get('policies', 'p', p.id) as DtsPolicy).lastReconcileDate).toBeTruthy();
+    } finally { plan.mockRestore(); start.mockRestore(); }
   });
   it.each(['password', 'accessToken', 'sessionId', 'migrationVersion'])('rejects protected data %s', field => {
     expect(() => policy.parseDtsContract({ id: 'accounts', version: 1, accepts: [1], fields: { _id: 'string', [field]: 'string' } })).toThrow('受保护');

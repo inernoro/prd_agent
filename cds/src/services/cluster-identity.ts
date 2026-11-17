@@ -232,10 +232,12 @@ export class ClusterIdentityService {
     if (depth > 20) throw new Error('identity payload too deep');
     const ids = toAuthority ? Object.fromEntries(Object.entries(c.projects).map(([a, b]) => [b, a])) : c.projects;
     if (typeof value === 'string' && ['projectId', 'projectIds', 'projects'].includes(key)) {
+      if (key === 'projects' && value === 'all') return value;
       if (!ids[value] && toAuthority) throw new Error('project has no cluster binding');
       return ids[value] || value;
     }
-    if (Array.isArray(value)) return value.map(v => this.translated(v, toAuthority, key, depth + 1));
+    // Arrays contain concrete IDs, even if a project happens to be named "all".
+    if (Array.isArray(value)) return value.map(v => this.translated(v, toAuthority, key === 'projects' ? 'projectIds' : key, depth + 1));
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, this.translated(v, toAuthority, k, depth + 1)]));
     return value;
   }
@@ -313,7 +315,12 @@ export class ClusterIdentityService {
     if (this.config?.role !== 'member') return false;
     try {
       const reply = await this.call(req, '/api/cluster/identity/resolve', { method: req.method, path: req.url });
-      if (reply.status !== 200) { failure(res, 'cluster_identity_rejected', reply.status === 401 ? 401 : 503); return true; }
+      if (reply.status !== 200) {
+        if (reply.status === 401 && req.method === 'GET' && !/^\/api\//i.test(req.path) && req.accepts('html')) {
+          res.redirect(302, `/login?redirect=${encodeURIComponent(localReturn(req.originalUrl))}`);
+        } else failure(res, 'cluster_identity_rejected', reply.status === 401 ? 401 : 503);
+        return true;
+      }
       installClusterIdentity(req, this.mapContext(reply.json as Parameters<ClusterIdentityService['mapContext']>[0],
         req.path.replace(/\/+$/, '').toLowerCase() === '/api/cluster/identity/config'));
       this.copyCookies(res, reply.cookies);

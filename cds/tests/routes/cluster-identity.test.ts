@@ -44,8 +44,8 @@ async function node(name: string, username: string, password: string) {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); servers.push(server);
   return { state, app, server, dir, sink, eventFile, url: `http://127.0.0.1:${(server.address() as { port: number }).port}` };
 }
-async function request(n: Node, route: string, key?: string, method = 'GET', body?: unknown, cookie?: string) {
-  const response = await fetch(n.url + route, { method, redirect: 'manual', headers: { Accept: 'application/json',
+async function request(n: Node, route: string, key?: string, method = 'GET', body?: unknown, cookie?: string, accept = 'application/json') {
+  const response = await fetch(n.url + route, { method, redirect: 'manual', headers: { Accept: accept,
     ...(key ? { 'X-AI-Access-Key': key } : {}), ...(cookie ? { Cookie: cookie } : {}),
     ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text(); let json: any;
@@ -101,6 +101,65 @@ describe('cluster identity through two real HTTP control planes', () => {
     const result = await request(member, '/api/dts/capabilities?projectId=local-a', key);
     expect(result.status).toBe(200); expect(result.json.projectId).toBe('local-a'); expect(capabilities).toHaveBeenCalledWith('source-a');
     expect((await request(member, '/api/dts/capabilities?projectId=local-b', key)).status).toBe(403);
+  });
+
+  it('admits authorized human DTS reads on both nodes without admitting writes or other projects', async () => {
+    const user = await primary.app.locals.cdsAuthService.createLocalUser({ username: 'dts-reader', password: 'long-fixture-password' });
+    primary.state.addPrincipal({ id: `human:${user.id}`, name: 'reader', kind: 'human', status: 'active', createdAt: new Date().toISOString() });
+    primary.state.addProjectGrant({ id: 'dts-read-grant', principalId: `human:${user.id}`, projectId: 'source-a', origin: 'approved', grantedAt: new Date().toISOString() });
+    const signed = await request(member, '/api/auth/login', undefined, 'POST', { username: 'dts-reader', password: 'long-fixture-password' });
+    expect(signed.status).toBe(200);
+    const cookie = signed.headers.getSetCookie().map(c => c.split(';')[0]).join('; ');
+    const service = primary.app.locals.dtsService;
+    vi.spyOn(service, 'capabilities').mockResolvedValue({ protocolVersion: 1 });
+    for (const method of ['connections', 'runs', 'policies']) vi.spyOn(service, method).mockResolvedValue([]);
+    vi.spyOn(service, 'services').mockReturnValue([]);
+    vi.spyOn(service, 'refresh').mockResolvedValue({ id: 'fixture-run' });
+    vi.spyOn(service, 'publicRun').mockReturnValue({ id: 'fixture-run', status: 'completed' });
+    for (const [n, id, other] of [[primary, 'source-a', 'source-b'], [member, 'local-a', 'local-b']] as const) {
+      for (const route of ['capabilities', 'connections', 'runs', 'runs/fixture-run', 'policies']) {
+        const result = await request(n, `/api/dts/${route}?projectId=${id}`, undefined, 'GET', undefined, cookie);
+        expect(result.status, `${n.url}/${route}`).toBe(200);
+        if (route === 'capabilities') expect(result.json).toMatchObject({ configureAllowed: false, executeAllowed: false });
+        expect((await request(n, `/api/dts/${route}?projectId=${other}`, undefined, 'GET', undefined, cookie)).status).toBe(403);
+      }
+      expect((await request(n, '/api/dts/capabilities', undefined, 'GET', undefined, cookie)).status).toBeGreaterThanOrEqual(400);
+      expect((await request(n, `/api/dts/engine?projectId=${id}`, undefined, 'GET', undefined, cookie)).status).toBe(403);
+      for (const [method, route] of [['POST', 'connections'], ['PUT', 'engine'], ['POST', 'plans'], ['POST', 'runs'], ['POST', 'policies'], ['PATCH', 'policies/fixture'], ['POST', 'runs/fixture-run/pause']]) {
+        expect((await request(n, `/api/dts/${route}`, undefined, method, { projectId: id }, cookie)).status).toBe(403);
+      }
+    }
+    primary.state.revokeProjectGrant('dts-read-grant');
+    for (const [n, id] of [[primary, 'source-a'], [member, 'local-a']] as const) {
+      expect((await request(n, `/api/dts/capabilities?projectId=${id}`, undefined, 'GET', undefined, cookie)).status).toBe(403);
+    }
+  });
+
+  it.each(['unrelated=1', 'cds_token=obsolete-member-session', undefined])('recovers a browser document with an invalid or missing session: %s', async cookie => {
+    const target = '/project-list?tab=active';
+    const result = await request(member, target, undefined, 'GET', undefined, cookie, 'text/html');
+    expect(result.status).toBe(302);
+    const localLogin = new URL(result.headers.get('location')!, member.url);
+    expect(localLogin.pathname).toBe('/login'); expect(localLogin.searchParams.get('redirect')).toBe(target);
+    const central = await request(member, localLogin.pathname + localLogin.search, undefined, 'GET', undefined, cookie, 'text/html');
+    const loginPage = new URL(central.headers.get('location')!);
+    expect(loginPage.origin).toBe(primary.url); expect(loginPage.pathname).toBe('/login');
+    const handoff = new URL(loginPage.searchParams.get('redirect')!, primary.url);
+    expect(handoff.searchParams.get('returnTo')).toBe(target);
+    expect((await request(member, '/api/projects', undefined, 'GET', undefined, cookie, 'text/html')).status).toBe(401);
+  });
+
+  it('preserves all-project key scope through the member while still translating concrete project lists', async () => {
+    const owner = await login(member);
+    const all = await request(member, '/api/global-agent-keys', undefined, 'POST', { label: 'all cluster projects', access: { canCreateProjects: false, projects: 'all' } }, owner.cookie);
+    expect(all.status).toBe(201); expect(all.json.access.projects).toBe('all');
+    expect(member.state.getGlobalAgentKeys()).toHaveLength(0);
+    expect(primary.state.getGlobalAgentKeys().find(k => k.id === all.json.keyId)?.access?.projects).toBe('all');
+    for (const id of ['local-a', 'local-b']) expect((await request(member, `/api/projects/${id}`, all.json.plaintext)).status).toBe(200);
+    expect((await request(member, '/api/global-agent-keys', all.json.plaintext, 'POST', { access: { projects: 'all' } })).status).toBe(403);
+    const scoped = await request(member, '/api/global-agent-keys', undefined, 'POST', { access: { canCreateProjects: false, projects: ['local-a'] } }, owner.cookie);
+    expect(scoped.status).toBe(201); expect(scoped.json.access.projects).toEqual(['local-a']);
+    expect(primary.state.getGlobalAgentKeys().find(k => k.id === scoped.json.keyId)?.access?.projects).toEqual(['source-a']);
   });
 
   it('accepts the same authority credential, rejects independent local credentials, and persists membership', async () => {

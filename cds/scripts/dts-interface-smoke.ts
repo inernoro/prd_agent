@@ -54,5 +54,15 @@ try{
   results.push({kind,channel:'web',runId:id,independentTargetCheck:true});console.log('PASS',kind,'visible project-tools path → native write → exact task and target verification');
  }
  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:folder+'/interface-narrow.png'});assert.deepEqual(errors,[]);
- await fs.writeFile(folder+'/five-interface-results.json',JSON.stringify({scope:'isolated native functional regression; not published acceptance',results,pageErrors:errors},null,2));
+ const viewer=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true}),reader=await viewer.newPage();reader.on('pageerror',e=>errors.push(e.message));
+ try{
+  await reader.goto(c.origin+'/login');await reader.getByPlaceholder('操作员用户名').fill('dts_viewer');await reader.locator('input[type=password]').fill('dts_disposable_viewer_password');await reader.getByRole('button',{name:'登录',exact:true}).click();
+  await reader.getByRole('button',{name:'更多操作',exact:true}).click();await reader.getByRole('button',{name:'数据同步',exact:true}).click();await reader.getByRole('heading',{name:'数据同步',exact:true}).waitFor();await reader.getByLabel('所属项目',{exact:true}).selectOption(c.projectId);await reader.getByRole('heading',{name:'同步任务',exact:true}).waitFor();
+  const caps=await reader.request.get(c.origin+'/api/dts/capabilities?projectId='+c.projectId);assert.equal(caps.status(),200);assert.equal((await caps.json()).executeAllowed,false);
+  assert.equal(await reader.getByRole('button',{name:'比较差异',exact:true}).isDisabled(),true);
+  assert.equal((await reader.request.post(c.origin+'/api/dts/plans',{data:{projectId:c.projectId,...c.pairs.mongo,mode:'append-only'}})).status(),403);
+  assert.equal(await reader.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await reader.screenshot({path:folder+'/interface-member-mobile.png'});
+ }finally{await viewer.close();}
+ assert.deepEqual(errors,[]);console.log('PASS ordinary member mobile login → visible DTS entry → own-project status; native write remains denied');
+ await fs.writeFile(folder+'/five-interface-results.json',JSON.stringify({scope:'isolated native functional regression; not published acceptance',results,memberReadOnly:true,pageErrors:errors},null,2));
 }finally{await browser.close();}

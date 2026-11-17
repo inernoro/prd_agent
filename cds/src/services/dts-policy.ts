@@ -57,7 +57,10 @@ export function dtsConnectionUri(connection: DtsConnection, env: Record<string, 
   if (!uri || !(connection.kind === 'mongo' ? /^mongodb(?:\+srv)?:\/\// : connection.kind === 'rabbitmq' ? /^https?:\/\// : connection.kind === 'redis' ? /^redis:\/\// : connection.kind === 'mysql' ? /^mysql:\/\// : /^(?:postgres|postgresql):\/\//).test(uri)) dtsReject('connection_unavailable', '已有数据库连接不可用，请联系管理员核对服务配置', 503);
   return uri;
 }
-export function compatibleDtsFields(source: DtsConnection, target: DtsConnection, mode: DtsMode): Record<string, DtsFieldType> {
+export function compatibleDtsFields(source: DtsConnection, target: DtsConnection, mode: DtsMode, accountPolicy = false): Record<string, DtsFieldType> {
+  // Policies keep their authority/whitelist checks, but missing rows need the
+  // complete approved insert contract rather than the daily update subset.
+  if (accountPolicy && mode !== 'account-authority') compatibleDtsFields(source, target, 'account-authority');
   if (!target.allowWrite) dtsReject('target_read_only', '该连接未获准作为写入目标，请由管理员核对后登记', 403);
   if (mode === 'account-authority' && (source.environmentRole !== 'production' || target.environmentRole === 'production')) dtsReject('account_direction_invalid', '账号资料必须由已登记的正式环境向非正式环境同步，不能反向覆盖正式资料', 409);
   if (source.kind !== target.kind || !['mongo', 'mysql', 'postgres', 'redis', 'rabbitmq'].includes(source.kind)) dtsReject('connector_not_verified', '该服务连接器尚未完成本环境验证，暂不允许写入', 409);
@@ -104,7 +107,7 @@ export async function prepareDtsPlan(input: {
 }): Promise<DtsPlan> {
   const { source, target, mode } = input;
   if (mode !== 'append-only' && mode !== 'account-authority') dtsReject('invalid_mode', '请选择只追加或账号资料校准');
-  const fields = compatibleDtsFields(source, target, input.profileOnly ? 'account-authority' : mode);
+  const fields = compatibleDtsFields(source, target, mode, input.profileOnly);
   return withDtsMongo(input.sourceUri, a => withDtsMongo(input.targetUri, async b => {
     const sourceMeta = await namespaceFingerprint(a, source, input.sourceUri), targetMeta = await namespaceFingerprint(b, target, input.targetUri);
     if (sourceMeta.identity === targetMeta.identity) dtsReject('same_dataset', '源和目标实际指向同一份数据，请选择独立的目标环境', 409);
@@ -131,6 +134,7 @@ export async function prepareDtsPlan(input: {
     const keys = records.map(row => String(row._id));
     const existing = keys.length ? await dst.find({ _id: { $in: keys as never[] } }, { projection: { _id: 1 }, maxTimeMS: 10_000 }).toArray() : [];
     const existingKeys = new Set(existing.map(row => String(row._id)));
+    if (mode === 'account-authority' && records.length !== existing.length) dtsReject('new_accounts_require_append', '目标仍有尚未同步的账号，请先使用只追加缺失项补齐，再校准账号资料', 409);
     const selected = mode === 'append-only' ? records.filter(row => !existingKeys.has(String(row._id))) : records;
     return { id: input.planId ?? randomUUID(), projectId: input.projectId, sourceId: source.id, targetId: target.id, mode, profileOnly: input.profileOnly,
       createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),

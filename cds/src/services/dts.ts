@@ -226,7 +226,7 @@ export class DtsService {
   async addPolicy(projectId: string, input: Pick<DtsPolicy, 'sourceId' | 'targetId'>, actor: DtsActor) {
     const target = await this.connection(projectId, input.targetId);
     if (!target.accountFields.length) dtsReject('account_fields_required', '请先由管理员登记允许校准的账号资料字段');
-    await this.plan(projectId, input.sourceId, input.targetId, 'account-authority', actor);
+    await this.plan(projectId, input.sourceId, input.targetId, 'append-only', actor, true);
     const existing = (await this.policies(projectId)).find(p => p.sourceId === input.sourceId && p.targetId === input.targetId);
     if (existing) return existing;
     const p: DtsPolicy = { id: randomUUID(), projectId, sourceId: input.sourceId, targetId: input.targetId, enabled: true,
@@ -252,7 +252,10 @@ export class DtsService {
           const daily = Number(hour) >= p.reconcileHour && p.lastReconcileDate !== date;
           if ((await this.store.activeRuns<DtsRun>(projectId)).length > 0) continue;
           try {
-            const plan = await this.plan(projectId, p.sourceId, p.targetId, daily ? 'account-authority' : 'append-only', p.actor, true);
+            let plan = await this.plan(projectId, p.sourceId, p.targetId, 'append-only', p.actor, true);
+            if (daily && !plan.insertCount) {
+              plan = await this.plan(projectId, p.sourceId, p.targetId, 'account-authority', p.actor, true);
+            }
             if (plan.insertCount || (daily && plan.updateCount)) {
               const run = await this.start(projectId, plan.id, `policy:${p.id}:${plan.id}`, p.actor, p.id); p.lastRunId = run.id;
             }

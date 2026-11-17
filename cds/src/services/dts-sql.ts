@@ -95,15 +95,16 @@ async function read(db:Sql,c:DtsConnection,fields:Record<string,DtsFieldType>) {
   return rows;
 }
 export async function prepareDtsSqlPlan(input:{projectId:string;source:DtsConnection;target:DtsConnection;sourceUri:string;targetUri:string;mode:DtsMode;actor:DtsActor;profileOnly?:boolean;planId?:string;freeBytes:()=>Promise<number>}) : Promise<DtsPlan> {
-  const {source,target,mode}=input, fields=compatibleDtsFields(source,target,input.profileOnly?'account-authority':mode);
+  const {source,target,mode}=input, fields=compatibleDtsFields(source,target,mode,input.profileOnly);
   return withDtsSql(source,input.sourceUri,a=>withDtsSql(target,input.targetUri,async b=>{
-    const sm=await sqlMeta(a,source,input.sourceUri,fields,'append-only'), tm=await sqlMeta(b,target,input.targetUri,fields,mode,true);
+    const sm=await sqlMeta(a,source,input.sourceUri,fields,'append-only'), tm=await sqlMeta(b,target,input.targetUri,fields,input.profileOnly?'account-authority':mode,true);
     if(sm.identity===tm.identity)dtsReject('same_dataset','源和目标实际指向同一张表，请选择独立的目标',409);
     const src=await read(a,source,fields),dst=await read(b,target,fields),existing=new Set(dst.map(r=>String(r._id)));
     const selected=mode==='append-only'?src.filter(r=>!existing.has(String(r._id))):src;
     const selectedBytes=Buffer.byteLength(JSON.stringify(src)),targetFreeBytes=await input.freeBytes(),requiredFreeBytes=selectedBytes*4+256*1024*1024;
     if(!Number.isFinite(targetFreeBytes)||targetFreeBytes<requiredFreeBytes)dtsReject('capacity_unavailable','无法核实目标数据卷可用空间或空间不足，已阻止 SQL 写入',409);
     const insertCount=src.filter(r=>!existing.has(String(r._id))).length;
+    if(mode==='account-authority'&&insertCount)dtsReject('new_accounts_require_append','目标仍有尚未同步的账号，请先使用只追加缺失项补齐，再校准账号资料',409);
     return {id:input.planId??randomUUID(),projectId:input.projectId,sourceId:source.id,targetId:target.id,mode,profileOnly:input.profileOnly,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+900000).toISOString(),sourceFingerprint:sm.fingerprint,targetFingerprint:tm.fingerprint,fields,sourceCount:src.length,targetCount:dst.length,insertCount,updateCount:mode==='account-authority'?src.length-insertCount:0,skipCount:mode==='append-only'?src.length-insertCount:0,selectedBytes,targetFreeBytes,requiredFreeBytes,keys:selected.map(r=>String(r._id)),selectedDigest:dtsHash(selected),approvedBy:input.actor,sourceContract:source.contract,targetContract:target.contract};
   }));
 }

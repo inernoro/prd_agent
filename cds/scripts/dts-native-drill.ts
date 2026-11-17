@@ -52,6 +52,27 @@ try {
   assert.equal(await dst.db(database).collection('records').countDocuments(), 3);
   const repeat = await service.plan(project, source.id, target.id, 'append-only', actor);
   assert.equal(repeat.insertCount, 0);
+  // A policy must insert the full approved contract before daily profile-only updates.
+  await src.db(database).collection('policy_accounts').insertMany([{ _id: 'existing', name: 'production', revision: 2 }, { _id: 'policy-new', name: 'new account', revision: 7 }] as never);
+  await dst.db(database).collection('policy_accounts').insertOne({ _id: 'existing', name: 'standby', revision: 19, localOnly: 'keep' } as never);
+  const policyBase = { ...base, collection: 'policy_accounts', accountFields: ['name'] };
+  const ps = await service.addConnection(project, { ...policyBase, environmentRole: 'production', name: 'policy source', uriEnv: 'DTS_SOURCE' });
+  const pt = await service.addConnection(project, { ...policyBase, environmentRole: 'standby', allowWrite: true, name: 'policy target', uriEnv: 'DTS_TARGET' });
+  await assert.rejects(service.plan(project, ps.id, pt.id, 'account-authority', actor), /只追加/);
+  const scheduled = await service.addPolicy(project, { sourceId: ps.id, targetId: pt.id }, actor);
+  await store.put('policies', { ...scheduled, reconcileHour: 0 }); await service.tick([project]);
+  let saved = (await service.policies(project)).find(p => p.id === scheduled.id)!;
+  const discovered = await wait(saved.lastRunId!); assert.equal(discovered.status, 'completed', discovered.message); assert.equal(discovered.plan.mode, 'append-only');
+  assert.equal((await dst.db(database).collection('policy_accounts').findOne({ _id: 'policy-new' as never }))?.revision, 7);
+  assert.equal((await dst.db(database).collection('policy_accounts').findOne({ _id: 'existing' as never }))?.name, 'standby');
+  saved = (await service.policies(project)).find(p => p.id === scheduled.id)!;
+  await store.put('policies', { ...saved, nextDiscoveryAt: new Date(0).toISOString() }); await service.tick([project]);
+  saved = (await service.policies(project)).find(p => p.id === scheduled.id)!;
+  const calibrated = await wait(saved.lastRunId!); assert.equal(calibrated.status, 'completed', calibrated.message); assert.equal(calibrated.plan.mode, 'account-authority');
+  const preserved = await dst.db(database).collection('policy_accounts').findOne({ _id: 'existing' as never });
+  assert.equal(preserved?.name, 'production'); assert.equal(preserved?.revision, 19); assert.equal(preserved?.localOnly, 'keep');
+  await service.setPolicy(project, scheduled.id, false, actor);
+  console.log('PASS MongoDB policy inserts full approved records before whitelist-only daily updates');
   await dst.db(database).collection('records').createIndex({name:1},{unique:true});
   await src.db(database).collection('records').insertOne({_id:'conflict',name:'production',revision:3} as never);
   const conflictPlan=await service.plan(project,source.id,target.id,'append-only',actor);
@@ -70,6 +91,6 @@ try {
   const tp = await service.plan(project, ts.id, tt.id, 'append-only', actor);
   const tr = await service.start(project, tp.id, 'native-types', actor); const typed = await wait(tr.id);
   assert.equal(typed.status, 'completed', typed.message);
-  await writeFile(`${folder}/drill-results.json`, JSON.stringify({ engine: '3.0.0', append: service.publicRun(appended), daily: service.publicRun(reconciled), repeatInsertCount: repeat.insertCount, auditCount: events.length, typed: service.publicRun(typed) }, null, 2));
+  await writeFile(`${folder}/drill-results.json`, JSON.stringify({ engine: '3.0.0', append: service.publicRun(appended), daily: service.publicRun(reconciled), repeatInsertCount: repeat.insertCount, auditCount: events.length, typed: service.publicRun(typed), policy: { newAccount: service.publicRun(discovered), daily: service.publicRun(calibrated), fullContractInserted: true, targetOnlyFieldsPreserved: true } }, null, 2));
   console.log('PASS: real SeaTunnel REST → native MongoDB append, daily selected-field reconciliation, independent verification and idempotent start');
 } finally { await store.close(); await src.close(); await dst.close(); }

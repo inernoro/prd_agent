@@ -826,6 +826,7 @@ export function ProjectListPage(): JSX.Element {
                 <RefreshCw />
                 <span className="md:hidden">刷新</span>
               </Button>
+              {state.status === 'ok' && !canManageProjects ? <Button variant="outline" size="sm" onClick={() => navigate('/dts')}><Database />数据同步</Button> : null}
               {canManageProjects ? <DropdownMenu
                 trigger={
                   <Button variant="outline" size="sm" aria-label="新建 / 自动化菜单">

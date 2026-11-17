@@ -58,6 +58,10 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       const source = typeof value === 'string' ? state.getBranch(value) : undefined;
       if (!source || !checkProject(source.projectId || 'default')) { deny(); return; }
     }
+    if (method === 'GET' && /^\/api\/dts\/(?:capabilities|connections|policies|runs(?:\/[^/]+)?)$/.test(path)) {
+      if (!checkProject(req.query.projectId)) { deny(); return; }
+      next(); return;
+    }
     if (kind?.toLowerCase() === 'config' && method === 'GET' && !id) { next(); return; }
     if (kind?.toLowerCase() === 'deployment-runs' && method === 'GET') {
       if (!id) {

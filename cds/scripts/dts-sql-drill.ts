@@ -45,12 +45,40 @@ try{
    assert.equal(rows.length,3);assert.equal(rows[0].local_only,'keep');assert.equal(rows[0].name,mode==='append-only'?'standby':'production');
    results.push({kind,mode,run:service.publicRun(done)});console.log('PASS',kind,mode,'native write + exact independent verification');
   }
+  await withDtsSql(source,env[base.uriEnv],db=>db.query(`INSERT INTO ${table} (_id,name,revision,big,flag,amount,at) VALUES ('policy-new','policy-new',7,9223372036854775806,${kind==='mysql'?'1':'true'},1.25,'2026-11-17 01:02:03')`));
+  await assert.rejects(service.plan(project,source.id,target.id,'account-authority',actor),/只追加/);
+  const scheduled=await service.addPolicy(project,{sourceId:source.id,targetId:target.id},actor);
+  await store.put('policies',{...scheduled,reconcileHour:0});await service.tick([project]);
+  let saved=(await service.policies(project)).find(p=>p.id===scheduled.id)!;
+  const discovered=await wait(saved.lastRunId!);assert.equal(discovered.status,'completed',discovered.message);assert.equal(discovered.plan.mode,'append-only');
+  const inserted=await withDtsSql(target,env[base.uriEnv],db=>db.query(`SELECT big FROM ${table} WHERE _id='policy-new'`));assert.equal(String(inserted[0].big),'9223372036854775806');
+  await withDtsSql(source,env[base.uriEnv],db=>db.query(`UPDATE ${table} SET revision=3,big=99 WHERE _id='existing'`));
+  saved=(await service.policies(project)).find(p=>p.id===scheduled.id)!;
+  await store.put('policies',{...saved,nextDiscoveryAt:new Date(0).toISOString()});await service.tick([project]);
+  saved=(await service.policies(project)).find(p=>p.id===scheduled.id)!;
+  const calibrated=await wait(saved.lastRunId!);assert.equal(calibrated.status,'completed',calibrated.message);assert.equal(calibrated.plan.mode,'account-authority');
+  const preserved=await withDtsSql(target,env[base.uriEnv],db=>db.query(`SELECT revision,big,local_only FROM ${table} WHERE _id='existing'`));
+  assert.equal(Number(preserved[0].revision),3);assert.equal(String(preserved[0].big),'1');assert.equal(preserved[0].local_only,'keep');
+  await service.setPolicy(project,scheduled.id,false,actor);
+  results.push({kind,policyCreatedFullRecord:true,policyPreservedNonProfileFields:true});console.log('PASS',kind,'policy inserts full contract then reconciles whitelist only');
   if(kind==='mysql'){
     await withDtsSql(target,env.MYSQL,db=>db.query(`CREATE UNIQUE INDEX cds_dts_qa_name ON ${table}(name)`));
     await assert.rejects(service.plan(project,source.id,target.id,'account-authority',actor),/额外唯一索引/);
+    await assert.rejects(service.plan(project,source.id,target.id,'append-only',actor,true),/额外唯一索引/);
     console.log('PASS mysql secondary unique index blocks account overwrite');
   }
-  if(kind==='postgres')await withDtsSql(target,env[base.uriEnv],db=>db.query(`CREATE UNIQUE INDEX cds_dts_qa_name ON ${table}(name)`));
+  if(kind==='postgres'){
+    await withDtsSql(target,env[base.uriEnv],db=>db.query(`CREATE UNIQUE INDEX cds_dts_qa_name ON ${table}(name)`));
+    await withDtsSql(source,env[base.uriEnv],db=>db.query(`UPDATE ${table} SET name='acceptance' WHERE _id='existing'`));
+    const clash=await service.plan(project,source.id,target.id,'account-authority',actor);
+    const clashRun=await service.start(project,clash.id,'postgres:secondary-unique:'+clash.id,actor),rejected=await wait(clashRun.id);
+    assert.equal(rejected.status,'failed',rejected.message);
+    const unchanged=await withDtsSql(target,env[base.uriEnv],db=>db.query(`SELECT _id,name,local_only FROM ${table} WHERE _id IN ('existing','target-only') ORDER BY _id`));
+    assert.deepEqual(unchanged.map(r=>[r._id,r.name,r.local_only]),[['existing','production','keep'],['target-only','acceptance','keep']]);
+    await withDtsSql(source,env[base.uriEnv],db=>db.query(`UPDATE ${table} SET name='production' WHERE _id='existing'`));
+    const fresh=await service.control(project,rejected.id,'resume',actor),settled=await wait(fresh.id);assert.equal(settled.status,'completed',settled.message);
+    results.push({kind,accountSecondaryUniqueConflictProtected:true});console.log('PASS postgres profile unique conflict fails without changing the conflicting account');
+  }
   await withDtsSql(source,env[base.uriEnv],db=>db.query(`INSERT INTO ${table} (_id,name,revision) VALUES ('conflict','production',3)`));
   const conflictPlan=await service.plan(project,source.id,target.id,'append-only',actor);
   const conflictRun=await service.start(project,conflictPlan.id,kind+':conflict:'+conflictPlan.id,actor),failed=await wait(conflictRun.id);

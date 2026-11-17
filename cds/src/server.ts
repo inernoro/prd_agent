@@ -2918,7 +2918,6 @@ export function createServer(deps: ServerDeps): express.Express {
       || req.path === '/' || req.path === '/healthz' || req.path === '/api/instance-mode'
       || /\.(?:css|js|ico|png|svg|woff2?|map)$/i.test(req.path)
       || req.path.startsWith('/api/peer-sync/') && !req.path.startsWith('/api/peer-sync/admin/')) { next(); return; }
-    if (!req.path.startsWith('/api/') && !req.headers.cookie) { res.redirect(302, '/login'); return; }
     void clusterIdentity.authenticate(req, res).then(handled => { if (!handled) next(); }).catch(next);
   });
 

@@ -54,6 +54,9 @@ const app = createServer({ stateService: state, shell, config, serverEventLogSto
   containerService: { list: async () => [], listContainers: async () => [], getContainers: async () => [] } as never,
   proxyService: { getProxyLog: () => [], setOnProxyLog() {}, handleSwitchFromExpress() {} } as never, bridgeService: {} as never });
 installSpaFallback(app);
+const viewer = await app.locals.cdsAuthService.createLocalUser({ username: 'dts_viewer', password: 'dts_disposable_viewer_password', isSystemOwner: false });
+state.addPrincipal({ id: `human:${viewer.id}`, name: 'DTS project reader', kind: 'human', status: 'active', createdAt: new Date().toISOString() });
+state.addProjectGrant({ id: 'dts-viewer-grant', principalId: `human:${viewer.id}`, projectId, origin: 'approved', grantedAt: new Date().toISOString() });
 const server = http.createServer(app); await new Promise<void>(resolve => server.listen(18886, '127.0.0.1', resolve));
 const origin = 'http://127.0.0.1:18886';
 async function call(route: string, body?: unknown, method = 'POST') {
