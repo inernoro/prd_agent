@@ -11,7 +11,8 @@ const gateway = new URL(process.env.GATEWAY_URL || target.gatewayUrl);
 assert.equal(map.protocol, 'https:'); assert.equal(gateway.protocol, 'https:');
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD, 'Missing real preview login credentials');
 // Wait for the real new public bundles; never record an older deployed scene as the result.
-for (const destination of [map,gateway]) {
+// MAP splits the portrait into lazy chunks; Gateway owns the scene being recorded in its entry bundle.
+for (const destination of [gateway]) {
   const deadline = Date.now() + 12 * 60_000;
   while (true) {
     try {
