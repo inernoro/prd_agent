@@ -45,6 +45,7 @@ export default function CommentsSection(props: Props) {
   const [filter, setFilter] = useState<'open' | 'resolved' | 'all'>('all');
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const threadElements = useRef(new Map<string, HTMLElement>());
   const fetchId = useRef(0);
   const changeSource = useRef({});
   const notifyChanged = () => window.dispatchEvent(new CustomEvent('hosted-comments-changed', { detail: changeSource.current }));
@@ -132,8 +133,8 @@ export default function CommentsSection(props: Props) {
       if (res.success && res.data) {
         setComments(res.data.comments); setCommentsEnabled(res.data.commentsEnabled); setCanComment(res.data.canComment);
         callbacks.current.onStateLoaded?.(res.data.commentsEnabled);
-      } else if (!silent) setError(res.error?.message || '加载讨论失败');
-    } catch { if (mounted.current && request === fetchId.current && !silent) setError('网络错误，无法加载讨论'); }
+      } else setError(res.error?.message || '加载讨论失败');
+    } catch { if (mounted.current && request === fetchId.current) setError('网络错误，无法加载讨论'); }
     finally { if (mounted.current && request === fetchId.current) setLoading(false); }
   }, [mode, token, password, siteId]);
   useEffect(() => { void load(); }, [load, isAuthenticated, authToken]);
@@ -153,7 +154,7 @@ export default function CommentsSection(props: Props) {
     if (!id) return;
     const selected = comments.find(c => c.id === id);
     if (selected) setFilter(current => current === 'all' ? current : selected.isResolved ? 'resolved' : 'open');
-    const timer = window.setTimeout(() => document.getElementById(`hosted-thread-${id}`)?.scrollIntoView({ block: 'nearest' }), 50);
+    const timer = window.setTimeout(() => threadElements.current.get(id)?.scrollIntoView({ block: 'nearest' }), 50);
     return () => window.clearTimeout(timer);
   }, [annotations?.activeId, comments]);
 
@@ -170,6 +171,7 @@ export default function CommentsSection(props: Props) {
       if (!mounted.current || operationIdentity !== identityRef.current) return;
       if (res.success && res.data) {
         const created = res.data;
+        fetchId.current++;
         notifyChanged();
         setComments(prev => prev.some(c => c.id === created.id) ? prev : [created, ...prev]);
         if (operationDraftScope === draftScopeRef.current) {
@@ -187,7 +189,7 @@ export default function CommentsSection(props: Props) {
     try {
       const res = await deleteSiteComment(id);
       if (!mounted.current || operationIdentity !== identityRef.current) return;
-      if (res.success) { notifyChanged(); setComments(prev => prev.filter(c => c.id !== id && c.parentId !== id)); if (replyTo === id) setReplyTo(null); }
+      if (res.success) { fetchId.current++; notifyChanged(); setComments(prev => prev.filter(c => c.id !== id && c.parentId !== id)); if (replyTo === id) setReplyTo(null); }
       else setError(res.error?.message || '删除失败');
     } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，删除失败'); }
     finally { if (mounted.current && operationIdentity === identityRef.current) { setBusyId(null); setConfirmDelete(null); } }
@@ -200,6 +202,7 @@ export default function CommentsSection(props: Props) {
       const res = await setSiteCommentResolved(source, comment.id, !comment.isResolved);
       if (!mounted.current || operationIdentity !== identityRef.current) return;
       if (res.success && res.data) {
+        fetchId.current++;
         setComments(prev => prev.map(c => c.id === comment.id ? res.data! : c));
         if (res.data.isResolved) annotations?.setActiveId(null);
         notifyChanged();
@@ -250,7 +253,7 @@ export default function CommentsSection(props: Props) {
               if (otherVersions && originVersion) review?.setVersionPreview({ id: originVersion.id, commentId: comment.id });
               else annotations?.focus(comment.id);
             };
-            return <article key={comment.id} id={`hosted-thread-${comment.id}`} className={`review-thread${annotations?.activeId === comment.id ? ' is-active' : ''}`}>
+            return <article key={comment.id} id={`${pickingHintId}-thread-${comment.id}`} ref={element => { if (element) threadElements.current.set(comment.id, element); else threadElements.current.delete(comment.id); }} className={`review-thread${annotations?.activeId === comment.id ? ' is-active' : ''}`}>
               <CommentMessage comment={comment} busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)}>
                 {comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready} className="review-anchor-quote" title={`定位原文：${comment.anchor.text || '无文字元素'}`}>
                   <span className="review-anchor-number">{otherVersions ? <History size={13} /> : number}</span>

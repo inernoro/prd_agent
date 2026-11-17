@@ -6,12 +6,12 @@ import CommentsSection from './CommentsSection';
 import type { HostedAnnotations } from './useHostedAnnotations';
 import type { HostedReview } from './useHostedReview';
 
-const { auth, list, login, select, add, resolveComment } = vi.hoisted(() => ({
-  auth: { isAuthenticated: false, token: '' }, list: vi.fn(), login: vi.fn(), select: vi.fn(), add: vi.fn(), resolveComment: vi.fn(),
+const { auth, list, login, select, add, resolveComment, removeComment } = vi.hoisted(() => ({
+  auth: { isAuthenticated: false, token: '' }, list: vi.fn(), login: vi.fn(), select: vi.fn(), add: vi.fn(), resolveComment: vi.fn(), removeComment: vi.fn(),
 }));
 vi.mock('../../stores/authStore', () => ({ useAuthStore: Object.assign((selector: (state: typeof auth) => unknown) => selector(auth), { getState: () => auth }) }));
 vi.mock('../../services/real/webPages', () => ({ listShareComments: list, listSiteComments: list,
-  addShareComment: add, addSiteComment: add, deleteSiteComment: vi.fn(), setSiteCommentResolved: resolveComment }));
+  addShareComment: add, addSiteComment: add, deleteSiteComment: removeComment, setSiteCommentResolved: resolveComment }));
 vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: ({ text }: { text?: string }) => <p>{text ?? '正在加载讨论…'}</p> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
@@ -379,4 +379,57 @@ it('解决状态变更通知其他面板，自身不重复发起读取', async (
     expect(changed).toHaveBeenCalledOnce(); expect(list).toHaveBeenCalledOnce();
     expect(button('重新打开')).toBeTruthy();
   } finally { window.removeEventListener('hosted-comments-changed', changed); }
+});
+
+it('父子阅读面板的同一历史意见具有独立DOM标识，定位只滚动本面板', async () => {
+  list.mockResolvedValue({ success: true, data: { comments: [{ id: 'shared-note', content: '父子都展示的历史意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' }], commentsEnabled: true, canComment: false } });
+  container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+  const render = (activeId: string | null) => root.render(<>
+    <div data-parent-panel><CommentsSection mode="share" token="share" annotations={annotations()} /></div>
+    <div data-child-panel><CommentsSection mode="share" token="share" annotations={{ ...annotations(), activeId }} /></div>
+  </>);
+  const oldScroll = HTMLElement.prototype.scrollIntoView, scroll = vi.fn(); HTMLElement.prototype.scrollIntoView = scroll;
+  try {
+    await act(async () => render(null));
+    const threads = [...container.querySelectorAll('.review-thread')];
+    expect(threads).toHaveLength(2); expect(new Set(threads.map(el => el.id)).size).toBe(2);
+    await act(async () => render('shared-note'));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    expect(scroll.mock.contexts).toEqual([container.querySelector('[data-child-panel] .review-thread')]);
+  } finally { HTMLElement.prototype.scrollIntoView = oldScroll; }
+});
+
+it.each(['resolve', 'delete'])('外部刷新不能覆盖之后成功的本地修改：%s', async operation => {
+  auth.isAuthenticated = true; auth.token = 'session';
+  const comment = { id: 'note', content: '正在修改的意见', canResolve: true, canDelete: true, authorName: '作者', createdAt: '2026-11-16T00:00:00Z' };
+  const response = { success: true, data: { comments: [comment], commentsEnabled: true, canComment: true } };
+  list.mockResolvedValue(response); await mount();
+  let finish!: (value: unknown) => void;
+  list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+  if (operation === 'resolve') {
+    resolveComment.mockResolvedValue({ success: true, data: { ...comment, isResolved: true } });
+    await act(async () => button('标记解决').click());
+  } else {
+    removeComment.mockResolvedValue({ success: true });
+    await act(async () => button('删除评论').click());
+    await act(async () => button('确认删除讨论及回复').click());
+  }
+  await act(async () => finish(response));
+  if (operation === 'resolve') expect(button('重新打开')).toBeTruthy();
+  else expect(container.textContent).not.toContain('正在修改的意见');
+});
+it.each([false, true])('初次读取期间的更新失败明确可重试，网络异常=%s', async network => {
+  let finish!: (value: unknown) => void;
+  list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await mount();
+  if (network) list.mockRejectedValueOnce(new Error('network'));
+  else list.mockResolvedValueOnce({ success: false, error: { message: '读取更新失败' } });
+  await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  await act(async () => finish({ success: true, data: { comments: [], commentsEnabled: true, canComment: false } }));
+  list.mockResolvedValue({ success: true, data: { comments: [{ id: 'recovered', content: '重试后意见可见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' }], commentsEnabled: true, canComment: false } });
+  await act(async () => button('重新加载').click());
+  expect(container.textContent).toContain('重试后意见可见');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });

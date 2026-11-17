@@ -3,6 +3,7 @@ import { act, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHostedReview, type HostedReview } from './useHostedReview';
+import type { HostedSiteCommentDto } from '@/services/real/webPages';
 import { shouldFetchPreviewHtml } from './previewHtml';
 import { resolveSitePreviewSource } from './sitePreviewSource';
 
@@ -215,4 +216,21 @@ describe('versioned webpage review', () => {
     expect(review.preview).toBeNull();
     expect(review.site?.siteUrl).toBe(site.siteUrl);
   });
+});
+
+it('历史原文定位等待目标意见载入，运行时先就绪时不消耗请求', async () => {
+  preview.mockResolvedValue({ success: true, data: { revision: previous, html: '<h1>旧版</h1>', siteUrl: previous.siteUrl } });
+  await mount();
+  const frame = container.querySelector('iframe')!.contentWindow!;
+  const send = vi.spyOn(frame, 'postMessage');
+  await act(async () => review.selectVersion('v1', 'target-old'));
+  const config = send.mock.calls.filter(call => call[0].type === 'map-annotation-init').at(-1)![0];
+  await act(async () => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, type: 'map-annotation-ready' } })));
+  expect(review.annotations.ready).toBe(true);
+  expect(send.mock.calls.filter(call => call[0].type === 'map-annotation-focus')).toHaveLength(0);
+  const threads = [{ id: 'target-old', contentVersion: '10000', anchor: { kind: 'element' } }] as HostedSiteCommentDto[];
+  await act(async () => review.annotations.setThreads(threads));
+  expect(send.mock.calls.filter(call => call[0].type === 'map-annotation-focus').map(call => call[0].id)).toEqual(['target-old']);
+  await act(async () => review.annotations.setThreads([...threads]));
+  expect(send.mock.calls.filter(call => call[0].type === 'map-annotation-focus')).toHaveLength(1);
 });

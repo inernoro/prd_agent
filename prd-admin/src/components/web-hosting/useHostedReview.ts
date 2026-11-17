@@ -111,10 +111,10 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
       if (mounted.current && request === selectionSequence.current) { setError('无法打开历史版本，请重试'); setSelectedId(null); setPendingFocus(null); }
     } finally { if (mounted.current && request === selectionSequence.current) setLoading(false); }
   }, [versions]);
-  const { ready, focus } = annotations;
+  const { ready, focus, threads } = annotations;
   useEffect(() => {
-    if (pendingFocus && ready && !loading) { focus(pendingFocus); setPendingFocus(null); }
-  }, [pendingFocus, ready, focus, loading]);
+    if (pendingFocus && ready && !loading && threads.some(thread => thread.id === pendingFocus)) { focus(pendingFocus); setPendingFocus(null); }
+  }, [pendingFocus, ready, focus, loading, threads]);
 
   const upload = useCallback(async (file: File) => {
     if (!live || uploading) return;
