@@ -1,3 +1,4 @@
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { BranchSearchDropdown } from '@/components/branch/BranchSearchDropdown';
 import { listRemoteBranches, type RemoteBranch } from '@/lib/remoteBranches';
 import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
@@ -2552,22 +2553,6 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  /*
-   * Close the branch search popover on outside-click. Esc handled inline
-   * on the input.
-   */
-  useEffect(() => {
-    if (!branchSearchOpen) return;
-    const onClick = (event: MouseEvent) => {
-      if (!branchSearchRef.current) return;
-      if (!branchSearchRef.current.contains(event.target as Node)) {
-        setBranchSearchOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', onClick);
-    return () => window.removeEventListener('mousedown', onClick);
-  }, [branchSearchOpen]);
-
   useEffect(() => {
     if (!canManageConsole) return;
     const source = new EventSource(apiUrl('/api/activity-stream'));
@@ -4021,6 +4006,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       if (event.key === 'Escape') setBranchSearchOpen(false);
                     }}
                     className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                    role="combobox" aria-haspopup="dialog" aria-autocomplete="list" aria-expanded={branchSearchOpen} aria-controls="branch-search-options"
                     placeholder={canOpenPreview ? '搜索分支 · 粘贴 commit / tag · 回车预览' : '搜索或添加分支 · 粘贴 commit / tag'}
                     autoComplete="off"
                     spellCheck={false}
@@ -4033,6 +4019,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
               </form>
               {branchSearchOpen ? (
                 <BranchSearchDropdown
+                  anchorRef={branchSearchRef} id="branch-search-options" onDismiss={() => setBranchSearchOpen(false)}
                   describeTracked={(branch) => { const time = branchTimeBadge(branch); return `${statusLabel(branch.status)} · 服务 ${runningServiceCount(branch)}/${serviceCount(branch)} · ${time.label} ${time.text}`; }}
                   trackedStatusClass={(branch) => statusRailClass(branch.status)}
                   trackedBusy={isBusy}
@@ -5606,6 +5593,8 @@ const BranchCard = memo(function BranchCard({
   const appResources = portedResources.filter((resource) => resource.source !== 'infra');
   const infraResources = portedResources.filter((resource) => resource.source === 'infra');
   const [portsPopoverOpen, setPortsPopoverOpen] = useState(false);
+  const portsAnchorRef = useRef<HTMLSpanElement>(null);
+  const portsPanelRef = useRef<HTMLDivElement>(null);
   /* 复制集标识与端口 chip 挤在同一条单行槽里。它占一格，端口就少露一个，否则最窄卡宽下
      排在后面的端口与「+N」会被卡片的 overflow-hidden 裁掉、点不到（Codex P2，PR #1646）。 */
   const replicaEntries = Object.entries((branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {})
@@ -5851,6 +5840,9 @@ const BranchCard = memo(function BranchCard({
   const footerSubject = commitSubject(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
+  const commitAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const aiAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const tagAnchorRef = useRef<HTMLButtonElement | null>(null);
   // 降温条件快捷编辑（2026-07-26 用户拍板）：调度器降温的提示条悬浮显示设置入口，
   // 就地改空闲阈值（PUT /api/scheduler/config，调度器每 tick 读配置——保存即生效）
   const [coolEditOpen, setCoolEditOpen] = useState(false);
@@ -5995,8 +5987,8 @@ const BranchCard = memo(function BranchCard({
     setTagDeleteTarget(null);
   };
   const commitHistoryPanel = commitMenuOpen ? (
-    <div
-      className="absolute bottom-[calc(100%+0.5rem)] left-0 z-[140] w-[min(22.5rem,calc(100vw-3rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+    <AnchoredPopover open anchorRef={commitAnchorRef} widthRem={22.5} side="top" autoFocus="first" onDismiss={() => setCommitMenuOpen(false)}
+      className="z-[300] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
       role="menu"
       aria-label={`${branch.branch} 最近提交`}
       onClick={(event) => event.stopPropagation()}
@@ -6020,7 +6012,7 @@ const BranchCard = memo(function BranchCard({
             <div
               key={`${commit.hash}-${index}`}
               className="grid grid-cols-[4rem_minmax(0,1fr)] gap-3 rounded-md px-2 py-1.5 text-xs hover:bg-muted/35"
-              role="menuitem"
+              role="menuitem" tabIndex={0}
               title={`${commit.hash} ${commit.subject}`}
             >
               <span className="block truncate font-mono text-muted-foreground">{commit.hash}</span>
@@ -6034,7 +6026,7 @@ const BranchCard = memo(function BranchCard({
           ))}
         </div>
       ) : null}
-    </div>
+    </AnchoredPopover>
   ) : null;
 
   return (
@@ -6144,6 +6136,7 @@ const BranchCard = memo(function BranchCard({
                     event.stopPropagation();
                     setTagEditorOpen(false);
                     setTagDeleteTarget(null);
+                    aiAnchorRef.current = event.currentTarget;
                     setAiPanelOpen((current) => !current);
                   }}
                 >
@@ -6176,16 +6169,9 @@ const BranchCard = memo(function BranchCard({
       </header>
 
       {aiPanelOpen && isAiOperated ? (
-        <div
-          className="absolute right-4 top-14 z-[130] w-[min(21.25rem,calc(100%-2rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
-          role="dialog"
-          aria-label={`${branch.branch} AI 操作记录`}
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (event.key === 'Escape') setAiPanelOpen(false);
-          }}
-        >
+        <AnchoredPopover open anchorRef={aiAnchorRef} widthRem={21.25} align="end" onDismiss={() => setAiPanelOpen(false)}
+          className="z-[300] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
+          role="dialog" aria-label={`${branch.branch} AI 操作记录`} onClick={event => event.stopPropagation()}>
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2 font-semibold">
               <Bot className={`h-4 w-4 ${isAiActive ? 'text-info' : aiState.status === 'timeout' ? 'text-warn' : 'text-muted-foreground'}`} />
@@ -6293,7 +6279,7 @@ const BranchCard = memo(function BranchCard({
               </Button>
             ) : null}
           </div>
-        </div>
+        </AnchoredPopover>
       ) : null}
 
       {/* 状态/服务 chip 行 — wrap 不 nowrap。应用 chips 全部显示(超过 8 个才
@@ -6497,7 +6483,7 @@ const BranchCard = memo(function BranchCard({
             {foldedAppCount + infraResources.length > 0 ? (
               // 「+N」折叠气泡（2026-09-29 起 N 含基础设施：托盘从卡面挪到页头汇总，
               // 这里保留逐分支直达资源面板 / 数据库工作台的入口，不丢能力）:悬浮 / 点击 / 键盘弹出浮层展开全部端口。浮层
-              // position:absolute 浮在本卡之上,只展开当前卡、不推挤整行、不改网格高度。
+              // 经共享浮层挂到 body，只展开当前卡，不推挤网格，并按可见视口避让。
               // 交互契约(2026-07-14,修 Codex P2 键盘/触摸可达性):
               //  - 点击/回车/触摸 = 打开(set true,不 toggle):触摸端 mouseenter+click 会
               //    连发两次,toggle 会一开一关净关闭 → 改为幂等打开,任何模态都能开。
@@ -6506,11 +6492,12 @@ const BranchCard = memo(function BranchCard({
               //    (原来 onBlur 挂 button 上,Tab 一离开 button 就 unmount,菜单永远够不到)。
               //  - 关闭走:鼠标移出 / 焦点离开 wrapper / Esc / 点中某个端口。
               <span
+                ref={portsAnchorRef}
                 className="relative inline-flex shrink-0"
                 onMouseEnter={() => setPortsPopoverOpen(true)}
-                onMouseLeave={() => setPortsPopoverOpen(false)}
+                onMouseLeave={event => { if (!portsPanelRef.current?.contains(event.relatedTarget as Node | null)) setPortsPopoverOpen(false); }}
                 onBlur={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null) && !portsPanelRef.current?.contains(event.relatedTarget as Node | null)) {
                     setPortsPopoverOpen(false);
                   }
                 }}
@@ -6520,6 +6507,7 @@ const BranchCard = memo(function BranchCard({
                   // 只 stopPropagation、不 preventDefault:让原生 button click 照常触发
                   // onClick(打开浮层 / 打开端口面板)。Esc 关闭浮层。
                   if (event.key === 'Escape') {
+                    portsAnchorRef.current?.querySelector('button')?.focus();
                     setPortsPopoverOpen(false);
                   }
                   event.stopPropagation();
@@ -6542,14 +6530,13 @@ const BranchCard = memo(function BranchCard({
                   // 外层从 +N 底边(top-full,0 间距)起,用透明 pt-1.5 把可见面板往下推 6px:
                   // 视觉上仍有 6px 间隙,但这 6px 属于 wrapper 子树、被 hover 覆盖 —— 鼠标从
                   // +N 移到端口时不再跨越「空隙」触发 wrapper 的 onMouseLeave(Codex P2 悬停桥)。
-                  <div
-                    className="absolute left-0 top-full z-[140] pt-1.5"
+                  <AnchoredPopover open anchorRef={portsAnchorRef} contentRef={portsPanelRef} widthRem={20} gap={0} onDismiss={() => setPortsPopoverOpen(false)}
+                    onMouseLeave={event => { if (!portsAnchorRef.current?.contains(event.relatedTarget as Node | null)) setPortsPopoverOpen(false); }}
+                    className="z-[300] pt-1.5" role="menu" aria-label="全部服务端口"
                     onClick={(event) => event.stopPropagation()}
                   >
                     <div
                       className="flex max-w-[min(20rem,calc(100vw-3rem))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
-                      role="menu"
-                      aria-label="全部服务端口"
                     >
                       {appResources.map((resource) => (
                         <button
@@ -6593,7 +6580,7 @@ const BranchCard = memo(function BranchCard({
                         </>
                       ) : null}
                     </div>
-                  </div>
+                  </AnchoredPopover>
                 ) : null}
               </span>
             ) : null}
@@ -6717,6 +6704,7 @@ const BranchCard = memo(function BranchCard({
                   onClick={(event) => {
                     event.stopPropagation();
                     setTagEditorOpen(false);
+                    tagAnchorRef.current = event.currentTarget;
                     setTagDeleteTarget((current) => (current === tag ? null : tag));
                   }}
                   className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-destructive/20 hover:text-destructive group-hover/tag:opacity-100 focus:opacity-100"
@@ -6745,6 +6733,7 @@ const BranchCard = memo(function BranchCard({
             type="button"
             onClick={(event) => {
               event.stopPropagation();
+              tagAnchorRef.current = event.currentTarget;
               setTagEditorOpen((current) => !current);
               setTagDeleteTarget(null);
               setTagDraftError('');
@@ -6761,12 +6750,14 @@ const BranchCard = memo(function BranchCard({
             <span>标签</span>
           </button>
           {tagEditorOpen ? (
+            <AnchoredPopover open anchorRef={tagAnchorRef} widthRem={17.5} role="dialog" aria-label="添加标签" onDismiss={() => setTagEditorOpen(false)} className="z-[300] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl">
             <form
-              className="absolute left-5 top-[calc(100%-0.25rem)] z-30 w-[min(17.5rem,calc(100%-2.5rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
+              className="min-w-0"
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => {
                 event.stopPropagation();
                 if (event.key === 'Escape') {
+                  tagAnchorRef.current?.focus();
                   setTagEditorOpen(false);
                   setTagDraft('');
                   setTagDraftError('');
@@ -6800,19 +6791,10 @@ const BranchCard = memo(function BranchCard({
                 </button>
               </div>
               {tagDraftError ? <div className="mt-1.5 text-[0.6875rem] text-destructive">{tagDraftError}</div> : null}
-            </form>
+            </form></AnchoredPopover>
           ) : null}
           {tagDeleteTarget && onRemoveTag ? (
-            <div
-              className="absolute left-5 top-[calc(100%-0.25rem)] z-[120] w-[min(18.75rem,calc(100%-2.5rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl"
-              role="dialog"
-              aria-label={`删除标签 ${tagDeleteTarget}`}
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-                if (event.key === 'Escape') setTagDeleteTarget(null);
-              }}
-            >
+            <AnchoredPopover open anchorRef={tagAnchorRef} widthRem={18.75} onDismiss={() => setTagDeleteTarget(null)} role="dialog" aria-label={`删除标签 ${tagDeleteTarget}`} className="z-[300] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl" onClick={event => event.stopPropagation()}>
               <div className="mb-1.5 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
                 <Tags className="h-3 w-3" aria-hidden />
                 删除标签
@@ -6841,7 +6823,7 @@ const BranchCard = memo(function BranchCard({
                   删除
                 </button>
               </div>
-            </div>
+            </AnchoredPopover>
           ) : null}
         </div>
       )}
@@ -7015,6 +6997,7 @@ const BranchCard = memo(function BranchCard({
               aria-expanded={commitMenuOpen}
               onClick={(event) => {
                 event.stopPropagation();
+                commitAnchorRef.current = event.currentTarget;
                 void toggleCommitMenu();
               }}
             >

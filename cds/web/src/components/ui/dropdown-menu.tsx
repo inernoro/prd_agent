@@ -1,7 +1,7 @@
 import { MotionLink, SurfaceOriginContext, isConsoleHref } from '@/components/layout/RouteMotion';
 import { useInRouterContext } from 'react-router-dom';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useRef, useState } from 'react';
+import { AnchoredPopover } from './anchored-popover';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -21,125 +21,25 @@ import { cn } from '@/lib/utils';
  * the BranchTile card). Position is computed from the trigger's bounding
  * rect on open + on scroll/resize while open.
  */
-export function DropdownMenu({
-  trigger,
-  children,
-  align = 'end',
-  width = 220,
-}: {
-  trigger: ReactNode;
-  children: ReactNode;
-  align?: 'start' | 'end';
-  width?: number;
+export function DropdownMenu({ trigger, children, align = 'end', width = 220 }: {
+  trigger: ReactNode; children: ReactNode; align?: 'start' | 'end'; width?: number;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
-  const triggerRef = useRef<HTMLSpanElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
-
-  // Recompute position whenever the menu opens or the page is scrolled/resized
-  // while open. Using viewport-relative coordinates so we render with `position:
-  // fixed` (no need to traverse offset parents).
-  const updatePosition = (): void => {
-    const el = triggerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const gap = 6; // 0.375rem gap below the trigger (was mt-1.5)
-    const margin = 8;
-    // 菜单比下方剩余空间高时（卡片靠近视口底部、菜单项多），往上翻；上下都放不下就限高、菜单内滚动。
-    // 以前总往下开，底部卡片的菜单后半截会落到视口外、点不到（2026-09-29 分组菜单加项后取证发现）。
-    const menuHeight = popoverRef.current?.scrollHeight ?? 0;
-    const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
-    const spaceAbove = rect.top - gap - margin;
-    let top = rect.bottom + gap;
-    let maxHeight: number | undefined;
-    if (menuHeight > spaceBelow && spaceAbove > spaceBelow) {
-      const height = Math.min(menuHeight, spaceAbove);
-      top = rect.top - gap - height;
-      if (menuHeight > spaceAbove) maxHeight = spaceAbove;
-    } else if (menuHeight > spaceBelow) {
-      // 限高只能取实际剩下的空间：再垫一个最小高度，矮视口（横屏、软键盘弹起）里菜单又会伸出视口底部（Codex P2，PR #1647）
-      maxHeight = Math.max(spaceBelow, 0);
+  const [autoFocus, setAutoFocus] = useState<false | 'first' | 'last'>(false);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  return <span ref={triggerRef} className="relative inline-flex" onKeyDown={event => {
+    if (event.defaultPrevented) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault(); setAutoFocus(event.key === 'ArrowDown' ? 'first' : 'last'); setOpen(true);
     }
-    const menuWidth = Math.min(width, Math.max(0, window.innerWidth - margin * 2));
-    const preferredLeft = align === 'end' ? rect.right - menuWidth : rect.left;
-    const left = Math.max(margin, Math.min(preferredLeft, window.innerWidth - menuWidth - margin));
-    setCoords({ top, left, width: menuWidth, maxHeight });
-  };
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    updatePosition();
-    // 1 ms isn't enough on slow phones — but rAF is. Re-position on the next
-    // frame to catch layout shifts that happen mid-mount (e.g. a parent
-    // animating in).
-    const raf = requestAnimationFrame(updatePosition);
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (popoverRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    const onLayoutChange = () => updatePosition();
-    window.addEventListener('mousedown', onClick);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', onLayoutChange, true); // capture: scrolls inside any ancestor
-    window.addEventListener('resize', onLayoutChange);
-    return () => {
-      window.removeEventListener('mousedown', onClick);
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', onLayoutChange, true);
-      window.removeEventListener('resize', onLayoutChange);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  return (
-    <span ref={triggerRef} className="relative inline-flex">
-      <span
-        onClick={(event) => {
-          // Stop propagation so click-outside on the parent (e.g. the card's
-          // onClick={onDetail}) doesn't immediately close the menu.
-          event.stopPropagation();
-          setOpen((current) => !current);
-        }}
-      >
-        {trigger}
-      </span>
-      {open && coords
-        ? createPortal(
-            <div
-              ref={popoverRef}
-              className="cds-overlay-anim fixed z-[300] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
-              style={{
-                width: coords.width,
-                top: coords.top,
-                left: coords.left,
-                ...(coords.maxHeight !== undefined ? { maxHeight: coords.maxHeight, overflowY: 'auto' as const } : {}),
-              }}
-              role="menu"
-              onClick={(event) => {
-                // Items handle their own clicks; close the menu after any selection.
-                event.stopPropagation();
-                setOpen(false);
-              }}
-            >
-              <SurfaceOriginContext.Provider value={triggerRef.current}>{children}</SurfaceOriginContext.Provider>
-            </div>,
-            document.body,
-          )
-        : null}
-    </span>
-  );
+  }}>
+    <span onClick={event => { event.stopPropagation(); setAutoFocus(event.detail === 0 ? 'first' : false); setOpen(value => !value); }}>{trigger}</span>
+    <AnchoredPopover open={open} anchorRef={triggerRef} onDismiss={() => setOpen(false)} width={width} align={align} autoFocus={autoFocus}
+      className="cds-overlay-anim z-[300] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl" role="menu"
+      onClick={event => { event.stopPropagation(); setOpen(false); }}>
+      <SurfaceOriginContext.Provider value={triggerRef.current}>{children}</SurfaceOriginContext.Provider>
+    </AnchoredPopover>
+  </span>;
 }
 
 export function DropdownItem({

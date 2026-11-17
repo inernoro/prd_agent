@@ -1,3 +1,4 @@
+import { AnchoredPopover, useAnchoredPosition } from '@/components/ui/anchored-popover';
 import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { RouteMotion, RouteMotionCommit } from './RouteMotion';
 import { InstanceSwitcher } from '@/components/InstanceSwitcher';
@@ -810,9 +811,7 @@ function UserAccountMenu({
   const { mode, setTheme } = useTheme();
   const { scale, setScale } = useUiScale();
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ bottom: number; left: number }>({ bottom: 12, left: 80 });
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const displayName = userDisplayName(user);
   const accountLabel = user?.githubLogin || user?.username || (authMode === 'disabled' ? '本地模式' : '已登录');
   const themes = [
@@ -821,49 +820,9 @@ function UserAccountMenu({
     { mode: 'system' as const, label: '自动', icon: Monitor },
   ];
 
-  const toggle = (): void => {
-    if (!open) {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) {
-        const menuWidth = Math.min(272, window.innerWidth - 24);
-        const desktopLeft = rect.right + 8;
-        setPosition({
-          bottom: Math.max(12, window.innerHeight - rect.bottom),
-          left: Math.max(12, Math.min(desktopLeft + menuWidth > window.innerWidth ? rect.left : desktopLeft, window.innerWidth - menuWidth - 12)),
-        });
-      }
-    }
-    setOpen((current) => !current);
-  };
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event: PointerEvent): void => {
-      const target = event.target as Node;
-      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener('pointerdown', close);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', close);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  const menu = open ? createPortal(
-    <div
-      ref={menuRef}
-      className="cds-account-menu"
-      style={{ bottom: position.bottom, left: position.left }}
-      role="menu"
-      aria-label="用户设置"
-    >
+  const toggle = (): void => setOpen(value => !value);
+  const menu = <AnchoredPopover open={open} anchorRef={triggerRef} widthRem={17} side="right" onDismiss={() => setOpen(false)} autoFocus="first"
+      className="cds-account-menu" role="menu" aria-label="用户设置">
       <div className="cds-account-menu-identity">
         <div className="cds-user-avatar cds-user-avatar--large">
           {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{userInitials(user)}</span>}
@@ -956,9 +915,7 @@ function UserAccountMenu({
           <span>{logoutState === 'running' ? '正在退出' : logoutState === 'error' ? '退出失败，请重试' : '退出登录'}</span>
         </button>
       ) : null}
-    </div>,
-    document.body,
-  ) : null;
+    </AnchoredPopover>;
 
   return (
     <>
@@ -1077,17 +1034,8 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
   // sheet 通过 portal 挂到 <body>(见下),所以用固定坐标定位到 ⋮ 按钮下方。
   // 不能留在 .cds-topbar 内:topbar 有 backdrop-filter,会成为 fixed 的包含块,
   // 导致全屏 backdrop 只盖住顶栏(Bugbot #741 Medium「Sheet backdrop clipped」)。
-  const [sheetPos, setSheetPos] = useState<{ top: number; right: number } | null>(null);
-  const toggleSheet = (): void => {
-    // 先算好定位再切状态:不把 setSheetPos 塞进 setActionsOpen 的 updater(reducer 里
-    // 做副作用是反模式),也保证 actionsOpen=true 时 sheetPos 必非空 —— 否则会出现
-    // 「锁了背景滚动却没渲染 sheet」(Bugbot #741 Medium「Sheet open locks background scroll」)。
-    const r = kebabRef.current?.getBoundingClientRect();
-    setSheetPos(r
-      ? { top: Math.round(r.bottom + 6), right: Math.round(Math.max(8, window.innerWidth - r.right)) }
-      : { top: 56, right: 8 });
-    setActionsOpen((o) => !o);
-  };
+  const sheetPosition = useAnchoredPosition({ open: actionsOpen, anchorRef: kebabRef, panelRef: sheetRef, widthRem: 18, align: 'end' });
+  const toggleSheet = (): void => setActionsOpen(value => !value);
   // ⋮ 动作 sheet 打开:锁背景滚动(否则触屏下背景仍可滚)+ 焦点陷阱(下方 useFocusTrap)。
   useEffect(() => {
     if (!actionsOpen) return undefined;
@@ -1167,7 +1115,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
               backdrop-filter 包含块,fixed backdrop 才能盖满整个视口(Bugbot #741)。
               不在容器上 auto-close:right 槽可能含嵌套 Radix 菜单(项目列表「一键部署」),
               点一下就收起会破坏二级菜单 —— 改为点 backdrop / Esc 关闭。 */}
-          {actionsOpen && sheetPos
+          {actionsOpen
             ? createPortal(
                 <>
                   <div className="cds-topbar-sheet-backdrop" onClick={() => setActionsOpen(false)} />
@@ -1175,7 +1123,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
                     ref={sheetRef}
                     className="cds-topbar-sheet"
                     role="menu"
-                    style={{ top: sheetPos.top, right: sheetPos.right }}
+                    style={sheetPosition}
                   >
                     {right}
                   </div>

@@ -1,8 +1,8 @@
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { ClassificationFilters, ClassificationSummary, NotificationTemplateCatalog, type ClassificationSelection } from '@/components/ReportClassification';
 import { matchesClassification } from '../../../src/shared/notification-templates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { resolveKindFilter } from '@/lib/reportKindFilter';
 import { effectiveVerdict, severityCount } from '@/lib/defectCounts';
@@ -2100,12 +2100,10 @@ function ReportContextMenu({
   }, [onClose]);
 
   const run = (action: () => void) => () => { action(); onClose(); };
-  const left = Math.max(8, Math.min(position.x, window.innerWidth - 268));
-  const top = Math.max(8, Math.min(position.y, window.innerHeight - 440));
-  return createPortal(
-    <div
-      className="cds-overlay-anim fixed z-[320] max-h-[min(70vh,32.5rem)] w-[16.25rem] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
-      style={{ left, top }}
+  const contextAnchor = useMemo(() => ({ current: { getBoundingClientRect: () => ({ left: position.x, right: position.x, top: position.y, bottom: position.y, width: 0, height: 0 }) } }), [position.x, position.y]);
+  return (
+    <AnchoredPopover open anchorRef={contextAnchor} widthRem={16.25} maxHeightRem={32.5} onDismiss={onClose}
+      className="cds-overlay-anim z-[320] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
       role="menu"
       aria-label={`报告操作：${report.title}`}
       onMouseDown={(event) => event.stopPropagation()}
@@ -2134,8 +2132,7 @@ function ReportContextMenu({
       ))}
       <DropdownDivider />
       <DropdownItem destructive onSelect={run(onDelete)}><Trash2 className="h-4 w-4" /><span className="flex-1 truncate">删除报告</span></DropdownItem>
-    </div>,
-    document.body,
+    </AnchoredPopover>
   );
 }
 

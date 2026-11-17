@@ -230,9 +230,9 @@ describe('前后端枚举一致', () => {
     // 只读项目的空分组不提示「拖到这里 / 编辑规则」
     expect(page).toContain("'这一组现在没有分支（分组只读，要在父实例上调整）'");
     // 下拉菜单限高只取实际剩余空间，不垫最小高度（矮视口里会伸出视口）
-    const dropdown = read('components/ui/dropdown-menu.tsx');
-    expect(dropdown).toContain('maxHeight = Math.max(spaceBelow, 0);');
-    expect(dropdown).not.toContain('Math.max(spaceBelow, 120)');
+    const dropdown = read('components/ui/anchored-popover.tsx');
+    expect(dropdown).toContain('Math.max(0, bottomEdge - Math.max(topEdge, rect.bottom + gap))');
+    expect(dropdown).not.toContain('Math.max(120');
     // 「归了别组」的分行按组 id 作 key（组名可重复）
     expect(editor).toContain('<div key={entry.groupId}');
     expect(editor).not.toContain('key={entry.groupName}');

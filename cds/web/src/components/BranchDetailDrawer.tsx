@@ -1,3 +1,4 @@
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { CiImageNotice } from '@/components/branch/CiImageNotice';
 import type { CiDiagnosisView } from '@/lib/ci-image-notice';
 import { TCP_DISABLED_DESCRIPTION } from '@/lib/resourceTcpStatus';
@@ -3866,7 +3867,8 @@ function ResourceConsole({
   const [detailTab, setDetailTab] = useState<BranchResourceDetailTab>(() => resourceInitialDetailTab(selectedResource, initialDetailTab));
   // 菜单锚点带屏幕坐标：菜单经 createPortal 挂 body（验收 P1-2：渲染在
   // overflow-x-auto 芯片行内会被裁剪到肉眼不可见，frontend-modal 规则第 2 条）
-  const [plusMenuFor, setPlusMenuFor] = useState<{ id: string; left: number; top: number } | null>(null);
+  const [plusMenuFor, setPlusMenuFor] = useState<{ id: string; anchor: HTMLButtonElement } | null>(null);
+  const plusAnchor = useMemo(() => ({ current: plusMenuFor?.anchor ?? null }), [plusMenuFor]);
   const [resourceMutation, setResourceMutation] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<{
     status: 'idle' | 'loading' | 'ok' | 'error';
@@ -4047,8 +4049,7 @@ function ResourceConsole({
                         onClick={(e) => {
                           e.stopPropagation();
                           if (plusMenuFor?.id === resource.id) { setPlusMenuFor(null); return; }
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          setPlusMenuFor({ id: resource.id, left: Math.max(8, rect.right - 160), top: rect.bottom + 6 });
+                          setPlusMenuFor({ id: resource.id, anchor: e.currentTarget });
                         }}
                       >
                         <Plus className="h-3 w-3" />
@@ -4065,16 +4066,15 @@ function ResourceConsole({
                         {guarding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
                       </button>
                     ) : null}
-                    {plusMenuFor?.id === resource.id ? createPortal(
-                      <div
-                        className="fixed z-[300] w-40 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
-                        style={{ left: plusMenuFor.left, top: plusMenuFor.top }}
+                    {plusMenuFor?.id === resource.id ? (
+                      <AnchoredPopover open anchorRef={plusAnchor} widthRem={10} align="end" onDismiss={() => setPlusMenuFor(null)} role="menu" aria-label="添加副本"
+                        className="z-[300] rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
                       >
                         <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[0.6875rem] text-muted-foreground">加几个副本？</div>
                         {[1, 2, 3].map((n) => (
                           <button
                             key={n}
-                            type="button"
+                            type="button" role="menuitem"
                             className="flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors hover:bg-indigo-500/10"
                             onClick={() => { setPlusMenuFor(null); void onQuickReplica?.(profileId, n); }}
                           >
@@ -4082,8 +4082,7 @@ function ResourceConsole({
                             <span className="text-[0.625rem] text-muted-foreground">确认</span>
                           </button>
                         ))}
-                      </div>,
-                      document.body,
+                      </AnchoredPopover>
                     ) : null}
                   </span>
                 );

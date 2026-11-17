@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react';
+import { AnchoredPopover, type PopoverAnchor } from '@/components/ui/anchored-popover';
 import { Loader2, Plus, RefreshCw, Star } from 'lucide-react';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { RemoteBranch } from '@/lib/remoteBranches';
@@ -8,6 +9,9 @@ export interface TrackedBranchOption { id: string; branch: string; status?: stri
 
 export function BranchSearchDropdown<T extends TrackedBranchOption>({
   query,
+  anchorRef,
+  onDismiss,
+  id,
   tracked,
   remote,
   remoteLoading,
@@ -25,6 +29,9 @@ export function BranchSearchDropdown<T extends TrackedBranchOption>({
   remoteError,
 }: {
   query: string;
+  anchorRef?: RefObject<HTMLElement | null>;
+  onDismiss?: () => void;
+  id?: string;
   tracked: T[];
   remote: RemoteBranch[];
   remoteLoading: boolean;
@@ -41,6 +48,22 @@ export function BranchSearchDropdown<T extends TrackedBranchOption>({
   emptyHint?: string;
   remoteError?: string;
 }): JSX.Element {
+  const fallbackRef = useRef<HTMLSpanElement>(null);
+  const fallbackAnchor = useMemo<PopoverAnchor>(() => ({ get current() { return fallbackRef.current?.parentElement ?? null; } }), []);
+  const effectiveAnchor = anchorRef ?? fallbackAnchor;
+  useEffect(() => {
+    const input = effectiveAnchor.current instanceof HTMLElement ? effectiveAnchor.current.querySelector('input') : null;
+    const key = (event: KeyboardEvent): void => {
+      if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+      const panel = document.getElementById(id || '');
+      const choices = panel?.querySelectorAll<HTMLButtonElement>('[data-branch-choice]:not(:disabled)');
+      if (!choices?.length) return;
+      event.preventDefault(); event.stopPropagation();
+      (event.key === 'ArrowDown' ? choices[0] : choices[choices.length - 1]).focus();
+    };
+    input?.addEventListener('keydown', key);
+    return () => input?.removeEventListener('keydown', key);
+  }, [effectiveAnchor, id]);
   const trimmed = query.trim().toLowerCase();
   const matches = (text: string) => !trimmed || text.toLowerCase().includes(trimmed);
   // 波3 补 UI:新建分支的「配置来源」——按分支名排序,供用户从本项目已有分支
@@ -53,10 +76,18 @@ export function BranchSearchDropdown<T extends TrackedBranchOption>({
 
   const empty = visibleTracked.length === 0 && visibleRemote.length === 0;
 
-  return (
-    <div
-      className="cds-overlay-anim absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
-      role="region"
+  return (<><span ref={fallbackRef} aria-hidden />
+    <AnchoredPopover open anchorRef={effectiveAnchor} onDismiss={onDismiss} width="anchor" maxHeightRem={30}
+      id={id}
+      className="cds-overlay-anim z-[300] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+      onKeyDown={event => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !(event.target as HTMLElement).hasAttribute('data-branch-choice')) return;
+        const choices = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-branch-choice]:not(:disabled)')];
+        const index = choices.indexOf(event.target as HTMLButtonElement);
+        event.preventDefault(); event.stopPropagation();
+        choices[event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length]?.focus();
+      }}
+      role="dialog"
       aria-label="分支建议"
     >
       {/* 波3 补 UI:配置来源分支选择器。常驻于建议列表之上,仅在新建分支时生效
@@ -83,7 +114,7 @@ export function BranchSearchDropdown<T extends TrackedBranchOption>({
         </div>
       ) : null}
       {remoteError ? <p role="alert" className="px-4 py-2 text-xs text-destructive">{remoteError}</p> : null}
-      <div style={{ maxHeight: 'min(26.25rem, 50dvh)', minHeight: 0 }} className="overflow-y-auto py-1">
+      <div className="py-1">
         {empty ? (
           <div className="px-4 py-6 text-center text-sm text-muted-foreground">
             {emptyHint}
@@ -101,6 +132,7 @@ export function BranchSearchDropdown<T extends TrackedBranchOption>({
               return (
                 <button
                   key={branch.id}
+                  data-branch-choice=""
                   type="button"
                   onClick={() => onPickTracked(branch)}
                   className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))]"
@@ -155,6 +187,7 @@ export function BranchSearchDropdown<T extends TrackedBranchOption>({
               return (
                 <button
                   key={remoteBranch.name}
+                  data-branch-choice=""
                   type="button"
                   onClick={() => onPickRemote(remoteBranch)}
                   disabled={!!action}
@@ -203,6 +236,6 @@ export function BranchSearchDropdown<T extends TrackedBranchOption>({
           </button>
         </div>
       </div>
-    </div>
+    </AnchoredPopover></>
   );
 }

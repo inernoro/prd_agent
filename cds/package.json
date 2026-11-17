@@ -19,6 +19,8 @@
     "smoke:mobile-layout:offline": "node scripts/mobile-layout-smoke.mjs --offline",
     "smoke:branch-picker-motion": "node scripts/branch-picker-motion-smoke.mjs",
     "smoke:select-boundary": "node scripts/select-boundary-smoke.mjs",
+    "audit:dropdowns": "node scripts/dropdown-inventory.mjs",
+    "smoke:floating-boundary": "node scripts/floating-boundary-smoke.mjs",
     "smoke:task-health-recovery": "node scripts/task-health-recovery-smoke.mjs",
     "smoke:agent-starter-mobile": "node scripts/agent-starter-mobile-probe.mjs",
     "smoke:agent-setup-scope": "node scripts/agent-setup-scope-probe.mjs",
