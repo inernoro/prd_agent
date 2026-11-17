@@ -90,7 +90,10 @@ async function artifacts(optimized: boolean) {
     const cid = docker('create', '--name', name, '--label', `cds.drill=${prefix}`, '--entrypoint', '/bin/true', id);
     objects.containers.push(cid); held.push(id);
   }
-  const adapters = { ...defaultImageDocker, removeImage: async (image: string, protectedNow?: () => boolean) => {
+  const adapters = { ...defaultImageDocker,
+    listImages: async () => (await defaultImageDocker.listImages()).filter(image => image.startsWith(repository + ':')),
+    removeImage: async (image: string, protectedNow?: () => boolean) => {
+    if (!image.startsWith(repository + ':')) throw new Error('Refusing an image outside this fixture repository');
     attempts++; const result = await defaultImageDocker.removeImage(image, protectedNow); if (!result) removed++; return result;
   } };
   const janitor = new JanitorService(state, { enabled: false, worktreeTTLDays: 7, diskWarnPercent: 80, sweepIntervalSeconds: 3600,
