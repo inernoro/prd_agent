@@ -8,7 +8,7 @@ import {samplePortrait,smoothProgress} from '/src/components/entry/portraitTimel
 const canvas=document.querySelector('#material'),svg=document.querySelector('svg'),etch=document.querySelector('#etch');
 const paths=(items,offset=0,glow=false)=>items.map((d,i)=>{
  const detail=items===PORTRAIT_DETAILS,weight=detail ? .6 :([0,1,3,7,24,28,33,37,40,43].includes(i)?2.1:1.05);
- return `<path d="${d}" pathLength="1" stroke-dasharray="1" stroke-width="${glow?Math.max(3.5,weight*2):weight}" data-order="${offset+i}" data-detail="${detail}"/>`;
+ return `<path d="${d}" pathLength="1" stroke-dasharray="1" stroke-width="${glow?Math.max(3.5,weight*2):weight}" opacity="${detail?.38:([0,1,7,24,28,33,40].includes(i)?.85:.46)}" data-order="${offset+i}" data-detail="${detail}"/>`;
 }).join('');
 svg.innerHTML=`<defs>
 <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#3481d5"/><stop offset=".5" stop-color="#81caff"/><stop offset="1" stop-color="#3879ce"/></linearGradient>
@@ -45,7 +45,7 @@ const renderer=createPortraitRenderer(canvas,images);if(!renderer)throw new Erro
 window.draw=time=>{
  renderer.draw(time);const state=samplePortrait(time);
  document.querySelector('#lines').setAttribute('opacity',state.lineOpacity);
- document.querySelector('#mesh').setAttribute('opacity',state.grid*.5);
+ document.querySelector('#mesh').setAttribute('opacity',state.grid*.4);
  etch.style.opacity=String(smoothProgress(time,1.25,1.9)*(1-smoothProgress(time,2.1,2.85))*.26);
  for(const path of svg.querySelectorAll('[data-order]'))path.setAttribute('stroke-dashoffset',1-portraitStrokeProgress(Number(path.dataset.order),time,path.dataset.detail==='true'));
 };window.ready=true;

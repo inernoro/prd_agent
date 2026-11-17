@@ -106,10 +106,14 @@ export function portraitStrokeProgress(index: number, time: number, detail = fal
 function cubicPoint(values: readonly number[], t: number) {
   const s=1-t;return s*s*s*values[0]+3*s*s*t*values[1]+3*s*t*t*values[2]+t*t*t*values[3];
 }
-export const CLOSED_LASHES = Array.from({length:25},(_,i) => {
-  const t=.035+i*.038,x=cubicPoint(EYE_X,t),y=cubicPoint(CLOSED_LID,t);
-  const dx=-17+34*t,dy=22+13*Math.sin(t*Math.PI)+(i%3-1)*4;
-  return `M${x.toFixed(1)} ${y.toFixed(1)} C${(x+dx*.2).toFixed(1)} ${(y+dy*.28).toFixed(1)} ${(x+dx*.6).toFixed(1)} ${(y+dy*.85).toFixed(1)} ${(x+dx).toFixed(1)} ${(y+dy).toFixed(1)}`;
+export const CLOSED_LASHES = Array.from({length:31},(_,i) => {
+  // Unequal roots form small crossing fans rather than a row of ticks.
+  const group=Math.floor(i/3),finger=i%3;
+  const t=.025+group*.089+[0,.017,.043][finger]+Math.sin(group*2.3)*.006;
+  const x=cubicPoint(EYE_X,t),y=cubicPoint(CLOSED_LID,t);
+  const dx=-25+49*t+[-9,5,13][finger]+Math.sin(group*1.7)*6;
+  const dy=(19+16*Math.sin(t*Math.PI))*[1,.61,.87][finger];
+  return `M${x.toFixed(1)} ${y.toFixed(1)} C${(x+dx*.05).toFixed(1)} ${(y+dy*.38).toFixed(1)} ${(x+dx*.42).toFixed(1)} ${(y+dy).toFixed(1)} ${(x+dx).toFixed(1)} ${(y+dy*.91).toFixed(1)}`;
 });
 export const FACE_CLIP = 'M1450 175 C1400 282 1330 330 1250 390 C1260 574 1330 728 1483 815 L1669 941 L1700 300 C1560 308 1510 255 1450 175Z';
 

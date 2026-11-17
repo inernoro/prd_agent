@@ -8,8 +8,8 @@ export const smoothProgress = (time: number, from: number, to: number) => {
 export function samplePortrait(time: number) {
   return {
     line: smoothProgress(time, 0, 1.9),
-    lineOpacity: 1 - smoothProgress(time, 2.0, 2.85),
-    grid: smoothProgress(time, 1.25, 1.85) * (1 - smoothProgress(time, 2.25, 3.0)),
+    lineOpacity: 1 - smoothProgress(time, 1.9, 2.55),
+    grid: smoothProgress(time, 1.25, 1.85) * (1 - smoothProgress(time, 2.15, 2.85)),
     material: smoothProgress(time, 1.55, 2.45),
     eye: smoothProgress(time, 2.65, 4.25),
     controls: smoothProgress(time, .12, .85),

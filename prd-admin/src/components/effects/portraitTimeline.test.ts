@@ -31,7 +31,7 @@ describe('角色成形的阶段与眼睑几何', () => {
     const middle = samplePortrait(2.1);
     expect(middle.material).toBeGreaterThan(.5);
     expect(middle.grid).toBe(1);
-    expect(middle.lineOpacity).toBeGreaterThan(.8);
+    expect(middle.lineOpacity).toBeGreaterThan(.7);
   });
   it('闭眼上下缘重合；101 个开度的实际控制点连续张开，眼角固定', () => {
     expect(eyeControlPoints(0)).toEqual({ upper: [...CLOSED_LID], lower: [...CLOSED_LID] });

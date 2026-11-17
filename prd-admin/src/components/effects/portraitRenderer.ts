@@ -84,7 +84,10 @@ void main(){
  // Material is a full, dim volume behind the reconstruction, never a horizontal cut.
  // Keep the face, hair and ornaments present together while the separate lattice dissolves.
  float exposure=smoothstep(0.,1.,material);
- color*=mix(.74,1.,smoothstep(0.,.5,opening));
+ // Compress blue specular strands independently of the low-frequency dark volume.
+ float hair=(1.-smoothstep(1220.,1430.,p.x))*smoothstep(.05,.22,color.b-color.r);
+ color*=mix(1.,.8,hair*smoothstep(.12,.48,color.b));
+ color*=mix(.62,1.,smoothstep(0.,.5,opening));
  gl_FragColor=vec4(color,exposure*.82);
 }`;
 
@@ -170,5 +173,5 @@ export function preloadPortraitMotion() {
   if (preparedMotion) return;
   preparedMotion = document.createElement('video');
   preparedMotion.muted = true; preparedMotion.preload = 'auto'; preparedMotion.playsInline = true;
-  preparedMotion.src = '/media/entry/portrait-motion.mp4'; preparedMotion.load();
+  preparedMotion.src = `/media/entry/${PORTRAIT_MOTION_FILE}`; preparedMotion.load();
 }
