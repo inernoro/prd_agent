@@ -47,11 +47,12 @@ export function writingCitationLocation(source: WritingSource | undefined, quote
   return writingSourceBlocks(source).find(block => block.text.includes(quote))?.location ?? '';
 }
 
-// Media clocks read back microseconds; approved scene starts can retain finer
-// floating-point fractions. Compare in that same unit for chapters and captions.
+// Chromium truncates a seek target to microseconds, while approved scene starts
+// retain finer fractions. Recover the already-quantized clock's integer unit
+// with round, and truncate the source boundary as the decoder does.
 export function writingMediaTimeReached(time: number, boundary: number) {
   return Number.isFinite(time) && Number.isFinite(boundary)
-    && Math.round(time * 1_000_000) >= Math.round(boundary * 1_000_000);
+    && Math.round(time * 1_000_000) >= Math.trunc(boundary * 1_000_000);
 }
 
 export function writingSourceHasSnapshot(source: WritingSource) {

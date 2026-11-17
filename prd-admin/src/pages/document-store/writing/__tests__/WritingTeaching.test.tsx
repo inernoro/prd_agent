@@ -64,7 +64,7 @@ describe('作者批准具体教学成品', () => {
   });
 });
 describe('读者消费已批准教学', () => {
-  it.each([4, 5, 6, 7])('小数章节%s跳转后媒体读回量化不会退回上一章或上一句字幕', async index => {
+  it.each([1, 2, 3, 4, 5, 6, 7])('小数章节%s跳转后媒体读回量化不会退回上一章或上一句字幕', async index => {
     vi.stubGlobal('CSS', { escape: (value: string) => value });
     HTMLElement.prototype.scrollIntoView = vi.fn();
     // 真实课程时间轴；Chromium媒体时钟读回按微秒量化，而接口保留双精度小数。
@@ -75,18 +75,21 @@ describe('读者消费已批准教学', () => {
     await mount(true); const video = await metadata(course.duration);
     const rows = () => [...container.querySelectorAll<HTMLButtonElement>('.writing-chapter')];
     await act(async () => rows()[index].click());
-    video.currentTime = Math.round(starts[index] * 1_000_000) / 1_000_000;
+    video.currentTime = Math.trunc(starts[index] * 1_000_000) / 1_000_000;
     await act(async () => video.dispatchEvent(new Event('timeupdate', { bubbles: true })));
     expect(container.querySelector('.writing-chapter.on strong')?.textContent).toBe(course.scenes[index].title);
     expect(rows()[index - 1].textContent).toContain('已看完');
     expect(container.querySelector('.capbox')?.textContent).toBe(course.scenes[index].narration);
     await click('字幕全文');
     expect(container.querySelector('.writing-caption-list [aria-current="true"]')?.textContent).toContain(course.scenes[index].narration);
-    // 真正位于边界前一帧仍属于前章，不能靠大容差提前进入下一章。
-    video.currentTime = starts[index] - 1 / 30;
-    await act(async () => video.dispatchEvent(new Event('timeupdate', { bubbles: true })));
-    expect(container.querySelector('.capbox')?.textContent).toBe(course.scenes[index - 1].narration);
-    expect(container.querySelector('.writing-caption-list [aria-current="true"]')?.textContent).toContain(course.scenes[index - 1].narration);
+    // 量化边界前1微秒及前一帧仍属于前章，不能靠大容差提前进入下一章。
+    for (const before of [(Math.trunc(starts[index] * 1_000_000) - 1) / 1_000_000, starts[index] - 1 / 30]) {
+      video.currentTime = before;
+      await act(async () => video.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+      expect(container.querySelector('.writing-tutorial-title')?.textContent).toBe(course.scenes[index - 1].title);
+      expect(container.querySelector('.capbox')?.textContent).toBe(course.scenes[index - 1].narration);
+      expect(container.querySelector('.writing-caption-list [aria-current="true"]')?.textContent).toContain(course.scenes[index - 1].narration);
+    }
   });
   it('按指定发布版鉴权加载成片，讲解要点不冒充操作完成，字幕在末尾消失', async () => {
     const course = teaching();
