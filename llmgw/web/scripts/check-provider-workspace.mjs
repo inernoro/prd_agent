@@ -26,7 +26,8 @@ async function mock(route) {
     if (request.method() !== 'GET' && endpoint !== '/auth/login') throw Error('business write forbidden');
     let data = { items: [], total: 0 };
     if (endpoint === '/auth/login') data = { token: 'local-fixture-only', expiresAt: '2099-01-01T00:00:00Z', username: 'owner', displayName: '审核', tenant, mustChangePassword: false };
-    else if (endpoint === '/healthz') data = { status: 'ok', mapHomeUrl: 'https://example.invalid' };
+    else if (endpoint === '/organization') data = { tenant: { id: tenant.id, name: tenant.name }, teams: [], members: [] };
+  else if (endpoint === '/healthz') data = { status: 'ok', mapHomeUrl: 'https://example.invalid' };
     else if (endpoint === '/platforms') data = { items: mode === 'empty' ? [] : mode === 'attention' ? [{ ...provider, keyStatus: 'unreadable', apiUrl: '', authority: 'map', recentCallStatus: 'quota_exhausted', recentCallAt: '2026-11-01T10:00:00Z', updatedAt: '2026-11-02T10:00:00Z' }, { ...provider, id: 'p1', name: 'preview-readability-20261115-beta', enabled: false, hasKey: false }] : [provider, { ...provider, id: 'p1', name: 'preview-readability-20261115-beta', enabled: false }] };
     else if (endpoint === '/models') data = { items: models() };
     else if (endpoint === '/logical-models') data = { items: mode === 'attention' ? [] : [{ id: 'l0', publicId: 'preview-public-alpha', offerings: [{ targetKind: 'model', targetId: 'm0' }] }] };

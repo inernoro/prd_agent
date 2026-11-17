@@ -29,6 +29,7 @@ async function mock(route) {
   if (request.method() !== 'GET' && endpoint !== '/auth/login') throw Error('Business write forbidden');
   const dataRows = rows(); let data = { items: [], total: 0 };
   if (endpoint === '/auth/login') data = { token: 'fixture-only', expiresAt: '2099-01-01T00:00:00Z', username: 'owner', displayName: '布局审核', tenant, mustChangePassword: false };
+  else if (endpoint === '/organization') data = { tenant: { id: tenant.id, name: tenant.name }, teams: [], members: [] };
   else if (endpoint === '/healthz') data = { status: 'ok', mapHomeUrl: 'https://example.invalid/' };
   else if (endpoint === '/overview') data = { totalRequests: 0, recentRequests: [], estimatedCosts: [], topUsers: [], topAppCallers: [], topModels: [], serviceKeys: { total: 0 } };
   else if (endpoint === '/logs/meta') data = { models: ['fixture-chat'], providers: ['受控供应方'], appCallers: ['fixture.reader'], statuses: ['failed', 'succeeded'] };

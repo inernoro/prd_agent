@@ -42,6 +42,8 @@ jobs:
           pnpm -C prd-admin test --maxWorkers=2 --minWorkers=1
           pnpm -C prd-admin build
       - name: Gateway regression and build
+        env:
+          NODE_OPTIONS: --max-old-space-size=1536
         working-directory: llmgw/web
         run: |
           pnpm exec node --experimental-strip-types --test --test-concurrency=1 --test-timeout=60000 tests/*.test.mjs
