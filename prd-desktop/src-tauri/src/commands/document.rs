@@ -99,16 +99,18 @@ pub async fn remove_document_from_session(
 #[command]
 pub async fn upload_file_to_session(
     session_id: String,
-    file_path: String,
+    window: tauri::WebviewWindow,
+    selections: tauri::State<'_, super::file_selection::FileSelections>,
+    selection_id: String,
     document_type: Option<String>,
 ) -> Result<ApiResponse<SessionInfo>, String> {
-    let path = std::path::Path::new(&file_path);
-    let bytes = std::fs::read(path).map_err(|e| format!("读取文件失败: {}", e))?;
-    let file_name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let selected = super::file_selection::consume_selection(
+        &window, selections, &selection_id,
+        super::file_selection::FilePurpose::Document, Some(&session_id),
+    )?;
+    let bytes = selected.bytes;
+    let file_name = selected.name;
+    let path = std::path::Path::new(&file_name);
 
     // 推断 MIME type（已知格式精确推断，其他交给后端自动检测）
     let mime = match path

@@ -14,34 +14,20 @@ pub struct UploadAttachmentResponse {
     pub size: i64,
 }
 
-/// 上传附件（图片）到服务端
-/// - file_path: 本地文件路径（由 Tauri file dialog 选取）
-/// - file_name: 原始文件名
+/// Consume a single-use selection created by the native file picker.
 #[command]
 pub async fn upload_attachment(
-    file_path: String,
-    file_name: Option<String>,
+    window: tauri::WebviewWindow,
+    selections: tauri::State<'_, super::file_selection::FileSelections>,
+    selection_id: String,
 ) -> Result<ApiResponse<UploadAttachmentResponse>, String> {
-    let path = std::path::Path::new(&file_path);
-    if !path.exists() {
-        return Err("文件不存在".to_string());
-    }
-
-    let bytes = tokio::fs::read(&file_path)
-        .await
-        .map_err(|e| format!("读取文件失败: {}", e))?;
-
-    // 限制 5MB
-    if bytes.len() > 5 * 1024 * 1024 {
-        return Err("文件大小不能超过 5MB".to_string());
-    }
-
-    let fname = file_name.unwrap_or_else(|| {
-        path.file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-    });
+    let selected = super::file_selection::consume_selection(
+        &window, selections, &selection_id,
+        super::file_selection::FilePurpose::Attachment, None,
+    )?;
+    let bytes = selected.bytes;
+    let fname = selected.name;
+    let path = std::path::Path::new(&fname);
 
     // 推断 MIME type
     let mime = match path

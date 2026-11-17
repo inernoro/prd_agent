@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { selectUploadFiles } from '../../lib/fileSelection';
 import { useGroupListStore } from '../../stores/groupListStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { usePrdCitationPreviewStore } from '../../stores/prdCitationPreviewStore';
@@ -45,7 +45,7 @@ const KNOWN_BAD_EXTS = new Set([
 type FilePhase = 'queued' | 'rejected' | 'detecting' | 'uploading' | 'success' | 'failed';
 interface FileTask {
   name: string;
-  path: string;
+  selectionId: string;
   phase: FilePhase;
   message?: string;
 }
@@ -149,32 +149,25 @@ export default function KnowledgeBasePage() {
     if (!sessionId) return;
 
     try {
-      const selected = await open({
-        multiple: true,
-        title: '选择资料文件（文档、代码、配置等均可）',
-      });
-
-      if (!selected) return;
-      const paths = Array.isArray(selected) ? selected : [selected];
-      if (paths.length === 0) return;
+      const selected = await selectUploadFiles('document', true, sessionId);
+      if (!selected.length) return;
 
       setBusy(true);
       setError('');
 
       // Phase 1：分类 — 已知放行 / 已知拒绝 / 未知待探测
-      const tasks: FileTask[] = paths.map(filePath => {
-        const name = filePath.split(/[/\\]/).pop() || filePath;
+      const tasks: FileTask[] = selected.map(({ selectionId, name }) => {
         const dotIdx = name.lastIndexOf('.');
         const ext = dotIdx >= 0 ? name.slice(dotIdx).toLowerCase() : '';
 
         if (KNOWN_BAD_EXTS.has(ext)) {
-          return { name, path: filePath, phase: 'rejected' as const, message: '不支持的文件类型（图片/音视频/压缩包/可执行文件）' };
+          return { name, selectionId, phase: 'rejected' as const, message: '不支持的文件类型（图片/音视频/压缩包/可执行文件）' };
         }
         if (KNOWN_GOOD_EXTS.has(ext) || ext === '') {
-          return { name, path: filePath, phase: 'queued' as const };
+          return { name, selectionId, phase: 'queued' as const };
         }
         // 未知格式 → 需要探测
-        return { name, path: filePath, phase: 'detecting' as const, message: '正在检测文件格式…' };
+        return { name, selectionId, phase: 'detecting' as const, message: '正在检测文件格式…' };
       });
 
       fileTasksRef.current = tasks;
@@ -192,7 +185,7 @@ export default function KnowledgeBasePage() {
         try {
           const resp = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
             'upload_file_to_session',
-            { sessionId, filePath: task.path }
+            { sessionId, selectionId: task.selectionId }
           );
           if (resp.success) {
             updateTask(i, { phase: 'success', message: '已添加' });
