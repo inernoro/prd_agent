@@ -965,7 +965,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                 title="无法打开关联文档" content={<p role="alert">{relatedOpenError}</p>} />
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
                 onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType}
-                onBubbleMode={() => { if (isMobile) setShowComments(false); }} />}
+                />}
               {token && <a className="share-topbar-btn share-topbar-icon" href={`/s/wp/${encodeURIComponent(token)}?siteId=${encodeURIComponent(liveSite.id)}${review.historical && review.selected ? `&review=${encodeURIComponent(review.selected.id)}` : ''}`}
                 target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开当前文档" title="在新标签页打开当前文档"><ExternalLink size={13} /></a>}
               <span className="share-topbar-divider" />
@@ -1220,7 +1220,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                 </button>
               </div>
               <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                <CommentsSection key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={handleCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
+                <CommentsSection visible={showComments && !isFullscreen} key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={handleCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
               </div>
             </aside>
           </>

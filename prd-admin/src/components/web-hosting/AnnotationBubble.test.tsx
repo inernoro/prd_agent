@@ -19,7 +19,7 @@ async function setup() {
   const annotations = { enabled: false, draftAnchor: null, displayMode: 'bubble', activeId: 'two',
     threads: ['one', 'two'].map(id => ({ id, anchor: {}, authorName: '小林', content: `意见-${id}` })),
     previews: ['one', 'two'].map(id => ({ id, rect: { left: 200, top: 300, width: 300, height: 40 }, obstacles: [] })),
-    dismissPreview: vi.fn(), openThread: vi.fn() } as unknown as HostedAnnotations;
+    allPreviewsHidden: false, hideAllPreviews: vi.fn(), showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn() } as unknown as HostedAnnotations;
   const render = async () => act(async () => root.render(<AnnotationBubble annotations={annotations} />));
   await render(); cleanup = async () => { await act(async () => root.unmount()); container.remove(); };
   return { annotations, render, container };
@@ -61,4 +61,24 @@ it('边缘拖动有限位，滚动暂时离屏再回来保留位置，正文按�
   expect(annotations.openThread).toHaveBeenCalledWith('one');
   await act(async () => card.querySelector('[aria-label="移动批注气泡 1"]')!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' })));
   expect(Number.parseFloat(card.style.left)).toBe(584);
+});
+
+it('连续几何更新保持同一气泡节点，自动位置和拖动偏移都随标注移动', async () => {
+  const { container, annotations, render } = await setup();
+  const first = container.querySelector<HTMLElement>('[data-bubble-id="one"]')!, before = Number.parseFloat(first.style.top);
+  annotations.previews = annotations.previews!.map(item => ({ ...item, rect: { ...item.rect, top: item.rect.top - 30 } }));
+  await render();
+  expect(container.querySelector('[data-bubble-id="one"]')).toBe(first); expect(Number.parseFloat(first.style.top)).toBe(before - 30);
+  await act(async () => first.querySelector('[aria-label="移动批注气泡 1"]')!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowRight' })));
+  const moved = Number.parseFloat(first.style.top);
+  annotations.previews = annotations.previews!.map(item => ({ ...item, rect: { ...item.rect, top: item.rect.top - 20 } })); await render();
+  expect(Number.parseFloat(first.style.top)).toBe(moved - 20);
+});
+it('气泡提供全显全隐图标，超长内容只渲染短摘要', async () => {
+  const { container, annotations, render } = await setup();
+  annotations.threads = annotations.threads.map(thread => ({ ...thread, content: '长内容'.repeat(100000) })); await render();
+  expect(container.querySelector('[data-bubble-id="one"] p')!.textContent!.length).toBeLessThanOrEqual(281);
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="隐藏全部气泡"]')!.click()); expect(annotations.hideAllPreviews).toHaveBeenCalledOnce();
+  annotations.allPreviewsHidden = true; await render();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="显示全部气泡"]')!.click()); expect(annotations.showAllPreviews).toHaveBeenCalledOnce();
 });

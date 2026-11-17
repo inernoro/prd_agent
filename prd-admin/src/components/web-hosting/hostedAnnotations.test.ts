@@ -5,6 +5,8 @@ import path from 'node:path';
 import { isAnnotationAnchor } from './useHostedAnnotations';
 
 const script = readFileSync(path.resolve(__dirname, '../../../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js'), 'utf8');
+type PreviewGeometryMessage = { items: { id: string; rect: { top: number } }[] };
+const previewMessages = (messages: Record<string, unknown>[]) => messages.filter(message => message.type === 'map-annotation-previews') as unknown as PreviewGeometryMessage[];
 const tick = () => new Promise(resolve => setTimeout(resolve, 40));
 const cleanups: Array<() => void> = [];
 afterEach(() => { cleanups.splice(0).forEach(cleanup => cleanup()); });
@@ -26,14 +28,36 @@ async function setup() {
 }
 
 describe('hosted page annotation runtime', () => {
-  it('滚动时隐藏整组旧几何气泡，停止后重新发布；不把原位置留在画布上', async () => {
+  it('连续滚动按帧发布跟随几何，不清空气泡或扫描全文', async () => {
     const t = await setup();
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, displayMode: 'bubble',
       threads: [{ id: 'scroll-note', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }] });
     await expect.poll(() => t.messages.find(message => message.type === 'map-annotation-previews')).toMatchObject({ items: [{ id: 'scroll-note' }] });
-    t.win.dispatchEvent(new t.win.Event('scroll')); await tick();
-    expect(t.messages.filter(message => message.type === 'map-annotation-previews').at(-1)).toMatchObject({ items: [] });
-    await expect.poll(() => t.messages.filter(message => message.type === 'map-annotation-previews').at(-1)).toMatchObject({ items: [{ id: 'scroll-note' }] });
+    const original = previewMessages(t.messages).at(-1)!.items[0].rect.top;
+    t.messages.length = 0;
+    const scan = vi.spyOn(t.win.document, 'querySelectorAll');
+    for (let i = 1; i <= 5; i++) {
+      Object.defineProperty(t.win, 'scrollY', { configurable: true, value: i * 2 });
+      t.win.dispatchEvent(new t.win.Event('scroll')); await tick();
+    }
+    const updates = previewMessages(t.messages);
+    expect(updates.length).toBeGreaterThan(0);
+    expect(updates.every(message => message.items.length === 1)).toBe(true);
+    expect(updates.at(-1)!.items[0].rect.top).toBe(original - 10);
+    expect(scan).not.toHaveBeenCalled(); scan.mockRestore();
+  });
+  it('全隐保留编号，点击编号重新显示单条，全部显示可恢复所有气泡', async () => {
+    const t = await setup();
+    const anchor = { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' };
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', displayMode: 'bubble', threads: [{ id: 'one', anchor }, { id: 'two', anchor }] });
+    await expect.poll(() => previewMessages(t.messages).at(-1)?.items.length).toBe(2);
+    t.send({ type: 'map-annotation-previews-hide' }); await tick();
+    expect(previewMessages(t.messages).at(-1)!.items).toEqual([]);
+    expect(t.layer()!.querySelectorAll('.pin:not([hidden])')).toHaveLength(2);
+    (t.layer()!.querySelectorAll('.pin')[1] as HTMLButtonElement).click(); await tick();
+    expect(previewMessages(t.messages).at(-1)!.items.map(item => item.id)).toEqual(['two']);
+    t.send({ type: 'map-annotation-previews-show' }); await tick();
+    expect(previewMessages(t.messages).at(-1)!.items).toHaveLength(2);
   });
   it('展开全部可见气泡且点击相邻编号同步选中，不被悬停抢回', async () => {
     const t = await setup();

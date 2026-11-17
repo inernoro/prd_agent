@@ -43,7 +43,7 @@ export function ReviewVersionPreview({ site, source, versionId, commentId, canRe
       <AnnotationBubble annotations={review.annotations} hidden={showComments} />
       {previewReady && <aside className="review-sidebar" style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'min(360px, 100%)', background: 'var(--bg-elevated)', display: showComments ? 'flex' : 'none', flexDirection: 'column' }}>
         <div className="review-sidebar-heading"><span>此版本批注</span><button type="button" aria-label="收起此版本批注" onClick={() => setShowComments(false)}><X size={16} /></button></div>
-        <div style={{ flex: 1, minHeight: 0 }}><CommentsSection {...(source.mode === 'share' ? { mode: 'share', token: source.token, siteId: source.siteId, password: source.password } : { mode: 'site', siteId: source.siteId })}
+        <div style={{ flex: 1, minHeight: 0 }}><CommentsSection visible={showComments} {...(source.mode === 'share' ? { mode: 'share', token: source.token, siteId: source.siteId, password: source.password } : { mode: 'site', siteId: source.siteId })}
           annotations={review.annotations} review={review} versionOnly onThreadCountsChange={counts => setCount(counts.annotations + counts.discussions)} onPickElement={() => setShowComments(false)} /></div>
       </aside>}
     </div>}

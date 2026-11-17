@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { ArrowUpRight, GripHorizontal, MessageCircle, X } from 'lucide-react';
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { ArrowUpRight, Eye, EyeOff, GripHorizontal, MessageCircle, X } from 'lucide-react';
 import type { HostedAnnotations, AnnotationRect } from './useHostedAnnotations';
 import type { HostedSiteCommentDto } from '@/services/real/webPages';
+import { annotationPreviewText } from './annotationPreviewText';
 import { placeAnnotationBubble } from './annotationBubblePlacement';
 
 const clamp = (n: number, max: number) => Math.max(8, Math.min(n, Math.max(8, max - 8)));
@@ -10,10 +11,15 @@ type Placement = NonNullable<ReturnType<typeof placeAnnotationBubble>>;
 /** Text remains in the trusted host; the uploaded page sends only anchor geometry. */
 export function AnnotationBubble({ annotations, hidden = false }: { annotations: HostedAnnotations; hidden?: boolean }) {
   const canvas = useRef<HTMLDivElement>(null);
+  const autoPositions = useRef(new Map<string, { placement: Placement; dx: number; dy: number; width: number; height: number; vw: number; vh: number }>());
+  const indexed = useMemo(() => {
+    let number = 0;
+    return new Map(annotations.threads.map(thread => [thread.id, { thread, number: thread.anchor && !thread.parentId ? ++number : 0, excerpt: annotationPreviewText(thread.content) }]));
+  }, [annotations.threads]);
   const [positions, setPositions] = useState<Record<string, { left: number; top: number }>>({});
   const [geometry, setGeometry] = useState<{ width: number; height: number; cards: Record<string, { width: number; height: number }> }>({ width: 0, height: 0, cards: {} });
   const visible = !hidden && !annotations.enabled && !annotations.draftAnchor && annotations.displayMode === 'bubble';
-  const items = visible ? (annotations.previews ?? (annotations.preview ? [annotations.preview] : [])).filter(item => annotations.threads.some(thread => thread.id === item.id)) : [];
+  const items = visible ? (annotations.previews ?? (annotations.preview ? [annotations.preview] : [])).filter(item => indexed.has(item.id)) : [];
   const key = items.map(item => item.id).join(':');
   useLayoutEffect(() => {
     if (!canvas.current || !visible || !key) return;
@@ -36,12 +42,16 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const occupied: AnnotationRect[] = [];
   return <div ref={canvas} className="annotation-bubble-canvas" aria-label="页面批注气泡">
     {items.map(item => {
-      const thread = annotations.threads.find(thread => thread.id === item.id)!;
+      const { thread, number, excerpt } = indexed.get(item.id)!;
       const size = geometry.cards[item.id];
-      const placement = size ? placeAnnotationBubble(item.rect, size, geometry, item.obstacles, occupied, true, item.markers) : null;
+      let cached = autoPositions.current.get(item.id);
+      if (size && (!cached || cached.width !== size.width || cached.height !== size.height || cached.vw !== geometry.width || cached.vh !== geometry.height)) {
+        const placed = placeAnnotationBubble(item.rect, size, geometry, item.obstacles, occupied.slice(-12), true, item.markers);
+        if (placed) { cached = { placement: placed, dx: placed.left - item.rect.left, dy: placed.top - item.rect.top, ...size, vw: geometry.width, vh: geometry.height }; autoPositions.current.set(item.id, cached); }
+      }
+      const placement = cached ? { ...cached.placement, left: item.rect.left + cached.dx, top: item.rect.top + cached.dy } : null;
       if (placement && size) occupied.push({ ...placement, ...size });
-      const number = annotations.threads.filter(thread => thread.anchor && !thread.parentId).findIndex(thread => thread.id === item.id) + 1;
-      return <BubbleCard key={item.id} thread={thread} number={number} annotations={annotations} placement={placement} canvas={geometry} size={size}
+      return <BubbleCard key={item.id} thread={thread} excerpt={excerpt} anchor={item.rect} number={number} annotations={annotations} placement={placement} canvas={geometry} size={size}
         position={positions[item.id]} onMove={position => setPositions(previous => {
           const next = { ...previous }; if (position) next[item.id] = position; else delete next[item.id]; return next;
         })} />;
@@ -49,15 +59,17 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   </div>;
 }
 
-function BubbleCard({ thread, number, annotations, placement, canvas, size, position, onMove }: {
-  thread: HostedSiteCommentDto; number: number; annotations: HostedAnnotations; placement: Placement | null;
+function BubbleCard({ thread, excerpt, anchor, number, annotations, placement, canvas, size, position, onMove }: {
+  thread: HostedSiteCommentDto; excerpt: string; anchor: AnnotationRect; number: number; annotations: HostedAnnotations; placement: Placement | null;
   canvas: { width: number; height: number }; size?: { width: number; height: number };
   position?: { left: number; top: number }; onMove: (position: { left: number; top: number } | null) => void;
 }) {
+  const hasHidden = annotations.hasHiddenPreviews || annotations.allPreviewsHidden;
   const drag = useRef<{ id: number; x: number; y: number; left: number; top: number } | null>(null);
-  const left = clamp(position?.left ?? placement?.left ?? 8, canvas.width - (size?.width ?? 0));
-  const top = clamp(position?.top ?? placement?.top ?? 8, canvas.height - (size?.height ?? 0));
-  const move = (x: number, y: number) => onMove({ left: clamp(x, canvas.width - (size?.width ?? 0)), top: clamp(y, canvas.height - (size?.height ?? 0)) });
+  // Follow the anchor continuously, while keeping controls reachable at viewport edges.
+  const left = clamp(position ? anchor.left + position.left : placement?.left ?? 8, canvas.width - (size?.width ?? 0));
+  const top = clamp(position ? anchor.top + position.top : placement?.top ?? 8, canvas.height - (size?.height ?? 0));
+  const move = (x: number, y: number) => onMove({ left: clamp(x, canvas.width - (size?.width ?? 0)) - anchor.left, top: clamp(y, canvas.height - (size?.height ?? 0)) - anchor.top });
   const start = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as Element).closest('button:not(.annotation-chat-grip)')) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -82,9 +94,11 @@ function BubbleCard({ thread, number, annotations, placement, canvas, size, posi
           if (delta) { event.preventDefault(); event.stopPropagation(); move(left + delta[0], top + delta[1]); }
           if (event.key === 'Home') { event.preventDefault(); onMove(null); }
         }}><GripHorizontal size={14} /></button>
+      <button type="button" aria-label={hasHidden ? '显示全部气泡' : '隐藏全部气泡'} title={hasHidden ? '显示全部气泡' : '隐藏全部气泡'}
+        onClick={() => hasHidden ? annotations.showAllPreviews() : annotations.hideAllPreviews()}>{hasHidden ? <Eye size={14} /> : <EyeOff size={14} />}</button>
       <button type="button" onClick={() => annotations.dismissPreview(thread.id)} aria-label={`收起批注气泡 ${number}`} title="收起此气泡，保留页面标记"><X size={13} /></button>
     </div>
-    <p>{thread.content}</p>
+    <p style={{ overflowWrap: 'anywhere' }}>{excerpt}</p>
     <button type="button" className="annotation-chat-open" onClick={() => annotations.openThread(thread.id)}><MessageCircle size={13} />查看讨论<ArrowUpRight size={13} /></button>
   </div>;
 }

@@ -80,3 +80,23 @@ describe('hosted annotation bridge', () => {
     expect(annotations.threads).toEqual([]);
   });
 });
+
+it('全隐过滤旧帧迟到几何，点编号可单独恢复，再全显恢复所有', async () => {
+  await mount(); const frame = container.querySelector('iframe')!.contentWindow!, send = vi.spyOn(frame, 'postMessage');
+  await act(async () => annotations.notifyFrame()); const config = send.mock.calls.filter(call => call[0].type === 'map-annotation-init').at(-1)![0];
+  const items = ['one', 'two'].map(id => ({ id, rect: { left: 10, top: 20, width: 100, height: 40 } }));
+  const post = (extra: object) => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, ...extra } }));
+  await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(2);
+  await act(async () => annotations.hideAllPreviews()); await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(0);
+  await act(async () => post({ type: 'map-annotation-preview-select', id: 'two' })); await act(async () => post({ type: 'map-annotation-previews', items }));
+  expect(annotations.previews?.map(item => item.id)).toEqual(['two']); expect(annotations.allPreviewsHidden).toBe(true);
+  await act(async () => annotations.showAllPreviews()); await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(2);
+});
+it('仅有旧单气泡协议时全隐后仍可点击编号重新显示', async () => {
+  await mount(); const frame = container.querySelector('iframe')!.contentWindow!, send = vi.spyOn(frame, 'postMessage');
+  await act(async () => annotations.notifyFrame()); const config = send.mock.calls.filter(call => call[0].type === 'map-annotation-init').at(-1)![0];
+  const post = (extra: object) => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, ...extra } }));
+  await act(async () => post({ type: 'map-annotation-preview', id: 'one', rect: { left: 10, top: 20, width: 100, height: 40 } }));
+  await act(async () => annotations.hideAllPreviews()); expect(annotations.preview).toBeNull(); expect(annotations.previews).toBeNull();
+  await act(async () => post({ type: 'map-annotation-activate', id: 'one' })); expect(annotations.preview?.id).toBe('one');
+});

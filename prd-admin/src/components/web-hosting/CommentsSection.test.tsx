@@ -16,7 +16,7 @@ vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
 const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, connectionChecked: true, displayMode: 'bubble', setDisplayMode: vi.fn(),
-  preview: null, previews: [], showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn(),
+  preview: null, previews: [], allPreviewsHidden: false, hasHiddenPreviews: false, hideAllPreviews: vi.fn(), showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn(),
   draftAnchor: null, activeId: null, missingIds: [], threads: [], select, clearDraft: vi.fn(), focus: vi.fn(),
   notifyFrame: vi.fn(), setThreads: vi.fn(), setEnabled: vi.fn(), setActiveId: vi.fn() });
 async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string; versionOnly?: boolean } = {}) {
@@ -432,4 +432,28 @@ it.each([false, true])('初次读取期间的更新失败明确可重试，网�
   await act(async () => button('重新加载').click());
   expect(container.textContent).toContain('重试后意见可见');
   expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it('面板隐藏时不消费滚动，同一已选意见打开面板后仍能定位', async () => {
+  list.mockResolvedValue({ success: true, data: { comments: [{ id: 'selected', content: '已选中的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' }], commentsEnabled: true, canComment: false } });
+  container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+  const selected = { ...annotations(), activeId: 'selected' };
+  const render = (visible: boolean) => root.render(<CommentsSection mode="share" token="share" annotations={selected} visible={visible} />);
+  const oldScroll = HTMLElement.prototype.scrollIntoView, scroll = vi.fn(); HTMLElement.prototype.scrollIntoView = scroll;
+  try {
+    await act(async () => render(false));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    expect(scroll).not.toHaveBeenCalled();
+    await act(async () => render(true));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    expect(scroll.mock.contexts).toEqual([container.querySelector('.review-thread')]);
+  } finally { HTMLElement.prototype.scrollIntoView = oldScroll; }
+});
+
+it('长意见默认只渲染有界摘要，用户可展开及收起完整内容', async () => {
+  const content = '长文内容'.repeat(10000);
+  list.mockResolvedValue({ success: true, data: { comments: [{ id: 'long', content, authorName: '作者', createdAt: '2026-11-16T00:00:00Z' }], commentsEnabled: true, canComment: false } });
+  await mount(); expect(container.querySelector('.review-message-body')!.textContent!.length).toBeLessThanOrEqual(281);
+  await act(async () => button('展开全文').click()); expect(container.querySelector('.review-message-body')!.textContent).toBe(content);
+  await act(async () => button('收起全文').click()); expect(container.querySelector('.review-message-body')!.textContent!.length).toBeLessThanOrEqual(281);
 });

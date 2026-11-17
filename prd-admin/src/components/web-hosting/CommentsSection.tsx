@@ -1,3 +1,4 @@
+import { annotationPreviewText } from './annotationPreviewText';
 import { useState, useEffect, useRef, useCallback, useId, type ReactNode } from 'react';
 import { MessageSquare, Send, Trash2, Lock, LogIn, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight, History } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '../ui/VideoLoader';
@@ -27,6 +28,7 @@ type Props = (
   threadKind?: 'annotation' | 'discussion';
   onThreadCountsChange?: (counts: CommentThreadCounts) => void;
   versionOnly?: boolean;
+  visible?: boolean;
 };
 
 export default function CommentsSection(props: Props) {
@@ -151,12 +153,12 @@ export default function CommentsSection(props: Props) {
   }, [draftAnchor]);
   useEffect(() => {
     const id = annotations?.activeId;
-    if (!id) return;
+    if (!id || props.visible === false) return;
     const selected = comments.find(c => c.id === id);
     if (selected) setFilter(current => current === 'all' ? current : selected.isResolved ? 'resolved' : 'open');
     const timer = window.setTimeout(() => threadElements.current.get(id)?.scrollIntoView({ block: 'nearest' }), 50);
     return () => window.clearTimeout(timer);
-  }, [annotations?.activeId, comments]);
+  }, [annotations?.activeId, comments, props.visible]);
 
   const submit = async () => {
     if (!draft.trim() || submitting || !canWrite) return;
@@ -299,6 +301,8 @@ export default function CommentsSection(props: Props) {
 }
 
 function CommentMessage({ comment, busy, confirming, onDelete, children }: { comment: HostedSiteCommentDto; busy: boolean; confirming: boolean; onDelete: () => void; children?: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = comment.content.length > 280;
   return <div className="review-message">
     <div className="review-message-author"><img src={getUserAvatarUrl({ avatarFileName: comment.authorAvatarFileName, displayName: comment.authorName })} alt="" />
       <strong>{comment.authorName}</strong><span>·</span><time dateTime={comment.createdAt}>{formatTime(comment.createdAt)}</time>
@@ -306,7 +310,8 @@ function CommentMessage({ comment, busy, confirming, onDelete, children }: { com
         {busy ? <MapSpinner size={13} /> : confirming ? <span>确认删除</span> : <Trash2 size={13} />}</button>}
     </div>
     {children}
-    <p className="review-message-body">{comment.content}</p>
+    <p className={`review-message-body${long && !expanded ? ' is-collapsed' : ''}`} style={{ overflowWrap: 'anywhere' }}>{expanded ? comment.content : annotationPreviewText(comment.content)}</p>
+    {long && <button type="button" className="review-tool" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起全文' : '展开全文'}</button>}
   </div>;
 }
 

@@ -279,7 +279,7 @@ export default function SitePreviewModal({
           <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
             <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar"
               onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
-            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} onBubbleMode={() => { if (isMobile) setShowComments(false); }} />
+            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} />
             {askEnabled && !review.historical && (
               <button
                 type="button"
@@ -432,6 +432,7 @@ export default function SitePreviewModal({
                 {/* key 随开关变化，强制刷新评论区的 commentsEnabled 态；
                     onStateLoaded 用服务端权威值回填开关，消除"开关 ON 但面板显示已关闭"的 stale 偏差（Cursor medium） */}
                 <CommentsSection
+                  visible={showComments}
                   key={`${site.id}:${commentsEnabled}`}
                   onCountChange={autoOpenReview}
                   mode="site"

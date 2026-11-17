@@ -359,3 +359,109 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     }
   });
 }
+
+
+test.describe('长文批注连续跟随与菜单外点', () => {
+  const title = '长文批注跟随样例';
+  const content = '这是一条需要保留完整内容的长意见。'.repeat(3000);
+  const html = `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font:16px/1.7 system-ui}main{padding:32px}p{margin:12px 0}</style><main><h1>${title}</h1><p id="note-one">定位段落一</p><p id="note-two">定位段落二</p>${'<p>长文压力段落，滚动时不应遍历全部正文寻找位置。</p>'.repeat(10000)}</main></html>`;
+  async function open(page: Page) {
+    const site = { id: 'qa-follow', title, siteUrl: 'https://hosting.example/sites/qa-follow/index.html?v=20000', entryFile: 'index.html', contentShape: 'self-contained-html', viewerCanEdit: false, totalSize: html.length, fileCount: 1, files: [], tags: [] };
+    const version = { id: 'v2', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, entryFile: site.entryFile, siteUrl: site.siteUrl, contentShape: site.contentShape };
+    const comments = ['one', 'two'].map((name, index) => ({ id: name, siteId: site.id, revisionId: 'v2', contentVersion: '20000', authorName: '复验作者', content, createdAt: '2026-11-17T00:00:00Z', anchor: { kind: 'element', pagePath: '/sites/qa-follow/index.html', selector: '#note-' + name, tagName: 'p', text: '定位段落' + (index + 1), elementText: '定位段落' + (index + 1), prefix: '', suffix: '', contentVersion: '20000' } }));
+    await page.route('**/api/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/annotation-runtime.js')) { await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') }); return; }
+      const data = path.endsWith('/shares/view/qa-follow') ? { title, shareType: 'single', sites: [site] }
+        : path.endsWith('/content') ? { html }
+        : path.endsWith('/comments') ? { siteId: site.id, commentsEnabled: true, canComment: false, comments }
+        : path.endsWith('/revisions') ? [version]
+        : path.endsWith('/related-documents') ? { version: 1, mainSiteId: site.id, canManage: false, items: [{ id: site.id, title }, { id: 'other', title: '关联样例', href: '/s/wp/other' }] }
+        : { items: [], total: 0 };
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto('/s/wp/qa-follow');
+    await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
+    await expect(page.locator('.annotation-chat-bubble').first()).toBeVisible();
+    return page.frameLocator(`iframe[title="${title}"]`);
+  }
+  async function freePoint(page: Page) {
+    const point = await page.locator(`iframe[title="${title}"]`).evaluate(el => {
+      const r = el.getBoundingClientRect();
+      for (const fx of [.95, .05, .5]) for (const fy of [.08, .3, .6, .9]) { const x = r.left + r.width * fx, y = r.top + r.height * fy; if (document.elementFromPoint(x, y) === el) return { x, y }; }
+      return null;
+    });
+    expect(point).not.toBeNull(); return point!;
+  }
+  for (const mobile of [false, true]) test.describe(mobile ? '独立触控' : '桌面', () => {
+    test.use({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: mobile, hasTouch: mobile });
+    const tap = async (locator: ReturnType<Page['getByRole']>) => mobile ? locator.tap() : locator.click();
+    test('图标全隐保留编号，编号重开后全显；菜单外点与iframe点击收起', async ({ page }) => {
+      const frame = await open(page);
+      await expect(page.getByRole('button', { name: '批注显示方式', exact: true })).toHaveCount(0);
+      await page.screenshot({ path: test.info().outputPath('default-bubble-icons.png') });
+      if (mobile) { const r = await page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first().boundingBox(); expect(r!.width).toBeGreaterThanOrEqual(44); expect(r!.height).toBeGreaterThanOrEqual(44); }
+      await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
+      await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(2);
+      await tap(frame.getByRole('button', { name: '打开批注 2', exact: true }));
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(1);
+      await tap(page.getByRole('button', { name: '显示全部气泡', exact: true })); await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
+      await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());
+      for (const menu of ['网页版本：V2', '关联文档']) {
+        await tap(page.getByRole('button', { name: menu, exact: true })); await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'true');
+        await tap(page.getByRole('button', { name: '批注与讨论', exact: true })); await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'false');
+        const commentsButton = page.getByRole('button', { name: '批注与讨论', exact: true });
+        if (await commentsButton.getAttribute('aria-expanded') === 'true') await tap(commentsButton);
+        await tap(page.getByRole('button', { name: menu, exact: true }));
+        const point = await freePoint(page); if (mobile) await page.touchscreen.tap(point.x, point.y); else await page.mouse.click(point.x, point.y);
+        await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'false');
+        if (menu === '网页版本：V2') {
+        await tap(page.getByRole('button', { name: menu, exact: true }));
+        await tap(frame.getByRole('button', { name: '打开批注 1', exact: true }));
+        await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'false');
+        await tap(page.getByRole('button', { name: '显示全部气泡', exact: true }).first());
+        await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());
+        }
+      }
+    });
+    test('一万段长文连续跟随、节点不重建、无全文查询，长意见默认渲染有界', async ({ page, context }) => {
+      const frame = await open(page), card = page.locator('[data-bubble-id="one"]');
+      await expect.poll(() => frame.locator('body').evaluate(() => document.readyState)).toBe('complete');
+      expect(await card.locator('p').innerText()).toHaveLength(281);
+      expect((await page.locator('.review-message-body').first().textContent())!.length).toBeLessThanOrEqual(281);
+      const before = await card.boundingBox(); expect(before).not.toBeNull();
+      await page.evaluate(() => {
+        const w = window as typeof window & { __followCard?: Element | null; __followMessages?: number };
+        w.__followCard = document.querySelector('[data-bubble-id="one"]'); w.__followMessages = 0;
+        window.addEventListener('message', e => { if (e.data?.type === 'map-annotation-previews') w.__followMessages!++; });
+      });
+      await frame.locator('body').evaluate(() => {
+        const w = window as typeof window & { __followReads?: { scans: number; rects: number } }; w.__followReads = { scans: 0, rects: 0 };
+        const query = document.querySelectorAll.bind(document); document.querySelectorAll = ((...args: Parameters<typeof query>) => { w.__followReads!.scans++; return query(...args); }) as typeof document.querySelectorAll;
+        const rect = Element.prototype.getBoundingClientRect; Element.prototype.getBoundingClientRect = function () { w.__followReads!.rects++; return rect.call(this); };
+      });
+      const point = await freePoint(page);
+      if (mobile) { const cdp = await context.newCDPSession(page); await cdp.send('Input.synthesizeScrollGesture', { x: point.x, y: point.y, yDistance: -40, speed: 100, gestureSourceType: 'touch' }); await cdp.detach(); }
+      else { await page.mouse.move(point.x, point.y); await page.mouse.wheel(0, 40); }
+      await expect.poll(() => frame.locator('body').evaluate(() => scrollY)).toBeGreaterThan(0);
+      await expect.poll(async () => {
+        const y = await frame.locator('body').evaluate(() => scrollY), current = await card.boundingBox(); return Math.abs(before!.y - current!.y - y);
+      }).toBeLessThan(2);
+      expect(await card.evaluate(el => el === (window as typeof window & { __followCard?: Element }).__followCard)).toBe(true);
+      const reads = await frame.locator('body').evaluate(() => (window as typeof window & { __followReads?: { scans: number; rects: number } }).__followReads!);
+      const messages = await page.evaluate(() => (window as typeof window & { __followMessages?: number }).__followMessages!);
+      expect(reads.scans).toBe(0); expect(reads.rects).toBeLessThanOrEqual((messages + 3) * 60);
+      const commentsButton = page.getByRole('button', { name: '批注与讨论', exact: true });
+      if (await commentsButton.getAttribute('aria-expanded') !== 'true') await tap(commentsButton);
+      {
+        await tap(page.getByRole('button', { name: '展开全文', exact: true }).first());
+        expect(await page.locator('.review-message-body').first().textContent()).toBe(content);
+        await tap(page.getByRole('button', { name: '收起全文', exact: true }).first());
+      }
+      const budgetPath = test.info().outputPath('scroll-budget.json');
+      await writeFile(budgetPath, JSON.stringify({ paragraphs: 10000, commentCharacters: content.length, ...reads, messages }));
+      await test.info().attach('长文滚动预算', { path: budgetPath, contentType: 'application/json' });
+    });
+  });
+});

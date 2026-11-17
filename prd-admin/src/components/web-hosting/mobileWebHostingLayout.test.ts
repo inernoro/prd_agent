@@ -26,7 +26,7 @@ describe('mobile web hosting layout', () => {
 
   it('gives every preview-header action at least a 44px touch target', () => {
     expect(previewSource).toContain('<ReviewToolbarControls');
-    expect(previewHeaderActionsSource.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(9);
+    expect(previewHeaderActionsSource.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(8);
     expect(reviewStyles).toMatch(/\.review-tool\s*\{[^}]*min-height:\s*44px/);
     expect(previewSource).toContain('min-w-11');
     // 2026-09-24：「帮我修改」进生成工作台，版本记录作为那里的对话显示，预览顶栏只留一个入口。

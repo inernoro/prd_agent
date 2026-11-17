@@ -147,7 +147,9 @@ export function AnchoredMenu({
     if (!open) return;
     const onScroll = () => reposition();
     const onResize = () => reposition();
-    const onDown = (e: MouseEvent) => {
+    let closing = false;
+    const onDown = (e: PointerEvent | MouseEvent) => {
+      if (closing) return;
       const t = e.target as Node;
       if (menuRef.current?.contains(t)) return;
       if (getAnchor()?.contains(t)) return; // 锚点自己负责 toggle
@@ -155,7 +157,15 @@ export function AnchoredMenu({
       // 但它是这次菜单操作的一部分：在对话框里点按钮不该把下层菜单关掉，否则确认后的结果
       // （例如刚生成的分享链接）没有地方就地显示。判定见 shouldCloseOnOutsidePointer。
       if (!shouldCloseOnOutsidePointer(t instanceof Element ? t : null, getAnchor())) return;
-      onClose();
+      closing = true; onClose();
+    };
+    let blurTimer: ReturnType<typeof setTimeout> | undefined;
+    const onBlur = () => {
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => {
+        const target = document.activeElement;
+        if (target instanceof HTMLIFrameElement && !menuRef.current?.contains(target) && !getAnchor()?.contains(target) && shouldCloseOnOutsidePointer(target, getAnchor()) && !closing) { closing = true; onClose(); }
+      }, 0);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -166,7 +176,9 @@ export function AnchoredMenu({
     if (menuRef.current) sizeObserver?.observe(menuRef.current);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onResize);
-    document.addEventListener('mousedown', onDown);
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('mousedown', onDown, true);
+    window.addEventListener('blur', onBlur);
     document.addEventListener('keydown', onKey);
     // 弹窗出场动画期间带 transform、是 fixed 的参照系；动画一结束参照系换回视口，
     // 在这期间打开的菜单要按新参照系重算一次，否则会停在错位的位置上。
@@ -177,7 +189,10 @@ export function AnchoredMenu({
       sizeObserver?.disconnect();
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
-      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('blur', onBlur);
+      clearTimeout(blurTimer);
       document.removeEventListener('keydown', onKey);
     };
   }, [open, reposition, onClose, getAnchor]);

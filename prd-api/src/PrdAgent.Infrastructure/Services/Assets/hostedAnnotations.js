@@ -7,7 +7,8 @@
   var currentHover = null, pending = null, lastLocations = '', activeId = null;
   var records = new Map(), structureDirty = true, geometryDirty = true, hoverDirty = true, threadsKey = '';
   var pendingBox = null, pointer = null;
-  var previewId = null, dismissedPreview = null, previewLast = '', previewMuted = false, previewTimer = 0;
+  var previewId = null, dismissedPreview = null, previewLast = '';
+  var previewsHidden = false, revealedPreviews = new Set();
   var dismissedPreviews = new Set(), previewsLast = '';
   var excluded = 'script,style,noscript,input,textarea,select,option,[contenteditable="true"]';
   function post(type, extra) {
@@ -121,7 +122,7 @@
         pin.onclick = function (event) {
           event.stopPropagation();
           if (context.displayMode === 'bubble') {
-            activeId = previewId = thread.id; dismissedPreview = null; dismissedPreviews.delete(thread.id); previewLast = ''; previewsLast = '';
+            activeId = previewId = thread.id; revealedPreviews.add(thread.id); dismissedPreview = null; dismissedPreviews.delete(thread.id); previewLast = ''; previewsLast = '';
             post('map-annotation-preview-select', { id: thread.id }); schedule(false); return;
           }
           activeId = thread.id;
@@ -149,53 +150,51 @@
     previewsLast = '';
   }
   function previewRect(rect) { return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; }
+  function viewportGeometry(record, key) {
+    if (!record.geometry) return null;
+    var rect = record.geometry[key];
+    if (!rect) return null;
+    var left = rect.left - (scrollX - record.geometry.x), top = rect.top - (scrollY - record.geometry.y);
+    return { left: left, top: top, width: rect.width, height: rect.height, right: left + rect.width, bottom: top + rect.height };
+  }
+  function surroundingGeometry() {
+    // Sample the viewport, never scan the full document on scroll. Work is independent
+    // of article length and preview text remains entirely in the trusted host.
+    var boxes = [], seen = new Set(), anchors = new Set();
+    if (!document.elementFromPoint) return boxes;
+    records.forEach(function (record) { if (record.found) anchors.add(record.found.el); });
+    for (var row = 0; row < 8; row++) for (var column = 0; column < 6; column++) {
+      var target = document.elementFromPoint((column + 0.5) * innerWidth / 6, (row + 0.5) * innerHeight / 8);
+      var element = target && target.closest('h1,h2,h3,h4,p,li,button,a,img,input,pre,table,blockquote');
+      if (!element || element === host || host.contains(element) || anchors.has(element) || seen.has(element)) continue;
+      seen.add(element);
+      var rect = element.getBoundingClientRect();
+      if (rect.width && rect.height) boxes.push(previewRect(rect));
+    }
+    return boxes;
+  }
   function publishPreview(force) {
-    if (previewMuted || context.displayMode !== 'bubble' || context.enabled || context.pending) { hidePreviews(); return; }
-    var surrounding = [];
-    document.querySelectorAll('h1,h2,h3,h4,p,li,button,a,img,input,pre,table,blockquote').forEach(function (element) {
-      if (surrounding.length >= 80 || Array.from(records.values()).some(function (item) { return item.found && (item.found.el === element || item.found.el.contains(element) || element.contains(item.found.el)); })) return;
-      var box = element.getBoundingClientRect();
-      if (box.width && box.height && box.bottom > 0 && box.top < innerHeight) surrounding.push(previewRect(box));
-    });
-    var items = [];
+    if (context.displayMode !== 'bubble' || context.enabled || context.pending || (previewsHidden && !revealedPreviews.size)) { hidePreviews(); return; }
+    var items = [], markers = [];
     records.forEach(function (item) {
-      if (!item.found || !item.found.el.isConnected || dismissedPreviews.has(item.thread.id)) return;
-      var rect = item.found.range ? item.found.range.getBoundingClientRect() : item.found.el.getBoundingClientRect();
-      if (rect.width && rect.height && rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth)
+      if (!item.found || !item.found.el.isConnected) return;
+      var pin = viewportGeometry(item, 'pin');
+      if (pin && pin.bottom > 0 && pin.top < innerHeight) markers.push(previewRect(pin));
+      if (dismissedPreviews.has(item.thread.id) || (previewsHidden && !revealedPreviews.has(item.thread.id))) return;
+      var rect = viewportGeometry(item, 'anchor');
+      if (rect && rect.width && rect.height && rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth)
         items.push({ id: item.thread.id, rect: previewRect(rect), obstacles: [] });
     });
-    var markers = [];
-    records.forEach(function (item) {
-      if (!item.located || item.pin.hidden) return;
-      var pin = item.pin.getBoundingClientRect();
-      if (pin.bottom > 0 && pin.top < innerHeight) markers.push(previewRect(pin));
-    });
+    var surrounding = items.length ? surroundingGeometry() : [];
     var itemsKey = JSON.stringify([items, surrounding, markers]);
     if (force || itemsKey !== previewsLast) { previewsLast = itemsKey; post('map-annotation-previews', { items: items, obstacles: surrounding, markers: markers }); }
-    var record = records.get(previewId || activeId);
-    if (!record) {
-      for (var item of records.values()) {
-        if (!item.found || !item.found.el.isConnected) continue;
-        var candidate = item.found.el.getBoundingClientRect();
-        if (candidate.bottom > 0 && candidate.top < innerHeight) { record = item; previewId = item.thread.id; break; }
-      }
-    }
-    if (!record || !record.found || !record.found.el.isConnected || dismissedPreview === record.thread.id) { hidePreview(); return; }
-    var target = record.found.range ? record.found.range.getBoundingClientRect() : record.found.el.getBoundingClientRect();
-    if (!target.width || !target.height || target.bottom <= 0 || target.top >= innerHeight || target.right <= 0 || target.left >= innerWidth) { hidePreview(); return; }
-    var rect = previewRect(target), key = record.thread.id + JSON.stringify(rect);
+    var record = records.get(previewId || activeId) || (items.length ? records.get(items[0].id) : null);
+    if (record) previewId = record.thread.id;
+    if (!record || !items.some(function (item) { return item.id === record.thread.id; }) || dismissedPreview === record.thread.id) { hidePreview(); return; }
+    var rect = previewRect(viewportGeometry(record, 'anchor')), key = record.thread.id + JSON.stringify(rect);
     if (!force && key === previewLast) return;
-    var obstacles = [];
-    // Geometry only. Comment text and author information never enter the uploaded page.
-    for (var element of document.querySelectorAll('h1,h2,h3,h4,p,li,button,a,img,input,pre,table,header,section,aside,blockquote,article,div,span')) {
-      if (element === record.found.el || record.found.el.contains(element) || element.contains(record.found.el)) continue;
-      if (/^(DIV|SECTION|ASIDE|ARTICLE|HEADER)$/.test(element.tagName) && !Array.from(element.childNodes).some(function (node) { return node.nodeType === Node.TEXT_NODE && node.textContent.trim(); })) continue;
-      var box = element.getBoundingClientRect();
-      if (box.width && box.height && box.bottom > 0 && box.top < innerHeight) obstacles.push(previewRect(box));
-      if (obstacles.length >= 80) break;
-    }
     previewLast = key;
-    post('map-annotation-preview', { id: record.thread.id, rect: rect, obstacles: obstacles });
+    post('map-annotation-preview', { id: record.thread.id, rect: rect, obstacles: surrounding });
   }
   function viewportPositioned(el) {
     for (var node = el; node && node !== document.documentElement; node = node.parentElement) {
@@ -223,7 +222,7 @@
         var rect = found.range ? found.range.getBoundingClientRect() : found.el.getBoundingClientRect();
         if (!rect.width || !rect.height) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
         var count = pinCounts.get(found.el) || 0; pinCounts.set(found.el, count + 1);
-        updates.push({ record: record, rects: found.range ? Array.from(found.range.getClientRects()) : [rect],
+        updates.push({ record: record, anchor: previewRect(rect), rects: found.range ? Array.from(found.range.getClientRects()) : [rect],
           pin: { left: Math.max(-scrollX, Math.min(rect.right - 12 - count * 28, document.documentElement.scrollWidth - scrollX - 27)),
             top: Math.max(record.viewportPositioned ? 2 : -scrollY + 2, rect.top - 12), width: 25, height: 25 } });
       });
@@ -244,6 +243,7 @@
     updates.forEach(function (update) {
       var record = update.record;
       record.located = !!update.pin;
+      record.geometry = update.pin ? { anchor: update.anchor, pin: update.pin, x: scrollX, y: scrollY } : null;
       if (update.pin) place(record.pin, update.pin, origin);
       while (record.boxes.length > update.rects.length) record.boxes.pop().remove();
       update.rects.forEach(function (rect, index) {
@@ -253,8 +253,9 @@
       });
     });
     records.forEach(function (record) {
-      record.pin.hidden = !record.located;
-      record.pin.className = 'pin' + (record.thread.id === activeId ? ' active' : '');
+      if (record.pin.hidden === record.located) record.pin.hidden = !record.located;
+      var pinClass = 'pin' + (record.thread.id === activeId ? ' active' : '');
+      if (record.pin.className !== pinClass) record.pin.className = pinClass;
     });
     if (geometryDirty) {
       if (pendingRect) {
@@ -276,9 +277,10 @@
     if (data.type === 'map-annotation-init') {
       if (typeof data.nonce !== 'string' || data.nonce.length > 100 || !data.nonce || typeof data.siteId !== 'string' || !data.siteId) return;
       try { new URL(data.siteUrl); } catch (_) { return; }
-      if (!context || context.displayMode !== data.displayMode || context.contentVersion !== data.contentVersion) { previewId = null; dismissedPreview = null; dismissedPreviews.clear(); previewMuted = false; hidePreview(); }
+      if (!context || context.displayMode !== data.displayMode || context.contentVersion !== data.contentVersion) { previewId = null; dismissedPreview = null; dismissedPreviews.clear(); hidePreview(); }
       var nextKey = JSON.stringify(data.threads || []);
       if (!context || context.siteUrl !== data.siteUrl || context.contentVersion !== data.contentVersion || activeId !== (data.activeId || null) || nextKey !== threadsKey) structureDirty = true;
+      if (typeof data.previewsHidden === 'boolean') { previewsHidden = data.previewsHidden; revealedPreviews = new Set(Array.isArray(data.revealedPreviewIds) ? data.revealedPreviewIds.slice(0, 500) : []); }
       threadsKey = nextKey; context = data; activeId = data.activeId || null; if (!data.pending) pending = null;
       mount(); observe(); post('map-annotation-ready'); schedule(); return;
     }
@@ -288,11 +290,12 @@
       if (dismissedPreview) dismissedPreviews.add(dismissedPreview);
       hidePreview(); schedule(false); return;
     }
-    if (data.type === 'map-annotation-previews-show') { dismissedPreviews.clear(); dismissedPreview = null; previewsLast = ''; schedule(false); return; }
+    if (data.type === 'map-annotation-previews-hide') { previewsHidden = true; revealedPreviews.clear(); hidePreviews(); return; }
+    if (data.type === 'map-annotation-previews-show') { previewsHidden = false; revealedPreviews.clear(); dismissedPreviews.clear(); dismissedPreview = null; previewsLast = ''; schedule(false); return; }
     if (data.type === 'map-annotation-focus') {
       var thread = (context.threads || []).find(function (item) { return item.id === data.id; });
       var found = thread && resolve(thread.anchor);
-      if (found) { activeId = thread.id; previewId = thread.id; dismissedPreview = null; dismissedPreviews.delete(thread.id); structureDirty = true; found.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); schedule(); }
+      if (found) { activeId = thread.id; previewId = thread.id; revealedPreviews.add(thread.id); dismissedPreview = null; dismissedPreviews.delete(thread.id); structureDirty = true; found.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); schedule(); }
       else post('map-annotation-locations', { missingIds: [data.id] });
     }
   });
@@ -322,10 +325,7 @@
   window.addEventListener('scroll', function (event) {
     if (!context) return;
     if (event.target === document || event.target === window) {
-      if (context.displayMode === 'bubble') {
-        previewMuted = true; hidePreviews(); clearTimeout(previewTimer);
-        previewTimer = setTimeout(function () { previewMuted = false; schedule(false); }, 120);
-      }
+      if (context.displayMode === 'bubble') schedule(false);
       // Absolute markers follow ordinary content natively. Fixed/sticky targets (including
       // descendants) move relative to the document and need fresh viewport geometry.
       if (pendingViewportPositioned || Array.from(records.values()).some(function (record) { return record.viewportPositioned; })) schedule();
@@ -351,5 +351,5 @@
       attributeFilter: ['class', 'style', 'hidden', 'id'] });
   }
   observe();
-  window.addEventListener('pagehide', function () { observer.disconnect(); if (frame) cancelAnimationFrame(frame); clearTimeout(previewTimer); frame = 0; context = null; });
+  window.addEventListener('pagehide', function () { observer.disconnect(); if (frame) cancelAnimationFrame(frame); frame = 0; context = null; });
 })();

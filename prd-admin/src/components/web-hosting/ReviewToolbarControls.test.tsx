@@ -28,20 +28,12 @@ const find = (label: string) => document.querySelector<HTMLButtonElement>(`butto
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('hosted review toolbar', () => {
-  it('keeps discussion and display controls first, and exposes all three display choices', async () => {
-    const { onOpen, setDisplayMode } = await mount();
+  it('只保留批注与版本入口，不再提供显示方式菜单', async () => {
+    const { onOpen } = await mount();
     expect([...container.querySelectorAll('button')].map(button => button.getAttribute('aria-label')))
-      .toEqual(['批注与讨论', '批注显示方式', '网页版本：V2']);
-    await act(async () => find('批注与讨论').click());
-    expect(onOpen).toHaveBeenCalledOnce();
-    await act(async () => find('批注显示方式').click());
-    const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
-    expect(choices).toHaveLength(3);
-    expect(choices[2].getAttribute('aria-checked')).toBe('true');
-    await act(async () => choices[0].click());
-    expect(setDisplayMode).toHaveBeenCalledWith('hidden');
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    expect(document.activeElement).toBe(find('批注显示方式'));
+      .toEqual(['批注与讨论', '网页版本：V2']);
+    expect(document.querySelector('[aria-label="批注显示方式"]')).toBeNull();
+    await act(async () => find('批注与讨论').click()); expect(onOpen).toHaveBeenCalledOnce();
   });
   it('offers keyboard-selectable version history and rejects unavailable snapshots', async () => {
     const { selectVersion } = await mount();
@@ -64,10 +56,6 @@ describe('hosted review toolbar', () => {
       await act(async () => find('网页版本：V2').click());
       await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
       expect(document.querySelector('[role="listbox"]')).toBeNull();
-      expect(parentEscape).not.toHaveBeenCalled();
-      await act(async () => find('批注显示方式').click());
-      await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-      expect(document.querySelector('[role="menu"]')).toBeNull();
       expect(parentEscape).not.toHaveBeenCalled();
     } finally { window.removeEventListener('keydown', parentEscape); }
   });
