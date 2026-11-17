@@ -129,15 +129,14 @@ export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, m
     };
     const key = (event: KeyboardEvent): void => {
       if (event.key === 'Tab' && !event.defaultPrevented) {
-        if (!tabIntoPanel) return; // Comboboxes retain their native form Tab order.
         const panel = panelRef.current, anchor = anchorRef.current;
-        const items = [...(panel?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled),button:not(:disabled),input:not(:disabled),a[href],[tabindex="0"]') ?? [])]
+        const items = [...(panel?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled),button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]') ?? [])]
           .filter(item => item.getClientRects().length && getComputedStyle(item).visibility !== 'hidden' && item.getAttribute('aria-disabled') !== 'true');
         const active = document.activeElement;
         const returnTarget = anchor instanceof HTMLElement
           ? anchor.matches('button,input,summary,[tabindex]') ? anchor : anchor.querySelector<HTMLElement>('input,button,summary,[tabindex]')
           : null;
-        const target = !event.shiftKey && active && anchor?.contains?.(active) ? items[0]
+        const target = tabIntoPanel && !event.shiftKey && active && anchor?.contains?.(active) ? items[0]
           : event.shiftKey && active === items[0] ? returnTarget : null;
         if (target) { event.preventDefault(); target.focus({ preventScroll: true }); }
         return;
@@ -157,7 +156,7 @@ export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, m
   useEffect(() => {
     if (!open) { focusedOnOpen.current = false; return; }
     if (!autoFocus || focusedOnOpen.current || position.visibility !== 'visible') return;
-    const items = panelRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled),button:not(:disabled),input:not(:disabled),a[href],[tabindex="0"]');
+    const items = panelRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled),button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]');
     const target = autoFocus === 'last' ? items?.[items.length - 1] : items?.[0];
     if (target) { focusedOnOpen.current = true; target.focus({ preventScroll: true }); }
   }, [open, autoFocus, position.visibility, children, panelRef]);

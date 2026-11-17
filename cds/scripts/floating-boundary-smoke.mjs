@@ -148,6 +148,16 @@ try {
   await page.keyboard.press('Tab');
   if(!await branchSubmit.evaluate(el=>el===document.activeElement))keyboardFailures.push(`width ${width}: branch search Tab skipped its submit button`);else checks++;
   await page.keyboard.press('Escape');
+  await branchInput.fill('');await branchInput.focus();await page.keyboard.press('ArrowDown');
+  await page.waitForFunction(()=>document.activeElement?.hasAttribute('data-branch-choice'));
+  await page.keyboard.press('Shift+Tab');
+  const configSource=page.locator('#cds-config-source');
+  if(await configSource.isVisible()){
+   assert.ok(await configSource.evaluate(el=>el===document.activeElement),'reverse traversal preserves the configuration source field');
+   await page.keyboard.press('Shift+Tab');
+  }
+  if(!await branchInput.evaluate(el=>el===document.activeElement))keyboardFailures.push(`width ${width}: reverse Tab did not return from branch suggestions to the search field`);else checks++;
+  await page.keyboard.press('Escape');
   const history=page.getByRole('button',{name:/提交历史$/}).first();
   await history.click();await bounded('[data-cds-anchored-popover]');await page.keyboard.press('Escape');
   const addTag=page.getByTitle('添加标签',{exact:true}).first();
