@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
+using System.Text;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -67,8 +69,29 @@ public class ChannelTaskService
         string? messageId = null,
         List<ChannelTaskAttachment>? attachments = null,
         Dictionary<string, object>? metadata = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        VerifiedEmailIngress? trustedEmailIngress = null)
     {
+        string? ingressTaskId = null;
+        User? ingressOwner = null;
+        if (trustedEmailIngress != null)
+        {
+            if (channelType != ChannelTypes.Email || string.IsNullOrWhiteSpace(trustedEmailIngress.Recipient)
+                || string.IsNullOrWhiteSpace(trustedEmailIngress.DeliveryKey))
+                return CreateTaskResult.Fail("INVALID_INGRESS", "邮件通道配置无效");
+            ingressOwner = await _db.Users.Find(x => x.UserId == trustedEmailIngress.OwnerUserId
+                && x.Status == UserStatus.Active).FirstOrDefaultAsync(ct);
+            if (ingressOwner == null)
+                return CreateTaskResult.Fail("INVALID_OWNER", "邮件通道归属用户不可用");
+            // Mongo's built-in unique _id provides atomic deduplication across processes/restarts.
+            // Exclude signature and timestamp: provider retries may re-sign the same message.
+            var identity = "sendgrid-inbound-parse\n" + trustedEmailIngress.Recipient.ToLowerInvariant()
+                + "\n" + trustedEmailIngress.DeliveryKey;
+            ingressTaskId = "EMAIL-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
+            var existing = await _db.ChannelTasks.Find(x => x.Id == ingressTaskId).FirstOrDefaultAsync(ct);
+            if (existing != null) return CreateTaskResult.Ok(existing);
+        }
+
         // 1. 识别意图
         var intentResult = _intentDetector.Detect(subject, content);
 
@@ -96,7 +119,7 @@ public class ChannelTaskService
         string? mappedUserId = matchResult.Whitelist!.BoundUserId;
         string? mappedUserName = matchResult.Whitelist.BoundUserName;
 
-        if (string.IsNullOrWhiteSpace(mappedUserId))
+        if (ingressOwner == null && string.IsNullOrWhiteSpace(mappedUserId))
         {
             var identityMapping = await _whitelistMatcher.ResolveIdentityAsync(channelType, senderIdentifier, ct);
             if (identityMapping != null)
@@ -106,10 +129,16 @@ public class ChannelTaskService
             }
         }
 
+        if (ingressOwner != null)
+        {
+            mappedUserId = ingressOwner.UserId;
+            mappedUserName = ingressOwner.DisplayName;
+        }
+
         // 4. 创建任务
         var task = new ChannelTask
         {
-            Id = GenerateTaskId(),
+            Id = ingressTaskId ?? GenerateTaskId(),
             ChannelType = channelType,
             ChannelMessageId = messageId,
             SenderIdentifier = senderIdentifier.ToLowerInvariant(),
@@ -133,7 +162,17 @@ public class ChannelTaskService
             At = DateTime.UtcNow
         });
 
-        await _db.ChannelTasks.InsertOneAsync(task, cancellationToken: ct);
+        try
+        {
+            await _db.ChannelTasks.InsertOneAsync(task, cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (ingressTaskId != null
+            && ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var existing = await _db.ChannelTasks.Find(x => x.Id == ingressTaskId).FirstOrDefaultAsync(ct);
+            if (existing == null) throw;
+            return CreateTaskResult.Ok(existing);
+        }
 
         _logger.LogInformation("Channel task created: {TaskId} from {Sender} intent={Intent} agent={Agent}",
             task.Id, senderIdentifier, task.Intent, task.TargetAgent);

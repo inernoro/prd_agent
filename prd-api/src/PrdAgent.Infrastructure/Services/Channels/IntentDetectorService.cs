@@ -195,7 +195,7 @@ public class IntentDetectorService
 
             case ChannelTaskIntent.Cancel:
                 // 提取任务ID
-                var taskIdMatch = Regex.Match(content, @"TASK-\d{8}-[A-Z0-9]+", RegexOptions.IgnoreCase);
+                var taskIdMatch = Regex.Match(content, @"(?:TASK-\d{8}-[A-Z0-9]+|EMAIL-[A-F0-9]{64})(?![A-Z0-9])", RegexOptions.IgnoreCase);
                 if (taskIdMatch.Success)
                 {
                     result.Parameters["taskId"] = taskIdMatch.Value.ToUpper();

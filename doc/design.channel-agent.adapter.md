@@ -277,6 +277,6 @@
 | 企业邮箱 IMAP 限制 | 中 | 轮询失败 | 后台记录 LastPollResult/Error，管理界面可手动测试连接 |
 | 白名单规则冲突 | 低 | 错误匹配 | Priority 排序 + 首匹配即停，管理界面可查看规则优先级 |
 | 配额竞态 | 低 | 超额放行 | MongoDB 原子更新（TodayDate + TodayUsedCount 条件更新） |
-| SendGrid Webhook 签名验证未实现 | 中 | 伪造请求 | TODO：实现签名验证；当前依赖网络隔离 |
+| SendGrid Webhook 签名验证未实现（原始风险） | 中 | 伪造请求 | 历史：TODO，依赖网络隔离。2026-11-17 本地复核及修复进展见[扫描报告 #26 关联台账](./debt.workflow-agent.md#邮件入站认证扫描报告-26)，真实投递与部署尚未验证 |
 | Handler 执行异常 | 中 | 任务卡在 processing | StatusHistory 追踪 + 管理界面支持手动重试/取消 |
 | SMS/Siri/Webhook 通道模型预留但未实现 | - | 数据模型中有通道类型但无实际适配器 | 标记为未来扩展，不影响邮件通道功能 |
