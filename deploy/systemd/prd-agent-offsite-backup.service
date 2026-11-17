@@ -1,0 +1,18 @@
+[Unit]
+Description=MAP full offsite backup and isolated restore
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/prd-agent-business-backups
+
+[Service]
+Type=oneshot
+UMask=0077
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=150%
+MemoryMax=3G
+LimitNOFILE=65536
+TimeoutStartSec=14h
+ExecStart=/usr/bin/python3 /usr/local/lib/prd-agent-business-backup/prd-agent-linux-offsite-backup.py --config /etc/prd-agent-backup/config.json
+StandardOutput=append:/var/log/prd-agent-offsite-backup.log
+StandardError=append:/var/log/prd-agent-offsite-backup.log

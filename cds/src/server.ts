@@ -81,6 +81,11 @@ import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-s
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
+import { createReleaseGovernanceRouter } from './routes/release-governance.js';
+import { ReleaseGovernanceService } from './services/release-governance.js';
+import { ReleaseGovernanceGit, governanceGitRunner, resolveReleaseProjectRepository } from './services/release-governance-git.js';
+import { releaseMergeBackReader } from './services/release-merge-back.js';
+import { ReleaseTargetHistoryStore } from './services/release-target-history.js';
 import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { sha256Hex } from './services/connection/pairing-service.js';
@@ -1041,6 +1046,15 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /releases/batches/:id/targets/:targetId/retry': '重试失败目标',
     'POST /releases/batches/:id/targets/:targetId/rollback': '恢复目标原版',
     'GET /releases/center': '查看发布中心',
+    'GET /releases/governance': '查看发布审批',
+    'POST /releases/targets/:id/governance/enable': '启用发布审批',
+    'POST /releases/targets/:id/conflict-check': '核验真实冲突',
+    'POST /releases/targets/:id/authorizations': '申请发布批准',
+    'POST /releases/authorizations/:id/approve': '批准发布申请',
+    'POST /releases/authorizations/:id/reject': '拒绝发布申请',
+    'POST /releases/authorizations/:id/revoke': '撤销发布批准',
+    'POST /releases/targets/:id/merge-back': '关联回并PR',
+    'POST /releases/merge-backs/:id/refresh': '刷新回并状态',
     'GET /deployment-runs': '列出部署运行',
     'GET /deployment-versions': '列出部署版本',
     'GET /projects/:id/delivery': '查看项目交付模式',
@@ -2068,13 +2082,16 @@ export function createServer(deps: ServerDeps): express.Express {
   }
   // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
+  const releaseHistory = new ReleaseTargetHistoryStore({ storePath: path.join(deps.config.repoRoot, '.cds', 'release-target-history.json') });
+  const resolveReleaseRepository = (projectId: string) => resolveReleaseProjectRepository(deps.stateService, projectId, deps.config.repoRoot);
+  const releaseGovernance = new ReleaseGovernanceService(deps.stateService,
+    new ReleaseGovernanceGit(resolveReleaseRepository, projectId => deps.stateService.getProject(projectId)?.gitDefaultBranch || 'main',
+      governanceGitRunner(deps.shell, repoRoot => resolveGitAuthEnv({repoRoot, config:deps.config, stateService:deps.stateService, githubApp:githubAppClient}),deps.serverEventLogStore)),
+    (projectId, number) => releaseMergeBackReader(deps.stateService, githubAppClient, fetch, deps.serverEventLogStore)(projectId, number), undefined, releaseHistory);
   const releaseService = new ReleaseService(deps.stateService, {
     verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
-    resolveProjectRepository: (projectId) => {
-      const project = deps.stateService.getProject(projectId);
-      if (!project || (project.gitRepoUrl && !project.repoPath)) return undefined;
-      return deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot);
-    },
+    governance: releaseGovernance,
+    resolveProjectRepository: resolveReleaseRepository,
   });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
@@ -5003,7 +5020,9 @@ export function createServer(deps: ServerDeps): express.Express {
     res.status(503).json({ error: 'self_update_draining', message: draining });
   });
 
+  app.use('/api', createReleaseGovernanceRouter(deps.stateService, releaseGovernance));
   app.use('/api', createReleasesRouter({
+    history: releaseHistory,
     shell: deps.shell,
     stateService: deps.stateService,
     config: deps.config,

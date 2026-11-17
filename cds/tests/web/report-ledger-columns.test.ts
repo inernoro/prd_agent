@@ -13,7 +13,7 @@ import { resolve } from 'node:path';
 
 const page = readFileSync(resolve(__dirname, '../..', 'web/src/pages/ReportsPage.tsx'), 'utf8');
 const start = (() => {
-  const i = page.indexOf('<table className="w-full');
+  const i = page.indexOf('<table ', page.indexOf('<section id="reports-ledger"'));
   expect(i, '找不到台账表').toBeGreaterThan(0);
   return i;
 })();
@@ -48,11 +48,14 @@ describe('台账列宽必须是有意分配的', () => {
     expect(strays, `这些 td 还写着固定宽度：${strays.join(' / ')}`).toEqual([]);
   });
 
-  it('最小宽度容得下这七列，窄屏走横向滚动而不是压扁', () => {
+  it('桌面最小宽度容得下七列，窄屏逐条纵排而不压扁内容', () => {
     // 归档时间那列是 18%，里面是 mono 的完整时间戳，min-w 太小它会被压破。
     const m = tableTag.match(/min-w-\[(\d+)rem\]/);
     expect(m, '表没有 min-w，窄屏会把列压扁').not.toBeNull();
     expect(Number(m![1])).toBeGreaterThanOrEqual(72);
+    expect(tableTag).toContain('lg:min-w-');
+    expect(tableTag).toContain('block');
+    expect(tableTag).toContain('lg:table');
   });
 
   it('标题能断行：table-fixed 下超长标题撑不破列，只能换行', () => {

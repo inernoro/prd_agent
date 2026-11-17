@@ -49,6 +49,14 @@ describe('releaseRail · 落点文案', () => {
       .toEqual({ text: '与 main 齐平', tone: 'ok' });
   });
 
+  it('只算出一个方向时仍然未知，不把缺失值补成零', () => {
+    for (const position of [{ behindCount: null, aheadCount: 0 }, { behindCount: 0, aheadCount: null }]) {
+      const description = describeCommitPosition(positionOf(position), 'main');
+      expect(description.tone).toBe('unknown');
+      expect(description.text).not.toContain('齐平');
+    }
+  });
+
   it('分叉时两个方向都说，不只报一个', () => {
     const text = describeCommitPosition(positionOf({ behindCount: 3, aheadCount: 2 }), 'main').text;
     expect(text).toContain('落后 3 个');

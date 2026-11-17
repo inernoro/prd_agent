@@ -460,7 +460,13 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 
 
   let payload: unknown = null;
-  const text = await res.text();
+  let text = '';
+  try { text = await res.text(); }
+  catch (error) {
+    // 响应头不证明业务写入结果；正文中断与 fetch 失败遵守同一返回契约。
+    // 已知 401 仍由下方唯一会话失效路径处理，不因正文不可读留下旧会话。
+    if (res.status !== 401) return { success: false, data: null, error: { code: 'NETWORK_ERROR', message: error instanceof Error ? error.message : '响应读取中断，请核对结果' } };
+  }
   if (text) {
     try {
       payload = JSON.parse(text);
@@ -715,6 +721,7 @@ export function bulkClaimConfigAuthority(req: BulkClaimConfigAuthorityRequest): 
   return apiRequest<BulkClaimConfigAuthorityResult>('/config-authority/bulk-claim', { method: 'POST', body: req });
 }
 export function getGatewayAppCallers(params?: {
+  id?: string;
   page?: number;
   pageSize?: number;
   status?: string;
@@ -727,6 +734,7 @@ export function getGatewayAppCallers(params?: {
 }): Promise<ApiResponse<GatewayAppCallersData>> {
   return apiRequest<GatewayAppCallersData>('/app-callers', {
     query: {
+      id: params?.id,
       page: params?.page,
       pageSize: params?.pageSize,
       status: params?.status,
@@ -823,8 +831,8 @@ export function createServiceKey(req: CreateServiceKeyRequest): Promise<ApiRespo
 export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; revoked: boolean }>> {
   return apiRequest<{ id: string; revoked: boolean }>(`/service-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
-export function confirmServiceKeyClientCutover(id: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
-  return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST' });
+export function confirmServiceKeyClientCutover(id: string, expectedSuccessorKeyId: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
+  return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST', body: { expectedSuccessorKeyId } });
 }
 export function getCostReconciliations(params?: { from?: string; to?: string }): Promise<ApiResponse<CostReconciliationSummary>> {
   return apiRequest<CostReconciliationSummary>('/cost-reconciliations', { query: params });
@@ -842,12 +850,13 @@ export function getLegacyKeyCutover(): Promise<ApiResponse<LegacyKeyCutoverData>
   return apiRequest<LegacyKeyCutoverData>('/legacy-key-cutover');
 }
 export function updateLegacyKeyCutover(req: {
+  expectedPolicyRevision: number;
   status: 'observing' | 'ready' | 'revoked';
   deadlineAt: string;
   allowedAppCallerCodes: string[];
   successorServiceKeyIds: string[];
   requiredSuccessorObservations: number;
-}): Promise<ApiResponse<{ id: string; status: string; deadlineAt: string; observed: number; required: number }>> {
+}): Promise<ApiResponse<{ id: string; status: string; deadlineAt: string; observed: number; required: number; policyRevision: number }>> {
   return apiRequest('/legacy-key-cutover', { method: 'PUT', body: req });
 }
 export function getOrganization(): Promise<ApiResponse<OrganizationData>> {

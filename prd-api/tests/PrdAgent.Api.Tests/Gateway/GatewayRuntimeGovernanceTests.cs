@@ -27,6 +27,70 @@ namespace PrdAgent.Api.Tests.Gateway;
 public sealed class GatewayRuntimeGovernanceTests
 {
     [Fact]
+    [Trait("Category", "Integration")]
+    public async Task ArchivedDetailFailuresReturnRecoverableError()
+    {
+        await using var scope = (await TryCreateDatabaseAsync())!;
+        var uri = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://localhost:27017";
+        var name = scope.Context.Database.DatabaseNamespace.DatabaseName;
+        var data = new MongoDbContext(uri, name, name);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["LlmGateway:InternalTenantId"] = "tenant-a" }).Build();
+        var archives = new PrdAgent.Infrastructure.Services.LogArchiveService(data, scope.Context, null!, null!, config);
+        await data.Database.GetCollection<BsonDocument>("apirequestlogs").InsertOneAsync(new BsonDocument
+            { { "_id", "cold-api" }, { "ColdArchiveId", "missing-batch" } });
+        await scope.Context.Database.GetCollection<BsonDocument>("llmrequestlogs").InsertOneAsync(new BsonDocument
+            { { "_id", "cold-llm" }, { "TenantId", "tenant-a" }, { "ColdArchiveId", "missing-batch" } });
+        var api = new ApiLogsController(data, archives, config)
+            { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
+        var llm = new LlmLogsController(data, null!, archives, config)
+            { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
+        foreach (var result in new[] { await api.Detail("cold-api"), await llm.Detail("cold-llm"),
+                     await llm.RestoreText("cold-llm"), await llm.ReplayCurl("cold-llm") })
+        {
+            var error = result.ShouldBeOfType<ObjectResult>();
+            error.StatusCode.ShouldBe(503);
+            var json = System.Text.Json.JsonSerializer.Serialize(error.Value);
+            json.ShouldContain("LOG_ARCHIVE_UNAVAILABLE");
+            json.ShouldNotContain("missing-batch");
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Initializer_RestartKeepsExpiredExecutionBodiesAndTemporaryStateTtl()
+    {
+        await using var scope = (await TryCreateDatabaseAsync())!;
+        var executions = scope.Context.Database.GetCollection<BsonDocument>("llmgw_request_executions");
+        var original = new BsonDocument
+        {
+            { "_id", Guid.NewGuid().ToString("N") }, { "TenantId", "tenant-a" },
+            { "AppCallerCode", "fixture" }, { "RequestId", "archived-request" }, { "Operation", "text" },
+            { "ExpiresAt", DateTime.UtcNow.AddYears(-1) }, { "ResponseBody", "complete response must survive restart" },
+        };
+        await executions.InsertOneAsync(original);
+        await executions.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt").Ascending("_id"),
+            new CreateIndexOptions { Name = "idx_preserved_llmgw_request_executions" }));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:Retention:EnableTtlIndexes"] = "false",
+            ["LlmGateway:Retention:ApplyChanges"] = "false",
+        }).Build();
+        var initializer = new LlmGatewayDatabaseInitializer(scope.Context, config,
+            NullLogger<LlmGatewayDatabaseInitializer>.Instance);
+        await initializer.StartAsync(CancellationToken.None);
+        await initializer.StartAsync(CancellationToken.None);
+        var indexes = await (await executions.Indexes.ListAsync()).ToListAsync();
+        indexes.ShouldAllBe(index => !index.Contains("expireAfterSeconds"));
+        (await executions.Find(new BsonDocument("_id", original["_id"])).SingleAsync()).ShouldBe(original);
+        var temporary = scope.Context.Database.GetCollection<BsonDocument>("llmgw_provider_concurrency_slots");
+        var temporaryIndexes = await (await temporary.Indexes.ListAsync()).ToListAsync();
+        temporaryIndexes.ShouldContain(index => index.GetValue("name", "") == "ttl_llmgw_provider_concurrency_slot"
+            && index.GetValue("expireAfterSeconds", -1).ToInt64() == 0);
+    }
+
+    [Fact]
     public async Task TaskBudget_ActivationRejectsOrdinaryCallerBeforeDatabaseAccess()
     {
         var controller = new DesignArtifactRuntimeBudgetController(

@@ -6,7 +6,7 @@ export type LoadState<T> =
 export interface MeResponse {
   username?: string;
   login?: string;
-  user?: string;
+  user?: string | { id?: string; username?: string | null; githubLogin?: string; name?: string };
   authMode?: string;
   authEnabled?: boolean;
   session?: {

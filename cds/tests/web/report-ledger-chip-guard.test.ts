@@ -58,13 +58,10 @@ describe('胶囊高度不许写死', () => {
 
 describe('三处共用一个组件，不许各抄一份', () => {
   const cell = (() => {
-    // 锚点认内容不认宽度：原来写死 w-[300px]，2026-09-15 全站换 rem 之后当场失效；
-    // 放宽成 w-[任意单位] 又不唯一（同一文件里别的格子也是这个形状，会锚错格）。
-    // 这一格的身份是「装 ChangeKeyChip 的那一格」，就按它找。
-    const k = src.indexOf('<ChangeKeyChip');
-    expect(k, '找不到验收对象那一格').toBeGreaterThan(-1);
-    const i = src.lastIndexOf('<td', k);
-    return src.slice(i, src.indexOf('</td>', k));
+    // 同一事实片段同时用于手机对象组与桌面验收对象列。
+    const i = src.indexOf('const deploymentContext = (');
+    expect(i, '找不到共享验收对象事实').toBeGreaterThan(-1);
+    return src.slice(i, src.indexOf('const archiveFact =', i));
   })();
 
   it('分支 / commit / PR 三处都走 ChangeKeyChip', () => {

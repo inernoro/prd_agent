@@ -1,0 +1,16 @@
+/www/wwwlogs/map.ebcone.net.log /www/wwwlogs/map.ebcone.net.error.log {
+    daily
+    maxsize 50M
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 www www
+    sharedscripts
+    postrotate
+        if [ -s /www/server/nginx/logs/nginx.pid ]; then
+            kill -USR1 "$(cat /www/server/nginx/logs/nginx.pid)"
+        fi
+    endscript
+}

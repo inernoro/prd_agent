@@ -1,0 +1,11 @@
+[Unit]
+Description=Expire MAP API request logs every 15 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

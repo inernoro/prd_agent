@@ -1,0 +1,22 @@
+.lg-login-task .lg-login-shell {
+  display: block;
+  width: min(100%, 460px);
+  min-height: 0;
+}
+.lg-login-task .lg-login-intro {
+  padding: 28px 32px 0;
+  background: var(--bg-surface);
+  border: 0;
+}
+.lg-login-task .lg-login-intro h1 { margin: 24px 0 12px; font-size: var(--fs-title); color: var(--text-primary); }
+.lg-login-task .lg-login-panel { padding: 16px 32px 28px; }
+.lg-login-task .lg-login-brand span { color: var(--text-muted); }
+.lg-login-task .lg-login-form { margin-top: 20px; }
+.lg-login-task .lg-login-account-help { margin-top: 24px; }
+.lg-login-task .lg-login-back-link { margin-top: 16px; }
+@media (max-width: 680px) {
+  .lg-login-task { padding: 20px 12px; align-content: start; }
+  .lg-login-task .lg-login-shell { border: 1px solid var(--border-subtle); border-radius: var(--radius); }
+  .lg-login-task .lg-login-intro { padding: 24px 24px 0; }
+  .lg-login-task .lg-login-panel { padding: 16px 24px 24px; }
+}

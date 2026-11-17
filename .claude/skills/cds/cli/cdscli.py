@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.23.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.23.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -1020,6 +1020,50 @@ def _release_environment_summary(target: dict) -> dict:
 def cmd_release_target_list(args: argparse.Namespace) -> None:
     targets, _ = _release_environment_rows(args.project)
     ok({"projectId": args.project, "environments": [_release_environment_summary(t) for t in targets]})
+
+
+def cmd_release_governance(args: argparse.Namespace) -> None:
+    command = args.release_target_cmd
+    project = urllib.parse.quote(args.project, safe="")
+    if command in ("approval-list", "approval-revoke"):
+        records = _call("GET", "/api/releases/governance?projectId=" + project)
+        if command == "approval-list":
+            ok(records)
+            return
+        if not any(item.get("id") == args.id for item in records.get("authorizations", [])):
+            die("当前项目没有这条审批记录，未发送撤销请求", code=2)
+        ok(_call("POST", "/api/releases/authorizations/" + urllib.parse.quote(args.id, safe="") + "/revoke",
+                 body={"reason": args.reason}), note="仅撤销本凭据有权撤销的申请，不触发发布")
+        return
+    _, targets = _release_environment_rows(args.project)
+    if not any(item.get("id") == args.id and item.get("projectId") == args.project for item in targets):
+        die("未确认当前项目的发布目标，未发送治理写入请求", code=2)
+    base = "/api/releases/targets/" + urllib.parse.quote(args.id, safe="")
+    if command == "conflict-check":
+        ok(_call("POST", base + "/conflict-check", body={"branchId": args.branch} if args.branch else {}, timeout=180))
+    elif command == "merge-back":
+        body = {"number": args.pr, "owner": args.owner}
+        if args.commit:
+            body["sourceSha"] = args.commit
+        ok(_call("POST", base + "/merge-back", body=body, timeout=90))
+    else:
+        if not 1 <= args.expires_in <= 1440:
+            die("有效期须为 1–1440 分钟，未创建申请", code=1)
+        if args.kind == "debug" and not args.scope:
+            die("连续调试必须用 --scope 限定文件或目录，未创建申请", code=1)
+        body = {"branchId": args.branch, "kind": args.kind, "action": "rollback" if args.rollback_version else "release",
+                "expiresAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + args.expires_in * 60)),
+                "allowedPaths": args.scope or [], "reason": args.reason}
+        if getattr(args, "scheduled_job", None):
+            body["scheduledJobId"] = args.scheduled_job
+        if getattr(args, "deployment_version", None):
+            if args.kind != "single" or args.rollback_version:
+                die("固定部署版本仅适用于单次发布批准，不能与调试或回滚混用", code=1)
+            body["deploymentVersionId"] = args.deployment_version
+        if args.rollback_version:
+            body["rollbackReleaseId"] = args.rollback_version
+        ok(_call("POST", base + "/authorizations", body=body, timeout=180),
+           note="申请已记录，必须由独立人类账号批准；本命令不批准也不发布")
 
 
 def cmd_release_target_register(args: argparse.Namespace) -> None:
@@ -11003,6 +11047,29 @@ def _build_parser() -> argparse.ArgumentParser:
         if command == "register":
             item.add_argument("--file", required=True, help="环境配置 JSON；只登记，不触发发布")
         item.set_defaults(func=handler)
+    for command in ("approval-list", "approval-request", "approval-revoke", "conflict-check", "merge-back"):
+        item = release_targets.add_parser(command, help="真实发布审批、调试范围与回并核验")
+        item.add_argument("--project", required=True, help="当前项目 ID")
+        if command != "approval-list":
+            item.add_argument("id", help="审批 ID" if command == "approval-revoke" else "发布目标 ID")
+        if command == "approval-request":
+            item.add_argument("--branch", required=True, help="执行分支的 canonical ID")
+            item.add_argument("--kind", choices=("single", "debug"), default="single")
+            item.add_argument("--scheduled-job", help="批准供同项目的指定发布任务执行，不改变真实申请人")
+            item.add_argument("--expires-in", type=int, default=60, help="有效分钟数，最长 1440")
+            item.add_argument("--scope", action="append", help="单个允许路径；目录以 / 结尾，可重复")
+            item.add_argument("--rollback-version", help="同一目标的历史成功 ReleaseRun ID")
+            item.add_argument("--deployment-version", help="当前项目与分支中已有的不可变部署版本 ID，批准固定提交而不回退分支")
+            item.add_argument("--reason", required=True)
+        elif command == "approval-revoke":
+            item.add_argument("--reason", required=True)
+        elif command == "conflict-check":
+            item.add_argument("--branch", help="候选分支 ID；缺省检查线上成功版本")
+        elif command == "merge-back":
+            item.add_argument("--pr", type=int, required=True)
+            item.add_argument("--owner", required=True)
+            item.add_argument("--commit", help="有当前环境成功发布证据的完整 SHA")
+        item.set_defaults(func=cmd_release_governance)
     instances = sub.add_parser("instance", help="主备实例发现、接入、检查与选择").add_subparsers(dest="instance_cmd", required=True)
     instances.add_parser("sync", help="从当前已授权 CDS 同步公共实例目录").set_defaults(func=cmd_instance_sync)
     instances.add_parser("recommend", help="只读检查当前负载并提示备用节点及集群授权状态").set_defaults(func=cmd_instance_recommend)

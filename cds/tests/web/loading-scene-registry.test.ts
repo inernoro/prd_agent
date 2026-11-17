@@ -54,6 +54,20 @@ describe('加载场景登记由真实路由约束', () => {
     expect(fs.readFileSync(path.join(src, 'pages/ProjectSettingsPage.tsx'), 'utf8')).toContain('<SettingsPageSkeleton label="加载项目设置"');
   });
 
+  it('验收中心代码等待保留导航槽，按真实 URL 选择页签且未就绪时不可操作', () => {
+    for (const [search, selected] of [['', '验收报告'], ['?view=templates', '测试清单'], ['?view=tasks', '执行任务'], ['?view=matrix', '历史矩阵'], ['?view=overview', '验收报告'], ['?view=tasks&report=report-1', '验收报告']]) {
+      const html = render(pageSkeletonForPath('/reports', { search }));
+      expect(html).toContain('aria-label="验收中心导航"');
+      const buttons = [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)];
+      expect(buttons).toHaveLength(4);
+      expect(buttons.every(([, attrs]) => attrs.includes('disabled'))).toBe(true);
+      expect(buttons.filter(([, attrs]) => attrs.includes('aria-current="page"')).map(([, , label]) => label)).toEqual([selected]);
+      expect(html).toContain('aria-busy="true"');
+    }
+    expect(render(pageSkeletonForPath('/task-schedule'))).not.toContain('验收中心导航');
+    expect(fs.readFileSync(path.join(src, 'components/skeletons/PageSkeletons.tsx'), 'utf8')).not.toContain('pages/reports/AcceptanceWorkspace');
+  });
+
   it('独立登录和公开状态也登记并复用专用骨架', () => {
     const { MemoryRouter } = createRequire(path.resolve('web/package.json'))('react-router-dom');
     expect(pageSkeletonForPath('/login').type).toBe(AuthPageSkeleton);

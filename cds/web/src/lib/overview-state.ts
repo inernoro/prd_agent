@@ -174,7 +174,7 @@ export function overviewCopy(f: OverviewFacts): OverviewCopy {
     case 'healthy':
       return {
         state,
-        verdict: '一切正常，可以直接验收',
+        verdict: '当前服务运行正常',
         tone: 'ok',
         entryLabel: ENTRY_READY,
         skeletonNote: pendingNote,

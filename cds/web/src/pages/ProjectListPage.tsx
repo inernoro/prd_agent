@@ -2016,9 +2016,8 @@ export function ProjectCard({
 
   return (
     <article className="cds-project-card cds-cv-auto" data-project-id={project.id} data-paused={paused || undefined} data-pinned={pinned || undefined}>
-      <a data-surface-route href={isReady ? projectHref(project) : '#'}
-        onClick={(event) => { if (!isReady) event.preventDefault(); }}
-        aria-label={`查看 ${title}`} className="cds-project-card-link">
+      <a data-surface-route href={projectHref(project)}
+        aria-label={project.kind === 'shared-service' ? `管理 ${title} 共享服务` : `查看 ${title} 的分支`} className="cds-project-card-link">
         <header className="cds-project-card-heading">
           <span className="cds-project-monogram" aria-hidden>{monogram}</span>
           <h2 title={project.description ? `${title} · ${project.description}` : title}>{title}</h2>
@@ -2060,8 +2059,7 @@ export function ProjectCard({
       {canManageProjects ? (
         <div className="cds-project-actions">
           <DropdownMenu width={200} trigger={<Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`${title} 项目操作`} title="项目操作"><MoreHorizontal /></Button>}>
-            <DropdownItem asChild href={projectHref(project)}><ExternalLink />查看项目</DropdownItem>
-            {project.kind !== 'shared-service' ? <DropdownItem asChild href={`/branches/${encodeURIComponent(project.id)}`}><GitBranch />查看分支</DropdownItem> : null}
+            <DropdownItem asChild href={projectHref(project)}>{project.kind === 'shared-service' ? <><Settings />管理共享服务</> : <><GitBranch />查看分支</>}</DropdownItem>
             {onTogglePin ? <DropdownItem onSelect={onTogglePin}><Pin />{pinned ? '取消置顶' : '置顶项目'}</DropdownItem> : null}
             {onCopyName ? <DropdownItem onSelect={onCopyName}><Copy />复制项目名称</DropdownItem> : null}
             <DropdownDivider />

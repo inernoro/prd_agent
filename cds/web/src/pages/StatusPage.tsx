@@ -33,6 +33,8 @@ import './status/monitor-design-fonts.css';
 import { Plus, RefreshCw } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
+import { userErrorMessage } from '@/lib/userErrorMessage';
+import { createLatestWinsGate } from '@/lib/latest-wins';
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
@@ -122,6 +124,7 @@ export function StatusPage(): JSX.Element {
   const [incidents, setIncidents] = useState<UptimeIncidentView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const readGate = useRef(createLatestWinsGate());
   const [now, setNow] = useState(() => Date.now());
   const [filter, setFilter] = useState<TargetFilter>({ query: '', status: 'all', source: 'all' });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -153,30 +156,41 @@ export function StatusPage(): JSX.Element {
     return () => { mounted.current = false; };
   }, []);
 
+  // 读取失败时也按真实时间老化；后台标签恢复立即校准，不累计被节流的tick。
+  useEffect(() => {
+    const tick = (): void => setNow(Date.now());
+    const visible = (): void => { if (document.visibilityState === 'visible') tick(); };
+    const timer = window.setInterval(tick, 10_000);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', visible);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', tick); document.removeEventListener('visibilitychange', visible); };
+  }, []);
+
   const load = useCallback(async (): Promise<void> => {
+    const ticket = readGate.current.begin();
     setRefreshing(true);
     try {
       const [next, incidentPayload] = await Promise.all([
         apiRequest<UptimeSummary>(`/api/uptime/summary?segments=${SEGMENTS}`),
         apiRequest<{ incidents: UptimeIncidentView[] }>('/api/uptime/incidents?limit=100'),
       ]);
-      if (!mounted.current) return;
+      if (!mounted.current || !readGate.current.accept(ticket)) return;
       setSummary(next);
       setIncidents(incidentPayload.incidents || []);
       setNow(Date.now());
       setError(null);
+      setRefreshing(false);
     } catch (err) {
-      if (!mounted.current) return;
-      setError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      if (mounted.current) setRefreshing(false);
+      if (!mounted.current || !readGate.current.accept(ticket)) return;
+      setError(userErrorMessage(err));
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => { void load(); }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
+    return () => { readGate.current.newSession(); window.clearInterval(timer); };
   }, [load]);
 
   useEffect(() => {
@@ -403,8 +417,8 @@ export function StatusPage(): JSX.Element {
         <div className={cn('flex min-h-0 flex-1 flex-col', boardView === 'home' ? 'monitor-page-shell' : 'status-home gap-3 lg:h-full lg:min-h-0')}>
           {/* 有数据时本次轮询失败只做顶部提示，保留旧数据；无数据时交给错误卡片 */}
           {phase === 'ready' && error ? (
-            <div className="shrink-0 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              最近一次刷新失败（显示的是上一次成功的数据）：{error}
+            <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">
+              <p className="min-w-0 flex-1 basis-[15rem]">最近一次刷新失败（显示的是上一次成功的数据）：{error}</p><Button className="min-h-11" size="sm" variant="outline" disabled={refreshing} onClick={() => void load()}>重试读取</Button>
             </div>
           ) : null}
           {notice ? (
@@ -427,7 +441,7 @@ export function StatusPage(): JSX.Element {
             <>
               {proberLiveness(summary)?.stalled || !summary.enabled ? <div role="alert" className="rounded-lg border border-warn/40 bg-warn-soft p-4 text-warn">{summary.enabled ? '检查器未按时更新' : '检查器已关闭'}，下方为最近记录，不能据此确认当前业务正常。请在监控管理中排查检查器。</div> : null}
               <div key={`${boardView}:${location.targetId ?? ''}`} className={boardView === 'home' ? 'monitor-page-content' : 'status-home-content'}>
-              {boardView === 'home' ? <MonitorWorkspace key={effectiveEnvironment} targets={workspaceTargets} now={now} summary={summary} incidents={incidents} entry={workspaceEntry} notificationTarget={workspaceEntry ? targets.find(target => target.id === workspaceEntry.targetId) : undefined} added={searchParams.toString() ? undefined : addedServices} onAddedSeen={() => setAddedServices(undefined)} onAdd={() => setWorkspacePanel({ panel: 'connect' })} onNotify={(targetId) => setWorkspacePanel({ panel: 'notify', targetId })} onManage={(targetId) => targetId ? openTarget(targetId) : setBoardView('owner')} onProbe={async (targetId) => { await probeTarget(targetId); await load(); }} onReload={() => void load()} /> :
+              {boardView === 'home' ? <MonitorWorkspace readFailed={!!error} key={effectiveEnvironment} targets={workspaceTargets} now={now} summary={summary} incidents={incidents} entry={workspaceEntry} notificationTarget={workspaceEntry ? targets.find(target => target.id === workspaceEntry.targetId) : undefined} added={searchParams.toString() ? undefined : addedServices} onAddedSeen={() => setAddedServices(undefined)} onAdd={() => setWorkspacePanel({ panel: 'connect' })} onNotify={(targetId) => setWorkspacePanel({ panel: 'notify', targetId })} onManage={(targetId) => targetId ? openTarget(targetId) : setBoardView('owner')} onProbe={async (targetId) => { await probeTarget(targetId); await load(); }} onReload={() => void load()} /> :
                 boardView === 'catalog' ? <MonitorCatalog targets={targets} now={now} projectId={catalogProject} onProject={setCatalogProject} onOpen={openTarget} /> :
                 boardView === 'history' ? <div><h1>处理记录</h1><p className="status-home-muted mb-4">最近 100 条故障发生与恢复记录。立即检查会追加采样，只有达到恢复判据才会结束故障。</p><IncidentTimeline scrollMode="page" incidents={incidents} filter={incidentFilter} onFilter={setIncidentFilter} onOpenTarget={openTarget} /></div> :
                 boardView === 'detail' ? <div className="status-home-detail">{selected ? <div className="monitor-subscription-control"><span>{selected.collectionMembers ? '采集通道随已订阅指标展示' : selected.subscribed ? selected.overviewIncluded ? '已订阅到业务总览' : '已订阅，当前未启用或已排除，恢复检查后回到总览' : '尚未订阅到业务总览'}</span><Button size="sm" variant="outline" disabled={subscriptionBusy || !!selected.collectionMembers} onClick={() => void subscribe(selected.id, !selected.subscribed)}>{selected.collectionMembers ? '随指标订阅' : subscriptionBusy ? '保存中…' : selected.subscribed ? '取消订阅' : '订阅到总览'}</Button></div> : null}{selected ? <TargetDetail scrollMode="page" key={selected.id} target={selected} incidents={incidents} generatedAt={summary.generatedAt} now={now} actions={actions} busy={busy} onBack={() => setBoardView('catalog')} /> : <div className="status-home-panel"><h1>暂时无法查看这项监控</h1><p>该监控可能已删除，或当前账号没有访问权限。没有改为显示其他监控。</p><Button onClick={() => setBoardView('home')}>返回业务总览</Button></div>}</div> : null}

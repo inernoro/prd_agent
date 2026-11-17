@@ -18,6 +18,9 @@
 
 ## 文档列表
 
+- [日志完整保留与冷存储 · 设计](./design.platform.log-cold-storage.md) `design.platform.log-cold-storage`
+
+
 - [MAP 运营工作区改造目标 · 计划](./plan.frontend.workspace.md) `plan.frontend.workspace`
 - [CDS / LLMGW 磁盘治理与交接 · 计划](./plan.cds.disk-governance-20261113.md) `plan.cds.disk-governance-20261113`
 
@@ -321,6 +324,7 @@
 ### 五、计划
 
 - [CDS DTS 数据传输服务与主备账号同步 · 计划](./plan.cds.dts.md) `plan.cds.dts`
+- [LLMGW 与 CDS 用户心智及产品体验整改 · 计划](./plan.platform.product-experience-rework.md) `plan.platform.product-experience-rework`
 
 - [视频制作台新环境验收续接 · 计划](./plan.video-agent.acceptance.handoff.md) `plan.video-agent.acceptance.handoff`
 - [CDS 代码审查需求兑现台账 · 计划](./plan.cds.code-review-delivery.md) `plan.cds.code-review-delivery`

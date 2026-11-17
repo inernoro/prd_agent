@@ -415,7 +415,7 @@ def build_report() -> dict[str, Any]:
             "routerTrace",
             "providerAttempts",
             "droppedParameters",
-            "initialQueryValue('releaseCommit')",
+            "query.get('releaseCommit')",
             "releaseCommit: filterReleaseCommit.trim() || undefined",
             "/app-callers?status=active",
             "configAuthority",

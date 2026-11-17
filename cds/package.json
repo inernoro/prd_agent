@@ -28,7 +28,8 @@
     "test:watch": "vitest",
     "audit:loading": "node scripts/loading-coverage-audit.mjs --check",
     "inventory:loading": "node scripts/loading-inventory.mjs",
-    "smoke:loading": "node scripts/loading-continuity-smoke.mjs"
+    "smoke:loading": "node scripts/loading-continuity-smoke.mjs",
+    "smoke:reports-workflow": "tsx scripts/reports-workflow-smoke.mjs"
   },
   "dependencies": {
     "express": "^4.21.0",

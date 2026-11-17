@@ -16,9 +16,10 @@
  * 滚动区 minHeight:0 + overflowY:auto。ESC 与点蒙版都能关（等价于取消）。
  * z-index 1500，与 BugReportDialog 同层——两者不会同时出现。
  */
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui';
+import { useDrawerFocus } from '@/components/EntityPreviewDrawer';
 import { useVisualViewport } from '@/lib/useVisualViewport';
 
 export type ConfirmOptions = {
@@ -69,6 +70,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<Pending | null>(null);
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const initialRef = useRef<HTMLElement | null>(null);
 
   const api = useRef<DialogApi>({
     confirm: (options) => new Promise<boolean>((resolve) => {
@@ -90,21 +93,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  useEffect(() => {
-    if (!pending) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
-      close(false, '');
-    };
-    window.addEventListener('keydown', onKey);
-    // 弹出即聚焦输入框：要输东西的场景不该让用户再点一下
-    const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.clearTimeout(timer);
-    };
-  }, [pending, close]);
+  useDrawerFocus(Boolean(pending), () => close(false, ''), dialogRef, initialRef);
 
   const options = pending?.options;
   const promptOptions = pending?.kind === 'prompt' ? pending.options : null;
@@ -131,6 +120,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       }}
     >
       <div
+        ref={element => { dialogRef.current = element; initialRef.current = element?.querySelector<HTMLInputElement>('input:not(:disabled)') || element?.querySelector<HTMLButtonElement>('button:not(:disabled)') || null; }}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={options.title}

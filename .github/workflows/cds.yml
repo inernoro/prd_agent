@@ -178,6 +178,19 @@ jobs:
       - name: Mobile layout smoke (offline)
         run: pnpm run smoke:mobile-layout:offline
 
+      - name: Report reading and small-data layout regression
+        env:
+          CDS_REPORTS_EVIDENCE: ${{ github.workspace }}/work/reports-workflow
+        run: pnpm run smoke:reports-workflow
+
+      - name: Preserve report reading evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-workflow-evidence
+          path: work/reports-workflow/
+          if-no-files-found: ignore
+
       # 关系视图视觉审计（2026-10-03）。关系图出过的问题全是几何与渲染问题：图被裁、问题卡一词一行、
       # 线从卡片上穿过、徽标字看不清——编译、类型、单测全绿时照样会出。这一步按真人路径
       # （分支列表 → 详情 → 关系卡 → 展开）在 5 档视口 × 双主题下量：横向溢出、截断、窄条、

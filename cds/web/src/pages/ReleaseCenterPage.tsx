@@ -21,7 +21,7 @@ import { ReleaseCenterSkeleton } from '@/components/skeletons/WorkspaceSkeletons
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, RefreshCw, Rocket } from 'lucide-react';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { useNowTick } from '@/hooks/useNowTick';
@@ -53,6 +53,8 @@ import {
   type RollbackState,
 } from '@/pages/release-center/dialogs';
 import { EnvironmentSidebar } from '@/pages/release-center/EnvironmentSidebar';
+import { ReleaseTraceOverview } from '@/pages/release-center/ReleaseTraceOverview';
+import { ReleaseGovernancePanel } from '@/pages/release-center/ReleaseGovernancePanel';
 import { OverviewTab } from '@/pages/release-center/OverviewTab';
 import { FleetMatrix } from '@/pages/release-center/FleetMatrix';
 import { AutoReleaseTab } from '@/pages/release-center/AutoReleaseTab';
@@ -128,6 +130,7 @@ function useMeasuredWide(threshold = 1264): [React.RefObject<HTMLDivElement>, bo
 }
 
 export function ReleaseCenterPage(): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialProject = initialReleaseCenterProject(
     searchParams,
@@ -136,6 +139,7 @@ export function ReleaseCenterPage(): JSX.Element {
   const [projectId, setProjectId] = useState(initialProject);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectListAttempt, setProjectListAttempt] = useState(0);
   const projectAvailable = projectsLoaded && Boolean(resolveReleaseProject(projectId, projects));
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const loadedScope = useRef(projectId);
@@ -180,9 +184,27 @@ export function ReleaseCenterPage(): JSX.Element {
   const [releaseIntent, setReleaseIntent] = useState<StartReleaseIntent | null>(null);
 
   const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [systemHosts, setSystemHosts] = useState<RemoteHostOption[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode | undefined>(undefined);
   const [previewConfig, setPreviewConfig] = useState<PreviewUrlConfig>({});
+
+  useEffect(() => {
+    setSystemHosts([]);
+    if (!wizardOpen || !canManageConsole || !projectAvailable) return;
+    const controller = new AbortController();
+    // 首次接入项目尚无已绑定主机；所有者从既有系统主机选择，写入仍由服务端鉴权。
+    void apiRequest<{ hosts: Array<RemoteHostOption & { sshPrivateKeyFingerprint?: string }> }>(
+      '/api/cds-system/remote-hosts', { signal: controller.signal },
+    ).then(result => {
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(result.hosts)) throw new Error('现有服务器列表尚未读取');
+      setSystemHosts(result.hosts.map(host => ({ ...host, fingerprint: host.fingerprint || host.sshPrivateKeyFingerprint || '' })));
+    }).catch(() => {
+      if (!controller.signal.aborted) setToast('现有服务器暂未读取，请关闭后重试；原有项目服务器仍可使用。');
+    });
+    return () => controller.abort();
+  }, [wizardOpen, canManageConsole, projectId, projectAvailable]);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!projectAvailable) { request.current?.abort(); return; }
@@ -216,6 +238,16 @@ export function ReleaseCenterPage(): JSX.Element {
       if (request.current === controller) { request.current = null; setRefreshing(false); }
     }
   }, [projectId, projectAvailable]);
+
+  const refreshProjectData = (): void => {
+    if (!projectAvailable) {
+      setState({ status: 'loading' });
+      setProjectsLoaded(false);
+      setProjectListAttempt(value => value + 1);
+      return;
+    }
+    void load();
+  };
 
   useEffect(() => { void load(); return () => { request.current?.abort(); }; }, [load]);
   useEffect(() => {
@@ -255,7 +287,7 @@ export function ReleaseCenterPage(): JSX.Element {
       .catch((error) => { if (!cancelled) { setProjects([]); setState({ status: 'error', message: error instanceof Error ? error.message : '项目列表读取失败' }); } })
       .finally(() => { if (!cancelled) setProjectsLoaded(true); });
     return () => { cancelled = true; };
-  }, []);
+  }, [projectListAttempt]);
 
   // 就地发布需要分支与预览地址推导所需的配置。三个请求都是 best-effort：
   // 任何一个失败都不该拦住这一页——推导不出预览地址时交给发布前检查说话。
@@ -281,7 +313,9 @@ export function ReleaseCenterPage(): JSX.Element {
   const rows = useMemo(() => center?.rows ?? [], [center]);
   const runs = useMemo(() => center?.runs ?? [], [center]);
   const commitMeta = useMemo(() => center?.commitMeta ?? {}, [center]);
-  const hosts = state.status === 'ok' ? state.hosts : [];
+  const hosts = useMemo(() => [...new Map([
+    ...(canManageConsole ? systemHosts : []), ...(state.status === 'ok' ? state.hosts : []),
+  ].map(host => [host.id, host])).values()], [canManageConsole, systemHosts, state]);
   const rail = center?.commitRail;
   const branchLabel = rail?.branch || 'main';
 
@@ -661,7 +695,7 @@ export function ReleaseCenterPage(): JSX.Element {
           right={(
             <>
               <PaletteHint />
-              <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
+              <Button variant="outline" size="sm" onClick={refreshProjectData} disabled={refreshing || !projectsLoaded}>
                 <RefreshCw className={refreshing ? 'animate-spin' : ''} />
                 刷新
               </Button>
@@ -670,7 +704,7 @@ export function ReleaseCenterPage(): JSX.Element {
                 新建环境
               </Button>
               {/*
-                逐目标操作继续由发布控制台承接；批次入口在全环境矩阵中。
+                发布工作台承接批次与逐目标发布；主页面保留版本追溯和审批。
                 带上当前项目，进去不用重选。
               */}
               <Button size="sm" asChild>
@@ -722,13 +756,13 @@ export function ReleaseCenterPage(): JSX.Element {
             {projectsLoaded && !projectAvailable && state.status !== 'error' ? <div role="alert" className="rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{projects.length ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : '当前实例还没有可用项目，请先创建项目。'}</div> : null}
             {state.status === 'ok' && refreshError ? <div role="alert" className="mb-4 space-y-2 rounded-md border border-destructive/30 p-3 text-sm">
               <p>刷新失败，保留上次结果：{refreshError}</p>
-              <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试</Button>
+              <Button variant="outline" size="sm" disabled={refreshing} onClick={refreshProjectData}>重试</Button>
             </div> : null}
 
             {projectAvailable && state.status === 'ok' ? (
               <div className="flex flex-col gap-[1.125rem]">
-                {/* ══ 监控条：常驻所有分区，页面第一块 ══ */}
-                {rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
+                {/* 主页面已在版本追溯里显示健康快照，管理分区保留监控摘要。 */}
+                {section !== 'fleet' && rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
                   <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-3">
                     <span
                       className={`mt-2 h-[0.5625rem] w-[0.5625rem] shrink-0 rounded-full ${
@@ -800,6 +834,8 @@ export function ReleaseCenterPage(): JSX.Element {
                 </section> : null}
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
+                {section === 'fleet' ? <ReleaseTraceOverview rows={rows} rail={rail} commitMeta={commitMeta} selectedTargetId={effectiveTargetId} onSelect={setSelectedTargetId} onOpenLogs={setLogRun} onInspect={inspectEnv} /> : null}
+                {section === 'fleet' ? <ReleaseGovernancePanel key={`governance:${projectId}`} projectId={projectId} row={rows.find(row => row.target.id === effectiveTargetId)} refreshVersion={sectionRefresh} onChanged={() => void load({ silent: true })} /> : null}
                 {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
                 {section === 'fleet' ? (
                   rows.length > 0 ? <FleetMatrix

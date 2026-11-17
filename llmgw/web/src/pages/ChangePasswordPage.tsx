@@ -2,8 +2,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound, Lock, ShieldAlert } from 'lucide-react';
+import { isPasswordChangeUncertain } from '@/lib/passwordRecovery';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui';
+import { FIELD_LABEL } from '@/lib/typography';
+import './ChangePasswordPage.css';
 
 export function ChangePasswordPage() {
   const { user, changePassword, logout } = useAuth();
@@ -15,10 +18,12 @@ export function ChangePasswordPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 「改成功了但会话到期」——既不是失败也不能直接进首页，单独一种终态。
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting || outcomeUnknown || notice) return;
     if (!oldPassword || !newPassword) {
       setError('请填写旧口令与新口令');
       return;
@@ -37,8 +42,10 @@ export function ChangePasswordPage() {
     }
     setSubmitting(true);
     setError(null);
-    const res = await changePassword({ oldPassword, newPassword });
-    setSubmitting(false);
+    let res: Awaited<ReturnType<typeof changePassword>>;
+    try { res = await changePassword({ oldPassword, newPassword }); }
+    catch { res = { success: false, data: null, error: { code: 'NETWORK_ERROR', message: '口令修改响应读取中断' } }; }
+    finally { setSubmitting(false); }
     if (res.success) {
       // 「改成功了但会话到期」后端回的是 success + requiresRelogin（报失败会让用户
       // 拿着已经作废的旧口令反复重试）。此时不能跳首页——会话已经没了，
@@ -52,7 +59,8 @@ export function ChangePasswordPage() {
       }
       navigate('/', { replace: true });
     } else {
-      setError(res.error?.message || '改密失败，请重试');
+      if (isPasswordChangeUncertain(res.error?.code)) setOutcomeUnknown(true);
+      else setError(res.error?.message || '修改被拒绝');
     }
   };
 
@@ -64,7 +72,7 @@ export function ChangePasswordPage() {
     border: '1px solid var(--border-subtle)',
     borderRadius: 'var(--radius-sm)',
     padding: '0 12px',
-    height: 42,
+    height: 44,
   };
   const inputStyle: React.CSSProperties = {
     flex: 1,
@@ -112,7 +120,7 @@ export function ChangePasswordPage() {
             <KeyRound size={20} />
           </span>
           <div>
-            <div style={{ fontSize: 'var(--fs-metric)', fontWeight: 700, color: 'var(--text-primary)' }}>设置新口令</div>
+            <h1 style={{ margin: 0, fontSize: 'var(--fs-metric)', fontWeight: 700, color: 'var(--text-primary)' }}>设置新口令</h1>
             <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>
               {user?.username ? `账号 ${user.username}` : '首次登录'} · 需修改初始口令后才能继续
             </div>
@@ -138,40 +146,44 @@ export function ChangePasswordPage() {
         </div>
 
         <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 18 }}>
-          <label style={inputWrap}>
+          <label className="lg-forced-password-field" style={{ ...FIELD_LABEL, display: 'grid', gap: 6 }}><span>旧口令</span><span style={inputWrap}>
             <Lock size={16} style={{ color: 'var(--text-muted)' }} />
             <input
               style={inputStyle}
+              disabled={submitting || outcomeUnknown || !!notice}
               type="password"
               placeholder="旧口令"
               autoComplete="current-password"
               value={oldPassword}
               onChange={(e) => setOldPassword(e.target.value)}
             />
-          </label>
-          <label style={inputWrap}>
+          </span></label>
+          <label className="lg-forced-password-field" style={{ ...FIELD_LABEL, display: 'grid', gap: 6 }}><span>新口令（至少 12 位）</span><span style={inputWrap}>
             <KeyRound size={16} style={{ color: 'var(--text-muted)' }} />
             <input
               style={inputStyle}
+              disabled={submitting || outcomeUnknown || !!notice}
               type="password"
               placeholder="新口令（至少 12 位）"
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
             />
-          </label>
-          <label style={inputWrap}>
+          </span></label>
+          <label className="lg-forced-password-field" style={{ ...FIELD_LABEL, display: 'grid', gap: 6 }}><span>确认新口令</span><span style={inputWrap}>
             <KeyRound size={16} style={{ color: 'var(--text-muted)' }} />
             <input
               style={inputStyle}
+              disabled={submitting || outcomeUnknown || !!notice}
               type="password"
               placeholder="确认新口令"
               autoComplete="new-password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
             />
-          </label>
+          </span></label>
 
+          {outcomeUnknown ? <div role="alert" style={{ color: 'var(--err)' }}>修改结果未确认，可能已生效。请用本次设置的新口令重新登录核实，勿重复提交。</div> : null}
           {notice ? (
             <div
               style={{
@@ -200,14 +212,14 @@ export function ChangePasswordPage() {
             </div>
           ) : null}
 
-          <Button type="submit" variant="primary" size="md" disabled={submitting} style={{ marginTop: 4 }}>
+          <Button type="submit" variant="primary" size="md" disabled={submitting || outcomeUnknown || !!notice} style={{ marginTop: 4, minHeight: 44 }}>
             {submitting ? '提交中…' : '设置新口令并进入'}
           </Button>
         </form>
 
         <div style={{ marginTop: 16, textAlign: 'center' }}>
-          <Button variant="ghost" size="sm" onClick={logout}>
-            退出登录
+          <Button variant="ghost" size="sm" onClick={logout} style={{ minHeight: 44 }}>
+            {outcomeUnknown ? '重新登录核实' : '退出登录'}
           </Button>
         </div>
       </div>
