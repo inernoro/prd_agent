@@ -1,3 +1,4 @@
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { useState, useEffect, useCallback } from 'react';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { listAppeals, approveAppeal, rejectAppeal } from '@/services/real/reviewAgent';
@@ -169,7 +170,7 @@ function AppealCard({
       <div className="text-[11px] text-token-muted mb-1">{appeal.submitterName} 的申诉理由：</div>
       <div
         className="appeal-content text-sm text-token-primary bg-token-nested border border-token-subtle rounded-md p-2.5 mb-2 leading-relaxed"
-        dangerouslySetInnerHTML={{ __html: appeal.reasonHtml }}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(appeal.reasonHtml) }}
       />
 
       {appeal.status !== 'Pending' && (

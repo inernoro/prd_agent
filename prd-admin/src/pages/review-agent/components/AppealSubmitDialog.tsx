@@ -1,3 +1,4 @@
+import { sanitizeHtml, cleanPastedHtml } from '@/lib/sanitizeHtml';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { createAppeal, uploadAppealImage } from '@/services/real/reviewAgent';
@@ -53,7 +54,15 @@ export function AppealSubmitDialog({
   const handlePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
     const items = Array.from(e.clipboardData.items);
     const imageItem = items.find(it => it.type.startsWith('image/'));
-    if (!imageItem) return;
+    if (!imageItem) {
+      const html = e.clipboardData.getData('text/html');
+      if (html) {
+        e.preventDefault();
+        document.execCommand('insertHTML', false, cleanPastedHtml(html));
+        syncPlainLen();
+      }
+      return;
+    }
     e.preventDefault();
     const file = imageItem.getAsFile();
     if (!file) return;
@@ -67,10 +76,15 @@ export function AppealSubmitDialog({
       return;
     }
     // 在光标位置插入 <img>，沿用 contentEditable 的 execCommand
+    const image = document.createElement('img');
+    image.src = res.data.url;
+    image.alt = '';
+    image.dataset.att = res.data.attachmentId;
+    image.style.cssText = 'max-width:100%;border-radius:4px;margin:4px 0';
     document.execCommand(
       'insertHTML',
       false,
-      `<img src="${res.data.url}" alt="" data-att="${res.data.attachmentId}" style="max-width:100%;border-radius:4px;margin:4px 0" />`
+      sanitizeHtml(image.outerHTML)
     );
     setImageAttachmentIds(prev => [...prev, res.data!.attachmentId]);
     syncPlainLen();
@@ -81,7 +95,7 @@ export function AppealSubmitDialog({
     if (plainLen < 10) { setError('请至少填写 10 个字的申诉理由'); return; }
     setSubmitting(true);
     setError(null);
-    const reasonHtml = editorRef.current?.innerHTML || '';
+    const reasonHtml = sanitizeHtml(editorRef.current?.innerHTML);
     const res = await createAppeal(submission.id, { reasonHtml, imageAttachmentIds });
     setSubmitting(false);
     if (!res.success) {
