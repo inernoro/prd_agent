@@ -49,6 +49,10 @@ public class ChannelWhitelist
     /// </summary>
     public int TodayUsedCount { get; set; } = 0;
 
+    /// <summary>本规则本日已准入的认证邮件投递编号，与计数在同一原子写中更新。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<string> TodayChargedDeliveryIds { get; set; } = new();
+
     /// <summary>
     /// 今日使用统计的日期（用于重置计数）
     /// </summary>

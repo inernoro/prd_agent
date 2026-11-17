@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using MongoDB.Bson;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -65,7 +66,8 @@ public class WhitelistMatcherService
         string senderIdentifier,
         string? targetAgent = null,
         string? operation = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? deliveryId = null)
     {
         var normalizedIdentifier = senderIdentifier.ToLowerInvariant();
 
@@ -115,7 +117,7 @@ public class WhitelistMatcherService
             // 检查每日配额
             if (rule.DailyQuota > 0)
             {
-                var quotaOk = await CheckAndIncrementQuotaAsync(rule, ct);
+                var quotaOk = await CheckAndIncrementQuotaAsync(rule, deliveryId, ct);
                 if (!quotaOk)
                 {
                     _logger.LogDebug("Quota exceeded for rule {RuleId}", rule.Id);
@@ -176,43 +178,50 @@ public class WhitelistMatcherService
     /// <summary>
     /// 检查并增加配额
     /// </summary>
-    private async Task<bool> CheckAndIncrementQuotaAsync(ChannelWhitelist rule, CancellationToken ct)
+    private async Task<bool> CheckAndIncrementQuotaAsync(ChannelWhitelist rule, string? deliveryId, CancellationToken ct)
     {
-        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
-
-        // 如果是新的一天，重置计数
-        if (rule.TodayDate != today)
+        // Read the date, quota and counter on the server in the same atomic operation. In
+        // particular, a losing "reset yesterday" writer must not silently bypass today's quota.
+        var today = new BsonDocument("$dateToString", new BsonDocument
         {
-            var resetUpdate = Builders<ChannelWhitelist>.Update
-                .Set(x => x.TodayDate, today)
-                .Set(x => x.TodayUsedCount, 1)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow);
-
-            var resetResult = await _db.ChannelWhitelists.UpdateOneAsync(
-                x => x.Id == rule.Id && (x.TodayDate != today || x.TodayDate == null),
-                resetUpdate,
-                cancellationToken: ct);
-
-            return resetResult.ModifiedCount > 0 || resetResult.MatchedCount == 0;
-        }
-
-        // 检查是否超出配额
-        if (rule.TodayUsedCount >= rule.DailyQuota)
+            { "format", "%Y-%m-%d" }, { "date", "$$NOW" }, { "timezone", "UTC" }
+        });
+        var sameDay = new BsonDocument("$eq", new BsonArray { "$TodayDate", today });
+        var used = new BsonDocument("$cond", new BsonArray
         {
-            return false;
-        }
-
-        // 原子性增加计数（使用条件更新避免并发超额）
-        var incrementUpdate = Builders<ChannelWhitelist>.Update
-            .Inc(x => x.TodayUsedCount, 1)
-            .Set(x => x.UpdatedAt, DateTime.UtcNow);
-
-        var incrementResult = await _db.ChannelWhitelists.UpdateOneAsync(
-            x => x.Id == rule.Id && x.TodayDate == today && x.TodayUsedCount < rule.DailyQuota,
-            incrementUpdate,
-            cancellationToken: ct);
-
-        return incrementResult.ModifiedCount > 0;
+            sameDay, new BsonDocument("$ifNull", new BsonArray { "$TodayUsedCount", 0 }), 0
+        });
+        var ids = new BsonDocument("$cond", new BsonArray
+        {
+            sameDay, new BsonDocument("$ifNull", new BsonArray { "$TodayChargedDeliveryIds", new BsonArray() }), new BsonArray()
+        });
+        BsonValue alreadyCharged = deliveryId == null ? BsonBoolean.False
+            : new BsonDocument("$in", new BsonArray { new BsonDocument("$literal", deliveryId), ids });
+        var filter = Builders<ChannelWhitelist>.Filter.Eq(x => x.Id, rule.Id)
+            & Builders<ChannelWhitelist>.Filter.Eq(x => x.IsActive, true)
+            & Builders<ChannelWhitelist>.Filter.Gt(x => x.DailyQuota, 0)
+            & new BsonDocument("$expr", new BsonDocument("$or", new BsonArray
+            {
+                alreadyCharged, new BsonDocument("$lt", new BsonArray { used, "$DailyQuota" })
+            }));
+        PipelineDefinition<ChannelWhitelist, ChannelWhitelist> pipeline = new[]
+        {
+            new BsonDocument("$set", new BsonDocument
+            {
+                { "TodayDate", today },
+                { "TodayUsedCount", new BsonDocument("$add", new BsonArray
+                    { used, new BsonDocument("$cond", new BsonArray { alreadyCharged, 0, 1 }) }) },
+                { "TodayChargedDeliveryIds", deliveryId == null ? ids
+                    : new BsonDocument("$setUnion", new BsonArray { ids, new BsonArray { deliveryId } }) },
+                { "UpdatedAt", "$$NOW" }
+            })
+        };
+        var admitted = await _db.ChannelWhitelists.FindOneAndUpdateAsync(filter,
+            Builders<ChannelWhitelist>.Update.Pipeline(pipeline),
+            new FindOneAndUpdateOptions<ChannelWhitelist> { ReturnDocument = ReturnDocument.After }, ct);
+        // The counter represents admission, not successful task completion: retain it on an
+        // uncertain/failed insert. The same delivery may retry without spending a second slot.
+        return admitted != null;
     }
 
     /// <summary>

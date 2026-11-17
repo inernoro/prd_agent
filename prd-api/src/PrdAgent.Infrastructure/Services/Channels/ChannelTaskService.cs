@@ -89,7 +89,11 @@ public class ChannelTaskService
                 + "\n" + trustedEmailIngress.DeliveryKey;
             ingressTaskId = "EMAIL-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
             var existing = await _db.ChannelTasks.Find(x => x.Id == ingressTaskId).FirstOrDefaultAsync(ct);
-            if (existing != null) return CreateTaskResult.Ok(existing);
+            if (existing != null)
+            {
+                await EnsureEmailAcceptedLogAsync(existing, ct);
+                return CreateTaskResult.Ok(existing);
+            }
         }
 
         // 1. 识别意图
@@ -101,7 +105,8 @@ public class ChannelTaskService
             senderIdentifier,
             intentResult.TargetAgent,
             intentResult.Intent,
-            ct);
+            ct,
+            ingressTaskId);
 
         if (!matchResult.IsMatch)
         {
@@ -171,6 +176,7 @@ public class ChannelTaskService
         {
             var existing = await _db.ChannelTasks.Find(x => x.Id == ingressTaskId).FirstOrDefaultAsync(ct);
             if (existing == null) throw;
+            await EnsureEmailAcceptedLogAsync(existing, ct);
             return CreateTaskResult.Ok(existing);
         }
 
@@ -178,9 +184,12 @@ public class ChannelTaskService
             task.Id, senderIdentifier, task.Intent, task.TargetAgent);
 
         // 5. 记录请求日志
-        await LogRequestAsync(channelType, senderIdentifier, mappedUserId, task.Id,
-            ChannelRequestLogStatus.Accepted, null, ct,
-            intentResult.Intent, intentResult.TargetAgent, matchResult.Whitelist.Id);
+        if (ingressTaskId != null)
+            await EnsureEmailAcceptedLogAsync(task, ct);
+        else
+            await LogRequestAsync(channelType, senderIdentifier, mappedUserId, task.Id,
+                ChannelRequestLogStatus.Accepted, null, ct,
+                intentResult.Intent, intentResult.TargetAgent, matchResult.Whitelist.Id);
 
         return CreateTaskResult.Ok(task);
     }
@@ -300,6 +309,16 @@ public class ChannelTaskService
             .ToListAsync(ct);
     }
 
+    private async Task EnsureEmailAcceptedLogAsync(ChannelTask task, CancellationToken ct)
+    {
+        // Preserve an existing acceptance record, including the previous version's random ID.
+        if (await _db.ChannelRequestLogs.Find(x => x.TaskId == task.Id
+            && x.Status == ChannelRequestLogStatus.Accepted).AnyAsync(ct)) return;
+        await LogRequestAsync(task.ChannelType, task.SenderIdentifier, task.MappedUserId, task.Id,
+            ChannelRequestLogStatus.Accepted, null, ct, task.Intent, task.TargetAgent,
+            task.WhitelistId, "EMAIL-ACCEPTED-" + task.Id);
+    }
+
     /// <summary>
     /// 记录请求日志
     /// </summary>
@@ -313,7 +332,8 @@ public class ChannelTaskService
         CancellationToken ct,
         string? intent = null,
         string? targetAgent = null,
-        string? whitelistId = null)
+        string? whitelistId = null,
+        string? idempotentLogId = null)
     {
         var log = new ChannelRequestLog
         {
@@ -328,7 +348,16 @@ public class ChannelTaskService
             RejectReason = rejectReason
         };
 
-        await _db.ChannelRequestLogs.InsertOneAsync(log, cancellationToken: ct);
+        if (idempotentLogId != null) log.Id = idempotentLogId;
+        try
+        {
+            await _db.ChannelRequestLogs.InsertOneAsync(log, cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (idempotentLogId != null
+            && ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // A concurrent request already repaired the same task's acceptance record.
+        }
     }
 
     private static string GenerateTaskId()

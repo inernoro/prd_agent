@@ -10,11 +10,13 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
+using MongoDB.Bson;
 using PrdAgent.Api.Controllers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.Channels;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace PrdAgent.Tests;
 
@@ -22,6 +24,9 @@ namespace PrdAgent.Tests;
 [Trait("Category", "Integration")]
 public class EmailInboundPersistenceTests : IAsyncLifetime
 {
+    private readonly ITestOutputHelper _output;
+    public EmailInboundPersistenceTests(ITestOutputHelper output) => _output = output;
+
     private readonly string _databaseName = "email_webhook_test_" + Guid.NewGuid().ToString("N");
     private MongoDbContext _db = null!;
     private readonly ECDsa _key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -203,6 +208,237 @@ public class EmailInboundPersistenceTests : IAsyncLifetime
         Assert.Single(task.Attachments);
         await app.StopAsync();
     }
+
+    [Fact]
+    public async Task Kd17_concurrent_same_delivery_charges_quota_once()
+    {
+        await SetQuotaAsync(100, DateTime.UtcNow.ToString("yyyy-MM-dd"));
+        await ConfigureFailPointAsync("alwaysOn", new BsonDocument
+        {
+            { "failCommands", new BsonArray { "insert" } }, { "namespace", _databaseName + ".channel_tasks" },
+            { "blockConnection", true }, { "blockTimeMS", 500 }
+        });
+        try
+        {
+            var body = Body("quota-replay", Recipient);
+            await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+                Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None)));
+        }
+        finally { await DisableFailPointAsync(); }
+        Assert.Equal(1, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        var whitelist = await _db.ChannelWhitelists.Find(FilterDefinition<ChannelWhitelist>.Empty).SingleAsync();
+        Assert.Equal(1, whitelist.TodayUsedCount);
+    }
+
+    [Fact]
+    public async Task Kd17_new_day_parallel_distinct_deliveries_cannot_exceed_quota()
+    {
+        await SetQuotaAsync(1, DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd"));
+        // Delay writes so all callers read yesterday's quota snapshot before any reset completes.
+        await ConfigureFailPointAsync("alwaysOn", new BsonDocument
+        {
+            { "failCommands", new BsonArray { "update", "findAndModify" } }, { "namespace", _databaseName + ".channel_whitelist" },
+            { "blockConnection", true }, { "blockTimeMS", 500 }
+        });
+        try
+        {
+            await Task.WhenAll(Enumerable.Range(0, 8).Select(i =>
+                Controller(Context(Body("new-day-" + i, Recipient)), Configuration()).ReceiveInbound(CancellationToken.None)));
+        }
+        finally { await DisableFailPointAsync(); }
+        Assert.Equal(1, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        var whitelist = await _db.ChannelWhitelists.Find(FilterDefinition<ChannelWhitelist>.Empty).SingleAsync();
+        Assert.Equal(1, whitelist.TodayUsedCount);
+    }
+
+    [Fact]
+    public async Task Kd17_task_insert_failure_then_retry_does_not_charge_twice()
+    {
+        await SetQuotaAsync(1, DateTime.UtcNow.ToString("yyyy-MM-dd"));
+        await ConfigureFailPointAsync(new BsonDocument("times", 1), new BsonDocument
+        {
+            { "failCommands", new BsonArray { "insert" } }, { "namespace", _databaseName + ".channel_tasks" }, { "errorCode", 2 }
+        });
+        var body = Body("insert-retry", Recipient);
+        try
+        {
+            var first = await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None);
+            Assert.Equal(503, Assert.IsType<StatusCodeResult>(first).StatusCode);
+            Assert.Equal(0, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        }
+        finally { await DisableFailPointAsync(); }
+        Assert.IsType<OkResult>(await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None));
+        Assert.Equal(1, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        var whitelist = await _db.ChannelWhitelists.Find(FilterDefinition<ChannelWhitelist>.Empty).SingleAsync();
+        Assert.Equal(1, whitelist.TodayUsedCount);
+    }
+
+    [Fact]
+    public async Task Kd17_audit_insert_failure_then_retry_repairs_one_accepted_log()
+    {
+        await SetQuotaAsync(100, DateTime.UtcNow.ToString("yyyy-MM-dd"));
+        // Fail only this test database's accepted-audit collection, independently of write ordering.
+        await ConfigureFailPointAsync(new BsonDocument("times", 1), new BsonDocument
+        {
+            { "failCommands", new BsonArray { "insert", "update", "findAndModify" } }, { "namespace", _databaseName + ".channel_request_logs" }, { "errorCode", 2 }
+        });
+        var body = Body("audit-retry", Recipient);
+        try
+        {
+            var first = await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None);
+            Assert.Equal(503, Assert.IsType<StatusCodeResult>(first).StatusCode);
+            Assert.Equal(1, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        }
+        finally { await DisableFailPointAsync(); }
+        var retries = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None)));
+        Assert.All(retries, result => Assert.IsType<OkResult>(result));
+        var task = Assert.Single(await _db.ChannelTasks.Find(FilterDefinition<ChannelTask>.Empty).ToListAsync());
+        var audit = Assert.Single(await _db.ChannelRequestLogs.Find(x => x.TaskId == task.Id
+            && x.Status == ChannelRequestLogStatus.Accepted).ToListAsync());
+        Assert.Equal(Owner, audit.MappedUserId);
+        Assert.Equal(1, (await _db.ChannelWhitelists.Find(FilterDefinition<ChannelWhitelist>.Empty).SingleAsync()).TodayUsedCount);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task Kd17_legacy_quota_document_preserves_usage_without_delivery_set(int priorUsage)
+    {
+        await SetQuotaAsync(priorUsage + 1, DateTime.UtcNow.ToString("yyyy-MM-dd"));
+        await _db.ChannelWhitelists.UpdateManyAsync(FilterDefinition<ChannelWhitelist>.Empty,
+            Builders<ChannelWhitelist>.Update.Set(x => x.TodayUsedCount, priorUsage).Unset("TodayChargedDeliveryIds"));
+        await Controller(Context(Body("legacy-allowed", Recipient)), Configuration()).ReceiveInbound(CancellationToken.None);
+        await Controller(Context(Body("legacy-over-quota", Recipient)), Configuration()).ReceiveInbound(CancellationToken.None);
+        Assert.Equal(1, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        Assert.Equal(priorUsage + 1, (await _db.ChannelWhitelists.Find(FilterDefinition<ChannelWhitelist>.Empty).SingleAsync()).TodayUsedCount);
+    }
+
+    [Fact]
+    public async Task Kd17_charged_retry_cannot_bypass_disabled_whitelist()
+    {
+        await SetQuotaAsync(1, DateTime.UtcNow.ToString("yyyy-MM-dd"));
+        await ConfigureFailPointAsync(new BsonDocument("times", 1), new BsonDocument
+        {
+            { "failCommands", new BsonArray { "insert" } }, { "namespace", _databaseName + ".channel_tasks" }, { "errorCode", 2 }
+        });
+        var body = Body("disabled-after-charge", Recipient);
+        try
+        {
+            var first = await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None);
+            Assert.Equal(503, Assert.IsType<StatusCodeResult>(first).StatusCode);
+        }
+        finally { await DisableFailPointAsync(); }
+        await _db.ChannelWhitelists.UpdateManyAsync(FilterDefinition<ChannelWhitelist>.Empty,
+            Builders<ChannelWhitelist>.Update.Set(x => x.IsActive, false));
+        await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None);
+        Assert.Equal(0, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        Assert.Equal(1, (await _db.ChannelWhitelists.Find(FilterDefinition<ChannelWhitelist>.Empty).SingleAsync()).TodayUsedCount);
+    }
+
+    [Fact]
+    public async Task Kd17_persisted_previous_day_delivery_replay_never_touches_today_quota()
+    {
+        await SetQuotaAsync(1, DateTime.UtcNow.ToString("yyyy-MM-dd"));
+        var body = Body("previous-day", Recipient);
+        Assert.IsType<OkResult>(await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None));
+        var yesterday = DateTime.UtcNow.AddDays(-1);
+        await _db.ChannelTasks.UpdateManyAsync(FilterDefinition<ChannelTask>.Empty,
+            Builders<ChannelTask>.Update.Set(x => x.CreatedAt, yesterday));
+        await _db.ChannelWhitelists.UpdateManyAsync(FilterDefinition<ChannelWhitelist>.Empty,
+            Builders<ChannelWhitelist>.Update.Set(x => x.TodayDate, yesterday.ToString("yyyy-MM-dd")));
+        _db = new MongoDbContext(Environment.GetEnvironmentVariable("EMAIL_WEBHOOK_TEST_MONGO")!, _databaseName);
+        Assert.IsType<OkResult>(await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None));
+        Assert.Equal(1, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        var whitelist = await _db.ChannelWhitelists.Find(FilterDefinition<ChannelWhitelist>.Empty).SingleAsync();
+        Assert.Equal(1, whitelist.TodayUsedCount);
+        Assert.Equal(yesterday.ToString("yyyy-MM-dd"), whitelist.TodayDate);
+    }
+
+    [Fact]
+    public async Task Kd17_legacy_accepted_log_is_preserved_without_duplicate_or_id_rewrite()
+    {
+        var body = Body("legacy-audit", Recipient);
+        Assert.IsType<OkResult>(await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None));
+        var task = Assert.Single(await _db.ChannelTasks.Find(FilterDefinition<ChannelTask>.Empty).ToListAsync());
+        var original = Assert.Single(await _db.ChannelRequestLogs.Find(x => x.TaskId == task.Id).ToListAsync());
+        await _db.ChannelRequestLogs.DeleteOneAsync(x => x.Id == original.Id);
+        original.Id = Guid.NewGuid().ToString("N");
+        await _db.ChannelRequestLogs.InsertOneAsync(original);
+        _db = new MongoDbContext(Environment.GetEnvironmentVariable("EMAIL_WEBHOOK_TEST_MONGO")!, _databaseName);
+        Assert.IsType<OkResult>(await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None));
+        var preserved = Assert.Single(await _db.ChannelRequestLogs.Find(x => x.TaskId == task.Id).ToListAsync());
+        Assert.Equal(original.Id, preserved.Id);
+        Assert.Equal(original.CreatedAt, preserved.CreatedAt);
+    }
+
+    [Fact]
+    [Trait("Category", "Manual")]
+    public async Task IdempotencyDiagnostic_no_message_id_identical_independent_submissions_are_merged()
+    {
+        var body = Encoding.Latin1.GetBytes(Encoding.Latin1.GetString(Body("no-id-diagnostic", Recipient))
+            .Replace("Message-ID: <no-id-diagnostic@example.com>\r\n", ""));
+        for (var i = 0; i < 2; i++)
+            Assert.IsType<OkResult>(await Controller(Context(body, DateTimeOffset.UtcNow.ToUnixTimeSeconds() + i), Configuration())
+                .ReceiveInbound(CancellationToken.None));
+        Assert.Single(await _db.ChannelTasks.Find(FilterDefinition<ChannelTask>.Empty).ToListAsync());
+        _output.WriteLine("OBSERVED ONLY: two independently submitted identical messages without Message-ID yield one task; the second intentional submission is indistinguishable from retry and is merged. This is not product acceptance.");
+    }
+
+    [Fact]
+    [Trait("Category", "Manual")]
+    public async Task IdempotencyDiagnostic_same_message_id_changed_body_preserves_first_submission()
+    {
+        var first = Body("shared-message-id", Recipient);
+        var second = Encoding.Latin1.GetBytes(Encoding.Latin1.GetString(first).Replace("hello ", "second "));
+        Assert.IsType<OkResult>(await Controller(Context(first), Configuration()).ReceiveInbound(CancellationToken.None));
+        Assert.IsType<OkResult>(await Controller(Context(second), Configuration()).ReceiveInbound(CancellationToken.None));
+        var task = Assert.Single(await _db.ChannelTasks.Find(FilterDefinition<ChannelTask>.Empty).ToListAsync());
+        Assert.Equal("fixture\n\nhello 中文", task.OriginalContent);
+        _output.WriteLine("OBSERVED ONLY: same Message-ID and recipient with different signed content retains the first task/content; later content is ignored. This is compatibility evidence, not product acceptance.");
+    }
+
+    [Fact]
+    [Trait("Category", "Manual")]
+    public async Task IdempotencyDiagnostic_distinct_message_ids_identical_content_create_two_tasks()
+    {
+        for (var i = 0; i < 2; i++)
+            Assert.IsType<OkResult>(await Controller(Context(Body("independent-" + i, Recipient)), Configuration())
+                .ReceiveInbound(CancellationToken.None));
+        var tasks = await _db.ChannelTasks.Find(FilterDefinition<ChannelTask>.Empty).ToListAsync();
+        Assert.Equal(2, tasks.Count);
+        Assert.All(tasks, task => Assert.Equal("fixture\n\nhello 中文", task.OriginalContent));
+        _output.WriteLine("OBSERVED ONLY: distinct Message-IDs with identical content and recipient create two tasks. No change to the existing deduplication contract is asserted.");
+    }
+
+    [Fact]
+    [Trait("Category", "Manual")]
+    public async Task IdempotencyDiagnostic_same_message_id_distinct_mailboxes_create_two_tasks()
+    {
+        foreach (var recipient in new[] { Recipient, "other-inbox@example.net" })
+        {
+            var config = Configuration();
+            config["Channels:Email:SendGrid:Recipient"] = recipient;
+            Assert.IsType<OkResult>(await Controller(Context(Body("cross-mailbox", recipient)), config)
+                .ReceiveInbound(CancellationToken.None));
+        }
+        var tasks = await _db.ChannelTasks.Find(FilterDefinition<ChannelTask>.Empty).ToListAsync();
+        Assert.Equal(2, tasks.Count);
+        Assert.All(tasks, task => Assert.Equal(Owner, task.MappedUserId));
+        _output.WriteLine("OBSERVED ONLY: the same Message-ID delivered to two separately configured recipient channels creates one task per mailbox (two total), both bound to their configured owner.");
+    }
+
+    private Task SetQuotaAsync(int limit, string day) => _db.ChannelWhitelists.UpdateManyAsync(
+        FilterDefinition<ChannelWhitelist>.Empty, Builders<ChannelWhitelist>.Update
+            .Set(x => x.DailyQuota, limit).Set(x => x.TodayDate, day).Set(x => x.TodayUsedCount, 0));
+
+    private async Task ConfigureFailPointAsync(BsonValue mode, BsonDocument data) =>
+        await _db.Database.Client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument
+        {
+            { "configureFailPoint", "failCommand" }, { "mode", mode }, { "data", data }
+        });
+
+    private Task DisableFailPointAsync() => ConfigureFailPointAsync("off", new BsonDocument());
 
     private EmailChannelController Controller(DefaultHttpContext context, IConfiguration configuration)
     {
