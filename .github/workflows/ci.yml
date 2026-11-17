@@ -134,6 +134,22 @@ jobs:
               - 'scripts/tests/test_skills_audit_contract.py'
               - '.github/workflows/ci.yml'
             release_scripts:
+              - 'fast.sh'
+              - 'docker-compose.yml'
+              - 'deploy/systemd/prd-agent-*.service'
+              - 'deploy/systemd/prd-agent-*.timer'
+              - 'deploy/logrotate/**'
+              - 'deploy/journald/**'
+              - 'deploy/compose/production-logging.yml'
+              - 'scripts/prd-agent-*-retention.*'
+              - 'scripts/prd-agent-verify-offsite-backups.py'
+              - 'scripts/prd-agent-sync-small-backups.sh'
+              - 'scripts/llmgw-install-disk-monitor.sh'
+              - 'deploy/systemd/llmgw-backup-retention.service'
+              - 'scripts/prd-agent-container-log-rollout.py'
+              - 'scripts/prd-agent-with-release-lock.sh'
+              - 'scripts/prd-agent-install-disk-governance.sh'
+              - 'scripts/tests/prd-agent-*.test.*'
               # 模型出口守卫读取所有 MAP 发送入口；漏登记新业务也必须触发构建检查。
               - 'prd-api/src/**'
               - 'llmgw/serving/**'
@@ -291,6 +307,16 @@ jobs:
       - name: cdscli monitor contract
         run: python3 scripts/tests/test_cdscli_monitor.py
 
+      - name: cdscli release governance contract
+        run: python3 scripts/tests/test_cdscli_release_governance.py
+
+      - name: CDS isolated release script check
+        env:
+          CDS_COMMIT_SHA: ${{ github.sha }}
+          CDS_TARGET_ID: ci-cds-governance-isolated
+          CDS_RELEASE_ID: ci-script-check
+        run: bash e2e/fixtures/cds-batch/cds-release.sh check
+
   docs-readability:
     name: Docs Readability Ratchet
     needs: changes
@@ -372,6 +398,14 @@ jobs:
         env:
           STATIC_RELEASE_BROWSER_TEST: "1"
         run: sh scripts/tests/static-release-nginx.test.sh
+
+      - name: Production disk governance regression
+        run: |
+          python3 scripts/tests/prd-agent-artifact-retention.test.py
+          python3 scripts/tests/prd-agent-verified-backup-retention.test.py
+          python3 scripts/tests/prd-agent-container-log-rollout.test.py
+          node --test scripts/tests/prd-agent-request-log-retention.test.mjs
+          sh scripts/tests/prd-agent-release-lock.test.sh
 
       - name: Gateway bind mount coherence
         run: sh scripts/tests/gateway-bind-mount-coherence.test.sh
@@ -512,6 +546,13 @@ jobs:
 
       - name: Build
         run: dotnet build PrdAgent.sln -c Release --no-restore
+
+      - name: Verify log archive and TTL boundaries in isolated MongoDB fixtures
+        run: |
+          dotnet test tests/PrdAgent.Tests/PrdAgent.Tests.csproj -c Release --no-build --no-restore \
+            --filter 'FullyQualifiedName~PrdAgent.Tests.Services.LogArchive'
+          dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj -c Release --no-build --no-restore \
+            --filter 'FullyQualifiedName~GatewayRuntimeGovernanceTests.Initializer_RestartKeepsExpiredExecutionBodiesAndTemporaryStateTtl|FullyQualifiedName~GatewayRuntimeGovernanceTests.ArchivedDetailFailuresReturnRecoverableError'
 
       - name: LLMGW protocol simulation (production adapters, synthetic provider)
         working-directory: ${{ github.workspace }}
@@ -701,7 +742,7 @@ jobs:
         working-directory: ${{ github.workspace }}/e2e
         env:
           E2E_LOCAL_SERVER: '1'
-        run: pnpm exec playwright test specs/recording-continuity.spec.ts specs/generation-progress-layout.spec.ts specs/web-hosting-version-touch-target.spec.ts specs/hosted-native-preview.spec.ts specs/web-hosting-card-layout.spec.ts specs/toolbox-toolbar-layout.spec.ts specs/notification-dialog-opacity.spec.ts
+        run: pnpm exec playwright test specs/recording-continuity.spec.ts specs/generation-progress-layout.spec.ts specs/web-hosting-version-touch-target.spec.ts specs/hosted-native-preview.spec.ts specs/web-hosting-card-layout.spec.ts specs/toolbox-toolbar-layout.spec.ts specs/notification-dialog-opacity.spec.ts specs/public-login-entry.spec.ts
 
       - name: Upload recording acceptance evidence
         if: always()
@@ -919,8 +960,56 @@ jobs:
       - name: Type check
         run: pnpm exec tsc --noEmit
 
+      - name: Start isolated loopback OpenSSH for release lifecycle tests
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends openssh-server
+          cds_ssh_dir="$RUNNER_TEMP/cds-release-e2e"
+          mkdir -p "$cds_ssh_dir/evidence"
+          chmod 700 "$cds_ssh_dir"
+          ssh-keygen -q -t ed25519 -N '' -f "$cds_ssh_dir/hostkey"
+          ssh-keygen -q -t ed25519 -N '' -f "$cds_ssh_dir/clientkey"
+          cp "$cds_ssh_dir/clientkey.pub" "$cds_ssh_dir/authorized_keys"
+          chmod 600 "$cds_ssh_dir/authorized_keys"
+          cat > "$cds_ssh_dir/sshd_config" <<CONFIG
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey "$cds_ssh_dir/hostkey"
+          PidFile "$cds_ssh_dir/sshd.pid"
+          AuthorizedKeysFile "$cds_ssh_dir/authorized_keys"
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin no
+          UsePAM yes
+          AllowUsers $(id -un)
+          CONFIG
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd -t -f "$cds_ssh_dir/sshd_config"
+          sudo /usr/sbin/sshd -f "$cds_ssh_dir/sshd_config" -E "$cds_ssh_dir/sshd.log"
+          printf '[127.0.0.1]:2222 %s\n' "$(ssh-keygen -y -f "$cds_ssh_dir/hostkey")" > "$cds_ssh_dir/known_hosts"
+          ssh -i "$cds_ssh_dir/clientkey" -p 2222 -o BatchMode=yes -o UserKnownHostsFile="$cds_ssh_dir/known_hosts" "$(id -un)@127.0.0.1" true
+          printf 'CDS_BATCH_E2E=1\nCDS_BATCH_E2E_SSH_KEY=%s\nCDS_RELEASE_E2E_SSH_KEY=%s\nCDS_BATCH_E2E_EVIDENCE_DIR=%s\nCDS_NATIVE_SSH_DIR=%s\n' "$cds_ssh_dir/clientkey" "$cds_ssh_dir/clientkey" "$cds_ssh_dir/evidence" "$cds_ssh_dir" >> "$GITHUB_ENV"
+
       - name: Run tests
         run: pnpm test
+
+      - name: Retain native SSH lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-native-ssh-${{ github.run_id }}
+          path: ${{ runner.temp }}/cds-release-e2e/evidence/
+          retention-days: 14
+
+      - name: Stop owned loopback OpenSSH
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${CDS_NATIVE_SSH_DIR:-}" ] && [ -f "$CDS_NATIVE_SSH_DIR/sshd.pid" ]; then
+            sudo kill "$(sudo cat "$CDS_NATIVE_SSH_DIR/sshd.pid")"
+          fi
 
   # 设计执行服务（design-runtime/opendesign）—— tsc + vitest。
   # 镜像构建在 branch-image.yml 里，而镜像的构建阶段只跑 `pnpm run build`（不编译测试、不跑 vitest），

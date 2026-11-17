@@ -5,8 +5,14 @@ import routes from './ProductVersionAccessPage.tsx?raw';
 import versions from './VersionWorkflowTab.tsx?raw';
 
 describe('shared requirement and version lists', () => {
+  it('prefers the edit capability returned for each internal version row', () => {
+    expect(versions).toContain('({ record, legacyRegistration, exportFields, canEdit }) => ({ ...record, legacyRegistration, exportFields, canEdit })');
+    expect(versions).toContain("const canEdit = item.canEdit ?? (isOwner && item.status !== 'voided'");
+    expect(versions).toContain('{canEdit && <button');
+  });
+
   it('only mounts the version workflow list, not the old overview list', () => {
-    expect(overview).toContain('<VersionWorkflowTab isAdmin={isAdmin} />');
+    expect(overview).toContain('<VersionWorkflowTab isAdmin />');
     expect(overview).not.toContain('function VersionOverviewSection(');
     expect(overview).not.toContain('function ReleaseOverviewTable(');
     expect(overview).not.toContain('function InitiationOverviewTable(');
@@ -28,7 +34,14 @@ describe('shared requirement and version lists', () => {
     expect(routes).toContain("productListPath('requirements', productId)");
     expect(routes).toContain("productListPath('versions', productId, searchParams)");
     expect(singleProduct).toContain('navigate(productListPath(key, productId))');
-    expect(versions).toContain("useState<RecordScope>('all')");
     expect(versions).toContain('aria-label="按产品筛选版本"');
+  });
+
+  it('filters both version lists by version type and uses the appropriate person field', () => {
+    expect(versions).toContain('clearOptionLabel="全部版本类型"');
+    expect(versions).toContain('aria-label="按负责人筛选"');
+    expect(versions).toContain('item.createdBy === initiationApplicantId');
+    expect(versions).toContain('item.ownerId === releaseOwnerId');
+    expect(versions.match(/item\.versionType === versionTypeFilter/g)).toHaveLength(2);
   });
 });

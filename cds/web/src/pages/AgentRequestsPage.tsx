@@ -77,6 +77,10 @@ function fmtDuration(ms: number): string {
 
 export function AgentRequestsPage(): JSX.Element {
   const { projectId = '' } = useParams<{ projectId: string }>();
+  return <ProjectAgentRequests key={projectId} projectId={projectId} />;
+}
+
+function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element {
   const [data, setData] = useState<AgentRequestsResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,15 +88,22 @@ export function AgentRequestsPage(): JSX.Element {
   const [fApp, setFApp] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [fQ, setFQ] = useState('');
+  const [dataScope, setDataScope] = useState('');
+  const queryScope = JSON.stringify([fUser, fApp, fStatus, fQ.trim()]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [eventsBySession, setEventsBySession] = useState<Record<string, AgentEvent[] | 'loading' | 'error'>>({});
   const fetchSeqRef = useRef(0);
+  const [eventsUpdatedAt, setEventsUpdatedAt] = useState<Record<string, string>>({});
+  const [eventsReading, setEventsReading] = useState<Record<string, boolean>>({});
+  const [eventsErrors, setEventsErrors] = useState<Record<string, string>>({});
+  const eventReaders = useRef(new Map<string, AbortController>());
+  useEffect(() => () => { for (const controller of eventReaders.current.values()) controller.abort(); eventReaders.current.clear(); }, []);
   const { lastAgentActivityEvent, effectiveConnection } = useCdsEvents();
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!projectId) return;
     const seq = ++fetchSeqRef.current;
-    if (!opts?.silent) setLoading(true);
+    if (!opts?.silent) { setLoading(true); setError(null); }
     try {
       const params = new URLSearchParams();
       if (fUser) params.set('user', fUser);
@@ -105,6 +116,7 @@ export function AgentRequestsPage(): JSX.Element {
       );
       if (seq !== fetchSeqRef.current) return;
       setData(resp);
+      setDataScope(JSON.stringify([fUser, fApp, fStatus, fQ.trim()]));
       setError(null);
     } catch (err) {
       if (seq !== fetchSeqRef.current) return;
@@ -134,11 +146,16 @@ export function AgentRequestsPage(): JSX.Element {
 
   // 行展开：一次性回放完整事件流（终态会话即全量；运行中会话回放到当前）
   const loadEvents = useCallback(async (sessionId: string) => {
-    setEventsBySession((prev) => ({ ...prev, [sessionId]: 'loading' }));
+    if (eventReaders.current.has(sessionId)) return;
+    const controller = new AbortController();
+    eventReaders.current.set(sessionId, controller);
+    setEventsReading(current => ({ ...current, [sessionId]: true }));
+    setEventsErrors(current => ({ ...current, [sessionId]: '' }));
+    setEventsBySession(prev => Array.isArray(prev[sessionId]) ? prev : ({ ...prev, [sessionId]: 'loading' }));
     try {
       const url = apiUrl(`/api/projects/${encodeURIComponent(projectId)}/agent-sessions/${encodeURIComponent(sessionId)}/stream?afterSeq=0`);
-      const response = await fetch(url, { credentials: 'include' });
-      if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+      const response = await fetch(url, { credentials: 'include', signal: controller.signal });
+      if (!response.ok || !response.body) throw new Error(response.status === 403 ? '没有权限读取这条会话的事件，请联系系统所有者。' : response.status === 404 ? '这条会话的事件已不可用；仍可查看上方保留的收发摘要。' : '暂时无法读取事件，请稍后重试。');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -159,21 +176,31 @@ export function AgentRequestsPage(): JSX.Element {
           } catch { /* keepalive 等非事件帧 */ }
         }
       }
+      if (controller.signal.aborted) return;
       setEventsBySession((prev) => ({ ...prev, [sessionId]: events }));
-    } catch {
-      setEventsBySession((prev) => ({ ...prev, [sessionId]: 'error' }));
+      setEventsUpdatedAt(current => ({ ...current, [sessionId]: new Date().toISOString() }));
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setEventsErrors(current => ({ ...current, [sessionId]: error instanceof Error ? error.message : '暂时无法读取事件，请重试。' }));
+      setEventsBySession(prev => Array.isArray(prev[sessionId]) ? prev : ({ ...prev, [sessionId]: 'error' }));
+    } finally {
+      eventReaders.current.delete(sessionId);
+      if (!controller.signal.aborted) setEventsReading(current => ({ ...current, [sessionId]: false }));
     }
   }, [projectId]);
 
   const toggleExpand = useCallback((sessionId: string) => {
     setExpanded((cur) => {
       const next = cur === sessionId ? null : sessionId;
-      if (next && eventsBySession[next] === undefined) void loadEvents(next);
+      if (next && (eventsBySession[next] === undefined || eventsBySession[next] === 'error')) void loadEvents(next);
       return next;
     });
   }, [eventsBySession, loadEvents]);
 
-  const items = data?.items ?? [];
+  const filtered = !!(fUser || fApp || fStatus || fQ.trim());
+  const clearFilters = (): void => { setFUser(''); setFApp(''); setFStatus(''); setFQ(''); };
+  const currentData = dataScope === queryScope ? data : null;
+  const items = currentData?.items ?? [];
   const sseLive = effectiveConnection === 'connected';
   const statusOptions = useMemo(() => ['', 'running', 'idle', 'stopped', 'failed'], []);
 
@@ -198,7 +225,7 @@ export function AgentRequestsPage(): JSX.Element {
           right={
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="live-indicator">
               <span className={['inline-block w-2 h-2 rounded-full', sseLive ? 'bg-ok animate-pulse' : 'bg-warn'].join(' ')} />
-              {sseLive ? '实时已连接（SSE）' : '实时降级（5s 轮询）'}
+              {sseLive ? '列表实时已连接（SSE）' : '列表实时降级（5s 轮询）'}
             </span>
           }
         />
@@ -209,6 +236,7 @@ export function AgentRequestsPage(): JSX.Element {
       {/* 筛选条：按用户 / 按应用 / 状态 / 关键字 */}
       <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border bg-card px-3 py-2" data-testid="request-filters">
         <select
+          aria-label="按应用筛选"
           value={fApp}
           onChange={(e) => setFApp(e.target.value)}
           className="h-8 rounded-md border border-border bg-background px-2 text-xs"
@@ -218,6 +246,7 @@ export function AgentRequestsPage(): JSX.Element {
           {(data?.apps ?? []).map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
         <select
+          aria-label="按用户筛选"
           value={fUser}
           onChange={(e) => setFUser(e.target.value)}
           className="h-8 rounded-md border border-border bg-background px-2 text-xs"
@@ -227,6 +256,7 @@ export function AgentRequestsPage(): JSX.Element {
           {(data?.users ?? []).map((u) => <option key={u} value={u}>{u}</option>)}
         </select>
         <select
+          aria-label="按状态筛选"
           value={fStatus}
           onChange={(e) => setFStatus(e.target.value)}
           className="h-8 rounded-md border border-border bg-background px-2 text-xs"
@@ -238,6 +268,7 @@ export function AgentRequestsPage(): JSX.Element {
         <div className="relative flex-1 min-w-[11.25rem]">
           <Search size="0.8125rem" className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
+            aria-label="搜索 Agent 请求"
             value={fQ}
             onChange={(e) => setFQ(e.target.value)}
             placeholder="搜标题 / 模型 / 收发内容..."
@@ -253,20 +284,23 @@ export function AgentRequestsPage(): JSX.Element {
           <RefreshCw size="0.75rem" className={loading ? 'animate-spin' : ''} /> 刷新
         </button>
         <span className="text-[0.6875rem] text-muted-foreground tabular-nums">
-          live {data?.liveCount ?? 0} · 历史 {data?.historyCount ?? 0}
+          实时 {currentData?.liveCount ?? '—'} · 历史 {currentData?.historyCount ?? '—'}
         </span>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">{error}</div>
+        <div role="alert" className="rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">
+          请求读取失败：{error}{currentData ? '；当前显示本次筛选上次成功读取的记录。' : '；尚未确认当前筛选是否有记录。'}
+          <button type="button" className="ml-3 underline" onClick={() => void load()}>重试读取</button>
+        </div>
       )}
 
       {/* 请求列表：一条 = 一次 agent 会话（title/label + 收发预览 + 状态/耗时） */}
       <div className="flex flex-col gap-2" data-testid="request-list">
         {loading && items.length === 0 ? <ContentLoading label="加载 Agent 请求" variant="table" /> : null}
-        {items.length === 0 && !loading && (
+        {items.length === 0 && !loading && !error && (
           <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-            还没有 Agent 请求。MAP 侧发起生成（如 PPT 创作工作台）后，请求会实时出现在这里。
+            {filtered ? <><p>没有符合当前筛选的请求。</p><button type="button" className="mt-3 text-primary underline" onClick={clearFilters}>清除筛选</button></> : '还没有 Agent 请求。应用发起生成后，请求会实时出现在这里。'}
           </div>
         )}
         {items.map((item) => {
@@ -301,7 +335,7 @@ export function AgentRequestsPage(): JSX.Element {
                   )}
                   {item.model && <span className="text-[0.625rem] font-mono text-muted-foreground truncate max-w-[10.625rem]">{item.model}</span>}
                   {item.live && <span className="text-[0.5625rem] text-ok font-semibold">LIVE</span>}
-                  <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground tabular-nums">
+                  <span className="col-start-3 row-start-1 text-xs text-muted-foreground tabular-nums sm:col-start-4">
                     {fmtTime(item.createdAt)} · {fmtDuration(item.durationMs)} · {item.eventCount} 事件
                   </span>
                 </div>
@@ -334,31 +368,33 @@ export function AgentRequestsPage(): JSX.Element {
                     </div>
                   </div>
                   <div>
-                    <div className="text-[0.625rem] font-semibold text-muted-foreground mb-1">
-                      完整事件流（{item.live ? '内存实录' : '会话已结束——live 会话才有全量事件，历史仅保留收发摘要'}）
+                    <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>事件快照{eventsUpdatedAt[item.sessionId] ? ` · 读取于 ${fmtTime(eventsUpdatedAt[item.sessionId])}` : ''}{Array.isArray(events) && item.eventCount > events.length ? <span className="ml-2 font-medium text-primary">有更新待刷新</span> : null}</span>
+                      <button type="button" className="inline-flex min-h-8 items-center gap-1 rounded-md border border-border px-2 text-xs disabled:opacity-50" disabled={!!eventsReading[item.sessionId]} onClick={() => void loadEvents(item.sessionId)}><RefreshCw className={eventsReading[item.sessionId] ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />{eventsReading[item.sessionId] ? '读取中' : '刷新事件'}</button>
                     </div>
+                    <p className="mb-2 text-xs text-muted-foreground">{item.live ? '显示截至本次读取的事件；运行中的新事件请刷新。' : '历史会话可能仅保留收发摘要；下方只展示本次实际读到的事件。'}</p>
                     {events === 'loading' && <ContentLoading label="加载事件流" variant="rows" />}
-                    {events === 'error' && (
+                    {eventsErrors[item.sessionId] && (
                       <div className="text-[0.6875rem] text-warn">
-                        事件流不可用（会话可能已随 CDS 重启清理，收发摘要见上）
+                        {eventsErrors[item.sessionId]}{Array.isArray(events) ? ' 下方保留上次成功读取的快照。' : ''}
+                        <button type="button" className="ml-2 underline disabled:opacity-50" disabled={!!eventsReading[item.sessionId]} onClick={() => void loadEvents(item.sessionId)}>重试事件流</button>
                       </div>
                     )}
                     {Array.isArray(events) && (
-                      <div className="max-h-64 overflow-auto rounded-md border border-border bg-background px-2.5 py-2 flex flex-col gap-1">
+                      <div role="region" aria-label="本次事件快照" tabIndex={0} className="max-h-64 overflow-auto rounded-md border border-border bg-background px-2.5 py-2 flex flex-col gap-1">
                         {events.map((ev) => (
-                          <div key={ev.seq} className="flex items-start gap-2 text-[0.6875rem] leading-relaxed">
-                            <span className="shrink-0 w-8 text-right tabular-nums text-muted-foreground">#{ev.seq}</span>
-                            <span className="shrink-0 w-20 font-mono text-muted-foreground">{ev.type}</span>
-                            <span className="min-w-0 break-all text-foreground/80">
-                              {typeof ev.payload.text === 'string'
-                                ? (ev.payload.text as string).slice(0, 300)
-                                : typeof ev.payload.message === 'string'
-                                  ? (ev.payload.message as string).slice(0, 300)
-                                  : typeof ev.payload.finalText === 'string'
-                                    ? (ev.payload.finalText as string).slice(0, 300)
-                                    : JSON.stringify(ev.payload).slice(0, 300)}
+                          <div key={ev.seq} className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1 text-sm leading-relaxed sm:grid-cols-[2rem_5rem_minmax(0,1fr)_auto]">
+                            <span className="col-start-1 row-start-1 text-right tabular-nums text-muted-foreground">#{ev.seq}</span>
+                            <span className="col-start-2 row-start-1 min-w-0 break-all font-mono text-muted-foreground">{ev.type}</span>
+                            <span className="col-span-3 row-start-2 min-w-0 break-all text-foreground/80 sm:col-span-1 sm:col-start-3 sm:row-start-1">
+                              {(() => {
+                                const text = typeof ev.payload.text === 'string' ? ev.payload.text
+                                  : typeof ev.payload.message === 'string' ? ev.payload.message
+                                    : typeof ev.payload.finalText === 'string' ? ev.payload.finalText : JSON.stringify(ev.payload);
+                                return text.length > 300 ? <details><summary className="cursor-pointer">{text.slice(0, 300)}… <span className="text-primary">展开完整事件</span></summary><pre className="mt-2 whitespace-pre-wrap break-all font-mono">{text}</pre></details> : text;
+                              })()}
                             </span>
-                            <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground tabular-nums">{fmtTime(ev.createdAt)}</span>
+                            <span className="col-start-3 row-start-1 text-xs text-muted-foreground tabular-nums sm:col-start-4">{fmtTime(ev.createdAt)}</span>
                           </div>
                         ))}
                         {events.length === 0 && <div className="text-[0.6875rem] text-muted-foreground">（空）</div>}

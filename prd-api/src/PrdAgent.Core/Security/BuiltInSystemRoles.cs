@@ -58,6 +58,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.GroupsRead,
                 AdminPermissionCatalog.GroupsWrite,
                 AdminPermissionCatalog.LogsRead,
+                AdminPermissionCatalog.LogsWrite,
                 AdminPermissionCatalog.DataRead,
                 AdminPermissionCatalog.DataWrite,
                 AdminPermissionCatalog.AssetsRead,

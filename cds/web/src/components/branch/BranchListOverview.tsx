@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-/** The loading and ready states reserve the same two rows/columns above the grid. */
+/** Summary and controls follow the available width; task counts never require a hidden horizontal scroll. */
 export function BranchListOverview({ summary, children, loading = false }: {
   summary: ReactNode;
   children: ReactNode;
@@ -8,23 +8,23 @@ export function BranchListOverview({ summary, children, loading = false }: {
 }): JSX.Element {
   return (
     <div
-      className="mb-5 grid min-w-0 grid-cols-1 gap-2 xl:grid-cols-2 xl:gap-x-4"
+      className="mb-4 flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-3"
       data-testid="branch-overview-bar"
       aria-hidden={loading || undefined}
     >
       <div
-        className="h-20 min-w-0 overflow-auto [scrollbar-width:thin] xl:h-10"
+        className="min-w-0 flex-[1_1_24rem]"
         role={loading ? undefined : 'region'}
         aria-label={loading ? undefined : '分支统计'}
-        tabIndex={loading ? undefined : 0}
+        tabIndex={undefined}
         data-branch-summary-slot
       >
-        <div className="flex min-h-full min-w-full items-center whitespace-normal xl:w-max xl:whitespace-nowrap">
+        <div className="flex min-w-0 items-start">
           {summary}
         </div>
       </div>
-      <div className="h-10 min-w-0 overflow-x-auto [scrollbar-width:thin]" data-branch-controls-slot>
-        <div className="flex h-full w-max min-w-full items-center gap-2 whitespace-nowrap xl:justify-end">
+      <div className="min-w-0 max-w-full flex-[0_1_auto]" data-branch-controls-slot>
+        <div className="flex min-h-10 max-w-full flex-wrap items-center gap-2">
           {children}
         </div>
       </div>

@@ -97,6 +97,21 @@ test('模型解析回退展示三态且不以线路备用尝试反推，详情�
         } finally { await unmount(); }
       });
     }
+    await t.test('计量缺失只在概览表达一次，结果依据跨页签保留且不造空指标卡', async () => {
+      fixture.detail = { ...base, status: 'failed', error: '本次请求被上游拒绝' };
+      try {
+        await mount(React.createElement(GenerationDetailsDrawer, { logId: 'failed-detail', onClose() {} }));
+        assert.equal(document.querySelectorAll('.lg-generation-missing').length, 1);
+        assert.equal(document.querySelector('.lg-generation-metrics').children.length, 4, 'amount, usage, fallback and actual async-call count remain; empty time/speed cards are omitted');
+        for (const name of ['请求与响应', '路由', '审计']) {
+          await act(async () => [...document.querySelectorAll('[role="tab"]')].find(tab => tab.textContent === name).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true })));
+          assert.equal(document.querySelectorAll('.lg-generation-missing').length, 0, `${name} must not repeat overview-only missing metrics`);
+          assert.equal(document.querySelectorAll('.lg-generation-error').length, 1);
+          assert.match(document.querySelector('.lg-generation-error').textContent, /本次请求被上游拒绝/);
+        }
+        assert.match(document.body.textContent, /开始时间/); assert.match(document.body.textContent, /首字节时间/);
+      } finally { await unmount(); }
+    });
     await t.test('同一未记录字段不受不同尝试结果影响', async () => {
       for (const chain of [attempts, [attempts[1]], [attempts[0]], [{ ...attempts[0], status: 'unknown', error: 'UPSTREAM_OUTCOME_UNKNOWN' }]]) {
         fixture.detail = { ...base, isFallback: null, providerAttempts: chain };

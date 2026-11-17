@@ -42,3 +42,17 @@
   border-radius: var(--radius-sm);
   overflow-wrap: anywhere;
 }
+
+.lg-trace-summary { padding-block: 4px; }
+.lg-log-trace details { margin-block: 8px; }
+.lg-log-trace summary { cursor: pointer; color: var(--text-secondary); min-height: 28px; }
+.lg-log-trace summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.lg-trace-record { border-top: 1px solid var(--border-subtle); padding-block: 16px; min-width: 0; }
+.lg-trace-record h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.lg-trace-record h2 a { font-size: var(--fs-body); font-weight: 500; }
+.lg-log-trace .lg-trace-failure { padding: 10px 12px; border-left: 3px solid var(--err); background: var(--err-bg); color: var(--text-primary); white-space: pre-wrap; }
+@media (max-width: 680px) {
+  .lg-log-trace .lg-trace-search { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; }
+  .lg-log-trace .lg-trace-search input { grid-column: 1 / -1; min-width: 0 !important; width: 100%; }
+  .lg-log-trace .lg-trace-search button { min-width: 0; }
+}

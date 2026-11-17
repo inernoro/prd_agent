@@ -35,7 +35,7 @@ public static class ProductReleaseDeletion
         || await db.Features.Find(x => !x.IsDeleted && x.OfficialReleaseId == id).AnyAsync()
         || await db.Requirements.Find(x => !x.IsDeleted && x.VersionIds.Contains(id)).AnyAsync();
 
-    public static async Task AnnotateAsync(MongoDbContext db, IReadOnlyList<ProductRelease> items, string userId)
+    public static async Task AnnotateAsync(MongoDbContext db, IReadOnlyList<ProductRelease> items, string? userId)
     {
         foreach (var item in items) item.CanDelete = false;
         if (items.Count == 0) return;
@@ -46,7 +46,7 @@ public static class ProductReleaseDeletion
         foreach (var item in items)
         {
             var app = item.InitiationId != null && sources.TryGetValue(item.InitiationId, out var linked) ? linked : item.ProductId;
-            if (latestIds.GetValueOrDefault(app) == item.Id && item.CreatedBy == userId && item.ClaimNotification?.Status != "sending"
+            if (latestIds.GetValueOrDefault(app) == item.Id && (userId == null || item.CreatedBy == userId) && item.ClaimNotification?.Status != "sending"
                 && !await HasDownstreamAsync(db, item.Id)) item.CanDelete = true;
         }
     }

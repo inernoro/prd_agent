@@ -9244,6 +9244,7 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
 // GW 自有 appCaller 注册表：由 llmgw-serve 入口层被动发现，控制台先只读展示。
 app.MapGet("/gw/app-callers", async (
     HttpContext http,
+    string? id,
     string? status,
     string? sourceSystem,
     string? ingressProtocol,
@@ -9258,6 +9259,7 @@ app.MapGet("/gw/app-callers", async (
     var ps = Math.Clamp(pageSize ?? 50, 1, 200);
     var fb = Builders<BsonDocument>.Filter;
     var filters = new List<FilterDefinition<BsonDocument>>();
+    if (!string.IsNullOrWhiteSpace(id)) filters.Add(fb.Eq("_id", id.Trim()));
     if (!string.IsNullOrWhiteSpace(status)) filters.Add(fb.Eq("Status", status.Trim()));
     if (!string.IsNullOrWhiteSpace(sourceSystem)) filters.Add(fb.Eq("SourceSystem", sourceSystem.Trim()));
     if (!string.IsNullOrWhiteSpace(ingressProtocol))
@@ -12057,7 +12059,7 @@ app.MapPost("/gw/service-keys", async (HttpContext http, ServiceKeyCreateRequest
     }), jsonOptions, 201);
 }).RequireAuthorization("ServiceKeyWrite");
 
-app.MapPost("/gw/service-keys/{id}/rotation/client-cutover", async (HttpContext http, string id) =>
+app.MapPost("/gw/service-keys/{id}/rotation/client-cutover", async (HttpContext http, string id, [FromBody] ServiceKeyClientCutoverRequest? body) =>
 {
     var access = TenantAccess.GetRequired(http);
     var scopeFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
@@ -12067,7 +12069,12 @@ app.MapPost("/gw/service-keys/{id}/rotation/client-cutover", async (HttpContext 
     var existing = await serviceKeys.Find(keyFilter).FirstOrDefaultAsync();
     if (existing is null)
         return Json(ApiEnvelope<object>.Fail("SERVICE_KEY_NOT_FOUND", "service key 不存在"), jsonOptions, 404);
-    var successorId = existing.AsNullableString("RotatedByKeyId");
+    var expectedSuccessorId = body?.ExpectedSuccessorKeyId?.Trim();
+    if (string.IsNullOrWhiteSpace(expectedSuccessorId))
+        return Json(ApiEnvelope<object>.Fail("ROTATION_EXPECTATION_REQUIRED", "请重新读取当前密钥配对，再确认客户端切换"), jsonOptions, 428);
+    if (!string.Equals(existing.AsNullableString("RotatedByKeyId"), expectedSuccessorId, StringComparison.Ordinal))
+        return Json(ApiEnvelope<object>.Fail("ROTATION_PAIR_CHANGED", "后继密钥已变化，请重新读取并确认实际使用的新密钥"), jsonOptions, 409);
+    var successorId = expectedSuccessorId;
     if (!string.Equals(existing.AsNullableString("RotationState"), "awaiting-client-cutover", StringComparison.Ordinal)
         || string.IsNullOrWhiteSpace(successorId))
     {
@@ -12782,6 +12789,7 @@ app.MapGet("/gw/legacy-key-cutover", async (HttpContext http) =>
     return Json(ApiEnvelope<object>.Ok(new
     {
         applicable = true,
+        policyRevision = LegacyKeyPolicyConcurrency.ReadRevision(policy),
         status = policy?.AsNullableString("Status") ?? "observing",
         deadlineAt = policy?.AsNullableUtcDateTime("DeadlineAt").ToIso(),
         allowedAppCallerCodes = policy?.AsStringList("AllowedAppCallerCodes") ?? [],
@@ -12815,6 +12823,10 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
     var access = TenantAccess.GetRequired(http);
     if (!string.Equals(access.TenantId, internalTenantId, StringComparison.Ordinal))
         return Json(ApiEnvelope<object>.Fail("LEGACY_KEY_NOT_APPLICABLE", "legacy shared key 只属于内部租户"), jsonOptions, 404);
+    if (body.ExpectedPolicyRevision is null)
+        return Json(ApiEnvelope<object>.Fail("LEGACY_POLICY_REVISION_REQUIRED", "请先重新读取旧共享密钥策略，再基于该版本保存"), jsonOptions, 428);
+    if (body.ExpectedPolicyRevision < 0)
+        return Json(ApiEnvelope<object>.Fail("INVALID_LEGACY_POLICY_REVISION", "策略版本不能小于零，请重新读取"), jsonOptions, 400);
     var status = (body.Status ?? "observing").Trim().ToLowerInvariant();
     if (status is not ("observing" or "ready" or "revoked"))
         return Json(ApiEnvelope<object>.Fail("INVALID_LEGACY_CUTOVER_STATUS", "status 仅支持 observing、ready、revoked"), jsonOptions, 400);
@@ -12852,6 +12864,8 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
         }
     }
     var current = await legacyKeyCutovers.Find(TenantAccess.Filter(http)).FirstOrDefaultAsync();
+    if (LegacyKeyPolicyConcurrency.ReadRevision(current) != body.ExpectedPolicyRevision.Value)
+        return Json(ApiEnvelope<object>.Fail("LEGACY_POLICY_CONFLICT", "策略已被其他管理员更新，请读取最新策略；本次未写入"), jsonOptions, 409);
     if (string.Equals(current?.AsNullableString("Status"), "revoked", StringComparison.OrdinalIgnoreCase)
         && status != "revoked")
         return Json(ApiEnvelope<object>.Fail("LEGACY_REVOCATION_FINAL", "legacy shared key 已永久撤销，不能恢复为可用状态"), jsonOptions, 409);
@@ -12868,7 +12882,7 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
         return Json(ApiEnvelope<object>.Fail("LEGACY_DUAL_KEY_OBSERVATION_REQUIRED", "后继 scoped key 观测次数达标后才能撤销 legacy key"), jsonOptions, 409);
     var now = DateTime.UtcNow;
     var id = current?.GetStringOrEmpty("_id") is { Length: > 0 } currentId ? currentId : Guid.NewGuid().ToString("N");
-    var policyFilter = TenantAccess.Filter(http);
+    var policyFilter = TenantAccess.Filter(http, LegacyKeyPolicyConcurrency.WriteFilter(body.ExpectedPolicyRevision.Value, status));
     if (status == "revoked")
     {
         foreach (var successorId in successorIds)
@@ -12884,7 +12898,8 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
         .Set("RequiredIngressProtocols", new BsonArray(requiredIngressProtocols))
         .Set("RequiredScopes", new BsonArray(requiredScopes))
         .Set("RequiredSuccessorObservations", required)
-        .Set("UpdatedAt", now);
+        .Set("UpdatedAt", now)
+        .Inc(LegacyKeyPolicyConcurrency.RevisionField, 1L);
     if (!successorSetUnchanged)
     {
         policyUpdate = policyUpdate
@@ -12902,10 +12917,10 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
     }
     catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
     {
-        return Json(ApiEnvelope<object>.Fail("LEGACY_CUTOVER_CONFLICT", "退场策略已被并发创建，请刷新后重试"), jsonOptions, 409);
+        return Json(ApiEnvelope<object>.Fail("LEGACY_POLICY_CONFLICT", "策略已被并发创建或更新，请读取最新策略；本次未写入"), jsonOptions, 409);
     }
     if (updateResult.MatchedCount == 0 && current is not null)
-        return Json(ApiEnvelope<object>.Fail("LEGACY_DUAL_KEY_OBSERVATION_REQUIRED", "后继 scoped key 观测状态已变化，请刷新后重试"), jsonOptions, 409);
+        return Json(ApiEnvelope<object>.Fail("LEGACY_POLICY_CONFLICT", "策略或撤销前提已变化，请读取最新策略；本次未写入"), jsonOptions, 409);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -12923,7 +12938,7 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
             { "successorKeyCount", successorIds.Count },
             { "requiredSuccessorObservations", required },
         });
-    return Json(ApiEnvelope<object>.Ok(new { id, status, deadlineAt = body.DeadlineAt.Value.ToUniversalTime(), observed = minimumObserved, required }), jsonOptions);
+    return Json(ApiEnvelope<object>.Ok(new { id, status, policyRevision = body.ExpectedPolicyRevision.Value + 1, deadlineAt = body.DeadlineAt.Value.ToUniversalTime(), observed = minimumObserved, required }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // ─────────────── 网关配置面（可写）───────────────

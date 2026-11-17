@@ -63,11 +63,13 @@ function formatClock(ms: number): string {
 export function PublicStatusPage(): JSX.Element {
   const { token: routeToken } = useParams<{ token: string }>();
   const token = routeToken || window.location.pathname.split('/').filter(Boolean)[1] || '';
-  type BoardState = { token: string; phase: 'loading' | 'ready' | 'gone' | 'error'; board: PublicBoardPayload | null };
+  type BoardState = { token: string; phase: 'loading' | 'ready' | 'gone' | 'error'; board: PublicBoardPayload | null; readAt?: number };
   const [snapshot, setSnapshot] = useState<BoardState>({ token, phase: 'loading', board: null });
   // 同一链接刷新保留旧结果；切换链接立即隔离旧内容，不把别的状态页借给新 token。
   const board = snapshot.token === token ? snapshot.board : null;
   const phase = snapshot.token === token ? snapshot.phase : 'loading';
+  const [readFailure, setReadFailure] = useState<{ token: string; failed: boolean }>({ token, failed: false });
+  const refreshFailed = readFailure.token === token && readFailure.failed;
   const [refreshing, setRefreshing] = useState(false);
   const request = useRef<AbortController | null>(null);
 
@@ -83,9 +85,9 @@ export function PublicStatusPage(): JSX.Element {
       if (res.status === 404) { setSnapshot({ token, phase: 'gone', board: null }); return; }
       if (!res.ok) throw new Error(String(res.status));
       const next = await res.json() as PublicBoardPayload;
-      if (!controller.signal.aborted) setSnapshot({ token, phase: 'ready', board: next });
+      if (!controller.signal.aborted) { setSnapshot({ token, phase: 'ready', board: next, readAt: Date.now() }); setReadFailure({ token, failed: false }); }
     } catch {
-      if (!controller.signal.aborted) setSnapshot(previous => previous.token === token && previous.board ? previous : { token, phase: 'error', board: null });
+      if (!controller.signal.aborted) { setReadFailure({ token, failed: true }); setSnapshot(previous => previous.token === token && previous.board ? previous : { token, phase: 'error', board: null }); }
     } finally {
       if (request.current === controller) { request.current = null; setRefreshing(false); }
     }
@@ -127,23 +129,24 @@ export function PublicStatusPage(): JSX.Element {
   return (
     <div className="min-h-screen bg-background px-4 py-8 sm:px-6 sm:py-12">
       <div className="mx-auto w-full max-w-2xl">
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           <span className="h-5 w-5 rounded bg-primary" aria-hidden />
-          <h1 className="text-base font-semibold text-foreground">{board.title} 服务状态</h1>
+          <h1 className="min-w-0 break-words text-base font-semibold text-foreground">{board.title} 服务状态</h1>
           <div className="flex-1" />
           <button
             type="button"
             onClick={() => void load()}
-            className="inline-flex items-center gap-1 rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:text-foreground"
+            disabled={refreshing}
+            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:text-foreground"
           >
             <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
             刷新
           </button>
         </div>
 
-        <div className={cn('mt-5 flex items-center gap-3 rounded-lg border px-4 py-3.5', BANNER[board.status])}>
+        <div className={cn('mt-5 flex items-center gap-3 rounded-lg border px-4 py-3.5', refreshFailed ? BANNER.degraded : BANNER[board.status])}>
           <BannerIcon className="h-4 w-4 shrink-0" />
-          <span className="text-sm font-semibold">{board.headline}</span>
+          <div><span className="text-sm font-semibold">{refreshFailed ? '上次成功读取的状态：' : ''}{board.headline}</span>{refreshFailed ? <p role="alert" className="mt-1 text-sm">本次刷新失败，最新状态待确认。上次读取于 {snapshot.readAt ? formatClock(snapshot.readAt) : '未知时间'}；业务数据更新时间见页尾。</p> : null}</div>
         </div>
 
         <div className="mt-6 flex flex-col gap-5">

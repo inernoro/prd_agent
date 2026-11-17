@@ -1,3 +1,6 @@
+import { ConsoleAuthContext, type ShellAuthStatus, type ShellUser } from '@/lib/consoleAuthContext';
+export { ConsoleAuthContext } from '@/lib/consoleAuthContext';
+export type { ShellAuthStatus } from '@/lib/consoleAuthContext';
 import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { RouteMotion, RouteMotionCommit } from './RouteMotion';
 import { InstanceSwitcher } from '@/components/InstanceSwitcher';
@@ -25,7 +28,7 @@ import { cn } from '@/lib/utils';
 import { readStatusLocation } from '@/lib/statusHome';
 import { MonitorViewNav } from './MonitorViewNav';
 import '@/pages/status/monitor-frame.css';
-import { canReadApproval, type ApprovalCapabilities } from '@/hooks/approvalPolling';
+import { canReadApproval } from '@/hooks/approvalPolling';
 
 /*
  * AppShell — single source of layout truth.
@@ -75,7 +78,7 @@ const MobileNavContext = createContext<{ openNav: () => void }>({ openNav: () =>
 const FOCUSABLE_SELECTOR =
   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
-function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void {
+export function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void {
   useEffect(() => {
     if (!active) return undefined;
     const container = ref.current;
@@ -104,7 +107,8 @@ function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void 
     return () => {
       window.clearTimeout(initial);
       document.removeEventListener('keydown', onKeyDown, true);
-      previouslyFocused?.focus?.();
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || active === document.body || !active.isConnected || container.contains(active)) previouslyFocused?.focus?.();
     };
   }, [active, ref]);
 }
@@ -120,24 +124,6 @@ export interface AppShellProps {
   /** Use the wider workspace cap (1360px) for pages with a right operations rail. */
   wide?: boolean;
 }
-
-export type ShellAuthStatus = {
-  approvalCapabilities?: ApprovalCapabilities;
-  enabled?: boolean;
-  mode?: string;
-  activeProvider?: string | null;
-  logoutEndpoint?: string | null;
-  postLogoutRedirect?: string | null;
-  user?: ShellUser | null;
-};
-
-type ShellUser = {
-  username?: string | null;
-  githubLogin?: string | null;
-  name?: string | null;
-  avatarUrl?: string | null;
-  isSystemOwner?: boolean;
-};
 
 /** Unknown auth never exposes owner-only controls; disabled local mode stays compatible. */
 export function canManageSystemSettings(status: ShellAuthStatus | null): boolean {
@@ -155,12 +141,6 @@ export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通�
 export function canUseConsolePreview(mode: 'simple' | 'port' | 'multi' | undefined, canManageConsole: boolean): boolean {
   return canManageConsole || mode === 'multi';
 }
-
-export const ConsoleAuthContext = createContext<{
-  status: ShellAuthStatus | null;
-  pending: boolean;
-  retry: () => void;
-}>({ status: null, pending: true, retry: () => {} });
 
 /** UI affordances use the same server-authenticated owner decision as route mounting. */
 export function useCanManageConsole(): boolean {
@@ -198,7 +178,7 @@ export function OwnerConsoleRoute(): JSX.Element {
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
-const preloadReleaseConsolePage = (): void => { void import('@/pages/ReleaseConsolePage'); };
+const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
 const preloadCodeReviewsPage = (): void => { void import('@/pages/CodeReviewsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
@@ -292,8 +272,8 @@ function ConsoleRouteFallback(): JSX.Element {
         */}
         <div className={cn('cds-workspace cds-workspace--fluid', scene?.kind === 'code-reviews' && 'cr-ui', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
           {monitoringHome ? <div className="monitor-page-shell flex min-h-0 flex-1 flex-col">
-            {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome })}
-          </div> : pageSkeletonForPath(pathname, { canManageProjects })}
+            {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome, search })}
+          </div> : pageSkeletonForPath(pathname, { canManageProjects, search })}
           <ListLoadingFeedback />
         </div>
       </main>
@@ -333,6 +313,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
    * page gets the palette for free, regardless of which page added the rail.
    */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [operatorPendingCount, setOperatorPendingCount] = useState(0);
+  const [operatorOpenRequest, setOperatorOpenRequest] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
   const [authPending, setAuthPending] = useState(true);
@@ -505,10 +487,10 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
       {canManageSettings ? <BugReportDialog /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
-      {canPollOperatorApprovals ? <OperatorApprovalModal /> : null}
+      {canPollOperatorApprovals ? <OperatorApprovalModal onCountChange={setOperatorPendingCount} openRequest={operatorOpenRequest} /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      {canManageSettings ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} /> : null}
+      {canManageSettings ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount} onOpenOperatorRequests={() => setOperatorOpenRequest(value => value + 1)} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>
@@ -602,22 +584,21 @@ function RailNav({
           <span>Overview</span>
         </Link>
         {/*
-         * 落地页是发布控制台（发布这件事本身）；发布中心退居为低频的管理面
-         * （建站向导 / 配置 / 自动发布 / 健康监测 / 证据），由控制台里的链接进入。
+         * 发布中心先展示线上版本、责任与主干差异；执行发布从中心进入发布控制台。
          * 两页共用一个高亮项，见 activeNavKeyFor。
          */}
         <Link
-          to="/release-console"
+          to="/release-center"
           className="cds-rail-item"
           data-active={active === 'release-center' ? 'true' : 'false'}
-          aria-label="发布控制台"
-          title="发布控制台（选版本 / 发布 / 实时输出 / 历史）"
+          aria-label="发布中心"
+          title="发布中心（线上版本 / 操作追溯 / 主干差异）"
           onClick={onNavigate}
-          onMouseEnter={preloadReleaseConsolePage}
-          onFocus={preloadReleaseConsolePage}
+          onMouseEnter={preloadReleaseCenterPage}
+          onFocus={preloadReleaseCenterPage}
         >
           <Upload />
-          <span className="cds-rail-full">发布控制台</span>
+          <span className="cds-rail-full">发布中心</span>
           <span className="cds-rail-short">发布</span>
         </Link>
         <Link

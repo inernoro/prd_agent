@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useHref } from 'react-router-dom';
 
 import { HeroSection, HERO_GRADIENT, HERO_GRADIENT_FG, HERO_GRADIENT_STOPS } from './sections/HeroSection';
 import { StatsStrip } from './sections/StatsStrip';
@@ -112,11 +112,12 @@ export default function LandingPage() {
 }
 
 function LandingInner() {
-  const navigate = useNavigate();
+  const loginHref = useHref('/login');
   const { t, lang } = useLanguage();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const handleGetStarted = () => navigate('/login');
+  // Keep this critical public entry independent of a pending landing-page transition.
+  const handleGetStarted = () => window.location.assign(loginHref);
 
   /*
    * 导航锚点必须落在真实存在的幕上。

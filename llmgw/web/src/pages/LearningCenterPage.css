@@ -1,0 +1,7 @@
+.lg-learn-page .lg-learning-steps { gap: 24px; }
+.lg-learn-page .lg-learning-steps > div { padding: 12px 0; background: transparent; border: 0; border-radius: 0; }
+.lg-learn-page #first-request { border-bottom: 1px solid var(--border-subtle); padding-bottom: 16px; }
+.lg-learn-page .lg-topic-grid { gap: 0 24px; }
+.lg-learn-page .lg-topic-grid a:hover { background: var(--bg-elevated); }
+.lg-learn-page .lg-topic-grid :target { outline: 2px solid var(--accent); outline-offset: 4px; }
+.lg-learn-page .lg-topic-grid a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }

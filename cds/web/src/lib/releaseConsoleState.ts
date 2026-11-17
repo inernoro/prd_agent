@@ -19,6 +19,8 @@
  * 分不清自己在哪——正是需要守卫钉住的那种改动。
  */
 
+import { releaseActorLabel } from './releaseProvenance';
+
 export type ConsolePhase =
   /** 本次没发起任何操作，屏幕上展示的是历史记录。 */
   | 'history'
@@ -31,7 +33,7 @@ export type ConsolePhase =
 
 export interface ConsoleStanceInput {
   /** 本次会话发起的 run（页面里的 `run`）。没有就是 null。 */
-  sessionRun: { status: string } | null;
+  sessionRun: { status: string; commitSha?: string } | null;
   /** 该环境最近一次历史发布（`row.latestRun`）。 */
   latestRun: { status: string; commitSha?: string; operator?: string; startedAt?: string } | null;
   /** 线上正在跑的 commit（`row.currentCommit`）。 */
@@ -167,7 +169,7 @@ export function buildConsoleStance(input: ConsoleStanceInput): ConsoleStance {
       title: failed ? '发布失败' : '发布成功',
       badge: '',
       selectedIsLive,
-      primaryLabel: failed ? '重新发布' : '再发一次',
+      primaryLabel: selectedCommit && sessionRun.commitSha === selectedCommit ? failed ? '重新发布' : '再发一次' : '发布所选版本',
       hint: '',
     };
   }
@@ -188,7 +190,7 @@ export function buildConsoleStance(input: ConsoleStanceInput): ConsoleStance {
   const sha = latestRun.commitSha ? latestRun.commitSha.slice(0, 7) : '';
   // 「哪一版、谁发的」拼成一段定语，缺哪一段就整段不出——
   // 拼出「由 不是本次操作」这种半截话比不写更糟。
-  const by = [sha, latestRun.operator].filter(Boolean).join(' · ');
+  const by = [sha, releaseActorLabel(latestRun.operator)].filter(Boolean).join(' · ');
   const whose = by ? `（${by}）` : '';
   return {
     phase: 'history',

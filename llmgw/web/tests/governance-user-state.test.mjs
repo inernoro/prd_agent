@@ -17,13 +17,14 @@ test('运维只显示当前状态和有效操作；无流量不判失败，旧�
   globalThis.__governanceRouter = { ...router.default, ...router };
   globalThis.__governanceFixture = { role: 'owner', failAuthority: false, calls: [] };
   const api = await readFile(new URL('../src/lib/api.ts', import.meta.url), 'utf8');
-  const server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true }, ssr: { noExternal: ['react-router-dom'] },
+  const server = await createServer({ root: process.env.W2_TEST_ROOT || fileURLToPath(new URL('../', import.meta.url)), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true }, ssr: { noExternal: ['react-router-dom'] },
     plugins: [{ name: 'governance-state-fixture', enforce: 'pre',
       resolveId(id) { if (id === 'react-router-dom') return '\0governance-router'; },
       load(id) {
         if (id === '\0governance-router') return Object.keys(globalThis.__governanceRouter).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__governanceRouter.${name};`).join('\n');
         if (id.endsWith('/src/lib/auth.tsx')) return 'export function useAuth(){return {tenant:{role:globalThis.__governanceFixture.role}}}';
         if (id.endsWith('/src/lib/api.ts')) return [...api.matchAll(/^export (?:async )?function (\w+)/gm)].map(([, name]) => {
+          if (name === 'getPlatforms') return 'export async function getPlatforms(){if(globalThis.__governanceFixture.failPlatforms)throw new Error("上游状态读取中断");return {success:true,data:{items:[],total:0}}}';
           if (name === 'getConfigAuthorityReport') return 'export async function getConfigAuthorityReport(){return globalThis.__governanceFixture.failAuthority?{success:false,error:{message:"配置状态暂不可用"}}:{success:true,data:{summary:{status:"blocked",mapOnlyPools:99,mapOnlyPlatforms:0,mapOnlyModels:2,mapOnlyExchanges:0,activeMissingGatewayPool:3},gaps:[{detail:"内部迁移报告不应展示"}]}}}';
           if (name === 'getKeyHealth') return 'export async function getKeyHealth(){return {success:true,data:{summary:{status:"ok",ok:2,unreadable:0,missing:0}}}}';
           if (name === 'getProtocolCoverage') return 'export async function getProtocolCoverage(params){globalThis.__governanceFixture.calls.push(params);return {success:true,data:{sinceHours:24,items:[{ingressProtocol:"openai-compatible",label:"OpenAI-compatible",status:"no-evidence",logRequests:0,httpRequests:0,failedRequests:0,droppedParameterRequests:0,requestTypes:[],missingActiveAppCallerCodes:["internal-old-sample"],logsLink:"/logs?ingressProtocol=openai-compatible",appCallersLink:"/app-callers"}]}}}';
@@ -38,7 +39,7 @@ test('运维只显示当前状态和有效操作；无流量不判失败，旧�
     root = createRoot(document.getElementById('root'));
     const mount = key => act(async () => root.render(React.createElement(globalThis.__governanceRouter.MemoryRouter, {}, React.createElement(GovernancePage, { key }))));
     await mount('owner');
-    assert.match(document.body.textContent, /3 个活跃调用方尚无可用模型/);
+    assert.match(document.body.textContent, /3 个已登记为启用的调用方缺少可用默认模型/);
     assert.match(document.body.textContent, /有 2 项已有 MAP 配置可导入/);
     assert.match(document.body.textContent, /暂无请求/);
     assert.ok([...document.querySelectorAll('button')].some(el => el.textContent === '导入已有配置'));
@@ -52,8 +53,16 @@ test('运维只显示当前状态和有效操作；无流量不判失败，旧�
     assert.match(document.body.textContent, /当前角色可以查看状态/);
     globalThis.__governanceFixture.failAuthority = true;
     await mount('unavailable');
-    assert.match(document.body.textContent, /调用方路由状态暂不可用/);
-    assert.doesNotMatch(document.body.textContent, /0 个活跃调用方尚无可用模型/);
+    assert.match(document.body.textContent, /调用方默认模型状态暂不可用/);
+    assert.doesNotMatch(document.body.textContent, /0 个已登记为启用的调用方缺少可用默认模型/);
+    globalThis.__governanceFixture.failPlatforms = true;
+    await mount('platform-unavailable');
+    assert.match(document.querySelector('a[href="/platforms"]').textContent, /未知/);
+    assert.doesNotMatch(document.querySelector('a[href="/platforms"]').textContent, /0\/0/);
+    globalThis.__governanceFixture.failPlatforms = false;
+    await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === '刷新状态').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true })));
+    assert.match(document.querySelector('a[href="/platforms"]').textContent, /0\/0/, 'an actual successful empty response is distinct from unknown');
+
   } finally {
     if (root) await act(async () => root.unmount());
     await server.close(); dom.window.close();

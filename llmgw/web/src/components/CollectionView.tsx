@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { ArrowLeft, X } from 'lucide-react';
 import { Button } from '@/components/ui';
 import { collectionPage } from '@/lib/collectionPaging';
 import './CollectionView.css';
 
-export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar, toolbarActions, continuous = false, initialFilter = '' }: {
+export type CollectionViewState = { query: string; filter: string; page: number };
+
+export function CollectionView<T>({ items, searchText, placeholder, searchLabel = placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar, toolbarActions, continuous = false, initialFilter = '', initialView, onViewChange }: {
   items: readonly T[];
   searchText: (item: T) => string;
   placeholder: string;
+  searchLabel?: string;
   children: (page: T[]) => ReactNode;
   pageSize?: number;
   emptyText?: string;
@@ -19,10 +22,14 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
   filters?: Array<{ value: string; label: string; matches: (item: T) => boolean }>;
   continuous?: boolean;
   initialFilter?: string;
+  initialView?: Partial<CollectionViewState>;
+  /** Paginated view bookmark; continuous batch/scroll restoration is outside this contract. */
+  onViewChange?: (state: CollectionViewState) => void;
 }) {
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(1);
-  const [filter, setFilter] = useState(initialFilter);
+  const [query, setQuery] = useState(initialView?.query || '');
+  const [page, setPage] = useState(Math.max(1, initialView?.page || 1));
+  const [filter, setFilter] = useState(initialView?.filter ?? initialFilter);
+  const notifyView = useRef(onViewChange); notifyView.current = onViewChange;
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const selectedFilter = filters.find((item) => item.value === filter);
@@ -30,6 +37,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
   const result = collectionPage(filtered, query, searchText, continuous ? 1 : page, continuous ? Math.max(1, filtered.length) : pageSize);
   const visible = continuous ? result.items.slice(0, page * pageSize) : result.items;
   const hasMore = continuous && visible.length < result.total;
+  useEffect(() => { notifyView.current?.({ query, filter, page: result.current }); }, [query, filter, result.current]);
   // 数据删除或刷新后立刻夹住页码；搜索、筛选和翻页都回到清单顶部。
   useEffect(() => { if (!continuous && page !== result.current) setPage(result.current); }, [page, result.current, continuous]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }); }, [query, filter, result.current]);
@@ -42,18 +50,19 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
     return () => observer.disconnect();
   }, [hasMore, visible.length]);
   return (
-    <div className={`lg-collection-view ${className}`}>
+    <div className={`lg-collection-view${!hasMore && result.total <= pageSize ? ' lg-collection-short' : ''} ${className}`}>
       <div className="lg-collection-toolbar">
-        <input type="search" aria-label={placeholder} placeholder={placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
+        <input type="search" aria-label={searchLabel} placeholder={placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
         {filters.length ? <select aria-label={filterLabel} value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}><option value="">{allFilterLabel}</option>{filters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : null}
         {toolbarActions}
+        <span className="lg-collection-count" role="status" aria-label="清单数量">{query || filter ? `${result.total} / ${items.length} 项` : `共 ${items.length} 项`}</span>
       </div>
       {afterToolbar}
       <div className="lg-collection-scroll" ref={scrollRef}>
         {result.total ? children(visible) : <div className="lg-collection-empty">{emptyText}{query || filter ? <Button size="sm" variant="ghost" onClick={() => { setQuery(''); setFilter(''); setPage(1); }}>清除筛选</Button> : null}</div>}
         {hasMore ? <div ref={sentinelRef} className="lg-collection-load-more"><Button size="sm" variant="ghost" onClick={() => setPage(value => value + 1)}>继续加载 · 已显示 {visible.length} / {result.total}</Button></div> : null}
       </div>
-      {!continuous ? <footer className="lg-collection-pagination">
+      {!continuous && result.pages > 1 ? <footer className="lg-collection-pagination">
         <span>{result.total ? `${result.start + 1}–${Math.min(result.start + pageSize, result.total)}` : '0'} / {result.total}</span>
         <span className="lg-collection-spacer" />
         <span>第 {result.current} / {result.pages} 页</span>
@@ -65,16 +74,26 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
 }
 
 /** 桌面并列、窄屏独立详情态。保持真实编辑表单内联在页面，不复制写入逻辑。 */
-export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon, footer }: { title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
+export function CollectionDetailPane({ title, identifier, onClose, children, tabs, tabActions, icon, footer, closeLabel, headingLevel = 2 }: { headingLevel?: 1 | 2; closeLabel?: string; title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; tabActions?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
+  const Heading = headingLevel === 1 ? 'h1' : 'h2';
   const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // Capture the entry before the master list becomes hidden on narrow screens.
+  const [trigger] = useState(() => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null);
+  useLayoutEffect(() => {
+    const pane = closeRef.current?.closest('.lg-collection-pane');
     closeRef.current?.focus({ preventScroll: true });
-    return () => { if (trigger?.isConnected) trigger.focus({ preventScroll: true }); };
-  }, []);
+    return () => queueMicrotask(() => {
+      // StrictMode effect rehearsal is not a real unmount.
+      if (pane?.isConnected) return;
+      const active = document.activeElement;
+      // A new dialog or an explicit subsequent focus task owns its focus.
+      if (active && active !== document.body && active.isConnected && !pane?.contains(active)) return;
+      if (trigger?.isConnected && trigger.getClientRects().length && !trigger.closest('[inert]')) trigger.focus();
+    });
+  }, [trigger]);
   return <aside className="lg-collection-pane" aria-label="清单详情" onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-    <header className="lg-collection-pane-heading">{icon ? <span className="lg-collection-pane-icon">{icon}</span> : null}<div><h2>{title}</h2>{identifier ? <code>{identifier}</code> : null}</div><button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button></header>
-    {tabs ? <div className="lg-collection-pane-tabs">{tabs}</div> : null}
+    <header className="lg-collection-pane-heading">{icon ? <span className="lg-collection-pane-icon">{icon}</span> : null}<div><Heading>{title}</Heading>{identifier ? <code>{identifier}</code> : null}</div>{closeLabel ? <button ref={closeRef} type="button" className="lg-collection-close lg-collection-back" onClick={onClose}><ArrowLeft size={16} aria-hidden="true" />{closeLabel}</button> : <button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button>}</header>
+    {tabs ? <div className="lg-collection-pane-tabs">{tabs}{tabActions ? <div className="lg-collection-pane-tab-actions">{tabActions}</div> : null}</div> : null}
     <div className="lg-collection-pane-body">{children}</div>
     {footer}
   </aside>;

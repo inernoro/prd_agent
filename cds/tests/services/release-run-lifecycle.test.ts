@@ -175,7 +175,7 @@ describe('ReleaseService 阶段一止血', () => {
 
   describe('expectedCommitSha 版本钳制', () => {
     it('与分支当前 commit 不一致时 fail-closed，且不建 ReleaseRun', async () => {
-      const { service } = createService(async () => 'deployed');
+      const { service, calls } = createService(async () => 'deployed');
       await expect(service.startRelease({
         branchId: 'b1',
         targetId: 'target-prod',
@@ -184,6 +184,7 @@ describe('ReleaseService 阶段一止血', () => {
         expectedCommitSha: 'c'.repeat(40),
       })).rejects.toThrow(/已前进到|不一致/);
       expect(stateService.getReleaseRuns({ targetId: 'target-prod' })).toHaveLength(0);
+      expect(calls.filter(call => isDeployCommand(call.command))).toHaveLength(0);
     });
 
     it('一致时正常放行', async () => {

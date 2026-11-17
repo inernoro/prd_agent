@@ -1,6 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
+# Installed on production hosts; local development keeps the existing behavior.
+if [ "${PRD_AGENT_PRODUCTION_LOCK_HELD:-0}" != 1 ] && [ -x /usr/local/sbin/prd-agent-with-release-lock ]; then
+  exec /usr/local/sbin/prd-agent-with-release-lock "$0" "$@"
+fi
+
 # 生产部署脚本：
 # - 从 GitHub Release 下载 prd-admin dist 压缩包
 # - 在稳定的 deploy/web/dist bind 根内离线校验并原子切换 current/previous
@@ -615,6 +620,13 @@ fi
 
 compose_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
 compose_project_directory="${PRD_AGENT_COMPOSE_PROJECT_DIRECTORY:-}"
+# Keep host logging policy even for a rollback to a release without Compose limits.
+if [ -f /etc/prd-agent/compose.logging.yml ]; then
+  case ":${COMPOSE_FILE:-}:" in
+    *:/etc/prd-agent/compose.logging.yml:*) ;;
+    *) export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}:/etc/prd-agent/compose.logging.yml" ;;
+  esac
+fi
 compose_run() {
   if [ -n "$compose_project_directory" ]; then
     set -- --project-directory "$compose_project_directory" "$@"

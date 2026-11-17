@@ -220,7 +220,8 @@ async function runCase(browser, url, fixtureName, payload, viewport, theme) {
 
     const sheetInfo = await page.evaluate(() => {
       const root = document.querySelector('[data-testid="relation-sheet"]');
-      const panel = root.querySelector(':scope > div:last-child');
+      // relation-sheet 标记在实际 DialogContent 上，不能再按旧外罩的末尾子节点猜面板。
+      const panel = root;
       const r = panel.getBoundingClientRect();
       const graph = root.querySelector('[data-testid="relation-graph"]');
       const nodes = [...graph.querySelectorAll('[data-node]')].map((el) => ({ id: el.getAttribute('data-node'), r: el.getBoundingClientRect() }));
@@ -261,6 +262,16 @@ async function runCase(browser, url, fixtureName, payload, viewport, theme) {
           if (q.x <= 1 || q.y <= 1 || q.x >= innerWidth - 1 || q.y >= innerHeight - 1) continue;
           const hit = document.elementFromPoint(q.x, q.y);
           if (!hit || !graph.contains(hit)) continue;
+          // 首锚点与源卡边框重合时，这个像素不是可见线段。只排除该边框锚点，
+          // 中途被卡片或其他元素遮挡的独有线段仍计入不可达判据。
+          if (q === s.pts[0]) {
+            const node = hit.closest('[data-node]');
+            if (node) {
+              const r = node.getBoundingClientRect(), cs = getComputedStyle(node);
+              const border = Math.max(...['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'].map(key => parseFloat(cs[key]) || 0));
+              if (Math.min(Math.abs(q.x - r.left), Math.abs(q.x - r.right), Math.abs(q.y - r.top), Math.abs(q.y - r.bottom)) <= border) continue;
+            }
+          }
           const he = hit.closest('[data-edge]');
           if (he === g) { own = true; break; }
           if (he && near(byKey.get(he.getAttribute('data-edge')) ?? [], q)) continue;
@@ -329,7 +340,22 @@ async function runCase(browser, url, fixtureName, payload, viewport, theme) {
 
     // S8 Esc 关闭
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
+    await page.evaluate(async () => {
+      await new Promise(requestAnimationFrame);
+      const closing = document.querySelector('[data-testid="relation-sheet"]');
+      if (!closing || closing.getAttribute('data-state') !== 'closed') return;
+      // 沿用原200ms预算，等实际有限退场动画，而不是在动画最后一帧采样。
+      // 仍open、无限/暂停动画、超过预算或Presence卡住都会保留节点并让S8失败。
+      const animations = closing.getAnimations().filter(animation => {
+        const timing = animation.effect?.getComputedTiming();
+        return animation.playState === 'running' && timing && timing.endTime <= 200;
+      });
+      await Promise.race([Promise.allSettled(animations.map(animation => animation.finished)), new Promise(resolve => setTimeout(resolve, 200))]);
+      await new Promise(requestAnimationFrame);
+      // animation.finished 先于 Radix Presence 的 animationend/React 卸载提交，
+      // 首帧仍可能是 closed + finished 的末帧节点，再等一帧提交而非加长动画预算。
+      await new Promise(requestAnimationFrame);
+    });
     check((await sheet.count()) === 0, where, 'S8 按 Esc 关不掉展开视图');
     // Esc 只该关浮层：下面的分支详情抽屉与关系卡还在（此前一次 Esc 连抽屉一起关掉、退回分支列表）
     check(await card.isVisible(), where, 'S8 按 Esc 把分支详情抽屉也一起关掉了，用户被退回分支列表');

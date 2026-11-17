@@ -71,14 +71,19 @@ try {
     const selector = selectors[scene.kind];
     const result = { route, kind: scene.kind, errors, syntheticApis: true };
     async function inspect(label) {
-      const target = page.locator(`main .cds-workspace ${selector}`).first();
-      const present = await target.count();
-      if (!present) return { present: false };
-      const measured = await target.evaluate(e => {
-        const r = e.getBoundingClientRect(), w = e.closest('.cds-workspace').getBoundingClientRect();
+      // Resolve and measure the current element in one browser tick: React may
+      // replace an identical skeleton between locator resolution and evaluation.
+      const handle = await page.waitForFunction(selector => {
+        const e = document.querySelector(selector);
+        if (!e || !e.isConnected) return false;
+        const workspace = e.closest('.cds-workspace');
+        if (!workspace) throw new Error('Loading target has no original workspace ancestor');
+        const r = e.getBoundingClientRect(), w = workspace.getBoundingClientRect();
         return { present: true, x: r.x - w.x, y: r.y - w.y, width: r.width, height: r.height,
           shape: e.outerHTML.replace(/aria-label="[^"]*"/g, '').replace(/id="[^"]*"/g, '').replace(/class="([^"]*)"/g, (_, cls) => `class="${cls.split(/\s+/).sort().join(' ')}"`) };
-      });
+      }, `main .cds-workspace ${selector}`);
+      let measured;
+      try { measured = await handle.jsonValue(); } finally { await handle.dispose(); }
       if (['settings', 'project-settings', 'release-console'].includes(scene.kind)) await page.screenshot({ path: path.join(out, `${before ? 'before' : 'after'}-${scene.kind}-${label}.jpg`) });
       return measured;
     }
@@ -115,10 +120,12 @@ try {
       result.dataReplacedSkeleton = true;
       if (!before && scene.kind === 'release-center') {
         await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();
+      }
+      if (!before && scene.kind === 'release-console') {
         await page.getByRole('region', { name: '批次发布', exact: true }).waitFor();
-        await page.getByRole('button', { name: '新建批次', exact: true }).click();
         await page.getByRole('combobox', { name: '已验收版本', exact: true }).waitFor();
-        await page.getByText('需要至少两个已启用的发布目标，可先通过「新建环境」补齐。', { exact: true }).waitFor();
+        await page.getByText('需要至少两个已启用的发布目标，可先通过「环境管理」补齐。', { exact: true }).waitFor();
+        assert(await page.getByRole('link', { name: '逐目标发布', exact: true }).isVisible(), `${route}: per-target release entry missing`);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: batch empty state overflows`);
         result.batchEmptyStateReachable = true;
       }

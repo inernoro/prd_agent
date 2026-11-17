@@ -10,8 +10,8 @@
 //     DetailsBlock 并深链教程第 5 章，控制台里不再复述教程正文。
 //   - 成员从「一人一张卡」改成表格：一屏看完谁是谁、什么角色、在哪个团队、是否停用；
 //     增改走抽屉，不占版面。
-import { useCallback, useEffect, useState } from 'react';
-import { KeyRound, Plus, RefreshCw, RotateCcw, Save, Trash2, UserPlus, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { KeyRound, Pencil, Plus, RefreshCw, RotateCcw, Save, Trash2, UserPlus, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import {
@@ -28,19 +28,29 @@ import {
   switchTenant,
   updateMember,
 } from '@/lib/api';
-import type { CreateMemberRequest, OrganizationData, UpdateMemberRequest } from '@/lib/types';
+import type { ApiResponse, CreateMemberRequest, OrganizationData, UpdateMemberRequest } from '@/lib/types';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { invalidateOnboardingCache } from '@/lib/onboarding';
 import { Button, Card, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import './OrganizationPage.css';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 import { canUseCapability } from '@/lib/access';
+import { canonicalMemberUsername } from '@/lib/organizationIdentity';
 import { CARD_BODY, GAP } from '@/lib/surface';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
+
+async function observedWrite<T>(request: Promise<ApiResponse<T>>): Promise<ApiResponse<T>> { return request.catch(() => ({ success: false, data: null, error: { code: 'NETWORK_ERROR', message: '响应读取中断' } })); }
+// Confirmed pre-write/atomic rejections from the organization endpoints; unfamiliar failures remain unknown.
+const ORGANIZATION_REJECTIONS = new Set(['UNAUTHORIZED', 'FORBIDDEN', 'INVALID_TENANT', 'TENANT_ACCESS_DENIED', 'TENANT_CONFLICT', 'TENANT_SCOPE_MISMATCH', 'INTERNAL_TENANT', 'TENANT_NOT_FOUND', 'TENANT_NOT_EMPTY', 'INVALID_TEAM', 'TEAM_CONFLICT', 'TEAM_NOT_FOUND', 'TEAM_IN_USE', 'INVALID_MEMBER', 'DEVELOPER_TEAM_REQUIRED', 'OWNER_REQUIRED', 'MEMBERSHIP_CONFLICT', 'USERNAME_UNAVAILABLE', 'INVALID_PASSWORD', 'MEMBERSHIP_NOT_FOUND', 'SELF_MEMBERSHIP_CHANGE_FORBIDDEN', 'INVALID_ROLE', 'INVALID_STATUS', 'LAST_OWNER', 'SELF_SESSION_INVALIDATION_FORBIDDEN']);
+const unknownWrite = (code?: string) => !code || !ORGANIZATION_REJECTIONS.has(code);
 
 type MemberRole = CreateMemberRequest['role'];
 type MemberItem = OrganizationData['members'][number];
 type TeamItem = OrganizationData['teams'][number];
+type PendingOrganizationWrite = { label: string; matches: (data: OrganizationData) => boolean; explain?: (data: OrganizationData) => string | null };
+
 
 const ROLE_OPTIONS: { value: MemberRole; label: string; detail: string }[] = [
   { value: 'owner', label: 'Owner', detail: '管理租户、成员和全部配置' },
@@ -50,7 +60,7 @@ const ROLE_OPTIONS: { value: MemberRole; label: string; detail: string }[] = [
   { value: 'billing', label: 'Billing', detail: '只查看预算与用量' },
 ];
 
-const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,47}$/;
+
 
 function roleLabel(role: string) {
   return ROLE_OPTIONS.find((item) => item.value === role)?.label || role;
@@ -79,10 +89,22 @@ export function OrganizationPage() {
   const [data, setData] = useState<OrganizationData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [pageUnknown, setPageUnknown] = useState(false);
+  const pendingWrite = useRef<PendingOrganizationWrite | null>(null);
+  const [reading, setReading] = useState(false);
+  const readSequence = useRef(0);
   const [teamName, setTeamName] = useState('');
   const [busy, setBusy] = useState(false);
   const [drawer, setDrawer] = useState<DrawerState>(null);
   const [tenantDialogOpen, setTenantDialogOpen] = useState(false);
+
+  useEffect(() => { if (!notice) return; const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); }, [notice]);
+
+  const visibleMembers = useMemo(() => {
+    const term = memberSearch.trim().toLowerCase();
+    return (data?.members || []).filter(member => !term || [member.username, member.displayName, member.userId].some(value => value?.toLowerCase().includes(term)));
+  }, [data?.members, memberSearch]);
 
   const currentRole = sessionTenant?.role ?? 'viewer';
   const canManage = canUseCapability(sessionTenant?.role, 'organizationWrite');
@@ -90,28 +112,45 @@ export function OrganizationPage() {
   const { confirm, promptText } = useDialogs();
 
   const load = useCallback(async () => {
-    setError(null);
-    const response = await getOrganization();
-    if (response.success) setData(response.data);
+    const seq = ++readSequence.current;
+    setReading(true); setError(null);
+    const response = await getOrganization().catch(() => ({ success: false as const, data: null, error: { code: 'NETWORK_ERROR', message: '组织信息读取中断，请重试' } }));
+    if (seq !== readSequence.current) return;
+    setReading(false);
+    if (response.success) {
+      setData(response.data);
+      const pending = pendingWrite.current;
+      if (pending && !pending.matches(response.data)) {
+        setPageUnknown(true); setError(`${pending.label}仍待核实。${pending.explain?.(response.data) || '当前读取尚未匹配已提交的目标状态，不代表操作未生效，请稍后刷新或联系管理员核对审计，暂不重复提交。'}`);
+      } else {
+        pendingWrite.current = null; setPageUnknown(false);
+        if (pending) setNotice('已读取到与本次提交匹配的当前状态，请核对目标对象。');
+      }
+    }
     else setError(response.error.message);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
+  const beginPageWrite = () => { ++readSequence.current; setReading(false); setBusy(true); setError(null); setNotice(null); };
+  const failPageWrite = (error: { code?: string; message?: string }, operation: string, matches: PendingOrganizationWrite['matches']) => {
+    if (unknownWrite(error.code)) { pendingWrite.current = { label: operation, matches }; setPageUnknown(true); setError(`${operation}结果未确认，可能已生效。请刷新核对，勿重复提交。${error.message || ''}`); }
+    else setError(error.message || `${operation}被拒绝`);
+  };
+
   // 后端一直有 PUT /gw/teams/{id}，但前端从没给过入口 —— 团队名一旦打错就永远改不回来。
   // 这是断头自检里唯一一条 A 类（后端有能力、前端无入口），补在团队 chip 上。
   const renameTeam = async (team: OrganizationData['teams'][number]) => {
+    if (!canManage || busy || pageUnknown || reading) return;
     const next = await promptText({ title: `把团队“${team.name}”改成什么名字？`, inputLabel: '新的团队名称', defaultValue: team.name, confirmLabel: '改名' });
     if (next === null) return;
     const name = next.trim();
     if (name.length < 2) { setError('团队名称至少 2 个字符'); return; }
     if (name === team.name) return;
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    const response = await updateTeam(team.id, name);
+    beginPageWrite();
+    const response = await observedWrite(updateTeam(team.id, name));
     setBusy(false);
-    if (!response.success) { setError(response.error.message); return; }
+    if (!response.success) { failPageWrite(response.error, '修改团队', latest => latest.teams.some(candidate => candidate.id === team.id && candidate.name === name)); return; }
     invalidateOnboardingCache(sessionTenant?.id);
     setNotice(`团队已改名为“${name}”`);
     await load();
@@ -120,13 +159,12 @@ export function OrganizationPage() {
   // 团队删掉后引用方不会报错，只会被当成「没有范围」——所以后端先查三类引用，
   // 这里把它报回来的原文原样端出去，运维才知道该先解哪一个。
   const removeTeam = async (team: OrganizationData['teams'][number]) => {
+    if (!canManage || busy || pageUnknown || reading) return;
     if (!await confirm({ title: `删除团队“${team.name}”？`, description: '成员、接入密钥、appCaller 只要还引用它就会被拒绝。', tone: 'danger', confirmLabel: '删除' })) return;
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    const response = await deleteTeam(team.id);
+    beginPageWrite();
+    const response = await observedWrite(deleteTeam(team.id));
     setBusy(false);
-    if (!response.success) { setError(response.error.message); return; }
+    if (!response.success) { failPageWrite(response.error, '删除团队', latest => !latest.teams.some(candidate => candidate.id === team.id)); return; }
     invalidateOnboardingCache(sessionTenant?.id);
     setNotice(`团队“${team.name}”已删除`);
     await load();
@@ -136,6 +174,7 @@ export function OrganizationPage() {
   // 「不能删自己 / 只有 owner 能删 owner / 不能删最后一个 owner」三条由后端判定，
   // 前端只在按钮可见性上先挡掉前两条，最后一条只有服务端知道。
   const removeMember = async (member: MemberItem) => {
+    if (!canManage || busy || pageUnknown || reading) return;
     const label = member.displayName || member.username || member.userId;
     const typed = await promptText({
       title: `把“${label}”移出本租户？`,
@@ -147,12 +186,10 @@ export function OrganizationPage() {
     });
     if (typed === null) return;
     if (typed.trim() !== (member.username || member.userId)) { setError('输入的账号不一致，已取消删除'); return; }
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    const response = await deleteMember(member.id);
+    beginPageWrite();
+    const response = await observedWrite(deleteMember(member.id));
     setBusy(false);
-    if (!response.success) { setError(response.error.message); return; }
+    if (!response.success) { failPageWrite(response.error, '移出成员', latest => !latest.members.some(candidate => candidate.id === member.id)); return; }
     invalidateOnboardingCache(sessionTenant?.id);
     setNotice(`“${label}”已移出本租户`);
     await load();
@@ -161,7 +198,7 @@ export function OrganizationPage() {
   // 删租户只删空租户：不做级联是有意的——级联写错不可逆，「先自己清干净」可逆。
   // 删成功后当前会话所在的租户就没了，只能回登录页重新选租户。
   const removeTenant = async () => {
-    if (!data?.tenant) return;
+    if (!data?.tenant || !canCreateTenant || busy || pageUnknown || reading) return;
     const typed = await promptText({
       title: `删除租户“${data.tenant.name}”`,
       description: '只有完全清空的租户能删：上游、模型、模型池、交换所、逻辑模型、接入密钥、appCaller、其他成员都必须为零。\n删除后当前会话失效，需要重新登录。',
@@ -172,24 +209,22 @@ export function OrganizationPage() {
     });
     if (typed === null) return;
     if (typed.trim() !== data.tenant.slug) { setError('输入的 slug 不一致，已取消删除'); return; }
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    const response = await deleteTenant(data.tenant.id);
+    beginPageWrite();
+    const response = await observedWrite(deleteTenant(data.tenant.id));
     setBusy(false);
-    if (!response.success) { setError(response.error.message); return; }
+    if (!response.success) { failPageWrite(response.error, '删除租户', latest => latest.tenant?.id !== data.tenant?.id); return; }
     // 租户没了，当前会话签发时绑定的租户也就不存在了：走正规登出，别留一个指向空租户的 token。
     logout();
   };
 
   const addTeam = async () => {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    const response = await createTeam({ name: teamName.trim() });
+    if (!canManage || busy || pageUnknown || reading || teamName.trim().length < 2) return;
+    const submittedName = teamName.trim(), previousIds = new Set(data?.teams.map(team => team.id));
+    beginPageWrite();
+    const response = await observedWrite(createTeam({ name: submittedName }));
     setBusy(false);
     if (!response.success) {
-      setError(response.error.message);
+      failPageWrite(response.error, '创建团队', latest => latest.teams.some(team => team.name === submittedName && !previousIds.has(team.id)));
       return;
     }
     setTeamName('');
@@ -198,7 +233,8 @@ export function OrganizationPage() {
     await load();
   };
 
-  const afterMemberChange = async (message: string) => {
+  const afterMemberChange = async (message: string, pending?: PendingOrganizationWrite) => {
+    if (pending) { pendingWrite.current = pending; setPageUnknown(true); }
     setNotice(message);
     setDrawer(null);
     await load();
@@ -215,88 +251,28 @@ export function OrganizationPage() {
             <Chip label={roleLabel(currentRole)} color="var(--accent)" bg="var(--accent-soft)" />
             <span>团队 <strong>{data.teams.length}</strong></span>
             <span>成员 <strong>{data.members.length}</strong></span>
-            <code style={MONO_META}>{data.tenant?.id}</code>
           </>
         ) : undefined}
         actions={(
           <>
-            <Button size="sm" variant="ghost" onClick={() => void load()}><RefreshCw size={14} />刷新</Button>
-            {canCreateTenant ? (
-              <Button size="sm" variant="secondary" onClick={() => setTenantDialogOpen(true)}><Plus size={14} />新建租户</Button>
-            ) : null}
-            {canCreateTenant && data?.tenant ? (
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void removeTenant()}><Trash2 size={14} />删除租户</Button>
-            ) : null}
+            <Button size="sm" variant="ghost" disabled={busy || reading} onClick={() => void load()}><RefreshCw size={14} />{reading ? '正在读取…' : '刷新'}</Button>
+            {canManage && data ? <Button data-member-primary="true" disabled={busy || pageUnknown || reading} size="sm" variant="primary" onClick={() => setDrawer({ mode: 'create' })}><UserPlus size={14} />添加成员</Button> : null}
           </>
         )}
       />
 
       <PageBody>
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {pageUnknown ? <div role="status">以下为上次读取数据，操作结果仍待核对。</div> : null}
+        {reading && data ? <div role="status">正在读取最新组织状态…</div> : null}
         {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
 
         {!data ? (
           error
-            ? <Card style={CARD_BODY}><Prose>当前账号不能读取组织信息，请联系 Owner 调整角色。</Prose></Card>
+            ? <div role="status">组织信息未读取，请刷新重试。</div>
             : <SectionLoader text="正在加载组织" />
         ) : (
           <>
-            <Card style={CARD_BODY}>
-              <div style={cardHeadStyle}>
-                <h2 style={SECTION_TITLE}>团队</h2>
-                <span style={countStyle}>{data.teams.length} 个</span>
-              </div>
-              {data.teams.length === 0 ? (
-                <Prose style={{ marginBottom: GAP.section }}>还没有团队。团队把成员、appCaller 和接入密钥放进同一工作范围。</Prose>
-              ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginBottom: GAP.section }}>
-                  {data.teams.map((team) => {
-                    const chip = (
-                      <Chip
-                        label={team.status === 'active' ? team.name : `${team.name}（已停用）`}
-                        color={team.status === 'active' ? 'var(--accent)' : 'var(--text-muted)'}
-                        bg={team.status === 'active' ? 'var(--accent-soft)' : 'var(--bg-elevated)'}
-                      />
-                    );
-                    if (!canManage) return <span key={team.id}>{chip}</span>;
-                    return (
-                      <span key={team.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <button
-                          type="button"
-                          aria-label={`重命名团队 ${team.name}`}
-                          title="点击重命名"
-                          disabled={busy}
-                          onClick={() => void renameTeam(team)}
-                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0 }}
-                        >
-                          {chip}
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`删除团队 ${team.name}`}
-                          title="删除团队"
-                          disabled={busy}
-                          onClick={() => void removeTeam(team)}
-                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0, color: 'var(--text-muted)' }}
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-              {canManage ? (
-                <FormGrid>
-                  <label style={FIELD_LABEL}>
-                    <span>团队名称</span>
-                    <input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="客服组" style={FIELD_INPUT} />
-                  </label>
-                  <Button size="sm" disabled={busy || teamName.trim().length < 2} onClick={() => void addTeam()}>创建团队</Button>
-                </FormGrid>
-              ) : null}
-            </Card>
-
             <Card style={CARD_BODY}>
               <div style={cardHeadStyle}>
                 <h2 style={SECTION_TITLE}>成员</h2>
@@ -306,12 +282,12 @@ export function OrganizationPage() {
                       （实测第 5 个角色 Billing 被切掉一半）。 */}
                   <span style={countStyle}>角色<RoleHelp align="end" /></span>
                   <span style={countStyle}>{data.members.length} 人</span>
-                  {canManage ? (
-                    <Button size="sm" variant="primary" onClick={() => setDrawer({ mode: 'create' })}><UserPlus size={14} />添加成员</Button>
-                  ) : null}
+
                 </div>
               </div>
-              <div style={{ overflowX: 'auto' }}>
+              {data.members.length > 10 || memberSearch ? <input className="lg-member-search" aria-label="搜索成员姓名或账号" value={memberSearch} onChange={event => setMemberSearch(event.target.value)} placeholder="搜索成员姓名或账号" style={FIELD_INPUT} /> : null}
+              {!visibleMembers.length ? <div role="status">{memberSearch ? '没有匹配的成员，请更换姓名或账号。' : '当前范围还没有成员。'}</div> : null}
+              <div className="lg-members-desktop" style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
@@ -324,7 +300,7 @@ export function OrganizationPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.members.map((member) => {
+                    {visibleMembers.map((member) => {
                       const ownerLocked = member.role === 'owner' && currentRole !== 'owner';
                       const selfLocked = Boolean(user?.username && member.username === user.username);
                       const editable = canManage && !ownerLocked && !selfLocked;
@@ -339,7 +315,7 @@ export function OrganizationPage() {
                           <td style={TABLE_CELL_MUTED}>{teamNames || '—'}</td>
                           <td style={TABLE_CELL}>
                             <Chip
-                              label={member.status}
+                              label={member.status === 'active' ? '启用' : member.status === 'disabled' ? '已停用' : member.status || '未知'}
                               color={member.status === 'active' ? 'var(--ok)' : 'var(--warn)'}
                               bg={member.status === 'active' ? 'var(--ok-bg)' : 'var(--warn-bg)'}
                             />
@@ -347,8 +323,8 @@ export function OrganizationPage() {
                           <td style={{ ...TABLE_CELL, textAlign: 'right' }}>
                             {editable ? (
                               <>
-                                <Button size="sm" variant="ghost" onClick={() => setDrawer({ mode: 'edit', member })}>编辑</Button>
-                                <Button size="sm" variant="ghost" disabled={busy} onClick={() => void removeMember(member)}>移出</Button>
+                                <Button size="sm" variant="ghost" disabled={busy || pageUnknown || reading} onClick={() => setDrawer({ mode: 'edit', member })}>编辑</Button>
+                                <Button size="sm" variant="ghost" disabled={busy || pageUnknown || reading} onClick={() => void removeMember(member)}>移出</Button>
                               </>
                             ) : (
                               // 「不能在这里修改自己」原本是条死路：成员区确实不该改自己的角色，
@@ -370,8 +346,78 @@ export function OrganizationPage() {
                   </tbody>
                 </table>
               </div>
+              <div className="lg-members-mobile">
+                {visibleMembers.map(member => {
+                  const ownerLocked = member.role === 'owner' && currentRole !== 'owner';
+                  const selfLocked = Boolean(user?.username && member.username === user.username);
+                  const editable = canManage && !ownerLocked && !selfLocked;
+                  return <article key={member.id} data-testid={`member-mobile-${member.id}`}>
+                    <div className="lg-member-heading"><strong>{member.displayName || member.username || member.userId}</strong><Chip label={member.status === 'active' ? '启用' : member.status === 'disabled' ? '已停用' : member.status || '未知'} color={member.status === 'active' ? 'var(--ok)' : 'var(--warn)'} bg={member.status === 'active' ? 'var(--ok-bg)' : 'var(--warn-bg)'} /></div>
+                    <div>{roleLabel(member.role)} · <code>{member.username || member.userId}</code></div>
+                    <div>团队：{member.teamIds.map(id => data.teams.find(team => team.id === id)?.name || '未知团队').join('、') || '未加入团队'}</div>
+                    <div className="lg-member-actions">{editable ? <><Button size="sm" variant="ghost" disabled={busy || pageUnknown || reading} onClick={() => setDrawer({ mode: 'edit', member })}>编辑成员</Button><Button size="sm" variant="ghost" disabled={busy || pageUnknown || reading} onClick={() => void removeMember(member)}>移出</Button></> : selfLocked ? <Link to="/account">账号与安全</Link> : <span>{ownerLocked ? '只有 Owner 可以修改 Owner' : '只读'}</span>}</div>
+                  </article>;
+                })}
+              </div>
             </Card>
 
+            <Card style={CARD_BODY}>
+              <div style={cardHeadStyle}>
+                <h2 style={SECTION_TITLE}>团队</h2>
+                <span style={countStyle}>{data.teams.length} 个</span>
+              </div>
+              {data.teams.length === 0 ? (
+                <Prose style={{ marginBottom: GAP.section }}>还没有团队。团队把成员、appCaller 和接入密钥放进同一工作范围。</Prose>
+              ) : (
+                <div className="lg-team-list">
+                  {data.teams.map((team) => {
+                    const chip = <span>{team.name}{team.status !== 'active' ? '（已停用）' : ''}</span>;
+                    if (!canManage) return <span key={team.id}>{chip}</span>;
+                    return (
+                      <span key={team.id} className="lg-team-item">
+                        <button
+                          type="button"
+                          aria-label={`重命名团队 ${team.name}`}
+                          title="点击重命名"
+                          disabled={busy || pageUnknown || reading}
+                          onClick={() => void renameTeam(team)}
+                          className="lg-team-rename"
+                        >
+                          {chip}<Pencil size={13} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`删除团队 ${team.name}`}
+                          title="删除团队"
+                          disabled={busy || pageUnknown || reading}
+                          onClick={() => void removeTeam(team)}
+                          style={{ border: 'none', background: 'none', padding: 4, minWidth: 32, minHeight: 32, cursor: 'pointer', lineHeight: 0, color: 'var(--text-muted)' }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              {canManage ? (
+                <FormGrid>
+                  <label style={FIELD_LABEL}>
+                    <span>团队名称</span>
+                    <input disabled={busy || pageUnknown || reading} value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="客服组" style={FIELD_INPUT} />
+                  </label>
+                  <Button size="sm" disabled={busy || pageUnknown || reading || teamName.trim().length < 2} onClick={() => void addTeam()}>创建团队</Button>
+                </FormGrid>
+              ) : null}
+            </Card>
+
+            {canCreateTenant ? <DetailsBlock title="租户管理">
+              <code style={MONO_META}>{data.tenant?.id}</code>
+              <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap', marginTop: GAP.normal }}>
+                <Button size="sm" variant="secondary" disabled={busy || pageUnknown || reading} onClick={() => setTenantDialogOpen(true)}><Plus size={14} />新建租户</Button>
+                {data.tenant ? <Button size="sm" variant="ghost" disabled={busy || pageUnknown || reading} onClick={() => void removeTenant()}><Trash2 size={14} />删除租户</Button> : null}
+              </div>
+            </DetailsBlock> : null}
             <DetailsBlock title="工作原理：租户、团队、角色的边界">
               <Prose>
                 租户是数据、预算、密钥和审计的隔离边界，由服务端登录会话确定，请求体和自定义 tenantId header 都改不了它。
@@ -390,6 +436,7 @@ export function OrganizationPage() {
           teams={data.teams}
           tenantSlug={data.tenant?.slug}
           currentRole={currentRole}
+          existingMemberIds={data.members.map(item => item.id)}
           onClose={() => setDrawer(null)}
           onDone={afterMemberChange}
         />
@@ -413,15 +460,17 @@ export function OrganizationPage() {
  * 抽屉与毛玻璃背板整块盖住：用户只看到表单停止 busy，没有任何可读的失败原因。
  * 抽屉 body 里本来就有 InlineAlert 的用法（校验提示），失败信息归到同一处即可。
  */
-function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, onDone }: {
+function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, existingMemberIds, onClose, onDone }: {
   mode: 'create' | 'edit';
   member?: MemberItem;
   teams: TeamItem[];
   tenantSlug?: string;
   currentRole: string;
+  existingMemberIds: string[];
   onClose: () => void;
-  onDone: (message: string) => Promise<void>;
+  onDone: (message: string, pending?: PendingOrganizationWrite) => Promise<void>;
 }) {
+  const [resultUnknown, setResultUnknown] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -432,13 +481,22 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
   const [memberTeamIds, setMemberTeamIds] = useState<string[]>(member?.teamIds ?? []);
   const [busy, setBusy] = useState(false);
 
+  const dialogRef = useRef<HTMLElement>(null);
+  const submittedState = useRef<PendingOrganizationWrite | null>(null);
+  const closeDrawer = () => { if (resultUnknown) void onDone('成员操作结果未确认，请核对列表中的账号、角色和团队。', submittedState.current || { label: '成员操作', matches: () => false }); else onClose(); };
+  useDialogFocus(dialogRef, closeDrawer, busy, '[data-member-primary]');
+  const failWrite = (error: { code?: string; message?: string }) => {
+    if (unknownWrite(error.code)) { setResultUnknown(true); setFailure('操作结果未确认，可能已生效。已保留本次输入，请返回列表核对，勿重复提交。'); }
+    else setFailure(error.message || '操作被拒绝');
+  };
+
   const isCreate = mode === 'create';
   const selected = memberTeamIds;
   const who = member ? (member.displayName || member.username || member.userId) : '';
   const selectedDisabledTeams = memberTeamIds.filter((teamId) => teams.some((team) => team.id === teamId && team.status !== 'active'));
   const missingDeveloperTeam = memberRole === 'developer' && memberTeamIds.length === 0;
-  const usernameOk = USERNAME_PATTERN.test(username.trim());
-  const blocked = busy
+  const usernameOk = canonicalMemberUsername(tenantSlug, username) !== null;
+  const blocked = busy || resultUnknown
     || missingDeveloperTeam
     || (isCreate ? (!usernameOk || memberInitialPassword.length < 12) : selectedDisabledTeams.length > 0);
 
@@ -446,18 +504,22 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     current.includes(teamId) ? current.filter((id) => id !== teamId) : [...current, teamId]);
 
   const submit = async () => {
+    if (busy || resultUnknown) return;
     setBusy(true);
     setFailure(null);
     if (isCreate) {
-      const response = await createMember({
+      const submittedUsername = canonicalMemberUsername(tenantSlug, username);
+      const submittedTeams = [...memberTeamIds], submittedRole = memberRole, previousIds = new Set(existingMemberIds);
+      submittedState.current = { label: '创建成员', matches: latest => latest.members.some(item => !previousIds.has(item.id) && item.username === submittedUsername && item.role === submittedRole && sameTeams(item.teamIds, submittedTeams)), explain: latest => latest.members.some(item => previousIds.has(item.id) && item.username === submittedUsername) ? '当前已有同名成员，列表不能确认本次初始口令或幂等回执。请核对审计及成员本人，勿再次创建。' : null };
+      const response = await observedWrite(createMember({
         username: username.trim(),
         displayName: displayName.trim() || undefined,
         initialPassword: memberInitialPassword || undefined,
         role: memberRole,
         teamIds: memberTeamIds,
-      });
+      }));
       setBusy(false);
-      if (!response.success) { setFailure(response.error.message); return; }
+      if (!response.success) { failWrite(response.error); return; }
       invalidateOnboardingCache();
       await onDone(response.data.idempotentReplay
         ? '该成员已存在，现有成员关系保持不变'
@@ -466,9 +528,10 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     }
     if (!member) return;
     const request: UpdateMemberRequest = { expectedVersion: member.version, role: memberRole, status, teamIds: memberTeamIds };
-    const response = await updateMember(member.id, request);
+    submittedState.current = { label: '编辑成员', matches: latest => latest.members.some(item => item.id === member.id && item.version > member.version && item.role === request.role && item.status === request.status && sameTeams(item.teamIds, request.teamIds || [])) };
+    const response = await observedWrite(updateMember(member.id, request));
     setBusy(false);
-    if (!response.success) { setFailure(response.error.message); return; }
+    if (!response.success) { failWrite(response.error); return; }
     // 改成员和建成员是同一份事实的两个方向：新人清单的「拉一个成员」只数 active，
     // 把唯一一个额外成员停用后这一步应当重新亮起。此前只在创建路径失效，
     // 于是 60 秒内回到概览仍认为这一步完成、清单已经消失（Codex P2）。
@@ -477,30 +540,33 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
   };
 
   const invalidate = async () => {
-    if (!member) return;
+    if (!member || busy || resultUnknown) return;
     if (!await confirm({ title: `让“${who}”的现有登录立即失效？`, description: '该成员需要重新登录。', tone: 'danger', confirmLabel: '强制重新登录' })) return;
     setBusy(true);
     setFailure(null);
-    const response = await invalidateMemberSessions(member.id);
+    submittedState.current = { label: '强制重新登录', matches: latest => latest.members.some(item => item.id === member.id && item.version > member.version) };
+    const response = await observedWrite(invalidateMemberSessions(member.id));
     setBusy(false);
-    if (!response.success) { setFailure(response.error.message); return; }
+    if (!response.success) { failWrite(response.error); return; }
     await onDone(`成员“${who}”需要重新登录`);
   };
 
   return createPortal(
     <div className="lg-side-drawer-portal">
-      <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" onClick={onClose} />
-      <aside className="lg-side-drawer" role="dialog" aria-modal="true" aria-label={isCreate ? '添加成员' : `编辑成员 ${who}`}>
+      <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" disabled={busy} onClick={closeDrawer} />
+      <aside ref={dialogRef} tabIndex={-1} className="lg-side-drawer" role="dialog" aria-modal="true" aria-label={isCreate ? '添加成员' : `编辑成员 ${who}`}>
         <header className="lg-side-drawer-header">
           <div className="lg-side-drawer-title">
             <span className="lg-side-drawer-icon">{isCreate ? <UserPlus size={17} /> : <Save size={17} />}</span>
             <div><small>{isCreate ? '添加成员' : '编辑成员'}</small><h2>{isCreate ? '新成员账号' : who}</h2></div>
           </div>
-          <button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button>
+          <button type="button" aria-label="关闭" disabled={busy} onClick={closeDrawer}><X size={18} /></button>
         </header>
 
         <div className="lg-side-drawer-body" data-testid={isCreate ? 'member-create' : undefined}>
           {failure ? <InlineAlert tone="error">{failure}</InlineAlert> : null}
+          {resultUnknown ? <Button variant="ghost" onClick={closeDrawer}>返回列表核对</Button> : null}
+          <fieldset disabled={busy || resultUnknown} style={{ margin: 0, padding: 0, border: 0, minWidth: 0, display: 'grid', gap: GAP.section }}>
           {isCreate ? (
             <>
               <label style={FIELD_LABEL}>
@@ -563,14 +629,15 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
 
           {missingDeveloperTeam ? <InlineAlert tone="error">Developer 至少要选择一个团队，否则登录后无法管理 appCaller 和接入密钥。</InlineAlert> : null}
           {selectedDisabledTeams.length > 0 ? <InlineAlert tone="error">成员仍关联已停用团队，请先取消这些团队再保存。</InlineAlert> : null}
+          </fieldset>
         </div>
 
         <div className="lg-side-drawer-footer">
           <Button size="sm" variant="primary" disabled={blocked} onClick={() => void submit()}>
-            {isCreate ? <UserPlus size={13} /> : <Save size={13} />}{isCreate ? '创建成员账号' : '保存成员范围'}
+            {isCreate ? <UserPlus size={13} /> : <Save size={13} />}{busy ? '正在提交…' : isCreate ? '创建成员账号' : '保存成员范围'}
           </Button>
           {!isCreate ? (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void invalidate()}><RotateCcw size={13} />强制重新登录</Button>
+            <Button size="sm" variant="ghost" disabled={busy || resultUnknown} onClick={() => void invalidate()}><RotateCcw size={13} />强制重新登录</Button>
           ) : null}
         </div>
       </aside>
@@ -585,34 +652,49 @@ function TenantDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [busy, setBusy] = useState(false);
+  const [resultUnknown, setResultUnknown] = useState(false);
+  const [createdTenantId, setCreatedTenantId] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
+  const dialogRef = useRef<HTMLElement>(null);
+  useDialogFocus(dialogRef, onClose, busy);
+
   const submit = async () => {
-    setBusy(true);
-    setFailure(null);
-    const created = await createTenant({ name: name.trim(), slug: slug.trim().toLowerCase() });
-    if (!created.success) { setFailure(created.error.message); setBusy(false); return; }
-    const switched = await switchTenant(created.data.id);
+    if (busy || resultUnknown) return;
+    setBusy(true); setFailure(null);
+    let targetId = createdTenantId;
+    if (!targetId) {
+      const created = await observedWrite(createTenant({ name: name.trim(), slug: slug.trim().toLowerCase() }));
+      if (!created.success) {
+        setBusy(false);
+        if (unknownWrite(created.error.code)) { setResultUnknown(true); setFailure('创建结果未确认，可能已生效。请重新加载控制台，在组织切换器中核对，勿重复创建。'); }
+        else setFailure(created.error.message);
+        return;
+      }
+      targetId = created.data.id; setCreatedTenantId(targetId);
+    }
+    const switched = await observedWrite(switchTenant(targetId));
     setBusy(false);
-    if (!switched.success) { setFailure(switched.error.message); return; }
-    setSession(switched.data);
-    window.location.reload();
+    if (!switched.success) { setFailure('租户已创建，但切换未完成。' + switched.error.message); return; }
+    setSession(switched.data); window.location.reload();
   };
 
   return createPortal(
     <div className="lg-side-drawer-portal">
-      <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" onClick={onClose} />
-      <aside className="lg-side-drawer" role="dialog" aria-modal="true" aria-label="新建租户">
+      <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" disabled={busy} onClick={onClose} />
+      <aside ref={dialogRef} tabIndex={-1} className="lg-side-drawer" role="dialog" aria-modal="true" aria-label="新建租户">
         <header className="lg-side-drawer-header">
           <div className="lg-side-drawer-title">
             <span className="lg-side-drawer-icon"><KeyRound size={17} /></span>
             <div><small>新建租户</small><h2>独立的数据与预算边界</h2></div>
           </div>
-          <button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button>
+          <button type="button" aria-label="关闭" disabled={busy} onClick={onClose}><X size={18} /></button>
         </header>
         <div className="lg-side-drawer-body">
           {failure ? <InlineAlert tone="error">{failure}</InlineAlert> : null}
           <Prose>新租户有独立的数据、预算、密钥和审计。创建后你会成为 Owner 并自动切换过去。</Prose>
+          {resultUnknown ? <Button variant="ghost" onClick={() => window.location.reload()}>重新加载核对租户</Button> : null}
+          <fieldset disabled={busy || resultUnknown || !!createdTenantId} style={{ margin: 0, padding: 0, border: 0, minWidth: 0, display: 'grid', gap: GAP.section }}>
           <label style={FIELD_LABEL}>
             <span>租户名称</span>
             <input value={name} onChange={(event) => setName(event.target.value)} placeholder="教程咖啡店" style={FIELD_INPUT} />
@@ -621,10 +703,11 @@ function TenantDialog({ onClose }: { onClose: () => void }) {
             <span>Slug</span>
             <input value={slug} onChange={(event) => setSlug(event.target.value)} placeholder="tutorial-coffee" style={FIELD_INPUT} />
           </label>
+          </fieldset>
         </div>
         <div className="lg-side-drawer-footer">
-          <Button size="sm" variant="primary" disabled={busy || name.trim().length < 2 || slug.trim().length < 2} onClick={() => void submit()}>
-            <Plus size={13} />创建并切换
+          <Button size="sm" variant="primary" disabled={busy || resultUnknown || name.trim().length < 2 || slug.trim().length < 2} onClick={() => void submit()}>
+            <Plus size={13} />{busy ? '正在提交…' : createdTenantId ? '切换到已创建租户' : '创建并切换'}
           </Button>
         </div>
       </aside>
@@ -657,3 +740,5 @@ const checkStyle: React.CSSProperties = {
   color: 'var(--text-secondary)',
   fontSize: 'var(--fs-body)',
 };
+
+function sameTeams(actual: string[], expected: string[]) { return actual.length === expected.length && expected.every(id => actual.includes(id)); }

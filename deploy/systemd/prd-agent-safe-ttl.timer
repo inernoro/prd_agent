@@ -1,0 +1,11 @@
+[Unit]
+Description=Recheck safe Mongo TTL after boot and while running
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Unit=prd-agent-safe-ttl.service
+
+[Install]
+WantedBy=timers.target

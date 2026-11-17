@@ -80,7 +80,7 @@
 | 用户管理 | `users.read` | `users.write` |
 | 群组管理 | `groups.read` | `groups.write` |
 | 模型管理 | `mds.read` | `mds.write` |
-| 日志 | `logs.read` | — |
+| 日志 | `logs.read` | `logs.write`（归档策略、校验与恢复） |
 | 数据管理 | `data.read` | `data.write` |
 | 资产管理 | `assets.read` | `assets.write` |
 | 设置 | `settings.read` | `settings.write` |

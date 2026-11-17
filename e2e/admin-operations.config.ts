@@ -2,7 +2,7 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./specs",
-  testMatch: ["admin-operations-compat.spec.ts", "branch-release-flow.spec.ts"],
+  testMatch: ["admin-operations-compat.spec.ts", "branch-release-flow.spec.ts", "collection-scroll-compat.spec.ts"],
   timeout: 90000,
   outputDir: process.env.COMPAT_OUTPUT || "../work/compat/test-results",
   reporter: [
@@ -22,6 +22,8 @@ export default defineConfig({
     ],
   ],
   use: {
+    // 夹具日志时间固定为 UTC，避免开发机时区改变日期选择器。
+    timezoneId: "UTC",
     actionTimeout: 8000,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",

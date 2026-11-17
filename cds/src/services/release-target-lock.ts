@@ -24,7 +24,7 @@
 /** 持有超过它即视为泄漏，下一次请求直接抢走。没有这条，一次漏放锁就永久卡死该目标。 */
 export const RELEASE_TARGET_LOCK_STALE_MS = 30 * 60_000;
 
-export type ReleaseTargetLockKind = '产物回收';
+export type ReleaseTargetLockKind = '产物回收' | '发布审批';
 
 interface LockEntry {
   kind: ReleaseTargetLockKind;

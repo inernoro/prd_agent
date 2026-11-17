@@ -12,7 +12,7 @@ import { resolve } from 'node:path';
 const page = readFileSync(resolve(__dirname, '../..', 'web/src/pages/ReportsPage.tsx'), 'utf8');
 const loadPipeline = (() => {
   const start = page.indexOf('const loadPipeline = useCallback(');
-  const end = page.indexOf('useEffect(() => { void loadPipeline', start);
+  const end = page.indexOf('useEffect(() => { if (showOverview) void loadPipeline', start);
   expect(start, '找不到 loadPipeline').toBeGreaterThan(0);
   expect(end).toBeGreaterThan(start);
   return page.slice(start, end);
@@ -34,7 +34,7 @@ describe('静默保留只对同一档成立', () => {
   });
 
   it('同一档的刷新（报告增删后重算）仍然静默，不退回 loading', () => {
-    expect(page).toMatch(/useEffect\(\(\) => \{ void loadPipeline\(true\); \}, \[loadPipeline\]\);/);
+    expect(page).toMatch(/useEffect\(\(\) => \{ if \(showOverview\) void loadPipeline\(true\); \}, \[loadPipeline, showOverview\]\);/);
     expect(page).toMatch(/void loadPipeline\(true\);/);
   });
 

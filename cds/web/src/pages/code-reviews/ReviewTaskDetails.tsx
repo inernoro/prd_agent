@@ -7,9 +7,9 @@ import { explainReviewError, isReviewActive, reviewCoverage, reviewTaskExplanati
 import { ReviewButton } from './ReviewUi';
 
 const deliveryLabels: Record<CodeReviewTask['delivery']['status'], string> = { not_requested: '仅报告中心', pending: '等待邮件投递', sending: '正在发送邮件', sent: '邮件已发送', failed: '邮件发送失败' };
-export function ErrorNotice({ message, title }: { message: string; title?: string }): JSX.Element {
+export function ErrorNotice({ message, title, next }: { message: string; title?: string; next?: string }): JSX.Element {
   const explained = explainReviewError(message);
-  return <div role="alert" className="cr-notice cr-notice-error"><strong className="cr-row-inline"><AlertTriangle className="size-4" />{title || explained.title}</strong><p>{explained.next}</p><details className="cr-small"><summary>技术详情</summary><pre className="cr-code cr-break">{message}</pre></details></div>;
+  return <div role="alert" className="cr-notice cr-notice-error"><strong className="cr-row-inline"><AlertTriangle className="size-4" />{title || explained.title}</strong><p>{next || explained.next}</p><details className="cr-small"><summary>技术详情</summary><pre className="cr-code cr-break">{message}</pre></details></div>;
 }
 export function TaskStatus({ task }: { task: CodeReviewTask }): JSX.Element {
   const view = reviewTaskLabel(task), active = isReviewActive(task);
