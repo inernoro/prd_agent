@@ -47,6 +47,13 @@ export function writingCitationLocation(source: WritingSource | undefined, quote
   return writingSourceBlocks(source).find(block => block.text.includes(quote))?.location ?? '';
 }
 
+// Media clocks read back microseconds; approved scene starts can retain finer
+// floating-point fractions. Compare in that same unit for chapters and captions.
+export function writingMediaTimeReached(time: number, boundary: number) {
+  return Number.isFinite(time) && Number.isFinite(boundary)
+    && Math.round(time * 1_000_000) >= Math.round(boundary * 1_000_000);
+}
+
 export function writingSourceHasSnapshot(source: WritingSource) {
   return source.status === 'read' && !!source.content.trim();
 }

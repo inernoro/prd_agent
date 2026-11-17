@@ -23,9 +23,9 @@ async function mount(reader = false) {
 }
 const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find(e => e.textContent === text)!;
 async function click(text: string) { await act(async () => button(text).click()); }
-async function metadata() {
+async function metadata(duration = 7.833) {
   const video = container.querySelector<HTMLVideoElement>('video')!;
-  Object.defineProperties(video, { duration: { configurable: true, value: 7.833 }, videoWidth: { configurable: true, value: 1280 }, videoHeight: { configurable: true, value: 720 } });
+  Object.defineProperties(video, { duration: { configurable: true, value: duration }, videoWidth: { configurable: true, value: 1280 }, videoHeight: { configurable: true, value: 720 } });
   await act(async () => video.dispatchEvent(new Event('loadedmetadata', { bubbles: true })));
   return video;
 }
@@ -64,6 +64,30 @@ describe('作者批准具体教学成品', () => {
   });
 });
 describe('读者消费已批准教学', () => {
+  it.each([4, 5, 6, 7])('小数章节%s跳转后媒体读回量化不会退回上一章或上一句字幕', async index => {
+    vi.stubGlobal('CSS', { escape: (value: string) => value });
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    // 真实课程时间轴；Chromium媒体时钟读回按微秒量化，而接口保留双精度小数。
+    const starts = [0, 16.566666666666666, 28.46666666666667, 44.96666666666667, 59.53333333333333, 84.73333333333333, 99.83333333333333, 114.23333333333333, 132.1];
+    const course = teaching(); course.duration = 148.234;
+    course.scenes = starts.map((start, i) => ({ ...course.scenes[0], id: `scene-${i}`, title: `第${i + 1}章条件`, narration: `第${i + 1}章必须遵守的规则`, start, duration: (starts[i + 1] ?? course.duration) - start }));
+    api.read.mockResolvedValue({ success: true, data: { entryId: 'entry', store: { id: 'store', name: '交接知识库' }, publication: source, affectedSources: [], entries: [], canEdit: false, teaching: { ...course, sourceVersion: 1 } } });
+    await mount(true); const video = await metadata(course.duration);
+    const rows = () => [...container.querySelectorAll<HTMLButtonElement>('.writing-chapter')];
+    await act(async () => rows()[index].click());
+    video.currentTime = Math.round(starts[index] * 1_000_000) / 1_000_000;
+    await act(async () => video.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+    expect(container.querySelector('.writing-chapter.on strong')?.textContent).toBe(course.scenes[index].title);
+    expect(rows()[index - 1].textContent).toContain('已看完');
+    expect(container.querySelector('.capbox')?.textContent).toBe(course.scenes[index].narration);
+    await click('字幕全文');
+    expect(container.querySelector('.writing-caption-list [aria-current="true"]')?.textContent).toContain(course.scenes[index].narration);
+    // 真正位于边界前一帧仍属于前章，不能靠大容差提前进入下一章。
+    video.currentTime = starts[index] - 1 / 30;
+    await act(async () => video.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+    expect(container.querySelector('.capbox')?.textContent).toBe(course.scenes[index - 1].narration);
+    expect(container.querySelector('.writing-caption-list [aria-current="true"]')?.textContent).toContain(course.scenes[index - 1].narration);
+  });
   it('按指定发布版鉴权加载成片，讲解要点不冒充操作完成，字幕在末尾消失', async () => {
     const course = teaching();
     api.read.mockResolvedValue({ success: true, data: { entryId: 'entry', store: { id: 'store', name: '交接知识库' }, publication: source, affectedSources: [], entries: [{ id: 'entry', title: source.title }], canEdit: false, teaching: { ...course, sourceVersion: 1 } } });
