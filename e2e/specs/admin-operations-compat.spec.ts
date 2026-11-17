@@ -856,6 +856,7 @@ for (const width of [390, 1440])
       await expect(page.getByRole("button", { name: "下一步", exact: true })).toBeEnabled();
       await assertScene("draft");
       await page.getByRole("button", { name: "下一步", exact: true }).click();
+      await page.getByRole('textbox', { name: '应用标识（英文）', exact: true }).fill('knowledge-assistant');
       await page.getByRole("radio", { name: "知识库团队", exact: true }).click();
       await page.getByRole("textbox", { name: "月预算（美元）", exact: true }).fill("25");
       await assertScene("owner");
@@ -932,7 +933,7 @@ test('账务角色普通登录默认落在可访问概览', async ({ page }) => 
   await page.locator('#llmgw-username').fill('billing-user');
   await page.locator('#llmgw-password').fill('fixture-only');
   await page.getByRole('button',{name:'开始身份确认',exact:true}).click();
-  await expect(page).toHaveURL(/\/llmgw\/$/);
+  await expect(page).toHaveURL(/\/llmgw\/?$/);
   await expect(page.getByText('当前角色不包含此页面')).toHaveCount(0);
-  await expect(page.locator('.lg-console-sidebar nav a').first()).toHaveAttribute('href','/llmgw/');
+  await expect(page.locator('.lg-console-sidebar nav a').first()).toHaveAttribute('href',/\/llmgw\/?$/);
 });

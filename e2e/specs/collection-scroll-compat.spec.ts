@@ -123,7 +123,7 @@ for (const theme of ["light", "dark"]) test(`390 ${theme} 菜单导航后新任�
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();
   const menu = page.locator(".lg-user-menu");
-  await menu.locator("summary").click();
+  await menu.locator(":scope > summary").click();
   await expect(menu).toHaveAttribute("open", "");
   await menu.getByRole("link", { name: "账号与安全", exact: true }).click();
   await expect(page).toHaveURL(/\/account$/);
