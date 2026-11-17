@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { ArrowLeft, ChevronRight, ExternalLink, List, Link2, MessageSquare, X } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSitePreviewHtml } from '@/components/web-hosting/useSitePreviewHtml';
@@ -49,7 +50,7 @@ export function HostedCollectionDocument({ item, collection, token, password, on
     const overflow = document.body.style.overflow; document.body.style.overflow = 'hidden';
     panel.current?.querySelector<HTMLButtonElement>('button')?.focus();
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); setPanelOpen(false); }
+      if (shouldCloseOnEscape(event)) { event.preventDefault(); setPanelOpen(false); }
       if (event.key !== 'Tab') return;
       const controls = [...panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]') ?? []].filter(e => e.offsetParent !== null);
       if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls.at(-1)?.focus(); }

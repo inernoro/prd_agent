@@ -85,7 +85,17 @@ for (const width of [1440, 900, 390]) test(`${width}px 合集两份工具栏只�
   expect(await document!.evaluate(element => element.isConnected)).toBe(true);
   expect(previews).toBe(1);
   await page.setViewportSize({ width, height: 900 });
-  await page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
+  if (width <= 700) {
+    await page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
+    await page.locator('[data-tool="notes"]').click();
+    await page.getByRole('button', { name: '网页版本：V2', exact: true }).filter({ visible: true }).click();
+    await page.getByRole('option', { name: /^V1/ }).click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: '合集阅读面板', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: '合集阅读面板', exact: true })).toHaveCount(0);
+  } else await page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
   if (width > 700) await expect(page.getByRole('button', { name: '网页版本：V2', exact: true }).filter({ visible: true })).toBeFocused();
 });
 
