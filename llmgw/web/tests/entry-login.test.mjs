@@ -164,6 +164,18 @@ test('MAP 单点进入受阻时先显示试听，点击真实激活后才声称�
     assert.equal(await waiting, false, '等待恢复期间被取消的旧音效不能迟到播放');
     assert.equal(started, 2);
     cancelled.dispose();
+    let fetches = 0;
+    globalThis.fetch = async () => ({ ok: ++fetches > 3, arrayBuffer: async () => new ArrayBuffer(2) });
+    const retry = new EntryAudio();
+    retry.unlock();
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    acknowledgeResume();
+    assert.equal(await retry.play('reveal'), false, '首次资源错误不能声称已播放');
+    assert.equal(fetches, 3, '错误不能触发后台重试风暴');
+    retry.unlock();
+    assert.equal(await retry.play('reveal'), true, '下次用户激活可重新加载并播放');
+    assert.equal(fetches, 6);
+    retry.dispose();
   } finally {
     if (root) await act(async () => root.unmount());
     finish?.(); await server.close(); dom.window.close(); Object.assign(globalThis, previous);

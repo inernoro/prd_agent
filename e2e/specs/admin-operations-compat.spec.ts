@@ -731,6 +731,7 @@ for (const width of [390, 1440])
       await expect(page).toHaveURL(/\/quickstart$/);
       await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
 
+      await page.waitForLoadState("networkidle");
       await page.reload();
       const firstNavigation = page.locator(".lg-console-sidebar nav a").first();
       await expect(firstNavigation).toHaveAttribute("aria-label", "对话");
@@ -750,6 +751,7 @@ for (const width of [390, 1440])
       const navigateTo = async (name: string) => {
         if (await page.getByLabel("打开导航", { exact: true }).isVisible()) await page.getByLabel("打开导航", { exact: true }).click();
         await page.locator(".lg-console-sidebar nav").getByRole("link", { name, exact: true }).click();
+        await page.waitForLoadState("networkidle");
       };
       const otherTheme = theme === "light" ? "dark" : "light";
       const originalInk = await page.locator(".gateway-intent-heading").evaluate(el => getComputedStyle(el).color);
@@ -758,6 +760,7 @@ for (const width of [390, 1440])
       await navigateTo("概览");
       await expect(page.locator("html")).toHaveAttribute("data-theme", otherTheme);
       await navigateTo("对话");
+      await page.waitForLoadState("networkidle");
       await page.reload();
       await expect(page.locator("html")).toHaveAttribute("data-theme", otherTheme);
       await expect(page.locator(".gateway-quickstart-stage")).toHaveCSS("color-scheme", otherTheme);
@@ -803,6 +806,7 @@ for (const width of [390, 1440])
       await expect(page.locator(".gateway-entry-help")).not.toHaveAttribute("open", "");
       await page.getByRole("button", { name: "准备接入", exact: true }).click();
       await expect(page.getByRole("heading", { name: "确认你的接入", exact: true })).toBeVisible();
+      await page.waitForLoadState("networkidle");
       await page.reload();
       await page.locator(".gateway-entry-resume button").click();
       await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toHaveValue(/产品文档.*售后同事/);
@@ -882,6 +886,7 @@ for (const width of [390, 1440])
       await assertScene("result");
       await page.getByRole("tab", { name: "提示词", exact: true }).click();
       await expect(page.getByRole("radiogroup", { name: "调用方式" })).toBeVisible();
+      await page.waitForLoadState("networkidle");
       await page.reload();
       await expect(page.locator(".gateway-intent-starters")).toBeVisible();
       await expect(page.locator(".gateway-entry-resume button")).toHaveCount(0);

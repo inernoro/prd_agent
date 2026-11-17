@@ -21,7 +21,11 @@ export class EntryAudio {
           const context = this.context;
           this.buffers.set(cue, fetch(`${entryAsset(`${cue}.wav`)}?v=2`)
             .then(response => { if (!response.ok) throw new Error('audio unavailable'); return response.arrayBuffer(); })
-            .then(bytes => context.decodeAudioData(bytes)).catch(() => null));
+            .then(bytes => context.decodeAudioData(bytes)).catch(() => {
+              // A later explicit unlock may retry a transient failure; never spin automatically.
+              this.buffers.delete(cue);
+              return null;
+            }));
         }
       }
     } catch { /* Sound cannot interrupt authentication. */ }

@@ -10,8 +10,8 @@ const output = new URL('../work/entry-motion/', import.meta.url);
 await mkdir(output, { recursive: true });
 const motion = JSON.parse(await readFile(new URL('./fixtures/media/portrait-motion.source.json',import.meta.url),'utf8'));
 const target = JSON.parse(await readFile(new URL('./fixtures/entry-preview.json', import.meta.url), 'utf8'));
-const map = new URL(process.env.MAP_URL || target.mapUrl);
-const gateway = new URL(process.env.GATEWAY_URL || target.gatewayUrl);
+const map = new URL(target.mapUrl);
+const gateway = new URL(target.gatewayUrl);
 assert.equal(map.protocol, 'https:'); assert.equal(gateway.protocol, 'https:');
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD, 'Missing real preview login credentials');
 // Wait for the real new public bundles; never record an older deployed scene as the result.

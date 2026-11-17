@@ -8,12 +8,6 @@ on:
         type: choice
         options: [checks, record]
         default: checks
-      map_url:
-        type: string
-        required: false
-      gateway_url:
-        type: string
-        required: false
 permissions:
   contents: read
 concurrency:
@@ -50,7 +44,7 @@ jobs:
       - name: Gateway regression and build
         working-directory: llmgw/web
         run: |
-          pnpm exec node --experimental-strip-types --test --test-concurrency=1 tests/*.test.mjs
+          pnpm exec node --experimental-strip-types --test --test-concurrency=1 --test-timeout=60000 tests/*.test.mjs
           pnpm build
       - name: Recording script syntax and types
         run: |
@@ -59,14 +53,11 @@ jobs:
           pnpm -C e2e typecheck
   record:
     needs: checks
-    if: ${{ !cancelled() && ((github.event_name == 'push' && needs.checks.result == 'success') || inputs.phase == 'record') }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.phase == 'record' }}
+    environment: entry-preview-acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      MAP_URL: ${{ inputs.map_url }}
-      GATEWAY_URL: ${{ inputs.gateway_url }}
-      E2E_USER: ${{ secrets.E2E_USER }}
-      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
       EXPECTED_COMMIT: ${{ github.sha }}
       TZ: Asia/Shanghai
     steps:
@@ -84,6 +75,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg xvfb openbox python3-pil
       - name: Capture the real public preview journey
+        env:
+          E2E_USER: ${{ secrets.E2E_USER }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: xvfb-run -a -s '-screen 0 1920x1080x24 -ac' sh -c 'openbox >/tmp/entry-openbox.log 2>&1 & node e2e/entry-motion-capture.mjs'
       - name: Extract actual quarter-second frames and comparisons
         if: always()
