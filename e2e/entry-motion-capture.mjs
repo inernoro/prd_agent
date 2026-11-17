@@ -28,8 +28,8 @@ for (const destination of [map,gateway]) {
     await new Promise(resolve => setTimeout(resolve,15000));
   }
 }
-const browser = await chromium.launch({ headless: false, args: ['--kiosk', '--window-size=1920,1080', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'] });
-const context = await browser.newContext({ viewport: null, deviceScaleFactor: 1, timezoneId: 'Asia/Shanghai', reducedMotion: 'no-preference' });
+const browser = await chromium.launch({ headless: false, ignoreDefaultArgs: ['--enable-automation'], args: ['--kiosk', '--window-size=1920,1080', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'] });
+const context = await browser.newContext({ viewport: null, timezoneId: 'Asia/Shanghai', reducedMotion: 'no-preference' });
 // Observe actual scene frames without changing the renderer, clock, auth or API responses.
 await context.addInitScript(() => {
   window.__entryEvidence = { frames: [], errors: [] };
