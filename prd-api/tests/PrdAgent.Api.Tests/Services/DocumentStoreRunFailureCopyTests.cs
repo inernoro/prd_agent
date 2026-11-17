@@ -1,3 +1,4 @@
+using System.Text.Json;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
@@ -13,6 +14,36 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public class DocumentStoreRunFailureCopyTests
 {
+    [Theory]
+    [InlineData("template-writing")]
+    [InlineData("template-writing-reconcile")]
+    public void ExtraGeneratedAuthorIntentIsRejectedAndExplainsRecoveryWithoutLosingInput(string kind)
+    {
+        // 真实失败返回的4条承载映射；作者只有3项，分号属于项内正文。
+        const string rawCoverage = """[{"intentIndex":0,"paragraphIds":["p2","p4"]},{"intentIndex":1,"paragraphIds":["p7","p10"]},{"intentIndex":2,"paragraphIds":["p5","p6","p8"]},{"intentIndex":3,"paragraphIds":["p9"]}]""";
+        var state = new WritingDocumentState {
+            IntentPoints = new() { "仅演练空间；先保留目录再由复核人确认。", "失败停止；共同核验完成条件。", "200份边界、16:00时限先裁定；例外需明确批准。" },
+            Sections = new() { new() { Id = "s1", Paragraphs = new[] { "p2", "p4", "p7", "p10", "p5", "p6", "p8", "p9" }
+                .Select(id => new WritingParagraph { Id = id, Text = "已有作者正文", Status = "auth" }).ToList() } },
+            IntentCoverage = JsonSerializer.Deserialize<List<WritingIntentCoverage>>(rawCoverage, WritingDocumentPolicy.JsonOptions)!
+        };
+        var before = JsonSerializer.Serialize(state, WritingDocumentPolicy.JsonOptions);
+        var error = kind == WritingDocumentPolicy.RunKind
+            ? Assert.ThrowsAny<InvalidOperationException>(() => WritingDocumentPolicy.ValidateGenerated(state))
+            : Assert.ThrowsAny<InvalidOperationException>(() => WritingDeliveryPolicy.ApplyReconciliation(state, state));
+        Assert.Equal(before, JsonSerializer.Serialize(state, WritingDocumentPolicy.JsonOptions));
+        Assert.Equal(4, state.IntentCoverage.Count); // 不截断或把非法3偷偷映射到2。
+        var copy = DocumentStoreRunFailureCopy.Resolve(new DocumentStoreAgentRun { Kind = kind }, error);
+        Assert.Equal("WRITING_INTENT_COVERAGE_INVALID", copy.Code);
+        Assert.False(copy.AutomaticRetryAllowed);
+        Assert.Contains("未采用", copy.UserMessage);
+        Assert.Contains("作者重点", copy.UserMessage);
+        Assert.Contains("保留", copy.UserMessage);
+        Assert.Contains("重试", copy.UserMessage);
+        Assert.Contains(kind == WritingDocumentPolicy.RunKind ? "重新生成" : "重新整理", copy.UserMessage);
+        Assert.DoesNotContain("intentIndex", copy.UserMessage);
+    }
+
     [Theory]
     [InlineData("template-writing")]
     [InlineData("template-writing-reconcile")]

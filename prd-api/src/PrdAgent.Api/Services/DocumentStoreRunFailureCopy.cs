@@ -32,6 +32,8 @@ public static class DocumentStoreRunFailureCopy
     /// </summary>
     public const string SummarySkipped = "SUMMARY_SKIPPED";
 
+    public const string WritingIntentCoverageInvalid = "WRITING_INTENT_COVERAGE_INVALID";
+
     /// <param name="Code">写进 run.FailureCode 的机器可判定分类；没有分类时为 null。</param>
     /// <param name="AutomaticRetryAllowed">这一类值不值得自动重试（配额另由 Worker 判）。</param>
     /// <param name="RetryingMessage">确定会自动重试时改说的那句；为 null 表示两种情形同一句话。</param>
@@ -55,6 +57,12 @@ public static class DocumentStoreRunFailureCopy
     /// </summary>
     public static Copy Resolve(DocumentStoreAgentRun run, Exception ex)
     {
+        if ((run.Kind == WritingDocumentPolicy.RunKind || run.Kind == WritingDeliveryPolicy.ReconcileRunKind)
+            && ex is WritingIntentCoverageException)
+            return new Copy(WritingIntentCoverageInvalid,
+                "生成结果未能正确关联作者重点，本次未采用。原资料、作者重点和已有正文均保留，请在当前文档点击“重试”"
+                    + (run.Kind == WritingDeliveryPolicy.ReconcileRunKind ? "重新整理摘要与重点。" : "重新生成。"),
+                AutomaticRetryAllowed: false);
         var routeFailureCode = ExtractRouteFailureCode(ex);
         if (run.Kind is WritingDocumentPolicy.RunKind or WritingDeliveryPolicy.ReconcileRunKind or WritingTeachingPolicy.RunKind
             && routeFailureCode == "LLM_QUOTA_EXCEEDED")

@@ -6561,6 +6561,21 @@ public partial class DocumentStoreController : ControllerBase
     // 公开知识库 / 点赞 / 收藏 / 分享
     // ─────────────────────────────────────────────
 
+    // 公开页和分享页展示可读文档数；作者保存的草稿总量不属于公开投影。
+    // 列表按本页storeIds一次聚合，不能逐库查询，也不回写owner的DocumentCount。
+    private async Task<Dictionary<string, int>> LoadPublicReadableDocumentCountsAsync(IReadOnlyList<string> storeIds, string? entryId = null)
+    {
+        if (storeIds.Count == 0) return new Dictionary<string, int>();
+        var filter = Builders<DocumentEntry>.Filter.In(e => e.StoreId, storeIds.Distinct())
+            & Builders<DocumentEntry>.Filter.Where(e => !e.IsFolder && e.SourceType != DocumentSourceType.GithubDirectory
+                && (e.Writing == null || e.Writing.Published != null));
+        if (!string.IsNullOrEmpty(entryId)) filter &= Builders<DocumentEntry>.Filter.Eq(e => e.Id, entryId);
+        var counts = await _db.DocumentEntries.Aggregate().Match(filter)
+            .Group(e => e.StoreId, group => new { StoreId = group.Key, Count = group.Count() })
+            .ToListAsync();
+        return counts.ToDictionary(item => item.StoreId, item => item.Count);
+    }
+
     /// <summary>获取所有公开知识库列表（IsPublic=true，匿名可访问）</summary>
     [HttpGet("public/stores")]
     [AllowAnonymous]
@@ -6593,13 +6608,14 @@ public partial class DocumentStoreController : ControllerBase
         var owners = await _db.Users.Find(u => ownerIds.Contains(u.UserId)).ToListAsync();
         var ownerMap = owners.ToDictionary(u => u.UserId, u => new { u.DisplayName, u.AvatarFileName });
 
+        var documentCounts = await LoadPublicReadableDocumentCountsAsync(stores.Select(s => s.Id).ToArray());
         var items = stores.Select(s => new
         {
             s.Id,
             s.Name,
             s.Description,
             s.Tags,
-            s.DocumentCount,
+            documentCount = documentCounts.GetValueOrDefault(s.Id),
             s.LikeCount,
             s.ViewCount,
             s.FavoriteCount,
@@ -6641,6 +6657,7 @@ public partial class DocumentStoreController : ControllerBase
             favoritedByMe = await _db.DocumentStoreFavorites.Find(f => f.StoreId == storeId && f.UserId == userId).AnyAsync();
         }
 
+        var documentCounts = await LoadPublicReadableDocumentCountsAsync(new[] { storeId });
         return Ok(ApiResponse<object>.Ok(new
         {
             store.Id,
@@ -6649,7 +6666,7 @@ public partial class DocumentStoreController : ControllerBase
             store.Tags,
             store.PrimaryEntryId,
             store.PinnedEntryIds,
-            store.DocumentCount,
+            documentCount = documentCounts.GetValueOrDefault(storeId),
             store.LikeCount,
             store.ViewCount,
             store.FavoriteCount,
@@ -7103,6 +7120,7 @@ public partial class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "关联知识库已删除"));
 
+        var documentCounts = await LoadPublicReadableDocumentCountsAsync(new[] { link.StoreId }, link.EntryId);
         return Ok(ApiResponse<object>.Ok(new
         {
             link.Token,
@@ -7119,7 +7137,7 @@ public partial class DocumentStoreController : ControllerBase
                 store.Description,
                 store.PrimaryEntryId,
                 store.PinnedEntryIds,
-                store.DocumentCount,
+                documentCount = documentCounts.GetValueOrDefault(store.Id),
                 store.LikeCount,
                 store.ViewCount,
             },

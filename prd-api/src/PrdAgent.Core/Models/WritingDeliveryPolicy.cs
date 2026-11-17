@@ -91,7 +91,7 @@ public static class WritingDeliveryPolicy
         var ids = state.Sections.SelectMany(s => s.Paragraphs).Where(p => !string.IsNullOrWhiteSpace(p.Text)).Select(p => p.Id).ToHashSet();
         if (generated.IntentCoverage.Select(c => c.IntentIndex).Distinct().Count() != generated.IntentCoverage.Count
             || generated.IntentCoverage.Any(c => c.IntentIndex < 0 || c.IntentIndex >= state.IntentPoints.Count || c.ParagraphIds.Any(id => !ids.Contains(id))))
-            throw new InvalidOperationException("重点位置不能定位到当前正文，请重试整理");
+            throw new WritingIntentCoverageException("重点位置不能定位到当前正文，请重试整理");
         if (generated.Roles.Any(r => !state.Sections.Any(s => s.Id == r.SectionId)
             || r.OrderedSectionIds.Any(id => !state.Sections.Any(s => s.Id == id))))
             throw new InvalidOperationException("角色行动不能定位到当前章节，请重试整理");

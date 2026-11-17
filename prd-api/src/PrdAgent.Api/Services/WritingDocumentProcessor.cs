@@ -79,9 +79,9 @@ public class WritingDocumentProcessor(
             "角色可包含orderedSectionIds数组，按角色真实需要排列已存在的小节id；摘要和角色行动不得省略改变行动的限制；不清楚时保留空值，不用模板提示代替正文。" +
             "小节可提供condition与detail（label、rows二维字符串表格），只在资料明确给出适用条件或字段表时填写。问题可提供choices（key、label、text）和evidence（sourceId、quote、location），quote必须逐字存在于对应原文。" +
             "模版为：" + JsonSerializer.Serialize(template, WritingDocumentPolicy.JsonOptions) +
-            "。以这些小标题组织，不复制写作提示。额外返回intentCoverage数组：每项intentIndex是作者必达要点从0开始的序号，paragraphIds是承载该重点的正文段落id数组；没有承载位置时返回空数组，不得假称覆盖。这仅是建议，仍由作者核对。返回结构：" + shape;
+            "。以这些小标题组织，不复制写作提示。额外返回intentCoverage数组：每项intentIndex必须原样使用作者重点输入提供的编号，不得自行拆分作者重点或新增编号；paragraphIds是承载该重点的正文段落id数组；没有承载位置时返回空数组，不得假称覆盖。这仅是建议，仍由作者核对。返回结构：" + shape;
         if (reconcile) system += "本次只整理作者已补充的正文所派生的摘要、结论、适用范围、角色行动和intentCoverage。当前正文是权威输入；不得改写正文、问题、引用或确认记录。只返回summary、conclusions、scopeIn、scopeOut、roles、intentCoverage。每项角色必须给出存在的sectionId。明确保留未决问题及影响范围，未决事项不得写成确定行动；每项结论与角色行动带上改变执行的条件、例外、数值边界。";
-        var user = $"作者标题：{state.Title}\n作者必达要点：{string.Join("；", state.IntentPoints)}\n作者手动输入：\n{state.ManualInput}\n\n关联资料：\n{sourceText}";
+        var user = $"作者标题：{state.Title}\n{WritingDocumentPolicy.AuthorIntentPrompt(state.IntentPoints)}\n作者手动输入：\n{state.ManualInput}\n\n关联资料：\n{sourceText}";
         if (reconcile) user += "\n当前权威正文与作者回答：\n" + JsonSerializer.Serialize(new { state.Sections, state.Questions }, WritingDocumentPolicy.JsonOptions);
         using var context = requestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: run.Id, UserId: run.UserId, ViewRole: null,

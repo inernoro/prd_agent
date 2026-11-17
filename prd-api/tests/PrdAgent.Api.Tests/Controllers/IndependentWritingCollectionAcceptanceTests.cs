@@ -29,6 +29,73 @@ namespace PrdAgent.Api.Tests.Controllers;
 [Trait("Category", TestCategories.Integration)]
 public sealed class IndependentWritingCollectionAcceptanceTests
 {
+    [Theory]
+    [InlineData(false, 3)]
+    [InlineData(true, 4)]
+    public async Task PublicStoreCountsOnlyReaderVisibleDocumentsWithoutChangingOwnerCount(bool published, int expected)
+    {
+        await using var f = new Fixture();
+        await SeedPublicCountStoreAsync(f, published);
+        var controller = PublicCountController(f);
+
+        var listing = PublicCountData(await controller.ListPublicStores());
+        Assert.Equal(expected, Assert.Single(listing.GetProperty("items").EnumerateArray()).GetProperty("documentCount").GetInt32());
+        var detail = PublicCountData(await controller.GetPublicStore("store"));
+        Assert.Equal(expected, detail.GetProperty("documentCount").GetInt32());
+        var entries = PublicCountData(await controller.ListPublicStoreEntries("store"));
+        Assert.Equal(expected, entries.GetProperty("total").GetInt32());
+        Assert.Contains(entries.GetProperty("items").EnumerateArray(), entry => entry.GetProperty("id").GetString() == "source-c");
+        Assert.Equal(4, (await f.Db.DocumentStores.Find(store => store.Id == "store").SingleAsync()).DocumentCount);
+    }
+
+    [Theory]
+    [InlineData(false, 3)]
+    [InlineData(true, 1)]
+    public async Task StoreShareCountUsesVisibleTokenScopeInsteadOfOwnerTotal(bool singleEntry, int expected)
+    {
+        await using var f = new Fixture();
+        await SeedPublicCountStoreAsync(f, published: false);
+        await f.Db.DocumentStoreShareLinks.InsertOneAsync(new DocumentStoreShareLink {
+            Id = "share", StoreId = "store", Token = "public-count-token", CreatedBy = "owner",
+            EntryId = singleEntry ? "source-c" : null,
+        });
+        var controller = PublicCountController(f);
+
+        var share = PublicCountData(await controller.AccessShareLink("public-count-token"));
+        Assert.Equal(expected, share.GetProperty("store").GetProperty("documentCount").GetInt32());
+        var entries = PublicCountData(await controller.ListShareEntries("public-count-token"));
+        Assert.Equal(expected, entries.GetProperty("total").GetInt32());
+        Assert.DoesNotContain(entries.GetProperty("items").EnumerateArray(), entry => entry.GetProperty("id").GetString() == "draft");
+        Assert.Equal(4, (await f.Db.DocumentStores.Find(store => store.Id == "store").SingleAsync()).DocumentCount);
+    }
+
+    private static async Task SeedPublicCountStoreAsync(Fixture fixture, bool published)
+    {
+        await fixture.Db.DocumentStores.InsertManyAsync(new[] {
+            new DocumentStore { Id = "store", OwnerId = "owner", IsPublic = true, DocumentCount = 4 },
+            new DocumentStore { Id = "private-store", OwnerId = "owner", DocumentCount = 1 },
+        });
+        await fixture.Db.DocumentEntries.InsertManyAsync(new[] {
+            new DocumentEntry { Id = "source-a", StoreId = "store", Title = "原始规范" },
+            new DocumentEntry { Id = "source-b", StoreId = "store", Title = "旧版说明" },
+            // 被成文跳过的是引用关系，普通源文件仍可公开阅读，不能从可读数量中排除。
+            new DocumentEntry { Id = "source-c", StoreId = "store", Title = "已跳过引用的辅助原件" },
+            new DocumentEntry { Id = "draft", StoreId = "store", Title = "未发布草稿", Writing = new WritingDocumentState {
+                Stage = "confirm", Published = published ? new WritingPublication { Version = 1, Title = "稳定发布版" } : null,
+            } },
+            new DocumentEntry { Id = "foreign", StoreId = "private-store", Title = "其他库资料" },
+        });
+    }
+
+    private static JsonElement PublicCountData(IActionResult result) => JsonSerializer.SerializeToElement(
+        Assert.IsType<OkObjectResult>(result).Value, new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("data");
+
+    private static DocumentStoreController PublicCountController(Fixture fixture) => new(fixture.Db, null!, null!, Mock.Of<IDocumentService>(),
+        null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, new ConfigurationBuilder().Build(),
+        null!, null!, null!, null!, null!, NullLogger<DocumentStoreController>.Instance) {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+
     [Fact]
     public async Task SuccessfulCollectionEntryRecordsOneVisitAndAuxiliaryReadsDoNotAddVisits()
     {

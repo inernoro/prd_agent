@@ -130,7 +130,7 @@ public class WritingDeliveryPolicyTests
         var generated = new WritingDocumentState { Summary = "无效整理", IntentCoverage = new() {
             new WritingIntentCoverage { IntentIndex = 0, ParagraphIds = new() { "missing" } }
         } };
-        Assert.Throws<InvalidOperationException>(() => WritingDeliveryPolicy.ApplyReconciliation(state, generated));
+        Assert.Throws<WritingIntentCoverageException>(() => WritingDeliveryPolicy.ApplyReconciliation(state, generated));
         Assert.Equal("旧摘要", state.Summary);
         Assert.True(state.DerivedContentStale);
     }

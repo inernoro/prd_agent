@@ -17,6 +17,27 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class WritingDocumentPolicyTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AuthorIntentInputKeepsItemBoundariesIndexesAndText(bool empty)
+    {
+        var points = empty ? Array.Empty<string>() : new[] {
+            "仅演练空间；正式空间禁止。",
+            "失败停止；保留原件；不得重复归档。",
+            "200份边界先裁定；16:00时限与旧版冲突；例外需明确批准。"
+        };
+        var before = points.ToArray();
+        var prompt = WritingDocumentPolicy.AuthorIntentPrompt(points);
+        using var json = JsonDocument.Parse(prompt[(prompt.IndexOf('\n') + 1)..]);
+        Assert.Equal(points.Length, json.RootElement.GetArrayLength());
+        for (var index = 0; index < points.Length; index++) {
+            Assert.Equal(index, json.RootElement[index].GetProperty("intentIndex").GetInt32());
+            Assert.Equal(points[index], json.RootElement[index].GetProperty("text").GetString());
+        }
+        Assert.Equal(before, points);
+    }
+
     [Fact]
     public void SaveRequestJsonPreservesBothVideoAssociations()
     {

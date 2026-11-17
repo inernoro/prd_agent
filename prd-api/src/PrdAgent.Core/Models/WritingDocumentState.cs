@@ -157,10 +157,18 @@ public class WritingPublication
     public string? MobileVideoEntryId { get; set; }
 }
 
+public sealed class WritingIntentCoverageException : InvalidOperationException
+{
+    public WritingIntentCoverageException(string message) : base(message) { }
+}
+
 public static class WritingDocumentPolicy
 {
     public const string RunKind = "template-writing";
     public static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
+    public static string AuthorIntentPrompt(IReadOnlyList<string> points) =>
+        $"作者必达要点（共{points.Count}项；intentIndex只能使用下列原始编号，text内的分号不代表新条目，不得拆分条目或新增编号；没有条目时intentCoverage必须为空数组）：\n"
+        + JsonSerializer.Serialize(points.Select((text, intentIndex) => new { intentIndex, text }), JsonOptions);
     public static List<string> SubmissionProblems(WritingDocumentState state)
     {
         var problems = new List<string>();
@@ -213,7 +221,7 @@ public static class WritingDocumentPolicy
         if (state.Questions.Select(q => q.Id).Distinct().Count() != state.Questions.Count) throw new InvalidOperationException("确认事项编号重复，请重试");
         if (state.IntentCoverage.Select(c => c.IntentIndex).Distinct().Count() != state.IntentCoverage.Count
             || state.IntentCoverage.Any(c => c.IntentIndex < 0 || c.IntentIndex >= state.IntentPoints.Count || c.ParagraphIds.Any(id => !paragraphs.Any(p => p.Id == id))))
-            throw new InvalidOperationException("作者重点的承载位置无效，请重试");
+            throw new WritingIntentCoverageException("作者重点的承载位置无效，请重试");
         foreach (var coverage in state.IntentCoverage) { coverage.ConfirmedContentHash = ""; coverage.Confirmed = false; }
         foreach (var section in state.Sections) section.MetadataConfirmed = false;
         foreach (var question in state.Questions) {
