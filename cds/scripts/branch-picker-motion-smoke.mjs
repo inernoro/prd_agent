@@ -40,7 +40,7 @@ try {
   await page.goto(`${base}/code-reviews?view=source`, {waitUntil:'domcontentloaded'});
   await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
   await page.locator('.cr-project-choice').first().click();
-  const search = page.getByRole('textbox', { name: '搜索审查分支' });
+  const search = page.getByRole('combobox', { name: '搜索审查分支' });
   const hasPicker = await search.count() > 0;
   check(`${theme}: review reuses searchable branch picker`, hasPicker);
   if (hasPicker) {
@@ -119,7 +119,7 @@ try {
    await page.goto(`${base}/code-reviews?view=source`, {waitUntil:'domcontentloaded'});
    await page.locator('.cr-project-choice').first().click(); await search.focus();
    await page.getByRole('button',{name:/feature\/remote-29/}).waitFor({state:'attached'});
-   const fits = await page.locator('[aria-label="分支建议"]').evaluate(el=>{const r=el.getBoundingClientRect();return {fits:r.left>=0&&r.right<=innerWidth,scrollable:el.querySelector('.overflow-y-auto').scrollHeight>el.querySelector('.overflow-y-auto').clientHeight};});
+   const fits = await page.locator('[aria-label="分支建议"]').evaluate(el=>{const r=el.getBoundingClientRect();return {fits:r.left>=0&&r.right<=innerWidth,scrollable:el.scrollHeight>el.clientHeight};});
    check(`${theme}: mobile picker fits and scrolls all branches`,fits.fits&&fits.scrollable,fits);
    if(out) await page.screenshot({path:`${out}/mobile-${theme}.png`});
   }

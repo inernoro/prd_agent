@@ -1,12 +1,9 @@
-import { ReactElement, ReactNode, cloneElement, useContext, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useAnchoredPosition } from '@/components/ui/anchored-popover';
+import { ReactElement, ReactNode, cloneElement, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 
 import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { Button } from '@/components/ui/button';
-
-const POPOVER_WIDTH = 288;
-const POPOVER_GAP = 8;
-const VIEWPORT_PADDING = 8;
 
 interface ConfirmActionProps {
   trigger: ReactElement<{ onClick?: React.MouseEventHandler<HTMLElement>; disabled?: boolean; 'aria-expanded'?: boolean; 'aria-controls'?: string; 'aria-haspopup'?: 'dialog'; onKeyDown?: React.KeyboardEventHandler<HTMLElement> }>;
@@ -40,9 +37,10 @@ export function ConfirmAction({
   const titleText = typeof title === 'string' ? title : undefined;
   const descriptionText = typeof description === 'string' ? description : undefined;
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [popoverNode, setPopoverNode] = useState<HTMLDivElement | null>(null);
+  const panelRef = useMemo(() => ({ current: popoverNode }), [popoverNode]);
+  const position = useAnchoredPosition({ open, anchorRef: rootRef, panelRef, widthRem: 18, align: 'end', gap: 8 });
 
   function scopeIsCurrent(): boolean {
     const snapshot = openingScope.current;
@@ -58,57 +56,11 @@ export function ConfirmAction({
       didFocus.current = false;
       return;
     }
-    if (!position || !popoverNode || didFocus.current) return;
+    if (position.visibility !== 'visible' || !popoverNode || didFocus.current) return;
     didFocus.current = true;
     const cancel = popoverNode?.querySelector<HTMLElement>('[data-confirm-cancel]');
     (cancel || popoverNode)?.focus({ preventScroll: true });
   }, [open, position, popoverNode]);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setPosition(null);
-      return;
-    }
-
-    function updatePosition(): void {
-      const triggerRect = rootRef.current?.getBoundingClientRect();
-      if (!triggerRect) return;
-
-      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-      const viewportLeft = window.visualViewport?.offsetLeft ?? 0;
-      const viewportTop = window.visualViewport?.offsetTop ?? 0;
-      const popoverHeight = popoverNode?.offsetHeight ?? 0;
-      const minLeft = viewportLeft + VIEWPORT_PADDING;
-      const maxLeft = viewportLeft + viewportWidth - POPOVER_WIDTH - VIEWPORT_PADDING;
-      const preferredLeft = triggerRect.right - POPOVER_WIDTH;
-      const left = Math.min(Math.max(preferredLeft, minLeft), Math.max(minLeft, maxLeft));
-
-      const belowTop = triggerRect.bottom + POPOVER_GAP;
-      const aboveTop = triggerRect.top - popoverHeight - POPOVER_GAP;
-      const belowSpace = viewportTop + viewportHeight - VIEWPORT_PADDING - belowTop;
-      const aboveSpace = triggerRect.top - (viewportTop + VIEWPORT_PADDING) - POPOVER_GAP;
-      const shouldPlaceAbove = popoverHeight > 0 && belowSpace < popoverHeight && aboveSpace > belowSpace;
-      const unclampedTop = shouldPlaceAbove ? aboveTop : belowTop;
-      const maxTop = viewportTop + viewportHeight - VIEWPORT_PADDING - popoverHeight;
-      const top = Math.min(Math.max(unclampedTop, viewportTop + VIEWPORT_PADDING), Math.max(viewportTop + VIEWPORT_PADDING, maxTop));
-      const maxHeight = Math.max(120, viewportHeight - VIEWPORT_PADDING * 2);
-
-      setPosition({ left, top, maxHeight });
-    }
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    window.visualViewport?.addEventListener('resize', updatePosition);
-    window.visualViewport?.addEventListener('scroll', updatePosition);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-      window.visualViewport?.removeEventListener('resize', updatePosition);
-      window.visualViewport?.removeEventListener('scroll', updatePosition);
-    };
-  }, [open, title, description, popoverNode]);
 
   const triggerNode = cloneElement(trigger, {
     disabled: disabled || pending || trigger.props.disabled,
@@ -154,13 +106,7 @@ export function ConfirmAction({
           onKeyDown={event => event.stopPropagation()}
           onKeyUp={event => event.stopPropagation()}
           aria-label={typeof title === 'string' ? title : '确认操作'}
-          style={{
-            left: position?.left ?? VIEWPORT_PADDING,
-            top: position?.top ?? VIEWPORT_PADDING,
-            maxHeight: position?.maxHeight,
-            overflowY: 'auto',
-            visibility: position ? 'visible' : 'hidden',
-          }}
+          style={position}
         >
           <DialogPrimitive.Title className="text-sm font-semibold leading-5 text-foreground">{title}</DialogPrimitive.Title>
           {description ? <DialogPrimitive.Description asChild><div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div></DialogPrimitive.Description> : null}
