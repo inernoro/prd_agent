@@ -289,18 +289,18 @@ export function buildOverview(jobs: ScheduledJob[], runs: ScheduledJobRun[], now
     detail = '没有任务会被自动触发。启用其中任意一个，或用「立即执行」手动跑一次。';
   } else if (state === 'unresolved') {
     tone = 'warn';
-    headline = `${enabled.length} 个任务在跑，今日 ${failedLive} 次失败尚未复跑成功`;
+    headline = `${enabled.length} 个任务已启用，今日 ${failedLive} 次失败尚未复跑成功`;
     detail = `${unrecovered.length} 个任务挂过之后没有再成功跑过一次${skipTail}${orphanTail}${tail}。`;
   } else if (state === 'recovered') {
     tone = 'ok';
-    headline = `${enabled.length} 个任务在跑，今日 ${failedLive} 次失败均已恢复`;
+    headline = `${enabled.length} 个任务已启用，今日 ${failedLive} 次失败均已恢复`;
     detail = `挂过的任务之后都有成功的重跑${skipTail}${orphanTail}${tail}；接下来 6 小时将触发 ${upcoming} 次。`;
   } else {
     tone = 'ok';
     // 有孤儿失败时不能说「今日无失败」——紧挨着的统计段里「失败」那一栏是非零的。
     headline = orphanFailed
-      ? `${enabled.length} 个任务在跑，现有任务今日无失败`
-      : `${enabled.length} 个任务在跑，今日无失败`;
+      ? `${enabled.length} 个任务已启用，现有任务今日无失败`
+      : `${enabled.length} 个任务已启用，今日无失败`;
     detail = `接下来 6 小时将触发 ${upcoming} 次${skipTail}${orphanTail}${tail}。`;
   }
 

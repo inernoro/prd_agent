@@ -535,8 +535,14 @@ public sealed class CostReconciliationSummary
     public List<CostReconciliationItem> Items { get; set; } = new();
 }
 
+public sealed class ServiceKeyClientCutoverRequest
+{
+    public string? ExpectedSuccessorKeyId { get; set; }
+}
+
 public sealed class LegacyKeyCutoverUpdateRequest
 {
+    public long? ExpectedPolicyRevision { get; set; }
     public string? Status { get; set; }
     public DateTime? DeadlineAt { get; set; }
     public List<string>? AllowedAppCallerCodes { get; set; }

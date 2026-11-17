@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { buildLogRequestHref } from '@/lib/logNavigation';
 import { getCatalogEntries, getModelUpgrade, getModels, getPlatforms, runModelUpgradeAction, saveModelUpgradePolicy } from '@/lib/api';
 import type { CatalogEntriesData, ModelItem, ModelUpgradeAction, ModelUpgradePhase, ModelUpgradePolicy, ModelUpgradeSuccessor, ModelUpgradeView } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
@@ -224,7 +225,7 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
         <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap' }}>{([
           ['capabilities', '能力兼容'], ['price', '价格变化'], ['budget', '验证预算'], ['validation', '真实验证'],
         ] as const).map(([key, label]) => <Chip key={key} label={`${label} · ${key === 'validation' ? VALIDATION_STATUS[view.validationStatus] || '结果未知' : view.gates[key] ? '通过' : '待满足'}`} color={view.gates[key] ? 'var(--ok)' : 'var(--warn)'} bg={view.gates[key] ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
-        {view.candidate ? <span style={HINT_TEXT}>最近验证：{formatTime(view.candidate.validatedAt)}{view.candidate.validationRequestId ? <> · <Link to={`/logs?requestId=${encodeURIComponent(view.candidate.validationRequestId)}`}>查看验证记录</Link></> : null}</span> : null}
+        {view.candidate ? <span style={HINT_TEXT}>最近验证：{formatTime(view.candidate.validatedAt)}{view.candidate.validationRequestId ? <> · <Link to={buildLogRequestHref(view.candidate.validationRequestId)}>查看验证记录</Link></> : null}</span> : null}
         {view.actionDisabledReason ? <span style={HINT_TEXT}>{view.actionDisabledReason}</span> : null}
       </div>
       {view.identityKind !== 'stable' ? <InlineAlert tone="info">固定版本保持原始标识，不参与自动升级。</InlineAlert> : !canWrite ? <ReadOnlyNotice /> : null}
@@ -285,7 +286,7 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
         <div style={{ minHeight: 180 }}><CollectionView items={view.discoveries} placeholder="搜索待确认型号" searchText={item => `${item.upstreamModelId} ${provider(item.providerId)} ${item.message}`}>{items => <>{items.map(item => <div key={`${item.providerId}:${item.upstreamModelId}`} style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, paddingBlock: GAP.normal, borderBottom: '1px solid var(--border-subtle)' }}><strong style={{ overflowWrap: 'anywhere' }}>{item.upstreamModelId}</strong><span style={HINT_TEXT}>{provider(item.providerId)} · 待确认</span><span style={HINT_TEXT}>{item.message}</span></div>)}</>}</CollectionView></div>
       </DetailsBlock> : null}
       <h3 style={{ ...SECTION_TITLE, margin: 0 }}>升级与回滚记录</h3>
-      <div style={{ minHeight: 180 }}><CollectionView items={view.history} placeholder="搜索升级记录" searchText={item => `${item.message} ${HISTORY_ACTIONS[item.action] || item.action}`} emptyText="尚无升级或回滚记录。">{items => <>{items.map(item => <div key={item.id} style={{ paddingBlock: GAP.normal, borderBottom: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: GAP.tight }}><strong>{HISTORY_ACTIONS[item.action] || '版本维护'} · {HISTORY_STATUS[item.status] || '状态待确认'}</strong><span style={{ ...HINT_TEXT, overflowWrap: 'anywhere' }}>{item.message}</span><span style={HINT_TEXT}>{formatTime(item.createdAt)}{item.requestId ? <> · <Link to={`/logs?requestId=${encodeURIComponent(item.requestId)}`}>查看请求</Link></> : null}</span></div>)}</>}</CollectionView></div>
+      <div style={{ minHeight: 180 }}><CollectionView items={view.history} placeholder="搜索升级记录" searchText={item => `${item.message} ${HISTORY_ACTIONS[item.action] || item.action}`} emptyText="尚无升级或回滚记录。">{items => <>{items.map(item => <div key={item.id} style={{ paddingBlock: GAP.normal, borderBottom: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: GAP.tight }}><strong>{HISTORY_ACTIONS[item.action] || '版本维护'} · {HISTORY_STATUS[item.status] || '状态待确认'}</strong><span style={{ ...HINT_TEXT, overflowWrap: 'anywhere' }}>{item.message}</span><span style={HINT_TEXT}>{formatTime(item.createdAt)}{item.requestId ? <> · <Link to={buildLogRequestHref(item.requestId)}>查看请求</Link></> : null}</span></div>)}</>}</CollectionView></div>
     </> : null}
   </section>;
 }

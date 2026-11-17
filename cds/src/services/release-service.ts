@@ -395,6 +395,14 @@ interface ReleaseExecutionHandle {
   cancelledBy?: string;
 }
 
+/** Only validation before creating this request's run may use this rejection type. */
+export class ReleaseNotStartedError extends Error {
+  constructor(message: string) { super(message); this.name = 'ReleaseNotStartedError'; }
+}
+function rejectBeforeReleaseStart(error: unknown): never {
+  throw new ReleaseNotStartedError(error instanceof Error ? error.message : String(error));
+}
+
 export class ReleaseService {
   private readonly now: () => Date;
   private readonly execTimeoutMs: number;
@@ -931,15 +939,15 @@ export class ReleaseService {
   }
 
   async startRelease(input: ReleaseStartInput): Promise<ReleaseRun> {
-    const preflight = await this.resolvePreflight(input);
+    const preflight = await this.resolvePreflight(input).catch(rejectBeforeReleaseStart);
     if (!preflight.ok || !preflight.artifact || !preflight.target || !preflight.plan) {
-      throw new Error(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
+      throw new ReleaseNotStartedError(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
     }
     // 版本钳制（fail-closed）：调用方说「我要发的是这个 commit」时，绝不能因为分支
     // 在这期间前进了就默默改发别的版本。见 ReleaseStartInput.expectedCommitSha。
     const expectedCommitSha = (input.expectedCommitSha || '').trim();
     if (expectedCommitSha && expectedCommitSha !== preflight.artifact.commitSha) {
-      throw new Error(`分支已前进到 ${preflight.artifact.commitSha}，与请求的版本 ${expectedCommitSha} 不一致，已拒绝发布`);
+      throw new ReleaseNotStartedError(`分支已前进到 ${preflight.artifact.commitSha}，与请求的版本 ${expectedCommitSha} 不一致，已拒绝发布`);
     }
     // 并发串行化：同一发布目标已有在途 run（未到终态）时拒绝新发布，避免两个 SSH
     // 部署并发跑互相打架。在途 = 非终态，从 RELEASE_STATUS_TERMINAL 取反推导，
@@ -947,9 +955,11 @@ export class ReleaseService {
     //
     // 这道守卫是「卡死」的放大器：执行体随 CDS 重启消失后 run 永远停在 running，
     // 该目标从此发不出去。所以先做一次心跳收割，把已经死掉的 run 收敛掉再判定。
-    this.reconcileInterruptedReleases();
-    input.assertDispatchAllowed?.();
-    this.assertTargetFree(preflight.target.id, '发布');
+    try {
+      this.reconcileInterruptedReleases();
+      input.assertDispatchAllowed?.();
+      this.assertTargetFree(preflight.target.id, '发布');
+    } catch (error) { rejectBeforeReleaseStart(error); }
     const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const startedAt = this.nowIso();
     const run: ReleaseRun = {
@@ -1007,28 +1017,30 @@ export class ReleaseService {
   async startRollback(releaseId: string, operator?: string, targetReleaseId?: string,
     batch?: { id: string; attemptId: string; assertDispatchAllowed: () => void }): Promise<ReleaseRun> {
     const current = this.stateService.getReleaseRun(releaseId);
-    if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
+    if (!current) throw new ReleaseNotStartedError(`ReleaseRun not found: ${releaseId}`);
     const target = this.stateService.getReleaseTarget(current.targetId);
-    if (!target?.ssh) throw new Error('回滚需要站点发布目标');
-    if (target.lifecycle === 'archived') throw new Error(`${target.name} 已归档，禁止回滚`);
-    if (!target.isEnabled) throw new Error(`${target.name} 已禁用，禁止回滚`);
+    if (!target?.ssh) throw new ReleaseNotStartedError('回滚需要站点发布目标');
+    if (target.lifecycle === 'archived') throw new ReleaseNotStartedError(`${target.name} 已归档，禁止回滚`);
+    if (!target.isEnabled) throw new ReleaseNotStartedError(`${target.name} 已禁用，禁止回滚`);
     const previous = targetReleaseId
       ? this.stateService.getReleaseRun(targetReleaseId)
       : current.previousReleaseId
         ? this.stateService.getReleaseRun(current.previousReleaseId)
         : this.stateService.getLatestSuccessfulReleaseRun(current.targetId, current.releaseId);
-    if (!previous) throw new Error('没有可回滚的上一版本');
-    if (previous.targetId !== current.targetId) throw new Error('回滚目标版本不属于当前发布目标');
+    if (!previous) throw new ReleaseNotStartedError('没有可回滚的上一版本');
+    if (previous.targetId !== current.targetId) throw new ReleaseNotStartedError('回滚目标版本不属于当前发布目标');
     // 与保留策略 / 版本下拉共用同一个成功判定：这三处一旦分裂，就会出现
     // 「下拉里看得见、点下去说不是成功版本」或「保留策略以为没用而删掉」的错位。
-    if (!isSuccessfulReleaseRun(previous)) throw new Error('只能回滚到成功版本');
+    if (!isSuccessfulReleaseRun(previous)) throw new ReleaseNotStartedError('只能回滚到成功版本');
 
     // 回滚同样是往目标机器跑 SSH 写操作，必须过与发布同一道并发闸：
     // 此前这里一道闸都没有，取消后紧接着回滚会和尚未退出的老执行体并发写
     // （Codex PR #1273 P1）。先收一轮心跳过期的僵尸 run，免得闸门被死 run 卡住。
-    this.reconcileInterruptedReleases();
-    batch?.assertDispatchAllowed();
-    this.assertTargetFree(current.targetId, '回滚');
+    try {
+      this.reconcileInterruptedReleases();
+      batch?.assertDispatchAllowed();
+      this.assertTargetFree(current.targetId, '回滚');
+    } catch (error) { rejectBeforeReleaseStart(error); }
 
     const rollbackId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const rollbackStartedAt = this.nowIso();

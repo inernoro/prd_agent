@@ -1,15 +1,13 @@
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { GenerationDetailsDrawer } from '@/components/GenerationDetailsDrawer';
 
-type LogDetailLocationState = {
-  from?: string;
-};
+import { getLogReturnTarget, getLogTaskContext } from '@/lib/logNavigation';
 
 export function LogDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as LogDetailLocationState | null)?.from;
+  const target = getLogReturnTarget(getLogTaskContext(location.search));
 
   if (!id) return null;
 
@@ -17,7 +15,8 @@ export function LogDetailPage() {
     <GenerationDetailsDrawer
       logId={id}
       presentation="page"
-      onClose={() => navigate(from || '/logs')}
+      returnLabel={target.label}
+      onClose={() => navigate(target.href)}
     />
   );
 }

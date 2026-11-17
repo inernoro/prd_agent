@@ -22,6 +22,7 @@ import { BranchDrawerSkeleton } from '../../web/src/components/branch/BranchDraw
 import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCard.js';
 import { drawerTabs } from '../../web/src/components/branch/drawerTabs.js';
 import { ProjectListSkeleton, pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
+import { ACCEPTANCE_LAYOUT_CLASS, AcceptanceNavigation } from '../../web/src/components/reports/AcceptanceNavigation.js';
 import { SettingsPageSkeleton } from '../../web/src/components/skeletons/SettingsSkeleton.js';
 import { branchNoticeVisible, ResourceTcpConnectionStatus, ServiceLogsPanel } from '../../web/src/components/BranchDetailDrawer.js';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '../../web/src/pages/cds-settings/components.js';
@@ -146,7 +147,7 @@ describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () =
 describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件', () => {
   it('外壳的 Suspense fallback 按路由取 pageSkeletonForPath，不再自画固定方块', () => {
     const shell = stripComments(read('components/layout/AppShell.tsx'));
-    expect(shell).toContain('pageSkeletonForPath(pathname, { canManageProjects })');
+    expect(shell).toContain('pageSkeletonForPath(pathname, { canManageProjects, search })');
     expect(shell).toContain("from '@/components/skeletons/PageSkeletons'");
     const fallback = shell.slice(shell.indexOf('function ConsoleRouteFallback'), shell.indexOf('function ConsoleRouteFallback') + 1200);
     expect(fallback).not.toContain('cds-loading-skeleton-panel h-40');
@@ -204,9 +205,11 @@ describe('统一骨架：路由、数据和预览共用组件', () => {
     expect(markup(pageSkeletonForPath('/status'))).toBe(markup(createElement(MonitorCenterSkeleton)));
     expect(markup(pageSkeletonForPath('/branch-panel/fixture'))).toBe(markup(createElement(BranchDetailLoadingSkeleton)));
     expect(markup(pageSkeletonForPath('/cds-settings'))).toBe(markup(createElement(SettingsPageSkeleton)));
-    for (const route of ['/reports', '/task-schedule']) {
-      expect(markup(pageSkeletonForPath(route))).toBe(markup(createElement(LoadingBlock)));
-    }
+    expect(markup(pageSkeletonForPath('/task-schedule'))).toBe(markup(createElement(LoadingBlock)));
+    expect(markup(pageSkeletonForPath('/reports'))).toBe(markup(createElement('div', { className: ACCEPTANCE_LAYOUT_CLASS },
+      createElement(AcceptanceNavigation, { view: 'reports' }),
+      createElement(LoadingBlock, { label: '正在加载验收报告' }),
+    )));
   });
 
   it('预览展示实际的页面骨架，不再用 Logo 点阵替代', () => {

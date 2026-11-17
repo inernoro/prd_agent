@@ -5,13 +5,14 @@
  * 而真正能动生产的四个执行类端点（发起发布 / 回滚 / 重试 / 取消）反而没有这道门——
  * 一把全局 AI key 就能把任意项目发上生产。本测试把「执行不得比配置松」钉死。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createReleasesRouter } from '../../src/routes/releases.js';
+import { ReleaseService } from '../../src/services/release-service.js';
 import { StateService } from '../../src/services/state.js';
 import type { BranchEntry, ReleaseRun, ReleaseRunStatus, ReleaseTarget } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -54,6 +55,7 @@ describe('release execution endpoints require a project-scoped key for AI caller
   let tmpDir: string;
   let stateService: StateService;
   let server: http.Server;
+  let releaseService: ReleaseService;
 
   const KEY_A = 'TEST-KEY-A';
   const UNSCOPED_AI = { 'X-AI-Access-Key': 'global-ai-key' };
@@ -128,6 +130,7 @@ describe('release execution endpoints require a project-scoped key for AI caller
     addRun('rel-success', 'success');
     addRun('rel-inflight', 'running');
 
+    releaseService = new ReleaseService(stateService);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -135,7 +138,7 @@ describe('release execution endpoints require a project-scoped key for AI caller
       if (h === KEY_A) (req as any).cdsProjectKey = { projectId: 'proj-a', keyId: 'k-a' };
       next();
     });
-    app.use('/api', createReleasesRouter({ stateService, config: { worktreeBase: path.join(tmpDir, 'wt') } }));
+    app.use('/api', createReleasesRouter({ stateService, releaseService, config: { worktreeBase: path.join(tmpDir, 'wt') } }));
 
     await new Promise<void>((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   });
@@ -144,6 +147,63 @@ describe('release execution endpoints require a project-scoped key for AI caller
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it.each(['', undefined])('does not start retry when original SHA is %s', async sha => {
+    const source = stateService.getReleaseRun('rel-success')!;
+    source.commitSha = sha as string;
+    const start = vi.spyOn(releaseService, 'startRelease');
+    const before = stateService.getReleaseRuns().length;
+    const result = await request(server, 'POST', '/api/releases/runs/rel-success/retry', {}, {});
+    expect(result.status).toBe(409);
+    expect(result.body.error).toContain('来源版本');
+    expect(start).not.toHaveBeenCalled();
+    expect(stateService.getReleaseRuns()).toHaveLength(before);
+  });
+
+  it('pins retry to the original source version before any execution', async () => {
+    const start = vi.spyOn(releaseService, 'startRelease').mockRejectedValueOnce(new Error('版本不一致'));
+    const before = stateService.getReleaseRuns().length;
+    const result = await request(server, 'POST', '/api/releases/runs/rel-success/retry', {}, {});
+    expect(result.status).toBe(409);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ branchId: 'branch-a', targetId: 'target-a', expectedCommitSha: 'rel-success-commit' }));
+    expect(stateService.getReleaseRuns()).toHaveLength(before);
+  });
+
+  it.each(['preflight', 'stale-sha', 'busy'])('marks %s refusal before run creation as a correlated definite rejection', async reason => {
+    const sha = 'a'.repeat(40);
+    vi.spyOn(releaseService, 'preflight').mockResolvedValue({
+      ok: reason !== 'preflight',
+      checks: reason === 'preflight' ? [{ id: 'blocked', label: '目标不可发布', status: 'fail', blocking: true }] : [],
+      artifact: { type: 'branch-preview', commitSha: sha, branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      target: stateService.getReleaseTarget('target-a')!, plan: { id: 'plan-a', steps: [] },
+    } as never);
+    const before = stateService.getReleaseRuns().length;
+    const result = await request(server, 'POST', '/api/releases/branches/branch-a/runs', { 'X-CDS-Request-Id': 'refused-before-start' }, {
+      targetId: 'target-a', expectedCommitSha: reason === 'stale-sha' ? 'b'.repeat(40) : sha,
+    });
+    expect(result.status).toBe(409);
+    expect(result.body).toMatchObject({ releaseOutcome: 'not-started', requestId: 'refused-before-start' });
+    expect(stateService.getReleaseRuns()).toHaveLength(before);
+  });
+
+  it('does not claim not-started when a run was created before flush failed', async () => {
+    const sha = 'a'.repeat(40);
+    stateService.getReleaseRun('rel-inflight')!.status = 'success';
+    vi.spyOn(releaseService, 'preflight').mockResolvedValue({ ok: true, checks: [],
+      artifact: { type: 'branch-preview', commitSha: sha, branchId: 'branch-a', branchName: 'main', previewUrl: 'https://a.example.test' },
+      target: stateService.getReleaseTarget('target-a')!, plan: { id: 'plan-a', steps: [] },
+    } as never);
+    const originalStart = releaseService.startRelease.bind(releaseService);
+    vi.spyOn(releaseService, 'startRelease').mockImplementation(input => originalStart({ ...input, batchId: 'flush-boundary-test' }));
+    const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('flush failed after run creation'));
+    const before = stateService.getReleaseRuns().length;
+    const result = await request(server, 'POST', '/api/releases/branches/branch-a/runs', { 'X-CDS-Request-Id': 'created-before-flush-error' }, { targetId: 'target-a', expectedCommitSha: sha });
+    flush.mockRestore();
+    expect(result.status).toBe(409);
+    expect(result.body.error).toContain('flush failed');
+    expect(result.body).not.toHaveProperty('releaseOutcome');
+    expect(stateService.getReleaseRuns()).toHaveLength(before + 1);
   });
 
   it('refuses an unscoped AI key from starting a release run', async () => {

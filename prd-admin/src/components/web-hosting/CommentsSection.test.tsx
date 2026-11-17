@@ -56,6 +56,29 @@ describe('annotation entry availability', () => {
     expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
     expect(container.querySelector('.review-thread')).toBeNull();
   });
+  it.each([false, true])('版本信息恢复后保留故障期间手动选择的页签，当前版有意见=%s', async hasCurrentComment => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'existing', siteId: 'site', content: '已保存的意见', contentVersion: hasCurrentComment ? 'current' : 'old', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview) => root.render(<CommentsSection mode="share" token="share" review={review} />);
+    await act(async () => render({ loading: false, error: '版本暂不可用', selected: undefined, versions: [] } as unknown as HostedReview));
+    const chosen = hasCurrentComment ? '其他版本' : '本版';
+    await act(async () => button(hasCurrentComment ? '其他版本 1' : '本版 0').click());
+    await act(async () => render({ loading: false, selected: { id: 'v2', versionLabel: 'V2', contentVersionKey: 'current' }, versions: [] } as unknown as HostedReview));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain(chosen);
+  });
+  it('未手动选择页签时，版本恢复后默认展示已确认属于当前版的意见', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'existing', siteId: 'site', content: '当前版已有意见', contentVersion: 'current', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview) => root.render(<CommentsSection mode="share" token="share" review={review} />);
+    await act(async () => render({ loading: false, error: '版本暂不可用', selected: undefined, versions: [] } as unknown as HostedReview));
+    await act(async () => render({ loading: false, selected: { id: 'v2', versionLabel: 'V2', contentVersionKey: 'current' }, versions: [] } as unknown as HostedReview));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
+    expect(container.querySelector('.review-thread')?.textContent).toContain('当前版已有意见');
+  });
   it('首次打开默认展示已解决和未解决批注，不因默认筛选隐藏已有意见', async () => {
     list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
       { id: 'resolved', siteId: 'site', content: '已经解决的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },

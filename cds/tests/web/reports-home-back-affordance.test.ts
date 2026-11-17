@@ -25,11 +25,19 @@ describe('验收报告主页 · 桌面端返回入口', () => {
   });
 
   it('阅读器的 onBack 复位 selected，让页面回到结论首页', () => {
-    expect(SRC).toContain('onBack={() => setSelected(null)}');
+    expect(SRC).toContain('onBack={closeReport}');
+    const close = SRC.slice(SRC.indexOf('const closeReport ='), SRC.indexOf('// 从列表发起的弹窗动作'));
+    expect(close).toContain('setSelected(null)');
+    expect(close).toContain('position = { ...readingPosition.current }');
+    expect(close).toContain('scrollTo({ top: position.scroll })');
+    expect(close).toContain('currentProject.current !== returningProject');
+    expect(close).toContain('selectedRef.current');
   });
 
-  it('未选中报告时渲染结论首页，选中后才回到列表 + 阅读器', () => {
+  it('未选中报告时显示清单或概况，已选正文不依赖清单读取成功', () => {
     expect(SRC).toContain("state.status === 'ok' && !selected");
-    expect(SRC).toContain("state.status === 'ok' && selected");
+    expect(SRC).toContain("const selected = centerView === 'reports' && selectedReport");
+    expect(SRC).toContain("{selected ? (");
+    expect(SRC).not.toContain("state.status === 'ok' && selected");
   });
 });
