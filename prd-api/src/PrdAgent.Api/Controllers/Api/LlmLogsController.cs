@@ -33,13 +33,15 @@ public class LlmLogsController : ControllerBase
 
     private readonly PrdAgent.Infrastructure.Services.LogArchiveService _archives;
     private readonly IConfiguration _config;
+    private readonly ILogger<LlmLogsController>? _logger;
 
-    public LlmLogsController(MongoDbContext db, IAssetStorage assetStorage, PrdAgent.Infrastructure.Services.LogArchiveService archives, IConfiguration config)
+    public LlmLogsController(MongoDbContext db, IAssetStorage assetStorage, PrdAgent.Infrastructure.Services.LogArchiveService archives, IConfiguration config, ILogger<LlmLogsController>? logger = null)
     {
         _db = db;
         _assetStorage = assetStorage;
         _archives = archives;
         _config = config;
+        _logger = logger;
     }
 
     private static string TruncatePreview(string? s, int maxChars)
@@ -370,11 +372,26 @@ public class LlmLogsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     }
 
+    private async Task<(LlmRequestLog? Log, IActionResult? Error)> ReadLogAsync(string id)
+    {
+        try
+        {
+            var raw = await _archives.HydrateAsync(PrdAgent.Api.Services.InstanceIdentity.Get(_config), "llm", id, HttpContext.RequestAborted);
+            return (raw == null ? null : MongoDB.Bson.Serialization.BsonSerializer.Deserialize<LlmRequestLog>(raw), null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogWarning("Log detail read failed; type {Type}", ex.GetType().Name);
+            return (null, StatusCode(503, ApiResponse<object>.Fail("LOG_ARCHIVE_UNAVAILABLE",
+                "日志原文暂时无法回读，请稍后重试或联系管理员检查冷库；已保存的日志仍保留。")));
+        }
+    }
+
     [HttpGet("{id}")]
     public async Task<IActionResult> Detail(string id)
     {
-        var raw = await _archives.HydrateAsync(PrdAgent.Api.Services.InstanceIdentity.Get(_config), "llm", id, HttpContext.RequestAborted);
-        var log = raw == null ? null : MongoDB.Bson.Serialization.BsonSerializer.Deserialize<LlmRequestLog>(raw);
+        var (log, error) = await ReadLogAsync(id);
+        if (error != null) return error;
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         return Ok(ApiResponse<LlmRequestLog>.Ok(log));
@@ -390,8 +407,8 @@ public class LlmLogsController : ControllerBase
     [HttpGet("{id}/restore-text")]
     public async Task<IActionResult> RestoreText(string id)
     {
-        var raw = await _archives.HydrateAsync(PrdAgent.Api.Services.InstanceIdentity.Get(_config), "llm", id, HttpContext.RequestAborted);
-        var log = raw == null ? null : MongoDB.Bson.Serialization.BsonSerializer.Deserialize<LlmRequestLog>(raw);
+        var (log, error) = await ReadLogAsync(id);
+        if (error != null) return error;
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         var restoreErrors = new List<string>();
@@ -466,8 +483,8 @@ public class LlmLogsController : ControllerBase
     [HttpGet("{id}/replay-curl")]
     public async Task<IActionResult> ReplayCurl(string id)
     {
-        var raw = await _archives.HydrateAsync(PrdAgent.Api.Services.InstanceIdentity.Get(_config), "llm", id, HttpContext.RequestAborted);
-        var log = raw == null ? null : MongoDB.Bson.Serialization.BsonSerializer.Deserialize<LlmRequestLog>(raw);
+        var (log, error) = await ReadLogAsync(id);
+        if (error != null) return error;
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         try

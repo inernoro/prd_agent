@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ApiLogsListParams } from '@/services/contracts/apiLogs';
 
 const requests = vi.hoisted(() => ({
-  list: vi.fn((_params?: ApiLogsListParams, _signal?: AbortSignal) => new Promise<never>(() => {})),
+  list: vi.fn((_params?: ApiLogsListParams, _signal?: AbortSignal): Promise<unknown> => new Promise<never>(() => {})),
   meta: vi.fn((_signal?: AbortSignal) => Promise.resolve({ success: true, data: { clientTypes: [], methods: [], appNames: [] } })),
 }));
 vi.mock('@/services', () => ({ getApiLogs: requests.list, getApiLogsMeta: requests.meta, getApiLogDetail: vi.fn(), getLlmLogs: vi.fn() }));
@@ -28,6 +28,7 @@ beforeEach(() => {
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
   vi.useFakeTimers();
   vi.clearAllMocks();
+  requests.list.mockImplementation(() => new Promise<never>(() => {}));
   host = document.createElement('div'); document.body.append(host);
   root = createRoot(host); unmounted = false;
 });
@@ -46,4 +47,21 @@ it('keeps one pending poll, loads the page once, and cancels work when leaving',
   await act(async () => root.unmount()); unmounted = true;
   expect(signals.every((s) => s?.aborted)).toBe(true);
   expect(requests.meta.mock.calls[0][0]?.aborted).toBe(true);
+});
+
+it('resets changed filters to the first page while retaining normal pagination', async () => {
+  requests.list.mockImplementation(async (params) => ({ success: true, data: { items: [], total: 150, page: params?.page ?? 1, pageSize: 30 } }));
+  await act(async () => root.render(<SystemLogsTab />));
+  const next = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === '下一页')!;
+  await act(async () => next.click());
+  expect(requests.list.mock.calls.filter(([p]) => p?.status !== 'running').at(-1)?.[0]?.page).toBe(2);
+  requests.list.mockClear();
+  const path = host.querySelector<HTMLInputElement>('input[placeholder="path"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(path, '/changed');
+    path.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  const filtered = requests.list.mock.calls.filter(([p]) => p?.status !== 'running' && p?.path === '/changed');
+  expect(filtered).toHaveLength(1);
+  expect(filtered[0][0]?.page).toBe(1);
 });

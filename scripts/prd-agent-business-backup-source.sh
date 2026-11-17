@@ -15,8 +15,8 @@ for name in prdagent llm_gateway admin; do
   available=$(df -Pk /var/lib/prd-agent | awk 'NR==2 {print $4}')
   [ "$available" -gt 10485760 ] || { echo 'Less than 10 GiB free; refusing new dump' >&2; exit 1; }
   date -u +%FT%TZ > "$root/$name.started"
-  # Conservative file-size ceiling preserves at least 10 GiB even if the dump grows.
-  (ulimit -f "$((available - 10485760))"; timeout 2h docker exec prdagent-mongodb nice -n 19 ionice -c 3 mongodump --numParallelCollections=1 --db "$name" --archive --gzip > "$root/$name.archive.gz.partial" 2> "$root/$name.dump.log")
+  # df reports KiB; use an explicit byte ceiling, independent of shell ulimit units.
+  prlimit --fsize="$(((available - 10485760) * 1024))" -- timeout 2h docker exec prdagent-mongodb nice -n 19 ionice -c 3 mongodump --numParallelCollections=1 --db "$name" --archive --gzip > "$root/$name.archive.gz.partial" 2> "$root/$name.dump.log"
   nice -n 19 ionice -c 3 gzip -t "$root/$name.archive.gz.partial"
   mv "$root/$name.archive.gz.partial" "$root/$name.archive.gz"
   (cd "$root" && nice -n 19 ionice -c 3 sha256sum "$name.archive.gz" > "$name.archive.gz.sha256")
@@ -25,8 +25,10 @@ done
 # Capture after all hot-log dumps: every cold pointer in them predates this
 # immutable archive-directory snapshot, including cross-database pointers.
 name=log-archive-index
+available=$(df -Pk /var/lib/prd-agent | awk 'NR==2 {print $4}')
+[ "$available" -gt 10485760 ] || { echo 'Less than 10 GiB free; refusing archive-directory dump' >&2; exit 1; }
 date -u +%FT%TZ > "$root/$name.started"
-timeout 10m docker exec prdagent-mongodb nice -n 19 ionice -c 3 mongodump --numParallelCollections=1 --db prdagent --collection log_archive_batches --archive --gzip > "$root/$name.archive.gz.partial" 2> "$root/$name.dump.log"
+prlimit --fsize="$(((available - 10485760) * 1024))" -- timeout 10m docker exec prdagent-mongodb nice -n 19 ionice -c 3 mongodump --numParallelCollections=1 --db prdagent --collection log_archive_batches --archive --gzip > "$root/$name.archive.gz.partial" 2> "$root/$name.dump.log"
 nice -n 19 ionice -c 3 gzip -t "$root/$name.archive.gz.partial"
 mv "$root/$name.archive.gz.partial" "$root/$name.archive.gz"
 (cd "$root" && nice -n 19 ionice -c 3 sha256sum "$name.archive.gz" > "$name.archive.gz.sha256")

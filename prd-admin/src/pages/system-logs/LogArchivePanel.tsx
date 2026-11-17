@@ -8,7 +8,7 @@ import { apiRequest, apiDownload } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 
 type Policy = { ready: boolean; enabled: boolean; hotDays: number; lastCompletedAt: string | null; error: string };
-type Batch = { id: string; source: string; status: string; from: string; to: string; count: number; rawBytes: number; storedBytes: number; migrated: number; verifiedAt: string | null; restoredAt: string | null; records: { id: string; requestId: string }[] };
+type Batch = { id: string; source: string; status: string; from: string; to: string; count: number; rawBytes: number; storedBytes: number; migrated: number; hotBodiesRetained?: boolean; verifiedAt: string | null; restoredAt: string | null; records: { id: string; requestId: string }[] };
 const names: Record<string, string> = { api: '系统请求', llm: '模型请求', 'legacy-llm': '历史模型请求', execution: '网关执行记录' };
 const states: Record<string, string> = { uploading: '正在归档', verified: '已校验', completed: '归档完成', failed: '归档中断，可重试' };
 const time = (value: string) => new Date(value).toLocaleString();
@@ -78,7 +78,7 @@ export default function LogArchivePanel() {
       <span className="ml-auto text-xs font-normal" style={{ color: 'var(--text-secondary)' }}>压缩异机保存，历史内容可查回</span>
     </button>
     {open && <div className="mt-4 space-y-4 max-h-[55vh] overflow-auto">
-      <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>完整日志加密保存至异机冷库，校验并实际回读成功后才迁出热库正文；保留检索索引，冷库不自动删除。查询已有归档无需恢复到热库。</p>
+      <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>完整日志加密保存至异机冷库，校验并实际回读成功后才迁出热库正文；网关读取和请求重放所需正文继续保留热库。冷库不自动删除，查询已有归档无需恢复到热库。</p>
       {canWrite && <div className="flex flex-wrap items-center gap-3">
         <label className="text-sm flex gap-2 items-center"><input type="checkbox" checked={enabled} disabled={!policy?.ready || !!busy} onChange={(e) => setEnabled(e.target.checked)} />启用自动归档与正文迁出</label>
         <label className="text-sm">热库保留 <input aria-label="热库保留天数" type="number" min={7} max={365} value={days} onChange={(e) => setDays(Number(e.target.value))} className={`${input} w-20`} /> 天</label>
@@ -102,7 +102,7 @@ export default function LogArchivePanel() {
       {!items.length && <p className="py-4 text-sm" style={{ color: 'var(--text-muted)' }}>此范围暂无归档；可调整日期和请求标识后查询。</p>}
       {items.map((batch) => <div key={batch.id} className="rounded-xl border border-[var(--border-subtle)] p-3 space-y-2">
         <div className="flex flex-wrap gap-3 items-center text-sm"><b>{names[batch.source] || batch.source}</b><span>{states[batch.status] || '等待核查'}</span><span>{batch.count} 条</span><span>{bytes(batch.rawBytes)} → {bytes(batch.storedBytes)}</span></div>
-        <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{time(batch.from)} 至 {time(batch.to)}；已迁出 {batch.migrated} 条正文{batch.verifiedAt && `；最近校验 ${time(batch.verifiedAt)}`}</div>
+        <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{time(batch.from)} 至 {time(batch.to)}；{batch.hotBodiesRetained ? '完整正文保留热库，兼容网关读取与请求重放' : `已迁出 ${batch.migrated} 条正文`}{batch.verifiedAt && `；最近校验 ${time(batch.verifiedAt)}`}</div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={!!busy || !batch.verifiedAt} onClick={() => setExpanded(expanded === batch.id ? '' : batch.id)}>查看日志</Button>
           <Button size="sm" disabled={!!busy || !batch.verifiedAt} onClick={() => void act(`${batch.id}-download`, async () => {

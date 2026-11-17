@@ -537,6 +537,13 @@ jobs:
       - name: Build
         run: dotnet build PrdAgent.sln -c Release --no-restore
 
+      - name: Verify log archive and TTL boundaries in isolated MongoDB fixtures
+        run: |
+          dotnet test tests/PrdAgent.Tests/PrdAgent.Tests.csproj -c Release --no-build --no-restore \
+            --filter 'FullyQualifiedName~PrdAgent.Tests.Services.LogArchive'
+          dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj -c Release --no-build --no-restore \
+            --filter 'FullyQualifiedName~GatewayRuntimeGovernanceTests.Initializer_RestartKeepsExpiredExecutionBodiesAndTemporaryStateTtl|FullyQualifiedName~GatewayRuntimeGovernanceTests.ArchivedDetailFailuresReturnRecoverableError'
+
       - name: LLMGW protocol simulation (production adapters, synthetic provider)
         working-directory: ${{ github.workspace }}
         env:

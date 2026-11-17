@@ -22,6 +22,7 @@ public sealed class LogArchivesController(LogArchiveService archives, IConfigura
         id = b["_id"].AsString, source = b["Source"].AsString, status = b["Status"].AsString,
         createdAt = Date(b, "CreatedAt"), from = Date(b, "From"), to = Date(b, "To"), count = b["Count"].ToInt32(),
         rawBytes = b["RawBytes"].ToInt64(), storedBytes = b["StoredBytes"].ToInt64(), migrated = b.GetValue("Migrated", 0).ToInt32(),
+        hotBodiesRetained = b.GetValue("HotBodiesRetained", false).AsBoolean,
         verifiedAt = Date(b, "VerifiedAt"), restoredAt = Date(b, "RestoredAt"),
         records = b["Records"].AsBsonArray.Select(x => new { id = x["Id"].ToString(), requestId = x["RequestId"].ToString() })
     };

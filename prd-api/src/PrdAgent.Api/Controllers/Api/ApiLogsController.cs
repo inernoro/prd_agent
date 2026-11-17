@@ -22,12 +22,14 @@ public class ApiLogsController : ControllerBase
 
     private readonly PrdAgent.Infrastructure.Services.LogArchiveService _archives;
     private readonly IConfiguration _config;
+    private readonly ILogger<ApiLogsController>? _logger;
 
-    public ApiLogsController(MongoDbContext db, PrdAgent.Infrastructure.Services.LogArchiveService archives, IConfiguration config)
+    public ApiLogsController(MongoDbContext db, PrdAgent.Infrastructure.Services.LogArchiveService archives, IConfiguration config, ILogger<ApiLogsController>? logger = null)
     {
         _db = db;
         _archives = archives;
         _config = config;
+        _logger = logger;
     }
 
     private sealed class MetaUser
@@ -305,11 +307,26 @@ public class ApiLogsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     });
 
+    private async Task<(ApiRequestLog? Log, IActionResult? Error)> ReadLogAsync(string id)
+    {
+        try
+        {
+            var raw = await _archives.HydrateAsync(PrdAgent.Api.Services.InstanceIdentity.Get(_config), "api", id, HttpContext.RequestAborted);
+            return (raw == null ? null : MongoDB.Bson.Serialization.BsonSerializer.Deserialize<ApiRequestLog>(raw), null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogWarning("Log detail read failed; type {Type}", ex.GetType().Name);
+            return (null, StatusCode(503, ApiResponse<object>.Fail("LOG_ARCHIVE_UNAVAILABLE",
+                "日志原文暂时无法回读，请稍后重试或联系管理员检查冷库；已保存的日志仍保留。")));
+        }
+    }
+
     [HttpGet("{id}")]
     public async Task<IActionResult> Detail(string id)
     {
-        var raw = await _archives.HydrateAsync(PrdAgent.Api.Services.InstanceIdentity.Get(_config), "api", id, HttpContext.RequestAborted);
-        var log = raw == null ? null : MongoDB.Bson.Serialization.BsonSerializer.Deserialize<ApiRequestLog>(raw);
+        var (log, error) = await ReadLogAsync(id);
+        if (error != null) return error;
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         // 解析用户名

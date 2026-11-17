@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,6 +15,37 @@ spec.loader.exec_module(rpc)
 
 
 class SourceBoundaryTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('prlimit'), 'Native Linux resource-limit test')
+    def test_dump_ceiling_uses_the_full_byte_budget_and_still_stops_overflow(self):
+        script = Path(__file__).resolve().parents[1] / 'prd-agent-business-backup-source.sh'
+        for payload_size, metadata_size, expected_success in [(6000, 6000, True), (12000, 6000, False), (6000, 12000, False)]:
+            with self.subTest(payload_size=payload_size, metadata_size=metadata_size), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                binaries = root / 'bin'; binaries.mkdir()
+                fake_df = binaries / 'df'
+                fake_df.write_text('#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 20000000 0 10485768 0%% /fixture\\n"\n')
+                fake_df.chmod(0o700)
+                docker = binaries / 'docker'
+                docker.write_text('#!' + os.sys.executable + '\nimport gzip,random,sys\n'
+                    'size=' + str(metadata_size) + ' if "log_archive_batches" in sys.argv else ' + str(payload_size) + '\n'
+                    'sys.stdout.buffer.write(gzip.compress(random.Random(7).randbytes(size)) if "mongodump" in sys.argv else b"{}")\n')
+                docker.chmod(0o700)
+                program = root / 'source.sh'
+                program.write_text(script.read_text().replace('/var/lib/prd-agent/business-backups', str(root / 'backups'))
+                    .replace('/run/lock/prd-agent-business-backup.lock', str(root / 'source.lock')))
+                result = subprocess.run(['sh', str(program), '20261117T000000Z'],
+                    env={**os.environ, 'PATH': str(binaries) + os.pathsep + os.environ['PATH']},
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode == 0, expected_success, result.stderr)
+                folder = root / 'backups' / '20261117T000000Z'
+                self.assertEqual((folder / 'status').read_text().strip(), 'completed' if expected_success else 'failed')
+                if expected_success:
+                    self.assertGreater((folder / 'prdagent.archive.gz').stat().st_size, 4096)
+                    self.assertTrue((folder / 'admin.archive.gz.sha256').is_file())
+                else:
+                    failed = 'prdagent' if payload_size > 8192 else 'log-archive-index'
+                    self.assertLessEqual((folder / (failed + '.archive.gz.partial')).stat().st_size, 8192)
+
     def test_unmounted_vault_is_rejected_before_creating_a_backup_or_contacting_source(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

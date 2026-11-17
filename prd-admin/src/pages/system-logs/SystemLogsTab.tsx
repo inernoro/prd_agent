@@ -312,10 +312,15 @@ export default function SystemLogsTab() {
     return () => controller.abort();
   }, [loadMeta]);
 
+  const listFilterKey = JSON.stringify([pageSize, qUserId, qPath, qRequestId, qStatusCode, qClientType, qMethod, qAppName, qDirection, qStatus, qFrom, qTo, excludeNoise]);
+  const previousListFilter = useRef(listFilterKey);
   useEffect(() => {
+    const filterChanged = previousListFilter.current !== listFilterKey;
+    previousListFilter.current = listFilterKey;
+    if (filterChanged && page !== 1) { setPage(1); return; }
     void load();
     return () => { listRequest.current?.abort(); listRequest.current = null; };
-  }, [load]);
+  }, [load, listFilterKey, page]);
 
   useEffect(() => {
     void loadRunning();

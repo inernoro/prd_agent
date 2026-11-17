@@ -28,7 +28,7 @@ public class LogArchiveCodecTests
     }
 }
 
-/// <summary>Named integration suite: owns a fresh loopback Mongo process, never uses production credentials.</summary>
+/// <summary>Named integration suite: owns fresh databases in CI Mongo or a loopback process, never uses production credentials.</summary>
 [Trait("Category", "Integration")]
 public sealed class LogArchiveIntegrationTests : IAsyncLifetime
 {
@@ -41,20 +41,32 @@ public sealed class LogArchiveIntegrationTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         Directory.CreateDirectory(_dir);
-        var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
-        if (port == 27017) throw new InvalidOperationException("Refusing default Mongo port");
-        var info = new ProcessStartInfo("mongod") { UseShellExecute = false };
-        foreach (var arg in new[] { "--dbpath", _dir, "--bind_ip", "127.0.0.1", "--port", port.ToString(), "--nounixsocket", "--wiredTigerCacheSizeGB", "0.25", "--setParameter", "ttlMonitorEnabled=false", "--logpath", Path.Combine(_dir, "mongo.log") }) info.ArgumentList.Add(arg);
-        _process = Process.Start(info)!;
-        var uri = "mongodb://127.0.0.1:" + port + "/?serverSelectionTimeoutMS=1000";
-        for (var i = 0; i < 60; i++)
+        var uri = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION");
+        var ci = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true";
+        if (ci && !string.IsNullOrWhiteSpace(uri))
         {
-            try { await new MongoClient(uri).GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1)); break; }
-            catch { if (i == 59) throw; await Task.Delay(200); }
+            var endpoint = new Uri(uri);
+            if (endpoint.Host is not ("127.0.0.1" or "localhost") || !string.IsNullOrEmpty(endpoint.UserInfo))
+                throw new InvalidOperationException("Only the credential-free CI loopback fixture is permitted");
         }
-        _db = new MongoDbContext(uri, "business", "gateway");
-        _gw = new LlmGatewayDataContext(uri, "gateway");
+        else
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
+            if (port == 27017) throw new InvalidOperationException("Refusing default Mongo port");
+            var info = new ProcessStartInfo("mongod") { UseShellExecute = false };
+            foreach (var arg in new[] { "--dbpath", _dir, "--bind_ip", "127.0.0.1", "--port", port.ToString(), "--nounixsocket", "--wiredTigerCacheSizeGB", "0.25", "--setParameter", "ttlMonitorEnabled=false", "--logpath", Path.Combine(_dir, "mongo.log") }) info.ArgumentList.Add(arg);
+            _process = Process.Start(info)!;
+            uri = "mongodb://127.0.0.1:" + port + "/?serverSelectionTimeoutMS=1000";
+            for (var i = 0; i < 60; i++)
+            {
+                try { await new MongoClient(uri).GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1)); break; }
+                catch { if (i == 59) throw; await Task.Delay(200); }
+            }
+        }
+        var prefix = "log_archive_test_" + Guid.NewGuid().ToString("N");
+        _db = new MongoDbContext(uri!, prefix + "_business", prefix + "_gateway");
+        _gw = new LlmGatewayDataContext(uri!, prefix + "_gateway");
         await _db.Database.GetCollection<BsonDocument>("log_archive_policies").Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(new BsonDocument("OwnerId", 1), new CreateIndexOptions { Unique = true }));
         foreach (var name in new[] { "apirequestlogs", "llmrequestlogs" })
             await _db.Database.GetCollection<BsonDocument>(name).Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(new BsonDocument { { "ColdArchiveId", 1 }, { "StartedAt", 1 } }));
@@ -70,12 +82,16 @@ public sealed class LogArchiveIntegrationTests : IAsyncLifetime
         _service = new LogArchiveService(_db, _gw, storage, new Remote(), configuration);
         await _service.SetPolicyAsync("test-owner", true, true, 30, default);
     }
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
+        if (_process == null && _db != null)
+        {
+            await _db.Database.Client.DropDatabaseAsync(_db.Database.DatabaseNamespace.DatabaseName);
+            await _gw.Database.Client.DropDatabaseAsync(_gw.Database.DatabaseNamespace.DatabaseName);
+        }
         if (_process is { HasExited: false }) { _process.Kill(); _process.WaitForExit(10000); }
         _process?.Dispose();
         Directory.Delete(_dir, true);
-        return Task.CompletedTask;
     }
     private static BsonDocument Log(string id) => new() { { "_id", id }, { "RequestId", "request-" + id }, { "StartedAt", DateTime.UtcNow.AddDays(-60) }, { "Status", "completed" }, { "RequestBody", "请求原文" }, { "ResponseBody", "响应原文" } };
     [Fact]
@@ -155,13 +171,72 @@ public sealed class LogArchiveIntegrationTests : IAsyncLifetime
     public async Task GatewayArchiveNeverTouchesOtherTenant()
     {
         var logs = _gw.Database.GetCollection<BsonDocument>("llmrequestlogs");
-        var mine = Log("mine"); mine["TenantId"] = "map-test"; mine["AnswerText"] = "自己的正文";
+        var mine = Log("mine"); mine["TenantId"] = "map-test"; mine["AnswerText"] = new string('a', 800);
+        mine["RequestBodyRedacted"] = "完整请求"; mine["ThinkingText"] = "完整思考";
+        mine["RequestHeadersRedacted"] = new BsonDocument("x-request", "complete");
+        mine["ResponseHeaders"] = new BsonDocument("x-response", "complete");
         var other = Log("other"); other["TenantId"] = "other-tenant"; other["AnswerText"] = "别人的正文";
         await logs.InsertManyAsync(new[] { mine, other });
         for (var i = 0; i < 3; i++) await _service.ProcessOneAsync("test-owner", default);
         Assert.Equal(other, await logs.Find(new BsonDocument("_id", "other")).FirstAsync());
-        Assert.Contains("正文已归档", (await logs.Find(new BsonDocument("_id", "mine")).FirstAsync())["AnswerText"].AsString);
+        var current = await logs.Find(new BsonDocument("_id", "mine")).FirstAsync();
+        Assert.True(current.Contains(LogArchiveService.Pointer));
+        current.Remove(LogArchiveService.Pointer);
+        Assert.Equal(mine, current); // Existing gateway console readers retain every original field.
+        var batch = Assert.Single(await _service.ListAsync("test-owner", "llm", null, null, null, default));
+        Assert.True(batch["HotBodiesRetained"].AsBoolean);
+        Assert.Equal(0, batch["Migrated"].ToInt32());
         Assert.Equal(mine, await _service.HydrateAsync("test-owner", "llm", "mine", default));
+        Assert.Null(await _service.HydrateAsync("another-reader", "llm", "other", default));
+    }
+    [Fact]
+    public async Task SharedDataReaderHydratesPointerWithoutAcquiringBatchManagement()
+    {
+        var logs = _db.Database.GetCollection<BsonDocument>("apirequestlogs");
+        var original = Log("shared"); await logs.InsertOneAsync(original);
+        await _service.ProcessOneAsync("test-owner", default);
+        var batch = Assert.Single(await _service.ListAsync("test-owner", "api", null, null, null, default));
+        var id = batch["_id"].AsString;
+        Assert.Equal(original, await _service.HydrateAsync("another-reader", "api", "shared", default));
+        Assert.Empty(await _service.ListAsync("another-reader", "api", null, null, null, default));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.ContentsAsync("another-reader", id, default));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.RestoreAsync("another-reader", id, default));
+    }
+    [Fact]
+    public async Task ExecutionArchivePreservesCompletedReplayResponse()
+    {
+        var logs = _gw.Database.GetCollection<BsonDocument>("llmgw_request_executions");
+        var original = Log("replay"); original["TenantId"] = "map-test";
+        original["CreatedAt"] = original["StartedAt"]; original["ResponseJson"] = "{\"answer\":\"complete replay response\"}";
+        original["Fingerprint"] = "request-fingerprint"; original["Operation"] = "text";
+        await logs.InsertOneAsync(original);
+        for (var i = 0; i < 4; i++) await _service.ProcessOneAsync("test-owner", default);
+        var current = await logs.Find(new BsonDocument("_id", "replay")).SingleAsync();
+        Assert.Equal("completed", current["Status"]);
+        Assert.Equal(original["ResponseJson"], current["ResponseJson"]);
+        current.Remove(LogArchiveService.Pointer);
+        Assert.Equal(original, current);
+        Assert.Equal(0, Assert.Single(await _service.ListAsync("test-owner", "execution", null, null, null, default))["Migrated"].ToInt32());
+    }
+    [Fact]
+    public async Task VersionOneExecutionStubRemainsSafelyRestorable()
+    {
+        var logs = _gw.Database.GetCollection<BsonDocument>("llmgw_request_executions");
+        var original = Log("old-replay"); original["TenantId"] = "map-test";
+        original["CreatedAt"] = original["StartedAt"]; original["ResponseJson"] = "{\"answer\":\"historic full response\"}";
+        await logs.InsertOneAsync(original);
+        for (var i = 0; i < 4; i++) await _service.ProcessOneAsync("test-owner", default);
+        var batch = Assert.Single(await _service.ListAsync("test-owner", "execution", null, null, null, default));
+        var id = batch["_id"].AsString;
+        // Freeze the deployed v1 shape: replay JSON absent, ownership and encrypted archive intact.
+        var oldStub = original.DeepClone().AsBsonDocument; oldStub.Remove("ResponseJson"); oldStub[LogArchiveService.Pointer] = id;
+        await logs.ReplaceOneAsync(new BsonDocument("_id", "old-replay"), oldStub);
+        await _db.Database.GetCollection<BsonDocument>("log_archive_batches").UpdateOneAsync(new BsonDocument("_id", id),
+            Builders<BsonDocument>.Update.Unset("StubVersion").Unset("HotBodiesRetained"));
+        Assert.Equal(1, await _service.RestoreAsync("test-owner", id, default));
+        var restored = await logs.Find(new BsonDocument("_id", "old-replay")).SingleAsync();
+        Assert.Equal(original["ResponseJson"], restored["ResponseJson"]);
+        Assert.False(restored.Contains(LogArchiveService.Pointer));
     }
     private sealed class Remote : IAssetStorageRuntimeInfo { public string ProviderName => "tencentCos"; }
     public class StorageProxy : DispatchProxy

@@ -129,10 +129,16 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
             : new BsonDocument("_id", id);
         var hot = await target.Collection.Find(target.Scope & idFilter).FirstOrDefaultAsync(ct);
         if (hot == null || !hot.TryGetValue(Pointer, out var pointer)) return hot;
-        var batch = await BatchAsync(owner, pointer.AsString, ct);
+        // Detail authorization comes from the hot collection and its tenant scope.
+        // Deployment ownership continues to guard archive management, not shared-data reads.
+        var batch = await Batches.Find(new BsonDocument("_id", pointer.AsString)).FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException();
         if (batch["Source"].AsString != source) throw new InvalidDataException("Archive source mismatch");
-        return (await ReadAsync(batch, ct))["Records"].AsBsonArray.Select(x => x.AsBsonDocument)
+        var record = (await ReadAsync(batch, ct))["Records"].AsBsonArray.Select(x => x.AsBsonDocument)
             .Single(x => x["_id"] == hot["_id"]);
+        if ((source is "llm" or "execution") && record.GetValue("TenantId", BsonNull.Value) != Tenant)
+            throw new InvalidDataException("Archive tenant mismatch");
+        return record;
     }
     public async Task<int> RestoreAsync(string owner, string id, CancellationToken ct)
     {
@@ -145,7 +151,7 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
             var hot = await target.Collection.Find(target.Scope & new BsonDocument { { "_id", record["_id"] }, { Pointer, id } }).FirstOrDefaultAsync(ct);
             if (hot == null) continue;
             // Only restore a still-unchanged cold stub. Never overwrite a live application's update.
-            var expected = Stub(record, batch["Source"].AsString, id);
+            var expected = Stub(record, batch["Source"].AsString, id, batch.GetValue("StubVersion", 1).ToInt32());
             if (!hot.Equals(expected)) continue;
             var replacement = record.DeepClone().AsBsonDocument;
             replacement["ColdRestoredUntil"] = DateTime.UtcNow.AddDays(7);
@@ -154,10 +160,13 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
         await Batches.UpdateOneAsync(new BsonDocument { { "_id", id }, { "OwnerId", owner } }, Builders<BsonDocument>.Update.Set("RestoredAt", DateTime.UtcNow), cancellationToken: ct);
         return restored;
     }
-    private static BsonDocument Stub(BsonDocument record, string source, string id)
+    private static BsonDocument Stub(BsonDocument record, string source, string id, int version)
     {
         var stub = record.DeepClone().AsBsonDocument;
-        foreach (var field in Bodies[source])
+        // Independent gateway readers and execution replay still consume these fields
+        // directly. Keep them hot until those readers support authenticated cold reads.
+        var fields = version >= 2 && (source is "llm" or "execution") ? Array.Empty<string>() : Bodies[source];
+        foreach (var field in fields)
         {
             if (stub.TryGetValue(field, out var value) && value.IsString && value.AsString.Length > 0
                 && field is "RequestBody" or "Curl" or "QuestionText" or "AnswerText")
@@ -219,7 +228,8 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
             batch = new BsonDocument { { "_id", id }, { "OwnerId", owner }, { "Source", source }, { "Status", "uploading" }, { "CreatedAt", now },
                 { "From", times.Min() }, { "To", times.Max() }, { "Count", records.Count }, { "RawBytes", size }, { "StoredBytes", encrypted.Length },
                 { "PlainSha256", LogArchiveCodec.Hash(payload.ToBson()) }, { "CipherSha256", LogArchiveCodec.Hash(encrypted) },
-                { "KeyId", LogArchiveCodec.Hash(Key())[..16] }, { "Migrated", 0 },
+                { "KeyId", LogArchiveCodec.Hash(Key())[..16] }, { "Migrated", 0 }, { "StubVersion", 2 },
+                { "HotBodiesRetained", source is "llm" or "execution" },
                 { "Records", new BsonArray(records.Select(x => new BsonDocument { { "Id", x["_id"] }, { "RequestId", x.AsBsonDocument.GetValue("RequestId", "") } })) } };
             await Batches.InsertOneAsync(batch, cancellationToken: ct);
             stage = "upload";
@@ -238,8 +248,10 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
                 {
                     var current = await Policies.Find(lease & new BsonDocument { { "Enabled", true }, { "MigrateBodies", true }, { "LeaseUntil", new BsonDocument("$gt", DateTime.UtcNow) } }).AnyAsync(ct);
                     if (!current) throw new InvalidOperationException("Archive lease lost");
-                    var stub = Stub(original, source, id);
-                    batch["Migrated"] = batch["Migrated"].ToInt32() + (int)(await target.Collection.ReplaceOneAsync(target.Scope & LogArchiveCodec.ExactVersion(original), stub, cancellationToken: ct)).ModifiedCount;
+                    var stub = Stub(original, source, id, 2);
+                    var result = await target.Collection.ReplaceOneAsync(target.Scope & LogArchiveCodec.ExactVersion(original), stub, cancellationToken: ct);
+                    if (!batch["HotBodiesRetained"].AsBoolean)
+                        batch["Migrated"] = batch["Migrated"].ToInt32() + (int)result.ModifiedCount;
                 }
             }
             batch["Status"] = "completed";
