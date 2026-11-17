@@ -52,6 +52,7 @@ try{
   let saved=(await service.policies(project)).find(p=>p.id===scheduled.id)!;
   const discovered=await wait(saved.lastRunId!);assert.equal(discovered.status,'completed',discovered.message);assert.equal(discovered.plan.mode,'append-only');
   const inserted=await withDtsSql(target,env[base.uriEnv],db=>db.query(`SELECT big FROM ${table} WHERE _id='policy-new'`));assert.equal(String(inserted[0].big),'9223372036854775806');
+  await withDtsSql(target,env[base.uriEnv],db=>db.query(kind==='mysql'?`ALTER TABLE ${table} MODIFY big bigint NOT NULL`:`ALTER TABLE ${table} ALTER COLUMN big SET NOT NULL`));
   await withDtsSql(source,env[base.uriEnv],db=>db.query(`UPDATE ${table} SET revision=3,big=99 WHERE _id='existing'`));
   saved=(await service.policies(project)).find(p=>p.id===scheduled.id)!;
   await store.put('policies',{...saved,nextDiscoveryAt:new Date(0).toISOString()});await service.tick([project]);
@@ -60,7 +61,8 @@ try{
   const preserved=await withDtsSql(target,env[base.uriEnv],db=>db.query(`SELECT revision,big,local_only FROM ${table} WHERE _id='existing'`));
   assert.equal(Number(preserved[0].revision),3);assert.equal(String(preserved[0].big),'1');assert.equal(preserved[0].local_only,'keep');
   await service.setPolicy(project,scheduled.id,false,actor);
-  results.push({kind,policyCreatedFullRecord:true,policyPreservedNonProfileFields:true});console.log('PASS',kind,'policy inserts full contract then reconciles whitelist only');
+  await withDtsSql(target,env[base.uriEnv],db=>db.query(kind==='mysql'?`ALTER TABLE ${table} MODIFY big bigint NULL`:`ALTER TABLE ${table} ALTER COLUMN big DROP NOT NULL`));
+  results.push({kind,policyCreatedFullRecord:true,policyPreservedNonProfileFields:true,nonProfileRequiredFieldPreserved:true});console.log('PASS',kind,'policy inserts full contract then reconciles whitelist only, preserving required target fields');
   if(kind==='mysql'){
     await withDtsSql(target,env.MYSQL,db=>db.query(`CREATE UNIQUE INDEX cds_dts_qa_name ON ${table}(name)`));
     await assert.rejects(service.plan(project,source.id,target.id,'account-authority',actor),/额外唯一索引/);

@@ -30,7 +30,7 @@ export async function withDtsSql<T>(c: DtsConnection, uri: string, fn: (sql: Sql
   try { await db.connect(); await db.query("SET TIME ZONE 'UTC'"); return await fn({ query: async (text, args) => (await db.query(text, args)).rows as Row[] }); }
   finally { await db.end(); }
 }
-async function sqlMeta(db: Sql, c: DtsConnection, uri: string, fields: Record<string, DtsFieldType>, mode: DtsMode, target=false) {
+async function sqlMeta(db: Sql, c: DtsConnection, uri: string, fields: Record<string, DtsFieldType>, mode: DtsMode, target=false, accountPolicy=false) {
   const my = c.kind === 'mysql';
   const [server] = await db.query(my ? 'SELECT @@server_uuid AS identity, VERSION() AS version, DATABASE() AS db, @@sql_mode AS sql_mode' : 'SELECT system_identifier::text AS identity FROM pg_control_system()');
   const [version] = my ? [server] : await db.query('SELECT current_setting(\'server_version_num\') AS version, current_database() AS db');
@@ -49,8 +49,8 @@ async function sqlMeta(db: Sql, c: DtsConnection, uri: string, fields: Record<st
     dtsReject('identity_type_not_verified', 'SQL 表必须使用单一文本 _id 主键，复合与其他主键尚未开放', 409);
   }
   if (my && !String(columns.find(c=>c.name==='_id')?.collation).endsWith('_bin')) dtsReject('identity_collation_not_verified', 'MySQL 主键必须使用区分大小写的二进制排序规则，避免账号身份合并', 409);
-  if (mode === 'account-authority' && my && indexes.some(i => i.name !== 'PRIMARY' && Number(i.non_unique) === 0)) {
-    dtsReject('ambiguous_unique_key', '目标表存在额外唯一索引，可能使账号校准命中其他账号，已阻止写入', 409);
+  if ((mode === 'account-authority' || accountPolicy) && my && indexes.some(i => i.name !== 'PRIMARY' && Number(i.non_unique) === 0)) {
+    dtsReject('ambiguous_unique_key', '目标表包含尚未验证的额外唯一索引，请先调整账号校准范围或联系管理员核对', 409);
   }
   const triggers = await db.query(my ? 'SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA=? AND EVENT_OBJECT_TABLE=?'
     : 'SELECT trigger_name AS name FROM information_schema.triggers WHERE event_object_schema=\'public\' AND event_object_table=$1', my ? [c.database,c.collection] : [c.collection]);
@@ -69,7 +69,7 @@ async function sqlMeta(db: Sql, c: DtsConnection, uri: string, fields: Record<st
       dtsReject('schema_drift', '实际 SQL 字段类型或生成规则与批准契约不一致，请先对齐结构', 409);
     }
   }
-  for (const col of target?columns:[]) if (!Object.hasOwn(fields, String(col.name)) && col.nullable === 'NO' && col.default_value == null && !String(col.extra || '').includes('auto_increment')) {
+  for (const col of target && mode === 'append-only'?columns:[]) if (!Object.hasOwn(fields, String(col.name)) && col.nullable === 'NO' && col.default_value == null && !String(col.extra || '').includes('auto_increment')) {
     dtsReject('required_field_missing', '目标表包含未选中的必填字段，请先补齐字段或目标默认值', 409);
   }
   const identity = String(server.identity) + '/' + c.database + '/' + c.collection;
@@ -97,7 +97,7 @@ async function read(db:Sql,c:DtsConnection,fields:Record<string,DtsFieldType>) {
 export async function prepareDtsSqlPlan(input:{projectId:string;source:DtsConnection;target:DtsConnection;sourceUri:string;targetUri:string;mode:DtsMode;actor:DtsActor;profileOnly?:boolean;planId?:string;freeBytes:()=>Promise<number>}) : Promise<DtsPlan> {
   const {source,target,mode}=input, fields=compatibleDtsFields(source,target,mode,input.profileOnly);
   return withDtsSql(source,input.sourceUri,a=>withDtsSql(target,input.targetUri,async b=>{
-    const sm=await sqlMeta(a,source,input.sourceUri,fields,'append-only'), tm=await sqlMeta(b,target,input.targetUri,fields,input.profileOnly?'account-authority':mode,true);
+    const sm=await sqlMeta(a,source,input.sourceUri,fields,'append-only'), tm=await sqlMeta(b,target,input.targetUri,fields,mode,true,input.profileOnly);
     if(sm.identity===tm.identity)dtsReject('same_dataset','源和目标实际指向同一张表，请选择独立的目标',409);
     const src=await read(a,source,fields),dst=await read(b,target,fields),existing=new Set(dst.map(r=>String(r._id)));
     const selected=mode==='append-only'?src.filter(r=>!existing.has(String(r._id))):src;
@@ -111,11 +111,17 @@ export async function prepareDtsSqlPlan(input:{projectId:string;source:DtsConnec
 export function buildDtsSqlJob(p:DtsPlan,s:DtsConnection,t:DtsConnection,su:string,tu:string):Record<string,unknown>{
   function endpoint(c:DtsConnection,uri:string){const u=sqlUri(c,uri);return {url:`jdbc:${c.kind==='mysql'?'mysql':'postgresql'}://${u.host}/${c.database}`+(c.kind==='mysql'?'?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=UTF-8':'?options=-c%20TimeZone%3DUTC'),driver:c.kind==='mysql'?'com.mysql.cj.jdbc.Driver':'org.postgresql.Driver',username:decodeURIComponent(u.username),password:decodeURIComponent(u.password)};}
   const keys=p.keys.map(k=>"'"+k.replaceAll("'","''").replaceAll('\\','\\\\')+"'").join(',');
-  return {env:{'job.mode':'BATCH',parallelism:1,'job.retry.times':0},source:[{plugin_name:'Jdbc',...endpoint(s,su),query:`SELECT ${Object.keys(p.fields).map(f=>quote(s.kind,f)).join(',')} FROM ${qualified(s)} WHERE ${quote(s.kind,'_id')} IN (${keys})`,'connection_check_timeout_sec':10}],sink:[{plugin_name:'Jdbc',...endpoint(t,tu),database:t.database,table:t.kind==='mysql'?t.collection:'public.'+t.collection,generate_sink_sql:true,primary_keys:['_id'],enable_upsert:p.mode==='account-authority',schema_save_mode:'ERROR_WHEN_SCHEMA_NOT_EXIST',data_save_mode:'APPEND_DATA',batch_size:100,max_retries:0}]};
+  const updating=p.mode==='account-authority', values=Object.keys(p.fields).filter(f=>f!=='_id');
+  // JDBC custom query binds in source field order. Put the immutable key last
+  // so only approved profile columns appear in SET; this path cannot insert.
+  const fields=updating?[...values,'_id']:Object.keys(p.fields);
+  const write=updating?{generate_sink_sql:false,query:`UPDATE ${qualified(t)} SET ${values.map(f=>quote(t.kind,f)+' = ?').join(',')} WHERE ${quote(t.kind,'_id')} = ?`}
+    :{generate_sink_sql:true,primary_keys:['_id'],enable_upsert:false,schema_save_mode:'ERROR_WHEN_SCHEMA_NOT_EXIST',data_save_mode:'APPEND_DATA'};
+  return {env:{'job.mode':'BATCH',parallelism:1,'job.retry.times':0},source:[{plugin_name:'Jdbc',...endpoint(s,su),query:`SELECT ${fields.map(f=>quote(s.kind,f)).join(',')} FROM ${qualified(s)} WHERE ${quote(s.kind,'_id')} IN (${keys})`,'connection_check_timeout_sec':10}],sink:[{plugin_name:'Jdbc',...endpoint(t,tu),database:t.database,table:t.kind==='mysql'?t.collection:'public.'+t.collection,...write,batch_size:100,max_retries:0}]};
 }
 export async function verifyDtsSqlPlan(p:DtsPlan,s:DtsConnection,t:DtsConnection,su:string,tu:string):Promise<number>{
  return withDtsSql(s,su,a=>withDtsSql(t,tu,async b=>{
-   const sm=await sqlMeta(a,s,su,p.fields,'append-only'),tm=await sqlMeta(b,t,tu,p.fields,p.mode,true);
+   const sm=await sqlMeta(a,s,su,p.fields,'append-only'),tm=await sqlMeta(b,t,tu,p.fields,p.mode,true,p.profileOnly);
    const selected=new Set(p.keys),src=(await read(a,s,p.fields)).filter(r=>selected.has(String(r._id))),dst=(await read(b,t,p.fields)).filter(r=>selected.has(String(r._id)));
    if(sm.fingerprint!==p.sourceFingerprint||tm.fingerprint!==p.targetFingerprint||dtsHash(src)!==p.selectedDigest||dtsHash(dst)!==p.selectedDigest)dtsReject('verification_mismatch','SQL 源数据、结构或目标结果已变化，本次未通过独立对账，请重新比较',409);
    return dst.length;

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { DtsService } from '../../src/services/dts.js';
 import { dtsCredentialAllowed } from '../../src/services/dts-access.js';
 import * as policy from '../../src/services/dts-policy.js';
+import { buildDtsSqlJob } from '../../src/services/dts-sql.js';
 import type { DtsStore } from '../../src/services/dts-store.js';
 import type { DtsSeaTunnel } from '../../src/services/dts-seatunnel.js';
 import type { DtsActor, DtsConnection, DtsPlan, DtsPolicy, DtsRun } from '../../src/shared/dts.js';
@@ -68,6 +69,17 @@ describe('DTS admission and native-job recovery', () => {
     expect(policy.compatibleDtsFields(source, target, 'append-only', true)).toEqual(source.contract.fields);
     expect(policy.compatibleDtsFields(source, target, 'account-authority', true)).toEqual({ _id: 'string', name: 'string' });
     expect(() => policy.compatibleDtsFields(target, source, 'append-only', true)).toThrow('不能反向');
+  });
+  it.each(['mysql', 'postgres'] as const)('uses update-only native JDBC statements for %s profile calibration', kind => {
+    const source = { ...connection('source'), kind }, target = { ...connection('target'), kind };
+    const plan = { ...makePlan(), mode: 'account-authority' as const, fields: { _id: 'string' as const, name: 'string' as const, revision: 'int' as const } };
+    const job = buildDtsSqlJob(plan, source, target, `${kind}://fixture@source/business`, `${kind}://fixture@target/business`) as { source: Record<string, unknown>[]; sink: Record<string, unknown>[] };
+    const quote = kind === 'mysql' ? '`' : '"';
+    expect(job.sink[0].query).toBe(`UPDATE ${kind === 'mysql' ? '`accounts`' : 'public."accounts"'} SET ${quote}name${quote} = ?,${quote}revision${quote} = ? WHERE ${quote}_id${quote} = ?`);
+    expect(job.sink[0].generate_sink_sql).toBe(false); expect(job.sink[0].enable_upsert).toBeUndefined();
+    expect(String(job.source[0].query).split(' FROM ')[0]).toBe(`SELECT ${quote}name${quote},${quote}revision${quote},${quote}_id${quote}`);
+    const append = buildDtsSqlJob({ ...plan, mode: 'append-only' }, source, target, `${kind}://fixture@source/business`, `${kind}://fixture@target/business`) as typeof job;
+    expect(append.sink[0].generate_sink_sql).toBe(true); expect(append.sink[0].enable_upsert).toBe(false); expect(append.sink[0].query).toBeUndefined();
   });
   it('creates missing accounts before daily profile reconciliation and marks the day only after reconciliation', async () => {
     const f = setup(); await f.seed();
