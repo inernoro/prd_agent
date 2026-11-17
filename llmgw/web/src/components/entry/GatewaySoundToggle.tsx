@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Volume2, VolumeX } from 'lucide-react';
 import { EntryAudio, type EntryCue } from './entryAudio';
 import { GATEWAY_SOUND_EVENT } from './gatewaySound';
-import { hasQuickstartArrival, hasQuickstartArrivalAudio, isQuickstartArrivalSoundRunning, stopQuickstartArrivalSound } from './quickstartArrival';
+import { hasQuickstartArrival, hasQuickstartArrivalAudio, waitForQuickstartArrivalSound, stopQuickstartArrivalSound } from './quickstartArrival';
 
 function prefersSound() { try { return localStorage.getItem('llmgw-entry-sound') !== 'off'; } catch { return true; } }
 
@@ -28,7 +28,12 @@ export function GatewaySoundToggle() {
     mounted.current = true;
     if (enabled.current && arrival.active) {
       if (!arrival.transferred) void play('reveal');
-      else setStatus(isQuickstartArrivalSoundRunning() ? 'ready' : 'pending');
+      else {
+        const sequence = ++playbackSeq.current;
+        void waitForQuickstartArrivalSound().then(started => {
+          if (mounted.current && enabled.current && playbackSeq.current === sequence) setStatus(started ? 'ready' : 'pending');
+        });
+      }
     }
     const cue = (event: Event) => {
       const value = (event as CustomEvent<EntryCue>).detail;

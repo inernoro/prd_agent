@@ -176,6 +176,25 @@ test('MAP 单点进入受阻时先显示试听，点击真实激活后才声称�
     assert.equal(await retry.play('reveal'), true, '下次用户激活可重新加载并播放');
     assert.equal(fetches, 6);
     retry.dispose();
+
+    // Password login transfers the existing device while resume may still be pending.
+    await act(async () => root.unmount());
+    localStorage.removeItem('llmgw-entry-sound');
+    const transferred = new EntryAudio();
+    transferred.unlock();
+    markQuickstartArrival(transferred);
+    root = createRoot(document.getElementById('root'));
+    await act(async () => root.render(React.createElement(GatewaySoundToggle)));
+    const transferredButton = document.querySelector('button');
+    assert.equal(transferredButton.dataset.audioStatus, 'pending');
+    const beforeTransfer = started;
+    await act(async () => acknowledgeResume());
+    assert.equal(started, beforeTransfer + 1, '转移音频在设备恢复后真实启动');
+    assert.equal(transferredButton.dataset.audioStatus, 'ready', '迟到的播放结果必须同步按钮');
+    assert.equal(transferredButton.getAttribute('aria-label'), '关闭进入音效');
+    await act(async () => transferredButton.click());
+    assert.equal(transferredButton.dataset.audioStatus, 'muted');
+    assert.equal(localStorage.getItem('llmgw-entry-sound'), 'off');
   } finally {
     if (root) await act(async () => root.unmount());
     finish?.(); await server.close(); dom.window.close(); Object.assign(globalThis, previous);
