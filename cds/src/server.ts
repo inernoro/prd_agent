@@ -2056,7 +2056,7 @@ export function createServer(deps: ServerDeps): express.Express {
   const resolveReleaseRepository = (projectId: string) => resolveReleaseProjectRepository(deps.stateService, projectId, deps.config.repoRoot);
   const releaseGovernance = new ReleaseGovernanceService(deps.stateService,
     new ReleaseGovernanceGit(resolveReleaseRepository, projectId => deps.stateService.getProject(projectId)?.gitDefaultBranch || 'main',
-      governanceGitRunner(deps.shell, repoRoot => resolveGitAuthEnv({repoRoot, config:deps.config, stateService:deps.stateService, githubApp:githubAppClient}))),
+      governanceGitRunner(deps.shell, repoRoot => resolveGitAuthEnv({repoRoot, config:deps.config, stateService:deps.stateService, githubApp:githubAppClient}),deps.serverEventLogStore)),
     (projectId, number) => releaseMergeBackReader(deps.stateService, githubAppClient, fetch, deps.serverEventLogStore)(projectId, number), undefined, releaseHistory);
   const releaseService = new ReleaseService(deps.stateService, {
     verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),

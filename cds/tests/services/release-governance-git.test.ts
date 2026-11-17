@@ -10,6 +10,7 @@ import { resolveGitAuthEnv } from '../../src/services/git-auth-env.js';
 import { executeShellCommand } from '../../src/services/shell-executor.js';
 import type { IShellExecutor, ExecOptions } from '../../src/types.js';
 import type { GitHubAppClient } from '../../src/services/github-app-client.js';
+import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 describe('发布治理的真实隔离合并', () => {
   let root: string, repo: string, basis: string, reader: ReleaseGovernanceGit;
@@ -38,6 +39,40 @@ describe('发布治理的真实隔离合并', () => {
     reader = new ReleaseGovernanceGit(() => repo, () => 'main', native);
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  it('相对本地文件远端使用真实Git且不要求第三方响应存储',async()=>{
+    git('remote','set-url','origin',path.relative(repo,path.join(root,'origin.git')));
+    const local=new ReleaseGovernanceGit(()=>repo,()=> 'main',governanceGitRunner({execBackgroundObservation:executeShellCommand} as IShellExecutor));
+    expect(await local.inspect('p',basis,basis)).toMatchObject({status:'clean',includesBaseline:true});
+  });
+  it('远端fetch成功、拒绝和执行中断先持久留证且脱敏，审计失败不能返回成功',async()=>{
+    const file=path.join(root,'git-audit.json');fs.writeFileSync(file,'[]');
+    const read=()=>JSON.parse(fs.readFileSync(file,'utf8'));
+    const sink:ServerEventLogSink={record(){},recordImmediate:async row=>{fs.writeFileSync(file,JSON.stringify([...read(),row]));},findRecent:async filter=>read().filter((row:any)=>row.projectId===filter?.projectId&&row.requestId===filter?.requestId)};
+    let outcome:'success'|'denied'|'timeout'='success',fetches=0;
+    const secret='fixture-private-git-token',encoded=Buffer.from('x-access-token:'+secret).toString('base64');
+    const shell={execBackgroundObservation:async(command:string,options?:ExecOptions)=>{
+      if(command.includes("'remote' 'get-url' 'origin'")){options?.onData?.('https://github.com/owner/private.git\n','stdout');return {stdout:'',stderr:'',exitCode:0};}
+      fetches++;
+      if(outcome==='timeout'){options?.onData?.('transport interrupted before timeout token='+secret,'stderr');throw new Error('timeout; token='+secret);}
+      options?.onData?.(outcome==='success'?'From github.com/owner/private\n':`remote: permission denied token=${secret} AUTHORIZATION: basic ${encoded}; person@example.com\n`,'stderr');
+      return {stdout:'',stderr:'',exitCode:outcome==='success'?0:128};
+    }} as IShellExecutor;
+    const auth=async()=>({source:'github-app' as const,projectId:'p',env:{GIT_CONFIG_VALUE_0:'AUTHORIZATION: basic '+encoded}});
+    const run=governanceGitRunner(shell,auth,sink),args=['-C',repo,'fetch','--no-tags','origin','main'];
+    const context={projectId:'p',purpose:'main-fetch' as const,candidateSha:basis};
+    expect((await run(args,repo,false,context)).exitCode).toBe(0);
+    outcome='denied';expect((await run(args,repo,false,context)).exitCode).toBe(128);
+    outcome='timeout';await expect(run(args,repo,false,context)).rejects.toThrow();
+    const rows=read();expect(rows).toHaveLength(3);
+    expect(rows.map((r:any)=>r.details.localDecision)).toEqual(['success','git-error','execution-failed']);
+    expect(rows.every((r:any)=>r.projectId==='p'&&r.details.remoteProjectId.includes(basis))).toBe(true);
+    expect(rows[1].details.snapshot).toContain('permission denied');expect(rows[2].details.snapshot).toContain('timeout');expect(rows[2].details.snapshot).toContain('transport interrupted');
+    expect(rows[2].details.responseReceived).toBe(true);expect(rows.every((r:any)=>r.details.httpStatus===null&&r.details.upstreamRequestId===null)).toBe(true);
+    expect(JSON.stringify(rows)).not.toMatch(new RegExp(secret+'|'+encoded+'|person@example.com'));
+    outcome='success';const count=fetches;
+    await expect(governanceGitRunner(shell,auth)(args,repo,false,context)).rejects.toThrow();expect(fetches).toBe(count);
+    await expect(governanceGitRunner(shell,auth,{...sink,recordImmediate:async()=>{throw new Error('private-store');}})(args,repo,false,context)).rejects.toThrow();expect(fetches).toBe(count+1);
+  });
   it.each(['github-app','device-flow'] as const)('治理 fetch 复用当前项目 %s 凭据，真实 Git 核验及 PR 取回可用，隔离本地操作不携带凭据',async(source)=>{
     const state=new StateService(path.join(root,'auth-state.json'),repo);state.load();const now=new Date().toISOString();
     state.addProject({id:'p',slug:'p',name:'私有仓库',kind:'git',repoPath:repo,githubInstallationId:source==='github-app'?123:undefined,githubCredentialUserId:'owner',createdAt:now,updatedAt:now});

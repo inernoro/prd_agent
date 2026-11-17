@@ -6,6 +6,8 @@ import type { ReleaseConflictCheck } from '../domain/release-governance.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import type { StateService } from './state.js';
 import { mergeGitAuthEnv, type GitAuthEnvResult } from './git-auth-env.js';
+import { createExternalResponseAudit } from './standby-response-audit.js';
+import type { ServerEventLogSink } from './server-event-log-store.js';
 
 export function resolveReleaseProjectRepository(state: Pick<StateService, 'getProject' | 'getProjectRepoRoot'>, projectId: string, fallbackRoot: string): string | undefined {
   const project = state.getProject(projectId);
@@ -15,27 +17,62 @@ export function resolveReleaseProjectRepository(state: Pick<StateService, 'getPr
 
 export const FULL_SHA = /^[a-f0-9]{40}$/i;
 export interface GovernanceGitResult { stdout: string; exitCode: number | null }
-export type GovernanceGitRunner = (args: string[], cwd: string, isolated?: boolean) => Promise<GovernanceGitResult>;
+export interface GovernanceGitFetchContext { projectId: string; purpose: 'main-fetch' | 'pr-fetch'; candidateSha: string; prNumber?: number }
+export type GovernanceGitRunner = (args: string[], cwd: string, isolated?: boolean, context?: GovernanceGitFetchContext) => Promise<GovernanceGitResult>;
 
 /** Bounded, non-urgent execution. Merge output is written only into a disposable bare repository. */
 export function governanceGitRunner(shell?: IShellExecutor,
-  gitAuth?: (repoRoot: string) => Promise<GitAuthEnvResult>): GovernanceGitRunner {
-  return async (args, cwd, isolated = false) => {
+  gitAuth?: (repoRoot: string) => Promise<GitAuthEnvResult>, auditSink?: ServerEventLogSink | null): GovernanceGitRunner {
+  return async (args, cwd, isolated = false, context) => {
     if (!shell?.execBackgroundObservation) throw new Error('Git 核验执行器不可用');
-    let stdout = '', bytes = 0;
+    const observe=shell.execBackgroundObservation.bind(shell);
+    let interruptedOutput='';
     const prefix = 'GIT_TERMINAL_PROMPT=0 GIT_NO_LAZY_FETCH=1 ' + (isolated ? 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null ' : '');
-    const auth = !isolated && args[0] === '-C' && args[2] === 'fetch' && gitAuth ? await gitAuth(cwd) : undefined;
-    const options: ExecOptions = {
-      cwd, timeout: 30_000, captureOutput: false,
-      onData: (chunk, channel) => {
-        bytes += Buffer.byteLength(chunk);
-        if (bytes > 1024 * 1024) throw new Error('Git 核验结果超过容量限制');
-        if (channel !== 'stderr') stdout += chunk;
-      },
+    const execute = async (commandArgs: string[], auth?: GitAuthEnvResult) => {
+      let stdout='',stderr='',bytes=0;
+      const options: ExecOptions={cwd,timeout:30_000,captureOutput:false,onData:(chunk,channel)=>{
+        bytes+=Buffer.byteLength(chunk);
+        if(bytes>1024*1024)throw new Error('Git 核验结果超过容量限制');
+        if(channel==='stderr')stderr+=chunk;else stdout+=chunk;
+      }};
+      try{
+        const result=await observe(prefix+['git',...commandArgs].map(shellQuoteArg).join(' '),auth?mergeGitAuthEnv(options,auth):options);
+        return {stdout,stderr,exitCode:result.exitCode};
+      }catch(error){interruptedOutput=stderr||stdout;throw error;}
     };
-    const result = await shell.execBackgroundObservation(prefix + ['git', ...args].map(shellQuoteArg).join(' '),
-      auth ? mergeGitAuthEnv(options, auth) : options);
-    return { stdout, exitCode: result.exitCode };
+    if(isolated||args[0]!=='-C'||args[2]!=='fetch')return execute(args);
+    const origin=await execute(['-C',cwd,'remote','get-url','origin']);
+    const remote=origin.stdout.trim();
+    if(origin.exitCode!==0||!remote)throw new Error('Git 来源未核实，未执行远端读取');
+    const scp=remote.match(/^(?:[^@/:\s]+@)?([^/:\s]+):(.+)$/);
+    const local=/^(?:\/|file:\/\/|[A-Za-z]:[\\/])/.test(remote)||!scp&&!/^[a-z][a-z0-9+.-]*:/i.test(remote);
+    const auditUrl=/^[a-z][a-z0-9+.-]*:\/\//i.test(remote)?remote:scp?`ssh://${scp[1]}/${scp[2]}`:remote;
+    if(!local&&!context?.projectId)throw new Error('Git 读取缺少项目关联，未执行远端读取');
+    const audit=!local?createExternalResponseAudit(auditSink,{projectId:context!.projectId,
+      remoteProjectId:`${context!.projectId}:${context!.purpose}:${context!.candidateSha}:${context!.prNumber||''}`,policy:'release-governance-git',dryRun:true},
+      {source:'release-governance-git',action:'release.git.response',message:'发布治理 Git 远端读取证据'}):undefined;
+    audit?.assertAvailable();
+    const started=Date.now();let auth:GitAuthEnvResult|undefined,result:Awaited<ReturnType<typeof execute>>|undefined,failure:unknown;
+    try{
+      auth=await gitAuth?.(cwd);
+      if(context&&auth?.projectId&&auth.projectId!==context.projectId)throw new Error('Git 凭据不属于当前项目，未执行远端读取');
+      result=await execute(args,auth);
+    }catch(error){failure=error;}
+    if(audit){
+      const secrets:string[]=[];
+      try{const url=new URL(remote);if(url.password)secrets.push(url.password,decodeURIComponent(url.password));if(url.username&&!['git','x-access-token'].includes(url.username))secrets.push(url.username,decodeURIComponent(url.username));}catch{/* SCP or local syntax has no URL password. */}
+      for(const [key,value] of Object.entries(auth?.env||{}))if(key.startsWith('GIT_CONFIG_VALUE_')){
+        secrets.push(value);const basic=value.match(/basic\s+(\S+)/i)?.[1];
+        if(basic){const decoded=Buffer.from(basic,'base64').toString('utf8');secrets.push(basic,decoded,decoded.slice(decoded.indexOf(':')+1));}
+      }
+      const json={status:result?.exitCode??'execution-failed',message:failure instanceof Error?`${failure.message}\n${interruptedOutput}`:result?.stderr||result?.stdout||'',code:result?.exitCode??'execution-failed'};
+      // 原生 Git 的结构化执行结果与诊断流；没有上游 HTTP 状态或请求号，不补造。
+      await audit.record({peerId:'git-origin',url:auditUrl,method:'GIT FETCH',startedAt:new Date(started).toISOString(),durationMs:Date.now()-started,
+        timeoutMs:30_000,responseReceived:Boolean(result||interruptedOutput),httpStatus:null,upstreamRequestId:null,contentType:'application/json',text:JSON.stringify(json),json,parseState:'json',
+        localDecision:failure?'execution-failed':result?.exitCode===0?'success':'git-error',secrets});
+    }
+    if(failure||!result)throw new Error('Git 读取未完成，请核对项目远端诊断后重试');
+    return {stdout:result.stdout,exitCode:result.exitCode};
   };
 }
 
@@ -66,7 +103,8 @@ export class ReleaseGovernanceGit {
     const root = this.root(projectId);
     if (!root || !Number.isSafeInteger(number) || number < 1 || !FULL_SHA.test(sourceSha) || !FULL_SHA.test(headSha)) throw new Error('PR 版本依据不完整');
     const reference = `refs/cds/release-pr/${number}`;
-    const fetched = await this.run(['-C',root,'fetch','--no-tags','origin',`+refs/pull/${number}/head:${reference}`],root);
+    const fetched = await this.run(['-C',root,'fetch','--no-tags','origin',`+refs/pull/${number}/head:${reference}`],root,false,
+      {projectId,purpose:'pr-fetch',candidateSha:sourceSha,prNumber:number});
     const observed = await this.run(['-C',root,'rev-parse','--verify',`${reference}^{commit}`],root);
     if (fetched.exitCode !== 0 || observed.exitCode !== 0 || observed.stdout.trim() !== headSha) throw new Error('PR 已变化或源码未取齐，请刷新后重试');
     return this.includes(projectId,sourceSha,headSha);
@@ -88,7 +126,9 @@ export class ReleaseGovernanceGit {
         return value.stdout;
       };
       // Explicit user/preflight operation, never a side effect of reading the release center.
-      await checked(['-C', root, 'fetch', '--no-tags', 'origin', `+${branch}:refs/remotes/origin/${branch}`]);
+      const fetched=await this.run(['-C', root, 'fetch', '--no-tags', 'origin', `+${branch}:refs/remotes/origin/${branch}`],root,false,
+        {projectId,purpose:'main-fetch',candidateSha});
+      if(fetched.exitCode!==0)throw new Error();
       result.mainSha = (await checked(['-C', root, 'rev-parse', '--verify', `refs/remotes/origin/${branch}^{commit}`])).trim();
       if (!FULL_SHA.test(result.mainSha)) throw new Error();
       await checked(['-C', root, 'cat-file', '-e', `${candidateSha}^{commit}`]);
