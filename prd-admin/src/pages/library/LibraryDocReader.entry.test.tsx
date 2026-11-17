@@ -12,15 +12,28 @@ vi.mock('@/components/ui/VideoLoader', () => ({ MapSectionLoader: ({ text }: { t
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
 const fixture = (published = true): DocumentEntry => ({ id: 'doc', storeId: 'store', isFolder: false, title: '公开测试文档', sourceType: 'upload', contentType: 'text/markdown', fileSize: 12, tags: [], metadata: { writing_template: 'prd', writing_stage: 'confirm' }, createdBy: 'author', createdAt: '', updatedAt: '', hasWritingPublication: published });
-async function mount(published = true, context: { writingStoreId?: string } = { writingStoreId: 'store' }) {
+async function mount(published = true, context: { writingStoreId?: string } = { writingStoreId: 'store' }, entries = [fixture(published)]) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-  const props = { entries: [fixture(published)], primaryEntryId: 'doc', ...context, loadContent: async () => ({ text: '测试正文', fileUrl: null, contentType: 'text/markdown' }) };
+  const props = { entries, primaryEntryId: 'doc', ...context, loadContent: async () => ({ text: '测试正文', fileUrl: null, contentType: 'text/markdown' }) };
   await act(async () => root.render(<MemoryRouter><LibraryDocReader {...props} /></MemoryRouter>));
 }
 beforeEach(() => { auth.isAuthenticated = true; auth.isRoot = false; auth.permissions = ['document-store.read']; });
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('公开库原生阅读与已发布阅读的连续性', () => {
+  it('发布摘要不替代作者标题，普通资料仍可切换正文标题与文件名', async () => {
+    const published = { ...fixture(), title: '归档交接指南 · 200份边界 · 全链验收20261117', summary: '本合成验收案例仅适用于演练空间。归档须经复核人明确确认。' };
+    const ordinary = { ...fixture(false), id: 'source', title: '资料C.md', summary: '# 原始来源标题' };
+    await mount(true, { writingStoreId: 'store' }, [published, ordinary]);
+    const titles = () => [...container.querySelectorAll('button .truncate')].map(node => node.textContent);
+    expect(titles()).toContain(published.title);
+    expect(titles()).not.toContain(published.summary);
+    expect(titles()).toContain('原始来源标题');
+    await act(async () => container.querySelector<HTMLButtonElement>('button[title="当前：正文标题，点击切换文件名"]')!.click());
+    expect(titles()).toContain(published.title);
+    expect(titles()).toContain('资料C.md');
+    expect(titles()).not.toContain('原始来源标题');
+  });
   it('下一版confirm但发布flag仍真时，只读者可直接阅读和学习', async () => {
     await mount();
     const links = [...container.querySelectorAll('a')];

@@ -42,6 +42,7 @@ import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useViewTracking } from '@/lib/useViewTracking';
+import { documentDisplayTitle } from '@/components/doc-browser/docBrowserTitle';
 
 // ── slug 辅助 ──
 function childrenToText(children: unknown): string {
@@ -230,11 +231,7 @@ export function LibraryDocReader({
   }, [entries]);
 
   const getDisplayTitle = useCallback(
-    (entry: DocumentEntry): string => {
-      if (entry.isFolder) return entry.title;
-      if (!useContentTitle) return entry.title;
-      return contentFirstLines.get(entry.id) ?? entry.title;
-    },
+    (entry: DocumentEntry): string => documentDisplayTitle(entry, useContentTitle, contentFirstLines),
     [useContentTitle, contentFirstLines],
   );
 

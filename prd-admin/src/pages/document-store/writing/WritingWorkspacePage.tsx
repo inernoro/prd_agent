@@ -183,7 +183,17 @@ function WritingAuthor({ storeId, entryId }: { storeId: string; entryId?: string
         next = result.data.state; setElapsed(0); setStepOverride(undefined);
       } else if (action !== 'save' && action !== 'exit') {
         const result = await commandWriting(saved.id, next.revision, action, values);
-        if (!result.success) throw new Error(result.error.message);
+        if (!result.success) {
+          // Only classify a known review blocker from the saved document; never expose raw validation or upstream text.
+          const uncheckedIntents = action === 'review' && result.error.code === 'INVALID_FORMAT'
+            ? next.intentPoints.flatMap((_, index) => next.intentCoverage?.find(c => c.intentIndex === index)?.confirmed ? [] : [index + 1])
+            : [];
+          if (uncheckedIntents.length) {
+            setStepOverride(3);
+            throw new Error(`提交审核未完成。第${uncheckedIntents.join('、')}项作者必达点尚未核对；请在「作者必达点」逐项确认对应正文及条件、例外后重试。`);
+          }
+          throw new Error(result.error.message);
+        }
         next = result.data.state;
         if (action === 'answer') {
           const remaining = next.questions.find(q => q.status === 'pending');

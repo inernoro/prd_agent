@@ -109,6 +109,28 @@ describe('补充确认的真实上下文', () => {
   });
 });
 describe('作者确认后的表达与补缺整理', () => {
+  it('提交审核被未核对必达点阻止时，指出对应项与恢复步骤并保留草稿', async () => {
+    const value = state(); value.stage = 'review';
+    value.sections[0].paragraphs[0].confirmed = true;
+    value.intentPoints = ['先保留原目录', '失败立即停止', '例外需要明确批准'];
+    value.intentCoverage = [
+      { intentIndex: 0, paragraphIds: ['paragraph'], confirmed: false },
+      { intentIndex: 1, paragraphIds: ['paragraph'], confirmed: true },
+      { intentIndex: 2, paragraphIds: ['paragraph'], confirmed: false },
+    ];
+    api.get.mockResolvedValue({ success: true, data: documentFor(value) });
+    api.save.mockResolvedValue({ success: true, data: documentFor({ ...value, revision: 7 }) });
+    api.command.mockResolvedValue({ success: false, error: { code: 'INVALID_FORMAT', message: '操作未完成，请检查输入后重试。' } });
+    await mount(); await click(findButton('提交审核'));
+    const message = container.querySelector('[role="alert"]')?.textContent;
+    expect(message).toContain('第1、3项作者必达点尚未核对');
+    expect(message).toContain('请在「作者必达点」逐项确认对应正文及条件、例外后重试');
+    expect(api.command).toHaveBeenCalledWith('draft', 7, 'review', {});
+    expect(container.querySelector('.stp [aria-current="step"]')?.textContent).toContain('审核发布');
+    expect(findButton('提交审核').disabled).toBe(false);
+    expect(value.intentCoverage.map(c => c.confirmed)).toEqual([false, true, false]);
+    expect(api.command).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), 'confirm-intent', expect.anything());
+  });
   it('上下文模版更新后仍使用文档冻结的章节与提示', async () => {
     const value = state(); value.stage = 'select'; value.templateSnapshot = { ...context.templates[0], name: '发布时交接模版', version: '0.8', headings: [{ title: '冻结的停止条件', hint: '禁止重复提交' }] };
     const changed = { ...context, templates: [{ ...context.templates[0], version: '2.0', headings: [{ title: '当前模版新章节', hint: '' }] }] };
