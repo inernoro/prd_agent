@@ -1,4 +1,6 @@
 /* v14 sources: 12 desktop and 11b mobile. Keep overrides scoped to the tutorial. */
+/* Generated slides retain their source footer below the playback captions. */
+.writing-tutorial.writing-root.writing-produced-tutorial .capbox{bottom:max(44px,8%)}
 .writing-tutorial.writing-root::before{display:none}
 .writing-tutorial.writing-root .writing-tutorial-layout{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:24px;padding:20px 28px 24px;flex:1;min-height:0}
 .writing-tutorial.writing-root .writing-tutorial-body{min-width:0;min-height:0;padding-right:4px}
