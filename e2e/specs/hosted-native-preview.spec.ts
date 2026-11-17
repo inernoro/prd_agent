@@ -210,8 +210,14 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await expect(dialog.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
       await expect(dialog.getByRole('alert')).toHaveCount(0);
       await dialog.getByRole('button', { name: '恢复为当前版本', exact: true }).click();
-      await dialog.getByRole('button', { name: '确认恢复并发布', exact: true }).click();
+      const confirmRestore = dialog.getByRole('button', { name: '确认恢复并发布', exact: true });
+      const confirmBox = await confirmRestore.boundingBox();
+      expect(confirmBox!.width).toBeGreaterThan(100);
+      expect(confirmBox!.height).toBeLessThanOrEqual(48);
+      expect(await confirmRestore.evaluate(button => button.scrollWidth <= button.clientWidth)).toBe(true);
+      await confirmRestore.click();
       await expect(dialog.getByRole('alert')).toHaveText('版本已更新，请核对后重试恢复');
+      await dialog.screenshot({ path: test.info().outputPath('restore-confirm.png') });
       await expect(page.locator('iframe[title="临时预览测试"]').contentFrame().getByRole('heading', { name: '当前版正文' })).toBeVisible();
       await dialog.getByRole('button', { name: '关闭', exact: true }).click();
       await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
