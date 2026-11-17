@@ -322,7 +322,7 @@ export default function SitePreviewModal({
               type="button"
               onClick={handleOpenExternal}
               disabled={siteWindow.opening || review.loading}
-              title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'}
+              title="新窗口打开"
               className="flex min-h-11 sm:min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <ExternalLink className="w-3.5 h-3.5" />

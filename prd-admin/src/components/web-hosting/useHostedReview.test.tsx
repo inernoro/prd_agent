@@ -144,7 +144,7 @@ describe('versioned webpage review', () => {
     await mount();
     await act(async () => review.selectVersion('v1'));
     expect(review.historical).toBe(false);
-    expect(review.error).toContain('历史版本未保留可用的预览');
+    expect(review.error).toContain('暂时无法预览，请重试或选择其他版本');
     expect(review.preview).toBeNull();
   });
   it('reports an unavailable module snapshot instead of presenting the live page as history', async () => {
@@ -154,7 +154,7 @@ describe('versioned webpage review', () => {
     await mount();
     await act(async () => review.selectVersion('v1'));
     expect(review.historical).toBe(false);
-    expect(review.error).toContain('历史版本未保留可用的预览');
+    expect(review.error).toContain('暂时无法预览，请重试或选择其他版本');
     expect(review.site?.siteUrl).toBe(site.siteUrl);
     expect(review.preview).toBeNull();
   });

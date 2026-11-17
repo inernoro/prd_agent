@@ -103,7 +103,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
       if (!mounted.current || request !== selectionSequence.current) return;
       if (result.success) {
         if (!result.data.siteUrl && (!result.data.html || result.data.revision.contentShape !== 'self-contained-html' || !canUseSrcDocPreview(result.data.html))) {
-          setError('这份历史版本未保留可用的预览，已返回当前版本'); setSelectedId(null); setPendingFocus(null);
+          setError('这份历史版本暂时无法预览，请重试或选择其他版本'); setSelectedId(null); setPendingFocus(null);
         } else setPreview(result.data);
       }
       else { setError(result.error?.message || '无法打开历史版本'); setSelectedId(null); setPendingFocus(null); }
