@@ -12,11 +12,12 @@ vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, content, actions }:
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let cleanup = async () => {};
 afterEach(async () => { await cleanup(); vi.clearAllMocks(); });
-async function setup(canRestore = true, failed = false) {
+async function setup(canRestore = true, failed = false, missingMetadata = false) {
   const container = document.createElement('div'); document.body.appendChild(container); const root = createRoot(container);
   const version = { id: 'v1', versionLabel: 'V1', isCurrent: false };
   const selectVersion = vi.fn();
-  useReview.mockReturnValue({ versions: [version], selected: version, selectVersion, loading: false,
+  const refresh = vi.fn();
+  useReview.mockReturnValue({ versions: missingMetadata ? [] : [version], selected: missingMetadata ? undefined : version, selectVersion, refresh, loading: false,
     preview: failed ? null : { html: '<h1>这是旧版 V1</h1>' }, previewBaseUrl: 'https://storage.example/site/index.html',
     site: { contentShape: 'self-contained-html' }, error: failed ? '预览暂不可用，请重试' : null, annotations: {} });
   const onRestore = vi.fn().mockResolvedValue(false), onClose = vi.fn();
@@ -24,7 +25,7 @@ async function setup(canRestore = true, failed = false) {
     source={{ mode: 'site', siteId: 'site' }} versionId="v1" canRestore={canRestore} restoring={false} restoreError={null} onRestore={onRestore} onClose={onClose} />));
   cleanup = async () => { await act(async () => root.unmount()); container.remove(); };
   const click = async (text: string) => act(async () => [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === text)!.click());
-  return { container, click, onRestore, onClose, selectVersion };
+  return { container, click, onRestore, onClose, selectVersion, refresh };
 }
 it('小窗显示旧版快照；预览与取消不发布，明确确认后才恢复且重试复用标识', async () => {
   const { container, click, onRestore, onClose } = await setup();
@@ -43,4 +44,9 @@ it('只读预览不提供恢复入口，快照失败时不展示当前内容并�
   expect(container.textContent).not.toContain('恢复为当前版本');
   await click('重试预览'); expect(selectVersion).toHaveBeenLastCalledWith('v1');
   expect(onRestore).not.toHaveBeenCalled();
+});
+it('初次版本元数据失败时重试真正重载列表，不调用会直接返回的版本选择', async () => {
+  const { click, selectVersion, refresh } = await setup(false, true, true);
+  await click('重试预览');
+  expect(refresh).toHaveBeenCalledOnce(); expect(selectVersion).not.toHaveBeenCalled();
 });

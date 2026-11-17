@@ -26,6 +26,15 @@ async function setup() {
 }
 
 describe('hosted page annotation runtime', () => {
+  it('滚动时隐藏整组旧几何气泡，停止后重新发布；不把原位置留在画布上', async () => {
+    const t = await setup();
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, displayMode: 'bubble',
+      threads: [{ id: 'scroll-note', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }] });
+    await expect.poll(() => t.messages.find(message => message.type === 'map-annotation-previews')).toMatchObject({ items: [{ id: 'scroll-note' }] });
+    t.win.dispatchEvent(new t.win.Event('scroll')); await tick();
+    expect(t.messages.filter(message => message.type === 'map-annotation-previews').at(-1)).toMatchObject({ items: [] });
+    await expect.poll(() => t.messages.filter(message => message.type === 'map-annotation-previews').at(-1)).toMatchObject({ items: [{ id: 'scroll-note' }] });
+  });
   it('展开全部可见气泡且点击相邻编号同步选中，不被悬停抢回', async () => {
     const t = await setup();
     const anchor = { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' };

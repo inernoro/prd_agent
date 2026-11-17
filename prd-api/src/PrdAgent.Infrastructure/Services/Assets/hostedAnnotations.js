@@ -143,10 +143,14 @@
     if (previewLast) post('map-annotation-preview-hide');
     previewLast = '';
   }
+  function hidePreviews() {
+    hidePreview();
+    if (previewsLast) post('map-annotation-previews', { items: [] });
+    previewsLast = '';
+  }
   function previewRect(rect) { return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; }
   function publishPreview(force) {
-    if (previewMuted) { hidePreview(); return; }
-    if (context.displayMode !== 'bubble' || context.enabled || context.pending) { hidePreview(); if (previewsLast) post('map-annotation-previews', { items: [] }); previewsLast = ''; return; }
+    if (previewMuted || context.displayMode !== 'bubble' || context.enabled || context.pending) { hidePreviews(); return; }
     var surrounding = [];
     document.querySelectorAll('h1,h2,h3,h4,p,li,button,a,img,input,pre,table,blockquote').forEach(function (element) {
       if (surrounding.length >= 80 || Array.from(records.values()).some(function (item) { return item.found && (item.found.el === element || item.found.el.contains(element) || element.contains(item.found.el)); })) return;
@@ -313,7 +317,7 @@
     if (!context) return;
     if (event.target === document || event.target === window) {
       if (context.displayMode === 'bubble') {
-        previewMuted = true; hidePreview(); clearTimeout(previewTimer);
+        previewMuted = true; hidePreviews(); clearTimeout(previewTimer);
         previewTimer = setTimeout(function () { previewMuted = false; schedule(false); }, 120);
       }
       // Absolute markers follow ordinary content natively. Fixed/sticky targets (including
