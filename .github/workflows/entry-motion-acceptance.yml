@@ -18,7 +18,7 @@ permissions:
   contents: read
 concurrency:
   group: entry-motion-${{ github.ref }}-${{ inputs.phase }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   checks:
     if: github.event_name == 'push' || inputs.phase == 'checks'

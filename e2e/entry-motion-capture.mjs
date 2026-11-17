@@ -52,9 +52,9 @@ await context.addInitScript(() => {
 const page = await context.newPage();
 try {
   await page.goto(new URL('/login', map).href);
-  await page.locator('input[name="username"], #username, [data-testid="login-user"]').first().fill(process.env.E2E_USER);
-  await page.locator('input[name="password"], #password, [data-testid="login-pass"]').first().fill(process.env.E2E_PASSWORD);
-  await page.locator('button[type="submit"], [data-testid="login-submit"]').first().click();
+  await page.locator('input[autocomplete="username"]').first().fill(process.env.E2E_USER);
+  await page.locator('input[autocomplete="current-password"]').first().fill(process.env.E2E_PASSWORD);
+  await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
   await page.getByLabel('打开用户菜单', { exact: true }).waitFor({ timeout: 45000 });
   for (const mode of ['cold', 'warm']) {
     if (mode === 'warm') {
