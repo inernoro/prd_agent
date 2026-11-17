@@ -25,6 +25,8 @@ folders:
 docs:
   design.platform.log-cold-storage: "日志完整保留与冷存储 · 设计"
   plan.llmgw.official-upstreams: "官方上游迁移与管理简化 · 计划"
+  plan.knowledge-base.information-delivery: "知识库信息高效传递与复刻验收计划"
+  guide.cds.automation-health: "CDS 自动化任务健康与安全恢复 · 指南"
   plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
   guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
   # 一、产品规格

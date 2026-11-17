@@ -36,6 +36,7 @@ public static class AdminNotificationSourceCatalog
 {
     private static readonly AdminNotificationSourceDefinition[] SourceDefinitions =
     [
+        new("document-store", "知识库成文", AdminNotificationSections.Personal, "知识库草稿生成与个人确认事项"),
         new("defect-agent", "缺陷管理", AdminNotificationSections.Personal, "别人提交、指派、验收、AI 修复等与当前用户相关的缺陷通知"),
         new("report-agent", "周报月报", AdminNotificationSections.Personal, "周报、月报、日报提交、退回、审阅和协作通知"),
         new("pm-agent", "任务协作", AdminNotificationSections.Personal, "项目任务、待办协作和个人执行提醒"),

@@ -396,6 +396,7 @@ export type DocBrowserProps = {
   enableSelectionAi?: boolean;
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
   onCreateDocument?: () => void;
+  onCreateWriting?: () => void;
   onUploadFile?: () => void;
   /** 「添加」菜单项：从网页托管导入（提供时显示）。具体选择/导入流程由调用方实现。 */
   onImportFromHosting?: () => void;
@@ -1635,6 +1636,7 @@ export function DocBrowser({
   loadContent,
   onCreateFolder,
   onCreateDocument,
+  onCreateWriting,
   onUploadFile,
   onImportFromHosting,
   onOpenVideoParser,
@@ -4462,6 +4464,7 @@ export function DocBrowser({
         <CreatePaletteFab
           onDoubleActivation={onQuickRecord ?? onUploadAudio}
           actions={[
+            ...(onCreateWriting ? [{ key: 'writing', label: '按模版成文', icon: FilePlus, onClick: onCreateWriting }] : []),
             ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
             ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),
             ...((onUploadFile || onOpenVideoParser || onImportFromHosting) ? [{

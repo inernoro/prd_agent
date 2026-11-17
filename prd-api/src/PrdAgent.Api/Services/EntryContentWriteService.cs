@@ -93,8 +93,11 @@ public class EntryContentWriteService
         DateTime? expectedUpdatedAt = null,
         EntryFields? entryFields = null,
         string? derivedStateMetadataKey = null,
-        FilterDefinition<DocumentEntry>? extraGuard = null)
+        FilterDefinition<DocumentEntry>? extraGuard = null,
+        UpdateDefinition<DocumentEntry>? atomicEntryUpdate = null)
     {
+        if (entry.Writing != null && atomicEntryUpdate == null)
+            throw new InvalidOperationException("按模版成文的文档请在作者工作区编辑并审核发布");
         // 更新或创建 ParsedPrd（内容寻址 + 共享保护；乐观并发模式不就地覆盖旧文档）
         var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content, reuseExclusiveDocId: expectedUpdatedAt == null);
         entry.DocumentId = newDocId;
@@ -136,6 +139,9 @@ public class EntryContentWriteService
                 .Set(e => e.Metadata, entryFields.Metadata.ToDictionary(pair => pair.Key, pair => pair.Value))
                 .Set(e => e.FileSize, entryFields.FileSize);
         }
+        // 发布快照与正文指针必须在同一个 entry 原子提交，不能先暴露新正文再保存版本。
+        if (atomicEntryUpdate != null)
+            contentUpdate = Builders<DocumentEntry>.Update.Combine(contentUpdate, atomicEntryUpdate);
 
         // 乐观并发：条件更新（Id + UpdatedAt），检查与写入是同一条原子操作。
         // 未命中说明期间有人保存过 → 整次写入放弃（评论/账本/快照都不动），

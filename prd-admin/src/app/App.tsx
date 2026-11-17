@@ -1,3 +1,4 @@
+import HostedCollectionPage from '@/pages/hosted-collections/HostedCollectionPage';
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
@@ -297,6 +298,7 @@ export default function App() {
         <Route path="/_mockup/selection-diff-probe" element={<SelectionDiffProbe />} />
 
         {/* 公开分享页面 - 无需登录 */}
+        <Route path="/s/collection/:token" element={<HostedCollectionPage />} />
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
         <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />

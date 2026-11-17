@@ -299,6 +299,7 @@ export function LibraryStoreDetailPage() {
         <div className="max-w-6xl mx-auto" style={{ height: 'calc(100vh - 320px)', minHeight: 560 }}>
           <LibraryDocReader
             entries={entries}
+            writingStoreId={store.id}
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
             loadContent={loadContent}
