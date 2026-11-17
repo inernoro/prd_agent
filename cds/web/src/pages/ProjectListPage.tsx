@@ -826,6 +826,7 @@ export function ProjectListPage(): JSX.Element {
                 <RefreshCw />
                 <span className="md:hidden">刷新</span>
               </Button>
+              {state.status === 'ok' && !canManageProjects ? <Button variant="outline" size="sm" onClick={() => navigate('/dts')}><Database />数据同步</Button> : null}
               {canManageProjects ? <DropdownMenu
                 trigger={
                   <Button variant="outline" size="sm" aria-label="新建 / 自动化菜单">
@@ -853,6 +854,7 @@ export function ProjectListPage(): JSX.Element {
                   <Github className="h-4 w-4 shrink-0" />
                   从 GitHub 选仓库
                 </DropdownItem>
+                <DropdownItem onSelect={() => navigate('/dts')}><Database className="h-4 w-4 shrink-0" />数据同步</DropdownItem>
                 <DropdownItem onSelect={() => setSandboxOpen(true)}>
                   <Beaker className="h-4 w-4 shrink-0" />
                   从 YAML 沙盒新建

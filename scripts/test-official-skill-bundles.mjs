@@ -45,13 +45,14 @@ assert(Array.isArray(catalog.bundles) && catalog.bundles.length > 0, `至少一�
 
 const skillByKey = new Map(catalog.skills.map((s) => [s.key, s]));
 // 这些技能已交付仓库；官方目录也必须能发现并分发，防止只合入源文件却漏上架。
-console.log('[2a] 目标交付与债务技能的官方分发');
+console.log('[2a] 目标交付技能的官方分发');
 const deliverySkills = {
   'game-over': ['references/behavior-cases.md'],
   'work-budget': ['references/estimate-and-calibrate.md'],
   'kill-debt': ['references/goal-prompts.md'],
   'create-debt': [],
   'first-principles': ['references/sources.md'],
+  'ios-style-mobile-frontend': [],
 };
 for (const [key, references] of Object.entries(deliverySkills)) {
   const entry = skillByKey.get(key);

@@ -167,14 +167,8 @@ async function responseJson(response) {
   catch { throw new Error(`CDS 返回非 JSON 响应（HTTP ${response.status}）`); }
 }
 
-export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}) {
-  // Native fetch on Node 20 does not honor HTTP(S)_PROXY. Preserve configured
-  // network routing and CA trust instead of silently attempting direct access.
+export function createProjectApiClient(credentials, { fetchImpl = fetch, dispatcher } = {}) {
   const ownedDispatcher = dispatcher ?? new EnvHttpProxyAgent();
-  let supportedTools;
-  const assertProject = (resource) => {
-    if (!resource || resource.projectId !== credentials.projectId) throw new Error('CDS 返回资源与当前项目不匹配');
-  };
   async function request(method, endpoint, body) {
     const multipart = body instanceof FormData;
     let response;
@@ -196,11 +190,21 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
       // Upstream messages may echo SMTP passwords, model tokens or request data.
       // Keep the status actionable; detailed diagnostics stay in CDS's protected
       // audit log rather than being forwarded into the MCP conversation.
-      const details = { 400: '参数不符合要求', 401: '项目凭据无效或已过期', 403: '当前项目无权访问此资源', 404: '任务或报告不存在', 409: '任务状态或幂等键冲突', 413: '上传超过大小限制', 429: '请求过于频繁', 502: '审查上游服务失败', 503: '审查或邮件服务未配置或不可用' };
+      const details = { 400: '参数不符合要求', 401: '项目凭据无效或已过期', 403: '当前项目无权访问此资源', 404: '任务或报告不存在', 409: '任务状态或幂等键冲突', 413: '上传超过大小限制', 429: '请求过于频繁', 502: '上游服务失败', 503: '服务未配置或不可用' };
       throw new Error(`CDS HTTP ${response.status}: ${details[response.status] ?? '请求失败，请查看 CDS 任务详情'}`);
     }
     return parsed;
   }
+  return { request, async close() { if (!dispatcher) await ownedDispatcher.close(); } };
+}
+
+export function createBridge(credentials, options = {}) {
+  const client = createProjectApiClient(credentials, options);
+  const { request } = client;
+  let supportedTools;
+  const assertProject = (resource) => {
+    if (!resource || resource.projectId !== credentials.projectId) throw new Error('CDS 返回资源与当前项目不匹配');
+  };
   async function listTools() {
     // The shared CDS registry is authoritative about availability. Local tool
     // definitions only describe the bounded inputs this bridge understands.
@@ -305,6 +309,6 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
       }
       throw new Error('未知 CDS 代码审查工具');
     },
-    async close() { if (!dispatcher) await ownedDispatcher.close(); },
+    async close() { await client.close(); },
   };
 }

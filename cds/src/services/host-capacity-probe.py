@@ -7,6 +7,7 @@ nonzero exits AND missing runs. This command does not install a scheduler.
 """
 import argparse
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import json
 import math
@@ -21,10 +22,16 @@ import time
 MAX_SAMPLES = 192  # eight days of hourly observations, bounded on every write
 MAX_STATE_BYTES = 4 * 1024 * 1024
 DAY = 86400
+# The managed parent kills the whole collector at 55s. Leave time to analyze
+# and atomically publish even when one or more native scans time out.
+COLLECTION_SECONDS = 45
+SOURCE_WORKERS = 4
 
 
-def run(argv, env=None):
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=True, env=env)
+def run(argv, env=None, timeout=COLLECTION_SECONDS):
+    if timeout <= 0:
+        raise subprocess.TimeoutExpired(argv, timeout)
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=True, env=env)
     if len(result.stdout) > 1024 * 1024:
         raise ValueError("collector output exceeds budget")
     return result.stdout
@@ -49,17 +56,21 @@ def roots(values):
 
 
 def collect(selected, docker=False, now=None):
+    deadline = time.monotonic() + COLLECTION_SECONDS
     sample = {"at": time.time() if now is None else now, "host": socket.gethostname(),
               "sources": {}, "filesystems": {}, "errors": []}
-    for name, directory in selected.items():
+
+    def source_reading(item):
+        name, directory = item
         source = {"path": directory, "bytes": None, "device": None}
+        filesystem, error = None, None
         try:
             device = str(os.stat(directory).st_dev)
             source["device"] = device
             v = os.statvfs(directory)
             if v.f_blocks <= 0 or v.f_frsize <= 0:
                 raise ValueError("invalid filesystem reading")
-            sample["filesystems"][device] = {
+            filesystem = {
                 "totalBytes": v.f_blocks * v.f_frsize,
                 "usedBytes": (v.f_blocks - v.f_bfree) * v.f_frsize,
                 "availableBytes": v.f_bavail * v.f_frsize,
@@ -67,14 +78,26 @@ def collect(selected, docker=False, now=None):
             }
             # GNU du counts allocated bytes, skips nested filesystems, never
             # dereferences interior symlinks. No shell and no recursive Python walk.
-            output = run(["du", "-sx", "--block-size=1", "--", directory])
+            output = run(["du", "-sx", "--block-size=1", "--", directory],
+                         timeout=deadline - time.monotonic())
             source["bytes"] = int(output.split()[0])
             if source["bytes"] < 0:
                 raise ValueError("invalid du reading")
         except (OSError, ValueError, IndexError, subprocess.SubprocessError):
             source["bytes"] = None
-            sample["errors"].append(f"source:{name}:collection-failed")
-        sample["sources"][name] = source
+            error = f"source:{name}:collection-failed"
+        return name, source, filesystem, error
+
+    # Four managed sources can make progress independently. Queued CLI roots
+    # share the same deadline, rather than receiving a new budget per root.
+    # Only this thread merges results; no shared sample mutation by workers.
+    with ThreadPoolExecutor(max_workers=SOURCE_WORKERS) as pool:
+        for name, source, filesystem, error in pool.map(source_reading, selected.items()):
+            sample["sources"][name] = source
+            if filesystem is not None:
+                sample["filesystems"][source["device"]] = filesystem
+            if error:
+                sample["errors"].append(error)
     if docker:
         try:
             # Filesystem readings are local. A saved remote Docker context must
@@ -85,6 +108,7 @@ def collect(selected, docker=False, now=None):
             rows = [json.loads(line) for line in run(
                 ["docker", "--host=unix:///var/run/docker.sock", "system", "df", "--format", "{{json .}}"],
                 env=docker_env,
+                timeout=deadline - time.monotonic(),
             ).splitlines() if line.strip()]
             if not rows or any(not all(k in row for k in ("Type", "Size", "Reclaimable")) for row in rows):
                 raise ValueError("incomplete docker inventory")
