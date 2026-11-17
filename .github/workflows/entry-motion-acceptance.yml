@@ -59,7 +59,7 @@ jobs:
           pnpm -C e2e typecheck
   record:
     needs: checks
-    if: always() && ((github.event_name == 'push' && needs.checks.result == 'success') || inputs.phase == 'record')
+    if: ${{ !cancelled() && ((github.event_name == 'push' && needs.checks.result == 'success') || inputs.phase == 'record') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:

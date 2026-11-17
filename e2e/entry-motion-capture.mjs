@@ -18,11 +18,12 @@ for (const destination of [gateway]) {
   const deadline = Date.now() + 12 * 60_000;
   while (true) {
     try {
-      const response = await fetch(destination, { signal: AbortSignal.timeout(15000) });
+      const response = await fetch(destination, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
       const document = await response.text();
       const source = document.match(/<script[^>]*type="module"[^>]*src="([^"]+)/)?.[1];
-      if (response.ok && source) {
-        const bundle = await fetch(new URL(source,destination), { signal: AbortSignal.timeout(15000) });
+      const deployed = document.match(/var commitSha=['"]([a-f0-9]{40})['"]/i)?.[1];
+      if (response.ok && source && deployed === process.env.EXPECTED_COMMIT) {
+        const bundle = await fetch(new URL(source,destination), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
         if (bundle.ok && (await bundle.text()).includes('uniform vec4 openLowerLid;')) break;
       }
     } catch { /* Public deployment may still be switching; bounded below. */ }
@@ -57,8 +58,12 @@ await context.addInitScript(() => {
 });
 const page = context.pages()[0] || await context.newPage();
 try {
+  const nativeWindow = await context.newCDPSession(page);
+  const { windowId } = await nativeWindow.send('Browser.getWindowForTarget');
+  await nativeWindow.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'fullscreen' } });
+  await nativeWindow.detach();
   await page.goto(new URL('/login', map).href);
-  await page.waitForFunction(() => innerWidth === 1920 && innerHeight === 1080, { timeout: 15000 });
+  await page.waitForFunction(() => innerWidth === 1920 && innerHeight === 1080, null, { timeout: 15000 });
   await page.locator('input[autocomplete="username"]').first().fill(process.env.E2E_USER);
   await page.locator('input[autocomplete="current-password"]').first().fill(process.env.E2E_PASSWORD);
   await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
@@ -86,7 +91,7 @@ try {
       }
       await page.getByRole('menuitem', { name: '模型网关', exact: true }).click();
       await page.waitForURL(url => url.origin === gateway.origin && url.pathname === '/quickstart', { timeout: 45000 });
-      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-entry-arriving'), { timeout: 15000 });
+      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-entry-arriving'), null, { timeout: 15000 });
       await page.getByRole('textbox', { name: '我想做什么', exact: true }).waitFor();
       await page.waitForTimeout(1300); // Include the actual settled greeting and last-frame handoff.
       const evidence = await page.evaluate(() => ({ ...window.__entryEvidence, viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
