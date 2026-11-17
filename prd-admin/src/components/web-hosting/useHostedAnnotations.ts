@@ -141,7 +141,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     setDisplayMode('bubble'); setPreview(legacyPreview.current);
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-previews-show', siteId, nonce }, '*');
   }, [frameRef, siteId, nonce]);
-  const openThread = useCallback((id: string) => { dismissPreview(id); setActiveId(id); setEnabled(false); openRef.current(); }, [dismissPreview]);
+  const openThread = useCallback((id: string) => { setActiveId(id); setEnabled(false); openRef.current(); }, []);
   return { enabled, ready, connectionChecked, displayMode, setDisplayMode, preview, previews, allPreviewsHidden, hasHiddenPreviews: allPreviewsHidden || dismissedPreviewIds.size > 0, hideAllPreviews, showAllPreviews, dismissPreview, openThread, draftAnchor, activeId, missingIds, threads,
     select, clearDraft, focus, notifyFrame, setThreads, setEnabled, setActiveId };
 }

@@ -422,6 +422,13 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     test('图标全隐保留编号，编号重开后全显；菜单外点与iframe点击收起', async ({ page }) => {
       const frame = await open(page);
       await expect(page.getByRole('button', { name: '批注显示方式', exact: true })).toHaveCount(0);
+      const viewed = page.locator('[data-bubble-id="one"]');
+      await tap(viewed.getByRole('button', { name: '查看讨论', exact: true }));
+      await expect(page.getByRole('button', { name: '批注与讨论', exact: true })).toHaveAttribute('aria-expanded', 'true');
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
+      await tap(page.getByRole('button', { name: '批注与讨论', exact: true }));
+      await expect(viewed).toBeVisible();
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
       await page.screenshot({ path: test.info().outputPath('default-bubble-icons.png') });
       if (mobile) { const r = await page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first().boundingBox(); expect(r!.width).toBeGreaterThanOrEqual(44); expect(r!.height).toBeGreaterThanOrEqual(44); }
       await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());

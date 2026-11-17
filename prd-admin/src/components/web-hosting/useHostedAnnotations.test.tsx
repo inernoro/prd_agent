@@ -129,3 +129,18 @@ it('旧单气泡几何迟到也不能重开单独收起的气泡', async () => {
   await act(async () => post()); await act(async () => { annotations.dismissPreview(); post(); }); expect(annotations.preview).toBeNull();
   await act(async () => annotations.showAllPreviews()); expect(annotations.preview?.id).toBe('one');
 });
+
+it('查看讨论不等于收起气泡，并保留其他气泡的主动关闭状态', async () => {
+  await mount(); const frame = container.querySelector('iframe')!.contentWindow!, send = vi.spyOn(frame, 'postMessage');
+  await act(async () => annotations.notifyFrame()); const config = send.mock.calls.at(-1)![0];
+  const items = ['one', 'two'].map(id => ({ id, rect: { left: 10, top: 20, width: 100, height: 40 } }));
+  const post = () => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, type: 'map-annotation-previews', items } }));
+  await act(async () => post());
+  await act(async () => annotations.dismissPreview('two'));
+  await act(async () => annotations.openThread('one'));
+  await act(async () => post());
+  expect(annotations.previews?.map(item => item.id)).toEqual(['one']);
+  expect(annotations.activeId).toBe('one');
+  await act(async () => annotations.notifyFrame());
+  expect(send.mock.calls.at(-1)![0]).toMatchObject({ dismissedPreviewIds: ['two'] });
+});
