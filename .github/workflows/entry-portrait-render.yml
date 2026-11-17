@@ -1,5 +1,11 @@
 name: Render Portrait Motion Asset
 on:
+  push:
+    branches: [codex/map-orbital-entry]
+    paths:
+      - '.github/workflows/entry-portrait-render.yml'
+      - 'e2e/render-entry-portrait.mjs'
+      - 'e2e/entry-portrait-render.html'
   workflow_dispatch:
 permissions:
   contents: read
