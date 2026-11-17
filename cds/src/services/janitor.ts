@@ -1,4 +1,5 @@
 import { WorktreeService } from './worktree.js';
+import { containerImageReferences } from './container-image-references.js';
 import { releaseBatchProtectsInputs } from '../domain/release-batch.js';
 import { SourceInspectionHeldError, sourceHoldReason } from './deployment-source-inspection.js';
 import { reclaimDeploymentSources, DeploymentSourceFailureTracker, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
@@ -143,9 +144,11 @@ function createImageDocker(run: DockerRunner): ImageDockerFns {
       return out.split('\n').filter(Boolean);
     },
     listInUseImages: async () => {
-      const out = await execDocker(['ps', '-a', '--format', '{{.Image}}'], 60_000, run);
-      if (out.startsWith('__ERR__')) throw new Error('容器镜像占用查询失败，本轮跳过镜像回收。');
-      return out.split('\n').filter(Boolean);
+      return containerImageReferences(async args => {
+        const out = await execDocker(args, 30_000, run);
+        if (out.startsWith('__ERR__')) throw new Error('容器镜像占用查询失败，本轮跳过镜像回收。');
+        return out;
+      });
     },
     removeImage: async (image, isProtected) => {
       let held = false;
@@ -236,6 +239,8 @@ export const defaultDockerPrune: DockerPruneFn = createDockerPrune(execDockerDet
 /** Report returned by a single sweep pass. */
 export interface JanitorSweepReport {
   deploymentSources?: DeploymentSourceRetentionReport;
+  /** A competing keeper owns the shared mutex; no reclaim phase was confirmed. */
+  reclaimDeferred?: { heldBy: string; heldForMs: number };
   /** A phase not confirmed by a source-only retry failed (including a thrown operation). */
   fullRecheckRequired?: boolean;
   timestamp: string;
@@ -504,7 +509,8 @@ export function createJanitorDockerAdapters(shell: IShellExecutor): {
   dockerPrune: DockerPruneFn; imageDocker: ImageDockerFns; orphanWorktreeFs: OrphanWorktreeFs;
 } {
   const run: DockerRunner = async (args, timeout, beforeStart) => {
-    const readOnly = ['images', 'ps', 'inspect'].includes(args[0]);
+    const readOnly = ['images', 'ps', 'inspect'].includes(args[0])
+      || (['container', 'image'].includes(args[0]) && args[1] === 'inspect');
     const result = await shell.exec(['docker', ...args].map(shellQuoteArg).join(' '), {
       timeout, executionLane: readOnly ? 'observation' : 'operation', beforeStart,
     });
@@ -539,6 +545,7 @@ export type OrphanInfraScanFn = () => Promise<string[]>;
 
 export interface JanitorSnapshot {
   enabled: boolean;
+  reclaimLock?: { holder: string | null; since: number | null };
   config: JanitorConfig;
   dryRun: { wouldRemove: string[]; wouldSkip: string[] };
   disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
@@ -551,6 +558,7 @@ export interface JanitorSnapshot {
    */
   lastSweep: {
     at: string;
+    reclaimDeferred?: { heldBy: string; heldForMs: number };
     diskTier: DiskTier;
     removedBranches: number;
     /** 本轮因受保护而免于删除的过期分支数（2026-07-27 P0 后新增，保护要可见）。 */
@@ -577,7 +585,8 @@ export interface JanitorSnapshot {
       heldReasons?: Partial<Record<DeploymentSourceHoldReason, number>>; filesystem?: DeploymentSourceRetentionReport['filesystem'] };
     dockerPrune: string[] | null;
     errors: number;
-    capacity?: { reasons: string[]; sourceDeferred: number; followUpScheduled: boolean; followUpsRemaining: number };
+    capacity?: { reasons: string[]; sourceDeferred: number; followUpScheduled: boolean; followUpsRemaining: number;
+      fullRecheckScheduled?: boolean; fullRechecksRemaining?: number };
   } | null;
 }
 
@@ -596,6 +605,9 @@ export const systemJanitorClock: JanitorClock = { now: () => Date.now() };
 
 const SOURCE_FOLLOW_UP_DELAY_MS = 60_000;
 const SOURCE_FOLLOW_UPS_PER_CYCLE = 5;
+// Offset from minute-based keepers, with a finite allowance. Never wait on or steal their lock.
+const RECLAIM_RECHECK_DELAY_MS = 45_000;
+const RECLAIM_RECHECKS_PER_CYCLE = 5;
 
 /**
  * Default disk usage implementation using `fs.statfsSync` (Node 18.15+).
@@ -643,6 +655,8 @@ export class JanitorService {
   private firstSweepHandle: NodeJS.Timeout | null = null;
   private sourceFollowUpHandle: NodeJS.Timeout | null = null;
   private sourceFollowUpsRemaining = 0;
+  private reclaimRecheckHandle: NodeJS.Timeout | null = null;
+  private reclaimRechecksRemaining = 0;
   private schedulingGeneration = 0;
   private inFlightSourceOnly = false;
   private lastCapacityRisk = '';
@@ -894,7 +908,13 @@ export class JanitorService {
     const plan: ImageRetentionPlan = computeImageRetentionPlan({
       ledger, hostImages, inUseImages: [...inUseImages, ...(this.protectedImages?.() || [])], keepGenerations,
       maxRemovals: imageMaxRemovalsFor(tier, this.config.imageMaxRemovalsPerSweep ?? 40),
+      afterImage: this.stateService.getImageRetentionCursor?.(),
     });
+    // Persist before dispatch: a held/failing prefix (or restart mid-batch) must not starve the tail.
+    if (plan.remove.length && this.stateService.setImageRetentionCursor) {
+      this.stateService.setImageRetentionCursor(plan.remove.at(-1)!);
+      this.stateService.save();
+    }
     const removed: string[] = [];
     const failed: Array<{ image: string; error: string }> = [];
     const held: Array<{ image: string; reason: string }> = [];
@@ -953,6 +973,7 @@ export class JanitorService {
     if (this.sweepHandle) return;
     this.schedulingGeneration++;
     this.sourceFollowUpsRemaining = SOURCE_FOLLOW_UPS_PER_CYCLE;
+    this.reclaimRechecksRemaining = RECLAIM_RECHECKS_PER_CYCLE;
     // 调度不再受 `enabled` 门禁（2026-07-27 宕机复盘）：`enabled` 的语义一直是
     // 「是否允许**破坏性**地删过期分支」，sweep() 内部已按它单独 gate。但此前
     // start() 在 disabled 时直接 return，连带把磁盘检查、悬空镜像清理、per-SHA
@@ -961,6 +982,7 @@ export class JanitorService {
     const intervalMs = Math.max(60_000, (this.config.sweepIntervalSeconds || 3600) * 1000);
     this.sweepHandle = setInterval(() => {
       this.sourceFollowUpsRemaining = SOURCE_FOLLOW_UPS_PER_CYCLE;
+      this.reclaimRechecksRemaining = RECLAIM_RECHECKS_PER_CYCLE;
       this.sweep().catch((err) => {
         console.error('[janitor] sweep error:', (err as Error).message);
       });
@@ -986,6 +1008,7 @@ export class JanitorService {
   stop(): void {
     this.schedulingGeneration++;
     this.clearSourceFollowUp();
+    this.clearReclaimRecheck();
     if (this.firstSweepHandle) {
       clearTimeout(this.firstSweepHandle);
       this.firstSweepHandle = null;
@@ -1028,6 +1051,30 @@ export class JanitorService {
     if (this.lastSweepSummary?.capacity) this.lastSweepSummary.capacity.followUpScheduled = false;
   }
 
+  private clearReclaimRecheck(): void {
+    if (this.reclaimRecheckHandle) clearTimeout(this.reclaimRecheckHandle);
+    this.reclaimRecheckHandle = null;
+    for (const summary of [this.lastSweepSummary, this.lastFullSweepSummary]) {
+      if (summary?.capacity) summary.capacity.fullRecheckScheduled = false;
+    }
+  }
+
+  private updateReclaimRecheck(report: JanitorSweepReport, sourceOnly: boolean): void {
+    if (!report.reclaimDeferred) {
+      if (!sourceOnly) this.clearReclaimRecheck();
+      return;
+    }
+    if (!this.sweepHandle || this.reclaimRecheckHandle || this.reclaimRechecksRemaining <= 0) return;
+    const generation = this.schedulingGeneration;
+    this.reclaimRecheckHandle = setTimeout(() => {
+      this.reclaimRecheckHandle = null;
+      if (!this.sweepHandle || generation !== this.schedulingGeneration) return;
+      this.reclaimRechecksRemaining--;
+      this.sweep().catch(error => console.error('[janitor] contention recheck failed:', (error as Error).message));
+    }, RECLAIM_RECHECK_DELAY_MS);
+    this.reclaimRecheckHandle.unref?.();
+  }
+
   private recordCapacityRisk(reasons: string[], message: string): void {
     const key = reasons.join(',');
     if (key && (key !== this.lastCapacityRisk || this.clock.now() - this.lastCapacityAlertAt >= 3600_000)) {
@@ -1041,6 +1088,7 @@ export class JanitorService {
   }
 
   private updateCapacity(report: JanitorSweepReport, sourceOnly: boolean): NonNullable<NonNullable<JanitorSnapshot['lastSweep']>['capacity']> {
+    this.updateReclaimRecheck(report, sourceOnly);
     const sources = report.deploymentSources;
     // The collector intentionally keeps this worker's claim for this process
     // lifetime. Another successful path cannot prove its terminal state.
@@ -1064,6 +1112,11 @@ export class JanitorService {
       || report.imageRetention?.failed.length || report.orphanWorktrees?.failed.length);
     const reasons: string[] = [];
     const messages: string[] = [];
+    if (report.reclaimDeferred) {
+      reasons.push('reclaim-busy');
+      messages.push(`回收等待${report.reclaimDeferred.heldBy}释放互斥锁，${this.reclaimRecheckHandle
+        ? '已安排有界复查' : '本周期复查额度已用尽或调度未运行，下一常规周期重试'}`);
+    }
     if (!report.disk) { reasons.push('disk-unconfirmed'); messages.push('磁盘余量未确认'); }
     else if (report.diskWarning || report.diskTier !== 'ok') {
       reasons.push('disk-pressure'); messages.push(`工作区磁盘已用${report.disk.usedPercent}%，宿主保护档位${report.diskTier}`);
@@ -1089,7 +1142,8 @@ export class JanitorService {
     }
     this.recordCapacityRisk(reasons, messages.join('；'));
     return { reasons, sourceDeferred: deferred, followUpScheduled: Boolean(this.sourceFollowUpHandle),
-      followUpsRemaining: this.sourceFollowUpsRemaining };
+      followUpsRemaining: this.sourceFollowUpsRemaining, fullRecheckScheduled: Boolean(this.reclaimRecheckHandle),
+      fullRechecksRemaining: this.reclaimRechecksRemaining };
   }
 
   private async executeSweep(sourceOnly: boolean): Promise<JanitorSweepReport> {
@@ -1101,6 +1155,7 @@ export class JanitorService {
         const report = await this.runSweep(sourceOnly);
         this.lastSweepSummary = {
           at: report.timestamp,
+          ...(report.reclaimDeferred ? { reclaimDeferred: report.reclaimDeferred } : {}),
           diskTier: report.diskTier,
           removedBranches: report.removedBranches.length,
           skippedProtected: report.skippedProtected.length,
@@ -1147,6 +1202,7 @@ export class JanitorService {
       } catch (error) {
         if (generation === this.schedulingGeneration) {
           this.clearSourceFollowUp();
+          this.clearReclaimRecheck();
           this.nonSourceReclaimFailed = true;
           this.recordCapacityRisk(['sweep-failed'], '容量与回收任务执行失败，本轮未确认完成，下一常规周期重试');
         }
@@ -1217,6 +1273,7 @@ export class JanitorService {
       return true;
     });
     if (isReclaimSkip(reclaimed)) {
+      report.reclaimDeferred = { heldBy: reclaimed.heldBy, heldForMs: reclaimed.heldForMs };
       report.fullRecheckRequired = true;
       report.errors.push(
         `回收被跳过：${reclaimed.heldBy} 正在回收（已持有 ${Math.round(reclaimed.heldForMs / 1000)}s），本轮跳过不排队`,
@@ -1477,6 +1534,7 @@ export class JanitorService {
     }
     return {
       enabled: this.isEnabled(),
+      reclaimLock: reclaimLock.getState(),
       config: this.config,
       dryRun: this.dryRun(),
       disk,
