@@ -69,6 +69,43 @@ public sealed class IndependentWritingCollectionAcceptanceTests
         Assert.Equal(4, (await f.Db.DocumentStores.Find(store => store.Id == "store").SingleAsync()).DocumentCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PublishedOrdinaryPublicAndShareContentUseTheSameFrozenReadProjection(bool singleEntry)
+    {
+        await using var f = new Fixture();
+        var entry = WritingPublishedContentProjectionTests.Entry();
+        entry.DocumentId = "private-original-document"; entry.AttachmentId = "private-original-file";
+        await f.Db.DocumentStores.InsertOneAsync(new DocumentStore { Id = "store", OwnerId = "owner", IsPublic = true });
+        await f.Db.DocumentEntries.InsertOneAsync(entry);
+        await f.Db.DocumentStoreShareLinks.InsertOneAsync(new DocumentStoreShareLink {
+            Id = "projection-share", StoreId = "store", Token = "projection-unit-token", EntryId = singleEntry ? "writing" : null, CreatedBy = "owner"
+        });
+        var documents = new Mock<IDocumentService>(MockBehavior.Strict);
+        var teams = new Mock<ITeamService>(MockBehavior.Strict);
+        teams.Setup(t => t.GetMyTeamIdsAsync("owner", It.IsAny<CancellationToken>())).ReturnsAsync(new List<string>());
+        var controller = new DocumentStoreController(f.Db, null!, null!, documents.Object, null!, null!, null!, teams.Object,
+            null!, null!, null!, null!, null!, null!, null!, null!, new ConfigurationBuilder().Build(), null!, null!, null!, null!, null!, NullLogger<DocumentStoreController>.Instance) {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "owner") }, "test")) } }
+        };
+        var before = JsonSerializer.Serialize((await f.Db.DocumentEntries.Find(e => e.Id == "writing").SingleAsync()).Writing);
+        var ordinary = PublicCountData(await controller.GetEntryContent("writing"));
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+        var published = PublicCountData(await controller.GetPublicEntryContent("writing"));
+        var shared = PublicCountData(await controller.GetShareEntryContent("projection-unit-token", "writing"));
+        Assert.Equal(ordinary.GetRawText(), published.GetRawText()); Assert.Equal(ordinary.GetRawText(), shared.GetRawText());
+        Assert.Contains("作者确认补充", shared.GetProperty("content").GetString());
+        Assert.DoesNotContain("未发布下一稿", shared.GetProperty("content").GetString());
+        Assert.IsType<NotFoundObjectResult>(await controller.GetShareEntryContent("unknown-token", "writing"));
+        await f.Db.DocumentEntries.InsertOneAsync(new DocumentEntry { Id = "unpublished", StoreId = "store", Writing = new WritingDocumentState() });
+        Assert.IsType<NotFoundObjectResult>(await controller.GetPublicEntryContent("unpublished"));
+        Assert.IsType<NotFoundObjectResult>(await controller.GetShareEntryContent("projection-unit-token", "unpublished"));
+        Assert.Equal(before, JsonSerializer.Serialize((await f.Db.DocumentEntries.Find(e => e.Id == "writing").SingleAsync()).Writing));
+        documents.VerifyNoOtherCalls();
+    }
+
     private static async Task SeedPublicCountStoreAsync(Fixture fixture, bool published)
     {
         await fixture.Db.DocumentStores.InsertManyAsync(new[] {
@@ -344,5 +381,101 @@ public sealed class IndependentWritingCollectionAcceptanceTests
             Db = new MongoDbContext(connection, name); Governance = new LlmGatewayDataContext(connection, name);
         }
         public async ValueTask DisposeAsync() => await new MongoClient(connection).DropDatabaseAsync(name);
+    }
+}
+
+// Pure read-projection tests: no Mongo, model call, publishing or business-data fixture.
+public sealed class WritingPublishedContentProjectionTests
+{
+    [Fact]
+    public async Task PublishedContentUsesOnlyFrozenParagraphsAndQuotedSourcesWithoutReadingPrivateOriginals()
+    {
+        var documents = new Mock<IDocumentService>(MockBehavior.Strict);
+        var entry = Entry();
+        entry.DocumentId = "private-original-document";
+        entry.AttachmentId = "private-original-file";
+        var before = JsonSerializer.Serialize(entry.Writing);
+        var payload = await Payload(Controller(documents.Object), entry);
+        var text = payload.GetProperty("content").GetString()!;
+        Assert.Equal(new[] { "entryId", "title", "content", "contentType", "fileUrl", "hasContent" }, payload.EnumerateObject().Select(p => p.Name));
+        Assert.Equal("稳定发布标题", payload.GetProperty("title").GetString());
+        Assert.Equal("text/markdown", payload.GetProperty("contentType").GetString());
+        Assert.True(payload.GetProperty("hasContent").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("fileUrl").ValueKind);
+        foreach (var paragraph in entry.Writing!.Published!.Sections.SelectMany(s => s.Paragraphs))
+            Assert.Contains(paragraph.Text, text, StringComparison.Ordinal);
+        Assert.Contains("作者确认补充", text);
+        Assert.Contains("S1", text); Assert.Contains("原始归档规范", text);
+        Assert.Contains("本版引用摘录", text); Assert.Contains("原始引用句", text);
+        Assert.Contains("条件：先取得明确确认", text); Assert.Contains("关键明细", text);
+        Assert.Contains("待确认事项", text); Assert.Contains("保留的开放项", text);
+        foreach (var hidden in new[] { "未发布下一稿", "未引用私密正文", "被跳过的来源", "private-original", "https://private.example", "不在citations内的引句" })
+            Assert.DoesNotContain(hidden, text);
+        Assert.Equal(before, JsonSerializer.Serialize(entry.Writing));
+        documents.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task SourceMetadataAndQuotesArePlainTextWhileParagraphTextIsUnchanged()
+    {
+        var entry = Entry();
+        var publication = entry.Writing!.Published!;
+        publication.Sources[0].Title = "  原始归档``规范`` [链接](https://private.example) <b>标题</b>  ";
+        publication.Sections[0].Paragraphs[0].Quotes["S1"] = "原始引用句 ![图](https://private.example/image)\n<script>恶意标记</script>\n   ";
+        var before = JsonSerializer.Serialize(publication);
+        var payload = await Payload(Controller(new Mock<IDocumentService>(MockBehavior.Strict).Object), entry);
+        var text = payload.GetProperty("content").GetString()!;
+        Assert.Contains(publication.Sections[0].Paragraphs[0].Text, text);
+        Assert.Contains("``` " + publication.Sources[0].Title + " ```", text);
+        Assert.Contains("` 原始引用句 ![图](https://private.example/image) `", text);
+        Assert.Contains("\n> ` <script>恶意标记</script> `", text);
+        Assert.Contains("\n> `   `", text);
+        Assert.Equal(before, JsonSerializer.Serialize(publication));
+    }
+
+    [Fact]
+    public async Task MissingExcerptDoesNotFallBackToSourceFullTextOrInventAuthorOrigin()
+    {
+        var entry = Entry();
+        entry.Writing!.Published!.Sections[0].Paragraphs[0].Quotes.Clear();
+        var text = (await Payload(Controller(new Mock<IDocumentService>(MockBehavior.Strict).Object), entry)).GetProperty("content").GetString()!;
+        Assert.Contains("本版未保存引用摘录", text);
+        Assert.DoesNotContain("未引用私密正文", text);
+        Assert.Equal(1, text.Split("作者确认补充").Length - 1);
+    }
+
+    [Fact]
+    public async Task NonWritingContentKeepsExistingPayloadAndDocumentRead()
+    {
+        var documents = new Mock<IDocumentService>(MockBehavior.Strict);
+        documents.Setup(s => s.GetByIdAsync("plain")).ReturnsAsync(new ParsedPrd { Title = "普通文件标题", RawContent = "普通正文" });
+        var payload = await Payload(Controller(documents.Object), new DocumentEntry { Id = "plain-entry", DocumentId = "plain", Title = "条目标题", ContentType = "text/plain" });
+        Assert.Equal("plain-entry", payload.GetProperty("entryId").GetString());
+        Assert.Equal("普通文件标题", payload.GetProperty("title").GetString());
+        Assert.Equal("普通正文", payload.GetProperty("content").GetString());
+        Assert.Equal("text/plain", payload.GetProperty("contentType").GetString());
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("fileUrl").ValueKind);
+        Assert.True(payload.GetProperty("hasContent").GetBoolean());
+        documents.Verify(s => s.GetByIdAsync("plain"), Times.Once); documents.VerifyNoOtherCalls();
+    }
+
+    internal static DocumentEntry Entry() => new() { Id = "writing", StoreId = "store", Title = "未发布下一稿条目标题", ContentType = "text/markdown", Writing = new() {
+        Stage = "confirm", Revision = 7, Title = "未发布下一稿", Sources = new() { new() { Id = "S1", Content = "未发布下一稿私源" } },
+        Sections = new() { new() { Paragraphs = new() { new() { Text = "未发布下一稿" } } } },
+        Published = new() { Version = 2, Title = "稳定发布标题", Summary = "稳定摘要", Sources = new() {
+            new() { Id = "S1", EntryId = "private-original", Title = "原始归档规范", Content = "原始引用句\n未引用私密正文", Status = "read" },
+            new() { Id = "S2", Title = "被跳过的来源", Content = "被跳过的来源正文", Status = "skipped" }
+        }, Sections = new() { new() { Id = "s", Title = "数量边界", Condition = "先取得明确确认", Detail = new() { Label = "关键明细", Rows = new() { new() { "每包", "严格少于200" } } }, Paragraphs = new() {
+            new() { Id = "p1", Text = "  少于200份可单包。\n数字与空格  不改。", Status = "src", Citations = new() { "S1" }, Quotes = new() { ["S1"] = "原始引用句", ["S2"] = "不在citations内的引句" } },
+            new() { Id = "p2", Text = "恰好200份也分包，每包严格少于200份。<作者原文保持>", Status = "auth" }
+        } } }, OpenQuestions = new() { new() { Title = "保留的开放项", Answer = "确认后再执行", Status = "open" } } }
+    } };
+
+    internal static DocumentStoreController Controller(IDocumentService documents) => new(null!, null!, null!, documents, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, new ConfigurationBuilder().Build(), null!, null!, null!, null!, null!, NullLogger<DocumentStoreController>.Instance);
+    internal static async Task<JsonElement> Payload(DocumentStoreController controller, DocumentEntry entry)
+    {
+        var method = typeof(DocumentStoreController).GetMethod("BuildEntryContentPayloadAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var payload = await (Task<object>)method.Invoke(controller, new object[] { entry })!;
+        return JsonSerializer.SerializeToElement(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
 }

@@ -233,12 +233,48 @@ public static class WritingDocumentPolicy
         }
         foreach (var q in state.Questions) { q.Status = "pending"; q.Answer = ""; }
     }
-    public static string Markdown(WritingDocumentState state)
+    public static string Markdown(WritingDocumentState state) =>
+        RenderMarkdown(state.Title, state.Summary, state.Sections, state.Questions, paragraph => paragraph.Text);
+
+    /// <summary>普通阅读的发布版投影：正文不改，只附已发布段落的身份和已引用摘录，不展开来源全文。</summary>
+    public static string PublishedMarkdown(WritingPublication published)
+    {
+        static string NoteText(string value)
+        {
+            // 行内字面文本也阻止 GFM 裸 URL 自动链接；按最长反引号选定界符，原摘录不能逃出注记。
+            return string.Join("\n> ", value.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n').Select(line => {
+                if (line.Length == 0) return "";
+                var longest = 0; var run = 0;
+                foreach (var ch in line) { run = ch == '`' ? run + 1 : 0; longest = Math.Max(longest, run); }
+                var fence = new string('`', longest + 1);
+                var padding = line.All(ch => ch == ' ') ? "" : " ";
+                return fence + padding + line + padding + fence;
+            }));
+        }
+        string Paragraph(WritingParagraph paragraph)
+        {
+            var notes = new List<string>();
+            if (paragraph.Status == "auth") notes.Add("> 作者确认补充");
+            foreach (var id in paragraph.Citations.Distinct()) {
+                var source = published.Sources.FirstOrDefault(s => s.Id == id && s.Status == "read");
+                notes.Add("> 来源 " + NoteText(id) + (source == null ? " · 本版来源快照不可用" : " · " + NoteText(source.Title)));
+                notes.Add(source != null && paragraph.Quotes.TryGetValue(id, out var quote) && !string.IsNullOrWhiteSpace(quote)
+                    ? "> 本版引用摘录：" + NoteText(quote)
+                    : "> 本版未保存引用摘录");
+            }
+            if (notes.Count == 0) notes.Add("> 本版未记录段落来源");
+            return paragraph.Text + "\n\n" + string.Join("\n>\n", notes);
+        }
+        return RenderMarkdown(published.Title, published.Summary, published.Sections, published.OpenQuestions, Paragraph);
+    }
+
+    private static string RenderMarkdown(string title, string summary, IEnumerable<WritingSection> sections,
+        IEnumerable<WritingQuestion> questions, Func<WritingParagraph, string> paragraph)
     {
         static string Cell(string value) => System.Net.WebUtility.HtmlEncode(value)
             .Replace("|", "\\|").Replace("\r\n", "\n").Replace("\n", "<br>");
-        var parts = state.Sections.Select(section => {
-            var content = new List<string> { $"## {section.Title}", string.Join("\n\n", section.Paragraphs.Select(p => p.Text)) };
+        var parts = sections.Select(section => {
+            var content = new List<string> { $"## {section.Title}", string.Join("\n\n", section.Paragraphs.Select(paragraph)) };
             if (!string.IsNullOrWhiteSpace(section.Condition))
                 content.Add("> 条件：" + section.Condition.Replace("\n", "\n> "));
             if (section.Detail is { Rows.Count: > 0 } detail) {
@@ -250,9 +286,9 @@ public static class WritingDocumentPolicy
             }
             return string.Join("\n\n", content);
         }).ToList();
-        var open = state.Questions.Where(q => q.Status == "open").ToList();
+        var open = questions.Where(q => q.Status == "open").ToList();
         if (open.Count > 0) parts.Add("## 待确认事项\n\n" + string.Join("\n", open.Select(q => $"- {q.Title}：{q.Answer}")));
-        return $"# {state.Title}\n\n{state.Summary}\n\n" + string.Join("\n\n", parts);
+        return $"# {title}\n\n{summary}\n\n" + string.Join("\n\n", parts);
     }
     public static WritingPublication Snapshot(WritingDocumentState state, string reviewerId, string reviewerName)
     {

@@ -3899,6 +3899,9 @@ public partial class DocumentStoreController : ControllerBase
         if (entry is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
+        if (entry.Writing?.Published != null)
+            return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
+
         // 优先从 ParsedPrd 读取完整内容
         string? content = null;
         string? title = null;
@@ -7375,6 +7378,13 @@ public partial class DocumentStoreController : ControllerBase
 
     private async Task<object> BuildEntryContentPayloadAsync(DocumentEntry entry)
     {
+        if (entry.Writing?.Published is { } published) {
+            var projected = WritingDocumentPolicy.PublishedMarkdown(published);
+            return new {
+                entryId = entry.Id, title = published.Title, content = projected,
+                contentType = entry.ContentType, fileUrl = (string?)null, hasContent = !string.IsNullOrEmpty(projected),
+            };
+        }
         string? content = null;
         string? title = null;
         if (!string.IsNullOrEmpty(entry.DocumentId))
