@@ -113,11 +113,13 @@ export default function CommentsSection(props: Props) {
   useEffect(() => {
     const previous = confirmedDraftVersion.current;
     if (previous.identity !== identity || (versionKey && previous.versionKey && versionKey !== previous.versionKey)) {
+      // A new publication starts on its own composer; this is not the first document load.
+      if (previous.identity === identity) initialVersionScope.current = manualVersionScope;
       setOtherVersions(false); setReplyTo(null); setDraft(''); setFilter('all');
     }
     // An unresolved metadata response does not change which publication owns the draft.
     if (previous.identity !== identity || versionKey) confirmedDraftVersion.current = { identity, versionKey };
-  }, [identity, versionKey]);
+  }, [identity, versionKey, manualVersionScope]);
   useEffect(() => {
     if (props.versionOnly || loading || !versionReady || error || !reportedCount || initialVersionScope.current === defaultVersionScope
       || initialVersionScope.current === manualVersionScope) return;

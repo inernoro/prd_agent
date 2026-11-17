@@ -98,6 +98,32 @@ describe('annotation entry availability', () => {
     expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
     expect(container.querySelector('.review-thread')?.textContent).toContain('当前版已有意见');
   });
+  it.each(['share', 'site'] as const)('发布新版本后保留本版输入，不被历史意见默认页签覆盖：%s', async mode => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: true, comments: [
+      { id: 'existing', siteId: 'site', content: '此前版本的意见', contentVersion: 'previous', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (versionKey: string) => {
+      const review = { loading: false, selected: { id: versionKey, contentVersionKey: versionKey }, versions: [] } as unknown as HostedReview;
+      const source = mode === 'share' ? { mode, token: 'share' } : { mode, siteId: 'site' };
+      root.render(<CommentsSection {...source} review={review} annotations={annotations()} />);
+    };
+    await act(async () => render('previous'));
+    const input = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '旧草稿');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => render('restored'));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
+    expect(container.querySelector('textarea')?.value).toBe('');
+    expect(container.querySelector('textarea')?.disabled).toBe(false);
+    await act(async () => button('其他版本 1').click());
+    await act(async () => render('uploaded'));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
+    expect(container.querySelector('textarea')?.disabled).toBe(false);
+  });
   it('首次打开默认展示已解决和未解决批注，不因默认筛选隐藏已有意见', async () => {
     list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
       { id: 'resolved', siteId: 'site', content: '已经解决的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },
