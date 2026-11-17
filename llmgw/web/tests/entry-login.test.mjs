@@ -9,6 +9,10 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/login' });
   const previous = Object.fromEntries(['window','document','Image','localStorage','requestAnimationFrame','cancelAnimationFrame','IS_REACT_ACT_ENVIRONMENT'].map(key => [key, globalThis[key]]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, Image: dom.window.Image, localStorage: dom.window.localStorage, IS_REACT_ACT_ENVIRONMENT: true });
+  // JSDOM has no media decoder. This unit case verifies routing/recovery; real playback is recorded in cloud browsers.
+  dom.window.HTMLMediaElement.prototype.play = () => Promise.resolve();
+  dom.window.HTMLMediaElement.prototype.pause = () => {};
+  dom.window.HTMLMediaElement.prototype.load = () => {};
   globalThis.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()),16);
   globalThis.cancelAnimationFrame = clearTimeout;
   window.matchMedia = () => ({ matches: true });
