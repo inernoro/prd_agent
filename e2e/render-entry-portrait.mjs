@@ -7,7 +7,7 @@ const out = new URL('../work/entry-portrait/',import.meta.url);
 await mkdir(new URL('frames/',out),{recursive:true});
 const document = new URL('../llmgw/web/entry-render.html',import.meta.url);
 await writeFile(document,await readFile(new URL('./entry-portrait-render.html',import.meta.url),'utf8'));
-const server=spawn('pnpm',['-C','llmgw/web','exec','vite','--host','127.0.0.1','--port','4173'],{stdio:'inherit'});
+const server=spawn('pnpm',['-C','llmgw/web','exec','vite','--base','/','--host','127.0.0.1','--port','4173'],{stdio:'inherit'});
 let browser;
 try {
   for(let n=0;n<100;n++){
@@ -16,6 +16,7 @@ try {
   }
   browser=await chromium.launch({headless:true,args:['--enable-unsafe-swiftshader']});
   const page=await browser.newPage({viewport:{width:1672,height:941},deviceScaleFactor:1});
+  page.on('pageerror',error=>console.error('Offline page error:',error.message));
   await page.goto('http://127.0.0.1:4173/entry-render.html');
   await page.waitForFunction(()=>window.ready===true);
   for(let frame=0;frame<=309;frame++){
