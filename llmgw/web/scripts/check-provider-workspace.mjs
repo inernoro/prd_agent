@@ -55,8 +55,8 @@ try {
         await p.goto(origin + '/login', { waitUntil: 'domcontentloaded' });
         await p.locator('#llmgw-username').fill('owner');
         await p.locator('#llmgw-password').fill('local-fixture');
-        await p.getByRole('button', { name: '进入租户工作区', exact: true }).click();
-        await p.waitForURL(origin + '/');
+        await p.locator('form button[type=submit]').click();
+        await p.waitForURL(origin + '/quickstart');
         const ready = async () => { await p.goto(origin + '/platforms', { waitUntil: 'domcontentloaded' }); await p.locator('.lg-collection-provider-row').first().waitFor(); await p.evaluate(t => { document.documentElement.dataset.theme = t; localStorage.setItem('llmgw-theme', t); }, theme); await p.evaluate(() => document.fonts.ready); };
         await ready();
         const measure = async (name) => { await p.waitForTimeout(100); await p.screenshot({ path: `${out}/${name}-${width}-${theme}.png` }); const m = await p.evaluate(() => { const rect = s => { const e = document.querySelector(s); if (!e)

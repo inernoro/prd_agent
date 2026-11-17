@@ -52,7 +52,7 @@ export function useDismissableMenus(route: string) {
     const ownedFocus = opened.some(menu => menu.contains(document.activeElement));
     opened.forEach(menu => { menu.open = false; });
     if (ownedFocus) {
-      const target = host?.querySelector<HTMLElement>('main h1, main');
+      const target = host?.querySelector<HTMLElement>('main h1') ?? host?.querySelector<HTMLElement>('main');
       if (target) { if (!target.hasAttribute('tabindex')) target.tabIndex = -1; target.focus({ preventScroll: true }); }
     }
   }, [route]);
