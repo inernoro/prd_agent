@@ -177,6 +177,7 @@ const EXACT = {
   '/api/releases/batches/accepted-versions': { versions: [] },
   '/api/releases/batches': { batches: [] },
   '/api/releases/targets': { targets: [] },
+  '/api/releases/governance': { authorizations: [], attempts: [], mergeBacks: [], checks: [] },
   '/api/github/app': { configured: false },
   '/api/github/installations': { installations: [] },
   '/api/cache/status': { entries: [] },

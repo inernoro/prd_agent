@@ -18,7 +18,101 @@ test.beforeEach(async ({ browser, page }, testInfo) => {
   });
 });
 
+test('普通项目成员不能通过环境接入读取系统服务器列表',async({page})=>{
+  await installOperationsFixtures(page);
+  await page.route('**/api/auth/status',route=>route.fulfill({json:{authenticated:true,enabled:true,
+    user:{name:'项目成员',isSystemOwner:false},approvalCapabilities:{accessRequests:false,operator:false}}}));
+  const systemReads:string[]=[];
+  page.on('request',request=>{if(new URL(request.url()).pathname==='/api/cds-system/remote-hosts')systemReads.push(request.url());});
+  await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+  await expect(page.getByRole('heading',{name:'此页面仅系统所有者可用',exact:true})).toBeVisible();
+  expect(systemReads).toEqual([]);
+});
+
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`${viewport.width} 单次批准选择已有固定版本且保留分支最新版本`,async({page})=>{
+    await page.setViewportSize(viewport);await installOperationsFixtures(page);
+    const stamp=new Date().toISOString(),a='a'.repeat(40),b='b'.repeat(40);let records:any[]=[];const writes:any[]=[];
+    await page.route('**/api/releases/center?*',route=>route.fulfill({json:{rows:[{target:{...target,governance:{required:true}},currentVersion:'old',currentCommit:a,healthStatus:'healthy',canRollback:false,latestRun:run}],runs:[run],plans:[]}}));
+    await page.route('**/api/releases/targets?*',route=>route.fulfill({json:{targets:[{...target,governance:{required:true}}],archivedTargets:[],remoteHosts:[]}}));
+    await page.route('**/api/branches?*',route=>route.fulfill({json:{branches:[{id:'compat-branch',projectId:target.projectId,branch:'compat-branch',githubCommitSha:b,commitSha:b,status:'running'}]}}));
+    await page.route('**/api/releases/governance?*',route=>route.fulfill({json:{authorizations:records,attempts:[],mergeBacks:[],deploymentVersions:[{id:'saved-a',branchId:'compat-branch',commitSha:a,createdAt:stamp}]}}));
+    await page.route('**/api/releases/targets/compat-target/authorizations',async route=>{
+      const body=route.request().postDataJSON();writes.push(body);records=[{...body,id:'fixed-a-approval',projectId:target.projectId,targetId:target.id,branchName:'compat-branch',candidateSha:a,requestedBy:'user:requester:申请人',status:'pending',createdAt:stamp}];await route.fulfill({json:{authorization:records[0]}});
+    });
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    const panel=page.getByRole('region',{name:'发布审批与连续调试'});await panel.getByRole('button',{name:'新建申请',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'申请发布批准',exact:true});
+    await expect(dialog.getByRole('combobox',{name:'申请分支',exact:true})).toContainText(b.slice(0,12));
+    await dialog.getByRole('combobox',{name:'批准发布版本',exact:true}).selectOption('saved-a');
+    await dialog.getByRole('textbox',{name:'发布目的',exact:true}).fill('批次固定已验收A而分支已经前进B');
+    await dialog.getByRole('button',{name:'提交独立审批',exact:true}).click();await expect(dialog).toBeHidden();
+    await expect(panel.getByText('fixed-a-approval',{exact:true})).toHaveCount(0);
+    await expect(panel.getByText('saved-a',{exact:true})).toBeVisible();await expect(panel.getByText(a,{exact:true})).toBeVisible();
+    expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({kind:'single',action:'release',deploymentVersionId:'saved-a',branchId:'compat-branch'});
+    expect(page.url()).toContain('release-center');
+  });
+  test(`${viewport.width} 已受理的单次批准仍可撤销且不重新批准`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    const stamp = new Date().toISOString();
+    let authorization = { id:'consumed-single', projectId:target.projectId, targetId:target.id,
+      branchId:'compat-branch', kind:'single', action:'rollback', rollbackReleaseId:'approved-history', status:'approved',
+      requestedBy:'ai:key:fixture-executor', candidateSha:'a'.repeat(40), mainSha:'b'.repeat(40),
+      reason:'已受理运行仍在连接时允许真实操作员撤销批准', createdAt:stamp,
+      expiresAt:new Date(Date.now()+3600000).toISOString(), allowedPaths:[], consumedBy:'connecting-run',
+      decisions:[{action:'approved',by:'user:independent:独立批准人',at:stamp,reason:'已核对固定版本'}] };
+    const writes: Array<{path:string;body:unknown}> = [];
+    await page.route('**/api/releases/governance?*', route => route.fulfill({json:{authorizations:[authorization],attempts:[],mergeBacks:[]}}));
+    await page.route('**/api/releases/authorizations/consumed-single/revoke', async route => {
+      writes.push({path:new URL(route.request().url()).pathname,body:route.request().postDataJSON()});
+      authorization = {...authorization,status:'revoked'};
+      await route.fulfill({json:{authorization}});
+    });
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    const panel=page.getByRole('region',{name:'发布审批与连续调试'});
+    await expect(panel.getByText('本次批准已使用',{exact:true})).toBeVisible();
+    await expect(panel.getByText('回滚目标记录',{exact:true})).toBeVisible();
+    await expect(panel.getByText('approved-history',{exact:true})).toBeVisible();
+    await panel.getByRole('button',{name:'刷新记录',exact:true}).click();
+    await expect(panel.getByText('已刷新审批记录',{exact:true})).toBeVisible();
+    await expect(panel.getByRole('button',{name:'独立批准',exact:true})).toHaveCount(0);
+    await expect(panel.getByRole('button',{name:'拒绝',exact:true})).toHaveCount(0);
+    await expect(panel.getByRole('button',{name:'撤销授权',exact:true})).toBeVisible();
+    await panel.getByRole('textbox',{name:'审批意见',exact:true}).fill('连接期间停止本次发布');
+    await panel.getByRole('button',{name:'撤销授权',exact:true}).click();
+    await expect(panel.getByText('审批决定已保存',{exact:true})).toBeVisible();
+    await expect(panel.getByText('已撤销',{exact:true})).toBeVisible();
+    await expect(panel.getByRole('button',{name:'撤销授权',exact:true})).toHaveCount(0);
+    expect(writes).toEqual([{path:'/api/releases/authorizations/consumed-single/revoke',body:{reason:'连接期间停止本次发布'}}]);
+    expect(authorization.consumedBy).toBe('connecting-run');
+  });
+
+  test(`${viewport.width} 所有者可为未绑定主机的项目选择既有服务器，选择本身不创建环境`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    await page.route('**/api/auth/status', route => route.fulfill({json:{authenticated:true,enabled:true,
+      user:{name:'接入管理员',isSystemOwner:true},approvalCapabilities:{accessRequests:false,operator:false}}}));
+    let hostReads=0, targetWrites=0;
+    await page.route('**/api/cds-system/remote-hosts', route => {
+      hostReads++;return route.fulfill({json:{hosts:[{id:'system-only-host',name:'已有隔离服务器',host:'127.0.0.1',
+        sshPort:2222,sshUser:'fixture',sshPrivateKeyFingerprint:'fixture-fingerprint',isEnabled:true}]}});
+    });
+    page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/releases/targets')targetWrites++;});
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    if (viewport.width < 768) await page.getByRole('button',{name:'更多操作',exact:true}).click();
+    await expect(page.getByRole('button',{name:'新建环境',exact:true})).toBeEnabled();
+    expect(hostReads).toBe(0);
+    await page.getByRole('button',{name:'新建环境',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'添加环境',exact:true});
+    await dialog.getByRole('button',{name:/已有隔离服务器/}).click();
+    await dialog.getByRole('button',{name:/生产域名/}).click();
+    await expect(dialog).toContainText('fixture@127.0.0.1:2222');
+    expect(hostReads).toBe(1);expect(targetWrites).toBe(0);
+    await dialog.getByRole('button',{name:'取消',exact:true}).click();
+    await expect(dialog).toBeHidden();expect(targetWrites).toBe(0);
+  });
+
   test(`${viewport.width} 运维授权关闭后同一请求不随心跳抢占，新请求和主动刷新仍可处理`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await installOperationsFixtures(page);
@@ -245,12 +339,15 @@ for (const viewport of [
       await page.goto("http://127.0.0.1:5273/project-list");
       if (await page.getByLabel("打开导航菜单").isVisible())
         await page.getByLabel("打开导航菜单").click();
-      await page
-        .getByRole("link", { name: "发布工作台", exact: true })
-        .first()
-        .click();
-      await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
-      await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
+      await page.getByRole("link", { name: "发布中心", exact: true }).first().click();
+      await expect(page).toHaveURL(/\/release-center/);
+      await expect(page.getByRole('region', { name: '线上版本与主干追溯' })).toBeVisible();
+      if (!await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().isVisible()) {
+        await page.getByRole('button', { name: '更多操作', exact: true }).click();
+      }
+      await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
+      await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+      await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
       await reachable(page.getByLabel("要发布的版本"));
       await page.getByRole("button", { name: "开始发布", exact: true }).click();
       const confirm = page.getByRole("button", {
@@ -484,9 +581,15 @@ for (const theme of ["light", "dark"]) {
     await page.addInitScript((t) => localStorage.setItem("cds_theme", t), theme);
     await page.goto("http://127.0.0.1:5273/project-list");
     await page.getByLabel("打开导航菜单").click();
-    await page.getByRole("link", { name: "发布工作台", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
-    await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
+    await page.getByRole("link", { name: "发布中心", exact: true }).click();
+    await expect(page).toHaveURL(/\/release-center/);
+    await expect(page.getByRole('region', { name: '线上版本与主干追溯' })).toBeVisible();
+    if (!await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().isVisible()) {
+      await page.getByRole('button', { name: '更多操作', exact: true }).click();
+    }
+    await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
+    await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+    await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
     await expect(page.getByLabel("要发布的版本")).toBeVisible();
     await page.evaluate(() => {
       document.documentElement.style.fontSize = "200%";
@@ -546,9 +649,15 @@ test("390 隔离发布成功闭环", async ({ page }) => {
   fixture.setPreflightPass(true);
   await page.goto("http://127.0.0.1:5273/project-list");
   await page.getByLabel("打开导航菜单").click();
-  await page.getByRole("link", { name: "发布工作台", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "选择版本与目标", exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "发布方式" }).getByRole("link", { name: "逐目标发布", exact: true }).click();
+  await page.getByRole("link", { name: "发布中心", exact: true }).click();
+  await expect(page).toHaveURL(/\/release-center/);
+  await expect(page.getByRole('region', { name: '线上版本与主干追溯' })).toBeVisible();
+  if (!await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().isVisible()) {
+    await page.getByRole('button', { name: '更多操作', exact: true }).click();
+  }
+  await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
+  await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+  await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
   await page.getByRole("button", { name: "开始发布", exact: true }).click();
   const confirm = page.getByRole("button", {
     name: `确认发布到 ${targetName}`,

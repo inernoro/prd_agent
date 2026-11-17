@@ -508,11 +508,13 @@ describe('human project grants through the production server', () => {
     shell.addResponsePattern(/git cat-file -t /, () => ({ stdout: 'commit\n', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/git checkout /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/git log --oneline -1/, () => ({ stdout: 'abc1234 历史提交\n', stderr: '', exitCode: 0 }));
+    const fullSha = 'abc1234' + 'a'.repeat(33);
+    shell.addResponsePattern(/git rev-parse --verify HEAD/, () => ({ stdout: fullSha + '\n', stderr: '', exitCode: 0 }));
     for (const cookie of [member, owner]) {
       const result = await call('POST', '/api/branches/branch-project-a/checkout/' + hash, cookie);
       expect(result.status).toBe(200);
-      expect(result.body.pinnedCommit).toBe('abc1234');
-      expect(state.getBranch('branch-project-a')?.pinnedCommit).toBe('abc1234');
+      expect(result.body.pinnedCommit).toBe(fullSha);
+      expect(state.getBranch('branch-project-a')?.pinnedCommit).toBe(fullSha);
       expect(shell.commands).toContain(`git cat-file -t '${hash}'`);
       expect(shell.commands).toContain(`git checkout --detach '${hash}'`);
     }

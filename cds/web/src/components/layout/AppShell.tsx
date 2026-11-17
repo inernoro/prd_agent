@@ -178,7 +178,7 @@ export function OwnerConsoleRoute(): JSX.Element {
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
-const preloadReleaseConsolePage = (): void => { void import('@/pages/ReleaseConsolePage'); };
+const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
 const preloadCodeReviewsPage = (): void => { void import('@/pages/CodeReviewsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
@@ -584,22 +584,21 @@ function RailNav({
           <span>Overview</span>
         </Link>
         {/*
-         * 落地页是发布控制台（发布这件事本身）；发布中心退居为低频的管理面
-         * （建站向导 / 配置 / 自动发布 / 健康监测 / 证据），由控制台里的链接进入。
+         * 发布中心先展示线上版本、责任与主干差异；执行发布从中心进入发布控制台。
          * 两页共用一个高亮项，见 activeNavKeyFor。
          */}
         <Link
-          to="/release-console"
+          to="/release-center"
           className="cds-rail-item"
           data-active={active === 'release-center' ? 'true' : 'false'}
-          aria-label="发布工作台"
-          title="发布工作台（批次发布 / 逐目标发布）"
+          aria-label="发布中心"
+          title="发布中心（线上版本 / 操作追溯 / 主干差异）"
           onClick={onNavigate}
-          onMouseEnter={preloadReleaseConsolePage}
-          onFocus={preloadReleaseConsolePage}
+          onMouseEnter={preloadReleaseCenterPage}
+          onFocus={preloadReleaseCenterPage}
         >
           <Upload />
-          <span className="cds-rail-full">发布工作台</span>
+          <span className="cds-rail-full">发布中心</span>
           <span className="cds-rail-short">发布</span>
         </Link>
         <Link

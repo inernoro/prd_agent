@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { FailureDiagnosis } from '../../web/src/pages/release-center/FailureDiagnosis.js';
 import { EnvironmentSidebar } from '../../web/src/pages/release-center/EnvironmentSidebar.js';
+import { ReleaseTraceOverview } from '../../web/src/pages/release-center/ReleaseTraceOverview.js';
 import { buildEnvironmentSections } from '../../web/src/lib/releaseEnvironments.js';
 import type { CenterRow, ReleaseRun } from '../../web/src/pages/release-center/types.js';
 
@@ -15,6 +16,34 @@ import type { CenterRow, ReleaseRun } from '../../web/src/pages/release-center/t
  */
 
 const NOW = Date.parse('2026-07-29T16:00:00Z');
+
+describe('发布追溯 · 真实数据口径', () => {
+  const current = { ...failedRun(), releaseId: 'current-success', status: 'success' as const,
+    operator: 'user:owner:Alice', commitSha: productionRow().currentCommit };
+  const row = { ...productionRow(), currentRun: current,
+    latestRun: { ...failedRun(), operator: 'user:other:Bob' },
+    comparison: { mainSha: 'b'.repeat(40), productionSha: current.commitSha, baseSha: 'c'.repeat(40),
+      comparedAt: new Date(NOW).toISOString(), overlapCount: 1, conflictStatus: 'not-checked' as const,
+      files: [{ path: 'shared.ts', side: 'both' as const }] } };
+  const html = render(createElement(ReleaseTraceOverview, {
+    rows: [row], commitMeta: { [current.commitSha]: { sha: current.commitSha, authorName: 'Code author' } },
+    selectedTargetId: row.target.id, onSelect: () => {}, onOpenLogs: () => {}, onInspect: () => {},
+  }));
+
+  it('显示成功记录的操作人，不借用失败记录或代码作者', () => {
+    expect(html).toContain('Alice');
+    expect(html).not.toContain('Bob');
+    expect(html).not.toContain('Code author');
+  });
+
+  it('文件重叠和历史包含不冒充冲突验证与批准', () => {
+    expect(html).toContain('shared.ts');
+    expect(html).toContain('双方重叠');
+    expect(html).toContain('尚未经过预合并核验');
+    expect(html).toContain('未记录独立批准证据');
+    expect(html).toContain('主干已包含该版本历史');
+  });
+});
 
 function gateReportJson(): string {
   return JSON.stringify({
