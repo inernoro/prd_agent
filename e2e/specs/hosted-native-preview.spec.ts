@@ -54,7 +54,7 @@ test.beforeAll(async ({}, testInfo) => {
 test.afterAll(async () => { if (directory) await rm(directory, { recursive: true, force: true }); });
 test.use({ trace: 'off', video: 'off' });
 
-for (const width of [1440, 390]) test(`${width}px 合集两份工具栏只打开一个历史阅读上下文`, async ({ page }) => {
+for (const width of [1440, 900, 390]) test(`${width}px 合集两份工具栏只打开一个历史阅读上下文`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   const site = { id: 'collection-doc', title: '合集唯一预览样例', siteUrl: entry, entryFile: 'index.html', contentShape: 'self-contained-html', canEdit: false, canShare: true };
   const current = { id: 'cv2', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, siteUrl: entry, entryFile: 'index.html', contentShape: 'self-contained-html' };
@@ -73,7 +73,7 @@ for (const width of [1440, 390]) test(`${width}px 合集两份工具栏只打开
   });
   await page.goto('/s/collection/qa-collection');
   await page.getByRole('button', { name: '从主文档开始阅读', exact: true }).click();
-  if (width < 1100) await page.locator('[data-tool="notes"]').click();
+  if (width <= 700) await page.locator('[data-tool="notes"]').click();
   await page.getByRole('button', { name: '网页版本：V2', exact: true }).filter({ visible: true }).click();
   await page.getByRole('option', { name: /^V1/ }).click();
   await expect(page.locator('iframe[title="V1 网页预览"]')).toHaveCount(1);
@@ -84,6 +84,9 @@ for (const width of [1440, 390]) test(`${width}px 合集两份工具栏只打开
   await page.waitForTimeout(200);
   expect(await document!.evaluate(element => element.isConnected)).toBe(true);
   expect(previews).toBe(1);
+  await page.setViewportSize({ width, height: 900 });
+  await page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true }).getByRole('button', { name: '关闭', exact: true }).click();
+  if (width > 700) await expect(page.getByRole('button', { name: '网页版本：V2', exact: true }).filter({ visible: true })).toBeFocused();
 });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
