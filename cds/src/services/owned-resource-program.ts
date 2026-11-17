@@ -5,11 +5,18 @@ export const OWNED_RESOURCE_PROGRAM = DISK_RESOURCE_NATIVE + String.raw`
 import subprocess,signal,socket,re
 action=req['action'];now=req.get('nowMs',int(time.time()*1000));instance=req['instanceId']
 deadline=time.monotonic()+(120 if action=='reconcile' else 25)
-base,base_identity=directory(req['workspaceBase'],action in ['begin','reconcile'])
-if base.stat().st_uid!=os.getuid() or base.stat().st_mode&0o077:raise ValueError('workspace-base-owner-unconfirmed')
-catalog,catalog_identity=directory(req['catalog'],action!='preview')
-if catalog.stat().st_uid!=os.getuid() or catalog.stat().st_mode&0o077:raise ValueError('catalog-owner-unconfirmed')
-catalog_fd=os.open(catalog,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+def preview_unavailable(reason):
+ if action!='preview':raise ValueError(reason)
+ print(json.dumps({'scanStatus':'partial','catalogError':reason,'usageBytes':None,'canExecute':False,'counts':{'unknown':None,'pending':None},'unknown':[{'reason':reason}]}));sys.exit(0)
+try:
+ base,base_identity=directory(req['workspaceBase'],action in ['begin','reconcile'])
+ if base.stat().st_uid!=os.getuid() or base.stat().st_mode&0o077:raise ValueError('workspace-base-owner-unconfirmed')
+ catalog,catalog_identity=directory(req['catalog'],action!='preview')
+ if catalog.stat().st_uid!=os.getuid() or catalog.stat().st_mode&0o077:raise ValueError('catalog-owner-unconfirmed')
+ catalog_fd=os.open(catalog,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+except FileNotFoundError:
+ if action!='preview':raise
+ preview_unavailable('catalog-uninitialized')
 root=catalog
 if action=='cancel':
  execution=req.get('executionId','')
@@ -18,7 +25,10 @@ if action=='cancel':
  s=os.fstat(fd)
  if not stat.S_ISREG(s.st_mode) or s.st_uid!=os.getuid() or s.st_nlink!=1:raise ValueError('cancel-file-identity-unconfirmed')
  os.fsync(fd);os.close(fd);print(json.dumps({'stopRequested':True}));sys.exit(0)
-lock=os.open('lock',(os.O_RDONLY if action=='preview' else os.O_RDWR|os.O_CREAT)|os.O_NOFOLLOW,0o600,dir_fd=catalog_fd)
+try:lock=os.open('lock',(os.O_RDONLY if action=='preview' else os.O_RDWR|os.O_CREAT)|os.O_NOFOLLOW,0o600,dir_fd=catalog_fd)
+except FileNotFoundError:
+ if action!='preview':raise
+ preview_unavailable('catalog-uninitialized')
 try:
  if action!='preview':fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError:print(json.dumps({'retryable':'catalog-busy'}));sys.exit(3)
@@ -37,8 +47,17 @@ def native(args,seconds=8):
  check();p=subprocess.run(args,capture_output=True,text=True,timeout=max(.1,min(seconds,deadline-time.monotonic())))
  return p
 def docker(*args):
- p=native(['docker',*args])
- if p.returncode:raise ValueError('docker-reference-query-unconfirmed')
+ if action=='preview' and time.monotonic()>deadline:preview_unavailable('inspection-budget-exceeded')
+ try:p=native(['docker',*args])
+ except subprocess.TimeoutExpired:
+  if action!='preview':raise
+  preview_unavailable('docker-query-timeout')
+ except OSError:
+  if action!='preview':raise
+  preview_unavailable('docker-query-unavailable')
+ if p.returncode:
+  if action=='preview':preview_unavailable('docker-reference-query-unconfirmed')
+  raise ValueError('docker-reference-query-unconfirmed')
  return p.stdout
 class RetirementFailed(ValueError):pass
 class RetirementPending(ValueError):pass
