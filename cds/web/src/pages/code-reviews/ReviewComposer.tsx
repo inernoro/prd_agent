@@ -53,12 +53,6 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
     return () => { cancelled = true; };
   }, [file, mode]);
   const chooseProject = (id: string): void => { setProjectId(id); setBranchId(''); setRemoteBranch(''); setBranches([]); setRemoteBranches([]); setBranchSearch(''); setBranchOpen(false); forceRemote.current = false; setError(''); };
-  useEffect(() => {
-    if (!branchOpen) return;
-    const close = (event: PointerEvent) => { if (!branchPickerRef.current?.contains(event.target as Node)) setBranchOpen(false); };
-    document.addEventListener('pointerdown', close);
-    return () => document.removeEventListener('pointerdown', close);
-  }, [branchOpen]);
   const refreshBranches = (): void => { forceRemote.current = true; setBranchAttempt(n => n + 1); };
   const selectedProject = projects.find(project => project.id === projectId);
   const selectedBranch = branches.find(branch => branch.id === branchId);
@@ -116,15 +110,15 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
               <fieldset className="cr-stack"><legend className="cr-label mb-2">项目</legend>{projects.length > 6 ? <input className="cr-input cr-full" aria-label="搜索项目" placeholder="搜索项目" value={projectSearch} onChange={e => setProjectSearch(e.target.value)} /> : null}<div className="cr-project-options">{projects.filter(project => `${project.aliasName || ''} ${project.name}`.toLocaleLowerCase().includes(projectSearch.toLocaleLowerCase())).map(project => <label className="cr-project-choice" key={project.id}><input type="radio" name={projectRadio} value={project.id} checked={projectId === project.id} onChange={() => chooseProject(project.id)} /><span><strong>{project.aliasName || project.name}</strong><small className="cr-mono">{project.githubRepoFullName ? `github.com/${project.githubRepoFullName}` : '已连接的项目仓库'}</small></span><em>{project.id === branchesLoadedFor && project.id === projectId && !branchesLoading && !branchesError ? `${branches.length} 个已登记分支` : project.branchCount === undefined ? '选择后读取分支' : project.branchCount ? `${project.branchCount} 个已登记分支` : '无已登记分支'}</em></label>)}</div>{!projects.length ? <p className="cr-placeholder">暂无可选项目。请等待项目加载完成，或检查当前账号的项目权限。</p> : null}</fieldset>
               <div className="cr-label"><span className="flex items-center justify-between">分支<ReviewButton type="button" disabled={!projectId || branchesLoading || remoteLoading} onClick={refreshBranches}>刷新分支</ReviewButton></span>
                 {!projectId ? <p className="cr-placeholder">先选择项目，再选择分支。</p> : <div ref={branchPickerRef} className="relative" onKeyDown={event => { if (event.key === 'Escape') { setBranchOpen(false); event.stopPropagation(); } }}>
-                  <input className="cr-input cr-full" aria-label="搜索审查分支" aria-expanded={branchOpen} aria-controls="review-branch-options" placeholder={branchName || '搜索分支'} value={branchSearch} autoComplete="off" onFocus={() => setBranchOpen(true)} onClick={() => setBranchOpen(true)} onChange={event => { setBranchSearch(event.target.value); setBranchOpen(true); }} />
+                  <input className="cr-input cr-full" aria-label="搜索审查分支" role="combobox" aria-haspopup="dialog" aria-autocomplete="list" aria-expanded={branchOpen} aria-controls="review-branch-options" placeholder={branchName || '搜索分支'} value={branchSearch} autoComplete="off" onFocus={() => setBranchOpen(true)} onClick={() => setBranchOpen(true)} onChange={event => { setBranchSearch(event.target.value); setBranchOpen(true); }} />
                   {branchName ? <p className="cr-form-note">已选择：{branchName}</p> : null}
                   {branchesLoading ? <ContentLoading label="正在读取已登记分支" variant="inline" /> : null}
                   {branchesError ? <ErrorNotice message={branchesError} /> : null}
                   {remoteError && !branchOpen ? <p role="alert" className="text-xs text-destructive">{remoteError}</p> : null}
-                  {branchOpen ? <div id="review-branch-options"><BranchSearchDropdown query={branchSearch} tracked={branches} remote={remoteBranches} remoteLoading={remoteLoading} remoteError={remoteError} trackedByName={new Map(branches.map(branch => [branch.branch, branch]))} actions={{}}
+                  {branchOpen ? <BranchSearchDropdown anchorRef={branchPickerRef} id="review-branch-options" onDismiss={() => setBranchOpen(false)} query={branchSearch} tracked={branches} remote={remoteBranches} remoteLoading={remoteLoading} remoteError={remoteError} trackedByName={new Map(branches.map(branch => [branch.branch, branch]))} actions={{}}
                     onPickTracked={branch => { setBranchId(branch.id); setRemoteBranch(''); setBranchSearch(''); setBranchOpen(false); }}
                     onPickRemote={branch => { setBranchId(''); setRemoteBranch(branch.name); setBranchSearch(''); setBranchOpen(false); }}
-                    onForceFetchRemote={refreshBranches} /></div> : null}
+                    onForceFetchRemote={refreshBranches} /> : null}
                   {remoteBranch && !branchSource ? <ErrorNotice message="该项目没有可读取的 GitHub 仓库地址，请选择已登记分支。" /> : null}
                 </div>}
                 <p className="cr-form-note">开始准备时同步并固定所选分支的提交，以报告中的 SHA 为准；不包含未提交修改。无需重新上传源码。</p></div>

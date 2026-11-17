@@ -1,3 +1,4 @@
+import { useAnchoredPosition } from '@/components/ui/anchored-popover';
 /*
  * SiteNoticeInbox — 右上角「信息中心」（合并了两条主线，2026-07-30）：
  *
@@ -29,7 +30,6 @@ import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { apiRequest, ApiError } from '@/lib/api';
 import { shouldDismissOnEscape, shouldDismissOnPointerDown } from '@/lib/outside-dismiss';
-import { floatingPanelPosition, type FloatingPanelPosition } from '@/lib/floatingPanelPosition';
 import { useOverlayDock } from '@/lib/useOverlayDock';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
@@ -127,7 +127,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
   const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
   const [open, setOpen] = useState(false);
   const [expandedNoticeIds, setExpandedNoticeIds] = useState<Set<string>>(() => new Set());
-  const [panelPosition, setPanelPosition] = useState<FloatingPanelPosition | null>(null);
+  const panelPosition = useAnchoredPosition({ open, anchorRef: triggerRef, panelRef, widthRem: 28, align: 'end', maxHeightRem: 48 });
   const [sourceCounts, setSourceCounts] = useState({
     access: 0,
     commit: 0,
@@ -145,27 +145,6 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
   const handleCommitCount = useCallback((count: number) => updateSourceCount('commit', count), [updateSourceCount]);
   const handleImportCount = useCallback((count: number) => updateSourceCount('import', count), [updateSourceCount]);
   const handleUpdateCount = useCallback((count: number) => updateSourceCount('update', count), [updateSourceCount]);
-
-  const updatePanelPosition = useCallback((): void => {
-    const trigger = triggerRef.current;
-    if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
-    setPanelPosition(floatingPanelPosition(
-      { left: rect.left, bottom: rect.bottom },
-      { width: window.innerWidth, height: window.innerHeight },
-    ));
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    updatePanelPosition();
-    window.addEventListener('resize', updatePanelPosition);
-    window.addEventListener('scroll', updatePanelPosition, true);
-    return () => {
-      window.removeEventListener('resize', updatePanelPosition);
-      window.removeEventListener('scroll', updatePanelPosition, true);
-    };
-  }, [open, updatePanelPosition]);
 
   /*
    * 点外部 / Esc 关闭（2026-08-05 用户反馈「失焦之后这个窗口应该关闭」）。
@@ -356,7 +335,6 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
           onClick={() => {
             const nextOpen = !open;
             if (nextOpen) {
-              updatePanelPosition();
               void refresh();
               markAllRead();
             }
@@ -375,12 +353,12 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
       {/* 授权是需要立刻决策的高优先级消息：常驻右下角，同时仍保留在信息中心。 */}
       {canReadAccessRequests ? <AccessRequestInbox placement="floating" onCountChange={handleAccessCount} /> : null}
 
-      {open && panelPosition ? createPortal((
+      {open ? createPortal((
         <div
           ref={panelRef}
           data-testid="cds-information-center-panel"
           className="fixed z-[220] flex flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
-          style={panelPosition}
+          style={{ ...panelPosition, overflowY: 'hidden', overflowX: 'hidden' }}
         >
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
             <div className="min-w-0">

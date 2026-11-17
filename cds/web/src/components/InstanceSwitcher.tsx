@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { useEffect, useRef, useState } from 'react';
 import { Server } from 'lucide-react';
 import { apiRequest } from '@/lib/api';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
@@ -21,6 +22,8 @@ function cachedCatalog(): InstanceCatalog | null {
 }
 
 export function InstanceSwitcher({ embedded = false }: { embedded?: boolean }): JSX.Element {
+  const summaryRef = useRef<HTMLElement>(null);
+  const [open, setOpen] = useState(false);
   const [catalog, setCatalog] = useState(cachedCatalog);
   const [stale, setStale] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -63,19 +66,8 @@ export function InstanceSwitcher({ embedded = false }: { embedded?: boolean }): 
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  return (
-    <details className={`relative shrink-0 text-sm ${embedded ? 'w-full' : ''}`} onToggle={event => {
-      if (event.currentTarget.open) {
-        setIdentity(null); setIdentityLoading(true);
-        void apiRequest('/api/cluster/identity/status').then(raw => setIdentity(raw as ClusterStatus))
-          .catch(() => setIdentity(null)).finally(() => setIdentityLoading(false));
-      }
-    }}>
-      <summary className={`flex cursor-pointer list-none items-center gap-1 rounded-md border border-border px-2 py-1.5 ${embedded ? 'ml-auto w-fit' : ''}`} aria-label="切换 CDS 实例">
-        <Server className="h-4 w-4" aria-hidden />
-        <span className="max-w-24 truncate">{current?.name || 'CDS 实例'}</span>
-      </summary>
-      <div className={`space-y-3 rounded-lg border border-border bg-background p-4 shadow-lg ${embedded ? 'mt-2 w-full' : 'absolute right-0 top-full z-50 mt-2 w-72 max-w-[90vw]'}`}>
+  const panel = (
+      <div className={`space-y-3 rounded-lg border border-border bg-background p-4 shadow-lg `}>
         <p className="font-medium">主备 CDS</p>
         <p className="break-all text-xs text-muted-foreground">当前：{typeof window !== 'undefined' ? window.location.host : '当前实例'}</p>
         {identityLoading ? <ContentLoading label="核对集群授权" /> : <p role="status" className="text-xs text-muted-foreground">{identity?.enabled
@@ -99,6 +91,21 @@ export function InstanceSwitcher({ embedded = false }: { embedded?: boolean }): 
         {stale && catalog && <p className="text-xs text-muted-foreground">显示本标签页保存的地址快照。</p>}
         <button type="button" disabled={!catalog?.instances.length} onClick={download} aria-label="下载备用入口" className="text-primary underline disabled:opacity-50">下载备用入口</button>
       </div>
+  );
+  return (
+    <details open={open} className={`relative shrink-0 text-sm ${embedded ? 'w-full' : ''}`} onToggle={event => {
+      setOpen(event.currentTarget.open);
+      if (event.currentTarget.open) {
+        setIdentity(null); setIdentityLoading(true);
+        void apiRequest('/api/cluster/identity/status').then(raw => setIdentity(raw as ClusterStatus))
+          .catch(() => setIdentity(null)).finally(() => setIdentityLoading(false));
+      }
+    }}>
+      <summary ref={summaryRef} className={`flex cursor-pointer list-none items-center gap-1 rounded-md border border-border px-2 py-1.5 ${embedded ? 'ml-auto w-fit' : ''}`} aria-label="切换 CDS 实例">
+        <Server className="h-4 w-4" aria-hidden />
+        <span className="max-w-24 truncate">{current?.name || 'CDS 实例'}</span>
+      </summary>
+      {embedded || typeof document === 'undefined' ? panel : <AnchoredPopover open={open} anchorRef={summaryRef} widthRem={18} align="end" onDismiss={() => setOpen(false)} className="z-[300]" aria-label="主备 CDS 入口">{panel}</AnchoredPopover>}
     </details>
   );
 }
