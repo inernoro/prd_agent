@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ReviewToolbarControls } from './ReviewToolbarControls';
 import type { HostedReview } from './useHostedReview';
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null }));
+vi.mock('./ReviewVersionPreview', () => ({ ReviewVersionPreview: ({ versionId }: { versionId: string }) => <section aria-label="历史版本预览小窗">{versionId}</section> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
 const versions = [
@@ -15,8 +16,12 @@ const versions = [
 async function mount() {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   const selectVersion = vi.fn(), setDisplayMode = vi.fn(), onOpen = vi.fn();
-  const review = { versions, selected: versions[0], selectVersion, annotations: { displayMode: 'bubble', setDisplayMode } } as unknown as HostedReview;
-  await act(async () => root.render(<ReviewToolbarControls review={review} canUpload={true} onOpen={onOpen} expanded={false} count={3} />));
+  function Harness() {
+    const [versionPreview, setVersionPreview] = useState<{ id: string } | null>(null);
+    const review = { versions, selected: versions[0], selectVersion, versionPreview, setVersionPreview, source: { mode: 'site', siteId: 'site' }, liveSite: { id: 'site' }, annotations: { displayMode: 'bubble', setDisplayMode } } as unknown as HostedReview;
+    return <ReviewToolbarControls review={review} canUpload={true} onOpen={onOpen} expanded={false} count={3} />;
+  }
+  await act(async () => root.render(<Harness />));
   return { selectVersion, setDisplayMode, onOpen };
 }
 const find = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
@@ -47,7 +52,8 @@ describe('hosted review toolbar', () => {
     expect(document.activeElement).toBe(choices[1]);
     expect(choices[2].disabled).toBe(true);
     await act(async () => choices[1].click());
-    expect(selectVersion).toHaveBeenCalledWith('v1');
+    expect(selectVersion).not.toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="历史版本预览小窗"]')?.textContent).toBe('v1');
     expect(document.querySelector('[role="listbox"]')).toBeNull();
   });
   it('closes the active popover with Escape without closing the surrounding preview', async () => {

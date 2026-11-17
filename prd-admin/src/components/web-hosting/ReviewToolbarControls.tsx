@@ -6,9 +6,9 @@ import type { HostedReview } from './useHostedReview';
 import type { AnnotationDisplayMode } from './useHostedAnnotations';
 
 const DISPLAY_MODES: { id: AnnotationDisplayMode; label: string; short: string; description: string; icon: typeof MessageSquare }[] = [
-  { id: 'hidden', label: '隐藏批注', short: '隐藏', description: '专注浏览，收起页面上的所有标记', icon: EyeOff },
-  { id: 'standard', label: '标准标记', short: '标准', description: '高亮、描边与编号，点击查看讨论', icon: ScanLine },
-  { id: 'bubble', label: '批注气泡', short: '气泡', description: '在标注旁展开聊天气泡，直接预览评论', icon: Layers },
+  { id: 'hidden', label: '隐藏全部气泡', short: '隐藏', description: '收起气泡和标记，批注内容保留', icon: EyeOff },
+  { id: 'standard', label: '只显示编号', short: '编号', description: '保留高亮和编号，点击打开对应讨论', icon: ScanLine },
+  { id: 'bubble', label: '显示全部气泡', short: '气泡', description: '展开批注；拖动气泡顶部或边缘可避让正文', icon: Layers },
 ];
 
 export function ReviewToolbarControls({ review, canUpload, onOpen, expanded, count, showVersions = true, onBubbleMode }: {
@@ -43,7 +43,7 @@ export function ReviewToolbarControls({ review, canUpload, onOpen, expanded, cou
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
         options[next]?.focus();
       }}>{DISPLAY_MODES.map(mode => <button type="button" key={mode.id} role="menuitemradio"
-        aria-checked={review.annotations.displayMode === mode.id} className="review-display-option" onClick={() => { review.annotations.setDisplayMode(mode.id); if (mode.id === 'bubble') onBubbleMode?.(); setOpen(false); trigger.current?.focus(); }}>
+        aria-checked={review.annotations.displayMode === mode.id} className="review-display-option" onClick={() => { review.annotations.setDisplayMode(mode.id); if (mode.id === 'bubble') { review.annotations.showAllPreviews?.(); onBubbleMode?.(); } setOpen(false); trigger.current?.focus(); }}>
         <mode.icon size={18} /><span><strong>{mode.label}</strong><small>{mode.description}</small></span>{review.annotations.displayMode === mode.id && <Check size={15} />}
       </button>)}</div>
     </AnchoredMenu>

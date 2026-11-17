@@ -43,6 +43,7 @@ describe('hosted annotation bridge', () => {
   });
   it('sends display preferences without replacing the page context and makes a new selection visible', async () => {
     await mount();
+    expect(annotations.displayMode).toBe('bubble');
     const frame = container.querySelector('iframe')!.contentWindow!;
     const send = vi.spyOn(frame, 'postMessage');
     await act(async () => annotations.notifyFrame());

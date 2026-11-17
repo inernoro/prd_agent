@@ -3,10 +3,12 @@ import { Check, ChevronDown, Files, Upload, RefreshCw } from 'lucide-react';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { HostedReview } from './useHostedReview';
+import { ReviewVersionPreview } from './ReviewVersionPreview';
 
 export function ReviewVersionBar({ review, canUpload }: { review: HostedReview; canUpload: boolean }) {
   const input = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null), list = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const previewId = review.versionPreview?.id;
   const busy = review.loading || review.uploading;
   useEffect(() => {
     if (open) list.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
@@ -20,8 +22,8 @@ export function ReviewVersionBar({ review, canUpload }: { review: HostedReview; 
       <span>{review.selected?.versionLabel ?? '版本'}<span className="review-version-state">{review.historical ? '历史版' : '当前版'}</span></span>
       <ChevronDown size={12} className={open ? 'review-chevron-open' : ''} />
     </button>
-    <AnchoredMenu open={open} onClose={() => setOpen(false)} anchorRef={trigger} minWidth={280} className={`review-popover${trigger.current?.closest('.surface-tone-dark') ? ' surface-tone-dark' : ''}`} style={{ width: 292, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100dvh - 88px)', overflowY: 'auto', zIndex: 2147483647 }}>
-      <div className="review-popover-heading"><strong>网页版本</strong><p>{review.versions.some(version => version.historyRestricted) ? '当前权限仅开放当前版本，历史需站点编辑权限' : '切换版本，查看对应的内容与批注'}</p></div>
+    <AnchoredMenu open={open} onClose={() => setOpen(false)} anchorRef={trigger} minWidth={260} className={`review-popover review-version-popover${trigger.current?.closest('.surface-tone-dark') ? ' surface-tone-dark' : ''}`} style={{ width: 280, maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(420px, calc(100dvh - 88px))', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 2147483647 }}>
+      <div className="review-popover-heading"><strong>网页版本</strong>{review.versions.some(version => version.historyRestricted) && <p>当前权限仅开放当前版本</p>}</div>
       <div ref={list} role="listbox" aria-label="网页版本" className="review-version-list" onKeyDown={event => {
         if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); return; }
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
@@ -33,7 +35,10 @@ export function ReviewVersionBar({ review, canUpload }: { review: HostedReview; 
       }}>
         {!review.versions.length && <p className="review-menu-empty">{review.error ? '暂时无法读取版本记录' : '正在读取版本记录…'}</p>}
         {review.versions.map(version => <button key={version.id} type="button" role="option" aria-selected={review.selected?.id === version.id}
-          disabled={busy || (!version.canPreview && !version.isCurrent)} className="review-version-option" onClick={() => { void review.selectVersion(version.id); setOpen(false); trigger.current?.focus(); }}>
+          disabled={busy || (!version.canPreview && !version.isCurrent)} className="review-version-option" onClick={() => {
+            if (version.isCurrent) void review.selectVersion(version.id); else review.setVersionPreview({ id: version.id });
+            setOpen(false); trigger.current?.focus();
+          }}>
           <span className="review-timeline-dot" />
           <span className="review-version-copy"><span><strong>{version.versionLabel}</strong><span>{version.isCurrent ? '当前发布' : '历史版本'}</span></span>
             <time dateTime={version.publishedAt ?? undefined}>{version.publishedAt ? new Date(version.publishedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '已保存的网页快照'}</time>
@@ -44,11 +49,13 @@ export function ReviewVersionBar({ review, canUpload }: { review: HostedReview; 
       {canUpload && <div className="review-menu-footer"><button type="button" className="review-upload-action" onClick={() => input.current?.click()} disabled={busy}>
         {review.uploading ? <MapSpinner size={15} /> : <Upload size={15} />}{review.uploading ? '正在保存新版本…' : '上传新版本'}
         <span>HTML / ZIP</span>
-      </button><p>保留旧版内容与批注，上传后发布新版本。</p></div>}
+      </button></div>}
       {review.error && <div role="alert" className="review-version-error"><span>{review.error}</span><button type="button" aria-label="重试加载版本" onClick={() => void review.refresh()}><RefreshCw size={14} /></button></div>}
     </AnchoredMenu>
     {canUpload && <input ref={input} type="file" accept=".html,.htm,.zip" className="hidden" aria-label="上传新版本文件" onChange={event => {
       const file = event.target.files?.[0]; event.target.value = ''; if (file) void review.upload(file);
     }} />}
+    {previewId && review.source && review.liveSite && <ReviewVersionPreview key={previewId} versionId={previewId} commentId={review.versionPreview?.commentId} site={review.liveSite} source={review.source}
+      canRestore={canUpload} restoring={review.uploading} restoreError={review.error} onRestore={key => review.restoreVersion(previewId, key)} onClose={() => { review.setVersionPreview(null); trigger.current?.focus(); }} />}
   </div>;
 }

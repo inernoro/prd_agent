@@ -4,8 +4,8 @@ const overlap = (a: AnnotationRect, b: AnnotationRect) => Math.max(0, Math.min(a
   * Math.max(0, Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top));
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
 
-/** Prefer whitespace around the target; never let a preview cover its own anchor or leave the canvas. */
-export function placeAnnotationBubble(anchor: AnnotationRect, size: { width: number; height: number }, viewport: { width: number; height: number }, obstacles: AnnotationRect[]) {
+/** Prefer whitespace. Explicitly expanded, movable cards may overlap a large anchor when no whitespace fits. */
+export function placeAnnotationBubble(anchor: AnnotationRect, size: { width: number; height: number }, viewport: { width: number; height: number }, obstacles: AnnotationRect[], occupied: AnnotationRect[] = [], allowOverlap = false) {
   const gap = 14, edge = 10;
   if (size.width > viewport.width - edge * 2 || size.height > viewport.height - edge * 2) return null;
   const candidates = [
@@ -13,11 +13,18 @@ export function placeAnnotationBubble(anchor: AnnotationRect, size: { width: num
     { side: 'right', left: anchor.left + anchor.width + gap, top: anchor.top + (anchor.height - size.height) / 2 },
     { side: 'left', left: anchor.left - size.width - gap, top: anchor.top + (anchor.height - size.height) / 2 },
     { side: 'bottom', left: anchor.left + anchor.width - size.width, top: anchor.top + anchor.height + gap },
+    ...occupied.flatMap(rect => [
+      { side: 'bottom', left: rect.left, top: rect.top + rect.height + gap },
+      { side: 'top', left: rect.left, top: rect.top - size.height - gap },
+      { side: 'right', left: rect.left + rect.width + gap, top: rect.top },
+      { side: 'left', left: rect.left - size.width - gap, top: rect.top },
+    ]),
   ].map((candidate, index) => {
     const rect = { ...candidate, left: clamp(candidate.left, edge, viewport.width - size.width - edge),
       top: clamp(candidate.top, edge, viewport.height - size.height - edge), ...size };
-    return { ...rect, score: obstacles.reduce((sum, obstacle) => sum + overlap(rect, obstacle), 0) + index * 8 };
-  }).filter(candidate => overlap(candidate, anchor) === 0);
+    return { ...rect, score: overlap(rect, anchor) * 10000 + occupied.reduce((sum, obstacle) => sum + overlap(rect, obstacle) * 1000, 0)
+      + obstacles.reduce((sum, obstacle) => sum + overlap(rect, obstacle), 0) + index * 8 };
+  }).filter(candidate => allowOverlap || overlap(candidate, anchor) === 0);
   candidates.sort((a, b) => a.score - b.score);
   const best = candidates[0];
   if (!best) return null;

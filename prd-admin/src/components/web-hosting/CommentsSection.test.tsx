@@ -16,13 +16,13 @@ vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
 const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, connectionChecked: true, displayMode: 'bubble', setDisplayMode: vi.fn(),
-  preview: null, dismissPreview: vi.fn(), openThread: vi.fn(),
+  preview: null, previews: [], showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn(),
   draftAnchor: null, activeId: null, missingIds: [], threads: [], select, clearDraft: vi.fn(), focus: vi.fn(),
   notifyFrame: vi.fn(), setThreads: vi.fn(), setEnabled: vi.fn(), setActiveId: vi.fn() });
-async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string } = {}) {
+async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string; versionOnly?: boolean } = {}) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login} threadKind={options.threadKind}
-    annotations={{ ...annotations(), ready: options.ready ?? true, activeId: options.activeId ?? null }} review={options.review} />));
+    annotations={{ ...annotations(), ready: options.ready ?? true, activeId: options.activeId ?? null }} review={options.review} versionOnly={options.versionOnly} />));
 }
 function button(text: string) {
   const match = [...container.querySelectorAll('button')].find(element => (element.getAttribute('aria-label') ?? element.textContent) === text);
@@ -36,6 +36,25 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('annotation entry availability', () => {
+  it('其他版本批注打开独立小窗，不改主页面的版本', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'old-note', content: '旧版意见', contentVersion: 'old', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    const selectVersion = vi.fn(), setVersionPreview = vi.fn();
+    await mount({ review: { loading: false, selected: { id: 'v2', contentVersionKey: 'current' },
+      versions: [{ id: 'v1', contentVersionKey: 'old', versionLabel: 'V1', canPreview: true }], selectVersion, setVersionPreview } as unknown as HostedReview });
+    await act(async () => button('预览 V1').click());
+    expect(setVersionPreview).toHaveBeenCalledWith({ id: 'v1', commentId: 'old-note' });
+    expect(selectVersion).not.toHaveBeenCalled();
+  });
+  it('小窗只显示预览版本的批注，不能自动混入其他版本意见', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'old-note', content: '不属于预览版本的意见', contentVersion: 'other', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    await mount({ versionOnly: true, review: { loading: false, selected: { id: 'v1', contentVersionKey: 'preview' }, versions: [] } as unknown as HostedReview });
+    expect(container.textContent).not.toContain('其他版本');
+    expect(container.querySelector('.review-thread')).toBeNull();
+  });
   it('等版本归属确认后首次展示仅存于历史版本的已解决批注，并保留手动页签选择', async () => {
     list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
       { id: 'historical', siteId: 'site', content: '旧版保留的意见', contentVersion: 'old', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },

@@ -244,7 +244,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const [askState, setAskState] = useState<AskDockState>('collapsed');
   // 常驻的 CommentsSection 统一加载批注并同步顶栏计数，避免重复请求。
   const [commentCount, setCommentCount] = useState<number | null>(null);
-  const autoOpenReview = useReviewAutoOpen(`${token}:${openedSiteId}`, () => setShowComments(true), showComments || askState !== 'collapsed');
+  const autoOpenReview = useReviewAutoOpen(`${token}:${openedSiteId}`, () => { if (!isMobile) setShowComments(true); }, showComments || askState !== 'collapsed');
   const reviewSidebar = useReviewSidebarWidth();
   const handleCommentCount = (count: number) => { setCommentCount(count); autoOpenReview(count); };
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
@@ -966,7 +966,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
                 onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType}
                 onBubbleMode={() => { if (isMobile) setShowComments(false); }} />}
-              {token && !review.historical && <a className="share-topbar-btn share-topbar-icon" href={`/s/wp/${encodeURIComponent(token)}?siteId=${encodeURIComponent(liveSite.id)}`}
+              {token && <a className="share-topbar-btn share-topbar-icon" href={`/s/wp/${encodeURIComponent(token)}?siteId=${encodeURIComponent(liveSite.id)}${review.historical && review.selected ? `&review=${encodeURIComponent(review.selected.id)}` : ''}`}
                 target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开当前文档" title="在新标签页打开当前文档"><ExternalLink size={13} /></a>}
               <span className="share-topbar-divider" />
               {!site.pdfAssetUrl && (

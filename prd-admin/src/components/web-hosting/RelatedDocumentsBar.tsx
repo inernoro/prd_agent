@@ -92,6 +92,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   if (variant === 'badge' && !summary?.count && !collectionsEnabled && !open) return null;
   const compact = variant !== 'bar';
   const relatedCount = data?.items.filter(item => item.id !== siteId).length ?? 0;
+  if (variant === 'toolbar' && !collectionsEnabled && !error && (loading || relatedCount === 0)) return null;
   const main = data?.items.find(item => item.isMain);
   const warn = variant === 'toolbar' && data?.canManage && data.hasPermissionDifferences;
   const badgeTitle = collectionsEnabled ? `查看${siteTitle ? '「' + siteTitle + '」的' : ''}关联文档与所属合集`
@@ -100,7 +101,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     <button ref={anchor} type="button" className="related-trigger" title={warn ? '关联文档权限不一致，展开查看' : badgeTitle}
       aria-description={warn ? '关联文档权限不一致，展开可查看差异' : undefined} style={warn ? { color: 'var(--accent-fg-warning)' } : undefined}
       aria-label={variant === 'badge' ? badgeTitle : '关联文档'} aria-expanded={open} aria-controls={menuId} aria-haspopup="dialog"
-      onPointerEnter={event => { if (event.pointerType === 'mouse') openPanel(false); }} onPointerLeave={leave} onClick={() => openPanel(true)}
+      onPointerEnter={event => { if (variant !== 'toolbar' && event.pointerType === 'mouse') openPanel(false); }} onPointerLeave={leave} onClick={() => openPanel(true)}
       onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
         event.preventDefault(); keepOpen(); setMaxHeight(measureAvailableHeight()); setOpen(true); setPinned(true);
         requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('input,a,button') ?? panel.current)?.focus());

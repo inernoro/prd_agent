@@ -26,6 +26,7 @@ type Props = (
   onLogin?: () => void;
   threadKind?: 'annotation' | 'discussion';
   onThreadCountsChange?: (counts: CommentThreadCounts) => void;
+  versionOnly?: boolean;
 };
 
 export default function CommentsSection(props: Props) {
@@ -113,11 +114,11 @@ export default function CommentsSection(props: Props) {
     if (previous.identity !== identity || versionKey) confirmedDraftVersion.current = { identity, versionKey };
   }, [identity, versionKey]);
   useEffect(() => {
-    if (loading || !versionReady || error || !reportedCount || initialVersionScope.current === defaultVersionScope
+    if (props.versionOnly || loading || !versionReady || error || !reportedCount || initialVersionScope.current === defaultVersionScope
       || initialVersionScope.current === manualVersionScope) return;
     initialVersionScope.current = defaultVersionScope;
     setOtherVersions(currentCount === 0);
-  }, [loading, versionReady, error, reportedCount, currentCount, defaultVersionScope, manualVersionScope]);
+  }, [props.versionOnly, loading, versionReady, error, reportedCount, currentCount, defaultVersionScope, manualVersionScope]);
 
   const load = useCallback(async (silent = false) => {
     const request = ++fetchId.current;
@@ -211,9 +212,9 @@ export default function CommentsSection(props: Props) {
         {review && <>
           <div className="review-scope-tabs" role="tablist" aria-label="批注版本范围">
             <button type="button" role="tab" disabled={versionPending} aria-selected={!otherVersions} onClick={() => { initialVersionScope.current = manualVersionScope; setOtherVersions(false); }}>本版 <span>{versionPending ? '—' : versionRoots.length}</span></button>
-            <button type="button" role="tab" disabled={versionPending} aria-selected={otherVersions} onClick={() => { initialVersionScope.current = manualVersionScope; setOtherVersions(true); }}>其他版本 <span>{versionPending ? '—' : outsideRoots.length}</span></button>
+            {!props.versionOnly && <button type="button" role="tab" disabled={versionPending} aria-selected={otherVersions} onClick={() => { initialVersionScope.current = manualVersionScope; setOtherVersions(true); }}>其他版本 <span>{versionPending ? '—' : outsideRoots.length}</span></button>}
           </div>
-          <div className="review-scope-caption"><span>{review.selected ? `${review.selected.versionLabel} · ${review.historical ? '历史版本' : '当前发布'}` : review.error ? '版本信息暂不可用，已有意见仍可阅读' : '正在读取版本归属…'}</span><span>{otherVersions ? '选择版本，回到原内容' : '批注随版本保留'}</span></div>
+          {review.error && <div className="review-scope-caption" role="status">版本信息暂不可用，已有意见仍可阅读</div>}
         </>}
         <div role="tablist" aria-label="讨论状态" className="review-status-tabs">
           {([{ value: 'open', label: '未解决', count: openCount }, { value: 'resolved', label: '已解决', count: resolvedCount },
@@ -235,18 +236,18 @@ export default function CommentsSection(props: Props) {
             const originVersion = review?.versions.find(v => v.id === comment.revisionId || v.contentVersionKey === comment.contentVersion);
             const canOpenOrigin = !!originVersion?.canPreview;
             const locate = () => {
-              if (otherVersions && originVersion) void review?.selectVersion(originVersion.id, comment.id);
+              if (otherVersions && originVersion) review?.setVersionPreview({ id: originVersion.id, commentId: comment.id });
               else annotations?.focus(comment.id);
             };
             return <article key={comment.id} id={`hosted-thread-${comment.id}`} className={`review-thread${annotations?.activeId === comment.id ? ' is-active' : ''}`}>
               <CommentMessage comment={comment} busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)}>
-                {comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready} className="review-anchor-quote">
+                {comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready} className="review-anchor-quote" title={`定位原文：${comment.anchor.text || '无文字元素'}`}>
                   <span className="review-anchor-number">{otherVersions ? <History size={13} /> : number}</span>
-                  <span><strong>{comment.anchor.kind === 'text' ? '选中文字' : elementLabel(comment.anchor.tagName)}</strong><span>{comment.anchor.text || '无文字元素'}</span>
+                  <span><span>{comment.anchor.text || elementLabel(comment.anchor.tagName)}</span>
                     {missing && <small>原位置已变更，批注内容已保留</small>}</span>
                 </button>}
                 {otherVersions && <div className="review-origin-version"><span>来自 {originVersion?.versionLabel ?? (comment.contentVersion ? '未收录的旧版本' : '未标版本的历史评论')}</span>
-                  {canOpenOrigin && <button type="button" onClick={locate}>切换到 {originVersion!.versionLabel}</button>}</div>}
+                  {canOpenOrigin && <button type="button" onClick={locate}>预览 {originVersion!.versionLabel}</button>}</div>}
               </CommentMessage>
               {replies.length > 0 && <div className="review-replies">{replies.map(reply =>
                 <CommentMessage key={reply.id} comment={reply} busy={busyId === reply.id} confirming={confirmDelete === reply.id} onDelete={() => void remove(reply.id)} />)}</div>}
@@ -269,9 +270,9 @@ export default function CommentsSection(props: Props) {
           {draftAnchor ? <div className="review-composer-anchor"><Link2 size={14} /><span><strong>已选中{draftAnchor.kind === 'text' ? '文字' : elementLabel(draftAnchor.tagName)}</strong><span>{draftAnchor.text || '无文字元素'}</span></span>
             <button type="button" aria-label="取消位置绑定" disabled={submitting} onClick={() => annotations?.clearDraft()}><X size={14} /></button></div>
             : replyTarget ? <div className="review-composer-anchor"><CornerDownRight size={14} /><span><strong>回复 {replyTarget.authorName}</strong><span>{replyTarget.content}</span></span><button type="button" aria-label="取消回复" disabled={submitting} onClick={() => setReplyTo(null)}><X size={14} /></button></div>
-            : <div className="review-composer-label"><span>整页评论</span>{pickEntry}</div>}
+            : <div className="review-composer-label"><span>新批注</span>{pickEntry}</div>}
           <textarea ref={textareaRef} aria-label={replyTo ? '回复内容' : props.threadKind === 'discussion' ? '讨论内容' : '批注内容'} value={draft} disabled={submitting}
-            onChange={e => setDraft(e.target.value)} maxLength={2000} rows={3}
+            onChange={e => setDraft(e.target.value)} maxLength={2000} rows={2}
             onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void submit(); } }}
             placeholder={replyTo ? '补充你的想法…' : draftAnchor ? '这个位置需要怎样修改？' : props.threadKind === 'discussion' ? '写下你对这份文档的看法…' : '写下意见，或先选取网页上的位置…'} />
           <div className="review-composer-footer"><span>{draft.length ? `${draft.length}/2000` : 'Ctrl / ⌘ + Enter 发送'}</span><button type="button" onClick={() => void submit()} disabled={!draft.trim() || submitting} className="review-send-action">

@@ -55,10 +55,12 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
-  it('没有关联时显示零且不把当前文档列为自己的关联，管理入口仍可用', async () => {
+  it('没有外部关联时顶部入口完全隐藏，管理仍可从完整关联栏进入', async () => {
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, version: 0, mainSiteId: null, items: [data.items[0]] }, error: null });
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
-    expect(container.querySelector('.related-count')?.textContent).toBe('0');
+    expect(container.querySelector('[aria-label="关联文档导航"]')).toBeNull();
+    expect(document.querySelector('.related-popover')).toBeNull();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="bar" />));
     await open();
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(0);
     expect(document.querySelector('.related-popover')?.textContent).toContain('暂无关联文档');

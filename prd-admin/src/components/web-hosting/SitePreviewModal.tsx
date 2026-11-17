@@ -84,7 +84,7 @@ export default function SitePreviewModal({
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
   const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>('none');
   const showComments = rightPanel === 'comments';
-  const autoOpenReview = useReviewAutoOpen(originalSite.id, () => setRightPanel('comments'), rightPanel !== 'none');
+  const autoOpenReview = useReviewAutoOpen(originalSite.id, () => { if (!isMobile) setRightPanel('comments'); }, rightPanel !== 'none');
   const reviewSidebar = useReviewSidebarWidth();
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
     const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
@@ -228,9 +228,8 @@ export default function SitePreviewModal({
   }, [site.siteUrl, review.loading]);
 
   const handleOpenExternal = () => {
-    // 当前版复用“访问”的 /s/wp 阅读入口；历史版仍打开所选版本的原地址。
-    if (review.historical && previewSource.src) window.open(previewSource.src, '_blank', 'noopener,noreferrer');
-    else void siteWindow.open(originalSite.id);
+    // 历史快照也走鉴权阅读页，内联快照没有可外开的原始 URL。
+    void siteWindow.open(originalSite.id, review.historical ? review.selected?.id : undefined);
   };
 
   const handleToggleCommentsEnabled = async () => {
@@ -262,11 +261,10 @@ export default function SitePreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2">
+        <div className="hosted-preview-toolbar flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2">
           <div className="flex min-w-0 w-full flex-1 items-center gap-2 sm:w-auto">
             <div className="min-w-0 flex-1">
             <h3 id="site-preview-dialog-title" className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
-            <p className="hidden text-xs text-token-muted truncate sm:block">{site.siteUrl}</p>
             </div>
             <button
               type="button"
@@ -323,7 +321,7 @@ export default function SitePreviewModal({
             <button
               type="button"
               onClick={handleOpenExternal}
-              disabled={siteWindow.opening || !previewSource.src}
+              disabled={siteWindow.opening || review.loading}
               title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'}
               className="flex min-h-11 sm:min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >

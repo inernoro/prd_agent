@@ -6,9 +6,9 @@ import { useHostedReview, type HostedReview } from './useHostedReview';
 import { shouldFetchPreviewHtml } from './previewHtml';
 import { resolveSitePreviewSource } from './sitePreviewSource';
 
-const { list, preview, upload } = vi.hoisted(() => ({ list: vi.fn(), preview: vi.fn(), upload: vi.fn() }));
+const { list, preview, upload, rollback } = vi.hoisted(() => ({ list: vi.fn(), preview: vi.fn(), upload: vi.fn(), rollback: vi.fn() }));
 vi.mock('@/services/real/webPages', () => ({ listHostedReviewVersions: list, previewHostedReviewVersion: preview,
-  reuploadSite: upload, buildApiUrl: (path: string) => path }));
+  reuploadSite: upload, rollbackHostedSiteRevision: rollback, buildApiUrl: (path: string) => path }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (selector: (state: { token: string }) => unknown) => selector({ token: 'session' }) }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement, review: HostedReview;
@@ -29,6 +29,31 @@ beforeEach(() => { vi.clearAllMocks(); list.mockResolvedValue({ success: true, d
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('versioned webpage review', () => {
+  it('恢复历史版作为新发布，旧元数据未刷新前不把新正文归入旧版本', async () => {
+    const nextSite = { ...site, siteUrl: 'https://assets.example/index.html?v=30000' };
+    rollback.mockResolvedValue({ success: true, data: { site: nextSite } });
+    await mount();
+    await act(async () => { expect(await review.restoreVersion('v1', 'restore-key')).toBe(true); });
+    expect(rollback).toHaveBeenCalledWith('site', 'v1', 'restore-key');
+    expect(review.liveSite?.siteUrl).toBe(nextSite.siteUrl);
+    expect(review.selected).toBeUndefined();
+    expect(review.loading).toBe(true);
+    list.mockResolvedValue({ success: true, data: [{ ...current, id: 'v3', versionLabel: 'V3', contentVersionKey: '30000', siteUrl: nextSite.siteUrl }, { ...current, isCurrent: false }, previous] });
+    await act(async () => review.refresh());
+    expect(review.selected?.id).toBe('v3');
+    expect(review.historical).toBe(false);
+  });
+  it('恢复失败保留当前内容，重试使用同一个操作标识；禁止恢复当前版本', async () => {
+    rollback.mockResolvedValueOnce({ success: false, error: { message: '版本冲突' } }).mockRejectedValueOnce(new Error('network'));
+    await mount();
+    await act(async () => { expect(await review.restoreVersion('v2', 'restore-key')).toBe(false); });
+    expect(rollback).not.toHaveBeenCalled();
+    await act(async () => { expect(await review.restoreVersion('v1', 'restore-key')).toBe(false); });
+    expect(review.error).toBe('版本冲突'); expect(review.site?.siteUrl).toBe(site.siteUrl);
+    await act(async () => { expect(await review.restoreVersion('v1', 'restore-key')).toBe(false); });
+    expect(rollback.mock.calls.map(call => call[2])).toEqual(['restore-key', 'restore-key']);
+    expect(review.error).toContain('尚未确认');
+  });
   it('keeps no-source previews idle without requesting version metadata', async () => {
     await mount(site, false);
     expect(review.loading).toBe(false);
