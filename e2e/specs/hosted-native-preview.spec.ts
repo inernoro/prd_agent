@@ -407,6 +407,19 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await tap(frame.getByRole('button', { name: '打开批注 2', exact: true }));
       await expect(page.locator('.annotation-chat-bubble')).toHaveCount(1);
       await tap(page.getByRole('button', { name: '显示全部气泡', exact: true })); await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
+      const closed = page.locator('[data-bubble-id="one"]'), number = await closed.locator('.annotation-chat-number').innerText();
+      const reloadDocument = async () => {
+        const boot = await frame.locator('body').evaluate(() => performance.timeOrigin);
+        await frame.locator('body').evaluate(() => location.reload());
+        await expect.poll(() => frame.locator('body').evaluate(() => performance.timeOrigin)).toBeGreaterThan(boot);
+        await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(2);
+      };
+      for (let round = 0; round < 2; round++) {
+        await tap(closed.getByRole('button', { name: /收起批注气泡/ })); await expect(closed).toHaveCount(0);
+        await reloadDocument(); await expect(page.locator('.annotation-chat-bubble')).toHaveCount(1); await expect(closed).toHaveCount(0);
+        if (round === 0) { await tap(frame.getByRole('button', { name: '打开批注 ' + number, exact: true })); await expect(closed).toBeVisible(); }
+      }
+      await tap(page.getByRole('button', { name: '显示全部气泡', exact: true }).first()); await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
       await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());
       for (const menu of ['网页版本：V2', '关联文档']) {
         await tap(page.getByRole('button', { name: menu, exact: true })); await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'true');

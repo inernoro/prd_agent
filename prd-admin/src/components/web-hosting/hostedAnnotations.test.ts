@@ -59,6 +59,17 @@ describe('hosted page annotation runtime', () => {
     t.send({ type: 'map-annotation-previews-show' }); await tick();
     expect(previewMessages(t.messages).at(-1)!.items).toHaveLength(2);
   });
+  it('新文档握手重放宿主的单条收起集合，编号与全显可重新打开', async () => {
+    const t = await setup(), anchor = { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' };
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', displayMode: 'bubble', dismissedPreviewIds: ['one'], revealedPreviewIds: ['one'], threads: [{ id: 'one', anchor }, { id: 'two', anchor }] });
+    await expect.poll(() => previewMessages(t.messages).at(-1)?.items.map(item => item.id)).toEqual(['two']);
+    expect(t.layer()!.querySelectorAll('.pin:not([hidden])')).toHaveLength(2);
+    (t.layer()!.querySelectorAll('.pin')[0] as HTMLButtonElement).click(); await tick();
+    expect(previewMessages(t.messages).at(-1)!.items).toHaveLength(2);
+    t.send({ type: 'map-annotation-preview-dismiss', id: 'one' }); await tick();
+    expect(previewMessages(t.messages).at(-1)!.items.map(item => item.id)).toEqual(['two']);
+    t.send({ type: 'map-annotation-previews-show' }); await tick(); expect(previewMessages(t.messages).at(-1)!.items).toHaveLength(2);
+  });
   it('展开全部可见气泡且点击相邻编号同步选中，不被悬停抢回', async () => {
     const t = await setup();
     const anchor = { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' };

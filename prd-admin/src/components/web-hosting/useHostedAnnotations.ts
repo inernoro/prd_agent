@@ -7,7 +7,7 @@ export function withAnnotationRuntime(html: string): string {
   if (!html || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
     || /http-equiv\s*=\s*["']content-security-policy["']/i.test(html)) return html;
   html = html.replace(/<script\b[^>]*\bdata-map-annotations\s*=\s*(["'])[^"']*\1[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=10'), window.location.href);
+  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=11'), window.location.href);
   const safeUrl = url.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   return `${html}<script data-map-annotations="v1" src="${safeUrl}"></script>`;
 }
@@ -46,6 +46,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const [dismissedPreviewIds, setDismissedPreviewIds] = useState(new Set<string>());
   const [allPreviewsHidden, setAllPreviewsHidden] = useState(false);
   const legacyPreview = useRef<AnnotationPreview | null>(null);
+  const dismissedPreviews = useRef(new Set<string>());
   const previewsHiddenRef = useRef(false), revealedPreviews = useRef(new Set<string>());
   const [threads, setThreads] = useState<HostedSiteCommentDto[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -55,7 +56,9 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const revealPreview = useCallback((id: string) => {
     revealedPreviews.current.add(id);
     if (legacyPreview.current?.id === id) setPreview(legacyPreview.current);
-    setDismissedPreviewIds(previous => { if (!previous.has(id)) return previous; const next = new Set(previous); next.delete(id); return next; });
+    if (dismissedPreviews.current.has(id)) {
+      const next = new Set(dismissedPreviews.current); next.delete(id); dismissedPreviews.current = next; setDismissedPreviewIds(next);
+    }
   }, []);
   const connected = useRef(false);
   const openRef = useRef(onOpen); openRef.current = onOpen;
@@ -63,7 +66,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   initRef.current = () => {
     if (!siteId || !siteUrl) return;
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-init', nonce, siteId, siteUrl: new URL(siteUrl, window.location.href).href,
-      previewsHidden: previewsHiddenRef.current, revealedPreviewIds: [...revealedPreviews.current],
+      previewsHidden: previewsHiddenRef.current, revealedPreviewIds: [...revealedPreviews.current], dismissedPreviewIds: [...dismissedPreviews.current],
       contentVersion: contentVersionKey ?? new URL(siteUrl, window.location.href).searchParams.get('v') ?? '', enabled, displayMode,
       threads: threads.filter(t => !t.parentId && t.anchor).map(t => ({ id: t.id, anchor: t.anchor, isResolved: t.isResolved })),
       activeId, pending: !!draftAnchor,
@@ -73,7 +76,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     connected.current = false;
     setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null); setPreview(null); setPreviews(null);
     setMissingIds([]); setConnectionChecked(false);
-    previewsHiddenRef.current = false; revealedPreviews.current.clear(); legacyPreview.current = null; setAllPreviewsHidden(false); setDismissedPreviewIds(new Set());
+    previewsHiddenRef.current = false; revealedPreviews.current.clear(); legacyPreview.current = null; setAllPreviewsHidden(false); dismissedPreviews.current = new Set(); setDismissedPreviewIds(dismissedPreviews.current);
   }, [siteId, siteUrl, contentVersionKey]);
   useEffect(() => { setThreads([]); }, [siteId]);
   useEffect(() => {
@@ -85,11 +88,11 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
       if (data.type === 'map-annotation-preview' && typeof data.id === 'string' && isRect(data.rect)) {
         const next = { id: data.id, rect: data.rect, obstacles: Array.isArray(data.obstacles) ? data.obstacles.slice(0, 100).filter(isRect) : [] };
         legacyPreview.current = next;
-        if (!previewsHiddenRef.current || revealedPreviews.current.has(data.id)) setPreview(next);
+        if (!dismissedPreviews.current.has(data.id) && (!previewsHiddenRef.current || revealedPreviews.current.has(data.id))) setPreview(next);
       }
       if (data.type === 'map-annotation-preview-hide') setPreview(null);
       if (data.type === 'map-annotation-previews' && Array.isArray(data.items)) {
-        const items: AnnotationPreview[] = data.items.slice(0, 500).filter((item: AnnotationPreview) => item && typeof item.id === 'string' && isRect(item.rect) && (!previewsHiddenRef.current || revealedPreviews.current.has(item.id)));
+        const items: AnnotationPreview[] = data.items.slice(0, 500).filter((item: AnnotationPreview) => item && typeof item.id === 'string' && isRect(item.rect) && !dismissedPreviews.current.has(item.id) && (!previewsHiddenRef.current || revealedPreviews.current.has(item.id)));
         const obstacles = Array.isArray(data.obstacles) ? data.obstacles.slice(0, 100).filter(isRect) : [];
         const markers = Array.isArray(data.markers) ? data.markers.slice(0, 100).filter(isRect) : [];
         setPreviews([...new Map(items.map(item => [item.id, { id: item.id, rect: item.rect, obstacles, markers }])).values()]);
@@ -117,22 +120,24 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const select = useCallback(() => { setDraftAnchor(null); setEnabled(true); setPreview(null); setDisplayMode(mode => mode === 'hidden' ? 'standard' : mode); }, []);
   const clearDraft = useCallback(() => setDraftAnchor(null), []);
   const focus = useCallback((id: string) => {
-    setActiveId(id);
+    revealPreview(id); setActiveId(id);
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-focus', siteId, nonce, id }, '*');
-  }, [frameRef, siteId, nonce]);
+  }, [frameRef, siteId, nonce, revealPreview]);
   const dismissPreview = useCallback((id?: string) => {
     const targetId = id ?? legacyPreview.current?.id;
-    if (targetId) setDismissedPreviewIds(previous => new Set(previous).add(targetId));
+    if (targetId) {
+      const next = new Set(dismissedPreviews.current).add(targetId); dismissedPreviews.current = next; setDismissedPreviewIds(next); revealedPreviews.current.delete(targetId);
+    }
     setPreview(null);
-    setPreviews(items => items?.filter(item => item.id !== id) ?? null);
-    frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-preview-dismiss', siteId, nonce, id }, '*');
+    setPreviews(items => items?.filter(item => item.id !== targetId) ?? null);
+    frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-preview-dismiss', siteId, nonce, id: targetId }, '*');
   }, [frameRef, siteId, nonce]);
   const hideAllPreviews = useCallback(() => {
     previewsHiddenRef.current = true; revealedPreviews.current.clear(); setAllPreviewsHidden(true); setPreviews(items => items === null ? null : []); setPreview(null);
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-previews-hide', siteId, nonce }, '*');
   }, [frameRef, siteId, nonce]);
   const showAllPreviews = useCallback(() => {
-    previewsHiddenRef.current = false; revealedPreviews.current.clear(); setAllPreviewsHidden(false); setDismissedPreviewIds(new Set());
+    previewsHiddenRef.current = false; revealedPreviews.current.clear(); setAllPreviewsHidden(false); dismissedPreviews.current = new Set(); setDismissedPreviewIds(dismissedPreviews.current);
     setDisplayMode('bubble'); setPreview(legacyPreview.current);
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-previews-show', siteId, nonce }, '*');
   }, [frameRef, siteId, nonce]);

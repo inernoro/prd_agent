@@ -281,13 +281,14 @@
       var nextKey = JSON.stringify(data.threads || []);
       if (!context || context.siteUrl !== data.siteUrl || context.contentVersion !== data.contentVersion || activeId !== (data.activeId || null) || nextKey !== threadsKey) structureDirty = true;
       if (typeof data.previewsHidden === 'boolean') { previewsHidden = data.previewsHidden; revealedPreviews = new Set(Array.isArray(data.revealedPreviewIds) ? data.revealedPreviewIds.slice(0, 500) : []); }
+      if (Array.isArray(data.dismissedPreviewIds)) dismissedPreviews = new Set(data.dismissedPreviewIds.slice(0, 500).filter(function (id) { return typeof id === 'string'; }));
       threadsKey = nextKey; context = data; activeId = data.activeId || null; if (!data.pending) pending = null;
       mount(); observe(); post('map-annotation-ready'); schedule(); return;
     }
     if (!context || data.siteId !== context.siteId || data.nonce !== context.nonce) return;
     if (data.type === 'map-annotation-preview-dismiss') {
       dismissedPreview = data.id || previewId || activeId;
-      if (dismissedPreview) dismissedPreviews.add(dismissedPreview);
+      if (dismissedPreview) { dismissedPreviews.add(dismissedPreview); revealedPreviews.delete(dismissedPreview); }
       hidePreview(); schedule(false); return;
     }
     if (data.type === 'map-annotation-previews-hide') { previewsHidden = true; revealedPreviews.clear(); hidePreviews(); return; }
