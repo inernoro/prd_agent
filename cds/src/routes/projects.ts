@@ -38,6 +38,7 @@ import { StateService } from '../services/state.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { hasActiveGrant } from '../services/identity.js';
+import { trustedClusterIdentity } from '../services/cluster-identity-context.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
 import { processTeardownTombstones, computeCdsInstanceId } from '../services/orphan-container-reaper.js';
@@ -1748,7 +1749,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         .getProjects()
         .filter((project) => canHumanAccessProject(req, stateService, project.id))
         .filter((project) => !projectScope || project.id === projectScope)
-        .filter((project) => !principalId || hasActiveGrant(grants, principalId, project.id))
+        .filter((project) => !principalId || (trustedClusterIdentity(req)
+          ? trustedClusterIdentity(req)!.principalProjects?.includes(project.id) === true
+          : hasActiveGrant(grants, principalId, project.id)))
         .filter((project) => !projectIds || projectIds.includes(project.id));
       const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.

@@ -4121,6 +4121,9 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
               <Button variant="outline" size="sm" onClick={() => setDatabaseDirectoryOpen(true)} title="数据库操作面板、连接通行证和备份">
                 <Database />数据库
               </Button>
+              <Button asChild variant="ghost" size="sm" title="同步当前项目数据">
+                <Link to={`/dts?project=${encodeURIComponent(projectId)}`}><Database />数据同步</Link>
+              </Button>
               <Button asChild variant="ghost" size="sm" title="审查当前项目代码">
                 <Link to={`/code-reviews?project=${encodeURIComponent(projectId)}`}>
                   <SearchCode />代码审查

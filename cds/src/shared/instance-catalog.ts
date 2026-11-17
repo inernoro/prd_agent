@@ -1,4 +1,4 @@
-/** Public addresses only. Project authorizations are always local to each host. */
+/** Public discovery only; trust is established by the authenticated authority. */
 export interface CdsInstance {
   id: string;
   name: string;
@@ -9,6 +9,7 @@ export interface CdsInstance {
 export interface InstanceCatalog {
   version: 1;
   instances: CdsInstance[];
+  cluster?: { id: string; authorityId: string };
 }
 
 export function parseInstanceCatalog(value: unknown): InstanceCatalog {
@@ -36,7 +37,12 @@ export function parseInstanceCatalog(value: unknown): InstanceCatalog {
     // Explicit projection prevents credentials/unknown fields leaking to the browser.
     return { id: entry.id, name: entry.name.trim(), role: entry.role, url: url.origin };
   });
-  return { version: 1, instances };
+  const cluster = catalog.cluster;
+  if (cluster && (!/^[a-zA-Z0-9_.-]{1,80}$/.test(cluster.id)
+    || !instances.some(instance => instance.id === cluster.authorityId && instance.role === 'primary'))) {
+    throw new Error('集群目录无效，请核对主节点登记');
+  }
+  return { version: 1, instances, ...(cluster ? { cluster: { id: cluster.id, authorityId: cluster.authorityId } } : {}) };
 }
 
 /** Always start at the target's project list; project and branch IDs are host-local. */
