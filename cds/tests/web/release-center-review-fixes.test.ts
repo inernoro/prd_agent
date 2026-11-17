@@ -321,8 +321,13 @@ describe('发布控制台：切项目后丢弃旧响应', () => {
     }
   });
 
-  it('切项目时把上一个项目的数据清空，宁可空一瞬', () => {
-    expect(page).toMatch(/setProjectId\(item\.id\);\s*setCenter\(null\);\s*setBranches\(\[\]\);/);
+  it('顶部和列表切项目共用清理入口，不展示上一项目的数据', () => {
+    const reset = page.slice(page.indexOf('const selectProject ='), page.indexOf('const workspaceHref ='));
+    expect(reset).toContain('currentProject.current = id');
+    expect(reset).toMatch(/setProjectId\(id\);\s*setCenter\(null\);\s*setBranches\(\[\]\);/);
+    expect(reset).toContain("['target', 'intent', 'batch', 'batchView']");
+    expect(page).toContain('onChange={(event) => selectProject(event.target.value)}');
+    expect(page).toContain('onClick={() => selectProject(item.id)}');
   });
 });
 

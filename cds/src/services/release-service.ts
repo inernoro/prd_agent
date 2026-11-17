@@ -69,11 +69,12 @@ type Ssh2Client = {
   connect(opts: Ssh2ConnectOptions): void;
   on(event: 'ready' | 'error' | 'end' | 'close', listener: (...args: unknown[]) => void): unknown;
   end(): void;
-  exec(cmd: string, cb: (err: Error | undefined, stream: Ssh2ExecStream) => void): boolean;
+  exec(cmd: string, options: { pty: { term: string; modes: Record<string, number> } }, cb: (err: Error | undefined, stream: Ssh2ExecStream) => void): boolean;
 };
 
 type Ssh2ExecStream = {
   on(event: 'close' | 'data', listener: (...args: unknown[]) => void): unknown;
+  signal(name: string): void;
   stderr: { on(event: 'data', listener: (...args: unknown[]) => void): unknown };
 };
 
@@ -86,6 +87,8 @@ interface Ssh2ConnectOptions {
   passphrase?: string;
   password?: string;
   readyTimeout?: number;
+  keepaliveInterval?: number;
+  keepaliveCountMax?: number;
 }
 
 // 结论结构的 SSOT 在 types.ts（落库要用同一份），这里转发保住存量 import 路径。
@@ -1907,7 +1910,7 @@ export class ReleaseService {
   }
 }
 
-/** 默认 SSH 执行实现（ssh2）。中止信号一到就断连接并以中止原因 reject。 */
+/** 前台发布绑定 SSH 终端会话；断连触发远端挂断，取消等待远端命令退出。 */
 export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
   const ssh2Mod = await loadSsh2();
   const client = new ssh2Mod.Client() as unknown as Ssh2Client;
@@ -1915,15 +1918,29 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let stream: Ssh2ExecStream | undefined;
+    let execPending = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const settle = (fn: () => void) => {
       if (settled) return;
       settled = true;
+      if (killTimer) clearTimeout(killTimer);
       req.signal.removeEventListener('abort', onAbort);
       try { client.end(); } catch { /* ignore */ }
       fn();
     };
     function onAbort(): void {
-      settle(() => reject(abortReasonError(req.signal)));
+      if (settled) return;
+      if (!stream) {
+        // 尚无命令通道时关闭受控会话，并等连接关闭；不无限等待丢失的 exec 回执。
+        if (execPending) client.end();
+        else settle(() => reject(abortReasonError(req.signal)));
+        return;
+      }
+      try { stream.signal('TERM'); } catch { /* close 回执仍负责最终收尾 */ }
+      if (!killTimer) killTimer = setTimeout(() => {
+        try { stream?.signal('KILL'); } catch { /* 不以发送信号成功代替退出确认 */ }
+      }, 1000);
     }
     if (req.signal.aborted) return onAbort();
     req.signal.addEventListener('abort', onAbort, { once: true });
@@ -1936,20 +1953,39 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
     };
 
     client.on('ready', () => {
-      client.exec(req.command, (err, stream) => {
-        if (err) return settle(() => reject(err));
-        stream.on('data', (chunk) => append('info', chunk));
-        stream.stderr.on('data', (chunk) => append('warn', chunk));
-        stream.on('close', (code: unknown) => {
-          const exitCode = typeof code === 'number' ? code : 0;
+      if (settled || req.signal.aborted) return settle(() => reject(abortReasonError(req.signal)));
+      execPending = true;
+      // 无 PTY 的 OpenSSH exec 断连后可能继续执行。终端把前台作业绑定到
+      // 会话生命周期；关闭回显/换行转换，保留机器可读输出和原命令退出码。
+      client.exec(req.command, { pty: { term: 'dumb', modes: { ECHO: 0, ONLCR: 0, OPOST: 0 } } }, (err, channel) => {
+        execPending = false;
+        if (err) return settle(() => reject(req.signal.aborted ? abortReasonError(req.signal) : err));
+        stream = channel;
+        channel.on('data', (chunk) => append('info', chunk));
+        channel.stderr.on('data', (chunk) => append('warn', chunk));
+        channel.on('close', (code: unknown, signal: unknown) => {
+          if (req.signal.aborted) return settle(() => reject(abortReasonError(req.signal)));
+          const exitCode = typeof code === 'number' ? code : 255;
           if (exitCode === 0) return settle(() => resolve(stdout));
           // stdout 也得进摘要：门禁判据（llmgw-prod-preflight.py 的那段 JSON）走的是
           // stdout，旧写法只取 stderr 头部，真正的失败原因一个字都留不下来。
-          settle(() => reject(new Error(formatSshExecFailure({ exitCode, stdout, stderr }))));
+          const termination = typeof signal === 'string' && signal ? `\nSSH 命令被 ${signal} 信号终止` : '';
+          settle(() => reject(new Error(formatSshExecFailure({ exitCode, stdout, stderr: stderr + termination }))));
         });
+        if (req.signal.aborted) onAbort();
       });
     });
-    client.on('error', (err) => settle(() => reject(err as Error)));
+    client.on('error', (err) => {
+      if (settled) return;
+      // 存活探测失败只说明连接丢失，不能把本地取消误记为远端已退出。
+      const failure = stream || execPending
+        ? new Error(`SSH 连接中断，远端执行结果未确认，请核对目标现场后再重试：${errorText(err)}`)
+        : err as Error;
+      if (stream || execPending) req.onOutput('warn', errorText(failure));
+      settle(() => reject(failure));
+    });
+    client.on('close', () => settle(() => reject(req.signal.aborted
+      ? abortReasonError(req.signal) : new Error('SSH 连接已关闭，未收到远端命令退出确认，请核对目标现场'))));
     client.connect({
       host: req.host.host,
       port: req.host.sshPort,
@@ -1958,6 +1994,9 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
       passphrase: req.passphrase,
       password: req.password,
       readyTimeout: 10_000,
+      // 最多约20秒无响应就断开；正常长命令仍由远端keepalive回执保持连接。
+      keepaliveInterval: 5_000,
+      keepaliveCountMax: 3,
     });
   });
 };

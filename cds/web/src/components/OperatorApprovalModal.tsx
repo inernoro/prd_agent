@@ -216,6 +216,7 @@ export function OperatorApprovalModal({ onCountChange, openRequest = 0 }: {
           </div>
 
           <p className="text-xs leading-5 text-muted-foreground">
+            关闭仅收起提醒，不会批准或拒绝；刷新页面可再次处理待批请求。<br />
             选择「<strong>允许本次</strong>」只放行这一次请求。<br />
             选择「<strong>授权 7 天</strong>」仅放行接下来 7 天内同一发起方、同一操作且参数完全相同的请求；更换目标或 SQL 需要重新批准。
           </p>
