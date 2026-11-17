@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, ChevronDown, Download, RotateCcw, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -32,30 +32,59 @@ export default function LogArchivePanel() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [record, setRecord] = useState('');
   const [expanded, setExpanded] = useState('');
-  const load = useCallback(async () => {
+  const opened = useRef(false);
+  const listRequest = useRef<AbortController | null>(null);
+  const policyRequest = useRef<AbortController | null>(null);
+  const load = useCallback(async (poll = false) => {
+    if (!opened.current || (poll && listRequest.current)) return;
+    listRequest.current?.abort();
+    const controller = new AbortController();
+    listRequest.current = controller;
     const query = new URLSearchParams();
     if (source) query.set('source', source);
     if (from) query.set('from', new Date(from).toISOString());
     if (to) query.set('to', new Date(to).toISOString());
     if (requestId) query.set('requestId', requestId);
-    const res = await apiRequest<{ items: Batch[] }>(`/api/logs/archives?${query}`);
-    if (res.success) setItems(res.data.items);
-    else setMessage(res.error?.message || '归档列表暂时无法读取，请稍后重试。');
+    try {
+      const res = await apiRequest<{ items: Batch[] }>(`/api/logs/archives?${query}`, { signal: controller.signal });
+      if (controller.signal.aborted || !opened.current) return;
+      if (res.success) setItems(res.data.items);
+      else setMessage(res.error?.message || '归档列表暂时无法读取，请稍后重试。');
+    } finally {
+      if (listRequest.current === controller) listRequest.current = null;
+    }
   }, [source, from, to, requestId]);
-  const loadPolicy = useCallback(async () => {
-    const res = await apiRequest<Policy>('/api/logs/archives/policy');
-    if (res.success) { setPolicy(res.data); setEnabled(res.data.enabled); setDays(res.data.hotDays); }
-    else setMessage(res.error?.message || '归档策略暂时无法读取，请稍后重试。');
+  const loadPolicy = useCallback(async (updateEditor = true) => {
+    if (!opened.current || (!updateEditor && policyRequest.current)) return;
+    policyRequest.current?.abort();
+    const controller = new AbortController();
+    policyRequest.current = controller;
+    try {
+      const res = await apiRequest<Policy>('/api/logs/archives/policy', { signal: controller.signal });
+      if (controller.signal.aborted || !opened.current) return;
+      if (res.success) {
+        setPolicy(res.data);
+        if (updateEditor) { setEnabled(res.data.enabled); setDays(res.data.hotDays); }
+      } else setMessage(res.error?.message || '归档策略暂时无法读取，请稍后重试。');
+    } finally {
+      if (policyRequest.current === controller) policyRequest.current = null;
+    }
   }, []);
   useEffect(() => {
+    opened.current = open;
     if (!open) return;
     void loadPolicy();
     void load();
     const timer = setInterval(() => {
-      void load();
-      void apiRequest<Policy>('/api/logs/archives/policy').then((res) => { if (res.success) setPolicy(res.data); });
+      void load(true);
+      void loadPolicy(false);
     }, 15000);
-    return () => clearInterval(timer);
+    return () => {
+      opened.current = false;
+      clearInterval(timer);
+      listRequest.current?.abort();
+      policyRequest.current?.abort();
+    };
   }, [open, load, loadPolicy]);
   async function act(key: string, operation: () => Promise<void>) {
     setBusy(key); setMessage('');
@@ -78,7 +107,7 @@ export default function LogArchivePanel() {
       <span className="ml-auto text-xs font-normal" style={{ color: 'var(--text-secondary)' }}>压缩异机保存，历史内容可查回</span>
     </button>
     {open && <div className="mt-4 space-y-4 max-h-[55vh] overflow-auto">
-      <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>完整日志加密保存至异机冷库，校验并实际回读成功后才迁出热库正文；网关读取和请求重放所需正文继续保留热库。冷库不自动删除，查询已有归档无需恢复到热库。</p>
+      <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>完整日志加密保存至异机冷库，校验并实际回读成功后才迁出热库正文；网关读取和请求重放所需正文继续保留热库。超大单条日志继续完整保留热库。冷库不自动删除，查询已有归档无需恢复到热库。</p>
       {canWrite && <div className="flex flex-wrap items-center gap-3">
         <label className="text-sm flex gap-2 items-center"><input type="checkbox" checked={enabled} disabled={!policy?.ready || !!busy} onChange={(e) => setEnabled(e.target.checked)} />启用自动归档与正文迁出</label>
         <label className="text-sm">热库保留 <input aria-label="热库保留天数" type="number" min={7} max={365} value={days} onChange={(e) => setDays(Number(e.target.value))} className={`${input} w-20`} /> 天</label>

@@ -4,6 +4,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ApiLogsListParams } from '@/services/contracts/apiLogs';
 
+const archiveApi = vi.hoisted(() => vi.fn((_path: string, _options?: { signal?: AbortSignal }): Promise<unknown> => new Promise<never>(() => {})));
+vi.mock('@/services/real/apiClient', () => ({ apiRequest: archiveApi, apiDownload: vi.fn() }));
+
 const requests = vi.hoisted(() => ({
   list: vi.fn((_params?: ApiLogsListParams, _signal?: AbortSignal): Promise<unknown> => new Promise<never>(() => {})),
   meta: vi.fn((_signal?: AbortSignal) => Promise.resolve({ success: true, data: { clientTypes: [], methods: [], appNames: [] } })),
@@ -64,4 +67,42 @@ it('resets changed filters to the first page while retaining normal pagination',
   const filtered = requests.list.mock.calls.filter(([p]) => p?.status !== 'running' && p?.path === '/changed');
   expect(filtered).toHaveLength(1);
   expect(filtered[0][0]?.page).toBe(1);
+});
+
+it('cancels obsolete archive queries and ignores late results after filters, close and unmount', async () => {
+  const { default: ArchivePanel } = await vi.importActual<typeof import('./LogArchivePanel')>('./LogArchivePanel');
+  const pending: { signal?: AbortSignal; resolve: (value: unknown) => void }[] = [];
+  archiveApi.mockImplementation((path, options) => {
+    if (path.includes('/policy')) return Promise.resolve({ success: true, data: { ready: true, enabled: false, hotDays: 30, error: '' } });
+    return new Promise((resolve) => pending.push({ signal: options?.signal, resolve }));
+  });
+  await act(async () => root.render(<ArchivePanel />));
+  const toggle = () => host.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click();
+  await act(async () => toggle());
+  expect(pending).toHaveLength(1);
+  await act(async () => vi.advanceTimersByTime(30000));
+  expect(pending).toHaveLength(1);
+  expect(pending[0].signal?.aborted).toBe(false);
+  const request = host.querySelector<HTMLInputElement>('input[aria-label="请求标识"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(request, 'new-query');
+    request.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(pending[0].signal?.aborted).toBe(true);
+  expect(pending).toHaveLength(2);
+  await act(async () => {
+    pending[1].resolve({ success: true, data: { items: [] } });
+    pending[0].resolve({ success: false, error: { message: 'obsolete failure' } });
+  });
+  expect(host.textContent).not.toContain('obsolete failure');
+  await act(async () => vi.advanceTimersByTime(15000));
+  expect(pending).toHaveLength(3);
+  await act(async () => toggle());
+  expect(pending[2].signal?.aborted).toBe(true);
+  await act(async () => pending[2].resolve({ success: false, error: { message: 'closed failure' } }));
+  await act(async () => toggle());
+  expect(host.textContent).not.toContain('closed failure');
+  expect(pending).toHaveLength(4);
+  await act(async () => root.unmount()); unmounted = true;
+  expect(pending[3].signal?.aborted).toBe(true);
 });

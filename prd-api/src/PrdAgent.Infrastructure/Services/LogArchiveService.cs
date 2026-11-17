@@ -15,6 +15,7 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
     IAssetStorageRuntimeInfo runtime, IConfiguration config)
 {
     public const string Pointer = "ColdArchiveId";
+    public const int MaxRecordBytes = 8 * 1024 * 1024 - 65536;
     private IMongoCollection<BsonDocument> Batches => db.Database.GetCollection<BsonDocument>("log_archive_batches");
     private IMongoCollection<BsonDocument> Policies => db.Database.GetCollection<BsonDocument>("log_archive_policies");
     private string Tenant => config["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenant ? tenant : GatewayTenantDefaults.InternalTenantId;
@@ -202,7 +203,11 @@ public sealed class LogArchiveService(MongoDbContext db, LlmGatewayDataContext g
                 new BsonDocument(target.Time, new BsonDocument { { "$type", "date" }, { "$lt", cutoff } }),
                 new BsonDocument(target.Time, new BsonDocument { { "$type", "string" }, { "$lt", cutoff.ToString("yyyy-MM-ddTHH:mm:ss.fffZ") } })
             });
-            var eligible = target.Scope & age & new BsonDocument(Pointer, new BsonDocument("$exists", false))
+            // Leave oversized single records intact in the hot collection. Filtering before
+            // the oldest-first limit prevents one unrepresentable replacement blocking later logs.
+            var bounded = new BsonDocument("$expr", new BsonDocument("$lte", new BsonArray
+                { new BsonDocument("$bsonSize", "$$ROOT"), MaxRecordBytes }));
+            var eligible = target.Scope & age & bounded & new BsonDocument(Pointer, new BsonDocument("$exists", false))
                 & new BsonDocument("Status", new BsonDocument("$nin", new BsonArray { "running", "queued", "processing", "streaming" }))
                 & new BsonDocument("$or", new BsonArray { new BsonDocument("ColdRestoredUntil", new BsonDocument("$exists", false)), new BsonDocument("ColdRestoredUntil", new BsonDocument("$lt", now)) });
             var records = new BsonArray();

@@ -238,6 +238,21 @@ public sealed class LogArchiveIntegrationTests : IAsyncLifetime
         Assert.Equal(original["ResponseJson"], restored["ResponseJson"]);
         Assert.False(restored.Contains(LogArchiveService.Pointer));
     }
+    [Fact]
+    public async Task OversizedRecordStaysHotWithoutBlockingLaterArchives()
+    {
+        var logs = _db.Database.GetCollection<BsonDocument>("apirequestlogs");
+        var huge = Log("oversized"); huge["RequestBody"] = new string('x', 10 * 1024 * 1024);
+        var next = Log("next"); next["StartedAt"] = huge["StartedAt"].ToUniversalTime().AddSeconds(1);
+        await logs.InsertManyAsync(new[] { huge, next });
+        for (var i = 0; i < 8; i++) await _service.ProcessOneAsync("test-owner", default);
+        Assert.Equal(huge, await logs.Find(new BsonDocument("_id", "oversized")).SingleAsync());
+        var batch = Assert.Single(await _service.ListAsync("test-owner", "api", null, null, null, default));
+        Assert.Equal(1, batch["Count"].ToInt32());
+        Assert.Equal("next", batch["Records"][0]["Id"].AsString);
+        Assert.True(batch["RawBytes"].ToInt32() <= 8 * 1024 * 1024);
+        Assert.Equal(next, await _service.HydrateAsync("test-owner", "api", "next", default));
+    }
     private sealed class Remote : IAssetStorageRuntimeInfo { public string ProviderName => "tencentCos"; }
     public class StorageProxy : DispatchProxy
     {
