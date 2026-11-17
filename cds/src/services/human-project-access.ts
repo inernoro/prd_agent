@@ -1,6 +1,7 @@
 import type { StateService } from './state.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from './human-auth.js';
 import { hasActiveGrant } from './identity.js';
+import { trustedClusterIdentity } from './cluster-identity-context.js';
 import type { BranchEntry, BuildProfile, Project, CdsState } from '../types.js';
 import { maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv, maskSecretsInObject } from './secret-masker.js';
 import type { UnifiedBranchResource } from './resources.js';
@@ -167,6 +168,8 @@ export function supportsHumanProjectGrant(project: Project | undefined): project
 
 export function canHumanAccessProject(req: unknown, state: StateService, projectId: string): boolean {
   if (!isScopedHuman(req)) return true;
+  const cluster = trustedClusterIdentity(req);
+  if (cluster) return cluster.humanProjects?.includes(projectId) === true;
   const user = (req as { cdsUser?: { id: string; status?: string } }).cdsUser;
   if (!user || user.status === 'disabled') return false;
   const principalId = humanPrincipalId(user.id);
