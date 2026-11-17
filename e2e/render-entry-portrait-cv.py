@@ -193,4 +193,16 @@ for start in range(0,len(thumbs),6):
     sheet=np.zeros((1080,1280,3),np.uint8)
     for j,im in enumerate(thumbs[start:start+6]): sheet[j//2*360:(j//2+1)*360,j%2*640:(j%2+1)*640]=im
     cv2.imwrite(str(OUT/f'contact-{start//6:02}.jpg'),sheet)
+# Clearly labelled authored-asset comparisons, never passed off as live UI recording.
+old = json.loads((ROOT/'e2e/fixtures/media/portrait-motion.source.json').read_text())
+previous = ROOT/'llmgw/web/public/media/entry'/old['fileName']
+for name, source, seek, label in [
+    ('previous-vs-image-led', previous, None, 'Previous authored asset'),
+    ('reference-vs-image-led', ROOT/'e2e/fixtures/media/entry-reference.mp4', '14.75', 'Reference source')]:
+    args = ['ffmpeg','-hide_banner','-loglevel','error','-y']
+    if seek: args += ['-ss',seek]
+    args += ['-i',str(source),'-i',str(movie),'-filter_complex',
+        f'[0:v]scale=960:540,setsar=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=2,drawtext=text={label}:fontcolor=white:fontsize=18:x=12:y=12[a];[1:v]scale=960:540,setsar=1,setpts=PTS-STARTPTS,drawtext=text=Image led OpenCV authored asset:fontcolor=white:fontsize=18:x=12:y=12[b];[a][b]hstack=inputs=2[v]',
+        '-map','[v]','-t',str(COUNT/FPS),'-an','-c:v','libx264','-preset','fast','-crf','20','-threads','2','-movflags','+faststart',str(OUT/f'{name}.mp4')]
+    subprocess.run(args,check=True)
 print(json.dumps({'file':proof['fileName'],'strokes':len(strokes),'eyeRegion':proof['eyeRegion'],'encoded':probe}),flush=True)
