@@ -181,7 +181,7 @@ export function OverviewPage() {
               );
             })}
           </div>
-        ) : <div className="lg-empty-guidance"><strong>还没有请求</strong><span>{canUseQuickstart ? '先完成 Quickstart，首个 requestId 会出现在这里。' : '当前时间范围没有可展示的请求。'}</span>{canUseQuickstart ? <Link to="/quickstart">打开接入指南</Link> : null}</div>}
+        ) : <div className="lg-empty-guidance"><strong>还没有请求</strong><span>{canUseQuickstart ? '先在对话中完成接入，首个 requestId 会出现在这里。' : '当前时间范围没有可展示的请求。'}</span>{canUseQuickstart ? <Link to="/quickstart">打开接入指南</Link> : null}</div>}
       </Card>
 
       <section className="lg-overview-section" aria-labelledby="usage-heading">

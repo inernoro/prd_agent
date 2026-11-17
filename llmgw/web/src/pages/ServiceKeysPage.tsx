@@ -467,7 +467,7 @@ export function ServiceKeysPage() {
         actions={(
           <>
             <Link className="lg-text-link" to="/organization">组织与团队</Link>
-            <Link className="lg-text-link" to="/quickstart">Quickstart</Link>
+            <Link className="lg-text-link" to="/quickstart">对话</Link>
             <Button size="sm" variant="ghost" onClick={() => void load()}><RefreshCw size={14} />刷新</Button>
             <Button size="sm" variant="primary" onClick={toggleCreate}>
               {showCreate ? <X size={14} /> : <Plus size={14} />}{showCreate ? '取消' : '新建密钥'}
@@ -488,7 +488,7 @@ export function ServiceKeysPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
               <code style={createdKeyStyle}>{created.key}</code>
               <Button size="sm" onClick={() => void copyCreatedKey()}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制'}</Button>
-              <Link className="lg-text-link" to="/quickstart">打开 Quickstart</Link>
+              <Link className="lg-text-link" to="/quickstart">打开对话</Link>
             </div>
           </div>
         ) : null}

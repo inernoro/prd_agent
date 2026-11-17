@@ -606,7 +606,7 @@ export function ExchangesPage() {
               <ol className="lg-exchange-steps" aria-label="Exchange 三步工作流">
                 <li><strong>创建映射</strong><p style={BODY_TEXT}>填写上游地址、模型标识和通讯密钥。</p></li>
                 <li><strong>挂成线路</strong><p style={BODY_TEXT}>把已启用模型挂到对应用途的对外模型池。</p></li>
-                <li><strong>用 requestId 验证</strong><p style={BODY_TEXT}>从 Quickstart 安全测试，再到审计定位变更。</p></li>
+                <li><strong>用 requestId 验证</strong><p style={BODY_TEXT}>从对话页安全测试，再到审计定位变更。</p></li>
               </ol>
               {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>创建第一条映射</Button> : null}
             </div>
@@ -676,7 +676,7 @@ export function ExchangesPage() {
                             title: '验证方式',
                             fields: [
                               { label: '保存配置', value: '只写配置和审计，不访问上游' },
-                              { label: '安全验证', value: '使用 Quickstart dry-run 取得 requestId' },
+                              { label: '安全验证', value: '使用对话页安全测试取得 requestId' },
                               { label: '真实验证', value: '在明确批准后按协议单次调用，避免批量付费测试' },
                             ],
                           },

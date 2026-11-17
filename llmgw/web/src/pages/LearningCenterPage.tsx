@@ -92,7 +92,7 @@ export function LearningCenterPage() {
               <Step index={2} title="选择协议并安全直测">
                 <small style={BODY_TEXT}>安全直测只验证鉴权与路由，不调用付费上游。</small>
                 {canUseQuickstart
-                  ? <Link to="/quickstart" style={stepLinkStyle}>打开 Quickstart <ArrowRight size={13} /></Link>
+                  ? <Link to="/quickstart" style={stepLinkStyle}>打开对话 <ArrowRight size={13} /></Link>
                   : <em style={stepFallbackStyle}>由其他角色执行</em>}
               </Step>
               <Step index={3} title="用 requestId 回查">

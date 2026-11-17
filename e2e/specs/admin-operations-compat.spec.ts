@@ -427,6 +427,9 @@ for (const width of [390, 1440])
       await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
 
       await page.reload();
+      const firstNavigation = page.locator(".lg-console-sidebar nav a").first();
+      await expect(firstNavigation).toHaveAttribute("aria-label", "对话");
+      await expect(firstNavigation).toHaveAttribute("href", /\/quickstart$/);
       await expect(page.locator(".gateway-identity-card")).toHaveCount(0);
       await expect(page.locator(".consciousness-ghost > span")).toHaveText("LLM Gateway");
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);

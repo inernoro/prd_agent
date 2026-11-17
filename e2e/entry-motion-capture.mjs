@@ -126,10 +126,13 @@ try {
         settledMovie: (() => { const video=document.querySelector('.portrait-motion'); return video ? {time:video.currentTime,paused:video.paused} : null; })(),
         brand: document.querySelector('.consciousness-ghost > span')?.textContent,
         personalGreetingCount: document.querySelectorAll('.gateway-identity-card').length,
+        navigation: [...document.querySelectorAll('.lg-console-sidebar nav a')].map(link => ({label:link.getAttribute('aria-label'),path:new URL(link.href).pathname})),
         body: document.body.innerText.slice(-500) }));
       await page.screenshot({ path: new URL(`${mode}-settled.png`, output).pathname });
       await writeFile(new URL(`${mode}.json`, output), JSON.stringify(evidence, null, 2));
       assert.ok(evidence.settledMovie?.paused && evidence.settledMovie.time >= 5.1, 'The settled portrait must retain its actual video end pose');
+      assert.deepEqual(evidence.navigation[0], {label:'对话',path:'/quickstart'});
+      assert.equal(evidence.navigation.filter(link => link.path === '/quickstart').length, 1);
       assert.equal(evidence.brand, 'LLM Gateway');
       assert.equal(evidence.personalGreetingCount, 0);
       assert.deepEqual(evidence.viewport, { width: 1920, height: 1080, dpr: 1 });

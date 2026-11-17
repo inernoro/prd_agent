@@ -4,7 +4,7 @@ import { GatewaySoundToggle } from '@/components/entry/GatewaySoundToggle';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Bug, Building2, ChevronDown, CircleDollarSign, FileClock, Layers3,
-  Check, ExternalLink, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings, SlidersHorizontal,
+  Check, ExternalLink, KeyRound, LayoutDashboard, LogOut, Menu, MessageSquare, Moon, Search, Server, Settings, SlidersHorizontal,
   ShieldCheck, Sun, Tags, UserRound, X, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -22,6 +22,7 @@ type NavGroup = { label: string; items: NavItem[] };
 
 const NAV_GROUPS: NavGroup[] = [
   { label: '工作区', items: [
+    { to: '/quickstart', label: '对话', icon: <MessageSquare size={16} />, page: 'quickstart' },
     { to: '/', label: '概览', icon: <LayoutDashboard size={16} />, page: 'home', end: true },
     { to: '/logs', label: '请求记录', icon: <Activity size={16} />, page: 'logs' },
     { to: '/app-callers', label: 'appCaller', icon: <Tags size={16} />, page: 'appCallers' },
@@ -36,7 +37,6 @@ const NAV_GROUPS: NavGroup[] = [
     { to: '/platforms', label: '上游', icon: <Server size={16} />, page: 'routeConfig' },
   ] },
   { label: '开发者', items: [
-    { to: '/quickstart', label: 'Quickstart', icon: <BookOpen size={16} />, page: 'quickstart' },
     { to: '/service-keys', label: '接入密钥', icon: <KeyRound size={16} />, page: 'serviceKeys' },
     { to: '/learn', label: '学习中心', icon: <BookOpen size={16} />, page: 'learn' },
   ] },
