@@ -1,3 +1,12 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Cryptography;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using Moq;
+using PrdAgent.Api.Middleware;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Services;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -44,10 +53,30 @@ public class PmProjectPermissionTests
         builder.Services.AddScoped<PmAuditActionFilter>();
         builder.Services.AddControllers().AddApplicationPart(typeof(PmAgentController).Assembly).AddControllersAsServices();
         builder.Services.AddTransient(_ => new PmAgentController(db, null!, null!, null!, null!, null!, null!, NullLogger<PmAgentController>.Instance));
-        // Test identity only; controller routes, JSON binding, storage and audit filter are real.
-        builder.Services.AddAuthorization(o => o.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder().RequireAssertion(_ => true).Build());
+        const string issuer = "pm-local-fixture";
+        var signingKey = new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32));
+        builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
+        {
+            options.MapInboundClaims = false;
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidIssuer = issuer, ValidAudience = issuer, IssuerSigningKey = signingKey,
+                ValidateIssuerSigningKey = true, ClockSkew = TimeSpan.Zero,
+            };
+        });
+        builder.Services.AddAuthorization();
+        var permissions = new Mock<IAdminPermissionService>();
+        permissions.Setup(x => x.GetEffectivePermissionsAsync(It.IsAny<string>(), false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, bool _, CancellationToken _) => (IReadOnlyList<string>)(id == "no-permission"
+                ? [AdminPermissionCatalog.Access]
+                : [AdminPermissionCatalog.Access, AdminPermissionCatalog.PmAgentUse]));
+        builder.Services.AddSingleton(permissions.Object);
+        var scanner = new AdminControllerScanner(NullLogger<AdminControllerScanner>.Instance, typeof(PmAgentController).Assembly);
+        builder.Services.AddSingleton<IAdminControllerScanner>(scanner);
+        Assert.Equal(AdminPermissionCatalog.PmAgentUse, scanner.GetRequiredPermission("/api/pm/projects/fixture", "PUT"));
         await using var app = builder.Build();
-        app.Use(async (ctx, next) => { ctx.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", ctx.Request.Headers["X-Test-User"].ToString()) }, "test")); await next(); });
+        app.UseAuthentication();
+        app.UseMiddleware<AdminPermissionMiddleware>();
         app.UseAuthorization();
         app.MapControllers();
         await app.StartAsync();
@@ -62,13 +91,30 @@ public class PmProjectPermissionTests
         Assert.Equal(typeof(UpdatePmProjectRequest).GetProperties().Select(p => p.Name.ToLowerInvariant()).Order(), fields.Keys.Select(p => p.ToLowerInvariant()).Order());
         async Task<HttpResponseMessage> Send(string role, string path, object? body = null) {
             using var req = new HttpRequestMessage(body == null ? HttpMethod.Get : HttpMethod.Put, path);
-            req.Headers.Add("X-Test-User", role);
+            if (role != "anonymous")
+            {
+                var key = role == "invalid-signature" ? new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32)) : signingKey;
+                var token = new JwtSecurityToken(issuer, issuer, [new Claim("sub", role)],
+                    expires: DateTime.UtcNow.AddMinutes(5), signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
+                req.Headers.Authorization = new("Bearer", new JwtSecurityTokenHandler().WriteToken(token));
+            }
             if (body != null) req.Content = JsonContent.Create(body);
             return await client.SendAsync(req);
         }
         PmProject NewProject() => new() { OwnerId = "owner", LeaderId = "leader", Title = "original", MemberIds = new() { "member", "leader" }, ObserverIds = new() { "observer" }, Stakeholders = new() { new() { UserId = "stakeholder" } } };
         try {
             await db.Users.InsertManyAsync(roles.Select(r => new User { UserId = r, Username = r, DisplayName = r }));
+            var admissionProject = NewProject();
+            await db.PmProjects.InsertOneAsync(admissionProject);
+            var admissionPath = $"/api/pm/projects/{admissionProject.Id}";
+            foreach (var role in new[] { "anonymous", "invalid-signature", "no-permission" })
+            {
+                var expected = role == "no-permission" ? HttpStatusCode.Forbidden : HttpStatusCode.Unauthorized;
+                Assert.Equal(expected, (await Send(role, admissionPath)).StatusCode);
+                Assert.Equal(expected, (await Send(role, admissionPath, fields)).StatusCode);
+            }
+            Assert.Equal("original", (await db.PmProjects.Find(x => x.Id == admissionProject.Id).SingleAsync()).Title);
+            Assert.Equal(0, await db.PmAuditLogs.CountDocumentsAsync(x => x.ProjectId == admissionProject.Id));
             foreach (var role in roles) {
                 foreach (var field in fields) {
                     var p = NewProject(); await db.PmProjects.InsertOneAsync(p);
