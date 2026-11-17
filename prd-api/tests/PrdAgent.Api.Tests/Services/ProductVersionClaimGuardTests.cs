@@ -2230,7 +2230,11 @@ public class ProductVersionClaimGuardTests
         {
             var claims = new List<Claim> { new("sub", "me"), new("permissions", AdminPermissionCatalog.ProductAgentUse) };
             if (test) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentVersionClaimTest));
-            if (admin) claims.Add(new("permissions", ProductPermissionRules.MapAdmin));
+            if (admin)
+            {
+                claims.Add(new("permissions", ProductPermissionRules.MapAdmin));
+                claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentAdmin));
+            }
             var http = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test")) };
             if (notify) http.RequestServices = new ServiceCollection().AddSingleton<IConfiguration>(SharedWorkConfiguration()).BuildServiceProvider();
             return new ProductAgentController(Db, NullLogger<ProductAgentController>.Instance, null!, null!, null!, null!, null!, null!) {
