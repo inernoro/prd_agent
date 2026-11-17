@@ -7,11 +7,11 @@ export const smoothProgress = (time: number, from: number, to: number) => {
 };
 export function samplePortrait(time: number) {
   return {
-    line: smoothProgress(time, 0, 1.9),
-    lineOpacity: 1 - smoothProgress(time, 1.9, 2.55),
-    grid: smoothProgress(time, 1.25, 1.85) * (1 - smoothProgress(time, 2.15, 2.85)),
+    line: smoothProgress(time, .12, 1.68),
+    lineOpacity: 1 - smoothProgress(time, 1.94, 2.70),
+    grid: smoothProgress(time, 1.38, 1.95) * (1 - smoothProgress(time, 2.18, 2.61)),
     material: smoothProgress(time, 1.55, 2.45),
-    eye: smoothProgress(time, 2.65, 4.25),
+    eye: smoothProgress(time, 2.70, 3.80),
     controls: smoothProgress(time, .12, .85),
     brand: smoothProgress(time, 2.3, 3.05),
     brandFill: smoothProgress(time, 3.25, 4.3),

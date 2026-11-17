@@ -21,5 +21,9 @@
     "eye-quarter.png": "仅改变眼部为四分之一睁眼，上眼睑真实遮挡虹膜，其他像素构图保持。",
     "eye-half.png": "依据全闭和全开参考生成半睁眼，保持眼睑厚度与睫毛附着，不用透明眼皮或重影。",
     "eye-three-quarter.png": "在半睁和全开之间生成四分之三睁眼，仅改变眼部与眼皮褶皱，保持其他轮廓。"
+  },
+  "comparisonBaseline": {
+    "file": "e2e/fixtures/media/portrait-motion-baseline.mp4",
+    "sha256": "92500f2d249af14c8db08817a9d75b71ea05d179e3dce6be613dd5da884ec9ed"
   }
 }

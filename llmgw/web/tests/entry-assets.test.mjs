@@ -10,6 +10,12 @@ test('两个独立构建的角色几何、素材与逐帧轨迹保持一致', ()
   for (let frame = 0; frame <= 432; frame++) assert.deepEqual(gateway(frame / 60), map(frame / 60));
   const motion = JSON.parse(readFileSync(new URL('../../../e2e/fixtures/media/portrait-motion.source.json',import.meta.url),'utf8'));
   assert.equal(PORTRAIT_MOTION_FILE,motion.fileName);
+  assert.equal(motion.authoringMethod, 'imagegen-edgedrawing-optical-flow');
+  assert.deepEqual(motion.eyeKeyframes, ['closed','quarter','half','three-quarter','open']);
+  for (const file of ['line-etching.png','surface-reveal.png','eye-quarter.png','eye-half.png','eye-three-quarter.png']) {
+    const bytes = readFileSync(new URL(`../../../.design/map-cinematic-entry/ai-v2/${file}`,import.meta.url));
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), motion.sourceImages[file], '源图改变后必须重新生成并验收电影素材');
+  }
   assert.match(motion.fileName,/^portrait-motion-[a-f0-9]{12}\.mp4$/);
   assert.equal(createHash('sha256').update(readFileSync(new URL(`../public/media/entry/${motion.fileName}`,import.meta.url))).digest('hex'),motion.sha256);
   for (const file of ['portraitGeometry.ts','portraitMotionAsset.ts','companion.webp','companion-sleep.webp',motion.fileName]) {

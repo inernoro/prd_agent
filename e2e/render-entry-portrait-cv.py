@@ -207,8 +207,7 @@ for start in range(0,len(thumbs),6):
     for j,im in enumerate(thumbs[start:start+6]): sheet[j//2*360:(j//2+1)*360,j%2*640:(j%2+1)*640]=im
     cv2.imwrite(str(OUT/f'contact-{start//6:02}.jpg'),sheet)
 # Clearly labelled authored-asset comparisons, never passed off as live UI recording.
-old = json.loads((ROOT/'e2e/fixtures/media/portrait-motion.source.json').read_text())
-previous = ROOT/'llmgw/web/public/media/entry'/old['fileName']
+previous = ROOT/'e2e/fixtures/media/portrait-motion-baseline.mp4'
 for name, source, seek, label in [
     ('previous-vs-image-led', previous, None, 'Previous authored asset'),
     ('reference-vs-image-led', ROOT/'e2e/fixtures/media/entry-reference.mp4', '14.75', 'Reference source')]:
