@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.22.2
+  version: 0.22.3
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, host-isolated primary/standby selection, load checks, canonical cdscli commands, self-update, deployment runs, versions and rollback. Read actual preview URLs through preview-url; delegate project scanning and deployment to their companion skills. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its required design/orchestration prerequisites; report upload is transport, not acceptance execution. Activate for these tasks or clarify intent when the user only says CDS.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.22.2 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
+> **版本**：v0.22.3 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -140,6 +140,7 @@ $CLI release-target merge-back <targetId> --project <id> --pr <number> --owner <
 
 # 批准必须由另一位真实登录用户在发布中心完成，执行凭据不能自批。
 # 单次批准绑定固定版本；调试授权绑定分支、累计路径、基线和最长 24 小时有效期。
+# 批次使用的已有固定部署版本可用 --kind single --deployment-version <versionId> 申请，不回退分支。
 # 每次执行重新获取 main 并隔离合并；撤销、过期、外部发布或配置变化均停止放行。
 # PR 状态来自项目 GitHub 授权及 PR 引用，包含关系与 PR 合并状态分别核验。
 

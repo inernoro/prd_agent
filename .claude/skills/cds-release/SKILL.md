@@ -83,6 +83,8 @@ python3 "$CDSCLI" release-target register --project <projectId> --file /tmp/rele
 
 执行凭据先用 `release-target approval-request` 申请，另一位真实用户在发布中心核对并批准。单次批准绑定完整提交和一次运行；回滚须申请独立的单次回滚批准。连续调试须列出允许文件或以 `/` 结尾的目录，以及最长 24 小时的有效期，不允许通配符。
 
+批次固定版本与分支当前版本不同时，在单次申请中选择该项目已有的部署版本；CLI 使用 `--deployment-version <versionId>`。服务端核对项目、分支及完整提交，批准回执保留部署版本来源，不回退或改写分支。批次自身仍须具备该固定版本的通过验收依据。
+
 实际执行前重新核对项目、环境配置、分支身份、主干和生产基线，隔离执行真实 Git 合并，并检查从授权基线起的全部累计改动，包括修改后又撤回的文件。越界、主干前进、其他发布改变基线、撤销、到期和核验失败都会拒绝执行。每次运行保存独立的批准回执，拒绝也有审计记录。
 
 `release-target conflict-check` 主动核验线上版本；`release-target merge-back` 关联项目仓库中真实、面向项目主干且包含线上提交的 PR。Git 包含关系与 GitHub 的 open、closed、merged 状态分开呈现，读取失败显示未知。

@@ -99,13 +99,15 @@ const now = new Date().toISOString(), projectId='release-live-lab', targetId='re
 state.addProject({id:projectId,slug:'release-live-lab',name:'发布治理隔离验收 · 真实 Git / SSH',kind:'git',repoPath:repo,gitRepoUrl:origin,gitDefaultBranch:'main',cloneStatus:'ready',createdAt:now,updatedAt:now});
 state.addAgentKey(projectId,{id:'release-lab-agent',label:'本轮隔离验收执行凭据',hash:crypto.createHash('sha256').update(agentKey).digest('hex'),scope:'rw',createdAt:now,expiresAt:new Date(Date.now()+24*60*60_000).toISOString()});
 for(const [id,branch,worktreePath,sha] of [['lab-main','main',repo,main],['lab-debug','lab/debug',debug,first],['lab-conflict','lab/conflict',conflict,conflictSha]])state.addBranch({id,projectId,branch,worktreePath,githubCommitSha:sha,status:'running',services:{},createdAt:now,previewUrl:`http://127.0.0.1:${surfacePort}/preview/${id}`});
+const deploymentVersionId='lab-fixed-first';
+state.addDeploymentVersion({id:deploymentVersionId,projectId,branchId:'lab-debug',commitSha:first,configHash:'isolated-fixture',profiles:[],migrations:[],capabilities:[],createdByRunId:'isolated-first-build',createdAt:now});
 state.addRemoteHost({id:'release-lab-ssh',name:'隔离验收目标（仅本容器）',host:'127.0.0.1',sshPort,sshUser:'lab',sshAuthMethod:'password',sshPasswordEncrypted:password,sshPrivateKeyFingerprint:crypto.createHash('sha256').update(password).digest('hex').slice(0,16),tags:['isolated-acceptance'],isEnabled:true,createdAt:now});
 state.upsertReleaseTarget({id:targetId,projectId,name:'隔离验收目标 · 实际执行发布',type:'ssh',environment:'staging',isEnabled:true,isCanonical:true,createdAt:now,strategy:{mode:'existing-script',command:'./release.sh'},ssh:{host:'127.0.0.1',port:sshPort,user:'lab',privateKeyRef:'release-lab-ssh',appPath:repo,deployCommand:'./release.sh',healthcheckUrl:`http://127.0.0.1:${surfacePort}/health`}});
 await state.flush();
 const workerProbe=http.createServer();await new Promise(resolve=>workerProbe.listen(0,'127.0.0.1',resolve));const workerPort=workerProbe.address().port;await new Promise(resolve=>workerProbe.close(resolve));
 await fs.writeFile(path.join(root,'cds/cds.config.json'),JSON.stringify({repoRoot:root,workerPort}));
 const credentialsPath=path.join(root,'.cds/lab-credentials.json');
-await fs.writeFile(credentialsPath,JSON.stringify({projectId,targetId,agentKey,username,password:humanPassword,main,first,second,outside,reverted,conflictSha,root,effects,surfaceUrl:`http://127.0.0.1:${surfacePort}/`,branches:{main:'lab-main',debug:'lab-debug',conflict:'lab-conflict'}}),{mode:0o600});
+await fs.writeFile(credentialsPath,JSON.stringify({projectId,targetId,agentKey,username,password:humanPassword,main,first,second,outside,reverted,conflictSha,deploymentVersionId,root,effects,surfaceUrl:`http://127.0.0.1:${surfacePort}/`,branches:{main:'lab-main',debug:'lab-debug',conflict:'lab-conflict'}}),{mode:0o600});
 const env={...process.env,CDS_PREVIEW_INSTANCE:'1',CDS_STORAGE_MODE:'json',CDS_REPO_ROOT:root,CDS_BIND_HOST:process.env.CDS_BIND_HOST||'127.0.0.1',CDS_PREVIEW_USERNAME:username,CDS_PREVIEW_PASSWORD:humanPassword};
 delete env.CDS_SECRET_KEY; delete env.AI_ACCESS_KEY; delete env.CDS_PROJECT_KEY; delete env.CDS_MONGO_URI;
 const mainProcess=spawn(process.execPath,[path.join(runtime,'dist/index.js')],{cwd:path.join(root,'cds'),env,stdio:'inherit'});

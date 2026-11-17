@@ -38,6 +38,15 @@ class GovernanceCliTests(unittest.TestCase):
             self.assertEqual(body['scheduledJobId'],'job-real')
             self.assertNotIn('operator',body)
             self.assertNotIn('requestedBy',body)
+    def test_fixed_version_is_explicit_single_only_and_never_changes_branch(self):
+        with patch.object(cli, '_release_environment_rows', return_value=([], [{'id':'target','projectId':'p'}])), patch.object(cli, '_call', return_value={}) as call, patch.object(cli, 'ok'):
+            cli.cmd_release_governance(self.args(kind='single',deployment_version='saved-a'))
+            self.assertEqual(call.call_count,1)
+            self.assertEqual(call.call_args.kwargs['body']['deploymentVersionId'],'saved-a')
+        for changes in [{'kind':'debug'},{'kind':'single','rollback_version':'old-run'}]:
+            with patch.object(cli, '_release_environment_rows', return_value=([], [{'id':'target','projectId':'p'}])), patch.object(cli, '_call') as call, patch.object(cli, 'die', side_effect=SystemExit):
+                with self.assertRaises(SystemExit): cli.cmd_release_governance(self.args(deployment_version='saved-a',**changes))
+                call.assert_not_called()
 
     def test_invalid_duration_or_missing_scope_never_writes(self):
         for changes in [{'expires_in':0}, {'expires_in':1441}, {'scope':None}]:

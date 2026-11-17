@@ -19,6 +19,7 @@ export interface ReleaseAuthorization {
   kind: 'single' | 'debug';
   action: 'release' | 'rollback';
   rollbackReleaseId?: string;
+  deploymentVersionId?: string;
   candidateSha: string;
   basisSha: string;
   baselineReleaseId: string | null;
@@ -46,6 +47,7 @@ export interface ReleaseGovernanceReceipt {
   kind: 'single' | 'debug';
   action: 'release' | 'rollback';
   rollbackReleaseId?: string;
+  deploymentVersionId?: string;
   requestedBy: string;
   approvedBy: string;
   approvedAt: string;

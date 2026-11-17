@@ -139,6 +139,49 @@ it('正常认证、真实 Git 和 SSH 发布：独立审批、连续调试、越
   expect(audit.attempts.filter((a:any)=>a.result==='denied').length).toBeGreaterThanOrEqual(5);
 },120000);
 
+it('真实固定版本双目标批次：分支前进后批准已验收A并实际SSH发布A，不回退分支',async()=>{
+  expect(root).toBeTruthy();expect(buildRoot).toBeTruthy();
+  const load=async(name:string)=>import(pathToFileURL(path.join(buildRoot!,'runtime/dist/services',name+'.js')).href);
+  const [{StateService},{ReleaseGovernanceService},{ReleaseGovernanceGit},{ReleaseService},{ReleaseBatchService}]=await Promise.all([load('state'),load('release-governance'),load('release-governance-git'),load('release-service'),load('release-batch-service')]);
+  const fixture=JSON.parse(await fs.readFile(path.join(root!,'.cds/state.json'),'utf8'));
+  const credentials=JSON.parse(await fs.readFile(path.join(root!,'.cds/lab-credentials.json'),'utf8'));
+  const host=Object.values(fixture.remoteHosts).find((row:any)=>row.id==='release-lab-ssh') as any;
+  const dir=path.join(root!,'fixed-batch-regression');await fs.mkdir(dir);const repo=path.join(root!,'project');
+  const projectId='fixed-project',branchId='fixed-branch',actor='ai:key:fixed-batch',stamp=new Date().toISOString();
+  const state=new StateService(path.join(dir,'state.json'),dir);state.load();
+  const health=http.createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({status:'healthy',commitSha:await fs.readFile(path.join(dir,req.url!.slice(1)),'utf8')}));});
+  await new Promise<void>(resolve=>health.listen(0,'127.0.0.1',resolve));
+  state.addProject({id:projectId,slug:projectId,name:'固定版本批次隔离回归',kind:'git',repoPath:repo,gitRepoUrl:path.join(root!,'origin.git'),gitDefaultBranch:'main',createdAt:stamp,updatedAt:stamp});
+  state.addBranch({id:branchId,projectId,branch:'lab/debug',worktreePath:path.join(root!,'debug'),githubCommitSha:credentials.second,status:'running',services:{},createdAt:stamp});
+  state.addRemoteHost({...host,id:'fixed-host'});
+  for(const targetId of ['fixed-a','fixed-b']){
+    await fs.writeFile(path.join(dir,targetId),credentials.main);
+    const script=`#!/bin/sh\nset -eu\nif [ "$1" = check ]; then exit 0; fi\nprintf '%s' "$CDS_COMMIT_SHA" > '${dir}/${targetId}'\n`;
+    state.upsertReleaseTarget({id:targetId,projectId,name:targetId,type:'ssh',isEnabled:true,createdAt:stamp,governance:{required:true},strategy:{mode:'managed-script',script},ssh:{host:'127.0.0.1',port:host.sshPort,user:'lab',privateKeyRef:'fixed-host',appPath:repo,healthcheckUrl:`http://127.0.0.1:${(health.address() as {port:number}).port}/${targetId}`}});
+    state.addReleaseRun({releaseId:targetId+'-baseline',projectId,targetId,branchId,commitSha:credentials.main,status:'success',operator:actor,planId:projectId+':managed-script',startedAt:stamp,finishedAt:stamp,logs:[],seq:0,artifact:{type:'branch-preview',branchId,branchName:'lab/debug',commitSha:credentials.main}});
+  }
+  state.addDeploymentVersion({id:'fixed-accepted-a',projectId,branchId,commitSha:credentials.first,configHash:'fixture',profiles:[],migrations:[],capabilities:[],createdByRunId:'fixed-build-a',createdAt:stamp});
+  const report=state.createAcceptanceReport({projectId,branchId,commitSha:credentials.first,verdict:'pass',reportType:'acceptance',title:'固定版本A隔离验收',content:'真实隔离验收',format:'md',createdAt:stamp});
+  const git=new ReleaseGovernanceGit(()=>repo,()=> 'main',async(args:string[],cwd:string,isolated=false)=>{const r=spawnSync('git',args,{cwd,encoding:'utf8',timeout:30000,env:{...process.env,GIT_TERMINAL_PROMPT:'0',...(isolated?{GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'}:{})}});return {stdout:r.stdout||'',exitCode:r.status};});
+  const governance=new ReleaseGovernanceService(state,git),releases=new ReleaseService(state,{governance,verifyProjectCI:async(_branch:any,sha:string)=>({ok:sha===credentials.first,message:'隔离CI契约仅认可固定A，真实Git与SSH另行执行'})}),batches=new ReleaseBatchService(state,releases);
+  try{
+    const batch=await batches.create({projectId,versionId:'fixed-accepted-a',reportId:report.id,targetIds:['fixed-a','fixed-b'],idempotencyKey:'fixed-batch-create-1',operator:actor});
+    expect((await batches.preflight(batch.id)).status).toBe('blocked');
+    for(const targetId of ['fixed-a','fixed-b']){
+      const pending=await governance.request({targetId,branchId,kind:'single',deploymentVersionId:'fixed-accepted-a',reason:'批次固定已验收A而分支已经前进B',actor,expiresAt:new Date(Date.now()+600000).toISOString()});
+      expect(pending.candidateSha).toBe(credentials.first);await governance.decide(pending.id,'approved','user:fixed-reviewer:Reviewer','独立核对批次固定版本A');
+    }
+    const checked=await batches.preflight(batch.id);expect(checked.status,JSON.stringify(checked.targets.map((t:any)=>({id:t.targetId,checks:t.checks,error:t.error})))).toBe('ready');await batches.start(batch.id,'fixed-batch-start-1',undefined,false,actor);
+    const deadline=Date.now()+45000;while(batches.get(batch.id).status==='running'&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
+    expect(batches.get(batch.id).status).toBe('success');
+    for(const targetId of ['fixed-a','fixed-b']){
+      expect(await fs.readFile(path.join(dir,targetId),'utf8')).toBe(credentials.first);
+      expect(state.getLatestSuccessfulReleaseRun(targetId)).toMatchObject({commitSha:credentials.first,governance:{deploymentVersionId:'fixed-accepted-a',approvedBy:'user:fixed-reviewer:Reviewer'}});
+    }
+    expect(state.getBranch(branchId).githubCommitSha).toBe(credentials.second);
+  }finally{await state.flush();await new Promise<void>(resolve=>health.close(()=>resolve()));}
+},90000);
+
 it('真实 SSH 部署启动后批准到期且脚本失败，仍自动恢复上一成功版本',async()=>{
   expect(root).toBeTruthy();expect(buildRoot).toBeTruthy();
   const compiled=path.join(buildRoot!,'runtime/dist/services');

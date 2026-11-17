@@ -49,6 +49,19 @@ describe('发布治理 HTTP 契约与认证边界夹具', () => {
     expect((await call('GET','/releases/governance?projectId=other')).status).toBe(403);
     expect((await call('POST','/releases/targets/other-target/authorizations','agent',body())).status).toBe(403);
   });
+  it('HTTP单次审批只接受同项目同分支的已保存部署版本，分支前进也仍绑定其完整提交',async()=>{
+    state.getBranch('b')!.githubCommitSha='b'.repeat(40);
+    state.addDeploymentVersion({id:'saved-a',projectId:'p',branchId:'b',commitSha:sha,configHash:'fixture',profiles:[],migrations:[],capabilities:[],createdByRunId:'build-a',createdAt:new Date().toISOString()});
+    const requested=await call('POST','/releases/targets/p-target/authorizations','agent',{...body(),kind:'single',deploymentVersionId:'saved-a',commitSha:'c'.repeat(40)});
+    expect(requested.status).toBe(200);expect(requested.body.authorization).toMatchObject({candidateSha:sha,deploymentVersionId:'saved-a'});
+    expect((await call('POST','/releases/authorizations/'+requested.body.authorization.id+'/approve','human',{reason:'核对已保存固定版本A'})).status).toBe(200);
+    expect((await service.authorize({runId:'fixed-run',projectId:'p',targetId:'p-target',branchId:'b',commitSha:sha,operator:'ai:key:agent-1',action:'release',authorizationId:requested.body.authorization.id}))?.deploymentVersionId).toBe('saved-a');
+    expect(state.getBranch('b')?.githubCommitSha).toBe('b'.repeat(40));
+    state.addBranch({...state.getBranch('b')!,id:'foreign',projectId:'other'});
+    state.addDeploymentVersion({id:'foreign-a',projectId:'other',branchId:'foreign',commitSha:sha,configHash:'fixture',profiles:[],migrations:[],capabilities:[],createdByRunId:'foreign-build',createdAt:new Date().toISOString()});
+    expect((await call('POST','/releases/targets/p-target/authorizations','agent',{...body(),kind:'single',deploymentVersionId:'foreign-a'})).status).toBe(409);
+    const listed=await call('GET','/releases/governance?projectId=p');expect(listed.body.deploymentVersions.map((v:any)=>v.id)).toEqual(['saved-a']);
+  });
   it('全局凭据不能写入治理；项目密钥不能批准或启用', async () => {
     expect((await call('POST','/releases/targets/p-target/authorizations','global',body())).status).toBe(403);
     expect((await call('POST','/releases/targets/p-target/governance/enable')).status).toBe(403);

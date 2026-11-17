@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.22.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.22.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -1056,6 +1056,10 @@ def cmd_release_governance(args: argparse.Namespace) -> None:
                 "allowedPaths": args.scope or [], "reason": args.reason}
         if getattr(args, "scheduled_job", None):
             body["scheduledJobId"] = args.scheduled_job
+        if getattr(args, "deployment_version", None):
+            if args.kind != "single" or args.rollback_version:
+                die("固定部署版本仅适用于单次发布批准，不能与调试或回滚混用", code=1)
+            body["deploymentVersionId"] = args.deployment_version
         if args.rollback_version:
             body["rollbackReleaseId"] = args.rollback_version
         ok(_call("POST", base + "/authorizations", body=body, timeout=180),
@@ -10815,6 +10819,7 @@ def _build_parser() -> argparse.ArgumentParser:
             item.add_argument("--expires-in", type=int, default=60, help="有效分钟数，最长 1440")
             item.add_argument("--scope", action="append", help="单个允许路径；目录以 / 结尾，可重复")
             item.add_argument("--rollback-version", help="同一目标的历史成功 ReleaseRun ID")
+            item.add_argument("--deployment-version", help="当前项目与分支中已有的不可变部署版本 ID，批准固定提交而不回退分支")
             item.add_argument("--reason", required=True)
         elif command == "approval-revoke":
             item.add_argument("--reason", required=True)

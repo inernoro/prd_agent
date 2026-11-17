@@ -112,6 +112,8 @@ export class ReleaseGovernanceService {
       checks: Object.values(data.checks || {}).filter(a => a.projectId === projectId),
       attempts: data.attempts.filter(a => a.projectId === projectId).slice(-200).reverse(),
       mergeBacks: Object.values(data.mergeBacks).filter(a => a.projectId === projectId),
+      deploymentVersions: this.state.getDeploymentVersions({projectId}).filter(version=>FULL_SHA.test(version.commitSha)
+        &&this.state.getBranch(version.branchId)?.projectId===projectId).map(({id,branchId,commitSha,createdAt})=>({id,branchId,commitSha,createdAt})),
       scheduledJobs: this.state.listScheduledJobs(projectId).map(job => ({ id: job.id, name: job.name,
         targetIds: (job.actions || (job.target ? [job.target] : [])).filter(action => action.type === 'release').map(action => action.targetId) })) };
   }
@@ -148,7 +150,7 @@ export class ReleaseGovernanceService {
     await this.persist(data);
   }
   async request(input: { targetId: string; branchId: string; kind: 'single' | 'debug'; action?: 'release' | 'rollback';
-    rollbackReleaseId?: string; scheduledJobId?: string; expiresAt: string; allowedPaths?: unknown; reason: string; actor: string }): Promise<ReleaseAuthorization> {
+    rollbackReleaseId?: string; deploymentVersionId?: string; scheduledJobId?: string; expiresAt: string; allowedPaths?: unknown; reason: string; actor: string }): Promise<ReleaseAuthorization> {
     if (!known(input.actor)) throw new ReleaseGovernanceError('请使用真实登录账号或项目执行凭据发起申请');
     const target = this.target(input.targetId);
     if (!target.governance?.required) throw new ReleaseGovernanceError('请先由项目成员启用本环境审批，再申请发布批准');
@@ -156,6 +158,11 @@ export class ReleaseGovernanceService {
     if (input.scheduledJobId !== undefined && (typeof input.scheduledJobId !== 'string' || !input.scheduledJobId.trim())) throw new ReleaseGovernanceError('请选择有效的定时发布任务');
     const scheduledJobFingerprint = input.scheduledJobId ? this.scheduledJobFingerprint(input.scheduledJobId, target.projectId, target.id) : undefined;
     const action = input.action || 'release';
+    const version=typeof input.deploymentVersionId==='string'?this.state.getDeploymentVersion(input.deploymentVersionId):undefined;
+    if(input.deploymentVersionId!==undefined&&(input.kind!=='single'||action!=='release'||!version
+      ||version.projectId!==target.projectId||version.branchId!==input.branchId||!FULL_SHA.test(version.commitSha))) {
+      throw new ReleaseGovernanceError('请选择同项目、同分支的完整部署版本；固定部署版本只用于单次发布批准');
+    }
     const previous = action === 'rollback' && input.rollbackReleaseId ? this.state.getReleaseRun(input.rollbackReleaseId) : undefined;
     if (action === 'rollback' && (!previous || previous.targetId !== target.id || !isSuccessfulReleaseRun(previous))) throw new ReleaseGovernanceError('请选择同一环境的历史成功版本');
     if (input.kind === 'debug' && action === 'rollback') throw new ReleaseGovernanceError('回滚须使用单次批准，不能借用连续调试授权');
@@ -164,7 +171,7 @@ export class ReleaseGovernanceService {
         pinnedCommit: previous.commitSha, githubCommitSha: previous.commitSha }
       : this.state.getBranch(input.branchId);
     if (!branch || branch.projectId !== target.projectId) throw new ReleaseGovernanceError('分支与发布环境不属于同一项目');
-    const candidate = previous?.commitSha || await this.branchCommit(branch.id);
+    const candidate = previous?.commitSha || version?.commitSha || await this.branchCommit(branch.id);
     if (!FULL_SHA.test(candidate)) throw new ReleaseGovernanceError('申请必须绑定完整提交');
     const expires = Date.parse(input.expiresAt), now = this.now();
     if (!Number.isFinite(expires) || expires <= now.getTime() || expires > now.getTime() + 24 * 60 * 60_000) throw new ReleaseGovernanceError('有效期须在当前时间之后，最长 24 小时');
@@ -180,7 +187,7 @@ export class ReleaseGovernanceService {
     if (this.state.getLatestSuccessfulReleaseRun(target.id)?.releaseId !== baseline?.releaseId) throw new ReleaseGovernanceError('生产基线已变化，请重新申请');
     if (input.scheduledJobId && this.scheduledJobFingerprint(input.scheduledJobId, target.projectId, target.id) !== scheduledJobFingerprint) throw new ReleaseGovernanceError('定时发布任务配置已变化，请重新申请');
     const record: ReleaseAuthorization = { id: id('ra_'), projectId: target.projectId, targetId: target.id,
-      branchId: branch.id, branchName: branch.branch, kind: input.kind, action, rollbackReleaseId: previous?.releaseId, candidateSha: candidate,
+      branchId: branch.id, branchName: branch.branch, kind: input.kind, action, rollbackReleaseId: previous?.releaseId, deploymentVersionId:version?.id,candidateSha: candidate,
       basisSha: baseline?.commitSha || check.mainSha, baselineReleaseId: baseline?.releaseId || null, mainSha: check.mainSha,
       targetFingerprint: releaseTargetConfigFingerprint(target,true), projectFingerprint: approvalProjectFingerprint(this.state.getProject(target.projectId)),
       allowedPaths, requestedBy: input.actor, scheduledJobId: input.scheduledJobId, scheduledJobFingerprint,
@@ -225,6 +232,12 @@ export class ReleaseGovernanceService {
       || actorId(executionActor(record)) !== actorId(input.operator) || record.action !== input.action) throw new ReleaseGovernanceError('批准的项目、环境、分支、执行凭据或操作不匹配');
     if (record.action === 'rollback' && (!record.rollbackReleaseId || record.rollbackReleaseId !== input.rollbackReleaseId)) {
       throw new ReleaseGovernanceError('回滚历史版本与批准不匹配，请重新选择已批准的历史运行');
+    }
+    if(record.deploymentVersionId){
+      const version=this.state.getDeploymentVersion(record.deploymentVersionId);
+      if(!version||version.projectId!==record.projectId||version.branchId!==record.branchId||version.commitSha!==record.candidateSha) {
+        throw new ReleaseGovernanceError('批准的固定部署版本已不可核实，请重新选择版本申请');
+      }
     }
     if (record.scheduledJobId && this.scheduledJobFingerprint(record.scheduledJobId, record.projectId, record.targetId) !== record.scheduledJobFingerprint) {
       throw new ReleaseGovernanceError('定时发布任务配置已变化，请重新申请');
@@ -276,7 +289,7 @@ export class ReleaseGovernanceService {
       const current = this.state.getReleaseGovernance().authorizations[record.id];
       this.validate(current, input);
       if (JSON.stringify(current) !== JSON.stringify(record)) throw new ReleaseGovernanceError('批准记录已变化，请重新发布');
-      return { authorizationId: record.id, kind: record.kind, action: record.action, rollbackReleaseId: record.rollbackReleaseId, requestedBy: record.requestedBy,
+      return { authorizationId: record.id, kind: record.kind, action: record.action, rollbackReleaseId: record.rollbackReleaseId,deploymentVersionId:record.deploymentVersionId,requestedBy: record.requestedBy,
         approvedBy: record.decidedBy!, approvedAt: record.decidedAt!, expiresAt: record.expiresAt,
         targetFingerprint: record.targetFingerprint, projectFingerprint: record.projectFingerprint,
         baselineReleaseId: this.state.getLatestSuccessfulReleaseRun(input.targetId)?.releaseId || null,

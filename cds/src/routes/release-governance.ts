@@ -47,7 +47,7 @@ export function createReleaseGovernanceRouter(state: StateService, governance: R
       res.status(400).json({ error: '请选择分支、授权类型、操作和有效期' }); return;
     }
     await execute(async request => ({ authorization: await governance.request({ targetId: request.params.id,
-      branchId: body.branchId, kind: body.kind, action: body.action, rollbackReleaseId: body.rollbackReleaseId,
+      branchId: body.branchId, kind: body.kind, action: body.action, rollbackReleaseId: body.rollbackReleaseId,deploymentVersionId:body.deploymentVersionId,
       expiresAt: body.expiresAt, allowedPaths: body.allowedPaths, scheduledJobId: body.scheduledJobId,
       reason: body.reason, actor: resolveReleaseActorFromRequest(request) }) }))(req, res);
   });

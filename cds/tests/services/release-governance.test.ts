@@ -77,6 +77,21 @@ describe('独立批准与连续调试的服务层约束', () => {
     const receipt = await service.authorize(input({ operator: agent, authorizationId: record.id }));
     expect(receipt).toMatchObject({ requestedBy: agent, approvedBy: reviewer, candidateSha: B, baselineReleaseId: 'baseline' });
   });
+  it('固定部署版本的单次批准可绑定A，分支已到B时不回退分支且批次仍可使用A',async()=>{
+    state.addDeploymentVersion({id:'accepted-a',projectId:'p',branchId:'feature',commitSha:A,configHash:'fixture',profiles:[],migrations:[],capabilities:[],createdByRunId:'build-a',createdAt:new Date(now).toISOString()});
+    const pending=await service.request({targetId:'prod',branchId:'feature',kind:'single',deploymentVersionId:'accepted-a',actor:alice,reason:'核对已有固定部署版本而不回退分支',expiresAt:new Date(now+3600000).toISOString()} as Parameters<typeof service.request>[0]&{deploymentVersionId:string});
+    expect(pending.candidateSha).toBe(A);
+    await service.decide(pending.id,'approved',reviewer,'核对固定部署版本A');
+    expect(await service.authorize(input({authorizationId:pending.id,commitSha:A}))).toMatchObject({candidateSha:A,deploymentVersionId:'accepted-a'});
+    expect(state.getBranch('feature')?.githubCommitSha).toBe(B);
+  });
+  it('固定版本拒绝其他项目、其他分支、缺失版本和连续调试借用',async()=>{
+    state.addBranch({id:'other-branch',projectId:'p',branch:'other/branch',githubCommitSha:A,status:'running',services:{},worktreePath:root,createdAt:new Date(now).toISOString()});
+    state.addDeploymentVersion({id:'other-version',projectId:'p',branchId:'other-branch',commitSha:A,configHash:'fixture',profiles:[],migrations:[],capabilities:[],createdByRunId:'build-a',createdAt:new Date(now).toISOString()});
+    for(const deploymentVersionId of ['missing','other-version'])await expect(request({deploymentVersionId})).rejects.toThrow('同项目、同分支');
+    state.addDeploymentVersion({id:'saved-a',projectId:'p',branchId:'feature',commitSha:A,configHash:'fixture',profiles:[],migrations:[],capabilities:[],createdByRunId:'build-a',createdAt:new Date(now).toISOString()});
+    await expect(request({kind:'debug',allowedPaths:['allowed/'],deploymentVersionId:'saved-a'})).rejects.toThrow('单次发布');
+  });
   it.each(['targetFingerprint','projectFingerprint'] as const)('批准的 %s 使用完整 SHA256，旧截断摘要不能放行',async(field)=>{
     const record=await approve();
     expect(record[field]).toMatch(/^(ref|pid):[a-f0-9]{64}$/);

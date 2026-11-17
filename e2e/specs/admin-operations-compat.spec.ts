@@ -30,6 +30,28 @@ test('普通项目成员不能通过环境接入读取系统服务器列表',asy
 });
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`${viewport.width} 单次批准选择已有固定版本且保留分支最新版本`,async({page})=>{
+    await page.setViewportSize(viewport);await installOperationsFixtures(page);
+    const stamp=new Date().toISOString(),a='a'.repeat(40),b='b'.repeat(40);let records:any[]=[];const writes:any[]=[];
+    await page.route('**/api/releases/center?*',route=>route.fulfill({json:{rows:[{target:{...target,governance:{required:true}},currentVersion:'old',currentCommit:a,healthStatus:'healthy',canRollback:false,latestRun:run}],runs:[run],plans:[]}}));
+    await page.route('**/api/releases/targets?*',route=>route.fulfill({json:{targets:[{...target,governance:{required:true}}],archivedTargets:[],remoteHosts:[]}}));
+    await page.route('**/api/branches?*',route=>route.fulfill({json:{branches:[{id:'compat-branch',projectId:target.projectId,branch:'compat-branch',githubCommitSha:b,commitSha:b,status:'running'}]}}));
+    await page.route('**/api/releases/governance?*',route=>route.fulfill({json:{authorizations:records,attempts:[],mergeBacks:[],deploymentVersions:[{id:'saved-a',branchId:'compat-branch',commitSha:a,createdAt:stamp}]}}));
+    await page.route('**/api/releases/targets/compat-target/authorizations',async route=>{
+      const body=route.request().postDataJSON();writes.push(body);records=[{...body,id:'fixed-a-approval',projectId:target.projectId,targetId:target.id,branchName:'compat-branch',candidateSha:a,requestedBy:'user:requester:申请人',status:'pending',createdAt:stamp}];await route.fulfill({json:{authorization:records[0]}});
+    });
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    const panel=page.getByRole('region',{name:'发布审批与连续调试'});await panel.getByRole('button',{name:'新建申请',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'申请发布批准',exact:true});
+    await expect(dialog.getByRole('combobox',{name:'申请分支',exact:true})).toContainText(b.slice(0,12));
+    await dialog.getByRole('combobox',{name:'批准发布版本',exact:true}).selectOption('saved-a');
+    await dialog.getByRole('textbox',{name:'发布目的',exact:true}).fill('批次固定已验收A而分支已经前进B');
+    await dialog.getByRole('button',{name:'提交独立审批',exact:true}).click();await expect(dialog).toBeHidden();
+    await expect(panel.getByText('fixed-a-approval',{exact:true})).toHaveCount(0);
+    await expect(panel.getByText('saved-a',{exact:true})).toBeVisible();await expect(panel.getByText(a,{exact:true})).toBeVisible();
+    expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({kind:'single',action:'release',deploymentVersionId:'saved-a',branchId:'compat-branch'});
+    expect(page.url()).toContain('release-center');
+  });
   test(`${viewport.width} 已受理的单次批准仍可撤销且不重新批准`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await installOperationsFixtures(page);
