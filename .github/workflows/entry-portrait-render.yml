@@ -4,9 +4,8 @@ on:
     branches: [codex/map-orbital-entry]
     paths:
       - '.github/workflows/entry-portrait-render.yml'
-      - 'e2e/render-entry-portrait.mjs'
-      - 'e2e/entry-portrait-render.html'
-      - 'e2e/entry-portrait-proof.py'
+      - 'e2e/render-entry-portrait-cv.py'
+      - '.design/map-cinematic-entry/ai-v2/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -16,26 +15,17 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: '10.28.2'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: |
-          pnpm -C llmgw/web install --frozen-lockfile
-          pnpm -C e2e install --frozen-lockfile
-          pnpm -C e2e exec playwright install --with-deps chromium
+      - name: Install bounded cloud media tools
+        run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg python3-pil
-      - run: node e2e/render-entry-portrait.mjs
-      - run: python3 e2e/entry-portrait-proof.py
+          sudo apt-get install -y ffmpeg python3-venv
+          python3 -m venv /tmp/entry-artwork-tools
+          /tmp/entry-artwork-tools/bin/pip install numpy==2.2.6 opencv-contrib-python-headless==4.12.0.88
+      - name: Register generated artwork and render actual strokes and eyelid poses
+        run: /tmp/entry-artwork-tools/bin/python e2e/render-entry-portrait-cv.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: entry-portrait-${{ github.sha }}
-          path: |
-            work/entry-portrait/portrait-motion.mp4
-            work/entry-portrait/preview-*.jpg
-            work/entry-portrait/composition-proof.json
+          path: work/entry-portrait/
           retention-days: 14

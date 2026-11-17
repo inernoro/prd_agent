@@ -1,0 +1,25 @@
+{
+  "tool": "built-in image_gen",
+  "purpose": "同角色图生图关键素材；云端OpenCV配准、骨架提线、笔画播放和眼部光流插值。",
+  "invariants": [
+    "同一镜头与构图",
+    "左侧黑色留白",
+    "角色五官与发束轮廓对齐",
+    "眼睑真实遮挡虹膜",
+    "无文字与产品UI"
+  ],
+  "inputs": {
+    "line-etching.png": "exec-6fed988c-411c-4c31-bafb-0ec3de473cb0.png",
+    "surface-reveal.png": "exec-fe3c06e5-adec-4adb-a81a-77246a4dbd15.png",
+    "eye-quarter.png": "exec-71cb1aa1-8fa9-4e3b-afb2-bb2da900ed4e.png",
+    "eye-half.png": "exec-b7eddc97-f6bc-47ec-ba58-11796aa4a7bd.png",
+    "eye-three-quarter.png": "exec-117e269f-ccc9-42ea-80bd-e82be6d35c86.png"
+  },
+  "prompts": {
+    "line-etching.png": "保留闭眼底图精确构图，生成丰富且有粗细主次的蓝色发丝、缎带与睫毛雕刻线稿，纯黑底，无平面网格。",
+    "surface-reveal.png": "基于闭眼底图及细线稿，派生少量深蓝材质与顺应额头、眼窝、脸颊的曲面线网，保持闭眼与轮廓位置。",
+    "eye-quarter.png": "仅改变眼部为四分之一睁眼，上眼睑真实遮挡虹膜，其他像素构图保持。",
+    "eye-half.png": "依据全闭和全开参考生成半睁眼，保持眼睑厚度与睫毛附着，不用透明眼皮或重影。",
+    "eye-three-quarter.png": "在半睁和全开之间生成四分之三睁眼，仅改变眼部与眼皮褶皱，保持其他轮廓。"
+  }
+}
