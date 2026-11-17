@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { FACE_CLIP, PORTRAIT_LINES, PORTRAIT_MESH, PORTRAIT_DETAILS } from './portraitGeometry';
-import { PORTRAIT_DURATION, samplePortrait, smoothProgress, materialFront } from './portraitTimeline';
+import { PORTRAIT_DURATION, samplePortrait, smoothProgress } from './portraitTimeline';
 import { createPortraitRenderer, loadPortraitImages } from './portraitRenderer';
 import { finishEntryArrival, setEntryChrome } from './entryArrival';
 
@@ -13,7 +13,6 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
   const video = useRef<HTMLVideoElement>(null);
   const [motionReady, setMotionReady] = useState(false);
   const gridClip = useRef<SVGRectElement>(null);
-  const materialMask = useRef<SVGLinearGradientElement>(null);
   const [settled, setSettled] = useState(false);
   const id = `portrait-${useId().replace(/:/g, '')}`;
   const controlled = frameTime !== undefined;
@@ -36,9 +35,6 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
         owner.style.setProperty(`--portrait-${key}`, String(value));
       }
       gridClip.current?.setAttribute('height', String(941 * smoothProgress(time, .8, 1.5)));
-      const front = materialFront(state.material);
-      materialMask.current?.setAttribute('y1', String(front - 42));
-      materialMask.current?.setAttribute('y2', String(front + 48));
       root.dataset.time = time.toFixed(3);
       root.dataset.eyeOpening = state.eye.toFixed(4);
       owner.style.setProperty('--portrait-controls-visibility', state.controls > .01 ? 'visible' : 'hidden');
@@ -124,13 +120,11 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
     {((playing && (controlled || !motionReady)) || fog) && <svg className="portrait-structure" viewBox="0 0 1672 941" preserveAspectRatio="xMaxYMid slice" fill="none" aria-hidden="true">
       <defs>
         <linearGradient id={`${id}-ink`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#3481d5" /><stop offset=".5" stopColor="#81caff" /><stop offset="1" stopColor="#3879ce" /></linearGradient>
-        <linearGradient ref={materialMask} id={`${id}-front`} gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="-136" y2="-46"><stop stopColor="black" /><stop offset="1" stopColor="white" /></linearGradient>
-        <mask id={`${id}-unbuilt`} maskUnits="userSpaceOnUse" x="0" y="0" width="1672" height="941"><rect width="1672" height="941" fill={`url(#${id}-front)`} /></mask>
         <filter id={`${id}-glow`} x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.5" /></filter>
         <clipPath id={`${id}-face`}><path d={FACE_CLIP} /></clipPath>
         <clipPath id={`${id}-scan`}><rect ref={gridClip} x="0" y="0" width="1672" height={fog ? '941' : '0'} /></clipPath>
       </defs>
-      <g mask={playing ? `url(#${id}-unbuilt)` : undefined}>
+      <g>
         <g className="portrait-lines" stroke={`url(#${id}-ink)`} strokeLinecap="round" strokeLinejoin="round">
           <g className="portrait-line-glow" filter={`url(#${id}-glow)`} strokeWidth="4" opacity=".32">
             {PORTRAIT_LINES.map((path, index) => <path key={path} d={path} pathLength="1" strokeDasharray="1" style={{ '--trace-order': index } as CSSProperties} />)}

@@ -8,9 +8,9 @@ export const smoothProgress = (time: number, from: number, to: number) => {
 export function samplePortrait(time: number) {
   return {
     line: smoothProgress(time, 0, 1.45),
-    lineOpacity: 1 - smoothProgress(time, 2.2, 2.65),
-    grid: smoothProgress(time, .8, 1.45) * (1 - smoothProgress(time, 2.35, 2.65)),
-    material: smoothProgress(time, 1.4, 2.5),
+    lineOpacity: 1 - smoothProgress(time, 2.0, 2.85),
+    grid: smoothProgress(time, .8, 1.45) * (1 - smoothProgress(time, 2.25, 3.0)),
+    material: smoothProgress(time, 1.55, 2.45),
     eye: smoothProgress(time, 2.85, 4.25),
     controls: smoothProgress(time, .12, .85),
     brand: smoothProgress(time, 2.3, 3.05),
@@ -35,10 +35,4 @@ export function eyeControlPoints(open: number) {
     upper: CLOSED_LID.map((value, index) => value + (OPEN_UPPER[index] - value) * upperOpen) as [number, number, number, number],
     lower: CLOSED_LID.map((value, index) => value + (OPEN_LOWER[index] - value) * lowerOpen) as [number, number, number, number],
   };
-}
-
-/** Portrait-space Y: material is established above this moving front. */
-export const materialFront = (material: number) => (material * 1.2 - .1) * 941;
-export function structureVisibility(y: number, material: number) {
-  return smoothProgress(y, materialFront(material) - 42, materialFront(material) + 48);
 }

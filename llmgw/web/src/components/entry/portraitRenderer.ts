@@ -82,11 +82,9 @@ void main(){
    color=mix(color,eyeColor,patch);
 
  }
- // Spatial material scan travels across the portrait; no whole-image dissolve.
- float front=material*1.20-.10;
- float exposure=1.-smoothstep(front-.045,front+.045,uv.y);
- float scan=exp(-pow((uv.y-front)*100.,2.))*.30;
- color+=vec3(.10,.46,.65)*scan;
+ // Material is a full, dim volume behind the reconstruction, never a horizontal cut.
+ // Keep the face, hair and ornaments present together while the separate lattice dissolves.
+ float exposure=smoothstep(0.,1.,material);
  gl_FragColor=vec4(color,exposure*.82);
 }`;
 

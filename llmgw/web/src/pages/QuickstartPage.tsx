@@ -1250,6 +1250,7 @@ export function QuickstartPage() {
               // Starters prepare editable language; only explicit submission begins inference.
               <section className="lg-qs-ask" aria-label="第一步 说清要做什么">
                 <div className="lg-qs-ask-inner">
+                  <p className="gateway-intent-heading"><ArrowUpRight size={17} aria-hidden="true" /><span>从一个想法开始</span></p>
                   <div className="gateway-intent-composer">
                     <textarea
                       className="lg-qs-ask-input"

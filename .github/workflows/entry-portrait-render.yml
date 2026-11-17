@@ -6,6 +6,7 @@ on:
       - '.github/workflows/entry-portrait-render.yml'
       - 'e2e/render-entry-portrait.mjs'
       - 'e2e/entry-portrait-render.html'
+      - 'e2e/entry-portrait-proof.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,10 +27,15 @@ jobs:
           pnpm -C e2e install --frozen-lockfile
           pnpm -C e2e exec playwright install --with-deps chromium
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg python3-pil
       - run: node e2e/render-entry-portrait.mjs
+      - run: python3 e2e/entry-portrait-proof.py
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: entry-portrait-${{ github.sha }}
-          path: work/entry-portrait/portrait-motion.mp4
+          path: |
+            work/entry-portrait/portrait-motion.mp4
+            work/entry-portrait/preview-*.jpg
+            work/entry-portrait/composition-proof.json
           retention-days: 14

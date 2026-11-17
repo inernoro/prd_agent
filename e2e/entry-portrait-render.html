@@ -1,30 +1,48 @@
 <!doctype html><meta charset="utf-8">
 <style>html,body{margin:0;background:black;overflow:hidden}canvas,svg{position:absolute;inset:0;width:1672px;height:941px;display:block}</style>
-<canvas></canvas><svg viewBox="0 0 1672 941" fill="none"></svg>
+<canvas id="material"></canvas><canvas id="etch"></canvas><svg viewBox="0 0 1672 941" fill="none"></svg>
 <script type="module">
 import {createPortraitRenderer,loadPortraitImages} from '/src/components/entry/portraitRenderer.ts';
-import {FACE_CLIP,PORTRAIT_LINES,PORTRAIT_DETAILS,PORTRAIT_MESH} from '/src/components/entry/portraitGeometry.ts';
-import {samplePortrait,smoothProgress,materialFront} from '/src/components/entry/portraitTimeline.ts';
-const canvas=document.querySelector('canvas'),svg=document.querySelector('svg');
+import {FACE_CLIP,HEAD_CLIP,PORTRAIT_LINES,PORTRAIT_DETAILS,PORTRAIT_MESH,PORTRAIT_HEAD_MESH,PORTRAIT_NODES} from '/src/components/entry/portraitGeometry.ts';
+import {samplePortrait,smoothProgress} from '/src/components/entry/portraitTimeline.ts';
+const canvas=document.querySelector('#material'),svg=document.querySelector('svg'),etch=document.querySelector('#etch');
 const paths=(items,offset=0)=>items.map((d,i)=>`<path d="${d}" pathLength="1" stroke-dasharray="1" data-order="${i+offset}"/>`).join('');
 svg.innerHTML=`<defs>
 <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#3481d5"/><stop offset=".5" stop-color="#81caff"/><stop offset="1" stop-color="#3879ce"/></linearGradient>
-<linearGradient id="front" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="-136" y2="-46"><stop stop-color="black"/><stop offset="1" stop-color="white"/></linearGradient>
-<mask id="unbuilt" maskUnits="userSpaceOnUse" x="0" y="0" width="1672" height="941"><rect width="1672" height="941" fill="url(#front)"/></mask>
 <filter id="glow" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.5"/></filter>
-<clipPath id="face"><path d="${FACE_CLIP}"/></clipPath><clipPath id="scan"><rect id="scanrect" width="1672" height="0"/></clipPath></defs>
-<g mask="url(#unbuilt)"><g id="lines" stroke="url(#ink)" stroke-linecap="round" stroke-linejoin="round">
-<g filter="url(#glow)" stroke-width="4" opacity=".32">${paths(PORTRAIT_LINES)}</g>
-<g stroke-width="1.3">${paths(PORTRAIT_LINES)}</g><g stroke-width=".7" opacity=".68">${paths(PORTRAIT_DETAILS,12)}</g></g>
-<g id="mesh" clip-path="url(#face)" stroke="#76b9ef" stroke-width=".65"><g clip-path="url(#scan)">${PORTRAIT_MESH.map(d=>`<path d="${d}"/>`).join('')}</g></g></g>`;
-const renderer=createPortraitRenderer(canvas,await loadPortraitImages());
-if(!renderer)throw new Error('Offline renderer unavailable');
+<clipPath id="face"><path d="${FACE_CLIP}"/></clipPath><clipPath id="head"><path d="${HEAD_CLIP}"/></clipPath></defs>
+<g id="lines" stroke="url(#ink)" stroke-linecap="round" stroke-linejoin="round">
+<g filter="url(#glow)" stroke-width="3.5" opacity=".3">${paths(PORTRAIT_LINES)}</g>
+<g stroke-width="1.15">${paths(PORTRAIT_LINES)}</g><g stroke-width=".65" opacity=".6">${paths(PORTRAIT_DETAILS,12)}</g></g>
+<g id="mesh" stroke="#76b9ef" stroke-width=".7">
+<g clip-path="url(#head)" opacity=".28">${PORTRAIT_HEAD_MESH.map(d=>`<path d="${d}"/>`).join('')}</g>
+<g clip-path="url(#face)" opacity=".82">${PORTRAIT_MESH.map(d=>`<path d="${d}"/>`).join('')}
+${PORTRAIT_NODES.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="6" fill="#6ebaf5" stroke="none" opacity=".45" filter="url(#glow)"/><circle cx="${x}" cy="${y}" r="1.4" fill="#c8edff" stroke="none"/>`).join('')}</g></g>`;
+const images=await loadPortraitImages();
+// Offline-only strand etching uses the actual painted bundles, including fine lashes and ornaments.
+// Nonmaximum suppression keeps narrow coherent strokes; flat shading does not become graph noise.
+etch.width=1672;etch.height=941;const ctx=etch.getContext('2d',{willReadFrequently:true});
+ctx.drawImage(images[1],0,0);const source=ctx.getImageData(0,0,1672,941),w=1672,h=941;
+const gray=new Float32Array(w*h),magnitude=new Float32Array(w*h),dx=new Float32Array(w*h),dy=new Float32Array(w*h);
+for(let i=0;i<w*h;i++)gray[i]=(source.data[i*4]*.299+source.data[i*4+1]*.587+source.data[i*4+2]*.114)/255;
+for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+ const i=y*w+x;dx[i]=-gray[i-w-1]+gray[i-w+1]-2*gray[i-1]+2*gray[i+1]-gray[i+w-1]+gray[i+w+1];
+ dy[i]=-gray[i-w-1]-2*gray[i-w]-gray[i-w+1]+gray[i+w-1]+2*gray[i+w]+gray[i+w+1];magnitude[i]=Math.hypot(dx[i],dy[i]);
+}
+const etched=ctx.createImageData(w,h);
+for(let y=2;y<h-2;y++)for(let x=500;x<w-2;x++){
+ const i=y*w+x,m=magnitude[i];if(m<.065||gray[i]<.025)continue;
+ const a=Math.abs(dx[i]),b=Math.abs(dy[i]),step=b<a*.414?1:a<b*.414?w:(dx[i]*dy[i]>0?w+1:w-1);
+ if(m<magnitude[i-step]||m<magnitude[i+step])continue;
+ const alpha=Math.min(.8,(m-.065)*2.5);etched.data[i*4]=69;etched.data[i*4+1]=143;etched.data[i*4+2]=211;etched.data[i*4+3]=Math.round(alpha*255);
+}
+ctx.putImageData(etched,0,0);
+const renderer=createPortraitRenderer(canvas,images);if(!renderer)throw new Error('Offline renderer unavailable');
 window.draw=time=>{
- renderer.draw(time);const state=samplePortrait(time),front=materialFront(state.material);
+ renderer.draw(time);const state=samplePortrait(time);
  document.querySelector('#lines').setAttribute('opacity',state.lineOpacity);
- document.querySelector('#mesh').setAttribute('opacity',state.grid);
- document.querySelector('#scanrect').setAttribute('height',941*smoothProgress(time,.8,1.5));
- document.querySelector('#front').setAttribute('y1',front-42);document.querySelector('#front').setAttribute('y2',front+48);
+ document.querySelector('#mesh').setAttribute('opacity',state.grid*.82);
+ etch.style.opacity=String(smoothProgress(time,.45,1.25)*(1-smoothProgress(time,2.1,2.85))*.9);
  for(const path of svg.querySelectorAll('[data-order]'))path.setAttribute('stroke-dashoffset',1-Math.max(0,Math.min(1,state.line*1.5-Number(path.dataset.order)*.009)));
 };window.ready=true;
 </script>

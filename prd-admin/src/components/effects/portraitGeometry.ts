@@ -53,20 +53,34 @@ export const PORTRAIT_LINES = [
   'M1486 902 L1512 941 L1549 944 L1553 924 L1520 902Z',
 ];
 
-/** Curved latitude/longitude lattice, clipped to the facial surface under the fringe. */
+/** Projected latitude/longitude follows cheek volume instead of bending graph paper. */
+function surfacePoint(u: number, v: number) {
+  const x = 1465 + Math.sin(u * 1.18) * 284 * Math.cos(v * .32) + v * 23;
+  const y = 505 + v * 345 + 43 * u * u * (1 - v * v);
+  return [x, y];
+}
+function projectedPath(points: number[][]) {
+  return points.map(([x,y],i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+}
 export function buildPortraitMesh() {
   const paths: string[] = [];
-  for (let row = 0; row < 15; row++) {
-    const y = 270 + row * 39;
-    paths.push(`M1210 ${y} Q1430 ${y + 58} 1710 ${y - 18}`);
+  for (let row = 0; row < 19; row++) {
+    const v = -1 + row / 9;
+    paths.push(projectedPath(Array.from({length:49},(_,i) => surfacePoint(-1.2+i/20,v))));
   }
-  for (let column = 0; column < 13; column++) {
-    const x = 1195 + column * 45;
-    paths.push(`M${x} 190 C${x - 65} 380 ${x - 10} 681 ${x + 140} 910`);
+  for (let column = 0; column < 18; column++) {
+    const u = -1.15 + column * .14;
+    paths.push(projectedPath(Array.from({length:49},(_,i) => surfacePoint(u,-1.1+i/20))));
   }
   return paths;
 }
 export const PORTRAIT_MESH = buildPortraitMesh();
+export const PORTRAIT_HEAD_MESH = [
+  ...Array.from({length:13},(_,i) => `M790 ${-40+i*73} Q1200 ${100+i*66} 1720 ${-70+i*73}`),
+  ...Array.from({length:17},(_,i) => `M${815+i*55} -40 C${720+i*56} 250 ${800+i*58} 650 ${1140+i*40} 960`),
+];
+export const HEAD_CLIP = 'M830 -20 L1700 -20 L1700 950 L1480 880 C1310 825 1190 710 1140 580 C1065 520 1020 350 1075 160 L950 100 L780 270 L750 155 Z';
+export const PORTRAIT_NODES = [[.15,-.3],[.7,.15],[-.55,.35],[.5,.65],[-.45,-.65]].map(([u,v]) => surfacePoint(u,v));
 export const FACE_CLIP = 'M1450 175 C1400 282 1330 330 1250 390 C1260 574 1330 728 1483 815 L1669 941 L1700 300 C1560 308 1510 255 1450 175Z';
 
 /** Fine strands follow separate painted hair bundles, rather than duplicating the silhouette. */
