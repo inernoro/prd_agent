@@ -15,7 +15,7 @@ vi.mock('./useHostedPdfDownload', async () => {
 vi.mock('./CommentsSection', () => ({ default: () => null }));
 vi.mock('./ask/AskPanelInline', () => ({ default: () => null }));
 vi.mock('./ask/AskConfigDrawer', () => ({ default: () => null }));
-vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: () => null }));
+vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: ({ text }: { text: string }) => <div data-testid="preview-loading">{text}</div> }));
 const host = document.createElement('div');
 let root: ReturnType<typeof createRoot>;
 let observed: ReturnType<typeof useSitePreviewHtml>;
@@ -95,4 +95,24 @@ it('相同地址的版本元数据改为多文件时退出内联路径，保持�
   const frame = document.querySelector('iframe')!;
   expect(frame.getAttribute('srcdoc')).toBeNull();
   expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
+});
+
+it('直链已加载后迟到的多文件元数据不会重新盖住同一网页', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('requestAnimationFrame', vi.fn());
+  vi.mocked(getSiteContent).mockResolvedValue(ok(content('<html><body><script type="module">console.log("module")</script></body></html>')));
+  const hosted = { ...site, contentShape: 'self-contained-html', title: '直链预览', askEnabled: false } as HostedSite;
+  try {
+    await act(async () => root.render(<SitePreviewModal site={hosted} onClose={() => {}} />));
+    const frame = document.querySelector('iframe')!;
+    expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(document.querySelector('[data-testid="preview-loading"]')).toBeNull();
+    await act(async () => root.render(<SitePreviewModal site={{ ...hosted, contentShape: 'multi-file' }} onClose={() => {}} />));
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(document.querySelector('iframe')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
+    expect(document.querySelector('[data-testid="preview-loading"]')).toBeNull();
+  } finally { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); }
 });

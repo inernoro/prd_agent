@@ -135,16 +135,18 @@ export default function SitePreviewModal({
    * （与 ShareViewPage 的取舍一致）。这里必须是latch，不能写成 `srcDoc && !超时` 这种会翻回去的表达式。
    */
   const [renderMode, setRenderMode] = useState<'waiting' | 'srcdoc' | 'direct'>('waiting');
+  const currentPreviewFetchable = shouldFetchPreviewHtml({ ...originalSite, ...review.liveSite });
   useEffect(() => {
-    if (review.historical || renderMode !== 'waiting') return;
+    if (review.historical) return;
+    // 迟到的元数据可能令内联正文失效。只退出失效路径，已加载的直链不重置或重载。
+    if (!currentPreviewFetchable && renderMode === 'srcdoc') { setRenderMode('direct'); return; }
+    if (renderMode !== 'waiting') return;
     if (srcDoc) { setRenderMode('srcdoc'); return; }
     if (!htmlLoading) setRenderMode('direct');
-  }, [renderMode, srcDoc, htmlLoading, review.historical]);
-  const useSrcDoc = review.historical ? !!srcDoc : renderMode === 'srcdoc';
-  const currentPreviewFetchable = shouldFetchPreviewHtml({ ...originalSite, ...review.liveSite });
+  }, [renderMode, srcDoc, htmlLoading, review.historical, currentPreviewFetchable]);
+  const useSrcDoc = review.historical ? !!srcDoc : renderMode === 'srcdoc' && currentPreviewFetchable;
 
-  // 发布后的地址或迟到的版本元数据都可能改变预览策略。组件不卸载时要重新判定，
-  // 避免已选择 srcdoc 后正文变为不可内联，导致 src 与 srcDoc 同时为空。
+  // 新地址或切换历史文档才重置加载过程；同地址元数据更新不代表 iframe 重新加载。
   useEffect(() => {
     setRenderMode('waiting');
     setLoading(true);
@@ -153,7 +155,7 @@ export default function SitePreviewModal({
     if (review.historical) return;
     const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, [site.siteUrl, historicalRevisionId, review.historical, currentPreviewFetchable, previewSource.usingNativePdfViewer]);
+  }, [site.siteUrl, historicalRevisionId, review.historical]);
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
