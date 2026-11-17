@@ -14,7 +14,7 @@ public partial class ProductAgentController
     [HttpGet("settings/scheduled-notifications/debug-settings")]
     public async Task<IActionResult> GetNotificationDebugSettings([FromServices] IConfiguration configuration)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         var settings = await GetProductAgentSettingsAsync();
         var configured = !string.IsNullOrEmpty(settings?.ScheduledNotificationDebugWebhook);
@@ -30,7 +30,7 @@ public partial class ProductAgentController
     public async Task<IActionResult> SaveNotificationDebugSettings(NotificationDebugSettingsRequest request,
         [FromServices] IDataProtectionProvider protection, [FromServices] IConfiguration configuration)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductScheduledNotificationWorker.CanManage(configuration))
             return Conflict(ApiResponse<object>.Fail("NOTIFICATION_PRODUCTION_ONLY", "请在正式环境配置调试群。"));
@@ -53,7 +53,7 @@ public partial class ProductAgentController
         [FromServices] IDataProtectionProvider protection, [FromServices] IConfiguration configuration,
         [FromServices] IHttpClientFactory clients)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductScheduledNotificationWorker.CanManage(configuration))
             return Conflict(ApiResponse<object>.Fail("NOTIFICATION_PRODUCTION_ONLY", "请在正式环境执行通知调试。"));

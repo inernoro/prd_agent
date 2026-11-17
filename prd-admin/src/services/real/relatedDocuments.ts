@@ -18,6 +18,7 @@ export interface RelatedDocument {
   preview?: { id: string; siteUrl: string; entryFile: string; wrappedAssetType?: string; contentShape?: 'self-contained-html' | 'multi-file'; requiresPreviewBridge?: boolean; useShareAccess: boolean };
 }
 export interface RelatedDocuments {
+  contextLabel?: string;
   version: number;
   mainSiteId: string | null;
   canManage: boolean;

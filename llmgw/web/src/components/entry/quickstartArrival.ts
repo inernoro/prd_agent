@@ -1,3 +1,5 @@
+import { canAccessPage } from '@/lib/access';
+import type { TenantSession } from '@/lib/types';
 import { beginEntryArrival } from './entryArrival';
 import type { EntryAudio } from './entryAudio';
 
@@ -5,8 +7,8 @@ let arrivalUntil = 0;
 let arrivalAudio: EntryAudio | null = null;
 let soundDeadline: ReturnType<typeof setTimeout> | undefined;
 
-export function gatewayLoginDestination(candidate?: string | null) {
-  if (!candidate || candidate === '/' || !candidate.startsWith('/') || candidate.startsWith('//') || candidate.startsWith('/login') || /[\u0000-\u001f\u007f]/.test(candidate)) return '/quickstart';
+export function gatewayLoginDestination(candidate?: string | null, tenant?: TenantSession | null) {
+  if (!candidate || candidate === '/' || !candidate.startsWith('/') || candidate.startsWith('//') || candidate.startsWith('/login') || /[\u0000-\u001f\u007f]/.test(candidate)) return canAccessPage(tenant, 'quickstart') ? '/quickstart' : '/';
   return candidate;
 }
 export const hasQuickstartArrivalAudio = () => arrivalAudio !== null;

@@ -1,0 +1,52 @@
+import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {pathToFileURL} from 'node:url';
+import {createRequire} from 'node:module';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const require=createRequire(import.meta.url);
+const {chromium}=require('playwright');
+// 同条件浏览器回归；默认使用合成数据，不访问任何实际部署。
+const argument=(flag,fallback)=>{const i=process.argv.indexOf(flag);return i<0?fallback:process.argv[i+1]};
+const root=argument('--source',path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..'));
+const version=argument('--label','current'),out=argument('--out','/tmp/cds-workspace-experience');
+fs.mkdirSync(out,{recursive:true});
+const sourceHash=()=>createHash('sha256').update(execFileSync('git',['diff','HEAD','--','cds/web/src'],{cwd:root})).digest('hex');
+const provenance={kind:'deterministic-fixture',sourceHead:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),sourceDiffSha256:sourceHash(),scriptSha256:createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex'),capturedAt:new Date().toISOString()};
+const {startViteDevServer}=await import(pathToFileURL(root+'/cds/scripts/lib/vite-dev-server.mjs'));
+const {resolveFixture,isEventStream}=await import(pathToFileURL(root+'/cds/scripts/fixtures/mobile-layout-fixtures.mjs'));
+const FIXED_NOW=Date.parse('2026-11-15T10:00:00Z');
+const server=await startViteDevServer();let browser;const results=[];
+const branches=(n)=>Array.from({length:n},(_,i)=>({id:'b'+i,projectId:'fixture-project',branch:i===1?'feature/settlement-reconciliation-cross-region-failure-recovery-long-branch-name':'feature/task-'+i,status:i===2?'error':i===4?'building':i%2?'idle':'running',services:{api:{profileId:'api',status:i%2?'stopped':'running',hostPort:34000+i,containerName:'fixture-api-'+i}},runningCommitSha:'a'.repeat(40),targetCommitSha:'b'.repeat(40),lastReadyAt:'2026-11-15T08:00:00Z',createdAt:'2026-11-01T00:00:00Z',lastDeployAt:'2026-11-15T10:00:00Z',lastStoppedAt:'2026-11-15T10:30:00Z',lastStopReason:i%2?'手动停止':undefined,tags:[],errorMessage:i===2?'构建未完成：依赖服务不可用，请检查连接后重新部署':undefined}));
+try{browser=await chromium.launch({executablePath:process.env.PW_CHROMIUM||'/usr/bin/chromium',args:['--no-sandbox']});for(const width of(argument('--widths','1440,390').split(',').map(Number)))for(const theme of['light','dark'])for(const n of(argument('--counts','2,30').split(',').map(Number))){
+ const context=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});const page=await context.newPage();
+ await context.addInitScript(({theme,fixedNow})=>{const NativeDate=Date;window.Date=class extends NativeDate{constructor(...args){if(args.length)super(...args);else super(fixedNow)}static now(){return fixedNow}};localStorage.setItem('cds_theme',theme);window.EventSource=class{listeners={};readyState=1;constructor(){setTimeout(()=>this.onopen?.({}),0)}addEventListener(t,f){(this.listeners[t]??=[]).push(f)}removeEventListener(){}close(){}}},{theme,fixedNow:FIXED_NOW});
+ await context.route('**/api/**',async r=>{const u=new URL(r.request().url()),p=u.pathname.replace(/^\/_cds/,'');let data;if(p==='/api/auth/status')data={authenticated:true,enabled:true,user:{name:'维护者',isSystemOwner:true},approvalCapabilities:{operator:true,accessRequests:false}};else if(p==='/api/branches')data={branches:branches(n),capacity:{maxContainers:200,runningContainers:2,totalMemGB:96}};else if(p==='/api/projects/fixture-project')data={id:'fixture-project',slug:'fixture-project',name:'工作区样例',cloneStatus:'ready',branchCount:n};else if(p==='/api/infra')data={services:[{id:'mongo',name:'Mongo',status:'running',dockerImage:'mongo:7',hostPort:10001},{id:'redis',name:'Redis',status:'running',dockerImage:'redis:7',hostPort:10002},{id:'cache',name:'Redis缓存',status:'stopped',dockerImage:'redis:7',hostPort:10003}]};
+else if(p.endsWith('/service-graph'))data={branchId:'b0',projectId:'fixture-project',branch:'feature/task-0',status:'running',graph:{nodes:[{id:'service:api',rawId:'api',name:'API',kind:'service',role:'api'}],edges:[],layers:[['service:api']],sites:[],internal:['service:api']},lint:{findings:[],summary:{errors:0,warnings:0,infos:0}},references:[]};
+else if(p.endsWith('/metrics'))data={branchId:'b0',ts:FIXED_NOW,runningCount:1,totalCount:1,services:[{profileId:'api',containerName:'fixture-api-0',status:'running',stats:{cpuPercent:12.4,memUsedBytes:128*1024*1024,netRxBytes:1,netTxBytes:1,blockReadBytes:1,blockWriteBytes:1,pids:3}}]};
+else if(p.endsWith('/metrics/series'))data={after:FIXED_NOW-1800000,before:FIXED_NOW,groupSeconds:60,services:[{profileId:'api',points:Array.from({length:30},(_,i)=>({cpuPercent:10+i%5,memUsedBytes:128*1024*1024,rxRate:4096,txRate:2048,readRate:0,writeRate:0}))}]};else if(p.endsWith('/preview-mode'))data={mode:'multi'};else if(p==='/api/build-profiles')data={profiles:[{id:'api',name:'API',containerPort:8080,dockerImage:'fixture/api:latest'}]};else if(isEventStream(p))return r.fulfill({status:200,contentType:'text/event-stream',body:': fixture\n\n'});else data=resolveFixture(p)??{};await r.fulfill({status:200,contentType:'application/json',body:JSON.stringify(data)});});
+ await page.goto(server.url+'/branches/fixture-project',{waitUntil:'domcontentloaded'});await page.locator('[data-branch-card-id="b0"]').waitFor();await page.evaluate(()=>document.fonts.ready);await page.waitForTimeout(500);
+ const measurement=await page.evaluate(()=>{const cards=[...document.querySelectorAll('[data-branch-card-id]')],main=document.querySelector('.cds-main'),first=cards[0],summary=document.querySelector('[data-branch-summary-slot]'),r=first.getBoundingClientRect();return{firstDataY:r.top,summaryClipped:summary.scrollWidth>summary.clientWidth+1,summaryHeight:summary.getBoundingClientRect().height,firstCardHeight:r.height,firstActionY:first.querySelector('footer')?.getBoundingClientRect().top,mainOverflow:main.scrollWidth>main.clientWidth+1,documentOverflow:document.documentElement.scrollWidth>innerWidth+1,cards:cards.map(e=>({id:e.dataset.branchCardId,y:e.getBoundingClientRect().top,h:e.getBoundingClientRect().height,title:e.querySelector('h3')?.textContent,footerY:e.querySelector('footer')?.getBoundingClientRect().top}))}});
+ const screenshot=`${version}-${width}-${theme}-${n}.png`;await page.screenshot({path:out+'/'+screenshot,fullPage:false});results.push({version,width,theme,count:n,...measurement,screenshot});
+ if(n===2){await page.locator('[data-branch-card-id="b0"]').click();await page.locator('[data-testid="kpi-status"]').waitFor();await page.waitForTimeout(300);const detail=await page.evaluate(()=>({kpiHeight:document.querySelector('[data-testid="kpi-tiles"]').getBoundingClientRect().height,relationY:document.querySelector('[data-testid="relation-card"]').getBoundingClientRect().top,bodyOverflow:document.documentElement.scrollWidth>innerWidth+1,coreActionClipped:[...document.querySelectorAll('.cds-branch-detail-footer a span')].some(el=>el.scrollWidth>el.clientWidth+1)}));const detailShot=`${version}-${width}-${theme}-detail.png`;await page.screenshot({path:out+'/'+detailShot});results.push({version,width,theme,detail:true,...detail,screenshot:detailShot});
+ await page.getByRole('link',{name:'详情页',exact:true}).click();await page.waitForURL(url=>url.pathname.includes('/branch-panel/'));await page.getByRole('button',{name:'部署全部',exact:true}).waitFor({state:'visible'});await page.waitForTimeout(300);const fullMeasure=await page.evaluate(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.includes('日志'));return {diagnosticNavigationHeight:tab?.closest('[role=tablist]')?.getBoundingClientRect().height,diagnosticTabY:tab?.getBoundingClientRect().top,diagnosticTabVisible:!!tab&&tab.getBoundingClientRect().bottom<=innerHeight,bodyOverflow:document.documentElement.scrollWidth>innerWidth+1}});const fullShot=`${version}-${width}-${theme}-full-detail.png`;await page.screenshot({path:out+'/'+fullShot});results.push({version,width,theme,fullDetail:true,...fullMeasure,screenshot:fullShot});if(version!=='before'){const logTab=page.getByRole('tab',{name:'日志',exact:true});await logTab.focus();await page.keyboard.press('ArrowRight');await page.getByRole('tab',{name:'配置',exact:true}).waitFor();await page.waitForFunction(()=>[...document.querySelectorAll('[role=tab]')].some(e=>e.textContent.trim()==='配置'&&e.getAttribute('aria-selected')==='true'));await page.keyboard.press('ArrowLeft');await page.waitForFunction(()=>[...document.querySelectorAll('[role=tab]')].some(e=>e.textContent.trim()==='日志'&&e.getAttribute('aria-selected')==='true'));}}
+
+ await context.close();
+}fs.writeFileSync(out+'/'+version+'-measurements.json',JSON.stringify(results,null,2));
+const failures=[];
+if(sourceHash()!==provenance.sourceDiffSha256)failures.push('取证期间源码发生变化，证据不可作稳定版本审批');
+fs.writeFileSync(out+'/'+version+'-provenance.json',JSON.stringify(provenance,null,2));
+for(const row of results){
+ if(row.fullDetail){if(row.diagnosticNavigationHeight>60)failures.push(`${row.width}/${row.theme}: 主工作区导航仍逐层占位`);if(row.width===390&&!row.diagnosticTabVisible)failures.push(`${row.theme}: 手机诊断导航被低频空配置推至首屏之外`);if(row.bodyOverflow)failures.push(`${row.width}/${row.theme}: 独立详情横向溢出`);continue;}
+ if(row.detail){if(row.coreActionClipped)failures.push(`${row.width}/${row.theme}: 核心操作文字被裁切`);if(row.bodyOverflow)failures.push(`${row.width}/${row.theme}: 详情横向溢出`);continue;}
+ if(row.mainOverflow||row.documentOverflow)failures.push(`${row.width}/${row.theme}: 工作区横向溢出`);
+ // 阈值来自同数据旧布局：207px卡高、操作比数据晚159px；保留标题/状态/操作顺序。
+ if(row.count===2 && row.firstCardHeight>185)failures.push(`${row.width}/${row.theme}: 两条数据仍被强制空槽撑高`);
+ if(row.count===2 && row.firstActionY-row.firstDataY>135)failures.push(`${row.width}/${row.theme}: 首项操作仍被空槽推远`);
+ if(row.count===2 && row.width===390 && row.firstDataY>230)failures.push(`${row.theme}: 窄屏核心数据未及时出现`);
+ const rows=new Map();for(const card of row.cards){const key=Math.round(card.y);const heights=rows.get(key)||[];heights.push(card.h);rows.set(key,heights)}
+ for(const heights of rows.values())if(Math.max(...heights)-Math.min(...heights)>1)failures.push(`${row.width}/${row.theme}: 同视觉行卡片不齐`);
+}
+console.log(JSON.stringify({provenance:'deterministic-fixture',version,scenarios:results.length,failures}));
+if(failures.length)process.exitCode=1;}finally{await browser?.close();server.stop()}

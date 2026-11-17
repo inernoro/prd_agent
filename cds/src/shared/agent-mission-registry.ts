@@ -1,3 +1,4 @@
+import { DTS_TOOLS } from './dts.js';
 import { CODE_REVIEW_MCP_TOOLS } from './code-review.js';
 import { releaseCenterHref } from './release-center-links.js';
 import type { AgentRoleId, CdsConnectTarget } from './agent-setup.js';
@@ -155,14 +156,21 @@ type CapabilitySeed = readonly [
 ];
 
 const CDS_AGENT_CAPABILITY_SEEDS = [
+  ['dts', '数据传输与账号资料同步', 'dts.ts', 'project', 'project', 'write', 'direct', 'cds', 'dts', '项目内批准连接的版本与容量比较、只追加和选定账号字段校准；SeaTunnel 原生传输后独立对账；MCP 与 CLI 共用项目权限，连接与引擎仅系统所有者配置；暂停取消须确认终态，未知结果保留写入保护，不支持未经验证的连接器写入'],
+  ['host-capacity-sampling', '只读容量采样', 'host-capacity-sampling.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅正常系统所有者可显式启用/暂停或立即采样；固定已知CDS目录，历史有界，不接受任意路径或命令，不执行清理，机器与项目凭据均不可配置'],
+  ['host-capacity-observation', '宿主容量来源与增长', 'host-capacity-observation.ts', 'system', 'human-only', 'read-only', 'guided', 'cds', '', '仅正常系统所有者可查看宿主报告；项目凭据、普通成员、SSO及机器身份不能读取。只读缓存，不执行采集、清理或变更保留策略'],
+  ['janitor-observation', '部署源码回收候选与保护原因', 'janitor-observation.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'disk', '只读预览，不签发删除许可；项目 Key 只能盘点本项目，完整宿主盘点由系统所有者或既有全局只读授权执行；未知引用保持保护，分配块估计不代表实际释放'],
+  ['backup-retention', '全局备份保留与退役', 'backup-retention.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', 'disk', '全局 Agent 仅只读盘点；归属登记、有限批次与取消需要系统所有者；唯一业务恢复点或未知来源保持保护并报告15天策略冲突'],
+  ['owned-resource-retention', '验收资源与镜像退役', 'owned-resource-retention.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', 'disk', '全局 Agent 仅只读；所有者执行受控批次。任务租约、当前与回滚引用、运行及停止容器、未知归属均保护；数据处置登记不授权删除'],
   ['identity-connections', '原账号设备接入与恢复', 'identity-connections.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect --recover', '匿名只能提交仓库恢复申请；原账号与原项目由系统所有者核对，历史匿名凭据归属也必须明确人工确认'],
   ['code-reviews', '代码审查任务与报告上传', 'code-reviews.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'code-review', 'ZIP/GitHub/CDS 项目分支固定快照；list 可附带当前项目分支 ID，submit 三选一且复用项目仓库授权；四个本地 stdio MCP 工具仅限项目任务与报告，复用项目权限，get 可分页读取已保存的问题、覆盖说明和报告链接，不触发分析；settings 仅限无项目作用域的管理员或 bootstrap 配置引擎引用，不暴露 settings MCP 工具；取消可停止任务，报告上传按内容去重，邮件仅在提交者指定时发送'],
-  ['instance-catalog', '主备 CDS 实例目录', 'instance-catalog.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'instance', '只读公共地址；实例独立授权，切换不迁移数据库或接管流量'],
+  ['instance-catalog', '主备 CDS 实例目录', 'instance-catalog.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'instance', '只读公共地址；已登记集群成员沿用统一授权，切换不迁移数据库或接管流量'],
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
   ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
   ['auth-session', '会话与 GitHub 登录', 'auth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', 'OAuth 回调和浏览器会话不是普通 Agent 工具'],
   ['branches', '分支、构建、资源与数据工作台', 'branches.ts', 'project', 'project', 'write', 'direct', 'cds-deploy-pipeline', 'branch', '写查询、恢复、清空和删除资源必须单独升级为破坏性审批'],
+  ['branch-service-isolation', '分支服务隔离', 'branch-service-isolation.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '仅对已停止并对账的分支，按读取到的配置版本原子调整服务排除与依赖；不启动容器，不复制至其他分支'],
   ['branch-lifecycle', '分支清理、归档与恢复', 'branch-lifecycle.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '先读取清理范围并确认停止；仅处理获授权项目，主干及固定分支受保护，归档保留30天，恢复不自动启动容器'],
   ['preview-address', '分支地址、项目 slug 与独立子域', 'preview-address.ts', 'project', 'human-only', 'write', 'guided', 'preview-url', '', '仅已认证且有项目访问权的人类可查看，保存与验证仅系统所有者；唯一性校验、版本锁和审计由服务端执行，Agent 不得伪造会话或修改他人项目'],
   ['bootstrap', '项目初始化与技能分发', 'bootstrap.ts', 'system', 'public', 'read-only', 'direct', 'cds', '', '匿名只读：发引导脚本与代理 MAP 技能包，不签发凭据也不碰项目数据'],
@@ -202,9 +210,11 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['project-storage', '项目存储占用', 'project-storage.ts', 'project', 'project', 'read-only', 'direct', 'cds', '', '只读容量检查可直接执行，清理必须转入对应破坏性能力'],
   ['projects', '项目、环境变量与 Agent Key', 'projects.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'project / env / key', '所有命令都必须锁定项目 ID，机器凭据不得自行提权'],
   ['releases', '正式发布控制面', 'releases.ts', 'project', 'project', 'destructive', 'direct', 'cds-release', '', '发现、预检、发布、验证、回滚和归档必须形成完整证据链'],
+  ['release-governance', '发布审批与回并', 'release-governance.ts', 'project', 'project', 'destructive', 'direct', 'cds-release', 'release-target', '执行凭据申请、人类独立批准；连续调试受范围、主干、基线和有效期约束'],
   ['replica-sets', '复制集成员、隔离库与执行计划', 'replica-sets.ts', 'project', 'project', 'destructive', 'direct', 'cds-deploy-pipeline', '', '加副本/调权重可逆；解散、隔离库、回切涉及数据库克隆与容器拆除，执行前必须锁定分支与服务'],
   ['remote-hosts', '远程主机、Sidecar 与 Agent 会话', 'remote-hosts.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', '', '主机密钥、工具审批和会话停止需要人类边界'],
   ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],
+  ['acceptance-tasks', '结构化功能清单、领取任务与历史矩阵', 'acceptance-tasks.ts', 'project', 'project', 'write', 'direct', 'cds', 'acceptance', '先读冻结清单再领取，按真实业务路径回填断言、线上证据与清理；正式环境无需发布分支，报告绑定不等于线上验真通过'],
   ['scheduled-jobs', '定时任务与运行记录', 'scheduled-jobs.ts', 'project', 'project', 'write', 'direct', 'cds', 'schedule', '先 parse 和 test，默认不直接创建或执行危险命令'],
   ['snapshots', '配置快照、回滚与撤销', 'snapshots.ts', 'system', 'system', 'destructive', 'guided', 'cds', '', '破坏性操作前建立快照，优先使用 undo 而不是再次修改'],
   ['storage-mode', '状态存储模式切换', 'storage-mode.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '切换前必须预检后端、迁移路径和回滚策略'],
@@ -256,8 +266,9 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
     agentUse,
     preferredSkill,
     ...(cliFamily ? { cliFamily } : {}),
-    mcpExposure: id === 'code-reviews' ? 'available' : deriveMcpExposure(risk, agentUse),
-    ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : {}),
+    mcpExposure: ['host-capacity-observation', 'host-capacity-sampling'].includes(id) ? 'not-exposed'
+      : ['code-reviews', 'dts'].includes(id) ? 'available' : deriveMcpExposure(risk, agentUse),
+    ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : id === 'dts' ? { mcpTools: DTS_TOOLS } : {}),
     note,
   }));
 
@@ -268,11 +279,11 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   projects: ['projects', 'managed-projects', 'workspaces'],
   'system-health': ['server-control-plane', 'cds-system-topology', 'cds-system-diagnostics', 'docker-network-health', 'cluster', 'executor-scheduler'],
   'system-observability': ['server-control-plane', 'cds-events', 'operator-console'],
-  maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup'],
+  maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup', 'janitor-observation', 'host-capacity-observation', 'host-capacity-sampling', 'backup-retention', 'owned-resource-retention'],
   settings: ['comment-template', 'cds-system-connections', 'cds-system-offsite-backup', 'cds-system-sealed-storage', 'peer-sync', 'remote-hosts'],
   'project-onboarding': ['projects', 'pending-import', 'project-compose'],
   'code-review': ['code-reviews', 'project-compose', 'deployment-runs'],
-  branches: ['branches', 'branch-lifecycle', 'deployment-runs', 'deployment-versions', 'replica-sets', 'infra-credential-rotation'],
+  branches: ['branches', 'branch-lifecycle', 'branch-service-isolation', 'deployment-runs', 'deployment-versions', 'replica-sets', 'infra-credential-rotation'],
   'build-diagnostics': ['branches', 'deployment-runs'],
   'startup-diagnostics': ['branches', 'deployment-runs', 'docker-network-health'],
   'log-diagnostics': ['branches', 'server-control-plane'],
@@ -284,7 +295,7 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   release: ['releases', 'remote-hosts'],
   rollback: ['deployment-versions', 'releases', 'snapshots'],
   tasks: ['scheduled-jobs'],
-  reports: ['reports'],
+  reports: ['acceptance-tasks', 'reports'],
   general: ['branches', 'projects', 'server-control-plane', 'project-inspections'],
 };
 
@@ -729,13 +740,13 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     scope: 'project',
     icon: 'check',
     shortLabel: '验收报告',
-    cardDescription: '步骤、证据和结果归档',
+    cardDescription: '清单、执行结果、历史矩阵与报告',
     title: '验收报告',
-    summary: '查找、整理或生成可追溯的验收证据。',
+    summary: '领取结构化功能清单，逐项执行并留下可追溯的结果。',
     goal: '围绕当前功能完成报告查询、证据整理与结果交付。',
-    steps: ['确认验收目标、版本和入口', '按真实用户路径执行步骤', '收集结果、日志和截图证据', '创建报告并返回可访问入口'],
+    steps: ['读取项目测试清单与本轮环境，正式环境按当前线上执行', '领取任务并持续续租，按冻结步骤走真实业务路径', '逐项回填断言、实际结果、线上证据与清理回读', '结束任务后归档并绑定报告，再真实打开深链验真'],
     checks: ['保留目标、步骤、结果和证据', '不伪造未执行的验收结论', '敏感信息进入报告前先脱敏'],
-    completion: ['报告包含完整证据链', '结论与实际结果一致', '报告入口可访问'],
+    completion: ['逐项结果与冻结清单一致', '矩阵保留失败与不稳定历史', '报告线上打开验真通过，不能用绑定成功代替'],
     pagePath: (projectId) => projectQueryPath('/reports', projectId),
   },
   general: {

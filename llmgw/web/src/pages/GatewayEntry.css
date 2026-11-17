@@ -377,3 +377,6 @@ html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body::-webkit-scrol
 }
 
 .gateway-entry-shortcuts > a, .gateway-entry-help > summary, .gateway-entry-help-body button { border-radius: 8px; }
+
+.gateway-intent-options { display: flex; justify-content: center; align-items: center; gap: 18px; margin-top: 14px; color: var(--text-muted); }
+.gateway-intent-options small, .gateway-intent-options button { font-size: var(--fs-caption); }

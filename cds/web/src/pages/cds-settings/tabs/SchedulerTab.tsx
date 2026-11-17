@@ -1,10 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef } from 'react';
 import { Flame, HardDrive, Snowflake, Trash2 } from 'lucide-react';
 
+import { useSettingsSessionState } from '../useSettingsSessionState';
+import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
+import { useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
-import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../components';
-import type { LoadState } from '../types';
+import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
+import { SourceRetentionPreview } from '../components/SourceRetentionPreview';
+import { BackupRetentionPanel } from '../components/BackupRetentionPanel';
+import { AcceptanceRetentionPanel } from '../components/AcceptanceRetentionPanel';
+import { ImageCachePanel } from '../components/ImageCachePanel';
+import { HostCapacityPanel } from '../components/HostCapacityPanel';
 
 interface SchedulerConfig {
   enabled: boolean;
@@ -35,11 +43,9 @@ interface JanitorSnapshot {
   config?: JanitorConfig | null;
   dryRun?: { wouldRemove: string[]; wouldSkip: string[] };
   disk?: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
-}
-
-interface RuntimePolicyState {
-  scheduler: SchedulerSnapshot;
-  janitor: JanitorSnapshot;
+  lastSweep?: { at: string; deploymentSources?: { filesystem?: {
+    beforeAvailableBytes: number | null; afterAvailableBytes: number | null; netAvailableBytesDelta: number | null;
+  } } } | null;
 }
 
 const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
@@ -58,229 +64,134 @@ const DEFAULT_JANITOR_CONFIG: JanitorConfig = {
 };
 
 const inputClass =
-  'min-h-11 w-32 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring';
+  'min-h-[3.25rem] w-32 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring';
+
+type SchedulerDraft = { enabled: boolean; minutes: string; maxHot: string };
+type JanitorDraft = { enabled: boolean; days: string };
+type PolicyState<S, D> = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ok'; scope: object | null; snapshot: S; saved: D; draft: D; readError: string; saveError: string; unknown: boolean; unconfirmed?: D };
+const equalDraft = <D,>(left: D, right: D) => JSON.stringify(left) === JSON.stringify(right);
+function schedulerDraft(snapshot: SchedulerSnapshot): SchedulerDraft {
+  const config = snapshot.config ?? DEFAULT_SCHEDULER_CONFIG;
+  return { enabled: snapshot.enabled ?? config.enabled, minutes: String(Math.round(config.idleTTLSeconds / 60)), maxHot: String(config.maxHotBranches) };
+}
+function janitorDraft(snapshot: JanitorSnapshot): JanitorDraft {
+  const config = snapshot.config ?? DEFAULT_JANITOR_CONFIG;
+  return { enabled: snapshot.enabled ?? config.enabled, days: String(config.worktreeTTLDays) };
+}
+function schedulerBody(draft: SchedulerDraft) {
+  const minutes = Number(draft.minutes), maxHot = Number(draft.maxHot);
+  if (!draft.minutes.trim() || !Number.isInteger(minutes) || minutes < 1 || minutes > 1440) throw new Error('空闲超时必须为 1–1440 分钟的整数');
+  if (!draft.maxHot.trim() || !Number.isInteger(maxHot) || maxHot < 0 || maxHot > 100) throw new Error('最大热分支数必须为 0–100 的整数，0 表示不限');
+  return { enabled: draft.enabled, idleTTLSeconds: minutes * 60, maxHotBranches: maxHot };
+}
+function janitorBody(draft: JanitorDraft) {
+  const days = Number(draft.days);
+  if (!draft.days.trim() || !Number.isInteger(days) || days < 1 || days > 7) throw new Error('过期删除天数必须为 1–7 的整数');
+  return { enabled: draft.enabled, worktreeTTLDays: days };
+}
+
+/** 每项策略独立读写、独立确认，不把两次写入伪装为一个事务。 */
+function useRuntimePolicy<S extends { config?: object | null }, D extends object>(name: string, readPath: string, writePath: string, normalize: (snapshot: S) => D, serialize: (draft: D) => object, onToast: (message: string) => void) {
+  const { status: scope } = useContext(ConsoleAuthContext);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const currentScope = useRef(scope); currentScope.current = scope;
+  const [state, setState] = useSettingsSessionState<PolicyState<S, D>>(`policy:${readPath}`, { status: 'loading' }, value => value.status === 'ok' && value.unknown, { keepSession: true });
+  const [busy, setBusy] = useSettingsSessionState<boolean>(`policy:${readPath}:busy`, false, Boolean);
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
+    try {
+      const snapshot = await apiRequest<S>(readPath, { signal });
+      if (signal.aborted) return;
+      const saved = normalize(snapshot);
+      setState(current => current.status === 'ok' && current.scope === scope && preserve
+        ? { ...current, snapshot, saved, draft: equalDraft(current.draft, current.saved) ? saved : current.draft, readError: '', saveError: current.unknown && !equalDraft(saved, current.unconfirmed) ? current.saveError : '', unknown: current.unknown && !equalDraft(saved, current.unconfirmed) }
+        : { status: 'ok', scope, snapshot, saved, draft: saved, readError: '', saveError: '', unknown: false });
+    } catch (err) {
+      if (signal.aborted) return;
+      const message = err instanceof Error ? err.message : String(err);
+      setState(current => current.status === 'ok' && current.scope === scope && preserve ? { ...current, readError: message } : { status: 'error', message });
+    }
+  }, [beginRead, normalize, readPath, scope]);
+  useEffect(() => { void load(true); }, [load]);
+  const update = (patch: Partial<D>) => setState(current => current.status === 'ok' && current.scope === scope ? { ...current, draft: { ...current.draft, ...patch }, saveError: current.unknown ? current.saveError : '' } : current);
+  async function save(): Promise<void> {
+    if (state.status !== 'ok' || state.scope !== scope || !state.snapshot.config || busy || state.unknown || state.readError) return;
+    const submitted = state.draft, requestScope = scope;
+    let body: object;
+    try { body = serialize(submitted); }
+    catch (err) { setState(current => current.status === 'ok' ? { ...current, saveError: err instanceof Error ? err.message : String(err) } : current); return; }
+    setBusy(true);
+    try {
+      const snapshot = await apiRequest<S>(writePath, { method: 'PUT', body });
+      if (!snapshot.config) throw new Error('服务没有返回保存后的配置');
+      if (alive.current && currentScope.current === requestScope) beginRead.cancel();
+      const saved = normalize(snapshot);
+      setState(current => current.status === 'ok' && current.scope === requestScope ? { ...current, snapshot, saved, draft: equalDraft(current.draft, submitted) ? saved : current.draft, readError: '', saveError: '', unknown: false } : current);
+      if (alive.current && currentScope.current === requestScope) onToast(`${name}已保存并立即生效`);
+    } catch (err) {
+      const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
+      setState(current => current.status === 'ok' && current.scope === requestScope ? { ...current, unknown, unconfirmed: unknown ? submitted : undefined, saveError: `${unknown ? '保存结果未确认，请重新读取核对，勿重复提交' : '保存被拒绝'}：${err instanceof Error ? err.message : String(err)}。当前草稿已保留。` } : current);
+    } finally { setBusy(false); }
+  }
+  useEffect(() => {
+    if (state.status !== 'ok' || !state.unknown && !busy) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
+  }, [state, busy]);
+  const ready = state.status === 'ok' && state.scope === scope ? state : null;
+  return { state, ready, busy, load, update, save, dirty: ready ? !equalDraft(ready.draft, ready.saved) : false };
+}
 
 export function SchedulerTab({ onToast }: { onToast: (message: string) => void }): JSX.Element {
-  const [state, setState] = useState<LoadState<RuntimePolicyState>>({ status: 'loading' });
-  const [enabled, setEnabled] = useState(false);
-  const [idleMinutes, setIdleMinutes] = useState('15');
-  const [maxHot, setMaxHot] = useState('3');
-  const [janitorEnabled, setJanitorEnabled] = useState(true);
-  const [expiryDays, setExpiryDays] = useState('7');
-  const [submitting, setSubmitting] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    Promise.all([
-      apiRequest<SchedulerSnapshot>('/api/scheduler/state', { signal: ctrl.signal }),
-      apiRequest<JanitorSnapshot>('/api/janitor/state', { signal: ctrl.signal }),
-    ])
-      .then(([scheduler, janitor]) => {
-        const schedulerCfg = scheduler.config ?? DEFAULT_SCHEDULER_CONFIG;
-        const janitorCfg = janitor.config ?? DEFAULT_JANITOR_CONFIG;
-        setState({ status: 'ok', data: { scheduler, janitor } });
-        setEnabled(scheduler.enabled ?? schedulerCfg.enabled);
-        setIdleMinutes(String(Math.round((schedulerCfg.idleTTLSeconds || 900) / 60)));
-        setMaxHot(String(schedulerCfg.maxHotBranches ?? 3));
-        setJanitorEnabled(janitor.enabled ?? janitorCfg.enabled);
-        setExpiryDays(String(janitorCfg.worktreeTTLDays ?? 7));
-      })
-      .catch((err: unknown) => {
-        if ((err as DOMException)?.name === 'AbortError') return;
-        setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-      });
-    return () => ctrl.abort();
-  }, [reloadKey]);
-
-  if (state.status === 'loading') return <LoadingBlock />;
-  if (state.status === 'error') return <ErrorBlock message={state.message} />;
-
-  const snap = state.data.scheduler;
-  const janitorSnap = state.data.janitor;
-  const cfg = snap.config ?? DEFAULT_SCHEDULER_CONFIG;
-  const janitorCfg = janitorSnap.config ?? DEFAULT_JANITOR_CONFIG;
-  const hotList = snap.hot ?? [];
-  const coldList = snap.cold ?? [];
-  const capMax = snap.capacityUsage?.max ?? cfg.maxHotBranches;
-  const dryRun = janitorSnap.dryRun ?? { wouldRemove: [], wouldSkip: [] };
-  const disk = janitorSnap.disk;
-
-  async function save(): Promise<void> {
-    const minutes = Number(idleMinutes);
-    const hot = Number(maxHot);
-    const days = Number(expiryDays);
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
-      onToast('空闲超时必须是 1 到 1440 之间的整数（分钟）');
-      return;
-    }
-    if (!Number.isInteger(hot) || hot < 0 || hot > 100) {
-      onToast('最大热分支数必须是 0 到 100 之间的整数（0 = 不限）');
-      return;
-    }
-    if (!Number.isInteger(days) || days < 1 || days > 7) {
-      onToast('全局过期天数必须是 1 到 7 之间的整数（最长 7 天）');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await Promise.all([
-        apiRequest<SchedulerSnapshot>('/api/scheduler/config', {
-          method: 'PUT',
-          body: { enabled, idleTTLSeconds: minutes * 60, maxHotBranches: hot },
-        }),
-        apiRequest<JanitorSnapshot>('/api/janitor/config', {
-          method: 'PUT',
-          body: { enabled: janitorEnabled, worktreeTTLDays: days },
-        }),
-      ]);
-      onToast('运行时策略已保存并即时生效');
-      setReloadKey((k) => k + 1);
-    } catch (err) {
-      onToast(`保存失败：${err instanceof ApiError ? err.message : String(err)}`);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Section
-      title="调度器"
-      description="调度器开启后，空闲超过设定时长的分支会自动停止变灰；热分支数超上限时按 LRU 驱逐最久未访问分支。固定分支永不冷却。配置即时生效并在重启后保留。"
-    >
-      <div className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-md border border-border bg-card px-4 py-4">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Flame className="h-4 w-4 text-warn" />
-              当前热分支
-            </div>
-            <div className="mt-2 text-2xl font-semibold">{hotList.length}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              上限 {capMax === 0 ? '不限' : capMax}
-            </div>
-          </div>
-          <div className="rounded-md border border-border bg-card px-4 py-4">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Snowflake className="h-4 w-4 text-info" />
-              当前冷分支
-            </div>
-            <div className="mt-2 text-2xl font-semibold">{coldList.length}</div>
-            <div className="mt-1 text-xs text-muted-foreground">已被停止 / 降温的分支</div>
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-md border border-border bg-card px-4 py-4">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Trash2 className="h-4 w-4 text-bad" />
-              即将过期删除
-            </div>
-            <div className="mt-2 text-2xl font-semibold">{dryRun.wouldRemove.length}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              保护跳过 {dryRun.wouldSkip.length} 个，当前阈值 {janitorCfg.worktreeTTLDays} 天
-            </div>
-          </div>
-          <div className="rounded-md border border-border bg-card px-4 py-4">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <HardDrive className="h-4 w-4 text-ok" />
-              工作区磁盘
-            </div>
-            <div className="mt-2 text-2xl font-semibold">{disk ? `${disk.usedPercent}%` : '-'}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {disk ? `阈值 ${janitorCfg.diskWarnPercent}%` : '当前环境未返回磁盘信息'}
-            </div>
-          </div>
-        </div>
-
-        <Field label="启用调度器">
-          <Button
-            type="button"
-            variant={enabled ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setEnabled((v) => !v)}
-          >
-            {enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
-          </Button>
-          <div className="mt-1.5 text-xs text-muted-foreground">
-            停用后所有分支不再被自动降温；已停止的分支下次被访问时会自动重建。
-          </div>
-        </Field>
-
-        <Field label="空闲自动下线时长（分钟）">
-          <input
-            type="number"
-            min={1}
-            max={1440}
-            value={idleMinutes}
-            onChange={(e) => setIdleMinutes(e.target.value)}
-            className={inputClass}
-          />
-          <div className="mt-1.5 text-xs text-muted-foreground">
-            分支无预览域名访问超过此时长即被停止。范围 1–1440 分钟。当前生效值{' '}
-            <CodePill>{Math.round((cfg.idleTTLSeconds || 900) / 60)} 分钟</CodePill>
-          </div>
-        </Field>
-
-        <Field label="最大热分支数">
-          <input
-            type="number"
-            min={0}
-            max={100}
-            value={maxHot}
-            onChange={(e) => setMaxHot(e.target.value)}
-            className={inputClass}
-          />
-          <div className="mt-1.5 text-xs text-muted-foreground">
-            同时保持运行的分支上限，超出按 LRU 驱逐最久未访问的非固定分支。0 = 不限。当前生效值{' '}
-            <CodePill>{cfg.maxHotBranches === 0 ? '不限' : cfg.maxHotBranches}</CodePill>
-          </div>
-        </Field>
-
-        <Field label="启用全局过期删除">
-          <Button
-            type="button"
-            variant={janitorEnabled ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setJanitorEnabled((v) => !v)}
-          >
-            {janitorEnabled ? '已启用（点击停用）' : '已停用（点击启用）'}
-          </Button>
-          <div className="mt-1.5 text-xs text-muted-foreground">
-            启用后，超过全局过期天数且未被固定 / 标记 / 设为默认的分支，会自动删除本地容器和 worktree。
-          </div>
-        </Field>
-
-        <Field label="全局过期删除天数">
-          <input
-            type="number"
-            min={1}
-            max={7}
-            value={expiryDays}
-            onChange={(e) => setExpiryDays(e.target.value)}
-            className={inputClass}
-          />
-          <div className="mt-1.5 text-xs text-muted-foreground">
-            默认 7 天，最长 7 天。当前生效值 <CodePill>{janitorCfg.worktreeTTLDays} 天</CodePill>
-          </div>
-        </Field>
-
-        {cfg.pinnedBranches.length > 0 ? (
-          <Field label="固定分支（永不冷却）">
-            <div className="flex flex-wrap gap-2">
-              {cfg.pinnedBranches.map((slug) => (
-                <CodePill key={slug}>{slug}</CodePill>
-              ))}
-            </div>
-          </Field>
-        ) : null}
-
-        <div>
-          <Button type="button" onClick={() => void save()} disabled={submitting}>
-            {submitting ? '保存中…' : '保存'}
-          </Button>
-        </div>
-      </div>
+  const scheduler = useRuntimePolicy('自动冷却规则', '/api/scheduler/state', '/api/scheduler/config', schedulerDraft, schedulerBody, onToast);
+  const janitor = useRuntimePolicy('过期删除规则', '/api/janitor/state', '/api/janitor/config', janitorDraft, janitorBody, onToast);
+  const s = scheduler.ready, j = janitor.ready;
+  const hot = s?.snapshot.hot, cold = s?.snapshot.cold;
+  const removal = j?.snapshot.dryRun?.wouldRemove, skipped = j?.snapshot.dryRun?.wouldSkip;
+  const validJanitorDays = Boolean(j?.draft.days.trim()) && Number.isInteger(Number(j?.draft.days)) && Number(j?.draft.days) >= 1 && Number(j?.draft.days) <= 7;
+  const destructiveChange = validJanitorDays && j && j.draft.enabled && (!j.saved.enabled || Number(j.draft.days) < Number(j.saved.days));
+  const janitorSave = <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" onClick={() => void janitor.save()} disabled={janitor.busy || !janitor.dirty || !j?.snapshot.config || j.unknown || Boolean(j.readError)}>{janitor.busy ? '正在保存' : '保存过期删除规则'}</Button>;
+  return <div className="space-y-5">
+    <Section title="调度器与工作区保留" description="配置影响全部项目。自动冷却停止空闲分支，过期删除会清理容器与工作区；两项规则分别保存，保存后立即生效。">
+      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground"><span className="inline-flex items-center gap-2"><Flame />热分支 {hot ? hot.length : '未确认'}</span><span className="inline-flex items-center gap-2"><Snowflake />冷分支 {cold ? cold.length : '未确认'}</span><span className="inline-flex items-center gap-2"><Trash2 />当前规则待删除 {removal ? removal.length : '未确认'}</span><span className="inline-flex items-center gap-2"><HardDrive />磁盘 {j?.snapshot.disk ? `${j.snapshot.disk.usedPercent}%` : '未确认'}</span></div>
     </Section>
-  );
+    <Section title="自动冷却" description="空闲超过时长或热分支超过上限时，停止最久未访问的非固定分支；后续访问可重建。固定分支不自动冷却。" actions={<Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={scheduler.busy} onClick={() => void scheduler.load(true)}>重新读取冷却规则</Button>}>
+      {scheduler.state.status === 'loading' ? <LoadingBlock label="读取冷却规则" /> : scheduler.state.status === 'error' ? <ErrorBlock message={scheduler.state.message} /> : !s ? <LoadingBlock label="读取当前会话冷却规则" /> : !s.snapshot.config ? <p className="text-sm text-muted-foreground">调度服务未启动，当前没有可编辑配置。请确认服务运行后重新读取。</p> : <div className="space-y-4">
+        <p role="status" className="text-sm text-muted-foreground">{s.unknown ? '保存结果未确认' : `已确认状态：${s.saved.enabled ? '已启用' : '已停用'}`}{scheduler.dirty && !s.unknown ? ' · 草稿未保存' : ''}</p>
+        <fieldset disabled={scheduler.busy} className="space-y-4"><label className="flex min-h-[3.25rem] items-center gap-2 text-sm"><input type="checkbox" checked={s.draft.enabled} onChange={event => scheduler.update({ enabled: event.target.checked })} className="h-4 w-4 accent-primary" />允许自动冷却（保存后生效）</label>
+          <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm">空闲自动下线时长（分钟）<input aria-label="空闲自动下线时长（分钟）" type="number" min={1} max={1440} className={inputClass} value={s.draft.minutes} onChange={event => scheduler.update({ minutes: event.target.value })} /><span className="text-xs text-muted-foreground">已确认值 {s.saved.minutes} 分钟，允许 1–1440 分钟。</span></label><label className="grid gap-2 text-sm">最大热分支数<input aria-label="最大热分支数" type="number" min={0} max={100} className={inputClass} value={s.draft.maxHot} onChange={event => scheduler.update({ maxHot: event.target.value })} /><span className="text-xs text-muted-foreground">已确认值 {s.saved.maxHot}；0 表示不限。</span></label></div>
+        </fieldset>
+        {s.snapshot.config.pinnedBranches.length ? <div className="flex flex-wrap gap-2 text-sm"><span>固定分支：</span>{s.snapshot.config.pinnedBranches.map(slug => <CodePill key={slug}>{slug}</CodePill>)}</div> : null}
+        {s.readError ? <p role="alert" className="text-sm text-destructive">读取失败：{s.readError}。当前显示上次结果。</p> : null}{s.saveError ? <p role="alert" className="text-sm text-destructive">{s.saveError}</p> : null}
+        <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" onClick={() => void scheduler.save()} disabled={scheduler.busy || !scheduler.dirty || s.unknown || Boolean(s.readError)}>{scheduler.busy ? '正在保存' : '保存冷却规则'}</Button>
+      </div>}
+    </Section>
+    <Section title="过期删除" description="启用后，超过保留期且未受固定、标记或默认分支保护的容器与工作区将按计划删除。Git 历史保留，未提交的工作区内容不能依此恢复。" actions={<Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={janitor.busy} onClick={() => void janitor.load(true)}>重新读取删除规则</Button>}>
+      {janitor.state.status === 'loading' ? <LoadingBlock label="读取过期删除规则" /> : janitor.state.status === 'error' ? <ErrorBlock message={janitor.state.message} /> : !j ? <LoadingBlock label="读取当前会话删除规则" /> : !j.snapshot.config ? <p className="text-sm text-muted-foreground">清理服务未启动，当前没有可编辑配置。请确认服务运行后重新读取。</p> : <div className="space-y-4">
+        <p role="status" className="text-sm text-muted-foreground">{j.unknown ? '保存结果未确认' : `已确认状态：${j.saved.enabled ? '已启用' : '已停用'}`}{janitor.dirty && !j.unknown ? ' · 草稿未保存' : ''}</p>
+        <fieldset disabled={janitor.busy} className="space-y-4"><label className="flex min-h-[3.25rem] items-center gap-2 text-sm"><input type="checkbox" checked={j.draft.enabled} onChange={event => janitor.update({ enabled: event.target.checked })} className="h-4 w-4 accent-primary" />允许过期删除（保存后生效）</label><label className="grid gap-2 text-sm">工作区保留天数<input aria-label="工作区保留天数" type="number" min={1} max={7} className={inputClass} value={j.draft.days} onChange={event => janitor.update({ days: event.target.value })} /><span className="text-xs text-muted-foreground">已确认值 {j.saved.days} 天，允许 1–7 天。</span></label></fieldset>
+        <p className="text-sm text-warn">当前已保存规则的候选：{removal ? `${removal.length} 个待删除` : '未确认'}，{skipped ? `${skipped.length} 个受保护` : '保护数量未确认'}。修改草稿后，这些数量不代表新规则的执行结果。</p>
+        {j.snapshot.disk ? <p className="text-sm text-muted-foreground">磁盘告警阈值 {j.snapshot.config.diskWarnPercent}%，当前使用 {j.snapshot.disk.usedPercent}%。</p> : null}
+        {removal && removal.length > 0 ? <details><summary className="cursor-pointer text-sm">查看当前规则待删除的分支</summary><div className="mt-2 flex flex-wrap gap-2">{removal.map(slug => <CodePill key={slug}>{slug}</CodePill>)}</div></details> : null}
+        {j.readError ? <p role="alert" className="text-sm text-destructive">读取失败：{j.readError}。当前显示上次结果。</p> : null}{j.saveError ? <p role="alert" className="text-sm text-destructive">{j.saveError}</p> : null}
+        {destructiveChange ? <ConfirmAction scopeKey={JSON.stringify({ draft: j.draft, saved: j.saved })} title="保存过期删除规则？" description={`保留期设为 ${j.draft.days} 天，保存后立即用于定时清理全部项目中未受保护的分支容器与工作区。当前候选仅基于旧规则，不代表新规则执行结果。`} confirmLabel="保存删除规则" onConfirm={janitor.save} disabled={janitor.busy || j.unknown || Boolean(j.readError)} trigger={janitorSave} /> : janitorSave}
+      </div>}
+    </Section>
+    <HostCapacityPanel />
+    <Section title="部署源码磁盘治理">
+      <p className="text-sm text-muted-foreground">
+        最近一轮文件系统净可用空间变化：{j?.snapshot.lastSweep?.deploymentSources?.filesystem?.netAvailableBytesDelta == null
+          ? '尚无已确认读数'
+          : `${j.snapshot.lastSweep.deploymentSources.filesystem.netAvailableBytesDelta.toLocaleString()} 字节`}。
+        该读数包含同时发生的写入，不能将候选估计值或删除数量当作实际释放量。
+      </p>
+      <SourceRetentionPreview />
+      <BackupRetentionPanel />
+      <AcceptanceRetentionPanel />
+      <ImageCachePanel />
+    </Section>
+  </div>;
 }

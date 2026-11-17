@@ -13,16 +13,23 @@
 //     声明作废（报错文字根本没变红），通配确认框那处更是连 color-mix 底色和边框一起丢了。
 //     语义色只有 --ok / --warn / --err / --info，全部改过来——边框底色重新出现是修复，不是回归。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { confirmServiceKeyClientCutover, createGatewayAppCaller, createServiceKey, getGatewayAppCallers, getLegacyKeyCutover, getOrganization, getServiceKeys, revokeServiceKey, updateLegacyKeyCutover } from '@/lib/api';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { invalidateOnboardingCache } from '@/lib/onboarding';
-import type { CreatedServiceKey, LegacyKeyCutoverData, OrganizationData, ServiceKeyItem } from '@/lib/types';
+import type { CreateServiceKeyRequest, CreatedServiceKey, LegacyKeyCutoverData, OrganizationData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { formatPlatformTime } from '@/lib/platformTime';
+import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
+import { legacyPolicyGoalObserved, LEGACY_POLICY_REJECTED, LEGACY_POLICY_NEEDS_READ, type LegacyPolicyWrite } from '@/lib/legacyKeyPolicy';
+import { CALLER_CREATE_REJECTED, KEY_CREATE_REJECTED } from '@/lib/serviceKeyIssuance';
+import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
+import { keyLifecycleGoalObserved, KEY_CUTOVER_REJECTED, KEY_REVOKE_REJECTED, type KeyLifecycleIntent } from '@/lib/serviceKeyLifecycle';
+import { serviceKeyValidity } from '@/lib/serviceKeyValidity';
 import { canCreateWildcardServiceKey, canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP, INSET_PADDING } from '@/lib/surface';
 import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -83,23 +90,75 @@ function ScopeHelp() {
 }
 
 export function ServiceKeysPage() {
-  const { tenant } = useAuth();
+  const [params] = useSearchParams();
+  const contextClient = (params.get('client') || '').trim();
+  const contextCaller = (params.get('appCaller') || '').trim();
+  const { tenant, user } = useAuth();
+  const accessScope = JSON.stringify([tenant?.id, tenant?.role, user?.username, user?.identityProvider]);
+  const accessScopeRef = useRef(accessScope);
+  accessScopeRef.current = accessScope;
   const { confirm } = useDialogs();
   const isInternalTenant = tenant?.isInternal === true;
   // Developer 的密钥必须绑团队（服务端硬性要求），Owner/Admin 留空则是租户级密钥。
   const isDeveloper = tenant?.role === 'developer';
   const canManageLegacyCutover = canUseCapability(tenant?.role, 'configWrite');
+  const [validityNow, setValidityNow] = useState(Date.now);
+  const keyValidity = (item: ServiceKeyItem) => serviceKeyValidity(item, validityNow);
   const [scopeCopied, setScopeCopied] = useState(false);
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
+  const keyListRef = useRef<HTMLDivElement>(null);
+  const detailWasOpen = useRef(false);
+  const [detailEntry, setDetailEntry] = useState(0);
+  useEffect(() => setSelectedKeyId(null), [contextClient, contextCaller]);
   const [keyTab, setKeyTab] = useState("permissions");
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
+  useEffect(() => {
+    const now = Date.now();
+    const upcoming = (items ?? []).filter(item => item.enabled && item.expiresAt).map(item => new Date(item.expiresAt!).getTime()).filter(time => Number.isFinite(time) && time > now);
+    if (!upcoming.length) return;
+    const timer = window.setTimeout(() => setValidityNow(Date.now()), Math.min(30_000, Math.max(1, Math.min(...upcoming) - now + 1)));
+    return () => window.clearTimeout(timer);
+  }, [items, validityNow]);
+  const [reading, setReading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [legacyReadError, setLegacyReadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const [creationUnknown, setCreationUnknown] = useState<{ stage: 'caller' | 'key'; request: CreateServiceKeyRequest; caller: string; requestType: SelfServiceRequestType; callerTeam: string } | null>(null);
+  const [creationCheck, setCreationCheck] = useState<string | null>(null);
+  const [checkingCreation, setCheckingCreation] = useState(false);
+  const creationReadSequence = useRef(0);
+  const [creationCandidates, setCreationCandidates] = useState<{ scope: string; pending: typeof creationUnknown; items: ServiceKeyItem[] } | null>(null);
+  const candidateReadRef = useRef(creationCandidates);
+  candidateReadRef.current = creationCandidates;
+  const creationUnknownRef = useRef(creationUnknown);
+  creationUnknownRef.current = creationUnknown;
   const [showCreate, setShowCreate] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [created, setCreated] = useState<CreatedServiceKey | null>(null);
   const [copied, setCopied] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const lifecycleRef = useRef(false);
+  const [lifecycleReceipt, setLifecycleReceipt] = useState<KeyLifecycleIntent | null>(null);
+  const [lifecycleUnknown, setLifecycleUnknown] = useState<KeyLifecycleIntent | null>(null);
+  const [lifecycleRead, setLifecycleRead] = useState<ServiceKeyItem[] | null>(null);
+  const [lifecycleReadAt, setLifecycleReadAt] = useState<string | null>(null);
+  const [lifecycleCheck, setLifecycleCheck] = useState<string | null>(null);
+  const [checkingLifecycle, setCheckingLifecycle] = useState(false);
+  const checkingLifecycleRef = useRef(false);
+  const [lifecycleResolved, setLifecycleResolved] = useState<{ intent: KeyLifecycleIntent; target: ServiceKeyItem; related: ServiceKeyItem[]; readAt: string } | null>(null);
+  useEffect(() => {
+    if (!lifecycleResolved) return;
+    let timer: number;
+    const dismissWhenIdle = () => {
+      const feedback = document.querySelector('[data-lifecycle-resolved]')?.closest('[role="status"]');
+      if (feedback?.contains(document.activeElement)) { timer = window.setTimeout(dismissWhenIdle, 8000); return; }
+      setLifecycleResolved(null);
+    };
+    timer = window.setTimeout(dismissWhenIdle, 8000);
+    return () => window.clearTimeout(timer);
+  }, [lifecycleResolved]);
   const [name, setName] = useState('');
   const [sourceSystem, setSourceSystem] = useState('external');
   const [clientCode, setClientCode] = useState('');
@@ -120,6 +179,10 @@ export function ServiceKeysPage() {
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState('');
   const [rotatesKeyId, setRotatesKeyId] = useState<string | undefined>();
   const [confirmWildcardRisk, setConfirmWildcardRisk] = useState(false);
+  const resetCreationDraft = useCallback(() => {
+    setName(''); setClientCode(''); setAppCallerFeature(''); setIdentitySlug(''); setAppCallerCodes(''); setTeamId(''); setAllowedCidrs(''); setRateLimitPerMinute(''); setRotatesKeyId(undefined); setExpiresAt(''); setConfirmWildcardRisk(false);
+    setSourceSystem('external'); setEnvironment('production'); setPurpose('external-platform'); setAppCallerMode('generate'); setAppCallerRequestType('chat'); setIngressProtocols(DEFAULT_PROTOCOLS); setScopes(DEFAULT_SCOPES);
+  }, []);
   /** 只喂下拉与补全。签发前的「存不存在、什么状态」现问服务端，不看这一页（见 submit）。 */
   const [knownAppCallers, setKnownAppCallers] = useState<string[]>([]);
   const [legacy, setLegacy] = useState<LegacyKeyCutoverData | null>(null);
@@ -129,29 +192,66 @@ export function ServiceKeysPage() {
   const [legacyRequired, setLegacyRequired] = useState('1');
   const [legacyStatus, setLegacyStatus] = useState<'observing' | 'ready' | 'revoked'>('observing');
   const [legacyBusy, setLegacyBusy] = useState(false);
+  const legacyTask = useRef<{ pending: boolean; unknown: LegacyPolicyWrite | null; receipt: boolean; conflict: boolean }>({ pending: false, unknown: null, receipt: false, conflict: false });
+  const legacyDirty = useRef(false);
+  const [legacyDraftRevision, setLegacyDraftRevision] = useState<number | null>(null);
+  const [legacyUnknown, setLegacyUnknown] = useState<LegacyPolicyWrite | null>(null);
+  const [legacyReceipt, setLegacyReceipt] = useState(false);
+  const [legacyConflict, setLegacyConflict] = useState(false);
+  const [legacyChecking, setLegacyChecking] = useState(false);
+  const legacyCheckingRef = useRef(false);
+  const legacyReadSequence = useRef(0);
+  const [legacyReadAt, setLegacyReadAt] = useState<string | null>(null);
+  const [legacyFeedback, setLegacyFeedback] = useState<string | null>(null);
+  const [legacySettledFeedback, setLegacySettledFeedback] = useState(false);
+  useEffect(() => {
+    if (!legacySettledFeedback) return;
+    const timer = window.setTimeout(() => setLegacyFeedback(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [legacySettledFeedback, legacyFeedback]);
+  const adoptLegacy = useCallback((data: LegacyKeyCutoverData) => {
+    setLegacyReadAt(new Date().toISOString());
+    setLegacy(data); setLegacyDraftRevision(Number.isSafeInteger(data.policyRevision) && data.policyRevision >= 0 ? data.policyRevision : null);
+    setLegacyStatus(data.status === 'not-applicable' ? 'observing' : data.status);
+    setLegacyDeadline(data.deadlineAt ? toLocalInput(data.deadlineAt) : '');
+    setLegacyAllowedCallers(data.allowedAppCallerCodes.join(', '));
+    setLegacySuccessorIds(data.successorServiceKeyIds.join(', '));
+    setLegacyRequired(String(data.requiredSuccessorObservations));
+    legacyDirty.current = false;
+  }, []);
 
   const load = useCallback(async () => {
-    setError(null);
+    const scope = accessScope;
+    setListError(null); setLegacyReadError(null); setReading(true);
+    let keysRead = false;
+    let legacyRequest = 0;
+    try {
     const res = await getServiceKeys();
-    if (res.success) setItems(res.data);
-    else setError(res.error?.message || '加载接入密钥失败');
+    if (accessScopeRef.current !== scope) return;
+    if (res.success) { keysRead = true; setItems(res.data); setValidityNow(Date.now()); setLifecycleReceipt(null); }
+    else setListError(res.error?.message || '加载接入密钥失败');
     if (canManageLegacyCutover) {
+      if (legacyCheckingRef.current) return;
+      legacyRequest = ++legacyReadSequence.current;
       const legacyRes = await getLegacyKeyCutover();
+      if (accessScopeRef.current !== scope) return;
+      if (legacyRequest !== legacyReadSequence.current) return;
+      if (!legacyRes.success) setLegacyReadError(legacyRes.error?.message || '旧共享密钥状态未读取，请刷新核对。');
       if (legacyRes.success && legacyRes.data.applicable) {
-        setLegacy(legacyRes.data);
-        setLegacyStatus(legacyRes.data.status === 'not-applicable' ? 'observing' : legacyRes.data.status);
-        setLegacyDeadline(legacyRes.data.deadlineAt ? toLocalInput(legacyRes.data.deadlineAt) : '');
-        setLegacyAllowedCallers(legacyRes.data.allowedAppCallerCodes.join(', '));
-        setLegacySuccessorIds(legacyRes.data.successorServiceKeyIds.join(', '));
-        setLegacyRequired(String(legacyRes.data.requiredSuccessorObservations));
+        const task = legacyTask.current;
+        if (!legacyDirty.current && !task.pending && !task.unknown && !task.receipt && !task.conflict) adoptLegacy(legacyRes.data);
+        else { setLegacy(legacyRes.data); setLegacyReadAt(new Date().toISOString()); }
       }
     }
-  }, [canManageLegacyCutover]);
+    } catch { if (accessScopeRef.current !== scope) return; if (keysRead) { if (legacyRequest === legacyReadSequence.current) setLegacyReadError('旧共享密钥状态读取中断，请重读。'); } else setListError('密钥配置读取未完成，请重新读取后核对。'); }
+    finally { if (accessScopeRef.current === scope) setReading(false); }
+  }, [canManageLegacyCutover, adoptLegacy, accessScope]);
 
   useEffect(() => {
+    const scope = accessScope;
     void load();
     void getGatewayAppCallers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) {
+      if (accessScopeRef.current === scope && res.success) {
         // 这一页只喂给「手选已有用途」的下拉与补全，不参与签发前的判定：
         // 那是一页有上限的列表，用它判「这个码存不存在 / 是什么状态」在用途多过一页的
         // 租户上必然判错，所以签发那一步改成现问服务端（见 submit）。
@@ -163,67 +263,28 @@ export function ServiceKeysPage() {
     // 团队只用来回答「这条调用用途登记在谁名下」。以前这里是一个让人手抄 team id 的
     // 输入框，没人知道该填什么；现在读回真实团队列表做下拉，空值仍然表示租户级密钥。
     void getOrganization().then((res) => {
-      if (res.success) setTeams(res.data.teams.filter((team) => team.status === 'active'));
+      if (accessScopeRef.current === scope && res.success) setTeams(res.data.teams.filter((team) => team.status === 'active'));
     });
   }, [load]);
 
+  const previousScope = useRef(accessScope);
+  useEffect(() => {
+    if (previousScope.current === accessScope) return;
+    previousScope.current = accessScope; creationReadSequence.current++;
+    candidateReadRef.current = null; creationUnknownRef.current = null;
+    setCreationCandidates(null); setCreationUnknown(null); setCreationCheck(null); setCheckingCreation(false);
+    setCreated(null); setShowCreate(false); resetCreationDraft();
+    setItems(null); setSelectedKeyId(null); setLifecycleUnknown(null); setLifecycleReceipt(null); setLifecycleResolved(null);
+    setLifecycleRead(null); setLifecycleReadAt(null); setLifecycleCheck(null); setBusyId(null); setError(null);
+    creatingRef.current = false; lifecycleRef.current = false; checkingLifecycleRef.current = false; setCheckingLifecycle(false); setCreating(false);
+  }, [accessScope, resetCreationDraft]);
+
   const submit = async () => {
-    setCreating(true);
-    setError(null);
-    // 自动生成的调用用途在签发密钥之前先登记：密钥的 appCaller 允许清单是精确匹配，
-    // 登记之后这条用途才会出现在「调用方」页上，能绑模型池、能被 Quickstart 直测
-    // （直测对未登记的 code 返回 APP_CALLER_NOT_FOUND）。登记失败就不签发，
-    // 免得留下一把指向无主 code 的密钥。
-    /*
-      「这个码此刻是什么状态」必须现问服务端，不能翻手上那一页。
-      页面开屏拉的是第一页（上限 200 条），租户的调用用途多过这个数时，一条**已停用**的同码
-      落在页外就查不到：状态判空 → 这道闸整条跳过 → 幂等创建把那条停用的原样返回 → 密钥照签，
-      而 serving 当场回 APP_CALLER_DISABLED。判据只覆盖了「最直观的那一页」，
-      正是 predicate-and-wiring-discipline 形状 1；而它上一轮刚被我按同一个理由修过一次。
-      顺带把「要不要登记」也改由这一次探测回答：两个判断问同一个来源，不会一个说有、一个说没有。
-    */
-    let existingCaller: { appCallerCode: string; status: string } | undefined;
-    if (appCallerMode === 'generate') {
-      const probe = await getGatewayAppCallers({ page: 1, pageSize: 200, search: generatedAppCallerCode });
-      if (!probe.success) {
-        setCreating(false);
-        setError(`没能确认调用用途「${generatedAppCallerCode}」当前是什么状态（${probe.error?.message || '读取失败'}），密钥未创建。`
-          + '这一步不敢猜：万一它已被停用，签出来的密钥一调用就会被拒。请重试，或先去「调用用途」页确认。');
-        return;
-      }
-      existingCaller = probe.data.items.find(
-        (item) => item.appCallerCode.trim().toLowerCase() === generatedAppCallerCode.trim().toLowerCase());
-      // 与 serving 的 GatewayAppCallerPolicy 同一套枚举：只有这三种状态放行真实流量。
-      const existingStatus = existingCaller?.status;
-      if (existingStatus !== undefined
-        && !['discovered', 'configured', 'active'].includes(existingStatus.trim().toLowerCase())) {
-        setCreating(false);
-        setError(`调用用途「${generatedAppCallerCode}」已存在但处于「${existingStatus}」状态，不接受流量。`
-          + '先去「调用用途」把它恢复，或换一个用途名——现在签出来的密钥一调用就会被拒。');
-        return;
-      }
-    }
-    if (appCallerMode === 'generate' && !existingCaller) {
-      if (!appCallerTeamId) {
-        setCreating(false);
-        setError('当前租户还没有可用团队，无法登记调用用途。请先在组织与团队里建一个团队。');
-        return;
-      }
-      const callerRes = await createGatewayAppCaller({
-        teamId: appCallerTeamId,
-        appCallerCode: generatedAppCallerCode,
-        requestType: appCallerRequestType,
-        title: name.trim() || generatedAppCallerCode,
-        ingressProtocol: 'openai-compatible',
-      });
-      if (!callerRes.success) {
-        setCreating(false);
-        setError(callerRes.error?.message || '登记调用用途失败，密钥未创建');
-        return;
-      }
-      setKnownAppCallers((current) => current.includes(generatedAppCallerCode) ? current : [...current, generatedAppCallerCode].sort());
-    }
-    const res = await createServiceKey({
+    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || !canSubmit || creatingRef.current || creationUnknown || Boolean(rotatesKeyId && (lifecycleRef.current || lifecycleUnknown || lifecycleReceipt))) return;
+    if (expiresAt && !Number.isFinite(Date.parse(expiresAt))) { setError('过期时间无效，请重新选择。'); return; }
+    const scope = accessScope;
+    creatingRef.current = true; setCreating(true); setError(null); setCreationCheck(null); setCreated(null); setCreationCandidates(null);
+    const request: CreateServiceKeyRequest = {
       name: name.trim(),
       sourceSystem: sourceSystem.trim(),
       clientCode: clientCode.trim().toLowerCase(),
@@ -243,72 +304,177 @@ export function ServiceKeysPage() {
       rotatesKeyId,
       expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
       confirmWildcardRisk,
-    });
-    setCreating(false);
-    if (!res.success) {
-      setError(res.error?.message || '创建接入密钥失败');
-      return;
-    }
-    setCreated(res.data);
-    // 新人清单的「签一把密钥」与老手轨的密钥前缀都读缓存，签发成功必须主动失效，
-    // 否则已挂载的组件会一直显示旧事实（60 秒 TTL 只在下次加载才被查）。
-    invalidateOnboardingCache(tenant?.id);
-    setShowCreate(false);
-    setName('');
-    setClientCode('');
-    // 复位回默认路径，但 MAP 身份没有自助登记这一档，留在「选择已有」。
-    setAppCallerMode(sourceIsMap ? 'existing' : 'generate');
-    setAppCallerFeature('');
-    // 标识跟着用途一起清。留着它，下一次新建时它会顶上那个还没填的用途段——
-    // code 拼得出来、按钮可点，用户以为自己填过了；名称也是中文的话还会拼出与上一把
-    // 完全相同的 code，于是两把钥匙静默共用一条路由身份与一份预算。
-    setIdentitySlug('');
-    setAppCallerCodes('');
-    setTeamId('');
-    setAllowedCidrs('');
-    setRateLimitPerMinute('');
-    setRotatesKeyId(undefined);
-    setConfirmWildcardRisk(false);
-    setExpiresAt('');
-    await load();
+    };
+    let stage: 'caller' | 'key' = appCallerMode === 'generate' ? 'caller' : 'key';
+    const snapshot = () => ({ stage, request, caller: generatedAppCallerCode, requestType: appCallerRequestType, callerTeam: appCallerTeamId });
+    try {
+      if (appCallerMode === 'generate') {
+        if (!appCallerTeamId) { setError('当前租户还没有可用团队，无法登记调用用途。请先在组织与团队里建一个团队。'); return; }
+        // Always let the authoritative idempotent endpoint resolve exact code+type, team
+        // and traffic permission. A paged code-only list is not this decision's authority.
+        const callerRes = await createGatewayAppCaller({ teamId: appCallerTeamId, appCallerCode: generatedAppCallerCode, requestType: appCallerRequestType, title: name.trim() || generatedAppCallerCode, ingressProtocol: 'openai-compatible' });
+        if (accessScopeRef.current !== scope) return;
+        if (!callerRes.success) {
+          if (mutationOutcomeUnknown(callerRes.error?.code, CALLER_CREATE_REJECTED)) setCreationUnknown(snapshot());
+          else setError(callerRes.error?.message || '调用身份登记被拒绝，密钥未签发');
+          return;
+        }
+        setKnownAppCallers(current => current.includes(generatedAppCallerCode) ? current : [...current, generatedAppCallerCode].sort());
+      }
+      stage = 'key';
+      const res = await createServiceKey(request);
+      if (accessScopeRef.current !== scope) return;
+      if (!res.success) {
+        if (mutationOutcomeUnknown(res.error?.code, KEY_CREATE_REJECTED)) setCreationUnknown(snapshot());
+        else setError(res.error?.message || '密钥签发请求被拒绝');
+        return;
+      }
+      setCreated(res.data);
+      // 新人清单的「签一把密钥」与老手轨的密钥前缀都读缓存，签发成功必须主动失效，
+      // 否则已挂载的组件会一直显示旧事实（60 秒 TTL 只在下次加载才被查）。
+      invalidateOnboardingCache(tenant?.id);
+      setShowCreate(false);
+      setName('');
+      setClientCode('');
+      // 复位回默认路径，但 MAP 身份没有自助登记这一档，留在「选择已有」。
+      setAppCallerMode(sourceIsMap ? 'existing' : 'generate');
+      setAppCallerFeature('');
+      // 标识跟着用途一起清。留着它，下一次新建时它会顶上那个还没填的用途段——
+      // code 拼得出来、按钮可点，用户以为自己填过了；名称也是中文的话还会拼出与上一把
+      // 完全相同的 code，于是两把钥匙静默共用一条路由身份与一份预算。
+      setIdentitySlug('');
+      setAppCallerCodes('');
+      setTeamId('');
+      setAllowedCidrs('');
+      setRateLimitPerMinute('');
+      setRotatesKeyId(undefined);
+      setConfirmWildcardRisk(false);
+      setExpiresAt('');
+      await load();
+    } catch { if (accessScopeRef.current === scope) setCreationUnknown(snapshot()); }
+    finally { if (accessScopeRef.current === scope) { creatingRef.current = false; setCreating(false); } }
   };
 
-  const revoke = async (item: ServiceKeyItem) => {
-    if (!await confirm({ title: `撤销接入密钥「${item.name}」？`, description: '撤销后使用它的客户端会立即收到 401。', tone: 'danger', confirmLabel: '撤销' })) return;
-    setBusyId(item.id);
-    const res = await revokeServiceKey(item.id);
-    setBusyId(null);
-    if (!res.success) {
-      setError(res.error?.message || '撤销接入密钥失败');
-      return;
-    }
-    // 撤销和签发是同一份事实的两个方向：撤掉最后一把可用密钥后，新人清单的
-    // 「签一把密钥」必须重新亮起、老手轨的前缀必须消失。此前只在创建路径失效，
-    // 于是撤销后 60 秒内回到 Quickstart 仍显示已撤销的前缀（Codex P2）。
-    invalidateOnboardingCache(tenant?.id);
-    await load();
+  const reconcileCreation = async () => {
+    const pending = creationUnknown; if (!pending || checkingCreation || creatingRef.current || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt) return;
+    const scope = accessScope, sequence = ++creationReadSequence.current;
+    const current = () => accessScopeRef.current === scope && sequence === creationReadSequence.current && creationUnknownRef.current === pending;
+    candidateReadRef.current = null; setCreationCandidates(null);
+    setCheckingCreation(true);
+    try {
+      if (pending.stage === 'caller') {
+        const result = await getGatewayAppCallers({ search: pending.caller, requestType: pending.requestType, page: 1, pageSize: 200 });
+        if (!current()) return;
+        if (!result.success) { setCreationCheck('调用身份核对读取失败，原提交结果仍未确认。'); return; }
+        const found = result.data.items.find(item => item.appCallerCode.toLowerCase() === pending.caller.toLowerCase() && item.requestType === pending.requestType && item.teamId === pending.callerTeam);
+        if (found && ['discovered', 'configured', 'active'].includes(found.status.toLowerCase())) { setCreationUnknown(null); setCreationCheck('已确认同一调用身份和团队，密钥尚未签发，可继续。'); }
+        else setCreationCheck('尚未确认可继续的调用身份；请到调用方治理核对团队、用途和管理状态。');
+      } else {
+        const result = await getServiceKeys();
+        if (!current()) return;
+        if (!result.success) { setCreationCheck('密钥核对读取失败，签发结果仍未确认。'); return; }
+        setItems(result.data); setValidityNow(Date.now());
+        const candidates = result.data.filter(item => creationRequestMatches(item, pending.request));
+        setCreationCandidates({ scope, pending, items: candidates });
+        setCreationCheck(candidates.length ? `找到 ${candidates.length} 把可能相关的密钥；不能确认哪把属于本次签发，明文无法重现。请核对并撤销不再使用的候选。` : '尚未找到可确认的签发记录；结果仍未知，不会再次签发。');
+      }
+    } catch { if (current()) setCreationCheck('核对读取中断，原提交结果仍未确认，请重试读取。'); }
+    finally { if (current()) setCheckingCreation(false); }
   };
 
+  const candidateFor = (item: ServiceKeyItem) => creationUnknown?.stage === 'key' && creationCandidates?.scope === accessScope && creationCandidates.pending === creationUnknown
+    ? creationCandidates.items.find(candidate => candidate.id === item.id && candidate.enabled && candidateFingerprint(candidate) === candidateFingerprint(item)) : undefined;
+
+  const endCreationCheck = async () => {
+    if (creationUnknown?.stage !== 'key' || !canUseCapability(tenant?.role, 'serviceKeyWrite') || creatingRef.current || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt || checkingCreation) return;
+    const pending = creationUnknown, scope = accessScope; creatingRef.current = true;
+    try {
+      const agreed = await confirm({ title: '结束核对并重新准备？', description: '原签发仍未确认，可能已有或稍后出现有效密钥；结束不会撤销它们，也不能恢复明文。请先核对候选及审计。继续只清空本次表单、准备新任务，不会重发原请求。', tone: 'danger', confirmLabel: '清空并重新准备' });
+      if (!agreed || accessScopeRef.current !== scope || creationUnknownRef.current !== pending) return;
+      creationReadSequence.current++; candidateReadRef.current = null; creationUnknownRef.current = null;
+      setCreationUnknown(null); setCreationCandidates(null); setCreated(null);
+      resetCreationDraft();
+      setShowCreate(true); setCreationCheck('已清空表单，尚未提交新任务。原签发仍可能有效，请继续核对审计。');
+    } finally { if (accessScopeRef.current === scope) creatingRef.current = false; }
+  };
+
+  const runLifecycle = async (item: ServiceKeyItem, kind: KeyLifecycleIntent['kind']) => {
+    const candidate = kind === 'revoke' ? candidateFor(item) : undefined;
+    if (!canUseCapability(tenant?.role, 'serviceKeyWrite') || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt || creatingRef.current || checkingCreation || creationUnknown && !candidate) return;
+    const scope = accessScope, authorizedRead = creationCandidates;
+    lifecycleRef.current = true; setBusyId(item.id); setLifecycleResolved(null);
+    const intent: KeyLifecycleIntent = { kind, id: item.id, name: item.name, predecessorId: item.rotatesKeyId, successorId: item.rotatedByKeyId };
+    const markUnknown = () => { setLifecycleUnknown(intent); setLifecycleRead(null); setLifecycleReadAt(null); setLifecycleCheck(null); setError(null); };
+    try {
+      const confirmed = await confirm(kind === 'revoke'
+        ? { title: `撤销接入密钥「${item.name}」？`, description: candidate ? `候选 ID：${item.id}。范围与本次请求一致，但不能证明它属于本次签发；撤销后使用它的客户端立即收到 401，且明文无法恢复。原签发仍待核，不会重复签发。` : '撤销后使用它的客户端会立即收到 401。', tone: 'danger', confirmLabel: '撤销' }
+        : { title: `确认「${item.name}」的客户端已经全部切换到新密钥？`, description: '确认后旧密钥进入可撤销状态。', confirmLabel: '已全部切换' });
+      if (!confirmed || accessScopeRef.current !== scope) return;
+      if (candidate) {
+        if (candidateReadRef.current !== authorizedRead || creationUnknownRef.current !== authorizedRead?.pending) return;
+        let fresh;
+        try { fresh = await getServiceKeys(); }
+        catch { if (accessScopeRef.current === scope) { candidateReadRef.current = null; setCreationCandidates(null); setCreationCheck('候选读取中断，未撤销；请重新核对本次步骤。'); } return; }
+        if (accessScopeRef.current !== scope) return;
+        const target = fresh.success ? fresh.data.find(key => key.id === item.id) : undefined;
+        if (!target || candidateFingerprint(target) !== candidateFingerprint(candidate)) {
+          candidateReadRef.current = null; setCreationCandidates(null);
+          setCreationCheck(fresh.success ? '候选状态已变化，未撤销；请重新核对本次步骤并确认目标。' : '候选读取失败，未撤销；请重新核对本次步骤。'); return;
+        }
+      }
+      const response = kind === 'revoke' ? await revokeServiceKey(intent.id) : await confirmServiceKeyClientCutover(intent.id, intent.successorId || '');
+      if (accessScopeRef.current !== scope) return;
+      if (!response.success) {
+        if (mutationOutcomeUnknown(response.error?.code, kind === 'revoke' ? KEY_REVOKE_REJECTED : KEY_CUTOVER_REJECTED)) markUnknown();
+        else setError(response.error?.message || '操作在写入前被拒绝，请读取当前状态。');
+        return;
+      }
+      if (response.data.id !== intent.id || kind === 'revoke' && (!('revoked' in response.data) || response.data.revoked !== true)) { markUnknown(); return; }
+      if (kind === 'cutover' && (!('rotationState' in response.data) || response.data.rotationState !== 'client-switched')) { markUnknown(); return; }
+      if (kind === 'cutover' && 'successorKeyId' in response.data && response.data.successorKeyId !== intent.successorId) { markUnknown(); setLifecycleCheck(`服务端回报的后继 ${response.data.successorKeyId} 与操作前不同；请核对完整配对。`); return; }
+      const confirmedPhase = 'rotationState' in response.data && typeof response.data.rotationState === 'string' ? response.data.rotationState : kind === 'revoke' ? 'revoked' : 'client-switched';
+      if (candidate) { candidateReadRef.current = null; setCreationCandidates(null); }
+      setLifecycleReceipt(intent);
+      // Apply only the target outcome confirmed in this response. Full pairing/stage
+      // facts still come from the subsequent read; a failed read retains the receipt.
+      setItems(current => current?.map(key => key.id !== intent.id ? key : kind === 'revoke' ? { ...key, enabled: false, rotationState: confirmedPhase } : { ...key, rotationState: confirmedPhase }) ?? current);
+      invalidateOnboardingCache(tenant?.id);
+      await load();
+    } catch { if (accessScopeRef.current === scope) markUnknown(); }
+    finally { if (accessScopeRef.current === scope) { lifecycleRef.current = false; setBusyId(null); } }
+  };
+  const revoke = (item: ServiceKeyItem) => runLifecycle(item, 'revoke');
+  const confirmClientCutover = (item: ServiceKeyItem) => runLifecycle(item, 'cutover');
+  const reconcileLifecycle = async () => {
+    if (!lifecycleUnknown || checkingLifecycleRef.current) return;
+    const intent = lifecycleUnknown, scope = accessScope; checkingLifecycleRef.current = true;
+    setCheckingLifecycle(true); setLifecycleRead(null); setLifecycleReadAt(null);
+    try {
+      const response = await getServiceKeys();
+      if (accessScopeRef.current !== scope) return;
+      if (!response.success) { setLifecycleCheck('读取失败，原操作结果仍未确认。'); return; }
+      const readAt = new Date().toISOString();
+      setItems(response.data); setValidityNow(Date.now());
+      const target = response.data.find(item => item.id === intent.id);
+      if (target && keyLifecycleGoalObserved(intent, response.data)) {
+        setLifecycleResolved({ intent, target, related: response.data.filter(item => item.id !== target.id && [intent.predecessorId, intent.successorId].includes(item.id)), readAt });
+        setLifecycleUnknown(null); setLifecycleRead(null); setLifecycleCheck(null);
+        invalidateOnboardingCache(tenant?.id);
+        return;
+      }
+      setLifecycleRead(response.data); setLifecycleReadAt(readAt);
+      setLifecycleCheck('当前读取尚未满足完整目标，或相关密钥不在可见范围；原操作仍待核，不会重提。');
+    } catch { if (accessScopeRef.current === scope) setLifecycleCheck('读取中断，原操作结果仍未确认。'); }
+    finally { if (accessScopeRef.current === scope) { checkingLifecycleRef.current = false; setCheckingLifecycle(false); } }
+  };
   const copyCreatedKey = async () => {
     if (!created) return;
     await navigator.clipboard.writeText(created.key);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  };
-
-  const confirmClientCutover = async (item: ServiceKeyItem) => {
-    if (!await confirm({ title: `确认「${item.name}」的客户端已经全部切换到新密钥？`, description: '确认后旧密钥进入可撤销状态。', confirmLabel: '已全部切换' })) return;
-    setBusyId(item.id);
-    const res = await confirmServiceKeyClientCutover(item.id);
-    setBusyId(null);
-    if (!res.success) {
-      setError(res.error?.message || '确认客户端切换失败');
-      return;
-    }
-    await load();
+    setCopied(true); window.setTimeout(() => setCopied(false), 1600);
   };
 
   const startRotation = (item: ServiceKeyItem) => {
+    if (creatingRef.current || creationUnknown || lifecycleRef.current || lifecycleUnknown || lifecycleReceipt) return;
     setName(`${item.name} rotation`);
     setSourceSystem(item.sourceSystem);
     setClientCode(item.clientCode);
@@ -337,6 +503,7 @@ export function ServiceKeysPage() {
   };
 
   const toggleCreate = () => {
+    if (creatingRef.current || creationUnknown) return;
     setShowCreate((current) => {
       if (!current) setShowAdvanced(false);
       return !current;
@@ -377,7 +544,7 @@ export function ServiceKeysPage() {
     // ::intent 这些内部类型，只能引用已登记的 code —— 切到 map 就锁回「选择已有」。
     if (nextIsMap) setAppCallerMode('existing');
   };
-  const activeKeys = (items ?? []).filter((item) => item.enabled);
+  const activeKeys = (items ?? []).filter((item) => keyValidity(item).value === 'active');
   const mapCoverage = (['runtime', 'release-gate', 'canary'] as const).map((requiredPurpose) => ({
     purpose: requiredPurpose,
     ready: activeKeys.some((item) => item.sourceSystem.toLowerCase() === 'map' && item.environment === 'production' && item.purpose === requiredPurpose),
@@ -386,42 +553,99 @@ export function ServiceKeysPage() {
     .filter((item) => item.purpose === 'external-platform')
     .map((item) => `${item.clientCode} · ${item.environment}`)));
 
-  const saveLegacyCutover = async () => {
-    if (!canManageLegacyCutover || !legacyDeadline) return;
-    if (legacyStatus === 'revoked' && !await confirm({ title: '确认撤销 legacy shared key？', description: '撤销后旧 key 将立即返回 401，且必须已有 scoped key 双 key 观测。', tone: 'danger', confirmLabel: '撤销' })) return;
-    setLegacyBusy(true);
-    const res = await updateLegacyKeyCutover({
-      status: legacyStatus,
-      deadlineAt: new Date(legacyDeadline).toISOString(),
-      allowedAppCallerCodes: splitValues(legacyAllowedCallers),
-      successorServiceKeyIds: splitValues(legacySuccessorIds),
-      requiredSuccessorObservations: Math.max(1, Number(legacyRequired) || 1),
-    });
-    setLegacyBusy(false);
-    if (!res.success) {
-      setError(res.error?.message || '更新 legacy 收口策略失败');
-      return;
-    }
-    await load();
+  const readLegacyPolicy = async (discardDraft = false) => {
+    if (legacyCheckingRef.current || legacyTask.current.pending) return;
+    legacyCheckingRef.current = true; setLegacyChecking(true); setLegacyReadError(null); setLegacySettledFeedback(false);
+    const request = ++legacyReadSequence.current;
+    try {
+      const response = await getLegacyKeyCutover();
+      if (request !== legacyReadSequence.current) return;
+      if (!response.success || !response.data.applicable) {
+        setLegacyFeedback(response.success ? '当前未取得适用策略，原草稿与待核状态保留。' : `策略读取失败，原草稿与待核状态保留：${response.error.message}`);
+        return;
+      }
+      const data = response.data;
+      if (!Number.isSafeInteger(data.policyRevision) || data.policyRevision < 0) { setLegacyFeedback('未取得可校验的策略版本，原草稿保留；请刷新或联系管理员确认服务版本。'); return; }
+      setLegacy(data); setLegacyReadAt(new Date().toISOString());
+      const task = legacyTask.current;
+      const superseded = Boolean(task.unknown && data.policyRevision > task.unknown.expectedPolicyRevision && !legacyPolicyGoalObserved(task.unknown, data));
+      if (task.unknown && !legacyPolicyGoalObserved(task.unknown, data) && !(discardDraft && superseded)) {
+        setLegacyFeedback(superseded ? '当前策略已更新为其他目标，原请求回执未确认；可保留本次草稿核对，或丢弃原草稿并按最新策略编辑。' : '已读取当前策略，但尚未符合本次完整目标；结果仍待核，不会重新提交。');
+        return;
+      }
+      if (task.unknown || task.receipt || discardDraft) {
+        const wasUnknown = Boolean(task.unknown); const wasReceipt = task.receipt;
+        adoptLegacy(data); task.unknown = null; task.receipt = false; task.conflict = false;
+        setLegacyUnknown(null); setLegacyReceipt(false); setLegacyConflict(false);
+        setLegacySettledFeedback(true);
+        setLegacyFeedback(superseded ? '已丢弃原草稿，按最新策略开始新编辑；原请求回执仍未确认。' : wasUnknown ? '已核对当前策略符合本次目标；未确认原请求或审计回执。' : wasReceipt ? '保存已确认，已读取当前策略。' : '已丢弃原草稿，按最新读取版本编辑。');
+      }
+    } catch { setLegacyFeedback('策略读取中断，原草稿与待核状态保留。'); }
+    finally { legacyCheckingRef.current = false; setLegacyChecking(false); }
   };
+  const saveLegacyCutover = async () => {
+    const task = legacyTask.current;
+    if (!canManageLegacyCutover || !legacyDeadline || !Number.isSafeInteger(legacyDraftRevision) || legacyDraftRevision === null || task.pending || task.unknown || task.receipt || task.conflict) return;
+    const deadline = new Date(legacyDeadline);
+    if (!Number.isFinite(deadline.getTime())) { setLegacyFeedback('截止时间无效，请重新填写。'); return; }
+    const snapshot: LegacyPolicyWrite = {
+      expectedPolicyRevision: legacyDraftRevision, status: legacyStatus, deadlineAt: deadline.toISOString(),
+      allowedAppCallerCodes: splitValues(legacyAllowedCallers), successorServiceKeyIds: splitValues(legacySuccessorIds),
+      requiredSuccessorObservations: Math.max(1, Number(legacyRequired) || 1),
+    };
+    task.pending = true; legacyReadSequence.current++; setLegacyBusy(true); setLegacyFeedback(null); setLegacySettledFeedback(false);
+    let submitted = false;
+    const unknown = () => {
+      task.unknown = snapshot; setLegacyUnknown(snapshot);
+      setLegacyFeedback('保存结果未确认，可能已生效；本次草稿已保留。请核对当前策略，不会重新提交。');
+    };
+    try {
+      if (snapshot.status === 'revoked' && !await confirm({ title: '确认撤销旧共享密钥？', description: '撤销后使用旧密钥的客户端立即收到 401，且无法恢复。', tone: 'danger', confirmLabel: '撤销旧共享密钥' })) return;
+      submitted = true;
+      const response = await updateLegacyKeyCutover(snapshot);
+      if (!response.success) {
+        if (mutationOutcomeUnknown(response.error?.code, LEGACY_POLICY_REJECTED)) unknown();
+        else {
+          if (LEGACY_POLICY_NEEDS_READ.some(code => code === response.error?.code)) { task.conflict = true; setLegacyConflict(true); }
+          setLegacyFeedback(`本次未写入，草稿保留：${response.error.message}`);
+        }
+        return;
+      }
+      if (!Number.isSafeInteger(response.data.policyRevision) || response.data.policyRevision !== snapshot.expectedPolicyRevision + 1 || response.data.status !== snapshot.status) { unknown(); return; }
+      task.receipt = true; setLegacyReceipt(true);
+      setLegacyFeedback(`已确认保存策略 v${response.data.policyRevision}，正在读取当前策略。`);
+      // Acknowledged save and subsequent read have separate outcomes.
+      task.pending = false;
+      await readLegacyPolicy();
+    } catch { if (submitted) unknown(); else setLegacyFeedback('确认未完成，本次尚未发送保存请求。'); }
+    finally { task.pending = false; setLegacyBusy(false); }
+  };
+  const legacyLocked = legacyBusy || legacyChecking || Boolean(legacyUnknown) || legacyReceipt || legacyConflict;
 
   const selectedKey = items?.find((item) => item.id === selectedKeyId);
+  useLayoutEffect(() => {
+    if (!detailEntry) return;
+    const close = keyListRef.current?.parentElement?.querySelector<HTMLButtonElement>('.lg-collection-pane .lg-collection-close');
+    close?.scrollIntoView({ block: 'nearest' }); close?.focus({ preventScroll: true });
+  }, [detailEntry]);
+  useLayoutEffect(() => {
+    const open = Boolean(selectedKey);
+    if (detailWasOpen.current && !open) queueMicrotask(() => {
+      // The shared pane restores its still-present entry first. Search is the
+      // fallback only when that entry disappeared, for example after a revoke.
+      if (document.activeElement === document.body && !keyListRef.current?.parentElement?.querySelector('.lg-collection-pane')) keyListRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus({ preventScroll: true });
+    });
+    detailWasOpen.current = open;
+  }, [Boolean(selectedKey)]);
   const keyOverview = <>
-        {items ? <div className="lg-collection-key-overview" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
-          {isInternalTenant ? <div style={coverageCardStyle}>
-            <strong style={SECTION_TITLE}>MAP 生产 key 覆盖</strong><HelpPopover label="MAP 生产 key 覆盖">runtime、release-gate、canary 各用一把 production scoped key。</HelpPopover>
-            <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
-
-          </div> : null}
-          <div style={coverageCardStyle}>
-            <strong style={SECTION_TITLE}>外部平台独立身份</strong><HelpPopover label="外部平台独立身份">每个 clientCode 与环境各一把 key，不跨 purpose 或 environment。</HelpPopover>
-            <div style={chipRowStyle}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={HINT_TEXT}>暂无外部平台 key</span>}</div>
-
-          </div>
-        </div> : null}
+        {items && isInternalTenant ? <details className="lg-key-coverage" style={{ padding: '6px 0', fontSize: 'var(--fs-secondary)' }}>
+          <summary style={{ cursor: 'pointer' }}>MAP 生产密钥 · {mapCoverage.some(item => !item.ready) ? `${mapCoverage.filter(item => !item.ready).length} 类用途缺失` : '配置覆盖完整'}</summary>
+          <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
+          <p style={HINT_TEXT}>runtime、release-gate、canary 各用一把 production scoped key；仅核对有效凭据覆盖，未验证业务。</p>
+        </details> : null}
 
         {legacy ? <details className="lg-collection-key-legacy" style={legacyBlockStyle}>
-          <summary style={legacySummaryStyle}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
+          <summary style={legacySummaryStyle}>旧共享密钥 · {legacyBusy || legacyUnknown || legacyReceipt ? '上次读取：' : ''}{legacy.status === 'revoked' ? '已撤销' : legacy.status === 'ready' ? '等待撤销' : '替换观察中'} · 替代密钥观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}{legacy.status !== 'revoked' ? ` · ${legacy.deadlineAt ? formatTime(legacy.deadlineAt) + ' 后拒绝旧密钥调用' : '尚未设置截止时间'}` : ''}</summary>
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', marginTop: GAP.section }}>
             <span style={HINT_TEXT}>
               收口判定
@@ -433,23 +657,32 @@ export function ServiceKeysPage() {
             </span>
             <span style={HINT_TEXT}>必需协议 {legacy.requiredIngressProtocols.join(', ')} · 必需 scope {legacy.requiredScopes.join(', ')}</span>
           </div>
+          <div style={{ marginTop: GAP.normal }}>
+            <span style={HINT_TEXT}>{legacyBusy || legacyUnknown || legacyReceipt ? '上次读取' : '最近读取'}策略 v{legacy.policyRevision ?? '未提供'} · 草稿基于 v{legacyDraftRevision ?? '未读取'} · 读取于 {formatTime(legacyReadAt)}</span>
+            {legacyReceipt ? <div role="status">已确认保存策略 v{(legacyDraftRevision ?? 0) + 1}，当前策略待读取。</div> : null}
+            {legacyFeedback ? <InlineAlert tone={legacyUnknown || legacyConflict ? 'error' : 'info'}>{legacyFeedback}</InlineAlert> : null}
+            {legacyUnknown || legacyReceipt ? <Button size="sm" variant="ghost" style={legacyActionStyle} disabled={legacyBusy || legacyChecking} onClick={() => void readLegacyPolicy()}>{legacyChecking ? '正在核对…' : '核对当前策略'}</Button> : null}
+            {legacyConflict || legacyUnknown && legacy.policyRevision > legacyUnknown.expectedPolicyRevision ? <Button size="sm" variant="ghost" style={legacyActionStyle} disabled={legacyChecking} onClick={() => void readLegacyPolicy(true)}>{legacyUnknown ? '丢弃原草稿并按最新策略编辑' : '丢弃草稿并读取最新策略'}</Button> : null}
+          </div>
+          <fieldset disabled={legacyLocked} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
           <FormGrid style={{ marginTop: GAP.normal }}>
-            <label style={labelStyle}><span>截止时间</span><input type="datetime-local" value={legacyDeadline} onChange={(e) => setLegacyDeadline(e.target.value)} style={inputStyle} /></label>
-            <label style={labelStyle}><span>状态</span><select value={legacyStatus} onChange={(e) => setLegacyStatus(e.target.value as typeof legacyStatus)} style={inputStyle}><option value="observing">观测中</option><option value="ready">待撤销</option><option value="revoked">已撤销</option></select></label>
-            <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={setLegacyAllowedCallers} placeholder="逗号分隔；空表示先盘点" />
-            <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={setLegacySuccessorIds} placeholder="逗号分隔" />
-            <Field label="最低观测次数" value={legacyRequired} onChange={setLegacyRequired} placeholder="1" type="number" />
-            <Button variant="primary" size="sm" disabled={legacyBusy || !legacyDeadline} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
+            <label style={labelStyle}><span>截止时间</span><input type="datetime-local" value={legacyDeadline} onChange={(e) => { legacyDirty.current = true; setLegacyDeadline(e.target.value); }} style={inputStyle} /></label>
+            <label style={labelStyle}><span>状态</span><select value={legacyStatus} onChange={(e) => { legacyDirty.current = true; setLegacyStatus(e.target.value as typeof legacyStatus); }} style={inputStyle}><option value="observing" disabled={legacy.status === 'revoked'}>观测中</option><option value="ready" disabled={legacy.status === 'revoked'}>待撤销</option><option value="revoked">已撤销</option></select></label>
+            <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={value => { legacyDirty.current = true; setLegacyAllowedCallers(value); }} placeholder="逗号分隔；空表示先盘点" />
+            <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={value => { legacyDirty.current = true; setLegacySuccessorIds(value); }} placeholder="逗号分隔" />
+            <Field label="最低观测次数" value={legacyRequired} onChange={value => { legacyDirty.current = true; setLegacyRequired(value); }} placeholder="1" type="number" />
+            <Button variant="primary" size="sm" style={legacyActionStyle} disabled={legacyLocked || !legacyDeadline || legacyDraftRevision === null} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
           </FormGrid>
+          </fieldset>
           {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: GAP.section }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
         </details> : null}
 
   </>;
 
   const renderActions = (item: ServiceKeyItem) => item.enabled ? <div className="lg-service-key-actions">
-    {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" onClick={() => startRotation(item)}>轮换</Button> : null}
-    {item.rotationState === 'awaiting-client-cutover' ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void confirmClientCutover(item)}>确认已切换</Button> : null}
-    <Button size="sm" variant="ghost" disabled={busyId === item.id || item.rotationState === 'awaiting-client-cutover' || item.rotationState === 'client-switched' && Boolean(item.rotatesKeyId) && !item.rotatedByKeyId} onClick={() => void revoke(item)}>{item.rotationState === 'client-switched' && item.rotatedByKeyId ? '撤销旧钥并完成' : item.rotationState === 'client-switched' ? '等待旧钥撤销' : '撤销'}</Button>
+    {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" disabled={creating || Boolean(creationUnknown) || Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt)} onClick={() => startRotation(item)}>轮换</Button> : null}
+    {item.rotationState === 'awaiting-client-cutover' ? <Button size="sm" variant="ghost" disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt) || creating || Boolean(creationUnknown)} onClick={() => void confirmClientCutover(item)}>确认已切换</Button> : null}
+    <Button size="sm" variant="ghost" data-creation-candidate-revoke={candidateFor(item) ? item.id : undefined} disabled={Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt) || creating || checkingCreation || Boolean(creationUnknown) && !candidateFor(item) || item.rotationState === 'awaiting-client-cutover' || item.rotationState === 'client-switched' && Boolean(item.rotatesKeyId) && !item.rotatedByKeyId} onClick={() => void revoke(item)}>{item.rotationState === 'client-switched' && item.rotatedByKeyId ? '撤销旧钥并完成' : item.rotationState === 'client-switched' ? '等待旧钥撤销' : '撤销'}</Button>
   </div> : null;
 
   return (
@@ -468,7 +701,7 @@ export function ServiceKeysPage() {
           <>
             <Link className="lg-text-link" to="/organization">组织与团队</Link>
             <Link className="lg-text-link" to="/quickstart">对话</Link>
-            <Button size="sm" variant="ghost" onClick={() => void load()}><RefreshCw size={14} />刷新</Button>
+            <Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}><RefreshCw size={14} />{reading ? '读取中…' : '刷新'}</Button>
             <Button size="sm" variant="primary" onClick={toggleCreate}>
               {showCreate ? <X size={14} /> : <Plus size={14} />}{showCreate ? '取消' : '新建密钥'}
             </Button>
@@ -477,7 +710,30 @@ export function ServiceKeysPage() {
       />
 
       <PageBody className="lg-collection-page">
+        {lifecycleReceipt ? <InlineAlert tone="info">已确认{lifecycleReceipt.kind === 'revoke' ? '撤销' : '客户端切换'}「{lifecycleReceipt.name}」，{reading ? '正在刷新清单' : '当前清单待刷新，请重读'}；不会重发。{listError ? <span>{listError}</span> : null}<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读密钥清单</Button></InlineAlert> : null}
+        {lifecycleResolved ? <InlineAlert tone="info">
+          <strong data-lifecycle-resolved>已核对：「{lifecycleResolved.target.name}」{lifecycleResolved.target.enabled ? '已进入可撤销旧钥阶段' : rotationLabel(lifecycleResolved.target.rotationState)}</strong>
+          <span style={{ display: 'block', ...HINT_TEXT }}>读取于 {formatTime(lifecycleResolved.readAt)}</span>
+          {lifecycleResolved.related.map(key => <span key={key.id} style={{ display: 'block' }}>{key.id === lifecycleResolved.intent.successorId ? '后继密钥' : '前钥'}：{key.name} · {keyValidity(key).label}{rotationLabel(key.rotationState) !== keyValidity(key).label ? ` · ${rotationLabel(key.rotationState)}` : ''}</span>)}
+          <Button size="sm" variant="ghost" onClick={() => { setKeyTab('usage'); setSelectedKeyId(lifecycleResolved.target.id); setDetailEntry(value => value + 1); }}>查看该密钥</Button>
+          <span style={{ display: 'block', ...HINT_TEXT }}>原操作回执与审计状态未确认。</span>
+        </InlineAlert> : null}
+        {lifecycleUnknown ? <InlineAlert tone="error">
+          <strong data-lifecycle-summary>「{lifecycleUnknown.name}」的{lifecycleUnknown.kind === 'revoke' ? '撤销' : '客户端切换确认'}结果未确认，可能已生效；未重提。</strong>
+          {lifecycleReadAt ? <span style={{ display: 'block', ...HINT_TEXT }}>读取于 {formatTime(lifecycleReadAt)}</span> : null}
+          {!lifecycleRead ? <code style={{ display: 'block', overflowWrap: 'anywhere' }}>{lifecycleUnknown.id}</code> : null}
+          {lifecycleRead ? <CollectionFacts items={[lifecycleUnknown.id, lifecycleUnknown.predecessorId, lifecycleUnknown.successorId].filter((id): id is string => Boolean(id)).map(id => {
+            const key = lifecycleRead.find(item => item.id === id);
+            return { label: id === lifecycleUnknown.id ? '目标密钥' : id === lifecycleUnknown.predecessorId ? '前钥' : '后继密钥', value: <>{key ? <span>{key.name} · {keyValidity(key).label}{rotationLabel(key.rotationState) !== keyValidity(key).label ? ` · ${rotationLabel(key.rotationState)}` : ''}</span> : <span>当前可见范围未找到，未改用同名密钥</span>}<code style={{ display: 'block', overflowWrap: 'anywhere' }}>{id}</code></> };
+          })} /> : null}
+          {lifecycleCheck ? <span style={{ display: 'block' }}>{lifecycleCheck}</span> : null}
+          <Button size="sm" variant="ghost" disabled={checkingLifecycle} onClick={() => void reconcileLifecycle()}>读取相关密钥状态</Button>
+        </InlineAlert> : null}
+        {creationUnknown ? <InlineAlert tone="error">{creationUnknown.stage === 'caller' ? '调用身份登记结果未确认，密钥尚未签发。' : '密钥签发结果未确认，可能已生效；本次表单已保留，不会重复签发。'}<Button size="sm" variant="ghost" disabled={checkingCreation || Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt)} onClick={() => void reconcileCreation()}>核对本次步骤</Button>{creationUnknown.stage === 'caller' ? <Link className="lg-text-link" to={callerWorkspaceReturnHref(creationUnknown.caller, creationUnknown.requestType, '')}>查看调用方治理</Link> : <Link className="lg-text-link" to={`/service-keys?${new URLSearchParams({ client: creationUnknown.request.clientCode, appCaller: creationUnknown.request.appCallerCodes[0] || '' })}`}>查看可能相关的密钥</Link>}{creationUnknown.stage === 'key' ? <Button size="sm" variant="ghost" disabled={checkingCreation || Boolean(busyId) || Boolean(lifecycleUnknown) || Boolean(lifecycleReceipt)} onClick={() => void endCreationCheck()}>结束核对并重新准备</Button> : null}</InlineAlert> : null}
+        {creationCheck ? <InlineAlert tone="info">{creationCheck}</InlineAlert> : null}
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {listError && !lifecycleReceipt ? <InlineAlert tone="error">{listError}<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重新读取</Button></InlineAlert> : null}
+        {legacyReadError ? <InlineAlert tone="error">{legacyReadError}<Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}>重读旧共享密钥状态</Button></InlineAlert> : null}
 
         {created ? (
           <div style={createdPanelStyle}>
@@ -488,13 +744,13 @@ export function ServiceKeysPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
               <code style={createdKeyStyle}>{created.key}</code>
               <Button size="sm" onClick={() => void copyCreatedKey()}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制'}</Button>
-              <Link className="lg-text-link" to="/quickstart">对话</Link>
+              <Link className="lg-text-link" to="/learn#existing-key">查看已有密钥接入说明</Link>
             </div>
           </div>
         ) : null}
 
         {showCreate ? (
-          <div className="lg-service-key-form">
+          <fieldset className="lg-service-key-form" disabled={creating || Boolean(creationUnknown)} style={{ minWidth: 0, margin: 0, border: 0, padding: 0 }}>
             <div className="lg-service-key-fast-fields">
               <Field label="密钥名称" value={name} onChange={updateName} placeholder="例如 cherry-studio" />
               {appCallerMode === 'generate' ? (
@@ -534,7 +790,7 @@ export function ServiceKeysPage() {
               )}
               <datalist id="llmgw-app-callers">{knownAppCallers.map((code) => <option key={code} value={code} />)}</datalist>
               <datalist id="llmgw-app-caller-features">{FEATURE_PRESETS.map((item) => <option key={item.value} value={item.value} label={item.label} />)}</datalist>
-              <div className="lg-service-key-fast-action"><Button variant="primary" disabled={!canSubmit || creating} onClick={() => void submit()}>{creating ? '创建中' : '生成 API Key'}</Button></div>
+              <div className="lg-service-key-fast-action">{appCallerMode === 'generate' ? <span style={HINT_TEXT}>登记此调用身份并签发密钥，不修改已有预算。</span> : null}<Button variant="primary" disabled={!canSubmit || creating || Boolean(creationUnknown) || Boolean(rotatesKeyId && (busyId || lifecycleUnknown || lifecycleReceipt))} onClick={() => void submit()}>{creating ? '创建中' : '生成 API Key'}</Button></div>
             </div>
             {/*
               自动设置这一行是「系统替你填了什么」的唯一交代口：clientCode、生成出来的
@@ -595,12 +851,12 @@ export function ServiceKeysPage() {
             ) : null}
             {usesWildcard && !canCreateWildcard ? <InlineAlert tone="error">Developer 只能创建明确限定 appCaller、协议和 scope 的团队密钥。</InlineAlert> : null}
             {rotatesKeyId ? <Prose>正在轮换 {rotatesKeyId}，新旧密钥并行有效。</Prose> : null}
-          </div>
+          </fieldset>
         ) : null}
 
         {!items || items.length === 0 ? keyOverview : null}
 
-        {!items ? <SectionLoader text="正在加载接入密钥" /> : items.length === 0 ? (
+        {!items ? reading ? <SectionLoader text="正在加载接入密钥" /> : null : items.length === 0 ? (
           <div className="lg-service-key-empty">
             <KeyRound size={24} />
             <strong>当前租户还没有外部接入密钥</strong>
@@ -609,8 +865,8 @@ export function ServiceKeysPage() {
           </div>
         ) : (
           <>
-          <div className="lg-collection-workspace lg-collection-key-workspace"><div className="lg-collection-list">{keyOverview}
-          <CollectionView items={items} placeholder="搜索密钥名称、客户端或调用用途" searchText={(item) => [item.name, item.keyPrefix, item.clientCode, item.environment, item.purpose, ...item.appCallerCodes].join(' ')} filters={[{ value: 'active', label: '有效', matches: (item) => item.enabled }, { value: 'revoked', label: '已撤销', matches: (item) => !item.enabled }]}>
+          <div className="lg-collection-workspace lg-collection-key-workspace"><div ref={keyListRef} className="lg-collection-list">{keyOverview}
+          <CollectionView key={`${contextClient}:${contextCaller}`} initialFilter={contextClient || contextCaller ? 'context' : 'active'} allFilterLabel="全部密钥（含历史）" emptyText="当前条件没有密钥，可切换状态或清除筛选" items={items} placeholder="搜索密钥名称、客户端或调用用途" searchText={(item) => [item.name, item.keyPrefix, item.clientCode, item.environment, item.purpose, ...item.appCallerCodes].join(' ')} filters={[...(contextClient || contextCaller ? [{ value: 'context', label: '同用途（含历史）', matches: (item: ServiceKeyItem) => (!contextClient || item.clientCode === contextClient) && (!contextCaller || item.appCallerCodes.some(code => code.toLowerCase() === contextCaller.toLowerCase())) }] : []), { value: 'active', label: '有效', matches: (item) => keyValidity(item).value === 'active' }, { value: 'expired', label: '已过期', matches: (item) => keyValidity(item).value === 'expired' }, { value: 'unknown', label: '有效期未知', matches: (item) => keyValidity(item).value === 'unknown' }, { value: 'revoked', label: '已撤销', matches: (item) => !item.enabled }]}>
           {(pageItems) => <>
           <div className="lg-service-key-desktop">
             <table className="lg-service-key-table lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -623,7 +879,7 @@ export function ServiceKeysPage() {
                 <td style={td}><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>{item.appCallerCodes.length} 个调用用途</Button><div style={HINT_TEXT}>协议 {item.ingressProtocols.length} · Scope {item.scopes.length}</div></td>
                 <td style={td} title={item.teamId || '租户级'}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
                 <td style={td}><div title={formatTime(item.lastUsedAt)}>{formatTime(item.lastUsedAt)}</div><div style={HINT_TEXT} title={formatTime(item.expiresAt)}>过期：{formatTime(item.expiresAt)}</div></td>
-                <td style={td}><div className="lg-collection-key-status"><Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} /><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>详情</Button></div></td>
+                <td style={td}><div className="lg-collection-key-status"><Chip label={keyValidity(item).label} color={keyValidity(item).color} bg={keyValidity(item).bg} /><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>详情</Button></div></td>
               </tr>)}</tbody>
             </table>
           </div>
@@ -631,7 +887,7 @@ export function ServiceKeysPage() {
             {pageItems.map((item) => <article key={item.id} className="lg-service-key-card">
               <div className="lg-service-key-card-heading">
                 <div><strong>{item.name}</strong><code>{item.keyPrefix}</code></div>
-                <Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
+                <Chip label={keyValidity(item).label} color={keyValidity(item).color} bg={keyValidity(item).bg} />
               </div>
               <div className="lg-service-key-card-identity">
                 <span>工作负载身份</span>
@@ -651,10 +907,10 @@ export function ServiceKeysPage() {
           </>}
           </CollectionView></div>
           {selectedKey ? <CollectionDetailPane key={selectedKey.id} title={selectedKey.name} identifier={selectedKey.keyPrefix} onClose={() => setSelectedKeyId(null)} footer={<div className="lg-collection-key-actions">{!selectedKey.enabled ? <span style={HINT_TEXT}>已撤销，只读<HelpPopover label="已撤销">仅可查看权限与历史记录</HelpPopover></span> : null}{renderActions(selectedKey)}<Button size="sm" variant="ghost" onClick={() => setSelectedKeyId(null)}>关闭</Button></div>} tabs={<><CollectionPaneTab active={keyTab === "permissions"} onClick={() => setKeyTab("permissions")}>权限范围</CollectionPaneTab><CollectionPaneTab active={keyTab === "usage"} onClick={() => setKeyTab("usage")}>轮换与使用</CollectionPaneTab></>}>
-            <div className={keyTab === "permissions" ? "lg-collection-key-permissions" : "lg-collection-hidden"}><div className="lg-collection-key-facts"><div className="lg-collection-key-meta"><div><span>客户端 / 环境</span><p>{selectedKey.clientCode} · {selectedKey.environment} · {selectedKey.purpose}</p></div><div><span>状态 / 过期</span><p>{rotationLabel(selectedKey.rotationState)} · {formatTime(selectedKey.expiresAt)}</p></div></div><div className="lg-collection-key-heading"><h3>调用用途 <Chip label={String(selectedKey.appCallerCodes.length)} color="var(--accent)" bg="var(--accent-soft)"/></h3><Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(selectedKey.appCallerCodes.join('\n')).then(() => setScopeCopied(true), () => setError('复制失败，请选中调用用途后手动复制'))}>{scopeCopied ? '已复制' : '复制全部调用用途'}</Button></div></div>
-            <CollectionView className="lg-collection-codes" items={selectedKey.appCallerCodes} searchText={(code) => code} placeholder="搜索 appCaller 标识">{(codes) => <>{codes.map((code) => <div key={code} className="lg-collection-code" title={code}>{code}</div>)}</>}</CollectionView>
+            <div className={keyTab === "permissions" ? "lg-collection-key-permissions" : "lg-collection-hidden"}><div className="lg-collection-key-facts"><div className="lg-collection-key-meta"><div><span>客户端 / 环境</span><p>{selectedKey.clientCode} · {selectedKey.environment} · {selectedKey.purpose}</p></div><div><span>状态 / 过期</span><p>{rotationLabel(selectedKey.rotationState)} · {formatTime(selectedKey.expiresAt)}</p></div></div><div className="lg-collection-key-heading"><h3>调用用途</h3><Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(selectedKey.appCallerCodes.join('\n')).then(() => setScopeCopied(true), () => setError('复制失败，请选中调用用途后手动复制'))}>{scopeCopied ? '已复制' : '复制全部调用用途'}</Button></div></div>
+            <div className="lg-collection-codes">{selectedKey.appCallerCodes.length <= 6 ? selectedKey.appCallerCodes.map(code => <div key={code} className="lg-collection-code" title={code}>{code}</div>) : <CollectionView items={selectedKey.appCallerCodes} searchText={(code) => code} placeholder="搜索 appCaller 标识">{(codes) => <>{codes.map((code) => <div key={code} className="lg-collection-code" title={code}>{code}</div>)}</>}</CollectionView>}</div>
             <div className="lg-collection-key-facts lg-collection-key-permission-summary"><div><h3>入口协议</h3><p>{selectedKey.ingressProtocols.map((protocol) => <Chip key={protocol} label={protocol} color="var(--text-secondary)" bg="var(--bg-elevated)"/>)}</p></div><div><h3>Scope</h3><p>{selectedKey.scopes.map((scope) => <Chip key={scope} label={scope} color="var(--text-secondary)" bg="var(--bg-elevated)"/>)}</p></div></div></div>
-            {keyTab === "usage" ? <div className="lg-collection-key-facts"><CollectionFacts items={[{label:'轮换阶段',value:rotationLabel(selectedKey.rotationState)},{label:'过期时间',value:formatTime(selectedKey.expiresAt)},{label:'网络与速率',value:<>{selectedKey.allowedCidrs.length ? selectedKey.allowedCidrs.join('、') : '不限 CIDR'} · {selectedKey.rateLimitPerMinute ? `${selectedKey.rateLimitPerMinute}/分钟` : '不限速'}</>},{label:'团队与创建者',value:<>{selectedKey.teamId || '租户级'} · {selectedKey.createdByUsername || '历史密钥'}</>},{label:'最后使用',value:formatTime(selectedKey.lastUsedAt)},{label:'前钥',value:selectedKey.rotatesKeyId || '无'},{label:'后钥',value:selectedKey.rotatedByKeyId || '无'},{label:'来源',value:selectedKey.sourceSystem}]}/></div> : null}
+            {keyTab === "usage" ? <div className="lg-collection-key-facts"><CollectionFacts items={[{label:'密钥 ID',value:<code style={{ overflowWrap: 'anywhere' }}>{selectedKey.id}</code>},{label:'轮换阶段',value:rotationLabel(selectedKey.rotationState)},{label:'过期时间',value:formatTime(selectedKey.expiresAt)},{label:'网络与速率',value:<>{selectedKey.allowedCidrs.length ? selectedKey.allowedCidrs.join('、') : '不限 CIDR'} · {selectedKey.rateLimitPerMinute ? `${selectedKey.rateLimitPerMinute}/分钟` : '不限速'}</>},{label:'团队与创建者',value:<>{selectedKey.teamId || '租户级'} · {selectedKey.createdByUsername || '历史密钥'}</>},{label:'最后使用',value:formatTime(selectedKey.lastUsedAt)},{label:'前钥',value:selectedKey.rotatesKeyId || '无'},{label:'后钥',value:selectedKey.rotatedByKeyId || '无'},{label:'来源',value:selectedKey.sourceSystem}]}/></div> : null}
 
           </CollectionDetailPane> : null}
 </div>
@@ -725,9 +981,7 @@ function buildAppCallerCode(clientCode: string, feature: string, requestType: Se
 }
 
 function formatTime(value?: string | null) {
-  if (!value) return '未设置';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return value ? formatPlatformTime(value) : '—';
 }
 
 function toLocalInput(value: string) {
@@ -742,7 +996,7 @@ function rotationLabel(state: string) {
     active: '未轮换',
     'new-key-created': '新钥已创建',
     'awaiting-client-cutover': '等待客户端切换',
-    'client-switched': '客户端已切换',
+    'client-switched': '已确认切换',
     'old-key-revoked': '旧钥已撤销',
     completed: '轮换完成',
     revoked: '已撤销',
@@ -762,8 +1016,8 @@ const surfaceCardStyle: React.CSSProperties = {
   borderRadius: 'var(--radius)',
   background: 'var(--bg-surface)',
 };
-const coverageCardStyle: React.CSSProperties = surfaceCardStyle;
 const legacyBlockStyle: React.CSSProperties = surfaceCardStyle;
+const legacyActionStyle: React.CSSProperties = { minHeight: '3.25rem', height: 'auto', marginRight: GAP.tight };
 const chipRowStyle: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginTop: GAP.normal };
 const legacySummaryStyle: React.CSSProperties = {
   cursor: 'pointer',
@@ -794,6 +1048,21 @@ const createdKeyStyle: React.CSSProperties = {
  * 而 --danger 从未定义 —— 整条 background 声明作废（有定义所以 var() 的 fallback 也不触发），
  * 这个警告框长期连底色和边框都没有。改成 --err 后它们会重新出现，这是修复。
  */
+// Candidates are a readable request-scope match, never proof of issuance attribution.
+function candidateFingerprint(item: ServiceKeyItem) {
+  const values = (items: readonly string[]) => [...items].map(value => value.toLowerCase()).sort();
+  return JSON.stringify([item.id, item.name, item.keyPrefix, item.enabled, item.rotationState, item.rotatesKeyId || null, item.rotatedByKeyId || null, item.teamId || null,
+    item.sourceSystem, item.clientCode, item.environment, item.purpose, values(item.appCallerCodes), values(item.ingressProtocols), values(item.scopes), values(item.allowedCidrs), item.rateLimitPerMinute ?? null, item.expiresAt ? Date.parse(item.expiresAt) : null]);
+}
+
+function creationRequestMatches(item: ServiceKeyItem, request: CreateServiceKeyRequest) {
+  const sameValues = (left: readonly string[], right: readonly string[]) => JSON.stringify([...left].map(value => value.toLowerCase()).sort()) === JSON.stringify([...right].map(value => value.toLowerCase()).sort());
+  return item.name === request.name && item.clientCode === request.clientCode && item.sourceSystem === request.sourceSystem && item.environment === request.environment && item.purpose === request.purpose
+    && (item.teamId || '') === (request.teamId || '') && (item.rotatesKeyId || '') === (request.rotatesKeyId || '') && (item.rateLimitPerMinute ?? null) === (request.rateLimitPerMinute ?? null)
+    && (item.expiresAt ? Date.parse(item.expiresAt) : null) === (request.expiresAt ? Date.parse(request.expiresAt) : null)
+    && sameValues(item.appCallerCodes, request.appCallerCodes) && sameValues(item.ingressProtocols, request.ingressProtocols) && sameValues(item.scopes, request.scopes) && sameValues(item.allowedCidrs, request.allowedCidrs);
+}
+
 const wildcardStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',

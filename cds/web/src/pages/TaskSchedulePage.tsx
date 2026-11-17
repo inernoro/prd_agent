@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlarmClock, ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiRequest } from '@/lib/api';
+import { userErrorMessage } from '@/lib/userErrorMessage';
+import { createLatestWinsGate } from '@/lib/latest-wins';
 import { parseCurlCommand } from '@/lib/curl-import';
 import { resolveTaskScheduleProjectId, taskScheduleProjectReference } from '@/lib/task-schedule-project';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -157,6 +159,9 @@ export function TaskSchedulePage(): JSX.Element {
   const [saving, setSaving] = useState(false);
   const [runningId, setRunningId] = useState('');
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [hasSnapshot, setHasSnapshot] = useState(false);
+  const readGate = useRef(createLatestWinsGate());
   const [toast, setToast] = useState('');
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
   const [editingActionIndex, setEditingActionIndex] = useState<number | null>(null);
@@ -179,31 +184,36 @@ export function TaskSchedulePage(): JSX.Element {
   }, []);
 
   const load = useCallback(async (quiet = false) => {
+    const ticket = readGate.current.begin();
     if (!quiet) setLoading(true);
-    setError('');
     try {
       const [projectRes, jobRes, runRes] = await Promise.all([
         apiRequest<{ projects?: ProjectLite[] }>('/api/projects'),
         apiRequest<{ jobs: ScheduledJob[] }>('/api/scheduled-jobs?nextRuns=24'),
         apiRequest<{ runs: ScheduledJobRun[] }>('/api/scheduled-jobs/runs?limit=400'),
       ]);
+      if (!readGate.current.accept(ticket)) return;
       const nextProjects = projectRes.projects || [];
       const initialProjectId = resolveTaskScheduleProjectId(projectSearch, nextProjects);
       setProjects(nextProjects);
       setJobs(jobRes.jobs || []);
       setRuns(runRes.runs || []);
       setForm((prev) => prev.projectId ? prev : emptyForm(initialProjectId));
+      setHasSnapshot(true);
+      setLoadError('');
+      setLoading(false);
     } catch (err) {
-      setError((err as Error).message);
-    } finally {
+      if (!readGate.current.accept(ticket)) return;
+      setLoadError(userErrorMessage(err));
       setLoading(false);
     }
   }, [projectSearch]);
 
   useEffect(() => {
+    readGate.current.newSession();
     void load();
     const refresh = window.setInterval(() => { void load(true); }, 30_000);
-    return () => window.clearInterval(refresh);
+    return () => { readGate.current.newSession(); window.clearInterval(refresh); };
   }, [load]);
 
   useEffect(() => {
@@ -279,12 +289,12 @@ export function TaskSchedulePage(): JSX.Element {
     return [
       { key: 'attention', label: '需要注意', tone: 'text-bad', jobs: attention },
       { key: 'soon', label: '即将触发', tone: 'text-primary-ink', jobs: soon },
-      { key: 'normal', label: '正常运行', tone: 'text-muted-foreground', jobs: normal },
+      { key: 'normal', label: '其他已启用', tone: 'text-muted-foreground', jobs: normal },
     ].filter((group) => group.jobs.length > 0);
   }, [jobs, now]);
 
   // 第一屏不该是一张空表单 —— 那正是这次重构要治的病。有任务就默认打开最该看的
-  // 那一个（分组已按「需要注意 → 即将触发 → 正常运行」排好），新建始终是显式动作。
+  // 那一个（分组已按「需要注意 → 即将触发 → 其他已启用」排好），新建始终是显式动作。
   // 只在首次落位一次：用户点了「新建任务」把 selectedId 清空后，不许再被抢回去。
   // 选中某个任务时运行流默认只看它 —— 归因要的就是这个。但低频任务只有一两条记录，
   // 中栏会空掉大半（content-fills-canvas）。所以给一个显式的作用域开关，
@@ -513,13 +523,14 @@ export function TaskSchedulePage(): JSX.Element {
     >
       <Workspace fluid className="cds-workspace--fill min-h-0">
         {error ? <ErrorBlock message={error} /> : null}
+        {loadError ? <div role="alert" className={`mb-3 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 ${hasSnapshot ? 'border-warn/30 bg-warn-soft text-warn' : 'border-bad/30 bg-bad-soft text-bad'}`}><p className="min-w-0 flex-1 basis-[15rem] text-sm">{hasSnapshot ? '刷新失败：' : '任务读取失败：'}{loadError}；{hasSnapshot ? '最新状态待确认。' : '尚未确认是否存在任务。'}</p><Button className="min-h-11" size="sm" variant="outline" disabled={loading} onClick={() => void load()}>重试读取</Button></div> : null}
         {toast ? (
           <div className="mb-3 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-sm text-ok">
             {toast}
           </div>
         ) : null}
 
-        {loading ? <LoadingBlock label="加载任务调度配置" /> : (
+        {loading && !hasSnapshot ? <LoadingBlock label="加载任务调度配置" /> : !hasSnapshot ? null : (
           <div className="flex flex-col gap-3 xl:min-h-0 xl:flex-1">
 
             {/* 值班条：常驻，跨左右两栏。它回答的是页面级的「有没有出事」，
@@ -532,9 +543,9 @@ export function TaskSchedulePage(): JSX.Element {
                 <div className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3">
                   <div className="flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${overview.tone === 'bad' ? 'bg-bad' : overview.tone === 'warn' ? 'bg-warn' : 'bg-ok'}`} />
-                    <span className="truncate text-base font-semibold">{overview.headline}</span>
+                    <span className="min-w-0 break-words text-base font-semibold">{loadError ? '上次记录：' : ''}{overview.headline}</span>
                   </div>
-                  <div className="mt-1 truncate text-xs leading-5 text-muted-foreground">{overview.detail}</div>
+                  <div className="mt-1 break-words text-sm leading-5 text-muted-foreground">{overview.detail}</div>
                 </div>
                 {/*
                   * 从 lg 起才露，不是 md：这一条统计段是固定宽的（5 个 86px 格 + 188px
@@ -735,7 +746,7 @@ export function TaskSchedulePage(): JSX.Element {
             <DialogHeader className="shrink-0 border-b border-[hsl(var(--hairline))] py-3 pl-5 pr-12">
               <div className="text-left">
                 <DialogTitle className="text-[0.9375rem]">{form.id ? '编辑任务' : '新建任务'}</DialogTitle>
-                <div className="mt-0.5 text-xs text-muted-foreground">触发器启动任务，动作按顺序执行。</div>
+                <DialogDescription className="mt-0.5 text-xs text-muted-foreground">触发器启动任务，动作按顺序执行。</DialogDescription>
               </div>
             </DialogHeader>
 

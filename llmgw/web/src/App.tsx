@@ -1,3 +1,4 @@
+import { gatewayLoginDestination } from '@/components/entry/quickstartArrival';
 import { LogTracePage } from '@/pages/LogTracePage';
 // 独立路由（自成体系，不依赖 prd-admin）：/login 登录 + /change-password 首登强制改密 + / 控制台首页（需鉴权）。
 import { useEffect } from 'react';
@@ -61,9 +62,9 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 // 改密页守卫：未登录跳登录；已登录且无需改密则不应停留在此页，回主页。
 function RequireChangePassword({ children }: { children: ReactNode }) {
-  const { authed, mustChangePassword } = useAuth();
+  const { authed, mustChangePassword, tenant } = useAuth();
   if (!authed) return <Navigate to="/login" replace />;
-  if (!mustChangePassword) return <Navigate to="/quickstart" replace />;
+  if (!mustChangePassword) return <Navigate to={gatewayLoginDestination(null, tenant)} replace />;
   return <>{children}</>;
 }
 

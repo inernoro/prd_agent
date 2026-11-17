@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -24,6 +25,136 @@ def sample(hour=0, used=50, source=10):
 
 
 class CapacityTests(unittest.TestCase):
+    def test_native_collection_budget_leaves_time_for_parent_to_publish(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(cap.subprocess, "run") as native:
+                native.return_value.stdout = "4096\tcache\n"
+                current = cap.collect({"cache": root})
+            self.assertEqual(current["sources"]["cache"]["bytes"], 4096)
+            self.assertGreater(native.call_args.kwargs["timeout"], 0)
+            # The managed parent has a fixed 55s limit. Native collection must
+            # leave at least 10s for analysis, history and atomic publication.
+            self.assertLessEqual(native.call_args.kwargs["timeout"], 45)
+
+    def test_slow_source_does_not_serialize_the_other_known_roots(self):
+        fast_started = threading.Event()
+        def native(argv, **kwargs):
+            if argv[-1].endswith("slow"):
+                if not fast_started.wait(1):
+                    raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+            else:
+                fast_started.set()
+            return subprocess.CompletedProcess(argv, 0, "4096\tcache\n")
+        with tempfile.TemporaryDirectory() as root:
+            selected = {name: str(Path(root) / name) for name in ("slow", "fast")}
+            for directory in selected.values():
+                Path(directory).mkdir()
+            with patch.object(cap.subprocess, "run", side_effect=native):
+                current = cap.collect(selected)
+            self.assertEqual([row["bytes"] for row in current["sources"].values()], [4096, 4096])
+            self.assertFalse(current["errors"])
+
+    def test_shared_deadline_does_not_start_more_native_work_after_expiry(self):
+        # First clock read creates the deadline; every later read is beyond it.
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(cap.time, "monotonic", side_effect=[0] + [46] * 100), \
+                    patch.object(cap.subprocess, "run") as native:
+                current = cap.collect({"cache": root}, docker=True)
+            # Avoid mock's argument dump: Docker's inherited env can contain
+            # credentials, even though production removes remote selectors.
+            self.assertEqual(native.call_count, 0)
+            self.assertIsNone(current["sources"]["cache"]["bytes"])
+            self.assertTrue(current["filesystems"])
+            self.assertEqual(len(current["errors"]), 2)
+            self.assertEqual(cap.analyze(current, [])["status"], "unknown")
+
+    def test_native_source_concurrency_is_bounded_for_cli_root_sets(self):
+        gate, lock = threading.Event(), threading.Lock()
+        active, peak = 0, 0
+        def native(argv, **kwargs):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                if active == 4:
+                    gate.set()
+            started = gate.wait(1)
+            with lock:
+                active -= 1
+            if not started:
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+            return subprocess.CompletedProcess(argv, 0, "4096\tcache\n")
+        with tempfile.TemporaryDirectory() as root:
+            selected = {str(n): str(Path(root) / str(n)) for n in range(12)}
+            for directory in selected.values():
+                Path(directory).mkdir()
+            with patch.object(cap.subprocess, "run", side_effect=native):
+                current = cap.collect(selected)
+            self.assertEqual(peak, 4)
+            self.assertEqual(len(current["sources"]), 12)
+            self.assertTrue(all(row["bytes"] == 4096 for row in current["sources"].values()))
+            self.assertFalse(current["errors"])
+
+    def test_cli_publishes_completed_sources_when_another_scan_times_out(self):
+        def native(argv, **kwargs):
+            if argv[-1].endswith("slow"):
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+            return subprocess.CompletedProcess(argv, 0, "4096\tcache\n")
+        with tempfile.TemporaryDirectory() as root:
+            fast, slow, state = (Path(root) / name for name in ("fast", "slow", "state"))
+            fast.mkdir(); slow.mkdir()
+            argv = [str(SCRIPT), "--source", f"fast={fast}", "--source", f"slow={slow}", "--state-dir", str(state)]
+            with patch.object(cap.subprocess, "run", side_effect=native), patch("sys.argv", argv):
+                self.assertEqual(cap.main(), 3)
+            report = json.loads((state / "latest.json").read_text())
+            self.assertEqual(report["status"], "unknown")
+            self.assertEqual(report["sources"]["fast"]["bytes"], 4096)
+            self.assertIsNone(report["sources"]["slow"]["bytes"])
+            self.assertTrue(report["filesystems"])
+            self.assertIn("source:slow:collection-failed", [a["code"] for a in report["alerts"]])
+            self.assertEqual(sorted(p.name for p in state.iterdir()), ["history.json", "latest.json", "lock"])
+
+    def test_cli_publishes_latest_and_preserves_history_when_collection_fails(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, state = Path(root) / "cache", Path(root) / "state"
+            source.mkdir()
+            (source / "payload").write_bytes(b"x" * 8192)
+            result = subprocess.run(["python3", str(SCRIPT), "--source", f"cache={source}", "--state-dir", str(state)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 3)
+            self.assertEqual(json.loads((state / "latest.json").read_text()), json.loads(result.stdout))
+            self.assertEqual((state / "latest.json").stat().st_mode & 0o777, 0o600)
+            history = (state / "history.json").read_bytes()
+            with patch.object(cap, "collect", side_effect=ValueError("fixture failure")), patch("sys.argv", [str(SCRIPT), "--source", f"cache={source}", "--state-dir", str(state)]):
+                self.assertEqual(cap.main(), 3)
+            latest = json.loads((state / "latest.json").read_text())
+            self.assertEqual(latest["status"], "unknown")
+            self.assertIn("collector-or-state-failed", [a["code"] for a in latest["alerts"]])
+            self.assertEqual((state / "history.json").read_bytes(), history)
+            self.assertFalse((state / "history.pending").exists())
+            self.assertLessEqual(sum(p.stat().st_size for p in state.iterdir()), 12 * 1024**2)
+
+    def test_missing_source_replaces_previous_report_with_unknown_without_erasing_history(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, state = Path(root) / "cache", Path(root) / "state"
+            source.mkdir()
+            command = ["python3", str(SCRIPT), "--source", f"cache={source}", "--state-dir", str(state)]
+            first = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(first.returncode, 3)
+            history = (state / "history.json").read_bytes()
+            # A previously valid flat-growth reading must not remain green after
+            # the selected source disappears before collection can start.
+            previous = json.loads((state / "latest.json").read_text())
+            previous["status"], previous["alerts"] = "ok", []
+            for row in [*previous["sources"].values(), *previous["filesystems"].values()]:
+                row.update(deltaBytes=0, bytesPerDay=0, windowSeconds=3600)
+            (state / "latest.json").write_text(json.dumps(previous))
+            source.rmdir()
+            failed = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(failed.returncode, 3)
+            self.assertEqual(json.loads((state / "latest.json").read_text()), json.loads(failed.stdout))
+            self.assertEqual((state / "history.json").read_bytes(), history)
+            self.assertIn("collector-or-state-failed", [a["code"] for a in json.loads(failed.stdout)["alerts"]])
+
     def test_forecast_warns_below_watermark_before_reserve_exhaustion(self):
         report = cap.analyze(sample(24, 60, 20), [sample(h, 50 + 10*h/24, 10 + 10*h/24) for h in range(24)], reserve_bytes=6 * GIB)
         self.assertEqual(report["status"], "warning")

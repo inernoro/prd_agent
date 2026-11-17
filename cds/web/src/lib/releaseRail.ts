@@ -58,11 +58,11 @@ export function describeCommitPosition(
     return { text: '还没有发布过版本', tone: 'unknown' };
   }
   const { behindCount, aheadCount } = position;
-  if (behindCount === null && aheadCount === null) {
+  if (behindCount == null || aheadCount == null) {
     return { text: `无法与 ${branchLabel} 比较${position.reason ? `：${position.reason}` : ''}`, tone: 'unknown' };
   }
-  const behind = behindCount ?? 0;
-  const ahead = aheadCount ?? 0;
+  const behind = behindCount;
+  const ahead = aheadCount;
   if (behind > 0 && ahead > 0) {
     return { text: `与 ${branchLabel} 已分叉：落后 ${behind} 个、领先 ${ahead} 个提交`, tone: 'warn' };
   }

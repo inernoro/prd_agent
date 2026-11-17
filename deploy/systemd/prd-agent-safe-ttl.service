@@ -1,0 +1,12 @@
+[Unit]
+Description=Guard temporary-data TTL with offsite restore and log preservation
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=180
+ExecStart=/usr/bin/python3 /usr/local/lib/prd-agent-business-backup/prd-agent-safe-ttl.py --config /etc/prd-agent/safe-ttl.json

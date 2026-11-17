@@ -82,7 +82,14 @@ function inventoryStdout(options: { current: string; previous?: string; worktree
 }
 
 function isWriteCommand(command: string): boolean {
+  const spec = reclaimSpec(command);
+  if (spec) return spec.dryRun !== true;
   return /worktree remove|worktree prune|rm -rf|ln -s|docker compose|git .*fetch/.test(command);
+}
+
+function reclaimSpec(command: string): {worktrees: string[]; versions: string[]; dryRun?: boolean} | undefined {
+  const match = command.match(/'([A-Za-z0-9+/=]+)' <<'CDS_SAFE_RECLAIM_PY'/);
+  return match ? JSON.parse(Buffer.from(match[1], 'base64').toString()) : undefined;
 }
 
 describe('远端发布现场读回与回收', () => {
@@ -121,12 +128,8 @@ describe('远端发布现场读回与回收', () => {
    * 否则测的就不是真实链路。
    */
   function reclaimStdout(command: string): string {
-    const lines: string[] = [];
-    for (const m of command.matchAll(/'(rel_[0-9a-f]{16}(?:-auto-restore)?)'/g)) {
-      lines.push(`CDS_RELEASE_RECLAIMED_WORKTREE=${m[1]}`);
-      lines.push(`CDS_RELEASE_RECLAIMED_VERSION=${m[1]}`);
-    }
-    return lines.join('\n');
+    const spec = reclaimSpec(command)!;
+    return spec.worktrees.map(name => `CDS_RELEASE_${spec.dryRun ? 'RECLAIMABLE' : 'RECLAIMED'}_WORKTREE=${name}`).join('\n');
   }
 
   function createService(respond: (command: string) => string | Promise<string>): {
@@ -188,9 +191,8 @@ describe('远端发布现场读回与回收', () => {
     expect(result.keptReasons[ONLINE_RUN]).toContain('current');
     expect(result.keptReasons[OLD_RUN]).toContain('previous');
     const deletion = commands.find(isWriteCommand)!;
-    expect(deletion).toContain(`'${STALE_RUN}'`);
-    expect(deletion).not.toContain(ONLINE_RUN);
-    expect(deletion).not.toContain(OLD_RUN);
+    expect(reclaimSpec(deletion)?.worktrees).toEqual([STALE_RUN]);
+    expect(result.nativeCounts).toEqual({succeeded: 1, held: 0, failed: 0, pending: 0});
   });
 
   it('current 指向自动恢复目录时同样保住——它从未进过台账', async () => {
@@ -285,12 +287,14 @@ describe('远端发布现场读回与回收', () => {
     const result = await service.reclaimRemoteReleaseArtifacts(stateService.getReleaseTarget('target-prod')!);
 
     expect(result.removedWorktrees).toEqual([]);
-    expect(result.skippedReason).toContain('回收命令执行失败');
+    expect(result.skippedReason).toContain('回收命令未能确认');
+    expect(result.readError).toContain('ssh exec exit=1');
+    expect(result.nativeCounts).toEqual({succeeded: 0, held: 0, failed: 0, pending: 1});
   });
 
   it('dry-run 报出本来会删哪些，但一条写命令都不发', async () => {
     stateService.addReleaseRun(releaseRun(ONLINE_RUN, '2026-07-28T03:00:00.000Z'));
-    const { service, commands } = createService(() => inventoryStdout({
+    const { service, commands } = createService(command => reclaimSpec(command) ? reclaimStdout(command) : inventoryStdout({
       current: ONLINE_RUN,
       worktrees: [ONLINE_RUN, STALE_RUN],
     }));
@@ -303,5 +307,7 @@ describe('远端发布现场读回与回收', () => {
     expect(result.dryRun).toBe(true);
     expect(result.removedWorktrees).toEqual([STALE_RUN]);
     expect(commands.some(isWriteCommand)).toBe(false);
+    expect(result.nativeCounts?.succeeded).toBe(0);
+    expect(commands).toHaveLength(2); // native readonly reference revalidation, not a plan-only success
   });
 });

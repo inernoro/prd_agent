@@ -108,7 +108,7 @@ public partial class ProductAgentController
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，本次未覆盖其他修改，请刷新后重试。"));
         var result = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (result == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "正式版本已删除，请刷新列表。"));
-        await ProductReleaseDeletion.AnnotateAsync(_db, new[] { result }, userId);
+        await ProductReleaseDeletion.AnnotateAsync(_db, new[] { result }, IsProductCollaborator() ? null : userId);
         return Ok(ApiResponse<object>.Ok(result));
     }
 

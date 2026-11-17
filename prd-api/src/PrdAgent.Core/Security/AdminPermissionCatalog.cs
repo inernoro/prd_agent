@@ -31,6 +31,7 @@ public static class AdminPermissionCatalog
     public const string ModelsWrite = "mds.write";
 
     public const string LogsRead = "logs.read";
+    public const string LogsWrite = "logs.write";
 
     public const string OpenPlatformManage = "open-platform.manage";
 
@@ -434,6 +435,7 @@ public static class AdminPermissionCatalog
         new(ModelsWrite, "模型管理-写", "编辑平台/模型/配置/调度等"),
 
         new(LogsRead, "日志-读", "查看系统/LLM/API 请求日志"),
+        new(LogsWrite, "日志-归档管理", "管理日志归档策略、校验和恢复"),
 
         new(OpenPlatformManage, "开放平台", "管理开放平台 App / 调用方 / 日志"),
 
@@ -537,7 +539,7 @@ public static class AdminPermissionCatalog
         new(TeamActivityManage, "团队动态-管理", "处理行为洞察（确认/已修复/忽略/转缺陷关联），写操作权限"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
-    }.Concat(ProductPermissionRules.AdditionalDefinitions).ToArray();
+    };
 }
 
 public sealed record AdminPermissionDef(string Key, string Name, string? Description);

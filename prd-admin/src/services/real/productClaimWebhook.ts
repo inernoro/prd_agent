@@ -2,7 +2,8 @@ import { apiRequest } from './apiClient';
 
 export interface ClaimWebhookConfig {
   enabled: boolean; debugMode: boolean; notifyInternal: boolean; notifyFormal: boolean;
-  configured: boolean; maskedUrl?: string; canSend: boolean;
+  configured: boolean; maskedUrl?: string; canEdit?: boolean; canSend: boolean;
+  sendBlockedReason?: string | null;
   identityReadyCount: number; identityPendingCount: number;
 }
 export interface ClaimNoticeRow {

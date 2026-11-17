@@ -149,6 +149,27 @@ export function parseCodeReviewGithubUrl(input: string): { owner: string; repo: 
   return { owner: parts[0], repo };
 }
 
+/** Only the selected project's repository may use its connected GitHub credential. */
+export async function codeReviewGithubToken(
+  project: Pick<Project, 'githubRepoFullName' | 'gitRepoUrl' | 'githubInstallationId' | 'githubCredentialUserId'> | undefined,
+  githubUrl: string,
+  credentials: { getInstallationToken?: (id: number) => Promise<string>; getDeviceToken: (userId: string) => string | undefined },
+): Promise<string | undefined> {
+  if (!project) return undefined;
+  const repository = (url: string): string | undefined => {
+    try { const { owner, repo } = parseCodeReviewGithubUrl(url); return `${owner}/${repo}`.toLowerCase(); }
+    catch { return undefined; }
+  };
+  const connectedUrl = project.githubRepoFullName ? `https://github.com/${project.githubRepoFullName}`
+    : project.gitRepoUrl?.replace(/^git@github\.com:/i, 'https://github.com/').replace(/^ssh:\/\/git@github\.com\//i, 'https://github.com/');
+  const connected = connectedUrl && repository(connectedUrl);
+  if (!connected || connected !== repository(githubUrl)) return undefined;
+  // Keep the existing App preference and propagate a revoked installation's error.
+  if (project.githubInstallationId && credentials.getInstallationToken) return credentials.getInstallationToken(project.githubInstallationId);
+  // An absent project owner must never select the legacy global Device Flow token.
+  return project.githubCredentialUserId ? credentials.getDeviceToken(project.githubCredentialUserId) : undefined;
+}
+
 async function snapshotFailureEvidence(response: Response, token?: string) {
   const limit = 8 * 1024, chunks: Buffer[] = [];
   let captured = 0, received = 0, incomplete = Number(response.headers.get('content-length')) > limit, bodyReadFailed = false;

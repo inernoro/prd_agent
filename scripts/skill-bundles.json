@@ -68,6 +68,10 @@
       "pm",
       "dev"
     ],
+    "ios-style-mobile-frontend": [
+      "pm",
+      "dev"
+    ],
     "find-skills": [
       "pm",
       "dev"
@@ -105,6 +109,30 @@
       "qa"
     ],
     "findmapskills": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "game-over": [
+      "dev",
+      "qa"
+    ],
+    "work-budget": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "kill-debt": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "create-debt": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "first-principles": [
       "pm",
       "dev",
       "qa"

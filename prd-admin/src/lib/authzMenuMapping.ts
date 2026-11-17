@@ -81,7 +81,7 @@ export const menuList: MenuDef[] = [
     appKey: 'logs',
     label: '请求日志',
     icon: 'ScrollText',
-    permissions: ['logs.read'],
+    permissions: ['logs.read', 'logs.write'],
   },
   {
     appKey: 'team-activity',
@@ -125,12 +125,6 @@ export const menuList: MenuDef[] = [
     label: '基础语音（智能体接入台）',
     icon: 'Plug',
     permissions: ['mcp-speech.read', 'mcp-speech.generate', 'mcp-speech.manage'],
-  },
-  {
-    appKey: 'product-agent',
-    label: '产品管理',
-    icon: 'Boxes',
-    permissions: ['product-agent.use', 'product-agent.version-apply', 'product-agent.version-claim-test', 'product-agent.manage', 'product-agent.admin'],
   },
   {
     appKey: 'review-agent',
@@ -270,6 +264,7 @@ export const allPermissions: PermissionDef[] = [
 
   // 日志
   { key: 'logs.read', label: '日志 - 读', description: '查看请求日志', category: 'read' },
+  { key: 'logs.write', label: '日志 - 归档管理', description: '管理日志归档策略、校验和恢复', category: 'write' },
 
   // 团队动态
   { key: 'team-activity.read', label: '团队动态 - 读', description: '查看全员工作动态时间线', category: 'read' },
@@ -324,11 +319,6 @@ export const allPermissions: PermissionDef[] = [
   { key: 'active-tasks.manage', label: '活动任务清单 - 管理', description: '看全员此刻、委派任务、配置匿名可见粒度', category: 'write' },
   { key: 'literary-agent.use', label: '文学创作智能体', description: '文章配图智能生成', category: 'use' },
   { key: 'video-agent.use', label: '视频创作智能体', description: '文章转视频教程生成', category: 'use' },
-  { key: 'product-agent.use', label: '产品管理 - 进入', description: '进入产品管理页面', category: 'use' },
-  { key: 'product-agent.version-apply', label: '产品管理 - 版本号申领', description: '仅进入内部/正式版本申领，可选择全部产品并完成所需方案评审；不开放其它产品管理页面', category: 'use' },
-  { key: 'product-agent.version-claim-test', label: '申领测试', description: 'T 号申领可选择所有人的已通过方案；关闭时只可选择本人提交的方案，仍遵守一个评审一个 T、一个 T 一个 V', category: 'manage' },
-  { key: 'product-agent.manage', label: '产品管理 - 管理', description: '管理产品配置与流程', category: 'manage' },
-  { key: 'product-agent.admin', label: '产品管理 - 管理层总览', description: '查看跨产品汇总与全局设置', category: 'manage' },
   { key: 'review-agent.use', label: '产品评审智能体', description: '提交方案并查看自己的评审结果', category: 'use' },
   { key: 'review-agent.view-all', label: '产品评审智能体 - 查看全部', description: '查看所有提交记录和评审结果', category: 'read' },
   { key: 'review-agent.manage', label: '产品评审智能体 - 管理', description: '自定义评审维度配置', category: 'manage' },

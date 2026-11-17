@@ -3,17 +3,17 @@ import { ArrowLeft } from 'lucide-react';
 import { ConsciousnessScene, ConsciousnessHud, IdentityScanner } from '@/components/entry/ConsciousnessScene';
 import { loadPortraitImages, preloadPortraitMotion } from '@/components/entry/portraitRenderer';
 import './GatewayEntry.css';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
+import { getHealth } from '@/lib/api';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 
 const MAP_SSO_CODE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
-function takeMapSsoCode(): string | null {
+function readMapSsoCode(): string | null {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
   const code = params.get('code');
-  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
   return code && MAP_SSO_CODE_PATTERN.test(code) ? code : null;
 }
 
@@ -32,9 +32,11 @@ export function MapSsoPage() {
   // 同上：失败态那条「返回 MAP」链接要能等到权威地址。
   usePlatformMapHome();
   const navigate = useNavigate();
-  const [code] = useState(takeMapSsoCode);
+  const [code] = useState(readMapSsoCode);
   const [returnTo] = useState(() => takeSafeMapReturnTo(window.location.search));
   const [error, setError] = useState<string | null>(null);
+  useLayoutEffect(() => { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); }, []);
+  useEffect(() => { void getHealth().catch(() => {}); }, []);
 
   useEffect(() => {
     let active = true;
@@ -49,7 +51,7 @@ export function MapSsoPage() {
     void loginWithMapCode(code).then((result) => {
       if (!active) return;
       if (result.success) {
-        const destination = gatewayLoginDestination(returnTo);
+        const destination = gatewayLoginDestination(returnTo, result.data?.tenant);
         if (!result.data?.mustChangePassword && destination.split(/[?#]/)[0] === '/quickstart') markQuickstartArrival();
         navigate(destination, { replace: true });
         return;

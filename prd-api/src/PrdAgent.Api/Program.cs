@@ -574,6 +574,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreLiveTranscriptionR
 builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentRecordingArchiveWorker>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.LogArchiveService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.LogArchiveWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();
 // 启动时把内置「再加工·智能体」种入 DB（reprocess_agents 集合）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
@@ -1862,7 +1864,7 @@ static async Task<IResult> DeepHealth(
         // 自检要判的是**页面上实际显示的那份**陈不陈旧，不是库里所有部署的文档。
         var snapshots = await db.ModelLeaderboardSnapshots
             .Find(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.VisibleFilter())
-            .Project(x => new { x.Board, x.FetchedAt, x.DeploymentSlug })
+            .Project(x => new { x.Board, x.FetchedAt, x.PublishedAt, x.DeploymentSlug })
             .ToListAsync(cancellationToken);
 
         var storedBoards = snapshots
@@ -1902,13 +1904,13 @@ static async Task<IResult> DeepHealth(
                 .Select(g => PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.PickVisible(
                     g.ToList(), x => x.DeploymentSlug, x => x.FetchedAt))
                 .Where(x => x is not null)
-                .OrderBy(x => x!.FetchedAt)
+                .OrderBy(x => x!.PublishedAt ?? x.FetchedAt)
                 .First()!;
-            leaderboardStaleHours = Math.Round((now - oldest.FetchedAt).TotalHours, 1);
+            leaderboardStaleHours = Math.Round((now - (oldest.PublishedAt ?? oldest.FetchedAt)).TotalHours, 1);
             leaderboardOutput = leaderboardStaleHours <= 48
                 ? $"{storedBoards.Count} 个榜都有快照，最旧的一份是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
-                : $"最旧的榜单快照已经 {leaderboardStaleHours} 小时没更新（{oldest.Board}）——"
-                  + "同步大概率连着失败了，去看容器日志里 ModelLeaderboardSync 的告警";
+                : $"最旧榜单的数据日期距今已 {leaderboardStaleHours} 小时（{oldest.Board}）——"
+                  + "请核对官方发布日期和 ModelLeaderboardSync 同步日志";
         }
     }
     catch (Exception ex)

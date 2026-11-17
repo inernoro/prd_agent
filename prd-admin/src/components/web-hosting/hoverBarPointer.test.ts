@@ -65,8 +65,8 @@ describe('卡片 hover 条的指针契约', () => {
     const src = read('SiteCard.tsx');
     const at = src.indexOf('data-site-select');
     expect(at).toBeGreaterThan(-1);
-    expect(src.slice(at, at + 300)).toContain('absolute top-[-5px] left-[-5px]');
-    expect(src.slice(at, at + 300)).toContain('h-11 w-11');
+    expect(src.slice(at, at + 300)).toContain('absolute right-1 top-1');
+    expect(src.slice(at, at + 300)).toContain('max-sm:h-11 max-sm:w-11');
     expect(hoverBarClassName(src)).toContain('bottom-1');
     expect(src).not.toContain('data-site-thumbnail-meta');
   });

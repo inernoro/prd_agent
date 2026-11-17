@@ -28,6 +28,7 @@ const selectors = {
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
   'code-reviews': '[data-code-reviews-skeleton]',
+  dts: '[aria-label="正在加载数据同步"]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
 const browser = await chromium.launch({ headless: true });
@@ -50,6 +51,7 @@ try {
       }
       if (!p.startsWith('/api/auth/')) { requests.push(p); await data.promise; }
       let payload = resolveFixture(p) ?? {};
+      if (scene.kind === 'release-center' && p === '/api/releases/center') payload = { ...payload, rows: [] };
       if (p === '/api/auth/sso/config') payload = { enabled: false, providerId: 'fixture', label: '使用 SSO 登录', authorizationUrl: '', tokenUrl: '', clientId: '', defaultRedirect: '/project-list', hasClientSecret: false };
       if (p === '/api/overview/topology') payload = {generatedAt: new Date().toISOString(),summary:{errors:0,warnings:0,infos:0},projects:[]};
       if (p === '/api/reports/overview') payload = {overview:{window:{from:'2026-10-01',to:'2026-11-01',days:30,previousFrom:'2026-09-01'},headline:{status:'untested',statusLabel:'尚无记录',sentence:'合成空结果',supports:[]},releaseGate:{state:'unknown',reason:'尚无记录',latest:null,lastPass:null},totals:{archived:0,folded:0,counted:0,pass:0,conditional:0,fail:0,undetermined:0,previous:{counted:0,pass:0,conditional:0,fail:0,undetermined:0}},passRate:{kind:'acceptance',numerator:0,denominator:0,rate:null,previous:{numerator:0,denominator:0,rate:null}},kinds:[],clusters:[],daily:[],mergeCoverage:{items:[],counts:{verified:0,conditional:0,failed:0,unverified:0}},reports:[],supersededReports:[]}};
@@ -67,17 +69,23 @@ try {
     if (scene.kind === 'settings') route += '#auth';
     if (route === '/branch-list') route += '?project=fixture-project';
     if (route === '/branch-topology') route += '?project=fixture-project';
+    if (route === '/dts') route += '?project=fixture-project';
     const selector = selectors[scene.kind];
     const result = { route, kind: scene.kind, errors, syntheticApis: true };
     async function inspect(label) {
-      const target = page.locator(`main .cds-workspace ${selector}`).first();
-      const present = await target.count();
-      if (!present) return { present: false };
-      const measured = await target.evaluate(e => {
-        const r = e.getBoundingClientRect(), w = e.closest('.cds-workspace').getBoundingClientRect();
+      // Resolve and measure the current element in one browser tick: React may
+      // replace an identical skeleton between locator resolution and evaluation.
+      const handle = await page.waitForFunction(selector => {
+        const e = document.querySelector(selector);
+        if (!e || !e.isConnected) return false;
+        const workspace = e.closest('.cds-workspace');
+        if (!workspace) throw new Error('Loading target has no original workspace ancestor');
+        const r = e.getBoundingClientRect(), w = workspace.getBoundingClientRect();
         return { present: true, x: r.x - w.x, y: r.y - w.y, width: r.width, height: r.height,
           shape: e.outerHTML.replace(/aria-label="[^"]*"/g, '').replace(/id="[^"]*"/g, '').replace(/class="([^"]*)"/g, (_, cls) => `class="${cls.split(/\s+/).sort().join(' ')}"`) };
-      });
+      }, `main .cds-workspace ${selector}`);
+      let measured;
+      try { measured = await handle.jsonValue(); } finally { await handle.dispose(); }
       if (['settings', 'project-settings', 'release-console'].includes(scene.kind)) await page.screenshot({ path: path.join(out, `${before ? 'before' : 'after'}-${scene.kind}-${label}.jpg`) });
       return measured;
     }
@@ -95,7 +103,7 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews', 'dts'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
       }
       if (!before) {
         await page.emulateMedia({reducedMotion:'reduce'});
@@ -112,6 +120,17 @@ try {
       data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
+      if (!before && scene.kind === 'release-center') {
+        await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();
+      }
+      if (!before && scene.kind === 'release-console') {
+        await page.getByRole('region', { name: '批次发布', exact: true }).waitFor();
+        await page.getByRole('combobox', { name: '已验收版本', exact: true }).waitFor();
+        await page.getByText('需要至少两个已启用的发布目标，可先通过「环境管理」补齐。', { exact: true }).waitFor();
+        assert(await page.getByRole('link', { name: '逐目标发布', exact: true }).isVisible(), `${route}: per-target release entry missing`);
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: batch empty state overflows`);
+        result.batchEmptyStateReachable = true;
+      }
       if (!before && scene.kind === 'code-reviews') {
         result.documentScroll = await verifyCodeReviewDocument(browser, base, out);
         await page.locator('.cr-ui h1').waitFor();

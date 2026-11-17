@@ -1,0 +1,5 @@
+.lg-theme-settings .lg-theme-options > label { display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); cursor: pointer; background: var(--bg-surface); }
+.lg-theme-settings .lg-theme-options > label.is-active { border-color: var(--accent); background: var(--accent-soft); }
+.lg-theme-settings .lg-theme-options input { accent-color: var(--accent); }
+.lg-theme-settings .lg-theme-options label span { display: grid; gap: 4px; }
+.lg-theme-settings .lg-theme-options label small { color: var(--text-secondary); }

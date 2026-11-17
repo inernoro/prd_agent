@@ -46,7 +46,10 @@ describe('CDS 外部接入页', () => {
   it('同页分别展示 MAP 系统互联和 MAP 缺陷转发的真实状态', () => {
     expect(connectionsSource).toContain('MAP 系统互联');
     expect(connectionsSource).toContain('MAP 缺陷转发');
-    expect(connectionsSource).toContain('同一次授权中完成');
+    // One redirect coordinates two server operations; each read can fail independently.
+    expect(connectionsSource).toContain("ready={state.status === 'ok' ? activeMapConnections.length > 0 : undefined}");
+    expect(connectionsSource).toContain("ready={integrationState.status === 'ok' ? Boolean(integration?.configured) : undefined}");
+    expect(connectionsSource).toContain("const authorizationConfirmed = state.status === 'ok' && integrationState.status === 'ok'");
     expect(connectionsSource).toContain('/api/cds-system/connections');
     expect(connectionsSource).toContain('/api/cds-system/integrations/bug-report');
     expect(connectionsSource).toContain('/api/cds-system/integrations/bug-report/test');

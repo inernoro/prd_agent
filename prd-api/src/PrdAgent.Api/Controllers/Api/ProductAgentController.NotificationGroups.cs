@@ -13,7 +13,7 @@ public partial class ProductAgentController
     [HttpGet("settings/scheduled-notifications/groups")]
     public async Task<IActionResult> ListNotificationGroups([FromServices] IConfiguration configuration)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductScheduledNotificationWorker.CanManage(configuration)) return NotificationGroupsUnavailable();
 
@@ -35,7 +35,7 @@ public partial class ProductAgentController
     private async Task<IActionResult> SaveNotificationGroup(string? id, NotificationGroupRequest request,
         IDataProtectionProvider protection, IConfiguration configuration)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductScheduledNotificationWorker.CanManage(configuration)) return NotificationGroupsUnavailable();
 
@@ -84,7 +84,7 @@ public partial class ProductAgentController
     public async Task<IActionResult> RemoveNotificationGroup(string id, [FromQuery] string? revision,
         [FromServices] IConfiguration configuration)
     {
-        var denied = await RequireProductApplicationAdminAsync();
+        var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
         if (!ProductScheduledNotificationWorker.CanManage(configuration)) return NotificationGroupsUnavailable();
 

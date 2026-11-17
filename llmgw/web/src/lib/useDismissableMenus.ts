@@ -47,7 +47,14 @@ export function useDismissableMenus(route: string) {
     };
   }, []);
   useEffect(() => {
-    root.current?.querySelectorAll<HTMLDetailsElement>(MENU).forEach(menu => { menu.open = false; });
+    const host = root.current;
+    const opened = Array.from(host?.querySelectorAll<HTMLDetailsElement>(MENU) ?? []).filter(menu => menu.open);
+    const ownedFocus = opened.some(menu => menu.contains(document.activeElement));
+    opened.forEach(menu => { menu.open = false; });
+    if (ownedFocus) {
+      const target = host?.querySelector<HTMLElement>('main h1, main');
+      if (target) { if (!target.hasAttribute('tabindex')) target.tabIndex = -1; target.focus({ preventScroll: true }); }
+    }
   }, [route]);
   return root;
 }

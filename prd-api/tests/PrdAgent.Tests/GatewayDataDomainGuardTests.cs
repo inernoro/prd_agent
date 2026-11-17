@@ -425,7 +425,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("runId: filterRunId.trim() || undefined", logsView);
         Assert.Contains("requestId: filterRequestId.trim() || undefined", logsView);
         Assert.Contains("sessionId: filterSessionId.trim() || undefined", logsView);
-        Assert.Contains("initialQueryValue('requestId')", logsView);
+        Assert.Contains("query.get('requestId')", logsView);
         var appCallersPage = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("logsHref('requestId', item.lastObservedRequestId)", appCallersPage);
         Assert.Contains("logsHref('sessionId', item.lastObservedSessionId)", appCallersPage);
@@ -816,7 +816,7 @@ public class GatewayDataDomainGuardTests
 
         // 导航只剩两条。断言的是导航项本身（带 page/icon 的那一行），不是路径出现过没有——
         // 注释和别处的 Link 都会提到这些路径，只查路径必然误判。
-        Assert.Contains("{ to: '/logical-models', label: '模型'", layout);
+        Assert.Contains("{ to: '/logical-models', label: '公开模型'", layout);
         Assert.Contains("{ to: '/platforms', label: '上游'", layout);
         Assert.DoesNotContain("to: '/pools', label:", layout);
         Assert.DoesNotContain("to: '/models', label:", layout);
@@ -841,10 +841,11 @@ public class GatewayDataDomainGuardTests
     public void ProviderRow_ShowsOwnedModelsAndWhetherTheyAreRegistered()
     {
         // 「模型属于上游」这件事在界面上的落地：展开一条上游就看到它卖的货，
-        // 以及每个货登记到白名单没有——没登记的模型躺在库里，调用方按公开名请求找不到它。
+        // 以及是否关联公开模型；关联不表示线路启用或当前可调用。
         // 在这之前这件事只能靠在两个页面之间来回对照才看得出来。
         //
-        // 这条链路整条删掉编译照过、llmgw/web 又整包没有单测，属于「改动删掉测试仍全绿」，
+        // 源码守卫保留关系判据；实际状态、权限与任务路径另由 Web DOM 用例验证。
+        // 这条链路整条删掉编译仍会通过，
         // 所以必须有守卫（predicate-and-wiring-discipline 形状 2）。
         var panel = ReadRepoFile("llmgw/web/src/components/ProviderModelsPanel.tsx");
         var platformsPage = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
@@ -853,11 +854,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("offering.targetKind !== 'model'", panel);
         Assert.Contains("byTarget.get(model.id)", panel);
         Assert.DoesNotContain("byTarget.get(model.modelName)", panel);
-        // 没登记的排前面：这一屏唯一需要人动手的就是它们
+        // 未关联模型优先展示，但不据此判定其当前健康。
         Assert.Contains("a.publicIds.length - b.publicIds.length", panel);
         // 结论句而不是一个数字：「3 个模型」读不出该不该管
-        Assert.Contains("个没登记", panel);
-        Assert.Contains("还没登记，调用方找不到它", panel);
+        Assert.Contains("个未关联公开模型", panel);
+        Assert.Contains("尚未关联公开模型", panel);
 
         // 接线：上游页真的渲染了它，而不是只建了组件没人用
         Assert.Contains("ProviderModelsPanel", platformsPage);
@@ -1236,11 +1237,18 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("deleteMany({ AppCallerCode: caller })", acceptance);
         Assert.DoesNotContain("findOne({ AppCallerCode:", acceptance);
 
+        // 协议说明已收在按需帮助中；守卫检查该实际 JSX 区域，不能要求首页恢复四张说明卡或旧数组格式。
+        var homeHelpStart = home.IndexOf("<DetailsBlock title=\"接入与使用帮助\">", StringComparison.Ordinal);
+        Assert.True(homeHelpStart >= 0, "首页应保留可发现的接入帮助区域");
+        var homeHelpEnd = home.IndexOf("</DetailsBlock>", homeHelpStart, StringComparison.Ordinal);
+        Assert.True(homeHelpEnd > homeHelpStart, "接入帮助区域应有完整的 JSX 边界");
+        var homeHelp = home[homeHelpStart..homeHelpEnd];
         foreach (var protocol in new[] { "GW Native", "OpenAI", "Claude", "Gemini" })
         {
             Assert.Contains($"label: '{protocol}'", quickstart);
-            Assert.Contains($"'{protocol}'", home);
+            Assert.Contains(protocol, homeHelp);
         }
+        Assert.Contains("to=\"/quickstart\"", homeHelp);
 
         Assert.DoesNotContain("'OpenAI Chat'", home);
         Assert.DoesNotContain("'OpenAI Responses'", home);
@@ -1383,7 +1391,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("getTenantOverview", webApi);
         Assert.Contains("getTenantOverview({ from: from.toISOString(), to: to.toISOString() })", home);
         Assert.Contains("CNY 与 USD 不做无汇率相加", home);
-        Assert.Contains("无请求时不显示 0%", home);
+        Assert.Contains("!overview.totalRequests ? '暂无请求'", home);
 
         Assert.Contains("path=\"/learn\"", app);
         Assert.Contains("to: '/learn', label: '学习中心'", layout);
@@ -1454,7 +1462,7 @@ public class GatewayDataDomainGuardTests
         }
 
         Assert.Contains("reconciliation.items.map", usagePage);
-        Assert.Contains("/logs?requestId=", usagePage);
+        Assert.Contains("buildLogRequestHref(item.requestId)", usagePage);
         Assert.Contains("逐条查看 Gateway 估算、供应商实际、差额依据和匹配粒度", usagePage);
         Assert.Contains("汇总记录没有单条 requestId", usagePage);
         Assert.Contains("value == null ? unknownLabel", usagePage);
@@ -2155,17 +2163,18 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("配置权威迁移", overview);
         Assert.Contains("/app-callers?status=active", overview);
         Assert.Contains("设置模型与默认项", overview);
-        Assert.Contains("initialQueryValue('releaseCommit')", logsView);
+        Assert.Contains("query.get('releaseCommit')", logsView);
         Assert.Contains("releaseCommit: filterReleaseCommit.trim() || undefined", logsView);
         Assert.Contains("placeholder=\"发布提交\"", logsView);
-        Assert.Contains("setFilterReleaseCommit('')", logsView);
+        Assert.Contains("for (const key of LOG_FILTER_KEYS) next.delete(key)", logsView);
+        Assert.Contains("'releaseCommit'", ReadRepoFile("llmgw/web/src/lib/logNavigation.ts"));
 
         Assert.Contains("useSearchParams", auditsPage);
         Assert.Contains("searchParams.get('targetType')", auditsPage);
         Assert.Contains("targetType: targetType || undefined", auditsPage);
 
         Assert.Contains("Links = RuntimeGateLinks", protocolAudit);
-        Assert.Contains("initialQueryValue('releaseCommit')", protocolAudit);
+        Assert.Contains("query.get('releaseCommit')", protocolAudit);
         Assert.Contains("\"runtimeEvidenceComplete\": False", protocolAudit);
         Assert.Contains("\"progressPercent\": None", protocolAudit);
         Assert.Contains("staticEvidencePercent covers code/doc evidence only", protocolAudit);
@@ -2369,7 +2378,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("write_remote_container_snapshot", script);
         Assert.Contains("docker ps --format", script);
         Assert.Contains("env.snapshot.redacted", script);
-        Assert.Contains("gzip -t \"$backup_dir/$db.archive.gz\"", script);
+        Assert.Contains(". \"$script_dir/lib/backup-stream.sh\"", script);
+        Assert.Contains("cds_backup_stream \"$backup_dir/$db.archive.gz\" remote_mongo_dump \"$db\"", script);
+        Assert.Contains("gzip -t \"$stream_archive\"", ReadRepoFile("scripts/lib/backup-stream.sh"));
         Assert.Contains("SHA256SUMS", script);
         Assert.DoesNotContain("rm -", script);
         Assert.DoesNotContain("dropDatabase", script);
@@ -3125,7 +3136,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystemDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
-        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logsView);
+        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\"", logsView);
         Assert.Contains("meta.ingressProtocols.map", logsView);
         Assert.Contains("setFilterIngressProtocol", logsView);
         Assert.Contains("meta.modelPolicies.map", logsView);
@@ -3395,11 +3406,20 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("aria-modal=\"true\"", preview);
         Assert.Contains("event.key === 'Escape'", preview);
         Assert.Contains("event.key !== 'Tab'", preview);
-        Assert.Contains("triggerButtonRef.current?.focus()", preview);
+        // The shared focus hook restores a still-connected origin for both preview and pricing drawers.
+        Assert.Contains("useDrawerFocus(open, () => setOpen(false), drawerRef, closeButtonRef, triggerButtonRef)", preview);
+        Assert.Contains("returnRef?.current || origin", preview);
+        Assert.Contains("target?.isConnected) target.focus()", preview);
         Assert.Contains("密钥明文不会在预览中显示", preview);
 
-        Assert.Contains("Provider 接口预览", platforms);
-        Assert.Contains("查看接口", platforms);
+        // 上游清单统一进入同对象的连接配置，避免与只读接口预览重复。
+        // 完整连接事实和权限仍须保留，不能靠删除安全信息来减少包装。
+        Assert.Contains("连接配置", platforms);
+        Assert.Contains("<ProxyBadge proxy={p.proxy}/>", platforms);
+        Assert.Contains("p.keyFingerprint", platforms);
+        Assert.Contains("canWrite && p.authority === 'llm_gateway'", platforms);
+        Assert.DoesNotContain("Provider 接口预览", platforms);
+        Assert.DoesNotContain("查看接口", platforms);
         Assert.Contains("查看 Provider", models);
         // appCaller 页那个「预览模型池」抽屉随模型池路由一起退役了（2026-09-16）。
         // 它展示的池健康、成员顺位、选择策略都已不再决定这个 appCaller 走哪个上游，
@@ -3504,7 +3524,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("width: 'min(820px, 100vw)'", drawer);
         Assert.DoesNotContain("width: 'min(820px, 96vw)'", drawer);
         Assert.Contains("openedRequestIdRef", logs);
-        Assert.Contains("openLogDetail(matched.id)", logs);
+        Assert.Contains("openLogDetail(matched.id, query.get('openRequest') === '1')", logs);
+        Assert.Contains("query.delete('openRequest')", logs);
         Assert.Contains("Provider 实际费用", drawer);
         Assert.Contains("汇率快照", drawer);
         Assert.Contains("请求内容", drawer);
@@ -3537,7 +3558,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("display: inline-flex;", theme);
         Assert.Contains("width: fit-content;", theme);
         Assert.DoesNotContain(".lg-log-entity-hover-root {\n  display: block;", theme);
-        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logs);
+        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\"", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.Contains(".lg-log-table {", theme);
         // 字号已收敛为 :root 的七档 token（doc/rule.platform.llm-gateway.console-design-tonality.md）。
@@ -3551,7 +3572,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--log-text-entity: #fcfcfe", theme);
         Assert.Contains("--log-text-muted: rgba(252, 252, 254, 0.627)", theme);
         Assert.Matches(@"(?s)\.lg-log-entity\s*\{[^}]*color:\s*var\(--log-text-entity\)", theme);
-        Assert.Contains("observedAppCaller(observed, requestedCode)", entityDetails);
+        // Resolve the registered code+requestType identity first. The old raw-link fallback
+        // could take the first log of another purpose (and even override a missing exact id).
+        Assert.Contains("observedAppCaller(items[0], identityCode)", entityDetails);
+        Assert.Contains("item.requestType?.toLowerCase() === identityType.toLowerCase()", entityDetails);
+        Assert.Contains("if (!matched && requestedId)", entityDetails);
         Assert.Contains("仅日志观测", entityDetails);
         Assert.Contains("不补造预算或速率配置", entityDetails);
         Assert.Contains("observedProvider(observed, requestedName)", entityDetails);
@@ -3668,9 +3693,10 @@ public class GatewayDataDomainGuardTests
         var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
 
         Assert.Contains("const invalidateTestResult = () => {", gatewaySettings);
-        // 三处选择走同一个出口：记一次「用户动过手」+ 改值 + 作废旧结论。
-        Assert.Contains("onClick={() => changeSelection(() => setSource(item.id))}", gatewaySettings);
-        Assert.Contains("onChange={(event) => changeSelection(() => setPoolId(event.target.value))}", gatewaySettings);
+        // 可编辑的来源与公开模型走同一出口；旧模型池只读兼容，不再作为新配置入口。
+        Assert.Contains("onChange={() => changeSelection(() => setSource(item.id))}", gatewaySettings);
+        Assert.Contains("现有模型池（兼容配置）", gatewaySettings);
+        Assert.DoesNotContain("onChange={(event) => changeSelection(() => setPoolId(event.target.value))}", gatewaySettings);
         Assert.Contains("onChange={(event) => changeSelection(() => setModelName(event.target.value))}", gatewaySettings);
         Assert.Contains("invalidateTestResult();", gatewaySettings[gatewaySettings.IndexOf("const changeSelection = (apply: () => void) => {", StringComparison.Ordinal)..]);
 
@@ -3682,9 +3708,9 @@ public class GatewayDataDomainGuardTests
         */
         Assert.Contains("const selectionAtStart = selectionSeq.current;", gatewaySettings);
         Assert.Contains("const editedDuringSave = selectionSeq.current !== selectionAtStart;", gatewaySettings);
-        Assert.Contains("await load(!editedDuringSave);", gatewaySettings);
+        Assert.Contains("await load(!editedDuringSave, modelQuery, true);", gatewaySettings);
         // 不回填选择时仍要刷新 data，否则 dirty 会拿旧的服务端值比，说不出「这份还没保存」。
-        Assert.Contains("setData(res.data);\n    if (!applySelection) return;", gatewaySettings.Replace("\r\n", "\n"));
+        Assert.True(gatewaySettings.IndexOf("setData(res.data);", StringComparison.Ordinal) < gatewaySettings.IndexOf("if (!applySelection) return;", StringComparison.Ordinal));
         // 在途那次也要按代次丢弃：请求在路上时改了选择，旧结论回来就会给新配置背书。
         Assert.Contains("if (testSeq.current !== runId) return;", gatewaySettings);
         /*
@@ -3699,9 +3725,8 @@ public class GatewayDataDomainGuardTests
         var invalidateEnd = gatewaySettings.IndexOf("const save = async () => {", invalidateStart, StringComparison.Ordinal);
         Assert.True(invalidateEnd > invalidateStart, "invalidateTestResult 的取值范围没有正常收尾");
         Assert.Contains("setTesting(false);", gatewaySettings[invalidateStart..invalidateEnd]);
-        Assert.True(
-            CountOccurrences(gatewaySettings, "changeSelection(() =>") >= 3,
-            "三处选择都得走同一个出口，少一处就会留下「配置 B 配着配置 A 的证明」");
+        // 原生来源选择与公开模型选择是现有两种可编辑入口；旧池只读，不增加伪 handler。
+        Assert.Equal(2, CountOccurrences(gatewaySettings, "changeSelection(() =>"));
         // 保存自己也要作废一次：保存换的是「下一次调用按什么走」，旧结论证明不了新的那份。
         Assert.Contains("invalidateTestResult();\n    const editedDuringSave", gatewaySettings.Replace("\r\n", "\n"));
     }
@@ -4231,6 +4256,26 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void AppCallerDetail_IdLookupRemainsExactAndInsideExistingReadScope()
+    {
+        var source = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = source.IndexOf("app.MapGet(\"/gw/app-callers\",", StringComparison.Ordinal);
+        var end = source.IndexOf("}).RequireAuthorization(\"LogsRead\");", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var endpoint = source[start..end];
+        Assert.Contains("string? id,", endpoint);
+        Assert.Contains("if (!string.IsNullOrWhiteSpace(id)) filters.Add(fb.Eq(\"_id\", id.Trim()));", endpoint);
+        Assert.Contains("TenantAccess.FilterTeamScope(http, filters.Count > 0 ? fb.And(filters) : fb.Empty)", endpoint);
+        Assert.Contains("CountDocumentsAsync(filter)", endpoint);
+        Assert.Contains("gwAppCallers.Find(filter)", endpoint);
+        Assert.DoesNotContain("fb.Or(fb.Eq(\"_id\"", endpoint);
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var apiStart = api.IndexOf("export function getGatewayAppCallers(", StringComparison.Ordinal);
+        var apiEnd = api.IndexOf("export function updateGatewayAppCaller", apiStart, StringComparison.Ordinal);
+        Assert.Contains("id: params?.id", api[apiStart..apiEnd]);
+    }
+
+    [Fact]
     public void TenantHardening_EnforcesTeamReadScopeAndIdentityLifecycle()
     {
         var access = ReadRepoFile("llmgw/console-api/Auth/TenantAccessContext.cs");
@@ -4419,7 +4464,7 @@ public class GatewayDataDomainGuardTests
         // 3) 查得到——按 PlatformId 精确过滤（provider 会重名，本仓库真出现过同名同 URL 两条上游）
         Assert.Contains("fb.Eq(\"PlatformId\", platformId.Trim())", console);
         Assert.Contains("platformId?: string;", ReadRepoFile("llmgw/web/src/lib/types.ts"));
-        Assert.Contains("initialQueryValue('platformId')", logsView);
+        Assert.Contains("query.get('platformId')", logsView);
         // 请求页与会话页共用同一份筛选参数：只有一边收 platformId 的话，用户从深链进来切到
         // 会话页，界面上筛选还亮着、列的却是所有平台的会话——筛选条件在说谎。
         // 判据钉「每个吃这份筛选的端点都要把 platformId 传进同一个 BuildFilter」。
@@ -5329,7 +5374,9 @@ public class GatewayDataDomainGuardTests
         */
         var drawer = ReadRepoFile("llmgw/web/src/components/ModelPricingDrawer.tsx");
         Assert.DoesNotContain("真正参与计费的是模型池成员里的那份价格", drawer, StringComparison.Ordinal);
-        Assert.Contains("线上计费读的就是上面这份价", drawer, StringComparison.Ordinal);
+        Assert.Contains("后续请求的Gateway费用估算和预算判定", drawer, StringComparison.Ordinal);
+        Assert.Contains("历史估算不追溯重算", drawer, StringComparison.Ordinal);
+        Assert.Contains("实际结算以供应商账单为准", drawer, StringComparison.Ordinal);
         Assert.Contains("回滚备份", drawer, StringComparison.Ordinal);
         // 默认一个都不勾：勾选是明明白白的额外动作。
         Assert.Contains("setSyncPoolIds([]);", drawer, StringComparison.Ordinal);

@@ -56,6 +56,7 @@ export async function installOperationsFixtures(page, { quickstart = false } = {
   let error = false;
   let preflightPass = false;
   let latestRun = run;
+  const releaseRuns = new Map([[run.releaseId, run]]);
   let releaseTargets = [structuredClone(target)];
   await page.route("**/*", async (route) => {
     const req = route.request(),
@@ -128,20 +129,47 @@ export async function installOperationsFixtures(page, { quickstart = false } = {
                 },
               ],
         });
+      if (path === "/api/releases/runs" && req.method() === "GET") {
+        const query = new URL(req.url()).searchParams;
+        return reply({
+          runs: [...releaseRuns.values()].filter((item) =>
+            (!query.get("project") || item.projectId === query.get("project")) &&
+            (!query.get("targetId") || item.targetId === query.get("targetId")) &&
+            (!query.get("branchId") || item.branchId === query.get("branchId")),
+          ).sort((a, b) => b.startedAt.localeCompare(a.startedAt)),
+        });
+      }
       if (
         path.endsWith("/branches/compat-branch/runs") &&
         req.method() === "POST"
       ) {
+        const body = req.postDataJSON();
+        if (body.expectedCommitSha && body.expectedCommitSha !== sha)
+          return route.fulfill({ status: 409, json: { error: "来源版本已变化" } });
         latestRun = {
           ...run,
-          targetId: req.postDataJSON().targetId,
+          // 与真实state.addReleaseRun的操作上下文一致，不伪造另一本请求身份。
+          requestId: req.headers()["x-cds-request-id"] || "compat-server-generated-request",
+          targetId: body.targetId,
+          startedAt: "2026-11-12T00:02:00Z",
+          finishedAt: "2026-11-12T00:03:00Z",
           releaseId: "compat-success-run",
           status: "success",
           logs: [{ ...logs[0], message: "COMPAT_RELEASE_SUCCESS" }],
         };
-        return reply({ run: latestRun });
+        releaseRuns.set(latestRun.releaseId, latestRun);
+        return route.fulfill({
+          status: 202,
+          json: { run: latestRun, streamUrl: `/api/releases/runs/${latestRun.releaseId}/stream` },
+        });
       }
-      if (path.includes("/releases/runs/")) return reply({ run, logs });
+      const runId = path.match(/^\/api\/releases\/runs\/([^/]+)$/)?.[1];
+      if (runId && req.method() === "GET") {
+        const matchedRun = releaseRuns.get(decodeURIComponent(runId));
+        return matchedRun
+          ? reply({ run: matchedRun })
+          : route.fulfill({ status: 404, json: { error: "release run not found" } });
+      }
       return reply(resolveFixture(path) ?? {});
     }
     if (quickstart && path === "/v1/chat/completions") {

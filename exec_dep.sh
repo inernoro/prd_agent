@@ -1,6 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
+# Installed on production hosts; local development keeps the existing behavior.
+if [ "${PRD_AGENT_PRODUCTION_LOCK_HELD:-0}" != 1 ] && [ -x /usr/local/sbin/prd-agent-with-release-lock ]; then
+  exec /usr/local/sbin/prd-agent-with-release-lock "$0" "$@"
+fi
+
 # 生产部署脚本：
 # - 从 GitHub Release 下载 prd-admin dist 压缩包
 # - 在稳定的 deploy/web/dist bind 根内离线校验并原子切换 current/previous
@@ -18,6 +23,7 @@ set -eu
 #   SKIP_VERIFY=1 ./exec_dep.sh  # 同上，环境变量方式
 #
 # 可选环境变量：
+#   - PRD_AGENT_RELEASE_MIN_FREE_MB：新增发布写入前的最低余量，默认 4096 MiB（已有产物只读核验不受此门禁影响）
 #   - PRD_AGENT_RELEASE_REF：指定发布 ref（latest / sha-<commit> / <tag>）
 #   - PRD_AGENT_DEPLOY_COMMIT：指定 commit，等价于 PRD_AGENT_RELEASE_REF=sha-<commit>
 #   - PRD_AGENT_RELEASE_TAG：指定发布 tag，等价于 PRD_AGENT_RELEASE_REF=<tag>
@@ -274,6 +280,17 @@ if [ "$TAG" = "latest" ]; then
   echo "Deploy target: latest"
 else
   echo "Deploy target: immutable ref $TAG"
+fi
+
+# Reuse the existing disk admission helper before downloads, image pulls, or
+# configuration rewrites. Help and existing-artifact verification stay usable.
+if [ "$LLMGW_VERIFY_ONLY" != "1" ] || [ "$static_only_mode" = "1" ] || \
+   [ "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" != "1" ] || [ "${SKIP_API_PULL:-0}" != "1" ]; then
+  if [ ! -f scripts/llmgw-disk-space-guard.sh ]; then
+    echo "ERROR: missing scripts/llmgw-disk-space-guard.sh" >&2
+    exit 1
+  fi
+  sh scripts/llmgw-disk-space-guard.sh "$PWD" "${PRD_AGENT_RELEASE_MIN_FREE_MB:-4096}" "production release"
 fi
 
 # 兼容两种方式传 repo：
@@ -603,6 +620,13 @@ fi
 
 compose_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
 compose_project_directory="${PRD_AGENT_COMPOSE_PROJECT_DIRECTORY:-}"
+# Keep host logging policy even for a rollback to a release without Compose limits.
+if [ -f /etc/prd-agent/compose.logging.yml ]; then
+  case ":${COMPOSE_FILE:-}:" in
+    *:/etc/prd-agent/compose.logging.yml:*) ;;
+    *) export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}:/etc/prd-agent/compose.logging.yml" ;;
+  esac
+fi
 compose_run() {
   if [ -n "$compose_project_directory" ]; then
     set -- --project-directory "$compose_project_directory" "$@"

@@ -19,7 +19,6 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const candidate = (location.state as { from?: string } | null)?.from;
-  const from = gatewayLoginDestination(candidate);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [phase, setPhase] = useState<IdentityPhase>('idle');
@@ -53,6 +52,7 @@ export function LoginPage() {
       const res = await login(username.trim(), password);
       if (!mounted.current) return;
       if (!res.success) { setError(res.error?.message || '登录失败，请检查账号密码'); setPhase('idle'); return; }
+      const from = gatewayLoginDestination(candidate, res.data?.tenant);
       if (res.data?.mustChangePassword || reducedMotion()) { navigate(res.data?.mustChangePassword ? '/change-password' : from, { replace: true }); return; }
       setPhase('authorized'); if (sound) audio.current?.play('verified');
       await pause(760); if (!mounted.current) return;

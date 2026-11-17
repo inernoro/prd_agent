@@ -8,9 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Trash2, Save, GripVertical, X, AlertTriangle } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { UserSearchSelect } from '@/components/UserSearchSelect';
 import {
-  listProducts,
   listFormTemplates,
   upsertFormTemplate,
   upsertProductCategory,
@@ -20,13 +18,9 @@ import {
   listDescTemplates,
   upsertDescTemplate,
   deleteDescTemplate,
-  listProductApplicationAdmins,
-  addProductApplicationAdmin,
-  removeProductApplicationAdmin,
   resetProductAgentDemoData,
-  type ProductApplicationAdmin,
 } from '@/services/real/productAgent';
-import type { Product, FormField, FormFieldType, ProductEntityType, ProductCategory, RequirementType, DescTemplate } from './types';
+import type { FormField, FormFieldType, ProductEntityType, ProductCategory, RequirementType, DescTemplate } from './types';
 import { useProductCategories } from './productCategories';
 import { useRequirementTypes } from './requirementTypes';
 import { RichTextField } from './DynamicForm';
@@ -100,153 +94,6 @@ const PRESET_FIELDS: Partial<Record<ProductEntityType, { label: string; type: st
     { label: '类型', type: '产品类型（可管理）' },
   ],
 };
-
-export function SettingsSection() {
-  const [mode, setMode] = useState<'form' | 'desc' | 'category' | 'reqtype' | 'admins' | 'debug'>('form');
-  const [entityType, setEntityType] = useState<ProductEntityType>('requirement');
-  const [productScope, setProductScope] = useState(''); // '' = 全局
-  const [products, setProducts] = useState<Product[]>([]);
-
-  useEffect(() => {
-    void (async () => {
-      const res = await listProducts({ pageSize: 200 });
-      if (res.success) setProducts(res.data.items);
-    })();
-  }, []);
-
-  return (
-    <div className="flex flex-col gap-4">
-      {/* 模式 + 对象类型 + 作用范围 */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex rounded-lg border border-token-subtle overflow-hidden">
-          <button onClick={() => setMode('form')} className={`px-3 py-1.5 text-sm ${mode === 'form' ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}>表单模板</button>
-          <button onClick={() => setMode('desc')} className={`px-3 py-1.5 text-sm ${mode === 'desc' ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}>描述模板</button>
-          <button onClick={() => setMode('category')} className={`px-3 py-1.5 text-sm ${mode === 'category' ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}>产品类型</button>
-          <button onClick={() => setMode('reqtype')} className={`px-3 py-1.5 text-sm ${mode === 'reqtype' ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}>需求类型</button>
-          <button onClick={() => setMode('admins')} className={`px-3 py-1.5 text-sm ${mode === 'admins' ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}>应用管理员</button>
-          <button onClick={() => setMode('debug')} className={`px-3 py-1.5 text-sm ${mode === 'debug' ? 'bg-amber-500/15 text-amber-200' : 'text-token-secondary hover-bg-soft'}`}>调试</button>
-        </div>
-        {mode !== 'category' && mode !== 'reqtype' && mode !== 'admins' && mode !== 'debug' && (
-          <>
-            <div className="w-px h-6 bg-token-card" />
-            {ENTITY_TYPES.map((e) => (
-              <button
-                key={e.value}
-                onClick={() => setEntityType(e.value)}
-                className={`px-2.5 py-1 rounded-md text-xs border ${entityType === e.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-              >
-                {e.label}
-              </button>
-            ))}
-            {mode !== 'desc' && (
-              <>
-                <div className="w-px h-6 bg-token-card" />
-                <select
-                  value={productScope}
-                  onChange={(e) => setProductScope(e.target.value)}
-                  className="px-2 py-1.5 rounded-md text-xs bg-token-nested border border-token-subtle text-token-secondary outline-none"
-                >
-                  <option value="">全局默认（所有产品共用）</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>覆盖：{p.name}</option>
-                  ))}
-                </select>
-              </>
-            )}
-          </>
-        )}
-      </div>
-
-      {mode === 'admins' ? (
-        <ApplicationAdminManager />
-      ) : mode === 'debug' ? (
-        <DebugDataResetPanel />
-      ) : mode === 'form' ? (
-        <FormTemplateEditor key={`f-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
-      ) : mode === 'desc' ? (
-        <DescTemplateManager key={`d-${entityType}`} entityType={entityType} />
-      ) : mode === 'reqtype' ? (
-        <RequirementTypeManager />
-      ) : (
-        <CategoryManager />
-      )}
-    </div>
-  );
-}
-
-export function ApplicationAdminManager() {
-  const [items, setItems] = useState<ProductApplicationAdmin[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const adminResult = await listProductApplicationAdmins();
-    if (adminResult.success) setItems(adminResult.data.items);
-    else setMessage(adminResult.error?.message ?? '管理员名单加载失败');
-    setLoading(false);
-  }, []);
-  useEffect(() => { void reload(); }, [reload]);
-
-  const add = async () => {
-    if (!selectedUserId) return;
-    setBusy(true);
-    const result = await addProductApplicationAdmin(selectedUserId);
-    setBusy(false);
-    if (!result.success) {
-      setMessage(result.error?.message ?? '添加失败');
-      return;
-    }
-    setItems(result.data.items);
-    setSelectedUserId('');
-    setMessage('管理员已添加');
-  };
-
-  const remove = async (userId: string) => {
-    setBusy(true);
-    const result = await removeProductApplicationAdmin(userId);
-    setBusy(false);
-    if (!result.success) {
-      setMessage(result.error?.message ?? '移除失败');
-      return;
-    }
-    setMessage('管理员已移除');
-    await reload();
-  };
-
-  if (loading) return <MapSectionLoader text="正在加载管理员…" />;
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="rounded-xl border border-token-subtle bg-token-nested p-4">
-        <div className="text-sm font-medium text-token-primary">产品管理应用管理员</div>
-        <div className="mt-1 text-xs leading-5 text-token-muted">只有名单内管理员可看到并执行历史数据导入：产品、需求、缺陷、版本请在产品管理总览对应菜单导入；功能目录仅在单产品「功能」页导入。可重复导入，带外部 ID 的数据按原记录更新。</div>
-        <div className="mt-4 flex items-center gap-2">
-          <div className="min-w-0 flex-1"><UserSearchSelect value={selectedUserId} onChange={setSelectedUserId} placeholder="搜索 MAP 用户" showAllOption={false} /></div>
-          <button onClick={() => void add()} disabled={!selectedUserId || busy} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-3 py-2 text-sm text-[color:var(--accent-fg-blue)] disabled:opacity-40">
-            {busy ? <MapSpinner size={14} /> : <Plus size={14} />} 添加管理员
-          </button>
-        </div>
-        {message && <div className="mt-2 text-xs text-token-secondary">{message}</div>}
-      </div>
-      <div className="overflow-hidden rounded-xl border border-token-subtle">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-token-nested text-xs text-token-muted"><tr><th className="px-4 py-2.5 font-medium">姓名</th><th className="px-4 py-2.5 font-medium">账号</th><th className="w-24 px-4 py-2.5 font-medium">操作</th></tr></thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.userId} className="border-t border-token-subtle">
-                <td className="px-4 py-3 text-token-primary">{item.displayName}</td>
-                <td className="px-4 py-3 text-xs text-token-muted">{item.username || item.userId}</td>
-                <td className="px-4 py-3"><button onClick={() => void remove(item.userId)} disabled={busy || items.length <= 1} title={items.length <= 1 ? '至少保留一位管理员' : '移除管理员'} className="text-token-muted-faint hover:text-red-300 disabled:opacity-25"><Trash2 size={14} /></button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 const DEBUG_RESET_CONFIRM = '清空演示数据';
 

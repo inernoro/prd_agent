@@ -12,6 +12,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { humanPrincipalId, humanProjectGrantUpdateStatus, beginHumanProjectGrantUpdate } from '../../src/services/human-project-access.js';
+import * as humanProjectAccess from '../../src/services/human-project-access.js';
 import { createIdentityRouter, resolveUserCredential } from '../../src/routes/identity.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
@@ -507,11 +508,13 @@ describe('human project grants through the production server', () => {
     shell.addResponsePattern(/git cat-file -t /, () => ({ stdout: 'commit\n', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/git checkout /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/git log --oneline -1/, () => ({ stdout: 'abc1234 历史提交\n', stderr: '', exitCode: 0 }));
+    const fullSha = 'abc1234' + 'a'.repeat(33);
+    shell.addResponsePattern(/git rev-parse --verify HEAD/, () => ({ stdout: fullSha + '\n', stderr: '', exitCode: 0 }));
     for (const cookie of [member, owner]) {
       const result = await call('POST', '/api/branches/branch-project-a/checkout/' + hash, cookie);
       expect(result.status).toBe(200);
-      expect(result.body.pinnedCommit).toBe('abc1234');
-      expect(state.getBranch('branch-project-a')?.pinnedCommit).toBe('abc1234');
+      expect(result.body.pinnedCommit).toBe(fullSha);
+      expect(state.getBranch('branch-project-a')?.pinnedCommit).toBe(fullSha);
       expect(shell.commands).toContain(`git cat-file -t '${hash}'`);
       expect(shell.commands).toContain(`git checkout --detach '${hash}'`);
     }
@@ -1261,27 +1264,65 @@ describe('human project grants through the production server', () => {
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status })).status).toBe(200);
   });
 
-  it('holds the gate when status save and its immediate compensation both throw', async () => {
-    await grant(['project-a']);
-    const principalId = humanPrincipalId(memberId);
-    const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
-    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
-    const fail = () => { throw new Error('fake synchronous status save failure'); };
-    vi.spyOn(state, 'save').mockImplementationOnce(fail).mockImplementationOnce(fail).mockImplementationOnce(fail);
-    expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(500);
-    expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
-    expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
-    for (let attempt = 0; attempt < 40 && humanProjectGrantUpdateStatus(state, principalId); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined();
-    expect(state.getPrincipal(principalId)?.status).toBe('disabled');
-    await state.flush();
-    fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'failed-status-compensated.json'));
-    const restored = new StateService(path.join(dir, 'failed-status-compensated.json'));
-    restored.load();
-    expect(resolveUserCredential(restored, key)).toBeNull();
-  });
+  it.each(['compensation', 'journal cleanup'] as const)(
+    'holds the gate when status save and its immediate compensation both throw until %s confirms', async phase => {
+      await grant(['project-a']);
+      const principalId = humanPrincipalId(memberId);
+      const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+      await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+
+      // Recovery and journal cleanup each need their own durable acknowledgement.
+      // Hold either acknowledgement explicitly instead of assuming real I/O finishes
+      // inside forty 10ms polls on every runner.
+      const flush = state.flush.bind(state);
+      let entered!: () => void;
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      let finish!: () => void;
+      const pending = new Promise<void>(resolve => { finish = resolve; });
+      let completed!: () => void;
+      const recovered = new Promise<void>(resolve => { completed = resolve; });
+      const begin = humanProjectAccess.beginHumanProjectGrantUpdate;
+      vi.spyOn(humanProjectAccess, 'beginHumanProjectGrantUpdate').mockImplementation((...args) => {
+        const release = begin(...args);
+        if (!release) return undefined;
+        return async () => {
+          const confirmed = await release();
+          if (confirmed) completed();
+          return confirmed;
+        };
+      });
+      let flushCount = 0;
+      const blockedFlush = phase === 'compensation' ? 1 : 2;
+      vi.spyOn(state, 'flush').mockImplementation(async () => {
+        if (++flushCount === blockedFlush) {
+          entered();
+          await pending;
+        }
+        await flush();
+      });
+      const fail = () => { throw new Error('fake synchronous status save failure'); };
+      vi.spyOn(state, 'save').mockImplementationOnce(fail).mockImplementationOnce(fail).mockImplementationOnce(fail);
+      try {
+        expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(500);
+        expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
+        await started;
+        expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
+        expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
+        expect((await grant(['project-b'])).status).toBe(409);
+        expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(409);
+      } finally {
+        finish();
+        await recovered;
+      }
+      expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined();
+      expect(state.getPrincipal(principalId)?.status).toBe('disabled');
+      await state.flush();
+      fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'failed-status-compensated.json'));
+      const restored = new StateService(path.join(dir, 'failed-status-compensated.json'));
+      restored.load();
+      expect(resolveUserCredential(restored, key)).toBeNull();
+      expect(restored.getHumanAccessRecoveries()[principalId]).toBeUndefined();
+    });
 
   it('rejects member self-grants and preserves owner/disabled-user invariants', async () => {
     expect((await call('PUT', `/api/auth/users/${memberId}/projects`, member, { projectIds: ['project-a'] })).status).toBe(403);

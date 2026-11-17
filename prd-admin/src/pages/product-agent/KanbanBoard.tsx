@@ -10,19 +10,13 @@ import { Clock, AlertTriangle, User } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
-import { getProduct, listRequirements, listFeatures, transition } from '@/services/real/productAgent';
-import { useAuthStore } from '@/stores/authStore';
+import { listRequirements, listFeatures, transition } from '@/services/real/productAgent';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { ITEM_GRADE_LABEL } from './types';
 import type { Requirement, Feature, WorkflowTransition } from './types';
 import { slaInfo } from './sla';
 import { normalizeRequirementStateKey, resolveRequirementStateLabel } from './requirementWorkflowUtils';
-import {
-  canExecuteWorkflowTransition,
-  isGlobalProductAdmin,
-  transitionNeedsDialog,
-  type ProductWorkflowContext,
-} from './workflowTransitionGuard';
+import { transitionNeedsDialog } from './workflowTransitionGuard';
 import { WorkflowTransitionDialog } from './WorkflowTransitionDialog';
 import './product-cards.css';
 
@@ -41,25 +35,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   useEffect(() => {
     if (!showGrade) setSwimlane((s) => (s === 'grade' ? 'none' : s));
   }, [showGrade]);
-  const [product, setProduct] = useState<ProductWorkflowContext | null>(null);
   const [pendingTransition, setPendingTransition] = useState<{ item: Item; transition: WorkflowTransition } | null>(null);
-
-  const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
-  const permissions = useAuthStore((s) => s.permissions);
-  const isGlobalAdmin = isGlobalProductAdmin(permissions);
-
-  useEffect(() => {
-    void getProduct(productId).then((res) => {
-      if (res.success) {
-        setProduct({
-          ownerId: res.data.ownerId,
-          ownerIds: res.data.ownerIds,
-          adminIds: res.data.adminIds,
-          memberIds: res.data.memberIds,
-        });
-      }
-    });
-  }, [productId]);
 
   const reload = useCallback(async () => {
     const res = entityType === 'requirement' ? await listRequirements(productId) : await listFeatures(productId);
@@ -118,11 +94,6 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
       grade: item.grade,
       versionIds: 'versionIds' in item ? item.versionIds : [],
     };
-    if (product && currentUserId && !canExecuteWorkflowTransition(currentUserId, tr, product, isGlobalAdmin, entity)) {
-      setHint('当前账号无权执行该流转');
-      setTimeout(() => setHint(null), 3500);
-      return;
-    }
     if (transitionNeedsDialog(tr, entity)) {
       setPendingTransition({ item, transition: tr });
       return;

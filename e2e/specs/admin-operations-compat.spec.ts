@@ -2,7 +2,9 @@ import { observeNativeAudio, nativeAudioEvidence } from '../fixtures/admin-opera
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   installOperationsFixtures,
+  target,
   targetName,
+  run,
 } from "../fixtures/admin-operations.mjs";
 test.beforeEach(async ({ browser, page }, testInfo) => {
   page.on("pageerror", (error) =>
@@ -16,11 +18,285 @@ test.beforeEach(async ({ browser, page }, testInfo) => {
     description: browser.version(),
   });
 });
+
+test('普通项目成员不能通过环境接入读取系统服务器列表',async({page})=>{
+  await installOperationsFixtures(page);
+  await page.route('**/api/auth/status',route=>route.fulfill({json:{authenticated:true,enabled:true,
+    user:{name:'项目成员',isSystemOwner:false},approvalCapabilities:{accessRequests:false,operator:false}}}));
+  const systemReads:string[]=[];
+  page.on('request',request=>{if(new URL(request.url()).pathname==='/api/cds-system/remote-hosts')systemReads.push(request.url());});
+  await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+  await expect(page.getByRole('heading',{name:'此页面仅系统所有者可用',exact:true})).toBeVisible();
+  expect(systemReads).toEqual([]);
+});
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`${viewport.width} 单次批准选择已有固定版本且保留分支最新版本`,async({page})=>{
+    await page.setViewportSize(viewport);await installOperationsFixtures(page);
+    const stamp=new Date().toISOString(),a='a'.repeat(40),b='b'.repeat(40);let records:any[]=[];const writes:any[]=[];
+    await page.route('**/api/releases/center?*',route=>route.fulfill({json:{rows:[{target:{...target,governance:{required:true}},currentVersion:'old',currentCommit:a,healthStatus:'healthy',canRollback:false,latestRun:run}],runs:[run],plans:[]}}));
+    await page.route('**/api/releases/targets?*',route=>route.fulfill({json:{targets:[{...target,governance:{required:true}}],archivedTargets:[],remoteHosts:[]}}));
+    await page.route('**/api/branches?*',route=>route.fulfill({json:{branches:[{id:'compat-branch',projectId:target.projectId,branch:'compat-branch',githubCommitSha:b,commitSha:b,status:'running'}]}}));
+    await page.route('**/api/releases/governance?*',route=>route.fulfill({json:{authorizations:records,attempts:[],mergeBacks:[],deploymentVersions:[{id:'saved-a',branchId:'compat-branch',commitSha:a,createdAt:stamp}]}}));
+    await page.route('**/api/releases/targets/compat-target/authorizations',async route=>{
+      const body=route.request().postDataJSON();writes.push(body);records=[{...body,id:'fixed-a-approval',projectId:target.projectId,targetId:target.id,branchName:'compat-branch',candidateSha:a,requestedBy:'user:requester:申请人',status:'pending',createdAt:stamp}];await route.fulfill({json:{authorization:records[0]}});
+    });
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    const panel=page.getByRole('region',{name:'发布审批与连续调试'});await panel.getByRole('button',{name:'新建申请',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'申请发布批准',exact:true});
+    await expect(dialog.getByRole('combobox',{name:'申请分支',exact:true})).toContainText(b.slice(0,12));
+    await dialog.getByRole('combobox',{name:'批准发布版本',exact:true}).selectOption('saved-a');
+    await dialog.getByRole('textbox',{name:'发布目的',exact:true}).fill('批次固定已验收A而分支已经前进B');
+    await dialog.getByRole('button',{name:'提交独立审批',exact:true}).click();await expect(dialog).toBeHidden();
+    await expect(panel.getByText('fixed-a-approval',{exact:true})).toHaveCount(0);
+    await expect(panel.getByText('saved-a',{exact:true})).toBeVisible();await expect(panel.getByText(a,{exact:true})).toBeVisible();
+    expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({kind:'single',action:'release',deploymentVersionId:'saved-a',branchId:'compat-branch'});
+    expect(page.url()).toContain('release-center');
+  });
+  test(`${viewport.width} 已受理的单次批准仍可撤销且不重新批准`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    const stamp = new Date().toISOString();
+    let authorization = { id:'consumed-single', projectId:target.projectId, targetId:target.id,
+      branchId:'compat-branch', kind:'single', action:'rollback', rollbackReleaseId:'approved-history', status:'approved',
+      requestedBy:'ai:key:fixture-executor', candidateSha:'a'.repeat(40), mainSha:'b'.repeat(40),
+      reason:'已受理运行仍在连接时允许真实操作员撤销批准', createdAt:stamp,
+      expiresAt:new Date(Date.now()+3600000).toISOString(), allowedPaths:[], consumedBy:'connecting-run',
+      decisions:[{action:'approved',by:'user:independent:独立批准人',at:stamp,reason:'已核对固定版本'}] };
+    const writes: Array<{path:string;body:unknown}> = [];
+    await page.route('**/api/releases/governance?*', route => route.fulfill({json:{authorizations:[authorization],attempts:[],mergeBacks:[]}}));
+    await page.route('**/api/releases/authorizations/consumed-single/revoke', async route => {
+      writes.push({path:new URL(route.request().url()).pathname,body:route.request().postDataJSON()});
+      authorization = {...authorization,status:'revoked'};
+      await route.fulfill({json:{authorization}});
+    });
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    const panel=page.getByRole('region',{name:'发布审批与连续调试'});
+    await expect(panel.getByText('本次批准已使用',{exact:true})).toBeVisible();
+    await expect(panel.getByText('回滚目标记录',{exact:true})).toBeVisible();
+    await expect(panel.getByText('approved-history',{exact:true})).toBeVisible();
+    await panel.getByRole('button',{name:'刷新记录',exact:true}).click();
+    await expect(panel.getByText('已刷新审批记录',{exact:true})).toBeVisible();
+    await expect(panel.getByRole('button',{name:'独立批准',exact:true})).toHaveCount(0);
+    await expect(panel.getByRole('button',{name:'拒绝',exact:true})).toHaveCount(0);
+    await expect(panel.getByRole('button',{name:'撤销授权',exact:true})).toBeVisible();
+    await panel.getByRole('textbox',{name:'审批意见',exact:true}).fill('连接期间停止本次发布');
+    await panel.getByRole('button',{name:'撤销授权',exact:true}).click();
+    await expect(panel.getByText('审批决定已保存',{exact:true})).toBeVisible();
+    await expect(panel.getByText('已撤销',{exact:true})).toBeVisible();
+    await expect(panel.getByRole('button',{name:'撤销授权',exact:true})).toHaveCount(0);
+    expect(writes).toEqual([{path:'/api/releases/authorizations/consumed-single/revoke',body:{reason:'连接期间停止本次发布'}}]);
+    expect(authorization.consumedBy).toBe('connecting-run');
+  });
+
+  test(`${viewport.width} 所有者可为未绑定主机的项目选择既有服务器，选择本身不创建环境`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    await page.route('**/api/auth/status', route => route.fulfill({json:{authenticated:true,enabled:true,
+      user:{name:'接入管理员',isSystemOwner:true},approvalCapabilities:{accessRequests:false,operator:false}}}));
+    let hostReads=0, targetWrites=0;
+    await page.route('**/api/cds-system/remote-hosts', route => {
+      hostReads++;return route.fulfill({json:{hosts:[{id:'system-only-host',name:'已有隔离服务器',host:'127.0.0.1',
+        sshPort:2222,sshUser:'fixture',sshPrivateKeyFingerprint:'fixture-fingerprint',isEnabled:true}]}});
+    });
+    page.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/releases/targets')targetWrites++;});
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    if (viewport.width < 768) await page.getByRole('button',{name:'更多操作',exact:true}).click();
+    await expect(page.getByRole('button',{name:'新建环境',exact:true})).toBeEnabled();
+    expect(hostReads).toBe(0);
+    await page.getByRole('button',{name:'新建环境',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'添加环境',exact:true});
+    await dialog.getByRole('button',{name:/已有隔离服务器/}).click();
+    await dialog.getByRole('button',{name:/生产域名/}).click();
+    await expect(dialog).toContainText('fixture@127.0.0.1:2222');
+    expect(hostReads).toBe(1);expect(targetWrites).toBe(0);
+    await dialog.getByRole('button',{name:'取消',exact:true}).click();
+    await expect(dialog).toBeHidden();expect(targetWrites).toBe(0);
+  });
+
+  test(`${viewport.width} 运维授权关闭后同一请求不随心跳抢占，新请求和主动刷新仍可处理`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    await page.route('**/api/auth/status', async route => route.fulfill({ json: {
+      authenticated: true, enabled: true, activeProvider: 'local',
+      user: { id: 'fixture-approval-operator', username: 'approval-operator', authProvider: 'local', name: '审批操作员', isSystemOwner: true },
+      approvalCapabilities: { accessRequests: false, operator: true },
+    } }));
+    let reads = 0;
+    const pending = [{ id: 'pending-one', opId: 'shell.run', opName: '隔离运维请求', opDanger: 'destructive',
+      requestedBy: '其他 Agent', requestedAt: '2026-01-01T00:00:00Z', callerKey: 'fixture', status: 'pending' }];
+    const mutations: string[] = [];
+    page.on('request', req => {
+      if (req.method() !== 'GET' && new URL(req.url()).pathname.startsWith('/api/')) mutations.push(new URL(req.url()).pathname);
+    });
+    await page.route('**/api/cds-system/operator/requests', async route => {
+      reads++;
+      await route.fulfill({ json: { pending } });
+    });
+    // 真实 EventSource 重连及心跳触发组件的正常刷新，不直接改 React 状态。
+    await page.route('**/api/cds-events', async route => route.fulfill({
+      contentType: 'text/event-stream',
+      body: `retry: 100\nevent: heartbeat\ndata: ${JSON.stringify({ ts: new Date().toISOString(), data: {} })}\n\n`,
+    }));
+    await page.goto(`http://127.0.0.1:5273/release-console?project=${target.projectId}&mode=batch`);
+    const dialog = page.getByRole('dialog', { name: '需要你的明确授权', exact: true });
+    await expect(dialog).toContainText('其他 Agent');
+    await reachable(dialog.getByRole('button', { name: '关闭', exact: true }));
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    const afterCloseReads = reads;
+    await expect.poll(() => reads, { timeout: 15000 }).toBeGreaterThanOrEqual(afterCloseReads + 2);
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole('combobox', { name: '当前项目', exact: true }).click({ trial: true });
+    expect(mutations).toEqual([]);
+    const beforeNewRequestReads = reads;
+    pending.unshift({ ...pending[0], id: 'pending-two', opName: '新的隔离运维请求' });
+    await expect.poll(() => reads, { timeout: 15000 }).toBeGreaterThan(beforeNewRequestReads);
+    await expect(dialog).toContainText('新的隔离运维请求');
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await page.reload();
+    await expect(dialog).toContainText('新的隔离运维请求');
+    expect(pending.every(item => item.status === 'pending')).toBe(true);
+    expect(mutations).toEqual([]);
+  });
+
+  test(`${viewport.width} 授权提醒可稍后处理，预检就绪批次可直接取消`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    await page.route('**/api/auth/status', async (route) => route.fulfill({ json: {
+      authenticated: true, enabled: true, activeProvider: 'local',
+      user: { id: 'fixture-approval-operator', username: 'approval-operator', authProvider: 'local', name: '审批操作员', isSystemOwner: true },
+      approvalCapabilities: { accessRequests: true, operator: false },
+    } }));
+    const targets = [target, { ...target, id: 'compat-target-b', name: '隔离目标 B' }];
+    let batch = {
+      id: 'compat-ready-batch', projectId: target.projectId, versionId: 'compat-version', reportId: 'compat-report',
+      branchId: 'compat-branch', branchName: 'compat-branch', commitSha: 'a'.repeat(40), status: 'ready',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+      targets: targets.map((item) => ({ targetId: item.id, targetName: item.name, status: 'ready', attempts: [], checks: [] })),
+    };
+    const mutations: string[] = [];
+    page.on('request', (req) => {
+      const path = new URL(req.url()).pathname;
+      if (req.method() !== 'GET' && path.startsWith('/api/')) mutations.push(path);
+    });
+    await page.route('**/api/access-requests', async (route) => {
+      await route.fulfill({ json: { requests: [{ id: 'unrelated-pending', status: 'pending', kind: 'project', projectId: 'other-project', projectName: '其他项目', agentName: '验收 Agent', purpose: '请保留这条未批准申请', createdAt: '2026-01-01T00:00:00Z' }] } });
+    });
+    await page.route('**/api/releases/targets*', async (route) => route.fulfill({ json: { targets, archivedTargets: [], remoteHosts: [] } }));
+    await page.route('**/api/releases/batches**', async (route) => {
+      const req = route.request(), path = new URL(req.url()).pathname;
+      if (path.endsWith('/accepted-versions')) return route.fulfill({ json: { versions: [] } });
+      if (path.endsWith('/cancel') && req.method() === 'POST') {
+        batch = { ...batch, status: 'cancelled', updatedAt: new Date().toISOString(), targets: batch.targets.map((item) => ({ ...item, status: 'cancelled' })) };
+        return route.fulfill({ json: { batch } });
+      }
+      return route.fulfill({ json: path.endsWith('/batches') ? { batches: [batch] } : { batch } });
+    });
+    await page.goto(`http://127.0.0.1:5273/release-console?project=${target.projectId}&batch=${batch.id}`);
+    const floating = page.getByTestId('cds-access-request-floating');
+    await expect(floating).toContainText('请保留这条未批准申请');
+    await floating.getByRole('button', { name: '稍后在信息中心处理', exact: true }).click();
+    await expect(floating).toHaveCount(0);
+    expect(mutations).toEqual([]);
+    const cancel = page.getByRole('button', { name: '取消批次', exact: true });
+    await reachable(cancel);
+    await cancel.click();
+    await expect(page.getByText('已取消', { exact: true }).first()).toBeVisible();
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/cancel`]);
+    expect(batch.targets.every((item) => item.attempts.length === 0)).toBe(true);
+    await page.getByRole('button', { name: '信息中心，1 条待处理', exact: true }).click();
+    const inbox = page.getByRole('region', { name: '1 个授权申请需要处理', exact: true });
+    await expect(inbox).toContainText('请保留这条未批准申请');
+    await expect(inbox.getByRole('button', { name: '批准项目访问', exact: true })).toBeVisible();
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/cancel`, '/api/notices/read-all']);
+  });
+
+  test(`${viewport.width} 取消目标重新发布先确认固定版本，返回不写入且只发布选中目标`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    const commit = 'a'.repeat(40);
+    let batch = {
+      id: 'compat-cancelled-batch', projectId: target.projectId, versionId: 'compat-version', reportId: 'compat-report',
+      branchId: 'compat-branch', branchName: 'compat-branch', commitSha: commit, status: 'cancelled',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+      targets: [target, { ...target, id: 'compat-target-b', name: '隔离目标 B' }].map(item => ({
+        targetId: item.id, targetName: item.name, status: 'cancelled',
+        attempts: [] as Array<{ id: string; kind: string; runId: string; createdAt: string }>,
+        runId: undefined as string | undefined, observedCommitSha: undefined as string | undefined,
+      })),
+    };
+    const mutations: string[] = [];
+    page.on('request', req => {
+      const path = new URL(req.url()).pathname;
+      if (req.method() !== 'GET' && path.startsWith('/api/')) mutations.push(path);
+    });
+    await page.route('**/api/releases/batches**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/accepted-versions')) return route.fulfill({ json: { versions: [] } });
+      if (path.endsWith('/targets/compat-target/retry') && route.request().method() === 'POST') {
+        expect(route.request().postDataJSON().idempotencyKey).toMatch(/^[a-zA-Z0-9_-]{8,128}$/);
+        batch = { ...batch, status: 'partial_success', targets: batch.targets.map((row, index) => index ? row : {
+          ...row, status: 'success', observedCommitSha: commit, runId: 'compat-republished',
+          attempts: [{ id: 'republished-once', kind: 'deploy', runId: 'compat-republished', createdAt: new Date().toISOString() }],
+        }) };
+      }
+      return route.fulfill({ json: path.endsWith('/batches') ? { batches: [batch] } : { batch } });
+    });
+    await page.goto(`http://127.0.0.1:5273/release-console?project=${target.projectId}&batch=${batch.id}`);
+    const rows = page.getByRole('list', { name: '各目标发布结果', exact: true }).locator(':scope > li');
+    await rows.first().getByRole('button', { name: '重新发布此目标', exact: true }).click();
+    const confirm = page.getByRole('dialog', { name: '确认重新发布已取消目标', exact: true });
+    await expect(confirm).toContainText(targetName);
+    await expect(confirm).toContainText(commit);
+    expect(mutations).toEqual([]);
+    await reachable(confirm.getByRole('button', { name: '返回', exact: true }));
+    await confirm.getByRole('button', { name: '返回', exact: true }).click();
+    await expect(confirm).toHaveCount(0);
+    expect(mutations).toEqual([]);
+    await rows.first().getByRole('button', { name: '重新发布此目标', exact: true }).click();
+    const execute = confirm.getByRole('button', { name: '确认重新发布', exact: true });
+    await reachable(execute);
+    await execute.click();
+    await expect(rows.first()).toContainText('本批次部署 1 次');
+    await expect(rows.first().getByRole('button', { name: '重新发布此目标', exact: true })).toHaveCount(0);
+    await expect(rows.nth(1).getByRole('button', { name: '重新发布此目标', exact: true })).toBeVisible();
+    expect(batch.targets.map(row => row.attempts.length)).toEqual([1, 0]);
+    await page.reload();
+    await expect(rows.first()).toContainText('本批次部署 1 次');
+    expect(mutations).toEqual([`/api/releases/batches/${batch.id}/targets/compat-target/retry`]);
+  });
+}
 test.afterEach(async ({}, testInfo) => {
   expect(testInfo.annotations.filter((a) => a.type === "pageerror")).toEqual(
     [],
   );
 });
+
+for (const route of ['release-console', 'release-center']) {
+  test(`${route} 失效项目不能冒用首项或读取别的发布上下文`, async ({ page }) => {
+    const invalidRequests: string[] = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/') && (url.searchParams.get('project') === 'missing-project' || url.searchParams.get('projectId') === 'missing-project' || url.pathname.includes('/missing-project/'))) invalidRequests.push(url.pathname);
+    });
+    await installOperationsFixtures(page);
+    if (route === 'release-console') await page.addInitScript(() => { (window as Window & { __CDS_PREVIEW_INSTANCE__?: boolean }).__CDS_PREVIEW_INSTANCE__ = true; });
+    await page.goto(`http://127.0.0.1:5273/${route}?project=missing-project&mode=batch`);
+    const project = page.getByRole('combobox', { name: route === 'release-console' ? '当前项目' : '项目', exact: true });
+    await expect(page.getByRole('alert')).toContainText('项目不在此实例中');
+    await expect(project).toHaveValue('');
+    if (route === 'release-console') await expect(page.getByRole('note')).toContainText('不能执行真实发布');
+    expect(invalidRequests).toEqual([]);
+    const validProjectId = await project.locator('option:not([value=""])').first().getAttribute('value');
+    expect(validProjectId).toBeTruthy();
+    await project.selectOption(validProjectId!);
+    await expect(project).toHaveValue(validProjectId!);
+    await expect.poll(() => new URL(page.url()).searchParams.get('project')).toBe(validProjectId);
+    if (route === 'release-console') await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+    else await expect(page.getByRole('button', { name: '新建环境', exact: true })).toBeEnabled();
+    expect(invalidRequests).toEqual([]);
+  });
+}
 async function reachable(locator: Locator) {
   await locator.scrollIntoViewIfNeeded();
   await expect(locator).toBeVisible();
@@ -91,10 +367,15 @@ for (const viewport of [
       await page.goto("http://127.0.0.1:5273/project-list");
       if (await page.getByLabel("打开导航菜单").isVisible())
         await page.getByLabel("打开导航菜单").click();
-      await page
-        .getByRole("link", { name: "发布控制台", exact: true })
-        .first()
-        .click();
+      await page.getByRole("link", { name: "发布中心", exact: true }).first().click();
+      await expect(page).toHaveURL(/\/release-center/);
+      await expect(page.getByRole('region', { name: '线上版本与主干追溯' })).toBeVisible();
+      if (!await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().isVisible()) {
+        await page.getByRole('button', { name: '更多操作', exact: true }).click();
+      }
+      await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
+      await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+      await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
       await reachable(page.getByLabel("要发布的版本"));
       await page.getByRole("button", { name: "开始发布", exact: true }).click();
       const confirm = page.getByRole("button", {
@@ -267,15 +548,15 @@ for (const theme of ["light", "dark"])
       await page.locator(`nav a[href="/llmgw/${path}"]`).click();
     }
     await nav("platforms");
-    await page
-      .getByRole("button", { name: "还没有模型", exact: false })
-      .click();
+    const providerEntry = page.getByRole("button", { name: "尚未接入模型", exact: false });
+    await providerEntry.click();
     let pane = page.getByRole("complementary", { name: "清单详情" });
     await pane.getByRole("button", { name: "连接配置", exact: true }).click();
     await reachable(
       pane.getByRole("button", { name: "编辑连接", exact: true }),
     );
-    await pane.getByRole("button", { name: "关闭详情", exact: true }).click();
+    await pane.getByRole("button", { name: "返回上游清单", exact: true }).click();
+    await expect(providerEntry).toBeFocused();
     await nav("service-keys");
     await page
       .getByRole("button", { name: "1 个调用用途", exact: true })
@@ -295,9 +576,11 @@ for (const theme of ["light", "dark"])
     );
     await pane.getByRole("button", { name: "关闭详情", exact: true }).click();
     await nav("logs");
-    await page
-      .getByRole("button", { name: /11-12 00:00 compat-model/ })
-      .click({ position: { x: 5, y: 5 } });
+    const requestRow = page.getByRole("button").filter({
+      has: page.getByRole("link", { name: "compat-model", exact: true }),
+    });
+    await expect(requestRow).toHaveCount(1);
+    await requestRow.click({ position: { x: 5, y: 5 } });
     const detail = page.getByRole("dialog", { name: "请求详情" });
     await expect(detail).toBeVisible();
     await detail.getByRole("tab", { name: "请求与响应", exact: true }).click();
@@ -326,7 +609,15 @@ for (const theme of ["light", "dark"]) {
     await page.addInitScript((t) => localStorage.setItem("cds_theme", t), theme);
     await page.goto("http://127.0.0.1:5273/project-list");
     await page.getByLabel("打开导航菜单").click();
-    await page.getByRole("link", { name: "发布控制台", exact: true }).click();
+    await page.getByRole("link", { name: "发布中心", exact: true }).click();
+    await expect(page).toHaveURL(/\/release-center/);
+    await expect(page.getByRole('region', { name: '线上版本与主干追溯' })).toBeVisible();
+    if (!await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().isVisible()) {
+      await page.getByRole('button', { name: '更多操作', exact: true }).click();
+    }
+    await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
+    await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+    await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
     await expect(page.getByLabel("要发布的版本")).toBeVisible();
     await page.evaluate(() => {
       document.documentElement.style.fontSize = "200%";
@@ -386,7 +677,15 @@ test("390 隔离发布成功闭环", async ({ page }) => {
   fixture.setPreflightPass(true);
   await page.goto("http://127.0.0.1:5273/project-list");
   await page.getByLabel("打开导航菜单").click();
-  await page.getByRole("link", { name: "发布控制台", exact: true }).click();
+  await page.getByRole("link", { name: "发布中心", exact: true }).click();
+  await expect(page).toHaveURL(/\/release-center/);
+  await expect(page.getByRole('region', { name: '线上版本与主干追溯' })).toBeVisible();
+  if (!await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().isVisible()) {
+    await page.getByRole('button', { name: '更多操作', exact: true }).click();
+  }
+  await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
+  await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
+  await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
   await page.getByRole("button", { name: "开始发布", exact: true }).click();
   const confirm = page.getByRole("button", {
     name: `确认发布到 ${targetName}`,
@@ -407,7 +706,7 @@ test("390 隔离发布成功闭环", async ({ page }) => {
     {
       path: "/api/releases/branches/compat-branch/runs",
       method: "POST",
-      body: { targetId: "compat-target", previewUrl: "https://example.test" },
+      body: { targetId: "compat-target", previewUrl: "https://example.test", expectedCommitSha: run.commitSha },
     },
   ]);
 });
@@ -487,6 +786,13 @@ for (const width of [390, 1440])
       await expect(starters.getByRole("button")).toHaveCount(4);
       const draftCalls = () => writes.filter(write => write.path === "/app-callers/draft").length;
       const before = draftCalls();
+      await expect(page.getByText('智能建议费用由平台承担', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: '手动接入', exact: true }).click();
+      await expect(page.getByRole('textbox', { name: '应用标识（英文）', exact: true })).toBeVisible();
+      expect(draftCalls()).toBe(before);
+      await page.getByRole('button', { name: '使用智能建议（会调用模型，费用由平台承担）', exact: true }).click();
+      await expect(page.getByRole('textbox', { name: '我想做什么', exact: true })).toBeVisible();
+      expect(draftCalls()).toBe(before);
       await starters.getByRole("button", { name: "搭建知识库助手", exact: true }).click();
       await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toHaveValue(/团队知识库助手/);
       expect(draftCalls()).toBe(before);
@@ -558,7 +864,7 @@ for (const width of [390, 1440])
         return el.getBoundingClientRect().top - summary.getBoundingClientRect().bottom;
       });
       expect(advancedGap).toBeGreaterThanOrEqual(0);
-      await page.getByRole("button", { name: "回上一步", exact: true }).click();
+      await page.getByRole("button", { name: "修改建议", exact: true }).click();
       await expect(page.getByText("team.knowledge::chat", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "下一步", exact: true }).click();
       await expect(page.getByRole("textbox", { name: "月预算（美元）", exact: true })).toHaveValue("25");
@@ -580,3 +886,53 @@ for (const width of [390, 1440])
       await expect(page.locator(".gateway-entry-resume button")).toHaveCount(0);
     });
   }
+
+for (const routePath of ['release-console', 'release-center']) {
+  for (const width of [1440, 390]) {
+    test(`${routePath} ${width} 项目列表失败后刷新在原页面恢复且仍校验项目`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await installOperationsFixtures(page);
+      let projectReads = 0;
+      const centerProjects: string[] = [], writes: string[] = [];
+      page.on('request', request => {
+        const url = new URL(request.url());
+        if (url.pathname === '/api/releases/center') centerProjects.push(url.searchParams.get('project') || '');
+        if (url.pathname.startsWith('/api/') && request.method() !== 'GET') writes.push(url.pathname);
+      });
+      await page.route('**/api/projects', async route => {
+        projectReads++;
+        await route.fulfill(projectReads === 1
+          ? { status: 503, json: { error: '项目清单暂不可用' } }
+          : { json: { projects: [{ id: target.projectId, name: '重试后可选的项目' }] } });
+      });
+      await page.goto(`http://127.0.0.1:5273/${routePath}?project=${target.projectId}`);
+      await expect(page.getByText('项目清单暂不可用').first()).toBeVisible();
+      expect(centerProjects).toEqual([]);
+      await page.evaluate(() => { Object.assign(window, { __projectRetryPageAlive: true }); });
+      if (width === 390) await page.getByRole('button', { name: '更多操作', exact: true }).click();
+      await page.getByRole('button', { name: '刷新', exact: true }).click();
+      if (width === 390) await page.keyboard.press('Escape');
+      await expect.poll(() => projectReads, { timeout: 8000 }).toBe(2);
+      await expect.poll(() => centerProjects.length).toBeGreaterThan(0);
+      expect(centerProjects.every(project => project === target.projectId)).toBe(true);
+      expect(await page.evaluate(() => Reflect.get(window, '__projectRetryPageAlive'))).toBe(true);
+      await expect(page.getByRole('combobox', {
+        name: routePath === 'release-center' ? '项目' : '当前项目', exact: true,
+      })).toHaveValue(target.projectId);
+      expect(writes).toEqual([]);
+    });
+  }
+}
+
+test('账务角色普通登录默认落在可访问概览', async ({ page }) => {
+  await installOperationsFixtures(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.route('**/auth/login', route => route.fulfill({json:{success:true,data:{token:'fixture',username:'billing-user',expiresAt:new Date(Date.now()+3600000).toISOString(),mustChangePassword:false,tenant:{id:'t1',name:'验收租户',isInternal:true,role:'billing',teamIds:[]}}}}));
+  await page.goto('http://127.0.0.1:8200/llmgw/login');
+  await page.locator('#llmgw-username').fill('billing-user');
+  await page.locator('#llmgw-password').fill('fixture-only');
+  await page.getByRole('button',{name:'开始身份确认',exact:true}).click();
+  await expect(page).toHaveURL(/\/llmgw\/$/);
+  await expect(page.getByText('当前角色不包含此页面')).toHaveCount(0);
+  await expect(page.locator('.lg-console-sidebar nav a').first()).toHaveAttribute('href','/llmgw/');
+});

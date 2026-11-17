@@ -500,8 +500,7 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --cds-branch-card-gap: 1rem;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, max(var(--cds-branch-card-min), calc((100% - 4 * var(--cds-branch-card-gap)) / 5))), 1fr));
-    /* 等高（2026-09-29）：卡片本身是固定槽位、固定高度，stretch 再兜一层——
-       任何一张卡将来多长出一行，同排其它卡跟着拉齐，而不是回到高低不齐。 */
+    /* 同一视觉行按真实内容自然拉齐，不给少量内容强制补整页空槽。 */
     align-items: stretch;
     gap: var(--cds-branch-card-gap);
   }
@@ -6609,6 +6608,7 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
 :root.cds-surface-motion::view-transition-old(cds-detail),
 :root.cds-surface-motion::view-transition-new(cds-detail) { transform-origin: 0 0; }
 .cds-surface-motion .cds-page-enter, .cds-surface-motion .cds-drawer-anim { animation: none !important; }
+[data-cds-surface-entered] { animation: none !important; }
 
 .cds-theme-motion .cds-main, .cds-theme-motion .cds-branch-detail-drawer { view-transition-name: none; }
 
@@ -6616,3 +6616,6 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
 
 :root.cds-surface-motion::view-transition-old(root) { opacity: 0; z-index: 0; }
 :root.cds-surface-motion::view-transition-new(root) { z-index: 1; }
+
+/* 关系画布保留可用空间；共享Dialog末尾关闭按钮在此工作区提供44px触区。 */
+.cds-relation-sheet > button:last-child { min-width: 3.25rem; min-height: 3.25rem; right: .5rem; top: .5rem; display: inline-flex; align-items: center; justify-content: center; }

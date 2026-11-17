@@ -66,7 +66,7 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     root = createRoot(document.getElementById('root'));
     window.matchMedia = () => ({ matches: false });
     globalThis.__gatewayRoutes.length = 0;
-    globalThis.__gatewayLogin = { success: true, data: { mustChangePassword: false } };
+    globalThis.__gatewayLogin = { success: true, data: { mustChangePassword: false, tenant: { role: "admin" } } };
     await act(async () => root.render(React.createElement(LoginPage)));
     assert.equal(document.querySelector('.gateway-entry').dataset.sound,'off');
     await fill('#llmgw-username','tenant-user'); await fill('#llmgw-password','fixture-only');
@@ -77,6 +77,10 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     await act(async () => { await new Promise(resolve => setTimeout(resolve,850)); });
     assert.equal(document.querySelector('.gateway-arrival-copy'),null);
     assert.deepEqual(globalThis.__gatewayRoutes,[['/quickstart',{replace:true}]]);
+    const { gatewayLoginDestination } = await server.ssrLoadModule('/src/components/entry/quickstartArrival.ts');
+    for (const role of ['owner','admin','developer','viewer']) assert.equal(gatewayLoginDestination(null, {role}), '/quickstart');
+    for (const candidate of [null, '/', '//outside.test', '/login']) assert.equal(gatewayLoginDestination(candidate, {role:'billing'}), '/');
+    assert.equal(gatewayLoginDestination('/usage', {role:'billing'}), '/usage');
     assert.equal(hasQuickstartArrival(),true);
     assert.ok(document.documentElement.hasAttribute('data-entry-arriving'));
     await act(async () => root.unmount());

@@ -11,7 +11,7 @@ fi
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 monitor="$root/scripts/llmgw-disk-usage-monitor.sh"
-retention="$root/scripts/llmgw-backup-retention.py"
+retention="$root/scripts/prd-agent-verified-backup-retention.py"
 service="$root/deploy/systemd/llmgw-disk-monitor.service"
 timer="$root/deploy/systemd/llmgw-disk-monitor.timer"
 retention_service="$root/deploy/systemd/llmgw-backup-retention.service"
@@ -26,7 +26,7 @@ done
 
 if [ "$execute" != "1" ]; then
   echo "+ install -m 0755 $monitor /usr/local/sbin/llmgw-disk-usage-monitor"
-  echo "+ install -m 0755 $retention /usr/local/sbin/llmgw-backup-retention"
+  echo "+ install -m 0755 $retention /usr/local/sbin/prd-agent-verified-backup-retention"
   echo "+ install -m 0644 $service /etc/systemd/system/llmgw-disk-monitor.service"
   echo "+ install -m 0644 $timer /etc/systemd/system/llmgw-disk-monitor.timer"
   echo "+ install -m 0644 $retention_service /etc/systemd/system/llmgw-backup-retention.service"
@@ -42,7 +42,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 install -m 0755 "$monitor" /usr/local/sbin/llmgw-disk-usage-monitor
-install -m 0755 "$retention" /usr/local/sbin/llmgw-backup-retention
+install -m 0755 "$retention" /usr/local/sbin/prd-agent-verified-backup-retention
 install -m 0644 "$service" /etc/systemd/system/llmgw-disk-monitor.service
 install -m 0644 "$timer" /etc/systemd/system/llmgw-disk-monitor.timer
 install -m 0644 "$retention_service" /etc/systemd/system/llmgw-backup-retention.service

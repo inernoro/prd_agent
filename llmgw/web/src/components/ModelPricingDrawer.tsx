@@ -10,10 +10,14 @@
 // 万一要回滚到池路由，那几个池里的价还得是对的。所以它是**回滚备份**，不是计费依据；
 // 原先那句「真正参与计费的是池成员里的那份价格」现在是假的，照着它去改池、以为改了线上账，
 // 是白改一场（第 60 轮 review）。
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { getModelPoolUsage, updateModel } from '@/lib/api';
+import { useDrawerFocus } from '@/components/EntityPreviewDrawer';
+import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
+import { formatPlatformTime } from '@/lib/platformTime';
+import { CollectionFacts } from '@/components/CollectionView';
+import { getModelPoolUsage, getModels, updateModel } from '@/lib/api';
 import type { ModelItem, ModelPoolUsageData, UpdateModelRequest } from '@/lib/types';
 import { Button, Chip, InlineAlert } from '@/components/ui';
 import { GAP } from '@/lib/surface';
@@ -30,9 +34,14 @@ type Props = {
   model: ModelItem;
   onClose: () => void;
   onSaved: (updated: ModelItem) => void;
+  onUnknownEnd: () => void;
 };
 
-export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
+export function ModelPricingDrawer({ model, onClose, onSaved, onUnknownEnd }: Props) {
+  const drawerRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const close = () => { if (!saving && !unknownWrite) onClose(); };
+  useDrawerFocus(true, close, drawerRef, closeButtonRef);
   const [name, setName] = useState(model.name || '');
   const [maxTokens, setMaxTokens] = useState(model.maxTokens != null ? String(model.maxTokens) : '');
   const [remark, setRemark] = useState(model.remark || '');
@@ -45,6 +54,10 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
   const [usageError, setUsageError] = useState<string | null>(null);
   const [syncPoolIds, setSyncPoolIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [unknownWrite, setUnknownWrite] = useState<UpdateModelRequest | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [currentRead, setCurrentRead] = useState<ModelItem | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -104,6 +117,8 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
     : model.priceStale ? '这份价格没有观测时间，无从判断还能不能信' : null;
 
   const save = async () => {
+    if (savingRef.current || unknownWrite) return;
+    savingRef.current = true;
     setSaving(true);
     setError(null);
     const req: UpdateModelRequest = {
@@ -127,29 +142,52 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
       // 计价口径只有美金一种，界面上没有可选项，这里也就不给第二种可能。
       req.priceCurrency = 'USD';
     }
-    const res = await updateModel(model.id, req);
-    setSaving(false);
-    if (!res.success) { setError(res.error?.message || '保存失败'); return; }
-    onSaved(res.data);
+    try {
+      const res = await updateModel(model.id, req);
+      if (!res.success) {
+        // Both codes are audited validation/not-found exits before UpdateOne in Program.cs.
+        if (mutationOutcomeUnknown(res.error?.code, ['INVALID_INPUT', 'NOT_FOUND'])) { setUnknownWrite(req); setError('保存结果未确认，可能已生效；提交字段已保留，请先核对服务端当前值。'); }
+        else setError(res.error?.message || '保存请求被拒绝');
+        return;
+      }
+      onSaved(res.data);
+    } catch { setUnknownWrite(req); setError('保存结果未确认，可能已生效；提交字段已保留，请先核对服务端当前值。'); }
+    finally { savingRef.current = false; setSaving(false); }
+  };
+  const readCurrent = async () => {
+    if (!unknownWrite || checking) return;
+    setChecking(true);
+    try {
+      const response = await getModels({ platformId: model.platformId || undefined });
+      if (!response.success) { setError('当前型号读取失败，原保存结果仍未确认。'); return; }
+      const found = response.data.items.find(item => item.id === model.id);
+      if (!found) { setError('当前可见范围未找到这个精确型号，未改用同名对象；保存结果仍未确认。'); return; }
+      setCurrentRead(found);
+      setError('已读取当前字段；这不证明原保存或旧池备份回写已完成，本次编辑不会自动重提。');
+    } catch { setError('当前型号读取中断，原保存结果仍未确认。'); }
+    finally { setChecking(false); }
   };
 
   const syncablePools = usage?.pools.filter((p) => !p.managed) ?? [];
 
   return createPortal(
     <div className="lg-side-drawer-portal">
-      <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" onClick={onClose} />
-      <aside className="lg-side-drawer" role="dialog" aria-modal="true" aria-label="编辑模型">
+      <button className="lg-side-drawer-backdrop" type="button" aria-label="关闭" disabled={saving || Boolean(unknownWrite)} onClick={close} />
+      <aside ref={drawerRef} tabIndex={-1} className="lg-side-drawer" role="dialog" aria-modal="true" aria-label="编辑模型">
         <header className="lg-side-drawer-header">
           <div className="lg-side-drawer-title">
             <div><small>编辑模型</small><h2>{model.modelName}</h2></div>
           </div>
-          <button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button>
+          <button ref={closeButtonRef} type="button" aria-label="关闭" disabled={saving || Boolean(unknownWrite)} onClick={close}><X size={18} /></button>
         </header>
 
         <div className="lg-side-drawer-body">
           {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
 
-          <div style={SECTION_TITLE}>基本信息</div>
+          {unknownWrite ? <><Button size="sm" disabled={checking} onClick={() => void readCurrent()}>读取当前型号字段</Button><p style={hintStyle}>结束编辑不会撤销可能已完成或仍在处理的保存；返回清单会重新读取。</p></> : null}
+          {currentRead ? <div><h3 style={SECTION_TITLE}>本次读取的服务端字段</h3><CollectionFacts items={[{ label: '型号', value: currentRead.modelName }, { label: '显示名', value: currentRead.name || '未设置' }, { label: '最大输出', value: currentRead.maxTokens ?? '未限制' }, { label: '备注', value: currentRead.remark || '未设置' }, { label: '币种', value: currentRead.priceCurrency || '未设置' }, { label: '输入 / 输出', value: `${currentRead.inputPricePerMillion ?? '未设'} / ${currentRead.outputPricePerMillion ?? '未设'}` }, { label: '缓存读 / 写', value: `${currentRead.cachedInputPricePerMillion ?? '未设'} / ${currentRead.cacheWritePricePerMillion ?? '未设'}` }, { label: '按次价格', value: currentRead.pricePerCall ?? '未设' }, { label: '更新时间', value: formatPlatformTime(currentRead.updatedAt) }]} /></div> : null}
+          <fieldset disabled={saving || Boolean(unknownWrite)} style={{ display: 'contents', border: 0, margin: 0, padding: 0 }}>
+          <div style={SECTION_TITLE}>{unknownWrite ? '本次提交的字段（待核对）' : saving ? '正在保存的提交字段' : '基本信息'}</div>
           <label style={FIELD_LABEL}>显示名<input value={name} onChange={(e) => setName(e.target.value)} style={FIELD_INPUT} /></label>
           <label style={FIELD_LABEL}>最大输出 token<input type="number" min={1} value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} style={FIELD_INPUT} placeholder="留空表示不限制" /></label>
           <label style={FIELD_LABEL}>备注<input value={remark} onChange={(e) => setRemark(e.target.value)} style={FIELD_INPUT} /></label>
@@ -161,16 +199,15 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
           <label style={FIELD_LABEL}>缓存写<input type="number" min={0} step="any" value={cacheWritePrice} onChange={(e) => setCacheWritePrice(e.target.value)} style={FIELD_INPUT} placeholder="Anthropic 一类协议才用得上" /></label>
           <label style={FIELD_LABEL}>每次调用固定费<input type="number" min={0} step="any" value={pricePerCall} onChange={(e) => setPricePerCall(e.target.value)} style={FIELD_INPUT} placeholder="按次计费的模型才填" /></label>
           <p style={hintStyle}>
-            缓存价留空不等于免费，计价时按输入全价算：宁可高估催人来补，也不低估放大真实开销——限额靠的就是这个数。
+            缓存单价留空时，费用估算按输入单价计算，不视为免费。
           </p>
           {optionalNumber(pricePerCall) !== undefined ? (
             <p style={hintStyle}>
-              填了「每次调用固定费」就只按次收费，上面那几个 token 单价不参与计价。
-              两种价同时生效是另一种计费模式，这里不靠「两个字段都填了」去猜——真要那样，得先有一个明确的计费模式开关。
+              配置每次调用固定费后，Gateway按次估算，Token单价不叠加；供应商实际收费规则以账单为准。
             </p>
           ) : null}
 
-          <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>来源与时效</div>
+          <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>{saving || unknownWrite ? '上次读取的来源与时效' : '来源与时效'}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
             {model.priceSource && PRICE_SOURCE_LABELS[model.priceSource] ? (
               <Chip
@@ -182,24 +219,23 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
               <Chip label="没有来源可考" color="var(--warn)" bg="var(--warn-bg)" />
             )}
             <span style={hintStyle}>
-              {model.priceObservedAt ? `观测于 ${model.priceObservedAt.slice(0, 16).replace('T', ' ')}` : '没有观测时间'}
+              {model.priceObservedAt ? `观测于 ${formatPlatformTime(model.priceObservedAt)}` : '没有观测时间'}
               {model.priceUpdatedBy ? ` · ${model.priceUpdatedBy}` : ''}
             </span>
           </div>
           {staleNotice ? <InlineAlert tone="info">{staleNotice}</InlineAlert> : null}
-          <p style={hintStyle}>改动任一价格后，来源会记成「人工录入」，观测时间刷成此刻。</p>
+          <p style={hintStyle}>保存价格改动后，来源记为「人工录入」，并更新观测时间。</p>
 
           <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>生效范围</div>
           <p style={hintStyle}>
-            线上计费读的就是上面这份价——运行时解析直接从这条模型文档取价，保存即生效。
+            {unknownWrite ? '本次提交是否保存仍待核对；费用估算以请求解析时读取的服务端价格为准。' : '本次价格用于后续请求的Gateway费用估算和预算判定，每次按解析时的价格快照计算。历史估算不追溯重算，实际结算以供应商账单为准。'}
           </p>
           {usageError ? <InlineAlert tone="error">{usageError}</InlineAlert> : null}
           {usage && usage.pools.length === 0 ? null : (
             <>
-              <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>回滚备份 · 旧模型池（不参与计费）</div>
+              <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>回滚备份 · 旧模型池</div>
               <p style={hintStyle}>
-                模型池已经不在计费链路上，勾选只是把这份价也写进那几个池，留给「万一要回滚到池路由」那一天。
-                不勾不影响线上任何一笔账。
+                旧模型池不参与当前费用估算。勾选仅将价格同步到所选旧池备份，供回滚到旧池路由时使用。
               </p>
             </>
           )}
@@ -229,15 +265,17 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
             <p style={hintStyle}>托管的只追加池不接受从这里改价，已跳过。</p>
           ) : null}
           {usage && usage.pools.length > 0 ? (
-            <p style={hintStyle}>不勾的池保留它自己的价格，并在模型池页面显示为「与档案价不同」——这不影响计费。</p>
+            <p style={hintStyle}>未勾选的旧池保留原有备份价格，不影响当前模型的费用估算。</p>
           ) : null}
+          </fieldset>
         </div>
 
-        <div className="lg-side-drawer-footer">
+        <div className="lg-side-drawer-footer" style={unknownWrite ? { flexWrap: 'wrap' } : undefined}>
+          {unknownWrite ? <p style={{ ...hintStyle, flexBasis: '100%' }}>结束编辑不撤销已发出的保存，也不证明服务端保存成功。</p> : null}
           {/* 按钮一行排开，不允许换行 */}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.tight, flexWrap: 'nowrap' }}>
-            <Button variant="ghost" size="sm" disabled={saving} onClick={onClose}>取消</Button>
-            <Button variant="primary" size="sm" disabled={saving} onClick={() => void save()}>
+            {unknownWrite ? <Button variant="ghost" size="sm" disabled={checking} onClick={onUnknownEnd}>结束本次编辑</Button> : <Button variant="ghost" size="sm" disabled={saving} onClick={onClose}>取消</Button>}
+            <Button variant="primary" size="sm" disabled={saving || Boolean(unknownWrite)} onClick={() => void save()}>
               {saving ? '保存中' : syncPoolIds.length > 0 ? `保存并回写 ${syncPoolIds.length} 个旧池` : '保存'}
             </Button>
           </span>

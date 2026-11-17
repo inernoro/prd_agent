@@ -1,9 +1,10 @@
 [Unit]
-Description=LLM Gateway backup retention
+Description=Verified offsite backup retention with 90-day local history
 
 [Service]
 Type=oneshot
 StateDirectory=llmgw
-ExecStart=/usr/local/sbin/llmgw-backup-retention --root /root/backups --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --minimum-full-mb 256 --minimum-age-hours 24 --execute --confirm DELETE_REDUNDANT_FULL_BACKUPS --json-out /var/lib/llmgw/backup-retention-latest.json
+# Original policy retained sparse July dates indefinitely; only recent verified offsite receipts permit expiry.
+ExecStart=/usr/local/sbin/prd-agent-verified-backup-retention --root /root/backups --receipt /var/lib/llmgw/offsite-backup-receipt.json --days 90 --execute --json-out /var/lib/llmgw/backup-retention-latest.json
 StandardOutput=journal
 StandardError=journal

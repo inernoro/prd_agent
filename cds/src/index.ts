@@ -62,13 +62,17 @@ import {
   backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
   buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
   buildRedisBackupProbeScript,
+  buildRedisSnapshotCopyArgv,
   redisAuthFromServiceDefinition,
   redisUsernameFromServiceDefinition,
-  redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
   shouldSkipOffsiteThisRound, INFRA_BACKUP_HEALTH_FILE, INFRA_BACKUP_INTERVAL_MS, backupFailureReason,
   type BackupOutcome,
 } from './services/infra-backup-schedule.js';
+import { BackupRetentionService } from './services/backup-retention.js';
+import { OwnedResourceLifecycle } from './services/owned-resource-task.js';
+import { ImageCacheGovernance, collectImageCacheReferences, configureImageCacheGovernance } from './services/image-cache-governance.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
 import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
 import {
@@ -176,7 +180,8 @@ import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
-import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
+import { MapNotifier, readMapNotifierSettings, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
+import { isSealedSecret } from './infra/secret-seal.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
 import { channelConfigured, classifyAlert, routeAlarm, notificationChannelSelected, renderAlarmMessage } from './services/alarm-route.js';
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
@@ -736,8 +741,8 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       // 半截文件的危害是具体的：保留策略按 `<key>-auto-` 前缀认它是一份备份，
       // 可能把真正可用的旧副本挤掉；备份历史也会把它列出来供人恢复。
       // 放子目录而不是加后缀，这样上层 ls 既看不到它，也不会把它算进份数。
-      const tmpDir = `${dir}/.tmp`;
-      await shell.exec(`rm -rf ${shq(tmpDir)} && mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
+      const tmpDir = `${dir}/.tmp/${holder.roundId}-${crypto.randomBytes(8).toString('hex')}`;
+      await shell.exec(`mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
 
       /**
        * 磁盘闸。**每个目标之前都要重跑一次**，不是每轮开头查一次就完事——
@@ -799,7 +804,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         const finalOut = `${dir}/${t.fileName}`;
         let maintenanceJobId: string | null = null;
         let maintenanceCompleted = false;
+        await backupRetentionService.withLease(dir, t.projectId, t.id, 'backup', async () => {
         try {
+          const backupSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          await backupRetentionService.beginOutput(out, t.projectId, t.id, backupSourceFingerprint);
           if (t.kind === 'mongo' || t.kind === 'redis') {
             try {
               const maintenanceJob = await stateService.beginInfraMaintenanceJob({
@@ -903,7 +911,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             if (!rdbPath.startsWith('/')) {
               throw new Error(`探测脚本没有回传快照路径（拿到 ${JSON.stringify(rdbPath.slice(0, 80))}），拒绝按默认路径猜`);
             }
-            cmd = `docker cp ${shq(`${t.containerName}:${rdbPath}`)} ${shq(out)}`;
+            cmd = buildRedisSnapshotCopyArgv(t.containerName, rdbPath, out).map(shq).join(' ');
           } else {
             /**
              * 这里原来是 redis 的 `else`——**新增一种备份类型而忘了在这里加分支时，
@@ -989,24 +997,19 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
           // 本地这份已经过 gzip -t，无论离机成不成都转正并纳入保留策略——
           // 保留策略是它的上界（份数 + 天数），不会因为离机长期挂掉就无限堆积把盘写满。
-          const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
-          if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
+          await backupRetentionService.promoteOutput(out, finalOut);
           maintenanceCompleted = true;
 
-          // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
-          const ls = await shell.exec(
-            `ls -l --time-style=+%s ${shq(dir)} 2>/dev/null | awk '{print $6"\\t"$7}'`,
-            { timeout: 15_000 },
-          );
-          const existing = (ls.stdout || '').split('\n')
-            .map((l) => l.split('\t'))
-            .filter((p) => p.length === 2 && p[1])
-            .map(([ts, name]) => ({ name: name.trim(), mtimeMs: Number(ts) * 1000 }))
-            .filter((f) => Number.isFinite(f.mtimeMs));
-          const doomed = selectExpiredBackups(existing, { projectId: t.projectId, id: t.id, now: new Date() });
-          for (const name of doomed) {
-            await shell.exec(`rm -f ${shq(`${dir}/${name}`)}`, { timeout: 10_000 });
-          }
+          // Completed outputs enter the shared catalog; the independent reconciler owns retirement.
+          const finalSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          await backupRetentionService.register(finalOut, t.projectId, t.id, 'automatic', {
+            sourceFingerprint: backupSourceFingerprint,
+            sourceComplete: Boolean(backupSourceFingerprint && backupSourceFingerprint === finalSourceFingerprint && !gapNote),
+          });
+          if (!backupSourceFingerprint || backupSourceFingerprint !== finalSourceFingerprint) store?.record({
+            category: 'system', severity: 'warn', source: 'infra-backup', action: 'infra.backup.recovery-point.unconfirmed',
+            projectId: t.projectId, serviceId: t.id, message: '导出已保留，但备份源身份未确认或已变化，不能替代旧恢复点。',
+          });
           outcomes.push({
             id: t.id,
             projectId: t.projectId,
@@ -1018,7 +1021,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               : `离机副本缺失：${offsiteError}（本地副本已保留：${t.fileName}）`,
             fileName: t.fileName,
             bytes,
-            pruned: doomed,
+            pruned: [],
             remoteObjectKey: remote?.objectKey,
             sha256: remote?.sha256,
             note: scopeNote ?? undefined,
@@ -1027,9 +1030,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         } catch (err) {
           // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），
           // 那才是真残骸，删掉；离机失败已经在上面单独处理，不会落到这条路径。
-          await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
+          // Retire only the registered native output identity; unknown replacements remain protected.
           outcomes.push({ id: t.id, projectId: t.projectId, ok: false, error: (err as Error).message });
         } finally {
+          await backupRetentionService.closeOutput(out).catch(() => undefined);
           if (maintenanceJobId) {
             await stateService.finishInfraMaintenanceJob(
               maintenanceJobId,
@@ -1037,9 +1041,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             );
           }
         }
+        });
       }
 
-      await shell.exec(`rm -rf ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
+      await shell.exec(`rmdir ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);
@@ -2109,6 +2114,11 @@ async function initStateService(): Promise<void> {
 
 await initStateService();
 config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
+const backupRetentionService = new BackupRetentionService({ shell, state: stateService, repoRoot: config.repoRoot, instanceId: config.storageInstanceId });
+const acceptanceResourceRoot = path.resolve(process.env.CDS_RESOURCE_ROOT || '/var/lib/cds-resource-lifecycle');
+const ownedResourceLifecycle = new OwnedResourceLifecycle({ shell, instanceId: config.storageInstanceId,
+  journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'tasks'),
+  workspaceBase: path.join(acceptanceResourceRoot, 'workspaces'), catalog: path.join(acceptanceResourceRoot, 'catalog') });
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -2177,6 +2187,27 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
+// Independent of backup creation/success; restart resumes the same durable catalog.
+const reconcileBackups = async () => {
+  try {
+    const report = await backupRetentionService.inspect(false);
+    activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'backup-retention', action: 'backup.retention.reconciled', message: '全局备份保留对账（最多15天，冲突与未知保持保护）', details: { report } });
+  } catch (error) {
+    activeServerEventLogStore?.record({ category: 'system', severity: 'error', source: 'backup-retention', action: 'backup.retention.failed', message: '备份保留对账未完成，未确认的对象已保留。' });
+  }
+};
+const backupRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileBackups(), 60 * 60_000) : null;
+const backupRetentionStartup = backupRetentionTimer ? setTimeout(() => void reconcileBackups(), 60_000) : null;
+backupRetentionTimer?.unref(); backupRetentionStartup?.unref();
+// Independent host keeper: a crashed producer is not responsible for its own retirement.
+const reconcileAcceptanceResources = async () => {
+  try {
+    const report = await ownedResourceLifecycle.inspect(false);
+    activeServerEventLogStore?.record({ category: 'system', severity: report.scanStatus === 'complete' ? 'info' : 'warn', source: 'acceptance-retention', action: 'acceptance.retention.reconciled', message: '验收资源租约与退役对账', details: { report } });
+  } catch { activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'acceptance-retention', action: 'acceptance.retention.failed', message: '验收资源身份或引用未确认，未确认对象已保留。' }); }
+};
+const acceptanceRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileAcceptanceResources(), 60_000) : null;
+acceptanceRetentionTimer?.unref();
 const rotationRecoveryCleanup = startRotationRecoveryArtifactCleanup({
   recoveryDir: path.join(path.dirname(stateService.getCacheBase()), 'credential-rotation-recovery'),
   onError: (error) => console.warn(`[credential-rotation] recovery artifact cleanup failed: ${error.message}`),
@@ -3570,6 +3601,24 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   }
 }
 const janitorDocker = createJanitorDockerAdapters(shell);
+const configuredImageCacheBudgetGiB = Number(process.env.CDS_IMAGE_CACHE_BUDGET_GIB || 0);
+if (!Number.isFinite(configuredImageCacheBudgetGiB) || configuredImageCacheBudgetGiB < 0 || configuredImageCacheBudgetGiB > 4096) throw new Error('镜像缓存总量预算必须在0至4096 GiB之间；0表示尚未启用。');
+const imageCacheGovernance = new ImageCacheGovernance({ shell, catalog: path.join(acceptanceResourceRoot, 'image-cache'),
+  audit: activeServerEventLogStore,
+  journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'images'),
+  instanceId: computeCdsInstanceId(config.repoRoot), budgetBytes: configuredImageCacheBudgetGiB * 1024 ** 3,
+  protectedReferences: () => collectImageCacheReferences(stateService, config.scheduler?.pinnedBranches || [], 5,
+    7, Date.now(), (profile, branch) => resolveEffectiveProfile(profile, branch).dockerImage) });
+if (configuredImageCacheBudgetGiB > 0) configureImageCacheGovernance(imageCacheGovernance);
+// The hourly general Janitor cannot drain a two-image batch at deployment speed.
+// Share its global reclaim lock and native cross-process catalog lock; never queue ticks.
+const imageCacheRetentionTimer = configuredImageCacheBudgetGiB > 0 && config.mode !== 'executor' && !isPreviewInstance()
+  ? setInterval(() => {
+    void imageCacheGovernance.inspect(false).then(report => {
+      activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'image-cache-retention', action: 'image.cache.reconciled', message: '宿主镜像总量与引用对账', details: { report } });
+    }, () => activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'image-cache-retention', action: 'image.cache.failed', message: '镜像引用、registry 或审计未确认，相关镜像保持保护。' }));
+  }, 60_000) : null;
+imageCacheRetentionTimer?.unref();
 const janitorService = new JanitorService(
   stateService,
   // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
@@ -3588,6 +3637,7 @@ const janitorService = new JanitorService(
       .filter((image): image is string => Boolean(image));
   }),
 );
+if (configuredImageCacheBudgetGiB > 0) janitorService.setImageCacheGovernance(imageCacheGovernance);
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
 // 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
 // 两个挂载点都量（Codex 第二十九轮 P2）：worktree 与 docker 数据目录常不在同一个
@@ -4830,6 +4880,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shutdownInProgress) return;
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
+  app.locals.stopAcceptanceLeaseReaper?.();
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown', { normalShutdown: true });
   // 已禁止新部署。尽早释放长日志/事件的空闲进程与内存，实际资源确认
   // 继续使用保留的operation/observation执行器及原来的清理期限。
@@ -4847,6 +4898,10 @@ async function shutdown(signal: string): Promise<void> {
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   if (infraExposureAudit) clearInterval(infraExposureAudit);
   if (infraAutoBackup) clearInterval(infraAutoBackup);
+  if (backupRetentionTimer) clearInterval(backupRetentionTimer);
+  if (backupRetentionStartup) clearTimeout(backupRetentionStartup);
+  if (acceptanceRetentionTimer) clearInterval(acceptanceRetentionTimer);
+  if (imageCacheRetentionTimer) clearInterval(imageCacheRetentionTimer);
   clearInterval(deploymentMemoryReconciler);
   clearInterval(rotationRecoveryCleanup);
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
@@ -5619,6 +5674,9 @@ const serverDeps: ServerDeps = {
   config,
   schedulerService,
   janitorService,
+  backupRetentionService,
+  ownedResourceLifecycle,
+  imageCacheGovernance,
   registry,
   getClusterStrategy: () => clusterStrategy,
   storageModeContext,
@@ -6148,16 +6206,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * 不在启动时定死一个实例的原因很实在：凭据配好之后不该还要重启一次 CDS 才生效——
    * 那等于把「接上铃」这件事又变回一件需要运维在场的事。
    */
+  const readMapSettings = () => readMapNotifierSettings(() => stateService.getAlarmNotify());
   const resolveMapNotifier = (): MapNotifier | null => {
-    const stored = stateService.getAlarmNotify();
-    // 设置里存的是 privateKey（与 githubApp 同名法），MapNotifier 要的是 privateKeyPem。
-    // 在这一处显式转换，而不是让两个名字在下游各自漂。
-    const cfg = stored
-      ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, privateKeyPem: stored.privateKey }
-      : mapNotifierConfigFromEnv();
-    return cfg
-      ? new MapNotifier(cfg, { warn: (m) => console.warn(m), info: (m) => console.log(m) })
-      : null;
+    const { config: cfg, unavailable } = readMapSettings();
+    if (unavailable) console.warn('[map-notifier] 已保存的签名凭据无法读取，未使用备用身份发送');
+    return cfg ? new MapNotifier(cfg, { warn: (m) => console.warn(m), info: (m) => console.log(m) }) : null;
   };
   const mapNotifier = resolveMapNotifier();
   if (mapNotifier) {
@@ -6171,9 +6224,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // configured 传 getter 而不是布尔快照：配置是随时可改的，
   // 定死一个启动时的布尔值会让「刚配好」和「压根没配」在面板上长得一模一样。
   const alarmChannel = new AlarmChannel(
-    () => Boolean(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv()),
+    () => Boolean(readMapSettings().config),
     'MAP 站内通知',
-    () => (stateService.getAlarmNotify() ? [] : missingAlarmEnvKeys()),
+    () => readMapSettings().unavailable ? ['CDS_SECRET_KEY（已存凭据无法解密，请恢复原密封密钥）'] : readMapSettings().config ? [] : missingAlarmEnvKeys(),
   );
   /**
    * 多通道的投递记账本（2026-09-15）。
@@ -6557,7 +6610,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     forgetTarget: targetId => uptimeMonitor.forgetTarget(targetId),
     getNotifications: () => stateService.getMonitorNotifications(),
     setNotifications: settings => stateService.setMonitorNotifications(settings),
-    listChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],
+    listChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(readMapSettings().config ? ['legacy-map'] : [])],
     stampPreviewBranch: monitor => {
       const hit = monitor.projectId && monitor.url ? matchPreviewHost(monitor.url, listProjectPreviewHosts(monitor.projectId)) : undefined;
       monitor.previewBranchId = hit ? hit.branchId : undefined;
@@ -6567,7 +6620,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     monitor: uptimeMonitor,
     getNotifications: () => stateService.getMonitorNotifications(),
     setNotifications: (settings) => stateService.setMonitorNotifications(settings),
-    listNotificationChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],
+    listNotificationChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(readMapSettings().config ? ['legacy-map'] : [])],
     recordMcpAudit: (evidence) => stateService.recordMcpMonitorAudit(evidence),
     listMcpAudits: () => stateService.listMcpMonitorAudits(),
     listProjectPreviewHosts,
@@ -6581,28 +6634,22 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     alarmChannels: () => stateService.listAlarmChannels()
       .map((c) => alarmLedger.view(c, channelConfigured(c))),
     readAlarmNotify: () => {
-      const stored = stateService.getAlarmNotify();
-      const env = mapNotifierConfigFromEnv();
-      const eff = stored
-        ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, key: stored.privateKey, source: 'settings' as const }
-        : env
-          ? { endpoint: env.endpoint, keyId: env.keyId, username: env.username, key: env.privateKeyPem, source: 'env' as const }
-          : null;
-      if (!eff) return { configured: false, source: null, missingEnv: missingAlarmEnvKeys() };
+      const { config: cfg, source, unavailable } = readMapSettings();
+      if (unavailable) return { configured: false, unavailable: true, source,
+        reason: '已保存的 MAP 凭据无法解密，请恢复原密封存储密钥后重试；未使用其他身份发送' };
+      if (!cfg) return { configured: false, source: null, missingEnv: missingAlarmEnvKeys() };
       return {
-        configured: true,
-        source: eff.source,
-        endpoint: eff.endpoint,
-        keyId: eff.keyId,
-        username: eff.username,
-        // 指纹而不是私钥：够用来核对「配的是不是我给的那把」，又不构成泄漏面。
-        privateKeyFingerprint: createHash('sha256').update(eff.key).digest('hex').slice(0, 16),
+        configured: true, source, endpoint: cfg.endpoint, keyId: cfg.keyId, username: cfg.username,
+        targetUsername: cfg.targetUsername || cfg.username,
+        secretStorage: source === 'settings' ? isSealedSecret(stateService.getState().alarmNotify?.privateKey) ? 'encrypted' : 'legacy' : 'env',
+        privateKeyFingerprint: createHash('sha256').update(cfg.privateKeyPem).digest('hex').slice(0, 16),
       };
     },
     writeAlarmNotify: (next) => {
       stateService.setAlarmNotify(next);
       // 换了凭据（或清掉）就是换了目的地：旧的投递证明作废，回到「没发过」，演练成功一次再算通
       alarmChannel.reset();
+      return stateService.flush();
     },
     // 演练走**真实投递路径**：同一个 MapNotifier、同一条签名、同一个 source。
     // 造一条假的「发送成功」毫无意义——那正好是这条链要防的自欺。

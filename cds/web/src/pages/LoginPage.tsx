@@ -32,7 +32,7 @@ import {
 } from '@/lib/api';
 import { parseTicketSsoCallback } from '@/lib/ticket-sso-callback';
 
-function redirectTarget(): string {
+export function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
@@ -41,7 +41,10 @@ function redirectTarget(): string {
   // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
   const path = raw.split(/[?#]/)[0];
   if (path === '/login') return '/project-list';
-  return raw;
+  // Fragments never reach the server. Its unauthenticated redirect preserves
+  // the original fragment on /login, so carry it back to the internal target.
+  // An explicitly encoded target fragment takes precedence.
+  return raw.includes('#') || !params.get('redirect') ? raw : raw + window.location.hash;
 }
 
 function AuthForm(): JSX.Element {
@@ -100,9 +103,9 @@ function AuthForm(): JSX.Element {
   const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled;
 
   function goToTarget() {
-    // Legacy server 路径(/settings.html?project=… 等)必须 hard-load,让 Express
-    // 的 legacy→React 重定向生效;干净的 React 路由走 SPA navigate + view transition。
-    if (/\.html(?:$|[?#])/i.test(target)) {
+    // Server endpoints (including the cluster login handoff) must reach Express.
+    // Dashboard routes retain SPA navigation and their view transition.
+    if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
       window.location.assign(target);
     } else {
       navigate(target, { replace: true, viewTransition: true });
@@ -310,8 +313,8 @@ export function LoginPage(): JSX.Element {
         setAuthPhase('anon');
         return;
       }
-      if (/\.html(?:$|[?#])/i.test(target)) {
-        // legacy server 路径:hard-load 让 Express 的 legacy→React 重定向生效。
+      if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
+        // Authenticated visits also need the server to perform the handoff.
         window.location.assign(target);
       } else {
         navigate(target, { replace: true, viewTransition: true });
@@ -351,7 +354,7 @@ export function TicketSsoPage(): JSX.Element {
       .then((result) => {
         if (!alive) return;
         const target = result.redirect || '/project-list';
-        if (/\.html(?:$|[?#])/i.test(target)) {
+        if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
           window.location.assign(target);
           return;
         }

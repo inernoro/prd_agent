@@ -233,6 +233,13 @@ export function LoadingPagesTab(): JSX.Element {
   const scenarios = page.scenarios || [];
   const scenario = scenarios.find((item) => item.id === scenarioId) || scenarios[0] || null;
 
+  function selectPage(value: string): void {
+    const next = loadingPages.find(item => item.id === value);
+    if (!next) return;
+    setPageId(value);
+    if (next.scenarios && !next.scenarios.some(entry => entry.id === scenarioId)) setScenarioId(next.scenarios[0]?.id || '');
+  }
+
   const previewUrl = useMemo(() => {
     if (page.kind !== 'iframe' || !page.endpoint) return '';
     const params = new URLSearchParams({ theme: 'dark', t: String(reloadKey) });
@@ -261,7 +268,8 @@ export function LoadingPagesTab(): JSX.Element {
       description="集中查看用户会实际遇到的 CDS 状态页。全屏状态页固定按真实暗色画布预览；局部加载块跟随当前主题。"
     >
       <div className="space-y-4">
-        <div className="space-y-4 border-b border-[hsl(var(--hairline))] pb-4">
+        <div className="flex flex-wrap items-center gap-2 lg:hidden"><label className="min-w-0 flex-1"><span className="sr-only">选择加载页预览</span><select aria-label="选择加载页预览" className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3 text-sm" value={pageId} onChange={event => selectPage(event.target.value)}>{loadingPageGroups.flatMap(group => group.sections.map(section => <optgroup key={group.id+section.id} label={`${group.label} · ${section.label}`}>{section.pages.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</optgroup>))}</select></label><Button type="button" variant="outline" className="min-h-[3.25rem]" onClick={()=>setReloadKey(value=>value+1)}>刷新</Button>{previewUrl?<Button asChild variant="outline" className="min-h-[3.25rem]"><a href={previewUrl} target="_blank" rel="noreferrer">新窗口</a></Button>:null}</div>
+        <div className="hidden space-y-4 border-b border-[hsl(var(--hairline))] pb-4 lg:block">
           <div className="flex items-center justify-end gap-2">
             <Button type="button" size="sm" variant="outline" onClick={() => setReloadKey((value) => value + 1)}>
               <RefreshCw />刷新
@@ -324,8 +332,9 @@ export function LoadingPagesTab(): JSX.Element {
             <div className="truncate text-sm font-semibold">{page.name}</div>
             <div className="mt-1 text-xs text-muted-foreground">{page.description}</div>
           </div>
+          {scenarios.length > 0 ? <label className="min-w-0 w-full lg:hidden"><span className="mb-1 block text-sm text-muted-foreground">加载情境</span><select aria-label="加载情境" className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3 text-sm" value={scenario?.id || ''} onChange={event=>setScenarioId(event.target.value)}>{scenarios.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</select></label> : null}
           {scenarios.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="hidden flex-wrap gap-1.5 lg:flex">
               {scenarios.map((item) => (
                 <button
                   key={item.id}
@@ -333,7 +342,7 @@ export function LoadingPagesTab(): JSX.Element {
                   aria-pressed={scenario?.id === item.id}
                   onClick={() => setScenarioId(item.id)}
                   className={cn(
-                    'h-8 rounded-md border px-3 text-xs transition-colors',
+                    'min-h-[3.25rem] rounded-md border px-3 text-sm transition-colors lg:min-h-0 lg:h-8 lg:text-xs',
                     scenarioId === item.id
                       ? 'border-primary/45 bg-primary/15 text-primary'
                       : 'border-[hsl(var(--hairline))] text-muted-foreground hover:border-primary/35 hover:text-primary',
@@ -346,7 +355,7 @@ export function LoadingPagesTab(): JSX.Element {
           ) : null}
         </div>
 
-        <div className="overflow-hidden rounded-none bg-transparent">
+        <div data-loading-preview={page.id} className="overflow-hidden rounded-none bg-transparent">
           <div
             data-theme={page.scope === 'fullscreen' ? 'dark' : undefined}
             className={cn(

@@ -10,30 +10,16 @@
  *   - doc/debt.acceptance-center-cds.md「验收报告重复归档」：通过率分母必须只计每个目标的最新版
  */
 import type { AcceptanceReportMeta, BranchTombstone } from '../types.js';
+import { parseReportMetadata, isCodeReviewReport } from '../shared/report-kind.js';
+import type { ReportKind, ParsedReportTitle } from '../shared/report-kind.js';
+export { REPORT_KINDS, parseReportTitle, parseReportMetadata, isCodeReviewReport } from '../shared/report-kind.js';
+export type { ReportKind, ParsedReportTitle } from '../shared/report-kind.js';
 
 export type OverviewVerdict = 'pass' | 'conditional' | 'fail';
-
-/** 标题合同的九类前缀（§4.1.2）。不在此列的标题归「其他」。 */
-export const REPORT_KINDS = [
-  '功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练', '代码审查报告',
-] as const;
-export type ReportKind = (typeof REPORT_KINDS)[number] | '其他';
-export function isCodeReviewReport(report: AcceptanceReportMeta): boolean {
-  return report.reportType === 'code-review'
-    || report.reportType === undefined && parseReportTitle(report.title).kind === '代码审查报告';
-}
 
 /** Operational monitor snapshots and code reviews are not acceptance evidence. */
 export function isAcceptanceAggregationReport(report: AcceptanceReportMeta): boolean {
   return !report.monitorEvent && !isCodeReviewReport(report);
-}
-
-export interface ParsedReportTitle {
-  kind: ReportKind;
-  /** 重点对象（标题中段）；无法解析时为整个标题。 */
-  target: string;
-  /** 目标日期 YYYY-MM-DD；无法解析时为 null。 */
-  targetDate: string | null;
 }
 
 export interface OverviewReportRef {
@@ -150,27 +136,10 @@ export interface ReportsOverview {
    *
    * 为什么必须返回：台账「展开被取代版本」时这些行也要落进九类页签。前端只有
    * `reports` 时查不到它们的 kind，会整批掉进「其他」——页签计数虚高、点真实类目
-   * 又看不到它们（2026-09-09 富数据验收实测）。标题解析是服务端 SSOT，
-   * 前端不得自己再实现一份（predicate-and-wiring-discipline 形状 3）。
+   * 又看不到它们（2026-09-09 富数据验收实测）。标题解析复用 shared/report-kind 同一纯函数，
+   * 前后端不得分别实现判据（predicate-and-wiring-discipline 形状 3）。
    */
   supersededReports: OverviewReportRef[];
-}
-
-const TITLE_RE = /^(\S+?)\s*[·・]\s*(.+?)\s*[·・]\s*(\d{4}-\d{2}-\d{2})\s*$/;
-
-export function parseReportTitle(title: string): ParsedReportTitle {
-  const m = TITLE_RE.exec(title.trim());
-  if (!m) return { kind: '其他', target: title.trim(), targetDate: null };
-  const prefix = m[1];
-  const kind: ReportKind = (REPORT_KINDS as readonly string[]).includes(prefix) ? (prefix as ReportKind) : '其他';
-  return { kind, target: kind === '其他' ? title.trim() : m[2].trim(), targetDate: m[3] };
-}
-
-/** Persisted type controls code-review identity; other title categories keep their existing contract. */
-export function parseReportMetadata(report: AcceptanceReportMeta): ParsedReportTitle {
-  const parsed = parseReportTitle(report.title);
-  if (isCodeReviewReport(report)) return { ...parsed, kind: '代码审查报告' };
-  return parsed.kind === '代码审查报告' ? { ...parsed, kind: '其他' } : parsed;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

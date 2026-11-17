@@ -1,0 +1,30 @@
+import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { apiRequest } from '@/lib/api';
+
+type Report = { scanStatus: string; canExecute?: boolean; counts?: Record<string, number>; tasks?: Array<{ id: string; owner: string; workspace: string; state: string }>; held?: Array<{ taskId: string; reason: string }>; pendingReasons?: Array<{ taskId: string; reason: string }>; unknown?: Array<{ identity: string; reason: string }>; filesystems?: Array<{ path: string; netAvailableBytesDelta: number | null }> };
+type Execution = { id: string; status: string; startedAt: string; report?: Report; error?: string };
+type DataCase = { id: string; projectId: string; dataIdentity: string; status: string; note?: string };
+const label: Record<string,string> = { 'active-lease':'任务租约有效', 'eligible-expired-owned-ephemeral-task':'租约结束且有完整出生清单，可对账退役', 'legacy-acceptance-resource-needs-manifest-adoption':'历史资源缺少完整清单，等待归属核查', 'foreign-instance':'其他实例，保留', 'workspace-replaced':'目录身份变化，保留', 'host-process-still-uses-workspace':'仍有进程使用，保留', 'volume-still-referenced':'运行或停止容器仍引用数据卷，保留', 'needs-owner':'待确认归属', protected:'受保护', 'backup-required':'测试数据待备份与退役审查' };
+export function AcceptanceRetentionPanel() {
+  const [report,setReport]=useState<Report|null>(null),[execution,setExecution]=useState<Execution|null>(null),[cases,setCases]=useState<DataCase[]>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false),[seconds,setSeconds]=useState(0),[canExecute,setCanExecute]=useState(false);
+  const refresh=async()=>{setBusy(true);setError('');try{const [r,d,s]=await Promise.allSettled([apiRequest<Report>('/api/janitor/tasks'),apiRequest<{cases:DataCase[]}>('/api/janitor/tasks/data-cases'),apiRequest<{execution:Execution|null;canExecute:boolean}>('/api/janitor/tasks/state')]);
+    if(r.status==='fulfilled')setReport(r.value);else{setReport(null);setError((r.reason as Error).message);}
+    if(d.status==='fulfilled')setCases(d.value.cases);else setError((d.reason as Error).message);
+    if(s.status==='fulfilled'){setExecution(s.value.execution);setCanExecute(s.value.canExecute);}else{setCanExecute(false);setError((s.reason as Error).message);}
+  }finally{setBusy(false);}};
+  useEffect(()=>{void refresh();},[]);
+  useEffect(()=>{if(!busy&&execution?.status!=='running')return;const timer=setInterval(()=>setSeconds(v=>v+1),1000);return()=>clearInterval(timer);},[busy,execution?.status]);
+  useEffect(()=>{if(execution?.status!=='running')return;const timer=setInterval(()=>void apiRequest<{execution:Execution|null}>('/api/janitor/tasks/state').then(r=>{setExecution(r.execution);if(r.execution?.report)setReport(r.execution.report);}).catch(e=>setError((e as Error).message)),1000);return()=>clearInterval(timer);},[execution?.id,execution?.status]);
+  const execute=async()=>{setSeconds(0);try{const r=await apiRequest<{execution:Execution}>('/api/janitor/tasks/reconcile',{method:'POST',body:{}});setExecution(r.execution);}catch(e){setError((e as Error).message);}};
+  return <section className="space-y-3 rounded-lg border border-border-default p-4" data-testid="acceptance-retention-panel">
+    <h3 className="font-medium">验收资源退役与历史数据处置</h3>
+    <p className="text-sm text-text-secondary">新任务在创建前登记临时数据、容器、卷与启动器，租约结束后由独立回收器对账。历史数据库保留，需先确认归属、备份和恢复方案。</p>
+    <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" disabled={busy} onClick={()=>void refresh()}>预览资源与保护原因</Button><Button variant="outline" size="sm" disabled={!canExecute||execution?.status==='running'} onClick={()=>void execute()}>执行受控批次</Button>{execution?.status==='running'&&<Button variant="outline" size="sm" onClick={()=>void apiRequest('/api/janitor/tasks/cancel',{method:'POST',body:{id:execution.id}}).catch(e=>setError((e as Error).message))}>停止后续处理</Button>}{(busy||execution?.status==='running')&&<span role="status" className="text-sm">正在核对资源与最新引用 · {seconds} 秒</span>}</div>
+    {(error||execution?.error)&&<p role="alert" className="text-sm text-bad">{error||execution?.error}；未知对象保持保留。</p>}
+    {report&&<><p className="text-sm">扫描：{report.scanStatus==='complete'?'完整':'部分结果，不能判断零占用'}；{Object.entries(report.counts||{}).map(([key,value])=>`${({tasks:'任务',removed:'回收对象',held:'保留',failed:'失败',pending:'待处理',unknown:'未知'} as Record<string,string>)[key]||key} ${value}`).join(' · ')}</p>
+      <div className="max-h-64 overflow-auto text-sm">{[...(report.held||[]),...(report.pendingReasons||[])].map((row,i)=><p key={`${row.taskId}-${i}`} className="break-all">{row.taskId}：{label[row.reason]||row.reason}</p>)}{(report.unknown||[]).map((row,i)=><p key={`${row.identity}-${i}`} className="break-all">{row.identity}：{label[row.reason]||row.reason}</p>)}</div>
+      {report.filesystems?.map(row=><p key={row.path} className="break-all text-sm">{row.path} 实测净可用空间变化：{row.netAvailableBytesDelta===null?'未知':`${row.netAvailableBytesDelta} 字节`}（并发写入也会影响此值）</p>)}</>}
+    <div className="space-y-2 text-sm">{cases.map(row=><div key={row.id} className="rounded border border-border-default p-2"><p className="break-all">{row.projectId} / {row.dataIdentity}</p><p>{label[row.status]||row.status}{row.note?`：${row.note}`:''}</p>{canExecute&&<form className="flex flex-wrap gap-2" onSubmit={event=>{event.preventDefault();const data=new FormData(event.currentTarget);void apiRequest(`/api/janitor/tasks/data-cases/${row.id}/confirm`,{method:'POST',body:{disposition:data.get('disposition'),note:data.get('note')}}).then(()=>refresh()).catch(e=>setError((e as Error).message));}}><select name="disposition" aria-label="数据用途" className="rounded border bg-transparent"><option value="unknown">归属未确认</option><option value="business-data">业务数据</option><option value="ephemeral-test">可退役测试数据</option></select><input name="note" aria-label="归属与处置说明" placeholder="填写归属及待完成的备份、恢复验证" required maxLength={2000} className="min-w-48 flex-1 rounded border bg-transparent px-2"/><Button type="submit" variant="outline" size="sm">登记处置，不删除数据</Button></form>}</div>)}</div>
+  </section>;
+}

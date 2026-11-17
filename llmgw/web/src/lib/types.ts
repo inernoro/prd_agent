@@ -1249,6 +1249,7 @@ export type CreateExchangeRequest = {
   description?: string | null;
 };
 export type UpdateExchangeRequest = Omit<CreateExchangeRequest, 'apiKey'> & { version: number };
+export type UpdateExchangeProxyRequest = { proxy: UpstreamProxyDraft; version: number };
 export type ImageLayeringCapabilityStatus = {
   capabilityId: 'image-layering';
   state: 'not-installed' | 'incomplete' | 'installed' | 'verified';
@@ -1588,6 +1589,7 @@ export type CostReconciliationImportRequest = {
 };
 
 export type LegacyKeyCutoverData = {
+  policyRevision: number;
   applicable: boolean;
   status: 'not-applicable' | 'observing' | 'ready' | 'revoked';
   deadlineAt?: string | null;

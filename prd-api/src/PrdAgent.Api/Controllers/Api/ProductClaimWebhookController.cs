@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
@@ -9,6 +10,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -17,8 +19,9 @@ namespace PrdAgent.Api.Controllers.Api;
 public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionProvider protection, IConfiguration configuration) : ControllerBase
 {
     public const string ProtectionPurpose = "ProductAgent.ClaimWebhook.v1";
+    private const string MaskedWebhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=********";
 
-    private async Task<bool> IsMapAdminAsync() => ProductPermissionRules.IsMapAdministrator(
+    private async Task<bool> IsMapAdminAsync() => User.HasClaim("isRoot", "1") || ProductPermissionRules.IsMapAdministrator(
         await db.Users.Find(x => x.UserId == this.GetRequiredUserId()).FirstOrDefaultAsync() ?? new User());
 
     [HttpGet]
@@ -27,15 +30,39 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
         if (!await IsMapAdminAsync()) return StatusCode(403);
         var settings = await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync();
         var config = settings?.ClaimWebhook ?? new();
+        var canEdit = DeploymentAuthority.CanRotateSharedCiphertext(configuration);
+        var sendBlockReason = ProductClaimNotificationQueue.GetDeploymentBlockReason(configuration);
         var users = await db.Users.Find(x => x.Status == UserStatus.Active && x.UserType == UserType.Human).ToListAsync();
         var ready = users.Count(user => ProductClaimMentionIdentity.Resolve(user, protection) != null);
         return Ok(ApiResponse<object>.Ok(new {
             config.Enabled, config.DebugMode, config.NotifyInternal, config.NotifyFormal,
             configured = !string.IsNullOrEmpty(config.ProtectedUrl),
-            maskedUrl = string.IsNullOrEmpty(config.ProtectedUrl) ? null : "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=********",
+            maskedUrl = MaskWebhook(config.ProtectedUrl, canEdit),
             identityReadyCount = ready, identityPendingCount = users.Count - ready,
-            canSend = DeploymentAuthority.CanRunSharedScheduledWork(configuration) && !DeploymentAuthority.IsCdsBranchPreview(configuration),
+            canEdit,
+            canSend = sendBlockReason is null,
+            sendBlockedReason = sendBlockReason is { } reason
+                ? $"{ProductClaimNotificationQueue.DescribeDeploymentBlock(reason)}，无法发送版本申领通知。"
+                : null,
         }));
+    }
+
+    private string? MaskWebhook(string? protectedUrl, bool canEdit)
+    {
+        if (string.IsNullOrEmpty(protectedUrl)) return null;
+        if (!canEdit) return MaskedWebhook;
+
+        try
+        {
+            var url = protection.CreateProtector(ProtectionPurpose).Unprotect(protectedUrl);
+            if (!ProductClaimWebhookPayload.IsValidWebhook(url)) return MaskedWebhook;
+            var key = new Uri(url).Query["?key=".Length..];
+            return key.Length > 4 ? MaskedWebhook + key[^4..] : MaskedWebhook;
+        }
+        catch (CryptographicException)
+        {
+            return MaskedWebhook;
+        }
     }
 
     [HttpPut]
@@ -45,6 +72,8 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
         // 共库预览不能用异钥覆写正式密文，也不能让预览配置意外启用真实群通知。
         if (DeploymentAuthority.IsCdsBranchPreview(configuration))
             return BadRequest(ApiResponse<object>.Fail("PREVIEW_READ_ONLY", "请在正式环境保存Webhook配置，预览不会发送群通知"));
+        if (!DeploymentAuthority.CanRotateSharedCiphertext(configuration))
+            return StatusCode(403, ApiResponse<object>.Fail("FORBIDDEN", "当前部署未获准修改共享Webhook配置"));
         var existing = await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync();
         var protectedUrl = existing?.ClaimWebhook?.ProtectedUrl;
         if (!string.IsNullOrWhiteSpace(request.Url))
