@@ -342,3 +342,41 @@ it('从全部状态点击原文编号定位意见时仍保留其他状态的意�
   expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
   expect(container.querySelectorAll('.review-thread')).toHaveLength(2);
 });
+
+it('收到其他阅读面板的变更通知后刷新意见与数量，保留正在写的草稿', async () => {
+  auth.isAuthenticated = true; auth.token = 'session';
+  const original = { id: 'old', siteId: 'site', canResolve: true, content: '已经删除的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' };
+  list.mockResolvedValue({ success: true, data: { comments: [original], commentsEnabled: true, canComment: true } });
+  await mount();
+  await act(async () => { const field = container.querySelector('textarea')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, '保留我的草稿'); field.dispatchEvent(new Event('input', { bubbles: true })); });
+  list.mockResolvedValue({ success: true, data: { comments: [{ ...original, id: 'new', content: '小窗新增的意见', isResolved: true }], commentsEnabled: true, canComment: true } });
+  await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+  expect(container.textContent).not.toContain('已经删除的意见');
+  expect(container.textContent).toContain('小窗新增的意见');
+  expect(button('重新打开')).toBeTruthy();
+  expect(container.querySelector('textarea')?.value).toBe('保留我的草稿');
+});
+it('初次读取未完成时收到变更通知，较新读取完成后结束加载并拒绝旧结果', async () => {
+  let finish!: (result: unknown) => void;
+  list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await mount();
+  list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: false } });
+  await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+  expect(container.textContent).not.toContain('正在加载');
+  await act(async () => finish({ success: true, data: { comments: [{ id: 'stale', content: '已过期的结果' }], commentsEnabled: true, canComment: false } }));
+  expect(container.textContent).not.toContain('已过期的结果');
+});
+
+it('解决状态变更通知其他面板，自身不重复发起读取', async () => {
+  auth.isAuthenticated = true; auth.token = 'session';
+  const comment = { id: 'note', canResolve: true, content: '需要同步状态', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' };
+  list.mockResolvedValue({ success: true, data: { comments: [comment], commentsEnabled: true, canComment: true } });
+  resolveComment.mockResolvedValue({ success: true, data: { ...comment, isResolved: true } });
+  await mount();
+  const changed = vi.fn(); window.addEventListener('hosted-comments-changed', changed);
+  try {
+    await act(async () => button('标记解决').click());
+    expect(changed).toHaveBeenCalledOnce(); expect(list).toHaveBeenCalledOnce();
+    expect(button('重新打开')).toBeTruthy();
+  } finally { window.removeEventListener('hosted-comments-changed', changed); }
+});

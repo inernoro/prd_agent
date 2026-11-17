@@ -46,6 +46,8 @@ export default function CommentsSection(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fetchId = useRef(0);
+  const changeSource = useRef({});
+  const notifyChanged = () => window.dispatchEvent(new CustomEvent('hosted-comments-changed', { detail: changeSource.current }));
   const mounted = useRef(true);
   const callbacks = useRef(props); callbacks.current = props;
   const { mode, token, password, siteId, annotations, review } = props;
@@ -132,9 +134,17 @@ export default function CommentsSection(props: Props) {
         callbacks.current.onStateLoaded?.(res.data.commentsEnabled);
       } else if (!silent) setError(res.error?.message || '加载讨论失败');
     } catch { if (mounted.current && request === fetchId.current && !silent) setError('网络错误，无法加载讨论'); }
-    finally { if (mounted.current && request === fetchId.current && !silent) setLoading(false); }
+    finally { if (mounted.current && request === fetchId.current) setLoading(false); }
   }, [mode, token, password, siteId]);
   useEffect(() => { void load(); }, [load, isAuthenticated, authToken]);
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail === changeSource.current) return;
+      void load(true);
+    };
+    window.addEventListener('hosted-comments-changed', refresh);
+    return () => window.removeEventListener('hosted-comments-changed', refresh);
+  }, [load]);
   useEffect(() => {
     if (draftAnchor) { setReplyTo(null); textareaRef.current?.focus(); }
   }, [draftAnchor]);
@@ -160,7 +170,7 @@ export default function CommentsSection(props: Props) {
       if (!mounted.current || operationIdentity !== identityRef.current) return;
       if (res.success && res.data) {
         const created = res.data;
-        window.dispatchEvent(new Event('hosted-comments-changed'));
+        notifyChanged();
         setComments(prev => prev.some(c => c.id === created.id) ? prev : [created, ...prev]);
         if (operationDraftScope === draftScopeRef.current) {
           setDraft(''); setReplyTo(null); if (props.threadKind !== 'discussion') annotations?.clearDraft(); if (!replyTo) setFilter('all');
@@ -177,7 +187,7 @@ export default function CommentsSection(props: Props) {
     try {
       const res = await deleteSiteComment(id);
       if (!mounted.current || operationIdentity !== identityRef.current) return;
-      if (res.success) { window.dispatchEvent(new Event('hosted-comments-changed')); setComments(prev => prev.filter(c => c.id !== id && c.parentId !== id)); if (replyTo === id) setReplyTo(null); }
+      if (res.success) { notifyChanged(); setComments(prev => prev.filter(c => c.id !== id && c.parentId !== id)); if (replyTo === id) setReplyTo(null); }
       else setError(res.error?.message || '删除失败');
     } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，删除失败'); }
     finally { if (mounted.current && operationIdentity === identityRef.current) { setBusyId(null); setConfirmDelete(null); } }
@@ -192,6 +202,7 @@ export default function CommentsSection(props: Props) {
       if (res.success && res.data) {
         setComments(prev => prev.map(c => c.id === comment.id ? res.data! : c));
         if (res.data.isResolved) annotations?.setActiveId(null);
+        notifyChanged();
       }
       else setError(res.error?.message || '更新讨论状态失败');
     } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，更新失败'); }
