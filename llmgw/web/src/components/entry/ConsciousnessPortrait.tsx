@@ -1,3 +1,4 @@
+import { PORTRAIT_MOTION_FILE } from './portraitMotionAsset';
 import { entryAsset } from './entryAsset';
 import { useEffect, useId, useRef, useState } from 'react';
 import { FACE_CLIP, PORTRAIT_LINES, PORTRAIT_MESH, PORTRAIT_DETAILS, portraitStrokeProgress, CLOSED_LASHES, HEAD_CLIP, PORTRAIT_HEAD_MESH, PORTRAIT_NODES, PORTRAIT_BRACES } from './portraitGeometry';
@@ -64,7 +65,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
         movie.currentTime = Math.min((performance.now() - startedAt) / 1000, 1.4);
         setMotionReady(true);
       };
-      const failed = () => { root.dataset.renderer = 'static-fallback'; complete(); };
+      const failed = () => { setMotionReady(false); root.dataset.renderer = 'static-fallback'; complete(); };
       const tick = (now: number) => {
         if (cancelled) return;
         const time = started ? movie.currentTime : Math.min(1.4, Math.max(0, (now-startedAt)/1000));
@@ -118,7 +119,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
 
   return <div ref={host} className={`consciousness-portrait${playing ? ' is-building' : ''}${fog ? ' is-ambient' : ''}`}>
     <img className="consciousness-art" src={fog ? entryAsset('companion-sleep.webp') : entryAsset('companion.webp')} alt="" loading="eager" decoding="async" />
-    {playing && (controlled ? <canvas ref={canvas} className="portrait-material" aria-hidden="true" /> : <video ref={video} className="portrait-material portrait-motion" src={entryAsset('portrait-motion.mp4')} muted playsInline preload="auto" aria-hidden="true" />)}
+    {(playing || (!controlled && motionReady)) && (controlled ? <canvas ref={canvas} className="portrait-material" aria-hidden="true" /> : <video ref={video} className="portrait-material portrait-motion" src={entryAsset(PORTRAIT_MOTION_FILE)} muted playsInline preload="auto" aria-hidden="true" />)}
     {((playing && (controlled || !motionReady)) || fog) && <svg className="portrait-structure" viewBox="0 0 1672 941" preserveAspectRatio="xMaxYMid slice" fill="none" aria-hidden="true">
       <defs>
         <linearGradient id={`${id}-ink`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#3481d5" /><stop offset=".5" stopColor="#81caff" /><stop offset="1" stopColor="#3879ce" /></linearGradient>

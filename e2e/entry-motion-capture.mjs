@@ -5,8 +5,10 @@ import { mkdir, writeFile, readFile, mkdtemp } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 const output = new URL('../work/entry-motion/', import.meta.url);
 await mkdir(output, { recursive: true });
+const motion = JSON.parse(await readFile(new URL('./fixtures/media/portrait-motion.source.json',import.meta.url),'utf8'));
 const target = JSON.parse(await readFile(new URL('./fixtures/entry-preview.json', import.meta.url), 'utf8'));
 const map = new URL(process.env.MAP_URL || target.mapUrl);
 const gateway = new URL(process.env.GATEWAY_URL || target.gatewayUrl);
@@ -28,7 +30,10 @@ for (const destination of [gateway]) {
       const deployed = branches.branches?.find(branch => branch.id === branchId)?.runningCommitSha;
       if (response.ok && source && deployed === process.env.EXPECTED_COMMIT) {
         const bundle = await fetch(new URL(source,destination), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
-        if (bundle.ok && (await bundle.text()).includes('portrait-motion.mp4')) break;
+        if (bundle.ok && (await bundle.text()).includes(motion.fileName)) {
+          const media = await fetch(new URL(`/media/entry/${motion.fileName}`,destination), { headers: { 'User-Agent':'Mozilla/5.0' }, signal:AbortSignal.timeout(15000) });
+          if (media.ok && createHash('sha256').update(new Uint8Array(await media.arrayBuffer())).digest('hex') === motion.sha256) break;
+        }
       }
     } catch { /* Public deployment may still be switching; bounded below. */ }
     assert.ok(Date.now() < deadline, 'The new public portrait bundle did not become available');
@@ -116,10 +121,12 @@ try {
       const evidence = await page.evaluate(() => ({ ...window.__entryEvidence, viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
 
         fineLines: document.querySelectorAll('.portrait-fine-lines path').length,
+        settledMovie: (() => { const video=document.querySelector('.portrait-motion'); return video ? {time:video.currentTime,paused:video.paused} : null; })(),
         greeting: document.querySelector('.gateway-identity-card')?.textContent,
         body: document.body.innerText.slice(-500) }));
       await page.screenshot({ path: new URL(`${mode}-settled.png`, output).pathname });
       await writeFile(new URL(`${mode}.json`, output), JSON.stringify(evidence, null, 2));
+      assert.ok(evidence.settledMovie?.paused && evidence.settledMovie.time >= 5.1, 'The settled portrait must retain its actual video end pose');
       assert.deepEqual(evidence.viewport, { width: 1920, height: 1080, dpr: 1 });
       assert.ok(evidence.frames.some(frame => frame.renderer === 'native-video'), 'Native motion video must actually play');
       assert.ok(evidence.videoFrames.length > 120, 'Too few actually presented portrait video frames');

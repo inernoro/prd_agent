@@ -1,6 +1,6 @@
 {
-  "sourceCommit": "bb4813a41d02937f364a8f39dac0c898f8eb26ba",
-  "workflowRun": "https://github.com/inernoro/prd_agent/actions/runs/44048009770",
+  "sourceCommit": "8a32a0c4ef7de6b34e3c8f978d6f5098372335ba",
+  "workflowRun": "https://github.com/inernoro/prd_agent/actions/runs/44065555634",
   "fps": 60,
   "sourceFrames": 310,
   "sourceSize": [
@@ -11,6 +11,7 @@
     1672,
     942
   ],
-  "sha256": "175c05f2c72c84b02b0290f23eb5cec0a92cd84ad188ed8317abd71db97c502b",
-  "purpose": "原创角色动效预渲染素材；实际页面验收需另录真实预览，不以此素材冒充录屏。"
+  "sha256": "92500f2d249af14c8db08817a9d75b71ea05d179e3dce6be613dd5da884ec9ed",
+  "purpose": "原创角色动效预渲染素材；实际页面验收需另录真实预览，不以此素材冒充录屏。",
+  "fileName": "portrait-motion-92500f2d249a.mp4"
 }

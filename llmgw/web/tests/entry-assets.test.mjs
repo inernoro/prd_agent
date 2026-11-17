@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { PORTRAIT_MOTION_FILE } from '../src/components/entry/portraitMotionAsset.ts';
 import { samplePortrait as gateway } from '../src/components/entry/portraitTimeline.ts';
 import { samplePortrait as map } from '../../../prd-admin/src/components/effects/portraitTimeline.ts';
 
 test('两个独立构建的角色几何、素材与逐帧轨迹保持一致', () => {
   for (let frame = 0; frame <= 432; frame++) assert.deepEqual(gateway(frame / 60), map(frame / 60));
-  for (const file of ['portraitGeometry.ts','companion.webp','companion-sleep.webp','portrait-motion.mp4']) {
+  const motion = JSON.parse(readFileSync(new URL('../../../e2e/fixtures/media/portrait-motion.source.json',import.meta.url),'utf8'));
+  assert.equal(PORTRAIT_MOTION_FILE,motion.fileName);
+  assert.match(motion.fileName,/^portrait-motion-[a-f0-9]{12}\.mp4$/);
+  assert.equal(createHash('sha256').update(readFileSync(new URL(`../public/media/entry/${motion.fileName}`,import.meta.url))).digest('hex'),motion.sha256);
+  for (const file of ['portraitGeometry.ts','portraitMotionAsset.ts','companion.webp','companion-sleep.webp',motion.fileName]) {
     const code = file.endsWith('.ts');
     const ours = new URL(code ? `../src/components/entry/${file}` : `../public/media/entry/${file}`, import.meta.url);
     const original = new URL(code ? `../../../prd-admin/src/components/effects/${file}` : `../../../prd-admin/public/media/entry/${file}`, import.meta.url);

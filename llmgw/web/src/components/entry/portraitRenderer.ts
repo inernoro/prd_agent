@@ -1,3 +1,4 @@
+import { PORTRAIT_MOTION_FILE } from './portraitMotionAsset';
 import { entryAsset } from './entryAsset';
 import { CLOSED_LID, EYE_X, OPEN_UPPER, OPEN_LOWER, eyeControlPoints, samplePortrait } from './portraitTimeline';
 
@@ -174,5 +175,5 @@ export function preloadPortraitMotion() {
   if (preparedMotion) return;
   preparedMotion = document.createElement('video');
   preparedMotion.muted = true; preparedMotion.preload = 'auto'; preparedMotion.playsInline = true;
-  preparedMotion.src = entryAsset('portrait-motion.mp4'); preparedMotion.load();
+  preparedMotion.src = entryAsset(PORTRAIT_MOTION_FILE); preparedMotion.load();
 }

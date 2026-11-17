@@ -1,3 +1,4 @@
+import { PORTRAIT_MOTION_FILE } from './portraitMotionAsset';
 import { CLOSED_LID, EYE_X, OPEN_UPPER, OPEN_LOWER, eyeControlPoints, samplePortrait } from './portraitTimeline';
 
 const VERTEX = `attribute vec2 position; varying vec2 screen;

@@ -37,6 +37,7 @@ for mode in ['cold','warm']:
             draw.text((12,row*574+8),f'+{index/4:.2f}s | reference left | actual {mode} right'+(' | reference ended' if index>18 else ''),fill='white')
             for col,kind in enumerate(['reference','current']):sheet.paste(Image.open(folder/f'{kind}-{index:02}.jpg'),(col*960,row*574+32))
         sheet.save(OUT/f'{mode}-sheet-{first//4:02}.jpg',quality=90)
+        if first == 8: sheet.crop((0,0,1920,574)).save(OUT/f'{mode}-keyframe-2.00.jpg',quality=94)
     run(['-ss','14.75','-i',REF,'-ss',f'{anchor:.6f}','-i',OUT/f'{mode}.mp4','-filter_complex',
          '[0:v]scale=960:540,setsar=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=2,drawtext=text=Reference (holds after 4.57s):fontcolor=white:fontsize=18:x=12:y=12[a];[1:v]scale=960:540,setsar=1,setpts=PTS-STARTPTS,drawtext=text=Actual preview:fontcolor=white:fontsize=18:x=12:y=12[b];[a][b]hstack=inputs=2[v]',
          '-map','[v]','-t','5.5','-an','-c:v','libx264','-preset','fast','-crf','20','-movflags','+faststart',OUT/f'{mode}-comparison.mp4'])
