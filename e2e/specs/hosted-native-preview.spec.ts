@@ -54,6 +54,38 @@ test.beforeAll(async ({}, testInfo) => {
 test.afterAll(async () => { if (directory) await rm(directory, { recursive: true, force: true }); });
 test.use({ trace: 'off', video: 'off' });
 
+for (const width of [1440, 390]) test(`${width}px 合集两份工具栏只打开一个历史阅读上下文`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  const site = { id: 'collection-doc', title: '合集唯一预览样例', siteUrl: entry, entryFile: 'index.html', contentShape: 'self-contained-html', canEdit: false, canShare: true };
+  const current = { id: 'cv2', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, siteUrl: entry, entryFile: 'index.html', contentShape: 'self-contained-html' };
+  const old = { ...current, id: 'cv1', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false };
+  let previews = 0;
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/annotation-runtime.js')) { await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') }); return; }
+    let data: unknown = {};
+    if (path.endsWith('/shares/view/qa-collection/collection')) data = { collection: { id: 'qa-collection', name: '单一历史预览', description: '', siteIds: [site.id], mainSiteId: site.id, sections: [], version: 1 }, items: [site], canManage: false };
+    else if (path.endsWith('/content')) data = { html: '<h1>合集当前正文</h1><p>当前阅读上下文。</p>' };
+    else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+    else if (path.endsWith('/revisions')) data = [current, old];
+    else if (path.endsWith('/revisions/cv1/preview')) { previews++; data = { revision: old, siteUrl: null, html: '<h1>历史只有一份</h1><p>不应重复执行。</p>' }; }
+    await route.fulfill({ json: { success: true, data, error: null } });
+  });
+  await page.goto('/s/collection/qa-collection');
+  await page.getByRole('button', { name: '从主文档开始阅读', exact: true }).click();
+  if (width < 1100) await page.locator('[data-tool="notes"]').click();
+  await page.getByRole('button', { name: '网页版本：V2', exact: true }).filter({ visible: true }).click();
+  await page.getByRole('option', { name: /^V1/ }).click();
+  await expect(page.locator('iframe[title="V1 网页预览"]')).toHaveCount(1);
+  await expect(page.frameLocator('iframe[title="V1 网页预览"]').getByRole('heading', { name: '历史只有一份' })).toBeVisible();
+  expect(previews).toBe(1);
+  const document = await page.locator('iframe[title="V1 网页预览"]').elementHandle();
+  await page.setViewportSize({ width: width === 1440 ? 390 : 1440, height: 900 });
+  await page.waitForTimeout(200);
+  expect(await document!.evaluate(element => element.isConnected)).toBe(true);
+  expect(previews).toBe(1);
+});
+
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
   pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean } = {}) {
   const requests: string[] = [];

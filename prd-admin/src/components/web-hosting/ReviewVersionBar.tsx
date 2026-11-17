@@ -5,10 +5,9 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { HostedReview } from './useHostedReview';
 import { ReviewVersionPreview } from './ReviewVersionPreview';
 
-export function ReviewVersionBar({ review, canUpload }: { review: HostedReview; canUpload: boolean }) {
+export function ReviewVersionBar({ review, canUpload, renderPreview = true }: { review: HostedReview; canUpload: boolean; renderPreview?: boolean }) {
   const input = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null), list = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const previewId = review.versionPreview?.id;
   const busy = review.loading || review.uploading;
   useEffect(() => {
     if (open) list.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
@@ -55,7 +54,13 @@ export function ReviewVersionBar({ review, canUpload }: { review: HostedReview; 
     {canUpload && <input ref={input} type="file" accept=".html,.htm,.zip" className="hidden" aria-label="上传新版本文件" onChange={event => {
       const file = event.target.files?.[0]; event.target.value = ''; if (file) void review.upload(file);
     }} />}
-    {previewId && review.source && review.liveSite && <ReviewVersionPreview key={previewId} versionId={previewId} commentId={review.versionPreview?.commentId} site={review.liveSite} source={review.source}
-      canRestore={canUpload} restoring={review.uploading} restoreError={review.error} onRestore={key => review.restoreVersion(previewId, key)} onClose={() => { review.setVersionPreview(null); trigger.current?.focus(); }} />}
+    {renderPreview && <ReviewVersionPreviewHost review={review} canRestore={canUpload} onClose={() => { review.setVersionPreview(null); trigger.current?.focus(); }} />}
   </div>;
+}
+
+/** A reader with responsive copies of its toolbar owns this host only once. */
+export function ReviewVersionPreviewHost({ review, canRestore, onClose }: { review: HostedReview; canRestore: boolean; onClose?: () => void }) {
+  const previewId = review.versionPreview?.id;
+  return previewId && review.source && review.liveSite ? <ReviewVersionPreview key={previewId} versionId={previewId} commentId={review.versionPreview?.commentId} site={review.liveSite} source={review.source}
+    canRestore={canRestore} restoring={review.uploading} restoreError={review.error} onRestore={key => review.restoreVersion(previewId, key)} onClose={onClose ?? (() => review.setVersionPreview(null))} /> : null;
 }

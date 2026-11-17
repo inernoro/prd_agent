@@ -39,7 +39,7 @@ export function ReviewVersionPreview({ site, source, versionId, commentId, canRe
       {previewReady ? <iframe ref={frame} title={`${version?.versionLabel} 网页预览`} srcDoc={html} src={html ? undefined : review.site?.siteUrl || undefined}
         sandbox={html ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(review.site?.siteUrl ?? '')} referrerPolicy="no-referrer" onLoad={review.annotations.notifyFrame}
         className="w-full" style={{ height: '100%', border: 0, background: 'var(--bg-elevated)' }} />
-        : <div className="review-empty" role="status">{review.error ? <><p>{review.error}</p><button type="button" className="review-tool" onClick={() => { if (version) void review.selectVersion(versionId); else void review.refresh(); }}>重试预览</button></> : <><MapSpinner size={20} /><p>正在预览历史版本…</p></>}</div>}
+        : <div className="review-empty" role="status">{review.error ? <><p>{review.error}</p><button type="button" className="review-tool" onClick={() => { if (version) void review.selectVersion(versionId, commentId); else void review.refresh(); }}>重试预览</button></> : <><MapSpinner size={20} /><p>正在预览历史版本…</p></>}</div>}
       <AnnotationBubble annotations={review.annotations} hidden={showComments} />
       {previewReady && <aside className="review-sidebar" style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 'min(360px, 100%)', background: 'var(--bg-elevated)', display: showComments ? 'flex' : 'none', flexDirection: 'column' }}>
         <div className="review-sidebar-heading"><span>此版本批注</span><button type="button" aria-label="收起此版本批注" onClick={() => setShowComments(false)}><X size={16} /></button></div>
