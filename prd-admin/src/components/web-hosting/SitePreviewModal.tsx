@@ -141,9 +141,10 @@ export default function SitePreviewModal({
     if (!htmlLoading) setRenderMode('direct');
   }, [renderMode, srcDoc, htmlLoading, review.historical]);
   const useSrcDoc = review.historical ? !!srcDoc : renderMode === 'srcdoc';
+  const currentPreviewFetchable = shouldFetchPreviewHtml({ ...originalSite, ...review.liveSite });
 
-  // 发布新版本后 siteUrl 的版本指纹会变化。预览组件不卸载，因此必须显式重开
-  // srcDoc/direct 的一次性判定，否则 iframe 会继续停在发布前的旧内容。
+  // 发布后的地址或迟到的版本元数据都可能改变预览策略。组件不卸载时要重新判定，
+  // 避免已选择 srcdoc 后正文变为不可内联，导致 src 与 srcDoc 同时为空。
   useEffect(() => {
     setRenderMode('waiting');
     setLoading(true);
@@ -152,7 +153,7 @@ export default function SitePreviewModal({
     if (review.historical) return;
     const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, [site.siteUrl, historicalRevisionId, review.historical]);
+  }, [site.siteUrl, historicalRevisionId, review.historical, currentPreviewFetchable, previewSource.usingNativePdfViewer]);
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;

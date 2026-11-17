@@ -7,7 +7,7 @@ import { ok } from '@/types/api';
 import { __resetSitePreviewHtmlCache, useSitePreviewHtml, type SitePreviewHtmlSite } from './useSitePreviewHtml';
 import SitePreviewModal from './SitePreviewModal';
 
-vi.mock('@/services/real/webPages', () => ({ getSiteContent: vi.fn(), getSiteAskConfig: vi.fn(), setSiteCommentsEnabled: vi.fn() }));
+vi.mock('@/services/real/webPages', () => ({ buildApiUrl: (path: string) => path, getSiteContent: vi.fn(), getSiteAskConfig: vi.fn(), setSiteCommentsEnabled: vi.fn() }));
 vi.mock('./useHostedPdfDownload', async () => {
   const { useRef } = await import('react');
   return { useHostedPdfDownload: () => ({ iframeRef: useRef(null), notifyFrame: vi.fn(), decorateHtml: (html: string) => html }), HostedPdfDownloadStatus: () => null };
@@ -84,4 +84,15 @@ it('原地址弹窗结束等待时保留同一个 iframe，发布新地址仍能
     vi.useRealTimers();
     vi.unstubAllGlobals();
   }
+});
+
+it('相同地址的版本元数据改为多文件时退出内联路径，保持原地址可读', async () => {
+  vi.mocked(getSiteContent).mockResolvedValue(ok(content('<html><head></head><body>恢复的正文</body></html>')));
+  const hosted = { ...site, contentShape: 'self-contained-html', title: '恢复后预览', askEnabled: false } as HostedSite;
+  await act(async () => root.render(<SitePreviewModal site={hosted} onClose={() => {}} />));
+  expect(document.querySelector('iframe')!.getAttribute('srcdoc')).toContain('恢复的正文');
+  await act(async () => root.render(<SitePreviewModal site={{ ...hosted, contentShape: 'multi-file' }} onClose={() => {}} />));
+  const frame = document.querySelector('iframe')!;
+  expect(frame.getAttribute('srcdoc')).toBeNull();
+  expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
 });
