@@ -134,6 +134,22 @@ jobs:
               - 'scripts/tests/test_skills_audit_contract.py'
               - '.github/workflows/ci.yml'
             release_scripts:
+              - 'fast.sh'
+              - 'docker-compose.yml'
+              - 'deploy/systemd/prd-agent-*.service'
+              - 'deploy/systemd/prd-agent-*.timer'
+              - 'deploy/logrotate/**'
+              - 'deploy/journald/**'
+              - 'deploy/compose/production-logging.yml'
+              - 'scripts/prd-agent-*-retention.*'
+              - 'scripts/prd-agent-verify-offsite-backups.py'
+              - 'scripts/prd-agent-sync-small-backups.sh'
+              - 'scripts/llmgw-install-disk-monitor.sh'
+              - 'deploy/systemd/llmgw-backup-retention.service'
+              - 'scripts/prd-agent-container-log-rollout.py'
+              - 'scripts/prd-agent-with-release-lock.sh'
+              - 'scripts/prd-agent-install-disk-governance.sh'
+              - 'scripts/tests/prd-agent-*.test.*'
               # 模型出口守卫读取所有 MAP 发送入口；漏登记新业务也必须触发构建检查。
               - 'prd-api/src/**'
               - 'llmgw/serving/**'
@@ -383,6 +399,14 @@ jobs:
           STATIC_RELEASE_BROWSER_TEST: "1"
         run: sh scripts/tests/static-release-nginx.test.sh
 
+      - name: Production disk governance regression
+        run: |
+          python3 scripts/tests/prd-agent-artifact-retention.test.py
+          python3 scripts/tests/prd-agent-verified-backup-retention.test.py
+          python3 scripts/tests/prd-agent-container-log-rollout.test.py
+          node --test scripts/tests/prd-agent-request-log-retention.test.mjs
+          sh scripts/tests/prd-agent-release-lock.test.sh
+
       - name: Gateway bind mount coherence
         run: sh scripts/tests/gateway-bind-mount-coherence.test.sh
 
@@ -522,6 +546,13 @@ jobs:
 
       - name: Build
         run: dotnet build PrdAgent.sln -c Release --no-restore
+
+      - name: Verify log archive and TTL boundaries in isolated MongoDB fixtures
+        run: |
+          dotnet test tests/PrdAgent.Tests/PrdAgent.Tests.csproj -c Release --no-build --no-restore \
+            --filter 'FullyQualifiedName~PrdAgent.Tests.Services.LogArchive'
+          dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj -c Release --no-build --no-restore \
+            --filter 'FullyQualifiedName~GatewayRuntimeGovernanceTests.Initializer_RestartKeepsExpiredExecutionBodiesAndTemporaryStateTtl|FullyQualifiedName~GatewayRuntimeGovernanceTests.ArchivedDetailFailuresReturnRecoverableError'
 
       - name: LLMGW protocol simulation (production adapters, synthetic provider)
         working-directory: ${{ github.workspace }}

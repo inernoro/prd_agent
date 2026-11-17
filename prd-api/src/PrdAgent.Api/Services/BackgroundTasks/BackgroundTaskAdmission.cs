@@ -98,6 +98,7 @@ public sealed class BackgroundTaskAdmissionRegistry
             typeof(PrdAgent.Api.Middleware.AiScoreWatchdog),
             typeof(PrdAgent.Api.Middleware.TranscriptRunWatchdog),
             typeof(PlatformKeyIntegrityWorker), typeof(MongoIndexAdvisoryStartupCheck),
+            typeof(LogArchiveWorker),
             typeof(EscalationNotificationCleanupService), typeof(ReprocessAgentSeeder),
             typeof(PermissionMigrationService), typeof(AppCallerRegistrySyncService),
             typeof(PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker),

@@ -1,13 +1,12 @@
-# 每个容器沿用 CDS 已有的 json-file 轮转上限；仅在受支持的容器重建后生效。
-# 禁止直接截断 /var/lib/docker 中的日志，既有容器需另行安排维护发布。
-x-logging: &bounded-logging
+x-production-logging: &production-logging
   driver: json-file
   options:
-    max-size: "50m"
+    max-size: "20m"
     max-file: "3"
 
 services:
   gateway:
+    logging: *production-logging
     image: nginx:1.27-alpine
     container_name: prdagent-gateway
     ports:
@@ -33,9 +32,9 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
   mongodb:
+    logging: *production-logging
     image: mongo:8.0
     container_name: prdagent-mongodb
     volumes:
@@ -45,9 +44,9 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
   redis:
+    logging: *production-logging
     image: redis:7-alpine
     container_name: prdagent-redis
     volumes:
@@ -55,9 +54,9 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
   api:
+    logging: *production-logging
     # 生产环境禁止本地构建：默认拉取 :latest（由 GitHub Actions 推送）
     # 如需固定版本/自建仓库，设置 PRD_AGENT_API_IMAGE 覆盖（tag 或 digest）
     # 例：PRD_AGENT_API_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-server:v1.1.1
@@ -191,13 +190,13 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
   # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
   # 主库只承载 MAP 业务依赖；appCaller、模型池、平台、exchange 和请求日志均从
   # LlmGateway__DatabaseName（默认 llm_gateway）读取。ApiKeyCrypto__Secret 与资产存储由两实例共享。
   # MAP 的全部模型调用都跨进程打到这里。
   llmgw-serve:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve
     environment:
@@ -248,10 +247,10 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
   # serving 第二实例。两实例使用同一不可变镜像和 GW-owned 数据库，由 gateway nginx 做被动摘流。
   llmgw-serve-b:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve-b
     environment:
@@ -300,12 +299,12 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
   # 独立 LLM 网关服务 llmgw —— 独立 llmgw/console-api 镜像（自包含 ASP.NET 服务，监听 8090）。
   # 与 MAP 共享同一 Mongo（读 llmrequestlogs 做观测）+ 独立 LlmGwJwt__Secret（网关自身账号鉴权，
   # 跨服务隔离见 cross-project-isolation.md）。不依赖 prd-api 任何项目，剥离失败不波及主站。
   llmgw:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw:latest}
     container_name: prdagent-llmgw
     environment:
@@ -347,11 +346,11 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
   # 独立 LLM 网关前端静态站 llmgw-web —— 独立 llmgw/web 镜像（nginx 托管构建产物，监听 80）。
   # SPA 回退 + /gw 反代到 llmgw:8090（见 llmgw/web/nginx.conf）。
   llmgw-web:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_WEB_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:latest}
     container_name: prdagent-llmgw-web
     depends_on:
@@ -359,12 +358,12 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
   # 设计执行服务 design-opendesign（OpenDesign 引擎 + map-design-executor-v1），只供 api 经内部网络调用，
   # 不发布端口。镜像与 api 同一个发布 ref（exec_dep.sh 钉版并同批拉取）。任务状态只在进程内存里，
   # 发布重建容器会中断正在跑的设计任务，api 侧会把它标为「服务重启中断」并如实告知用户。
   design-opendesign:
+    logging: *production-logging
     image: ${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:latest}
     container_name: prdagent-design-opendesign
     environment:
@@ -382,7 +381,6 @@ services:
     networks:
       - prdagent-network
     restart: unless-stopped
-    logging: *bounded-logging
 
 volumes:
   mongodb_data:
