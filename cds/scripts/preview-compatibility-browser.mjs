@@ -142,6 +142,19 @@ try {
   assert.equal(await prepare(newImage, running, 'other-project/other-branch/cds'), undefined);
   assert.equal(commands.length, 0);
   const next = await prepare(newImage, running);
+  const scopeDigest = createHash('sha256').update(owner.join('\0')).digest('hex');
+  const exporterName = 'cds-preview-assets-' + scopeDigest;
+  const priorExporter = docker('create', '--name', exporterName, '--network=none', '--read-only', '--label', ownership,
+    '--label', `cds.preview-assets.export=${scopeDigest}`, '--label', `cds.preview-assets.image=${newImage}`, newImage);
+  containers.add(priorExporter);
+  await prepare(newImage, running);
+  assert.equal(docker('ps', '-aq', '--filter', `name=^/${exporterName}$`), '');
+  containers.delete(priorExporter);
+  const unknownExporter = docker('create', '--name', exporterName, '--network=none', '--label', ownership, newImage);
+  containers.add(unknownExporter);
+  await assert.rejects(prepare(newImage, running), /未能确认预览静态兼容资产/);
+  assert.equal(docker('container', 'inspect', '--format', '{{.Id}}', unknownExporter), unknownExporter);
+  stop(unknownExporter);
   await assert.rejects(prepare(differentBytes, running), /未能确认预览静态兼容资产/);
   await assert.rejects(prepare(databasePayload, running), /未能确认预览静态兼容资产/);
   await ready(url, 'a');
@@ -177,7 +190,8 @@ try {
   assert.equal(fs.readFileSync(protectedAsset, 'utf8'), 'corrupt test fixture');
   fs.writeFileSync(protectedAsset, protectedBytes);
   records.push({ changedAssetReuseRefused: true, missingAsset404: true, readOnlyMount: true, sameImageReused: true,
-    rollbackAssetLinked: true, unrelatedScopeUntouched: true, replacedDirectoryRefused: true, collisionAndDataPayloadRefusedBeforeReplacement: true });
+    rollbackAssetLinked: true, unrelatedScopeUntouched: true, replacedDirectoryRefused: true, collisionAndDataPayloadRefusedBeforeReplacement: true,
+    verifiedAbandonedExporterRetired: true, unknownExporterRetained: true });
 } finally {
   clearInterval(keepAlive);
   if (browser) await browser.close();

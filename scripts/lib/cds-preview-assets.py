@@ -121,18 +121,41 @@ def copy_preview_files(container, stage, archive, asset_mode, scope_remaining):
     return size
 
 
-def extract_image(image, stage):
+def export_identity(name):
+    ids = command(['docker', 'ps', '-aq', '--no-trunc', '--filter', f'name=^/{name}$']).splitlines()
+    if len(ids) > 1 or any(not CID.fullmatch(cid) for cid in ids):
+        raise ValueError('preview exporter inventory is unconfirmed')
+    return ids[0] if ids else None
+
+
+def retire_exporter(name, scope, expected_id=None):
+    ref = export_identity(name)
+    if not ref:
+        return
+    actual = json.loads(command(['docker', 'container', 'inspect', '--format',
+        '[{{json .Id}},{{json .Name}},{{json .Image}},{{json .State.Status}},{{json .Mounts}},{{json .Config.Labels}}]', ref]))
+    cid, observed_name, image, status, mounts, labels = actual
+    if cid != ref or observed_name != '/' + name or expected_id and ref != expected_id or status != 'created' or mounts \
+            or labels.get('cds.preview-assets.export') != scope or labels.get('cds.preview-assets.image') != image or not IMAGE.fullmatch(image):
+        raise ValueError('preview exporter identity or lifecycle is unconfirmed')
+    command(['docker', 'rm', ref])
+    if export_identity(name) is not None:
+        raise ValueError('preview exporter retirement is unconfirmed')
+
+
+def extract_image(image, stage, scope):
     image_id, volumes = json.loads(command(['docker', 'image', 'inspect', '--format',
                                             '[{{json .Id}},{{json (index .Config "Volumes")}}]', image]))
     if image_id != image or volumes:
         raise ValueError('preview image or volume declarations are unconfirmed')
-    name = 'cds-preview-assets-' + uuid.uuid4().hex
-    owner = 'cds.preview-assets.export=' + name
-    ref = command(['docker', 'create', '--pull=never', '--network=none', '--read-only',
-                   '--name', name, '--label', owner, image])
-    if not CID.fullmatch(ref):
-        raise ValueError('export container ID is unconfirmed')
+    name = 'cds-preview-assets-' + scope
+    ref = None
     try:
+        ref = command(['docker', 'create', '--pull=never', '--network=none', '--read-only',
+                       '--name', name, '--label', f'cds.preview-assets.export={scope}',
+                       '--label', f'cds.preview-assets.image={image}', image])
+        if not CID.fullmatch(ref):
+            raise ValueError('export container ID is unconfirmed')
         # Spool only the entry and generated assets, bounded by their tar bytes.
         (stage / 'assets').mkdir()
         with tempfile.TemporaryFile(dir=stage) as archive:
@@ -141,11 +164,7 @@ def extract_image(image, stage):
             copy_preview_files(ref, stage, archive, True, ARCHIVE_LIMIT - entry_size)
         verify_entry(stage)
     finally:
-        actual = json.loads(command(['docker', 'container', 'inspect', '--format',
-                                     '[{{json .Id}},{{json .Name}},{{json .Image}},{{json (index .Config.Labels "cds.preview-assets.export")}}]', ref]))
-        if actual != [ref, '/' + name, image, name]:
-            raise ValueError('export container identity changed')
-        command(['docker', 'rm', ref])
+        retire_exporter(name, scope, ref if ref and CID.fullmatch(ref) else None)
 
 
 def release_anchor(root, name):
@@ -209,7 +228,7 @@ def activate(root, image, lock, store_lock, serving_release=None):
     with tempfile.TemporaryDirectory(prefix='.staging-', dir=root) as stage:
         cached = cached_release(root, image)
         if cached is None:
-            extract_image(image, Path(stage))
+            extract_image(image, Path(stage), root.name)
         else:
             reuse_native_assets(cached, Path(stage))
         reject_asset_collisions(Path(stage), {current, release_anchor(root, 'previous')})
@@ -346,6 +365,9 @@ def main():
     with exclusive_lock(base / '.store.lock') as store_lock:
         root = scope_root(base, args.owner)
         with exclusive_lock(root / retention.LOCK) as fd:
+            # A prior executor can die after Docker accepted create. Prove and retire
+            # only the one stopped, unmounted exporter for this owned scope.
+            retire_exporter('cds-preview-assets-' + root.name, root.name)
             ensure_directory(root / '.releases')
             release_anchor(root, 'previous')
             published = serving_image(args.owner, args.previous_container, current_release(root) is None)
