@@ -72,26 +72,34 @@ clean = np.zeros_like(binary)
 for label in range(1,n):
     if stats[label,cv2.CC_STAT_AREA] >= 9: clean[labels==label] = 255
 skeleton = cv2.ximgproc.thinning(clean)
-contours,_ = cv2.findContours(skeleton,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
+edge_drawing = cv2.ximgproc.createEdgeDrawing()
+params = cv2.ximgproc_EdgeDrawing_Params()
+params.MinPathLength = 35
+params.GradientThresholdValue = 12
+params.Sigma = 1.0
+edge_drawing.setParams(params)
+edge_drawing.detectEdges(np.max(line,axis=2).astype(np.uint8))
+segments = edge_drawing.getSegments()
 rng = np.random.default_rng(20261118)
 strokes = []
-for contour in contours:
-    points = contour[:,0,:]
-    if len(points)<12: continue
+for contour in segments:
+    points = contour.reshape(-1,2)
+    if len(points)<35: continue
     # Preserve each complete connected gesture. Cutting every N pixels creates
     # synchronized fragments across adjacent hair strands and looks like bars.
     p = cv2.approxPolyDP(points.reshape(-1,1,2),.28,False)[:,0,:]
     if len(p)<3: continue
     lengths = np.r_[0,np.cumsum(np.linalg.norm(np.diff(p,axis=0),axis=1))]
-    if lengths[-1]<18: continue
+    if lengths[-1]<45: continue
     center = np.mean(p,axis=0)
     start = .12+.65*center[1]/H+.12*rng.random()
     if center[0]>W*.76 and .31<center[1]/H<.65: start += .18
     strokes.append({'points':p,'lengths':lengths,'start':start,
-                    'duration':.22+min(.58,lengths[-1]/1600),'drawn':0})
+                    'duration':.22+min(.58,lengths[-1]/1600),'drawn':0,
+                    'color':tuple(int(v) for v in np.clip(np.maximum(np.percentile(line[p[:,1],p[:,0]],75,axis=0),[160,75,25]),0,255))})
 assert len(strokes)>150, f'Insufficient authored linework: {len(strokes)}'
 proof['strokes'] = {'count':len(strokes),'skeletonPixels':int(np.count_nonzero(skeleton)),
-                    'source':'generated line-etching.png','uniformVectorSubstitute':False}
+                    'source':'generated line-etching.png','extractor':'OpenCV EdgeDrawing connected segments','uniformVectorSubstitute':False}
 cv2.imwrite(str(OUT/'line-skeleton.png'),skeleton)
 
 def smooth(a,b,value):
@@ -141,7 +149,7 @@ noise = cv2.resize(rng.random((15,25),dtype=np.float32),(W,H),interpolation=cv2.
 noise = cv2.GaussianBlur(noise,(61,61),0); noise = (noise-noise.min())/max(1e-6,noise.max()-noise.min())
 xx,yy = np.meshgrid(np.linspace(0,1,W),np.linspace(0,1,H))
 field = (.42*noise+.33*yy+.25*(1-xx)).astype(np.float32)
-mask = np.zeros((H,W),np.uint8)
+stroke_canvas = np.zeros((H,W,3),np.uint8)
 line_float = line.astype(np.float32); surface = art['surface-reveal'].astype(np.float32)
 movie = OUT/'portrait-motion.mp4'
 encoder = subprocess.Popen(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','rawvideo','-pixel_format','bgr24',
@@ -156,10 +164,15 @@ try:
             end = min(len(stroke['points']),int(np.searchsorted(stroke['lengths'],p*stroke['lengths'][-1],side='right')))
             if end>max(1,stroke['drawn']):
                 a = max(0,stroke['drawn']-1)
-                cv2.polylines(mask,[stroke['points'][a:end].reshape(-1,1,2)],False,255,7,cv2.LINE_AA)
+                cv2.polylines(stroke_canvas,[stroke['points'][a:end].reshape(-1,1,2)],False,stroke['color'],1,cv2.LINE_AA)
                 stroke['drawn']=end
-        ink = np.maximum(cv2.GaussianBlur(mask,(3,3),0).astype(np.float32)/255, .035*smooth(.12,.55,t)+.965*smooth(1.08,1.70,t))
-        drawing = line_float*ink[:,:,None]
+        # Paint the extracted curves themselves; masking the source's highlights
+        # produces striped fragments even when the paths are continuous.
+        vector_ink = stroke_canvas.astype(np.float32)
+        vector_ink = vector_ink*.88+cv2.GaussianBlur(vector_ink,(7,7),1.3)*.42
+        texture = smooth(1.05,1.68,t)
+        drawing = vector_ink*(1-texture)+line_float*texture
+        drawing += line_float*(.025*smooth(.12,.45,t))*(1-texture)
         grid = smooth(1.38,1.95,t)*(1-smooth(2.18,2.61,t))
         drawing = drawing*(1-grid)+surface*grid
         exposure = smooth(1.94,2.70,t)
