@@ -6,7 +6,7 @@ namespace PrdAgent.Api.Services.ProductAgent;
 
 // Read DTOs only: legacy rows are never written into the product workflow collections.
 public sealed record ProductVersionListRow<T>(T Record, VersionRegistration? LegacyRegistration = null,
-    ProductVersionExportFields? ExportFields = null);
+    ProductVersionExportFields? ExportFields = null, bool? CanEdit = null);
 
 public sealed record ProductVersionExportFields(string? SystemName, string? OwnerId, IReadOnlyList<string> TeamMemberIds,
     string? ReleaseOrigin = null);
@@ -34,7 +34,7 @@ public static class ProductVersionListReader
     }
 
     public static async Task<ProductVersionListResult<ProductInitiation>> ReadInitiationsAsync(
-        MongoDbContext db, HashSet<string>? scope, string userId, bool canViewAllLegacy)
+        MongoDbContext db, HashSet<string>? scope, string userId, bool canViewAllLegacy, bool canDeleteOthers = false)
     {
         var products = await ReadProductsAsync(db, scope);
         var ids = products.Select(x => x.Id).ToList();
@@ -42,12 +42,12 @@ public static class ProductVersionListReader
             Builders<ProductInitiation>.Filter.Eq(x => x.IsDeleted, false)
             & Builders<ProductInitiation>.Filter.In(x => x.ProductId, ids)).ToListAsync();
         var legacy = await ReadLegacyAsync(db, VersionRegistrationKind.Internal, userId, canViewAllLegacy);
-        await ProductInitiationDeletion.AnnotateAsync(db, current, userId);
+        await ProductInitiationDeletion.AnnotateAsync(db, current, canDeleteOthers ? null : userId);
         return new(MergeInitiations(current, legacy, products), new(), ProductVersionPlanMatching.Aliases);
     }
 
     public static async Task<ProductVersionListResult<ProductRelease>> ReadReleasesAsync(
-        MongoDbContext db, HashSet<string>? scope, string userId, bool canViewAllLegacy)
+        MongoDbContext db, HashSet<string>? scope, string userId, bool canViewAllLegacy, bool canDeleteOthers = false)
     {
         var products = await ReadProductsAsync(db, scope);
         var ids = products.Select(x => x.Id).ToList();
@@ -55,7 +55,7 @@ public static class ProductVersionListReader
             Builders<ProductRelease>.Filter.Eq(x => x.IsDeleted, false)
             & Builders<ProductRelease>.Filter.In(x => x.ProductId, ids)).ToListAsync();
         var legacy = await ReadLegacyAsync(db, VersionRegistrationKind.Formal, userId, canViewAllLegacy);
-        await ProductReleaseDeletion.AnnotateAsync(db, current, userId);
+        await ProductReleaseDeletion.AnnotateAsync(db, current, canDeleteOthers ? null : userId);
         var requirementIds = current.SelectMany(x => x.RequirementIds).Distinct().ToList();
         var names = new Dictionary<string, string>();
         if (requirementIds.Count > 0)
