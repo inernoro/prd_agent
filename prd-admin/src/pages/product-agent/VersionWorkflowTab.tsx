@@ -69,7 +69,6 @@ const SCALE_OPTIONS = Object.entries(SCALE_LABEL).map(([id, label]) => ({ id, la
 export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin = false }: { productId?: string; isAdmin?: boolean }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { productId, setProductId } = useProductListScope(initialProductId);
-  const currentUserId = useAuthStore((state) => state.user?.userId);
   const canClearRecords = useAuthStore((state) => state.isRoot || state.permissions.includes(PRODUCT_MAP_ADMIN));
   const tab: MainTab = searchParams.get('versionTab') === 'initiation' ? 'initiation' : 'release';
   const [products, setProducts] = useState<VersionApplicationProduct[]>([]);
@@ -846,6 +845,7 @@ function InitiationTable({ productId, productName, productNames, items, names, o
   onOpenLegacy: (record: VersionRegistration) => void;
   onChanged: () => Promise<void>;
 }) {
+  const currentUserId = useAuthStore((state) => state.user?.userId);
   const navigate = useNavigate();
   const openDetail = (item: WorkflowVersionRecord<ProductInitiation>) => item.legacyRegistration
     ? onOpenLegacy(item.legacyRegistration)
