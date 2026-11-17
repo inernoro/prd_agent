@@ -1,4 +1,4 @@
-import { CLOSED_LID, EYE_X, OPEN_UPPER, eyeControlPoints, samplePortrait } from './portraitTimeline';
+import { CLOSED_LID, EYE_X, OPEN_UPPER, OPEN_LOWER, eyeControlPoints, samplePortrait } from './portraitTimeline';
 
 const VERTEX = `attribute vec2 position; varying vec2 screen;
 void main(){ screen=vec2(position.x*.5+.5,.5-position.y*.5); gl_Position=vec4(position,0.,1.); }`;
@@ -13,6 +13,7 @@ uniform vec4 upperLid;
 uniform vec4 lowerLid;
 uniform vec4 closedLid;
 uniform vec4 openLid;
+uniform vec4 openLowerLid;
 const vec4 eyeX=vec4(${EYE_X.map(value => value.toFixed(1)).join(',')});
 float cubic(float a,float b,float c,float d,float t){float s=1.-t;return s*s*s*a+3.*s*s*t*b+3.*s*t*t*c+t*t*t*d;}
 void main(){
@@ -20,7 +21,7 @@ void main(){
  vec2 offset=vec2(viewport.x-size.x*scale,(viewport.y-size.y*scale)*.5);
  vec2 p=(screen*viewport-offset)/scale; vec2 uv=p/size;
  vec3 color=texture2D(awake,uv).rgb;
- if(p.x>1200. && p.x<1630. && p.y>310. && p.y<620. && opening<.9999){
+ if(p.x>1200. && p.x<1630. && p.y>310. && p.y<620.){
    float t=clamp((p.x-1260.)/307.,0.,1.);
    for(int j=0;j<4;j++){
      float s=1.-t;
@@ -30,36 +31,55 @@ void main(){
    float closed=cubic(closedLid.x,closedLid.y,closedLid.z,closedLid.w,t);
    float top=cubic(upperLid.x,upperLid.y,upperLid.z,upperLid.w,t);
    float bottom=cubic(lowerLid.x,lowerLid.y,lowerLid.z,lowerLid.w,t);
-   bool inside=p.x>1260. && p.x<1567. && p.y>top && p.y<bottom;
-   if(!inside){
-     float sourceY=p.y<top ? 310.+(p.y-310.)*(closed-7.-310.)/max(1.,top-310.)
-       : 620.-(620.-p.y)*(620.-closed-32.)/max(1.,620.-bottom);
-     vec3 skin=texture2D(asleep,vec2(p.x,sourceY)/size).rgb;
-     float feather=smoothstep(1200.,1245.,p.x)*(1.-smoothstep(1585.,1630.,p.x))
-       *smoothstep(310.,345.,p.y)*(1.-smoothstep(575.,620.,p.y));
-     color=mix(color,skin,feather*(1.-smoothstep(.96,1.,opening)));
+   float openTop=cubic(openLid.x,openLid.y,openLid.z,openLid.w,t);
+   float openBottom=cubic(openLowerLid.x,openLowerLid.y,openLowerLid.z,openLowerLid.w,t);
+   float patch=smoothstep(1200.,1248.,p.x)*(1.-smoothstep(1580.,1630.,p.x))
+     *smoothstep(310.,345.,p.y)*(1.-smoothstep(575.,620.,p.y));
+   vec3 eyeColor=color;
+   // Iris / sclera stay at their original coordinates. Only occluding lid tissue moves.
+   if(p.y<top){
+     float distance=top-p.y;
+     float falloff=exp(-pow(distance/72.,2.));
+     float sourceY=p.y+(closed-top)*falloff;
+     vec3 closedSkin=texture2D(asleep,vec2(p.x,sourceY)/size).rgb;
+     vec3 openSkin=texture2D(awake,vec2(p.x,p.y+(openTop-top)*falloff)/size).rgb;
+     eyeColor=mix(closedSkin,openSkin,opening);
+   } else if(p.y>bottom){
+     float distance=p.y-bottom;
+     float falloff=exp(-pow(distance/58.,2.));
+     float sourceY=p.y+(openBottom-bottom)*falloff;
+     // At rest the lower lashes are tucked behind the upper lash fan.
+     float tuck=(1.-smoothstep(.02,.32,opening))*26.*exp(-pow(distance/28.,2.));
+     eyeColor=texture2D(awake,vec2(p.x,sourceY+tuck)/size).rgb;
    }
-   // The lash root follows the *moving* lid boundary. The iris remains stationary.
    if(p.x>1258. && p.x<1570.){
-     float root=1.-smoothstep(1.3,3.1,abs(p.y-top));
      float dy=p.y-top;
-     float lashes=0.;
-     float foreshorten=1.-2.*opening;
-     // Preserve the painted lash clusters while rotating/foreshortening the lid.
-     // Only the small lash strip is sampled; no closed-eye photograph overlays the iris.
-     if(foreshorten>.025 && dy>0. && dy<34.*foreshorten){
-       vec3 lash=texture2D(asleep,vec2(p.x,closed+dy/foreshorten)/size).rgb;
-       lashes=1.-smoothstep(.028,.11,dot(lash,vec3(.299,.587,.114)));
+     // One lash fan rotates through its edge-on pose, using the painted lash alpha.
+     // No synthetic black outline and no late whole-patch crossfade.
+     float projection=cos(opening*3.14159265);
+     float lashInk=0.;
+     vec3 lashColor=eyeColor;
+     if(projection>.035 && dy>=0. && dy<38.*projection){
+       vec3 lash=texture2D(asleep,vec2(p.x,closed+dy/projection)/size).rgb;
+       lashColor=lash;
+       lashInk=1.-smoothstep(.035,.12,dot(lash,vec3(.299,.587,.114)));
      }
-     float lift=smoothstep(.48,.88,opening);
-     if(lift>0. && dy<0. && dy> -42.*lift){
-       float openTop=cubic(openLid.x,openLid.y,openLid.z,openLid.w,t);
-       vec3 lash=texture2D(awake,vec2(p.x,openTop+dy/max(.1,lift))/size).rgb;
-       lashes=max(lashes,1.-smoothstep(.028,.11,dot(lash,vec3(.299,.587,.114))));
+     if(projection<-.035 && dy<=0. && dy>42.*projection){
+       vec3 lash=texture2D(awake,vec2(p.x,openTop+dy/(-projection))/size).rgb;
+       lashColor=lash;
+       lashInk=1.-smoothstep(.035,.12,dot(lash,vec3(.299,.587,.114)));
      }
-     float ink=max(root,lashes)*(1.-smoothstep(.90,1.,opening));
-     color=mix(color,vec3(.012,.016,.025),ink);
+     // The painted root remains through the edge-on pose; its thickness stays anatomical.
+     vec3 rootSample=texture2D(asleep,vec2(p.x,closed+1.5)/size).rgb;
+     float rootInk=(1.-smoothstep(.035,.12,dot(rootSample,vec3(.299,.587,.114))))
+       *(1.-smoothstep(.8,2.1,abs(dy)));
+     eyeColor=mix(eyeColor,rootSample,rootInk*(1.-smoothstep(.65,1.,opening)));
+     eyeColor=mix(eyeColor,lashColor,lashInk);
    }
+   // Exact end poses share the original photographs, with a local, subpixel edge feather.
+   if(opening<.001) eyeColor=texture2D(asleep,uv).rgb;
+   color=mix(color,eyeColor,patch);
+
  }
  // Spatial material scan travels across the portrait; no whole-image dissolve.
  float front=material*1.20-.10;
@@ -125,6 +145,7 @@ export function createPortraitRenderer(canvas: HTMLCanvasElement, images: HTMLIm
   const lowerLid = gl.getUniformLocation(program, 'lowerLid');
   gl.uniform4f(gl.getUniformLocation(program, 'closedLid'), ...CLOSED_LID);
   gl.uniform4f(gl.getUniformLocation(program, 'openLid'), ...OPEN_UPPER);
+  gl.uniform4f(gl.getUniformLocation(program, 'openLowerLid'), ...OPEN_LOWER);
   return {
     draw(time: number) {
       const bounds = { width: canvas.clientWidth, height: canvas.clientHeight };

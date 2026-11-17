@@ -32,3 +32,18 @@ it('图片准备挂起时有独立超时，仍恢复可操作首页', async () =
   expect(host.style.getPropertyValue('--portrait-controls')).toBe('1');
   expect(document.documentElement.hasAttribute('data-entry-arriving')).toBe(false);
 });
+
+it('贴图尚未解码时线稿已在首批帧推进，不等待图片 Promise 才启动', async () => {
+  vi.useFakeTimers();
+  let renderFrame: FrameRequestCallback | undefined;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { renderFrame = callback; return 1; });
+  renderers.load.mockReturnValue(new Promise(() => {}));
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  await act(async () => root.render(<ConsciousnessPortrait fog={false} arriving />));
+  await act(async () => renderFrame?.(250));
+  expect(Number(host.style.getPropertyValue('--portrait-line'))).toBeGreaterThan(0);
+  expect(host.querySelectorAll('.portrait-fine-lines path').length).toBeGreaterThan(30);
+  expect(renderers.create).not.toHaveBeenCalled();
+  expect(host.querySelector('canvas')).not.toBeNull();
+  vi.restoreAllMocks();
+});

@@ -1,0 +1,6 @@
+{
+  "source": "cdscli preview-url (CDS authority)",
+  "branch": "codex/map-orbital-entry",
+  "mapUrl": "https://map-orbital-entry-codex-prd-agent.miduo.org",
+  "gatewayUrl": "https://map-orbital-entry-codex-prd-agent-llmgw.miduo.org"
+}

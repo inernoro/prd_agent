@@ -1,0 +1,98 @@
+name: Entry Motion Cloud Acceptance
+on:
+  push:
+    branches: [codex/map-orbital-entry]
+  workflow_dispatch:
+    inputs:
+      phase:
+        type: choice
+        options: [checks, record]
+        default: checks
+      map_url:
+        type: string
+        required: false
+      gateway_url:
+        type: string
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: entry-motion-${{ github.ref }}-${{ inputs.phase }}
+  cancel-in-progress: false
+jobs:
+  checks:
+    if: github.event_name == 'push' || inputs.phase == 'checks'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: |
+          pnpm -C prd-admin install --frozen-lockfile
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C e2e install --frozen-lockfile
+      - name: Changelog contract
+        run: bash scripts/validate-changelog-fragments.sh
+      - name: MAP type check, lint, regression and build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: |
+          pnpm -C prd-admin tsc --noEmit
+          pnpm -C prd-admin lint
+          pnpm -C prd-admin test --maxWorkers=2 --minWorkers=1
+          pnpm -C prd-admin build
+      - name: Gateway regression and build
+        working-directory: llmgw/web
+        run: |
+          pnpm exec node --experimental-strip-types --test --test-concurrency=1 tests/*.test.mjs
+          pnpm build
+      - name: Recording script syntax and types
+        run: |
+          node --check e2e/entry-motion-capture.mjs
+          python3 -m py_compile e2e/entry-motion-compare.py
+          pnpm -C e2e typecheck
+  record:
+    needs: checks
+    if: always() && ((github.event_name == 'push' && needs.checks.result == 'success') || inputs.phase == 'record')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MAP_URL: ${{ inputs.map_url }}
+      GATEWAY_URL: ${{ inputs.gateway_url }}
+      E2E_USER: ${{ secrets.E2E_USER }}
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      EXPECTED_COMMIT: ${{ github.sha }}
+      TZ: Asia/Shanghai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install cloud recording tools
+        run: |
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C e2e exec playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg xvfb python3-pil
+      - name: Capture the real public preview journey
+        run: xvfb-run -a -s '-screen 0 1920x1080x24 -ac' node e2e/entry-motion-capture.mjs
+      - name: Extract actual quarter-second frames and comparisons
+        if: always()
+        run: python3 e2e/entry-motion-compare.py
+      - name: Retain actual recordings and frame evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: entry-motion-${{ github.sha }}
+          path: work/entry-motion/
+          if-no-files-found: error
+          retention-days: 14

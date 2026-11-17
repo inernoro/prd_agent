@@ -259,8 +259,8 @@ html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chr
 .gateway-identity-card { --welcome-typeface: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", serif; --welcome-ink: color-mix(in srgb, var(--cinema-light) 88%, var(--cinema-amber)); }
 .gateway-identity-card > strong { display: flex; flex-wrap: wrap; font-family: var(--welcome-typeface); font-size: calc(var(--fs-title) * 1.65); font-weight: 400; letter-spacing: .035em; line-height: 1.55; color: var(--welcome-ink); text-wrap: balance; }
 .gateway-identity-card > strong > span { max-width: 100%; overflow-wrap: anywhere; }
-.gateway-identity-card.is-awaiting-welcome { opacity: 0; visibility: hidden; }
-.gateway-identity-card.is-welcoming { animation: gateway-welcome 1400ms cubic-bezier(.2,.65,.3,1) both; }
+.gateway-identity-card.is-awaiting-welcome { transition: none; opacity: var(--portrait-welcome, 0); transform: translateY(calc((1 - var(--portrait-welcome, 0)) * 8px)); }
+.gateway-identity-card.is-welcoming { opacity: 1; transform: none; }
 @keyframes gateway-welcome { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 .gateway-identity-meta { display: flex; align-items: center; gap: 12px; margin-top: 8px; color: color-mix(in srgb, var(--cinema-light) 48%, transparent); font-size: var(--fs-micro); letter-spacing: .06em; }
 .gateway-identity-meta > b { height: 12px; width: 1px; background: var(--cinema-border); }
@@ -348,3 +348,12 @@ html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chr
 }
 @media (prefers-reduced-motion: reduce) { .gateway-intent-starters button { transition: none; } }
 .gateway-quickstart-stage:has(.gateway-entry-resume button) .consciousness-ghost > small { display: none; }
+
+/* SSO uses the same full-viewport paper scene; the destination veil reveals already-running vectors. */
+.gateway-sso-copy { position: relative; z-index: 3; max-width: 32em; padding: 32px; text-align: center; }
+.gateway-sso-copy h1 { font-size: var(--fs-title); font-weight: 450; letter-spacing: .12em; }
+.gateway-sso-copy p { font-size: var(--fs-body); line-height: 1.8; }
+.gateway-sso-copy a { color: inherit; }
+.gateway-arrival-paper { position: absolute; inset: 0; z-index: 6; pointer-events: none; background: var(--cinema-paper); animation: gateway-paper-reveal 650ms cubic-bezier(.22,.61,.36,1) both; }
+@keyframes gateway-paper-reveal { from { opacity: 1; } to { opacity: 0; visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .gateway-arrival-paper { display: none; } }

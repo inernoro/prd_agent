@@ -1,5 +1,5 @@
 /** A single clock drives geometry and exposure; values are seconds after scene mount. */
-export const PORTRAIT_DURATION = 7.2;
+export const PORTRAIT_DURATION = 5.15;
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 export const smoothProgress = (time: number, from: number, to: number) => {
   const t = clamp((time - from) / (to - from));
@@ -7,16 +7,17 @@ export const smoothProgress = (time: number, from: number, to: number) => {
 };
 export function samplePortrait(time: number) {
   return {
-    line: smoothProgress(time, .18, 2.05),
-    lineOpacity: 1 - smoothProgress(time, 3.1, 4.15),
-    grid: smoothProgress(time, 1.55, 2.55) * (1 - smoothProgress(time, 3.85, 4.4)),
-    material: smoothProgress(time, 2.25, 3.9),
-    eye: smoothProgress(time, 4.45, 6.05),
-    controls: smoothProgress(time, .8, 1.65),
-    brand: smoothProgress(time, 4.5, 5.5),
-    brandFill: smoothProgress(time, 5.7, 6.6),
-    chrome: smoothProgress(time, 6.5, PORTRAIT_DURATION),
-    camera: 1.018 - .018 * smoothProgress(time, .1, 6.5),
+    line: smoothProgress(time, 0, 1.45),
+    lineOpacity: 1 - smoothProgress(time, 2.2, 2.65),
+    grid: smoothProgress(time, .8, 1.45) * (1 - smoothProgress(time, 2.35, 2.65)),
+    material: smoothProgress(time, 1.4, 2.5),
+    eye: smoothProgress(time, 2.85, 4.25),
+    controls: smoothProgress(time, .12, .85),
+    brand: smoothProgress(time, 2.3, 3.05),
+    brandFill: smoothProgress(time, 3.25, 4.3),
+    chrome: smoothProgress(time, 3.85, 4.5),
+    welcome: smoothProgress(time, 4.35, 5.05),
+    camera: 1.018 - .018 * smoothProgress(time, 0, 4.5),
   };
 }
 
@@ -24,11 +25,20 @@ export function samplePortrait(time: number) {
 export const EYE_X = [1260, 1330, 1485, 1567] as const;
 export const CLOSED_LID = [441, 469, 488, 443] as const;
 export const OPEN_UPPER = [441, 350, 347, 443] as const;
-const OPEN_LOWER = [441, 550, 510, 443] as const;
+export const OPEN_LOWER = [441, 550, 510, 443] as const;
 export function eyeControlPoints(open: number) {
   const p = clamp(open);
+  // The upper lid leads; the lower lid follows with a smaller, delayed excursion.
+  const upperOpen = 1 - Math.pow(1 - p, 1.12);
+  const lowerOpen = Math.pow(p, 1.65);
   return {
-    upper: CLOSED_LID.map((value, index) => value + (OPEN_UPPER[index] - value) * p) as [number, number, number, number],
-    lower: CLOSED_LID.map((value, index) => value + (OPEN_LOWER[index] - value) * p) as [number, number, number, number],
+    upper: CLOSED_LID.map((value, index) => value + (OPEN_UPPER[index] - value) * upperOpen) as [number, number, number, number],
+    lower: CLOSED_LID.map((value, index) => value + (OPEN_LOWER[index] - value) * lowerOpen) as [number, number, number, number],
   };
+}
+
+/** Portrait-space Y: material is established above this moving front. */
+export const materialFront = (material: number) => (material * 1.2 - .1) * 941;
+export function structureVisibility(y: number, material: number) {
+  return smoothProgress(y, materialFront(material) - 42, materialFront(material) + 48);
 }
