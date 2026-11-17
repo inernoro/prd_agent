@@ -7,7 +7,7 @@ export function withAnnotationRuntime(html: string): string {
   if (!html || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
     || /http-equiv\s*=\s*["']content-security-policy["']/i.test(html)) return html;
   html = html.replace(/<script\b[^>]*\bdata-map-annotations\s*=\s*(["'])[^"']*\1[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=8'), window.location.href);
+  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=9'), window.location.href);
   const safeUrl = url.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   return `${html}<script data-map-annotations="v1" src="${safeUrl}"></script>`;
 }
@@ -26,7 +26,7 @@ export function isAnnotationAnchor(value: unknown): value is HostedSiteCommentAn
 
 export type AnnotationDisplayMode = 'hidden' | 'standard' | 'bubble';
 export type AnnotationRect = { left: number; top: number; width: number; height: number };
-export type AnnotationPreview = { id: string; rect: AnnotationRect; obstacles: AnnotationRect[] };
+export type AnnotationPreview = { id: string; rect: AnnotationRect; obstacles: AnnotationRect[]; markers?: AnnotationRect[] };
 const isRect = (value: unknown): value is AnnotationRect => {
   if (!value || typeof value !== 'object') return false;
   const rect = value as Record<string, unknown>;
@@ -40,7 +40,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const [enabled, setEnabled] = useState(false);
   const [displayMode, setDisplayMode] = useState<AnnotationDisplayMode>('bubble');
   const [preview, setPreview] = useState<AnnotationPreview | null>(null);
-  const [previews, setPreviews] = useState<AnnotationPreview[]>([]);
+  const [previews, setPreviews] = useState<AnnotationPreview[] | null>(null);
   const [ready, setReady] = useState(false);
   const [draftAnchor, setDraftAnchor] = useState<HostedSiteCommentAnchor | null>(null);
   const [threads, setThreads] = useState<HostedSiteCommentDto[]>([]);
@@ -61,7 +61,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   };
   useEffect(() => {
     connected.current = false;
-    setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null); setPreview(null); setPreviews([]);
+    setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null); setPreview(null); setPreviews(null);
     setMissingIds([]); setConnectionChecked(false);
   }, [siteId, siteUrl, contentVersionKey]);
   useEffect(() => { setThreads([]); }, [siteId]);
@@ -78,7 +78,8 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
       if (data.type === 'map-annotation-previews' && Array.isArray(data.items)) {
         const items: AnnotationPreview[] = data.items.slice(0, 500).filter((item: AnnotationPreview) => item && typeof item.id === 'string' && isRect(item.rect));
         const obstacles = Array.isArray(data.obstacles) ? data.obstacles.slice(0, 100).filter(isRect) : [];
-        setPreviews([...new Map(items.map(item => [item.id, { id: item.id, rect: item.rect, obstacles }])).values()]);
+        const markers = Array.isArray(data.markers) ? data.markers.slice(0, 100).filter(isRect) : [];
+        setPreviews([...new Map(items.map(item => [item.id, { id: item.id, rect: item.rect, obstacles, markers }])).values()]);
       }
       if (data.type === 'map-annotation-preview-select' && typeof data.id === 'string') setActiveId(data.id);
       if (data.type === 'map-annotation-selected' && isAnnotationAnchor(data.anchor)) {
@@ -108,7 +109,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   }, [frameRef, siteId, nonce]);
   const dismissPreview = useCallback((id?: string) => {
     setPreview(null);
-    setPreviews(items => items.filter(item => item.id !== id));
+    setPreviews(items => items?.filter(item => item.id !== id) ?? null);
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-preview-dismiss', siteId, nonce, id }, '*');
   }, [frameRef, siteId, nonce]);
   const showAllPreviews = useCallback(() => {

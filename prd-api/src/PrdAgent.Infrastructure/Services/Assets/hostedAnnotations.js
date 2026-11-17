@@ -164,8 +164,14 @@
       if (rect.width && rect.height && rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth)
         items.push({ id: item.thread.id, rect: previewRect(rect), obstacles: [] });
     });
-    var itemsKey = JSON.stringify([items, surrounding]);
-    if (force || itemsKey !== previewsLast) { previewsLast = itemsKey; post('map-annotation-previews', { items: items, obstacles: surrounding }); }
+    var markers = [];
+    records.forEach(function (item) {
+      if (!item.located || item.pin.hidden) return;
+      var pin = item.pin.getBoundingClientRect();
+      if (pin.bottom > 0 && pin.top < innerHeight) markers.push(previewRect(pin));
+    });
+    var itemsKey = JSON.stringify([items, surrounding, markers]);
+    if (force || itemsKey !== previewsLast) { previewsLast = itemsKey; post('map-annotation-previews', { items: items, obstacles: surrounding, markers: markers }); }
     var record = records.get(previewId || activeId);
     if (!record) {
       for (var item of records.values()) {

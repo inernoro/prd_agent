@@ -36,4 +36,10 @@ describe('chat annotation placement', () => {
       occupied.push({ ...result, width: 280, height: 120 });
     }
   });
+  it('手机气泡避让同段落的所有相邻编号，而非只避让自己的原文', () => {
+    const markers = [{ left: 303, top: 200, width: 25, height: 25 }, { left: 275, top: 200, width: 25, height: 25 }];
+    const result = placeAnnotationBubble({ left: 35, top: 340, width: 280, height: 48 }, { width: 253, height: 124 }, { width: 351, height: 640 }, [], [], true, markers)!;
+    expect(result).not.toBeNull();
+    expect(markers.every(marker => result.left + 253 <= marker.left || result.left >= marker.left + marker.width || result.top + 124 <= marker.top || result.top >= marker.top + marker.height)).toBe(true);
+  });
 });

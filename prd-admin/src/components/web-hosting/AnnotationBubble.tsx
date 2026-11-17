@@ -13,7 +13,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const [positions, setPositions] = useState<Record<string, { left: number; top: number }>>({});
   const [geometry, setGeometry] = useState<{ width: number; height: number; cards: Record<string, { width: number; height: number }> }>({ width: 0, height: 0, cards: {} });
   const visible = !hidden && !annotations.enabled && !annotations.draftAnchor && annotations.displayMode === 'bubble';
-  const items = visible ? (annotations.previews ?? []).filter(item => annotations.threads.some(thread => thread.id === item.id)) : [];
+  const items = visible ? (annotations.previews ?? (annotations.preview ? [annotations.preview] : [])).filter(item => annotations.threads.some(thread => thread.id === item.id)) : [];
   const key = items.map(item => item.id).join(':');
   useLayoutEffect(() => {
     if (!canvas.current || !visible || !key) return;
@@ -38,7 +38,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     {items.map(item => {
       const thread = annotations.threads.find(thread => thread.id === item.id)!;
       const size = geometry.cards[item.id];
-      const placement = size ? placeAnnotationBubble(item.rect, size, geometry, item.obstacles, occupied, true) : null;
+      const placement = size ? placeAnnotationBubble(item.rect, size, geometry, item.obstacles, occupied, true, item.markers) : null;
       if (placement && size) occupied.push({ ...placement, ...size });
       const number = annotations.threads.filter(thread => thread.anchor && !thread.parentId).findIndex(thread => thread.id === item.id) + 1;
       return <BubbleCard key={item.id} thread={thread} number={number} annotations={annotations} placement={placement} canvas={geometry} size={size}

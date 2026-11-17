@@ -172,7 +172,7 @@
 .annotation-chat-open:hover { color: var(--accent-fg-amber); }
 .annotation-chat-bubble button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 @media (max-width: 767px) {
-  .annotation-chat-bubble { width: 276px; padding: 8px 12px; }
+  .annotation-chat-bubble { width: min(276px, calc(100% - 88px)); padding: 8px 12px; }
   .annotation-chat-bubble > p { -webkit-line-clamp: 2; margin: 6px 0 0; font-size: 12px; }
   .annotation-chat-author { padding-right: 38px; }
   .annotation-chat-avatar { width: 20px; height: 20px; border-radius: 6px; }

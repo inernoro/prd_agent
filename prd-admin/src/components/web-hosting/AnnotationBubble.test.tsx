@@ -35,6 +35,15 @@ it('同时显示每条气泡，编号与选中一致，单条关闭不影响另�
   expect(annotations.dismissPreview).toHaveBeenCalledWith('two');
 });
 
+it('旧历史网页只发送单条预览时仍可读，新协议明确空集合时不复活旧气泡', async () => {
+  const { container, annotations, render } = await setup();
+  annotations.preview = annotations.previews![0]; annotations.previews = null; await render();
+  expect(container.querySelectorAll('[data-bubble-id]')).toHaveLength(1);
+  expect(container.textContent).toContain('意见-one');
+  annotations.previews = []; await render();
+  expect(container.querySelector('[data-bubble-id]')).toBeNull();
+});
+
 it('边缘拖动有限位，滚动暂时离屏再回来保留位置，正文按钮保持可点', async () => {
   const { container, annotations, render } = await setup();
   let card = container.querySelector<HTMLElement>('[data-bubble-id="one"]')!;
