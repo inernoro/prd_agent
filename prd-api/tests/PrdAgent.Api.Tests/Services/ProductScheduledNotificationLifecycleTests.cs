@@ -341,7 +341,9 @@ public class ProductScheduledNotificationLifecycleTests
                 HttpContext = new DefaultHttpContext
                 {
                     User = new ClaimsPrincipal(new ClaimsIdentity(new[] {
-                        new Claim("sub", "admin"), new Claim("permissions", PrdAgent.Core.Security.ProductPermissionRules.MapAdmin),
+                        new Claim("sub", "admin"),
+                        new Claim("permissions", PrdAgent.Core.Security.AdminPermissionCatalog.ProductAgentAdmin),
+                        new Claim("permissions", PrdAgent.Core.Security.ProductPermissionRules.MapAdmin),
                     }, "test")),
                 },
             },
