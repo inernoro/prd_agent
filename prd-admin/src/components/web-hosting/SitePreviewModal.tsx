@@ -3,7 +3,7 @@ import { ReviewSidebarResizeHandle, useReviewSidebarWidth } from './ReviewSideba
 import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { useHostedSiteWindow } from './useHostedSiteWindow';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
 import { X, ExternalLink, FileWarning, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
@@ -145,13 +145,13 @@ export default function SitePreviewModal({
     if (!htmlLoading) setRenderMode('direct');
   }, [renderMode, srcDoc, htmlLoading, review.historical, currentPreviewFetchable]);
   const useSrcDoc = review.historical ? !!srcDoc : renderMode === 'srcdoc' && currentPreviewFetchable;
+  const previewFrameKey = `${review.historical ? review.selected?.id : 'live'}:${useSrcDoc ? 'srcdoc' : 'direct'}`;
+  const previewFrameSrc = historicalLoading || useSrcDoc || (review.historical && !site.siteUrl) ? undefined : previewSource.src;
+  const previewFrameSrcDoc = !historicalLoading && useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined;
 
-  // 新地址或切换历史文档才重置加载过程；同地址元数据更新不代表 iframe 重新加载。
+  // 地址和历史选择只负责重新选源，加载状态由下方实际 iframe 输入统一管理。
   useEffect(() => {
     setRenderMode('waiting');
-    setLoading(true);
-    setErrored(false);
-    setSlow(false);
     if (review.historical) return;
     const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
     return () => window.clearTimeout(timer);
@@ -225,10 +225,14 @@ export default function SitePreviewModal({
   // 用户看到的就是「无法预览」。判据必须换成真正能证明失败的信号：iframe onError。
   // 超时只降级为一条非阻断的角标提示，绝不遮挡内容。
   // 参见 .claude/rules/predicate-and-wiring-discipline.md 形状 1（判据比它该管的范围窄）。
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // 在浏览器可能触发 load 前重置；同 key/src/srcDoc 的元数据更新不会重新遮住正文。
+    setLoading(true);
+    setErrored(false);
+    setSlow(false);
     const timer = setTimeout(() => setSlow(true), SLOW_HINT_MS);
     return () => clearTimeout(timer);
-  }, [site.siteUrl, review.loading]);
+  }, [previewFrameKey, previewFrameSrc, previewFrameSrcDoc]);
 
   const handleOpenExternal = () => {
     // 历史快照也走鉴权阅读页，内联快照没有可外开的原始 URL。
@@ -385,9 +389,9 @@ export default function SitePreviewModal({
             <iframe
               ref={iframeRef}
               // waiting 与 direct 都已加载同一个原地址，结束等待不能重建文档、清空用户输入。
-              key={`${review.historical ? review.selected?.id : 'live'}:${useSrcDoc ? 'srcdoc' : 'direct'}`}
-              src={historicalLoading || useSrcDoc || (review.historical && !site.siteUrl) ? undefined : previewSource.src}
-              srcDoc={!historicalLoading && useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined}
+              key={previewFrameKey}
+              src={previewFrameSrc}
+              srcDoc={previewFrameSrcDoc}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {

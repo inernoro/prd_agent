@@ -86,15 +86,28 @@ it('原地址弹窗结束等待时保留同一个 iframe，发布新地址仍能
   }
 });
 
-it('相同地址的版本元数据改为多文件时退出内联路径，保持原地址可读', async () => {
+it('相同地址元数据令内联失效时切换原地址并显示加载与慢提示', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('requestAnimationFrame', vi.fn());
   vi.mocked(getSiteContent).mockResolvedValue(ok(content('<html><head></head><body>恢复的正文</body></html>')));
   const hosted = { ...site, contentShape: 'self-contained-html', title: '恢复后预览', askEnabled: false } as HostedSite;
-  await act(async () => root.render(<SitePreviewModal site={hosted} onClose={() => {}} />));
-  expect(document.querySelector('iframe')!.getAttribute('srcdoc')).toContain('恢复的正文');
-  await act(async () => root.render(<SitePreviewModal site={{ ...hosted, contentShape: 'multi-file' }} onClose={() => {}} />));
-  const frame = document.querySelector('iframe')!;
-  expect(frame.getAttribute('srcdoc')).toBeNull();
-  expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
+  try {
+    await act(async () => root.render(<SitePreviewModal site={hosted} onClose={() => {}} />));
+    const initial = document.querySelector('iframe')!;
+    expect(initial.getAttribute('srcdoc')).toContain('恢复的正文');
+    await act(async () => initial.dispatchEvent(new Event('load')));
+    expect(document.querySelector('[data-testid="preview-loading"]')).toBeNull();
+    await act(async () => root.render(<SitePreviewModal site={{ ...hosted, contentShape: 'multi-file' }} onClose={() => {}} />));
+    const frame = document.querySelector('iframe')!;
+    expect(frame.getAttribute('srcdoc')).toBeNull();
+    expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
+    expect(document.querySelector('[data-testid="preview-loading"]')).not.toBeNull();
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(document.querySelector('[data-testid="preview-loading"]')).toBeNull();
+    expect(document.body.textContent).toContain('加载较慢');
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    expect(document.body.textContent).not.toContain('加载较慢');
+  } finally { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); }
 });
 
 it('直链已加载后迟到的多文件元数据不会重新盖住同一网页', async () => {
