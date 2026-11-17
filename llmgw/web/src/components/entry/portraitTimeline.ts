@@ -11,7 +11,7 @@ export function samplePortrait(time: number) {
     lineOpacity: 1 - smoothProgress(time, 2.0, 2.85),
     grid: smoothProgress(time, .8, 1.45) * (1 - smoothProgress(time, 2.25, 3.0)),
     material: smoothProgress(time, 1.55, 2.45),
-    eye: smoothProgress(time, 2.85, 4.25),
+    eye: smoothProgress(time, 2.65, 4.25),
     controls: smoothProgress(time, .12, .85),
     brand: smoothProgress(time, 2.3, 3.05),
     brandFill: smoothProgress(time, 3.25, 4.3),

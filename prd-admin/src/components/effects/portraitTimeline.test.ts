@@ -7,11 +7,11 @@ describe('角色成形的阶段与眼睑几何', () => {
     expect(samplePortrait(1.1)).toMatchObject({ material: 0, eye: 0, brand: 0, chrome: 0 });
     expect(samplePortrait(1.5).line).toBe(1);
     expect(samplePortrait(1.5).grid).toBe(1);
-    expect(samplePortrait(2.7)).toMatchObject({ material: 1, eye: 0, chrome: 0 });
+    expect(samplePortrait(2.6)).toMatchObject({ material: 1, eye: 0, chrome: 0 });
     expect(samplePortrait(2.7).grid).toBeGreaterThan(0);
     expect(samplePortrait(3).grid).toBe(0);
     expect(samplePortrait(2.7).brand).toBeGreaterThan(0);
-    expect(samplePortrait(3.55).eye).toBeCloseTo(.5);
+    expect(samplePortrait(3.45).eye).toBeCloseTo(.5);
     expect(samplePortrait(3.55).brandFill).toBeGreaterThan(0);
     expect(samplePortrait(4.25).eye).toBe(1);
     expect(samplePortrait(4.25).chrome).toBeGreaterThan(0);
