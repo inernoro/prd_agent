@@ -351,7 +351,7 @@ export default function SitePreviewModal({
         {/* 主体：iframe + 可选评论面板 */}
         <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
-          <div className="flex-1 min-w-0 min-h-0 relative bg-token-nested">
+          <div className="review-document-stage flex-1 min-w-0 min-h-0 relative bg-token-nested">
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {(historicalLoading || (loading && !slow)) && (
@@ -415,7 +415,7 @@ export default function SitePreviewModal({
                 : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(previewSource.src)} allow-modals`}
               title={site.title}
             />
-            <AnnotationBubble annotations={annotations} hidden={isMobile && showComments} />
+            <AnnotationBubble annotations={annotations} hidden={showComments} />
           </div>
 
           {/* 评论面板 */}

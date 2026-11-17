@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { placeAnnotationBubble } from './annotationBubblePlacement';
 
 describe('chat annotation placement', () => {
-  it('floats above the anchor when there is room', () => {
+  it('aligns beside the anchor when the right margin has room', () => {
     const result = placeAnnotationBubble({ left: 350, top: 320, width: 100, height: 40 }, { width: 280, height: 120 }, { width: 800, height: 600 }, []);
-    expect(result?.side).toBe('top');
-    expect(result!.top + 120).toBeLessThan(320);
+    expect(result?.side).toBe('right');
+    expect(result!.left).toBeGreaterThanOrEqual(450);
+    expect(result!.top).toBe(320);
   });
   it('chooses adjacent whitespace rather than covering nearby text', () => {
     const result = placeAnnotationBubble({ left: 350, top: 330, width: 100, height: 40 }, { width: 280, height: 120 }, { width: 800, height: 600 },
@@ -18,6 +19,12 @@ describe('chat annotation placement', () => {
     expect(result!.left).toBeGreaterThanOrEqual(10);
     expect(result!.left + 276).toBeLessThanOrEqual(380);
     expect(result!.top).toBeGreaterThanOrEqual(10);
+  });
+  it('keeps default notes in the reserved page margin instead of covering document text', () => {
+    const result = placeAnnotationBubble({ left: 50, top: 300, width: 600, height: 40 }, { width: 292, height: 130 }, { width: 1100, height: 800 }, [], [], true, [], 320)!;
+    expect(result.left).toBeGreaterThanOrEqual(780);
+    expect(result.left + 292).toBeLessThanOrEqual(1090);
+    expect(result.top).toBe(300);
   });
   it('collapses the preview when it cannot fit without covering its target', () => {
     expect(placeAnnotationBubble({ left: 20, top: 0, width: 260, height: 150 }, { width: 280, height: 110 }, { width: 300, height: 150 }, [])).toBeNull();

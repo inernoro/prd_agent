@@ -5,12 +5,13 @@ const overlap = (a: AnnotationRect, b: AnnotationRect) => Math.max(0, Math.min(a
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), Math.max(min, max));
 
 /** Prefer whitespace. Explicitly expanded, movable cards may overlap a large anchor when no whitespace fits. */
-export function placeAnnotationBubble(anchor: AnnotationRect, size: { width: number; height: number }, viewport: { width: number; height: number }, obstacles: AnnotationRect[], occupied: AnnotationRect[] = [], allowOverlap = false, markers: AnnotationRect[] = []) {
+export function placeAnnotationBubble(anchor: AnnotationRect, size: { width: number; height: number }, viewport: { width: number; height: number }, obstacles: AnnotationRect[], occupied: AnnotationRect[] = [], allowOverlap = false, markers: AnnotationRect[] = [], rightMargin = 0) {
   const gap = 14, edge = 10;
   if (size.width > viewport.width - edge * 2 || size.height > viewport.height - edge * 2) return null;
   const candidates = [
+    ...(rightMargin ? [{ side: 'right', left: viewport.width - rightMargin + gap, top: anchor.top }] : []),
+    { side: 'right', left: anchor.left + anchor.width + gap, top: anchor.top },
     { side: 'top', left: anchor.left + anchor.width - size.width, top: anchor.top - size.height - gap },
-    { side: 'right', left: anchor.left + anchor.width + gap, top: anchor.top + (anchor.height - size.height) / 2 },
     { side: 'left', left: anchor.left - size.width - gap, top: anchor.top + (anchor.height - size.height) / 2 },
     { side: 'bottom', left: anchor.left + anchor.width - size.width, top: anchor.top + anchor.height + gap },
     ...markers.flatMap(rect => [
@@ -31,7 +32,7 @@ export function placeAnnotationBubble(anchor: AnnotationRect, size: { width: num
     return { ...rect, score: markers.reduce((sum, marker) => sum + overlap(rect, marker) * 1e6, 0)
       + overlap(rect, anchor) * 10000 + occupied.reduce((sum, obstacle) => sum + overlap(rect, obstacle) * 1000, 0)
       + obstacles.reduce((sum, obstacle) => sum + overlap(rect, obstacle), 0) + index * 8 };
-  }).filter(candidate => allowOverlap || overlap(candidate, anchor) === 0);
+  }).filter(candidate => (!rightMargin || candidate.left >= viewport.width - rightMargin) && (allowOverlap || overlap(candidate, anchor) === 0));
   const clearOfMarkers = candidates.filter(candidate => markers.every(marker => overlap(candidate, marker) === 0));
   const choices = clearOfMarkers.length ? clearOfMarkers : candidates;
   choices.sort((a, b) => a.score - b.score);

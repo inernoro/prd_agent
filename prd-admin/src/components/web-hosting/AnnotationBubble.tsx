@@ -1,5 +1,5 @@
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { ArrowUpRight, Eye, EyeOff, GripHorizontal, MessageCircle, X } from 'lucide-react';
+import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { ArrowUpRight, Eye, EyeOff, GripHorizontal, X } from 'lucide-react';
 import type { HostedAnnotations, AnnotationRect } from './useHostedAnnotations';
 import type { HostedSiteCommentDto } from '@/services/real/webPages';
 import { annotationPreviewText } from './annotationPreviewText';
@@ -46,10 +46,10 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
       const size = geometry.cards[item.id];
       let cached = autoPositions.current.get(item.id);
       if (size && (!cached || cached.width !== size.width || cached.height !== size.height || cached.vw !== geometry.width || cached.vh !== geometry.height)) {
-        const placed = placeAnnotationBubble(item.rect, size, geometry, item.obstacles, occupied.slice(-12), true, item.markers);
+        const placed = placeAnnotationBubble(item.rect, size, geometry, item.obstacles, occupied.slice(-12), true, item.markers, geometry.width >= 820 ? 320 : 0);
         if (placed) { cached = { placement: placed, dx: placed.left - item.rect.left, dy: placed.top - item.rect.top, ...size, vw: geometry.width, vh: geometry.height }; autoPositions.current.set(item.id, cached); }
       }
-      const placement = cached ? { ...cached.placement, left: item.rect.left + cached.dx, top: item.rect.top + cached.dy } : null;
+      const placement = cached ? { ...cached.placement, left: geometry.width >= 820 ? geometry.width - 306 : item.rect.left + cached.dx, top: item.rect.top + cached.dy } : null;
       if (placement && size) occupied.push({ ...placement, ...size });
       return <BubbleCard key={item.id} thread={thread} excerpt={excerpt} anchor={item.rect} number={number} annotations={annotations} placement={placement} canvas={geometry} size={size}
         position={positions[item.id]} onMove={position => setPositions(previous => {
@@ -81,7 +81,7 @@ function BubbleCard({ thread, excerpt, anchor, number, annotations, placement, c
   };
   return <div className={`annotation-chat-bubble${annotations.activeId === thread.id ? ' is-active' : ''}`} role="dialog" aria-label={`批注气泡 ${number}`}
     data-bubble-id={thread.id} data-placement={position ? 'moved' : placement?.side}
-    style={{ left, top, visibility: placement || position ? 'visible' : 'hidden', '--bubble-tail-x': `${placement?.tailX ?? 24}px`, '--bubble-tail-y': `${placement?.tailY ?? 24}px` } as CSSProperties}
+    style={{ left, top, visibility: placement || position ? 'visible' : 'hidden' }}
     onPointerDown={start} onPointerMove={event => { const d = drag.current; if (d?.id === event.pointerId) move(d.left + event.clientX - d.x, d.top + event.clientY - d.y); }}
     onPointerUp={event => { if (drag.current?.id === event.pointerId) { drag.current = null; event.currentTarget.releasePointerCapture(event.pointerId); } }}
     onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }}
@@ -99,6 +99,6 @@ function BubbleCard({ thread, excerpt, anchor, number, annotations, placement, c
       <button type="button" onClick={() => annotations.dismissPreview(thread.id)} aria-label={`收起批注气泡 ${number}`} title="收起此气泡，保留页面标记"><X size={13} /></button>
     </div>
     <p style={{ overflowWrap: 'anywhere' }}>{excerpt}</p>
-    <button type="button" className="annotation-chat-open" onClick={() => annotations.openThread(thread.id)}><MessageCircle size={13} />查看讨论<ArrowUpRight size={13} /></button>
+    <button type="button" className="annotation-chat-open" onClick={() => annotations.openThread(thread.id)}>查看讨论<ArrowUpRight size={13} /></button>
   </div>;
 }

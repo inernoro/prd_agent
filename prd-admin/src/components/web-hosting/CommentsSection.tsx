@@ -1,6 +1,6 @@
 import { annotationPreviewText } from './annotationPreviewText';
-import { useState, useEffect, useRef, useCallback, useId, type ReactNode } from 'react';
-import { MessageSquare, Send, Trash2, Lock, LogIn, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight, History } from 'lucide-react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId, type ReactNode } from 'react';
+import { MessageSquare, ArrowUp, Trash2, Lock, LogIn, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight, History } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '../ui/VideoLoader';
 import { getUserAvatarUrl } from '../../lib/avatar';
 import { useAuthStore } from '../../stores/authStore';
@@ -218,11 +218,17 @@ export default function CommentsSection(props: Props) {
   const visible = roots.filter(c => filter === 'all' || (filter === 'resolved' ? c.isResolved : !c.isResolved));
   const startPicking = () => { setReplyTo(null); annotations?.select(); props.onPickElement?.(); };
   const replyTarget = roots.find(c => c.id === replyTo);
+  useLayoutEffect(() => {
+    const field = textareaRef.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    field.style.height = `${Math.min(field.scrollHeight, 120)}px`;
+  }, [draft, canWrite, otherVersions]);
   const pickEntry = annotations && props.threadKind !== 'discussion' ? <button type="button" onClick={loginToAnnotate ? props.onLogin : startPicking}
     aria-label={loginToAnnotate ? (isAuthenticated ? '重新登录后批注' : '登录后批注') : '绑定页面元素 / 选中文字'}
     disabled={!loginToAnnotate && (loading || !canWrite || !annotations.ready || submitting || review?.uploading)}
     title={pickingHint} aria-describedby={pickingHintId} className={loginToAnnotate ? 'review-login-action' : 'review-pick-action'}>
-    {loginToAnnotate ? <><LogIn size={15} />{isAuthenticated ? '重新登录后批注' : '登录后批注'}</> : <><MousePointer2 size={14} />选取位置</>}
+    {loginToAnnotate ? <><LogIn size={15} />{isAuthenticated ? '重新登录后批注' : '登录后批注'}</> : <><MousePointer2 size={15} /><span className="sr-only">选取位置</span></>}
   </button> : null;
   return (
     <section aria-label="批注与讨论" className="review-discussion">
@@ -259,11 +265,6 @@ export default function CommentsSection(props: Props) {
             };
             return <article key={comment.id} id={`${pickingHintId}-thread-${comment.id}`} ref={element => { if (element) threadElements.current.set(comment.id, element); else threadElements.current.delete(comment.id); }} className={`review-thread${annotations?.activeId === comment.id ? ' is-active' : ''}`}>
               <CommentMessage comment={comment} busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)}>
-                {comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready} className="review-anchor-quote" title={`定位原文：${comment.anchor.text || '无文字元素'}`}>
-                  <span className="review-anchor-number">{otherVersions ? <History size={13} /> : number}</span>
-                  <span><span>{comment.anchor.text || elementLabel(comment.anchor.tagName)}</span>
-                    {missing && <small>原位置已变更，批注内容已保留</small>}</span>
-                </button>}
                 {otherVersions && <div className="review-origin-version"><span>来自 {originVersion?.versionLabel ?? (comment.contentVersion ? '未收录的旧版本' : '未标版本的历史评论')}</span>
                   {canOpenOrigin && <button type="button" onClick={locate}>预览 {originVersion!.versionLabel}</button>}</div>}
               </CommentMessage>
@@ -271,9 +272,13 @@ export default function CommentsSection(props: Props) {
                 <CommentMessage key={reply.id} comment={reply} busy={busyId === reply.id} confirming={confirmDelete === reply.id} onDelete={() => void remove(reply.id)} />)}</div>}
               <div className="review-thread-actions">
                 {canWrite && !otherVersions ? <button type="button" disabled={submitting} onClick={() => { annotations?.clearDraft(); setReplyTo(comment.id); textareaRef.current?.focus(); }}><CornerDownRight size={13} />回复{replies.length ? ` ${replies.length}` : ''}</button> : <span />}
-                {comment.canResolve && commentsEnabled && <button type="button" disabled={busyId !== null} onClick={() => void resolve(comment)}>
-                  {comment.isResolved ? <RotateCcw size={13} /> : <Check size={13} />}{comment.isResolved ? '重新打开' : '标记解决'}</button>}
+                {comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready} className="review-anchor-quote" title={`定位原文：${comment.anchor.text || elementLabel(comment.anchor.tagName)}`}>
+                  <span className="review-anchor-number">{otherVersions ? <History size={13} /> : number}</span>原文
+                </button>}
+                {comment.canResolve && commentsEnabled && <button type="button" className="review-resolve-action" aria-label={comment.isResolved ? '重新打开' : '标记解决'} title={comment.isResolved ? '重新打开' : '标记解决'} disabled={busyId !== null} onClick={() => void resolve(comment)}>
+                  {comment.isResolved ? <RotateCcw size={14} /> : <Check size={14} />}<span className="sr-only">{comment.isResolved ? '重新打开' : '标记解决'}</span></button>}
               </div>
+              {missing && <p className="review-anchor-missing">原位置已变更，批注内容已保留</p>}
             </article>;
           })}
         </>}
@@ -288,13 +293,16 @@ export default function CommentsSection(props: Props) {
           {draftAnchor ? <div className="review-composer-anchor"><Link2 size={14} /><span><strong>已选中{draftAnchor.kind === 'text' ? '文字' : elementLabel(draftAnchor.tagName)}</strong><span>{draftAnchor.text || '无文字元素'}</span></span>
             <button type="button" aria-label="取消位置绑定" disabled={submitting} onClick={() => annotations?.clearDraft()}><X size={14} /></button></div>
             : replyTarget ? <div className="review-composer-anchor"><CornerDownRight size={14} /><span><strong>回复 {replyTarget.authorName}</strong><span>{replyTarget.content}</span></span><button type="button" aria-label="取消回复" disabled={submitting} onClick={() => setReplyTo(null)}><X size={14} /></button></div>
-            : <div className="review-composer-label"><span>新批注</span>{pickEntry}</div>}
+            : null}
+          <div className="review-composer-row">
           <textarea ref={textareaRef} aria-label={replyTo ? '回复内容' : props.threadKind === 'discussion' ? '讨论内容' : '批注内容'} value={draft} disabled={submitting}
-            onChange={e => setDraft(e.target.value)} maxLength={2000} rows={2}
+            onChange={e => setDraft(e.target.value)} maxLength={2000} rows={1}
             onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void submit(); } }}
-            placeholder={replyTo ? '补充你的想法…' : draftAnchor ? '这个位置需要怎样修改？' : props.threadKind === 'discussion' ? '写下你对这份文档的看法…' : '写下意见，或先选取网页上的位置…'} />
-          <div className="review-composer-footer"><span>{draft.length ? `${draft.length}/2000` : 'Ctrl / ⌘ + Enter 发送'}</span><button type="button" onClick={() => void submit()} disabled={!draft.trim() || submitting} className="review-send-action">
-            {submitting ? <MapSpinner size={14} /> : <Send size={14} />}{replyTo ? '发送回复' : props.threadKind === 'discussion' ? '发送讨论' : '发送批注'}</button></div>
+            placeholder={replyTo ? `回复 ${replyTarget?.authorName ?? ''}…` : draftAnchor ? '写下对这个位置的意见…' : props.threadKind === 'discussion' ? '写下你的看法…' : '写下意见…'} />
+          {!draftAnchor && !replyTo && pickEntry}
+          <button type="button" onClick={() => void submit()} disabled={!draft.trim() || submitting} className="review-send-action" title="Ctrl / ⌘ + Enter 发送">
+            {submitting ? <MapSpinner size={15} /> : <ArrowUp size={16} />}<span className="sr-only">{replyTo ? '发送回复' : props.threadKind === 'discussion' ? '发送讨论' : '发送批注'}</span></button></div>
+          {draft.length >= 1800 && <div className="review-composer-count">{draft.length}/2000</div>}
           {annotations && !annotations.draftAnchor && <p id={pickingHintId} className="review-composer-hint">{pickingHint}</p>}
         </>}
       </div>

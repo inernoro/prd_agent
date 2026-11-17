@@ -1077,7 +1077,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
             </div>
           )}
         </div>
-        <div style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: '#fff', marginBottom: showComments && isMobile ? '55dvh' : 0 }}>
+        <div className="review-document-stage" style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: '#fff', marginBottom: showComments && isMobile ? '55dvh' : 0 }}>
           <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
           {pageFullscreen && (
             <button
@@ -1120,7 +1120,8 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
             src={previewSource === 'direct' && site.siteUrl ? site.siteUrl : undefined}
             srcDoc={previewSource === 'srcdoc' && iframeHtml ? pdfDownload.decorateHtml(withAnnotationRuntime(iframeHtml)) : undefined}
             title={site.title}
-            style={{ border: 'none', width: '100%', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
+            style={{ border: 'none', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
+            className="w-full"
             sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(site.siteUrl)}
             // 全屏权限归 `allow`（Permissions Policy）管，**不是** sandbox 的取值。
             // 这里原先写的 `allow-fullscreen` 不是合法 sandbox flag，Chrome 会报
@@ -1129,7 +1130,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
             allow="fullscreen"
             allowFullScreen
           />
-          <AnnotationBubble annotations={annotations} hidden={isFullscreen || (isMobile && showComments)} />
+          <AnnotationBubble annotations={annotations} hidden={isFullscreen || showComments} />
           {/* 既没有取回的正文、也没有入口地址 —— iframe 会停在 about:blank，
               用户看到的就是标题栏下面一片白、控制台一条错都没有，无从判断发生了什么。
               这种时候必须把「为什么是空的」说出来（no-rootless-tree / expectation-management）。 */}

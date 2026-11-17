@@ -381,6 +381,13 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await route.fulfill({ json: { success: true, data, error: null } });
     });
     await page.goto('/s/wp/qa-follow');
+    const discussion = page.getByRole('button', { name: '批注与讨论', exact: true });
+    await expect(discussion).toHaveAttribute('aria-expanded', page.viewportSize()!.width < 768 ? 'false' : 'true');
+    if (await discussion.getAttribute('aria-expanded') === 'true') {
+      await expect(page.locator('.review-thread')).toHaveCount(2);
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
+      await discussion.click();
+    }
     await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
     await expect(page.locator('.annotation-chat-bubble').first()).toBeVisible();
     return page.frameLocator(`iframe[title="${title}"]`);
