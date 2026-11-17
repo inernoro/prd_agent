@@ -165,3 +165,5 @@ Dispatcher 支持按分支数量、实时负载或温池容量选择节点：
 - [doc/design.cds.branch-network-isolation.md](./design.cds.branch-network-isolation.md)
 - [doc/design.cds.lifecycle-atomicity.md](./design.cds.lifecycle-atomicity.md)
 - [doc/guide.cds.cluster-setup.md](./guide.cds.cluster-setup.md)
+
+备份执行以单个目标为失败边界：前置身份或租约未确认时不导出，其他目标仍独立核查；收尾未确认时保留已有产物证据并记录失败。原生诊断只保留异常类型、退出码、错误号与受管源码行号，不暴露原始输出、输入或租约令牌。整轮完成时间、目标成功时间和恢复验证时间分别记录。

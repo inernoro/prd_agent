@@ -91,6 +91,8 @@ import { schedulerResourcePressure } from './services/scheduler-pressure.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
 import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
+import { BackupRetentionOperationError } from './services/backup-retention.js';
+import { runBackupTargetWithLease } from './services/infra-backup-target.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
 import { previewSlugMatchPercent } from './services/preview-slug.js';
@@ -805,7 +807,12 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         const finalOut = `${dir}/${t.fileName}`;
         let maintenanceJobId: string | null = null;
         let maintenanceCompleted = false;
-        await backupRetentionService.withLease(dir, t.projectId, t.id, 'backup', async () => {
+        await runBackupTargetWithLease({ retention: backupRetentionService, directory: dir, projectId: t.projectId, serviceId: t.id, outcomes,
+        onUnconfirmed: error => store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup', action: 'infra.backup.target-unconfirmed',
+          projectId: t.projectId, serviceId: t.id, message: backupFailureReason(error instanceof Error ? error.message : String(error)),
+          details: error instanceof BackupRetentionOperationError ? error.diagnostic : { stage: 'target-lease' },
+        }), operation: async () => {
         try {
           const backupSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
           await backupRetentionService.beginOutput(out, t.projectId, t.id, backupSourceFingerprint);
@@ -1042,7 +1049,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             );
           }
         }
-        });
+        } });
       }
 
       await shell.exec(`rmdir ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);

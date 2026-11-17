@@ -156,7 +156,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
   const scheduler = useRuntimePolicy('自动冷却规则', '/api/scheduler/state', '/api/scheduler/config', schedulerDraft, schedulerBody, onToast);
   const janitor = useRuntimePolicy('过期删除规则', '/api/janitor/state', '/api/janitor/config', janitorDraft, janitorBody, onToast);
   const s = scheduler.ready, j = janitor.ready;
-  const hot = s?.snapshot.hot, cold = s?.snapshot.cold;
+  const cold = s?.snapshot.cold;
   const removal = j?.snapshot.dryRun?.wouldRemove, skipped = j?.snapshot.dryRun?.wouldSkip;
   const validJanitorDays = Boolean(j?.draft.days.trim()) && Number.isInteger(Number(j?.draft.days)) && Number(j?.draft.days) >= 1 && Number(j?.draft.days) <= 7;
   const destructiveChange = validJanitorDays && j && j.draft.enabled && (!j.saved.enabled || Number(j.draft.days) < Number(j.saved.days));
@@ -212,11 +212,12 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
 
 function HeatPoolGovernance({ snapshot }: { snapshot?: SchedulerSnapshot }): JSX.Element {
   const pressure = snapshot?.resourcePressure;
+  const occupancyLabels: Record<string, string> = { resident: '已占用', reserved: '预约中', unknown: '待核实', nonresident: '未占用' };
   const labels: Record<string, string> = { user: '手动固定', debug: '调试标记', 'config-pinned': '配置固定', 'default-branch': '默认分支', 'trunk-branch': '主分支', 'release-batch-input': '发布与恢复保护' };
   return <div className="mt-4 space-y-3 text-sm">
     <p className="text-muted-foreground">资源状态：{pressure === 'ample' ? '充裕，暂不因空闲降温' : pressure === 'pressure' ? '存在压力，保留空闲降温保护' : '未知，继续原有保护'}。</p>
     <div className="space-y-2"><h3 className="font-medium">热池占用与保护</h3>
-      {snapshot?.occupancy ? <div className="flex flex-wrap gap-2">{snapshot.occupancy.map(row => <span key={row.slug} className="rounded border border-border px-2 py-1">{row.slug} · {row.state} · {row.reason}</span>)}</div> : <p className="text-muted-foreground">占用尚未确认。</p>}
+      {snapshot?.occupancy ? <div className="flex flex-wrap gap-2">{snapshot.occupancy.map(row => <span key={row.slug} className="rounded border border-border px-2 py-1">{row.slug} · {occupancyLabels[row.state] ?? '待核实'} · {row.reason}</span>)}</div> : <p className="text-muted-foreground">占用尚未确认。</p>}
       {snapshot?.protections ? <ul className="space-y-2">{snapshot.protections.map((row, index) => <li key={`${row.slug}-${row.source}-${index}`} className="rounded border border-border p-3">
         <strong>{row.slug}</strong> · {labels[row.source] ?? row.source} · {row.active ? '保护中' : '临时保护已到期'}
         {row.pin ? <div className="mt-1 break-words text-muted-foreground">{row.pin.actor} · {row.pin.reason} · {row.reviewRequired ? '期限及依据待核对' : row.pin.expiresAt ? `到期 ${row.pin.expiresAt}` : '永久固定'}{row.pin.authorizationRef ? ` · 授权 ${row.pin.authorizationRef}` : ''}</div> : row.reviewRequired ? <div className="mt-1 text-muted-foreground">历史记录，期限及依据待核对，继续保留保护。</div> : null}
