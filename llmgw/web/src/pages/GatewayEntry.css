@@ -349,10 +349,11 @@ html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body::-webkit-scrol
   --cinema-paper: #f6f8fc; --cinema-glass: rgba(255,255,255,.78); --cinema-border: rgba(37,73,96,.24);
   --entry-inset: rgba(255,255,255,.58); --entry-result: rgba(255,255,255,.74);
   --entry-hover: rgba(9,107,124,.10); --entry-pressed: rgba(9,107,124,.18);
+  --ok: #147342; --err: #b42335; --warn: #8a5b00; --info: #17649b;
   color-scheme: light;
 }
 :root[data-theme='light'] .gateway-quickstart-stage .consciousness-mist { opacity: .90; }
-:root[data-theme='light'] .gateway-quickstart-stage .consciousness-ghost { opacity: .9; }
+:root[data-theme='light'] .gateway-quickstart-stage .consciousness-ghost { opacity: calc(.9 * var(--portrait-brand, 1)); }
 :root[data-theme='light'] .gateway-quickstart-stage .consciousness-camera { filter: saturate(.65); }
 
 /* Pointer feedback uses theme-aware surfaces, never layout shifts or feedback on disabled controls. */
