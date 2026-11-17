@@ -150,7 +150,11 @@ describe('cluster identity through two real HTTP control planes', () => {
     expect((await request(member, '/api/auth/status', undefined, 'GET', undefined, signed.cookie)).json.user.username).toBe('primary-admin');
     expect((await request(member, '/api/projects/local-a', undefined, 'GET', undefined, signed.cookie)).status).toBe(200);
     const start = await request(member, '/login?redirect=%2Fproject-list');
-    const central = new URL(start.headers.get('location')!);
+    const loginPage = new URL(start.headers.get('location')!);
+    expect(loginPage.origin).toBe(primary.url); expect(loginPage.pathname).toBe('/login');
+    const central = new URL(loginPage.searchParams.get('redirect')!, primary.url);
+    expect(central.pathname).toBe('/api/cluster/identity/login');
+    expect((await request(primary, central.pathname + central.search)).status).toBe(401);
     const handoff = await request(primary, central.pathname + central.search, undefined, 'GET', undefined, signed.cookie);
     expect(handoff.status).toBe(302);
     const callback = new URL(handoff.headers.get('location')!);
@@ -160,7 +164,8 @@ describe('cluster identity through two real HTTP control planes', () => {
     expect((await request(member, '/api/projects/local-a', undefined, 'GET', undefined, cookie)).status).toBe(200);
     expect((await request(member, callback.pathname + callback.search)).status).toBe(401);
     const malicious = await request(member, '/login?redirect=%2F%5Cevil.example');
-    expect(new URL(malicious.headers.get('location')!).searchParams.get('returnTo')).toBe('/project-list');
+    const safeLogin = new URL(malicious.headers.get('location')!);
+    expect(new URL(safeLogin.searchParams.get('redirect')!, primary.url).searchParams.get('returnTo')).toBe('/project-list');
   });
 
   it('issues and revokes only at the authority even through a member URL', async () => {

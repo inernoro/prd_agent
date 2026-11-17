@@ -290,7 +290,8 @@ export class ClusterIdentityService {
     }
     if (pathname === '/login' || pathname === '/login.html') {
       const returnTo = localReturn(req.query.redirect);
-      res.redirect(302, `${c.authorityUrl}/api/cluster/identity/login?node=${encodeURIComponent(c.nodeId)}&returnTo=${encodeURIComponent(returnTo)}`); return;
+      const handoff = `/api/cluster/identity/login?node=${encodeURIComponent(c.nodeId)}&returnTo=${encodeURIComponent(returnTo)}`;
+      res.redirect(302, `${c.authorityUrl}/login?redirect=${encodeURIComponent(handoff)}`); return;
     }
     if (pathname === '/api/cluster/identity/callback') {
       res.locals.cdsSuppressRequestBodyLog = true;
