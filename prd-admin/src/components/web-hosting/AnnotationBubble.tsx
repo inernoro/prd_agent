@@ -16,6 +16,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     let number = 0;
     return new Map(annotations.threads.map(thread => [thread.id, { thread, number: thread.anchor && !thread.parentId ? ++number : 0, excerpt: annotationPreviewText(thread.content) }]));
   }, [annotations.threads]);
+  const hasAnchors = useMemo(() => annotations.threads.some(thread => thread.anchor && !thread.parentId), [annotations.threads]);
   const [positions, setPositions] = useState<Record<string, { left: number; top: number }>>({});
   const [geometry, setGeometry] = useState<{ width: number; height: number; cards: Record<string, { width: number; height: number }> }>({ width: 0, height: 0, cards: {} });
   const visible = !hidden && !annotations.enabled && !annotations.draftAnchor && annotations.displayMode === 'bubble';
@@ -38,7 +39,8 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     canvas.current.querySelectorAll('[data-bubble-id]').forEach(card => observer.observe(card));
     return () => observer.disconnect();
   }, [visible, key]);
-  if (!visible || !key) return null;
+  // The document gutter must not depend on which anchors currently intersect it.
+  if (!visible || !hasAnchors) return null;
   const occupied: AnnotationRect[] = [];
   return <div ref={canvas} className="annotation-bubble-canvas" aria-label="页面批注气泡">
     {items.map(item => {

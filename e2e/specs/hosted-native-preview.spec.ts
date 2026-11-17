@@ -403,6 +403,22 @@ test.describe('长文批注连续跟随与菜单外点', () => {
   for (const mobile of [false, true]) test.describe(mobile ? '独立触控' : '桌面', () => {
     test.use({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: mobile, hasTouch: mobile });
     const tap = async (locator: ReturnType<Page['getByRole']>) => mobile ? locator.tap() : locator.click();
+    if (!mobile) test('页边宽度不随可见锚点增减，右侧绝对定位内容不触发缩放闪烁', async ({ page }) => {
+      await page.setViewportSize({ width: 1000, height: 900 });
+      const frame = await open(page);
+      await frame.locator('#note-one, #note-two').evaluateAll(elements => elements.forEach((element, index) => {
+        Object.assign((element as HTMLElement).style, { position: 'absolute', left: '750px', top: `${100 + index * 160}px`, width: '100px' });
+      }));
+      await page.waitForTimeout(300);
+      const widths: number[] = [];
+      for (let sample = 0; sample < 8; sample++) {
+        widths.push(await page.locator(`iframe[title="${title}"]`).evaluate(element => element.clientWidth));
+        await page.waitForTimeout(100);
+      }
+      expect(new Set(widths)).toEqual(new Set([680]));
+      await expect(page.locator('.annotation-bubble-canvas')).toHaveCount(1);
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
+    });
     test('图标全隐保留编号，编号重开后全显；菜单外点与iframe点击收起', async ({ page }) => {
       const frame = await open(page);
       await expect(page.getByRole('button', { name: '批注显示方式', exact: true })).toHaveCount(0);

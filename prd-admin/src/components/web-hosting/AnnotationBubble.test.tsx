@@ -44,6 +44,14 @@ it('旧历史网页只发送单条预览时仍可读，新协议明确空集合�
   expect(container.querySelector('[data-bubble-id]')).toBeNull();
 });
 
+it('所有锚点暂时离开视口时保留页边容器，避免宽度反复变化让气泡闪烁', async () => {
+  const { container, annotations, render } = await setup();
+  const canvas = container.querySelector('.annotation-bubble-canvas');
+  annotations.previews = []; await render();
+  expect(container.querySelector('[data-bubble-id]')).toBeNull();
+  expect(container.querySelector('.annotation-bubble-canvas')).toBe(canvas);
+});
+
 it('边缘拖动有限位，滚动暂时离屏再回来保留位置，正文按钮保持可点', async () => {
   const { container, annotations, render } = await setup();
   let card = container.querySelector<HTMLElement>('[data-bubble-id="one"]')!;
