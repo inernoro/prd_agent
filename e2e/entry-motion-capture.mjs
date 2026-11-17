@@ -21,7 +21,11 @@ for (const destination of [gateway]) {
       const response = await fetch(destination, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
       const document = await response.text();
       const source = document.match(/<script[^>]*type="module"[^>]*src="([^"]+)/)?.[1];
-      const deployed = document.match(/var commitSha=['"]([a-f0-9]{40})['"]/i)?.[1];
+      // The widget deliberately starts without a version and refreshes it from runtime facts.
+      const branchId = document.match(/var BRANCH_ID=['"]([^'"]+)['"]/i)?.[1];
+      const state = await fetch(new URL('/_cds/api/branches',destination), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
+      const branches = await state.json();
+      const deployed = branches.branches?.find(branch => branch.id === branchId)?.runningCommitSha;
       if (response.ok && source && deployed === process.env.EXPECTED_COMMIT) {
         const bundle = await fetch(new URL(source,destination), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
         if (bundle.ok && (await bundle.text()).includes('uniform vec4 openLowerLid;')) break;
