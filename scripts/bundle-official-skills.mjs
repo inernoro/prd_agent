@@ -56,6 +56,7 @@ const INCLUDE = new Set([
   'flow-trace',              // 通用端到端链路追踪（大白话版）
   'laowang',                 // 精英·米多文化人格
   'ui-ux-pro-max',           // 通用 UI/UX 设计智能
+  'ios-style-mobile-frontend', // 通用移动端任务取舍与苹果风触屏设计
   'risk-matrix',             // 通用风险评估
   'skill-validation',        // 通用需求验证
   'human-verify',            // 通用代码人工审查方法论
@@ -111,6 +112,7 @@ const DISPLAY_NAME = {
   'task-handoff-checklist': 'task-handoff-checklist · 任务交接清单',
   'theme-transition': 'theme-transition · 主题切换水波纹动效',
   'ui-ux-pro-max': 'UI/UX Pro Max · 设计智能',
+  'ios-style-mobile-frontend': 'ios-style-mobile-frontend · 苹果风移动端前端',
 };
 
 // ── 中文一句话简介（key → 用途）───────────────────────────────────────
@@ -149,6 +151,7 @@ const DISPLAY_SUMMARY = {
   'task-handoff-checklist': '把改动、用户路径、验收证据、发布风险和后续行动完整交接',
   'theme-transition': '给前端加主题切换的圆形水波纹动效，含降级方案',
   'ui-ux-pro-max': '设计智能：67 种风格、96 种配色、57 种字体搭配，覆盖 13 种技术栈',
+  'ios-style-mobile-frontend': '先明确手机任务与取舍，再实现触屏交互、苹果风界面并检查多端表现',
   'findmapskills': '搜索、下载、上传、订阅海鲜市场的技能包；搜索下载免凭据',
 };
 
@@ -196,6 +199,7 @@ const TAG_OVERRIDE = {
   bridge: ['工具'],
   cds: ['部署'],
   'ui-ux-pro-max': ['创意'],
+  'ios-style-mobile-frontend': ['创意'],
 };
 
 // 不可移植文件排除：官方包面向外部用户，不能夹带绑定本仓库数据/第三方 URL 的临时取证 driver。
