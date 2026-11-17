@@ -4,8 +4,61 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
-export async function verifyPublicLoading(browser, base, out) {
+
+/** 从首个 DOM 变更开始观察，防止首页开场动画前短暂闪过通用骨架。 */
+async function verifyHomeOpening(browser, base, out) {
   const results = [];
+  for (const scenario of [
+    { name: 'normal', width: 1440, colorScheme: 'dark', reducedMotion: 'no-preference', slow: false },
+    { name: 'slow', width: 1440, colorScheme: 'dark', reducedMotion: 'no-preference', slow: true },
+    { name: 'mobile-light', width: 390, colorScheme: 'light', reducedMotion: 'no-preference', slow: false },
+    { name: 'reduced-motion', width: 390, colorScheme: 'light', reducedMotion: 'reduce', slow: false },
+  ]) {
+    const context = await browser.newContext({ viewport: { width: scenario.width, height: 940 }, colorScheme: scenario.colorScheme, reducedMotion: scenario.reducedMotion });
+    const session = gate();
+    try {
+      // 首页进入不依赖会话探测返回；慢资源仅在测试网络层延迟。
+      await context.route('**/api/**', async route => { await session.promise; await route.fulfill({ json: { enabled: true, authenticated: false } }); });
+      if (scenario.slow) await context.route('**/assets/**', async route => { await new Promise(resolve => setTimeout(resolve, 300)); await route.continue(); });
+      await context.addInitScript(() => {
+        window.__homeOpening = { sawSkeleton: false, bootMounts: 0 };
+        new MutationObserver(records => {
+          for (const record of records) for (const node of record.addedNodes) {
+            if (!(node instanceof Element)) continue;
+            if (node.matches('[data-content-loading], .cds-loading-skeleton-panel, .cds-loading-skeleton-line') || node.querySelector('[data-content-loading], .cds-loading-skeleton-panel, .cds-loading-skeleton-line')) window.__homeOpening.sawSkeleton = true;
+            window.__homeOpening.bootMounts += Number(node.matches('.cdsh-boot')) + node.querySelectorAll('.cdsh-boot').length;
+          }
+        }).observe(document, { childList: true, subtree: true });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', error => errors.push(error.message));
+      const requested = [];
+      page.on('request', request => requested.push(request.url()));
+      await page.goto(base + '/');
+      await page.getByRole('heading', { name: '分支，即环境。', exact: true }).waitFor({ state: 'attached' });
+      await page.locator('.cdsh-boot').waitFor({ state: 'attached' });
+      if (scenario.reducedMotion === 'reduce') {
+        assert.equal(await page.locator('.cdsh-boot').evaluate(e => getComputedStyle(e).display), 'none');
+      } else {
+        await page.waitForFunction(() => document.querySelector('.cdsh-boot-top').getAnimations().every(a => a.playState === 'finished'));
+        assert(await page.locator('.cdsh-boot-top').evaluate(e => e.getBoundingClientRect().bottom <= 0), 'opening curtain must leave the screen');
+      }
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'homepage must fit the viewport');
+      const opening = await page.evaluate(() => window.__homeOpening);
+      assert.equal(opening.sawSkeleton, false, 'homepage must never render a generic skeleton before its opening animation');
+      assert.equal(opening.bootMounts, 1, 'homepage must play one opening, without remounting the curtain');
+      assert(!requested.some(url => /\/assets\/BranchlineScene-/.test(url)), '3D narrative must remain deferred until scroll');
+      assert.deepEqual(errors, []);
+      await page.screenshot({ path: path.join(out, `home-${scenario.name}.jpg`) });
+      results.push({ kind: 'home', scenario: scenario.name, ...opening, deferred3D: true, errors });
+      console.log(`PASS standalone home ${scenario.name}`);
+    } finally { session.release(); await context.close(); }
+  }
+  return results;
+}
+
+export async function verifyPublicLoading(browser, base, out) {
+  const results = await verifyHomeOpening(browser, base, out);
   for (const kind of ['login', 'public-status']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 940 }, colorScheme: 'dark' });
     const chunk = gate(), session = gate(), config = gate(), board = gate(), configSeen = gate(), boardSeen = gate();
