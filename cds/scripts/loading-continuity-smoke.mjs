@@ -28,6 +28,7 @@ const selectors = {
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
   'code-reviews': '[data-code-reviews-skeleton]',
+  dts: '[aria-label="正在加载数据同步"]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
 const browser = await chromium.launch({ headless: true });
@@ -68,6 +69,7 @@ try {
     if (scene.kind === 'settings') route += '#auth';
     if (route === '/branch-list') route += '?project=fixture-project';
     if (route === '/branch-topology') route += '?project=fixture-project';
+    if (route === '/dts') route += '?project=fixture-project';
     const selector = selectors[scene.kind];
     const result = { route, kind: scene.kind, errors, syntheticApis: true };
     async function inspect(label) {
@@ -96,7 +98,7 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews', 'dts'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
       }
       if (!before) {
         await page.emulateMedia({reducedMotion:'reduce'});

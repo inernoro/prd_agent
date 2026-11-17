@@ -40,6 +40,9 @@ import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { isHumanSystemOwner } from './services/human-auth.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
+import { ClusterIdentityService, clusterProjectRepository } from './services/cluster-identity.js';
+import { trustedClusterIdentity, type ClusterIdentityContext } from './services/cluster-identity-context.js';
+import { canHumanAccessProject as clusterHumanProjectAccess } from './services/human-project-access.js';
 import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
@@ -52,10 +55,19 @@ import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
+import { dtsManagedFreeBytes } from './services/dts-capacity.js';
+import { createDtsRouter } from './routes/dts.js';
+import { DtsService } from './services/dts.js';
+import { dtsCredentialAllowed } from './services/dts-access.js';
+import { DtsStore } from './services/dts-store.js';
+import { dtsHash, dtsReject } from './services/dts-policy.js';
+import type { DtsActor, DtsRun } from './shared/dts.js';
 import { CodeReviewService } from './services/code-review.js';
 import { codeReviewGithubToken, codeReviewRepositoryRoot } from './services/code-review-source.js';
 import { createCodeReviewInputs } from './services/code-review-inputs.js';
 import { createCodeReviewMail } from './services/code-review-mail.js';
+import { createAcceptanceTasksRouter } from './routes/acceptance-tasks.js';
+import { AcceptanceTaskService, startAcceptanceLeaseReaper } from './services/acceptance-tasks.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger, resolveCurrentNoticeOutbound } from './services/notice-ledger.js';
@@ -675,6 +687,7 @@ function isDatabasePassCredentialRequest(req: express.Request): boolean {
 
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
+  if (/^\/api\/cluster\/identity\//i.test(raw)) return raw.split('?')[0];
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
@@ -897,13 +910,35 @@ export interface ActivityEvent {
 export function resolveApiLabel(method: string, path: string): string {
   // Normalize: remove /api prefix, trim trailing slash
   const p = path.replace(/^\/api/, '').replace(/\/$/, '');
+  if (method === 'PATCH' && /^\/dts\/policies\/[^/]+$/.test(p)) return '调整账号同步规则';
+  if (/^\/dts\/runs\/[^/]+(?:\/(?:pause|resume|cancel))?$/.test(p)) return method === 'GET' ? '查看同步进度' : '管理同步任务';
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /dts/capabilities': '查看同步能力',
+    'GET /dts/connections': '列出数据连接',
+    'POST /dts/connections': '登记数据连接',
+    'PUT /dts/engine': '连接传输服务',
+    'POST /dts/plans': '比较同步差异',
+    'POST /dts/runs': '开始数据同步',
+    'GET /dts/runs': '列出同步任务',
+    'GET /dts/policies': '查看账号同步',
+    'POST /dts/policies': '启用账号同步',
+    'POST /cluster/identity/resolve': '校验集群身份',
+    'POST /cluster/identity/exchange': '交接集群登录',
+    'GET /cluster/identity/status': '读取身份同步',
+    'PUT /cluster/identity/config': '配置集群身份',
+    'GET /cluster/identity/login': '登录集群成员',
     'GET /host-capacity/observation': '查看容量观测',
     'GET /host-capacity/sampling': '查看容量采样',
     'PUT /host-capacity/sampling': '配置容量采样',
     'POST /host-capacity/sampling/run': '执行容量采样',
+    'GET /acceptance/health': '检查验收服务',
+    'GET /acceptance/templates': '列出测试清单',
+    'POST /acceptance/templates': '发布测试清单',
+    'GET /acceptance/tasks': '列出验收任务',
+    'POST /acceptance/tasks': '创建验收任务',
+    'GET /acceptance/matrix': '查看历史矩阵',
     'GET /janitor/backups': '预览备份回收',
     'GET /janitor/backups/state': '查询备份回收',
     'GET /janitor/backups/owners': '查询备份归属',
@@ -1257,6 +1292,16 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/acceptance\/templates\/[^/]+$/, '读取清单版本'],
+    [/^GET \/acceptance\/tasks\/[^/]+$/, '查看验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/claim$/, '领取验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/heartbeat$/, '续期任务领取'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/release$/, '释放验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/results\/[^/]+$/, '保存用例结果'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/complete$/, '结束验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/cancel$/, '取消验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/report$/, '生成验收报告'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/bind-report$/, '关联验收报告'],
     [/^POST \/janitor\/tasks\/data-cases\/[^/]+\/confirm$/, '登记数据处置'],
     [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
@@ -1688,6 +1733,8 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
 
 /** Check if a request is from an approved AI session */
 function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+  const cluster = trustedClusterIdentity(req);
+  if (cluster) return cluster.aiSession ?? null;
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
   // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
   // 字段名维持 AI_ACCESS_KEY 不动（用户可见，改名会破坏现有表单存档）。
@@ -1927,6 +1974,14 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const clusterIdentity = new ClusterIdentityService(deps.config.repoRoot, deps.stateService, deps.serverEventLogStore);
+  const acceptanceTaskService = new AcceptanceTaskService(deps.stateService);
+  const acceptanceLeaseReaper = startAcceptanceLeaseReaper(acceptanceTaskService);
+  // 服务启动即收敛，支持测试/宿主关闭时清理定时器；不另造分布式任务队列。
+  app.locals.acceptanceTaskService = acceptanceTaskService;
+  app.locals.stopAcceptanceLeaseReaper = acceptanceLeaseReaper.stop;
+  app.once('close', acceptanceLeaseReaper.stop);
+  deps.registerResourceShutdown?.(async () => acceptanceLeaseReaper.stop());
   const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
     deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
       action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
@@ -2124,7 +2179,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req)) {
+    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2166,6 +2221,7 @@ export function createServer(deps: ServerDeps): express.Express {
     //     调用时撞上 100kb 上限，容器拿到一个 HTML 的 413（栈里是 raw-body），
     //     错误文案读起来像模型出错，实际是转发层把自己的解析上限套在了别人的请求上。
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
+    if (req.path === '/api/acceptance' || req.path.startsWith('/api/acceptance/')) return next();
     return globalJsonParser(req, res, next);
   });
 
@@ -2233,6 +2289,13 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.state = { ok: false, detail: (err as Error).message };
       overallOk = false;
     }
+
+    const acceptanceHealth = acceptanceTaskService.health();
+    checks.acceptanceLeases = {
+      ok: acceptanceHealth.ok,
+      detail: acceptanceHealth.ok ? '单权威进程租约收敛正常' : '验收持久层或租约收敛未完成，请检查 /api/acceptance/health',
+    };
+    // 验收收敛是非核心后台状态；专属端点告警，不将整个控制面摘除。
 
     // Check 2: docker reachable (use a lightweight `docker version --format` call)
     try {
@@ -2349,7 +2412,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
-      degraded: pressure?.degraded ?? false,
+      degraded: Boolean(pressure?.degraded || !acceptanceHealth.ok),
       checks,
       pressure,
       timestamp: new Date().toISOString(),
@@ -2504,7 +2567,8 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
+    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)
+      || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
     // request flowing before async authentication finishes, draining uploads
@@ -2550,6 +2614,7 @@ export function createServer(deps: ServerDeps): express.Express {
         suppressRequestBodyLog || suppressPreviewBody,
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
+      if (responseHeaders?.location?.includes('/api/cluster/identity/callback?')) responseHeaders.location = responseHeaders.location.split('?')[0];
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
@@ -2686,6 +2751,10 @@ export function createServer(deps: ServerDeps): express.Express {
   const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
 
+  // Central identity management runs before every local authentication provider.
+  // A member cannot issue or accept a separate set of credentials.
+  app.use((req, res, next) => { void clusterIdentity.middleware(req, res, next).catch(next); });
+
   // Provider-neutral ticket SSO. Public routes are mounted before either
   // legacy-basic or GitHub gates so an anonymous browser can start/exchange
   // the one-time code. The resulting session is accepted alongside password
@@ -2705,6 +2774,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   );
   app.use((req, res, next) => {
+    if (clusterIdentity.getConfig()?.role === 'member') { next(); return; }
     const ssoSession = ticketSsoSession(req, ticketSsoSessionStore);
     const identity = ssoSession?.identity ?? null;
     if (identity && ssoSession) {
@@ -2763,6 +2833,76 @@ export function createServer(deps: ServerDeps): express.Express {
       };
     }
     next();
+  });
+
+  app.post('/api/cluster/identity/resolve', async (req, res, next) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    res.setHeader('Cache-Control', 'no-store');
+    const member = clusterIdentity.memberOf(req);
+    const config = clusterIdentity.getConfig();
+    if (!member || config?.role !== 'authority' || authMode === 'disabled') {
+      res.status(401).json({ error: 'cluster_member_rejected' }); return;
+    }
+    const method = req.body?.method, target = req.body?.path;
+    if (typeof method !== 'string' || !/^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/.test(method)
+      || typeof target !== 'string' || target.length > 4096 || !target.startsWith('/') || target.startsWith('//')) {
+      res.status(400).json({ error: 'cluster_request_invalid' }); return;
+    }
+    try {
+      const virtual = Object.create(req) as express.Request;
+      virtual.method = method; virtual.url = target; virtual.originalUrl = target;
+      virtual.query = Object.fromEntries(new URL(target, 'http://cluster.local').searchParams);
+      let user = (req as express.Request & { cdsUser?: CdsUser }).cdsUser;
+      let session: ClusterIdentityContext['session'];
+      let basicHuman = false;
+      if (!user && authService) {
+        const token = parseCookie(req.headers.cookie || '', GH_SESSION_COOKIE);
+        const current = await authService.validateSession(token ?? null);
+        if (current) {
+          user = current.user; session = { createdAt: current.session.createdAt, expiresAt: current.session.expiresAt };
+          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure));
+        }
+      }
+      if (!user && authEnabled && verifyHumanSessionToken(parseCookie(req.headers.cookie || '', 'cds_token'), cdsUser!, cdsPass!, sessionTtlMs)) {
+        user = legacyAuthUser(cdsUser!, 'basic'); basicHuman = true;
+        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure));
+      }
+      if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
+      const legacyMachine = !user && authEnabled && tokenMatches(req.headers['x-cds-token'] as string | undefined, validToken);
+      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService) || (legacyMachine
+        ? { id: 'legacy-machine', agentName: 'AI (legacy machine credential)', token: '', approvedAt: '', expiresAt: '' } : null);
+      if (!user && !aiSession) { res.status(401).json({ error: 'cluster_credential_rejected' }); return; }
+      const stamps = virtual as express.Request & {
+        cdsProjectKey?: ClusterIdentityContext['projectKey']; cdsAccess?: ClusterIdentityContext['access']; cdsPrincipal?: ClusterIdentityContext['principal'];
+      };
+      const humanReq = { cdsUser: user, cdsSession: session, _cdsBasicHumanAuth: basicHuman };
+      const context: ClusterIdentityContext = {
+        clusterId: config.clusterId, authorityNodeId: config.nodeId, nodeId: member.nodeId,
+        ...(user ? { user: toPublicUser(user) as CdsUser, session, basicHuman,
+          humanProjects: deps.stateService.getProjects().filter(p => clusterHumanProjectAccess(humanReq, deps.stateService, p.id)).map(p => p.id) } : {}),
+        ...(aiSession ? { aiSession: { ...aiSession, token: '' }, projectKey: stamps.cdsProjectKey, access: stamps.cdsAccess, principal: stamps.cdsPrincipal } : {}),
+        ...(stamps.cdsPrincipal ? { principalProjects: deps.stateService.getProjectGrants()
+          .filter(g => g.principalId === stamps.cdsPrincipal!.principalId && !g.revokedAt)
+          .map(g => g.projectId)
+          .filter(id => { const ids = deps.stateService.getUserCredentials().find(c => c.id === stamps.cdsPrincipal!.credentialId)?.projectIds;
+            return !ids || ids.includes(id); }) } : {}),
+      };
+      res.json({ ...context, projects: member.projects, projectRepositories: Object.fromEntries(Object.keys(member.projects)
+        .map(id => [id, clusterProjectRepository(deps.stateService.getProject(id))])) });
+    } catch (error) { next(error); }
+  });
+  app.post('/api/cluster/identity/exchange', (req, res) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    clusterIdentity.exchange(req, res);
+  });
+  app.use((req, res, next) => {
+    if (clusterIdentity.getConfig()?.role !== 'member'
+      || isPublicAccessRequestRoute(req.method, req.path)
+      || req.path === '/' || req.path === '/healthz' || req.path === '/api/instance-mode'
+      || /\.(?:css|js|ico|png|svg|woff2?|map)$/i.test(req.path)
+      || req.path.startsWith('/api/peer-sync/') && !req.path.startsWith('/api/peer-sync/admin/')) { next(); return; }
+    if (!req.path.startsWith('/api/') && !req.headers.cookie) { res.redirect(302, '/login'); return; }
+    void clusterIdentity.authenticate(req, res).then(handled => { if (!handled) next(); }).catch(next);
   });
 
   app.get('/api/auth/public-status', (_req, res) => {
@@ -2882,7 +3022,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
-      isPendingReplay: req => pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
+      isPendingReplay: req => !!trustedClusterIdentity(req) || pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
       isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
@@ -2934,6 +3074,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
+      if (trustedClusterIdentity(req)) return next();
       if (pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
@@ -3604,6 +3745,44 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot,
     path.resolve(__dirname, '..', 'web', 'dist', 'cds-instances.json')));
 
+  app.get('/api/cluster/identity/status', (req, res) => {
+    const status = clusterIdentity.status();
+    const projectId = (req as express.Request & { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId;
+    if (projectId && 'members' in status && status.members) {
+      status.members = status.members.map(m => ({ ...m, projects: Object.fromEntries(Object.entries(m.projects).filter(([id]) => id === projectId)) }));
+    }
+    if (projectId && 'projects' in status && status.projects) status.projects = Object.fromEntries(Object.entries(status.projects).filter(([, local]) => local === projectId));
+    const access = (req as express.Request & { cdsAccess?: { access: AgentKeyAccess } }).cdsAccess?.access;
+    if (access && access.projects !== 'all' && !projectId && 'members' in status && status.members) {
+      status.members = status.members.map(m => ({ ...m, projects: Object.fromEntries(Object.entries(m.projects).filter(([id]) => access.projects.includes(id))) }));
+    }
+    res.setHeader('Cache-Control', 'no-store'); res.json(status);
+  });
+  app.put('/api/cluster/identity/config', async (req, res) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    if (!isHumanSystemOwner(req) && resolveAiSession(req, deps.stateService)?.id !== 'static') {
+      res.status(403).json({ error: 'cluster_owner_required', message: '只有系统所有者可以配置集群身份，请联系系统所有者。' }); return;
+    }
+    try {
+      if (req.body?.role === 'member' && clusterIdentity.getConfig()?.role !== 'member' && app.locals.dtsService) {
+        const dts = app.locals.dtsService as DtsService;
+        if (dts.store.configured()) for (const p of deps.stateService.getProjects()) {
+          if ((await dts.store.activeRuns<DtsRun>(p.id)).length) {
+            res.status(409).json({ error: 'dts_writer_active', message: '本节点仍有未确认结束的数据同步任务，请先核对并停止，再加入统一集群。' }); return;
+          }
+        }
+      }
+      clusterIdentity.configure(req.body); res.json(clusterIdentity.status());
+    }
+    catch (error) {
+      if ((error as { code?: string }).code === 'cluster_identity_pinned') {
+        res.status(409).json({ error: 'cluster_identity_pinned', message: '该节点已加入现有集群，不能切换为独立身份；请保留原集群、节点和角色后重试。' }); return;
+      }
+      res.status(400).json({ error: 'cluster_config_invalid', message: '集群身份配置不完整，请核对节点与项目绑定后重试。' });
+    }
+  });
+  app.get('/api/cluster/identity/login', (req, res) => clusterIdentity.login(req, res));
+
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
   if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
 
@@ -3727,7 +3906,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // malformed.
   app.use((req, _res, next) => {
     // CDS-CLI-005：同时支持 `X-AI-Access-Key` / `ai-access-key` / Bearer。
-    const h = (req.headers['x-ai-access-key'] as string | undefined)
+    const h = trustedClusterIdentity(req) ? undefined : (req.headers['x-ai-access-key'] as string | undefined)
       || (req.headers['ai-access-key'] as string | undefined)
       || (() => {
           const auth = req.headers['authorization'] as string | undefined;
@@ -5062,7 +5241,40 @@ export function createServer(deps: ServerDeps): express.Express {
     },
   });
   app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
+
+  const dtsActor = (req: express.Request): DtsActor => {
+    const r = req as express.Request & { cdsProjectKey?: { projectId: string; keyId: string }; _aiSession?: { id: string; token: string };
+      cdsPrincipal?: { credentialId: string }; _cdsBasicHumanAuth?: boolean; cdsUser?: { id?: string; username?: string } };
+    if (r.cdsProjectKey) return { kind: 'project-key', id: r.cdsProjectKey.keyId };
+    if (r.cdsPrincipal) return { kind: 'principal', id: r.cdsPrincipal.credentialId };
+    if (r._aiSession?.id === 'static') return { kind: 'static', id: 'static', fingerprint: dtsHash(r._aiSession.token) };
+    if (r._cdsBasicHumanAuth && r.cdsUser?.username) return { kind: 'legacy-owner', id: r.cdsUser.username };
+    if (r.cdsUser?.id) return { kind: 'user', id: r.cdsUser.id };
+    return dtsReject('dts_identity_required', '请先使用已授权的账号或项目凭据接入数据同步', 403);
+  };
+  const dtsStore = new DtsStore(process.env.CDS_MONGO_URI, process.env.CDS_MONGO_DB || 'cds_state_db');
+  const dtsService = new DtsService(dtsStore, deps.stateService, deps.serverEventLogStore, async (actor, projectId) => {
+    if (!deps.stateService.getProject(projectId) || authMode === 'disabled') return false;
+    if (actor.kind === 'project-key' || actor.kind === 'principal') return dtsCredentialAllowed(deps.stateService, actor, projectId);
+    if (actor.kind === 'static') return [process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY, deps.stateService.getCustomEnv()?.AI_ACCESS_KEY]
+      .some(value => value && dtsHash(value) === actor.fingerprint);
+    if (actor.kind === 'legacy-owner') return authEnabled && actor.id === cdsUser;
+    const user = await authService?.findUserById(actor.id);
+    return Boolean(user?.status === 'active' && user.isSystemOwner);
+  }, undefined, { freeBytes: c => dtsManagedFreeBytes(deps.stateService, deps.shell, c) });
+  app.locals.dtsService = dtsService;
+  app.use('/api', createDtsRouter({ service: dtsService, state: deps.stateService, actor: dtsActor }));
+  const dtsTimer = setInterval(() => {
+    if (clusterIdentity.getConfig()?.role !== 'member') void dtsService.tick(deps.stateService.getProjects().map(p => p.id))
+      .catch(() => console.warn('[dts] 后台同步状态核对失败，将保留任务保护并等待重试'));
+  }, 5_000);
+  dtsTimer.unref();
+  const stopDts = async () => { clearInterval(dtsTimer); await dtsStore.close(); };
+  app.once('close', () => { void stopDts(); });
+  deps.registerResourceShutdown?.(stopDts);
+
   void reviews.start().catch((error: Error) => console.error('[code-review] recovery failed:', error.message));
+  app.use('/api/acceptance', createAcceptanceTasksRouter({ service: acceptanceTaskService }));
 
   // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。

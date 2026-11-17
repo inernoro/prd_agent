@@ -853,6 +853,7 @@ export function ProjectListPage(): JSX.Element {
                   <Github className="h-4 w-4 shrink-0" />
                   从 GitHub 选仓库
                 </DropdownItem>
+                <DropdownItem onSelect={() => navigate('/dts')}><Database className="h-4 w-4 shrink-0" />数据同步</DropdownItem>
                 <DropdownItem onSelect={() => setSandboxOpen(true)}>
                   <Beaker className="h-4 w-4 shrink-0" />
                   从 YAML 沙盒新建

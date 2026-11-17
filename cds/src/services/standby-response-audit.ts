@@ -4,7 +4,7 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 
 const SNAPSHOT_BYTES = 4096;
 const SAFE_TEXT_KEYS = /^(code|message|reason|error|status|type|detail|event)$/i;
-const SAFE_FIELD_NAMES = /^(code|message|reason|error|status|type|detail|details|event|ok|success|data|branch|branches|protocolVersion|capabilities|configurationRevision|configHash|secretKeyHash|repository|defaultBranch|id|name|projectId|commitSha|githubCommitSha|digest|mediaType|size|manifests|config|layers|platform|architecture|os|variant)$/i;
+const SAFE_FIELD_NAMES = /^(code|message|reason|error|status|type|detail|details|event|ok|success|data|branch|branches|protocolVersion|capabilities|configurationRevision|configHash|secretKeyHash|repository|defaultBranch|id|name|projectId|commitSha|githubCommitSha|digest|mediaType|size|manifests|config|layers|platform|architecture|os|variant|jobId|sourceCount|targetCount|insertCount|updateCount|skipCount|appliedCount|decision)$/i;
 const PRIVATE_KEYS = /password|token|cookie|authorization|secret|credential|signature|email|phone|document|prompt|content|payload|body/i;
 
 function safeText(value: string, secrets: string[]): string {
@@ -26,7 +26,7 @@ function safeValue(value: unknown, secrets: string[], key = '', depth = 0, limit
     if (/^(commitSha|githubCommitSha|configHash|configurationRevision)$/i.test(key) && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value)) {
       return secrets.includes(value) ? '[redacted]' : value;
     }
-    if (/^(id|name|projectId)$/i.test(key)) {
+    if (/^(id|name|projectId|jobId)$/i.test(key)) {
       const identifier = safeText(value, secrets);
       return /^[a-z0-9_./:-]{1,128}$/i.test(identifier) ? identifier : '[identifier omitted]';
     }
@@ -40,7 +40,7 @@ function safeValue(value: unknown, secrets: string[], key = '', depth = 0, limit
     if (entries.length > 40) limits.truncated = true;
     return Object.fromEntries(entries.slice(0, 40).map(([name, item], index) => [SAFE_FIELD_NAMES.test(name) ? name : `other-field-${index}`, safeValue(item, secrets, name, depth + 1, limits)]));
   }
-  return value === null || SAFE_TEXT_KEYS.test(key) || /^(ok|success|protocolVersion|secretKeyCount|size)$/i.test(key) ? value : '[value omitted]';
+  return value === null || SAFE_TEXT_KEYS.test(key) || /^(ok|success|protocolVersion|secretKeyCount|size|sourceCount|targetCount|insertCount|updateCount|skipCount|appliedCount)$/i.test(key) ? value : '[value omitted]';
 }
 
 export interface StandbyResponseFacts {
@@ -65,6 +65,7 @@ export interface StandbyResponseFacts {
 /** Existing project-scoped event store and its retention/query path; no new public log store. */
 export function createStandbyResponseAudit(sink: ServerEventLogSink | null | undefined, scope: {
   projectId: string; remoteProjectId: string; policy: string; dryRun: boolean; configUpdatedAt?: string;
+  businessRequestId?: string;
 }, event = { source: 'standby-response-audit', action: 'standby.peer.response', message: '备用站远端响应证据' }) {
   const operationId = randomUUID();
   let attempt = 0;

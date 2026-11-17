@@ -378,6 +378,8 @@ export class StateService {
    *  at runtime for the "switch storage mode" flow in the Settings
    *  panel (P4 Part 18 D.3). */
   private backingStore: StateBackingStore;
+  isReportObjectStoreConfigured(): boolean { return this.reportObjects.isConfigured(); }
+
   /**
    * 验收报告正文的持久层（2026-09-10）。元数据在这个 state 里（跟着 backingStore
    * 进 Mongo），正文进对象存储——两半必须同一个持久等级，否则就是那批点不开的
@@ -1327,6 +1329,28 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   }
 
 
+
+  /** 验收切片在 flush 成功前不对读取发布，失败不留下虚假领取状态。 */
+  async persistAcceptanceState(
+    templates: import('../acceptance-types.js').AcceptanceTemplate[],
+    tasks: import('../acceptance-types.js').StoredAcceptanceTask[],
+  ): Promise<void> {
+    const previousTemplates = this.state.acceptanceTemplates;
+    const previousTasks = this.state.acceptanceTasks;
+    // backingStore.save 可以排队，故必须等待 flush；不能用 save 的返回值冒充落库。
+    this.state.acceptanceTemplates = templates;
+    this.state.acceptanceTasks = tasks;
+    try {
+      this.save([{ kind: 'global' }]);
+      await this.flush();
+    } catch (error) {
+      this.state.acceptanceTemplates = previousTemplates;
+      this.state.acceptanceTasks = previousTasks;
+      // 尝试撤回可能已入队的快照；失败仍向调用者报告，不返回租约票据。
+      try { this.save([{ kind: 'global' }]); await this.flush(); } catch { /* 原错误为权威结果 */ }
+      throw error;
+    }
+  }
 
   // ── Scheduled jobs ──
 
@@ -6653,6 +6677,40 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     fs.writeFileSync(file, data);
   }
 
+  /** Shared canonical image normalization for ingestion and immutable task binding. */
+  async normalizeReportInlineImages(content: string, base: string): Promise<{ content: string; extracted: number }> {
+    const DATA_IMG_RE = /data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=\s]+)/g;
+    const MIME_EXT: Record<string, string> = {
+      png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg',
+    };
+    let extracted = 0;
+    // replace 回调不能 await——先同步改写正文并收集待写资产，最后统一异步落盘
+    //（2026-07-09：截图资产原来 writeFileSync，MB 级整图会阻塞单进程服务器）。
+    const pendingWrites = new Map<string, Buffer>();
+    const out = content.replace(DATA_IMG_RE, (whole: string, mime: string, b64: string) => {
+      const clean = b64.replace(/\s+/g, '');
+      if (!clean) return whole;
+      let buf: Buffer;
+      try {
+        buf = Buffer.from(clean, 'base64');
+      } catch {
+        return whole;
+      }
+      if (!buf.length) return whole;
+      const ext = MIME_EXT[mime.toLowerCase()] || 'png';
+      const hash = crypto.createHash('sha256').update(buf).digest('hex');
+      const name = `${hash}.${ext}`;
+      pendingWrites.set(name, buf); // 内容寻址，同名去重
+      extracted += 1;
+      const rel = `/api/reports/assets/${name}`;
+      return base ? `${base}${rel}` : rel;
+    });
+    await Promise.all(
+      [...pendingWrites.entries()].map(([name, buf]) => this.writeReportAssetAsync(name, buf)),
+    );
+    return { content: out, extracted };
+  }
+
   /**
    * Async variant of writeReportAsset — HTTP 请求路径必须用这个
    * （routes/reports.ts），同步版仅供测试/非请求路径使用。
@@ -6730,6 +6788,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     prNumber?: number | null;
     deployMode?: string | null;
     sourceId?: string | null;
+    inlineAssetBaseUrl?: string;
     sourcePath?: string | null;
     contentHash?: string | null;
     publishedAt?: string | null;
@@ -6850,6 +6909,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       prNumber: input.prNumber ?? null,
       deployMode: input.deployMode ?? null,
       sourceId: input.sourceId ?? null,
+      inlineAssetBaseUrl: input.inlineAssetBaseUrl,
       sourcePath: input.sourcePath ?? null,
       contentHash: input.contentHash ?? null,
       publishedAt: input.publishedAt ?? null,
@@ -6880,6 +6940,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       prNumber?: number | null;
       deployMode?: string | null;
       sourceId?: string | null;
+      inlineAssetBaseUrl?: string;
       sourcePath?: string | null;
       contentHash?: string | null;
       publishedAt?: string | null;
@@ -7020,6 +7081,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;
     if (updates.deployMode !== undefined) meta.deployMode = updates.deployMode;
     if (updates.sourceId !== undefined) meta.sourceId = updates.sourceId;
+    if (updates.inlineAssetBaseUrl !== undefined) meta.inlineAssetBaseUrl = updates.inlineAssetBaseUrl;
     if (updates.sourcePath !== undefined) meta.sourcePath = updates.sourcePath;
     if (updates.contentHash !== undefined) meta.contentHash = updates.contentHash;
     if (updates.publishedAt !== undefined) meta.publishedAt = updates.publishedAt;

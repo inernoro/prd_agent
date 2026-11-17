@@ -2,12 +2,14 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { createDtsBridge } from './dts-bridge.mjs';
 import { createBridge, readProjectCredentials } from './bridge.mjs';
 
 async function main() {
   const credentials = await readProjectCredentials();
-  const bridge = createBridge(credentials);
-  const server = new Server({ name: 'cds-code-review', version: '1.0.0' }, { capabilities: { tools: {} } });
+  const dts = process.argv.includes('--dts');
+  const bridge = dts ? createDtsBridge(credentials) : createBridge(credentials);
+  const server = new Server({ name: dts ? 'cds-dts' : 'cds-code-review', version: '1.0.0' }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await bridge.listTools() }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {

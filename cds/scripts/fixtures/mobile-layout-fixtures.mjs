@@ -145,6 +145,7 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
+  '/api/cluster/identity/status': { enabled: false, state: 'independent' },
   '/api/instance-catalog': { version: 1, instances: [
     { id: 'primary', name: '合成主实例', role: 'primary', url: 'https://primary.example.invalid' },
     { id: 'standby', name: '合成备用实例', role: 'standby', url: 'https://standby.example.invalid' },
@@ -154,6 +155,10 @@ const EXACT = {
   '/api/notices': { notices: [] },
   '/api/notices/read-all': { ok: true, changed: 0 },
   '/api/projects': { projects: [project] },
+  '/api/dts/capabilities': { protocolVersion: 1, projectId: PROJECT_ID, configured: false, configureAllowed: false, executeAllowed: false, connectors: [] },
+  '/api/dts/connections': { connections: [], services: [] },
+  '/api/dts/runs': { runs: [] },
+  '/api/dts/policies': { policies: [] },
   '/api/code-reviews': { tasks: [], totals: { source: 0, report: 0, all: 0 }, newCount: 0, historyCount: 0,
     snapshotAt: '2026-11-09T00:00:00.000Z', page: { offset: 0, limit: 10, total: 0, nextOffset: null } },
   '/api/code-reviews/capabilities': { engineConfigured: false, mailConfigured: false,

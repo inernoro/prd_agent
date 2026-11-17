@@ -1,3 +1,5 @@
+import { AssetSourceFilter } from '@/components/workspace/AssetSourceFilter';
+import { WorkspaceSearch } from '@/components/workspace/Workspace';
 import { useEffect, useState, useMemo } from 'react';
 import { Image, FolderOpen } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
@@ -28,6 +30,7 @@ export default function MobileAssetsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = TABS.find((tab) => tab.key === searchParams.get('tab'))?.key ?? 'all';
   const setActiveTab = (tab: AssetTab) => {
+    setSourceFilter('');
     const next = new URLSearchParams(searchParams);
     if (tab === 'all') next.delete('tab'); else next.set('tab', tab);
     setSearchParams(next, { replace: true });
@@ -36,6 +39,8 @@ export default function MobileAssetsPage() {
   const [assets, setAssets] = useState<MobileAssetItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -53,9 +58,8 @@ export default function MobileAssetsPage() {
   }, [activeTab, retry]);
 
   const filtered = useMemo(() => {
-    if (activeTab === 'all') return assets;
-    return assets.filter((a) => a.type === activeTab);
-  }, [assets, activeTab]);
+    return assets.filter(a => (activeTab === 'all' || a.type === activeTab) && (!sourceFilter || (a.source || '未标注来源') === sourceFilter) && `${a.title} ${a.summary || ''} ${a.source || ''}`.toLowerCase().includes(query.trim().toLowerCase()));
+  }, [assets, activeTab, sourceFilter, query]);
 
   return (
     <div className="h-full min-h-0 flex flex-col" style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}>
@@ -84,6 +88,7 @@ export default function MobileAssetsPage() {
         })}
       </div>
 
+      <div className="px-4 pb-2 map-workspace workspace-mobile-toolbar"><WorkspaceSearch value={query} onChange={setQuery} placeholder="搜索已载入资源" /><AssetSourceFilter compact items={assets} value={sourceFilter} onChange={setSourceFilter} /></div>
       {/* ── 内容区 ── */}
       <div className="flex-1 min-h-0 overflow-auto px-4 pb-28" style={{ overscrollBehavior: 'contain' }}>
         {loading ? (
@@ -96,8 +101,9 @@ export default function MobileAssetsPage() {
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 gap-2">
             <FolderOpen size={32} style={{ color: C.labelTertiary }} />
+            {(query || sourceFilter) && <button type="button" className="ws-link" onClick={()=>{setQuery('');setSourceFilter('');}}>清除筛选</button>}
             <div className="text-sm" style={{ color: C.labelSecondary }}>
-              {activeTab === 'all' ? '还没有任何资产' : '该分类下暂无内容'}
+              {query || sourceFilter ? '没有匹配的资源' : activeTab === 'all' ? '还没有任何资产' : '该分类下暂无内容'}
             </div>
             <div className="text-[11px]" style={{ color: C.labelTertiary }}>
               使用 Agent 创作后，产出物会自动出现在这里
