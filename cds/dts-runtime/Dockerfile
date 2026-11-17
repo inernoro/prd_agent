@@ -23,5 +23,5 @@ COPY *.mjs artifacts.json entrypoint.sh RedisShake.LICENSE ./
 RUN cp /runtime/RedisShake.LICENSE /opt/redis-shake/LICENSE && chmod 755 /runtime/entrypoint.sh
 ENV DTS_RUNTIME_HOST=0.0.0.0 DTS_RUNTIME_PORT=18085 DTS_RUNTIME_DATA=/data/jobs DTS_REDIS_SHAKE_BINARY=/opt/redis-shake/redis-shake
 EXPOSE 18085
-HEALTHCHECK --interval=15s --timeout=8s --start-period=90s --retries=3 CMD node -e "fetch('http://127.0.0.1:18085/overview',{headers:{authorization:'Basic '+Buffer.from(process.env.DTS_ENGINE_USER+':'+process.env.DTS_ENGINE_PASSWORD).toString('base64')}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=15s --timeout=8s --start-period=90s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.DTS_RUNTIME_PORT||'18085')+'/overview',{headers:{authorization:'Basic '+Buffer.from(process.env.DTS_ENGINE_USER+':'+process.env.DTS_ENGINE_PASSWORD).toString('base64')}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 ENTRYPOINT ["/runtime/entrypoint.sh"]

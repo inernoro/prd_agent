@@ -1,9 +1,13 @@
 [
   {
-    "url": "https://archive.apache.org/dist/seatunnel/3.0.0/apache-seatunnel-3.0.0-bin.tar.gz",
+    "url": "https://downloads.apache.org/seatunnel/3.0.0/apache-seatunnel-3.0.0-bin.tar.gz",
     "file": "seatunnel.tar.gz",
     "algorithm": "sha512",
-    "digest": "2825b9ef0708dcbb3c2cab238b8ed39b41fce0eb4d01582c026c57cec8cef9b047875c38ea5a03b6483737213cd49f8c6130f59c2ad6b689669ccb10cd5356e6"
+    "digest": "2825b9ef0708dcbb3c2cab238b8ed39b41fce0eb4d01582c026c57cec8cef9b047875c38ea5a03b6483737213cd49f8c6130f59c2ad6b689669ccb10cd5356e6",
+    "mirrors": [
+      "https://archive.apache.org/dist/seatunnel/3.0.0/apache-seatunnel-3.0.0-bin.tar.gz"
+    ],
+    "bytes": 472156508
   },
   {
     "url": "https://repo.maven.apache.org/maven2/org/apache/seatunnel/connector-mongodb/3.0.0/connector-mongodb-3.0.0.jar",

@@ -51,8 +51,18 @@ jobs:
           pnpm exec tsc --noEmit
           node --test dts-runtime/runtime.test.mjs
           pnpm exec vitest run tests/services/dts.test.ts tests/services/dts-connections.test.ts tests/services/dts-capacity.test.ts tests/services/dts-seatunnel.test.ts
+      - uses: docker/setup-buildx-action@v3
       - name: Build pinned upstream runtime
-        run: docker build --build-arg SOURCE_REVISION=${{ github.sha }} --build-arg SOURCE_URL=${{ github.server_url }}/${{ github.repository }} --tag cds-dts-runtime:test cds/dts-runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: cds/dts-runtime
+          load: true
+          tags: cds-dts-runtime:test
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=cds-dts-native
+          cache-to: type=gha,mode=max,scope=cds-dts-native
       - name: Exercise five real services before publishing
         working-directory: cds
         env:
