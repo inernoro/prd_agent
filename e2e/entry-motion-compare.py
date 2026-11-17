@@ -31,6 +31,8 @@ for mode in ['cold','warm']:
         for kind in ['reference','current']:
             Image.open(folder/f'{kind}-{index:02}.jpg').crop((640,150,960,380)).resize((640,460)).save(folder/f'{kind}-eye-{index:02}.jpg')
         summary['samples'].append({'mode':mode,'elapsed':elapsed,'reference':ref_time,'current':anchor+elapsed,'referenceEnded':elapsed>4.5})
+    patch = Image.open(folder/'current-01.jpg').crop((80,80,160,160)).convert('RGB')
+    summary['runs'][mode]['quarterDarkPatch'] = sum(sum(pixel) for pixel in patch.getdata()) / (80*80*3*255)
     for first in range(0,23,4):
         sheet=Image.new('RGB',(1920,4*574),'#10151c');draw=ImageDraw.Draw(sheet)
         for row,index in enumerate(range(first,min(first+4,23))):
@@ -47,3 +49,5 @@ page='''<!doctype html><meta charset="utf-8"><title>登录动效逐 0.25 秒验�
 page=page.replace('MODES',''.join(f'<option value="{m}">{m}</option>' for m in summary['runs']))
 (OUT/'comparison.html').write_text(page)
 print(json.dumps(summary['runs'],indent=2))
+
+assert all(data['quarterDarkPatch'] < .08 for data in summary['runs'].values()), 'Actual quarter-second screen still contains a white/grey flash'

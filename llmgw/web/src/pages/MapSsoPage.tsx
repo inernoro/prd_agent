@@ -50,7 +50,7 @@ export function MapSsoPage() {
       if (!active) return;
       if (result.success) {
         const destination = gatewayLoginDestination(returnTo);
-        if (!result.data?.mustChangePassword && destination.split(/[?#]/)[0] === '/quickstart') markQuickstartArrival(undefined, 'paper');
+        if (!result.data?.mustChangePassword && destination.split(/[?#]/)[0] === '/quickstart') markQuickstartArrival();
         navigate(destination, { replace: true });
         return;
       }

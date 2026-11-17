@@ -349,16 +349,13 @@ html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chr
 @media (prefers-reduced-motion: reduce) { .gateway-intent-starters button { transition: none; } }
 .gateway-quickstart-stage:has(.gateway-entry-resume button) .consciousness-ghost > small { display: none; }
 
-/* SSO uses the same full-viewport paper scene; the destination veil reveals already-running vectors. */
+/* SSO hands its paper scene directly to the dark workspace; never insert a second white curtain. */
 .gateway-sso-copy { position: relative; z-index: 3; max-width: 32em; padding: 32px; text-align: center; }
 .gateway-sso-copy h1 { font-size: var(--fs-title); font-weight: 450; letter-spacing: .12em; }
 .gateway-sso-copy p { font-size: var(--fs-body); line-height: 1.8; }
 .gateway-sso-copy a { color: inherit; }
-.gateway-arrival-paper { position: absolute; inset: 0; z-index: 6; pointer-events: none; background: var(--cinema-paper); opacity: var(--portrait-paper, 0); }
-/* Paper belongs to the portrait clock, so route mount timing cannot prolong a grey veil. */
 html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body { scrollbar-width: none; }
 html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body::-webkit-scrollbar { display: none; }
-@media (prefers-reduced-motion: reduce) { .gateway-arrival-paper { display: none; } }
 
 .gateway-intent-heading { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 22px; color: var(--cinema-light); font-size: var(--fs-title); font-weight: 500; letter-spacing: .08em; }
 .gateway-intent-heading svg { color: var(--cinema-accent); opacity: .75; }

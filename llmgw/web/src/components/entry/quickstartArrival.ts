@@ -2,7 +2,6 @@ import { beginEntryArrival } from './entryArrival';
 import type { EntryAudio } from './entryAudio';
 
 let arrivalUntil = 0;
-let arrivalSurface: 'paper' | 'night' = 'night';
 let arrivalAudio: EntryAudio | null = null;
 let soundDeadline: ReturnType<typeof setTimeout> | undefined;
 
@@ -17,9 +16,8 @@ export function stopQuickstartArrivalSound() {
   arrivalAudio?.dispose(); arrivalAudio = null;
 }
 /** One visual handoff; it never delays navigation or stores an auth result. */
-export function markQuickstartArrival(audio?: EntryAudio | null, surface: 'paper' | 'night' = 'night') {
+export function markQuickstartArrival(audio?: EntryAudio | null) {
   stopQuickstartArrivalSound();
-  arrivalSurface = surface;
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { arrivalUntil = 0; return false; }
   arrivalUntil = Date.now() + 10000;
   beginEntryArrival();
@@ -32,4 +30,3 @@ export function markQuickstartArrival(audio?: EntryAudio | null, surface: 'paper
 export const hasQuickstartArrival = () => Date.now() < arrivalUntil;
 export function consumeQuickstartArrival() { arrivalUntil = 0; }
 
-export const hasQuickstartPaperArrival = () => hasQuickstartArrival() && arrivalSurface === 'paper';

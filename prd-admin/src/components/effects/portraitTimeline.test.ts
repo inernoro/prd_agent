@@ -11,8 +11,6 @@ describe('角色成形的阶段与眼睑几何', () => {
     expect(portraitStrokeProgress(100,1.75)).toBe(1);
   });
   it('白场退去时已有线条，闭眼材质与品牌先于睁眼建立', () => {
-    expect(samplePortrait(0).paper).toBe(1);
-    expect(samplePortrait(.25).paper).toBe(0);
     expect(samplePortrait(.25).line).toBeGreaterThan(0);
     expect(samplePortrait(1.1)).toMatchObject({ material: 0, eye: 0, brand: 0, chrome: 0 });
     expect(samplePortrait(1.9).line).toBe(1);

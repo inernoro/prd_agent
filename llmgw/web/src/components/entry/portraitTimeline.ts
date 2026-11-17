@@ -7,7 +7,6 @@ export const smoothProgress = (time: number, from: number, to: number) => {
 };
 export function samplePortrait(time: number) {
   return {
-    paper: 1 - smoothProgress(time, 0, .18),
     line: smoothProgress(time, 0, 1.9),
     lineOpacity: 1 - smoothProgress(time, 1.9, 2.55),
     grid: smoothProgress(time, 1.25, 1.85) * (1 - smoothProgress(time, 2.15, 2.85)),

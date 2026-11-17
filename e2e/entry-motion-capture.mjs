@@ -30,7 +30,8 @@ for (const destination of [gateway]) {
       const deployed = branches.branches?.find(branch => branch.id === branchId)?.runningCommitSha;
       if (response.ok && source && deployed === process.env.EXPECTED_COMMIT) {
         const bundle = await fetch(new URL(source,destination), { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
-        if (bundle.ok && (await bundle.text()).includes(motion.fileName)) {
+        const javascript = await bundle.text();
+        if (bundle.ok && javascript.includes(motion.fileName) && javascript.includes('direct-night')) {
           const media = await fetch(new URL(`/media/entry/${motion.fileName}`,destination), { headers: { 'User-Agent':'Mozilla/5.0' }, signal:AbortSignal.timeout(15000) });
           if (media.ok && createHash('sha256').update(new Uint8Array(await media.arrayBuffer())).digest('hex') === motion.sha256) break;
         }
@@ -74,7 +75,7 @@ await context.addInitScript(() => {
       previous = t;
       const gradient = portrait.querySelector('linearGradient[gradientUnits="userSpaceOnUse"]');
       evidence.frames.push({ epoch: Date.now(), t, eye: Number(portrait.dataset.eyeOpening), renderer: portrait.dataset.renderer,
-        paperOpacity: Number(getComputedStyle(document.querySelector('.gateway-arrival-paper') || portrait).opacity),
+        paperOpacity: Number(document.querySelector('.gateway-arrival-paper') ? getComputedStyle(document.querySelector('.gateway-arrival-paper')).opacity : 0),
         mask: [gradient?.getAttribute('y1'), gradient?.getAttribute('y2')], width: innerWidth, height: innerHeight });
     }
     requestAnimationFrame(observe);
