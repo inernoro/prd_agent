@@ -152,7 +152,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
           </dl>
           {current.decisionReason ? <p className="mt-3 text-sm text-muted-foreground">审批意见：{current.decisionReason}</p> : null}
           {current.decisions?.length ? <ol aria-label="审批历史" className="mt-3 space-y-1 text-xs text-muted-foreground">{current.decisions.map((decision, index) => <li key={index}>{formatDateTime(decision.at)} · {releaseActorLabel(decision.by)} · {states[decision.action]}：{decision.reason}</li>)}</ol> : null}
-          {current.status === 'pending' || current.status === 'approved' && !current.consumedBy ? <div className="mt-4 space-y-2">
+          {current.status === 'pending' || current.status === 'approved' ? <div className="mt-4 space-y-2">
             <label className="block text-xs text-muted-foreground">审批 / 撤销意见<input aria-label="审批意见" className={`${inputClass} mt-1`} value={decisionReason} onChange={e => setDecisionReason(e.target.value)} placeholder="说明批准依据或拒绝原因" /></label>
             <div className="flex flex-wrap gap-2">{current.status === 'pending' ? <><Button disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('approve')}><Check />独立批准</Button><Button variant="outline" disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('reject')}><X />拒绝</Button></> : null}<Button variant="outline" disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('revoke')}><Square />撤销授权</Button></div>
           </div> : null}

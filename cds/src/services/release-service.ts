@@ -2002,6 +2002,12 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
       try { client.end(); } catch { /* ignore */ }
       fn();
     };
+    const rejectUnconfirmed = (cause?: unknown): void => {
+      if (settled) return;
+      const failure = new Error(`SSH 连接中断，远端执行结果未确认，请核对目标现场后再重试${cause ? `：${errorText(cause)}` : ''}`);
+      req.onOutput('warn', failure.message);
+      settle(() => reject(failure));
+    };
     function onAbort(): void {
       if (settled) return;
       if (!stream) {
@@ -2018,7 +2024,7 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
         try { client.end(); } catch { /* The bounded transport teardown still follows. */ }
         if (!settled) closeTimer = setTimeout(() => {
           try { client.destroy(); } catch { /* Finalize cancellation even if teardown throws. */ }
-          settle(() => reject(abortReasonError(req.signal)));
+          rejectUnconfirmed(abortReasonError(req.signal));
         }, 1000);
       }, 1000);
     }
@@ -2045,7 +2051,11 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
         channel.on('data', (chunk) => append('info', chunk));
         channel.stderr.on('data', (chunk) => append('warn', chunk));
         channel.on('close', (code: unknown, signal: unknown) => {
-          if (req.signal.aborted) return settle(() => reject(abortReasonError(req.signal)));
+          if (req.signal.aborted) {
+            const confirmed = typeof code === 'number' || typeof signal === 'string' && signal.length > 0;
+            if (!confirmed) return rejectUnconfirmed(abortReasonError(req.signal));
+            return settle(() => reject(abortReasonError(req.signal)));
+          }
           const exitCode = typeof code === 'number' ? code : 255;
           if (exitCode === 0) return settle(() => resolve(stdout));
           // stdout 也得进摘要：门禁判据（llmgw-prod-preflight.py 的那段 JSON）走的是
@@ -2059,14 +2069,15 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
     client.on('error', (err) => {
       if (settled) return;
       // 存活探测失败只说明连接丢失，不能把本地取消误记为远端已退出。
-      const failure = stream || execPending
-        ? new Error(`SSH 连接中断，远端执行结果未确认，请核对目标现场后再重试：${errorText(err)}`)
-        : err as Error;
-      if (stream || execPending) req.onOutput('warn', errorText(failure));
-      settle(() => reject(failure));
+      if (stream || execPending) return rejectUnconfirmed(err);
+      settle(() => reject(err as Error));
     });
-    client.on('close', () => settle(() => reject(req.signal.aborted
-      ? abortReasonError(req.signal) : new Error('SSH 连接已关闭，未收到远端命令退出确认，请核对目标现场'))));
+    client.on('close', () => {
+      if (settled) return;
+      if (stream || execPending) return rejectUnconfirmed(req.signal.aborted ? abortReasonError(req.signal) : undefined);
+      settle(() => reject(req.signal.aborted
+        ? abortReasonError(req.signal) : new Error('SSH 连接已关闭，未收到远端命令退出确认，请核对目标现场')));
+    });
     client.connect({
       host: req.host.host,
       port: req.host.sshPort,

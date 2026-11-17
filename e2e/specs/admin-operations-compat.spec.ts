@@ -29,6 +29,40 @@ test('普通项目成员不能通过环境接入读取系统服务器列表',asy
 });
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`${viewport.width} 已受理的单次批准仍可撤销且不重新批准`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installOperationsFixtures(page);
+    const stamp = new Date().toISOString();
+    let authorization = { id:'consumed-single', projectId:target.projectId, targetId:target.id,
+      branchId:'compat-branch', kind:'single', action:'release', status:'approved',
+      requestedBy:'ai:key:fixture-executor', candidateSha:'a'.repeat(40), mainSha:'b'.repeat(40),
+      reason:'已受理运行仍在连接时允许真实操作员撤销批准', createdAt:stamp,
+      expiresAt:new Date(Date.now()+3600000).toISOString(), allowedPaths:[], consumedBy:'connecting-run',
+      decisions:[{action:'approved',by:'user:independent:独立批准人',at:stamp,reason:'已核对固定版本'}] };
+    const writes: Array<{path:string;body:unknown}> = [];
+    await page.route('**/api/releases/governance?*', route => route.fulfill({json:{authorizations:[authorization],attempts:[],mergeBacks:[]}}));
+    await page.route('**/api/releases/authorizations/consumed-single/revoke', async route => {
+      writes.push({path:new URL(route.request().url()).pathname,body:route.request().postDataJSON()});
+      authorization = {...authorization,status:'revoked'};
+      await route.fulfill({json:{authorization}});
+    });
+    await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
+    const panel=page.getByRole('region',{name:'发布审批与连续调试'});
+    await expect(panel.getByText('本次批准已使用',{exact:true})).toBeVisible();
+    await panel.getByRole('button',{name:'刷新记录',exact:true}).click();
+    await expect(panel.getByText('已刷新审批记录',{exact:true})).toBeVisible();
+    await expect(panel.getByRole('button',{name:'独立批准',exact:true})).toHaveCount(0);
+    await expect(panel.getByRole('button',{name:'拒绝',exact:true})).toHaveCount(0);
+    await expect(panel.getByRole('button',{name:'撤销授权',exact:true})).toBeVisible();
+    await panel.getByRole('textbox',{name:'审批意见',exact:true}).fill('连接期间停止本次发布');
+    await panel.getByRole('button',{name:'撤销授权',exact:true}).click();
+    await expect(panel.getByText('审批决定已保存',{exact:true})).toBeVisible();
+    await expect(panel.getByText('已撤销',{exact:true})).toBeVisible();
+    await expect(panel.getByRole('button',{name:'撤销授权',exact:true})).toHaveCount(0);
+    expect(writes).toEqual([{path:'/api/releases/authorizations/consumed-single/revoke',body:{reason:'连接期间停止本次发布'}}]);
+    expect(authorization.consumedBy).toBe('connecting-run');
+  });
+
   test(`${viewport.width} 所有者可为未绑定主机的项目选择既有服务器，选择本身不创建环境`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await installOperationsFixtures(page);
