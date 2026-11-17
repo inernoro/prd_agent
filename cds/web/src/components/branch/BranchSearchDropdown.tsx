@@ -77,7 +77,7 @@ export function BranchSearchDropdown<T extends TrackedBranchOption>({
   const empty = visibleTracked.length === 0 && visibleRemote.length === 0;
 
   return (<><span ref={fallbackRef} aria-hidden />
-    <AnchoredPopover open anchorRef={effectiveAnchor} onDismiss={onDismiss} width="anchor" minWidthRem={20} maxHeightRem={30}
+    <AnchoredPopover open anchorRef={effectiveAnchor} onDismiss={onDismiss} width="anchor" minWidthRem={20} maxHeightRem={30} tabIntoPanel={false}
       id={id}
       className="cds-overlay-anim z-[300] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
       onKeyDown={event => {

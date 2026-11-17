@@ -995,7 +995,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                         aria-activedescendant={pickerOpen && visibleBranches[highlightedIndex] ? `cds-update-branch-option-${highlightedIndex}` : undefined}
                       />
                       {pickerOpen && visibleBranches.length > 0 ? (
-                        <AnchoredPopover open anchorRef={pickerWrapRef} width="anchor" maxHeightRem={22.5} onDismiss={() => setPickerOpen(false)}
+                        <AnchoredPopover open anchorRef={pickerWrapRef} width="anchor" maxHeightRem={22.5} onDismiss={() => setPickerOpen(false)} tabIntoPanel={false}
                           id="cds-update-branch-options" role="listbox"
                           className="z-[300] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
                           style={{ overscrollBehavior: 'contain' }}

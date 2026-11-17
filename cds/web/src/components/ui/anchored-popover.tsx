@@ -110,11 +110,11 @@ export function useAnchoredPosition({ open, anchorRef, panelRef, width, widthRem
 }
 
 export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, minWidthRem, align, side, gap, maxHeightRem,
-  children, style, autoFocus = false, contentRef, ...props }: Omit<HTMLAttributes<HTMLDivElement>, 'autoFocus'> & {
+  children, style, autoFocus = false, tabIntoPanel = true, contentRef, ...props }: Omit<HTMLAttributes<HTMLDivElement>, 'autoFocus'> & {
   open: boolean; anchorRef: PopoverAnchor; onDismiss?: () => void; width?: number | 'anchor'; widthRem?: number; minWidthRem?: number;
   contentRef?: RefObject<HTMLDivElement>;
   align?: 'start' | 'end'; side?: 'bottom' | 'top' | 'right'; gap?: number; maxHeightRem?: number;
-  autoFocus?: false | 'first' | 'last'; children: ReactNode;
+  autoFocus?: false | 'first' | 'last'; tabIntoPanel?: boolean; children: ReactNode;
 }): JSX.Element | null {
   const localRef = useRef<HTMLDivElement>(null);
   const panelRef = contentRef ?? localRef;
@@ -129,6 +129,7 @@ export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, m
     };
     const key = (event: KeyboardEvent): void => {
       if (event.key === 'Tab' && !event.defaultPrevented) {
+        if (!tabIntoPanel) return; // Comboboxes retain their native form Tab order.
         const panel = panelRef.current, anchor = anchorRef.current;
         const items = [...(panel?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled),button:not(:disabled),input:not(:disabled),a[href],[tabindex="0"]') ?? [])]
           .filter(item => item.getClientRects().length && getComputedStyle(item).visibility !== 'hidden' && item.getAttribute('aria-disabled') !== 'true');
@@ -152,7 +153,7 @@ export function AnchoredPopover({ open, anchorRef, onDismiss, width, widthRem, m
     };
     document.addEventListener('pointerdown', outside); document.addEventListener('focusin', outside); document.addEventListener('keydown', key);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside); document.removeEventListener('keydown', key); };
-  }, [open, anchorRef]);
+  }, [open, anchorRef, tabIntoPanel]);
   useEffect(() => {
     if (!open) { focusedOnOpen.current = false; return; }
     if (!autoFocus || focusedOnOpen.current || position.visibility !== 'visible') return;

@@ -125,6 +125,7 @@ try {
  await bounded('[data-cds-anchored-popover]');checks++;
  await page.evaluate(()=>{Object.assign(visualViewport,{height:8});visualViewport.dispatchEvent(new Event('resize'));});
  await page.waitForFunction(()=>getComputedStyle(document.querySelector('[data-cds-anchored-popover]')).visibility==='hidden');checks++;
+ const keyboardFailures=[];
  // Real page integrations: same components in their actual parent DOM and dismissal paths.
  for(const width of [375,1440]){
   await page.setViewportSize({width,height:600});await page.goto(`${base}/project-list`);await page.getByLabel('项目排序',{exact:true}).waitFor();
@@ -136,9 +137,17 @@ try {
   await page.goto(`${base}/cds-settings#maintenance`);
   const input=page.locator('#cds-update-target-branch');await input.waitFor();await input.focus();await input.fill('fixture');
   await page.getByRole('listbox').waitFor();await input.evaluate(el=>{el.parentElement.style.overflow='hidden';el.scrollIntoView({block:'end'});});
+  await page.keyboard.press('Tab');
+  if(await page.evaluate(()=>Boolean(document.activeElement?.closest('#cds-update-branch-options'))))keyboardFailures.push(`width ${width}: maintenance combobox Tab entered suggestions`);else checks++;
+  await input.focus();
   await bounded('#cds-update-branch-options');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await page.keyboard.press('Escape');
   await page.goto(`${base}/branches/${FIXTURE_PROJECT_ID}`);
   await page.locator('[data-branch-card-id]').first().waitFor();
+  const branchInput=page.locator('input[aria-controls="branch-search-options"]');await branchInput.fill('fixture-keyboard');
+  const branchSubmit=branchInput.locator('xpath=ancestor::form').locator('button[type="submit"]');
+  await page.keyboard.press('Tab');
+  if(!await branchSubmit.evaluate(el=>el===document.activeElement))keyboardFailures.push(`width ${width}: branch search Tab skipped its submit button`);else checks++;
+  await page.keyboard.press('Escape');
   const history=page.getByRole('button',{name:/提交历史$/}).first();
   await history.click();await bounded('[data-cds-anchored-popover]');await page.keyboard.press('Escape');
   const addTag=page.getByTitle('添加标签',{exact:true}).first();
@@ -149,7 +158,7 @@ try {
   assert.ok(await ports.count(),'fixture must expose the folded port menu');
   {await ports.click();await bounded('[data-cds-anchored-popover]');await page.getByRole('menu',{name:'全部服务端口'}).getByRole('menuitem').first().focus();assert.ok(await page.getByRole('menu',{name:'全部服务端口'}).isVisible());await page.keyboard.press('Escape');checks++;}
  }
- const reviewFailures=[];
+ const reviewFailures=[...keyboardFailures];
  for(const width of [375,1440]){
   await page.setViewportSize({width,height:600});await page.goto(`${base}/project-list`);await page.getByLabel('项目排序',{exact:true}).waitFor();
   const switcher=page.getByLabel('切换 CDS 实例',{exact:true});
