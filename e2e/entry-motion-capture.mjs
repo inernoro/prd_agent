@@ -119,16 +119,19 @@ try {
       await page.waitForURL(url => url.origin === gateway.origin && url.pathname === '/quickstart', { timeout: 45000 });
       await page.waitForFunction(() => !document.documentElement.hasAttribute('data-entry-arriving'), null, { timeout: 15000 });
       await page.getByRole('textbox', { name: '我想做什么', exact: true }).waitFor();
-      await page.waitForTimeout(1300); // Include the actual settled greeting and last-frame handoff.
+      await page.waitForTimeout(1300); // Include the actual settled brand and last-frame handoff.
       const evidence = await page.evaluate(() => ({ ...window.__entryEvidence, viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
 
         fineLines: document.querySelectorAll('.portrait-fine-lines path').length,
         settledMovie: (() => { const video=document.querySelector('.portrait-motion'); return video ? {time:video.currentTime,paused:video.paused} : null; })(),
-        greeting: document.querySelector('.gateway-identity-card')?.textContent,
+        brand: document.querySelector('.consciousness-ghost > span')?.textContent,
+        personalGreetingCount: document.querySelectorAll('.gateway-identity-card').length,
         body: document.body.innerText.slice(-500) }));
       await page.screenshot({ path: new URL(`${mode}-settled.png`, output).pathname });
       await writeFile(new URL(`${mode}.json`, output), JSON.stringify(evidence, null, 2));
       assert.ok(evidence.settledMovie?.paused && evidence.settledMovie.time >= 5.1, 'The settled portrait must retain its actual video end pose');
+      assert.equal(evidence.brand, 'LLM Gateway');
+      assert.equal(evidence.personalGreetingCount, 0);
       assert.deepEqual(evidence.viewport, { width: 1920, height: 1080, dpr: 1 });
       assert.ok(evidence.frames.filter(frame => frame.t >= .25 && frame.t < .5).every(frame => frame.paperOpacity === 0), 'Paper must have cleared by the first quarter second');
       assert.ok(evidence.frames.some(frame => frame.renderer === 'native-video'), 'Native motion video must actually play');

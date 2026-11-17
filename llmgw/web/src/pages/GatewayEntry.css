@@ -19,6 +19,7 @@
 @media (max-width: 760px) { .gateway-sound { right: 16px; bottom: 18px; } .gateway-sound span { display: none; } .gateway-entry .consciousness-ghost { top: 30%; } }
 
 .gateway-entry .consciousness-hud-coordinate { bottom: 80px; }
+.gateway-entry .consciousness-ghost > span { font-size: clamp(56px, 6.4vw, 124px); white-space: nowrap; }
 @media (max-width: 760px) { .gateway-entry .consciousness-hud-brand > span { display: none; } }
 
 /* The content viewport owns the scene; the page shell stays transparent and unboxed. */
@@ -251,55 +252,34 @@ html[data-entry-arriving] .is-entry-workspace .lg-console-header.entry-shell-chr
 /* The action row follows the form so long team lists never hide advanced fields. */
 .gateway-flow-frame .lg-qs-create-footer { position: static; }
 
-/* Identity and ambient typography restore the film's sense of a lived-in workspace. */
+/* Quiet ambient labels leave the left-hand brand as the main typographic focus. */
 .gateway-workspace-hud { position: absolute; inset: 0; z-index: 2; pointer-events: none; color: var(--cinema-light); }
-.gateway-identity-card { position: absolute; top: 23%; left: 48px; display: flex; flex-direction: column; gap: 20px; transition: opacity 400ms ease, transform 400ms ease; }
-.gateway-identity-caption { display: flex; align-items: center; gap: 9px; font: var(--fs-micro) var(--font-mono); letter-spacing: .18em; color: color-mix(in srgb, var(--welcome-ink) 62%, transparent); }
-.gateway-identity-caption > i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: none; }
-.gateway-identity-card { --welcome-typeface: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", serif; --welcome-ink: color-mix(in srgb, var(--cinema-light) 88%, var(--cinema-amber)); }
-.gateway-identity-card > strong { display: flex; flex-wrap: wrap; font-family: var(--welcome-typeface); font-size: calc(var(--fs-title) * 1.65); font-weight: 400; letter-spacing: .035em; line-height: 1.55; color: var(--welcome-ink); text-wrap: balance; }
-.gateway-identity-card > strong > span { max-width: 100%; overflow-wrap: anywhere; }
-.gateway-identity-card.is-awaiting-welcome { transition: none; opacity: var(--portrait-welcome, 0); transform: translateY(calc((1 - var(--portrait-welcome, 0)) * 8px)); }
-.gateway-identity-card.is-welcoming { opacity: 1; transform: none; }
-@keyframes gateway-welcome { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-.gateway-identity-meta { display: flex; align-items: center; gap: 12px; margin-top: 8px; color: color-mix(in srgb, var(--cinema-light) 48%, transparent); font-size: var(--fs-micro); letter-spacing: .06em; }
-.gateway-identity-meta > b { height: 12px; width: 1px; background: var(--cinema-border); }
-.gateway-identity-card > p { margin: -8px 0 0; max-width: 30em; font-size: var(--fs-body); line-height: 1.9; letter-spacing: .12em; color: color-mix(in srgb, var(--welcome-ink) 70%, transparent); }
 .gateway-edge-index { position: absolute; top: 36%; right: 30px; font: var(--fs-micro)/1.7 var(--font-mono); letter-spacing: .12em; color: var(--text-muted); }
 .gateway-edge-index > i { display: block; width: 24px; height: 1px; margin-top: 12px; background: var(--cinema-accent); }
 .gateway-session-caption { position: absolute; left: 48px; bottom: 28px; display: flex; align-items: center; gap: 18px; font: var(--fs-micro) var(--font-mono); color: var(--text-muted); letter-spacing: .12em; }
 .gateway-session-caption > i { width: 90px; height: 1px; background: var(--cinema-border); }
 .gateway-workspace-coordinate { position: absolute; right: 32px; bottom: 28px; font: var(--fs-micro)/1.8 var(--font-mono); letter-spacing: .16em; text-align: right; color: var(--text-secondary); }
 .gateway-workspace-coordinate > span { display: block; color: var(--text-muted); font-size: var(--fs-micro); }
-.gateway-quickstart-stage:has(.is-intent) .consciousness-ghost { display: block; top: 57%; left: 5%; width: 32%; opacity: .55; }
-.gateway-quickstart-stage:has(.is-intent) .consciousness-ghost > span { font-size: clamp(100px, 15vw, 240px); }
-.gateway-quickstart-stage:has(.is-flow) .gateway-identity-card { animation: none; opacity: 0; transform: translateY(-12px); visibility: hidden; }
+.gateway-quickstart-stage:has(.is-intent) .consciousness-ghost { display: block; top: 38%; left: 5%; width: 46%; opacity: .55; }
+.gateway-quickstart-stage:has(.is-intent) .consciousness-ghost > span { font-size: clamp(56px, 6.4vw, 124px); white-space: nowrap; }
 .gateway-quickstart-stage:has(.is-flow) .gateway-edge-index { display: none; }
 .gateway-quickstart-stage:has(.is-flow) .gateway-session-caption { display: none; }
 .gateway-quickstart-stage:has(.is-flow) .gateway-workspace-coordinate { display: none; }
 .gateway-quickstart-stage.is-arriving :is(.gateway-edge-index, .gateway-session-caption, .gateway-workspace-coordinate) { opacity: var(--portrait-brandFill, 0); }
 .gateway-chrome-sound.is-pending { width: auto; padding: 0 10px; gap: 8px; display: flex; border: 1px solid var(--cinema-border); border-radius: 24px; }
 .gateway-chrome-sound > span { font-size: var(--fs-caption); white-space: nowrap; color: var(--text-secondary); }
-@media (max-width: 960px) { .gateway-identity-card { left: 24px; } .gateway-edge-index { display: none; } .gateway-session-caption { left: 24px; } }
+@media (max-width: 960px) { .gateway-edge-index { display: none; } .gateway-session-caption { left: 24px; } }
 @media (max-width: 600px) {
-  .gateway-identity-card { top: 18%; left: 22px; gap: 12px; }
-  .gateway-identity-card > strong { font-size: calc(var(--fs-title) * 1.25); }
-  .gateway-identity-card > p { font-size: var(--fs-body); letter-spacing: .06em; }
-  .gateway-identity-caption { font-size: var(--fs-micro); letter-spacing: .1em; }
   .gateway-workspace-coordinate { right: 20px; bottom: 22px; font-size: var(--fs-micro); }
   .gateway-session-caption { left: 22px; bottom: 24px; gap: 10px; }
   .gateway-session-caption > span, .gateway-session-caption > i { display: none; }
-  .gateway-quickstart-stage:has(.is-intent) .consciousness-ghost { top: 67%; left: 2%; opacity: .45; }
-  .gateway-quickstart-stage:has(.is-intent) .consciousness-ghost > span { font-size: 38vw; }
+  .gateway-quickstart-stage:has(.is-intent) .consciousness-ghost { top: 20%; left: 6%; width: 88%; opacity: .55; }
+  .gateway-quickstart-stage:has(.is-intent) .consciousness-ghost > span { font-size: clamp(40px, 10vw, 64px); }
   .gateway-quickstart-stage:has(.is-intent) .consciousness-ghost > i { width: 160px; }
   .gateway-chrome-sound.is-pending { gap: 5px; padding: 0 8px; }
   .is-entry-workspace .lg-console-brand > .lg-brand-mark { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .gateway-identity-card, .gateway-identity-card.is-welcoming { transition: none; animation: none; } }
-.gateway-identity-card { width: min(560px, calc(100% - 96px)); }
-.gateway-identity-meta { overflow: hidden; white-space: nowrap; }
 .gateway-chrome-sound .gateway-sound-label-short { display: none; }
-@media (max-width: 600px) { .gateway-identity-card { width: calc(100% - 44px); } }
 @media (max-width: 400px) {
   .gateway-chrome-sound .gateway-sound-label-long { display: none; }
   .gateway-chrome-sound .gateway-sound-label-short { display: inline; }

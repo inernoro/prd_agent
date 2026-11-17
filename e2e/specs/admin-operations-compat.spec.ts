@@ -427,7 +427,8 @@ for (const width of [390, 1440])
       await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
 
       await page.reload();
-      await expect(page.locator(".gateway-identity-card > strong")).toHaveText(/^(早上好|午安|下午好|晚上好|夜深了)，demo。$/);
+      await expect(page.locator(".gateway-identity-card")).toHaveCount(0);
+      await expect(page.locator(".consciousness-ghost > span")).toHaveText("LLM Gateway");
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
       const starters = page.getByRole("group", { name: "从一个想法开始" });
       await expect(starters.getByRole("button")).toHaveCount(4);

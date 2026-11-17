@@ -22,7 +22,7 @@ export function ConsciousnessScene({ fog = false, arriving = false, frameTime }:
     <div className={`consciousness-scene${fog ? ' has-fog' : ''}${arriving || frameTime !== undefined ? ' is-arriving' : ''}`} aria-hidden="true">
       <div className="consciousness-camera"><ConsciousnessPortrait fog={fog} arriving={arriving} frameTime={frameTime} /></div>
       <div className="consciousness-mist" />
-      <div className="consciousness-ghost"><span data-word="GW">GW</span><i /><small>欢迎进入模型网关</small></div>
+      <div className="consciousness-ghost"><span data-word="LLM Gateway">LLM Gateway</span><i /><small>欢迎进入模型网关</small></div>
       <div className="consciousness-grain" />
     </div>
   );
