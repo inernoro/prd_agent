@@ -35,8 +35,10 @@ describe.skipIf(!image)('原生R2恢复清场（合成归档、替代传输）',
       const dump = await docker(['exec', source, 'sh', '-c', 'mongodump --host 127.0.0.1 --db synthetic_recovery --archive --gzip | base64 -w0']);
       expect(dump.exitCode).toBe(0);
       const body = Buffer.from(dump.stdout.trim(), 'base64'); expect(body.length).toBeGreaterThan(100);
-      const run = async (corrupt = false, hold = false) => {
+      const run = async (corrupt = false, hold = false, replaceReviewed = false) => {
         const bytes = corrupt ? Buffer.from('invalid synthetic gzip archive') : body;
+        const approvedBytes = replaceReviewed ? body : bytes;
+        let gets = 0;
         let own: { id: string; label: string; root: string } | undefined;
         const runner: RecoveryDrillCommandRunner = async (command, args) => {
           expect(command).toBe('docker');
@@ -55,17 +57,25 @@ describe.skipIf(!image)('原生R2恢复清场（合成归档、替代传输）',
           }
           return r;
         };
-        const fetchImpl: typeof fetch = async (_url, init) => init?.method === 'HEAD'
-          ? new Response(null, { headers: { 'content-length': String(bytes.length), 'x-amz-meta-sha256': crypto.createHash('sha256').update(bytes).digest('hex') } }) : new Response(bytes);
+        const fetchImpl: typeof fetch = async (_url, init) => {
+          if (init?.method === 'HEAD') return new Response(null, { headers: { 'content-length': String(bytes.length), 'x-amz-meta-sha256': crypto.createHash('sha256').update(bytes).digest('hex') } });
+          gets++; return new Response(bytes);
+        };
         const promise = runMongoR2RecoveryDrill({ config: { endpoint: 'https://storage.invalid', bucket: 'synthetic', prefix: '', accessKeyId: 'fake', secretAccessKey: 'fake' },
           objectKey: 'synthetic.archive.gz', mongoImage: image, fetchImpl, commandRunner: runner,
+          expectedBackup: { bytes: approvedBytes.length, sha256: crypto.createHash('sha256').update(approvedBytes).digest('hex') },
           maxArchiveBytes: 1024 ** 2, dataBytes: 1024 ** 3, memoryBytes: 1536 * 1024 ** 2, timeoutMs: 60_000, readinessDelayMs: 250 });
+        if (replaceReviewed) {
+          await expect(promise).rejects.toThrow('已核对对象不一致'); expect(gets).toBe(0); expect(own).toBeUndefined();
+          return;
+        }
         if (hold) { await expect(promise).rejects.toThrow('清场未确认'); expect(fs.existsSync(path.join(own!.root, 'backup.archive.gz'))).toBe(true); expect((await docker(['inspect', own!.id])).exitCode).toBe(0); }
         else if (corrupt) await expect(promise).rejects.toThrow('恢复离机备份失败');
         else expect(await promise).toMatchObject({ databaseCount: 1, collectionCount: 1, nonEmptyCollectionCount: 1 });
         if (!hold) { expect((await docker(['inspect', own!.id])).exitCode).not.toBe(0); expect(fs.existsSync(own!.root)).toBe(false); }
       };
-      await run(); await run(true); await run(false, true);
+      await run(); await run(true); await run(false, true); await run(true, false, true);
+      evidence.reviewedIdentityPinned = true;
       evidence.passed = true;
     } finally {
       for (const own of held) {

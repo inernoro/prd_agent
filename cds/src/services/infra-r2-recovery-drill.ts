@@ -91,6 +91,8 @@ export async function runMongoR2RecoveryDrill(opts: {
   dataBytes?: number;
   memoryBytes?: number;
   timeoutMs?: number;
+  /** Pin the reviewed object; a subsequent HEAD alone must not authorize a replacement. */
+  expectedBackup?: { bytes: number; sha256: string };
 }): Promise<MongoRecoveryDrillResult> {
   const GiB = 1024 ** 3;
   const maxArchiveBytes = opts.maxArchiveBytes ?? 4 * GiB;
@@ -145,6 +147,7 @@ export async function runMongoR2RecoveryDrill(opts: {
     const remote = await downloadAndVerifyR2Backup({
       config: opts.config, objectKey: opts.objectKey, filePath: archive, fetchImpl: opts.fetchImpl,
       maxBytes: maxArchiveBytes, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+      expectedBackup: opts.expectedBackup,
     });
     const downloadRoot = await fs.promises.lstat(root);
     if (!downloadRoot.isDirectory() || downloadRoot.dev !== rootIdentity.dev || downloadRoot.ino !== rootIdentity.ino) throw new Error('下载目录身份变化');

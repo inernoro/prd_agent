@@ -40,8 +40,14 @@ export async function downloadAndVerifyR2Backup(opts: {
   fetchImpl?: typeof fetch;
   /** Optional disk budget for recovery drills; checked before GET and on every chunk. */
   maxBytes?: number;
+  /** Identity captured during review, independent of mutable remote metadata. */
+  expectedBackup?: { bytes: number; sha256: string };
   signal?: AbortSignal;
 }): Promise<VerifiedRemoteBackup> {
+  const pinned = opts.expectedBackup ? { ...opts.expectedBackup } : undefined;
+  if (pinned && (!Number.isSafeInteger(pinned.bytes) || pinned.bytes <= 0 || !/^[a-f0-9]{64}$/.test(pinned.sha256))) {
+    throw new Error('已核对备份的大小或 sha256 无效');
+  }
   const fetchImpl = opts.fetchImpl ?? fetch;
   const url = objectUrl(opts.config, opts.objectKey);
   const now = opts.now ?? new Date();
@@ -62,6 +68,9 @@ export async function downloadAndVerifyR2Backup(opts: {
   const expectedSha256 = String(head.headers.get('x-amz-meta-sha256') || '').trim().toLowerCase();
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
     throw new Error('离机备份缺少可信的大小或 sha256 元数据');
+  }
+  if (pinned && (pinned.bytes !== expectedBytes || pinned.sha256 !== expectedSha256)) {
+    throw new Error('远端备份身份与本次已核对对象不一致，未发起下载');
   }
   if (opts.maxBytes !== undefined && (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes <= 0 || expectedBytes > opts.maxBytes)) {
     throw new Error('离机备份超过本次下载空间预算');

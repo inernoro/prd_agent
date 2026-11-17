@@ -16,6 +16,49 @@ afterEach(() => {
 });
 
 describe('R2 离机备份', () => {
+  it.each(['size', 'checksum', 'caller-mutated'] as const)('已核对对象被%s替换时不GET、不覆盖原文件', async (replacement) => {
+    const file = path.join(os.tmpdir(), `cds-r2-pin-${replacement}-${process.pid}.bin`);
+    created.push(file); fs.writeFileSync(file, 'known-good');
+    const approved = { bytes: 7, sha256: 'a'.repeat(64) };
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      calls.push(String(init?.method));
+      if (replacement === 'caller-mutated') approved.sha256 = 'b'.repeat(64);
+      return new Response(null, { headers: { 'content-length': String(replacement === 'size' ? 8 : 7),
+        'x-amz-meta-sha256': replacement === 'size' ? 'a'.repeat(64) : 'b'.repeat(64) } });
+    };
+    await expect(downloadAndVerifyR2Backup({ config: { endpoint: 'https://storage.invalid', bucket: 'b', prefix: '', accessKeyId: 'fake', secretAccessKey: 'fake' },
+      objectKey: 'reviewed', filePath: file, expectedBackup: approved, fetchImpl })).rejects.toThrow('已核对对象不一致');
+    expect(calls).toEqual(['HEAD']); expect(fs.readFileSync(file, 'utf8')).toBe('known-good');
+  });
+
+  it.each([{ bytes: 0, sha256: 'a'.repeat(64) }, { bytes: 1, sha256: 'invalid' },
+    { bytes: Number.MAX_SAFE_INTEGER + 1, sha256: 'a'.repeat(64) }])('无效固定身份在网络和文件写入前拒绝 %j', async (expectedBackup) => {
+    let calls = 0;
+    await expect(downloadAndVerifyR2Backup({ config: { endpoint: 'https://storage.invalid', bucket: 'b', prefix: '', accessKeyId: 'fake', secretAccessKey: 'fake' },
+      objectKey: 'reviewed', filePath: '/unused', expectedBackup,
+      fetchImpl: async () => { calls++; return new Response(null); } })).rejects.toThrow('大小或 sha256 无效');
+    expect(calls).toBe(0);
+  });
+
+  it.each([false, true])('固定对象真实下载；HEAD后替换字节%s时拒绝转正', async (swapAfterHead) => {
+    const file = path.join(os.tmpdir(), `cds-r2-pin-get-${swapAfterHead}-${process.pid}.bin`);
+    created.push(file); fs.writeFileSync(file, 'known-good');
+    const body = Buffer.from('reviewed-archive');
+    const expectedBackup = { bytes: body.length, sha256: crypto.createHash('sha256').update(body).digest('hex') };
+    const fetchImpl: typeof fetch = async (_url, init) => init?.method === 'HEAD'
+      ? new Response(null, { headers: { 'content-length': String(body.length), 'x-amz-meta-sha256': expectedBackup.sha256 } })
+      : new Response(swapAfterHead ? Buffer.alloc(body.length) : body);
+    const operation = downloadAndVerifyR2Backup({ config: { endpoint: 'https://storage.invalid', bucket: 'b', prefix: '', accessKeyId: 'fake', secretAccessKey: 'fake' },
+      objectKey: 'reviewed', filePath: file, expectedBackup, fetchImpl });
+    if (swapAfterHead) {
+      await expect(operation).rejects.toThrow('checksum'); expect(fs.readFileSync(file, 'utf8')).toBe('known-good');
+    } else {
+      expect(await operation).toEqual({ objectKey: 'reviewed', ...expectedBackup }); expect(fs.readFileSync(file)).toEqual(body);
+    }
+    expect(fs.readdirSync(os.tmpdir()).some((name) => name.startsWith(`${path.basename(file)}.tmp-`))).toBe(false);
+  });
+
   it('恢复下载先检查空间预算，超限不发起GET', async () => {
     const calls: string[] = [];
     const file = path.join(os.tmpdir(), `cds-r2-budget-${process.pid}.bin`);

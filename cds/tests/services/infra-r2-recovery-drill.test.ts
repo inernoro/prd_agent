@@ -25,12 +25,17 @@ function fixture(change?: (args: string[], state: State) => void | { exitCode: n
     if (a.some((x) => x.includes('listDatabases:1,nameOnly:true'))) return { exitCode: 0, stdout: '{"databaseCount":2,"collectionCount":7,"nonEmptyCollectionCount":5,"validatedCollectionCount":7}', stderr: '' };
     return { exitCode: 0, stdout: a[0] === 'create' ? id : '', stderr: '' };
   };
-  const run = () => runMongoR2RecoveryDrill({ config, objectKey: 'cds/synthetic.gz', mongoImage: 'mongo:8', fetchImpl, commandRunner: runner,
+  const run = (expectedBackup?: { bytes: number; sha256: string }) => runMongoR2RecoveryDrill({ config, objectKey: 'cds/synthetic.gz', mongoImage: 'mongo:8', fetchImpl, commandRunner: runner, expectedBackup,
     maxArchiveBytes: 1024, dataBytes: 64 * 1024 ** 2, memoryBytes: 256 * 1024 ** 2, readinessAttempts: 1, readinessDelayMs: 0 });
   return { run, calls, state };
 }
 const fail = { exitCode: 2, stdout: '', stderr: 'PRIVATE-DOCUMENT-SECRET' };
 describe('R2 Mongo 隔离恢复与清场', () => {
+  it('操作包固定身份不匹配时不创建容器且空演练目录已清场', async () => {
+    const f = fixture();
+    await expect(f.run({ bytes: 17, sha256: 'f'.repeat(64) })).rejects.toThrow('已核对对象不一致');
+    expect(f.calls.some(a => a[0] === 'create')).toBe(false);
+  });
   it('未指定源库同版本镜像时不使用默认版本恢复', async () => {
     await expect(runMongoR2RecoveryDrill({ config, objectKey: 'synthetic' })).rejects.toThrow('必须显式指定');
   });
