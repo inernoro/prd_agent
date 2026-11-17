@@ -74,6 +74,7 @@ await context.addInitScript(() => {
       previous = t;
       const gradient = portrait.querySelector('linearGradient[gradientUnits="userSpaceOnUse"]');
       evidence.frames.push({ epoch: Date.now(), t, eye: Number(portrait.dataset.eyeOpening), renderer: portrait.dataset.renderer,
+        paperOpacity: Number(getComputedStyle(document.querySelector('.gateway-arrival-paper') || portrait).opacity),
         mask: [gradient?.getAttribute('y1'), gradient?.getAttribute('y2')], width: innerWidth, height: innerHeight });
     }
     requestAnimationFrame(observe);
@@ -128,6 +129,7 @@ try {
       await writeFile(new URL(`${mode}.json`, output), JSON.stringify(evidence, null, 2));
       assert.ok(evidence.settledMovie?.paused && evidence.settledMovie.time >= 5.1, 'The settled portrait must retain its actual video end pose');
       assert.deepEqual(evidence.viewport, { width: 1920, height: 1080, dpr: 1 });
+      assert.ok(evidence.frames.filter(frame => frame.t >= .25 && frame.t < .5).every(frame => frame.paperOpacity === 0), 'Paper must have cleared by the first quarter second');
       assert.ok(evidence.frames.some(frame => frame.renderer === 'native-video'), 'Native motion video must actually play');
       assert.ok(evidence.videoFrames.length > 120, 'Too few actually presented portrait video frames');
       assert.ok(evidence.frames.some(frame => frame.eye > .15 && frame.eye < .85), 'Missing actual intermediate eyelid frames');
