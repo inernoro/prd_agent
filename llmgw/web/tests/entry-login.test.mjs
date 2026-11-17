@@ -37,7 +37,7 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     assert.equal(entryAsset('verified.wav'), '/llmgw/media/entry/verified.wav');
     dom.reconfigure({ url: 'http://localhost/login' });
     const { gatewayLoginDestination, hasQuickstartArrival } = await server.ssrLoadModule('/src/components/entry/quickstartArrival.ts');
-    for (const path of [null, '/', '//outside', 'https://outside', '/login']) assert.equal(gatewayLoginDestination(path), '/quickstart');
+    for (const path of [null, '/', '//outside', 'https://outside', '/login']) assert.equal(gatewayLoginDestination(path, {role:'admin'}), '/quickstart');
     assert.equal(gatewayLoginDestination('/logs?requestId=sample'), '/logs?requestId=sample');
     ({ finishEntryArrival } = await server.ssrLoadModule('/src/components/entry/entryArrival.ts'));
     const { GatewayQuickstartStage } = await server.ssrLoadModule('/src/components/entry/GatewayQuickstartStage.tsx');
@@ -77,7 +77,7 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     await act(async () => { await new Promise(resolve => setTimeout(resolve,850)); });
     assert.equal(document.querySelector('.gateway-arrival-copy'),null);
     assert.deepEqual(globalThis.__gatewayRoutes,[['/quickstart',{replace:true}]]);
-    const { gatewayLoginDestination } = await server.ssrLoadModule('/src/components/entry/quickstartArrival.ts');
+    assert.equal(gatewayLoginDestination(null), '/');
     for (const role of ['owner','admin','developer','viewer']) assert.equal(gatewayLoginDestination(null, {role}), '/quickstart');
     for (const candidate of [null, '/', '//outside.test', '/login']) assert.equal(gatewayLoginDestination(candidate, {role:'billing'}), '/');
     assert.equal(gatewayLoginDestination('/usage', {role:'billing'}), '/usage');
