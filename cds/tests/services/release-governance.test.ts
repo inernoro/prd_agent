@@ -7,6 +7,7 @@ import { ReleaseGovernanceService, normalizeDebugPaths, pathAllowed, type Govern
 import { ReleaseGovernanceGit } from '../../src/services/release-governance-git.js';
 import { ReleaseService } from '../../src/services/release-service.js';
 import { resetReleaseTargetLocksForTest } from '../../src/services/release-target-lock.js';
+import { releaseTargetConfigFingerprint } from '../../src/services/release-target-history.js';
 import type { ReleaseRun, ReleaseTarget } from '../../src/types.js';
 
 const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40), MAIN = 'd'.repeat(40);
@@ -75,6 +76,20 @@ describe('独立批准与连续调试的服务层约束', () => {
     const record = await approve({ actor: agent });
     const receipt = await service.authorize(input({ operator: agent, authorizationId: record.id }));
     expect(receipt).toMatchObject({ requestedBy: agent, approvedBy: reviewer, candidateSha: B, baselineReleaseId: 'baseline' });
+  });
+  it.each(['targetFingerprint','projectFingerprint'] as const)('批准的 %s 使用完整 SHA256，旧截断摘要不能放行',async(field)=>{
+    const record=await approve();
+    expect(record[field]).toMatch(/^(ref|pid):[a-f0-9]{64}$/);
+    expect((await service.authorize(input({authorizationId:record.id})))?.[field]).toBe(record[field]);
+    const data=state.getReleaseGovernance();data.authorizations[record.id][field]=record[field].slice(0,16);state.saveReleaseGovernance(data);
+    await expect(service.authorize(input({authorizationId:record.id}))).rejects.toThrow('配置或项目身份已变化');
+  });
+  it('审批配置摘要保留字段边界，不将带换行的不同原值连接成相同身份',()=>{
+    const target=state.getReleaseTarget('prod')!;
+    const first={...target,ssh:{...target.ssh!,appPath:'/tmp/repo\nssh.deployCommand=benign',deployCommand:'malicious'}};
+    const second={...target,ssh:{...target.ssh!,appPath:'/tmp/repo',deployCommand:'benign\nssh.deployCommand=malicious'}};
+    expect(releaseTargetConfigFingerprint(first)).toBe(releaseTargetConfigFingerprint(second));
+    expect(releaseTargetConfigFingerprint(first,true)).not.toBe(releaseTargetConfigFingerprint(second,true));
   });
   it('真实申请人可为指定任务申请，独立批准后仅该任务可执行；修改任务使批准失效', async () => {
     const job = { id:'job-release', projectId:'p', name:'定时发布', enabled:false, schedule:{type:'manual' as const},

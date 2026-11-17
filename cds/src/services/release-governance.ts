@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import type { StateService } from './state.js';
-import type { ReleaseRun, ReleaseTarget } from '../types.js';
+import type { ReleaseRun, ReleaseTarget, Project } from '../types.js';
 import type { ReleaseAuthorization, ReleaseConflictCheck, ReleaseGovernanceReceipt, ReleaseMergeBack } from '../domain/release-governance.js';
 import { releaseTargetConfigFingerprint, recordReleaseTargetUpsert, ReleaseTargetHistoryStore } from './release-target-history.js';
-import { projectIdentityFingerprint } from './release-strategy.js';
+import { releaseProjectIdentity, normalizeRepositoryIdentity } from './release-strategy.js';
 import { FULL_SHA, type ReleaseGovernanceGit } from './release-governance-git.js';
 import { isReleaseRunInFlight, isSuccessfulReleaseRun } from './release-retention.js';
 import { peekReleaseTargetLock } from './release-target-lock.js';
@@ -19,6 +19,11 @@ const actorId = (actor: string) => human(actor) ? actor.split(':').slice(0, 2).j
 const known = (actor: string) => human(actor) || /^ai:key:[A-Za-z0-9_-]+$/.test(actor);
 const executionActor = (record: ReleaseAuthorization) => record.scheduledJobId ? `system:scheduled-job:${record.scheduledJobId}` : record.requestedBy;
 const id = (prefix: string) => prefix + crypto.randomBytes(12).toString('hex');
+const approvalProjectFingerprint = (project?: Project): string => {
+  if (!project) return '';
+  const identity=releaseProjectIdentity(project);
+  return 'pid:'+crypto.createHash('sha256').update(JSON.stringify({...identity,repository:normalizeRepositoryIdentity(identity.repository)})).digest('hex');
+};
 
 export function normalizeDebugPaths(value: unknown): string[] {
   if (!Array.isArray(value) || !value.length || value.length > 32) throw new ReleaseGovernanceError('请限定 1–32 个文件或目录，目录以 / 结尾');
@@ -177,7 +182,7 @@ export class ReleaseGovernanceService {
     const record: ReleaseAuthorization = { id: id('ra_'), projectId: target.projectId, targetId: target.id,
       branchId: branch.id, branchName: branch.branch, kind: input.kind, action, rollbackReleaseId: previous?.releaseId, candidateSha: candidate,
       basisSha: baseline?.commitSha || check.mainSha, baselineReleaseId: baseline?.releaseId || null, mainSha: check.mainSha,
-      targetFingerprint: releaseTargetConfigFingerprint(target), projectFingerprint: projectIdentityFingerprint(this.state.getProject(target.projectId)),
+      targetFingerprint: releaseTargetConfigFingerprint(target,true), projectFingerprint: approvalProjectFingerprint(this.state.getProject(target.projectId)),
       allowedPaths, requestedBy: input.actor, scheduledJobId: input.scheduledJobId, scheduledJobFingerprint,
       reason: input.reason.trim(), createdAt: now.toISOString(),
       expiresAt: new Date(expires).toISOString(), status: 'pending', conflictCheck: check };
@@ -227,8 +232,8 @@ export class ReleaseGovernanceService {
     if (record.kind === 'single' && (record.candidateSha !== input.commitSha || record.consumedBy && record.consumedBy !== input.runId)) throw new ReleaseGovernanceError('单次批准已使用或版本已变化');
     const target = this.target(input.targetId), branch = this.state.getBranch(input.branchId);
     if ((!branch && record.action !== 'rollback') || branch && (branch.branch !== record.branchName || branch.projectId !== record.projectId)) throw new ReleaseGovernanceError('批准的分支身份已变化');
-    if (releaseTargetConfigFingerprint(target) !== record.targetFingerprint
-      || projectIdentityFingerprint(this.state.getProject(record.projectId)) !== record.projectFingerprint) throw new ReleaseGovernanceError('环境配置或项目身份已变化，请重新申请');
+    if (releaseTargetConfigFingerprint(target,true) !== record.targetFingerprint
+      || approvalProjectFingerprint(this.state.getProject(record.projectId)) !== record.projectFingerprint) throw new ReleaseGovernanceError('环境配置或项目身份已变化，请重新申请');
     const baseline = this.state.getLatestSuccessfulReleaseRun(input.targetId);
     if ((baseline?.releaseId || null) !== record.baselineReleaseId
       && !(record.kind === 'debug' && baseline?.governance?.authorizationId === record.id)) throw new ReleaseGovernanceError('生产基线已被其他发布改变，批准已失效');

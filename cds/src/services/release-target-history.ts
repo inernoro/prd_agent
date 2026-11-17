@@ -144,14 +144,15 @@ function rawTrackedValue(raw: unknown): string | undefined {
  * 取**原值**做单向哈希（见 rawTrackedValue）：sha256 不可逆，指纹里不残留任何明文，
  * 落库安全；而用脱敏值会让「命令换了但掩码后一样」的两个配置撞成同一个指纹。
  */
-export function releaseTargetConfigFingerprint(target: ReleaseTarget | undefined): string {
+export function releaseTargetConfigFingerprint(target: ReleaseTarget | undefined, fullDigest = false): string {
   if (!target) return '';
   const parts = RELEASE_TARGET_TRACKED_PATHS.map(({ path: dottedPath }) => {
     // 字段名与值一起进哈希，避免「A 字段清空、B 字段填上同一个值」互相抵消。
     const value = rawTrackedValue(readPath(target, dottedPath));
     return `${dottedPath}=${value ?? ''}`;
   });
-  return fingerprint(parts.join('\n'));
+  // 批准是安全边界：使用完整摘要及无歧义字段编码；既有预检/批次缓存保持原身份。
+  return fullDigest ? `ref:${crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex')}` : fingerprint(parts.join('\n'));
 }
 
 export function formatTrackedValue(raw: unknown, dottedPath: string): string | undefined {
