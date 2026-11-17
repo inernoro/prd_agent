@@ -16,6 +16,29 @@ afterEach(() => {
 });
 
 describe('R2 离机备份', () => {
+  it('恢复下载先检查空间预算，超限不发起GET', async () => {
+    const calls: string[] = [];
+    const file = path.join(os.tmpdir(), `cds-r2-budget-${process.pid}.bin`);
+    created.push(file);
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      calls.push(String(init?.method));
+      return new Response(null, { headers: { 'content-length': '1024', 'x-amz-meta-sha256': 'a'.repeat(64) } });
+    };
+    await expect(downloadAndVerifyR2Backup({ config: { endpoint: 'https://storage.invalid', bucket: 'b', prefix: '', accessKeyId: 'fake', secretAccessKey: 'fake' },
+      objectKey: 'synthetic', filePath: file, maxBytes: 100, fetchImpl })).rejects.toThrow('空间预算');
+    expect(calls).toEqual(['HEAD']); expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it('响应超过HEAD声明时立即拒绝并保留既有目标', async () => {
+    const file = path.join(os.tmpdir(), `cds-r2-stream-budget-${process.pid}.bin`);
+    created.push(file); fs.writeFileSync(file, 'known-good');
+    const fetchImpl: typeof fetch = async (_url, init) => init?.method === 'HEAD'
+      ? new Response(null, { headers: { 'content-length': '1', 'x-amz-meta-sha256': 'a'.repeat(64) } }) : new Response(Buffer.alloc(128));
+    await expect(downloadAndVerifyR2Backup({ config: { endpoint: 'https://storage.invalid', bucket: 'b', prefix: '', accessKeyId: 'fake', secretAccessKey: 'fake' },
+      objectKey: 'synthetic', filePath: file, maxBytes: 100, fetchImpl })).rejects.toThrow('超过已验证大小');
+    expect(fs.readFileSync(file, 'utf8')).toBe('known-good');
+    expect(fs.readdirSync(os.tmpdir()).some((name) => name.startsWith(`cds-r2-stream-budget-${process.pid}.bin.tmp-`))).toBe(false);
+  });
   it('配置缺项时返回未知而不是假装已配置', () => {
     expect(r2BackupConfigFromEnv({ R2_ENDPOINT: 'https://storage.invalid' })).toBeNull();
   });

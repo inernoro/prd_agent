@@ -38,6 +38,9 @@ export async function downloadAndVerifyR2Backup(opts: {
   filePath: string;
   now?: Date;
   fetchImpl?: typeof fetch;
+  /** Optional disk budget for recovery drills; checked before GET and on every chunk. */
+  maxBytes?: number;
+  signal?: AbortSignal;
 }): Promise<VerifiedRemoteBackup> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const url = objectUrl(opts.config, opts.objectKey);
@@ -45,6 +48,7 @@ export async function downloadAndVerifyR2Backup(opts: {
   const emptyHash = crypto.createHash('sha256').update('').digest('hex');
   const head = await fetchImpl(url, {
     method: 'HEAD',
+    signal: opts.signal,
     headers: signedHeaders({
       config: opts.config,
       method: 'HEAD',
@@ -59,9 +63,13 @@ export async function downloadAndVerifyR2Backup(opts: {
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
     throw new Error('离机备份缺少可信的大小或 sha256 元数据');
   }
+  if (opts.maxBytes !== undefined && (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes <= 0 || expectedBytes > opts.maxBytes)) {
+    throw new Error('离机备份超过本次下载空间预算');
+  }
 
   const get = await fetchImpl(url, {
     method: 'GET',
+    signal: opts.signal,
     headers: signedHeaders({
       config: opts.config,
       method: 'GET',
@@ -80,6 +88,10 @@ export async function downloadAndVerifyR2Backup(opts: {
   const digest = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       bytes += chunk.byteLength;
+      if (bytes > expectedBytes || (opts.maxBytes !== undefined && bytes > opts.maxBytes)) {
+        callback(new Error('离机备份下载字节超过已验证大小或空间预算'));
+        return;
+      }
       hash.update(chunk);
       callback(null, chunk);
     },
@@ -89,6 +101,7 @@ export async function downloadAndVerifyR2Backup(opts: {
       Readable.fromWeb(get.body as never),
       digest,
       fs.createWriteStream(tmp, { flags: 'wx', mode: 0o600 }),
+      { signal: opts.signal },
     );
     const actualSha256 = hash.digest('hex');
     if (bytes !== expectedBytes || actualSha256 !== expectedSha256) {
