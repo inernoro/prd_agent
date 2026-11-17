@@ -1,0 +1,29 @@
+name: Render Portrait Motion Asset
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C e2e exec playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - run: node e2e/render-entry-portrait.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: entry-portrait-${{ github.sha }}
+          path: work/entry-portrait/portrait-motion.mp4
+          retention-days: 14
