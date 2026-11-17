@@ -77,6 +77,31 @@ describe('发布治理的真实隔离合并', () => {
     expect(result.changedPaths).toContain('allowed/line\nname.txt');
     expect(result.changedPaths.every(p => !p.startsWith('\n'))).toBe(true);
   });
+  it('吸收当前生产基线只计调试分支新增范围，不改变原索引、内容或对象库',async()=>{
+    git('checkout','-b','debug');commit('allowed/ui.txt','debug\n');
+    git('checkout','main');const production=commit('infra/hotfix.txt','already live\n');git('push','origin','main');
+    git('checkout','debug');git('merge','--no-ff','main','-m','吸收线上基线');const candidate=git('rev-parse','HEAD');
+    fs.writeFileSync(path.join(repo,'untracked.txt'),'保留未提交内容');
+    const index=fs.readFileSync(path.join(repo,'.git/index')),status=git('status','--porcelain'),objects=git('count-objects','-v');
+    const result=await reader.inspect('p',candidate,production);
+    expect(result).toMatchObject({status:'clean',includesBaseline:true,changedPaths:['allowed/ui.txt']});
+    expect(fs.readFileSync(path.join(repo,'.git/index'))).toEqual(index);expect(git('status','--porcelain')).toBe(status);
+    expect(git('count-objects','-v')).toBe(objects);expect(git('branch','--show-current')).toBe('debug');
+  });
+  for(const octopus of [false,true])it(`合并时新增又在后续合并撤回的越界路径仍累计检查：${octopus?'多父合并':'双父合并'}`,async()=>{
+    git('checkout','-b','side-a');commit('allowed/a.txt','one\n');
+    if(octopus){git('checkout','-b','side-b',basis);commit('allowed/b.txt','one\n');}
+    git('checkout','-b','debug',basis);commit('allowed/ui.txt','debug\n');
+    git('merge','--no-ff','--no-commit','side-a',...(octopus?['side-b']:[]));
+    commit('outside.txt','introduced only in merge\n');
+    git('checkout','side-a');commit('allowed/a2.txt','two\n');
+    if(octopus){git('checkout','side-b');commit('allowed/b2.txt','two\n');}
+    git('checkout','debug');git('merge','--no-ff','--no-commit','side-a',...(octopus?['side-b']:[]));
+    git('rm','outside.txt');git('commit','-m','合并时撤回越界');const candidate=git('rev-parse','HEAD');
+    expect(git('diff','--name-only',basis,candidate)).not.toContain('outside.txt');
+    const result=await reader.inspect('p',candidate,basis);
+    expect(result.status).toBe('clean');expect(result.changedPaths).toContain('outside.txt');
+  });
   it('从可信 PR 引用取齐对象并核对完整 head，拒绝错配版本', async () => {
     git('checkout','-b','hotfix'); const head = commit('allowed/ui.txt','review\n');
     git('push','origin',`${head}:refs/pull/7/head`);

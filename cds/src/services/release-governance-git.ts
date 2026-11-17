@@ -90,17 +90,22 @@ export class ReleaseGovernanceGit {
       const basis = basisSha || result.mainSha;
       result.includesBaseline = await this.includes(projectId, basis, candidateSha);
       const net = await checked(['-C', root, 'diff', '--name-only', '-z', '--no-renames', basis, candidateSha, '--']);
-      // Include reverted changes and merge-parent changes, rather than only the final net diff.
-      const history = await checked(['-C', root, 'log', '--format=', '--name-only', '-z', '--no-renames',
-        '--diff-merges=separate', `${basis}..${candidateSha}`, '--']);
-      if (net && !net.endsWith('\0') || history && !history.endsWith('\0')) throw new Error();
-      result.changedPaths = [...new Set([...net.split('\0'), ...history.split('\0')].filter(Boolean))].sort();
-      if (result.changedPaths.length > 10_000) throw new Error();
       const common = (await checked(['-C', root, 'rev-parse', '--git-common-dir'])).trim();
       const objects = await fs.realpath(path.resolve(root, common, 'objects'));
       temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-release-merge-'));
       await checked(['init', '--bare', '--quiet', temporary], temporary, true);
       await fs.writeFile(path.join(temporary, 'objects/info/alternates'), objects + '\n');
+      // 普通提交仍累计已撤回的修改；双父合并只计手工解决的差异，避免把已在线上的基线重复算作调试修改。
+      // remerge 会生成临时对象，必须与冲突核验共用隔离仓库，不能写原对象库或使用项目合并驱动配置。
+      const range = `${basis}..${candidateSha}`;
+      const history = await checked(['-C', temporary, 'log', '--format=', '--name-only', '-z', '--no-renames',
+        '--diff-merges=remerge', range, '--'], temporary, true);
+      // Git 仅能重算双父合并；多父合并沿用原先逐父累计的保守检查，不能静默漏过其历史修改。
+      const octopus = await checked(['-C', temporary, 'log', '--format=', '--name-only', '-z', '--no-renames',
+        '--min-parents=3', '--diff-merges=separate', range, '--'], temporary, true);
+      if ([net, history, octopus].some(value => value && !value.endsWith('\0'))) throw new Error();
+      result.changedPaths = [...new Set([net, history, octopus].flatMap(value => value.split('\0')).filter(Boolean))].sort();
+      if (result.changedPaths.length > 10_000) throw new Error();
       const merged = await this.run(['-C', temporary, '-c', 'core.hooksPath=/dev/null', 'merge-tree', '--write-tree',
         '--name-only', '--no-messages', '-z', result.mainSha, candidateSha], temporary, true);
       if (merged.exitCode !== 0 && merged.exitCode !== 1 || !merged.stdout.endsWith('\0')) throw new Error();
