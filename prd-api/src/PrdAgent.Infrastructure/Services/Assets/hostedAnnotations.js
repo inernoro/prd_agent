@@ -102,7 +102,14 @@
     host.style.cssText = 'all:initial;position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483646;';
     shadow = host.attachShadow({ mode: 'open' });
     var style = document.createElement('style');
-    style.textContent = ':host{all:initial}*{box-sizing:border-box}.outline{z-index:0;position:absolute;pointer-events:none;border:2px solid #f59e0b;border-radius:4px;background:rgba(245,158,11,.09)}.highlight{z-index:0;position:absolute;pointer-events:none;background:rgba(245,158,11,.23);border-bottom:2px solid #f59e0b;border-radius:2px}.pin{z-index:2;position:absolute;pointer-events:auto;width:25px;height:25px;border-radius:50%;border:2px solid #fff;background:#d97706;color:#fff;font:600 12px/1 system-ui;box-shadow:0 2px 7px #0003;cursor:pointer}.pin.active{background:#2563eb;outline:3px solid #2563eb40}.pin:focus-visible{outline:3px solid #2563eb}.hover{border-style:dashed;background:rgba(245,158,11,.06)}';
+    style.textContent = ':host{all:initial}*{box-sizing:border-box}'
+      + '.outline,.highlight{z-index:0;position:absolute;pointer-events:none;border-radius:3px}'
+      + '.outline{border:1px solid #ad6a2359}'
+      + '.highlight{background:#efb24b30;border-bottom:1px solid #b6690b}'
+      + '.outline.active,.highlight.active{border:1px solid #a15b08;background:#efb24b4d}'
+      + '.pin{z-index:2;position:absolute;pointer-events:auto;width:25px;height:25px;border-radius:50%;border:2px solid #fff;background:#f3d08a;color:#392509;font:650 12px/1 system-ui;box-shadow:0 1px 4px #0002;cursor:pointer}'
+      + '.pin.active{background:#262526;color:#fff}.pin:focus-visible{outline:2px solid #2563eb}'
+      + '.hover{border:1px dashed #ad6a23;background:#efb24b1a}';
     shadow.appendChild(style); document.body.appendChild(host);
     hover = document.createElement('div'); hover.className = 'outline hover'; hover.hidden = true; shadow.appendChild(hover);
   }
@@ -249,7 +256,8 @@
       update.rects.forEach(function (rect, index) {
         var box = record.boxes[index];
         if (!box) { box = document.createElement('div'); box.setAttribute('data-mark', ''); record.boxes.push(box); shadow.appendChild(box); }
-        box.className = record.found.range ? 'highlight' : 'outline'; place(box, rect, origin);
+        box.className = (record.found.range ? 'highlight' : 'outline') + (record.thread.id === activeId ? ' active' : '');
+        place(box, rect, origin);
       });
     });
     records.forEach(function (record) {

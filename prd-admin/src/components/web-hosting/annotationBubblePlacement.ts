@@ -42,3 +42,27 @@ export function placeAnnotationBubble(anchor: AnnotationRect, size: { width: num
     tailX: clamp(anchor.left + anchor.width / 2 - best.left, 18, size.width - 18),
     tailY: clamp(anchor.top + anchor.height / 2 - best.top, 18, size.height - 18) };
 }
+
+/** Pack the margin in reading order. When it fits, leave whitespace near the original anchors. */
+export function placeAnnotationRail(cards: { id: string; top: number; height: number }[], height: number, activeId: string | null) {
+  if (!cards.length) return { tops: new Map<string, number>(), contentHeight: height };
+  const gap = 8, edge = 10;
+  let bottom = edge;
+  const stack = cards.map(card => {
+    const start = bottom;
+    bottom += card.height + gap;
+    return { ...card, start };
+  });
+  const contentHeight = Math.max(height, bottom - gap + edge);
+  const slack = Math.max(0, height - (bottom - gap + edge));
+  const selected = stack.findIndex(card => card.id === activeId);
+  const selectedCard = stack[selected];
+  const selectedOffset = selectedCard ? clamp(selectedCard.top - gap - selectedCard.start, 0, slack) : slack;
+  let offset = 0;
+  const tops = new Map(stack.map((card, index) => {
+    const limit = selected >= 0 && index <= selected ? selectedOffset : slack;
+    offset = Math.max(offset, clamp(card.top - gap - card.start, 0, limit));
+    return [card.id, card.start + offset];
+  }));
+  return { tops, contentHeight };
+}

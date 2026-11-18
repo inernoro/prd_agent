@@ -19,7 +19,7 @@ async function setup() {
   const annotations = { enabled: false, draftAnchor: null, displayMode: 'bubble', activeId: 'two',
     threads: ['one', 'two'].map(id => ({ id, anchor: {}, authorName: '小林', content: `意见-${id}` })),
     previews: ['one', 'two'].map(id => ({ id, rect: { left: 200, top: 300, width: 300, height: 40 }, obstacles: [] })),
-    allPreviewsHidden: false, hideAllPreviews: vi.fn(), showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn() } as unknown as HostedAnnotations;
+    allPreviewsHidden: false, hideAllPreviews: vi.fn(), showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn(), setActiveId: vi.fn() } as unknown as HostedAnnotations;
   const render = async () => act(async () => root.render(<AnnotationBubble annotations={annotations} />));
   await render(); cleanup = async () => { await act(async () => root.unmount()); container.remove(); };
   return { annotations, render, container };
@@ -30,7 +30,11 @@ it('同时显示每条气泡，编号与选中一致，单条关闭不影响另�
   const cards = container.querySelectorAll<HTMLElement>('[data-bubble-id]');
   expect(cards).toHaveLength(2); expect(cards[1].classList.contains('is-active')).toBe(true);
   expect(cards[0].textContent).toContain('意见-one'); expect(cards[1].textContent).toContain('意见-two');
-  expect([cards[0].style.left, cards[0].style.top]).not.toEqual([cards[1].style.left, cards[1].style.top]);
+  expect(Number.parseFloat(cards[1].style.top) - Number.parseFloat(cards[0].style.top)).toBeGreaterThanOrEqual(128);
+  expect(cards[0].querySelector('.annotation-chat-actions')).toBeNull();
+  expect(container.querySelectorAll('.annotation-bubble-connectors path')).toHaveLength(1);
+  await act(async () => cards[0].querySelector<HTMLButtonElement>('.annotation-chat-select')!.click());
+  expect(annotations.setActiveId).toHaveBeenCalledWith('one');
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起批注气泡 2"]')!.click());
   expect(annotations.dismissPreview).toHaveBeenCalledWith('two');
 });
@@ -65,6 +69,7 @@ it('边缘拖动有限位，滚动暂时离屏再回来保留位置，正文按�
   const previews = annotations.previews; annotations.previews = []; await render(); annotations.previews = previews; await render();
   card = container.querySelector<HTMLElement>('[data-bubble-id="one"]')!;
   expect(Number.parseFloat(card.style.left)).toBe(600); expect(Number.parseFloat(card.style.top)).toBe(572);
+  annotations.activeId = 'one'; await render();
   await act(async () => card.querySelector<HTMLButtonElement>('.annotation-chat-open')!.click());
   expect(annotations.openThread).toHaveBeenCalledWith('one');
   await act(async () => card.querySelector('[aria-label="移动批注气泡 1"]')!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowLeft' })));

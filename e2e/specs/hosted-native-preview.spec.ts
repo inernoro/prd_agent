@@ -470,10 +470,11 @@ test.describe('长文批注连续跟随与菜单外点', () => {
   const title = '长文批注跟随样例';
   const content = '这是一条需要保留完整内容的长意见。'.repeat(3000);
   const html = `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font:16px/1.7 system-ui}main{padding:32px}p{margin:12px 0}</style><main><h1>${title}</h1><p id="note-one">定位段落一</p><p id="note-two">定位段落二</p>${'<p>长文压力段落，滚动时不应遍历全部正文寻找位置。</p>'.repeat(10000)}</main></html>`;
-  async function open(page: Page) {
+  async function open(page: Page, dense = false) {
     const site = { id: 'qa-follow', title, siteUrl: 'https://hosting.example/sites/qa-follow/index.html?v=20000', entryFile: 'index.html', contentShape: 'self-contained-html', viewerCanEdit: false, totalSize: html.length, fileCount: 1, files: [], tags: [] };
     const version = { id: 'v2', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, entryFile: site.entryFile, siteUrl: site.siteUrl, contentShape: site.contentShape };
-    const comments = ['one', 'two'].map((name, index) => ({ id: name, siteId: site.id, revisionId: 'v2', contentVersion: '20000', authorName: '复验作者', content, createdAt: '2026-11-17T00:00:00Z', anchor: { kind: 'element', pagePath: '/sites/qa-follow/index.html', selector: '#note-' + name, tagName: 'p', text: '定位段落' + (index + 1), elementText: '定位段落' + (index + 1), prefix: '', suffix: '', contentVersion: '20000' } }));
+    const names = dense ? ['one', ...Array.from({ length: 8 }, (_, index) => 'dense-' + index)] : ['one', 'two'];
+    const comments = names.map((name, index) => ({ id: name, siteId: site.id, revisionId: 'v2', contentVersion: '20000', authorName: '复验作者', content, createdAt: '2026-11-17T00:00:00Z', anchor: { kind: 'element', pagePath: '/sites/qa-follow/index.html', selector: '#note-' + (dense ? 'one' : name), tagName: 'p', text: '定位段落' + (index + 1), elementText: '定位段落' + (index + 1), prefix: '', suffix: '', contentVersion: '20000' } }));
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname;
       if (path.endsWith('/annotation-runtime.js')) { await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') }); return; }
@@ -489,11 +490,11 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     const discussion = page.getByRole('button', { name: '批注与讨论', exact: true });
     await expect(discussion).toHaveAttribute('aria-expanded', page.viewportSize()!.width < 768 ? 'false' : 'true');
     if (await discussion.getAttribute('aria-expanded') === 'true') {
-      await expect(page.locator('.review-thread')).toHaveCount(2);
+      await expect(page.locator('.review-thread')).toHaveCount(comments.length);
       await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
       await discussion.click();
     }
-    await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
+    await expect(page.locator('.annotation-chat-bubble')).toHaveCount(comments.length);
     await expect(page.locator('.annotation-chat-bubble').first()).toBeVisible();
     return page.frameLocator(`iframe[title="${title}"]`);
   }
@@ -520,14 +521,40 @@ test.describe('长文批注连续跟随与菜单外点', () => {
         widths.push(await page.locator(`iframe[title="${title}"]`).evaluate(element => element.clientWidth));
         await page.waitForTimeout(100);
       }
-      expect(new Set(widths)).toEqual(new Set([680]));
+      expect(new Set(widths)).toEqual(new Set([700]));
       await expect(page.locator('.annotation-bubble-canvas')).toHaveCount(1);
       await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
+    });
+    if (!mobile) test('同段九条批注在页边互不遮盖，选中连接原文，短视口可滚动阅读', async ({ page }) => {
+      const frame = await open(page, true);
+      const cards = page.locator('.annotation-chat-bubble');
+      const nonoverlapping = () => cards.evaluateAll(elements => elements.every((el, index) => index === 0
+        || elements[index - 1].getBoundingClientRect().bottom + 7 <= el.getBoundingClientRect().top));
+      await expect.poll(nonoverlapping).toBe(true);
+      await expect(page.locator('.annotation-chat-actions')).toHaveCount(0);
+      await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(9);
+      await frame.getByRole('button', { name: '打开批注 5', exact: true }).click();
+      const selected = page.getByRole('dialog', { name: '批注气泡 5', exact: true });
+      await expect(selected).toHaveClass(/is-active/);
+      await expect.poll(nonoverlapping).toBe(true);
+      await expect(page.locator('.annotation-bubble-connectors path')).toHaveCount(1);
+      await expect(selected.getByRole('button', { name: '查看讨论' })).toBeVisible();
+
+      await page.setViewportSize({ width: 1440, height: 445 });
+      const margin = page.locator('.annotation-bubble-scroll');
+      await expect(margin).toHaveAttribute('aria-label', '滚动查看更多页边批注');
+      const point = await selected.boundingBox();
+      await page.mouse.move(point!.x + point!.width / 2, point!.y + point!.height / 2);
+      await page.mouse.wheel(0, 500);
+      await expect.poll(() => margin.evaluate(el => el.scrollTop + el.clientHeight)).toBeGreaterThan(570);
+      await expect(page.getByRole('button', { name: '展开批注气泡 9', exact: true })).toBeInViewport();
+      expect(await frame.locator('body').evaluate(() => window.scrollY)).toBe(0);
     });
     test('图标全隐保留编号，编号重开后全显；菜单外点与iframe点击收起', async ({ page }) => {
       const frame = await open(page);
       await expect(page.getByRole('button', { name: '批注显示方式', exact: true })).toHaveCount(0);
       const viewed = page.locator('[data-bubble-id="one"]');
+      await tap(viewed.getByRole('button', { name: '展开批注气泡 1', exact: true }));
       await tap(viewed.getByRole('button', { name: '查看讨论', exact: true }));
       await expect(page.getByRole('button', { name: '批注与讨论', exact: true })).toHaveAttribute('aria-expanded', 'true');
       await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
@@ -551,6 +578,8 @@ test.describe('长文批注连续跟随与菜单外点', () => {
         await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(2);
       };
       for (let round = 0; round < 2; round++) {
+        const expand = closed.getByRole('button', { name: /展开批注气泡/ });
+        if (await expand.count()) await tap(expand);
         await tap(closed.getByRole('button', { name: /收起批注气泡/ })); await expect(closed).toHaveCount(0);
         await reloadDocument(); await expect(page.locator('.annotation-chat-bubble')).toHaveCount(1); await expect(closed).toHaveCount(0);
         if (round === 0) { await tap(frame.getByRole('button', { name: '打开批注 ' + number, exact: true })); await expect(closed).toBeVisible(); }
