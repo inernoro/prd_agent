@@ -27,17 +27,37 @@ async function prepare(page, theme) {
 }
 
 async function arrive(page, theme, name) {
+  const expected = assets[theme].motion;
+  if (expected.durationSeconds) {
+    await page.evaluate(() => {
+      window.__portraitSeeks = 0;
+      document.addEventListener('seeking', event => {
+        if (event.target instanceof HTMLVideoElement && event.target.matches('.portrait-motion')) window.__portraitSeeks++;
+      }, true);
+    });
+  }
   await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
   await page.waitForURL(/\/quickstart$/);
   await page.waitForFunction(expected => {
     const v = document.querySelector('.portrait-motion');
     return v && v.currentSrc === expected && v.currentTime > .06;
-  }, assets[theme].motion.url, { timeout: 15_000 });
-  const align = await page.locator('.portrait-motion').evaluate(movie => Date.now() / 1_000 - movie.currentTime);
-  await expect.poll(() => page.locator('.portrait-motion').evaluate(movie => movie.currentTime), { timeout: 12_000 }).toBeGreaterThan(5.1);
+  }, expected.url, { timeout: 15_000 });
+  const movie = page.locator('.portrait-motion');
+  const align = await movie.evaluate(video => Date.now() / 1_000 - video.currentTime);
+  if (expected.durationSeconds) {
+    await expect(movie).toHaveAttribute('poster', assets[theme].opening.url);
+    await expect.poll(() => movie.evaluate(video => video.ended), { timeout: 12_000 }).toBe(true);
+    const playback = await movie.evaluate(video => ({ duration: video.duration, time: video.currentTime, seeks: window.__portraitSeeks }));
+    assert.ok(Math.abs(playback.duration - expected.durationSeconds) < .05, 'The approved full-length edit must play');
+    assert.equal(playback.time, playback.duration, 'The last frame must be reached');
+    assert.equal(playback.seeks, 0, 'Daylight must start from the authored opening');
+  } else {
+    await expect.poll(() => movie.evaluate(video => video.currentTime), { timeout: 12_000 }).toBeGreaterThan(5.1);
+  }
   await expect(page.getByRole('textbox', { name: '我想做什么', exact: true })).toBeVisible();
   await expect(page.locator('.consciousness-scene')).toHaveAttribute('data-portrait-theme', theme);
   await page.screenshot({ path: outputPath(`${name}-settled.png`) });
+  await page.waitForTimeout(450); // Keep the live end pose in the desktop recording.
   return align;
 }
 

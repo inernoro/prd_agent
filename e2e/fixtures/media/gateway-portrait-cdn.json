@@ -18,9 +18,9 @@
   },
   "light": {
     "open": {
-      "url": "https://cfi.miduo.org/data/web-hosting/sites/93078f743f7543d6957d4af8414f4cf1/daylight/daylight-open-b65ff9396b44cd52.webp",
-      "sha256": "b65ff9396b44cd523a5b6a8efa0d3f23043d5506392db6416ec3a23e480b7906",
-      "bytes": 240716
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/9a1ddb2322a84f4fa2a4d0d60173e3cf/daylight/settled-8880adf870ef3418.webp",
+      "sha256": "8880adf870ef34186e6bff69a914225622468672c2e49b0f9cacaf5e715d76e9",
+      "bytes": 288330
     },
     "closed": {
       "url": "https://cfi.miduo.org/data/web-hosting/sites/93078f743f7543d6957d4af8414f4cf1/daylight/daylight-closed-de7cbfdb42c0ef6f.webp",
@@ -28,9 +28,15 @@
       "bytes": 237150
     },
     "motion": {
-      "url": "https://cfi.miduo.org/data/web-hosting/sites/93078f743f7543d6957d4af8414f4cf1/daylight/portrait-motion-7ff66cc3b1d4357e.mp4",
-      "sha256": "7ff66cc3b1d4357e39d7d9fc82028b762e9771c4f87e9c2469a06ed28ba34750",
-      "bytes": 4432306
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/9a1ddb2322a84f4fa2a4d0d60173e3cf/daylight/portrait-motion-05c8a2d277469c57.mp4",
+      "sha256": "05c8a2d277469c57356b4e4427a4f118080e5d7729018056305c6c7cdda2a213",
+      "bytes": 6518061,
+      "durationSeconds": 8.166667
+    },
+    "opening": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/9a1ddb2322a84f4fa2a4d0d60173e3cf/daylight/opening-76c92b60a1ed0aff.webp",
+      "sha256": "76c92b60a1ed0aff3e596910f6e6fad044484d4a58b355278064ac4532f42db9",
+      "bytes": 90960
     }
   }
 }

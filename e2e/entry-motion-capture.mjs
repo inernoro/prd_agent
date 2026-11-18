@@ -90,12 +90,16 @@ try {
       await page.getByRole('menuitem', { name: '模型网关', exact: true }).click();
       await page.waitForURL(url => url.origin === gateway.origin && url.pathname === '/quickstart', { timeout: 45000 });
       await page.waitForFunction(() => !document.documentElement.hasAttribute('data-entry-arriving'), null, { timeout: 15000 });
+      const expectedMotion = gatewayAssets[theme].motion;
+      if (expectedMotion.durationSeconds) {
+        await page.waitForFunction(() => document.querySelector('.portrait-motion')?.ended, null, { timeout: 15000 });
+      }
       await page.getByRole('textbox', { name: '我想做什么', exact: true }).waitFor();
       await page.waitForTimeout(1300); // Include the actual settled brand and last-frame handoff.
       const evidence = await page.evaluate(() => ({ ...window.__entryEvidence, viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
 
         fineLines: document.querySelectorAll('.portrait-fine-lines path').length,
-        settledMovie: (() => { const video=document.querySelector('.portrait-motion'); return video ? {time:video.currentTime,paused:video.paused,src:video.currentSrc} : null; })(),
+        settledMovie: (() => { const video=document.querySelector('.portrait-motion'); return video ? {time:video.currentTime,duration:video.duration,paused:video.paused,src:video.currentSrc} : null; })(),
         theme: document.querySelector('.consciousness-scene')?.dataset.portraitTheme,
         brand: document.querySelector('.consciousness-ghost > span')?.textContent,
         personalGreetingCount: document.querySelectorAll('.gateway-identity-card').length,
@@ -105,7 +109,7 @@ try {
       await writeFile(new URL(`${mode}.json`, output), JSON.stringify(evidence, null, 2));
       assert.ok(evidence.settledMovie?.paused && evidence.settledMovie.time >= 5.1, 'The settled portrait must retain its actual video end pose');
       assert.equal(evidence.theme, theme);
-      assert.equal(evidence.settledMovie.src, gatewayAssets[theme].motion.url);
+      assert.equal(evidence.settledMovie.src, expectedMotion.url);
       assert.deepEqual(evidence.navigation[0], {label:'对话',path:'/quickstart'});
       assert.equal(evidence.navigation.filter(link => link.path === '/quickstart').length, 1);
       assert.equal(evidence.brand, 'LLM Gateway');
@@ -114,7 +118,13 @@ try {
       assert.ok(evidence.frames.filter(frame => frame.t >= .25 && frame.t < .5).every(frame => frame.paperOpacity === 0), 'Paper must have cleared by the first quarter second');
       assert.ok(evidence.frames.some(frame => frame.renderer === 'native-video'), 'Native motion video must actually play');
       assert.ok(evidence.videoFrames.length > 120, 'Too few actually presented portrait video frames');
-      assert.ok(evidence.frames.some(frame => frame.eye > .15 && frame.eye < .85), 'Missing actual intermediate eyelid frames');
+      if (expectedMotion.durationSeconds) {
+        assert.ok(Math.abs(evidence.settledMovie.duration - expectedMotion.durationSeconds) < .05, 'The reference edit duration differs');
+        assert.ok(evidence.videoFrames[0]?.mediaTime < .125, 'The recording missed the authored opening');
+        assert.ok(evidence.videoFrames.some(frame => frame.mediaTime >= expectedMotion.durationSeconds - .15), 'The recording missed the final eye pose');
+      } else {
+        assert.ok(evidence.frames.some(frame => frame.eye > .15 && frame.eye < .85), 'Missing intermediate eye timing samples');
+      }
       assert.ok(evidence.frames.filter(frame => frame.t < .5).length > 2, 'Missing first structural frames');
       assert.ok(evidence.body.includes(process.env.EXPECTED_COMMIT.slice(0,7)), 'Public preview is not the expected revision');
     });

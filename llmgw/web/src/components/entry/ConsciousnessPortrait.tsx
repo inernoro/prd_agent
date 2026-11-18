@@ -19,6 +19,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
   const controlled = frameTime !== undefined;
   const playing = !fog && (arriving || controlled) && !settled;
   const assets = PORTRAIT_ASSETS[theme];
+  const openingPoster = controlled ? undefined : assets.opening;
   const motionReady = readyMotion === assets.motion;
   const timeRef = useRef(frameTime);
   timeRef.current = frameTime;
@@ -36,6 +37,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
     let renderer: ReturnType<typeof createPortraitRenderer> = null;
     const paintState = (time: number) => {
       const state = samplePortrait(time);
+      if (openingPoster) state.camera = 1;
       setEntryChrome(state.chrome);
       for (const [key, value] of Object.entries(state)) {
         root.style.setProperty(`--portrait-${key}`, String(value));
@@ -63,22 +65,24 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
       root.dataset.renderer = 'native-video';
       const complete = () => {
         if (cancelled) return;
-        paintState(PORTRAIT_DURATION); setSettled(true); finishEntryArrival();
+        paintState(Math.max(PORTRAIT_DURATION, movie.currentTime)); setSettled(true); finishEntryArrival();
       };
       const playingVideo = () => {
         if (started) return;
         started = true;
-        movie.currentTime = Math.min((performance.now() - startedAt) / 1000, 1.4);
+        lastAdvance = performance.now();
+        // An authored opening poster holds frame zero while loading. Preserve the first strokes.
+        if (!openingPoster) movie.currentTime = Math.min((lastAdvance - startedAt) / 1000, 1.4);
         setReadyMotion(assets.motion);
       };
       const failed = () => { setReadyMotion(undefined); root.dataset.renderer = 'static-fallback'; complete(); };
       const tick = (now: number) => {
         if (cancelled) return;
-        const time = started ? movie.currentTime : Math.min(1.4, Math.max(0, (now-startedAt)/1000));
+        const time = !started && !openingPoster ? Math.min(1.4, Math.max(0, (now-startedAt)/1000)) : movie.currentTime;
         if (time > lastTime) { lastTime = time; lastAdvance = now; }
         if (started && now-lastAdvance > 3000) { failed(); return; }
         paintState(time);
-        if (time >= PORTRAIT_DURATION) { complete(); return; }
+        if (!openingPoster && time >= PORTRAIT_DURATION) { complete(); return; }
         raf = requestAnimationFrame(tick);
       };
       movie.addEventListener('playing', playingVideo);
@@ -121,12 +125,12 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
       cancelled = true; window.clearTimeout(preparationTimeout); cancelAnimationFrame(raf); renderer?.dispose();
       root.removeEventListener('webglcontextlost', contextLost, true);
     };
-  }, [playing, controlled, assets]);
+  }, [playing, controlled, assets, openingPoster]);
 
   return <div ref={host} className={`consciousness-portrait${playing ? ' is-building' : ''}${fog ? ' is-ambient' : ''}`}>
     <img className="consciousness-art" src={fog ? assets.closed : assets.open} alt="" loading="eager" decoding="async" />
-    {(playing || (!controlled && motionReady)) && (controlled ? <canvas ref={canvas} className="portrait-material" aria-hidden="true" /> : <video key={assets.motion} ref={video} className="portrait-material portrait-motion" src={assets.motion} muted playsInline preload="auto" aria-hidden="true" />)}
-    {((playing && (controlled || !motionReady)) || fog) && <svg className="portrait-structure" viewBox="0 0 1672 941" preserveAspectRatio="xMaxYMid slice" fill="none" aria-hidden="true">
+    {(playing || (!controlled && motionReady)) && (controlled ? <canvas ref={canvas} className="portrait-material" aria-hidden="true" /> : <video key={assets.motion} ref={video} className="portrait-material portrait-motion" src={assets.motion} poster={openingPoster} muted playsInline preload="auto" aria-hidden="true" />)}
+    {((playing && !openingPoster && (controlled || !motionReady)) || fog) && <svg className="portrait-structure" viewBox="0 0 1672 941" preserveAspectRatio="xMaxYMid slice" fill="none" aria-hidden="true">
       <defs>
         <linearGradient id={`${id}-ink`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#3481d5" /><stop offset=".5" stopColor="#81caff" /><stop offset="1" stopColor="#3879ce" /></linearGradient>
         <filter id={`${id}-glow`} x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.5" /></filter>
