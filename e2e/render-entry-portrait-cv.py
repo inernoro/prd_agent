@@ -5,7 +5,7 @@ if os.environ.get('CI') != 'true':
 from pathlib import Path
 from argparse import ArgumentParser
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 import hashlib, json, math, subprocess
 import cv2
 import numpy as np
@@ -28,17 +28,23 @@ input_folder = OUT / 'sources'
 input_folder.mkdir(exist_ok=True)
 source_manifest = json.loads((source_folder / 'portrait-cdn-sources.json').read_text())
 
-def source(name):
-    asset = source_manifest['daylight' if daylight else 'night'][name]
+def download(asset):
     url = urlsplit(asset['url'])
     assert url.scheme == 'https' and url.netloc == 'cfi.miduo.org', 'Unexpected authoring asset origin'
-    with urlopen(asset['url'], timeout=30) as response:
-        data = response.read(10 * 1024 * 1024)
+    request = Request(asset['url'], headers={'User-Agent': 'Mozilla/5.0'})
+    with urlopen(request, timeout=30) as response:
+        assert response.geturl() == asset['url'], 'Unexpected asset redirect'
+        data = response.read(asset['bytes'] + 1)
     digest = hashlib.sha256(data).hexdigest()
-    assert digest == asset['sha256'], f'Authoring asset hash mismatch: {name}'
+    assert len(data) == asset['bytes'] and digest == asset['sha256'], 'Authoring asset readback mismatch'
+    return data
+
+def source(name):
+    asset = source_manifest['daylight' if daylight else 'night'][name]
+    data = download(asset)
     path = input_folder / name
     path.write_bytes(data)
-    source_hashes[name] = digest
+    source_hashes[name] = asset['sha256']
     return read(path)
 
 source_hashes = {}
@@ -251,14 +257,8 @@ comparisons = [
     ('previous-vs-image-led', previous, None, 'Previous authored asset'),
     ('reference-vs-image-led', ROOT/'e2e/fixtures/media/entry-reference.mp4', '14.75', 'Reference source')]
 if daylight:
-    asset = source_manifest['nightMotion']
-    url = urlsplit(asset['url'])
-    assert url.scheme == 'https' and url.netloc == 'cfi.miduo.org'
-    with urlopen(asset['url'], timeout=30) as response:
-        night_bytes = response.read(10 * 1024 * 1024)
-    assert hashlib.sha256(night_bytes).hexdigest() == asset['sha256']
     night = input_folder/'night-motion.mp4'
-    night.write_bytes(night_bytes)
+    night.write_bytes(download(source_manifest['nightMotion']))
     comparisons = [('night-vs-daylight-assets',night,None,'Night')]
 for name, source, seek, label in comparisons:
     args = ['ffmpeg','-hide_banner','-loglevel','error','-y']
