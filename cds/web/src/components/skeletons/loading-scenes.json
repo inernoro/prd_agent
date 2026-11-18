@@ -63,6 +63,13 @@
     "workspace": "bleed"
   },
   {
+    "route": "/release-center/approval/:authorizationId?",
+    "name": "发布审批列表",
+    "page": "pages/release-center/ReleaseApprovalPage.tsx",
+    "kind": "rows",
+    "workspace": "fluid"
+  },
+  {
     "route": "/release-console",
     "name": "发布控制台",
     "page": "pages/ReleaseConsolePage.tsx",

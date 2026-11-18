@@ -174,6 +174,6 @@ describe('接线：判定必须真的渲染到屏幕上', () => {
   });
 
   it('版本下拉里标出线上那一版', () => {
-    expect(PAGE).toContain("sameCommit(item.commitSha, row?.currentCommit) ? ' · 线上' : ''");
+    expect(PAGE).toContain("sameCommit(revision, row?.currentCommit) ? ' · 线上' : ''");
   });
 });
