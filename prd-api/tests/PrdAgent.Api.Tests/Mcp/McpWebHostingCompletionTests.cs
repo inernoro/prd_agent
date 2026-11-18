@@ -63,14 +63,15 @@ public sealed class McpWebHostingCompletionTests
     public async Task 重传指定原站_不会退化成创建新站()
     {
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
-        var site = new HostedSite { Id = "existing", SiteUrl = "https://files.example/existing/index.html" };
+        var site = new HostedSite { Id = "existing", SiteUrl = "https://files.example/existing/index.html", Visibility = "public" };
         sites.Setup(x => x.GetByIdAsync("existing", "u", It.IsAny<CancellationToken>())).ReturnsAsync(site);
         sites.Setup(x => x.CanEditSiteAsync(site, "u", It.IsAny<CancellationToken>())).ReturnsAsync(true);
         sites.Setup(x => x.ReuploadAsync("existing", "u", It.IsAny<Stream>(), "new.zip", null,
             It.IsAny<CancellationToken>(), null, null)).ReturnsAsync(site);
         var bytes = Zip(("index.html", "updated"));
         using var input = new MemoryStream(bytes);
-        var response = await Controller(sites.Object).ReuploadFile("existing", new FormFile(input, 0, input.Length, "file", "new.zip"), null, null);
+        var response = await Controller(sites.Object).ReuploadFile("existing", new FormFile(input, 0, input.Length, "file", "new.zip"),
+            null, null, confirmedExposure: true);
         Body(response).GetProperty("siteId").GetString().ShouldBe("existing");
         sites.VerifyAll();
         sites.VerifyNoOtherCalls();

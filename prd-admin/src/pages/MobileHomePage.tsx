@@ -229,7 +229,7 @@ export default function MobileHomePage() {
                   )}
                 </span>
                 {/* span 版药丸:外层整卡已是 button,内部不得再嵌 button(Codex P2,非法 DOM) */}
-                <AppStorePillLabel label="继续" />
+                <AppStorePillLabel label={headline.agentKey === 'web-pages' ? '查看' : '继续'} />
               </button>
               {restRecent.map((item) => {
                 const meta = recentAgentMetaFor(item.agentKey);
@@ -247,7 +247,7 @@ export default function MobileHomePage() {
                     </span>
                     {/* 右侧只留相对时间——真实标题偏长,带上 agent 名会把标题挤没(demo 差距复盘) */}
                     <span style={{ ...AS_TYPE.caption, color: C.labelTertiary, flex: 'none' }}>
-                      {formatRelativeTime(item.lastActiveAt)}
+                      {item.agentKey === 'web-pages' ? item.progressLabel : formatRelativeTime(item.lastActiveAt)}
                     </span>
                   </button>
                 );

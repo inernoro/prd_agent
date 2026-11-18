@@ -44,15 +44,17 @@ public partial class WebPagesOpenApiController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly PrdAgent.Api.Services.IHostedSitePrivateSourceGate? _privateSources;
     private readonly IUploadProgressService? _uploadProgress;
+    private readonly IWebFolderService? _webFolders;
 
     public WebPagesOpenApiController(IHostedSiteService sites, MongoDbContext db,
         PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
-        IUploadProgressService? uploadProgress = null)
+        IUploadProgressService? uploadProgress = null, IWebFolderService? webFolders = null)
     {
         _sites = sites;
         _db = db;
         _privateSources = privateSources;
         _uploadProgress = uploadProgress;
+        _webFolders = webFolders;
     }
 
     private string GetBoundUserId()
@@ -76,6 +78,7 @@ public partial class WebPagesOpenApiController : ControllerBase
         public string? Description { get; set; }
         public string? Folder { get; set; }
         public List<string>? Tags { get; set; }
+        public bool ConfirmedExposure { get; set; }
         /// <summary>幂等键：智能体重试时不会重复建站。</summary>
         public string? ClientRequestId { get; set; }
     }
@@ -111,6 +114,7 @@ public partial class WebPagesOpenApiController : ControllerBase
                     siteId = existed.Id,
                     title = existed.Title,
                     url = Request.ResolveAbsoluteUrl(existed.SiteUrl),
+                    managementUrl = BuildSiteManagementUrl(existed.Id),
                     deduplicated = true,
                 }));
         }
@@ -149,6 +153,7 @@ public partial class WebPagesOpenApiController : ControllerBase
             siteId = site.Id,
             title = site.Title,
             url = Request.ResolveAbsoluteUrl(site.SiteUrl),
+            managementUrl = BuildSiteManagementUrl(site.Id),
             visibility = site.Visibility,
         }));
     }
@@ -289,4 +294,7 @@ public partial class WebPagesOpenApiController : ControllerBase
         var digest = McpIdempotency.Fingerprint("mcp-site", McpIdempotency.ScopedByKey(User, clientRequestId));
         return digest == null ? null : $"mcp:{digest}";
     }
+
+    private string BuildSiteManagementUrl(string siteId)
+        => Request.ResolveAbsoluteUrl($"/web-pages?focusSite={Uri.EscapeDataString(siteId)}");
 }

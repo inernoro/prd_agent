@@ -389,6 +389,7 @@ const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string; iconK
   'report-agent': { icon: FileBarChart, label: '周报', iconKey: 'FileBarChart' },
   'review-agent': { icon: ClipboardCheck, label: '产品评审', iconKey: 'ClipboardCheck' },
   'document-store': { icon: Library, label: '知识库', iconKey: 'Library' },
+  'web-pages': { icon: Globe, label: '网页托管', iconKey: 'Globe' },
 };
 
 function WorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => void }) {
@@ -401,8 +402,8 @@ function WorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => v
     <button
       type="button"
       onClick={onClick}
-      title={`继续处理：${item.title}`}
-      aria-label={`继续处理${meta.label}工作：${item.title}`}
+      title={item.agentKey === 'web-pages' ? `查看交付：${item.title}` : `继续处理：${item.title}`}
+      aria-label={item.agentKey === 'web-pages' ? `查看 MCP 网页：${item.title}` : `继续处理${meta.label}工作：${item.title}`}
       className="home-desk-work group"
       style={{
         '--work-accent': accent.color,
