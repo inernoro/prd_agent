@@ -11,10 +11,17 @@ public sealed class RepoCreatePullRequestTool : IAgentTool
 {
     private static readonly Regex SafeBranchRegex = new("^[A-Za-z0-9._/-]+$", RegexOptions.Compiled);
     private readonly AgentWorkspace _workspace;
+    private readonly Func<string?> _resolveGitHubToken;
 
     public RepoCreatePullRequestTool(AgentWorkspace workspace)
+        : this(workspace, ResolveGitHubToken)
+    {
+    }
+
+    internal RepoCreatePullRequestTool(AgentWorkspace workspace, Func<string?> resolveGitHubToken)
     {
         _workspace = workspace;
+        _resolveGitHubToken = resolveGitHubToken;
     }
 
     public AgentToolDescriptor Descriptor { get; } = new()
@@ -59,7 +66,7 @@ public sealed class RepoCreatePullRequestTool : IAgentTool
                 return AgentToolInvokeResult.Fail("branch_invalid", "branch is invalid or points at the base branch");
             }
 
-            var token = ResolveGitHubToken();
+            var token = _resolveGitHubToken();
             if (string.IsNullOrWhiteSpace(token))
             {
                 return AgentToolInvokeResult.Fail("github_token_missing", "GITHUB_PAT, GH_TOKEN or GITHUB_TOKEN is not configured in the runtime");

@@ -85,6 +85,8 @@ builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttp
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundWebSocketConnector,
     PrdAgent.Infrastructure.Services.SafeOutboundWebSocketConnector>();
 builder.Services.AddHttpClient();
+// 内部供应方可使用已授权的私网地址，但不能借重定向扩大出站范围或转发凭据。
+builder.Services.AddGatewayOutboundHttpClient();
 builder.Services.AddHttpClient("SafeOutbound")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());

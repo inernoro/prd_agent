@@ -48,6 +48,249 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class GatewayKeyGateContractTests
 {
     [Theory]
+    [InlineData("/gw/v1/send")]
+    [InlineData("/v1/chat/completions")]
+    [InlineData("/v1/messages")]
+    [InlineData("/v1beta/models/gemini:generateContent")]
+    [InlineData("/v1/images/edits")]
+    public async Task InvalidScopedCredential_ReadsZeroBodyBytes(string path)
+    {
+        var authorizer = new RejectingHeaderAuthorizer();
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        using var source = new GeneratedBodyStream(100_000_000, "{\"data\":\"");
+        var response = await app.GetTestServer().SendAsync(context =>
+        {
+            context.Request.Method = "POST";
+            context.Request.Path = path;
+            context.Request.Headers["X-Gateway-Key"] = "invalid";
+            context.Request.Headers.TransferEncoding = "chunked";
+            context.Request.ContentType = path.EndsWith("edits") ? "multipart/form-data; boundary=test" : "application/json";
+            context.Request.Body = source;
+        });
+        Assert.Equal(401, response.Response.StatusCode);
+        Assert.Equal(0, source.BytesRead);
+        Assert.Equal(1, authorizer.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Multipart_UnknownLengthSingleAndAggregateFilesStopAtPhysicalBudget(bool multiple)
+    {
+        await using var app = BuildHost();
+        await app.StartAsync();
+        var section = "--test\r\nContent-Disposition: form-data; name=\"image\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\n";
+        var prefix = multiple ? section + new string('x', 15_000_000) + "\r\n" + section : section;
+        using var source = new GeneratedBodyStream(100_000_000, prefix);
+        var response = await app.GetTestServer().SendAsync(context =>
+        {
+            context.Request.Method = "POST";
+            context.Request.Path = "/v1/images/edits";
+            context.Request.Headers["X-Gateway-Key"] = GatewayKey;
+            context.Request.Headers[GatewayTaskAdmission.HeaderName] = GatewayAuthorizedTaskFixture.PermitId;
+            context.Request.Headers.TransferEncoding = "chunked";
+            context.Request.ContentType = "multipart/form-data; boundary=test";
+            context.Request.Body = source;
+        });
+        Assert.Equal(413, response.Response.StatusCode);
+        Assert.Equal(GatewayRequestBody.MaxBytes + 1, source.BytesRead);
+    }
+
+    [Theory]
+    [InlineData(null, 30_000_001)]
+    [InlineData(100_000_000L, 0)]
+    public async Task Json_ActualAndDeclaredOversizeRejectBeforeMaterialization(long? contentLength, long expectedRead)
+    {
+        await using var app = BuildHost();
+        await app.StartAsync();
+        using var source = new GeneratedBodyStream(100_000_000, "{\"data\":\"");
+        var response = await app.GetTestServer().SendAsync(context =>
+        {
+            context.Request.Method = "POST";
+            context.Request.Path = "/v1/chat/completions";
+            context.Request.Headers["X-Gateway-Key"] = GatewayKey;
+            context.Request.ContentType = "application/json";
+            context.Request.ContentLength = contentLength;
+            context.Request.Body = source;
+        });
+        Assert.Equal(413, response.Response.StatusCode);
+        Assert.Equal(expectedRead, source.BytesRead);
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task KestrelChunkedBody_EnforcesAdmissionWithoutContentLength(bool validCredential)
+    {
+        GatewayBudgetReadStream? observed = null;
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), useKestrel: true,
+            beforeEndpoints: host => host.Use(async (context, next) =>
+            {
+                Assert.Null(context.Request.ContentLength);
+                Assert.Equal("chunked", context.Request.Headers.TransferEncoding.ToString());
+                observed = new GatewayBudgetReadStream(context.Request.Body, 100_000_000);
+                context.Request.Body = observed;
+                await next();
+            }));
+        await app.StartAsync();
+        using var source = new GeneratedBodyStream(100_000_000, "{\"data\":\"");
+        var address = new Uri(app.Urls.Single());
+        using var client = new System.Net.Sockets.TcpClient();
+        await client.ConnectAsync(address.Host, address.Port);
+        using var wire = client.GetStream();
+        var key = validCredential ? GatewayKey : "invalid";
+        var headers = $"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nX-Gateway-Key: {key}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+        await wire.WriteAsync(System.Text.Encoding.ASCII.GetBytes(headers));
+        var upload = Task.Run(async () =>
+        {
+            try
+            {
+                var buffer = new byte[16 * 1024];
+                int read;
+                while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    await wire.WriteAsync(System.Text.Encoding.ASCII.GetBytes($"{read:x}\r\n"));
+                    await wire.WriteAsync(buffer.AsMemory(0, read));
+                    await wire.WriteAsync("\r\n"u8.ToArray());
+                }
+                await wire.WriteAsync("0\r\n\r\n"u8.ToArray());
+            }
+            catch (IOException) { /* Early rejection closes the still-uploading socket. */ }
+            catch (ObjectDisposedException) { }
+        });
+        using var responseReader = new StreamReader(wire);
+        var statusLine = await responseReader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        client.Close();
+        await upload.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.StartsWith(validCredential ? "HTTP/1.1 413" : "HTTP/1.1 401", statusLine);
+        Assert.NotNull(observed);
+        if (validCredential) Assert.InRange(observed!.BytesRead, 1, GatewayRequestBody.MaxBytes + 1);
+        else Assert.Equal(0, observed!.BytesRead);
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("native", "valid", 200)]
+    [InlineData("openai", "valid", 200)]
+    [InlineData("claude", "valid", 200)]
+    [InlineData("gemini", "valid", 200)]
+    [InlineData("openai", "scope", 403)]
+    [InlineData("openai", "disabled", 401)]
+    [InlineData("openai", "deep", 400)]
+    [InlineData("openai", "oversize", 413)]
+    public async Task KestrelScopedBodyAdmission_PreservesProtocolsAndRejectsWithoutInvocationOrReservations(
+        string protocol, string mode, int expectedStatus)
+    {
+        var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27017";
+        var database = "kd08_http_" + Guid.NewGuid().ToString("N");
+        var data = new LlmGatewayDataContext(connection, database);
+        const string key = "kd08-isolated-scoped-key";
+        const string caller = "kd08.test::chat";
+        const string tenant = "kd08-tenant";
+        try
+        {
+            await data.Database.GetCollection<BsonDocument>("llmgw_tenants").InsertOneAsync(new BsonDocument { { "_id", tenant }, { "Status", "active" } });
+            var record = new GatewayServiceKeyRecord
+            {
+                TenantId = tenant, KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key), Name = "isolated test",
+                SourceSystem = "external", AppCallerCodes = [caller], Enabled = mode != "disabled",
+                IngressProtocols = ["gw-native", "openai-compatible", "claude-compatible", "gemini-compatible"],
+                Scopes = ["invoke"], RateLimitPerMinute = 1,
+            };
+            await data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(record);
+            await data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory").InsertOneAsync(new()
+                { KeyHash = record.KeyHash, TenantId = tenant, ServiceKeyId = record.Id });
+            GatewayBudgetReadStream? observed = null;
+            var gateway = new EchoingGateway();
+            await using var app = BuildHostWithGateway(gateway, keyAuthorizer: new GatewayScopedKeyAuthorizer(data),
+                gatewayData: data, useKestrel: true, beforeEndpoints: host => host.Use(async (context, next) =>
+                {
+                    Assert.Null(context.Request.ContentLength);
+                    observed = new GatewayBudgetReadStream(context.Request.Body, 100_000_000);
+                    context.Request.Body = observed;
+                    await next();
+                }));
+            await app.StartAsync();
+            var (path, body) = protocol switch
+            {
+                "native" => ("/gw/v1/invoke", "{\"appCallerCode\":\"kd08.test::chat\",\"modelType\":\"chat\",\"requestBody\":{\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}]},\"context\":{\"sourceSystem\":\"external\"}}"),
+                "claude" => ("/v1/messages", "{\"model\":\"auto\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}]}"),
+                "gemini" => ("/v1beta/models/auto:generateContent", "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"ok\"}]}]}"),
+                _ => ("/v1/chat/completions", "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}]}")
+            };
+            using Stream source = mode == "valid" ? new MemoryStream(System.Text.Encoding.UTF8.GetBytes(body))
+                : new GeneratedBodyStream(100_000_000, mode == "deep" ? new string('[', 65) : "{\"data\":\"");
+            var status = await SendIsolatedChunkedStatusAsync(app, path, key, mode == "scope" ? "denied::chat" : caller, source);
+            Assert.StartsWith($"HTTP/1.1 {expectedStatus}", status);
+            Assert.NotNull(observed);
+            if (mode == "valid")
+            {
+                Assert.Equal(System.Text.Encoding.UTF8.GetByteCount(body), observed!.BytesRead);
+                Assert.Equal(1, gateway.SendCount);
+                var window = await data.Database.GetCollection<GatewayServiceKeyRateWindowRecord>("llmgw_service_key_rate_windows").Find(x => x.ServiceKeyId == record.Id).SingleAsync();
+                Assert.Equal(1, window.Count); // Header precheck must not charge the call twice.
+            }
+            else
+            {
+                Assert.Equal(0, gateway.SendCount);
+                if (mode is "scope" or "disabled") Assert.Equal(0, observed!.BytesRead);
+                else Assert.InRange(observed!.BytesRead, 1, mode == "deep" ? 16 * 1024 : GatewayRequestBody.MaxBytes + 1);
+                foreach (var collection in new[] { "llmgw_service_key_rate_windows", "llmgw_budget_reservations", "llmgw_runtime_grants", "llmgw_task_permits" })
+                    Assert.Equal(0, await data.Database.GetCollection<BsonDocument>(collection).CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty));
+            }
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(database); }
+    }
+
+    private static async Task<string?> SendIsolatedChunkedStatusAsync(WebApplication app, string path, string key, string caller, Stream source)
+    {
+        var address = new Uri(app.Urls.Single());
+        using var client = new System.Net.Sockets.TcpClient();
+        await client.ConnectAsync(address.Host, address.Port);
+        using var wire = client.GetStream();
+        var headers = $"POST {path} HTTP/1.1\r\nHost: localhost\r\nX-Gateway-Key: {key}\r\nX-Gateway-Source: external\r\nX-Gateway-App-Caller: {caller}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+        await wire.WriteAsync(System.Text.Encoding.ASCII.GetBytes(headers));
+        var upload = Task.Run(async () =>
+        {
+            try
+            {
+                var buffer = new byte[16 * 1024];
+                int read;
+                while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    await wire.WriteAsync(System.Text.Encoding.ASCII.GetBytes($"{read:x}\r\n"));
+                    await wire.WriteAsync(buffer.AsMemory(0, read));
+                    await wire.WriteAsync("\r\n"u8.ToArray());
+                }
+                await wire.WriteAsync("0\r\n\r\n"u8.ToArray());
+            }
+            catch (IOException) { }
+            catch (ObjectDisposedException) { }
+        });
+        using var reader = new StreamReader(wire);
+        var status = await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        client.Close();
+        await upload.WaitAsync(TimeSpan.FromSeconds(30));
+        return status;
+    }
+
+    private sealed class RejectingHeaderAuthorizer : IGatewayScopedKeyAuthorizer
+    {
+        public int Calls { get; private set; }
+        public Task<GatewayKeyAuthorization> AuthorizeAsync(string providedKey, string legacySharedKey,
+            string sourceSystem, string appCallerCode, string ingressProtocol, string requiredScope,
+            IPAddress? remoteIp, CancellationToken ct, bool allowSingleAppCallerInference = false,
+            string? requestPath = null, bool headersOnly = false)
+        {
+            Assert.True(headersOnly);
+            Calls++;
+            return Task.FromResult(new GatewayKeyAuthorization(false, false, 401, "GATEWAY_KEY_INVALID", "invalid"));
+        }
+    }
+
+    [Theory]
     [InlineData(null, ModelTypes.Chat)]
     [InlineData(ModelTypes.Code, ModelTypes.Code)]
     public async Task NativeResponses_RuntimeGrantOverridesCallerRoutingIdentityAndModelPolicy(string? grantModelType, string expectedType)
@@ -4870,11 +5113,13 @@ public class GatewayKeyGateContractTests
         ILLMRequestContextAccessor? contextAccessor = null,
         LlmGatewayDataContext? gatewayData = null,
         IHttpContextAccessor? httpContextAccessor = null,
-        GatewayBudgetCoordinator? budgetCoordinator = null)
+        GatewayBudgetCoordinator? budgetCoordinator = null,
+        bool useKestrel = false, Action<WebApplication>? beforeEndpoints = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
-        builder.WebHost.UseTestServer();
+        if (useKestrel) builder.WebHost.UseUrls("http://127.0.0.1:0");
+        else builder.WebHost.UseTestServer();
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
         builder.Services.AddSingleton(gateway);
         builder.Services.AddSingleton<ILLMRequestContextAccessor>(
@@ -4899,6 +5144,7 @@ public class GatewayKeyGateContractTests
             PropertyNamingPolicy = null,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         };
+        beforeEndpoints?.Invoke(app);
         app.MapGatewayServingEndpoints(pascalJson, GatewayKey, "keygate-contract-test");
         return app;
     }
@@ -4947,8 +5193,9 @@ public class GatewayKeyGateContractTests
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
             bool allowSingleAppCallerInference = false,
-            string? requestPath = null)
+            string? requestPath = null, bool headersOnly = false)
         {
+            if (headersOnly) return Task.FromResult(new GatewayKeyAuthorization(true, true, 200, "", "headers admitted"));
             CallCount++;
             SourceSystem = sourceSystem;
             AppCallerCode = appCallerCode;
@@ -5047,7 +5294,7 @@ public class GatewayKeyGateContractTests
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
             bool allowSingleAppCallerInference = false,
-            string? requestPath = null)
+            string? requestPath = null, bool headersOnly = false)
         {
             var teamId = providedKey switch
             {
@@ -5079,7 +5326,7 @@ public class GatewayKeyGateContractTests
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
             bool allowSingleAppCallerInference = false,
-            string? requestPath = null)
+            string? requestPath = null, bool headersOnly = false)
         {
             var tenantId = providedKey switch
             {
@@ -5310,6 +5557,7 @@ public class GatewayKeyGateContractTests
 
         public EchoingGateway(ILLMRequestContextAccessor? contextAccessor = null) => _contextAccessor = contextAccessor;
 
+        public int SendCount { get; private set; }
         public GatewayRequest? LastRequest { get; private set; }
         public GatewayStreamChunk[]? StreamChunks { get; init; }
         public GatewayRawRequest? LastRawRequest { get; private set; }
@@ -5332,6 +5580,7 @@ public class GatewayKeyGateContractTests
 
         public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
         {
+            SendCount++;
             LastRequest = request;
             if (request.RequestBody?.ContainsKey("tools") == true)
             {
@@ -5387,6 +5636,7 @@ public class GatewayKeyGateContractTests
             GatewayRequest request,
             [EnumeratorCancellation] CancellationToken ct = default)
         {
+            SendCount++;
             LastRequest = request;
             await Task.Yield();
             yield return GatewayStreamChunk.Start(Resolve(request.ExpectedModel));

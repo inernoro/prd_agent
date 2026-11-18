@@ -111,7 +111,9 @@ public partial class LlmGateway
                 return outcome;
             }
             _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
-            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
+            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId),
+                body["stream"] is JsonValue sv && sv.TryGetValue<bool>(out var streamRequested) && streamRequested
+                    ? _responseBudget : _responseBudget with { ResponseBytes = Math.Min(_responseBudget.ResponseBytes ?? MaxBufferedNativeResponseBytes, MaxBufferedNativeResponseBytes) });
             var client = outboundClients.Get(resolved, 0);
             // 本次 deadline 管理完整请求；不使用 HttpClient 的默认 100 秒截断原生长流。
             if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, deadline.Token);
@@ -130,7 +132,7 @@ public partial class LlmGateway
             // 干净的 200 加一段残缺输出，只有内部账目知道它失败了（判据与接线纪律 形状 10：
             // 静默降级，把可诊断的失败变成不可诊断的）。先缓冲就还没写过响应头，端点得以如实发 502。
             // 流式收不回已发的 200，改由端点在流尾可观测地终止（写 error 事件并中断连接）。
-            var buffered = !wantsStream && response.IsSuccessStatusCode ? new MemoryStream() : null;
+            using var buffered = !wantsStream && response.IsSuccessStatusCode ? new MemoryStream() : null;
             if (buffered == null) await write(new(status, contentType, ReadOnlyMemory<byte>.Empty), deadline.Token);
             await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
             var buffer = new byte[16 * 1024];
@@ -199,6 +201,14 @@ public partial class LlmGateway
                     Success = false, ErrorCode = task.Code, ErrorMessage = task.Message, StatusCode = task.StatusCode,
                 }
                 : GatewayRawResponse.Fail(task.Code, task.Message, task.StatusCode);
+            return outcome;
+        }
+        catch (Exception ex) when (GetResponseRejection(ex) is not null)
+        {
+            var rejected = GetResponseRejection(ex)!;
+            outcome = GatewayRawResponse.Fail(rejected.Code, rejected.Message, 502);
+            auditBody = JsonSerializer.Serialize(new { rejection = rejected.Code, reason = rejected.Message });
+            observer = null;
             return outcome;
         }
         catch (OperationCanceledException)
