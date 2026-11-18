@@ -405,6 +405,47 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         resolved.ShouldContain("\"used\":1");
     }
 
+    [Theory]
+    [InlineData("AutomaticAppCallerPerDay", "app-caller", 86400)]
+    [InlineData("AutomaticTenantPerHour", "tenant", 3600)]
+    [InlineData("budget", "", 0)]
+    public async Task LaterGovernanceRejectionDoesNotConsumeApprovedQuota(string laterLimit, string scope, int seconds)
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant);
+        await using var serving = await Serving(database, new() { ["AutomaticAppCallerPerHour"] = 1, [laterLimit] = 1 });
+        await using var console = await Console(database);
+        var caller = serving.GetTestClient();
+        var admin = console.GetTestClient();
+        admin.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "admin"));
+
+        (await Send(caller, true)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Send(caller, true)).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        var alert = await database.Alerts.Find(new BsonDocument("Kind", "blocked")).SingleAsync();
+        var resolution = "/gw/logs/consumption-alerts/" + Uri.EscapeDataString(alert["_id"].AsString) + "/resolution";
+        (await admin.PostAsJsonAsync(resolution, new { action = "request-quota", units = 1, reason = "Finish fixture" }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await admin.PostAsJsonAsync(resolution, new { action = "approve-quota" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        if (laterLimit == "budget")
+            await database.Data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").UpdateOneAsync(
+                callerRecord => callerRecord.TenantId == Tenant && callerRecord.AppCallerCode == Caller,
+                Builders<GatewayAppCallerRecord>.Update.Set(callerRecord => callerRecord.MonthlyBudgetUsd, 1m));
+
+        var denied = await Send(caller, true);
+        if (laterLimit == "budget")
+            (await denied.Content.ReadAsStringAsync()).ShouldContain("APP_CALLER_BUDGET_RESERVATION_UNCONFIGURED");
+        else
+        {
+            denied.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+            denied.Headers.GetValues("X-LLMGW-Safety-Scope").Single().ShouldBe(scope);
+            denied.Headers.GetValues("X-LLMGW-Safety-Window-Seconds").Single().ShouldBe(seconds.ToString());
+        }
+        var unchanged = await database.Alerts.Find(new BsonDocument("_id", alert["_id"])).SingleAsync();
+        unchanged["QuotaUsed"].AsInt32.ShouldBe(0);
+        database.UpstreamCalls.ShouldBe(1);
+    }
+
     [Fact]
     public async Task DynamicBaselineDetectsSharedSpikeWithoutWeakeningFixedLimit()
     {

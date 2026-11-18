@@ -3451,9 +3451,16 @@ public static class GatewayHttpEndpoints
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType, caller?.RateLimitPerMinute ?? 0),
                     budget);
 
+            async Task<AppCallerGovernanceDecision> CompleteAdmissionAsync(AppCallerRateLimitDecision rateLimit)
+            {
+                var quotaRejection = rateLimit.Rejected ? null : await safety.CompleteTemporaryQuotaAsync(
+                    minimum, tenantId, appCallerCode, requestType, caller?.TeamId, requestId, identity, ct);
+                return new(status, tenantRateLimit, rateLimit, budget, quotaRejection);
+            }
+
             var limit = caller?.RateLimitPerMinute ?? 0;
             if (limit <= 0)
-                return new AppCallerGovernanceDecision(status, tenantRateLimit, AppCallerRateLimitDecision.Allow(appCallerCode, requestType), budget);
+                return await CompleteAdmissionAsync(AppCallerRateLimitDecision.Allow(appCallerCode, requestType));
 
             var now = DateTime.UtcNow;
             var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
@@ -3511,7 +3518,7 @@ public static class GatewayHttpEndpoints
                 : AppCallerRateLimitDecision.Allow(appCallerCode, requestType, limit, count, windowStart);
             await safety.ObserveAsync(tenantId, normalizedAppCallerCode, normalizedRequestType, caller?.TeamId,
                 requestId, identity.SourceDeployment, "app-caller", "general", 60, windowStart, count, limit, ct);
-            return new AppCallerGovernanceDecision(status, tenantRateLimit, rateLimit, budget);
+            return await CompleteAdmissionAsync(rateLimit);
         }
         catch
         {
