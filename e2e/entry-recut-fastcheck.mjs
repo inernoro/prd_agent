@@ -8,6 +8,7 @@ const target = 'ccf3c05eba9e41abf112481bd8d590718462171f';
 const artifacts = new URL('../work/entry-recut-headless/', import.meta.url);
 const output = name => new URL(name, artifacts).pathname;
 await mkdir(artifacts, { recursive: true });
+await mkdir(output('samples/'), { recursive: true });
 const manifest = JSON.parse(await readFile(new URL('./fixtures/media/gateway-portrait-cdn.json', import.meta.url), 'utf8'));
 const browser = await chromium.launch({ channel: 'chromium', headless: true, args: ['--disable-dev-shm-usage'] });
 const evidence = { target, provenance: 'deterministic-fixture', playback: [] };
@@ -47,10 +48,17 @@ async function verify(mobile) {
     await page.waitForURL(/\/quickstart$/);
     const movie = page.locator('.portrait-motion');
     await expect(movie).toHaveAttribute('poster', manifest.light.opening.url);
-    const moments = mobile ? [] : [.25, 2.86, 7.70];
+    const samples = [];
+    const moments = mobile ? [] : Array.from({ length: 34 }, (_, step) => step / 4);
     for (const time of moments) {
-      await page.waitForFunction(t => document.querySelector('.portrait-motion')?.currentTime >= t, time, { timeout: 15000 });
-      await page.screenshot({ path: output(`desktop-${time}.png`) });
+      await page.waitForFunction(t => {
+        const video = document.querySelector('.portrait-motion');
+        return video && (video.currentTime >= t || video.ended);
+      }, time, { timeout: 15000 });
+      const at = await movie.evaluate(v => v.currentTime);
+      const file = `samples/${Math.round(time * 4).toString().padStart(2, '0')}.jpg`;
+      await page.screenshot({ path: output(file), type: 'jpeg', quality: 86 });
+      samples.push({ time, at, file });
     }
     await expect.poll(() => movie.evaluate(v => v.ended), { timeout: 15000 }).toBe(true);
     await expect(page.getByRole('textbox', { name: '我想做什么', exact: true })).toBeVisible();
@@ -69,9 +77,20 @@ async function verify(mobile) {
     assert.equal(result.overflow, false);
     if (mobile) assert.ok(result.touchPoints > 0);
     await page.screenshot({ path: output(`${label}-settled.png`) });
-    evidence.playback.push({ label, ...result });
+    evidence.playback.push({ label, ...result, samples });
     if (!mobile) {
-      await page.waitForTimeout(450);
+      await page.waitForTimeout(950);
+      for (const next of ['dark', 'light']) {
+        await page.getByLabel('打开用户菜单', { exact: true }).click();
+        await page.getByRole('button', { name: next === 'dark' ? '切换深色' : '切换浅色', exact: true }).click();
+        await expect(page.locator('.consciousness-scene')).toHaveAttribute('data-portrait-theme', next);
+        const portrait = page.locator('.consciousness-art');
+        await expect(portrait).toHaveAttribute('src', manifest[next].open.url);
+        await expect.poll(() => portrait.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+        await expect(page.locator('.portrait-motion')).toHaveCount(0);
+        await page.screenshot({ path: output(`${next}-switched.png`) });
+        await page.waitForTimeout(1200);
+      }
       const video = page.video();
       await ctx.close();
       await video.saveAs(output('daylight-preflight.webm'));

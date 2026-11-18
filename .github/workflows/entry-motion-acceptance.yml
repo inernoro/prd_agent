@@ -29,6 +29,11 @@ jobs:
           pnpm -C llmgw/web build
           pnpm -C e2e install --frozen-lockfile
           pnpm -C e2e exec playwright install chromium
+          mkdir -p "$HOME/.local/share/fonts"
+          curl --fail --silent --show-error --retry 2 --max-time 90 --location 'https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' --output "$HOME/.local/share/fonts/NotoSansCJKsc-Regular.otf"
+          fc-cache -f "$HOME/.local/share/fonts"
+          fc-match -f '%{family}\n' :lang=zh-cn | rg '^Noto Sans CJK SC'
+          python3 -m pip install --disable-pip-version-check --target "$RUNNER_TEMP/entry-media" pillow==11.3.0 imageio-ffmpeg==0.6.0
       - name: Run the real UI with isolated login on desktop and mobile
         run: |
           pnpm -C llmgw/web preview --host 127.0.0.1 --strictPort --port 8200 &
@@ -37,6 +42,7 @@ jobs:
             sleep 1
           done
           node e2e/entry-recut-fastcheck.mjs
+          PYTHONPATH="$RUNNER_TEMP/entry-media" python3 e2e/entry-recut-fastcheck-media.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
