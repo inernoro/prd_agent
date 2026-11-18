@@ -598,7 +598,16 @@ test.describe('长文批注连续跟随与菜单外点', () => {
         twoLines: 2 * parseFloat(getComputedStyle(el).lineHeight),
       }));
       expect(excerpt.height).toBeGreaterThanOrEqual(Math.floor(excerpt.twoLines));
-      await selected.getByRole('button', { name: '放回原位', exact: true }).tap();
+      const reset = selected.getByRole('button', { name: '放回原位', exact: true });
+      await expect(reset).toBeInViewport();
+      const target = await reset.evaluate(button => {
+        const { x, y, width, height } = button.getBoundingClientRect();
+        const center = { x: x + width / 2, y: y + height / 2 };
+        return { ...center, hitsButton: button.contains(button.ownerDocument.elementFromPoint(center.x, center.y)) };
+      });
+      expect(target.hitsButton).toBe(true);
+      // Complete the next finger gesture on the same input session as the drag.
+      await touch.send('Input.synthesizeTapGesture', { x: target.x, y: target.y, duration: 72, gestureSourceType: 'touch' });
       await expect(selected).toHaveAttribute('data-placement', 'dock');
 
       await selected.getByRole('button', { name: '返回批注摘要', exact: true }).tap();
