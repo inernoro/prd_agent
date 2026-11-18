@@ -106,7 +106,8 @@ public class ChannelTaskService
             intentResult.TargetAgent,
             intentResult.Intent,
             ct,
-            ingressTaskId);
+            ingressTaskId,
+            trustedEmailIngress?.OwnerUserId);
 
         if (!matchResult.IsMatch)
         {

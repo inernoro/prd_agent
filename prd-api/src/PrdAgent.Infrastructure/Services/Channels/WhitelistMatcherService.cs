@@ -67,7 +67,8 @@ public class WhitelistMatcherService
         string? targetAgent = null,
         string? operation = null,
         CancellationToken ct = default,
-        string? deliveryId = null)
+        string? deliveryId = null,
+        string? emailOwnerId = null)
     {
         var normalizedIdentifier = senderIdentifier.ToLowerInvariant();
 
@@ -117,7 +118,11 @@ public class WhitelistMatcherService
             // 检查每日配额
             if (rule.DailyQuota > 0)
             {
-                var quotaOk = await CheckAndIncrementQuotaAsync(rule, deliveryId, ct);
+                var receiptKey = deliveryId == null ? null : Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+                            new[] { deliveryId, normalizedIdentifier, targetAgent, operation, emailOwnerId })));
+                var quotaOk = await CheckAndIncrementQuotaAsync(rule, deliveryId, receiptKey, ct);
                 if (!quotaOk)
                 {
                     _logger.LogDebug("Quota exceeded for rule {RuleId}", rule.Id);
@@ -178,7 +183,7 @@ public class WhitelistMatcherService
     /// <summary>
     /// 检查并增加配额
     /// </summary>
-    private async Task<bool> CheckAndIncrementQuotaAsync(ChannelWhitelist rule, string? deliveryId, CancellationToken ct)
+    private async Task<bool> CheckAndIncrementQuotaAsync(ChannelWhitelist rule, string? deliveryId, string? receiptKey, CancellationToken ct)
     {
         // Read the date, quota and counter on the server in the same atomic operation. In
         // particular, a losing "reset yesterday" writer must not silently bypass today's quota.
@@ -195,15 +200,62 @@ public class WhitelistMatcherService
         {
             sameDay, new BsonDocument("$ifNull", new BsonArray { "$TodayChargedDeliveryIds", new BsonArray() }), new BsonArray()
         });
-        BsonValue alreadyCharged = deliveryId == null ? BsonBoolean.False
-            : new BsonDocument("$in", new BsonArray { new BsonDocument("$literal", deliveryId), ids });
-        var filter = Builders<ChannelWhitelist>.Filter.Eq(x => x.Id, rule.Id)
-            & Builders<ChannelWhitelist>.Filter.Eq(x => x.IsActive, true)
-            & Builders<ChannelWhitelist>.Filter.Gt(x => x.DailyQuota, 0)
+        var unexpired = new BsonDocument("$filter", new BsonDocument
+        {
+            { "input", new BsonDocument("$ifNull", new BsonArray { "$EmailQuotaAdmissions", new BsonArray() }) },
+            { "cond", new BsonDocument("$gt", new BsonArray { "$$this.ExpiresAt", "$$NOW" }) }
+        });
+        BsonValue alreadyCharged = BsonBoolean.False;
+        BsonValue admissions = unexpired;
+        if (receiptKey != null)
+        {
+            var receiptKeys = new BsonDocument("$map", new BsonDocument
+            {
+                { "input", unexpired }, { "in", "$$this.Key" }
+            });
+            alreadyCharged = new BsonDocument("$or", new BsonArray
+            {
+                new BsonDocument("$in", new BsonArray { receiptKey, receiptKeys }),
+                new BsonDocument("$in", new BsonArray { new BsonDocument("$literal", deliveryId), ids })
+            });
+            // A fixed 24-hour window covers overnight recovery without extending on retries.
+            var receipt = new BsonDocument
+            {
+                { "Key", receiptKey },
+                { "ExpiresAt", new BsonDocument("$add", new BsonArray { "$$NOW", 86_400_000 }) }
+            };
+            admissions = new BsonDocument("$cond", new BsonArray
+            {
+                alreadyCharged, unexpired,
+                new BsonDocument("$concatArrays", new BsonArray { unexpired, new BsonArray { receipt } })
+            });
+        }
+
+        var rules = Builders<ChannelWhitelist>.Filter;
+        var filter = rules.Eq(x => x.Id, rule.Id)
+            & rules.Eq(x => x.IsActive, true)
+            & rules.Gt(x => x.DailyQuota, 0)
             & new BsonDocument("$expr", new BsonDocument("$or", new BsonArray
             {
                 alreadyCharged, new BsonDocument("$lt", new BsonArray { used, "$DailyQuota" })
             }));
+        if (receiptKey != null)
+        {
+            // Recheck policy fields in the same write that consumes or reuses admission.
+            var agents = rules.Eq(x => x.AllowedAgents, rule.AllowedAgents);
+            if (rule.AllowedAgents.Count == 0)
+                agents |= rules.Exists(x => x.AllowedAgents, false);
+            var operations = rules.Eq(x => x.AllowedOperations, rule.AllowedOperations);
+            if (rule.AllowedOperations.Count == 0)
+                operations |= rules.Exists(x => x.AllowedOperations, false);
+            var priority = rules.Eq(x => x.Priority, rule.Priority);
+            if (rule.Priority == 100)
+                priority |= rules.Exists(x => x.Priority, false);
+            filter &= rules.Eq(x => x.ChannelType, rule.ChannelType)
+                & rules.Eq(x => x.IdentifierPattern, rule.IdentifierPattern)
+                & agents & operations & priority
+                & rules.Eq(x => x.BoundUserId, rule.BoundUserId);
+        }
         PipelineDefinition<ChannelWhitelist, ChannelWhitelist> pipeline = new[]
         {
             new BsonDocument("$set", new BsonDocument
@@ -211,8 +263,8 @@ public class WhitelistMatcherService
                 { "TodayDate", today },
                 { "TodayUsedCount", new BsonDocument("$add", new BsonArray
                     { used, new BsonDocument("$cond", new BsonArray { alreadyCharged, 0, 1 }) }) },
-                { "TodayChargedDeliveryIds", deliveryId == null ? ids
-                    : new BsonDocument("$setUnion", new BsonArray { ids, new BsonArray { deliveryId } }) },
+                { "TodayChargedDeliveryIds", ids },
+                { "EmailQuotaAdmissions", admissions },
                 { "UpdatedAt", "$$NOW" }
             })
         };

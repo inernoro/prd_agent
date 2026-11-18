@@ -273,6 +273,80 @@ public class EmailInboundPersistenceTests : IAsyncLifetime
         Assert.Equal(1, whitelist.TodayUsedCount);
     }
 
+    [Theory]
+    [InlineData("valid")]
+    [InlineData("valid-full")]
+    [InlineData("expired")]
+    [InlineData("disabled")]
+    [InlineData("revoked")]
+    [InlineData("replaced")]
+    public async Task Kd17_overnight_retry_respects_receipt_expiry_and_current_permissions(string scenario)
+    {
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var yesterday = DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd");
+        await SetQuotaAsync(1, yesterday);
+        var body = Body("overnight-retry", Recipient);
+        await ConfigureFailPointAsync(new BsonDocument("times", 1), new BsonDocument
+        {
+            { "failCommands", new BsonArray { "insert" } },
+            { "namespace", _databaseName + ".channel_tasks" },
+            { "errorCode", 2 }
+        });
+        try
+        {
+            var result = await Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None);
+            Assert.Equal(503, Assert.IsType<StatusCodeResult>(result).StatusCode);
+        }
+        finally { await DisableFailPointAsync(); }
+
+        var all = FilterDefinition<ChannelWhitelist>.Empty;
+        var rule = await _db.ChannelWhitelists.Find(all).SingleAsync();
+        var receipt = Assert.Single(rule.EmailQuotaAdmissions);
+        Assert.Equal(1, rule.TodayUsedCount);
+        Assert.Equal(0, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        var updates = Builders<ChannelWhitelist>.Update;
+        await _db.ChannelWhitelists.UpdateOneAsync(all, updates
+            .Set(x => x.TodayDate, yesterday)
+            .Set(x => x.EmailQuotaAdmissions, new List<EmailQuotaAdmission>
+            {
+                receipt with { ExpiresAt = scenario == "expired"
+                    ? DateTime.UtcNow.AddMinutes(-1) : receipt.ExpiresAt }
+            }));
+        if (scenario == "valid-full")
+        {
+            var other = Body("new-day-quota", Recipient);
+            Assert.IsType<OkResult>(await Controller(Context(other), Configuration())
+                .ReceiveInbound(CancellationToken.None));
+        }
+        if (scenario == "disabled")
+            await _db.ChannelWhitelists.UpdateOneAsync(all, updates.Set(x => x.IsActive, false));
+        if (scenario == "revoked")
+            await _db.ChannelWhitelists.UpdateOneAsync(all, updates.Set(x => x.AllowedOperations,
+                new List<string> { "unrelated-operation" }));
+
+        if (scenario == "replaced")
+        {
+            await _db.ChannelWhitelists.DeleteOneAsync(all);
+            rule.Id = Guid.NewGuid().ToString("N");
+            rule.TodayDate = today;
+            rule.EmailQuotaAdmissions.Clear();
+            await _db.ChannelWhitelists.InsertOneAsync(rule);
+        }
+
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            Controller(Context(body), Configuration()).ReceiveInbound(CancellationToken.None)));
+
+        var permitted = scenario is "valid" or "valid-full" or "expired";
+        Assert.Equal(scenario == "valid-full" ? 2 : permitted ? 1 : 0, await _db.ChannelTasks.CountDocumentsAsync(FilterDefinition<ChannelTask>.Empty));
+        var after = await _db.ChannelWhitelists.Find(all).SingleAsync();
+        Assert.Equal(permitted || scenario == "replaced" ? today : yesterday, after.TodayDate);
+        Assert.Equal(scenario == "valid" ? 0 : 1, after.TodayUsedCount);
+        if (scenario is "valid" or "valid-full")
+            Assert.Equal(receipt, Assert.Single(after.EmailQuotaAdmissions.Where(x => x.Key == receipt.Key)));
+        if (scenario == "expired")
+            Assert.True(Assert.Single(after.EmailQuotaAdmissions).ExpiresAt > receipt.ExpiresAt.AddMinutes(-1));
+    }
+
     [Fact]
     public async Task Kd17_audit_insert_failure_then_retry_repairs_one_accepted_log()
     {

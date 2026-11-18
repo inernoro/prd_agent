@@ -53,6 +53,9 @@ public class ChannelWhitelist
     [System.Text.Json.Serialization.JsonIgnore]
     public List<string> TodayChargedDeliveryIds { get; set; } = new();
 
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<EmailQuotaAdmission> EmailQuotaAdmissions { get; set; } = new();
+
     /// <summary>
     /// 今日使用统计的日期（用于重置计数）
     /// </summary>
@@ -109,3 +112,6 @@ public static class ChannelTypes
         _ => channelType
     };
 }
+
+
+public record EmailQuotaAdmission(string Key, DateTime ExpiresAt);
