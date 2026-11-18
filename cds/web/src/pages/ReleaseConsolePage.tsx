@@ -27,6 +27,7 @@ import { MotionLink as Link } from '@/components/layout/RouteMotion';
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { chooseReleaseWorkbenchBranch, releaseApprovalInboxPath, releaseApprovalPath, releaseWorkbenchCommit } from '@/lib/releaseApproval';
 import {
   AlertTriangle, Ban, Boxes, CheckCircle2, CircleDashed, Clipboard, Clock, Github, History, Loader2,
   PauseCircle, Play, Plug, RefreshCw, Rocket, RotateCcw, Search, XCircle, Zap,
@@ -240,7 +241,8 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
   const [search, setSearch] = useState('');
   const [center, setCenter] = useState<CenterResponse | null>(null);
   const [branches, setBranches] = useState<BranchOption[]>([]);
-  const [branchId, setBranchId] = useState('');
+  const linkedApprovalBranch = useRef(params.get('branch') || '');
+  const [branchId, setBranchId] = useState(linkedApprovalBranch.current);
   // 从发布中心跳过来时带着 target（与可选的 intent=rollback）——落地即选中那个目标，
   // 不让用户在左栏里再找一遍。intent 只影响首屏提示，不代替回滚本身的二次确认。
   const [targetId, setTargetId] = useState(params.get('target') || '');
@@ -316,10 +318,12 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
     activeRunId.current = undefined;
     setUnavailableProject(false);
     currentProject.current = id;
+    linkedApprovalBranch.current = '';
+    setBranchId('');
     setProjectId(id); setCenter(null); setBranches([]); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setBatchLog(null); setTargetId(''); setConfirmTargetId(null);
     setParams((current) => {
       const next = new URLSearchParams(current); next.set('project', id);
-      for (const key of ['target', 'intent', 'batch', 'batchView']) next.delete(key);
+      for (const key of ['target', 'intent', 'batch', 'batchView', 'branch']) next.delete(key);
       return next;
     }, { replace: true });
   };
@@ -371,7 +375,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
       if (isStaleProject(forProject) || !branchesGate.current.accept(ticket)) return;
       const list = response.branches || [];
       setBranches(list); setBranchesError('');
-      setBranchId(current => list.some(item => item.id === current) ? current : list[0]?.id || '');
+      setBranchId(current => chooseReleaseWorkbenchBranch(list, current, linkedApprovalBranch.current));
     } catch (error) {
       if (isStaleProject(forProject) || !branchesGate.current.accept(ticket)) return;
       setBranchesError(`来源分支读取失败：${releaseFailureReason(error)}；请刷新后再发起新发布。`);
@@ -493,7 +497,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
   });
   const diagnosis = failed ? diagnoseReleaseFailure(shownLogs) : null;
   const branch = branches.find((item) => item.id === branchId);
-  const commitSha = branch?.commitSha || branch?.githubCommitSha || '';
+  const commitSha = releaseWorkbenchCommit(branch);
   /*
    * 发布来源地址：只认后端下发的 previewUrl / previewUrls，取不到就是空串。
    * 空串不是「随便填填」——它会被发布前检查的「可发布产物」那一项拦下；
@@ -758,7 +762,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                   ? inFlight && liveRow ? `已知运行 · ${liveRow.target.name}；另有请求待核对` : '当前项目有发布请求待核对'
                   : inFlight && liveRow ? `发布中 · ${liveRow.target.name}` : '当前项目暂无进行中记录'}
               </span> : null}
-              {projectAvailable ? <Button variant="outline" size="sm" asChild><Link to={`/release-center?project=${encodeURIComponent(projectId)}`}>环境管理</Link></Button> : <Button variant="outline" size="sm" disabled>环境管理</Button>}
+              {projectAvailable ? <Button variant="outline" size="sm" asChild><Link to={`/release-center?${new URLSearchParams({ project: projectId, ...(!batchMode && row ? { target: row.target.id } : {}) })}`}>环境管理</Link></Button> : <Button variant="outline" size="sm" disabled>环境管理</Button>}
               <Button variant="outline" size="sm" onClick={refreshProjectData} disabled={!projectsLoaded}>
                 <RefreshCw />
                 刷新
@@ -781,6 +785,10 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
             aria-current={(item.mode === 'batch') === batchMode ? 'page' : undefined}
             className={`rounded-md px-4 py-2 text-sm font-medium ${(item.mode === 'batch') === batchMode ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>{item.label}</Link>)}
         </nav>
+        {!batchMode && row?.target.governance?.required ? <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-[hsl(var(--hairline))] px-4 py-2 text-sm sm:px-6">
+          <p><strong>{row.target.name}</strong><span className="ml-2 text-muted-foreground">发布前需要有效审批。已有批准时，选择获批分支再执行。</span></p>
+          <Button asChild variant="outline" size="sm"><Link to={releaseApprovalInboxPath(projectId, row.target.id)}>查看此环境审批</Link></Button>
+        </div> : null}
         {isChildPreviewCdsInstance() ? <p role="note" className="border-b border-warn/30 bg-warn-soft px-6 py-3 text-sm">当前是隔离预览，只能查看界面，不能执行真实发布。请在有发布数据与权限的 CDS 实例中操作。</p> : null}
         {commandError || recovery.error || branchesError ? <div role="alert" className="mx-3 mt-3 shrink-0 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">{commandError || recovery.error || branchesError}</div> : null}
         {cancelUnknown ? <div className="mx-3 mt-3 flex shrink-0 flex-wrap items-center gap-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm"><span>正在核对 {cancelUnknown.releaseId} 的取消结果，确认终态前不会再次取消。</span><Button size="sm" variant="outline" onClick={() => void verifyCancellation(cancelUnknown)}>核对原任务</Button></div> : null}
@@ -1004,24 +1012,24 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                       id="release-source-version"
                       value={branchId}
                       disabled={commandPending || !!branchesError || targetUnconfirmed}
-                      onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
+                      onChange={(event) => { linkedApprovalBranch.current = ''; setBranchId(event.target.value); setConfirmTargetId(null); }}
                       title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，发布前检查会拦下这一项'}
                       aria-label="要发布的版本"
                       className="cds-ident min-h-11 min-w-0 max-w-full shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-sm outline-none focus:border-[hsl(var(--hairline-strong))] sm:max-w-[14rem]"
                     >
-                      {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
-                      {branches.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.branch}
-                          {(item.commitSha || item.githubCommitSha) ? ` · ${(item.commitSha || item.githubCommitSha || '').slice(0, 7)}` : ' · 版本未确认'}
-                          {/* 已经在线上的那一版直接标出来——用户问的正是
-                              「这些没有被标记为已发布吗」。 */}
-                          {!targetUnconfirmed && sameCommit(item.commitSha, row?.currentCommit) ? ' · 线上' : ''}
-                          {commitMeta[item.commitSha || '']?.subject ? ` · ${commitMeta[item.commitSha || ''].subject}` : ''}
-                        </option>
-                      ))}
+                      {!branchId ? <option value="">{branches.length === 0 ? '没有可发布的分支' : '请选择分支'}</option> : null}
+                      {branches.map(item => {
+                        const revision = releaseWorkbenchCommit(item);
+                        const subject = commitMeta[revision]?.subject || (item.commitSha === revision ? item.subject : undefined);
+                        return <option key={item.id} value={item.id}>
+                          {item.branch}{revision ? ` · ${revision.slice(0, 7)}` : ' · 版本未确认'}
+                          {!targetUnconfirmed && sameCommit(revision, row?.currentCommit) ? ' · 线上' : ''}
+                          {subject ? ` · ${subject}` : ''}
+                        </option>;
+                      })}
                     </select>
                     )}
+                    {!targetRequest && !branchId && linkedApprovalBranch.current && !branchesError ? <p role="status" className="text-sm text-warn">申请中的分支当前不可用。请返回审批记录核对，或明确选择另一分支。</p> : null}
                     {!targetRequest && branchId && !commitSha && !branchesError ? <p role="status" className="text-sm text-warn">来源版本未确认，请刷新分支后再发布。</p> : null}
                   </div>
                   {!targetUnconfirmed ? <>
@@ -1097,6 +1105,12 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
               + 一屏日志全是上一次发布留下的，不说清楚，用户会以为是自己刚做的
               （用户原话：「很有心智负担」）。本次真发起了就不出——那时屏幕自己说得清。
             */}
+            {shown?.governance && !targetUnconfirmed ? <div aria-label="本次发布审批与执行记录" className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-[hsl(var(--hairline))] px-3.5 py-2.5 text-xs">
+              <strong>{shown.governance.kind === 'debug' ? '连续调试授权' : '独立批准'}</strong>
+              <span>执行人 {releaseActorLabel(shown.operator)}</span>
+              <span>批准人 {releaseActorLabel(shown.governance.approvedBy)}</span>
+              <Link className="font-medium text-primary underline" to={releaseApprovalPath(shown.governance.authorizationId)}>查看这笔审批</Link>
+            </div> : null}
             {!targetUnconfirmed && stance.hint ? (
               <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-[0.625rem] border px-3.5 py-2.5 text-xs ${
                 stance.selectedIsLive

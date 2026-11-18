@@ -17,6 +17,7 @@ export interface GovernanceAdmission { runId: string; projectId: string; targetI
 const human = (actor: string) => /^user:[^:]+:[^:]+$/.test(actor);
 const actorId = (actor: string) => human(actor) ? actor.split(':').slice(0, 2).join(':') : actor;
 const known = (actor: string) => human(actor) || /^ai:key:[A-Za-z0-9_-]+$/.test(actor);
+export const isReleaseApplicant = (actor: string, requestedBy: string): boolean => known(actor) && actorId(actor) === actorId(requestedBy);
 const executionActor = (record: ReleaseAuthorization) => record.scheduledJobId ? `system:scheduled-job:${record.scheduledJobId}` : record.requestedBy;
 const id = (prefix: string) => prefix + crypto.randomBytes(12).toString('hex');
 const approvalProjectFingerprint = (project?: Project): string => {
@@ -198,14 +199,15 @@ export class ReleaseGovernanceService {
     if (Object.keys(data.authorizations).length >= 5000) throw new ReleaseGovernanceError('审批记录容量已满，请先归档历史记录');
     data.authorizations[record.id] = record; await this.persist(data); return record;
   }
-  async decide(authorizationId: string, decision: 'approved' | 'rejected' | 'revoked', actor: string, reason: string): Promise<ReleaseAuthorization> {
+  async decide(authorizationId: string, decision: 'approved' | 'rejected' | 'revoked', actor: string, reason: string, stillAllowed?: () => boolean): Promise<ReleaseAuthorization> {
     const original = this.state.getReleaseGovernance().authorizations[authorizationId];
     if (!original) throw new ReleaseGovernanceError('审批申请不存在');
     if (!human(actor) && !(decision === 'revoked' && known(actor) && actorId(actor) === actorId(original.requestedBy))) {
       throw new ReleaseGovernanceError('批准和拒绝必须由人类账号完成；执行凭据仅能撤销自己的申请');
     }
     if (decision !== 'revoked' && original.status !== 'pending' || decision === 'revoked' && !['pending','approved'].includes(original.status)) throw new ReleaseGovernanceError('申请状态已变化，请刷新后重试');
-    if (decision === 'approved' && actorId(actor) === actorId(original.requestedBy)) throw new ReleaseGovernanceError('不能批准自己发起的申请，请由另一位项目成员批准');
+    if (decision === 'rejected' && !(Date.parse(original.expiresAt) > this.now().getTime())) throw new ReleaseGovernanceError('申请已到期，请由申请人重新发起');
+    if (decision === 'approved' && isReleaseApplicant(actor, original.requestedBy)) throw new ReleaseGovernanceError('不能批准自己发起的申请，请由另一位项目成员批准');
     if (typeof reason !== 'string' || reason.trim().length < 4 || reason.length > 2000) throw new ReleaseGovernanceError('请填写至少 4 字的审批意见');
     if (decision === 'approved') {
       this.validate(original, { projectId: original.projectId, targetId: original.targetId, branchId: original.branchId,
@@ -216,6 +218,7 @@ export class ReleaseGovernanceService {
       this.validate(original, { projectId: original.projectId, targetId: original.targetId, branchId: original.branchId,
         commitSha: original.candidateSha, operator: executionActor(original), action: original.action, rollbackReleaseId: original.rollbackReleaseId, runId: '' }, false);
     }
+    if (stillAllowed && !stillAllowed()) throw new ReleaseGovernanceError('项目访问权限已变化，未保存审批决定');
     const data = this.state.getReleaseGovernance(), current = data.authorizations[authorizationId];
     if (JSON.stringify(current) !== JSON.stringify(original)) throw new ReleaseGovernanceError('申请已被其他操作更新，请刷新后重试');
     const at = this.now().toISOString();

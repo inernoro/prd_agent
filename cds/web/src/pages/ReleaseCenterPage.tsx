@@ -707,7 +707,7 @@ export function ReleaseCenterPage(): JSX.Element {
                 发布工作台承接批次与逐目标发布；主页面保留版本追溯和审批。
                 带上当前项目，进去不用重选。
               */}
-              <Button size="sm" asChild>
+              <Button size="sm" variant="outline" asChild>
                 <Link to={consoleHref()}>
                   <Rocket />
                   发布工作台
@@ -834,8 +834,8 @@ export function ReleaseCenterPage(): JSX.Element {
                 </section> : null}
 
                 {/* ══ 分区一：全环境矩阵 ══ */}
+                {section === 'fleet' ? <ReleaseGovernancePanel key={`governance:${projectId}`} projectId={projectId} row={selectedRow} targets={rows} onSelectTarget={setSelectedTargetId} refreshVersion={sectionRefresh} onChanged={() => void load({ silent: true })} /> : null}
                 {section === 'fleet' ? <ReleaseTraceOverview rows={rows} rail={rail} commitMeta={commitMeta} selectedTargetId={effectiveTargetId} onSelect={setSelectedTargetId} onOpenLogs={setLogRun} onInspect={inspectEnv} /> : null}
-                {section === 'fleet' ? <ReleaseGovernancePanel key={`governance:${projectId}`} projectId={projectId} row={rows.find(row => row.target.id === effectiveTargetId)} refreshVersion={sectionRefresh} onChanged={() => void load({ silent: true })} /> : null}
                 {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
                 {section === 'fleet' ? (
                   rows.length > 0 ? <FleetMatrix
