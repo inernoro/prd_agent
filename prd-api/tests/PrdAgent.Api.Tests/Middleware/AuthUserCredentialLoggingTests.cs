@@ -57,6 +57,7 @@ public sealed class AuthUserCredentialLoggingTests
     [InlineData("/api/chat-agents")]
     [InlineData("/api/agent-tools-console")]
     [InlineData("/api/agent-toolsmith")]
+    [InlineData("/api/web-pages/share-history")]
     public void AdjacentRoutesKeepTheirExistingDiagnostics(string path)
         => Assert.False(RequestLogRedactionProbe.CarriesCredential(path));
 
@@ -68,6 +69,12 @@ public sealed class AuthUserCredentialLoggingTests
     [InlineData("/api/users/bulk", 400, false)]
     [InlineData("/api/users/fake-user/password", 200, false)]
     [InlineData("/api/v1/auth/login", 200, true)]
+    [InlineData("/api/web-pages/shares/view/synthetic/access", 200, false)]
+    [InlineData("/api/web-pages/shares/view/synthetic/access", 429, false)]
+    [InlineData("/api/web-pages/shares/synthetic/password", 200, false)]
+    [InlineData("/api/web-pages/share", 200, false)]
+    [InlineData("/api/web-pages/share", 400, false)]
+    [InlineData("/api/web-pages/collections/synthetic/shares", 200, false)]
     public async Task BodiesStayOnTransportButNeverReachFinalSharedLog(string path, int statusCode, bool stream)
     {
         var fixture = new LogFixture();

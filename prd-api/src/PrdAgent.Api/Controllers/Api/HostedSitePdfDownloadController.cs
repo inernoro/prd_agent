@@ -9,6 +9,7 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 namespace PrdAgent.Api.Controllers.Api;
 
 [ApiController]
+[HostedShareCookie]
 [Route("api/web-pages")]
 [Authorize]
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]

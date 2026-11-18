@@ -45,13 +45,13 @@ const path = (id: string) => `/api/web-pages/${encodeURIComponent(id)}/related-d
 export async function getRelatedDocuments(id: string, source?: RelatedDocumentSource): Promise<ApiResponse<RelatedDocuments>> {
   if (!source?.token) return apiRequest(path(id));
   const query = new URLSearchParams({ siteId: id });
-  if (source.password) query.set('password', source.password);
+
   const headers: Record<string, string> = { Accept: 'application/json' };
   const token = useAuthStore.getState().token;
   if (token) headers.Authorization = `Bearer ${token}`;
   try {
     const response = await fetch(resolveApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(source.token)}/related-documents?${query}`), {
-      headers, cache: 'no-store',
+      headers, credentials: 'include', cache: 'no-store',
     });
     return await response.json() as ApiResponse<RelatedDocuments>;
   } catch {

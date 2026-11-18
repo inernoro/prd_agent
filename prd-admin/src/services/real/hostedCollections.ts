@@ -1,3 +1,4 @@
+import { unlockHostedShare } from './webPages';
 import { apiRequest, resolveApiUrl } from './apiClient';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
@@ -16,12 +17,16 @@ export const stopHostedCollectionShares = (id: string) => apiRequest<{ stopped: 
 export const dissolveHostedCollection = (id: string, version: number) => apiRequest<{ dissolved: boolean }>(`${root}/${encodeURIComponent(id)}/dissolve`, { method: 'POST', body: { version } });
 export const restoreHostedCollection = (id: string, version: number) => apiRequest<HostedCollectionView>(`${root}/${encodeURIComponent(id)}/restore`, { method: 'POST', body: { version } });
 export async function readHostedCollectionShare(token: string, password?: string): Promise<ApiResponse<HostedCollectionView>> {
+  if (password) {
+    const access = await unlockHostedShare(token, password);
+    if (!access.success) return access as ApiResponse<HostedCollectionView>;
+  }
   const headers: Record<string, string> = { Accept: 'application/json' };
   const auth = useAuthStore.getState().token;
   if (auth) headers.Authorization = `Bearer ${auth}`;
-  const query = new URLSearchParams(); if (password) query.set('password', password);
+  const query = new URLSearchParams();
   try {
-    const response = await fetch(resolveApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(token)}/collection?${query}`), { headers, cache: 'no-store' });
+    const response = await fetch(resolveApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(token)}/collection?${query}`), { headers, credentials: 'include', cache: 'no-store' });
     const result = await response.json() as ApiResponse<HostedCollectionView & { collection: HostedDocumentCollection & { collectionId?: string } }>;
     if (result.success) result.data.collection.id ??= result.data.collection.collectionId ?? '';
     return result;

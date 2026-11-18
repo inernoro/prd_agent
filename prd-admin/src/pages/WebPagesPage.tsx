@@ -78,6 +78,7 @@ import { resolveSiteForm, siteSourceLabel, SITE_FORM_REGISTRY } from '@/componen
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { QuickSharePopover } from '@/components/web-hosting/QuickSharePopover';
+import { PUBLIC_SITE_AFTER_REVOCATION_NOTICE, SHARE_REVOCATION_NOTICE } from '@/components/web-hosting/shareRevocationNotice';
 import { buildShareLedger } from '@/components/web-hosting/shareLedger';
 import { isLinkActive } from '@/components/web-hosting/shareStatus';
 import { buildWeeklyPulse } from '@/components/web-hosting/weeklyPulse';
@@ -763,7 +764,7 @@ export default function WebPagesPage() {
     }
     if (ok > 0) {
       const title = sites.find((s) => s.id === id)?.title ?? '站点';
-      toast.success('已取消分享', `「${title}」的分享链接已撤销`);
+      toast.success('已取消分享', `「${title}」的分享链接已撤销。${PUBLIC_SITE_AFTER_REVOCATION_NOTICE}`);
     }
     await loadShares();
   }, [loadShares, sites]);
@@ -4437,7 +4438,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
               </div>
             )}
             <p className="text-xs text-token-muted">
-              {result.password ? '复制按钮会同时复制链接和密码' : '此链接无需密码，任何人可直接访问'}
+              {result.password ? '密码仅在本次显示，请及时保存；关闭后可在分享管理中重设' : '此链接无需密码，任何人可直接访问'}
             </p>
             <div className="flex justify-end">
               <Button variant="ghost" onClick={onClose}>关闭</Button>
@@ -4898,7 +4899,7 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
     : shares;
 
   const handleRevoke = async (shareId: string) => {
-    if (!confirm('确定撤销此分享链接？撤销后任何人都无法再访问。')) return;
+    if (!confirm(`确定撤销此分享链接？${SHARE_REVOCATION_NOTICE}`)) return;
     const res = await revokeSiteShare(shareId);
     if (res.success) {
       setShares(shares.filter(s => s.id !== shareId));

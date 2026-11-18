@@ -23,6 +23,7 @@ import {
   type ShareVisibility,
 } from './quickShare';
 import { isWideningBeyondCollaborators, runWithPrivateSourceGate } from './privateSourceConfirm';
+import { SHARE_REVOCATION_NOTICE } from './shareRevocationNotice';
 
 /**
  * 分享下拉面板 —— 从站点卡片的「分享」按钮就地垂直展开，一步拿到链接。
@@ -186,7 +187,7 @@ export function QuickSharePopover({
 
   const handleRevoke = async () => {
     if (!link) return;
-    if (!confirm('撤销这条链接？撤销后拿到链接的人立即打不开，且不可恢复，只能重新分享。')) return;
+    if (!confirm(`撤销这条链接？${SHARE_REVOCATION_NOTICE}`)) return;
     setBusy('revoke');
     try {
       const res = await revokeSiteShare(link.id);

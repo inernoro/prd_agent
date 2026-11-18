@@ -2837,18 +2837,16 @@ public class HostedSiteService : IHostedSiteService
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt));
                 reuse.ExpiresAt = newExpiresAt;
             }
-            if (wantAccess == "password" && reuse.Password != wantPassword)
+            if (wantAccess == "password" && (string.IsNullOrEmpty(reuse.PasswordHash) || string.IsNullOrEmpty(reuse.PasswordSalt) || !_sharePwd.Verify(wantPassword!, reuse.PasswordHash, reuse.PasswordSalt)))
             {
-                // 密码变更：明文（去重 + 展示给分享者）+ Hash/Salt（校验）一并刷新
+                // 设置或重设密码仅保存 verifier；同密码验证成功时保留原 token。
                 var h = _sharePwd.Hash(wantPassword!);
-                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Password, wantPassword));
+                ups.Add(Builders<WebPageShareLink>.Update.Unset(x => x.Password));
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.PasswordHash, h.Hash));
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.PasswordSalt, h.Salt));
-                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, new List<DateTime>()));
-                reuse.Password = wantPassword;
+                reuse.Password = null;
                 reuse.PasswordHash = h.Hash;
                 reuse.PasswordSalt = h.Salt;
-                reuse.RecentAttempts = new List<DateTime>();
             }
             if (reuse.Title != shareTitle)
             {
@@ -2920,7 +2918,7 @@ public class HostedSiteService : IHostedSiteService
             Title = shareTitle,
             Description = effDescription,
             AccessLevel = wantAccess,
-            Password = wantPassword,
+            Password = null,
             PasswordHash = pwdHash?.Hash,
             PasswordSalt = pwdHash?.Salt,
             ExpiresAt = newExpiresAt,
@@ -3220,23 +3218,42 @@ public class HostedSiteService : IHostedSiteService
         if (!string.IsNullOrEmpty(viewerUserId) && await IsTeamInsiderForShareAsync(share, viewerUserId, ct))
             return null;
 
-        var rl = _sharePwd.CheckRateLimit(share.RecentAttempts);
-        if (!rl.Allowed)
+        if (password?.StartsWith(HostedShareGrant.Prefix, StringComparison.Ordinal) == true)
         {
-            // 即使被拒，也把过期条目清掉一并写回，避免列表无限膨胀
-            await _db.WebPageShareLinks.UpdateOneAsync(
-                x => x.Id == share.Id,
-                Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, rl.PrunedAttempts),
-                cancellationToken: ct);
-            var sec = (int)Math.Ceiling(rl.RetryAfter.TotalSeconds);
-            return ($"尝试过于频繁，请 {sec} 秒后再试", 429, sec);
+            var current = await _db.WebPageShareLinks.Find(x => x.Id == share.Id).FirstOrDefaultAsync(ct);
+            if (current == null || current.IsRevoked) return ("分享链接不存在或已失效", 404, null);
+            return await HostedShareGrant.VerifyAsync(_db, current, password, ct)
+                ? null : ("需要提供正确的访问密码", 401, null);
         }
 
-        // 记录本次尝试时间戳（无论对错）—— 攻击者要破解就只能 10 次/分钟慢慢凿
-        await _db.WebPageShareLinks.UpdateOneAsync(
-            x => x.Id == share.Id,
-            Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, rl.PrunedAttempts),
-            cancellationToken: ct);
+        // Compare-and-swap the persisted window. A losing replica must re-read before
+        // admission; no password calculation is allowed until its reservation succeeds.
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var current = await _db.WebPageShareLinks.Find(x => x.Id == share.Id).FirstOrDefaultAsync(ct);
+            if (current == null || current.IsRevoked)
+                return ("分享链接不存在或已失效", 404, null);
+            var attempts = current.RecentAttempts;
+            var rl = _sharePwd.CheckRateLimit(attempts);
+            if (!rl.Allowed)
+            {
+                var sec = Math.Max(1, (int)Math.Ceiling(rl.RetryAfter.TotalSeconds));
+                return ($"尝试过于频繁，请 {sec} 秒后再试", 429, sec);
+            }
+
+            var fb = Builders<WebPageShareLink>.Filter;
+            var unchanged = fb.Eq(x => x.RecentAttempts, attempts);
+            // Legacy documents may omit the field, which deserializes as an empty list.
+            if (attempts == null || attempts.Count == 0)
+                unchanged |= fb.Exists(x => x.RecentAttempts, false)
+                    | fb.Eq(x => x.RecentAttempts, null);
+            var reservation = await _db.WebPageShareLinks.UpdateOneAsync(
+                fb.Eq(x => x.Id, share.Id) & fb.Ne(x => x.IsRevoked, true) & unchanged,
+                Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, rl.PrunedAttempts),
+                cancellationToken: ct);
+            if (reservation.ModifiedCount == 1) break;
+        }
 
         var provided = (password ?? string.Empty).Trim();
         if (string.IsNullOrEmpty(provided))
@@ -3256,15 +3273,8 @@ public class HostedSiteService : IHostedSiteService
 
         if (!ok) return ("需要提供正确的访问密码", 401, null);
 
-        // 密码正确：清空窗口让合法用户不被自己的历史失败拖累；攻击者一旦撞对就进去了，
-        // 清空对安全性无伤
-        if (rl.PrunedAttempts.Count > 0)
-        {
-            await _db.WebPageShareLinks.UpdateOneAsync(
-                x => x.Id == share.Id,
-                Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, new List<DateTime>()),
-                cancellationToken: ct);
-        }
+        // Successful attempts also consume their reservation. Clearing the window here
+        // would erase concurrent attempts admitted by other replicas.
         return null;
     }
 

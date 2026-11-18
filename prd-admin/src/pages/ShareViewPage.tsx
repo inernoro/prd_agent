@@ -421,6 +421,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
     setLoading(false);
     if (res.success) {
       setData(res.data);
+      setPassword('');
       setNeedPassword(false);
     } else if (res.error?.code === 'UNAUTHORIZED') {
       setNeedPassword(true);

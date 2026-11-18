@@ -17,6 +17,7 @@ namespace PrdAgent.Api.Controllers.Api;
 ///   与分享页取正文是同一条判定源。另要求登录，与分享页「下载源文件」按钮的门槛一致。
 /// </summary>
 [ApiController]
+[HostedShareCookie]
 [Route("api/web-pages")]
 [Authorize]
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]

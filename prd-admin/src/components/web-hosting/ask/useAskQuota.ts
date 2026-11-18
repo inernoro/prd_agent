@@ -38,7 +38,6 @@ export function useAskQuota(source: AskSource, enabled: boolean, blockedUntil?: 
   // 一个安静的死循环，页面看着正常，网络面板在刷屏。
   const token = source.mode === 'share' ? source.token : null;
   const siteId = source.mode === 'share' ? source.siteId : undefined;
-  const password = source.mode === 'share' ? source.password : undefined;
 
   const refresh = useCallback(async () => {
     // 站内预览（mode: 'site'）没有这条旁路：owner 看自己的页面不占访客额度桶，
@@ -49,7 +48,7 @@ export function useAskQuota(source: AskSource, enabled: boolean, blockedUntil?: 
     }
     const params = new URLSearchParams();
     if (siteId) params.set('siteId', siteId);
-    if (password) params.set('password', password);
+
     const q = params.toString();
     const url = buildApiUrl(
       `${api.webPages.askQuotaByShare(encodeURIComponent(token))}${q ? `?${q}` : ''}`,
@@ -57,6 +56,7 @@ export function useAskQuota(source: AskSource, enabled: boolean, blockedUntil?: 
     try {
       const authToken = useAuthStore.getState().token;
       const res = await fetch(url, {
+        credentials: 'include',
         headers: {
           Accept: 'application/json',
           ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
@@ -79,7 +79,7 @@ export function useAskQuota(source: AskSource, enabled: boolean, blockedUntil?: 
     } catch {
       setQuota(null);
     }
-  }, [enabled, token, siteId, password]);
+  }, [enabled, token, siteId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 

@@ -1,3 +1,4 @@
+import { apiRequest } from '@/services/real/apiClient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { BarChart3, Copy, Eye, Lock, Search, Share2, X } from 'lucide-react';
@@ -8,6 +9,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { buildLedgerConclusion, buildShareLedger, filterShareLinks, type ShareTier } from './shareLedger';
 import { daysUntil } from './siteConclusion';
 import { normalizeVisibility, VISIBILITY_ACCESS_HINT, visibilityLabelOf } from './shareVisibility';
+import { SHARE_REVOCATION_NOTICE } from './shareRevocationNotice';
 
 /**
  * 三层的表头分隔说明。设计稿在每个分段的右侧写一句「这一层还能做什么」——
@@ -154,7 +156,7 @@ export function SharesWorkspace({
 
   const handleRevoke = async (link: ShareLinkItem) => {
     // 撤销不可逆，走二级确认
-    if (!confirm(`撤销「${link.title || '未命名链接'}」？撤销后任何人都打不开，且不可恢复，只能重新分享。`)) return;
+    if (!confirm(`撤销「${link.title || '未命名链接'}」？${SHARE_REVOCATION_NOTICE}`)) return;
     setBusyId(link.id);
     try {
       const res = await revokeSiteShare(link.id);
@@ -435,6 +437,7 @@ function TierSection({
                     <Dot />
                     <span className="inline-flex items-center gap-0.5" style={{ color: 'var(--accent-fg-emerald)' }}>
                       <Lock size={10} /> 有密码
+                      {tier !== 'revoked' && <ResetSharePassword shareId={l.id} />}
                     </span>
                   </>
                 )}
@@ -579,4 +582,29 @@ function EmptyState({ onCreateShare }: { onCreateShare: () => void }) {
       </button>
     </div>
   );
+}
+
+function ResetSharePassword({ shareId }: { shareId: string }) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+  if (!open) return <button type="button" onClick={() => setOpen(true)}>重设密码</button>;
+  return <span className="inline-flex gap-2" onClick={e => e.stopPropagation()}>
+    {saved ? <span>新密码仅显示一次：<code>{password}</code></span> : <>
+      <input aria-label="新分享密码" type="password" autoComplete="new-password" placeholder="12 至 128 位新密码"
+        minLength={12} maxLength={128} value={password} onChange={e => setPassword(e.target.value)} />
+      <button type="button" disabled={busy || password.trim().length < 12} onClick={async () => {
+        setBusy(true); setError('');
+        try {
+          const result = await apiRequest(`/api/web-pages/shares/${encodeURIComponent(shareId)}/password`, { method: 'POST', body: { password } });
+          if (result.success) { setPassword(password.trim()); setSaved(true); }
+          else setError(result.error?.message || '重设失败，请重试');
+        } catch { setError('重设失败，请重试'); } finally { setBusy(false); }
+      }}>{busy ? '正在保存' : '确认重设'}</button>
+    </>}
+    {error && <span role="alert">{error}</span>}
+    <button type="button" disabled={busy} onClick={() => { setOpen(false); setPassword(''); setSaved(false); setError(''); }}>关闭</button>
+  </span>;
 }

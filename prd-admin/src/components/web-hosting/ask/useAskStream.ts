@@ -138,7 +138,7 @@ export function useAskStream(source: AskSource) {
       };
       if (source.mode === 'share') {
         if (source.siteId) body.siteId = source.siteId;
-        if (source.password) body.password = source.password;
+
       }
 
       // 是否真的收到了 done。EOF 不等于答完——代理截断 / 空闲超时都会让流静默结束，
@@ -154,6 +154,7 @@ export function useAskStream(source: AskSource) {
       try {
         const authToken = useAuthStore.getState().token;
         const res = await fetch(url, {
+        credentials: 'include',
           method: 'POST',
           headers: {
             Accept: 'text/event-stream',
