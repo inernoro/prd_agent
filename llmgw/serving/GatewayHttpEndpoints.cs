@@ -295,6 +295,7 @@ public static class GatewayHttpEndpoints
                 context.Items["llmgw.route.failure-code"] as string ?? "GATEWAY_REQUEST_REJECTED");
         });
 
+        app.MapGatewayConsumptionRetries();
         app.MapGet("/gw/v1/healthz", () => Results.Content(JsonSerializer.Serialize(new
         {
             status = "ok",
@@ -2378,6 +2379,8 @@ public static class GatewayHttpEndpoints
 
     private static string ResolveIngressProtocol(string path)
     {
+        if (path.Equals(GatewayConsumptionRetries.Path, StringComparison.OrdinalIgnoreCase))
+            return "openai-compatible";
         if (path.StartsWith("/v1beta/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/gemini/v1beta/", StringComparison.OrdinalIgnoreCase))
             return "gemini-compatible";
@@ -3300,6 +3303,8 @@ public static class GatewayHttpEndpoints
         var inputs = http.Items["llmgw.key.authorization.inputs"] as GatewayAuthorizationInputs;
         var identity = GatewayMinimumRequestIdentity.Resolve(http, authorization,
             inputs?.SourceSystem ?? string.Empty, inputs?.IngressProtocol ?? string.Empty);
+        if (identity.Automatic && GatewayConsumptionRetries.ReadRunId(http, authorization, inputs?.IngressProtocol) is { } retryRunId)
+            identity = identity with { RetryRunId = retryRunId, RetryServiceKeyId = authorization.KeyId };
         var decision = await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct, identity);
         ApplyGovernanceRateLimitHeaders(http, decision);
         return decision;

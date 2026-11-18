@@ -315,6 +315,97 @@ public sealed class GatewayMinimumProtectionIntegrationTests
     }
 
     [Fact]
+    public async Task HourlyAlertSupportsBoundedQuotaAndSourceOwnedRetryReceipt()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant);
+        const string sourceKey = "resolution-fixture-source-key";
+        const string otherKey = "resolution-fixture-other-key";
+        foreach (var key in new[] { sourceKey, otherKey })
+        {
+            var record = new GatewayServiceKeyRecord
+            {
+                TenantId = Tenant, KeyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant(),
+                KeyPrefix = "local-test", SourceSystem = "external", ClientCode = "resolution-fixture", Environment = "test",
+                Purpose = "external-platform", AppCallerCodes = [Caller], IngressProtocols = ["openai-compatible"], Scopes = ["invoke"],
+            };
+            await database.Data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(record);
+            await database.Data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
+                .InsertOneAsync(new GatewayServiceKeyDirectoryRecord { TenantId = Tenant, KeyHash = record.KeyHash, ServiceKeyId = record.Id });
+        }
+
+        await using var serving = await Serving(database, new() { ["AutomaticAppCallerPerHour"] = 1 });
+        await using var console = await Console(database);
+        var caller = serving.GetTestClient();
+        var operatorClient = console.GetTestClient();
+        var viewer = console.GetTestClient();
+        operatorClient.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "admin"));
+        viewer.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "viewer"));
+        const string retryPath = "/gw/v1/consumption-retries";
+
+        Task<HttpResponseMessage> SendChat() => Dispatch(HttpMethod.Post, "/v1/chat/completions", sourceKey,
+            new { messages = new[] { new { role = "user", content = "synthetic work" } } }, "batch-fixture");
+
+        Task<HttpResponseMessage> Dispatch(HttpMethod method, string path, string key, object? body = null, string? runId = null)
+        {
+            var request = new HttpRequestMessage(method, path);
+            request.Headers.Add("X-Gateway-Key", key);
+            request.Headers.Add("X-Gateway-App-Caller", Caller);
+            if (runId is not null) request.Headers.Add("X-Gateway-Retry-Run-Id", runId);
+            if (body is not null) request.Content = JsonContent.Create(body);
+            return caller.SendAsync(request);
+        }
+
+        var first = await SendChat();
+        first.StatusCode.ShouldBe(HttpStatusCode.OK, await first.Content.ReadAsStringAsync());
+        var blocked = await SendChat();
+        blocked.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        blocked.Headers.RetryAfter.ShouldNotBeNull();
+        var alert = await database.Alerts.Find(new BsonDocument("Kind", "blocked")).SingleAsync();
+        var resolution = "/gw/logs/consumption-alerts/" + Uri.EscapeDataString(alert["_id"].AsString) + "/resolution";
+        (await viewer.PostAsJsonAsync(resolution, new { action = "retry" })).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        var initial = await operatorClient.GetStringAsync("/gw/logs/consumption-alerts");
+        initial.ShouldContain("\"restoresAt\":");
+        initial.ShouldContain("\"available\":1");
+        initial.ShouldNotContain("batch-fixture");
+
+        (await operatorClient.PostAsJsonAsync(resolution, new { action = "request-quota", units = 1, reason = "Complete this fixture" }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await SendChat()).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        (await operatorClient.PostAsJsonAsync(resolution, new { action = "approve-quota" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var concurrent = await Task.WhenAll(SendChat(), SendChat());
+        concurrent.Count(result => result.StatusCode == HttpStatusCode.OK).ShouldBe(1);
+        concurrent.Count(result => result.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(1);
+        database.UpstreamCalls.ShouldBe(2);
+
+        (await operatorClient.PostAsJsonAsync(resolution, new { action = "retry" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await operatorClient.PostAsJsonAsync(resolution, new { action = "retry" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
+
+        var retries = database.Data.Database.GetCollection<BsonDocument>("llmgw_consumption_retries");
+        var retry = await retries.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync();
+        // 以隔离库中的已到期窗口验证领取时序，无需等待下一个整点。
+        await retries.UpdateOneAsync(new BsonDocument("_id", retry["_id"]),
+            Builders<BsonDocument>.Update.Set("ReadyAt", DateTime.UtcNow.AddSeconds(-1)));
+        (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey)).Content.ReadAsStringAsync()).ShouldContain("batch-fixture");
+        (await (await Dispatch(HttpMethod.Get, retryPath, otherKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
+        var claim = new { id = retry["_id"].AsString, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
+        var otherClaim = new { claim.id, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
+        var receipt = new { claim.id, claim.claimId, outcome = "completed", completedCount = 1 };
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, claim)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, otherClaim)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, claim)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, retryPath, otherKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
+        var resolved = await operatorClient.GetStringAsync("/gw/logs/consumption-alerts");
+        resolved.ShouldContain("\"completed\":1");
+        resolved.ShouldContain("\"used\":1");
+    }
+
+    [Fact]
     public async Task DynamicBaselineDetectsSharedSpikeWithoutWeakeningFixedLimit()
     {
         await using var database = await DiagnosticDatabase.CreateAsync();

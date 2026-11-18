@@ -20,6 +20,8 @@ namespace PrdAgent.LlmGatewayHost;
 public sealed record GatewayMinimumRequestIdentity(string Origin, string? SourceDeployment)
 {
     public bool Automatic => Origin == "automatic";
+    internal string? RetryRunId { get; init; }
+    internal string? RetryServiceKeyId { get; init; }
     public static GatewayMinimumRequestIdentity General { get; } = new("general", null);
 
     public static GatewayMinimumRequestIdentity Resolve(
@@ -149,15 +151,34 @@ public sealed class GatewayMinimumProtectionCoordinator
             var counterCaller = scope == "tenant" ? "$tenant" : caller;
             var counterType = scope == "tenant" ? "$aggregate" : type;
             var count = await IncrementWindowAsync(tenantId, counterCaller, counterType, scope, origin, seconds, windowStart, ct);
-            await ObserveAsync(tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
-                requestId, identity.SourceDeployment, scope, origin, seconds, windowStart, count, limit, ct);
+            var blocked = count > limit;
+            if (blocked && scope == "app-caller" && origin == "automatic" && seconds == 3600)
+            {
+                var alertId = Identity("alert", tenantId, counterCaller, counterType, scope, origin, seconds, windowStart) + ":blocked";
+                blocked = !await TryUseTemporaryQuotaAsync(alertId, tenantId, ct);
+                if (blocked && identity.RetryServiceKeyId is { } serviceKeyId && identity.RetryRunId is { } runId)
+                {
+                    try
+                    {
+                        await GatewayConsumptionRetries.RecordAsync(_data.Database, alertId, tenantId, counterCaller,
+                            serviceKeyId, runId, requestId, windowStart.AddSeconds(seconds), ct);
+                    }
+                    catch (MongoException error)
+                    {
+                        _logger.LogWarning(error, "[GatewaySafety] Could not associate blocked request {RequestId} with retry run", requestId);
+                    }
+                }
+            }
+            if (blocked || count <= limit)
+                await ObserveAsync(tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
+                    requestId, identity.SourceDeployment, scope, origin, seconds, windowStart, count, limit, ct);
             if (dynamicPolicy?.WindowSeconds == seconds)
             {
                 dynamicScopes.Add(scope);
                 await ObserveDynamicSafeAsync(dynamicPolicy, tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
                     requestId, identity.SourceDeployment, scope, origin, windowStart, count, ct);
             }
-            if (count > limit)
+            if (blocked)
                 return new(true, scope, origin, seconds, windowStart, count, limit);
         }
         // 显式 RPM 配置会跳过 fallback 窗口；动态观测仍复用相同计数集合，不覆盖其硬限制。
@@ -169,6 +190,29 @@ public sealed class GatewayMinimumProtectionCoordinator
                     identity.SourceDeployment, scope, identity.Automatic ? "automatic" : "general", WindowStart(now, dynamicPolicy.WindowSeconds), null, ct);
         }
         return GatewayMinimumProtectionDecision.Allow;
+    }
+
+    private async Task<bool> TryUseTemporaryQuotaAsync(string alertId, string tenantId, CancellationToken ct)
+    {
+        var match = Builders<BsonDocument>.Filter;
+        var filter = match.Eq("_id", alertId) & match.Eq("TenantId", tenantId) & match.Eq("QuotaState", "approved")
+            & new BsonDocument("$expr", new BsonDocument("$and", new BsonArray
+            {
+                new BsonDocument("$gt", new BsonArray { "$QuotaExpiresAt", "$$NOW" }),
+                new BsonDocument("$lt", new BsonArray { "$QuotaUsed", "$QuotaUnits" }),
+            }));
+        try
+        {
+            var result = await _data.Database.GetCollection<BsonDocument>(AlertsCollection).UpdateOneAsync(
+                filter, Builders<BsonDocument>.Update.Inc("QuotaUsed", 1).Set("ResolutionUpdatedAt", DateTime.UtcNow),
+                cancellationToken: ct);
+            return result.ModifiedCount == 1;
+        }
+        catch (MongoException error)
+        {
+            _logger.LogWarning(error, "[GatewaySafety] Temporary quota unavailable for alert {AlertId}", alertId);
+            return false;
+        }
     }
 
     private async Task<long> IncrementWindowAsync(string tenantId, string caller, string type, string scope, string origin,
