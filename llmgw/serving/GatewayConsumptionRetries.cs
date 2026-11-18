@@ -28,7 +28,13 @@ internal static class GatewayConsumptionRetries
         {
             if (GetWorker(http) is not { } worker) return Results.StatusCode(StatusCodes.Status403Forbidden);
             var items = await GetStore(http).ReadReadyAsync(worker, http.RequestAborted);
-            return Results.Ok(new { items });
+            return Results.Ok(new { items = items.Select(item => new
+            {
+                id = item.Id,
+                runId = item.RunId,
+                firstBlockedRequestId = item.FirstBlockedRequestId,
+                expiresAt = item.ExpiresAt,
+            }) });
         });
 
         app.MapPost(Path, async (HttpContext http, GatewayConsumptionRetryReceipt body) =>
@@ -53,7 +59,7 @@ internal static class GatewayConsumptionRetries
             || authorization.ResolvedAppCallerCode is not { Length: > 0 } caller)
             return null;
 
-        return new(authorization.TenantId, authorization.KeyId, caller);
+        return new(authorization.TenantId!, authorization.KeyId!, caller);
     }
 
     private static bool IsScopedKey(GatewayKeyAuthorization authorization) =>

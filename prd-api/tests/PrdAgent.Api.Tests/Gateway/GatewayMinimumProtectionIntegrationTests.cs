@@ -397,7 +397,12 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         // 以隔离库中的已到期窗口验证领取时序，无需等待下一个整点。
         await retries.UpdateOneAsync(new BsonDocument("_id", retry["_id"]),
             Builders<BsonDocument>.Update.Set("ReadyAt", DateTime.UtcNow.AddSeconds(-1)));
-        (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey, callerCode: null)).Content.ReadAsStringAsync()).ShouldContain("batch-fixture");
+        using var available = JsonDocument.Parse(await (await Dispatch(HttpMethod.Get, retryPath, sourceKey, callerCode: null)).Content.ReadAsStringAsync());
+        var queued = available.RootElement.GetProperty("items").EnumerateArray().Single();
+        queued.GetProperty("id").GetString().ShouldBe(retry["_id"].AsString);
+        queued.GetProperty("runId").GetString().ShouldBe("batch-fixture");
+        queued.GetProperty("firstBlockedRequestId").GetString().ShouldBe(retry["FirstBlockedRequestId"].AsString);
+        queued.GetProperty("expiresAt").GetDateTime().ShouldBe(retry["ExpiresAt"].AsBsonDateTime.ToUniversalTime());
         (await (await Dispatch(HttpMethod.Get, retryPath, otherKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
         var claim = new { id = retry["_id"].AsString, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
         var otherClaim = new { claim.id, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
@@ -730,6 +735,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
+        builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNamingPolicy = null);
         var defaults = new Dictionary<string, string?>();
         foreach (var prefix in new[] { "Tenant", "AppCaller", "AutomaticTenant", "AutomaticAppCaller" })
             foreach (var period in new[] { "PerMinute", "PerHour", "PerDay" })
