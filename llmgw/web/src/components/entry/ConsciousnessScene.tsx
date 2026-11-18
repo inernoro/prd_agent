@@ -1,12 +1,12 @@
-import { entryAsset } from './entryAsset';
 import { useEffect, useRef } from 'react';
+import { useThemePreference } from '@/lib/theme';
 import './consciousness-entry.css';
 import { ConsciousnessPortrait } from './ConsciousnessPortrait';
+import { PORTRAIT_ASSETS } from './portraitMotionAsset';
 import { beginEntryArrival } from './entryArrival';
 const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export type IdentityPhase = 'idle' | 'verifying' | 'authorized' | 'entering';
-export const COMPANION_ART = entryAsset('companion.webp');
 let arrivalUntil = 0;
 
 /** Visual handoff only; authentication remains server-authoritative. */
@@ -18,10 +18,17 @@ export function clearConsciousnessArrival() { arrivalUntil = 0; }
 export function isConsciousnessArrival() { return Date.now() < arrivalUntil; }
 
 export function ConsciousnessScene({ fog = false, arriving = false, frameTime }: { fog?: boolean; arriving?: boolean; frameTime?: number }) {
+  const { resolved: theme } = useThemePreference();
+  useEffect(() => {
+    if (fog) return;
+    const alternative = new Image();
+    alternative.fetchPriority = 'low';
+    alternative.src = PORTRAIT_ASSETS[theme === 'light' ? 'dark' : 'light'].open;
+  }, [fog, theme]);
   return (
-    <div className={`consciousness-scene${fog ? ' has-fog' : ''}${arriving || frameTime !== undefined ? ' is-arriving' : ''}`} aria-hidden="true">
-      <div className="consciousness-camera"><ConsciousnessPortrait fog={fog} arriving={arriving} frameTime={frameTime} /></div>
-      <div className="consciousness-mist" />
+    <div className={`consciousness-scene${fog ? ' has-fog' : ''}${arriving || frameTime !== undefined ? ' is-arriving' : ''}`} data-portrait-theme={theme} aria-hidden="true">
+      <div className="consciousness-camera"><ConsciousnessPortrait fog={fog} arriving={arriving} frameTime={frameTime} theme={theme} /></div>
+      {fog && theme === 'dark' && <div className="consciousness-mist" />}
       <div className="consciousness-ghost"><span data-word="LLM Gateway">LLM Gateway</span><i /><small>欢迎进入模型网关</small></div>
       <div className="consciousness-grain" />
     </div>

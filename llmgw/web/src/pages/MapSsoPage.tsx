@@ -1,7 +1,9 @@
 import { gatewayLoginDestination, markQuickstartArrival } from '@/components/entry/quickstartArrival';
 import { ArrowLeft } from 'lucide-react';
 import { ConsciousnessScene, ConsciousnessHud, IdentityScanner } from '@/components/entry/ConsciousnessScene';
-import { loadPortraitImages, preloadPortraitMotion } from '@/components/entry/portraitRenderer';
+import { preloadPortraitMotion } from '@/components/entry/portraitRenderer';
+import { PORTRAIT_ASSETS } from '@/components/entry/portraitMotionAsset';
+import { readThemePreference, resolveTheme } from '@/lib/theme';
 import './GatewayEntry.css';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -45,9 +47,9 @@ export function MapSsoPage() {
       return () => { active = false; };
     }
 
-    // Start the same decoded-image promise during authorization, not after the dark scene mounts.
-    preloadPortraitMotion();
-    void loadPortraitImages().catch(() => {});
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      preloadPortraitMotion(PORTRAIT_ASSETS[resolveTheme(readThemePreference())]);
+    }
     void loginWithMapCode(code).then((result) => {
       if (!active) return;
       if (result.success) {

@@ -6,19 +6,21 @@ import { waitForEntryPreviews } from './entry-preview-readiness.mjs';
 const bytes = new TextEncoder().encode('actual new portrait film');
 const motion = { fileName: 'portrait-motion-000000000000.mp4', sha256: createHash('sha256').update(bytes).digest('hex') };
 const expectedCommit = 'a'.repeat(40);
-function fixture({ mapReady = () => true, mapMedia = () => bytes, mapCommit = () => expectedCommit } = {}) {
+function fixture({ mapReady = () => true, mapMedia = () => bytes, mapCommit = () => expectedCommit, daylight = false } = {}) {
   let tick = 0;
   const calls = [];
+  const day = { url: 'https://cfi.miduo.org/daylight-proof.mp4', sha256: motion.sha256 };
   return {
     calls,
     options: { map: new URL('https://map.test'), gateway: new URL('https://gateway.test'), motion, expectedCommit,
+      gatewayAssets: daylight ? { light: { motion: day } } : undefined,
       now: () => tick, timeoutMs: 3, retryMs: 1, sleep: async () => { tick++; }, log: () => {},
       fetcher: async input => {
         const url = new URL(input); calls.push(url.href);
         const isMap = url.hostname === 'map.test';
         if (url.pathname === '/') return new Response(`<script type="module" src="/assets/index.js"></script><script>var BRANCH_ID='${url.hostname}'</script>`);
         if (url.pathname === '/_cds/api/branches') return Response.json({ branches: [{ id: url.hostname, runningCommitSha: isMap ? mapCommit(tick) : expectedCommit }] });
-        if (url.pathname === '/assets/index.js') return new Response(`direct-night ${isMap && !mapReady(tick) ? 'portrait-motion-older.mp4' : motion.fileName}`);
+        if (url.pathname === '/assets/index.js') return new Response(`direct-scene ${isMap && !mapReady(tick) ? 'portrait-motion-older.mp4' : motion.fileName} ${day.url}`);
         if (url.pathname === `/media/entry/${motion.fileName}`) return new Response(isMap ? mapMedia(tick) : bytes);
         return new Response('not found', { status: 404 });
       } },
@@ -44,4 +46,9 @@ test('分支版本已更新但 MAP 媒体内容仍旧时不得放行', async () 
 test('两端素材都有但 MAP 尚未运行预期提交时继续等待', async () => {
   const f = fixture({ mapCommit: () => 'b'.repeat(40) });
   await assert.rejects(waitForEntryPreviews(f.options), /map\.test: expected revision not running/);
+});
+test('日景 CDN 文件不可读取时阻止公网录屏', async () => {
+  const f = fixture({ daylight: true });
+  await assert.rejects(waitForEntryPreviews(f.options), /gateway\.test: portrait media unavailable/);
+  assert.ok(f.calls.includes('https://cfi.miduo.org/daylight-proof.mp4'));
 });

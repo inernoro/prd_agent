@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 /** Verify both published entry bundles and media before a credentialed browser starts. */
 export async function waitForEntryPreviews({ map, gateway, motion, expectedCommit,
+  gatewayAssets,
   fetcher = fetch, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   timeoutMs = 12 * 60_000, retryMs = 15_000, log = console.log }) {
   const deadline = now() + timeoutMs;
@@ -26,17 +27,26 @@ export async function waitForEntryPreviews({ map, gateway, motion, expectedCommi
         if (bundleUrl.origin !== origin.origin) return { ...result, reason: 'unexpected entry origin' };
         const bundle = await get(bundleUrl);
         const javascript = await bundle.text();
+        const requiredAssets = app === 'gateway' && gatewayAssets
+          ? Object.values(gatewayAssets).flatMap(theme => Object.values(theme))
+          : [{ url: new URL(`/media/entry/${motion.fileName}`, origin).href, sha256: motion.sha256 }];
         // Both current app entry bundles contain their shared portrait constant.
         // MAP must not be accepted solely because Gateway or the branch API is ready.
-        if (!bundle.ok || !javascript.includes(motion.fileName)
-          || (app === 'gateway' && !javascript.includes('direct-night'))) {
+        if (!bundle.ok || !requiredAssets.every(asset => javascript.includes(new URL(asset.url).pathname.split('/').at(-1)))
+          || (app === 'gateway' && !javascript.includes('direct-scene'))) {
           return { ...result, reason: 'expected entry artwork not referenced' };
         }
-        const media = await get(new URL(`/media/entry/${motion.fileName}`, origin));
-        if (!media.ok) return { ...result, reason: 'portrait media unavailable' };
-        const sha256 = createHash('sha256').update(new Uint8Array(await media.arrayBuffer())).digest('hex');
-        if (sha256 !== motion.sha256) return { ...result, reason: 'portrait media hash differs' };
-        return { ...result, ready: true, branchId, commit: deployed, bundle: bundleUrl.pathname, mediaSha256: sha256 };
+        const media = await Promise.all(requiredAssets.map(async asset => {
+          const url = new URL(asset.url);
+          if (url.protocol !== 'https:' || ![origin.origin, 'https://cfi.miduo.org'].includes(url.origin)) return { reason: 'unexpected asset origin' };
+          const response = await get(url);
+          if (!response.ok || (response.url && response.url !== url.href)) return { reason: 'portrait media unavailable' };
+          const sha256 = createHash('sha256').update(new Uint8Array(await response.arrayBuffer())).digest('hex');
+          return sha256 === asset.sha256 ? { url: url.href, sha256 } : { reason: 'portrait media hash differs' };
+        }));
+        const failure = media.find(asset => asset.reason);
+        if (failure) return { ...result, reason: failure.reason };
+        return { ...result, ready: true, branchId, commit: deployed, bundle: bundleUrl.pathname, mediaSha256: media[0].sha256, media };
       } catch {
         return { ...result, reason: 'public resource request not ready' };
       }

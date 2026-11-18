@@ -747,6 +747,9 @@ for (const width of [390, 1440])
         await expect(userMenu).not.toHaveAttribute("open", "");
         await expect(page.locator("html")).toHaveAttribute("data-theme", next);
         await expect(page.locator(".gateway-quickstart-stage")).toHaveCSS("color-scheme", next);
+        await expect(page.locator(".consciousness-scene")).toHaveAttribute("data-portrait-theme", next);
+        await expect(page.locator(".consciousness-art")).toHaveAttribute("src", next === "light" ? /cfi\.miduo\.org\/.*daylight-open/ : /cfi\.miduo\.org\/.*night\/companion-/);
+        await expect(page.locator(".consciousness-mist")).toHaveCount(0);
       };
       const navigateTo = async (name: string) => {
         if (await page.getByLabel("打开导航", { exact: true }).isVisible()) await page.getByLabel("打开导航", { exact: true }).click();

@@ -1,5 +1,4 @@
-import { PORTRAIT_MOTION_FILE } from './portraitMotionAsset';
-import { entryAsset } from './entryAsset';
+import { PORTRAIT_ASSETS, type PortraitAssets } from './portraitMotionAsset';
 import { CLOSED_LID, EYE_X, OPEN_UPPER, OPEN_LOWER, eyeControlPoints, samplePortrait } from './portraitTimeline';
 
 const VERTEX = `attribute vec2 position; varying vec2 screen;
@@ -93,14 +92,19 @@ void main(){
  gl_FragColor=vec4(color,exposure*.82);
 }`;
 
-let imagesPromise: Promise<HTMLImageElement[]> | undefined;
-export function loadPortraitImages() {
-  return imagesPromise ??= Promise.all(['companion.webp', 'companion-sleep.webp'].map(file => new Promise<HTMLImageElement>((resolve, reject) => {
+const imagesByPortrait = new Map<string, Promise<HTMLImageElement[]>>();
+export function loadPortraitImages(assets: PortraitAssets) {
+  const loaded = imagesByPortrait.get(assets.open);
+  if (loaded) return loaded;
+  const pending = Promise.all([assets.open, assets.closed].map(url => new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
+    image.crossOrigin = 'anonymous';
     image.onload = () => { void image.decode().then(() => resolve(image), reject); };
     image.onerror = reject;
-    image.src = entryAsset(file);
-  }))).catch(error => { imagesPromise = undefined; throw error; });
+    image.src = url;
+  }))).catch(error => { imagesByPortrait.delete(assets.open); throw error; });
+  imagesByPortrait.set(assets.open, pending);
+  return pending;
 }
 
 export function createPortraitRenderer(canvas: HTMLCanvasElement, images: HTMLImageElement[]) {
@@ -171,9 +175,11 @@ export function createPortraitRenderer(canvas: HTMLCanvasElement, images: HTMLIm
 
 let preparedMotion: HTMLVideoElement | undefined;
 /** Warm the native decoder during identity confirmation, without playing sound or motion. */
-export function preloadPortraitMotion() {
-  if (preparedMotion) return;
+export function preloadPortraitMotion(assets: PortraitAssets = PORTRAIT_ASSETS.dark) {
+  if (preparedMotion?.src === assets.motion) return;
+  preparedMotion?.removeAttribute('src');
+  preparedMotion?.load();
   preparedMotion = document.createElement('video');
   preparedMotion.muted = true; preparedMotion.preload = 'auto'; preparedMotion.playsInline = true;
-  preparedMotion.src = entryAsset(PORTRAIT_MOTION_FILE); preparedMotion.load();
+  preparedMotion.src = assets.motion; preparedMotion.load();
 }

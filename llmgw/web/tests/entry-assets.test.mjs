@@ -2,28 +2,42 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { PORTRAIT_MOTION_FILE } from '../src/components/entry/portraitMotionAsset.ts';
+import { PORTRAIT_ASSETS } from '../src/components/entry/portraitMotionAsset.ts';
 import { samplePortrait as gateway } from '../src/components/entry/portraitTimeline.ts';
 import { samplePortrait as map } from '../../../prd-admin/src/components/effects/portraitTimeline.ts';
 
-test('两个独立构建的角色几何、素材与逐帧轨迹保持一致', () => {
+const readJson = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
+const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+
+test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材同源', () => {
   for (let frame = 0; frame <= 432; frame++) assert.deepEqual(gateway(frame / 60), map(frame / 60));
-  const motion = JSON.parse(readFileSync(new URL('../../../e2e/fixtures/media/portrait-motion.source.json',import.meta.url),'utf8'));
-  assert.equal(PORTRAIT_MOTION_FILE,motion.fileName);
-  assert.equal(motion.authoringMethod, 'imagegen-edgedrawing-optical-flow');
-  assert.deepEqual(motion.eyeKeyframes, ['closed','quarter','half','three-quarter','open']);
-  for (const file of ['line-etching.png','surface-reveal.png','eye-quarter.png','eye-half.png','eye-three-quarter.png']) {
-    const bytes = readFileSync(new URL(`../../../.design/map-cinematic-entry/ai-v2/${file}`,import.meta.url));
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), motion.sourceImages[file], '源图改变后必须重新生成并验收电影素材');
+  const runtime = readJson('../../../e2e/fixtures/media/gateway-portrait-cdn.json');
+  const sources = readJson('../../../.design/map-cinematic-entry/portrait-cdn-sources.json');
+  const night = readJson('../../../e2e/fixtures/media/portrait-motion.source.json');
+  assert.equal(night.authoringMethod, 'imagegen-edgedrawing-optical-flow');
+  assert.deepEqual(night.eyeKeyframes, ['closed', 'quarter', 'half', 'three-quarter', 'open']);
+  assert.deepEqual(Object.fromEntries(Object.entries(sources.night).map(([file, asset]) => [file, asset.sha256])), night.sourceImages);
+  const distinctUrls = new Set();
+  for (const theme of ['dark', 'light']) {
+    for (const plate of ['open', 'closed', 'motion']) {
+      const expected = runtime[theme][plate];
+      const url = new URL(PORTRAIT_ASSETS[theme][plate]);
+      assert.equal(url.href, expected.url);
+      assert.equal(url.origin, 'https://cfi.miduo.org');
+      assert.ok(url.pathname.includes(expected.sha256.slice(0, 16)), '文件名固定到内容哈希');
+      assert.ok(expected.bytes > 0);
+      distinctUrls.add(url.href);
+    }
   }
-  assert.match(motion.fileName,/^portrait-motion-[a-f0-9]{12}\.mp4$/);
-  assert.equal(createHash('sha256').update(readFileSync(new URL(`../public/media/entry/${motion.fileName}`,import.meta.url))).digest('hex'),motion.sha256);
-  for (const file of ['portraitGeometry.ts','portraitMotionAsset.ts','companion.webp','companion-sleep.webp',motion.fileName]) {
-    const code = file.endsWith('.ts');
-    const ours = new URL(code ? `../src/components/entry/${file}` : `../public/media/entry/${file}`, import.meta.url);
-    const original = new URL(code ? `../../../prd-admin/src/components/effects/${file}` : `../../../prd-admin/public/media/entry/${file}`, import.meta.url);
-    assert.deepEqual(readFileSync(ours),readFileSync(original));
+  assert.equal(distinctUrls.size, 6);
+  assert.deepEqual(sources.daylightAuthoring.eyeKeyframes, night.eyeKeyframes);
+  assert.equal(sources.daylightAuthoring.sha256, runtime.light.motion.sha256);
+  for (const [file, expected] of [['companion.webp', runtime.dark.open], ['companion-sleep.webp', runtime.dark.closed], [night.fileName, runtime.dark.motion]]) {
+    const original = new URL(`../../../prd-admin/public/media/entry/${file}`, import.meta.url);
+    assert.equal(sha256(readFileSync(original)), expected.sha256);
   }
+  const geometry = file => readFileSync(new URL(file, import.meta.url));
+  assert.deepEqual(geometry('../src/components/entry/portraitGeometry.ts'), geometry('../../../prd-admin/src/components/effects/portraitGeometry.ts'));
 });
 test('进入音效有实际信号、无削波，起止归零且不超过两秒', () => {
   for (const cue of ['scan','verified','reveal']) {

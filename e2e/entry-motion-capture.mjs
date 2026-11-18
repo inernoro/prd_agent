@@ -1,21 +1,22 @@
 /** Cloud-only public-preview acceptance. No injected auth, mocked routes, or fabricated video frames. */
 import { chromium } from '@playwright/test';
-import { spawn } from 'node:child_process';
 import { mkdir, writeFile, readFile, mkdtemp } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { waitForEntryPreviews } from './entry-preview-readiness.mjs';
+import { recordEntryDesktop } from './entry-record-desktop.mjs';
 const output = new URL('../work/entry-motion/', import.meta.url);
 await mkdir(output, { recursive: true });
 const motion = JSON.parse(await readFile(new URL('./fixtures/media/portrait-motion.source.json',import.meta.url),'utf8'));
+const gatewayAssets = JSON.parse(await readFile(new URL('./fixtures/media/gateway-portrait-cdn.json', import.meta.url), 'utf8'));
 const target = JSON.parse(await readFile(new URL('./fixtures/entry-preview.json', import.meta.url), 'utf8'));
 const map = new URL(target.mapUrl);
 const gateway = new URL(target.gatewayUrl);
 assert.equal(map.protocol, 'https:'); assert.equal(gateway.protocol, 'https:');
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD, 'Missing real preview login credentials');
 // Bind both public app bundles and the actual film before filling any login form.
-const readiness = await waitForEntryPreviews({ map, gateway, motion, expectedCommit: process.env.EXPECTED_COMMIT });
+const readiness = await waitForEntryPreviews({ map, gateway, motion, gatewayAssets, expectedCommit: process.env.EXPECTED_COMMIT });
 await writeFile(new URL('preview-readiness.json', output), JSON.stringify(readiness, null, 2));
 const profile = await mkdtemp(join(tmpdir(),'entry-motion-'));
 await mkdir(join(profile,'Default'),{recursive:true});
@@ -58,6 +59,12 @@ await context.addInitScript(() => {
   requestAnimationFrame(observe);
 });
 const page = context.pages()[0] || await context.newPage();
+async function setTheme(theme) {
+  await page.getByLabel('打开用户菜单', {exact:true}).click();
+  await page.getByRole('button', {name:theme === 'light' ? '切换浅色' : '切换深色', exact:true}).click();
+  await page.waitForFunction(expected => document.documentElement.dataset.theme === expected && !document.querySelector('details.lg-user-menu[open]'),theme);
+}
+
 try {
   const nativeWindow = await context.newCDPSession(page);
   const { windowId } = await nativeWindow.send('Browser.getWindowForTarget');
@@ -69,8 +76,9 @@ try {
   await page.locator('input[autocomplete="current-password"]').first().fill(process.env.E2E_PASSWORD);
   await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
   await page.getByLabel('打开用户菜单', { exact: true }).waitFor({ timeout: 45000 });
-  for (const mode of ['cold', 'warm']) {
+  for (const [mode, theme] of [['cold', 'dark'], ['warm', 'light']]) {
     if (mode === 'warm') {
+      await setTheme('light');
       await page.getByLabel('打开用户菜单', { exact: true }).click();
       await page.getByRole('button', { name: '返回 MAP', exact: true }).click();
       await page.getByLabel('打开用户菜单', { exact: true }).waitFor();
@@ -78,18 +86,7 @@ try {
     const collapse = page.getByRole('button', { name: '收缩通知', exact: true });
     if (await collapse.isVisible()) await collapse.click();
     await page.getByLabel('打开用户菜单', { exact: true }).click();
-    const raw = new URL(`${mode}.mp4`, output).pathname;
-    const recorder = spawn('ffmpeg', ['-hide_banner', '-y', '-f', 'x11grab', '-video_size', '1920x1080', '-framerate', '60', '-i', process.env.DISPLAY,
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-threads', '1', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', raw], { stdio: ['pipe', 'ignore', 'pipe'] });
-    let stderr = ''; recorder.stderr.on('data', data => { stderr += data; });
-    const done = new Promise(resolve => recorder.on('close', resolve));
-    try {
-      // Wait for the actual first encoded frame before triggering entry.
-      const started = Date.now();
-      while (!/frame=\s*[1-9]/.test(stderr)) {
-        assert.ok(Date.now() - started < 15000, 'Cloud screen recorder did not start');
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
+    await recordEntryDesktop(output, mode, async () => {
       await page.getByRole('menuitem', { name: '模型网关', exact: true }).click();
       await page.waitForURL(url => url.origin === gateway.origin && url.pathname === '/quickstart', { timeout: 45000 });
       await page.waitForFunction(() => !document.documentElement.hasAttribute('data-entry-arriving'), null, { timeout: 15000 });
@@ -98,7 +95,8 @@ try {
       const evidence = await page.evaluate(() => ({ ...window.__entryEvidence, viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
 
         fineLines: document.querySelectorAll('.portrait-fine-lines path').length,
-        settledMovie: (() => { const video=document.querySelector('.portrait-motion'); return video ? {time:video.currentTime,paused:video.paused} : null; })(),
+        settledMovie: (() => { const video=document.querySelector('.portrait-motion'); return video ? {time:video.currentTime,paused:video.paused,src:video.currentSrc} : null; })(),
+        theme: document.querySelector('.consciousness-scene')?.dataset.portraitTheme,
         brand: document.querySelector('.consciousness-ghost > span')?.textContent,
         personalGreetingCount: document.querySelectorAll('.gateway-identity-card').length,
         navigation: [...document.querySelectorAll('.lg-console-sidebar nav a')].map(link => ({label:link.getAttribute('aria-label'),path:new URL(link.href).pathname})),
@@ -106,6 +104,8 @@ try {
       await page.screenshot({ path: new URL(`${mode}-settled.png`, output).pathname });
       await writeFile(new URL(`${mode}.json`, output), JSON.stringify(evidence, null, 2));
       assert.ok(evidence.settledMovie?.paused && evidence.settledMovie.time >= 5.1, 'The settled portrait must retain its actual video end pose');
+      assert.equal(evidence.theme, theme);
+      assert.equal(evidence.settledMovie.src, gatewayAssets[theme].motion.url);
       assert.deepEqual(evidence.navigation[0], {label:'对话',path:'/quickstart'});
       assert.equal(evidence.navigation.filter(link => link.path === '/quickstart').length, 1);
       assert.equal(evidence.brand, 'LLM Gateway');
@@ -117,17 +117,12 @@ try {
       assert.ok(evidence.frames.some(frame => frame.eye > .15 && frame.eye < .85), 'Missing actual intermediate eyelid frames');
       assert.ok(evidence.frames.filter(frame => frame.t < .5).length > 2, 'Missing first structural frames');
       assert.ok(evidence.body.includes(process.env.EXPECTED_COMMIT.slice(0,7)), 'Public preview is not the expected revision');
-    } finally {
-      recorder.stdin.write('q'); await done;
-      await writeFile(new URL(`${mode}-ffmpeg.log`, output), stderr);
-    }
+    });
   }
   // Real menu operations, navigation and reload verify the preference across cinematic and ordinary pages.
   const themeEvidence = [];
-  for (const theme of ['light', 'dark']) {
-    await page.getByLabel('打开用户菜单', {exact:true}).click();
-    await page.getByRole('button', {name:theme === 'light' ? '切换浅色' : '切换深色', exact:true}).click();
-    await page.waitForFunction(expected => document.documentElement.dataset.theme === expected && !document.querySelector('details.lg-user-menu[open]'),theme);
+  for (const theme of ['dark', 'light']) {
+    await setTheme(theme);
     const paint = await page.locator('.gateway-quickstart-stage').evaluate(el => ({scheme:getComputedStyle(el).colorScheme, ink:getComputedStyle(el).color}));
     assert.equal(paint.scheme,theme);
     await page.screenshot({path:new URL(`${theme}-conversation.png`,output).pathname});
@@ -159,6 +154,17 @@ try {
     assert.equal(stored,theme);
     themeEvidence.push({theme,paint,stored,hoverChanged:hover !== idle,outsideDismissed:true,escapeDismissed:true});
   }
+  await recordEntryDesktop(output, 'theme-switch', async () => {
+    for (const theme of ['dark', 'light']) {
+      await setTheme(theme);
+      await page.waitForFunction(url => {
+        const img = document.querySelector('.consciousness-art');
+        return img?.currentSrc === url && img.complete && img.naturalWidth > 0;
+      }, gatewayAssets[theme].open.url);
+      assert.equal(await page.locator('.consciousness-mist').count(), 0);
+      await page.waitForTimeout(900);
+    }
+  });
   assert.notEqual(themeEvidence[0].paint.ink,themeEvidence[1].paint.ink);
   await writeFile(new URL('theme-menu-journey.json',output),JSON.stringify(themeEvidence,null,2));
 } catch (error) {

@@ -1,25 +1,31 @@
-import { PORTRAIT_MOTION_FILE } from './portraitMotionAsset';
-import { entryAsset } from './entryAsset';
+import { PORTRAIT_ASSETS } from './portraitMotionAsset';
+import { type ResolvedTheme } from '@/lib/theme';
 import { useEffect, useId, useRef, useState } from 'react';
 import { FACE_CLIP, PORTRAIT_LINES, PORTRAIT_MESH, PORTRAIT_DETAILS, portraitStrokeProgress, CLOSED_LASHES, HEAD_CLIP, PORTRAIT_HEAD_MESH, PORTRAIT_NODES, PORTRAIT_BRACES } from './portraitGeometry';
 import { PORTRAIT_DURATION, samplePortrait } from './portraitTimeline';
 import { createPortraitRenderer, loadPortraitImages } from './portraitRenderer';
 import { finishEntryArrival, setEntryChrome } from './entryArrival';
 
-type Props = { fog: boolean; arriving: boolean; frameTime?: number };
+type Props = { fog: boolean; arriving: boolean; frameTime?: number; theme: ResolvedTheme };
 
 /** Original layered portrait: vectors, facial surface, spatial material scan, deforming eyelid. */
-export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
+export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const video = useRef<HTMLVideoElement>(null);
-  const [motionReady, setMotionReady] = useState(false);
+  const [readyMotion, setReadyMotion] = useState<string>();
   const [settled, setSettled] = useState(false);
   const id = `portrait-${useId().replace(/:/g, '')}`;
   const controlled = frameTime !== undefined;
   const playing = !fog && (arriving || controlled) && !settled;
+  const assets = PORTRAIT_ASSETS[theme];
+  const motionReady = readyMotion === assets.motion;
   const timeRef = useRef(frameTime);
   timeRef.current = frameTime;
+
+  useEffect(() => {
+    setReadyMotion(current => current === assets.motion ? current : undefined);
+  }, [assets.motion]);
 
   useEffect(() => {
     if (!playing || !host.current) return;
@@ -63,9 +69,9 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
         if (started) return;
         started = true;
         movie.currentTime = Math.min((performance.now() - startedAt) / 1000, 1.4);
-        setMotionReady(true);
+        setReadyMotion(assets.motion);
       };
-      const failed = () => { setMotionReady(false); root.dataset.renderer = 'static-fallback'; complete(); };
+      const failed = () => { setReadyMotion(undefined); root.dataset.renderer = 'static-fallback'; complete(); };
       const tick = (now: number) => {
         if (cancelled) return;
         const time = started ? movie.currentTime : Math.min(1.4, Math.max(0, (now-startedAt)/1000));
@@ -102,7 +108,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
     };
     raf = requestAnimationFrame(frame);
     const preparationTimeout = window.setTimeout(fallback, 1800);
-    void loadPortraitImages().then(images => {
+    void loadPortraitImages(assets).then(images => {
       if (cancelled || !canvas.current) return;
       renderer = createPortraitRenderer(canvas.current, images);
       root.dataset.renderer = renderer ? 'webgl' : 'static-fallback';
@@ -115,11 +121,11 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime }: Props) {
       cancelled = true; window.clearTimeout(preparationTimeout); cancelAnimationFrame(raf); renderer?.dispose();
       root.removeEventListener('webglcontextlost', contextLost, true);
     };
-  }, [playing, controlled]);
+  }, [playing, controlled, assets]);
 
   return <div ref={host} className={`consciousness-portrait${playing ? ' is-building' : ''}${fog ? ' is-ambient' : ''}`}>
-    <img className="consciousness-art" src={fog ? entryAsset('companion-sleep.webp') : entryAsset('companion.webp')} alt="" loading="eager" decoding="async" />
-    {(playing || (!controlled && motionReady)) && (controlled ? <canvas ref={canvas} className="portrait-material" aria-hidden="true" /> : <video ref={video} className="portrait-material portrait-motion" src={entryAsset(PORTRAIT_MOTION_FILE)} muted playsInline preload="auto" aria-hidden="true" />)}
+    <img className="consciousness-art" src={fog ? assets.closed : assets.open} alt="" loading="eager" decoding="async" />
+    {(playing || (!controlled && motionReady)) && (controlled ? <canvas ref={canvas} className="portrait-material" aria-hidden="true" /> : <video key={assets.motion} ref={video} className="portrait-material portrait-motion" src={assets.motion} muted playsInline preload="auto" aria-hidden="true" />)}
     {((playing && (controlled || !motionReady)) || fog) && <svg className="portrait-structure" viewBox="0 0 1672 941" preserveAspectRatio="xMaxYMid slice" fill="none" aria-hidden="true">
       <defs>
         <linearGradient id={`${id}-ink`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#3481d5" /><stop offset=".5" stopColor="#81caff" /><stop offset="1" stopColor="#3879ce" /></linearGradient>

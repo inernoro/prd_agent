@@ -343,7 +343,7 @@ html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body::-webkit-scrol
 .gateway-intent-heading { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 22px; color: var(--cinema-light); font-size: var(--fs-title); font-weight: 500; letter-spacing: .08em; }
 .gateway-intent-heading svg { color: var(--cinema-accent); opacity: .75; }
 
-/* One global preference also governs the cinematic workspace. The film stays intact under a paper wash. */
+/* Daylight uses separately lit artwork. Keep contrast local to controls and chrome. */
 :root[data-theme='light'] :is(.lg-console-shell.is-entry-workspace, .gateway-quickstart-stage) {
   --cinema-night: #f3f6fa; --cinema-light: #172e3b; --cinema-accent: #096b7c;
   --cinema-paper: #f6f8fc; --cinema-glass: rgba(255,255,255,.78); --cinema-border: rgba(37,73,96,.24);
@@ -352,9 +352,22 @@ html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body::-webkit-scrol
   --ok: #147342; --err: #b42335; --warn: #8a5b00; --info: #17649b;
   color-scheme: light;
 }
-:root[data-theme='light'] .gateway-quickstart-stage .consciousness-mist { opacity: .90; }
-:root[data-theme='light'] .gateway-quickstart-stage .consciousness-ghost { opacity: calc(.9 * var(--portrait-brand, 1)); }
-:root[data-theme='light'] .gateway-quickstart-stage .consciousness-camera { filter: saturate(.65); }
+:root[data-theme='light'] .cinema-login,
+:root[data-theme='light'] .gateway-quickstart-stage { --cinema-night: #f8f0e7; }
+:root[data-theme='light'] .cinema-login[data-phase='entering']::after { animation: none; }
+.consciousness-portrait:not(.is-ambient):not(.is-building) > .consciousness-art { opacity: 1; }
+.consciousness-scene[data-portrait-theme='light'] .consciousness-portrait.is-ambient > .consciousness-art { opacity: 1; filter: none; }
+.consciousness-scene[data-portrait-theme='light'] .consciousness-grain { display: none; }
+:root[data-theme='light'] .gateway-quickstart-stage .consciousness-camera { opacity: 1; }
+:root[data-theme='light'] .gateway-quickstart-stage .gateway-quickstart-shade { background: none; }
+:root[data-theme='light'] .gateway-intent-heading { text-shadow: 0 1px 12px #f8f0e7; }
+:root[data-theme='light'] .gateway-intent-starters button { background: var(--cinema-glass); }
+@media (max-width: 600px) {
+  :root[data-theme='light'] .gateway-quickstart-stage .gateway-quickstart-shade {
+    background: linear-gradient(0deg, var(--cinema-night) 10%, transparent 62%);
+  }
+  :root[data-theme='light'] .cinema-login-center { background: #f8f0e7e8; padding: 16px; border-radius: 16px; }
+}
 
 /* Pointer feedback uses theme-aware surfaces, never layout shifts or feedback on disabled controls. */
 .is-entry-workspace :is(.lg-nav-group a, .lg-sidebar-desktop-heading button, .lg-header-actions button, .lg-user-menu > summary, .lg-user-popover > a, .lg-user-popover > button, .gateway-account-organizations > summary, .gateway-account-organization-list > button),

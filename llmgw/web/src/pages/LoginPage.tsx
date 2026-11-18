@@ -5,7 +5,9 @@ import { useAuth } from '@/lib/auth';
 import { getHealth } from '@/lib/api';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 import { ConsciousnessHud, ConsciousnessScene, IdentityScanner, type IdentityPhase } from '@/components/entry/ConsciousnessScene';
-import { loadPortraitImages, preloadPortraitMotion } from '@/components/entry/portraitRenderer';
+import { preloadPortraitMotion } from '@/components/entry/portraitRenderer';
+import { PORTRAIT_ASSETS } from '@/components/entry/portraitMotionAsset';
+import { useThemePreference } from '@/lib/theme';
 import { EntryAudio } from '@/components/entry/entryAudio';
 import { gatewayLoginDestination, markQuickstartArrival } from '@/components/entry/quickstartArrival';
 import './GatewayEntry.css';
@@ -14,6 +16,7 @@ export { resolveMapHomeHref } from '@/lib/mapNavigation';
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export function LoginPage() {
+  const { resolved: theme } = useThemePreference();
   const { login, sessionExpiredReason } = useAuth();
   usePlatformMapHome();
   const navigate = useNavigate();
@@ -35,13 +38,14 @@ export function LoginPage() {
     mounted.current = true;
     audio.current = new EntryAudio();
     audio.current.setEnabled(sound);
-    preloadPortraitMotion();
-    void loadPortraitImages().catch(() => {});
     void getHealth().then(res => { if (mounted.current) setHealth(res.success && res.data?.status === 'ok' ? 'Gateway 服务正常' : '暂时无法确认服务状态'); }).catch(() => { if (mounted.current) setHealth('暂时无法确认服务状态'); });
     const silence = () => { if (document.visibilityState !== 'visible') audio.current?.stop(); };
     document.addEventListener('visibilitychange', silence);
     return () => { mounted.current = false; if (!audioTransferred.current) audio.current?.dispose(); document.removeEventListener('visibilitychange', silence); };
   }, []);
+  useEffect(() => {
+    if (!reducedMotion()) preloadPortraitMotion(PORTRAIT_ASSETS[theme]);
+  }, [theme]);
   const pause = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms));
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();

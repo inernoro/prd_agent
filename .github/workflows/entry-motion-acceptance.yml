@@ -6,7 +6,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [checks, record]
+        options: [checks, record, visual]
         default: checks
 permissions:
   contents: read
@@ -52,8 +52,45 @@ jobs:
         run: |
           node --test e2e/entry-preview-readiness.test.mjs
           node --check e2e/entry-motion-capture.mjs
-          python3 -m py_compile e2e/entry-motion-compare.py
+          node --check e2e/entry-daylight-fixture.mjs
+          python3 -m py_compile e2e/entry-motion-compare.py e2e/entry-daylight-compare.py
           pnpm -C e2e typecheck
+  visual:
+    if: github.event_name == 'workflow_dispatch' && inputs.phase == 'visual'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build Gateway and install cloud browser recording tools
+        run: |
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C llmgw/web build
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C e2e exec playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg xvfb openbox python3-pil
+      - name: Record both entries and the theme switch with isolated business responses
+        run: |
+          pnpm -C llmgw/web preview --host 127.0.0.1 --strictPort --port 8200 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8200/llmgw/; then break; fi
+            sleep 1
+          done
+          xvfb-run -a -s '-screen 0 1920x1080x24 -ac' sh -c 'openbox >/tmp/entry-openbox.log 2>&1 & node e2e/entry-daylight-fixture.mjs'
+          python3 e2e/entry-daylight-compare.py --fixture
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gateway-daylight-fixture-${{ github.sha }}
+          path: work/entry-daylight/
+          if-no-files-found: error
+          retention-days: 14
   record:
     needs: checks
     if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.phase == 'record' }}
@@ -84,7 +121,9 @@ jobs:
         run: xvfb-run -a -s '-screen 0 1920x1080x24 -ac' sh -c 'openbox >/tmp/entry-openbox.log 2>&1 & node e2e/entry-motion-capture.mjs'
       - name: Extract actual quarter-second frames and comparisons
         if: always()
-        run: python3 e2e/entry-motion-compare.py
+        run: |
+          python3 e2e/entry-motion-compare.py
+          python3 e2e/entry-daylight-compare.py
       - name: Retain actual recordings and frame evidence
         if: always()
         uses: actions/upload-artifact@v4
