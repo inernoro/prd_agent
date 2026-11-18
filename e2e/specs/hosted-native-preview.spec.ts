@@ -158,7 +158,10 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       contentRequests++;
       data = { html: options.html ?? files['index.html'] };
     } else if (path.endsWith('/comments')) {
-      data = { siteId: site.id, commentsEnabled: true, canComment: !!options.inlineHistory, comments: [] };
+      data = { siteId: site.id, commentsEnabled: true, canComment: !!options.inlineHistory, comments: options.extraHistory ? [{
+        id: 'inline-history-note', revisionId: inlineVersion.id, contentVersion: inlineVersion.contentVersionKey,
+        authorName: '复验作者', content: '旧版意见与正文同时可读', createdAt: '2026-11-02T00:00:00Z',
+      }] : [] };
     } else if (path.endsWith('/revisions')) {
       if (options.metadataLag) await metadataGate;
       data = options.inlineHistory ? [currentVersion, inlineVersion, ...(options.extraHistory ? [olderVersion] : [])] : options.metadataLag ? [currentVersion] : [];
@@ -208,6 +211,11 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await page.getByRole('option', { name: /^V1/ }).click();
       const first = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
       await expect(first.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+      await expect(first.getByText('旧版意见与正文同时可读', { exact: true })).toBeVisible();
+      const documentBox = await first.locator('iframe').boundingBox();
+      const commentsBox = await first.locator('.review-history-comments').boundingBox();
+      expect(documentBox && commentsBox && (documentBox.x + documentBox.width <= commentsBox.x + 1 || documentBox.y + documentBox.height <= commentsBox.y + 1)).toBeTruthy();
+      await expect(first.locator('.annotation-chat-bubble')).toHaveCount(0);
       const dialogElement = await first.elementHandle();
       await first.getByRole('button', { name: '恢复为当前版本', exact: true }).click();
       await first.getByRole('navigation', { name: '历史版本列表' }).getByRole('button', { name: /^V0/ }).click();

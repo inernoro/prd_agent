@@ -19,10 +19,12 @@ export function ReviewVersionPreview({ site, source, versionId, commentId, versi
   onReturnFocus?: (event: Event) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
-  const [showComments, setShowComments] = useState(false), [confirmVersion, setConfirmVersion] = useState<string | null>(null);
+  const [commentsOverride, setCommentsOverride] = useState<boolean | null>(null);
+  const [confirmVersion, setConfirmVersion] = useState<string | null>(null);
   const [count, setCount] = useState(0);
+  const showComments = commentsOverride ?? count > 0;
   const restoreKeys = useRef(new Map<string, string>());
-  const review = useHostedReview(frame, site, source, () => setShowComments(true));
+  const review = useHostedReview(frame, site, source, () => setCommentsOverride(true));
   const { versions, selectVersion } = review;
   const selected = useRef<{ id: string; commentId?: string } | null>(null);
   useEffect(() => {
@@ -43,14 +45,14 @@ export function ReviewVersionPreview({ site, source, versionId, commentId, versi
   return <Dialog open onOpenChange={open => { if (!open && !restoring) onClose(); }} title={<><History size={16} />{version?.versionLabel ?? '历史版本'} · 版本预览</>}
     onCloseAutoFocus={onReturnFocus}
     zIndex={2147483646} maxWidth={920} contentClassName="review-history-dialog" contentStyle={{ maxHeight: 'calc(100dvh - 30px)' }}
-    titleAction={<button type="button" className="review-tool" aria-label="查看此版本批注" disabled={!previewReady} onClick={() => setShowComments(value => !value)}><MessageSquare size={14} />批注 {previewReady && count || ''}</button>}
+    titleAction={<button type="button" className="review-tool" aria-label="查看此版本批注" aria-expanded={previewReady && showComments} disabled={!previewReady} onClick={() => setCommentsOverride(!showComments)}><MessageSquare size={14} />批注 {previewReady && count || ''}</button>}
     content={<div className="review-history-layout">
       {history && history.length > 0 && <nav className="review-history-versions" aria-label="历史版本列表">
         {history.map(item => <button type="button" key={item.id} aria-current={item.id === versionId ? 'true' : undefined}
           disabled={restoring || (!item.isCurrent && !item.canPreview)} onClick={() => {
             if (item.isCurrent) { onClose(); return; }
             if (item.id === versionId) return;
-            setConfirmVersion(null); setShowComments(false); setCount(0); onVersionChange?.(item.id);
+            setConfirmVersion(null); setCommentsOverride(null); setCount(0); onVersionChange?.(item.id);
           }}>
           <span><strong>{item.versionLabel}</strong><small className={item.isCurrent ? 'is-current' : ''}>{item.isCurrent ? '当前发布' : item.canPreview ? '历史版本' : '原文不可预览'}</small></span>
           {item.publishedAt && <time dateTime={item.publishedAt}>{new Date(item.publishedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time>}
@@ -67,9 +69,9 @@ export function ReviewVersionPreview({ site, source, versionId, commentId, versi
       <AnnotationBubble annotations={review.annotations} hidden={showComments} />
       </div>
       {previewReady && <aside className="review-sidebar review-history-comments review-b-surface" hidden={!showComments}>
-        <div className="review-sidebar-heading"><span>此版本批注</span><button type="button" aria-label="收起此版本批注" onClick={() => setShowComments(false)}><X size={16} /></button></div>
+        <div className="review-sidebar-heading"><span>此版本批注</span><button type="button" aria-label="收起此版本批注" onClick={() => setCommentsOverride(false)}><X size={16} /></button></div>
         <div style={{ flex: 1, minHeight: 0 }}><CommentsSection visible={showComments} {...(source.mode === 'share' ? { mode: 'share', token: source.token, siteId: source.siteId, password: source.password } : { mode: 'site', siteId: source.siteId })}
-          annotations={review.annotations} review={review} splitLayout versionOnly onThreadCountsChange={counts => setCount(counts.annotations + counts.discussions)} onPickElement={() => setShowComments(false)} /></div>
+          annotations={review.annotations} review={review} splitLayout versionOnly onThreadCountsChange={counts => setCount(counts.annotations + counts.discussions)} onPickElement={() => setCommentsOverride(false)} /></div>
       </aside>}
       </div>
       </div>

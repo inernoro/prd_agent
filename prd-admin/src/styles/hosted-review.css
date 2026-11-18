@@ -338,5 +338,6 @@
   .review-history-layout { flex-direction: column; height: min(68dvh, 540px); }
   .review-history-versions { display: flex; gap: 4px; flex: 0 0 auto; border: 0; border-bottom: 1px solid var(--border-subtle); }
   .review-history-versions button { width: auto; min-width: 98px; margin-bottom: 0; }
-  .review-history-comments { position: absolute; inset: 0; }
+  .review-version-preview { flex-direction: column; }
+  .review-history-comments { flex-basis: 46%; }
 }
