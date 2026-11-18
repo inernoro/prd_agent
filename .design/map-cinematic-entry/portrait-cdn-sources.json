@@ -104,5 +104,12 @@
     ],
     "curveCount": 1275,
     "design": "同角色与右侧近景构图，真实暖色晨光、轨道舷窗与蓝天，深蓝发束阴影与青色虹膜。先显影浅纸细线、曲面和色彩，再以五档实际姿态睁眼。"
+  },
+  "daylightSelectedEdit": {
+    "method": "seedance-official-downloads-aligned-recut",
+    "sha256": "05c8a2d277469c57356b4e4427a4f118080e5d7729018056305c6c7cdda2a213",
+    "durationSeconds": 8.166667,
+    "openingPosterSha256": "76c92b60a1ed0aff3e596910f6e6fad044484d4a58b355278064ac4532f42db9",
+    "settledPosterSha256": "8880adf870ef34186e6bff69a914225622468672c2e49b0f9cacaf5e715d76e9"
   }
 }

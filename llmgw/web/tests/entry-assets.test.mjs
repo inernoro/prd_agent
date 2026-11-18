@@ -18,8 +18,7 @@ test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材�
   assert.deepEqual(Object.fromEntries(Object.entries(sources.night).map(([file, asset]) => [file, asset.sha256])), night.sourceImages);
   const distinctUrls = new Set();
   for (const theme of ['dark', 'light']) {
-    for (const plate of ['open', 'closed', 'motion']) {
-      const expected = runtime[theme][plate];
+    for (const [plate, expected] of Object.entries(runtime[theme])) {
       const url = new URL(PORTRAIT_ASSETS[theme][plate]);
       assert.equal(url.href, expected.url);
       assert.equal(url.origin, 'https://cfi.miduo.org');
@@ -28,9 +27,13 @@ test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材�
       distinctUrls.add(url.href);
     }
   }
-  assert.equal(distinctUrls.size, 6);
+  assert.equal(distinctUrls.size, 7);
   assert.deepEqual(sources.daylightAuthoring.eyeKeyframes, night.eyeKeyframes);
-  assert.equal(sources.daylightAuthoring.sha256, runtime.light.motion.sha256);
+  assert.equal(sources.daylightSelectedEdit.method, 'seedance-official-downloads-aligned-recut');
+  assert.equal(sources.daylightSelectedEdit.sha256, runtime.light.motion.sha256);
+  assert.equal(sources.daylightSelectedEdit.durationSeconds, runtime.light.motion.durationSeconds);
+  assert.equal(sources.daylightSelectedEdit.openingPosterSha256, runtime.light.opening.sha256);
+  assert.equal(sources.daylightSelectedEdit.settledPosterSha256, runtime.light.open.sha256);
   assert.deepEqual(MAP_PORTRAIT_ASSETS, PORTRAIT_ASSETS.dark);
   assert.equal(runtime.dark.motion.sha256, night.sha256);
   assert.equal(runtime.dark.open.sha256, night.sourceImages['companion.webp']);
