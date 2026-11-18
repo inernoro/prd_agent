@@ -101,7 +101,7 @@ for (const width of [1440, 900, 390]) test(`${width}px 合集两份工具栏只�
 });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; extraHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   let listRequests = 0;
@@ -137,6 +137,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     }
     const currentVersion = { id: 'current', siteId: site.id, versionLabel: 'V2', contentVersionKey: options.metadataLag ? '10000' : '20000', isCurrent: true, canPreview: true, siteUrl: siteEntry, entryFile: 'index.html', contentShape: 'self-contained-html' };
     const inlineVersion = { ...currentVersion, id: 'inline-history', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: options.multiFileHistory ? siteEntry : null, contentShape: options.multiFileHistory ? 'multi-file' : 'self-contained-html' };
+    const olderVersion = { ...inlineVersion, id: 'earlier-history', versionLabel: 'V0', contentVersionKey: '5000' };
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
     if (path.endsWith('/shares/view/qa-native')) {
       data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [site],
@@ -160,7 +161,9 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       data = { siteId: site.id, commentsEnabled: true, canComment: !!options.inlineHistory, comments: [] };
     } else if (path.endsWith('/revisions')) {
       if (options.metadataLag) await metadataGate;
-      data = options.inlineHistory ? [currentVersion, inlineVersion] : options.metadataLag ? [currentVersion] : [];
+      data = options.inlineHistory ? [currentVersion, inlineVersion, ...(options.extraHistory ? [olderVersion] : [])] : options.metadataLag ? [currentVersion] : [];
+    } else if (options.extraHistory && path.endsWith('/revisions/earlier-history/preview')) {
+      data = { revision: olderVersion, siteUrl: null, html: '<h1>更早的 V0 正文</h1>' };
     } else if (path.endsWith('/revisions/inline-history/preview')) {
       data = { revision: inlineVersion, siteUrl: inlineVersion.siteUrl, html: options.multiFileHistory ? files['index.html'].replace('<script type="module" src="./module.js"></script>', '') : '<!doctype html><html><head><meta charset="utf-8"></head><body><h1 id="old-heading">仅保留 HTML 的旧版正文</h1><p>这是旧版，不能替换为当前版或后台页面。</p></body></html>' };
     }
@@ -197,6 +200,26 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
   test.describe(`托管对抗样本 ${viewport.width}px`, () => {
     test.use({ viewport });
+
+    test('在同一个历史小窗切换快照，清除上一版的恢复确认并保留当前正文', async ({ page }) => {
+      const { frame } = await serve(page, { modal: true, inlineHistory: true, extraHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
+      const version = page.getByRole('button', { name: '网页版本：V2', exact: true });
+      await version.click();
+      await page.getByRole('option', { name: /^V1/ }).click();
+      const first = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+      await expect(first.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+      const dialogElement = await first.elementHandle();
+      await first.getByRole('button', { name: '恢复为当前版本', exact: true }).click();
+      await first.getByRole('navigation', { name: '历史版本列表' }).getByRole('button', { name: /^V0/ }).click();
+      const second = page.getByRole('dialog', { name: 'V0 · 版本预览', exact: true });
+      await expect(second.frameLocator('iframe').getByRole('heading', { name: '更早的 V0 正文' })).toBeVisible();
+      expect(await dialogElement!.evaluate(element => element.isConnected)).toBe(true);
+      await expect(second.getByRole('button', { name: '确认恢复并发布', exact: true })).toHaveCount(0);
+      await expect(second.getByRole('button', { name: '恢复为当前版本', exact: true })).toBeVisible();
+      await second.getByRole('button', { name: '返回当前页', exact: true }).click();
+      await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
+      await expect(version).toBeFocused();
+    });
 
     test('历史小窗隔离之前上传错误，恢复失败保留可操作提示', async ({ page }) => {
       await serve(page, { modal: true, inlineHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
@@ -510,7 +533,8 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(2);
       await tap(frame.getByRole('button', { name: '打开批注 2', exact: true }));
       await expect(page.locator('.annotation-chat-bubble')).toHaveCount(1);
-      await tap(page.getByRole('button', { name: '显示全部气泡', exact: true })); await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
+      await tap(page.getByRole('dialog', { name: '批注气泡 2', exact: true }).getByRole('button', { name: '显示全部气泡', exact: true }));
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
       const closed = page.locator('[data-bubble-id="one"]'), number = await closed.locator('.annotation-chat-number').innerText();
       const reloadDocument = async () => {
         const boot = await frame.locator('body').evaluate(() => performance.timeOrigin);

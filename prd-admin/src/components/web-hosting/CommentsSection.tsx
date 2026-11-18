@@ -28,6 +28,7 @@ type Props = (
   threadKind?: 'annotation' | 'discussion';
   onThreadCountsChange?: (counts: CommentThreadCounts) => void;
   versionOnly?: boolean;
+  splitLayout?: boolean;
   visible?: boolean;
 };
 
@@ -263,7 +264,12 @@ export default function CommentsSection(props: Props) {
               if (otherVersions && originVersion) review?.setVersionPreview({ id: originVersion.id, commentId: comment.id });
               else annotations?.focus(comment.id);
             };
+            const anchorAction = comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready} className="review-anchor-quote" title={`定位原文：${comment.anchor.text || elementLabel(comment.anchor.tagName)}`}>
+              <span className="review-anchor-number">{otherVersions ? <History size={13} /> : number}</span>
+              <span className="review-anchor-label">{props.splitLayout ? comment.anchor.text || elementLabel(comment.anchor.tagName) : '原文'}</span>
+            </button>;
             return <article key={comment.id} id={`${pickingHintId}-thread-${comment.id}`} ref={element => { if (element) threadElements.current.set(comment.id, element); else threadElements.current.delete(comment.id); }} className={`review-thread${annotations?.activeId === comment.id ? ' is-active' : ''}`}>
+              {props.splitLayout && (anchorAction || <div className="review-thread-context"><span className="review-anchor-number">页</span>整页评论</div>)}
               <CommentMessage comment={comment} busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)}>
                 {otherVersions && <div className="review-origin-version"><span>来自 {originVersion?.versionLabel ?? (comment.contentVersion ? '未收录的旧版本' : '未标版本的历史评论')}</span>
                   {canOpenOrigin && <button type="button" onClick={locate}>预览 {originVersion!.versionLabel}</button>}</div>}
@@ -272,9 +278,7 @@ export default function CommentsSection(props: Props) {
                 <CommentMessage key={reply.id} comment={reply} busy={busyId === reply.id} confirming={confirmDelete === reply.id} onDelete={() => void remove(reply.id)} />)}</div>}
               <div className="review-thread-actions">
                 {canWrite && !otherVersions ? <button type="button" disabled={submitting} onClick={() => { annotations?.clearDraft(); setReplyTo(comment.id); textareaRef.current?.focus(); }}><CornerDownRight size={13} />回复{replies.length ? ` ${replies.length}` : ''}</button> : <span />}
-                {comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready} className="review-anchor-quote" title={`定位原文：${comment.anchor.text || elementLabel(comment.anchor.tagName)}`}>
-                  <span className="review-anchor-number">{otherVersions ? <History size={13} /> : number}</span>原文
-                </button>}
+                {!props.splitLayout && anchorAction}
                 {comment.canResolve && commentsEnabled && <button type="button" className="review-resolve-action" aria-label={comment.isResolved ? '重新打开' : '标记解决'} title={comment.isResolved ? '重新打开' : '标记解决'} disabled={busyId !== null} onClick={() => void resolve(comment)}>
                   {comment.isResolved ? <RotateCcw size={14} /> : <Check size={14} />}<span className="sr-only">{comment.isResolved ? '重新打开' : '标记解决'}</span></button>}
               </div>

@@ -18,10 +18,10 @@ const dialogSource = readFileSync(path.resolve(__dirname, '../ui/Dialog.tsx'), '
 
 describe('mobile web hosting layout', () => {
   it('keeps preview actions in one scrollable control strip on narrow screens', () => {
-    expect(previewSource).toContain('flex shrink-0 flex-col gap-2');
-    expect(previewSource).toContain('overflow-x-auto');
+    expect(previewSource).toContain('review-reader-toolbar');
+    expect(previewSource).toContain('review-reader-actions');
+    expect(reviewStyles).toMatch(/\.review-reader-actions,[^{]*\{[^}]*grid-column:\s*1 \/ -1[^}]*overflow-x:\s*auto/);
     expect(previewSource).toContain('whitespace-nowrap');
-    expect(previewSource).toContain('sm:flex-row');
   });
 
   it('gives every preview-header action at least a 44px touch target', () => {

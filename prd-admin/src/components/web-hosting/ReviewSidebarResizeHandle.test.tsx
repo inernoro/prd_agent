@@ -18,7 +18,7 @@ it('拖动只响应捕获的指针，限制最窄/最宽，松手后不再改变
   }
   try {
     pointer('pointerdown', 600); pointer('pointermove', 500, 2);
-    expect(handle.getAttribute('aria-valuenow')).toBe('400');
+    expect(handle.getAttribute('aria-valuenow')).toBe('440');
     pointer('pointermove', 400); expect(handle.getAttribute('aria-valuenow')).toBe('563');
     pointer('pointermove', -500); expect(handle.getAttribute('aria-valuenow')).toBe('563');
     pointer('pointermove', 1500); expect(handle.getAttribute('aria-valuenow')).toBe('320');
@@ -28,7 +28,7 @@ it('拖动只响应捕获的指针，限制最窄/最宽，松手后不再改变
     act(() => handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })));
     expect(handle.getAttribute('aria-valuenow')).toBe('352');
     act(() => handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
-    expect(handle.getAttribute('aria-valuenow')).toBe('400');
-    expect(sessionStorage.getItem('hosted-review-sidebar-width')).toBe('400');
+    expect(handle.getAttribute('aria-valuenow')).toBe('440');
+    expect(sessionStorage.getItem('hosted-review-sidebar-width')).toBe('440');
   } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
 });

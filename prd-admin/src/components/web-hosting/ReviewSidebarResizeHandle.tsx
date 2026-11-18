@@ -2,16 +2,17 @@ import { useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 
 const WIDTH_KEY = 'hosted-review-sidebar-width';
-const DEFAULT_WIDTH = 400;
+const DEFAULT_WIDTH = 440;
 const MIN_WIDTH = 320;
+const MAX_WIDTH = 640;
 
 export function useReviewSidebarWidth() {
   const { width: viewportWidth } = useBreakpoint();
-  const maxWidth = Math.min(720, Math.max(MIN_WIDTH, Math.floor(viewportWidth * .55)));
+  const maxWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.floor(viewportWidth * .55)));
   const [preferredWidth, setPreferredWidth] = useState(() => {
     try {
       const saved = Number(sessionStorage.getItem(WIDTH_KEY));
-      return Number.isFinite(saved) && saved >= MIN_WIDTH && saved <= 720 ? saved : DEFAULT_WIDTH;
+      return Number.isFinite(saved) && saved >= MIN_WIDTH ? Math.min(saved, MAX_WIDTH) : DEFAULT_WIDTH;
     } catch { return DEFAULT_WIDTH; }
   });
   const setWidth = (value: number) => {

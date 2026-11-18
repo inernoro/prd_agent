@@ -6,7 +6,7 @@ import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDow
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, FileWarning, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
+import { X, ExternalLink, FileWarning, FileText, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
@@ -15,6 +15,7 @@ import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationModeBar } from './AnnotationModeBar';
 import { useHostedReview } from './useHostedReview';
 import { ReviewToolbarControls } from './ReviewToolbarControls';
+import { ReviewVersionBar } from './ReviewVersionBar';
 import { AnnotationBubble } from './AnnotationBubble';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import AskPanelInline from './ask/AskPanelInline';
@@ -263,13 +264,14 @@ export default function SitePreviewModal({
         aria-modal="true"
         aria-labelledby="site-preview-dialog-title"
         tabIndex={-1}
-        className="relative flex flex-col rounded-xl border border-token-subtle bg-token-card text-token-primary shadow-2xl"
+        className="review-b-surface relative flex flex-col rounded-xl border border-token-subtle bg-token-card text-token-primary shadow-2xl"
         style={{ width: '90vw', height: '90vh', maxWidth: '1400px', background: 'var(--bg-elevated)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="hosted-preview-toolbar flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2">
-          <div className="flex min-w-0 w-full flex-1 items-center gap-2 sm:w-auto">
+        <div className="hosted-preview-toolbar review-reader-toolbar border-b border-token-subtle">
+          <div className="review-reader-title">
+            <span className="review-reader-icon" aria-hidden="true"><FileText size={16} /></span>
             <div className="min-w-0 flex-1">
             <h3 id="site-preview-dialog-title" className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
             </div>
@@ -283,10 +285,11 @@ export default function SitePreviewModal({
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
+          {!originalSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={canToggleComments} readerToolbar />}
+          <div className="review-reader-actions">
             <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar"
               onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
-            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} />
+            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={false} showBubbleToggle={!originalSite.wrappedAssetType} />
             {askEnabled && !review.historical && (
               <button
                 type="button"
@@ -439,6 +442,7 @@ export default function SitePreviewModal({
                 {/* key 随开关变化，强制刷新评论区的 commentsEnabled 态；
                     onStateLoaded 用服务端权威值回填开关，消除"开关 ON 但面板显示已关闭"的 stale 偏差（Cursor medium） */}
                 <CommentsSection
+                  splitLayout
                   visible={showComments}
                   key={`${site.id}:${commentsEnabled}`}
                   onCountChange={autoOpenReview}

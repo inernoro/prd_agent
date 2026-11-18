@@ -26,6 +26,7 @@ import { withAnnotationRuntime } from '@/components/web-hosting/useHostedAnnotat
 import { AnnotationModeBar } from '@/components/web-hosting/AnnotationModeBar';
 import { useHostedReview } from '@/components/web-hosting/useHostedReview';
 import { ReviewToolbarControls } from '@/components/web-hosting/ReviewToolbarControls';
+import { ReviewVersionBar } from '@/components/web-hosting/ReviewVersionBar';
 import { AnnotationBubble } from '@/components/web-hosting/AnnotationBubble';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareAssistantLauncher from '@/components/web-hosting/ShareAssistantLauncher';
@@ -930,13 +931,9 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
           overflow: 'hidden',
         }}
       >
-        {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏。
-            观感收在 styles/share-topbar.css：这条栏永远浮在访客上传的网页之上，所以带
-            surface-tone-dark 钉死深色，按钮一律走 token（admin-dual-theme）。原先四个按钮
-            各写一套内联 style、各自一个亮蓝、都没有 hover——顶栏比它托着的内容还抢眼。
-            现在只有「保存到我的托管」是实心主操作，其余一律安静。 */}
+        {/* 全屏演示隐藏审阅顶栏，给托管内容留出完整空间。 */}
         <div style={{ display: isFullscreen ? 'none' : 'block', gridColumn: '1 / -1' }}>
-          <div className="share-topbar surface-tone-dark border-b border-b-token-subtle">
+          <div className="share-topbar review-reader-toolbar border-b border-b-token-subtle">
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
             <div className="share-topbar-title">
               <ShieldCheck size={14} color="var(--accent-fg-success)" style={{ flexShrink: 0 }} />
@@ -944,6 +941,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                 ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
               } : current)} />
             </div>
+            {token && !liveSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} readerToolbar />}
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
               {!embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
@@ -964,7 +962,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
               <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }}
                 title="无法打开关联文档" content={<p role="alert">{relatedOpenError}</p>} />
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
-                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType}
+                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={false} showBubbleToggle={!liveSite.wrappedAssetType}
                 />}
               {token && <a className="share-topbar-btn share-topbar-icon" href={`/s/wp/${encodeURIComponent(token)}?siteId=${encodeURIComponent(liveSite.id)}${review.historical && review.selected ? `&review=${encodeURIComponent(review.selected.id)}` : ''}`}
                 target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开当前文档" title="在新标签页打开当前文档"><ExternalLink size={13} /></a>}
@@ -1203,7 +1201,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
           <>
             {/* 右侧抽屉 */}
             <aside
-              className="review-sidebar" style={{ position: isMobile ? 'fixed' : 'relative', right: 0, bottom: 0, zIndex: 61, gridColumn: isMobile ? 1 : 2, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : reviewSidebar.width, height: isMobile ? '55dvh' : '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)' }}
+              className="review-sidebar review-b-surface" style={{ position: isMobile ? 'fixed' : 'relative', right: 0, bottom: 0, zIndex: 61, gridColumn: isMobile ? 1 : 2, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : reviewSidebar.width, height: isMobile ? '55dvh' : '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)' }}
             >
               {!isMobile && <ReviewSidebarResizeHandle {...reviewSidebar} />}
               <div className="review-sidebar-heading">
@@ -1221,7 +1219,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                 </button>
               </div>
               <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                <CommentsSection visible={showComments && !isFullscreen} key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={handleCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
+                <CommentsSection splitLayout visible={showComments && !isFullscreen} key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={handleCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
               </div>
             </aside>
           </>

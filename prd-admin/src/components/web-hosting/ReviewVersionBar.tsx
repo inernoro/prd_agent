@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Files, Upload, RefreshCw } from 'lucide-react';
+import { Check, ChevronDown, History, Upload, RefreshCw } from 'lucide-react';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { HostedReview } from './useHostedReview';
 import { ReviewVersionPreview } from './ReviewVersionPreview';
 
-export function ReviewVersionBar({ review, canUpload, renderPreview = true }: { review: HostedReview; canUpload: boolean; renderPreview?: boolean }) {
+const versionDate = (value: string) => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+export function ReviewVersionBar({ review, canUpload, renderPreview = true, readerToolbar = false }: { review: HostedReview; canUpload: boolean; renderPreview?: boolean; readerToolbar?: boolean }) {
   const input = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null), list = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const { width } = useBreakpoint();
+  const mobileReaderToolbar = readerToolbar && width < 768;
   const busy = review.loading || review.uploading;
   useEffect(() => {
     if (open) list.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
@@ -16,12 +21,15 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true }: { 
     if (open && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
   }}>
     <button ref={trigger} type="button" className="review-tool review-version-trigger max-sm:min-h-11" aria-label={`网页版本：${review.selected?.versionLabel ?? '加载中'}`}
-      aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(value => !value)} title="切换网页版本，查看对应批注">
-      {busy ? <MapSpinner size={15} /> : <Files size={15} />}
-      <span>{review.selected?.versionLabel ?? '版本'}<span className="review-version-state">{review.historical ? '历史版' : '当前版'}</span></span>
+      aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(value => !value)} title="查看版本记录">
+      {busy ? <MapSpinner size={14} /> : <History size={14} />}
+      {review.selected && <span className="review-version-reading">正在阅读</span>}
+      <strong>{review.selected?.versionLabel ?? '版本'}</strong>
+      {review.selected && <span className={`review-version-state${review.historical ? '' : ' is-current'}`}>{review.historical ? '历史版' : '当前版'}</span>}
+      {review.selected?.publishedAt && <time className="review-version-date" dateTime={review.selected.publishedAt}>{versionDate(review.selected.publishedAt)}</time>}
       <ChevronDown size={12} className={open ? 'review-chevron-open' : ''} />
     </button>
-    <AnchoredMenu open={open} onClose={() => setOpen(false)} anchorRef={trigger} minWidth={260} className={`review-popover review-version-popover${trigger.current?.closest('.surface-tone-dark') ? ' surface-tone-dark' : ''}`} style={{ width: 280, maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(420px, calc(100dvh - 88px))', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 2147483647 }}>
+    <AnchoredMenu open={open} onClose={() => setOpen(false)} anchorRef={trigger} gap={mobileReaderToolbar ? 54 : 6} minWidth={260} className={`review-popover review-version-popover${trigger.current?.closest('.surface-tone-dark') ? ' surface-tone-dark' : ''}`} style={{ width: 280, maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(420px, calc(100dvh - 88px))', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 2147483647 }}>
       <div className="review-popover-heading"><strong>网页版本</strong>{review.versions.some(version => version.historyRestricted) && <p>当前权限仅开放当前版本</p>}</div>
       <div ref={list} role="listbox" aria-label="网页版本" className="review-version-list" onKeyDown={event => {
         if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); return; }
@@ -40,8 +48,8 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true }: { 
           }}>
           <span className="review-timeline-dot" />
           <span className="review-version-copy"><span><strong>{version.versionLabel}</strong><span>{version.isCurrent ? '当前发布' : '历史版本'}</span></span>
-            <time dateTime={version.publishedAt ?? undefined}>{version.publishedAt ? new Date(version.publishedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '已保存的网页快照'}</time>
-            {!version.canPreview && !version.isCurrent && <small>历史文件不完整</small>}</span>
+            <time dateTime={version.publishedAt ?? undefined}>{version.publishedAt ? versionDate(version.publishedAt) : ''}</time>
+            {!version.canPreview && !version.isCurrent && <small>原文不可预览</small>}</span>
           {review.selected?.id === version.id && <Check size={15} />}
         </button>)}
       </div>
@@ -54,13 +62,17 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true }: { 
     {canUpload && <input ref={input} type="file" accept=".html,.htm,.zip" className="hidden" aria-label="上传新版本文件" onChange={event => {
       const file = event.target.files?.[0]; event.target.value = ''; if (file) void review.upload(file);
     }} />}
-    {renderPreview && <ReviewVersionPreviewHost review={review} canRestore={canUpload} onClose={() => { review.setVersionPreview(null); trigger.current?.focus(); }} />}
+    {renderPreview && <ReviewVersionPreviewHost review={review} canRestore={canUpload} onReturnFocus={event => {
+      const button = trigger.current;
+      if (button?.isConnected) { event.preventDefault(); button.focus({ preventScroll: true }); }
+    }} />}
   </div>;
 }
 
 /** A reader with responsive copies of its toolbar owns this host only once. */
-export function ReviewVersionPreviewHost({ review, canRestore, onClose }: { review: HostedReview; canRestore: boolean; onClose?: () => void }) {
+export function ReviewVersionPreviewHost({ review, canRestore, onClose, onReturnFocus }: { review: HostedReview; canRestore: boolean; onClose?: () => void; onReturnFocus?: (event: Event) => void }) {
   const previewId = review.versionPreview?.id;
-  return previewId && review.source && review.liveSite ? <ReviewVersionPreview key={previewId} versionId={previewId} commentId={review.versionPreview?.commentId} site={review.liveSite} source={review.source}
-    canRestore={canRestore} restoring={review.uploading} restoreError={review.restoreError} onRestore={key => review.restoreVersion(previewId, key)} onClose={onClose ?? (() => review.setVersionPreview(null))} /> : null;
+  return previewId && review.source && review.liveSite ? <ReviewVersionPreview key={review.liveSite.id} versionId={previewId} commentId={review.versionPreview?.commentId} site={review.liveSite} source={review.source}
+    versions={review.versions} onVersionChange={id => review.setVersionPreview({ id })} canRestore={canRestore} restoring={review.uploading}
+    restoreError={review.restoreError} onRestore={key => review.restoreVersion(previewId, key)} onClose={onClose ?? (() => review.setVersionPreview(null))} onReturnFocus={onReturnFocus} /> : null;
 }
