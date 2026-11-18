@@ -27,6 +27,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-dist
@@ -42,17 +45,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: "9"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
 
@@ -105,7 +108,7 @@ jobs:
 
       - name: Archive loading acceptance failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cds-loading-failure-${{ github.sha }}
           path: ${{ runner.temp }}/cds-loading-*
@@ -113,18 +116,21 @@ jobs:
 
       - name: Write prebuilt manifest
         run: |
-          cat > cds/cds-prebuilt-manifest.json <<JSON
-          {
-            "sha": "${{ github.sha }}",
-            "ref": "${{ github.ref_name }}",
-            "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "runId": "${{ github.run_id }}",
-            "schema": 1
-          }
-          JSON
+          python3 - <<'PYTHON'
+          import datetime, json, os, pathlib, re, subprocess
+          sha, ref = os.environ['GITHUB_SHA'], os.environ['GITHUB_REF_NAME']
+          if not re.fullmatch(r'[0-9a-f]{40}', sha):
+              raise SystemExit('Invalid commit')
+          subprocess.run(['git', 'check-ref-format', 'refs/heads/' + ref], check=True)
+          pathlib.Path('cds/cds-prebuilt-manifest.json').write_text(json.dumps({
+              'sha': sha, 'ref': ref,
+              'builtAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'runId': os.environ['GITHUB_RUN_ID'], 'schema': 1,
+          }) + '\n')
+          PYTHON
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -132,7 +138,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # 不可变全 SHA tag（自更新按它精确认领），外加每分支移动 tag 便于排查。
@@ -141,7 +147,7 @@ jobs:
             type=ref,event=branch,prefix=branch-
 
       - name: Build & push CDS prebuilt image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./cds
           file: ./cds/Dockerfile.dist
@@ -158,7 +164,7 @@ jobs:
 
       # 验收前只加载到 runner，部署端不能拉到未通过冒烟的 SHA 产物。
       - name: Build & load CDS preview runtime
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./cds
           file: ./cds/Dockerfile.preview
@@ -201,7 +207,7 @@ jobs:
       # 不改变预览实例的环境隔离，也不在部署端绕过提交一致性门禁。
       - name: Build & load opt-in standard CDS runtime
         if: github.event_name == 'workflow_dispatch' && inputs.capacity_standard_runtime
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./cds
           file: ./cds/Dockerfile
