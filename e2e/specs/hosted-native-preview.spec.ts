@@ -578,13 +578,26 @@ test.describe('长文批注连续跟随与菜单外点', () => {
         }
         await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       };
+      await scroller.evaluate(el => {
+        el.addEventListener('scrollend', () => el.setAttribute('data-scroll-settled', 'true'), { once: true });
+      });
       await swipe(row!.x + row!.width * .74, row!.y + row!.height / 2, -220, 0);
       await expect.poll(() => scroller.evaluate(el => el.scrollLeft)).toBeGreaterThan(40);
+      await expect(scroller).toHaveAttribute('data-scroll-settled', 'true');
       expect(await frame.locator('body').evaluate(() => scrollY)).toBe(0);
       const scroll = await scroller.evaluate(el => el.scrollLeft);
-      const firstVisible = summaries.filter({ visible: true });
-      // Playwright scrolls this button within the summary rail before tapping, never scrolling the document iframe.
-      await firstVisible.nth(3).tap();
+      // Tap the exposed part of a summary without scrolling the rail again for locator actionability.
+      const summaryPoint = await scroller.evaluate(el => {
+        const rail = el.getBoundingClientRect();
+        for (const button of Array.from(el.querySelectorAll('button'))) {
+          const rect = button.getBoundingClientRect();
+          const left = Math.max(rect.left, rail.left), right = Math.min(rect.right, rail.right);
+          if (right - left >= 44) return { x: (left + right) / 2, y: rect.top + rect.height / 2 };
+        }
+        return null;
+      });
+      expect(summaryPoint).not.toBeNull();
+      await page.touchscreen.tap(summaryPoint!.x, summaryPoint!.y);
       const selected = page.locator('.annotation-chat-bubble.is-active');
       await expect(selected).toHaveAttribute('data-placement', 'dock');
       expect((await rectangle(selected)).top).toBeGreaterThanOrEqual((await rectangle(document)).bottom - 1);
@@ -598,16 +611,7 @@ test.describe('长文批注连续跟随与菜单外点', () => {
         twoLines: 2 * parseFloat(getComputedStyle(el).lineHeight),
       }));
       expect(excerpt.height).toBeGreaterThanOrEqual(Math.floor(excerpt.twoLines));
-      const reset = selected.getByRole('button', { name: '放回原位', exact: true });
-      await expect(reset).toBeInViewport();
-      const target = await reset.evaluate(button => {
-        const { x, y, width, height } = button.getBoundingClientRect();
-        const center = { x: x + width / 2, y: y + height / 2 };
-        return { ...center, hitsButton: button.contains(button.ownerDocument.elementFromPoint(center.x, center.y)) };
-      });
-      expect(target.hitsButton).toBe(true);
-      // Complete the next finger gesture on the same input session as the drag.
-      await touch.send('Input.synthesizeTapGesture', { x: target.x, y: target.y, duration: 72, gestureSourceType: 'touch' });
+      await selected.getByRole('button', { name: '放回原位', exact: true }).tap();
       await expect(selected).toHaveAttribute('data-placement', 'dock');
 
       await selected.getByRole('button', { name: '返回批注摘要', exact: true }).tap();

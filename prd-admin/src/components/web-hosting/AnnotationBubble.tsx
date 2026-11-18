@@ -202,6 +202,7 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
   const active = annotations.activeId === thread.id;
   const hasHidden = annotations.hasHiddenPreviews || annotations.allPreviewsHidden;
   const drag = useRef<{ id: number; x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
+  const resetTouch = useRef<{ id: number; x: number; y: number } | null>(null);
   const start = (event: PointerEvent<HTMLDivElement>) => {
     const target = event.target as Element;
     if (!placement || event.button !== 0 || target.closest('button:not(.annotation-chat-grip)')) return;
@@ -258,7 +259,16 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
     {active
       ? <>
         <div className="annotation-chat-actions">
-          {placement?.side === 'moved' && <button type="button" onClick={() => onMove(null)}>放回原位</button>}
+          {placement?.side === 'moved' && <button type="button" onClick={() => onMove(null)} onPointerDown={event => {
+            if (event.pointerType === 'touch') resetTouch.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+          }} onPointerCancel={() => { resetTouch.current = null; }} onPointerUp={event => {
+            const touch = resetTouch.current;
+            resetTouch.current = null;
+            if (!touch || touch.id !== event.pointerId || Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 10) return;
+            const button = event.currentTarget;
+            // Chromium can suppress the compatibility click immediately after a touch drag.
+            if (button.contains(button.ownerDocument.elementFromPoint(event.clientX, event.clientY))) onMove(null);
+          }}>放回原位</button>}
           <button type="button" className="annotation-chat-open" onClick={() => annotations.openThread(thread.id)}>查看讨论<ArrowUpRight size={13} /></button>
         </div>
         <div className="annotation-chat-controls">
