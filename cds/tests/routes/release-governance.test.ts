@@ -7,10 +7,12 @@ import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
 import { ReleaseGovernanceService } from '../../src/services/release-governance.js';
 import { ReleaseGovernanceGit } from '../../src/services/release-governance-git.js';
+import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
+import { humanPrincipalId } from '../../src/services/human-project-access.js';
 import { createReleaseGovernanceRouter } from '../../src/routes/release-governance.js';
 
 describe('发布治理 HTTP 契约与认证边界夹具', () => {
-  let root: string, state: StateService, server: http.Server, port: number, service: ReleaseGovernanceService;
+  let root: string, state: StateService, server: http.Server, port: number, service: ReleaseGovernanceService, git: ReleaseGovernanceGit;
   const sha = 'a'.repeat(40);
   async function call(method: string, route: string, identity = 'agent', body?: unknown) {
     const response = await fetch(`http://127.0.0.1:${port}/api${route}`, { method,
@@ -27,7 +29,7 @@ describe('发布治理 HTTP 契约与认证边界夹具', () => {
       state.upsertReleaseTarget({ id: projectId+'-target', projectId, name: projectId, type:'ssh', isEnabled:true, createdAt:now, governance:{required:true} });
     }
     state.addBranch({ id:'b', projectId:'p', branch:'feature/test', githubCommitSha:sha, worktreePath:root, services:{},status:'running',createdAt:now });
-    const git = new ReleaseGovernanceGit(() => root, () => 'main',async () => ({ stdout:'',exitCode:0 }));
+    git = new ReleaseGovernanceGit(() => root, () => 'main',async () => ({ stdout:'',exitCode:0 }));
     vi.spyOn(git,'inspect').mockResolvedValue({ projectId:'p', candidateSha:sha, mainSha:sha, checkedAt:now,status:'clean',includesBaseline:true,conflicts:[],changedPaths:['allowed/file.ts'] });
     service = new ReleaseGovernanceService(state,git);
     const app = express(); app.use(express.json());
@@ -35,10 +37,12 @@ describe('发布治理 HTTP 契约与认证边界夹具', () => {
     app.use((req, _res, next) => {
       const identity = req.headers['x-fixture-identity'];
       if (identity === 'agent' || identity === 'agent2') (req as any).cdsProjectKey = { projectId:'p', keyId: identity === 'agent' ? 'agent-1' : 'agent-2' };
-      if (identity === 'human' || identity === 'unverified-human') (req as any).cdsUser = { id:'reviewer', name:'Reviewer' };
-      if (identity === 'human') (req as any).cdsSession = { id:'verified-session' };
+      if (identity === 'human' || identity === 'unverified-human') (req as any).cdsUser = { id:'reviewer', name:'Reviewer', isSystemOwner: true };
+      if (identity === 'member' || identity === 'outsider') (req as any).cdsUser = { id: identity, name: identity, authProvider:'local' };
+      if (['human','member','outsider'].includes(String(identity))) (req as any).cdsSession = { id:'verified-session' };
       next();
     });
+    app.use(createHumanProjectAccessMiddleware(state));
     app.use('/api',createReleaseGovernanceRouter(state,service));
     server = app.listen(0,'127.0.0.1'); await new Promise<void>(resolve => server.once('listening',resolve));
     port = (server.address() as { port: number }).port;
@@ -48,6 +52,49 @@ describe('发布治理 HTTP 契约与认证边界夹具', () => {
   it('项目密钥不能跨项目查询或修改，伪造 webhook 不改变权限', async () => {
     expect((await call('GET','/releases/governance?projectId=other')).status).toBe(403);
     expect((await call('POST','/releases/targets/other-target/authorizations','agent',body())).status).toBe(403);
+  });
+  it('单笔链接按项目授权，可独立审批但不能访问管理面', async () => {
+    state.addProjectGrant({ id:'member-grant', principalId:humanPrincipalId('member'), projectId:'p', origin:'approved', grantedAt:new Date().toISOString() });
+    const own = await call('POST','/releases/targets/p-target/authorizations','human',body());
+    expect(own.status).toBe(200);
+    const route = '/releases/authorizations/'+own.body.authorization.id;
+    expect((await call('GET',route,'outsider')).status).toBe(403);
+    expect((await call('GET',route,'agent')).status).toBe(403);
+    expect((await call('GET',route,'human')).body.viewer).toEqual({applicant:true,mayReview:false,mayReapply:true});
+    state.upsertReleaseTarget({id:'p-sibling',projectId:'p',name:'目标 B',type:'ssh',isEnabled:true,createdAt:new Date().toISOString(),governance:{required:true}});
+    const sibling = await call('POST','/releases/targets/p-sibling/authorizations','human',body());
+    expect(sibling.status).toBe(200);
+    const inbox = '/releases/approval-inbox?projectId=p&targetId=p-target';
+    const ownInbox = await call('GET',inbox,'human');
+    expect(ownInbox.body.records.map((record: any) => [record.id,record.applicant,record.mayReview])).toEqual([[own.body.authorization.id,true,false]]);
+    const reviewerInbox = await call('GET',inbox,'member');
+    expect(reviewerInbox.body.records.map((record: any) => [record.id,record.applicant,record.mayReview])).toEqual([[own.body.authorization.id,false,true]]);
+    expect((await call('GET',inbox,'outsider')).status).toBe(403);
+    expect((await call('GET',inbox,'agent')).status).toBe(403);
+    expect((await call('GET','/releases/approval-inbox?projectId=p&targetId=other-target','member')).status).toBe(403);
+    const member = await call('GET',route,'member');
+    expect(member.body).toMatchObject({target:{name:'p'},authorization:{id:own.body.authorization.id},viewer:{applicant:false,mayReview:true,mayReapply:false}});
+    expect(member.body.authorization).not.toHaveProperty('targetFingerprint');
+    expect((await call('GET','/releases/governance?projectId=p','member')).status).toBe(403);
+    expect((await call('POST',route+'/approve','human',{reason:'不能自我批准'})).status).toBe(409);
+    expect((await call('POST',route+'/approve','outsider',{reason:'没有项目授权'})).status).toBe(403);
+    const check = await git.inspect('p', sha);
+    vi.mocked(git.inspect).mockImplementationOnce(async () => { state.revokeProjectGrant('member-grant', 'review-fixture'); return check; });
+    expect((await call('POST',route+'/approve','member',{reason:'核验期间撤销项目授权'})).status).toBe(409);
+    expect((await call('GET',route,'human')).body.authorization.status).toBe('pending');
+    state.addProjectGrant({ id:'member-restored', principalId:humanPrincipalId('member'), projectId:'p', origin:'approved', grantedAt:new Date().toISOString() });
+    expect((await call('POST',route+'/approve','member',{reason:'核对目标与限定路径'})).status).toBe(200);
+    expect((await call('GET',route,'human')).body.authorization).toMatchObject({status:'approved',decidedBy:'user:member:member'});
+  });
+  it('过期申请不接受批准或拒绝，链接仍可查看', async () => {
+    const requested = await call('POST','/releases/targets/p-target/authorizations','agent',body());
+    const stored = state.getReleaseGovernance();
+    const stateRecord = stored.authorizations[requested.body.authorization.id];
+    stateRecord.expiresAt = new Date(Date.now()-1).toISOString();
+    state.saveReleaseGovernance(stored);
+    const route = `/releases/authorizations/${stateRecord.id}`;
+    expect((await call('GET',route,'human')).body.authorization.expiresAt).toBe(stateRecord.expiresAt);
+    for (const action of ['approve','reject']) expect((await call('POST',route+'/'+action,'human',{reason:'已超过申请有效期'})).status).toBe(409);
   });
   it('HTTP单次审批只接受同项目同分支的已保存部署版本，分支前进也仍绑定其完整提交',async()=>{
     state.getBranch('b')!.githubCommitSha='b'.repeat(40);
