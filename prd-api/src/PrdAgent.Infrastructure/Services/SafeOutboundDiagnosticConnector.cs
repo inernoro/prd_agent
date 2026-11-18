@@ -67,6 +67,7 @@ public sealed class SafeOutboundDiagnosticConnector
     {
         AllowAutoRedirect = false,
         UseProxy = false,
+        UseCookies = false,
         ConnectCallback = (context, ct) =>
         {
             if (!string.Equals(context.DnsEndPoint.Host.TrimEnd('.'), target.Uri.IdnHost.TrimEnd('.'), StringComparison.OrdinalIgnoreCase)

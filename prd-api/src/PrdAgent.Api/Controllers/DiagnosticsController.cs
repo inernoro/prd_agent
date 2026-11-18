@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Security;
 using System.Diagnostics;
 using System.Security.Cryptography.X509Certificates;
 using System.Net.Security;
@@ -75,7 +76,6 @@ public class DiagnosticsController : ControllerBase
             timeout.CancelAfter(TimeSpan.FromSeconds(5));
             target = await _connector.PrepareAsync(uri, timeout.Token);
             dnsTimer.Stop();
-            clientUrl = uri.ToString();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
@@ -90,7 +90,12 @@ public class DiagnosticsController : ControllerBase
             return Ok(ApiResponse<NetworkDiagnosticsResult>.Ok(result));
         }
 
-        using var httpClient = new HttpClient(_connector.CreateHandler(target)) { Timeout = TimeSpan.FromSeconds(5) };
+        var gateway = new Uri(_config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091", UriKind.Absolute);
+        using var guardedTransport = new MapModelEgressHandler("NetworkDiagnostics", gateway)
+        {
+            InnerHandler = _connector.CreateHandler(target),
+        };
+        using var httpClient = new HttpClient(guardedTransport, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(5) };
 
         // 1. DNS 解析测试
         result.Tests.Add(new DiagnosticTest
@@ -108,13 +113,13 @@ public class DiagnosticsController : ControllerBase
         }
 
         // 3. API 端点测试
-        result.Tests.Add(await TestApiEndpoint(httpClient, clientUrl, ct));
+        result.Tests.Add(await TestApiEndpoint(httpClient, target.Uri, ct));
 
         // 4. Ping 测试（TCP 连接延迟）
         result.Tests.Add(await TestPing(target, ct));
 
         // 5. 聊天功能测试（简化版，只测试端点可达性）
-        result.Tests.Add(await TestChatEndpoint(httpClient, clientUrl, ct));
+        result.Tests.Add(await TestChatEndpoint(httpClient, target.Uri, ct));
 
         // 6. Agent 功能测试（简化版）
         result.Tests.Add(TestAgentEndpoint(clientUrl));
@@ -165,13 +170,26 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    private async Task<DiagnosticTest> TestApiEndpoint(HttpClient client, string baseUrl, CancellationToken ct)
+    private static async Task<HttpResponseMessage> ProbeEndpointAsync(
+        HttpClient client, Uri baseUri, string endpoint, CancellationToken ct)
+    {
+        var probe = new UriBuilder(baseUri)
+        {
+            Path = baseUri.AbsolutePath.TrimEnd('/') + endpoint,
+            Query = string.Empty,
+            Fragment = string.Empty,
+        };
+        using var request = new HttpRequestMessage(HttpMethod.Get, probe.Uri);
+        request.Options.Set(MapModelEgressHandler.DisableRedirects, true);
+        return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+    }
+
+    private async Task<DiagnosticTest> TestApiEndpoint(HttpClient client, Uri baseUri, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
-            var healthUrl = $"{baseUrl.TrimEnd('/')}/health";
-            using var response = await client.GetAsync(healthUrl, ct);
+            using var response = await ProbeEndpointAsync(client, baseUri, "/health", ct);
             sw.Stop();
 
             if (response.IsSuccessStatusCode)
@@ -239,15 +257,13 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    private async Task<DiagnosticTest> TestChatEndpoint(HttpClient client, string baseUrl, CancellationToken ct)
+    private async Task<DiagnosticTest> TestChatEndpoint(HttpClient client, Uri baseUri, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
-            var chatUrl = $"{baseUrl.TrimEnd('/')}/api/v1/sessions";
-            
             // 只测试端点是否存在（401/403 也算成功，因为说明端点可达）
-            using var response = await client.GetAsync(chatUrl, ct);
+            using var response = await ProbeEndpointAsync(client, baseUri, "/api/v1/sessions", ct);
             sw.Stop();
 
             var statusCode = (int)response.StatusCode;

@@ -130,6 +130,56 @@ public class DiagnosticsConnectionSecurityTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task HttpProbes_KeepOnlyDiagnosticPathsWithoutQueryCookiesOrRedirects()
+    {
+        var requestLines = new ConcurrentBag<string>();
+        var cookies = new ConcurrentBag<string>();
+        await using var fixture = new LocalFixture(async (stream, ct) =>
+        {
+            using var reader = new StreamReader(stream, leaveOpen: true);
+            var requestLine = await reader.ReadLineAsync(ct);
+            if (requestLine is null)
+                return; // TCP-only Ping.
+            requestLines.Add(requestLine);
+            while (await reader.ReadLineAsync(ct) is { Length: > 0 } header)
+            {
+                if (header.StartsWith("Cookie:", StringComparison.OrdinalIgnoreCase))
+                    cookies.Add(header);
+            }
+            var response = "HTTP/1.1 302 Found\r\nLocation: /second-hop\r\n"
+                + "Set-Cookie: probe=fixture; Path=/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(response), ct);
+        });
+        var attempts = new ConcurrentBag<string>();
+        var connector = FixtureConnector(fixture, attempts, () => Public);
+
+        await RunController(connector, "http://diagnostics.invalid:8443/deploy/?secret=synthetic#fragment");
+
+        Assert.Equal(new[] { "GET /deploy/api/v1/sessions HTTP/1.1", "GET /deploy/health HTTP/1.1" },
+            requestLines.OrderBy(line => line, StringComparer.Ordinal));
+        Assert.Empty(cookies);
+        Assert.Equal(3, attempts.Count);
+    }
+
+    [Fact]
+    public async Task GatewayAuthority_RejectsDiagnosticHttpBeforeTransport()
+    {
+        var attempts = 0;
+        var connector = new SafeOutboundDiagnosticConnector(new SafeOutboundUrlValidator(),
+            (_, _) => Task.FromResult(new[] { Public }),
+            (_, _) =>
+            {
+                attempts++;
+                return ValueTask.FromResult<Stream>(Stream.Null);
+            });
+        var result = await RunController(connector, Target.AbsoluteUri, gatewayBase: Target.AbsoluteUri);
+        Assert.Equal("failed", Assert.Single(result.Tests, test => test.Name == "API").Status);
+        Assert.Equal("failed", Assert.Single(result.Tests, test => test.Name == "Chat").Status);
+        Assert.Equal("success", Assert.Single(result.Tests, test => test.Name == "Ping").Status);
+        Assert.Equal(1, attempts);
+    }
+
+    [Fact]
     public async Task LocalTlsFixture_PreservesSni_RejectsUntrustedCertificate()
     {
         using var key = RSA.Create(2048);
@@ -322,10 +372,13 @@ public class DiagnosticsConnectionSecurityTests(ITestOutputHelper output)
         });
 
     private static async Task<NetworkDiagnosticsResult> RunController(SafeOutboundDiagnosticConnector connector,
-        string url = "http://diagnostics.invalid:8443", CancellationToken ct = default)
+        string url = "http://diagnostics.invalid:8443", CancellationToken ct = default, string? gatewayBase = null)
     {
+        var config = new ConfigurationBuilder();
+        if (gatewayBase is not null)
+            config.AddInMemoryCollection(new Dictionary<string, string?> { ["LlmGateway:ServeBaseUrl"] = gatewayBase });
         var controller = new DiagnosticsController(NullLogger<DiagnosticsController>.Instance,
-            new ConfigurationBuilder().Build(), connector)
+            config.Build(), connector)
         { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestAborted = ct } } };
         var response = Assert.IsType<OkObjectResult>(await controller.NetworkDiagnostics(new() { ClientUrl = url }));
         return Assert.IsType<ApiResponse<NetworkDiagnosticsResult>>(response.Value).Data!;
