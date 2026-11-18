@@ -22,8 +22,11 @@ pub async fn upload_attachment(
     selection_id: String,
 ) -> Result<ApiResponse<UploadAttachmentResponse>, String> {
     let selected = super::file_selection::consume_selection(
-        &window, selections, &selection_id,
-        super::file_selection::FilePurpose::Attachment, None,
+        &window,
+        selections,
+        &selection_id,
+        super::file_selection::FilePurpose::Attachment,
+        None,
     )?;
     let bytes = selected.bytes;
     let fname = selected.name;

@@ -105,8 +105,11 @@ pub async fn upload_file_to_session(
     document_type: Option<String>,
 ) -> Result<ApiResponse<SessionInfo>, String> {
     let selected = super::file_selection::consume_selection(
-        &window, selections, &selection_id,
-        super::file_selection::FilePurpose::Document, Some(&session_id),
+        &window,
+        selections,
+        &selection_id,
+        super::file_selection::FilePurpose::Document,
+        Some(&session_id),
     )?;
     let bytes = selected.bytes;
     let file_name = selected.name;

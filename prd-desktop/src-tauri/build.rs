@@ -16,17 +16,29 @@ fn main() {
 
     // Keep the ACL command list in sync with the actual invoke handler.
     let source = include_str!("src/lib.rs");
-    let handler = source.split("tauri::generate_handler![").nth(1).expect("invoke handler")
-        .split("])").next().expect("handler end");
-    let mut commands: Vec<&str> = handler.lines().filter_map(|line| {
-        let line = line.trim().trim_end_matches(',');
-        line.strip_prefix("commands::").and_then(|s| s.rsplit("::").next())
-    }).collect();
+    let handler = source
+        .split("tauri::generate_handler![")
+        .nth(1)
+        .expect("invoke handler")
+        .split("])")
+        .next()
+        .expect("handler end");
+    let mut commands: Vec<&str> = handler
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim().trim_end_matches(',');
+            line.strip_prefix("commands::")
+                .and_then(|s| s.rsplit("::").next())
+        })
+        .collect();
     commands.sort_unstable();
     commands.dedup();
     let commands = Box::leak(commands.into_boxed_slice());
-    tauri_build::try_build(tauri_build::Attributes::new()
-        .app_manifest(tauri_build::AppManifest::new().commands(commands))).unwrap()
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(commands)),
+    )
+    .unwrap()
 }
 
 fn ensure_bundle_icons_exist() {
