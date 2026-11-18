@@ -16,6 +16,16 @@ import '../../styles/hosted-review-discussion.css';
 const ELEMENT_LABELS: Record<string, string> = { button: '按钮', a: '链接', img: '图片', p: '段落',
   h1: '标题', h2: '标题', h3: '标题', h4: '标题', section: '区块', div: '区块', li: '列表项', svg: '图标' };
 const elementLabel = (tag: string) => ELEMENT_LABELS[tag] ?? '页面元素';
+const emptyRecoveries: readonly string[] = [];
+
+function readRecoveries(key?: string): readonly string[] {
+  if (!key) return emptyRecoveries;
+  try {
+    const saved: unknown = JSON.parse(sessionStorage.getItem(key) ?? 'null');
+    if (Array.isArray(saved)) return saved.filter((id): id is string => typeof id === 'string');
+  } catch { /* The composer also tracks recoveries in memory. */ }
+  return emptyRecoveries;
+}
 
 export interface CommentThreadCounts { annotations: number; discussions: number }
 type DiscussionActions = {
@@ -62,7 +72,9 @@ export default function CommentsSection(props: Props) {
   const [commentsEnabled, setCommentsEnabled] = useState(true);
   const [canComment, setCanComment] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
-  const [pendingPageDraft, setPendingPageDraft] = useState<string | null>(null);
+  const [pendingPageDraft, setPendingPageDraft] = useState<{ scope: string; id: string; text: string } | null>(null);
+  const [recoveriesByScope, setRecoveriesByScope] = useState<Record<string, readonly string[]>>({});
+  const [openedRecovery, setOpenedRecovery] = useState<{ scope: string; id: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -116,30 +128,51 @@ export default function CommentsSection(props: Props) {
   const confirmedDraftVersion = useRef({ identity, versionKey });
   const identityRef = useRef(identity); identityRef.current = identity;
   const draftScope = `${identity}:${review?.selected?.id ?? ''}:${versionKey ?? ''}:${props.threadKind ?? 'all'}`;
-  const draftMode = replyTo ? `reply:${replyTo}` : draftAnchor ? 'anchor' : 'page';
-  const storageKey = props.readerLayout && userId && siteId && (!review || versionKey)
-    ? `hosted-review-draft:${userId}:${siteId}:${versionKey ?? 'live'}:${draftMode}` : undefined;
-  const { draft: savedDraft, update: setDraft } = useDiscussionDraft(`${draftScope}:${draftMode}`, storageKey);
+  const draftStorage = props.readerLayout && userId && siteId && (!review || versionKey)
+    ? `hosted-review-draft:${userId}:${siteId}:${versionKey ?? 'live'}` : undefined;
+  const recoveryStorage = draftStorage ? `${draftStorage}:recoveries:${props.threadKind ?? 'all'}` : undefined;
+  const storedRecoveries = useMemo(() => readRecoveries(recoveryStorage), [recoveryStorage]);
+  const recoverableReplies = recoveriesByScope[draftScope] ?? storedRecoveries;
+  const recoveredReply = !replyTo && !draftAnchor && openedRecovery?.scope === draftScope ? openedRecovery.id : null;
+  const draftSource = replyTo ?? recoveredReply;
+  const draftMode = draftSource ? `reply:${draftSource}` : draftAnchor ? 'anchor' : 'page';
+  const { draft: savedDraft, update: setDraft } = useDiscussionDraft(`${draftScope}:${draftMode}`,
+    draftStorage ? `${draftStorage}:${draftMode}` : undefined);
   const draft = savedDraft.text;
+  const storeRecoveries = useCallback((next: readonly string[]) => {
+    setRecoveriesByScope(previous => ({ ...previous, [draftScope]: next }));
+    if (!recoveryStorage) return;
+    try {
+      if (next.length) sessionStorage.setItem(recoveryStorage, JSON.stringify(next));
+      else sessionStorage.removeItem(recoveryStorage);
+    } catch { /* The drafts and their recovery entry remain available in memory. */ }
+  }, [draftScope, recoveryStorage]);
   useEffect(() => {
-    if (pendingPageDraft === null || draftMode !== 'page') return;
+    if (pendingPageDraft === null) return;
+    if (pendingPageDraft.scope !== draftScope) {
+      if (!versionPending) setPendingPageDraft(null);
+      return;
+    }
+    if (draftMode !== 'page') return;
     setPendingPageDraft(null);
-    const combined = [draft, pendingPageDraft].filter(Boolean).join('\n\n');
-    if (combined !== draft && combined.length <= 2000) setDraft({ text: combined });
-    else if (combined.length > 2000) setNotice({ text: '整页草稿已接近字数上限，原回复草稿仍保留。' });
+    const combined = [draft, pendingPageDraft.text].filter(Boolean).join('\n\n');
+    if (combined.length > 2000) {
+      if (!recoverableReplies.includes(pendingPageDraft.id)) storeRecoveries([...recoverableReplies, pendingPageDraft.id]);
+    } else if (combined !== draft) setDraft({ text: combined });
     textareaRef.current?.focus({ preventScroll: true });
-  }, [draft, draftMode, pendingPageDraft, setDraft]);
-  const draftScopeRef = useRef({ key: draftScope, draft, replyTo, anchor: draftAnchor });
+  }, [draft, draftMode, draftScope, pendingPageDraft, recoverableReplies, setDraft, storeRecoveries, versionPending]);
+  const draftScopeRef = useRef({ key: draftScope, draft, draftMode, replyTo, anchor: draftAnchor });
   const previousDraftScope = draftScopeRef.current;
   if (previousDraftScope.key !== draftScope || previousDraftScope.draft !== draft
-    || previousDraftScope.replyTo !== replyTo || previousDraftScope.anchor !== draftAnchor)
-    draftScopeRef.current = { key: draftScope, draft, replyTo, anchor: draftAnchor };
+    || previousDraftScope.draftMode !== draftMode || previousDraftScope.replyTo !== replyTo || previousDraftScope.anchor !== draftAnchor)
+    draftScopeRef.current = { key: draftScope, draft, draftMode, replyTo, anchor: draftAnchor };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setReplyTo(null); }, [props.threadKind]);
   useEffect(() => {
     submittingDraft.current = null;
     setSubmitting(false);
     setPendingPageDraft(null);
+    setOpenedRecovery(null);
     setNewThreads(new Map());
     setShowOlderReplies(new Set());
     setNotice(null);
@@ -331,6 +364,10 @@ export default function CommentsSection(props: Props) {
       }
       setDraft({ text: '' });
       setReplyTo(null);
+      if (recoveredReply) {
+        storeRecoveries(recoverableReplies.filter(id => id !== recoveredReply));
+        setOpenedRecovery(null);
+      }
       if (props.threadKind !== 'discussion') annotations?.clearDraft();
       if (replyTo && props.readerLayout) {
         setShowOlderReplies(current => new Set(current).add(replyTo));
@@ -475,6 +512,7 @@ export default function CommentsSection(props: Props) {
   const replyDeleted = !!replyTo && !replyTarget && !loading;
   const cancelContext = () => {
     if (replyTo) setReplyTo(null);
+    else if (recoveredReply) setOpenedRecovery(null);
     else annotations?.clearDraft();
   };
   useLayoutEffect(() => {
@@ -612,15 +650,28 @@ export default function CommentsSection(props: Props) {
             <button type="button" aria-label="取消位置绑定" disabled={submitting} onClick={() => annotations?.clearDraft()}><X size={14} /></button></div>
             : replyTarget ? <div className="review-composer-anchor"><CornerDownRight size={14} /><span><strong>回复 {replyTarget.authorName}</strong><span>{props.readerLayout ? `「${annotationPreviewText(replyTarget.content, 22)}」` : replyTarget.content}</span></span><button type="button" aria-label="取消回复" disabled={submitting} onClick={() => setReplyTo(null)}><X size={14} /></button></div>
             : null}
-          {replyDeleted ? <div className="review-composer-error" role="alert">
+          {replyDeleted && replyTo ? <div className="review-composer-error" role="alert">
             <CircleAlert size={14} /><span>原讨论已删除，草稿已保留。</span>
-            <button type="button" onClick={() => {
+            <button type="button" disabled={submitting} onClick={() => {
+              // The recovered text will be sent to the page, with different submission parameters.
+              if (savedDraft.clientId || savedDraft.error) setDraft({ text: draft });
+              setPendingPageDraft({ scope: draftScope, id: replyTo, text: draft });
+              setOpenedRecovery(null);
               setReplyTo(null);
-              setPendingPageDraft(draft);
             }}>改为整页评论</button>
           </div> : savedDraft.error && <div className="review-composer-error" role="alert">
             <CircleAlert size={14} /><span>{savedDraft.error}</span>
             <button type="button" onClick={() => void submit()} disabled={submitting}>重试</button>
+          </div>}
+          {recoveredReply ? <div className="review-composer-error" role="status">
+            <span>原回复可单独作为整页评论发送。</span>
+            <button type="button" disabled={submitting} onClick={() => setOpenedRecovery(null)}>返回原整页草稿</button>
+          </div> : draftMode === 'page' && recoverableReplies.length > 0 && <div className="review-composer-error" role="status">
+            <CircleAlert size={14} /><span>合并超过 2000 字，两份草稿可单独发送。</span>
+            <button type="button" disabled={submitting} onClick={() => {
+              setOpenedRecovery({ scope: draftScope, id: recoverableReplies[0] });
+              textareaRef.current?.focus({ preventScroll: true });
+            }}>打开回复草稿</button>
           </div>}
           <div className="review-composer-row">
           <textarea ref={textareaRef} aria-label={replyTo ? '回复内容' : props.threadKind === 'discussion' ? '讨论内容' : '批注内容'} value={draft}
@@ -628,14 +679,14 @@ export default function CommentsSection(props: Props) {
             onChange={e => setDraft({ text: e.target.value })} maxLength={2000} rows={1}
             onKeyDown={e => {
               if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); if (!replyDeleted) void submit(); }
-              if (e.key === 'Escape' && !submitting && (replyTo || draftAnchor)) { e.preventDefault(); e.stopPropagation(); cancelContext(); }
+              if (e.key === 'Escape' && !submitting && (replyTo || draftAnchor || recoveredReply)) { e.preventDefault(); e.stopPropagation(); cancelContext(); }
             }}
             placeholder={replyTo ? (props.readerLayout ? '写回复…' : `回复 ${replyTarget?.authorName ?? ''}…`) : draftAnchor ? (props.readerLayout ? '写下对这段文字的意见…' : '写下对这个位置的意见…') : props.threadKind === 'discussion' ? '写下你的看法…' : props.readerLayout ? '写整页评论…' : '写下意见…'} />
-          {!draftAnchor && !replyTo && pickEntry}
+          {draftMode === 'page' && pickEntry}
           <button type="button" onClick={() => void submit()} disabled={!draft.trim() || submitting || replyDeleted} className="review-send-action" title="Ctrl / ⌘ + Enter 发送">
             {submitting ? <MapSpinner size={15} /> : <ArrowUp size={16} />}<span className="sr-only">{replyTo ? '发送回复' : props.threadKind === 'discussion' ? '发送讨论' : '发送批注'}</span></button></div>
           {draft.length >= 1800 && <div className="review-composer-count">{draft.length}/2000</div>}
-          {props.readerLayout ? !replyTo && !draftAnchor && <div id={pickingHintId} className="review-talk-hint"><span>{annotations?.ready ? '选中正文文字可添加批注' : '此页面只支持整页评论'}</span><span>Ctrl + Enter 发送</span></div>
+          {props.readerLayout ? draftMode === 'page' && <div id={pickingHintId} className="review-talk-hint"><span>{annotations?.ready ? '选中正文文字可添加批注' : '此页面只支持整页评论'}</span><span>Ctrl + Enter 发送</span></div>
             : annotations && !annotations.draftAnchor && <p id={pickingHintId} className="review-composer-hint">{pickingHint}</p>}
         </>}
       </div>

@@ -5,6 +5,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { listShareComments, listSiteComments, type HostedReviewSource, type HostedReviewVersion, type HostedSiteCommentDto } from '@/services/real/webPages';
 import { useHostedReview, type HostedReview } from './useHostedReview';
+import { useSitePreviewHtml } from './useSitePreviewHtml';
 import { canUseSrcDocPreview, directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, withPreviewBase } from './previewHtml';
 import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationBubble } from './AnnotationBubble';
@@ -183,9 +184,14 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
   const version = entries.find(entry => entry.id === versionId);
   const current = entries.find(entry => entry.isCurrent);
   const isUnarchived = !!version && !version.isCurrent && version.canPreview === false;
-  const currentReady = !!version?.isCurrent && selected?.id === versionId && !loading && !!review.liveSite?.siteUrl;
+  const currentSite = version?.isCurrent && selected?.id === versionId && !loading && review.liveSite?.siteUrl ? {
+    ...review.liveSite, shareAccess: source.mode === 'share' ? { token: source.token, password: source.password } : undefined,
+  } : null;
+  const currentPreview = useSitePreviewHtml(currentSite, true);
+  const currentReady = !!currentSite && currentPreview.settled && !currentPreview.error;
   const snapshotReady = !isUnarchived && selected?.id === versionId && !loading && !!review.preview;
-  const archiveReady = !!version && !review.error && (isUnarchived || currentReady || snapshotReady);
+  const previewError = review.error || currentPreview.error;
+  const archiveReady = !!version && !previewError && (isUnarchived || currentReady || snapshotReady);
   const confirmOpen = !!version && confirmation === version.id;
   const commentsByVersion = useMemo(() => groupHistoryThreads(commentState.rows, entries), [entries, commentState.rows]);
   const versionRows = version ? commentsByVersion.get(version.id) ?? emptyComments : emptyComments;
@@ -242,10 +248,10 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
   }, [archiveReady, commentState.status, selectedComment]);
   useEffect(() => {
     setShowSkeleton(false);
-    if (archiveReady || review.error) return;
+    if (archiveReady || previewError) return;
     const timer = window.setTimeout(() => setShowSkeleton(true), 300);
     return () => window.clearTimeout(timer);
-  }, [archiveReady, review.error, versionId]);
+  }, [archiveReady, previewError, versionId]);
 
   const { trigger, stage, lastPosition } = placement;
   useLayoutEffect(() => {
@@ -278,7 +284,11 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
     if (confirmOpen) cancelButton.current?.focus();
   }, [confirmOpen]);
 
-  const retry = () => { if (version && versions.length) void selectVersion(version.id, commentId); else void review.refresh(); };
+  const retry = () => {
+    if (currentPreview.error) currentPreview.retry();
+    else if (version && versions.length) void selectVersion(version.id, commentId);
+    else void review.refresh();
+  };
   const cancel = () => {
     setConfirmation(null);
     requestAnimationFrame(() => restoreButton.current?.focus());
@@ -290,11 +300,13 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
     if (await onRestore(key)) onClose();
   };
 
-  const html = snapshotReady && review.preview?.html && review.site?.contentShape === 'self-contained-html' && canUseSrcDocPreview(review.preview.html)
-    ? withAnnotationRuntime(withPreviewBase(review.preview.html, review.previewBaseUrl!)) : undefined;
-  const frameUrl = currentReady ? review.liveSite?.siteUrl : review.site?.siteUrl;
+  const snapshotHtml = snapshotReady && review.preview?.html && review.site?.contentShape === 'self-contained-html' && canUseSrcDocPreview(review.preview.html)
+    ? withPreviewBase(review.preview.html, review.previewBaseUrl!) : null;
+  const inlineHtml = currentReady ? currentPreview.srcDoc : snapshotHtml;
+  const html = inlineHtml ? withAnnotationRuntime(inlineHtml) : undefined;
+  const frameUrl = currentReady ? currentSite?.siteUrl : review.site?.siteUrl;
   let panel: ReactNode;
-  if (review.error) {
+  if (previewError) {
     panel = <div className="review-history-window-error" role="alert">
       <span aria-hidden="true"><CircleAlert size={18} /></span>
       <strong>{version?.versionLabel ?? '历史版本'} 载入失败</strong>

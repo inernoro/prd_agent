@@ -136,3 +136,35 @@ it('双栏页边批注贴向正文且能用讨论业务桥直接回复与解决'
   await act(async () => [...selected.querySelectorAll('button')].find(button => button.textContent === '解决')!.click());
   expect(resolve).toHaveBeenCalledWith('two');
 });
+
+it('页边回复发出后离开视口再返回，失败仍可用原草稿和发送标识重试', async () => {
+  const { container, annotations, render } = await setup(1440);
+  annotations.dualColumn = true;
+  let finish!: (error: string | null) => void;
+  const reply = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValueOnce(null);
+  annotations.discussionActions = { canReply: true, canResolve: () => false, reply, resolve: vi.fn(), getReplies: () => [] };
+  await render();
+  const original = container.querySelector<HTMLElement>('[data-bubble-id="two"]')!;
+  await act(async () => original.querySelector<HTMLButtonElement>('.annotation-chat-reply-trigger')!.click());
+  const text = '滚动后需要保留的回复';
+  await act(async () => {
+    const field = original.querySelector('textarea')!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, text);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => original.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  const previews = annotations.previews;
+  annotations.previews = []; await render();
+  expect(container.querySelector('[data-bubble-id="two"]')).toBeNull();
+  annotations.previews = previews; await render();
+  const returned = container.querySelector<HTMLElement>('[data-bubble-id="two"]')!;
+  expect(returned).not.toBe(original);
+  expect(returned.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(text);
+  await act(async () => returned.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  expect(reply).toHaveBeenCalledTimes(1);
+  await act(async () => finish('发送失败，草稿已保留。'));
+  expect(returned.querySelector('[role="alert"]')?.textContent ?? '').toContain('草稿已保留');
+  await act(async () => returned.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+  expect(reply.mock.calls[1]).toEqual(reply.mock.calls[0]);
+  expect(returned.querySelector('form')).toBeNull();
+});

@@ -7,7 +7,8 @@ import type { HostedAnnotations } from './useHostedAnnotations';
 import type { HostedReview } from './useHostedReview';
 
 const { auth, list, login, select, add, resolveComment, removeComment } = vi.hoisted(() => ({
-  auth: { isAuthenticated: false, token: '' }, list: vi.fn(), login: vi.fn(), select: vi.fn(), add: vi.fn(), resolveComment: vi.fn(), removeComment: vi.fn(),
+  auth: { isAuthenticated: false, token: '', user: undefined as { userId: string } | undefined },
+  list: vi.fn(), login: vi.fn(), select: vi.fn(), add: vi.fn(), resolveComment: vi.fn(), removeComment: vi.fn(),
 }));
 vi.mock('../../stores/authStore', () => ({ useAuthStore: Object.assign((selector: (state: typeof auth) => unknown) => selector(auth), { getState: () => auth }) }));
 vi.mock('../../services/real/webPages', () => ({ listShareComments: list, listSiteComments: list,
@@ -19,10 +20,10 @@ const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, con
   preview: null, previews: [], allPreviewsHidden: false, hasHiddenPreviews: false, hideAllPreviews: vi.fn(), showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn(),
   draftAnchor: null, activeId: null, missingIds: [], threads: [], select, clearDraft: vi.fn(), focus: vi.fn(),
   notifyFrame: vi.fn(), setThreads: vi.fn(), setEnabled: vi.fn(), setActiveId: vi.fn() });
-async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string; versionOnly?: boolean; readerLayout?: boolean } = {}) {
+async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string; versionOnly?: boolean; readerLayout?: boolean; siteId?: string } = {}) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login} threadKind={options.threadKind}
-    readerLayout={options.readerLayout} splitLayout={options.readerLayout}
+    readerLayout={options.readerLayout} splitLayout={options.readerLayout} siteId={options.siteId}
     annotations={{ ...annotations(), ready: options.ready ?? true, activeId: options.activeId ?? null }} review={options.review} versionOnly={options.versionOnly} />));
 }
 function button(text: string) {
@@ -31,7 +32,8 @@ function button(text: string) {
   return match!;
 }
 beforeEach(() => {
-  vi.clearAllMocks(); auth.isAuthenticated = false; auth.token = '';
+  vi.clearAllMocks(); auth.isAuthenticated = false; auth.token = ''; auth.user = undefined;
+  sessionStorage.clear();
   list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: false } });
 });
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
@@ -89,6 +91,46 @@ describe('review discussion', () => {
     expect(listElement.scrollTop).toBe(180);
     await act(async () => (container.querySelector('.review-thread') as HTMLElement).click());
     expect(container.querySelector('.review-talk-new')?.textContent).toContain('1 条讨论有新内容');
+  });
+
+  it.each([false, true])('合并超过字数上限时，两份草稿仍能分别取回和发表，已尝试发送原回复=%s', async attemptedReply => {
+    const pageDraft = '整页草稿'.repeat(450);
+    const replyDraft = '回复草稿'.repeat(75);
+    list.mockResolvedValueOnce(response([original])).mockResolvedValue(response([]));
+    auth.user = { userId: 'reviewer' };
+    const layout = { readerLayout: true, siteId: 'site' };
+    await mount(layout);
+    await enterDraft(pageDraft);
+    await act(async () => button('回复').click());
+    await enterDraft(replyDraft);
+    if (attemptedReply) {
+      add.mockResolvedValueOnce({ success: false, error: { code: 'NETWORK_ERROR' } });
+      await act(async () => button('发送回复').click());
+    }
+    const originalId = add.mock.calls[0]?.[3].clientId;
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(container.querySelector('.review-composer [role="alert"]')?.textContent).toContain('原讨论已删除');
+    await act(async () => button('改为整页评论').click());
+    expect(container.querySelector('textarea')?.value).toBe(pageDraft);
+    await act(async () => root.unmount());
+    container.remove();
+    await mount(layout);
+    await act(async () => button('打开回复草稿').click());
+    expect(container.querySelector('textarea')?.value).toBe(replyDraft);
+    await act(async () => button('返回原整页草稿').click());
+    expect(container.querySelector('textarea')?.value).toBe(pageDraft);
+    await act(async () => button('打开回复草稿').click());
+    add.mockResolvedValueOnce({ success: false, error: { code: 'NETWORK_ERROR' } })
+      .mockResolvedValueOnce({ success: true, data: { ...original, id: 'recovered', content: replyDraft } });
+    await act(async () => button('发送批注').click());
+    const standalone = add.mock.calls.at(-1)!;
+    expect(standalone).toEqual(['share', replyDraft, undefined, expect.objectContaining({ clientId: expect.any(String) })]);
+    expect(standalone[3]).not.toHaveProperty('parentId');
+    expect(standalone[3].clientId).not.toBe(originalId);
+    expect(container.querySelector('textarea')?.value).toBe(replyDraft);
+    await act(async () => button('重试').click());
+    expect(add.mock.calls.at(-1)).toEqual(standalone);
+    expect(container.querySelector('textarea')?.value).toBe(pageDraft);
   });
 });
 

@@ -605,7 +605,12 @@ test.describe('长文批注连续跟随与菜单外点', () => {
         || elements[index - 1].getBoundingClientRect().bottom + 7 <= el.getBoundingClientRect().top));
       await expect.poll(nonoverlapping).toBe(true);
       await expect(page.locator('.annotation-chat-actions')).toHaveCount(0);
-      await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(9);
+      const pins = frame.getByRole('button', { name: /打开批注/ });
+      await expect(pins).toHaveCount(9);
+      const firstPin = await pins.first().boundingBox();
+      expect(firstPin).not.toBeNull();
+      await expect.poll(() => Promise.all(Array.from({ length: 9 }, (_, index) => pins.nth(index).boundingBox()))
+        .then(boxes => boxes.every(box => box && box.x <= firstPin!.x + 1))).toBe(true);
       await expect(frame.locator('[data-map-annotation-layer] .outline:not([hidden])')).toHaveCount(1);
       await frame.getByRole('button', { name: '打开批注 5', exact: true }).click();
       const selected = page.getByRole('dialog', { name: '批注气泡 5', exact: true });

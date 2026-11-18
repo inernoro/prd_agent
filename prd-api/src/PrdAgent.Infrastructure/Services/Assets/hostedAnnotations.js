@@ -408,10 +408,10 @@
       return pin;
     }
     function searchRow(y, avoidText) {
-      for (var offset = 0; left - offset >= 2 || left + offset <= right; offset += step) {
+      for (var offset = 0; left - offset >= 2 || (range && left + offset <= right); offset += step) {
         var before = left - offset >= 2 ? placePin(left - offset, y, avoidText) : null;
         if (before) return before;
-        var after = offset && left + offset <= right ? placePin(left + offset, y, avoidText) : null;
+        var after = range && offset && left + offset <= right ? placePin(left + offset, y, avoidText) : null;
         if (after) return after;
       }
       return null;

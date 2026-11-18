@@ -5,15 +5,24 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ReviewVersionPreview } from './ReviewVersionPreview';
 import { ReviewVersionPreviewHost } from './ReviewVersionBar';
 import type { HostedReview } from './useHostedReview';
-const { useReview } = vi.hoisted(() => ({ useReview: vi.fn() }));
+import { __resetSitePreviewHtmlCache } from './useSitePreviewHtml';
+import type { HostedReviewSource } from '@/services/real/webPages';
+const { useReview, getSiteContent, getShareSiteContent } = vi.hoisted(() => ({
+  useReview: vi.fn(), getSiteContent: vi.fn(), getShareSiteContent: vi.fn(),
+}));
 vi.mock('./useHostedReview', () => ({ useHostedReview: useReview }));
+vi.mock('@/services/real/webPages', () => ({
+  getSiteContent, getShareSiteContent, buildApiUrl: (path: string) => path,
+  listSiteComments: async () => ({ success: true, data: { comments: [] } }),
+  listShareComments: async () => ({ success: true, data: { comments: [] } }),
+}));
 vi.mock('./CommentsSection', () => ({ default: () => <p data-test-comments>当前绑定的批注</p> }));
 vi.mock('./AnnotationBubble', () => ({ AnnotationBubble: () => null }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null }));
 vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, titleAction, content, actions }: { title: string; titleAction: React.ReactNode; content: React.ReactNode; actions: React.ReactNode }) => <section aria-label={title}>{titleAction}{content}{actions}</section> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let cleanup = async () => {};
-afterEach(async () => { await cleanup(); vi.clearAllMocks(); });
+afterEach(async () => { await cleanup(); __resetSitePreviewHtmlCache(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 async function setup(canRestore = true, failed = false, missingMetadata = false, commentId?: string, parentErrors?: { error: string; restoreError: string | null }) {
   const container = document.createElement('div'); document.body.appendChild(container); const root = createRoot(container);
   const version = { id: 'v1', versionLabel: 'V1', isCurrent: false };
@@ -71,4 +80,65 @@ it('成功历史快照不显示父页面上传错误，恢复失败仍在小窗�
 it('恢复操作自己的错误仍可见，不被父页面其他错误替换', async () => {
   const { container } = await setup(true, false, false, undefined, { error: '上传失败，请重新上传', restoreError: '版本已更新，请核对后重试恢复' });
   expect(container.querySelector('[role="alert"]')?.textContent).toBe('版本已更新，请核对后重试恢复');
+});
+
+async function setupCurrentVersion(contentShape: 'self-contained-html' | 'multi-file', source: HostedReviewSource) {
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    disconnect() {}
+  });
+  const container = document.createElement('div');
+  const main = document.createElement('iframe');
+  main.srcdoc = '<input value="当前阅读现场">';
+  document.body.append(container, main);
+  const root = createRoot(container);
+  cleanup = async () => { await act(async () => root.unmount()); container.remove(); main.remove(); };
+  const version = { id: 'v3', versionLabel: 'V3', isCurrent: true, contentVersionKey: '3', canPreview: true };
+  const site = { id: 'site', title: '当前 V3', siteUrl: 'https://storage.example/site/index.html?v=3', entryFile: 'index.html', contentShape };
+  useReview.mockReturnValue({
+    versions: [version], selected: version, selectVersion: vi.fn(), loading: false, preview: null,
+    site, liveSite: site, error: null, annotations: { setThreads: vi.fn(), setDisplayMode: vi.fn(), notifyFrame: vi.fn() },
+  });
+  await act(async () => root.render(<ReviewVersionPreview site={site} source={source} versionId={version.id} canRestore
+    restoring={false} restoreError={null} onRestore={vi.fn()} onClose={vi.fn()}
+    placement={{ trigger: { current: null }, stage: { current: main }, lastPosition: { current: null } }} />));
+  const preview = () => document.querySelector<HTMLIFrameElement>('.review-history-window iframe');
+  return { site, main, preview };
+}
+
+it.each(['site', 'share'] as const)('当前行复用 %s 正文加载策略，等待期间不请求直链', async mode => {
+  let complete!: (value: unknown) => void;
+  const content = new Promise(resolve => { complete = resolve; });
+  const request = mode === 'site' ? getSiteContent : getShareSiteContent;
+  request.mockReturnValue(content);
+  const source: HostedReviewSource = mode === 'site' ? { mode, siteId: 'site' } : { mode, siteId: 'site', token: 'share', password: 'secret' };
+  const { main, preview } = await setupCurrentVersion('self-contained-html', source);
+  expect(preview()).toBeNull();
+  expect(request).toHaveBeenCalledWith(...(mode === 'site' ? ['site'] : ['share', 'site', 'secret']));
+  await act(async () => { complete({ success: true, data: { html: '<h1>当前 V3 的正文</h1>' } }); });
+  expect(preview()?.srcdoc).toContain('当前 V3 的正文');
+  expect(preview()?.hasAttribute('src')).toBe(false);
+  expect(preview()?.getAttribute('sandbox')).not.toContain('allow-same-origin');
+  expect(main.srcdoc).toContain('当前阅读现场');
+  expect(document.querySelector('.review-history-window')?.textContent).not.toContain('恢复此版本');
+});
+
+it('当前多文件页面沿用真实地址与资源同源，不加载独立的入口 HTML', async () => {
+  const { site, preview } = await setupCurrentVersion('multi-file', { mode: 'site', siteId: 'site' });
+  expect(preview()?.src).toBe(site.siteUrl);
+  expect(preview()?.hasAttribute('srcdoc')).toBe(false);
+  expect(preview()?.getAttribute('sandbox')).toContain('allow-same-origin');
+  expect(getSiteContent).not.toHaveBeenCalled();
+});
+
+it('当前独立正文取回失败时保持窗口、允许原地重试', async () => {
+  getSiteContent.mockResolvedValueOnce({ success: false, error: { message: '源暂不可读' } })
+    .mockResolvedValueOnce({ success: true, data: { html: '<h1>重新取得的正文</h1>' } });
+  const { preview } = await setupCurrentVersion('self-contained-html', { mode: 'site', siteId: 'site' });
+  expect(preview()).toBeNull();
+  expect(document.querySelector('.review-history-window [role="alert"]')?.textContent).toContain('V3 载入失败');
+  const retry = [...document.querySelectorAll<HTMLButtonElement>('.review-history-window button')].find(button => button.textContent === '重试');
+  await act(async () => retry?.click());
+  expect(getSiteContent).toHaveBeenCalledTimes(2);
+  expect(preview()?.srcdoc).toContain('重新取得的正文');
 });

@@ -38,7 +38,7 @@ afterEach(async () => { await act(async () => root.unmount()); });
 it('多文件站不请求正文，也不产生正文错误或等待状态', async () => {
   await act(async () => root.render(<Probe value={{ ...site, contentShape: 'multi-file' }} />));
   expect(getSiteContent).not.toHaveBeenCalled();
-  expect(observed).toEqual({ srcDoc: null, error: null, loading: false });
+  expect(observed).toMatchObject({ srcDoc: null, error: null, loading: false, settled: true });
 });
 
 it('相同 URL 的站点类型变化不会复用旧正文，迟到响应不能覆盖当前策略', async () => {
@@ -48,7 +48,7 @@ it('相同 URL 的站点类型变化不会复用旧正文，迟到响应不能�
   expect(getSiteContent).toHaveBeenCalledOnce();
   await act(async () => root.render(<Probe value={{ ...site, contentShape: 'multi-file' }} />));
   await act(async () => finish(ok(content('<html><head></head><body>旧正文</body></html>'))));
-  expect(observed).toEqual({ srcDoc: null, error: null, loading: false });
+  expect(observed).toMatchObject({ srcDoc: null, error: null, loading: false, settled: true });
 });
 
 it('旧站点仍能取回正文并注入原资源基址', async () => {

@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { ArrowLeft, ArrowUpRight, Check, CornerDownLeft, Eye, EyeOff, RotateCcw, Send, X } from 'lucide-react';
 import type { HostedAnnotations, AnnotationRect } from './useHostedAnnotations';
 import type { HostedSiteCommentDto } from '@/services/real/webPages';
@@ -12,6 +12,7 @@ type Size = { width: number; height: number };
 type Placement = Point & { side: string };
 type CachedPlacement = { delta: Point; side: string; size: Size; viewport: Size };
 type MarginReply = { text: string; clientId?: string; error?: string; sending?: boolean; editing?: boolean };
+const emptyReply: MarginReply = { text: '' };
 const clamp = (n: number, max: number) => Math.max(8, Math.min(n, Math.max(8, max - 8)));
 const marginWidth = 300;
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -25,6 +26,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const dock = useRef<HTMLElement>(null);
   const autoPositions = useRef(new Map<string, CachedPlacement>());
   const replies = useRef(new Map<string, MarginReply>());
+  const [, refreshReplies] = useReducer((revision: number) => revision + 1, 0);
   const [positions, setPositions] = useState<Record<string, Point>>({});
   const [scrollTop, setScrollTop] = useState(0);
   const railOrigin = useRef<{ activeId: string | null; top: number; height: number }>({ activeId: null, top: 0, height: 0 });
@@ -226,7 +228,8 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
           </svg>}
           {placed.map(({ item, thread, excerpt, number, time, hue, placement, size }) => <BubbleCard key={item.id}
             thread={thread} excerpt={excerpt} number={number} time={time} hue={hue} annotations={annotations}
-            placement={placement} mobileDock={docked} dualColumn={dualColumn} replyDrafts={replies.current} onBack={activeInDock ? returnToDock : undefined}
+            placement={placement} mobileDock={docked} dualColumn={dualColumn} replyDrafts={replies.current} refreshReplies={refreshReplies}
+            onBack={activeInDock ? returnToDock : undefined}
             onMove={point => setPositions(previous => {
               const next = { ...previous };
               if (point && size) next[item.id] = {
@@ -242,10 +245,10 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   </>;
 }
 
-function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement, mobileDock, dualColumn, replyDrafts, onBack, onMove }: {
+function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement, mobileDock, dualColumn, replyDrafts, refreshReplies, onBack, onMove }: {
   thread: HostedSiteCommentDto; excerpt: string; number: number; time: string; hue: number; annotations: HostedAnnotations;
   placement?: Placement; mobileDock: boolean; dualColumn: boolean; replyDrafts: Map<string, MarginReply>;
-  onBack?: () => void; onMove: (point: Point | null) => void;
+  refreshReplies: () => void; onBack?: () => void; onMove: (point: Point | null) => void;
 }) {
   const active = annotations.activeId === thread.id;
   const hasHidden = annotations.hasHiddenPreviews || annotations.allPreviewsHidden;
@@ -255,7 +258,7 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
   const [expanded, setExpanded] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
-  const [reply, setReplyState] = useState<MarginReply>(() => replyDrafts.get(thread.id) ?? { text: '' });
+  const reply = replyDrafts.get(thread.id) ?? emptyReply;
   const replyBox = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
     const field = replyBox.current;
@@ -263,19 +266,25 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
     field.style.height = 'auto';
     field.style.height = Math.min(142, field.scrollHeight) + 'px';
   }, [reply.editing, reply.text]);
-  const setReply = (next: MarginReply) => { replyDrafts.set(thread.id, next); setReplyState(next); };
+  const setReply = (next: MarginReply) => {
+    // The card is removed while its anchor is off screen. Keep in-flight changes with the rail.
+    if (next.editing || next.text) replyDrafts.set(thread.id, next);
+    else replyDrafts.delete(thread.id);
+    refreshReplies();
+  };
   const visibleReplies = active && permissions ? permissions.getReplies(thread.id) : [];
   const beginReply = () => {
     setReply({ ...reply, editing: true });
     requestAnimationFrame(() => replyBox.current?.focus());
   };
   const sendReply = async () => {
-    if (!permissions?.canReply || !reply.text.trim() || reply.sending) return;
-    const submission = { ...reply, clientId: reply.clientId ?? crypto.randomUUID(), sending: true, error: undefined };
+    const current = replyDrafts.get(thread.id);
+    if (!permissions?.canReply || !current?.text.trim() || current.sending) return;
+    const submission = { ...current, clientId: current.clientId ?? crypto.randomUUID(), sending: true, error: undefined };
     setReply(submission);
     try {
       const error = await permissions.reply(thread.id, submission.text.trim(), submission.clientId);
-      setReply(error ? { ...submission, sending: false, error } : { text: '' });
+      setReply(error ? { ...submission, sending: false, error } : emptyReply);
     } catch {
       setReply({ ...submission, sending: false, error: '发送失败，草稿已保留。' });
     }
