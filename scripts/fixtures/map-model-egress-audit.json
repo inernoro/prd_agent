@@ -724,10 +724,9 @@
     },
     "prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarRouter.cs": {
       "calls": {
-        "call:CreateClient:b8a90d00944332c9a1b450fd": 3,
+        "call:CreateClient:b8a90d00944332c9a1b450fd": 2,
         "call:SendAsync:03da1cbe5c8a4bdbfbd9ea69": 1,
-        "call:SendAsync:1c5efcf4d6cf0e725ba99f49": 1,
-        "call:SendAsync:cbb02b7c202143719c9dc39c": 1
+        "call:SendAsync:1c5efcf4d6cf0e725ba99f49": 1
       },
       "purpose": "侧车运行唯一发送口必调任务短凭据 issuer；有限既有运行/取消/诊断合同，不下发供应商长期凭据"
     },

@@ -29,8 +29,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    // Only dispatching processes hold cancellation credentials; never broadcast a shared bearer.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Token, string Url, TaskExecutionIdentity? Identity)> RunCredentials = new();
+    // Bind background cancellation to the subject and lease that dispatched the run.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Token, TaskExecutionIdentity? Identity)> RunOwners = new();
     private readonly IHttpClientFactory _httpFactory;
     private readonly IOptionsMonitor<ClaudeSidecarOptions> _options;
     private readonly ILogger<ClaudeSidecarRouter> _logger;
@@ -40,6 +40,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ITaskScopedRuntimeGrantIssuer? _runtimeGrantIssuer;
     private readonly ISidecarReplayStore? _runControl;
+    private readonly TaskContinuationTokens? _continuationTokens;
 
     public ClaudeSidecarRouter(
         IHttpClientFactory httpFactory,
@@ -49,7 +50,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         IConfiguration configuration,
         IHttpContextAccessor httpContextAccessor,
         ILogger<ClaudeSidecarRouter> logger,
-        ITaskScopedRuntimeGrantIssuer? runtimeGrantIssuer = null, ISidecarReplayStore? runControl = null)
+        ITaskScopedRuntimeGrantIssuer? runtimeGrantIssuer = null, ISidecarReplayStore? runControl = null,
+        TaskContinuationTokens? continuationTokens = null)
     {
         _httpFactory = httpFactory;
         _options = options;
@@ -60,6 +62,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         _logger = logger;
         _runtimeGrantIssuer = runtimeGrantIssuer;
         _runControl = runControl;
+        _continuationTokens = continuationTokens;
     }
 
     public bool IsConfigured =>
@@ -130,7 +133,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             yield return new SidecarEvent { Type = SidecarEventType.Error, ErrorCode = "runtime_authorization_missing" };
             yield break;
         }
-        if (!RunCredentials.TryAdd(request.RunId, (effectiveCallbackToken, instance.BaseUrl, TaskExecutionContext.Current)))
+        if (!RunOwners.TryAdd(request.RunId, (effectiveCallbackToken, TaskExecutionContext.Current)))
         {
             yield return new SidecarEvent { Type = SidecarEventType.Error, ErrorCode = "runtime_already_active" };
             yield break;
@@ -167,7 +170,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     yield break;
             }
         }
-        finally { RunCredentials.TryRemove(request.RunId, out _); }
+        finally { RunOwners.TryRemove(request.RunId, out _); }
     }
 
     public async Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct)
@@ -184,18 +187,12 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             if (string.IsNullOrWhiteSpace(subject)) return new SidecarCancelResult(false, "cancel_subject_missing");
             return await CancelOwnedRunAsync(runId, subject, ct);
         }
-        if (!RunCredentials.TryGetValue(runId, out var credential)
-            || TaskExecutionContext.Current is not { Lease: not null } current || current != credential.Identity)
+        if (!RunOwners.TryGetValue(runId, out var owner)
+            || TaskExecutionContext.Current is not { Lease: not null } current || current != owner.Identity || _continuationTokens is null)
             return new SidecarCancelResult(false, "cancel_authority_missing");
-        var http = _httpFactory.CreateClient(HttpClientName);
-        using var request = new HttpRequestMessage(HttpMethod.Post,
-            CombineUrl(credential.Url, $"/v1/agent/cancel/{Uri.EscapeDataString(runId)}"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Token);
-        using var response = await http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode) return new SidecarCancelResult(false, $"sidecar_http_{(int)response.StatusCode}");
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-        var cancelled = body.RootElement.TryGetProperty("cancelled", out var value) && value.ValueKind == JsonValueKind.True;
-        return new SidecarCancelResult(cancelled, body.RootElement.TryGetProperty("state", out var stateValue) ? stateValue.GetString() : "unconfirmed");
+        var grant = await _continuationTokens.AuthorizeRuntimeAsync(owner.Token, runId, "cancel");
+        if (grant is null) return new SidecarCancelResult(false, "cancel_authority_missing");
+        return await CancelOwnedRunAsync(runId, grant.Subject, ct);
     }
 
     public async Task<SidecarCancelResult> CancelOwnedRunAsync(string runId, string subject, CancellationToken ct)
