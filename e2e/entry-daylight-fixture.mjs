@@ -45,8 +45,8 @@ const evidence = { provenance: 'deterministic-fixture', commit: process.env.GITH
 for (const theme of ['dark', 'light']) {
   const profile = await mkdtemp(join(tmpdir(), 'entry-daylight-'));
   const context = await chromium.launchPersistentContext(profile, {
-    headless: false, viewport: null, colorScheme: theme, reducedMotion: 'no-preference',
-    args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--disable-dev-shm-usage'],
+    headless: false, viewport: null, locale: 'zh-CN', colorScheme: theme, reducedMotion: 'no-preference',
+    args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--disable-dev-shm-usage', '--disable-features=Translate'],
   });
   try {
     const page = context.pages()[0];
