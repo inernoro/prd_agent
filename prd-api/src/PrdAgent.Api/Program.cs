@@ -34,6 +34,8 @@ using Serilog.Events;
 using Microsoft.Extensions.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
+if (!builder.Environment.IsDevelopment() && !string.IsNullOrWhiteSpace(builder.Configuration["OpenPlatform:TestApiKey"]))
+    throw new InvalidOperationException("OpenPlatform:TestApiKey is retired; remove it before starting outside Development.");
 
 // MongoDB BSON 映射注册：
 // - 线上遇到过旧数据/旧镜像导致 _id 反序列化失败（Element '_id' does not match...）
@@ -89,6 +91,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddScoped<PrdAgent.Api.Filters.PmAuditActionFilter>();
 builder.Services.AddControllers(options =>
     {
+        options.Conventions.Add(new PrdAgent.Api.Filters.DevelopmentStubConvention(
+            builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("DevelopmentStub:Enabled")));
         // 团队动态：全局白名单审计（白名单外的动作一次字典查找即逃逸）
         options.Filters.Add<PrdAgent.Api.Filters.ActivityLogActionFilter>();
         // 模型管理退场：api/mds 下的写操作一律 410，配置改由 LLM Gateway 控制台承担。

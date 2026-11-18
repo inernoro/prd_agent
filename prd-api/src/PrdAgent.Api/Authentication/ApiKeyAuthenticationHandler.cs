@@ -18,7 +18,6 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
 {
     private readonly IOpenPlatformService _openPlatformService;
     private readonly IAgentApiKeyService _agentApiKeyService;
-    private readonly IConfiguration _configuration;
     private readonly IAdminPermissionService _permissionService;
     private readonly McpLoopbackSignal _mcpLoopback;
     private readonly IDataProtectionProvider? _uploadProtection;
@@ -37,7 +36,6 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
     {
         _openPlatformService = openPlatformService;
         _agentApiKeyService = agentApiKeyService;
-        _configuration = configuration;
         _permissionService = permissionService;
         _mcpLoopback = mcpLoopback;
         _uploadProtection = uploadProtection;
@@ -75,27 +73,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             return AuthenticateResult.NoResult();
         }
 
-        // 检查是否为测试 Key
-        var testApiKey = _configuration["OpenPlatform:TestApiKey"];
-        if (!string.IsNullOrWhiteSpace(testApiKey) && apiKey == testApiKey)
-        {
-            // 使用测试 Key，创建测试用户身份
-            var testClaims = new List<Claim>
-            {
-                new Claim("appId", "test-app-id"),
-                new Claim("appName", "Test Application"),
-                new Claim("boundUserId", "test-user-id"),
-                new Claim("authType", "apikey-test"),
-                new Claim("isTestKey", "true")
-            };
-
-            var testIdentity = new ClaimsIdentity(testClaims, Scheme.Name);
-            var testPrincipal = new ClaimsPrincipal(testIdentity);
-            var testTicket = new AuthenticationTicket(testPrincipal, Scheme.Name);
-
-            return AuthenticateResult.Success(testTicket);
-        }
-
+        // 固定测试身份已退役；所有 Key 均经过受管查找、撤销和权限校验。
         // 优先：AgentApiKey（`sk-ak-` 前缀，新版开放接口 M2M 鉴权）
         // 其次：OpenPlatformApp（`sk-` 前缀，历史 PRD 对话代理 Key）
         if (apiKey.StartsWith("sk-ak-", StringComparison.Ordinal))

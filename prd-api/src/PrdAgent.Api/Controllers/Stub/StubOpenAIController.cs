@@ -25,6 +25,8 @@ namespace PrdAgent.Api.Controllers.Stub;
 ///   - GET  /assets/{id}.png（返回图片 bytes）
 /// </summary>
 [ApiController]
+[TypeFilter(typeof(PrdAgent.Api.Filters.DevelopmentStubFilter))]
+[RequestSizeLimit(4 * 1024 * 1024)]
 [Route("api/v1/stub")]
 public class StubOpenAIController : ControllerBase
 {
@@ -508,10 +510,11 @@ public class StubOpenAIController : ControllerBase
     {
         var size = NormalizeSize(request?.Size);
         var (w, h) = ParseSizeOrDefault(size, 1024, 1024);
-        var n = Math.Clamp(request?.N ?? 1, 1, 20);
+        var n = Math.Clamp(request?.N ?? 1, 1, 4);
         var data = new List<object>(n);
         for (var i = 0; i < n; i++)
         {
+            HttpContext.RequestAborted.ThrowIfCancellationRequested();
             var color = RandomColor();
             var wm = BuildCenterWatermarkText(request?.Prompt, n <= 1 ? null : i + 1, n <= 1 ? null : n);
             var bytes = RenderSolidPng(w, h, color, watermarkText: wm);
@@ -529,7 +532,7 @@ public class StubOpenAIController : ControllerBase
     }
 
     [HttpPost("v1/images/edits")]
-    [RequestSizeLimit(12 * 1024 * 1024)]
+    [RequestSizeLimit(4 * 1024 * 1024)]
     public async Task<IActionResult> ImageEdits(CancellationToken ct)
     {
         // OpenAI compatible multipart: image(file) + prompt + n + size + response_format
@@ -551,12 +554,13 @@ public class StubOpenAIController : ControllerBase
         var (w, h) = ParseSizeOrDefault(size, 1024, 1024);
         var nRaw = form["n"].ToString();
         var n = int.TryParse(nRaw, out var nn) ? nn : 1;
-        n = Math.Clamp(n, 1, 20);
+        n = Math.Clamp(n, 1, 4);
         var prompt = form["prompt"].ToString();
-        var watermarkBase = string.IsNullOrWhiteSpace(prompt) ? "PRD STUB" : $"PRD STUB | {prompt}";
+        var watermarkBase = BuildCenterWatermarkText(prompt, null, null);
         var data = new List<object>(n);
         for (var i = 0; i < n; i++)
         {
+            HttpContext.RequestAborted.ThrowIfCancellationRequested();
             var watermark = n <= 1 ? watermarkBase : $"{watermarkBase} | #{i + 1}";
             var outBytes = TryRenderWatermarkedFromInput(inputBytes, w, h, watermark);
             var id = PutImage(outBytes);
@@ -637,14 +641,18 @@ public class StubOpenAIController : ControllerBase
     private static string PutImage(byte[] bytes)
     {
         var id = Guid.NewGuid().ToString("N");
-        _imgStore[id] = (bytes, DateTimeOffset.UtcNow.Add(ImgTtl));
-        // best-effort: 轻量清理过期项（避免无限增长）
-        if (_imgStore.Count > 256)
+        lock (_imgStore)
         {
-            foreach (var kv in _imgStore)
+            foreach (var item in _imgStore)
+                if (item.Value.expireAt <= DateTimeOffset.UtcNow) _imgStore.TryRemove(item.Key, out _);
+            // 硬预算：淘汰最早资源，不仅清理过期资源。
+            while (_imgStore.Count >= 64 || _imgStore.Values.Sum(v => (long)v.bytes.Length) + bytes.Length > 32 * 1024 * 1024)
             {
-                if (kv.Value.expireAt <= DateTimeOffset.UtcNow) _imgStore.TryRemove(kv.Key, out _);
+                var oldest = _imgStore.OrderBy(v => v.Value.expireAt).FirstOrDefault();
+                if (oldest.Key == null) throw new InvalidOperationException("Stub image budget exceeded");
+                _imgStore.TryRemove(oldest.Key, out _);
             }
+            _imgStore[id] = (bytes, DateTimeOffset.UtcNow.Add(ImgTtl));
         }
         return id;
     }
@@ -664,8 +672,8 @@ public class StubOpenAIController : ControllerBase
         if (!m.Success) return (defW, defH);
         var w = int.TryParse(m.Groups["w"].Value, out var ww) ? ww : defW;
         var h = int.TryParse(m.Groups["h"].Value, out var hh) ? hh : defH;
-        w = Math.Clamp(w, 64, 4096);
-        h = Math.Clamp(h, 64, 4096);
+        w = Math.Clamp(w, 64, 1024);
+        h = Math.Clamp(h, 64, 1024);
         return (w, h);
     }
 
@@ -696,6 +704,9 @@ public class StubOpenAIController : ControllerBase
         // 尽量加载用户图并缩放；失败则退回纯色图（仍带水印）
         try
         {
+            var info = Image.Identify(inputBytes);
+            if (info == null || (long)info.Width * info.Height > 4 * 1024 * 1024 || info.FrameMetadataCollection.Count > 1)
+                return RenderSolidPng(w, h, RandomColor(), watermarkText);
             using var input = Image.Load<Rgba32>(inputBytes);
             // contain（计算缩放与居中偏移）
             var scale = Math.Min((double)w / input.Width, (double)h / input.Height);
