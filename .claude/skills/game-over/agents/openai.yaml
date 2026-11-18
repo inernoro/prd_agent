@@ -1,4 +1,4 @@
 interface:
   display_name: "Game Over · 交付闭环"
-  short_description: "按任务授权推进提 PR、评论分类、多轮修复、真实验收与最终合并复核"
-  default_prompt: "使用 $game-over 跟进当前任务的 PR，处理评论并完成验证；按我本次明确授权的终点交付。"
+  short_description: "处理 PR 评审和验证，默认通过门禁后合入 main，受阻时说明具体门禁"
+  default_prompt: "使用 $game-over 跟进当前任务的 PR，处理评审并验证，全部门禁通过后合入 main。"
