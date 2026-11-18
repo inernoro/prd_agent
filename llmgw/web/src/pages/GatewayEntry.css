@@ -360,9 +360,17 @@ html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body::-webkit-scrol
 .consciousness-scene[data-portrait-theme='light'] .consciousness-grain { display: none; }
 :root[data-theme='light'] .gateway-quickstart-stage .consciousness-camera { opacity: 1; }
 :root[data-theme='light'] .gateway-quickstart-stage .gateway-quickstart-shade { background: none; }
-:root[data-theme='light'] .gateway-intent-heading { text-shadow: 0 1px 12px #f8f0e7; }
+:root[data-theme='light'] .is-entry-workspace .lg-console-header { background: none; }
+:root[data-theme='light'] .is-entry-workspace :is(.gateway-chrome-sound, .lg-user-menu > summary) { background: var(--cinema-glass); }
+:root[data-theme='light'] .gateway-intent-heading { text-shadow: 0 1px 2px #fff, 0 0 14px #f8f0e7; }
 :root[data-theme='light'] .gateway-intent-starters button { background: var(--cinema-glass); }
+:root[data-theme='light'] .gateway-entry-shortcuts { gap: 10px; }
+:root[data-theme='light'] .gateway-entry-shortcuts :is(a, summary),
+:root[data-theme='light'] .gateway-intent-options { background: var(--cinema-glass); padding-inline: 10px; border-radius: 8px; }
+:root[data-theme='light'] .gateway-intent-options { width: fit-content; margin-inline: auto; }
 @media (max-width: 600px) {
+  :root[data-theme='light'] .is-entry-workspace .lg-console-header { background: var(--cinema-night); border-bottom: 1px solid var(--cinema-border); }
+  :root[data-theme='light'] .gateway-quickstart-stage :is(.consciousness-art, .portrait-motion) { object-position: 86% center; }
   :root[data-theme='light'] .gateway-quickstart-stage .gateway-quickstart-shade {
     background: linear-gradient(0deg, var(--cinema-night) 10%, transparent 62%);
   }
