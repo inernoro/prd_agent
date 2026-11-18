@@ -164,14 +164,16 @@
 .annotation-chat-bubble {
   position: absolute; width: 264px; max-width: calc(100% - 24px);
   padding: 11px 11px 8px; border: 1px solid var(--border-subtle); border-radius: 11px;
-  background: var(--bg-card); color: var(--text-primary); box-shadow: 0 2px 8px rgb(0 0 0 / .12);
+  background: linear-gradient(var(--bg-card), var(--bg-card)), var(--bg-base);
+  color: var(--text-primary); box-shadow: 0 2px 8px rgb(0 0 0 / .12);
   pointer-events: auto; touch-action: none;
 }
 .annotation-chat-bubble[data-placement='moved'] { z-index: 1; }
 .annotation-chat-bubble.is-active {
   z-index: 2;
   border-color: var(--accent-fg-amber);
-  background: color-mix(in srgb, var(--accent-fg-amber) 7%, var(--bg-card));
+  --annotation-selected-tint: color-mix(in srgb, var(--accent-fg-amber) 7%, var(--bg-card));
+  background: linear-gradient(var(--annotation-selected-tint), var(--annotation-selected-tint)), var(--bg-base);
   box-shadow: 0 7px 24px rgb(0 0 0 / .18);
 }
 .annotation-chat-bubble.is-active[data-placement='moved'] { z-index: 3; }

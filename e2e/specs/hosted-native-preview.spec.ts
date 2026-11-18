@@ -561,6 +561,9 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await tap(page.getByRole('button', { name: '批注与讨论', exact: true }));
       await expect(viewed).toBeVisible();
       await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
+      const backgrounds = await page.locator('.annotation-chat-bubble').evaluateAll(cards => cards.map(card => getComputedStyle(card).backgroundColor));
+      // The document can use a different theme. A translucent card would let its text show through.
+      expect(backgrounds.every(color => /^rgb\(\d+, \d+, \d+\)$/.test(color))).toBe(true);
       await page.screenshot({ path: test.info().outputPath('default-bubble-icons.png') });
       if (mobile) { const r = await page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first().boundingBox(); expect(r!.width).toBeGreaterThanOrEqual(44); expect(r!.height).toBeGreaterThanOrEqual(44); }
       await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());
