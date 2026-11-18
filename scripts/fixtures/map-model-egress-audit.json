@@ -614,13 +614,26 @@
       },
       "purpose": "网关 serving 复用的统一发送源及既有 GatewayLLMClient 构造；代理客户端构造收敛至内部 UpstreamProxyClientScope，移除已迁出的旧工厂许可，发送前仍由授权叶子校验，新增运输逐调用审计。"
     },
+    "prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayOutboundHttpClients.cs": {
+      "calls": {
+        "new:SocketsHttpHandler:0ca3444a5bf80201361e2dcb": 1
+      },
+      "purpose": "统一网关内部命名客户端 LlmGatewayOutbound 的唯一运输处理器。保留已授权内部目标及部署代理，AllowAutoRedirect 固定为 false；外部直连继续经单独的 SafeOutbound，显式代理走既有代理快照。此注册本身不发送请求。"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LlmGateway/UpstreamResponseProtection.cs": {
+      "calls": {
+        "call:SendAsync:90f10daf08d9ef452156e1b5": 1
+      },
+      "purpose": "ProtectedUpstreamHandler 只向作用域注入的、已按租户与代理策略选定的客户端转发原目标及正文。使用 ResponseHeadersRead 执行凭据回显拒绝和可选字节预算；无独立套接字、重定向、解析或目的地选择。"
+    },
     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/UpstreamProxyClientScope.cs": {
       "calls": {
         "call:CreateClient:007bf574b64ef30dbfccf6fc": 1,
-        "call:CreateClient:c3dbeb32338105b6c2256b11": 1,
-        "new:HttpClient:44c248368d7640f892def6e2": 1
+        "call:CreateClient:98aba39b150537e7552e6235": 1,
+        "new:HttpClient:44c248368d7640f892def6e2": 1,
+        "new:HttpClient:6962c405a24a5216c1f1aad4": 1
       },
-      "purpose": "统一网关发送阶段的内部客户端作用域；只消费解析阶段已确定的代理快照，重试仍由原网关准入、发送授权及审计链路控制。MAP 不注册进程内发送器，不能从业务服务借此新建客户端；只登记当前构造与工厂调用，不放行后续新增调用。"
+      "purpose": "统一网关发送阶段的内部客户端作用域。外部直连仍使用 SafeOutbound 的连接时地址校验；内部直连改用 LlmGatewayOutbound 命名客户端，保留获准私网供应方和部署代理并禁用自动重定向。显式代理仍使用解析阶段的代理快照及原连接限制。新增 HttpClient 仅包装 ProtectedUpstreamHandler，无独立网络运输；转发原方法、URI 和正文到既定客户端，先读取响应头再执行凭据回显拒绝及可选响应预算。跨源跳转、外部客户端选择和代理凭据回显均有定向测试。发送授权与重试仍由原网关控制，MAP 不注册进程内模型发送器。本条只登记这些具体调用。"
     },
     "prd-api/src/PrdAgent.Infrastructure/ModelPool/HttpPoolDispatcher.cs": {
       "calls": {
