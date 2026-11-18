@@ -364,6 +364,9 @@ html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body::-webkit-scrol
 :root[data-theme='light'] .is-entry-workspace :is(.gateway-chrome-sound, .lg-user-menu > summary) { background: var(--cinema-glass); }
 :root[data-theme='light'] .gateway-intent-heading { text-shadow: 0 1px 2px #fff, 0 0 14px #f8f0e7; }
 :root[data-theme='light'] .gateway-intent-starters button { background: var(--cinema-glass); }
+:root[data-theme='light'] .gateway-intent-starters button:hover:not(:active, :disabled) {
+  background: color-mix(in srgb, var(--cinema-glass) 82%, var(--cinema-accent));
+}
 :root[data-theme='light'] .gateway-entry-shortcuts { gap: 10px; }
 :root[data-theme='light'] .gateway-entry-shortcuts :is(a, summary),
 :root[data-theme='light'] .gateway-intent-options { background: var(--cinema-glass); padding-inline: 10px; border-radius: 8px; }

@@ -44,9 +44,13 @@ async function arrive(page, theme, name) {
 const evidence = { provenance: 'deterministic-fixture', commit: process.env.GITHUB_SHA, viewport: resolutions, entries: {} };
 for (const theme of ['dark', 'light']) {
   const profile = await mkdtemp(join(tmpdir(), 'entry-daylight-'));
+  await mkdir(join(profile, 'Default'));
+  await writeFile(join(profile, 'Default', 'Preferences'), JSON.stringify({
+    translate: { enabled: false }, translate_blocked_languages: ['zh-CN'], intl: { accept_languages: 'zh-CN,zh' },
+  }));
   const context = await chromium.launchPersistentContext(profile, {
-    headless: false, viewport: null, colorScheme: theme, reducedMotion: 'no-preference',
-    args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--disable-dev-shm-usage'],
+    headless: false, viewport: null, locale: 'zh-CN', colorScheme: theme, reducedMotion: 'no-preference',
+    args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--disable-dev-shm-usage', '--lang=zh-CN', '--disable-translate'],
   });
   try {
     const page = context.pages()[0];

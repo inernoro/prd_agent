@@ -20,11 +20,11 @@ const readiness = await waitForEntryPreviews({ map, gateway, motion, gatewayAsse
 await writeFile(new URL('preview-readiness.json', output), JSON.stringify(readiness, null, 2));
 const profile = await mkdtemp(join(tmpdir(),'entry-motion-'));
 await mkdir(join(profile,'Default'),{recursive:true});
-await writeFile(join(profile,'Default','Preferences'),JSON.stringify({credentials_enable_service:false,profile:{password_manager_enabled:false}}));
+await writeFile(join(profile,'Default','Preferences'),JSON.stringify({credentials_enable_service:false,profile:{password_manager_enabled:false},translate:{enabled:false},translate_blocked_languages:['zh-CN'],intl:{accept_languages:'zh-CN,zh'}}));
 const context = await chromium.launchPersistentContext(profile, {
-  headless: false, viewport: null, timezoneId: 'Asia/Shanghai', reducedMotion: 'no-preference',
+  headless: false, viewport: null, locale: 'zh-CN', timezoneId: 'Asia/Shanghai', reducedMotion: 'no-preference',
   ignoreDefaultArgs: ['--enable-automation'], colorScheme: 'dark',
-  args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage', '--disable-gpu-compositing', '--disable-save-password-bubble'],
+  args: ['--kiosk', '--start-fullscreen', '--window-size=1920,1080', '--window-position=0,0', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage', '--disable-gpu-compositing', '--disable-save-password-bubble', '--lang=zh-CN', '--disable-translate'],
 });
 // Observe actual scene frames without changing the renderer, clock, auth or API responses.
 await context.addInitScript(() => {
