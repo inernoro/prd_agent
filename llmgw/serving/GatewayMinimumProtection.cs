@@ -99,17 +99,21 @@ public sealed record GatewayDynamicRateBaseline(decimal Average, int Samples, in
 public sealed class GatewayMinimumProtectionCoordinator
 {
     public const string WindowsCollection = "llmgw_consumption_rate_windows";
-    public const string AlertsCollection = "llmgw_consumption_alerts";
+    public const string AlertsCollection = GatewayTemporaryQuotaStore.AlertsCollection;
     private readonly LlmGatewayDataContext _data;
     private readonly IConfiguration _configuration;
     private readonly ILogger<GatewayMinimumProtectionCoordinator> _logger;
+    private readonly GatewayTemporaryQuotaStore _temporaryQuota;
     private int _invalidDynamicPolicyReported;
 
     public GatewayMinimumProtectionCoordinator(
         LlmGatewayDataContext data,
         IConfiguration configuration,
         ILogger<GatewayMinimumProtectionCoordinator> logger)
-        => (_data, _configuration, _logger) = (data, configuration, logger);
+    {
+        (_data, _configuration, _logger) = (data, configuration, logger);
+        _temporaryQuota = new(data.Database, logger);
+    }
 
     public async Task<GatewayMinimumProtectionDecision> CheckAsync(
         string tenantId,
@@ -173,10 +177,10 @@ public sealed class GatewayMinimumProtectionCoordinator
             var counterType = scope == "tenant" ? "$aggregate" : type;
             var count = await IncrementWindowAsync(tenantId, counterCaller, counterType, scope, origin, seconds, windowStart, ct);
             var blocked = count > limit;
-            if (blocked && scope == "app-caller" && origin == "automatic" && seconds == 3600)
+            if (blocked && GatewayTemporaryQuotaStore.AppliesTo(scope, origin, seconds))
             {
                 var alertId = Identity("alert", tenantId, counterCaller, counterType, scope, origin, seconds, windowStart) + ":blocked";
-                if (await HasTemporaryQuotaAsync(alertId, tenantId, ct))
+                if (await _temporaryQuota.IsAvailableAsync(alertId, tenantId, ct))
                 {
                     // 只有所有后续治理检查通过后才扣减；这里先判断是否值得继续检查。
                     temporaryQuota = new(false, scope, origin, seconds, windowStart, count, limit)
@@ -216,7 +220,7 @@ public sealed class GatewayMinimumProtectionCoordinator
         string? teamId, string requestId, GatewayMinimumRequestIdentity identity, CancellationToken ct)
     {
         if (candidate.TemporaryQuotaAlertId is not { } alertId
-            || await TryUseTemporaryQuotaAsync(alertId, tenantId, ct))
+            || await _temporaryQuota.TryConsumeAsync(alertId, tenantId, ct))
             return null;
 
         var caller = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
@@ -240,48 +244,6 @@ public sealed class GatewayMinimumProtectionCoordinator
         catch (MongoException error)
         {
             _logger.LogWarning(error, "[GatewaySafety] Could not associate blocked request {RequestId} with retry run", requestId);
-        }
-    }
-
-    private static FilterDefinition<BsonDocument> AvailableTemporaryQuota(string alertId, string tenantId)
-    {
-        var match = Builders<BsonDocument>.Filter;
-        return match.Eq("_id", alertId) & match.Eq("TenantId", tenantId) & match.Eq("QuotaState", "approved")
-            & new BsonDocument("$expr", new BsonDocument("$and", new BsonArray
-            {
-                new BsonDocument("$gt", new BsonArray { "$QuotaExpiresAt", "$$NOW" }),
-                new BsonDocument("$lt", new BsonArray { "$QuotaUsed", "$QuotaUnits" }),
-            }));
-    }
-
-    private async Task<bool> HasTemporaryQuotaAsync(string alertId, string tenantId, CancellationToken ct)
-    {
-        try
-        {
-            return await _data.Database.GetCollection<BsonDocument>(AlertsCollection)
-                .Find(AvailableTemporaryQuota(alertId, tenantId)).AnyAsync(ct);
-        }
-        catch (MongoException error)
-        {
-            _logger.LogWarning(error, "[GatewaySafety] Temporary quota unavailable for alert {AlertId}", alertId);
-            return false;
-        }
-    }
-
-    private async Task<bool> TryUseTemporaryQuotaAsync(string alertId, string tenantId, CancellationToken ct)
-    {
-        try
-        {
-            var result = await _data.Database.GetCollection<BsonDocument>(AlertsCollection).UpdateOneAsync(
-                AvailableTemporaryQuota(alertId, tenantId),
-                Builders<BsonDocument>.Update.Inc("QuotaUsed", 1).Set("ResolutionUpdatedAt", DateTime.UtcNow),
-                cancellationToken: ct);
-            return result.ModifiedCount == 1;
-        }
-        catch (MongoException error)
-        {
-            _logger.LogWarning(error, "[GatewaySafety] Temporary quota unavailable for alert {AlertId}", alertId);
-            return false;
         }
     }
 

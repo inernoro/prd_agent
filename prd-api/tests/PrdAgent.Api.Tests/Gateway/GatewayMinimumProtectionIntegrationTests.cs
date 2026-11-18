@@ -407,6 +407,81 @@ public sealed class GatewayMinimumProtectionIntegrationTests
     }
 
     [Theory]
+    [InlineData("invoke")]
+    [InlineData("stream:invoke")]
+    [InlineData("raw:invoke")]
+    public async Task RetryControlUsesOriginalInvocationScopeWithoutRecordingBusinessTraffic(string originalScope)
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        const string tenant = "retry-cutover-fixture";
+        const string path = "/gw/v1/consumption-retries";
+        const string key = "resolution-fixture-cutover-key";
+        const string readKey = "resolution-fixture-read-only-key";
+        await database.TokenAsync(tenant, "admin");
+        async Task<GatewayServiceKeyRecord> AddKeyAsync(string secret, string scope)
+        {
+            var record = new GatewayServiceKeyRecord
+            {
+                TenantId = tenant, KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(secret),
+                SourceSystem = "map", ClientCode = "resolution-fixture", Environment = "production",
+                Purpose = "runtime", AppCallerCodes = [Caller], IngressProtocols = ["openai-compatible"], Scopes = [scope],
+            };
+            await database.Data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(record);
+            await database.Data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
+                .InsertOneAsync(new GatewayServiceKeyDirectoryRecord { TenantId = tenant, KeyHash = record.KeyHash, ServiceKeyId = record.Id });
+            return record;
+        }
+        var source = await AddKeyAsync(key, originalScope);
+        await AddKeyAsync(readKey, "route:read");
+        var cutovers = database.Data.Database.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
+        await cutovers.InsertOneAsync(new BsonDocument
+        {
+            { "TenantId", tenant }, { "Status", "observing" }, { "SuccessorServiceKeyIds", new BsonArray { source.Id } },
+            { "AllowedAppCallerCodes", new BsonArray { Caller } },
+            { "RequiredIngressProtocols", new BsonArray { "openai-compatible" } },
+            { "SuccessorObservedCount", 0 },
+        });
+        var retries = database.Data.Database.GetCollection<BsonDocument>("llmgw_consumption_retries");
+        var now = DateTime.UtcNow;
+        await retries.InsertOneAsync(new BsonDocument
+        {
+            { "_id", "retry-control-fixture" }, { "TenantId", tenant }, { "AppCallerCode", Caller },
+            { "ServiceKeyId", source.Id }, { "RunId", "test-run" }, { "FirstBlockedRequestId", "test-request" },
+            { "State", "queued" }, { "ReadyAt", now.AddMinutes(-1) }, { "ExpiresAt", now.AddHours(1) },
+        });
+
+        await using var serving = await Serving(database, new());
+        using var client = serving.GetTestClient();
+        Task<HttpResponseMessage> Dispatch(HttpMethod method, string secret, object? body = null)
+        {
+            var request = new HttpRequestMessage(method, path);
+            request.Headers.Add("X-Gateway-Key", secret);
+            request.Headers.Add("X-Gateway-App-Caller", Caller);
+            request.Headers.Add("X-Gateway-Source", "map");
+            if (body is not null) request.Content = JsonContent.Create(body);
+            return client.SendAsync(request);
+        }
+        (await Dispatch(HttpMethod.Get, readKey)).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        var poll = await Dispatch(HttpMethod.Get, key);
+        poll.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await poll.Content.ReadAsStringAsync()).ShouldContain("test-run");
+        var claim = new { id = "retry-control-fixture", claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
+        (await Dispatch(HttpMethod.Post, key, claim)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, key, new { claim.id, claim.claimId, outcome = "completed", completedCount = 1 }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        var cutover = Builders<BsonDocument>.Filter.Eq("TenantId", tenant);
+        (await cutovers.Find(cutover).SingleAsync())["SuccessorObservedCount"].AsInt32.ShouldBe(0);
+
+        var authorizer = serving.Services.GetRequiredService<IGatewayScopedKeyAuthorizer>();
+        (await authorizer.AuthorizeAsync(key, InternalKey, "map", Caller, "openai-compatible", originalScope,
+            null, default)).Allowed.ShouldBeTrue();
+        (await cutovers.Find(cutover).SingleAsync())["SuccessorObservedCount"].AsInt32.ShouldBe(1);
+        if (originalScope != "invoke")
+            (await authorizer.AuthorizeAsync(key, InternalKey, "map", Caller, "openai-compatible", "invoke",
+                null, default)).Allowed.ShouldBeFalse();
+    }
+
+    [Theory]
     [InlineData("AutomaticAppCallerPerDay", "app-caller", 86400)]
     [InlineData("AutomaticTenantPerHour", "tenant", 3600)]
     [InlineData("budget", "", 0)]

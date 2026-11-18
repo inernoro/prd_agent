@@ -2393,6 +2393,8 @@ public static class GatewayHttpEndpoints
 
     private static string ResolveRequiredScope(string path)
     {
+        if (path.Equals(GatewayConsumptionRetries.Path, StringComparison.OrdinalIgnoreCase))
+            return GatewayConsumptionRetries.ControlScope;
         if (path.Equals("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase)) return GatewayLegacyProbeScopes.Readiness;
         if (path.Equals("/gw/v1/route-self-test", StringComparison.OrdinalIgnoreCase))
             return GatewayLegacyProbeScopes.Route;

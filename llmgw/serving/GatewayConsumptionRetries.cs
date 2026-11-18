@@ -10,6 +10,7 @@ namespace PrdAgent.LlmGatewayHost;
 internal static class GatewayConsumptionRetries
 {
     internal const string Path = "/gw/v1/consumption-retries";
+    internal const string ControlScope = "retry:control";
     internal const string CollectionName = "llmgw_consumption_retries";
     internal const string OptInHeader = "X-Gateway-Retry-Run-Id";
 
