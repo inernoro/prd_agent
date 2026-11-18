@@ -10,6 +10,7 @@ import { createPreviewAddressRouter } from './preview-address.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
 import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
+import { parseRuntimeCapacityGuard, captureGuardedRuntime } from '../services/guarded-runtime.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget, type SourceStartAdmission } from '../services/deployment-phase-budget.js';
 import { remoteProxyOwner, readOwnedRemoteChunk, type RemoteDeploymentIdentity } from '../services/remote-deployment-owner.js';
@@ -22,7 +23,7 @@ import { projectResourceNamespace } from '../services/preview-slug.js';
 import http from 'node:http';
 import { DatabasePassService, databasePassClientIp, type DatabasePass } from '../services/database-pass.js';
 import type { DatabasePassTarget } from '../services/database-pass-accounts.js';
-import { componentInputComparator } from '../services/prebuilt-reuse.js';
+import { componentInputComparator, imageRepositoryOf } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { resolvePreviewDispatch, type PreviewProjectFacts } from '../services/preview-dispatch.js';
 import https from 'node:https';
@@ -2320,6 +2321,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
+  const guardedLeases = new Map<BranchOperationLease, { release: () => void; check: () => void }>();
+  function guardedRequest(req: Request, entry: BranchEntry, mode: 'deploy' | 'stop' | 'restart') {
+    const guard = parseRuntimeCapacityGuard(req.body?.capacityGuard);
+    if (!guard) {
+      if (entry.capacityYieldFirst) throw new Error('本临时分支必须提供准确运行保护条件');
+      return null;
+    }
+    if (!branchOperationCoordinator || !schedulerService || !schedulerService.isEnabled()
+      || isPreviewInstance() || isRemoteExecutorOwned(entry.executorId) || req.body?.targetExecutorId
+      || req.body?.pendingReplay || req.body?.versionId || req.query.force || req.query.ignoreRequired)
+      throw new Error('当前执行环境不支持受限运行保护，尚未执行');
+    if (mode === 'deploy' && req.body?.commitSha !== guard.expectedCommitSha)
+      throw new Error('必须指定相同的完整提交，不能降级到可变分支');
+    const snapshot = captureGuardedRuntime(entry, guard, mode);
+    const profiles = structuredClone(stateService.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry)));
+    const configuration = () => createHash('sha256').update(JSON.stringify({
+      profiles: stateService.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry)),
+      env: getConfiguredDeploymentEnv(entry.projectId || 'default', entry.id),
+      infra: stateService.getInfraServicesForProject(entry.projectId || 'default'),
+      routing: stateService.getRoutingRulesForProject(entry.projectId || 'default'),
+    })).digest('hex');
+    const baseline = configuration();
+    return { guard, snapshot, profiles, check: () => {
+      snapshot.assertCurrent();
+      if (configuration() !== baseline) throw new Error('有效配置或就绪条件已变化，停止本次操作');
+    } };
+  }
   router.use(createJanitorObservationRouter(janitorService));
   router.use(createBranchServiceIsolationRouter(stateService, branchOperationCoordinator,
     (entry, excluded) => containerService.assertBranchStoppedForIsolation(entry, excluded)));
@@ -3257,8 +3285,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     runInput: Omit<BeginDeploymentRunInput, 'projectId' | 'branchId' | 'operationId' | 'operationGeneration' | 'initialStatus'>,
     deploymentInput?: DeploymentInputSnapshot,
   ): Promise<{ started: boolean; lease: BranchOperationLease | null; run: DeploymentRun | undefined }> {
+    let guarded: ReturnType<typeof guardedRequest>;
+    try {
+      guarded = guardedRequest(req, entry, 'deploy');
+      if (guarded && (!guarded.guard.expectedImage || !deploymentInput || deploymentInput.profiles.some(profile => {
+        const effective = resolveEffectiveProfile(profile, deploymentInputBranch(deploymentInput!, entry));
+        return !effective.prebuiltImage || effective.managedBuild || effective.localArtifact;
+      }))) throw new Error('受限运行只接受已核验的预构建镜像');
+    } catch (error) {
+      res.status(409).json({ error: 'runtime_guard_rejected', message: (error as Error).message });
+      return { started: false, lease: null, run: undefined };
+    }
     // 备用同步的实时条件不进入会丢失条件的重放；沿用一次性选项先核产物的路径。
-    if (req.body?.standbyExpected !== undefined) input = { ...input, hasOneShotOptions: true };
+    if (req.body?.standbyExpected !== undefined || guarded) input = { ...input, hasOneShotOptions: true };
     const artifactProfiles = deploymentInput?.profiles.filter(profile => !input.profileId || profile.id === input.profileId)
       .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(deploymentInput!, entry))) || [];
     const requiresArtifacts = artifactProfiles.some(profile => profile.prebuiltImage && !profile.localArtifact && !profile.managedBuild);
@@ -3282,6 +3321,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } finally { preparation?.release(); }
       }
     }
+    if (guarded) {
+      try {
+        // 首次部署尚无容器可比较；在创建操作、预约容量前绑定本次实际产物，而非仅核同一提交标签。
+        guarded.check();
+        const admission = deploymentInput?.artifactAdmission;
+        if (admission?.state !== 'ready' || admission.targetCommitSha !== guarded.guard.expectedCommitSha || !artifactProfiles.length)
+          throw new Error('受限运行产物身份未知，尚未开始部署');
+        const expected = `${imageRepositoryOf(guarded.guard.expectedImage!)}:sha-${guarded.guard.expectedCommitSha}@${guarded.guard.expectedImage!.split('@')[1]}`;
+        for (const profile of artifactProfiles) {
+          if (admittedArtifactProfile(profile, admission).dockerImage !== expected)
+            throw new Error('实际产物的仓库、提交或摘要与本次保护条件不符，尚未开始部署');
+        }
+      } catch (error) {
+        const preparation = deploymentInput && latestTargetPreparations.get(deploymentInput);
+        preparation?.release();
+        if (deploymentInput) latestTargetPreparations.delete(deploymentInput);
+        res.status(409).json({ error: 'runtime_guard_rejected', message: (error as Error).message });
+        return { started: false, lease: null, run: undefined };
+      }
+    }
     const waitForArtifacts = deploymentInput?.artifactAdmission?.state === 'waiting';
     if (waitForArtifacts && (!branchOperationCoordinator || !deploymentRunService)) {
       res.status(503).json({ error: 'artifact_wait_unavailable', message: '产物尚未确认齐备，可靠排队能力不可用，请稍后重试；尚未开始部署' });
@@ -3297,7 +3356,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
       decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), {
-        waitForArtifacts, requireImmediate: req.body?.standbyExpected !== undefined,
+        waitForArtifacts, requireImmediate: req.body?.standbyExpected !== undefined || Boolean(guarded) || schedulerService?.hasNoEvictionProtection(),
       });
     } catch (error) {
       if (!res.destroyed && !res.headersSent) res.status(error instanceof BranchOperationSupersededError ? 409 : 503).json({
@@ -3318,6 +3377,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const operationAdmissionGeneration = decision?.lease?.admissionGeneration ?? decision?.generation;
     let run: DeploymentRun | undefined;
     try {
+      if (decision?.status === 'started' && decision.lease && (guarded || schedulerService?.hasNoEvictionProtection())) {
+        guarded?.check();
+        const release = schedulerService!.reserveNoEviction(entry.id,
+          guarded?.guard.expectedMaxHotBranches ?? schedulerService!.getSnapshot().config.maxHotBranches, Boolean(guarded));
+        guardedLeases.set(decision.lease, { release, check: guarded?.check || (() => {}) });
+      }
       if (decision) run = deploymentRunService?.getForOperation(decision.operationId, decision.generation);
       if (decision?.status === 'joined') {
         if (!run && decision.joinedPending) {
@@ -3405,7 +3470,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     decisionOverride?: BranchOperationDecision,
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
-    const decision = decisionOverride || branchOperationCoordinator.begin(buildBranchOperationRequest(req, entry, input));
+    const decision = decisionOverride || branchOperationCoordinator.begin(buildBranchOperationRequest(req, entry, input),
+      { requireImmediate: req.body?.capacityGuard !== undefined });
     if (decision.status === 'started') return decision.lease || null;
 
     // merged / joined 都是「已受理、不新开操作」：merged 排到当前操作之后重放，
@@ -3633,13 +3699,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     error?: string,
   ): void {
     if (!lease || !branchOperationCoordinator) return;
-    for (const pending of branchOperationCoordinator.completeAll(lease, status, error)) {
-      dispatchPendingWebhookDeploy(pending);
-    }
+    const guarded = guardedLeases.get(lease); guardedLeases.delete(lease);
+    try {
+      for (const pending of branchOperationCoordinator.completeAll(lease, status, error)) {
+        dispatchPendingWebhookDeploy(pending);
+      }
+    } finally { guarded?.release(); }
   }
 
   function assertBranchOperationCurrent(lease: BranchOperationLease | null | undefined, step: string): void {
     lease?.assertCurrent(step);
+    if (lease) guardedLeases.get(lease)?.check();
   }
 
   async function persistBranchCancellation(entry: Pick<BranchEntry, 'id' | 'projectId'>, lease: BranchOperationLease | null | undefined): Promise<void> {
@@ -16240,6 +16310,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (m) { res.status(m.status).json(m.body); return; }
     }
     if (!guardStandbyRuntimeSnapshot(req, res, entry, 'stop')) return;
+    let guarded: ReturnType<typeof guardedRequest>;
+    try { guarded = guardedRequest(req, entry, 'stop'); }
+    catch (error) { res.status(409).json({ error: 'runtime_guard_rejected', message: (error as Error).message }); return; }
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'stop',
       source: 'api.stop-branch',
@@ -16250,6 +16323,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const stopAttribution = stopAttributionFromRequest(req);
 
     try {
+      if (guarded && branchOperationLease) {
+        guardedLeases.set(branchOperationLease, { release: () => {}, check: guarded.check });
+        await guarded.snapshot.inspectAll(containerService,
+          () => assertBranchOperationCurrent(branchOperationLease, 'guarded stop physical identity'));
+      }
       await persistBranchCancellation(entry, branchOperationLease);
     } catch (err) {
       const superseded = err instanceof BranchOperationSupersededError;
@@ -16352,7 +16430,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         assertBranchOperationCurrent(branchOperationLease, `before-stop-${svc.profileId}`);
         try {
-          await containerService.stopRuntimeGroup(svc, stopAttribution.reason, {
+          const stopContext = {
             kind: stopIntentKindFrom(stopAttribution.source),
             projectId: entry.projectId,
             branchId: entry.id,
@@ -16363,7 +16441,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             trigger: triggerFromRequest(req),
             operation: 'branch-stop',
             source: 'api.stop-branch',
-          });
+            assertCurrent: (step: string) => assertBranchOperationCurrent(branchOperationLease, step),
+          };
+          if (guarded) await containerService.stop(svc.containerId!, stopAttribution.reason, stopContext);
+          else await containerService.stopRuntimeGroup(svc, stopAttribution.reason, stopContext);
         } catch (err) {
           assertBranchOperationCurrent(branchOperationLease, `after-failed-stop-${svc.profileId}`);
           svc.status = err instanceof ContainerStopUnconfirmedError && err.running === true ? 'running' : 'error';
@@ -16453,6 +16534,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(503).json({ error: '部分服务停止结果未确认，请查看服务状态并重试', failedServices });
         return;
       }
+      if (guarded) {
+        await guarded.snapshot.inspectAll(containerService,
+          () => assertBranchOperationCurrent(branchOperationLease, 'guarded stop retained containers'));
+        entry.heatState = 'cold';
+        delete entry.capacityYieldFirst;
+      }
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
       entry.lastStoppedAt = new Date().toISOString();
@@ -16471,7 +16558,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       await stateService.flush();
       assertBranchOperationCurrent(branchOperationLease, 'local-stop-confirmation');
-      res.json({ message: '所有服务已停止' });
+      res.json({ message: '所有服务已停止', ...(guarded ? { operationId: branchOperationLease?.operationId,
+        commitSha: guarded.guard.expectedCommitSha, containers: guarded.guard.expectedContainers } : {}) });
     } catch (err) {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       res.status(err instanceof BranchOperationSupersededError ? 409 : 500).json({ error: err instanceof BranchOperationSupersededError
@@ -16550,6 +16638,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(409).json({ error: '还没有已构建的容器可重启，请先「重新部署」' });
       return;
     }
+    let guarded: ReturnType<typeof guardedRequest>;
+    try { guarded = guardedRequest(req, entry, 'restart'); }
+    catch (error) { res.status(409).json({ error: 'runtime_guard_rejected', message: (error as Error).message }); return; }
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'restart',
       source: 'api.restart-branch',
@@ -16561,6 +16652,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const actor = resolveActorFromRequest(req);
     const trigger = triggerFromRequest(req);
     try {
+      if (guarded || schedulerService?.hasNoEvictionProtection()) {
+        if (!branchOperationLease) throw new Error('准确运行租约缺失，尚未启动');
+        const release = schedulerService!.reserveNoEviction(entry.id,
+          guarded?.guard.expectedMaxHotBranches ?? schedulerService!.getSnapshot().config.maxHotBranches, Boolean(guarded));
+        guardedLeases.set(branchOperationLease, { release, check: guarded?.check || (() => {}) });
+        if (guarded) await guarded.snapshot.inspectAll(containerService,
+          () => assertBranchOperationCurrent(branchOperationLease, 'guarded restart physical identity'));
+      }
       assertBranchOperationCurrent(branchOperationLease, 'restart before state write');
       const restartStartedAt = new Date().toISOString();
       entry.status = 'restarting';
@@ -16571,7 +16670,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const failed: string[] = [];
       for (const svc of services) {
         assertBranchOperationCurrent(branchOperationLease, `restart before ${svc.profileId}`);
-        const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
+        const ok = await containerService.restartServiceInPlace(guarded ? svc.containerId! : svc.containerName, undefined, {
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: svc.profileId,
@@ -16671,6 +16770,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       if (failed.length === 0) {
+        if (guarded) {
+          await guarded.snapshot.inspectAll(containerService,
+            () => assertBranchOperationCurrent(branchOperationLease, 'guarded restart readback'));
+          const profiles = guarded.profiles;
+          for (const svc of services) {
+            const profile = profiles.find(p => p.id === svc.profileId);
+            if (!profile) throw new Error('当前准确服务配置缺失，恢复未完成');
+            const started = performance.now();
+            const signalReady = !profile.startupSignal
+              || await containerService.waitForStartupSignal(svc.containerId!, profile.startupSignal, undefined, 120);
+            assertBranchOperationCurrent(branchOperationLease, 'guarded restart startup signal');
+            const remaining = 120 - (performance.now() - started) / 1000;
+            const ready = signalReady && remaining >= 2
+              && await containerService.waitForReadiness(svc.hostPort,
+                { ...profile.readinessProbe, timeoutSeconds: remaining, intervalSeconds: 2 }, undefined, undefined, svc.containerId!);
+            assertBranchOperationCurrent(branchOperationLease, 'guarded restart readiness');
+            if (!ready) throw new Error('同批容器未通过就绪核对，保留原操作记录');
+          }
+        }
         assertBranchOperationCurrent(branchOperationLease, 'restart before success save');
         // 记录热重启耗时进 restart 样本桶（预览等待页真实进度的历史数据源）。
         stateService.recordDeployDuration(entry.projectId || 'default', 'restart', Date.now() - Date.parse(restartStartedAt), 10 * 60 * 1000);
@@ -16701,7 +16819,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           note: '手动重新启动（docker restart，未重建代码）',
         });
         stateService.save();
-        res.json({ message: '所有服务已重新启动' });
+        res.json({ message: '所有服务已重新启动', ...(guarded ? { operationId: branchOperationLease?.operationId,
+          commitSha: guarded.guard.expectedCommitSha, containers: guarded.guard.expectedContainers } : {}) });
       } else {
         branchOperationFinalStatus = 'failed';
         entry.status = 'error';
@@ -16715,7 +16834,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         stateService.save();
         res.status(409).json({
-          error: `${failed.length} 个容器重启失败，建议改用「重新部署」`,
+          error: guarded ? '同批容器恢复未完成，请先按原操作号核对，不能自动重建'
+            : `${failed.length} 个容器重启失败，建议改用「重新部署」`,
           failed,
         });
       }

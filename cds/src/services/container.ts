@@ -861,6 +861,29 @@ export class ContainerService {
     if (!main) throw new Error('旧服务网络关系无法确认，保持旧入口');
     return { ...runtimeRef(runtime), containerId: value.id, networkName: main, aliasNetworks: own.map(([name]) => name), connectedNetworks: networks.map(([name]) => name).filter(name => name !== main) };
   }
+  /** Strict temporary preview control: inspect a frozen CID, immutable image/revision and no mounted data. */
+  async inspectGuardedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
+    expectedImage: string, expectedCommit: string, expectedRunning: boolean): Promise<import('../types.js').ServiceRuntimeRef | null> {
+    if (!/^[a-f0-9]{64}$/.test(runtime.containerId || '') || runtime.staticWeb) throw new Error('受限操作缺少准确容器身份');
+    const actual = await this.inspectOwnedRuntime(entry, profileId, runtime, false);
+    if (!actual) return null;
+    const format = '{"id":{{json .Id}},"image":{{json .Config.Image}},"running":{{json .State.Running}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"mounts":{{json .Mounts}}}';
+    const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId!)}`,
+      { timeout: 5000, executionLane: 'observation' });
+    if (result.exitCode !== 0) throw new Error('准确容器物理状态暂不可确认');
+    const value = JSON.parse(result.stdout);
+    const immutable = (image: unknown) => {
+      if (typeof image !== 'string' || !/^[a-z0-9./:_-]+@sha256:[a-f0-9]{64}$/.test(image)) return null;
+      const [repository, digest] = image.split('@');
+      const tag = repository.lastIndexOf(':');
+      return (tag > repository.lastIndexOf('/') ? repository.slice(0, tag) : repository) + '@' + digest;
+    };
+    if (value.id !== runtime.containerId || !immutable(expectedImage) || immutable(value.image) !== immutable(expectedImage)
+      || value.revision !== expectedCommit || value.running !== expectedRunning || !Array.isArray(value.mounts) || value.mounts.length)
+      throw new Error('容器物理提交、镜像、状态或挂载不符，未允许操作');
+    return actual;
+  }
+
   async removeOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
     context: ContainerRemoveContext = {}): Promise<void> {
     if (runtime.staticWeb) {

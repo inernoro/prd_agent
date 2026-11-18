@@ -3297,8 +3297,13 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const previousWake = { status: branch.status, lastDeployStartedAt: branch.lastDeployStartedAt,
       services: services.map(svc => ({ svc, status: svc.status })) };
+    let releaseGuardedCapacity: (() => void) | undefined;
 
     try {
+      if (schedulerService.hasNoEvictionProtection()) {
+        releaseGuardedCapacity = schedulerService.reserveNoEviction(slug,
+          schedulerService.getSnapshot().config.maxHotBranches, false);
+      }
       // Synchronous prefix (runs before the first await): flip to a loading
       // state and persist, so the waiting page the proxy renders right after
       // firing this callback shows live progress instead of the cooled
@@ -3331,6 +3336,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       try {
         await schedulerService.evictLruIfOverCapacity(slug);
       } catch (evictErr) {
+        if (schedulerService.hasNoEvictionProtection()) throw evictErr;
         if (schedulerService.getSnapshot().previewActivity?.status === 'unknown') {
           lease?.assertCurrent('auto-wake capacity deferred');
           branchOperationFinalStatus = 'cancelled';
@@ -3564,7 +3570,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // log a misleading "auto-wake failed".
     } finally {
       try { completeBackgroundBranchOperation(lease, branchOperationFinalStatus); }
-      finally { releaseAdmission(); }
+      finally { try { releaseGuardedCapacity?.(); } finally { releaseAdmission(); } }
     }
   });
 }

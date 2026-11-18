@@ -84,6 +84,8 @@ export class SchedulerService {
   private runtimePresence?: () => ReadonlySet<string> | null;
   private operationProtection?: (slug: string) => boolean;
   private readonly cooling = new Set<string>();
+  private readonly noEvictionReservations = new Set<string>();
+  private readonly temporaryNoEvictionReservations = new Set<string>();
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
   private activitySource?: { read: () => Promise<unknown>; isProbe: (fingerprint: string) => boolean; masterStartedAt: number };
@@ -159,13 +161,67 @@ export class SchedulerService {
 
   setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null): void { this.runtimePresence = provider; }
   setOperationProtection(provider: (slug: string) => boolean): void { this.operationProtection = provider; }
+  hasNoEvictionProtection(): boolean {
+    return this.noEvictionReservations.size > 0 ||
+      this.stateService.getAllBranches().some(branch => branch.capacityYieldFirst === true);
+  }
+
+  private temporaryYieldTargets(): string[] {
+    return this.stateService.getAllBranches().filter(branch => branch.capacityYieldFirst === true).map(branch => branch.id);
+  }
+
+  private residentIn(names: ReadonlySet<string>, branch: BranchEntry): boolean {
+    return Object.values(branch.services || {}).some(service =>
+      serviceRuntimeRefs(service).some(runtime => names.has(runtime.containerName)))
+      || Object.values(branch.replicaSets || {}).some(set => set.members.some(member =>
+        member.containerName && names.has(member.containerName)));
+  }
+
+  private occupiedBranches(names: ReadonlySet<string>): Set<string> {
+    const occupied = new Set(this.noEvictionReservations);
+    for (const branch of this.stateService.getAllBranches()) {
+      if (branch.heatState === 'hot' || branch.heatState === 'warming' ||
+          ['building', 'starting', 'running', 'restarting', 'stopping'].includes(branch.status) ||
+          this.cooling.has(branch.id) || this.operationProtection?.(branch.id) ||
+          this.residentIn(names, branch)) occupied.add(branch.id);
+    }
+    return occupied;
+  }
+
+  /** Reserve a temporary branch before any await. No peer is cooled to admit it. */
+  reserveNoEviction(branchId: string, expectedMax: number, temporary = true): () => void {
+    if (!branchId || !this.stateService.getBranch(branchId) || !this.isEnabled() ||
+        !Number.isSafeInteger(expectedMax) || expectedMax <= 0 ||
+        this.config.maxHotBranches !== expectedMax || this.noEvictionReservations.has(branchId)) {
+      throw new Error('临时分支容量保护条件不符，未占用容量');
+    }
+    const names = this.runtimePresence?.();
+    if (!names) throw new Error('运行容器占用暂不可确认，未占用容量');
+    const branch = this.stateService.getBranch(branchId)!;
+    const occupied = this.occupiedBranches(names);
+    const required = occupied.size + (occupied.has(branchId) ? 0 : 1);
+    if (required > expectedMax) {
+      throw new Error('临时分支容量不足或已有在途操作，未冷却其他分支');
+    }
+    if (temporary && branch.capacityYieldFirst !== true) {
+      branch.capacityYieldFirst = true;
+      try { this.stateService.save([{ kind: 'branches', id: branchId }]); }
+      catch (error) { delete branch.capacityYieldFirst; throw error; }
+    }
+    this.noEvictionReservations.add(branchId);
+    if (temporary) this.temporaryNoEvictionReservations.add(branchId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.noEvictionReservations.delete(branchId);
+      this.temporaryNoEvictionReservations.delete(branchId);
+    };
+  }
 
   private hasResidentRuntime(branch: BranchEntry): boolean {
     const names = this.runtimePresence?.();
-    return Boolean(names && (Object.values(branch.services || {}).some(service =>
-      serviceRuntimeRefs(service).some(runtime => names.has(runtime.containerName)))
-      || Object.values(branch.replicaSets || {}).some(set => set.members.some(member =>
-        member.containerName && names.has(member.containerName)))));
+    return Boolean(names && this.residentIn(names, branch));
   }
 
   setWakeFn(fn: WakeFn): void {
@@ -311,7 +367,17 @@ export class SchedulerService {
     const branch = this.stateService.getBranch(slug);
     if (!branch) return;
     if (this.isPinned(branch)) return;
-    if ((branch.heatState === 'cold' && !this.hasResidentRuntime(branch)) || this.cooling.has(slug)) return;
+    if (this.cooling.has(slug)) return;
+    if (branch.heatState === 'cold' && !this.hasResidentRuntime(branch)) {
+      const names = this.runtimePresence?.();
+      if (branch.capacityYieldFirst === true && names && !this.residentIn(names, branch) &&
+          !['building', 'starting', 'running', 'restarting', 'stopping'].includes(branch.status)) {
+        delete branch.capacityYieldFirst;
+        this.temporaryNoEvictionReservations.delete(slug);
+        this.stateService.save([{ kind: 'branches', id: slug }]);
+      }
+      return;
+    }
 
     this.cooling.add(slug);
     branch.heatState = 'cooling';
@@ -322,6 +388,12 @@ export class SchedulerService {
         await this.coolFn(slug);
       }
       branch.heatState = 'cold';
+      const names = this.runtimePresence?.();
+      if (branch.capacityYieldFirst === true && names && !this.residentIn(names, branch) &&
+          !['building', 'starting', 'running', 'restarting', 'stopping'].includes(branch.status)) {
+        delete branch.capacityYieldFirst;
+        this.temporaryNoEvictionReservations.delete(slug);
+      }
       this.stateService.save();
       console.log(`[scheduler] cooled branch "${slug}"`);
     } catch (err) {
@@ -357,6 +429,13 @@ export class SchedulerService {
 
     // Evict LRU if the new branch would push us over capacity.
     await this.evictLruIfOverCapacity(slug);
+    if (this.hasNoEvictionProtection()) {
+      const names = this.runtimePresence?.();
+      if (!names) throw new Error('运行容器占用暂不可确认，不能唤醒其他分支');
+      const occupied = this.occupiedBranches(names);
+      if (!occupied.has(slug)) occupied.add(slug);
+      if (occupied.size > this.config.maxHotBranches) throw new Error('临时分支占用期间容量不足，不能唤醒其他分支');
+    }
 
     if (branch) {
       branch.heatState = 'warming';
@@ -446,10 +525,22 @@ export class SchedulerService {
     const max = this.config.maxHotBranches;
     if (!max || max <= 0) return 0;
 
+    const refuseProtectedOverrun = (): boolean => {
+      if (!this.hasNoEvictionProtection()) return false;
+      const names = this.runtimePresence?.();
+      if (!names) throw new Error('运行容器占用暂不可确认，不能冷却其他分支');
+      const occupied = this.occupiedBranches(names);
+      if (excludeSlug && !occupied.has(excludeSlug)) occupied.add(excludeSlug);
+      if (occupied.size > this.config.maxHotBranches) throw new Error('临时分支占用期间容量不足，不能冷却其他分支');
+      return true;
+    };
+    if (refuseProtectedOverrun()) return 0;
+
     const hotCount = this.getHotBranches().filter(b => b.id !== excludeSlug).length;
     // +1 for the branch we're about to wake (if it's not already hot).
     if (hotCount + 1 <= max) return 0;
     if (!await this.refreshPreviewActivity()) throw new Error('预览访问状态暂不可确认，请稍后重试');
+    if (refuseProtectedOverrun()) return 0;
 
     const victim = this.selectLruVictim(excludeSlug);
     if (!victim) {
@@ -469,6 +560,29 @@ export class SchedulerService {
   async tick(): Promise<void> {
     if (!this.isEnabled()) return;
     if (!await this.refreshPreviewActivity()) return;
+
+    if (this.hasNoEvictionProtection()) {
+      const names = this.runtimePresence?.();
+      if (!names) return; // Never cool a peer when runtime occupancy is unknown.
+      if (this.config.maxHotBranches > 0 && this.occupiedBranches(names).size > this.config.maxHotBranches) {
+        // A concurrent ordinary wake or capacity reduction must yield this
+        // temporary slot first. In-flight work cannot be stopped safely here.
+        const target = this.temporaryYieldTargets()[0];
+        if (!target) return;
+        const branch = this.stateService.getBranch(target);
+        if (!branch || branch.heatState === 'warming' ||
+            ['building', 'starting', 'restarting', 'stopping'].includes(branch.status) ||
+            this.operationProtection?.(target) || this.isPinned(branch)) return;
+        try {
+          await this.markCold(target);
+          // markCold clears capacityYieldFirst only after confirmed physical stop.
+          // Recompute once; never fall through to peer cooling in this tick.
+          const afterNames = this.runtimePresence?.();
+          if (afterNames) this.occupiedBranches(afterNames);
+        } catch { /* Keep the reservation and never cool a peer. */ }
+      }
+      return;
+    }
 
     const now = this.clock.now();
     const idleTTLMs = (this.config.idleTTLSeconds || 900) * 1000;

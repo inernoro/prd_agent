@@ -1036,6 +1036,8 @@ export interface BranchEntry {
    * See `doc/design.cds.resilience.md` §三.
    */
   heatState?: BranchHeatState;
+  /** Isolated temporary preview yields its capacity before any peer; cleared only after confirmed physical stop. */
+  capacityYieldFirst?: boolean;
   /**
    * User explicitly pinned this branch — scheduler must never evict it.
    * The default branch and color-marked branches are also treated as pinned implicitly.

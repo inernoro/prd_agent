@@ -85,8 +85,8 @@ describe('部署心跳过期后的精确租约回收', () => {
     visit(source); expect(contexts).toHaveLength(3);
     expect(methods).toEqual(['removeRuntimeGroup', 'remove', 'removeRuntimeGroup']);
     const functionSource = ts.transpileModule(functions.join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-    const functionsAtRuntime = new Function('deploymentRunService', 'stateService', 'DEPLOYMENT_RUN_TERMINAL_STATUSES',
-      `${functionSource}\nreturn { appendDeploymentRunEvent, assertBranchOperationCurrent, createCleanupProgressReporter: ${reporterFound ? 'createCleanupProgressReporter' : 'undefined'} };`)(runs, state, DEPLOYMENT_RUN_TERMINAL_STATUSES);
+    const functionsAtRuntime = new Function('deploymentRunService', 'stateService', 'DEPLOYMENT_RUN_TERMINAL_STATUSES', 'guardedLeases',
+      `${functionSource}\nreturn { appendDeploymentRunEvent, assertBranchOperationCurrent, createCleanupProgressReporter: ${reporterFound ? 'createCleanupProgressReporter' : 'undefined'} };`)(runs, state, DEPLOYMENT_RUN_TERMINAL_STATUSES, new Map());
     const logEvent = (event: OperationLogEvent) => { functionsAtRuntime.appendDeploymentRunEvent(old.run.id, event); events.push(event); };
     const bindings = { ...functionsAtRuntime, entry: state.getBranch('b1'), sid: 'api', cleanupRun: old.run,
       cleanupLease: old.lease, deploymentRun: old.run, branchOperationLease: old.lease,
@@ -116,7 +116,7 @@ describe('部署心跳过期后的精确租约回收', () => {
     };
     visit(source);
     expect(contextSource).toBeDefined(); expect(assertionSource).toBeDefined();
-    const bindings = { entry: state.getBranch('b1'), svc: { profileId: 'api' }, replicaSet: { profileId: 'api' },
+    const bindings = { guardedLeases: new Map(), entry: state.getBranch('b1'), svc: { profileId: 'api' }, replicaSet: { profileId: 'api' },
       member: { id: 'replica' }, requestId: 'restart-regression', branchOperationLease: lease, actor: 'tester', trigger: 'manual' };
     const compiled = ts.transpileModule(`${assertionSource}\nconst context = ${contextSource};`,
       { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;

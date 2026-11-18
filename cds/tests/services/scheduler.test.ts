@@ -551,5 +551,184 @@ describe('SchedulerService', () => {
     expect(stateService.getBranch(b.id)!.heatState).toBe('cold');
   });
 
+  describe('临时预览不驱逐容量保留', () => {
+    it('首个 await 前同步占位，竞争者在满额时只被拒绝且释放幂等', () => {
+      setup({ maxHotBranches: 2 });
+      stateService.addBranch(makeBranch('peer', 'running', { heatState: 'hot' }));
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      stateService.addBranch(makeBranch('other', 'idle', { heatState: 'cold' }));
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      const release = scheduler.reserveNoEviction('temporary', 2);
+      expect(() => scheduler.reserveNoEviction('other', 2)).toThrow('容量不足');
+      expect(cooled).toEqual([]);
+      release(); release();
+      expect(scheduler.reserveNoEviction('other', 2)).toBeTypeOf('function');
+    });
+
+    it('普通并发请求可用同一账预约，但不成为可退让的临时目标', async () => {
+      setup({ maxHotBranches: 3 });
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      stateService.addBranch(makeBranch('ordinary', 'idle', { heatState: 'cold' }));
+      stateService.addBranch(makeBranch('peer', 'running', { heatState: 'hot' }));
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      expect(scheduler.hasNoEvictionProtection()).toBe(false);
+      const releaseTemporary = scheduler.reserveNoEviction('temporary', 3);
+      expect(scheduler.hasNoEvictionProtection()).toBe(true);
+      const releaseOrdinary = scheduler.reserveNoEviction('ordinary', 3, false);
+      scheduler.setMaxHotBranches(1);
+      await scheduler.tick();
+      expect(cooled).toEqual([]); // Both reservations are in flight; never choose ordinary or peer.
+      releaseTemporary();
+      expect(scheduler.hasNoEvictionProtection()).toBe(true);
+      releaseOrdinary();
+      expect(scheduler.hasNoEvictionProtection()).toBe(false); // The earlier tick confirmed target already cold and physically absent.
+    });
+
+    it('普通 wake 的 await 之后重新核占位，不能越过后来的临时预约', async () => {
+      setup({ maxHotBranches: 2 });
+      stateService.addBranch(makeBranch('peer', 'running', { heatState: 'hot' }));
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      stateService.addBranch(makeBranch('ordinary', 'idle', { heatState: 'cold' }));
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      const wake = scheduler.wake('ordinary');
+      const release = scheduler.reserveNoEviction('temporary', 2);
+      await expect(wake).rejects.toThrow('不能唤醒其他分支');
+      expect(woken).toEqual([]); expect(cooled).toEqual([]);
+      release();
+    });
+
+    it('容量上限、开关、未知物理占用和在途分支均失败关闭', () => {
+      setup({ maxHotBranches: 2 });
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      expect(() => scheduler.reserveNoEviction('temporary', 2)).toThrow('暂不可确认');
+      scheduler.setRuntimePresenceProvider(() => null);
+      expect(() => scheduler.reserveNoEviction('temporary', 2)).toThrow('暂不可确认');
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      expect(() => scheduler.reserveNoEviction('temporary', 3)).toThrow('条件不符');
+      stateService.getBranch('temporary')!.heatState = 'warming';
+      const release = scheduler.reserveNoEviction('temporary', 2);
+      expect(() => scheduler.reserveNoEviction('temporary', 2)).toThrow('条件不符');
+      release();
+      stateService.getBranch('temporary')!.heatState = 'cold';
+      scheduler.setEnabled(false);
+      expect(() => scheduler.reserveNoEviction('temporary', 2)).toThrow('条件不符');
+    });
+
+    it('将 warming、受保护操作和物理驻留共同计入容量', () => {
+      setup({ maxHotBranches: 3 });
+      stateService.addBranch(makeBranch('warming', 'starting', { heatState: 'warming' }));
+      stateService.addBranch(makeBranch('busy', 'idle', { heatState: 'cold' }));
+      stateService.addBranch(makeBranch('resident', 'error', { heatState: 'cold', services: { api: { profileId: 'api', containerName: 'resident-container', status: 'error' } } }));
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      scheduler.setOperationProtection(id => id === 'busy');
+      scheduler.setRuntimePresenceProvider(() => new Set(['resident-container']));
+      expect(() => scheduler.reserveNoEviction('temporary', 3)).toThrow('容量不足');
+    });
+
+    it('目标自身已登记操作时只占一个名额，release 不擦除稳定运行事实', () => {
+      setup({ maxHotBranches: 1 });
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      scheduler.setOperationProtection(id => id === 'temporary');
+      const release = scheduler.reserveNoEviction('temporary', 1);
+      stateService.getBranch('temporary')!.status = 'running';
+      stateService.getBranch('temporary')!.heatState = 'hot';
+      release();
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+    });
+
+    it('五服务分步部署复用已驻留分支自己的名额，不放大容量也不允许双预约', () => {
+      setup({ maxHotBranches: 1 });
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      const first = scheduler.reserveNoEviction('temporary', 1);
+      stateService.getBranch('temporary')!.status = 'running';
+      stateService.getBranch('temporary')!.heatState = 'hot';
+      expect(() => scheduler.reserveNoEviction('temporary', 1)).toThrow('条件不符');
+      first();
+      const secondProfile = scheduler.reserveNoEviction('temporary', 1);
+      expect(scheduler.hasNoEvictionProtection()).toBe(true);
+      secondProfile();
+      expect(stateService.getBranch('temporary')!.capacityYieldFirst).toBe(true);
+    });
+
+    it('release 后稳定临时环境仍先退让；在途时不冷却任何 peer', async () => {
+      setup({ maxHotBranches: 2 });
+      stateService.addBranch(makeBranch('peer', 'running', { heatState: 'hot' }));
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      const release = scheduler.reserveNoEviction('temporary', 2);
+      const target = stateService.getBranch('temporary')!;
+      target.status = 'running'; target.heatState = 'hot';
+      release();
+      expect(target.capacityYieldFirst).toBe(true);
+      let active = true;
+      scheduler.setOperationProtection(id => id === 'temporary' && active);
+      scheduler.setMaxHotBranches(1);
+      await scheduler.tick(); expect(cooled).toEqual([]);
+      active = false;
+      scheduler.setCoolFn(async id => { cooled.push(id); stateService.getBranch(id)!.status = 'idle'; });
+      await scheduler.tick();
+      expect(cooled).toEqual(['temporary']);
+      expect(target.capacityYieldFirst).toBeUndefined();
+      expect(stateService.getBranch('peer')!.heatState).toBe('hot');
+    });
+
+    it('停止回调完成但物理容器尚驻留时保留责任，后续读到停止才清', async () => {
+      setup({ maxHotBranches: 1 });
+      const live = new Set(['temporary-container']);
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold',
+        services: { api: { profileId: 'api', containerName: 'temporary-container', status: 'stopped' } } }));
+      scheduler.setRuntimePresenceProvider(() => live);
+      const release = scheduler.reserveNoEviction('temporary', 1);
+      release();
+      scheduler.setCoolFn(async id => { stateService.getBranch(id)!.status = 'idle'; });
+      await scheduler.markCold('temporary');
+      expect(stateService.getBranch('temporary')!.capacityYieldFirst).toBe(true);
+      live.clear();
+      await scheduler.markCold('temporary');
+      expect(stateService.getBranch('temporary')!.capacityYieldFirst).toBeUndefined();
+    });
+
+    it('受保护期间普通 wake 不冷却 peer；释放后保留原 LRU 行为', async () => {
+      setup({ maxHotBranches: 2 });
+      stateService.addBranch(makeBranch('peer', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 100_000).toISOString() }));
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      stateService.addBranch(makeBranch('ordinary', 'idle', { heatState: 'cold' }));
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      const release = scheduler.reserveNoEviction('temporary', 2);
+      await expect(scheduler.wake('ordinary')).rejects.toThrow('不能冷却其他分支');
+      expect(cooled).toEqual([]); expect(woken).toEqual([]);
+      release();
+      const temporary = stateService.getBranch('temporary')!;
+      temporary.heatState = 'hot'; temporary.status = 'running';
+      scheduler.setCoolFn(async id => { cooled.push(id); stateService.getBranch(id)!.status = 'idle'; });
+      await scheduler.markCold('temporary');
+      expect(temporary.capacityYieldFirst).toBeUndefined();
+      cooled.length = 0;
+      scheduler.setMaxHotBranches(1);
+      await scheduler.wake('ordinary');
+      expect(cooled).toEqual(['peer']); expect(woken).toEqual(['ordinary']);
+    });
+
+    it('超限先退让临时目标；目标在途时拒绝冷却 peer，退让后重算', async () => {
+      setup({ maxHotBranches: 2 });
+      stateService.addBranch(makeBranch('peer', 'running', { heatState: 'hot' }));
+      stateService.addBranch(makeBranch('temporary', 'idle', { heatState: 'cold' }));
+      scheduler.setRuntimePresenceProvider(() => new Set());
+      const release = scheduler.reserveNoEviction('temporary', 2);
+      const target = stateService.getBranch('temporary')!;
+      target.heatState = 'warming'; target.status = 'starting';
+      scheduler.setMaxHotBranches(1);
+      await scheduler.tick(); expect(cooled).toEqual([]);
+      target.heatState = 'hot'; target.status = 'running';
+      scheduler.setCoolFn(async slug => { cooled.push(slug); stateService.getBranch(slug)!.status = 'idle'; });
+      await scheduler.tick(); expect(cooled).toEqual(['temporary']);
+      await scheduler.tick(); expect(cooled).toEqual(['temporary']);
+      expect(stateService.getBranch('peer')!.heatState).toBe('hot');
+      release();
+    });
+  });
+
 
 });
