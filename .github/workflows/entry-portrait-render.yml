@@ -7,6 +7,11 @@ on:
       - 'e2e/render-entry-portrait-cv.py'
       - '.design/map-cinematic-entry/ai-v2/**'
   workflow_dispatch:
+    inputs:
+      theme:
+        type: choice
+        options: [night, daylight]
+        default: night
 permissions:
   contents: read
 jobs:
@@ -22,10 +27,12 @@ jobs:
           python3 -m venv /tmp/entry-artwork-tools
           /tmp/entry-artwork-tools/bin/pip install numpy==2.2.6 opencv-contrib-python-headless==4.12.0.88
       - name: Register generated artwork and render actual strokes and eyelid poses
-        run: /tmp/entry-artwork-tools/bin/python e2e/render-entry-portrait-cv.py
+        env:
+          ENTRY_ARTWORK_THEME: ${{ inputs.theme || 'night' }}
+        run: /tmp/entry-artwork-tools/bin/python e2e/render-entry-portrait-cv.py --theme "$ENTRY_ARTWORK_THEME"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: entry-portrait-${{ github.sha }}
+          name: entry-portrait-${{ inputs.theme || 'night' }}-${{ github.sha }}
           path: work/entry-portrait/
           retention-days: 14
