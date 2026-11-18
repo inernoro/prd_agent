@@ -384,19 +384,24 @@ public sealed class HomeRecentWorkController : ControllerBase
     {
         var since = DateTime.UtcNow.AddDays(-30);
         var scope = DeploymentScope.CurrentDurable;
-        var deliveries = await _db.McpCallLogs
-            .Find(log => log.OwnerUserId == userId && log.DeploymentSlug == scope && log.CreatedAt >= since
+        var deliveries = await _db.McpCallLogs.Aggregate()
+            .Match(log => log.OwnerUserId == userId && log.DeploymentSlug == scope && log.CreatedAt >= since
                 && log.Status == "success" && log.Deduplicated != true && log.ArtifactKind == "site" && log.ArtifactId != null
                 && (log.ToolName == "map_web_publish_page" || (log.ToolName == "map_web_update_page"
                     && log.ArgumentsPreview != null && log.ArgumentsPreview.StartsWith("直连 POST "))))
+            // 一次新增和最近一次更新各有一条，同一站点的连续更新只保留最新一条。
+            .Group(log => new { log.ArtifactId, log.ToolName }, group => new
+            {
+                group.Key.ArtifactId,
+                group.Key.ToolName,
+                CreatedAt = group.Max(log => log.CreatedAt),
+            })
             .SortByDescending(log => log.CreatedAt)
-            .Project(log => new { log.ArtifactId, log.ToolName, log.CreatedAt })
             .Limit(limit * 4)
             .ToListAsync(ct);
         if (deliveries.Count == 0) return [];
 
-        var newestBySite = deliveries.DistinctBy(log => log.ArtifactId).ToList();
-        var ids = newestBySite.Select(log => log.ArtifactId!).ToList();
+        var ids = deliveries.Select(log => log.ArtifactId!).Distinct().ToList();
         var sites = await _db.HostedSites.Find(site => ids.Contains(site.Id))
             .Project(site => new { site.Id, site.Title, site.OwnerUserId, site.SharedTeamIds, site.GroupId })
             .ToListAsync(ct);
@@ -407,7 +412,7 @@ public sealed class HomeRecentWorkController : ControllerBase
                 : teamRoles != null && site.SharedTeamIds.Any(teamRoles.ContainsKey))
             .ToDictionary(site => site.Id);
         var items = new List<RecentWorkItem>();
-        foreach (var log in newestBySite)
+        foreach (var log in deliveries)
         {
             if (!visibleSites.TryGetValue(log.ArtifactId!, out var site)) continue;
             if (site.OwnerUserId != userId && !string.IsNullOrWhiteSpace(site.GroupId)
@@ -416,7 +421,7 @@ public sealed class HomeRecentWorkController : ControllerBase
             var version = new DateTimeOffset(DateTime.SpecifyKind(log.CreatedAt, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
             items.Add(new RecentWorkItem($"/web-pages?focusSite={id}&mcpDelivery={version}", "web-pages",
                 string.IsNullOrWhiteSpace(site.Title) ? "未命名网页" : site.Title, log.CreatedAt,
-                ProgressLabel: log.ToolName == "map_web_publish_page" ? "MCP 已上传" : "MCP 已更新"));
+                ProgressLabel: log.ToolName == "map_web_publish_page" ? "新增" : "更新"));
             if (items.Count >= limit) break;
         }
         return items;

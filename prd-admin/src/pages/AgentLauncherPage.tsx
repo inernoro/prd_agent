@@ -403,7 +403,7 @@ function WorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => v
       type="button"
       onClick={onClick}
       title={item.agentKey === 'web-pages' ? `查看交付：${item.title}` : `继续处理：${item.title}`}
-      aria-label={item.agentKey === 'web-pages' ? `查看 MCP 网页：${item.title}` : `继续处理${meta.label}工作：${item.title}`}
+      aria-label={item.agentKey === 'web-pages' ? `查看 MCP 网页：${item.title}${item.progressLabel ? `（${item.progressLabel}）` : ''}` : `继续处理${meta.label}工作：${item.title}`}
       className="home-desk-work group"
       style={{
         '--work-accent': accent.color,
