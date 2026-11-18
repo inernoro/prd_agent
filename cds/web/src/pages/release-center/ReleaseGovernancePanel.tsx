@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ClipboardList, Clock, GitPullRequest, Plus, RefreshCw, ShieldCheck, Square } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { releaseApprovalInboxPath, releaseApprovalLabels, releaseApprovalPath, releaseApprovalState, releaseWorkbenchCommit } from '@/lib/releaseApproval';
+import { canRevokeReleaseApproval, releaseApprovalInboxPath, releaseApprovalLabels, releaseApprovalPath, releaseApprovalState, releaseWorkbenchCommit } from '@/lib/releaseApproval';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -167,7 +167,7 @@ export function ReleaseGovernancePanel({ projectId, row, targets, onSelectTarget
           {current.decisionReason ? <p className="mt-3 text-sm text-muted-foreground">审批意见：{current.decisionReason}</p> : null}
           {current.decisions?.length ? <ol aria-label="审批历史" className="mt-3 space-y-1 text-xs text-muted-foreground">{current.decisions.map((decision, index) => <li key={index}>{formatDateTime(decision.at)} · {releaseActorLabel(decision.by)} · {states[decision.action]}：{decision.reason}</li>)}</ol> : null}
           <Button asChild variant="outline" className="mt-3"><Link to={releaseApprovalPath(current.id)}>打开这笔审批申请</Link></Button>
-          {['pending', 'approved'].includes(releaseApprovalState(current, now)) ? <details className="mt-3 text-xs text-muted-foreground"><summary className="cursor-pointer">撤销授权</summary><div className="mt-2 flex flex-wrap gap-2"><input aria-label="撤销意见" className={`${inputClass} flex-1`} value={decisionReason} onChange={e => setDecisionReason(e.target.value)} placeholder="说明撤销原因（至少 4 字）" /><Button variant="outline" disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('revoke')}><Square />撤销授权</Button></div></details> : null}
+          {canRevokeReleaseApproval(current) ? <details className="mt-3 text-xs text-muted-foreground"><summary className="cursor-pointer">撤销授权</summary><div className="mt-2 flex flex-wrap gap-2"><input aria-label="撤销意见" className={`${inputClass} flex-1`} value={decisionReason} onChange={e => setDecisionReason(e.target.value)} placeholder="说明撤销原因（至少 4 字）" /><Button variant="outline" disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('revoke')}><Square />撤销授权</Button></div></details> : null}
           {attempts.length ? <div className="mt-5"><h4 className="text-sm font-medium">逐次执行记录</h4><ol className="mt-2 max-h-52 space-y-2 overflow-auto">{attempts.map(attempt => <li key={attempt.id} className="border-l-2 border-[hsl(var(--hairline))] pl-3 text-xs"><span className={attempt.result === 'accepted' ? 'text-ok' : 'text-bad'}>{attempt.result === 'accepted' ? '已受理' : '已拦截'}</span> · {formatDateTime(attempt.at)} · {attempt.candidateSha.slice(0,12)}<p className="mt-1 text-muted-foreground">{attempt.reason}</p></li>)}</ol></div> : null}
         </> : null}
       </div>

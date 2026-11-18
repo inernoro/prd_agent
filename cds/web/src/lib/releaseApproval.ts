@@ -1,4 +1,14 @@
+import { ApiError } from './api';
 import type { ReleaseApprovalDetail } from '../../../src/domain/release-governance';
+
+export type ReleaseApprovalRead<T> = { key: string; result?: T; error?: string };
+
+export function releaseApprovalReadFailure<T>(
+  previous: ReleaseApprovalRead<T> | undefined, key: string, failure: unknown, error: string,
+): ReleaseApprovalRead<T> {
+  const retain = previous?.key === key && (!(failure instanceof ApiError) || failure.status >= 500 || failure.status === 429);
+  return { key, result: retain ? previous.result : undefined, error };
+}
 
 export const releaseApprovalInboxPath = (projectId: string, targetId: string): string =>
   `/release-center/approval?${new URLSearchParams({ project: projectId, target: targetId })}`;
@@ -19,9 +29,9 @@ export function chooseReleaseWorkbenchBranch(branches: Array<{ id: string }>, cu
   return branches[0]?.id || '';
 }
 
-/** Matches the branch revision read by the publication and approval servers. */
-export function releaseWorkbenchCommit(branch?: { pinnedCommit?: string; githubCommitSha?: string }): string {
-  return branch?.pinnedCommit || branch?.githubCommitSha || '';
+/** Prefer the pinned revision while preserving older branch responses. */
+export function releaseWorkbenchCommit(branch?: { pinnedCommit?: string; githubCommitSha?: string; commitSha?: string }): string {
+  return branch?.pinnedCommit || branch?.githubCommitSha || branch?.commitSha || '';
 }
 
 export function releaseApprovalState(record: Pick<ReleaseApprovalDetail['authorization'], 'status' | 'expiresAt' | 'consumedBy'>, now: number): keyof typeof releaseApprovalLabels {
@@ -31,6 +41,10 @@ export function releaseApprovalState(record: Pick<ReleaseApprovalDetail['authori
     if (!Number.isFinite(expires) || expires <= now) return 'expired';
   }
   return record.status;
+}
+
+export function canRevokeReleaseApproval(record: Pick<ReleaseApprovalDetail['authorization'], 'status'>): boolean {
+  return record.status === 'pending' || record.status === 'approved';
 }
 
 export const releaseApprovalLabels = {

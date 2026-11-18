@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowUpRight, Check, ClipboardList, Copy, RotateCw } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
@@ -6,9 +6,10 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ApiError, apiRequest } from '@/lib/api';
-import { releaseApprovalInboxPath, releaseApprovalLabels, releaseApprovalPath, releaseApprovalState, releaseApprovalTitle, releaseApprovalWorkbenchPath } from '@/lib/releaseApproval';
+import { releaseApprovalInboxPath, releaseApprovalLabels, releaseApprovalPath, releaseApprovalReadFailure, releaseApprovalState, releaseApprovalTitle, releaseApprovalWorkbenchPath, type ReleaseApprovalRead } from '@/lib/releaseApproval';
 import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { useNowTick } from '@/hooks/useNowTick';
+import { LoadingBlock } from '../cds-settings/components';
 import { Chip, formatDateTime } from './shared';
 import { releaseGovernanceFailure } from './ReleaseGovernancePanel';
 import type { ReleaseApprovalDetail, ReleaseApprovalInbox } from '../../../../src/domain/release-governance';
@@ -27,13 +28,15 @@ export function ReleaseApprovalPage(): JSX.Element {
   const projectId = params.get('project') || '';
   const targetId = params.get('target') || '';
   const [selectedScope, setSelectedScope] = useState<InboxScope>();
+  const [resolvedId, setResolvedId] = useState<string>();
   const [refresh, setRefresh] = useState(0);
+  const refreshInbox = useCallback(() => setRefresh(n => n + 1), []);
   const scope = projectId && targetId ? { projectId, targetId } : selectedScope;
   return <AppShell active="release-center" topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '审批列表' }]} />} />}>
     <Workspace fluid className="overflow-y-auto">
-      <ApprovalInbox scope={scope} refresh={refresh} onRefresh={() => setRefresh(n => n + 1)} opening={Boolean(authorizationId)} />
+      <ApprovalInbox scope={scope} refresh={refresh} onRefresh={refreshInbox} opening={Boolean(authorizationId && authorizationId !== resolvedId)} />
       {authorizationId ? <ApprovalDetail key={authorizationId} id={authorizationId} scope={scope}
-        onScope={setSelectedScope} onChanged={() => setRefresh(n => n + 1)} /> : null}
+        onScope={setSelectedScope} onResolved={setResolvedId} onChanged={refreshInbox} /> : null}
     </Workspace>
   </AppShell>;
 }
@@ -42,7 +45,7 @@ function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
   scope?: InboxScope; refresh: number; onRefresh: () => void; opening: boolean;
 }): JSX.Element {
   const canManage = useCanManageConsole();
-  const [state, setState] = useState<{ key: string; result?: ReleaseApprovalInbox; error?: string }>();
+  const [state, setState] = useState<ReleaseApprovalRead<ReleaseApprovalInbox>>();
   const [filter, setFilter] = useState<Filter>('all');
   const now = useNowTick(Boolean(state?.result));
   const key = scope ? new URLSearchParams(scope).toString() : '';
@@ -50,13 +53,21 @@ function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
     if (!key) return;
     const controller = new AbortController();
     void apiRequest<ReleaseApprovalInbox>(`/api/releases/approval-inbox?${key}`, { signal: controller.signal })
-      .then(result => { if (!controller.signal.aborted) setState({ key, result }); })
-      .catch(error => { if (!controller.signal.aborted) setState({ key, error: releaseGovernanceFailure(error) }); });
+      .then(result => {
+        if (controller.signal.aborted) return;
+        if (!result?.target || !Array.isArray(result.records)) throw new Error('审批列表响应不完整');
+        setState({ key, result });
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setState(previous => releaseApprovalReadFailure(previous, key, error, releaseGovernanceFailure(error)));
+      });
     return () => controller.abort();
   }, [key, refresh]);
 
   const result = state?.key === key ? state?.result : undefined;
   const error = state?.key === key ? state?.error : undefined;
+  if (!result && !error && (key || opening)) return <LoadingBlock label="读取环境审批列表" />;
+
   const records = result?.records.map(record => ({ ...record, state: releaseApprovalState(record, now) })) || [];
   const waiting = records.filter(record => record.state === 'pending' && record.mayReview);
   const mine = records.filter(record => record.applicant);
@@ -77,9 +88,9 @@ function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
       <h1 id="release-approval-inbox" tabIndex={-1} className="mt-1 text-2xl font-semibold">审批列表</h1>
       <p className="mt-1.5 text-sm text-muted-foreground">{waiting.length ? `有 ${waiting.length} 笔申请需要你审批。打开一笔核对范围，再决定是否批准。` : '打开申请查看当前状态、下一步和审批记录。'}</p>
     </header>
-    {error ? <p role="alert" className="text-sm text-bad">{error}</p> : !result
-      ? key || opening ? <ContentLoading label="读取环境审批列表" variant="panel" /> : <p className="text-sm text-muted-foreground">从发布中心选中一个环境，再打开该环境的审批列表。</p>
-      : <section aria-label="环境审批申请" className="cds-surface-raised cds-hairline min-w-0 rounded-xl">
+    {error ? <p role="alert" className="mb-3 text-sm text-bad">{result ? '刷新失败，仍显示上次读取的记录。' : null}{error}</p> : null}
+    {!result && !error ? <p className="text-sm text-muted-foreground">从发布中心选中一个环境，再打开该环境的审批列表。</p> : null}
+    {result ? <section aria-label="环境审批申请" className="cds-surface-raised cds-hairline min-w-0 rounded-xl">
         <div className="flex flex-wrap gap-1 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
           {filterOptions.map(option => <Button key={option.id} variant={filter === option.id ? 'secondary' : 'ghost'} size="sm" aria-pressed={filter === option.id} onClick={() => setFilter(option.id)}>
             {option.name}<span className="tabular-nums text-muted-foreground">{option.count}</span>
@@ -109,18 +120,17 @@ function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
             </Link>
           </li>)}
         </ul> : <p className="px-5 py-7 text-sm text-muted-foreground">{filter === 'review' ? '没有需要你审批的申请。' : filter === 'mine' ? '你还没有在此环境发起申请。' : '这个环境还没有审批申请。'}</p>}
-      </section>}
+      </section> : null}
   </div>;
 }
 
-function ApprovalDetail({ id, scope, onScope, onChanged }: {
-  id: string; scope?: InboxScope; onScope: (scope: InboxScope) => void; onChanged: () => void;
+function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
+  id: string; scope?: InboxScope; onScope: (scope: InboxScope) => void; onResolved: (id: string) => void; onChanged: () => void;
 }): JSX.Element {
   const navigate = useNavigate();
   const canManage = useCanManageConsole();
-  const [data, setData] = useState<ReleaseApprovalDetail>();
-  const [loadError, setLoadError] = useState('');
-  const [refresh, setRefresh] = useState(0);
+  const [read, setRead] = useState<ReleaseApprovalRead<ReleaseApprovalDetail>>();
+  const { result: data, error: loadError } = read || {};
   const [notice, setNotice] = useState('');
   const [showLink, setShowLink] = useState(false);
   const [command, setCommand] = useState<Command>();
@@ -128,26 +138,56 @@ function ApprovalDetail({ id, scope, onScope, onChanged }: {
   const [minutes, setMinutes] = useState('60');
   const [sending, setSending] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const readController = useRef<AbortController | null>(null);
+  const submitting = useRef(false);
+  const lastStatus = useRef<ReleaseApprovalDetail['authorization']['status']>();
   const decisionField = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (command) decisionField.current?.focus(); }, [command]);
   const now = useNowTick(Boolean(data));
   const endpoint = `/api/releases/authorizations/${encodeURIComponent(id)}`;
-  useEffect(() => {
+  const readApproval = useCallback((replace = false) => {
+    if (submitting.current || (!replace && readController.current)) return;
+    readController.current?.abort();
     const controller = new AbortController();
-    setLoadError('');
+    readController.current = controller;
     void apiRequest<ReleaseApprovalDetail>(endpoint, { signal: controller.signal }).then(result => {
       if (controller.signal.aborted) return;
-      const { projectId, targetId } = result.authorization;
+      const { projectId, targetId, status } = result.authorization;
       onScope({ projectId, targetId });
-      setData(result);
+      setRead({ key: endpoint, result });
+      if (lastStatus.current && lastStatus.current !== status) onChanged();
+      lastStatus.current = status;
     }).catch(error => {
       if (controller.signal.aborted) return;
-      setData(undefined);
-      setLoadError(error instanceof ApiError && error.status === 404
-        ? '找不到这笔申请。请向发起人索取正确链接。' : releaseGovernanceFailure(error));
+      const message = error instanceof ApiError && error.status === 404
+        ? '找不到这笔申请。请向发起人索取正确链接。' : releaseGovernanceFailure(error);
+      setRead(previous => releaseApprovalReadFailure(previous, endpoint, error, message));
+    }).finally(() => {
+      if (readController.current === controller) readController.current = null;
+      if (!controller.signal.aborted) onResolved(id);
     });
-    return () => controller.abort();
-  }, [endpoint, onScope, refresh]);
+  }, [endpoint, id, onChanged, onResolved, onScope]);
+  useEffect(() => {
+    readApproval();
+    return () => {
+      readController.current?.abort();
+      readController.current = null;
+    };
+  }, [readApproval]);
+
+  const waitingForDecision = Boolean(data?.viewer.applicant && releaseApprovalState(data.authorization, now) === 'pending');
+  useEffect(() => {
+    if (!waitingForDecision) return;
+    const refreshVisible = () => { if (!document.hidden) readApproval(); };
+    const timer = window.setInterval(refreshVisible, 10_000);
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
+  }, [readApproval, waitingForDecision]);
 
   function close() {
     if (sending) return;
@@ -159,7 +199,7 @@ function ApprovalDetail({ id, scope, onScope, onChanged }: {
   if (!data) return <Dialog open onOpenChange={open => { if (!open) close(); }}>
     <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>{loadError ? '无法打开发布审批' : '读取发布审批'}</DialogTitle>
       <DialogDescription>{loadError || '正在核对这笔申请和你的访问权限。'}</DialogDescription>
-    </DialogHeader>{loadError ? <Button variant="outline" onClick={() => setRefresh(n => n + 1)}>重新读取</Button>
+    </DialogHeader>{loadError ? <Button variant="outline" onClick={() => readApproval(true)}>重新读取</Button>
       : <ContentLoading label="读取这笔发布审批" variant="panel" />}</DialogContent>
   </Dialog>;
 
@@ -173,6 +213,7 @@ function ApprovalDetail({ id, scope, onScope, onChanged }: {
   const waiting = state === 'pending' && viewer.applicant;
   const reapply = state === 'expired' && viewer.mayReapply;
   const mayContinue = state === 'approved' && viewer.applicant && canManage && !record.scheduledJobId && !record.deploymentVersionId;
+  const mayContinueBatch = state === 'approved' && viewer.applicant && canManage && Boolean(record.deploymentVersionId);
   const approvedLabel = approval ? releaseActorLabel(approval.by) : releaseActorLabel(record.decidedBy);
   const next = review ? '轮到你审批' : waiting ? '等待另一位成员审批' : state === 'expired' ? '需要重新申请'
     : state === 'approved' ? '已批准，等待执行' : state === 'used' ? '这笔批准已使用'
@@ -189,7 +230,10 @@ function ApprovalDetail({ id, scope, onScope, onChanged }: {
     catch { setShowLink(true); setNotice('请复制下方的审批链接'); }
   }
   async function submit() {
-    if (!command || sending || (command === 'reapply' ? !reapply : !review)) return;
+    if (!command || submitting.current || loadError || (command === 'reapply' ? !reapply : !review)) return;
+    submitting.current = true;
+    readController.current?.abort();
+    readController.current = null;
     setSending(true); setSubmitError('');
     try {
       if (command === 'reapply') {
@@ -202,10 +246,12 @@ function ApprovalDetail({ id, scope, onScope, onChanged }: {
         onChanged(); navigate(releaseApprovalPath(result.authorization.id, record), { replace: true }); return;
       }
       const result = await apiRequest<{authorization: ReleaseApprovalDetail['authorization']}>(`${endpoint}/${command}`, { method:'POST', body:{ reason:reason.trim() } });
-      setData({ ...data!, authorization: result.authorization }); setCommand(undefined); onChanged();
+      lastStatus.current = result.authorization.status;
+      setRead({ key: endpoint, result: { ...data!, authorization: result.authorization } });
+      setCommand(undefined); onChanged();
       setNotice(command === 'approve' ? '批准已保存，申请人可以继续执行' : '拒绝已保存');
     } catch (error) { setSubmitError(releaseGovernanceFailure(error)); }
-    finally { setSending(false); }
+    finally { submitting.current = false; setSending(false); }
   }
   const commandLabel = command === 'reapply' ? '重新申请' : command === 'reject' ? '拒绝申请' : '填写批准意见';
   return <Dialog open onOpenChange={open => { if (!open) close(); }}>
@@ -249,18 +295,20 @@ function ApprovalDetail({ id, scope, onScope, onChanged }: {
       </div>
       <footer className="shrink-0 space-y-2 border-t border-[hsl(var(--hairline))] px-4 py-3 sm:px-6">
         <div id="approval-next-step" className="text-xs leading-5 text-muted-foreground" aria-live="polite"><strong className="mr-2 text-sm text-foreground">{next}</strong>{command === 'reapply' ? '新申请会重新核验当前分支和批准范围。' : command ? '决定会记录你的身份，不会直接执行发布。' : help}</div>
+        {loadError ? <p role="alert" className="text-xs text-bad">暂时无法核对最新审批状态，请刷新申请。{loadError}</p> : null}
         {notice ? <p role="status" className="text-xs text-ok">{notice}</p> : null}
         <div className="flex flex-wrap justify-end gap-2">
           {command ? <>
             <Button variant="outline" disabled={sending} onClick={() => setCommand(undefined)}>取消</Button>
-            <Button variant={command === 'reject' ? 'destructive' : 'default'} disabled={sending || (command === 'reapply' ? !reapply || reason.trim().length < 8 : !review || reason.trim().length < 4)} onClick={() => void submit()}>{sending ? '正在保存…' : command === 'reapply' ? '提交新申请' : command === 'reject' ? '确认拒绝' : '确认批准'}</Button>
+            <Button variant={command === 'reject' ? 'destructive' : 'default'} disabled={Boolean(loadError) || sending || (command === 'reapply' ? !reapply || reason.trim().length < 8 : !review || reason.trim().length < 4)} onClick={() => void submit()}>{sending ? '正在保存…' : command === 'reapply' ? '提交新申请' : command === 'reject' ? '确认拒绝' : '确认批准'}</Button>
           </> : <>
-            {review ? <><Button variant="outline" onClick={() => open('reject')}>拒绝</Button><Button onClick={() => open('approve')}><Check />批准申请</Button></> : null}
-            {waiting ? <Button onClick={() => void copyLink()}><Copy />复制审批链接</Button> : null}
-            {reapply ? <Button onClick={() => open('reapply')}>重新申请</Button> : null}
-            {mayContinue ? <Button asChild><Link to={record.action === 'release' ? releaseApprovalWorkbenchPath(record) : center}>{record.action === 'release' ? '前往发布工作台' : '返回环境管理'}</Link></Button> : null}
-            {state === 'approved' && viewer.applicant && canManage && record.deploymentVersionId ? <Button asChild><Link to={`/release-console?${new URLSearchParams({ project: record.projectId, mode: 'batch' })}`}>前往批次发布</Link></Button> : null}
-            {!review && !waiting && !reapply && !mayContinue && !(state === 'approved' && viewer.applicant && canManage && record.deploymentVersionId) ? <Button variant="outline" onClick={close}>返回列表</Button> : null}
+            <Button variant={loadError ? 'default' : 'ghost'} onClick={() => readApproval(true)}><RotateCw />刷新申请</Button>
+            {review && !loadError ? <><Button variant="outline" onClick={() => open('reject')}>拒绝</Button><Button onClick={() => open('approve')}><Check />批准申请</Button></> : null}
+            {waiting && !loadError ? <Button onClick={() => void copyLink()}><Copy />复制审批链接</Button> : null}
+            {reapply && !loadError ? <Button onClick={() => open('reapply')}>重新申请</Button> : null}
+            {mayContinue && !loadError ? <Button asChild><Link to={record.action === 'release' ? releaseApprovalWorkbenchPath(record) : center}>{record.action === 'release' ? '前往发布工作台' : '返回环境管理'}</Link></Button> : null}
+            {mayContinueBatch && !loadError ? <Button asChild><Link to={`/release-console?${new URLSearchParams({ project: record.projectId, mode: 'batch' })}`}>前往批次发布</Link></Button> : null}
+            {!review && !waiting && !reapply && !mayContinue && !mayContinueBatch && !loadError ? <Button variant="outline" onClick={close}>返回列表</Button> : null}
           </>}
         </div>
       </footer>

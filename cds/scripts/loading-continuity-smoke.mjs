@@ -61,6 +61,7 @@ try {
       if (p === '/api/report-folders') payload = {folders:[]};
       if (/\/identity-history$/.test(p)) payload = {records:[],nextCursor:null,coverage:'complete'};
       if (p === '/api/cds-system/connections') payload = {connections:[]};
+      if (p === '/api/releases/approval-inbox') payload = { target: { name: '合成审批环境' }, records: [] };
       if (p === '/api/auth/activity') payload = { activity: [] };
       try { await route.fulfill({ json: payload }); } catch (e) { if (!/closed|handled|canceled/i.test(String(e))) throw e; }
     });
@@ -69,6 +70,7 @@ try {
     if (scene.kind === 'settings') route += '#auth';
     if (route === '/branch-list') route += '?project=fixture-project';
     if (route === '/branch-topology') route += '?project=fixture-project';
+    if (route === '/release-center/approval/:authorizationId?') route = '/release-center/approval?project=fixture-project&target=fixture-release-target';
     if (route === '/dts') route += '?project=fixture-project';
     const selector = selectors[scene.kind];
     const result = { route, kind: scene.kind, errors, syntheticApis: true };

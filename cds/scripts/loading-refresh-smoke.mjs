@@ -12,14 +12,21 @@ export async function verifyLoadingRefresh(browser, base, out) {
   let sectionGate, releaseSection, sectionRequestSeen, jobsCount = 0, runsCount = 0, changesCount = 0, sectionVersion = 1, failCenter = false, failRuns = false, activePoll = false, heldCenterRequests = 0;
   const errors = [];
   let governanceRecords = [], governanceGate, releaseGovernance, governanceRequestSeen, holdGovernanceOnce = false, failGovernance = false;
+  let approvalViewerIsApplicant = false;
   await context.route('**/api/**', async route => {
     const p = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
     if (isEventStream(p) || p === '/api/activity-stream') return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
     let payload = resolveFixture(p) ?? {};
     if (p === '/api/releases/governance') {
-      const snapshot = structuredClone({ authorizations: governanceRecords, attempts: [], mergeBacks: [], checks: [] });
+      payload = { authorizations: governanceRecords, attempts: [], mergeBacks: [], checks: [] };
+    }
+    if (p === '/api/releases/approval-inbox') {
+      payload = failGovernance ? {} : { target: { name: '合成审批环境' }, records: governanceRecords.map(record => ({ ...record, purpose: record.reason, applicant: approvalViewerIsApplicant, mayReview: !approvalViewerIsApplicant && record.status === 'pending' })) };
+    }
+    if (p === '/api/releases/authorizations/fixture-approval') {
+      const snapshot = structuredClone({ authorization: governanceRecords[0], target: { name: '合成审批环境' }, viewer: { applicant: approvalViewerIsApplicant, mayReview: !approvalViewerIsApplicant && governanceRecords[0].status === 'pending', mayReapply: approvalViewerIsApplicant } });
       if (holdGovernanceOnce) { holdGovernanceOnce = false; governanceRequestSeen?.(); await governanceGate; }
-      payload = failGovernance ? {} : snapshot;
+      payload = snapshot;
     }
     if (p === '/api/releases/authorizations/fixture-approval/approve') {
       governanceRecords[0] = { ...governanceRecords[0], status: 'approved', decidedBy: 'user:reviewer:Reviewer', decidedAt: new Date().toISOString(), decisions: [{ action: 'approved', by: 'user:reviewer:Reviewer', at: new Date().toISOString(), reason: '独立核对测试范围' }] };
@@ -194,26 +201,48 @@ export async function verifyLoadingRefresh(browser, base, out) {
     releaseCenter();centerGate=null;activePoll=false;
     await page.waitForFunction(()=>!document.querySelector('button[title="刷新"][disabled]'));
     // 审批落地后，先前挂起的旧快照不得把已批准状态改回待批准。
-    governanceRecords = [{ id:'fixture-approval',projectId:'fixture-project',targetId:'fixture-release-target',branchId:'fixture-branch-alpha',branchName:'feature/approval',kind:'single',action:'release',candidateSha:'0'.repeat(40),mainSha:'0'.repeat(40),basisSha:'0'.repeat(40),requestedBy:'ai:key:fixture',reason:'独立审批响应先后顺序验收',createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+3_600_000).toISOString(),status:'pending' }];
+    const pendingApproval = { id:'fixture-approval',projectId:'fixture-project',targetId:'fixture-release-target',branchId:'fixture-branch-alpha',branchName:'feature/approval',kind:'single',action:'release',candidateSha:'0'.repeat(40),mainSha:'0'.repeat(40),basisSha:'0'.repeat(40),requestedBy:'ai:key:fixture',reason:'独立审批响应先后顺序验收',createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+3_600_000).toISOString(),status:'pending' };
+    governanceRecords = [pendingApproval];
     await page.clock.resume();
     await page.goto(base + '/release-center?project=fixture-project');
     const governance = page.getByRole('region',{name:'发布审批与连续调试',exact:true});
-    await governance.getByRole('button',{name:'独立批准',exact:true}).waitFor();
+    await governance.getByRole('link',{name:'审批列表',exact:true}).click();
+    const row = page.getByRole('link').filter({hasText:'独立审批响应先后顺序验收'});
+    await row.click();
+    const dialog = page.getByRole('dialog',{name:'单次发布申请',exact:true});
+    await dialog.getByRole('button',{name:'刷新申请',exact:true}).waitFor();
     const governanceRequested = new Promise(resolve=>governanceRequestSeen=resolve);
     governanceGate = new Promise(resolve=>releaseGovernance=resolve); holdGovernanceOnce = true;
-    await page.getByRole('button',{name:'刷新',exact:true}).first().click(); await requested(governanceRequested);
-    await governance.getByRole('textbox',{name:'审批意见',exact:true}).fill('独立核对测试范围');
-    await governance.getByRole('button',{name:'独立批准',exact:true}).click();
-    await governance.getByText('已批准',{exact:true}).waitFor();
-    await Promise.all([page.waitForResponse(response=>response.url().includes('/api/releases/governance')),Promise.resolve().then(()=>releaseGovernance())]); governanceGate = null;
-    await page.waitForTimeout(50);
-    assert(await governance.getByText('已批准',{exact:true}).isVisible(),'迟到旧响应不能覆盖新审批决定');
-    failGovernance = true; await governance.getByRole('button',{name:'刷新记录',exact:true}).click();
-    await governance.getByRole('alert').waitFor();
-    assert(await governance.getByText('已批准',{exact:true}).isVisible(),'损坏响应不能使页面崩溃或丢掉已有审批');
-    assert.equal(await governance.getByRole('status',{name:'读取审批与调试窗口',exact:true}).count(),0);
+    await dialog.getByRole('button',{name:'刷新申请',exact:true}).click(); await requested(governanceRequested);
+    await dialog.getByRole('button',{name:'批准申请',exact:true}).click();
+    await dialog.getByRole('textbox',{name:/审批意见/}).fill('独立核对测试范围');
+    await Promise.all([
+      page.waitForEvent('requestfailed', request => new URL(request.url()).pathname.endsWith('/authorizations/fixture-approval')),
+      dialog.getByRole('button',{name:'确认批准',exact:true}).click(),
+    ]);
+    await dialog.getByText('已批准',{exact:true}).waitFor();
+    releaseGovernance(); governanceGate = null;
+    await dialog.getByText('批准已保存，申请人可以继续执行',{exact:true}).waitFor();
+    assert(await dialog.getByText('已批准',{exact:true}).isVisible(),'迟到旧响应不能覆盖新审批决定');
+    await dialog.getByRole('button',{name:'返回列表',exact:true}).click();
+    const inbox = page.getByRole('region',{name:'环境审批申请',exact:true});
+    await inbox.getByText('已批准',{exact:true}).waitFor();
+    failGovernance = true; await page.getByRole('button',{name:'刷新记录',exact:true}).click();
+    await page.getByRole('alert').filter({hasText:'仍显示上次读取的记录'}).waitFor();
+    assert(await inbox.getByText('已批准',{exact:true}).isVisible(),'损坏响应不能使页面崩溃或丢掉已有审批');
+    assert.equal(await page.getByRole('status',{name:'读取环境审批列表',exact:true}).count(),0);
+    // 另一名成员从外部完成审批时，申请人保留原弹窗即可进入发布工作台。
+    const approved = governanceRecords[0];
+    failGovernance = false;
+    approvalViewerIsApplicant = true;
+    governanceRecords = [pendingApproval];
+    await row.click();
+    await dialog.getByText('等待另一位成员审批',{exact:true}).waitFor();
+    governanceRecords = [approved];
+    await page.clock.runFor(10_001);
+    await dialog.getByRole('link',{name:'前往发布工作台',exact:true}).waitFor();
     assert.deepEqual(errors, []);
-    return { governanceLateResponseIgnored: true, governanceMalformedResponseRetainsContent: true, saveInvalidatesOlderRefresh: true, hungSilentPollCanBeReplaced: true, projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, releaseCenterRefreshFailureRetainsContent: true, releaseCenterHealthRefreshes: true, healthRefreshFailureRetainsContent: true, releaseRulesAndOpenRunsRefresh: true, releaseRuleDraftAndFocusPreserved: true, releaseEvidenceRefreshes: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, healthCount, jobsCount, runsCount, changesCount, errors };
+    return { applicantObservedExternalApproval: true, governanceLateResponseIgnored: true, governanceMalformedResponseRetainsContent: true, saveInvalidatesOlderRefresh: true, hungSilentPollCanBeReplaced: true, projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, releaseCenterRefreshFailureRetainsContent: true, releaseCenterHealthRefreshes: true, healthRefreshFailureRetainsContent: true, releaseRulesAndOpenRunsRefresh: true, releaseRuleDraftAndFocusPreserved: true, releaseEvidenceRefreshes: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, healthCount, jobsCount, runsCount, changesCount, errors };
   } catch(e) {
     await page.screenshot({path:path.join(out,'failure-refresh.jpg')});
     await fs.writeFile(path.join(out,'failure-refresh.html'),await page.content());
