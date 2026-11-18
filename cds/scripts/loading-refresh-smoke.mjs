@@ -238,9 +238,19 @@ export async function verifyLoadingRefresh(browser, base, out) {
     governanceRecords = [pendingApproval];
     await row.click();
     await dialog.getByText('等待另一位成员审批',{exact:true}).waitFor();
-    governanceRecords = [approved];
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 1_000)));
+    const applicantRead = new Promise(resolve => governanceRequestSeen = resolve);
+    governanceGate = new Promise(resolve => releaseGovernance = resolve);
+    holdGovernanceOnce = true;
     await page.clock.runFor(10_001);
+    await requested(applicantRead);
+    governanceRecords = [approved];
+    await Promise.all([
+      page.waitForEvent('requestfailed', request => new URL(request.url()).pathname.endsWith('/authorizations/fixture-approval')),
+      page.clock.runFor(20_001),
+    ]);
     await dialog.getByRole('link',{name:'前往发布工作台',exact:true}).waitFor();
+    releaseGovernance(); governanceGate = null;
     assert.deepEqual(errors, []);
     return { applicantObservedExternalApproval: true, governanceLateResponseIgnored: true, governanceMalformedResponseRetainsContent: true, saveInvalidatesOlderRefresh: true, hungSilentPollCanBeReplaced: true, projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, releaseCenterRefreshFailureRetainsContent: true, releaseCenterHealthRefreshes: true, healthRefreshFailureRetainsContent: true, releaseRulesAndOpenRunsRefresh: true, releaseRuleDraftAndFocusPreserved: true, releaseEvidenceRefreshes: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, healthCount, jobsCount, runsCount, changesCount, errors };
   } catch(e) {

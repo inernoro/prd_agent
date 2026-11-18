@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowUpRight, Check, ClipboardList, Copy, RotateCw } from 'lucide-react';
+import { ArrowUpRight, Check, ClipboardList, Copy, RotateCw } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { Button } from '@/components/ui/button';
@@ -20,8 +20,11 @@ type Command = 'approve' | 'reject' | 'reapply';
 type InboxScope = { projectId: string; targetId: string };
 type Filter = 'all' | 'review' | 'mine';
 const hrefCenter = (scope: InboxScope) => `/release-center?${new URLSearchParams({ project: scope.projectId, target: scope.targetId })}`;
+const DECISION_REFRESH_INTERVAL_MS = 10_000;
+const STALE_APPROVAL_READ_MS = 15_000;
 
 export function ReleaseApprovalPage(): JSX.Element {
+  const canManage = useCanManageConsole();
   const pathId = useParams().authorizationId;
   const [params] = useSearchParams();
   const authorizationId = pathId || params.get('request');
@@ -32,7 +35,9 @@ export function ReleaseApprovalPage(): JSX.Element {
   const [refresh, setRefresh] = useState(0);
   const refreshInbox = useCallback(() => setRefresh(n => n + 1), []);
   const scope = projectId && targetId ? { projectId, targetId } : selectedScope;
-  return <AppShell active="release-center" topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '审批列表' }]} />} />}>
+  const back = canManage ? { label: '环境管理', href: scope ? hrefCenter(scope) : '/release-center' }
+    : { label: '项目列表', href: '/project-list' };
+  return <AppShell active="release-center" topbar={<TopBar left={<Crumb items={[back, { label: '审批列表' }]} />} />}>
     <Workspace fluid className="overflow-y-auto">
       <ApprovalInbox scope={scope} refresh={refresh} onRefresh={refreshInbox} opening={Boolean(authorizationId && authorizationId !== resolvedId)} />
       {authorizationId ? <ApprovalDetail key={authorizationId} id={authorizationId} scope={scope}
@@ -44,7 +49,6 @@ export function ReleaseApprovalPage(): JSX.Element {
 function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
   scope?: InboxScope; refresh: number; onRefresh: () => void; opening: boolean;
 }): JSX.Element {
-  const canManage = useCanManageConsole();
   const [state, setState] = useState<ReleaseApprovalRead<ReleaseApprovalInbox>>();
   const [filter, setFilter] = useState<Filter>('all');
   const now = useNowTick(Boolean(state?.result));
@@ -78,9 +82,7 @@ function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
     { id: 'mine', name: '我发起的', count: mine.length },
   ];
   return <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-7">
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-      <Link to={canManage ? scope ? hrefCenter(scope) : '/release-center' : '/project-list'} className="inline-flex min-h-8 items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="size-4" />{canManage ? '返回发布中心' : '返回项目列表'}</Link>
+    <div className="mb-4 flex justify-end">
       <Button variant="ghost" size="sm" onClick={onRefresh}><RotateCw />刷新记录</Button>
     </div>
     <header className="mb-5">
@@ -138,7 +140,7 @@ function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
   const [minutes, setMinutes] = useState('60');
   const [sending, setSending] = useState(false);
   const [submitError, setSubmitError] = useState('');
-  const readController = useRef<AbortController | null>(null);
+  const activeRead = useRef<{ controller: AbortController; startedAt: number } | null>(null);
   const submitting = useRef(false);
   const lastStatus = useRef<ReleaseApprovalDetail['authorization']['status']>();
   const decisionField = useRef<HTMLTextAreaElement>(null);
@@ -146,10 +148,12 @@ function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
   const now = useNowTick(Boolean(data));
   const endpoint = `/api/releases/authorizations/${encodeURIComponent(id)}`;
   const readApproval = useCallback((replace = false) => {
-    if (submitting.current || (!replace && readController.current)) return;
-    readController.current?.abort();
+    const startedAt = Date.now();
+    const reading = activeRead.current;
+    if (submitting.current || (!replace && reading && startedAt - reading.startedAt < STALE_APPROVAL_READ_MS)) return;
+    reading?.controller.abort();
     const controller = new AbortController();
-    readController.current = controller;
+    activeRead.current = { controller, startedAt };
     void apiRequest<ReleaseApprovalDetail>(endpoint, { signal: controller.signal }).then(result => {
       if (controller.signal.aborted) return;
       const { projectId, targetId, status } = result.authorization;
@@ -163,15 +167,15 @@ function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
         ? '找不到这笔申请。请向发起人索取正确链接。' : releaseGovernanceFailure(error);
       setRead(previous => releaseApprovalReadFailure(previous, endpoint, error, message));
     }).finally(() => {
-      if (readController.current === controller) readController.current = null;
+      if (activeRead.current?.controller === controller) activeRead.current = null;
       if (!controller.signal.aborted) onResolved(id);
     });
   }, [endpoint, id, onChanged, onResolved, onScope]);
   useEffect(() => {
     readApproval();
     return () => {
-      readController.current?.abort();
-      readController.current = null;
+      activeRead.current?.controller.abort();
+      activeRead.current = null;
     };
   }, [readApproval]);
 
@@ -179,7 +183,7 @@ function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
   useEffect(() => {
     if (!waitingForDecision) return;
     const refreshVisible = () => { if (!document.hidden) readApproval(); };
-    const timer = window.setInterval(refreshVisible, 10_000);
+    const timer = window.setInterval(refreshVisible, DECISION_REFRESH_INTERVAL_MS);
     window.addEventListener('focus', refreshVisible);
     document.addEventListener('visibilitychange', refreshVisible);
     return () => {
@@ -232,8 +236,8 @@ function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
   async function submit() {
     if (!command || submitting.current || loadError || (command === 'reapply' ? !reapply : !review)) return;
     submitting.current = true;
-    readController.current?.abort();
-    readController.current = null;
+    activeRead.current?.controller.abort();
+    activeRead.current = null;
     setSending(true); setSubmitError('');
     try {
       if (command === 'reapply') {
