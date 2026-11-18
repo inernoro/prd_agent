@@ -78,12 +78,17 @@ public class DiagnosticsConnectionSecurityTests(ITestOutputHelper output)
     public async Task ConnectionCancellation_DoesNotTryAnotherAddress()
     {
         var attempts = 0;
+        using var cancel = new CancellationTokenSource();
         var connector = new SafeOutboundDiagnosticConnector(new SafeOutboundUrlValidator(),
             (_, _) => Task.FromResult(new[] { Public, IPAddress.Parse("1.1.1.1") }),
-            async (_, ct) => { attempts++; await Task.Delay(Timeout.Infinite, ct); return Stream.Null; });
+            (_, ct) =>
+            {
+                attempts++;
+                cancel.Cancel();
+                return ValueTask.FromCanceled<Stream>(ct);
+            });
         var target = await connector.PrepareAsync(Target, default);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await connector.ConnectAsync(target, timeout.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => connector.ConnectAsync(target, cancel.Token).AsTask());
         Assert.Equal(1, attempts);
     }
 
@@ -206,11 +211,27 @@ public class DiagnosticsConnectionSecurityTests(ITestOutputHelper output)
     [Fact]
     public async Task RequestCancellation_StopsHandshakeAndRemainingSteps()
     {
-        await using var fixture = new LocalFixture((_, ct) => Task.Delay(Timeout.Infinite, ct));
+        using var cancel = new CancellationTokenSource();
+        var handshakeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var fixture = new LocalFixture(async (stream, ct) =>
+        {
+            var firstByte = new byte[1];
+            if (await stream.ReadAsync(firstByte, ct) == 1)
+                handshakeStarted.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+        });
         var attempts = new ConcurrentBag<string>();
         var connector = FixtureConnector(fixture, attempts, () => Public);
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunController(connector, "https://diagnostics.invalid:8443", cancel.Token));
+        var request = RunController(connector, "https://diagnostics.invalid:8443", cancel.Token);
+        try
+        {
+            await handshakeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            await cancel.CancelAsync();
+        }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
         Assert.Single(attempts);
     }
 
@@ -234,10 +255,14 @@ public class DiagnosticsConnectionSecurityTests(ITestOutputHelper output)
     [Fact]
     public async Task ResolverCancellation_StopsBeforeTransport()
     {
+        using var cancel = new CancellationTokenSource();
         var connector = new SafeOutboundDiagnosticConnector(new SafeOutboundUrlValidator(),
-            async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return new[] { Public }; },
+            (_, ct) =>
+            {
+                cancel.Cancel();
+                return Task.FromCanceled<IPAddress[]>(ct);
+            },
             (_, _) => throw new InvalidOperationException("Transport must not run"));
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunController(connector, ct: cancel.Token));
     }
 
