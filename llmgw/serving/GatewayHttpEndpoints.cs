@@ -3389,6 +3389,7 @@ public static class GatewayHttpEndpoints
 
         GatewayAppCallerRecord? caller = null;
         GatewayTenantGovernanceRecord? tenantGovernance = null;
+        GatewayTemporaryQuotaReservation? temporaryQuota = null;
         try
         {
             tenantGovernance = await gatewayData.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
@@ -3430,6 +3431,7 @@ public static class GatewayHttpEndpoints
 
             var minimum = await safety.CheckBeforeOtherGovernanceAsync(tenantId, appCallerCode, requestType, caller?.TeamId,
                 requestId, identity, tenantGovernance?.RateLimitPerMinute, caller?.RateLimitPerMinute, ct);
+            temporaryQuota = minimum.TemporaryQuota;
             if (minimum.Rejected)
                 return new AppCallerGovernanceDecision(status, TenantRateLimitDecision.Allow(tenantId),
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
@@ -3455,7 +3457,11 @@ public static class GatewayHttpEndpoints
 
             async Task<AppCallerGovernanceDecision> CompleteAdmissionAsync(AppCallerRateLimitDecision rateLimit)
             {
-                var quotaRejection = rateLimit.Rejected ? null : await safety.CompleteTemporaryQuotaAsync(
+                if (rateLimit.Rejected)
+                    return new(status, tenantRateLimit, rateLimit, budget);
+
+                temporaryQuota = null; // CompleteTemporaryQuotaAsync 接手占用并负责释放。
+                var quotaRejection = await safety.CompleteTemporaryQuotaAsync(
                     minimum, tenantId, appCallerCode, requestType, caller?.TeamId, requestId, identity, ct);
                 return new(status, tenantRateLimit, rateLimit, budget, quotaRejection);
             }
@@ -3527,6 +3533,11 @@ public static class GatewayHttpEndpoints
             // 无法读取租户治理配置时不能判断是否存在硬限制，因此统一 fail-closed；
             // 否则数据库故障会把已配置的租户总预算或总速率变成无限窗口。
             return AppCallerGovernanceDecision.RejectTenantGovernanceUnavailable(tenantId, appCallerCode, requestType);
+        }
+        finally
+        {
+            if (temporaryQuota is not null)
+                await safety.ReleaseTemporaryQuotaAsync(temporaryQuota);
         }
     }
 

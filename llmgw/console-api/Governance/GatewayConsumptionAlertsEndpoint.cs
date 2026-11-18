@@ -185,7 +185,8 @@ public static class GatewayConsumptionAlertsEndpoint
             {
                 { "_id", new BsonDocument { { "alert", "$AlertId" }, { "state", state } } },
                 { "Batches", new BsonDocument("$sum", 1) },
-                { "CompletedCount", new BsonDocument("$sum", "$CompletedCount") },
+                { "CompletedCount", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+                    { new BsonDocument("$eq", new BsonArray { "$State", "completed" }), "$CompletedCount", 0 })) },
             }).ToListAsync(ct);
         return rows.GroupBy(row => row["_id"]["alert"].AsString).ToDictionary(group => group.Key, group =>
         {

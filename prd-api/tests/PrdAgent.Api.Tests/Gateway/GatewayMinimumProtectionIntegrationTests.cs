@@ -344,8 +344,8 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         viewer.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "viewer"));
         const string retryPath = "/gw/v1/consumption-retries";
 
-        Task<HttpResponseMessage> SendChat() => Dispatch(HttpMethod.Post, "/v1/chat/completions", sourceKey,
-            new { messages = new[] { new { role = "user", content = "synthetic work" } } }, "batch-fixture");
+        Task<HttpResponseMessage> SendChat(string runId = "batch-fixture") => Dispatch(HttpMethod.Post, "/v1/chat/completions", sourceKey,
+            new { messages = new[] { new { role = "user", content = "synthetic work" } } }, runId);
 
         Task<HttpResponseMessage> Dispatch(HttpMethod method, string path, string key, object? body = null, string? runId = null)
         {
@@ -374,17 +374,25 @@ public sealed class GatewayMinimumProtectionIntegrationTests
             .StatusCode.ShouldBe(HttpStatusCode.OK);
         (await SendChat()).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
         (await operatorClient.PostAsJsonAsync(resolution, new { action = "approve-quota" })).StatusCode.ShouldBe(HttpStatusCode.OK);
-        var concurrent = await Task.WhenAll(SendChat(), SendChat());
+        var concurrent = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => SendChat()));
         concurrent.Count(result => result.StatusCode == HttpStatusCode.OK).ShouldBe(1);
-        concurrent.Count(result => result.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(1);
+        concurrent.Count(result => result.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(15);
         database.UpstreamCalls.ShouldBe(2);
+        var laterWindows = await database.Windows.Find(new BsonDocument { { "Origin", "automatic" }, { "$or", new BsonArray
+        {
+            new BsonDocument { { "Scope", "app-caller" }, { "WindowSeconds", 86400 } },
+            new BsonDocument { { "Scope", "tenant" }, { "WindowSeconds", 3600 } },
+        } } }).ToListAsync();
+        laterWindows.Count.ShouldBe(2);
+        laterWindows.ShouldAllBe(window => window["Count"].ToInt64() == 2);
 
+        (await SendChat("partial-batch")).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
         (await operatorClient.PostAsJsonAsync(resolution, new { action = "retry" })).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await operatorClient.PostAsJsonAsync(resolution, new { action = "retry" })).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
 
         var retries = database.Data.Database.GetCollection<BsonDocument>("llmgw_consumption_retries");
-        var retry = await retries.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync();
+        var retry = await retries.Find(new BsonDocument("RunId", "batch-fixture")).SingleAsync();
         // 以隔离库中的已到期窗口验证领取时序，无需等待下一个整点。
         await retries.UpdateOneAsync(new BsonDocument("_id", retry["_id"]),
             Builders<BsonDocument>.Update.Set("ReadyAt", DateTime.UtcNow.AddSeconds(-1)));
@@ -401,9 +409,21 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         (await Dispatch(HttpMethod.Post, retryPath, sourceKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await Dispatch(HttpMethod.Post, retryPath, sourceKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
-        var resolved = await operatorClient.GetStringAsync("/gw/logs/consumption-alerts");
-        resolved.ShouldContain("\"completed\":1");
-        resolved.ShouldContain("\"used\":1");
+        var partial = await retries.Find(new BsonDocument("RunId", "partial-batch")).SingleAsync();
+        await retries.UpdateOneAsync(new BsonDocument("_id", partial["_id"]),
+            Builders<BsonDocument>.Update.Set("ReadyAt", DateTime.UtcNow.AddSeconds(-1)));
+        var partialClaim = new { id = partial["_id"].AsString, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, partialClaim)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, new { partialClaim.id, partialClaim.claimId, outcome = "failed", completedCount = 2 }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var resolved = JsonDocument.Parse(await operatorClient.GetStringAsync("/gw/logs/consumption-alerts"));
+        var resolvedAlert = resolved.RootElement.GetProperty("data").GetProperty("items").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetString() == alert["_id"].AsString);
+        var retrySummary = resolvedAlert.GetProperty("retry");
+        retrySummary.GetProperty("completed").GetInt32().ShouldBe(1);
+        retrySummary.GetProperty("failed").GetInt32().ShouldBe(1);
+        retrySummary.GetProperty("completedCount").GetInt32().ShouldBe(1);
+        resolvedAlert.GetProperty("quota").GetProperty("used").GetInt32().ShouldBe(1);
     }
 
     [Theory]
@@ -519,6 +539,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         }
         var unchanged = await database.Alerts.Find(new BsonDocument("_id", alert["_id"])).SingleAsync();
         unchanged["QuotaUsed"].AsInt32.ShouldBe(0);
+        unchanged.GetValue("QuotaReservations", new BsonArray()).AsBsonArray.ShouldBeEmpty();
         database.UpstreamCalls.ShouldBe(1);
     }
 
