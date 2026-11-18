@@ -17,6 +17,10 @@
 }
 
 .annotation-bubble-canvas[data-review-margin]::before { background: var(--review-margin-paper, var(--bg-base)); }
+/* The iframe already supplies live geometry. Only selection animates the cards. */
+.annotation-bubble-canvas[data-review-margin] :is(.annotation-bubble-scroll, .annotation-bubble-space, .annotation-bubble-connectors, .annotation-bubble-connectors *) {
+  transition: none;
+}
 .annotation-bubble-canvas[data-review-margin] .annotation-bubble-connectors { stroke: var(--review-margin-ring); stroke-width: 1.5; }
 .annotation-bubble-canvas[data-review-margin] .annotation-bubble-connectors circle { fill: var(--review-margin-ring); }
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble {
@@ -27,6 +31,7 @@
   color: var(--review-margin-ink);
   background: var(--review-margin-card);
   box-shadow: var(--review-margin-shadow);
+  transition: background-color 150ms, box-shadow 150ms;
   font-family: Inter, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
   font-size: 13.5px;
   line-height: 1.6;

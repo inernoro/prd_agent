@@ -644,6 +644,8 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await marker(5).click();
       const selected = page.getByRole('dialog', { name: '批注气泡 5', exact: true });
       await expect(selected).toBeVisible();
+      await expect(margin.locator('.annotation-bubble-space')).toHaveCSS('transition-property', 'none');
+      await expect(margin.locator('[data-active-connector] path')).toHaveCSS('transition-property', 'none');
       await expect.poll(() => margin.evaluate(el => el.getAnimations({ subtree: true }).some(animation => animation.playState === 'running'))).toBe(true);
       await expect.poll(() => margin.evaluate(el => el.getAnimations({ subtree: true }).some(animation => animation.playState === 'running'))).toBe(false);
       expect(await documentTop()).toBe(first);

@@ -31,11 +31,12 @@ function useRailSelectionMotion(layer: { current: HTMLElement | null }, snapshot
   useLayoutEffect(() => {
     const from = previous.current;
     previous.current = snapshot;
-    if (!from || !snapshot || from.documentTop !== snapshot.documentTop || from.offset !== snapshot.offset) {
+    if (!from || !snapshot || from.documentTop !== snapshot.documentTop || from.offset !== snapshot.offset
+      || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
       cancel();
       return;
     }
-    if (from.active === snapshot.active || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    if (from.active === snapshot.active) return;
     cancel();
     motion.current.frame = requestAnimationFrame(() => {
       const margin = layer.current;
