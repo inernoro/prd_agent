@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-from urllib.request import urlretrieve
+from urllib.request import Request, urlopen
 
 import imageio_ffmpeg
 from PIL import Image, ImageDraw
@@ -14,7 +14,9 @@ out = root / 'work/entry-recut-headless'
 evidence = json.loads((out / 'playback-evidence.json').read_text())
 desktop = evidence['playback'][0]
 original = out / 'original.mp4'
-urlretrieve(desktop['source'], original)
+request = Request(desktop['source'], headers={'User-Agent': 'Mozilla/5.0'})
+with urlopen(request, timeout=20) as response:
+    original.write_bytes(response.read())
 assert hashlib.sha256(original.read_bytes()).hexdigest() == (
     '05c8a2d277469c57356b4e4427a4f118080e5d7729018056305c6c7cdda2a213'
 )
