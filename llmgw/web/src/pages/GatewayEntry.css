@@ -353,7 +353,10 @@ html[data-entry-arriving] .gateway-quickstart-stage .lg-page-body::-webkit-scrol
   color-scheme: light;
 }
 :root[data-theme='light'] .cinema-login,
-:root[data-theme='light'] .gateway-quickstart-stage { --cinema-night: #f8f0e7; }
+:root[data-theme='light'] .gateway-quickstart-stage {
+  --cinema-night: #f8f0e7;
+  --cinema-opening-paper: #eeddc4;
+}
 :root[data-theme='light'] .cinema-login[data-phase='entering']::after { animation: none; }
 .consciousness-portrait:not(.is-ambient):not(.is-building) > .consciousness-art { opacity: 1; }
 .consciousness-scene[data-portrait-theme='light'] .consciousness-portrait.is-ambient > .consciousness-art { opacity: 1; filter: none; }

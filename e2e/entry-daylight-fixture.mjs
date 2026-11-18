@@ -19,7 +19,7 @@ async function prepare(page, theme) {
   await installOperationsFixtures(page, { quickstart: true });
   await page.goto(loginUrl);
   await expect(page.locator('.consciousness-scene')).toHaveAttribute('data-portrait-theme', theme);
-  await expect(page.locator('.consciousness-art')).toHaveAttribute('src', assets[theme].closed.url);
+  await expect(page.locator('.consciousness-art')).toHaveAttribute('src', (assets[theme].opening ?? assets[theme].closed).url);
   await expect.poll(() => page.locator('.consciousness-art').evaluate(img => img.naturalWidth)).toBeGreaterThan(0);
   if (theme === 'light') await expect(page.locator('.consciousness-mist')).toHaveCount(0);
   await page.locator('#llmgw-username').fill('demo');
@@ -37,6 +37,11 @@ async function arrive(page, theme, name) {
     });
   }
   await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
+  if (theme === 'light') {
+    const handoff = page.locator('.cinema-login[data-phase="entering"] .consciousness-art');
+    await expect(handoff).toHaveAttribute('src', assets.light.opening.url);
+    await expect(handoff).toHaveCSS('opacity', '1');
+  }
   await page.waitForURL(/\/quickstart$/);
   await page.waitForFunction(expected => {
     const v = document.querySelector('.portrait-motion');

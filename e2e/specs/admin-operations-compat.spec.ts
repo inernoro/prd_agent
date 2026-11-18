@@ -10,7 +10,7 @@ import {
 
 const gatewayPortraitAssets = JSON.parse(
   readFileSync(new URL('../fixtures/media/gateway-portrait-cdn.json', import.meta.url), 'utf8'),
-) as Record<'light' | 'dark', { open: { url: string } }>;
+) as typeof import('../fixtures/media/gateway-portrait-cdn.json');
 
 test.beforeEach(async ({ browser, page }, testInfo) => {
   page.on("pageerror", (error) =>
@@ -318,7 +318,13 @@ async function loginGateway(page: Page) {
   await page.goto("http://127.0.0.1:8200/llmgw/login", {
     waitUntil: "domcontentloaded",
   });
-  await expect(page.locator(".consciousness-art")).toHaveJSProperty("naturalWidth", 1672);
+  const scene = page.locator(".consciousness-scene");
+  const loginArtwork = page.locator(".consciousness-art");
+  const theme = await scene.getAttribute("data-portrait-theme");
+  expect(["light", "dark"]).toContain(theme);
+  const portrait = theme === "light" ? gatewayPortraitAssets.light.opening : gatewayPortraitAssets.dark.closed;
+  await expect(loginArtwork).toHaveAttribute("src", portrait.url);
+  await expect.poll(() => loginArtwork.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
   await page.locator("#llmgw-username").fill("demo");
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();

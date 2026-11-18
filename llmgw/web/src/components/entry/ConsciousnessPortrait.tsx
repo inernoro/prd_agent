@@ -20,6 +20,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
   const playing = !fog && (arriving || controlled) && !settled;
   const assets = PORTRAIT_ASSETS[theme];
   const openingPoster = controlled ? undefined : assets.opening;
+  const openingPaper = fog || playing ? openingPoster : undefined;
   const motionReady = readyMotion === assets.motion;
   const timeRef = useRef(frameTime);
   timeRef.current = frameTime;
@@ -127,8 +128,8 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
     };
   }, [playing, controlled, assets, openingPoster]);
 
-  return <div ref={host} className={`consciousness-portrait${playing ? ' is-building' : ''}${fog ? ' is-ambient' : ''}`}>
-    <img className="consciousness-art" src={fog ? assets.closed : assets.open} alt="" loading="eager" decoding="async" />
+  return <div ref={host} className={`consciousness-portrait${playing ? ' is-building' : ''}${fog ? ' is-ambient' : ''}${openingPaper ? ' has-opening-paper' : ''}`}>
+    <img className="consciousness-art" src={openingPaper ?? (fog ? assets.closed : assets.open)} alt="" loading="eager" decoding="async" />
     {(playing || (!controlled && motionReady)) && (controlled ? <canvas ref={canvas} className="portrait-material" aria-hidden="true" /> : <video key={assets.motion} ref={video} className="portrait-material portrait-motion" src={assets.motion} poster={openingPoster} muted playsInline preload="auto" aria-hidden="true" />)}
     {((playing && !openingPoster && (controlled || !motionReady)) || fog) && <svg className="portrait-structure" viewBox="0 0 1672 941" preserveAspectRatio="xMaxYMid slice" fill="none" aria-hidden="true">
       <defs>

@@ -117,7 +117,9 @@
 .consciousness-portrait { position: absolute; inset: 0; }
 .portrait-material, .portrait-structure { position: absolute; inset: 0; width: 100%; height: 100%; }
 .portrait-motion { object-fit: cover; object-position: right center; }
-.consciousness-portrait.is-building > .consciousness-art { opacity: 0; }
+.consciousness-portrait.is-building:not(.has-opening-paper) > .consciousness-art { opacity: 0; }
+.consciousness-portrait.has-opening-paper { background: var(--cinema-opening-paper, var(--cinema-paper)); }
+.consciousness-portrait.has-opening-paper > .consciousness-art { opacity: 1; }
 .portrait-lines { opacity: var(--portrait-lineOpacity, 1); }
 .portrait-lines path { stroke-dashoffset: 1; }
 .portrait-mesh { opacity: calc(var(--portrait-grid, 0) * .5); }
