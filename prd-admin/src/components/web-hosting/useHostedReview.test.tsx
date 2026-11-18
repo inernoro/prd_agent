@@ -228,6 +228,19 @@ describe('versioned webpage review', () => {
     expect(review.liveSite?.siteUrl).toBe(moved.siteUrl);
     expect(review.site?.siteUrl).toBe(moved.siteUrl);
   });
+  it('keeps the published document eligible for inline review when its restored revision has stale archive metadata', async () => {
+    const live = { ...site, entryFile: 'report.html', contentShape: 'self-contained-html' as const };
+    const archiveShape = 'multi-file' as const;
+    const historicalSnapshot = { ...previous, contentShape: archiveShape };
+    list.mockResolvedValue({ success: true, data: [{ ...current, contentShape: archiveShape }, historicalSnapshot] });
+    preview.mockResolvedValue({ success: true, data: { revision: historicalSnapshot, siteUrl: previous.siteUrl } });
+    await mount(live);
+    expect(review.site?.entryFile).toBe('report.html');
+    expect(shouldFetchPreviewHtml(review.site!)).toBe(true);
+    await act(async () => review.selectVersion(previous.id));
+    expect(review.site?.entryFile).toBe(previous.entryFile);
+    expect(shouldFetchPreviewHtml(review.site!)).toBe(false);
+  });
   it('does not replace a newer live publication with an older version-list response', async () => {
     await mount();
     const newer = { ...site, siteUrl: 'https://assets.example/.versions/new/nested/page.html?v=30000', entryFile: 'nested/page.html' };

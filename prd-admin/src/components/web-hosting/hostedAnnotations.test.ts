@@ -135,11 +135,12 @@ describe('hosted page annotation runtime', () => {
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', displayMode: 'bubble', dismissedPreviewIds: ['one'], revealedPreviewIds: ['one'], threads: [{ id: 'one', anchor }, { id: 'two', anchor }] });
     await expect.poll(() => previewMessages(t.messages).at(-1)?.items.map(item => item.id)).toEqual(['two']);
     expect(t.layer()!.querySelectorAll('.pin:not([hidden])')).toHaveLength(2);
-    (t.layer()!.querySelectorAll('.pin')[0] as HTMLButtonElement).click(); await tick();
-    expect(previewMessages(t.messages).at(-1)!.items).toHaveLength(2);
-    t.send({ type: 'map-annotation-preview-dismiss', id: 'one' }); await tick();
-    expect(previewMessages(t.messages).at(-1)!.items.map(item => item.id)).toEqual(['two']);
-    t.send({ type: 'map-annotation-previews-show' }); await tick(); expect(previewMessages(t.messages).at(-1)!.items).toHaveLength(2);
+    (t.layer()!.querySelectorAll('.pin')[0] as HTMLButtonElement).click();
+    await expect.poll(() => previewMessages(t.messages).at(-1)?.items).toHaveLength(2);
+    t.send({ type: 'map-annotation-preview-dismiss', id: 'one' });
+    await expect.poll(() => previewMessages(t.messages).at(-1)?.items.map(item => item.id)).toEqual(['two']);
+    t.send({ type: 'map-annotation-previews-show' });
+    await expect.poll(() => previewMessages(t.messages).at(-1)?.items).toHaveLength(2);
   });
   it('展开全部可见气泡且点击相邻编号同步选中，不被悬停抢回', async () => {
     const t = await setup();
@@ -181,9 +182,8 @@ describe('hosted page annotation runtime', () => {
     await expect.poll(() => t.messages.find(message => message.type === 'map-annotation-preview')).toMatchObject({ id: 'chat', rect: { left: 10, top: 20, width: 200, height: 40 } });
     expect(t.messages.find(message => message.type === 'map-annotation-preview')).not.toHaveProperty('content');
     t.send({ type: 'map-annotation-preview-dismiss' });
-    await tick();
+    await expect.poll(() => previewMessages(t.messages).at(-1)).toMatchObject({ items: [] });
     expect(t.messages.some(message => message.type === 'map-annotation-preview-hide')).toBe(true);
-    expect(t.messages.filter(message => message.type === 'map-annotation-previews').at(-1)).toMatchObject({ items: [] });
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, threads, displayMode: 'standard' });
     await tick();
     expect(t.layer()?.querySelector<HTMLButtonElement>('.pin')?.hidden).toBe(false);

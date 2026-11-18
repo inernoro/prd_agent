@@ -396,31 +396,40 @@
   }
   function reviewPin(last, range, occupied, lines) {
     var size = innerWidth < 768 ? 22 : 18, step = size + 3;
-    var right = Math.min(innerWidth, document.documentElement.scrollWidth - scrollX) - size - 2;
+    var right = Math.max(2, Math.min(innerWidth, document.documentElement.scrollWidth - scrollX) - size - 2);
     var left = Math.max(2, Math.min(right, last.right + (range ? 4 : -size / 2)));
-    var top = Math.max(2 - scrollY, range ? last.top + (last.height - size) / 2 : last.top - size / 2);
-    // A source document does not reserve the inline space that the review mockup
-    // has. Dock above the range when the adjacent glyphs still occupy that space.
-    if (range && lines.some(function (box) { return box.left < left + size && box.right > left && box.top < top + size && box.bottom > top; })) {
-      top = Math.max(2 - scrollY, last.top - size);
+    var minTop = 2 - scrollY;
+    var top = Math.max(minTop, range ? last.top + (last.height - size) / 2 : last.top - size / 2);
+    function placePin(x, y, avoidText) {
+      if (occupied.some(function (pin) { return Math.abs(pin.top - y) < size + 1 && Math.abs(pin.left - x) < size + 1; })) return null;
+      if (avoidText && lines.some(function (box) { return box.left < x + size && box.right > x && box.top < y + size && box.bottom > y; })) return null;
+      var pin = { left: x, top: y, width: size, height: size };
+      occupied.push(pin);
+      return pin;
     }
-    var fits = function (x, y) {
-      return !occupied.some(function (pin) { return Math.abs(pin.top - y) < size + 1 && Math.abs(pin.left - x) < size + 1; });
-    };
-    // Text anchors in one paragraph normally have distinct end points. Only step
-    // aside for actual geometric collisions, including overlapping ranges.
-    for (var row = 0; row < 10; row++) {
-      var y = top - row * step;
-      if (y < 2 - scrollY) break;
-      for (var x = left; x >= 2; x -= step) {
-        if (fits(x, y)) {
-          var placed = { left: x, top: y, width: size, height: size };
-          occupied.push(placed);
-          return placed;
-        }
+    function searchRow(y, avoidText) {
+      for (var offset = 0; left - offset >= 2 || left + offset <= right; offset += step) {
+        var before = left - offset >= 2 ? placePin(left - offset, y, avoidText) : null;
+        if (before) return before;
+        var after = offset && left + offset <= right ? placePin(left + offset, y, avoidText) : null;
+        if (after) return after;
       }
+      return null;
     }
-    return { left: left, top: top, width: size, height: size };
+    // No inline space is reserved in an author's document. Recheck the text on
+    // every alternate row, including the line immediately above the selection.
+    var above = Math.max(minTop, last.top - size);
+    var placed = placePin(left, top, range) || (range && above < top ? placePin(left, above, true) : null);
+    if (placed) return placed;
+    for (var row = 0; row < 10; row++) {
+      var y = (range && row ? above : top) - row * step;
+      if (y >= minTop) placed = searchRow(y, range);
+      if (!placed && range && row) placed = searchRow(top + row * step, true);
+      if (placed) return placed;
+    }
+    // In dense passages, extend below the anchor so every numbered target can be opened.
+    for (var collisionRow = 0; !placed; collisionRow++) placed = searchRow(top + collisionRow * step, false);
+    return placed;
   }
   var pendingViewportPositioned = false;
   function paint() {

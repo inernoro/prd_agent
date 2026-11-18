@@ -300,7 +300,7 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const choose = () => annotations.setActiveId(thread.id);
-  return <div className={`annotation-chat-bubble${active ? ' is-active' : ''}`} role="dialog" aria-label={`批注气泡 ${number}`}
+  return <div className={`annotation-chat-bubble${active ? ' is-active' : ''}`} role={dualColumn && !active ? 'group' : 'dialog'} aria-label={`批注气泡 ${number}`}
     data-bubble-id={thread.id} data-placement={placement?.side} data-mobile-dock={mobileDock ? '' : undefined}
     style={{ left: placement?.left, top: placement?.top, visibility: placement ? undefined : 'hidden' }}
     onPointerDown={start}

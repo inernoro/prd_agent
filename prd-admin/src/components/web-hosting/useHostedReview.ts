@@ -58,10 +58,13 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
     && !versionAtLeast(published.contentVersionKey, urlVersionKey(currentSite.siteUrl));
   const selected = selectedId ? versions.find(v => v.id === selectedId) : metadataBehind ? undefined : published;
   const useRecordedMetadata = !!published && !metadataBehind;
+  // An older archive can misclassify the current document at the same address.
+  const usesRecordedLocation = useRecordedMetadata && !!published.siteUrl && published.siteUrl !== currentSite?.siteUrl;
   const liveSite = currentSite ? { ...currentSite,
     siteUrl: useRecordedMetadata && published.siteUrl ? published.siteUrl : currentSite.siteUrl,
-    entryFile: useRecordedMetadata ? published.entryFile : currentSite.entryFile,
-    contentShape: useRecordedMetadata ? published.contentShape ?? currentSite.contentShape : currentSite.contentShape } : null;
+    entryFile: usesRecordedLocation ? published.entryFile : currentSite.entryFile,
+    contentShape: usesRecordedLocation ? published.contentShape ?? currentSite.contentShape
+      : currentSite.contentShape ?? (useRecordedMetadata ? published.contentShape : undefined) } : null;
   const historical = !!selectedId && !!selected && !selected.isCurrent;
   const selectedUrl = historical ? (preview?.revision.id === selectedId ? preview.siteUrl : selected.siteUrl) : liveSite?.siteUrl;
   const displaySite = liveSite ? { ...liveSite, siteUrl: selectedUrl || '',

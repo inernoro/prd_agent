@@ -100,7 +100,7 @@ for (const width of [1440, 900, 390]) test(`${width}px 合集两份工具栏只�
   if (width > 700) await expect(page.getByRole('button', { name: '网页版本：V2', exact: true }).filter({ visible: true })).toBeFocused();
 });
 
-async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
+async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string; staleArchiveShape?: boolean;
   pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; extraHistory?: boolean; unarchivedHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
@@ -135,7 +135,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') });
       return;
     }
-    const currentVersion = { id: 'current', siteId: site.id, versionLabel: 'V2', contentVersionKey: options.metadataLag ? '10000' : '20000', isCurrent: true, canPreview: true, siteUrl: siteEntry, entryFile: 'index.html', contentShape: 'self-contained-html' };
+    const currentVersion = { id: 'current', siteId: site.id, versionLabel: 'V2', contentVersionKey: options.metadataLag ? '10000' : '20000', isCurrent: true, canPreview: true, siteUrl: siteEntry, entryFile: 'index.html', contentShape: options.staleArchiveShape ? 'multi-file' : 'self-contained-html' };
     const inlineVersion = { ...currentVersion, id: 'inline-history', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: options.multiFileHistory ? siteEntry : null, contentShape: options.multiFileHistory ? 'multi-file' : 'self-contained-html' };
     const olderVersion = { ...inlineVersion, id: 'earlier-history', versionLabel: 'V0', contentVersionKey: '5000', canPreview: !options.unarchivedHistory };
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
@@ -515,6 +515,18 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         expect(contentRequests()).toBeGreaterThan(0);
       });
     }
+
+    test('恢复旧网页后以当前正文的内容类型加载新版批注', async ({ page }) => {
+      const html = '<h1>恢复后正文</h1><script data-map-annotations="v1">document.body.dataset.obsoleteRuntime = "1";</script>';
+      const { frame, preview, requests } = await serve(page, {
+        shape: 'self-contained-html', staleArchiveShape: true, inlineHistory: true, html, nativeHtml: html,
+      });
+      await expect(frame.getByRole('heading', { name: '恢复后正文' })).toBeVisible();
+      await expect(preview).toHaveAttribute('srcdoc', /annotation-runtime\.js/);
+      await expect(frame.locator('[data-map-annotation-layer]')).toHaveAttribute('data-dual-column', '');
+      await expect(frame.locator('[data-obsolete-runtime]')).toHaveCount(0);
+      expect(requests).toEqual([]);
+    });
   });
 }
 
@@ -523,16 +535,19 @@ test.describe('长文批注连续跟随与菜单外点', () => {
   const title = '长文批注跟随样例';
   const content = '这是一条需要保留完整内容的长意见。'.repeat(3000);
   const html = `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font:16px/1.7 system-ui}main{padding:32px}p{margin:12px 0}</style><main><h1>${title}</h1><p id="note-one">定位段落一</p><p id="note-two">定位段落二</p>${'<p>长文压力段落，滚动时不应遍历全部正文寻找位置。</p>'.repeat(10000)}</main></html>`;
-  async function open(page: Page, denseCount = 0) {
-    const site = { id: 'qa-follow', title, siteUrl: 'https://hosting.example/sites/qa-follow/index.html?v=20000', entryFile: 'index.html', contentShape: 'self-contained-html', viewerCanEdit: false, totalSize: html.length, fileCount: 1, files: [], tags: [] };
+  async function open(page: Page, denseCount = 0, compactRange = false) {
+    const sourceHtml = compactRange
+      ? '<meta name="viewport" content="width=device-width,initial-scale=1"><p id="note-one" style="margin:22px 42px 0 16px;font:16px/20px sans-serif">上一行' + '文字'.repeat(8) + '<br>批注目标' + '继续'.repeat(7) + '</p>'
+      : html;
+    const site = { id: 'qa-follow', title, siteUrl: 'https://hosting.example/sites/qa-follow/index.html?v=20000', entryFile: 'index.html', contentShape: 'self-contained-html', viewerCanEdit: false, totalSize: sourceHtml.length, fileCount: 1, files: [], tags: [] };
     const version = { id: 'v2', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, entryFile: site.entryFile, siteUrl: site.siteUrl, contentShape: site.contentShape };
     const names = denseCount ? ['one', ...Array.from({ length: denseCount - 1 }, (_, index) => 'dense-' + index)] : ['one', 'two'];
-    const comments = names.map((name, index) => ({ id: name, siteId: site.id, revisionId: 'v2', contentVersion: '20000', authorName: '复验作者', content, createdAt: '2026-11-17T00:00:00Z', anchor: { kind: 'element', pagePath: '/sites/qa-follow/index.html', selector: '#note-' + (denseCount ? 'one' : name), tagName: 'p', text: '定位段落' + (index + 1), elementText: '定位段落' + (index + 1), prefix: '', suffix: '', contentVersion: '20000' } }));
+    const comments = names.map((name, index) => ({ id: name, siteId: site.id, revisionId: 'v2', contentVersion: '20000', authorName: '复验作者', content, createdAt: '2026-11-17T00:00:00Z', anchor: { kind: compactRange ? 'text' : 'element', pagePath: '/sites/qa-follow/index.html', selector: '#note-' + (denseCount ? 'one' : name), tagName: 'p', text: compactRange ? '批注目标' : '定位段落' + (index + 1), elementText: '定位段落' + (index + 1), prefix: '', suffix: '', contentVersion: '20000' } }));
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname;
       if (path.endsWith('/annotation-runtime.js')) { await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') }); return; }
       const data = path.endsWith('/shares/view/qa-follow') ? { title, shareType: 'single', sites: [site] }
-        : path.endsWith('/content') ? { html }
+        : path.endsWith('/content') ? { html: sourceHtml }
         : path.endsWith('/comments') ? { siteId: site.id, commentsEnabled: true, canComment: false, comments }
         : path.endsWith('/revisions') ? [version]
         : path.endsWith('/related-documents') ? { version: 1, mainSiteId: site.id, canManage: false, items: [{ id: site.id, title }, { id: 'other', title: '关联样例', href: '/s/wp/other' }] }
@@ -626,6 +641,26 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await documentTab.tap();
       await expect(pins.nth(4)).toBeInViewport();
       expect(await frame.locator('body').evaluate(() => scrollY)).toBe(initialScrollY);
+    });
+    if (mobile) test('首屏紧凑文字的重叠批注不遮住字，每个编号均可触控', async ({ page }) => {
+      const frame = await open(page, 4, true);
+      const pins = frame.getByRole('button', { name: /打开批注/ });
+      await expect(pins).toHaveCount(4);
+      await expect.poll(() => frame.locator('#note-one').evaluate(paragraph => {
+        const range = document.createRange();
+        range.selectNodeContents(paragraph);
+        const glyphs = Array.from(range.getClientRects()).filter(rect => rect.width > 0);
+        const layer = document.querySelector('[data-map-annotation-layer]')?.shadowRoot;
+        const boxes = Array.from(layer?.querySelectorAll('.pin:not([hidden])') ?? [], element => element.getBoundingClientRect());
+        const overlaps = (a: DOMRect, b: DOMRect) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+        return boxes.length === 4 && boxes.every((box, index) => !glyphs.some(glyph => overlaps(box, glyph))
+          && !boxes.slice(0, index).some(previous => overlaps(box, previous)));
+      })).toBe(true);
+      for (const number of [1, 2, 3, 4]) {
+        await frame.getByRole('button', { name: '打开批注 ' + number, exact: true }).tap();
+        await expect(page.locator('.review-thread.is-active .review-anchor-number')).toHaveText(String(number));
+        await page.getByRole('tab', { name: '正文', exact: true }).tap();
+      }
     });
     if (!mobile) test('页边卡可以拖离原文、虚线保留关系并复位', async ({ page }) => {
       const frame = await open(page);

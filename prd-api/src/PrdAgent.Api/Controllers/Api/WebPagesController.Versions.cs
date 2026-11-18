@@ -113,17 +113,20 @@ public partial class WebPagesController
 
     private ReviewVersionSummary ReviewVersionDto(HostedSiteRevision item, HostedSite site, long number)
     {
-        var entryFile = item.PublishedEntryFile ?? "index.html";
         var key = item.PublishedEntryCosKey;
         var current = item.PublishedContentVersion == HostedSiteService.EffectiveContentVersion(site);
-        var siteUrl = current && !string.IsNullOrWhiteSpace(site.SiteUrl) ? site.SiteUrl
+        var usesLivePublication = current && !string.IsNullOrWhiteSpace(site.SiteUrl);
+        var siteUrl = usesLivePublication ? site.SiteUrl
             : !string.IsNullOrWhiteSpace(key) && _reviewStorage != null
             ? HostedSiteService.AppendBridgeVersion(HostedSiteService.AppendVersion(_reviewStorage.BuildUrlForKey(key), item.PublishedContentVersion!.Value), site.SlideNavCompatVersion)
             : current ? site.SiteUrl : null;
+        var entryFile = usesLivePublication ? site.EntryFile : item.PublishedEntryFile ?? "index.html";
+        var contentShape = usesLivePublication ? HostedSiteContentShapeRules.Resolve(site)
+            : item.CapturedContentShape ?? HostedSiteContentShapes.MultiFile;
         return new ReviewVersionSummary(item.Id, site.Id, "V" + number,
             HostedSiteCommentRules.VersionKey(item.PublishedContentVersion!.Value), item.PublishedAt, current,
             !string.IsNullOrWhiteSpace(siteUrl) || item.CapturedContentShape == HostedSiteContentShapes.SelfContainedHtml,
-            entryFile, item.CapturedContentShape ?? HostedSiteContentShapes.MultiFile, siteUrl);
+            entryFile, contentShape, siteUrl);
     }
 
     private sealed record ReviewVersionSummary(string Id, string SiteId, string VersionLabel, string ContentVersionKey,
