@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -93,5 +94,75 @@ public sealed class GatewayTemporaryQuotaStore(IMongoDatabase database, ILogger 
                 new BsonDocument("$gt", new BsonArray { "$QuotaExpiresAt", "$$NOW" }),
                 capacity,
             }));
+    }
+}
+
+public sealed record GatewayConsumptionRetryOwner(string TenantId, string KeyId, string Caller);
+
+public sealed record GatewayConsumptionRetryWorkItem(string Id, string RunId, string FirstBlockedRequestId, DateTime ExpiresAt);
+
+/// <summary>临时额度和恢复后补跑共用同一告警；这里只存取补跑批次，调用授权由网关执行。</summary>
+public sealed class GatewayConsumptionRetryStore(IMongoDatabase database)
+{
+    public const string CollectionName = "llmgw_consumption_retries";
+    private static readonly FilterDefinitionBuilder<BsonDocument> Where = Builders<BsonDocument>.Filter;
+    private static readonly UpdateDefinitionBuilder<BsonDocument> Update = Builders<BsonDocument>.Update;
+    private IMongoCollection<BsonDocument> Retries => database.GetCollection<BsonDocument>(CollectionName);
+
+    public async Task RecordAsync(string alertId, GatewayConsumptionRetryOwner owner,
+        string runId, string requestId, DateTime readyAt, CancellationToken ct)
+    {
+        var id = alertId + ":" + owner.KeyId + ":" + runId;
+        var update = Update.SetOnInsert("TenantId", owner.TenantId).SetOnInsert("AppCallerCode", owner.Caller)
+            .SetOnInsert("AlertId", alertId).SetOnInsert("ServiceKeyId", owner.KeyId).SetOnInsert("RunId", runId)
+            .SetOnInsert("State", "available").SetOnInsert("ReadyAt", readyAt)
+            .SetOnInsert("ExpiresAt", readyAt.AddDays(7)).SetOnInsert("FirstBlockedRequestId", requestId);
+        try
+        {
+            await Retries.UpdateOneAsync(Where.Eq("_id", id), update, new UpdateOptions { IsUpsert = true }, ct);
+        }
+        catch (MongoWriteException error) when (error.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 并发登记的同一批次继续共用一项补跑动作。
+        }
+    }
+
+    public async Task<IReadOnlyList<GatewayConsumptionRetryWorkItem>> ReadReadyAsync(GatewayConsumptionRetryOwner owner,
+        CancellationToken ct)
+    {
+        var rows = await Retries.Find(WorkerScope(owner) & Where.Eq("State", "queued") & ReadyAt(DateTime.UtcNow))
+            .SortBy(row => row["ReadyAt"]).Limit(25).ToListAsync(ct);
+        return rows.Select(row => new GatewayConsumptionRetryWorkItem(row["_id"].AsString, row["RunId"].AsString,
+            row["FirstBlockedRequestId"].AsString, row["ExpiresAt"].AsBsonDateTime.ToUniversalTime())).ToArray();
+    }
+
+    public async Task<bool> ApplyReceiptAsync(GatewayConsumptionRetryOwner owner, string id, string claimId,
+        string outcome, int? count, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var identity = WorkerScope(owner) & Where.Eq("_id", id);
+        var ownedClaim = identity & Where.Eq("ClaimId", claimId);
+        var ready = ReadyAt(now);
+        var claiming = outcome == "claim";
+        var completedCount = count is { } value ? (BsonValue)new BsonInt32(value) : BsonNull.Value;
+        var transition = claiming
+            ? Update.Set("State", "running").Set("ClaimId", claimId).Set("ClaimedAt", now)
+            : Update.Set("State", outcome).Set("FinishedAt", now).Set("CompletedCount", completedCount);
+        var before = claiming ? identity & Where.Eq("State", "queued") : ownedClaim & Where.Eq("State", "running");
+        var applied = claiming ? ownedClaim & ready & Where.Eq("State", "running")
+            : ownedClaim & Where.Eq("State", outcome) & Where.Eq("CompletedCount", completedCount);
+        var result = await Retries.UpdateOneAsync(before & ready, transition, cancellationToken: ct);
+        return result.ModifiedCount == 1 || await Retries.Find(applied).AnyAsync(ct);
+    }
+
+    private static FilterDefinition<BsonDocument> ReadyAt(DateTime now)
+        => Where.Lte("ReadyAt", now) & Where.Gt("ExpiresAt", now);
+
+    private static FilterDefinition<BsonDocument> WorkerScope(GatewayConsumptionRetryOwner owner)
+    {
+        // 只对调用方名称忽略大小写，租户、密钥、批次和领取标识仍须精确匹配。兼容已用原大小写存下的批次。
+        var caller = Regex.Escape(GatewayAppCallerIdentity.NormalizePart(owner.Caller));
+        return Where.Eq("TenantId", owner.TenantId) & Where.Eq("ServiceKeyId", owner.KeyId)
+            & Where.Regex("AppCallerCode", new BsonRegularExpression($@"\A{caller}\z", "i"));
     }
 }

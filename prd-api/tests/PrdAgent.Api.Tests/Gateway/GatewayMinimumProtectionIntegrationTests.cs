@@ -345,13 +345,14 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         const string retryPath = "/gw/v1/consumption-retries";
 
         Task<HttpResponseMessage> SendChat(string runId = "batch-fixture") => Dispatch(HttpMethod.Post, "/v1/chat/completions", sourceKey,
-            new { messages = new[] { new { role = "user", content = "synthetic work" } } }, runId);
+            new { messages = new[] { new { role = "user", content = "synthetic work" } } }, runId, Caller.ToUpperInvariant());
 
-        Task<HttpResponseMessage> Dispatch(HttpMethod method, string path, string key, object? body = null, string? runId = null)
+        Task<HttpResponseMessage> Dispatch(HttpMethod method, string path, string key, object? body = null,
+            string? runId = null, string? callerCode = Caller)
         {
             var request = new HttpRequestMessage(method, path);
             request.Headers.Add("X-Gateway-Key", key);
-            request.Headers.Add("X-Gateway-App-Caller", Caller);
+            if (callerCode is not null) request.Headers.Add("X-Gateway-App-Caller", callerCode);
             if (runId is not null) request.Headers.Add("X-Gateway-Retry-Run-Id", runId);
             if (body is not null) request.Content = JsonContent.Create(body);
             return caller.SendAsync(request);
@@ -396,7 +397,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         // 以隔离库中的已到期窗口验证领取时序，无需等待下一个整点。
         await retries.UpdateOneAsync(new BsonDocument("_id", retry["_id"]),
             Builders<BsonDocument>.Update.Set("ReadyAt", DateTime.UtcNow.AddSeconds(-1)));
-        (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey)).Content.ReadAsStringAsync()).ShouldContain("batch-fixture");
+        (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey, callerCode: null)).Content.ReadAsStringAsync()).ShouldContain("batch-fixture");
         (await (await Dispatch(HttpMethod.Get, retryPath, otherKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
         var claim = new { id = retry["_id"].AsString, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
         var otherClaim = new { claim.id, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };

@@ -104,6 +104,7 @@ public sealed class GatewayMinimumProtectionCoordinator
     private readonly IConfiguration _configuration;
     private readonly ILogger<GatewayMinimumProtectionCoordinator> _logger;
     private readonly GatewayTemporaryQuotaStore _temporaryQuota;
+    private readonly GatewayConsumptionRetryStore _retries;
     private int _invalidDynamicPolicyReported;
 
     public GatewayMinimumProtectionCoordinator(
@@ -113,6 +114,7 @@ public sealed class GatewayMinimumProtectionCoordinator
     {
         (_data, _configuration, _logger) = (data, configuration, logger);
         _temporaryQuota = new(data.Database, logger);
+        _retries = new(data.Database);
     }
 
     public async Task<GatewayMinimumProtectionDecision> CheckAsync(
@@ -262,8 +264,7 @@ public sealed class GatewayMinimumProtectionCoordinator
         if (identity.RetryServiceKeyId is not { } serviceKeyId || identity.RetryRunId is not { } runId) return;
         try
         {
-            await GatewayConsumptionRetries.RecordAsync(_data.Database, alertId, tenantId, caller,
-                serviceKeyId, runId, requestId, restoresAt, ct);
+            await _retries.RecordAsync(alertId, new(tenantId, serviceKeyId, caller), runId, requestId, restoresAt, ct);
         }
         catch (MongoException error)
         {
