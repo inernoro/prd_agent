@@ -111,3 +111,28 @@ it('窄屏展开或收起一条时，保留其他气泡的位置', async () => {
   annotations.activeId = 'one'; await render();
   expect([other.style.left, other.style.top]).toEqual(before);
 });
+
+it('双栏页边批注贴向正文且能用讨论业务桥直接回复与解决', async () => {
+  const { container, annotations, render } = await setup(1440);
+  annotations.dualColumn = true;
+  annotations.column = { right: 918, paper: 'rgb(255, 255, 255)' };
+  const reply = vi.fn().mockResolvedValueOnce('发送失败，草稿已保留。').mockResolvedValueOnce(null);
+  const resolve = vi.fn().mockResolvedValue(null);
+  annotations.discussionActions = { canReply: true, canResolve: () => true, reply, resolve, getReplies: () => [] };
+  await render();
+  const selected = container.querySelector<HTMLElement>('[data-bubble-id="two"]')!;
+  expect(selected.style.left).toBe('958px');
+  await act(async () => selected.querySelector<HTMLButtonElement>('.annotation-chat-reply-trigger')!.click());
+  const textarea = selected.querySelector('textarea')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '直接回复本条批注');
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => selected.querySelector<HTMLFormElement>('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  expect(selected.querySelector('[role="alert"]')!.textContent).toContain('草稿已保留');
+  expect(textarea.value).toBe('直接回复本条批注');
+  await act(async () => selected.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+  expect(reply.mock.calls[1]).toEqual(reply.mock.calls[0]);
+  await act(async () => [...selected.querySelectorAll('button')].find(button => button.textContent === '解决')!.click());
+  expect(resolve).toHaveBeenCalledWith('two');
+});

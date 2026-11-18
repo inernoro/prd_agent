@@ -3,7 +3,7 @@ import { listHostedReviewVersions, previewHostedReviewVersion, reuploadSite, rol
   type HostedReviewSource, type HostedReviewVersion, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { canUseSrcDocPreview } from './previewHtml';
-import { useHostedAnnotations } from './useHostedAnnotations';
+import { useHostedAnnotations, type HostedAnnotationOptions } from './useHostedAnnotations';
 
 type ReviewSite = { id: string; title: string; siteUrl: string; entryFile: string; contentShape?: 'self-contained-html' | 'multi-file' }
   & { wrappedAssetType?: string | null }
@@ -29,7 +29,8 @@ type Preview = { revision: HostedReviewVersion; html: string; siteUrl: string | 
 
 /** Version selection affects only this review; uploading appends and publishes using the existing upload contract. */
 export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: ReviewSite | null,
-  source: HostedReviewSource | null, onOpen: () => void, onPublished?: (site: HostedSite) => void) {
+  source: HostedReviewSource | null, onOpen: () => void, onPublished?: (site: HostedSite) => void,
+  annotationOptions?: HostedAnnotationOptions) {
   const authToken = useAuthStore(s => s.token);
   const [versions, setVersions] = useState<HostedReviewVersion[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -71,7 +72,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   // A logical hosted address anchors inline snapshots; it is never used as their navigation fallback.
   const previewBaseUrl = historical ? selectedUrl || (liveSite ? inlineSnapshotBase(liveSite, selected.entryFile) : undefined) : liveSite?.siteUrl;
   const annotationSite = displaySite && previewBaseUrl ? { ...displaySite, siteUrl: previewBaseUrl } : null;
-  const annotations = useHostedAnnotations(frameRef, metadataBehind && !selectedId ? null : annotationSite, onOpen, selected?.contentVersionKey);
+  const annotations = useHostedAnnotations(frameRef, metadataBehind && !selectedId ? null : annotationSite, onOpen, selected?.contentVersionKey, annotationOptions);
   const annotationsRef = useRef(annotations); annotationsRef.current = annotations;
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -100,7 +101,9 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
     const request = ++selectionSequence.current;
     annotationsRef.current.setEnabled(false); annotationsRef.current.clearDraft(); annotationsRef.current.setActiveId(null);
     setPendingFocus(commentId ?? null); setError(null); setSelectedId(version.isCurrent ? null : id); setPreview(null);
-    if (version.isCurrent) { setLoading(false); return; }
+    // Unarchived publications still have their own discussion scope. Do not
+    // ask the snapshot endpoint to serve a document it has marked unavailable.
+    if (version.isCurrent || version.canPreview === false) { setLoading(false); return; }
     setLoading(true);
     try {
       const result = await previewHostedReviewVersion(sourceRef.current, id);
@@ -121,16 +124,19 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   }, [pendingFocus, ready, focus, loading, threads]);
 
   const upload = useCallback(async (file: File) => {
-    if (!live || uploading) return;
+    if (!live || uploading) return false;
     const operation = identity;
     setUploading(true); setError(null); annotationsRef.current.setEnabled(false);
     try {
       const result = await reuploadSite(live.id, file, crypto.randomUUID());
-      if (!mounted.current || operation !== identityRef.current) return;
-      if (!result.success) { setError(result.error?.message || '新增版本失败'); return; }
+      if (!mounted.current || operation !== identityRef.current) return false;
+      if (!result.success) { setError(result.error?.message || '新增版本失败'); return false; }
       setOverride(result.data); setSelectedId(null); setPreview(null); setPendingFocus(null);
-      publishedRef.current?.(result.data); await refresh();
-    } catch { if (mounted.current && operation === identityRef.current) setError('新增版本失败，请重试'); }
+      publishedRef.current?.(result.data); await refresh(); return true;
+    } catch {
+      if (mounted.current && operation === identityRef.current) setError('新增版本失败，请重试');
+      return false;
+    }
     finally { if (mounted.current && operation === identityRef.current) setUploading(false); }
   }, [live, uploading, identity, refresh]);
 

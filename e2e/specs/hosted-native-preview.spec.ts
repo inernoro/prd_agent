@@ -101,7 +101,7 @@ for (const width of [1440, 900, 390]) test(`${width}px 合集两份工具栏只�
 });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; extraHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; extraHistory?: boolean; unarchivedHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   let listRequests = 0;
@@ -137,7 +137,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     }
     const currentVersion = { id: 'current', siteId: site.id, versionLabel: 'V2', contentVersionKey: options.metadataLag ? '10000' : '20000', isCurrent: true, canPreview: true, siteUrl: siteEntry, entryFile: 'index.html', contentShape: 'self-contained-html' };
     const inlineVersion = { ...currentVersion, id: 'inline-history', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: options.multiFileHistory ? siteEntry : null, contentShape: options.multiFileHistory ? 'multi-file' : 'self-contained-html' };
-    const olderVersion = { ...inlineVersion, id: 'earlier-history', versionLabel: 'V0', contentVersionKey: '5000' };
+    const olderVersion = { ...inlineVersion, id: 'earlier-history', versionLabel: 'V0', contentVersionKey: '5000', canPreview: !options.unarchivedHistory };
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
     if (path.endsWith('/shares/view/qa-native')) {
       data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [site],
@@ -158,13 +158,24 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       contentRequests++;
       data = { html: options.html ?? files['index.html'] };
     } else if (path.endsWith('/comments')) {
-      data = { siteId: site.id, commentsEnabled: true, canComment: !!options.inlineHistory, comments: options.extraHistory ? [{
-        id: 'inline-history-note', revisionId: inlineVersion.id, contentVersion: inlineVersion.contentVersionKey,
-        authorName: '复验作者', content: '旧版意见与正文同时可读', createdAt: '2026-11-02T00:00:00Z',
-      }] : [] };
+      data = { siteId: site.id, commentsEnabled: true, canComment: !!options.inlineHistory, comments: [
+        ...(options.extraHistory || options.unarchivedHistory ? [{
+          id: 'inline-history-note', revisionId: inlineVersion.id, contentVersion: inlineVersion.contentVersionKey,
+          authorName: '复验作者', content: '旧版意见与正文同时可读', createdAt: '2026-11-02T00:00:00Z',
+          anchor: options.extraHistory ? {
+            kind: 'element', selector: '#old-heading', pagePath: new URL(siteEntry).pathname, tagName: 'h1',
+            text: '仅保留 HTML 的旧版正文', elementText: '仅保留 HTML 的旧版正文', prefix: '', suffix: '',
+            contentVersion: inlineVersion.contentVersionKey,
+          } : null,
+        }] : []),
+        ...(options.unarchivedHistory ? [{
+          id: 'unarchived-history-note', revisionId: olderVersion.id, contentVersion: olderVersion.contentVersionKey,
+          authorName: '复验作者', content: '原文未归档也可以阅读当时的意见', createdAt: '2026-11-01T00:00:00Z',
+        }] : []),
+      ] };
     } else if (path.endsWith('/revisions')) {
       if (options.metadataLag) await metadataGate;
-      data = options.inlineHistory ? [currentVersion, inlineVersion, ...(options.extraHistory ? [olderVersion] : [])] : options.metadataLag ? [currentVersion] : [];
+      data = options.inlineHistory ? [currentVersion, inlineVersion, ...(options.extraHistory || options.unarchivedHistory ? [olderVersion] : [])] : options.metadataLag ? [currentVersion] : [];
     } else if (options.extraHistory && path.endsWith('/revisions/earlier-history/preview')) {
       data = { revision: olderVersion, siteUrl: null, html: '<h1>更早的 V0 正文</h1>' };
     } else if (path.endsWith('/revisions/inline-history/preview')) {
@@ -205,27 +216,46 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     test.use({ viewport });
 
     test('在同一个历史小窗切换快照，清除上一版的恢复确认并保留当前正文', async ({ page }) => {
-      const { frame } = await serve(page, { modal: true, inlineHistory: true, extraHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
+      const { frame } = await serve(page, { modal: true, inlineHistory: true, extraHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1><input aria-label="当前页草稿"><div style="height:1800px"></div>' });
+      const liveInput = frame.getByRole('textbox', { name: '当前页草稿' });
+      await liveInput.fill('切回时保留原输入');
+      const liveDocument = frame.locator('html');
+      await liveDocument.evaluate(() => window.scrollTo(0, 400));
       const version = page.getByRole('button', { name: '网页版本：V2', exact: true });
       await version.click();
-      await page.getByRole('option', { name: /^V1/ }).click();
-      const first = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+      const first = page.getByRole('dialog', { name: '历史版本', exact: true });
       await expect(first.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
-      await expect(first.getByText('旧版意见与正文同时可读', { exact: true })).toBeVisible();
+      await expect(first.getByText(/旧版意见与正文同时可读/)).toBeVisible();
       const documentBox = await first.locator('iframe').boundingBox();
-      const commentsBox = await first.locator('.review-history-comments').boundingBox();
+      const commentsBox = await first.getByRole('region', { name: 'V1 的意见' }).boundingBox();
       expect(documentBox && commentsBox && (documentBox.x + documentBox.width <= commentsBox.x + 1 || documentBox.y + documentBox.height <= commentsBox.y + 1)).toBeTruthy();
       await expect(first.locator('.annotation-chat-bubble')).toHaveCount(0);
+      await first.frameLocator('iframe').getByRole('button', { name: '打开批注 1' }).click();
+      await expect(first.locator('[data-review-history-thread="inline-history-note"]')).toHaveAttribute('aria-current', 'true');
+      if (viewport.width > 768) {
+        const header = first.locator('.review-history-window-header');
+        const box = (await header.boundingBox())!;
+        await page.mouse.move(box.x + 180, box.y + 16);
+        await page.mouse.down();
+        await page.mouse.move(box.x + 222, box.y + 43, { steps: 5 });
+        await page.mouse.up();
+        const moved = (await header.boundingBox())!;
+        expect(moved.x - box.x).toBe(42);
+        expect(moved.y - box.y).toBe(27);
+      }
       const dialogElement = await first.elementHandle();
-      await first.getByRole('button', { name: '恢复为当前版本', exact: true }).click();
+      await first.getByRole('button', { name: '恢复此版本', exact: true }).click();
+      await first.getByRole('alertdialog').getByRole('button', { name: '取消', exact: true }).click();
       await first.getByRole('navigation', { name: '历史版本列表' }).getByRole('button', { name: /^V0/ }).click();
-      const second = page.getByRole('dialog', { name: 'V0 · 版本预览', exact: true });
+      const second = page.getByRole('dialog', { name: '历史版本', exact: true });
       await expect(second.frameLocator('iframe').getByRole('heading', { name: '更早的 V0 正文' })).toBeVisible();
       expect(await dialogElement!.evaluate(element => element.isConnected)).toBe(true);
-      await expect(second.getByRole('button', { name: '确认恢复并发布', exact: true })).toHaveCount(0);
-      await expect(second.getByRole('button', { name: '恢复为当前版本', exact: true })).toBeVisible();
-      await second.getByRole('button', { name: '返回当前页', exact: true }).click();
+      await expect(second.getByRole('button', { name: /^确认恢复并发布/ })).toHaveCount(0);
+      await expect(second.getByRole('button', { name: '恢复此版本', exact: true })).toBeVisible();
+      await second.getByRole('button', { name: '返回', exact: true }).click();
       await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
+      expect(await liveDocument.evaluate(() => window.scrollY)).toBe(400);
+      await expect(liveInput).toHaveValue('切回时保留原输入');
       await expect(version).toBeFocused();
     });
 
@@ -234,14 +264,17 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await page.route('**/api/web-pages/qa-native/reupload', route => route.fulfill({ json: { success: false, data: null, error: { code: 'TEST_UPLOAD', message: '上传失败，请重新上传' } } }));
       await page.route('**/api/web-pages/qa-native/edits/revisions/inline-history/rollback', route => route.fulfill({ json: { success: false, data: null, error: { code: 'VERSION_CONFLICT', message: '版本已更新，请核对后重试恢复' } } }));
       await page.getByLabel('上传新版本文件', { exact: true }).setInputFiles({ name: 'new.html', mimeType: 'text/html', buffer: Buffer.from('<h1>新版</h1>') });
-      await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
       await expect(page.getByRole('alert').filter({ hasText: '上传失败，请重新上传' })).toBeVisible();
-      await page.getByRole('option', { name: /^V1/ }).click();
-      const dialog = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+      await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: '历史版本', exact: true });
       await expect(dialog.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
       await expect(dialog.getByRole('alert')).toHaveCount(0);
-      await dialog.getByRole('button', { name: '恢复为当前版本', exact: true }).click();
-      const confirmRestore = dialog.getByRole('button', { name: '确认恢复并发布', exact: true });
+      const selecting = page.waitForEvent('filechooser');
+      await dialog.getByRole('button', { name: '上传新版本', exact: true }).click();
+      await (await selecting).setFiles({ name: 'history-upload.html', mimeType: 'text/html', buffer: Buffer.from('<h1>新版</h1>') });
+      await expect(dialog.getByRole('alert')).toHaveText('上传失败，请重新上传');
+      await dialog.getByRole('button', { name: '恢复此版本', exact: true }).click();
+      const confirmRestore = dialog.getByRole('button', { name: /^确认恢复并发布/ });
       const confirmBox = await confirmRestore.boundingBox();
       expect(confirmBox!.width).toBeGreaterThan(100);
       expect(confirmBox!.height).toBeLessThanOrEqual(48);
@@ -250,20 +283,20 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await expect(dialog.getByRole('alert')).toHaveText('版本已更新，请核对后重试恢复');
       await dialog.screenshot({ path: test.info().outputPath('restore-confirm.png') });
       await expect(page.locator('iframe[title="临时预览测试"]').contentFrame().getByRole('heading', { name: '当前版正文' })).toBeVisible();
-      await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+      await page.keyboard.press('Escape');
+      await expect(dialog.getByRole('alertdialog')).toHaveCount(0);
+      await dialog.getByRole('button', { name: '关闭历史版本', exact: true }).click();
       await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
-      await page.getByRole('option', { name: /^V1/ }).click();
       await expect(dialog.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
       await expect(dialog.getByRole('alert')).toHaveCount(0);
     });
 
     for (const modal of [false, true]) {
-      test(`${modal ? '站内' : '分享'}的无直链历史正文保持内联预览并可绑定批注`, async ({ page }) => {
+      test(`${modal ? '站内' : '分享'}的无直链历史正文保持内联与只读预览`, async ({ page }) => {
         const { frame, preview } = await serve(page, { modal, inlineHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
         await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
         await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
-        await page.getByRole('option', { name: /V1/ }).click();
-        const dialog = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+        const dialog = page.getByRole('dialog', { name: '历史版本', exact: true });
         const historical = dialog.locator('iframe');
         const historicalFrame = historical.contentFrame();
         await expect(historicalFrame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
@@ -271,12 +304,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         await expect(preview).toHaveAttribute('srcdoc', /当前版正文/);
         await expect.poll(() => historicalFrame.locator('base').getAttribute('href')).toBe(new URL('.', entry).href);
         expect((await historical.getAttribute('sandbox'))?.split(' ')).not.toContain('allow-same-origin');
-        await dialog.getByRole('button', { name: '查看此版本批注', exact: true }).click();
-        const bind = dialog.getByRole('button', { name: '绑定页面元素 / 选中文字', exact: true });
-        await expect(bind).toBeEnabled();
-        await bind.click();
-        await historicalFrame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' }).click();
-        await expect(dialog.getByText('已选中标题', { exact: true })).toBeVisible();
+        await expect(dialog.getByRole('button', { name: '绑定页面元素 / 选中文字', exact: true })).toHaveCount(0);
+        await expect(dialog.getByRole('textbox')).toHaveCount(0);
         await expect(historical).toHaveAttribute('srcdoc', /仅保留 HTML 的旧版正文/);
         await expect(historicalFrame.locator('script[data-map-pdf-download-bridge], script[data-map-package-download-bridge]')).toHaveCount(0);
         expect(new URL(page.url()).pathname).toBe(modal ? '/web-pages' : '/s/wp/qa-native');
@@ -288,8 +317,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       test(`${modal ? '站内' : '分享'}的历史多文件版本保留真实来源与同源 fetch`, async ({ page }) => {
         const { frame } = await serve(page, { modal, inlineHistory: true, multiFileHistory: true, shape: 'multi-file' });
         await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
-        await page.getByRole('option', { name: /V1/ }).click();
-        const dialog = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
+        const dialog = page.getByRole('dialog', { name: '历史版本', exact: true });
         const historical = dialog.locator('iframe');
         const historicalFrame = historical.contentFrame();
         await expect(page.getByRole('button', { name: '网页版本：V2', exact: true, includeHidden: true })).toBeAttached();
@@ -311,25 +339,46 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         else await route.fallback();
       });
       await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
-      await page.getByRole('option', { name: /V1/ }).click();
-      const dialog = page.getByRole('dialog', { name: 'V1 · 版本预览', exact: true });
-      await expect(dialog.getByRole('button', { name: '重试预览', exact: true })).toBeVisible();
-      await expect(dialog.getByRole('button', { name: '查看此版本批注', exact: true })).toBeDisabled();
-      await expect(dialog.locator('.review-sidebar')).toHaveCount(0);
+      const dialog = page.getByRole('dialog', { name: '历史版本', exact: true });
+      await expect(dialog.getByRole('button', { name: '重试', exact: true })).toBeVisible();
+      await expect(dialog.getByRole('alert')).toContainText('V1 载入失败');
+      await expect(dialog.getByRole('region', { name: 'V1 的意见' })).toHaveCount(0);
       await expect(dialog.locator('iframe')).toHaveCount(0);
       await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
       failSnapshot = false;
-      await dialog.getByRole('button', { name: '重试预览', exact: true }).click();
+      await dialog.getByRole('button', { name: '重试', exact: true }).click();
       await expect(dialog.locator('iframe').contentFrame().getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
-      await expect(dialog.getByRole('button', { name: '查看此版本批注', exact: true })).toBeEnabled();
+      await expect(dialog.getByRole('region', { name: 'V1 的意见' })).toBeVisible();
       expect(new URL(page.url()).pathname).toBe('/web-pages');
+    });
+
+    test('历史小窗的原文未归档版本仍可阅读独立意见，不请求或恢复旧原文', async ({ page }) => {
+      const { frame } = await serve(page, { modal: true, inlineHistory: true, unarchivedHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
+      const unavailable = page.waitForRequest('**/revisions/earlier-history/preview', { timeout: 1500 }).then(() => true, () => false);
+      await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: '历史版本', exact: true });
+      const list = dialog.getByRole('navigation', { name: '历史版本列表' });
+      await list.getByRole('button', { name: /^V0 原文未归档/ }).click();
+      const opinions = dialog.getByRole('region', { name: 'V0 的意见' });
+      await expect(opinions.getByText(/原文未归档也可以阅读当时的意见/)).toBeVisible();
+      await expect(opinions.getByText(/旧版意见与正文同时可读/)).toHaveCount(0);
+      await expect(dialog.getByRole('button', { name: '恢复此版本', exact: true })).toHaveCount(0);
+      await expect(dialog.locator('iframe')).toHaveCount(0);
+      await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
+      await list.getByRole('button', { name: /^V1/ }).click();
+      await expect(dialog.frameLocator('iframe').getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+      await expect(dialog.getByRole('region', { name: 'V1 的意见' }).getByText(/旧版意见与正文同时可读/)).toBeVisible();
+      expect(await unavailable).toBe(false);
     });
 
     test('站内当前版保留输入，不因旧版本记录响应而跳到空白文档', async ({ page }) => {
       const { frame, preview, releaseVersions } = await serve(page, { modal: true, shape: 'multi-file', metadataLag: true });
       await expect(frame.locator('#result')).toHaveText('fetch-ok:entry');
       await frame.getByLabel('保留输入').fill('等待版本记录时保留');
-      await page.getByRole('dialog').getByRole('button', { name: '批注与讨论', exact: true }).click();
+      const tab = page.getByRole('tab', { name: /^讨论/ });
+      const toggle = page.getByRole('dialog').getByRole('button', { name: '批注与讨论', exact: true });
+      if (await tab.isVisible()) await tab.click();
+      else if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
       await expect(page.locator('.review-thread-scroll')).toContainText('正在确认网页版本');
       await expect(page.getByRole('dialog')).not.toContainText('无法确认网页版本');
       const original = await preview.elementHandle();
@@ -345,9 +394,13 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
 
     test('讨论打开时进入全屏仍铺满视口，退出后恢复工具栏', async ({ page }) => {
       await serve(page, { shape: 'multi-file' });
-      await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
+      const tab = page.getByRole('tab', { name: /^讨论/ });
+      const toggle = page.getByRole('button', { name: '批注与讨论', exact: true });
+      if (await tab.isVisible()) await tab.click();
+      else if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
       await expect(page.locator('aside.review-sidebar')).toBeVisible();
-      await page.getByRole('button', { name: '全屏演示', exact: true }).click();
+      await page.getByRole('button', { name: '更多', exact: true }).click();
+      await page.getByRole('menuitem', { name: '全屏演示', exact: true }).click();
       await expect(page.locator('.share-topbar')).toBeHidden();
       await expect(page.locator('aside.review-sidebar')).toBeHidden();
       await expect.poll(async () => (await page.locator('iframe[title="临时预览测试"]').boundingBox())?.height ?? 0)
@@ -488,17 +541,18 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     });
     await page.goto('/s/wp/qa-follow');
     const discussion = page.getByRole('button', { name: '批注与讨论', exact: true });
-    await expect(discussion).toHaveAttribute('aria-expanded', page.viewportSize()!.width < 768 ? 'false' : 'true');
-    if (await discussion.getAttribute('aria-expanded') === 'true') {
-      await expect(page.locator('.review-thread')).toHaveCount(comments.length);
-      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
-      await discussion.click();
+    if (page.viewportSize()!.width < 768) {
+      await expect(page.getByRole('tab', { name: '正文', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('.annotation-mobile-dock, .annotation-chat-bubble')).toHaveCount(0);
+    } else {
+      if (page.viewportSize()!.width >= 1024) {
+        await expect(discussion).toHaveAttribute('aria-expanded', 'true');
+        await expect(page.locator('.review-thread')).toHaveCount(comments.length);
+        await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
+        await discussion.click();
+      }
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(comments.length);
     }
-    const summaries = denseCount > 0 && page.viewportSize()!.width < 768
-      ? page.getByRole('region', { name: '页边批注' }).getByRole('button', { name: /^展开批注气泡/ })
-      : page.locator('.annotation-chat-bubble');
-    await expect(summaries).toHaveCount(comments.length);
-    await expect(summaries.first()).toBeVisible();
     return page.frameLocator(`iframe[title="${title}"]`);
   }
   async function freePoint(page: Page, scrolling = false) {
@@ -510,7 +564,8 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     expect(point).not.toBeNull(); return point!;
   }
   for (const mobile of [false, true]) test.describe(mobile ? '独立触控' : '桌面', () => {
-    test.use({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: mobile, hasTouch: mobile });
+    test.use({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: mobile, hasTouch: mobile,
+      contextOptions: { reducedMotion: 'reduce' } });
     const tap = async (locator: ReturnType<Page['getByRole']>) => mobile ? locator.tap() : locator.click();
     if (!mobile) test('页边宽度不随可见锚点增减，右侧绝对定位内容不触发缩放闪烁', async ({ page }) => {
       await page.setViewportSize({ width: 1000, height: 900 });
@@ -536,6 +591,7 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await expect.poll(nonoverlapping).toBe(true);
       await expect(page.locator('.annotation-chat-actions')).toHaveCount(0);
       await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(9);
+      await expect(frame.locator('[data-map-annotation-layer] .outline:not([hidden])')).toHaveCount(1);
       await frame.getByRole('button', { name: '打开批注 5', exact: true }).click();
       const selected = page.getByRole('dialog', { name: '批注气泡 5', exact: true });
       await expect(selected).toHaveClass(/is-active/);
@@ -546,155 +602,95 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await page.setViewportSize({ width: 1440, height: 445 });
       const margin = page.locator('.annotation-bubble-scroll');
       await expect(margin).toHaveAttribute('aria-label', '滚动查看更多页边批注');
-      const point = await selected.boundingBox();
-      await page.mouse.move(point!.x + point!.width / 2, point!.y + point!.height / 2);
+      await expect(selected).toBeInViewport({ ratio: .6 });
+      const viewport = await margin.boundingBox(), scrollArea = await margin.locator('.annotation-bubble-scroll-area').boundingBox();
+      await page.mouse.move(scrollArea!.x + scrollArea!.width / 2, viewport!.y + viewport!.height / 2);
       await page.mouse.wheel(0, 500);
       await expect.poll(() => margin.evaluate(el => el.scrollTop + el.clientHeight)).toBeGreaterThan(570);
       await expect(page.getByRole('button', { name: '展开批注气泡 9', exact: true })).toBeInViewport();
       expect(await frame.locator('body').evaluate(() => window.scrollY)).toBe(0);
     });
-    if (mobile) test('密集批注显示在正文外，可横滑摘要、展开、显隐和拖移复位', async ({ page, context }) => {
-      const touch = await context.newCDPSession(page);
-      const bottomInset = 34;
-      await touch.send('Emulation.setSafeAreaInsetsOverride', { insets: { bottom: bottomInset } });
+    if (mobile) test('手机保持正文至底并由编号直达讨论，可按原位置返回', async ({ page }) => {
       const frame = await open(page, 16);
-      const dock = page.getByRole('region', { name: '页边批注' });
-      const summaries = dock.getByRole('button', { name: /^展开批注气泡/ });
-      const document = page.locator(`iframe[title="${title}"]`);
-      const rectangle = (locator: ReturnType<Page['locator']>) => locator.evaluate(el => {
-        const { top, bottom } = el.getBoundingClientRect();
-        return { top, bottom };
-      });
-      expect((await rectangle(dock)).top).toBeGreaterThanOrEqual((await rectangle(document)).bottom - 1);
-      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
-      await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(16);
-      const scroller = dock.locator('.annotation-dock-list'), row = await scroller.boundingBox();
-      expect((await rectangle(dock)).bottom - (await rectangle(scroller)).bottom).toBeGreaterThanOrEqual(bottomInset);
-      const swipe = async (x: number, y: number, dx: number, dy: number) => {
-        await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-        for (let i = 1; i <= 8; i++) {
-          await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + dx * i / 8, y: y + dy * i / 8 }] });
-          await page.waitForTimeout(16);
-        }
-        await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-      };
-      await scroller.evaluate(el => {
-        el.addEventListener('scrollend', () => el.setAttribute('data-scroll-settled', 'true'), { once: true });
-      });
-      await swipe(row!.x + row!.width * .74, row!.y + row!.height / 2, -220, 0);
-      await expect.poll(() => scroller.evaluate(el => el.scrollLeft)).toBeGreaterThan(40);
-      await expect(scroller).toHaveAttribute('data-scroll-settled', 'true');
-      expect(await frame.locator('body').evaluate(() => scrollY)).toBe(0);
-      const scroll = await scroller.evaluate(el => el.scrollLeft);
-      // Tap the exposed part of a summary without scrolling the rail again for locator actionability.
-      const summaryPoint = await scroller.evaluate(el => {
-        const rail = el.getBoundingClientRect();
-        for (const button of Array.from(el.querySelectorAll('button'))) {
-          const rect = button.getBoundingClientRect();
-          const left = Math.max(rect.left, rail.left), right = Math.min(rect.right, rail.right);
-          if (right - left >= 44) return { x: (left + right) / 2, y: rect.top + rect.height / 2 };
-        }
-        return null;
-      });
-      expect(summaryPoint).not.toBeNull();
-      await page.touchscreen.tap(summaryPoint!.x, summaryPoint!.y);
-      const selected = page.locator('.annotation-chat-bubble.is-active');
-      await expect(selected).toHaveAttribute('data-placement', 'dock');
-      expect((await rectangle(selected)).top).toBeGreaterThanOrEqual((await rectangle(document)).bottom - 1);
-      expect((await rectangle(dock)).bottom - (await rectangle(selected)).bottom).toBeGreaterThanOrEqual(bottomInset);
-      const grip = await selected.getByRole('button', { name: /移动批注气泡/ }).boundingBox();
-      await swipe(grip!.x + grip!.width / 2, grip!.y + grip!.height / 2, 0, -167);
-      await expect(selected).toHaveAttribute('data-placement', 'moved');
-      expect((await rectangle(selected)).bottom).toBeLessThan((await rectangle(dock)).top);
-      const excerpt = await selected.locator('p').evaluate(el => ({
-        height: el.clientHeight,
-        twoLines: 2 * parseFloat(getComputedStyle(el).lineHeight),
-      }));
-      expect(excerpt.height).toBeGreaterThanOrEqual(Math.floor(excerpt.twoLines));
-      await selected.getByRole('button', { name: '放回原位', exact: true }).tap();
-      await expect(selected).toHaveAttribute('data-placement', 'dock');
-
-      await selected.getByRole('button', { name: '返回批注摘要', exact: true }).tap();
-      await expect(summaries).toHaveCount(16);
-      expect(await scroller.evaluate(el => el.scrollLeft)).toBeGreaterThanOrEqual(scroll);
-      await page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first().tap();
-      await expect(dock).toHaveCount(0);
-      await frame.getByRole('button', { name: '打开批注 1', exact: true }).tap();
-      await expect(selected).toBeVisible();
-      await selected.getByRole('button', { name: '显示全部气泡', exact: true }).tap();
-      await expect(selected).toHaveAttribute('data-placement', 'dock');
-      await touch.detach();
+      const documentPanel = page.getByRole('tabpanel', { name: '正文', exact: true });
+      const discussionTab = page.getByRole('tab', { name: '讨论 16', exact: true });
+      const documentTab = page.getByRole('tab', { name: '正文', exact: true });
+      const pins = frame.getByRole('button', { name: /打开批注/ });
+      await expect(pins).toHaveCount(16);
+      expect((await documentPanel.boundingBox())!.height).toBeGreaterThan(680);
+      const initialScrollY = await frame.locator('body').evaluate(() => scrollY);
+      await pins.nth(4).tap();
+      await expect(discussionTab).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('.review-thread.is-active .review-anchor-number')).toHaveText('5');
+      await expect(page.locator('.annotation-mobile-dock, .annotation-chat-bubble')).toHaveCount(0);
+      await documentTab.tap();
+      await expect(pins.nth(4)).toBeInViewport();
+      expect(await frame.locator('body').evaluate(() => scrollY)).toBe(initialScrollY);
     });
-    test('图标全隐保留编号，编号重开后全显；菜单外点与iframe点击收起', async ({ page }) => {
+    if (!mobile) test('页边卡可以拖离原文、虚线保留关系并复位', async ({ page }) => {
       const frame = await open(page);
+      await frame.getByRole('button', { name: '打开批注 1', exact: true }).click();
+      const card = page.getByRole('dialog', { name: '批注气泡 1', exact: true });
+      await expect(card).toHaveAttribute('data-placement', 'right');
+      const grip = await card.getByRole('button', { name: '移动批注气泡 1' }).boundingBox();
+      expect(grip).not.toBeNull();
+      await page.mouse.move(grip!.x + grip!.width / 2, grip!.y + grip!.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(grip!.x, grip!.y + 120, { steps: 8 });
+      await page.mouse.up();
+      await expect(card).toHaveAttribute('data-placement', 'moved');
+      await expect(page.locator('.annotation-bubble-connectors .is-moved path')).toHaveCount(1);
+      await card.getByRole('button', { name: '放回原位', exact: true }).click();
+      await expect(card).toHaveAttribute('data-placement', 'right');
+    });
+    test('图标全隐保留编号，编号重开后全显；关联菜单在外点与点正文时收起', async ({ page }) => {
+      const frame = await open(page);
+      const discussion = page.getByRole('button', { name: '批注与讨论', exact: true });
+      const documentTab = page.getByRole('tab', { name: '正文', exact: true });
+      const pinned = frame.getByRole('button', { name: '打开批注 2', exact: true });
+      const hide = page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first();
+      const show = page.getByRole('button', { name: '显示全部气泡', exact: true }).first();
       await expect(page.getByRole('button', { name: '批注显示方式', exact: true })).toHaveCount(0);
-      const viewed = page.locator('[data-bubble-id="one"]');
-      await tap(viewed.getByRole('button', { name: '展开批注气泡 1', exact: true }));
-      await tap(viewed.getByRole('button', { name: '查看讨论', exact: true }));
-      await expect(page.getByRole('button', { name: '批注与讨论', exact: true })).toHaveAttribute('aria-expanded', 'true');
-      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
-      await tap(page.getByRole('button', { name: '批注与讨论', exact: true }));
-      await expect(viewed).toBeVisible();
-      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
-      const backgrounds = await page.locator('.annotation-chat-bubble').evaluateAll(cards => cards.map(card => getComputedStyle(card).backgroundColor));
-      // The document can use a different theme. A translucent card would let its text show through.
-      expect(backgrounds.every(color => /^rgb\(\d+, \d+, \d+\)$/.test(color))).toBe(true);
-      await page.screenshot({ path: test.info().outputPath('default-bubble-icons.png') });
-      if (mobile) { const r = await page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first().boundingBox(); expect(r!.width).toBeGreaterThanOrEqual(44); expect(r!.height).toBeGreaterThanOrEqual(44); }
-      await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());
+      await tap(hide);
       await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
       await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(2);
-      await tap(frame.getByRole('button', { name: '打开批注 2', exact: true }));
-      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(1);
-      await tap(page.getByRole('dialog', { name: '批注气泡 2', exact: true }).getByRole('button', { name: '显示全部气泡', exact: true }));
-      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
-      const closed = page.locator('[data-bubble-id="one"]'), number = await closed.locator('.annotation-chat-number').innerText();
-      const reloadDocument = async () => {
-        const boot = await frame.locator('body').evaluate(() => performance.timeOrigin);
-        await frame.locator('body').evaluate(() => location.reload());
-        await expect.poll(() => frame.locator('body').evaluate(() => performance.timeOrigin)).toBeGreaterThan(boot);
-        await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(2);
-      };
-      for (let round = 0; round < 2; round++) {
-        const expand = closed.getByRole('button', { name: /展开批注气泡/ });
-        if (await expand.count()) await tap(expand);
-        await tap(closed.getByRole('button', { name: /收起批注气泡/ })); await expect(closed).toHaveCount(0);
-        await reloadDocument(); await expect(page.locator('.annotation-chat-bubble')).toHaveCount(1); await expect(closed).toHaveCount(0);
-        if (round === 0) { await tap(frame.getByRole('button', { name: '打开批注 ' + number, exact: true })); await expect(closed).toBeVisible(); }
-      }
-      await tap(page.getByRole('button', { name: '显示全部气泡', exact: true }).first()); await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
-      await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());
-      for (const menu of ['网页版本：V2', '关联文档']) {
-        await tap(page.getByRole('button', { name: menu, exact: true })); await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'true');
-        await tap(page.getByRole('button', { name: '批注与讨论', exact: true })); await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'false');
-        const commentsButton = page.getByRole('button', { name: '批注与讨论', exact: true });
-        if (await commentsButton.getAttribute('aria-expanded') === 'true') await tap(commentsButton);
-        await tap(page.getByRole('button', { name: menu, exact: true }));
-        const point = await freePoint(page); if (mobile) await page.touchscreen.tap(point.x, point.y); else await page.mouse.click(point.x, point.y);
-        await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'false');
-        if (menu === '网页版本：V2') {
-        await tap(page.getByRole('button', { name: menu, exact: true }));
-        await tap(frame.getByRole('button', { name: '打开批注 1', exact: true }));
-        await expect(page.getByRole('button', { name: menu, exact: true })).toHaveAttribute('aria-expanded', 'false');
-        await tap(page.getByRole('button', { name: '显示全部气泡', exact: true }).first());
-        await tap(page.getByRole('button', { name: '隐藏全部气泡', exact: true }).first());
-        }
-      }
+      await tap(pinned);
+      if (mobile) await expect(page.locator('.review-thread.is-active .review-anchor-number')).toHaveText('2');
+      else await expect(page.getByRole('dialog', { name: '批注气泡 2', exact: true })).toBeVisible();
+      await tap(show);
+      if (mobile) await documentTab.tap();
+      else await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
+      await tap(hide);
+
+      const menu = page.getByRole('button', { name: '关联文档', exact: true });
+      await tap(menu);
+      await expect(menu).toHaveAttribute('aria-expanded', 'true');
+      if (mobile) await page.getByText(title, { exact: true }).tap();
+      else await discussion.click();
+      await expect(menu).toHaveAttribute('aria-expanded', 'false');
+      if (!mobile) await discussion.click();
+      await tap(menu);
+      const point = await freePoint(page);
+      if (mobile) await page.touchscreen.tap(point.x, point.y);
+      else await page.mouse.click(point.x, point.y);
+      await expect(menu).toHaveAttribute('aria-expanded', 'false');
     });
     test('一万段长文连续跟随、节点不重建、无全文查询，长意见默认渲染有界', async ({ page, context }) => {
       const frame = await open(page), card = page.locator('[data-bubble-id="one"]');
       await expect.poll(() => frame.locator('body').evaluate(() => document.readyState)).toBe('complete');
-      expect(await card.locator('p').innerText()).toHaveLength(281);
-      expect((await page.locator('.review-message-body').first().textContent())!.length).toBeLessThanOrEqual(281);
-      // 先把跟踪气泡挪到阅读区内部，避免边缘限位改变本用例的位移期望。
-      const grip = await card.getByRole('button', { name: /移动批注气泡/ }).boundingBox(); expect(grip).not.toBeNull();
-      if (mobile) {
-        const cdp = await context.newCDPSession(page), x = grip!.x + grip!.width / 2, y = grip!.y + grip!.height / 2;
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-        for (let i = 1; i <= 10; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + 160 * i / 10 }] }); await page.waitForTimeout(16); }
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach();
-      } else { await page.mouse.move(grip!.x + 5, grip!.y + 5); await page.mouse.down(); await page.mouse.move(grip!.x + 5, grip!.y + 165, { steps: 10 }); await page.mouse.up(); }
-      const before = await card.boundingBox(); expect(before).not.toBeNull();
+      const pin = frame.getByRole('button', { name: '打开批注 1', exact: true });
+      const followed = mobile ? pin : card;
+      if (!mobile) {
+        expect(await card.locator('p').innerText()).toHaveLength(281);
+        const grip = await card.getByRole('button', { name: /移动批注气泡/ }).boundingBox();
+        expect(grip).not.toBeNull();
+        await page.mouse.move(grip!.x + 5, grip!.y + 5);
+        await page.mouse.down();
+        await page.mouse.move(grip!.x + 5, grip!.y + 165, { steps: 10 });
+        await page.mouse.up();
+      }
+      const before = await followed.boundingBox();
+      expect(before).not.toBeNull();
       await page.evaluate(() => {
         const w = window as typeof window & { __followCard?: Element | null; __followMessages?: number };
         w.__followCard = document.querySelector('[data-bubble-id="one"]'); w.__followMessages = 0;
@@ -709,22 +705,23 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       if (mobile) {
         const cdp = await context.newCDPSession(page);
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
-        for (let i = 1; i <= 12; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x, y: point.y - 100 * i / 12 }] }); await page.waitForTimeout(16); }
+        for (let i = 1; i <= 12; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x, y: point.y - 42 * i / 12 }] }); await page.waitForTimeout(16); }
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach();
       }
       else { await page.mouse.move(point.x, point.y); await page.mouse.wheel(0, 40); }
       await expect.poll(() => frame.locator('body').evaluate(() => scrollY)).toBeGreaterThan(0);
       await expect.poll(async () => {
-        const y = await frame.locator('body').evaluate(() => scrollY), current = await card.boundingBox(); return Math.abs(before!.y - current!.y - y);
+        const y = await frame.locator('body').evaluate(() => scrollY), current = await followed.boundingBox(); return Math.abs(before!.y - current!.y - y);
       }).toBeLessThan(2);
-      expect(await card.evaluate(el => el === (window as typeof window & { __followCard?: Element }).__followCard)).toBe(true);
+      if (!mobile) expect(await card.evaluate(el => el === (window as typeof window & { __followCard?: Element }).__followCard)).toBe(true);
       const reads = await frame.locator('body').evaluate(() => (window as typeof window & { __followReads?: { scans: number; rects: number } }).__followReads!);
       const messages = await page.evaluate(() => (window as typeof window & { __followMessages?: number }).__followMessages!);
       expect(reads.scans).toBe(0); expect(reads.rects).toBeLessThanOrEqual((messages + 3) * 60);
-      const commentsButton = page.getByRole('button', { name: '批注与讨论', exact: true });
-      if (await commentsButton.getAttribute('aria-expanded') !== 'true') await tap(commentsButton);
+      if (mobile) await page.getByRole('tab', { name: '讨论 2', exact: true }).tap();
+      else await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
+      expect((await page.locator('.review-message-body').first().textContent())!.length).toBeLessThanOrEqual(281);
       {
-        await tap(page.getByRole('button', { name: '展开全文', exact: true }).first());
+        await tap(page.getByRole('button', { name: /^展开全文/ }).first());
         expect(await page.locator('.review-message-body').first().textContent()).toBe(content);
         await tap(page.getByRole('button', { name: '收起全文', exact: true }).first());
       }

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -75,6 +77,25 @@ public class HostedSiteCommentAnchor
 
 public static class HostedSiteCommentRules
 {
+    public static string SubmissionId(string siteId, string authorUserId, Guid clientId)
+    {
+        var scope = string.Join('\n', "hosted-comment-v1", siteId, authorUserId, clientId.ToString("N"));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scope)).AsSpan(0, 16)).ToLowerInvariant();
+    }
+
+    public static bool MatchesSubmission(HostedSiteComment saved, string content, HostedSiteCommentAnchor? anchor,
+        string? parentId, string? revisionId, string? expectedContentVersion) =>
+        saved.Content == content && saved.ParentId == parentId
+        && (parentId != null || ((revisionId == null || revisionId == saved.RevisionId)
+            && MatchesExpectedVersion(expectedContentVersion, StoredVersion(saved))))
+        && SameAnchor(saved.Anchor, anchor);
+
+    private static bool SameAnchor(HostedSiteCommentAnchor? left, HostedSiteCommentAnchor? right) =>
+        left == null || right == null ? left == right :
+        left.Kind == right.Kind && left.PagePath == right.PagePath && left.Selector == right.Selector
+        && left.TagName == right.TagName && left.Text == right.Text && left.Prefix == right.Prefix
+        && left.Suffix == right.Suffix && left.ElementText == right.ElementText && left.ContentVersion == right.ContentVersion;
+
     public static string VersionKey(DateTime version) =>
         (version.Ticks - version.Ticks % TimeSpan.TicksPerMillisecond).ToString(System.Globalization.CultureInfo.InvariantCulture);
 

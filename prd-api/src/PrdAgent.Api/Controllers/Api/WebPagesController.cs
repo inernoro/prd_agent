@@ -2038,7 +2038,7 @@ public partial class WebPagesController : ControllerBase
     {
         var result = await _siteService.AddCommentBySiteAsync(
             siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId,
-            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion);
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, clientId: req.ClientId);
         return MapAddCommentResult(result);
     }
 
@@ -2062,7 +2062,7 @@ public partial class WebPagesController : ControllerBase
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
             token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId,
-            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId);
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId, clientId: req.ClientId);
         return MapAddCommentResult(result);
     }
 
@@ -2305,6 +2305,7 @@ public class SetCommentResolvedRequest
 
 public class AddSiteCommentRequest
 {
+    public string? ClientId { get; set; }
     public string? SiteId { get; set; }
     public string? RevisionId { get; set; }
     public string? ExpectedContentVersion { get; set; }

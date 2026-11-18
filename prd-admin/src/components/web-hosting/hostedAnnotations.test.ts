@@ -28,6 +28,77 @@ async function setup() {
 }
 
 describe('hosted page annotation runtime', () => {
+  it('双栏以原文段序分组，只弱化隐藏后的底色，保留逐条编号', async () => {
+    const t = await setup();
+    const paragraph = t.win.document.getElementById('intro')!;
+    vi.spyOn(paragraph, 'getBoundingClientRect').mockReturnValue({
+      left: 72, top: 20, right: 272, bottom: 60, width: 200, height: 40,
+    } as DOMRect);
+    const anchor = { pagePath: '/site/index.html', selector: '#intro', tagName: 'p', kind: 'text',
+      text: '预计三天', elementText: '交付周期：预计三天交付，请提前确认。' };
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', dualColumn: true, displayMode: 'bubble',
+      threads: [{ id: 'one', anchor }, { id: 'resolved', anchor, isResolved: true }, { id: 'two', anchor }] });
+    await expect.poll(() => t.messages.find(message => message.type === 'map-annotation-paragraphs')).toMatchObject({
+      items: [{ id: 'one', paragraph: 1 }, { id: 'resolved', paragraph: 1 }, { id: 'two', paragraph: 1 }],
+    });
+    expect(t.layer()!.querySelector('[aria-label="第 1 段，2 条意见"]')).toBeTruthy();
+    expect([...t.layer()!.querySelectorAll('.pin:not([hidden])')].map(pin => pin.textContent)).toEqual(['1', '3']);
+    const firstPin = t.layer()!.querySelector<HTMLElement>('.pin:not([hidden])')!;
+    const highlight = t.layer()!.querySelector<HTMLElement>('.highlight:not([hidden])')!;
+    const verticalOffset = (element: HTMLElement) => Number(/,(-?[\d.]+)px\)$/.exec(element.style.transform)?.[1]);
+    expect(verticalOffset(firstPin)).toBeLessThan(verticalOffset(highlight));
+    t.send({ type: 'map-annotation-previews-hide' });
+    await expect.poll(() => t.layer()!.querySelectorAll('.highlight.dim:not([hidden])').length).toBe(1);
+    (t.layer()!.querySelector('[aria-label="打开批注 3"]') as HTMLButtonElement).click();
+    await expect.poll(() => t.layer()!.querySelectorAll('.highlight.active:not(.dim)').length).toBe(1);
+    expect(t.layer()!.querySelectorAll('.highlight.dim:not([hidden])')).toHaveLength(0);
+  });
+  it('仅提示同段选字，接收选区操作后以蓝色待批注标记保留原文', async () => {
+    const t = await setup();
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', dualColumn: true, suggestSelection: true });
+    const paragraph = t.win.document.getElementById('intro')!, range = t.win.document.createRange();
+    range.setStart(paragraph.firstChild!, 5); range.setEnd(paragraph.firstChild!, 9);
+    t.win.getSelection()!.addRange(range);
+    t.win.document.dispatchEvent(new t.win.Event('selectionchange'));
+    await expect.poll(() => t.messages.find(message => message.type === 'map-annotation-selection')).toMatchObject({
+      anchor: { kind: 'text', selector: '#intro', text: '预计三天' },
+    });
+    const selection = t.messages.find(message => message.type === 'map-annotation-selection')!;
+    t.send({ type: 'map-annotation-accept-selection', anchor: selection.anchor });
+    await expect.poll(() => t.layer()!.querySelector('.pending-mark')).toBeTruthy();
+    expect(paragraph.textContent).toBe('交付周期：预计三天交付，请提前确认。');
+  });
+  it('只发送靠近视口顶端的横幅颜色，滚离后清空，不再查询 DOM', async () => {
+    const t = await setup();
+    const hero = t.win.document.createElement('header');
+    hero.style.backgroundImage = 'linear-gradient(rgb(18, 59, 74), rgb(201, 119, 43))';
+    t.win.document.body.prepend(hero);
+    vi.spyOn(hero, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 1024, bottom: 124, width: 1024, height: 124 } as DOMRect);
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', dualColumn: true });
+    const lastTint = () => t.messages.filter(message => message.type === 'map-annotation-header-tints').at(-1);
+    await expect.poll(lastTint).toMatchObject({ colors: [[18, 59, 74], [201, 119, 43]] });
+    const scan = vi.spyOn(t.win.document, 'querySelectorAll');
+    Object.defineProperty(t.win, 'scrollY', { configurable: true, value: 300 });
+    t.win.dispatchEvent(new t.win.Event('scroll'));
+    await expect.poll(lastTint).toMatchObject({ colors: null });
+    expect(scan).not.toHaveBeenCalled();
+  });
+  it('双栏聚焦位置时保留托管正文内部滚动容器的原生定位', async () => {
+    const t = await setup();
+    const intro = t.win.document.querySelector('#intro')!;
+    const container = intro.parentElement!;
+    container.style.overflowY = 'auto';
+    Object.defineProperty(container, 'scrollHeight', { value: 900 });
+    Object.defineProperty(container, 'clientHeight', { value: 300 });
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(intro, 'scrollIntoView', { value: scrollIntoView });
+    const anchor = { pagePath: '/site/index.html', selector: '#intro', tagName: 'p', kind: 'element',
+      elementText: '交付周期：预计三天交付，请提前确认。' };
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', dualColumn: true,
+      displayMode: 'bubble', threads: [{ id: 'one', anchor }] });
+    t.send({ type: 'map-annotation-focus', id: 'one' });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' });
+  });
   it('连续滚动按帧发布跟随几何，不清空气泡或扫描全文', async () => {
     const t = await setup();
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, displayMode: 'bubble',

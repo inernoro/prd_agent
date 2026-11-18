@@ -5,19 +5,23 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
+import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
 import { updateSite } from '@/services/real/webPages';
 import { previewCollectionPermissions, syncCollectionPermissions } from '@/services/real/hostedCollections';
-import { RelatedDocumentContent } from './RelatedDocumentContent';
+import { RelatedDocumentContent, RelatedReaderList } from './RelatedDocumentContent';
 import { CollectionContextPanel } from './CollectionContextPanel';
 import './RelatedDocumentsBar.css';
 
-export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, siteTitle }: {
+export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, siteTitle, reviewReader = false }: {
   siteId: string; collectionNavigation?: boolean; siteTitle?: string; variant?: 'bar' | 'toolbar' | 'badge';
-  summary?: RelatedSummary; source?: RelatedDocumentSource; onNavigate?: (item: RelatedDocument) => void;
+  summary?: RelatedSummary; source?: RelatedDocumentSource; onNavigate?: (item: RelatedDocument) => void; reviewReader?: boolean;
 }) {
   const authToken = useAuthStore(state => state.token);
+  const theme = useResolvedThemeMode();
+  const mobile = useIsMobile();
   const [data, setData] = useState<RelatedDocuments | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -91,7 +95,8 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const openPermissions = (next = data) => { setData(next); close(); setPermissions(true); };
   if (variant === 'badge' && !summary?.count && !collectionsEnabled && !open) return null;
   const compact = variant !== 'bar';
-  const relatedCount = data?.items.filter(item => item.id !== siteId).length ?? 0;
+  const relatedItems = data?.items.filter(item => item.id !== siteId) ?? [];
+  const relatedCount = relatedItems.length;
   if (variant === 'toolbar' && !collectionsEnabled && !error && (loading || relatedCount === 0)) return null;
   const main = data?.items.find(item => item.isMain);
   const warn = variant === 'toolbar' && data?.canManage && data.hasPermissionDifferences;
@@ -106,7 +111,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
         event.preventDefault(); keepOpen(); setMaxHeight(measureAvailableHeight()); setOpen(true); setPinned(true);
         requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('input,a,button') ?? panel.current)?.focus());
       } }}>
-      {variant === 'badge' ? <Link2 size={12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
+      {variant === 'badge' || reviewReader ? <Link2 size={reviewReader ? 15 : 12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
       {variant === 'badge' ? <>{!!summary?.count && <span className="related-count">{summary.count}</span>}<span className="related-badge-name">{summary?.isMain ? '主文档' : summary?.mainTitle || summary?.titles[0] || '关联'}</span></>
         : loading ? <MapSpinner size={12} /> : <span className="related-count">{data ? relatedCount : '—'}</span>}
       {warn && <ShieldAlert size={12} data-permission-warning aria-hidden />}<ChevronDown size={13} className={open ? 'related-chevron-open' : ''} />
@@ -115,12 +120,18 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     {!compact && data?.canManage && data.version > 0 && <button type="button" className={`related-permission-hint ${data.hasPermissionDifferences ? 'is-warning' : ''}`} onClick={() => openPermissions()}>
       {data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}<span>{data.hasPermissionDifferences ? '权限不一致' : '权限与分享'}</span>
     </button>}
-    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} align={compact ? 'right' : 'left'} gap={6} minWidth={280}
-      className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: collectionsEnabled && split ? 'min(680px, calc(100vw - 24px))' : 'min(464px, calc(100vw - 24px))', maxHeight, padding: 0 }}>
+    <AnchoredMenu open={open} onClose={close} anchorRef={anchor}
+      align={reviewReader && mobile ? 'viewport-right' : compact ? 'right' : 'left'}
+      offsetX={reviewReader && !mobile ? -28 : 0} gap={reviewReader && mobile ? 0 : 6} minWidth={280}
+      className={`related-popover ${reviewReader ? 'related-reader-popover' : token ? 'surface-tone-dark' : ''}`} theme={reviewReader ? theme : undefined}
+      style={{ width: reviewReader ? 'min(302px, calc(100vw - 24px))' : collectionsEnabled && split ? 'min(680px, calc(100vw - 24px))' : 'min(464px, calc(100vw - 24px))', maxHeight, padding: 0,
+        ...(reviewReader ? { background: 'var(--review-b-popover)', boxShadow: '0 12px 24px #0003, 0 2px 5px #0002' } : {}) }}>
       <div id={menuId} ref={panel} tabIndex={-1} role="dialog" aria-label="关联文档" onPointerDown={event => { event.stopPropagation(); setPinned(true); }} onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
         {collectionsEnabled ? <CollectionContextPanel key={siteId + authToken} siteId={siteId} maxHeight={maxHeight - 2} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate}
           onManage={next => openManager(next)} onPermissions={next => openPermissions(next)} onTagEdit={item => { close(); setTagTarget(item); }} />
+          : reviewReader ? <RelatedReaderList items={relatedItems} data={data} error={error} maxHeight={maxHeight - 2}
+            onReload={() => void refresh()} onManage={() => openManager()} onPermissions={() => openPermissions()} onNavigate={onNavigate} onClose={close} />
           : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact}
             onReload={() => { setLoading(true); void refresh(); }} onManage={() => openManager()} onPermissions={() => openPermissions()}
             onTagEdit={item => { close(); setTagTarget(item); }} onNavigate={onNavigate} onClose={close} />}

@@ -1,4 +1,4 @@
-import { useReviewAutoOpen } from '@/components/web-hosting/useReviewAutoOpen';
+import { ReviewHistoryHint, ReviewReaderTabs, ReviewUnavailableNotice, reviewReaderTint, useReviewReaderWidth, type ReviewHistoryHintValue } from '@/components/web-hosting/ReviewReaderChrome';
 import { ReviewSidebarResizeHandle, useReviewSidebarWidth } from '@/components/web-hosting/ReviewSidebarResizeHandle';
 import { HostedCollectionEditor } from '@/components/web-hosting/HostedCollectionManager';
 import HostedShareCollection from '@/components/web-hosting/HostedShareCollection';
@@ -9,13 +9,15 @@ import type { RelatedDocument } from '@/services/real/relatedDocuments';
 import { Dialog } from '@/components/ui/Dialog';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, useId } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
 import { getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
-import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, ShieldCheck, Download, FileDown, Check, LogIn, X, Maximize, Minimize } from 'lucide-react';
+import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, BookOpen, Download, FileDown, Check, LogIn, X, Maximize, Minimize } from 'lucide-react';
+import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { getUserAvatarUrl } from '@/lib/avatar';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
@@ -31,7 +33,7 @@ import { AnnotationBubble } from '@/components/web-hosting/AnnotationBubble';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareAssistantLauncher from '@/components/web-hosting/ShareAssistantLauncher';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
-import { SharePageTitle, SharePageActions, ShareMoreMenu } from '@/components/web-hosting/SharePageControls';
+import { SharePageTitle, SharePageActions } from '@/components/web-hosting/SharePageControls';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
 import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
@@ -190,8 +192,12 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
-  const currentUserId = useAuthStore(s => s.user?.userId);
-  const isMobile = useIsMobile();
+  const currentUser = useAuthStore(s => s.user);
+  const currentUserId = currentUser?.userId;
+  const viewportMobile = useIsMobile();
+  const theme = useResolvedThemeMode();
+  const singleViewRef = useRef<HTMLDivElement>(null);
+  const documentPanelId = useId(), discussionPanelId = useId();
   const [fullData, setData] = useState<ShareViewData | null>(null);
   const [collectionManagerOpen, setCollectionManagerOpen] = useState(false);
   const [collectionShareFirst, setCollectionShareFirst] = useState(false);
@@ -199,6 +205,10 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const selectedSite = fullData?.sites.find(item => item.id === requestedRelatedSiteId);
   const data = useMemo(() => fullData && requestedRelatedSiteId ? selectedSite ? { ...fullData, sites: [selectedSite] } : null : fullData, [fullData, requestedRelatedSiteId, selectedSite]);
   const readsSingleSite = data?.sites.length === 1 && (embedded || !!requestedRelatedSiteId || data.shareType !== 'collection');
+  const readerWidth = useReviewReaderWidth(singleViewRef, !!readsSingleSite);
+  const isMobile = readsSingleSite ? readerWidth < 768 : viewportMobile;
+  const defaultDiscussion = !isMobile && readerWidth >= 1024 && !data?.sites[0]?.wrappedAssetType;
+  const sideBySide = !isMobile && readerWidth >= 1024;
   const [relatedAccountSite, setRelatedAccountSite] = useState<HostedSite | null>(null);
   const [relatedSharedSite, setRelatedSharedSite] = useState<RelatedDocument | null>(null);
   const [relatedOpenError, setRelatedOpenError] = useState('');
@@ -239,15 +249,14 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
    */
   const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
   const reviewFrameRef = useRef<HTMLIFrameElement>(null);
-  // 批注加载后自动展开，也可从顶栏手动切换。
-  const [showComments, setShowComments] = useState(() => searchParams.has('review'));
+  const [discussionOverride, setDiscussionOverride] = useState<boolean | null>(() => searchParams.has('review') ? true : null);
+  const showComments = discussionOverride ?? defaultDiscussion;
+  const setShowComments = useCallback((next: boolean | ((previous: boolean) => boolean)) => {
+    setDiscussionOverride(previous => typeof next === 'function' ? next(previous ?? defaultDiscussion) : next);
+  }, [defaultDiscussion]);
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
   const [askState, setAskState] = useState<AskDockState>('collapsed');
-  // 常驻的 CommentsSection 统一加载批注并同步顶栏计数，避免重复请求。
-  const [commentCount, setCommentCount] = useState<number | null>(null);
-  const autoOpenReview = useReviewAutoOpen(`${token}:${openedSiteId}`, () => { if (!isMobile) setShowComments(true); }, showComments || askState !== 'collapsed');
-  const reviewSidebar = useReviewSidebarWidth();
-  const handleCommentCount = (count: number) => { setCommentCount(count); autoOpenReview(count); };
+  const reviewSidebar = useReviewSidebarWidth(readerWidth);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
   /**
    * 取正文这一趟走到哪了 —— **必须带上它说的是哪个 siteUrl**。
@@ -318,10 +327,12 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
 
   const review = useHostedReview(reviewFrameRef, readsSingleSite ? data!.sites[0] : null,
     token && readsSingleSite && !data!.sites[0].wrappedAssetType ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
-    () => setShowComments(true), handleOwnerSitePublished);
+    () => setShowComments(true), handleOwnerSitePublished, { dualColumn: true, pinOpensDiscussion: isMobile });
   const pdfDownload = useHostedPdfDownload(review.historical || data?.sites.length !== 1 ? null : { ...data.sites[0], ...review.liveSite },
     token ? { token, password: password || undefined } : undefined, reviewFrameRef);
   const annotations = review.annotations;
+  const unresolvedCount = annotations.threads.filter(thread => !thread.parentId && !thread.isResolved).length;
+  const [historyHint, setHistoryHint] = useState<ReviewHistoryHintValue | null>(null);
   const requestedReview = searchParams.get('review');
   const restoredReview = useRef<string | null>(null);
   const versionsForLogin = review.versions;
@@ -456,7 +467,6 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
 
   // 全屏演示：优先请求浏览器原生全屏。iPhone WebKit 不支持普通元素 requestFullscreen，
   // 此时降级为页面级沉浸模式：固定铺满可视视口并隐藏 MAP 顶栏，同时提供退出按钮。
-  const singleViewRef = useRef<HTMLDivElement>(null);
   const [nativeFullscreen, setNativeFullscreen] = useState(false);
   const [pageFullscreen, setPageFullscreen] = useState(false);
   const isFullscreen = nativeFullscreen || pageFullscreen;
@@ -482,7 +492,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
     setShowComments(false);
     const target = singleViewRef.current;
     if (!target || !await tryEnterNativeFullscreen(target)) setPageFullscreen(true);
-  }, [pageFullscreen]);
+  }, [pageFullscreen, setShowComments]);
 
   // 取回入口 HTML 走**服务端同源代理**（getShareSiteContent），不是浏览器直接 fetch(site.siteUrl)。
   // 托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧跨域 fetch 一律被拦，
@@ -917,37 +927,45 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
     return (
       <div
         ref={singleViewRef}
+        className="review-workbench"
+        data-theme={theme}
+        data-review-layout={isMobile ? 'mobile' : 'desktop'}
         style={{
           width: embedded ? '100%' : '100vw',
-          height: embedded && !pageFullscreen ? '100%' : pageFullscreen ? '100dvh' : '100vh',
+          height: embedded && !pageFullscreen ? '100%' : '100dvh',
           minHeight: 0,
           position: pageFullscreen ? 'fixed' : 'relative',
           inset: pageFullscreen ? 0 : undefined,
           zIndex: pageFullscreen ? 2147483000 : undefined,
           display: 'grid',
           gridTemplateRows: isFullscreen ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
-          gridTemplateColumns: !isFullscreen && showComments && !isMobile ? `minmax(0, 1fr) ${reviewSidebar.width}px` : 'minmax(0, 1fr)',
-          background: '#0a0a0a',
+          gridTemplateColumns: !isFullscreen && showComments && sideBySide ? `minmax(0, 1fr) ${reviewSidebar.width}px` : 'minmax(0, 1fr)',
           overflow: 'hidden',
         }}
       >
         {/* 全屏演示隐藏审阅顶栏，给托管内容留出完整空间。 */}
         <div style={{ display: isFullscreen ? 'none' : 'block', gridColumn: '1 / -1' }}>
-          <div className="share-topbar review-reader-toolbar border-b border-b-token-subtle">
-            {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
-            <div className="share-topbar-title">
-              <ShieldCheck size={14} color="var(--accent-fg-success)" style={{ flexShrink: 0 }} />
-              <SharePageTitle site={site} onRenamed={(title) => setData((current) => current ? {
-                ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
-              } : current)} />
+          <div className="share-topbar review-reader-toolbar border-b border-b-token-subtle" style={reviewReaderTint(annotations.headerTints)}>
+            <div className="review-reader-title">
+              <span className="review-reader-icon" aria-hidden="true"><BookOpen size={16} /></span>
+              <div className="review-reader-identity">
+                <div className="review-reader-identity-line">
+                  <SharePageTitle site={site} onRenamed={(title) => setData((current) => current ? {
+                    ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
+                  } : current)} />
+                </div>
+                {data.documentCollectionId && data.title !== site.title ? <span className="review-reader-source">{data.title}</span>
+                  : site.description && <span className="review-reader-source" title={site.description}>{site.description}</span>}
+              </div>
             </div>
-            {token && !liveSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} readerToolbar />}
+            {token && !liveSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} readerToolbar readerStage={reviewFrameRef} />}
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
+              {historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
               {!embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
               {!embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => openCollectionManager()}>管理合集</button>}
               {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
-              <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
+              <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" reviewReader source={{ token, password: password || undefined }}
                 onNavigate={openRelatedDocument} />
               {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
                 canToggleComments={relatedAccountSite.ownerUserId === currentUserId}
@@ -962,27 +980,26 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
               <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }}
                 title="无法打开关联文档" content={<p role="alert">{relatedOpenError}</p>} />
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
-                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={false} showBubbleToggle={!liveSite.wrappedAssetType}
+                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={unresolvedCount} showVersions={false} showBubbleToggle={!liveSite.wrappedAssetType} readerLayout
                 />}
-              {token && <a className="share-topbar-btn share-topbar-icon" href={`/s/wp/${encodeURIComponent(token)}?siteId=${encodeURIComponent(liveSite.id)}${review.historical && review.selected ? `&review=${encodeURIComponent(review.selected.id)}` : ''}`}
-                target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开当前文档" title="在新标签页打开当前文档"><ExternalLink size={13} /></a>}
-              <span className="share-topbar-divider" />
+              <SharePageActions site={site} compact menu onSettingsSaved={async () => {
+                if (!token) return;
+                const result = await viewSiteShare(token, password || undefined);
+                if (!result.success) throw new Error('refresh failed');
+                setData(result.data);
+              }}>
               {!site.pdfAssetUrl && (
                 <button
+                  role="menuitem"
                   className="share-topbar-btn"
                   onClick={togglePresentFullscreen}
                   title="全屏演示（Esc 退出）"
                   aria-label="全屏演示"
                 >
                   {isFullscreen ? <Minimize size={isMobile ? 15 : 13} /> : <Maximize size={isMobile ? 15 : 13} />}
+                  全屏演示
                 </button>
               )}
-              <SharePageActions site={site} compact={true} onSettingsSaved={async () => {
-                if (!token) return;
-                const result = await viewSiteShare(token, password || undefined);
-                if (!result.success) throw new Error('refresh failed');
-                setData(result.data);
-              }} />
               {/* 下载源文件：登录用户可见。
                   为什么要有：拿到一个分享链接之后，想把这份 HTML 本身要回来（换个人发、
                   存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
@@ -992,6 +1009,8 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                   原因由上面那条常驻说明在交互前就给出，不需要一个点了才肯说话的假控件。 */}
               {isAuthenticated && downloadPlan.kind !== 'unavailable' && (
                 <button
+                  role="menuitem"
+                  data-menu-keep-open
                   className="share-topbar-btn share-topbar-icon"
                   onClick={handleDownloadSource}
                   disabled={downloading || review.historical}
@@ -1003,10 +1022,9 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                     : downloadPlan.kind === 'open'
                       ? <ExternalLink size={isMobile ? 15 : 13} />
                       : <FileDown size={isMobile ? 15 : 13} />}
+                  {downloading ? '正在下载…' : downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件'}
                 </button>
               )}
-              <span className="share-topbar-divider" />
-              <ShareMoreMenu>
                 {!isOwner && (
                   <button
                     role="menuitem"
@@ -1050,10 +1068,14 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                   <ExternalLink size={isMobile ? 15 : 13} />
                   新窗口打开
                 </a>
-              </ShareMoreMenu>
-
+              </SharePageActions>
+              {currentUser && <span className="review-reader-portrait" title={currentUser.displayName}>
+                {currentUser.avatarFileName ? <img src={getUserAvatarUrl(currentUser)} alt="" /> : Array.from(currentUser.displayName || currentUser.username).at(0)}
+              </span>}
             </div>
           </div>
+          {isMobile && token && <ReviewReaderTabs discussion={showComments} count={unresolvedCount}
+            documentId={documentPanelId} discussionId={discussionPanelId} onChange={setShowComments} />}
 
           {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
           {visibleNote && (
@@ -1075,7 +1097,10 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
             </div>
           )}
         </div>
-        <div className="review-document-stage" style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: '#fff', marginBottom: showComments && isMobile ? '55dvh' : 0 }}>
+        <div id={documentPanelId} role={isMobile && token ? 'tabpanel' : undefined} aria-labelledby={isMobile && token ? `${documentPanelId}-tab` : undefined}
+          aria-hidden={isMobile && showComments && !isFullscreen ? true : undefined}
+          className="review-document-stage" style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: 'var(--review-b-paper)' }}>
+          {!isFullscreen && !review.loading && (site.wrappedAssetType === 'pdf' || (annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
           <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
           {pageFullscreen && (
             <button
@@ -1128,7 +1153,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
             allow="fullscreen"
             allowFullScreen
           />
-          <AnnotationBubble annotations={annotations} hidden={isFullscreen || showComments} />
+          <AnnotationBubble annotations={annotations} hidden={isFullscreen || showComments || isMobile} />
           {/* 既没有取回的正文、也没有入口地址 —— iframe 会停在 about:blank，
               用户看到的就是标题栏下面一片白、控制台一条错都没有，无从判断发生了什么。
               这种时候必须把「为什么是空的」说出来（no-rootless-tree / expectation-management）。 */}
@@ -1196,36 +1221,26 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
           )}
         </div>
 
-        {/* 评论：右侧滑出抽屉（由顶栏「评论」按钮打开）。不占页面布局、不盖 PPT 控件（token 必有） */}
+        {/* Keep the same discussion mounted when switching views so drafts and scroll positions survive. */}
         {token && (
           <>
             {/* 右侧抽屉 */}
             <aside
-              className="review-sidebar review-b-surface" style={{ position: isMobile ? 'fixed' : 'relative', right: 0, bottom: 0, zIndex: 61, gridColumn: isMobile ? 1 : 2, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : reviewSidebar.width, height: isMobile ? '55dvh' : '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)' }}
+              id={discussionPanelId} role={isMobile ? 'tabpanel' : undefined} aria-labelledby={isMobile ? `${discussionPanelId}-tab` : undefined}
+              className="review-sidebar review-b-surface" style={{ position: 'relative', zIndex: 3, gridColumn: sideBySide ? 2 : 1, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : reviewSidebar.width, justifySelf: 'end', height: '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column' }}
             >
               {!isMobile && <ReviewSidebarResizeHandle {...reviewSidebar} />}
-              <div className="review-sidebar-heading">
-                <span>批注与讨论{commentCount != null && <small>{commentCount}</small>}</span>
-                <button
-                  onClick={() => setShowComments(false)}
-                  title="关闭"
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
-                    background: 'var(--nested-block-bg)', color: 'var(--text-secondary)',
-                  }}
-                >
-                  <X size={16} />
-                </button>
-              </div>
               <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                <CommentsSection splitLayout visible={showComments && !isFullscreen} key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={handleCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
+                <CommentsSection splitLayout readerLayout visible={showComments && !isFullscreen} key={`${token}:${password}:${liveSite.id}`}
+                  mode="share" siteId={liveSite.id} token={token} password={password || undefined} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review}
+                  onClose={!isMobile ? () => setShowComments(false) : undefined} onPickElement={() => setShowComments(false)} onHistoryHint={setHistoryHint}
+                  onLocateAnchor={isMobile ? focus => { setShowComments(false); requestAnimationFrame(focus); } : undefined} onLogin={loginToReview} />
               </div>
             </aside>
           </>
         )}
 
-        <ShareAssistantLauncher hidden={isFullscreen || showComments || review.historical || review.loading} isMobile={isMobile}>
+        <ShareAssistantLauncher hidden={isFullscreen || showComments || review.historical || review.loading || !!annotations.selectionCandidate} isMobile={isMobile}>
         {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
             开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
         {token && data.ask?.enabled && (

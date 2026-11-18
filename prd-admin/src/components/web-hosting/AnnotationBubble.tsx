@@ -1,18 +1,21 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { ArrowLeft, ArrowUpRight, Eye, EyeOff, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, CornerDownLeft, Eye, EyeOff, RotateCcw, Send, X } from 'lucide-react';
 import type { HostedAnnotations, AnnotationRect } from './useHostedAnnotations';
 import type { HostedSiteCommentDto } from '@/services/real/webPages';
 import { getUserAvatarUrl } from '@/lib/avatar';
 import { annotationPreviewText } from './annotationPreviewText';
 import { placeAnnotationBubble, placeAnnotationRail } from './annotationBubblePlacement';
+import '@/styles/hosted-review-margin.css';
 
 type Point = { left: number; top: number };
 type Size = { width: number; height: number };
 type Placement = Point & { side: string };
 type CachedPlacement = { delta: Point; side: string; size: Size; viewport: Size };
+type MarginReply = { text: string; clientId?: string; error?: string; sending?: boolean; editing?: boolean };
 const clamp = (n: number, max: number) => Math.max(8, Math.min(n, Math.max(8, max - 8)));
 const marginWidth = 300;
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+const marginDateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 
 /** Text stays in the host. The uploaded document provides only the anchor geometry. */
 export function AnnotationBubble({ annotations, hidden = false }: { annotations: HostedAnnotations; hidden?: boolean }) {
@@ -21,17 +24,20 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const scroller = useRef<HTMLDivElement>(null);
   const dock = useRef<HTMLElement>(null);
   const autoPositions = useRef(new Map<string, CachedPlacement>());
+  const replies = useRef(new Map<string, MarginReply>());
   const [positions, setPositions] = useState<Record<string, Point>>({});
   const [scrollTop, setScrollTop] = useState(0);
+  const railOrigin = useRef<{ activeId: string | null; top: number; height: number }>({ activeId: null, top: 0, height: 0 });
   const [geometry, setGeometry] = useState<Size & { dockHeight: number; cards: Record<string, Size> }>({ width: 0, height: 0, dockHeight: 0, cards: {} });
   const indexed = useMemo(() => {
     let number = 0;
+    const format = annotations.dualColumn ? marginDateFormat : dateFormat;
     return new Map(annotations.threads.filter(thread => thread.anchor && !thread.parentId).map(thread => {
       const time = Date.parse(thread.createdAt);
       const hue = [...(thread.authorName || '')].reduce((hash, char) => (hash * 31 + char.codePointAt(0)!) % 360, 0);
-      return [thread.id, { thread, number: ++number, excerpt: annotationPreviewText(thread.content), time: Number.isFinite(time) ? dateFormat.format(time) : '', hue }];
+      return [thread.id, { thread, number: ++number, excerpt: annotationPreviewText(thread.content), time: Number.isFinite(time) ? format.format(time) : '', hue }];
     }));
-  }, [annotations.threads]);
+  }, [annotations.threads, annotations.dualColumn]);
   const visible = !hidden && !annotations.enabled && !annotations.draftAnchor && annotations.displayMode === 'bubble' && indexed.size > 0;
   const items = visible ? (annotations.previews ?? (annotations.preview ? [annotations.preview] : [])) : [];
   const entries = items.flatMap(item => {
@@ -39,6 +45,9 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     return itemData ? [{ item, ...itemData }] : [];
   }).sort((a, b) => a.item.rect.top - b.item.rect.top || a.number - b.number);
   const wide = geometry.width >= 820;
+  const dualColumn = wide && annotations.dualColumn === true;
+  const farRight = geometry.width - marginWidth + 21;
+  const marginLeft = dualColumn && annotations.column ? Math.max(8, Math.min(farRight, annotations.column.right + 40)) : farRight;
   // Reserve space based on the version's annotation count, not the number seen on any one scroll frame.
   const docked = !wide && geometry.height >= 360 && indexed.size >= 4 && annotations.ready && !annotations.allPreviewsHidden;
   const cards = docked ? entries.filter(({ item }) => item.id === annotations.activeId) : entries;
@@ -66,7 +75,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const rail = placeAnnotationRail(wide ? entries.flatMap(({ item }) => {
     const size = geometry.cards[item.id];
     return size && !positions[item.id] ? [{ id: item.id, top: item.rect.top, height: size.height }] : [];
-  }) : [], geometry.height, annotations.activeId);
+  }) : [], geometry.height, annotations.activeId, dualColumn);
 
   // Scrolling on the margin is only needed when this viewport's annotations do not fit.
   const maxScroll = rail.contentHeight - geometry.height;
@@ -74,6 +83,30 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   useLayoutEffect(() => {
     const margin = scroller.current;
     const id = annotations.activeId;
+    if (dualColumn && margin) {
+      const top = rail.preferredScroll ?? 0;
+      const previous = railOrigin.current;
+      const selectionChanged = previous.activeId !== id || !!(id && previous.height !== geometry.height);
+      if (selectionChanged) margin.scrollTop = top;
+      else if (previous.top !== top) margin.scrollTop += top - previous.top;
+      railOrigin.current = { activeId: id, top, height: geometry.height };
+      setScrollTop(margin.scrollTop);
+      if (id && selectionChanged) {
+        // A viewport resize and a card's reflow can be delivered in separate observations.
+        // Recheck once after layout has settled so their scroll positions do not race.
+        const frame = requestAnimationFrame(() => {
+          const card = Array.from(margin.querySelectorAll<HTMLElement>('[data-bubble-id]')).find(el => el.dataset.bubbleId === id);
+          if (!card || card.dataset.placement !== 'right') return;
+          const position = card.offsetTop;
+          if (position < margin.scrollTop || position + Math.min(card.offsetHeight, margin.clientHeight) > margin.scrollTop + margin.clientHeight) {
+            margin.scrollTop = Math.max(0, position - 10);
+            setScrollTop(margin.scrollTop);
+          }
+        });
+        return () => cancelAnimationFrame(frame);
+      }
+      return;
+    }
     if (!id || !margin || !maxScroll) return;
     const card = Array.from(margin.querySelectorAll<HTMLElement>('[data-bubble-id]')).find(el => el.dataset.bubbleId === id);
     if (!card || card.dataset.placement !== 'right') return;
@@ -81,10 +114,21 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     else if (card.offsetTop + card.offsetHeight > margin.scrollTop + margin.clientHeight) {
       margin.scrollTop = card.offsetTop + card.offsetHeight - margin.clientHeight + 8;
     }
-  }, [annotations.activeId, geometry.cards, maxScroll]);
+  }, [annotations.activeId, dualColumn, geometry.cards, geometry.height, maxScroll, rail.preferredScroll]);
 
+  const candidate = annotations.dualColumn && !annotations.enabled && !annotations.draftAnchor
+    && annotations.discussionActions?.canReply ? annotations.selectionCandidate : null;
+  const selectionAction = candidate ? <div className="annotation-selection-action" style={{
+    '--annotation-selection-left': `${Math.max(8, candidate.rect.left + candidate.rect.width - 48)}px`,
+    '--annotation-selection-top': `${Math.max(4, candidate.rect.top - 40)}px`,
+  } as CSSProperties}>
+    <span className="annotation-selection-quote">已选「{candidate.anchor.text}」</span>
+    <button type="button" className="annotation-selection-cancel" onClick={annotations.dismissSelection}>取消</button>
+    <button type="button" className="annotation-selection-confirm" aria-label="批注所选文字"
+      onMouseDown={event => event.preventDefault()} onClick={annotations.acceptSelection}>批注</button>
+  </div> : null;
   // Keep the gutter even when every anchor has scrolled out of the iframe.
-  if (!visible) return null;
+  if (!visible) return selectionAction;
   const occupied: AnnotationRect[] = [];
   // A resized card fits around the cards whose dimensions have not changed.
   const stable = new Map<string, Placement>();
@@ -119,7 +163,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
       placement = { side: 'dock', left: Math.round((geometry.width - size.width) / 2),
         top: geometry.height - geometry.dockHeight + 6 };
     } else if (size && wide) {
-      placement = { side: 'right', left: geometry.width - marginWidth + 21, top: rail.tops.get(item.id) ?? 10 };
+      placement = { side: 'right', left: marginLeft, top: rail.tops.get(item.id) ?? 10 };
     } else if (size) {
       placement = stable.get(item.id);
       if (!placement) {
@@ -142,6 +186,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     if (number) requestAnimationFrame(() => dock.current?.querySelector<HTMLButtonElement>(`[data-annotation-number="${number}"]`)?.focus());
   };
   return <>
+    {selectionAction}
     {docked && <section ref={dock} className="annotation-mobile-dock" aria-label="页边批注">
       <div className="annotation-dock-list" hidden={activeInDock}>
         {entries.map(({ item, thread, number, excerpt }) => <button type="button" key={item.id} data-annotation-number={number}
@@ -156,19 +201,21 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
         {!entries.length && <span className="annotation-dock-empty">滚动正文查看对应批注</span>}
       </div>
     </section>}
-    <div ref={canvas} className="annotation-bubble-canvas" aria-label="页面批注气泡">
+    <div ref={canvas} className="annotation-bubble-canvas" aria-label="页面批注气泡" data-review-margin={dualColumn ? '' : undefined}
+      style={dualColumn && annotations.column?.paper ? { '--review-margin-paper': annotations.column.paper } as CSSProperties : undefined}>
       <div className="annotation-bubble-scroll" ref={scroller} onScroll={event => setScrollTop(event.currentTarget.scrollTop)}
         tabIndex={maxScroll > 0 ? 0 : undefined} aria-label={maxScroll > 0 ? '滚动查看更多页边批注' : undefined}>
         <div className="annotation-bubble-space" style={{ minHeight: rail.contentHeight }}>
-          {maxScroll > 0 && <div className="annotation-bubble-scroll-area" />}
+          {maxScroll > 0 && <div className="annotation-bubble-scroll-area" style={dualColumn ? { left: marginLeft, right: 'auto', width: 264 } : undefined} />}
           {wide && <svg className="annotation-bubble-connectors" aria-hidden="true">
             {placed.map(({ item, placement, size }) => {
               if (!placement || !size || (placement.side !== 'moved' && annotations.activeId !== item.id)) return null;
               const { rect } = item;
-              const x = Math.min(rect.left + rect.width + 8, geometry.width - marginWidth + 5);
+              const x = dualColumn && annotations.column ? Math.min(annotations.column.right + 10, marginLeft - 8)
+                : Math.min(rect.left + rect.width + 8, geometry.width - marginWidth + 5);
               const start = Math.max(0, rect.top) + offset;
               const end = Math.min(geometry.height, rect.top + rect.height) + offset;
-              const from = (start + end) / 2, to = placement.top + 27;
+              const from = (start + end) / 2, to = placement.top + (dualColumn ? 20 : 27);
               const left = placement.left > x;
               const target = left ? placement.left - 1 : placement.left + size.width + 1;
               return <g key={item.id} className={placement.side === 'moved' ? 'is-moved' : undefined}>
@@ -179,7 +226,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
           </svg>}
           {placed.map(({ item, thread, excerpt, number, time, hue, placement, size }) => <BubbleCard key={item.id}
             thread={thread} excerpt={excerpt} number={number} time={time} hue={hue} annotations={annotations}
-            placement={placement} mobileDock={docked} onBack={activeInDock ? returnToDock : undefined}
+            placement={placement} mobileDock={docked} dualColumn={dualColumn} replyDrafts={replies.current} onBack={activeInDock ? returnToDock : undefined}
             onMove={point => setPositions(previous => {
               const next = { ...previous };
               if (point && size) next[item.id] = {
@@ -195,12 +242,51 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   </>;
 }
 
-function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement, mobileDock, onBack, onMove }: {
+function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement, mobileDock, dualColumn, replyDrafts, onBack, onMove }: {
   thread: HostedSiteCommentDto; excerpt: string; number: number; time: string; hue: number; annotations: HostedAnnotations;
-  placement?: Placement; mobileDock: boolean; onBack?: () => void; onMove: (point: Point | null) => void;
+  placement?: Placement; mobileDock: boolean; dualColumn: boolean; replyDrafts: Map<string, MarginReply>;
+  onBack?: () => void; onMove: (point: Point | null) => void;
 }) {
   const active = annotations.activeId === thread.id;
   const hasHidden = annotations.hasHiddenPreviews || annotations.allPreviewsHidden;
+  const permissions = dualColumn ? annotations.discussionActions : null;
+  const canResolve = permissions?.canResolve(thread.id);
+  const [showOlder, setShowOlder] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [reply, setReplyState] = useState<MarginReply>(() => replyDrafts.get(thread.id) ?? { text: '' });
+  const replyBox = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const field = replyBox.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    field.style.height = Math.min(142, field.scrollHeight) + 'px';
+  }, [reply.editing, reply.text]);
+  const setReply = (next: MarginReply) => { replyDrafts.set(thread.id, next); setReplyState(next); };
+  const visibleReplies = active && permissions ? permissions.getReplies(thread.id) : [];
+  const beginReply = () => {
+    setReply({ ...reply, editing: true });
+    requestAnimationFrame(() => replyBox.current?.focus());
+  };
+  const sendReply = async () => {
+    if (!permissions?.canReply || !reply.text.trim() || reply.sending) return;
+    const submission = { ...reply, clientId: reply.clientId ?? crypto.randomUUID(), sending: true, error: undefined };
+    setReply(submission);
+    try {
+      const error = await permissions.reply(thread.id, submission.text.trim(), submission.clientId);
+      setReply(error ? { ...submission, sending: false, error } : { text: '' });
+    } catch {
+      setReply({ ...submission, sending: false, error: '发送失败，草稿已保留。' });
+    }
+  };
+  const toggleResolved = async () => {
+    if (!permissions || !canResolve || resolving) return;
+    setResolving(true); setResolveError(null);
+    try { setResolveError(await permissions.resolve(thread.id)); }
+    catch { setResolveError('未能更新批注，请重试。'); }
+    finally { setResolving(false); }
+  };
   const drag = useRef<{ id: number; x: number; y: number; left: number; top: number; moved: boolean } | null>(null);
   const resetTouch = useRef<{ id: number; x: number; y: number } | null>(null);
   const start = (event: PointerEvent<HTMLDivElement>) => {
@@ -237,6 +323,10 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
     onKeyDown={event => {
       if (event.key !== 'Escape' || !active) return;
       event.preventDefault(); event.stopPropagation();
+      if (reply.editing) {
+        if (!reply.sending) setReply({ ...reply, editing: false });
+        return;
+      }
       if (onBack) onBack(); else annotations.setActiveId(null);
     }}>
     <button type="button" className="annotation-chat-grip" aria-label={`移动批注气泡 ${number}`} title="拖动顶部或边缘；方向键移动，双击复位"
@@ -255,11 +345,23 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
       {time && <time dateTime={thread.createdAt}>{time}</time>}
       {thread.isResolved && <span className="annotation-chat-status">已解决</span>}
     </div>
-    <p>{excerpt}</p>
+    <p className={active && expanded ? 'annotation-chat-full' : undefined}>{dualColumn && active && expanded ? thread.content : excerpt}</p>
     {active
       ? <>
+        {dualColumn && thread.content.length > 110 && <button type="button" className="annotation-chat-more" onClick={() => setExpanded(value => !value)}>
+          {expanded ? '收起全文' : `展开全文 · ${thread.content.length} 字`}
+        </button>}
+        {dualColumn && visibleReplies.length > 0 && <div className="annotation-chat-replies">
+          {!showOlder && visibleReplies.length > 2 && <button type="button" onClick={() => setShowOlder(true)}>还有 {visibleReplies.length - 2} 条更早的回复</button>}
+          {(showOlder ? visibleReplies : visibleReplies.slice(-2)).map(child => <div className="annotation-chat-reply" key={child.id}>
+            <span className="annotation-chat-reply-author">{child.authorName}</span>
+            <p>{annotationPreviewText(child.content)}</p>
+          </div>)}
+        </div>}
         <div className="annotation-chat-actions">
-          {placement?.side === 'moved' && <button type="button" onClick={() => onMove(null)} onPointerDown={event => {
+          {placement?.side === 'moved' && <button type="button" className={dualColumn ? 'annotation-chat-reset' : undefined}
+            aria-label={dualColumn ? '放回原位' : undefined} title={dualColumn ? '放回原位' : undefined}
+            onClick={() => onMove(null)} onPointerDown={event => {
             if (event.pointerType === 'touch') resetTouch.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
           }} onPointerCancel={() => { resetTouch.current = null; }} onPointerUp={event => {
             const touch = resetTouch.current;
@@ -268,15 +370,31 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
             const button = event.currentTarget;
             // Chromium can suppress the compatibility click immediately after a touch drag.
             if (button.contains(button.ownerDocument.elementFromPoint(event.clientX, event.clientY))) onMove(null);
-          }}>放回原位</button>}
-          <button type="button" className="annotation-chat-open" onClick={() => annotations.openThread(thread.id)}>查看讨论<ArrowUpRight size={13} /></button>
+          }}>{dualColumn ? <RotateCcw size={14} /> : '放回原位'}</button>}
+          {permissions?.canReply && <button type="button" className="annotation-chat-reply-trigger" onClick={beginReply}><CornerDownLeft size={13} />回复</button>}
+          {canResolve && <button type="button" onClick={() => void toggleResolved()} disabled={resolving}><Check size={13} />{thread.isResolved ? '重新打开' : '解决'}</button>}
+          {!permissions?.canReply && !canResolve && <button type="button" className="annotation-chat-open" onClick={() => annotations.openThread(thread.id)}>查看讨论<ArrowUpRight size={13} /></button>}
         </div>
+        {resolveError && <p role="alert" className="annotation-chat-error">{resolveError}</p>}
+        {permissions?.canReply && reply.editing && <div className="annotation-chat-editor">
+          {reply.error && <div className="annotation-chat-error" role="alert">{reply.error}<button type="button" onClick={() => void sendReply()}>重试</button></div>}
+          <div className="annotation-chat-editor-target">回复 {thread.authorName}<button type="button" disabled={reply.sending}
+            title="取消回复" aria-label="取消回复" onClick={() => setReply({ ...reply, editing: false })}><X size={13} /></button></div>
+          <form onSubmit={event => { event.preventDefault(); void sendReply(); }}>
+            <textarea ref={replyBox} rows={1} aria-label="写回复" placeholder="写回复…" value={reply.text} readOnly={reply.sending}
+              onChange={event => setReply({ text: event.target.value, editing: true })}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void sendReply(); }
+              }} />
+            <button type="submit" disabled={reply.sending || !reply.text.trim()} aria-label="发送回复"><Send size={14} /></button>
+          </form>
+        </div>}
         <div className="annotation-chat-controls">
           <button type="button" aria-label={hasHidden ? '显示全部气泡' : '隐藏全部气泡'} title={hasHidden ? '显示全部气泡' : '隐藏全部气泡'}
             onClick={() => hasHidden ? annotations.showAllPreviews() : annotations.hideAllPreviews()}>{hasHidden ? <Eye size={15} /> : <EyeOff size={15} />}</button>
           {onBack
             ? <button type="button" onClick={onBack} data-annotation-dock-back aria-label="返回批注摘要" title="返回批注摘要"><ArrowLeft size={15} /></button>
-            : <button type="button" onClick={() => annotations.dismissPreview(thread.id)} aria-label={`收起批注气泡 ${number}`} title="收起此气泡，保留页面标记"><X size={14} /></button>}
+            : !dualColumn && <button type="button" onClick={() => annotations.dismissPreview(thread.id)} aria-label={`收起批注气泡 ${number}`} title="收起此气泡，保留页面标记"><X size={14} /></button>}
         </div>
       </>
       : <button type="button" className="annotation-chat-select" aria-label={`展开批注气泡 ${number}`} onClick={choose} />}

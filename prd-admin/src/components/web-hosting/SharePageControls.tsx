@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
 import { updateSite, type SharedSiteInfo } from '@/services/real/webPages';
 
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
@@ -59,21 +60,27 @@ export function SharePageTitle({ site, onRenamed }: {
   </>;
 }
 
-export function SharePageActions({ site, compact, onSettingsSaved }: {
+export function SharePageActions({ site, compact, menu, children, onSettingsSaved }: {
   site: SharedSiteInfo;
   compact: boolean;
+  menu?: boolean;
+  children?: ReactNode;
   onSettingsSaved: () => Promise<void>;
 }) {
   const navigate = useNavigate();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  return <>
-    {site.viewerIsOwner && <button type="button" className="share-topbar-btn share-topbar-icon" title="设置" aria-label="设置"
-      onClick={() => setSettingsOpen(true)}><Settings2 size={15} /></button>}
-    <button type="button" className="share-topbar-btn" title="返回网页托管" aria-label="返回网页托管"
+  const role = menu ? 'menuitem' : undefined;
+  const actions = <>
+    {site.viewerIsOwner && <button type="button" role={role} className="share-topbar-btn" title="设置" aria-label="设置"
+      onClick={() => setSettingsOpen(true)}><Settings2 size={15} />{menu && '设置'}</button>}
+    <button type="button" role={role} className="share-topbar-btn" title="返回网页托管" aria-label="返回网页托管"
       onClick={() => navigate(site.viewerCanEdit
         ? `/web-pages?focusSite=${encodeURIComponent(site.id)}` : '/web-pages')}>
-      <ArrowLeft size={15} />{!compact && '返回网页托管'}
-    </button>
+      <ArrowLeft size={15} />{(menu || !compact) && '返回网页托管'}
+    </button>{children}
+  </>;
+  return <>
+    {menu ? <ShareMoreMenu adaptive>{actions}</ShareMoreMenu> : actions}
     {settingsOpen && site.viewerIsOwner && <Suspense fallback={<MapSpinner size={16} />}>
       <SiteSettingsDialog siteId={site.id} siteTitle={site.title} onClose={() => setSettingsOpen(false)}
         onSaved={async () => {
@@ -86,8 +93,9 @@ export function SharePageActions({ site, compact, onSettingsSaved }: {
 
 
 /** 低频动作放在同一个锚定菜单里，避免占满阅读页顶栏。 */
-export function ShareMoreMenu({ children }: { children: ReactNode }) {
+export function ShareMoreMenu({ children, adaptive = false }: { children: ReactNode; adaptive?: boolean }) {
   const [open, setOpen] = useState(false);
+  const theme = useResolvedThemeMode();
   const anchor = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -101,7 +109,9 @@ export function ShareMoreMenu({ children }: { children: ReactNode }) {
       aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((value) => !value)}>
       <MoreHorizontal size={17} />
     </button>
-    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} className="surface-tone-dark share-more-menu" minWidth={180}>
+    <AnchoredMenu open={open} onClose={close} anchorRef={anchor}
+      className={`share-more-menu ${adaptive ? '' : 'surface-tone-dark'}`} minWidth={180} theme={adaptive ? theme : undefined}
+      style={adaptive ? { background: 'var(--review-b-popover)' } : undefined}>
       <div ref={menu} role="menu" aria-label="更多网页操作" onClick={(event) => {
         const action = (event.target as Element).closest('button:not(:disabled), a[href]');
         if (action && !action.hasAttribute('data-menu-keep-open')) { close(); anchor.current?.focus(); }

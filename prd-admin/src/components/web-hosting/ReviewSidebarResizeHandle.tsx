@@ -6,9 +6,11 @@ const DEFAULT_WIDTH = 440;
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 640;
 
-export function useReviewSidebarWidth() {
+export function useReviewSidebarWidth(containerWidth?: number) {
   const { width: viewportWidth } = useBreakpoint();
-  const maxWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.floor(viewportWidth * .55)));
+  const available = containerWidth ?? viewportWidth;
+  const maxWidth = containerWidth && available >= 1280 ? MAX_WIDTH : containerWidth && available >= 1024 ? 400 :
+    Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.floor(available * .55)));
   const [preferredWidth, setPreferredWidth] = useState(() => {
     try {
       const saved = Number(sessionStorage.getItem(WIDTH_KEY));

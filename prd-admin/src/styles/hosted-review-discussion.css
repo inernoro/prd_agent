@@ -1,0 +1,639 @@
+.review-discussion.review-discussion--b {
+  --talk-paper: var(--review-b-paper);
+  --talk-panel: var(--review-b-panel);
+  --talk-field: var(--review-b-field);
+  --talk-ink: var(--review-b-ink);
+  --talk-secondary: var(--review-b-secondary);
+  --talk-muted: var(--review-b-muted);
+  --talk-line: var(--review-b-line);
+  --talk-line-strong: var(--review-b-line-strong);
+  --talk-action: var(--review-b-action);
+  --talk-on-action: var(--review-b-on-action);
+  --talk-ring: var(--review-b-ring);
+  --talk-selected: var(--review-b-selected);
+  --talk-pin: var(--review-b-pin);
+  --talk-on-pin: var(--review-b-on-pin);
+  --talk-note: var(--review-b-note);
+  --talk-success: var(--review-b-success);
+  --talk-error: var(--review-b-error);
+  --talk-error-bg: var(--review-b-error-bg);
+  --talk-shadow: var(--review-b-shadow);
+  position: relative;
+  color: var(--talk-ink);
+  background: var(--talk-panel);
+  font-family: var(--review-b-ui, system-ui), "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.review-discussion--b button:focus-visible {
+  outline-color: var(--talk-action);
+}
+
+.review-talk-header {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-height: 46px;
+  gap: 6px;
+  padding: 12px 10px 6px 18px;
+}
+
+.review-talk-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.review-talk-title strong {
+  flex-shrink: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.review-talk-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.review-talk-title span, .review-talk-nav {
+  color: var(--talk-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.review-talk-title button {
+  color: var(--talk-action);
+}
+
+.review-talk-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.review-talk-nav button, .review-talk-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  color: var(--talk-secondary);
+}
+
+.review-talk-nav button:hover, .review-talk-icon:hover:not(:disabled) {
+  background: var(--talk-line);
+}
+
+.review-talk-icon:disabled {
+  opacity: .45;
+}
+
+.review-discussion.review-discussion--b .review-scope {
+  gap: 0;
+  padding: 2px 14px 8px;
+  border: 0;
+}
+
+.review-discussion.review-discussion--b .review-status-tabs {
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+}
+
+.review-discussion.review-discussion--b .review-status-tabs button {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 14px;
+  color: var(--talk-secondary);
+  font-size: 12.5px;
+}
+
+.review-discussion.review-discussion--b .review-status-tabs button[aria-selected="true"] {
+  color: var(--talk-paper);
+  background: var(--talk-ink);
+  font-weight: 400;
+}
+
+.review-discussion--b .review-status-tabs button span {
+  margin-left: 3px;
+  opacity: .75;
+}
+
+.review-talk-note {
+  margin: 0 14px 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--talk-note);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.review-talk-note button {
+  margin-left: 4px;
+  color: var(--talk-action);
+  font-weight: 600;
+}
+
+.review-talk-new {
+  align-self: center;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  margin: 0 0 8px;
+  border-radius: 15px;
+  background: var(--talk-action);
+  color: var(--talk-on-action);
+  box-shadow: var(--talk-shadow);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.review-talk-unread {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--talk-action);
+  color: var(--talk-on-action);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.review-discussion.review-discussion--b .review-thread-scroll {
+  padding: 2px 12px 16px;
+  overflow-anchor: none;
+  scrollbar-color: var(--talk-line-strong) transparent;
+}
+
+.review-thread-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 6px 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--talk-muted);
+}
+
+.review-thread-group:first-child {
+  margin-top: 4px;
+}
+
+.review-thread-group strong {
+  color: var(--talk-secondary);
+  font-weight: 600;
+}
+
+.review-discussion.review-discussion--b .review-thread {
+  margin: 0 0 8px;
+  padding: 11px 12px 6px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--talk-paper);
+  box-shadow: 0 0 0 1px var(--talk-line);
+  cursor: pointer;
+}
+
+.review-discussion.review-discussion--b .review-thread:hover {
+  box-shadow: 0 0 0 1px var(--talk-line-strong);
+}
+
+.review-discussion.review-discussion--b .review-thread.is-following {
+  box-shadow: 0 0 0 1px var(--talk-line-strong), var(--talk-shadow);
+}
+
+.review-discussion.review-discussion--b .review-thread.is-active {
+  background: var(--talk-selected);
+  box-shadow: 0 0 0 1.5px var(--talk-ring), var(--talk-shadow);
+  cursor: default;
+}
+
+.review-discussion--b .review-thread.is-active::before {
+  display: none;
+}
+
+.review-discussion--b .review-thread.is-resolved {
+  opacity: .8;
+}
+
+.review-discussion.review-discussion--b .review-anchor-quote,
+.review-discussion.review-discussion--b .review-thread-context {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 7px;
+  padding: 0;
+  margin: 0 0 7px;
+  text-align: start;
+  color: var(--talk-secondary);
+  font-size: 13px;
+  border: 0;
+  background: transparent;
+}
+
+.review-discussion.review-discussion--b .review-anchor-quote:hover:not(:disabled) {
+  color: var(--talk-action);
+}
+
+.review-discussion.review-discussion--b .review-anchor-number {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--talk-on-pin);
+  background: var(--talk-pin);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.review-discussion--b .review-anchor-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", STSong, serif;
+}
+
+.review-thread-paragraph {
+  flex-shrink: 0;
+  color: var(--talk-muted);
+  font-size: 11.5px;
+}
+
+.review-discussion--b .review-message-author {
+  min-height: 24px;
+  font-size: 12px;
+  color: var(--talk-muted);
+}
+
+.review-discussion--b .review-message-author img {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  background: var(--talk-line);
+}
+
+.review-talk-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--review-b-avatar-ink);
+  background: hsl(var(--talk-avatar-hue) 48% 39%);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.review-discussion--b .review-message-author strong {
+  color: var(--talk-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.review-discussion--b .review-message-author time {
+  font-size: 12px;
+}
+
+.review-discussion--b .review-message-author > button {
+  color: var(--talk-muted);
+}
+
+.review-discussion--b .review-message-author > button:hover {
+  color: var(--talk-error);
+}
+
+.review-discussion--b .review-message-body {
+  margin: 4px 0 2px;
+  color: var(--talk-ink);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+.review-discussion--b .review-message-body.is-collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.review-discussion--b .review-discussion-expand,
+.review-discussion--b .review-older-replies {
+  justify-content: flex-start;
+  min-height: 26px;
+  padding: 2px 0;
+  color: var(--talk-action);
+  font-size: 12px;
+}
+
+.review-discussion--b .review-discussion-expand:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.review-discussion.review-discussion--b .review-thread-actions {
+  justify-content: flex-end;
+  gap: 2px;
+  margin: 4px -6px 0;
+}
+
+.review-discussion.review-discussion--b .review-thread-actions button {
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  color: var(--talk-secondary);
+  font-size: 12.5px;
+}
+
+.review-discussion.review-discussion--b .review-thread-actions button:hover:enabled {
+  background: var(--talk-line);
+}
+
+.review-discussion.review-discussion--b .review-thread-actions .review-reply-action {
+  color: var(--talk-action);
+}
+
+.review-discussion.review-discussion--b .review-thread-actions .review-resolve-action {
+  margin-left: 0;
+}
+
+.review-discussion--b .review-replies {
+  gap: 8px;
+  margin: 7px 0 0;
+  padding: 7px 0 0;
+  border: 0;
+  border-top: 1px solid var(--talk-line);
+}
+
+.review-discussion--b .review-replies .review-message-body {
+  padding-inline-start: 26px;
+}
+
+.review-talk-resolved {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-inline-end: auto;
+  padding-inline-start: 6px;
+  color: var(--talk-success);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.review-discussion--b .review-empty {
+  padding: 28px 16px;
+  color: var(--talk-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.review-discussion--b .review-empty strong {
+  display: block;
+  margin: 0 0 4px;
+  color: var(--talk-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.review-discussion--b .review-empty p {
+  margin: 0;
+  font-size: inherit;
+}
+
+.review-discussion.review-discussion--b .review-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border-color: var(--talk-line);
+  background: var(--talk-panel);
+}
+
+.review-discussion.review-discussion--b .review-composer-row {
+  gap: 8px;
+  padding: 5px 5px 5px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--talk-field);
+  box-shadow: inset 0 0 0 1px var(--talk-line-strong);
+}
+
+.review-discussion.review-discussion--b .review-composer-row:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--talk-action);
+}
+
+.review-discussion.review-discussion--b .review-composer textarea {
+  height: 32px;
+  min-height: 32px;
+  max-height: 142px;
+  padding: 5px 0;
+  color: var(--talk-ink);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.review-discussion--b .review-composer textarea:focus-visible {
+  outline: none;
+}
+
+.review-discussion--b .review-composer textarea::placeholder {
+  color: var(--talk-muted);
+}
+
+.review-discussion--b .review-composer-anchor {
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+  margin: 0;
+  color: var(--talk-muted);
+}
+
+.review-discussion--b .review-composer-anchor > svg {
+  margin: 0;
+}
+
+.review-discussion--b .review-composer-anchor > span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.review-discussion--b .review-composer-anchor strong {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.review-discussion--b .review-composer-anchor > span > span {
+  display: block;
+  margin: 0;
+  color: var(--talk-secondary);
+  font: 12px/1.6 "Noto Serif SC", "Source Han Serif SC", "Songti SC", STSong, serif;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.review-discussion--b .review-composer-anchor button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -6px -4px -6px 0;
+  border-radius: 7px;
+  color: var(--talk-secondary);
+}
+
+.review-discussion--b .review-composer-anchor button:hover {
+  background: var(--talk-line);
+}
+
+.review-composer-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  margin: 0 0 6px;
+  border-radius: 8px;
+  color: var(--talk-error, var(--accent-fg-error));
+  background: var(--talk-error-bg, var(--bg-nested));
+  font-size: 12.5px;
+}
+
+.review-discussion--b .review-composer-error {
+  margin: 0;
+}
+
+.review-composer-error span {
+  flex: 1;
+}
+
+.review-composer-error button {
+  padding: 3px 10px;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 1px currentColor;
+  color: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.review-discussion.review-discussion--b .review-send-action {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 9px;
+  color: var(--talk-on-action);
+  background: var(--talk-action);
+}
+
+.review-discussion.review-discussion--b .review-send-action:disabled {
+  opacity: 1;
+  color: var(--talk-muted);
+  background: var(--talk-line-strong);
+}
+
+.review-discussion--b .review-pick-action {
+  min-width: 28px;
+  min-height: 32px;
+  padding: 0;
+  color: var(--talk-muted);
+}
+
+.review-discussion--b .review-pick-action:hover:not(:disabled) {
+  color: var(--talk-action);
+  background: var(--talk-line);
+}
+
+.review-talk-hint {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+  color: var(--talk-muted);
+  font-size: 11.5px;
+}
+
+.review-talk-toast {
+  position: absolute;
+  z-index: 3;
+  bottom: 86px;
+  left: 50%;
+  max-width: calc(100% - 24px);
+  width: max-content;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  border-radius: 9px;
+  color: var(--talk-paper);
+  background: var(--talk-ink);
+  box-shadow: var(--talk-shadow);
+  font-size: 12.5px;
+}
+
+.review-talk-toast button {
+  margin-left: 10px;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+@media (max-width: 767px) {
+  .review-talk-header {
+    min-height: 44px;
+    padding: 2px 10px 6px 18px;
+  }
+
+  .review-talk-nav button, .review-talk-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .review-discussion.review-discussion--b .review-composer {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .review-discussion.review-discussion--b .review-composer textarea {
+    min-height: 34px;
+    font-size: 16px;
+    line-height: 24px;
+  }
+
+  .review-discussion.review-discussion--b .review-send-action {
+    width: 38px;
+    height: 38px;
+    min-height: 38px;
+  }
+
+  .review-discussion.review-discussion--b .review-composer-anchor button {
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .review-talk-hint {
+    display: none;
+  }
+
+  .review-discussion--b .review-message-author > button {
+    opacity: 1;
+  }
+
+  .review-talk-toast {
+    bottom: 95px;
+    padding: 10px 14px;
+  }
+}

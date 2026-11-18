@@ -137,6 +137,20 @@ describe('versioned webpage review', () => {
     expect(review.previewBaseUrl).toBe('https://assets.example/index.html');
     expect(review.preview?.html).toContain('只有旧版正文');
   });
+  it('keeps the real discussion scope available for an unarchived version without fetching or restoring a snapshot', async () => {
+    const unarchived = { ...previous, canPreview: false, siteUrl: null };
+    list.mockResolvedValue({ success: true, data: [current, unarchived] });
+    await mount();
+    await act(async () => review.selectVersion(unarchived.id));
+    expect(review.selected?.contentVersionKey).toBe(unarchived.contentVersionKey);
+    expect(review.historical).toBe(true);
+    expect(review.preview).toBeNull();
+    expect(review.site?.siteUrl).toBe('');
+    expect(review.liveSite?.siteUrl).toBe(site.siteUrl);
+    expect(preview).not.toHaveBeenCalled();
+    await act(async () => { expect(await review.restoreVersion(unarchived.id, 'unarchived')).toBe(false); });
+    expect(rollback).not.toHaveBeenCalled();
+  });
   it('uses the historical entry name when the current AI publication has a generated filename', async () => {
     const inline = { ...previous, siteUrl: null, contentShape: 'self-contained-html' };
     const generated = { ...current, siteUrl: 'https://assets.example/pack/index.vnew.html?v=20000', entryFile: 'pack/index.html' };

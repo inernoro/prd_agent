@@ -3,10 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const previewSource = readFileSync(path.resolve(__dirname, 'SitePreviewModal.tsx'), 'utf8');
-const previewHeaderActionsSource = previewSource
-  + readFileSync(path.resolve(__dirname, 'ReviewToolbarControls.tsx'), 'utf8')
-  + readFileSync(path.resolve(__dirname, 'ReviewVersionBar.tsx'), 'utf8');
-const reviewStyles = readFileSync(path.resolve(__dirname, '../../styles/hosted-review.css'), 'utf8');
+const reviewStyles = readFileSync(path.resolve(__dirname, '../../styles/hosted-review-workbench.css'), 'utf8');
 const editPanelSource = readFileSync(path.resolve(__dirname, 'SiteEditPanel.tsx'), 'utf8')
   + readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
 const pageSource = readFileSync(path.resolve(__dirname, '../../pages/WebPagesPage.tsx'), 'utf8');
@@ -17,18 +14,17 @@ const changelogBellSource = readFileSync(path.resolve(__dirname, '../changelog/C
 const dialogSource = readFileSync(path.resolve(__dirname, '../ui/Dialog.tsx'), 'utf8');
 
 describe('mobile web hosting layout', () => {
-  it('keeps preview actions in one scrollable control strip on narrow screens', () => {
+  it('keeps preview actions together and tucks secondary actions into the menu on narrow screens', () => {
     expect(previewSource).toContain('review-reader-toolbar');
     expect(previewSource).toContain('review-reader-actions');
-    expect(reviewStyles).toMatch(/\.review-reader-actions,[^{]*\{[^}]*grid-column:\s*1 \/ -1[^}]*overflow-x:\s*auto/);
-    expect(previewSource).toContain('whitespace-nowrap');
+    expect(previewSource).toContain('<ShareMoreMenu adaptive>');
+    expect(reviewStyles).toMatch(/grid-column:\s*2; grid-row:\s*1 \/ -1/);
   });
 
   it('gives every preview-header action at least a 44px touch target', () => {
     expect(previewSource).toContain('<ReviewToolbarControls');
-    expect(previewHeaderActionsSource.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(8);
-    expect(reviewStyles).toMatch(/\.review-tool\s*\{[^}]*min-height:\s*44px/);
-    expect(previewSource).toContain('min-w-11');
+    expect(reviewStyles).toMatch(/\.related-trigger\s*\{[^}]*min-width:\s*44px; min-height:\s*44px/);
+    expect(reviewStyles).toMatch(/\.share-more-menu\[data-theme\] \.share-topbar-btn\s*\{ min-height:\s*44px/);
     // 2026-09-24：「帮我修改」进生成工作台，版本记录作为那里的对话显示，预览顶栏只留一个入口。
     expect(previewSource).toContain('帮我修改');
     expect(previewSource).toContain('onClick={onEditInWorkbench}');
@@ -57,10 +53,10 @@ describe('mobile web hosting layout', () => {
     expect(editPanelSource).not.toContain('ref={composeRef} className="shrink-0');
   });
 
-  it('opens every right panel as a mobile overlay instead of squeezing the preview', () => {
+  it('switches the mobile reader between full-width document and discussion panels', () => {
     expect(previewSource).toContain('relative flex-1 min-h-0 flex overflow-hidden');
-    // 评论、提问两块侧栏；修改不再挤进 440px 侧栏，而是进生成工作台（一个对话 + 一个预览）。
-    expect(previewSource.match(/absolute inset-0 z-20 flex w-full/g)).toHaveLength(2);
+    expect(previewSource).toContain('<ReviewReaderTabs');
+    expect(previewSource).toContain("aria-hidden={isMobile && rightPanel !== 'none' ? true : undefined}");
     expect(previewSource).toContain("width: isMobile ? '100%' : reviewSidebar.width");
     expect(previewSource).toContain('!isMobile && <ReviewSidebarResizeHandle');
     expect(previewSource).toContain('sm:w-[380px]');

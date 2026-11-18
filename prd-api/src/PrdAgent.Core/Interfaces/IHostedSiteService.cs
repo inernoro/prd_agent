@@ -428,14 +428,14 @@ public interface IHostedSiteService
     Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
         string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null);
+        string? revisionId = null, string? expectedContentVersion = null, string? clientId = null);
 
     /// <summary>经分享链接发表评论（公开路径，需登录）。校验分享访问门 + 评论开关；通过后插入。</summary>
     Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
         string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null);
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null, string? clientId = null);
 
     Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
         bool resolved, CancellationToken ct = default);
@@ -513,6 +513,7 @@ public class HostedSiteCommentDto
     public string SiteId { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public string AuthorUserId { get; set; } = string.Empty;
+    public bool IsMine { get; set; }
     public string AuthorName { get; set; } = "用户";
     public string? AuthorAvatarFileName { get; set; }
     public DateTime CreatedAt { get; set; }

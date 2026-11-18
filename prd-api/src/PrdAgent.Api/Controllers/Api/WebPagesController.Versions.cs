@@ -65,7 +65,21 @@ public partial class WebPagesController
             .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles).Exclude(r => r.PublishedAssetKeys))
             .SortByDescending(r => r.PublishedContentVersion).ThenByDescending(r => r.Id).Limit(100)
             .ToListAsync(CancellationToken.None);
-        var result = items.Select((item, index) => ReviewVersionDto(item, site, total - index) with { HistoryRestricted = !canViewHistory }).ToList();
+        // A baseline records who archived the publication, which can differ from its author.
+        var authorIds = canViewHistory ? items.Where(item => item.Source != HostedSiteRevisionSources.Baseline)
+            .Select(item => item.CreatedByUserId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToArray() : [];
+        var authors = authorIds.Length == 0 ? [] : await _db.Users.Find(user => authorIds.Contains(user.UserId))
+            .Project(user => new { user.UserId, user.DisplayName, user.Username })
+            .ToListAsync(CancellationToken.None);
+        var authorNames = authors.ToDictionary(user => user.UserId,
+            user => string.IsNullOrWhiteSpace(user.DisplayName) ? user.Username : user.DisplayName);
+        var result = items.Select((item, index) => ReviewVersionDto(item, site, total - index) with
+        {
+            HistoryRestricted = !canViewHistory,
+            AuthorName = item.Source == HostedSiteRevisionSources.Baseline || string.IsNullOrWhiteSpace(item.CreatedByUserId)
+                ? null : authorNames.GetValueOrDefault(item.CreatedByUserId),
+            RestoredFromRevisionId = canViewHistory ? item.RollbackTargetRevisionId : null,
+        }).ToList();
         if (!items.Any(item => item.PublishedContentVersion == HostedSiteService.EffectiveContentVersion(site)))
         {
             // The live publication has no immutable revision ID until it is captured before replacement.
@@ -113,5 +127,6 @@ public partial class WebPagesController
     }
 
     private sealed record ReviewVersionSummary(string Id, string SiteId, string VersionLabel, string ContentVersionKey,
-        DateTime? PublishedAt, bool IsCurrent, bool CanPreview, string EntryFile, string ContentShape, string? SiteUrl, bool HistoryRestricted = false);
+        DateTime? PublishedAt, bool IsCurrent, bool CanPreview, string EntryFile, string ContentShape, string? SiteUrl,
+        bool HistoryRestricted = false, string? AuthorName = null, string? RestoredFromRevisionId = null);
 }

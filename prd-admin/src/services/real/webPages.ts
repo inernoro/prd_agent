@@ -1438,6 +1438,8 @@ export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise
 /** 发布版本的评审元数据；版本编号和内容标识由服务端维护。 */
 export interface HostedReviewVersion {
   historyRestricted?: boolean;
+  authorName?: string | null;
+  restoredFromRevisionId?: string | null;
   id: string;
   siteId: string;
   versionLabel: string;
@@ -1491,6 +1493,7 @@ export interface HostedSiteCommentAnchor {
 }
 
 export interface HostedSiteCommentOptions {
+  clientId?: string;
   siteId?: string;
   revisionId?: string;
   expectedContentVersion?: string;
@@ -1505,6 +1508,7 @@ export interface HostedSiteCommentDto {
   revisionId?: string | null;
   content: string;
   authorUserId: string;
+  isMine?: boolean;
   authorName: string;
   authorAvatarFileName?: string;
   createdAt: string;
@@ -1542,6 +1546,7 @@ export async function addSiteComment(siteId: string, content: string, options?: 
   return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/comments`, {
     method: 'POST',
     body: { content, ...options },
+    ...(options?.clientId && { headers: { 'Idempotency-Key': options.clientId } }),
   });
 }
 
@@ -1634,6 +1639,7 @@ export async function addShareComment(token: string, content: string, password?:
   return apiRequest(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, {
     method: 'POST',
     body: { content, ...options },
+    ...(options?.clientId && { headers: { 'Idempotency-Key': options.clientId } }),
   });
 }
 

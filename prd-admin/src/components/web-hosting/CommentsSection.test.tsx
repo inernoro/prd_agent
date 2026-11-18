@@ -19,9 +19,10 @@ const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, con
   preview: null, previews: [], allPreviewsHidden: false, hasHiddenPreviews: false, hideAllPreviews: vi.fn(), showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn(),
   draftAnchor: null, activeId: null, missingIds: [], threads: [], select, clearDraft: vi.fn(), focus: vi.fn(),
   notifyFrame: vi.fn(), setThreads: vi.fn(), setEnabled: vi.fn(), setActiveId: vi.fn() });
-async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string; versionOnly?: boolean } = {}) {
+async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string; versionOnly?: boolean; readerLayout?: boolean } = {}) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login} threadKind={options.threadKind}
+    readerLayout={options.readerLayout} splitLayout={options.readerLayout}
     annotations={{ ...annotations(), ready: options.ready ?? true, activeId: options.activeId ?? null }} review={options.review} versionOnly={options.versionOnly} />));
 }
 function button(text: string) {
@@ -34,6 +35,62 @@ beforeEach(() => {
   list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: false } });
 });
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
+
+describe('review discussion', () => {
+  const original = { id: 'topic', siteId: 'site', content: '原来的意见', authorName: '作者', createdAt: '2026-11-16T09:00:00Z' };
+  const response = (comments: typeof original[]) => ({ success: true, data: { comments, commentsEnabled: true, canComment: true } });
+  async function enterDraft(text: string) {
+    const field = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, text);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    return field;
+  }
+
+  beforeEach(() => { auth.isAuthenticated = true; auth.token = 'session'; });
+
+  it('keeps the failed reply in the fixed composer and retries once with the same identifier', async () => {
+    const reply = { ...original, id: 'submitted', parentId: original.id, content: '待发送的回复', isMine: true };
+    list.mockResolvedValueOnce(response([original])).mockResolvedValue(response([original, reply]));
+    add.mockResolvedValueOnce({ success: false, error: { code: 'NETWORK_ERROR' } }).mockResolvedValueOnce({ success: true, data: reply });
+    await mount({ readerLayout: true });
+    await act(async () => button('回复').click());
+    const input = await enterDraft(reply.content);
+    await act(async () => button('发送回复').click());
+    expect(container.querySelector('.review-composer [role="alert"]')?.textContent).toContain('发送失败，网络连接中断');
+    expect(input.value).toBe(reply.content);
+    const first = add.mock.calls[0];
+    expect(first[3]).toMatchObject({ parentId: original.id, clientId: expect.any(String) });
+    await act(async () => button('重试').click());
+    expect(add.mock.calls).toEqual([first, first]);
+    expect(container.querySelector('.review-composer [role="alert"]')).toBeNull();
+    expect(container.querySelector('.review-composer textarea')?.getAttribute('placeholder')).toBe('写整页评论…');
+    expect(container.querySelectorAll('.review-replies .review-message-body')).toHaveLength(1);
+    expect(container.querySelector('.review-talk-toast')?.textContent).toBe('回复已发送');
+  });
+
+  it('shows unread changes from focus sync while preserving the draft, focus and discussion position', async () => {
+    const newTopic = { ...original, id: 'new-topic', content: '另一条意见' };
+    const newReply = { ...original, id: 'new-reply', parentId: original.id, content: '另一位读者的回复' };
+    const ownReply = { ...original, id: 'own-reply', parentId: original.id, content: '自己的回复', isMine: true };
+    list.mockResolvedValueOnce(response([original]));
+    await mount({ readerLayout: true });
+    const input = await enterDraft('尚未发表的整页意见');
+    const listElement = container.querySelector('.review-thread-scroll')!;
+    input.focus();
+    listElement.scrollTop = 180;
+    list.mockResolvedValue(response([newTopic, original, newReply, ownReply]));
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(container.querySelector('.review-talk-new')?.textContent).toContain('2 条讨论有新内容');
+    expect(container.querySelectorAll('.review-talk-unread')).toHaveLength(3);
+    expect(input.value).toBe('尚未发表的整页意见');
+    expect(document.activeElement).toBe(input);
+    expect(listElement.scrollTop).toBe(180);
+    await act(async () => (container.querySelector('.review-thread') as HTMLElement).click());
+    expect(container.querySelector('.review-talk-new')?.textContent).toContain('1 条讨论有新内容');
+  });
+});
 
 describe('annotation entry availability', () => {
   it('其他版本批注打开独立小窗，不改主页面的版本', async () => {

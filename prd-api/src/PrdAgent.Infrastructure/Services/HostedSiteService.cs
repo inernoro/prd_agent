@@ -5478,20 +5478,21 @@ public class HostedSiteService : IHostedSiteService
     public async Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
         string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null)
+        string? revisionId = null, string? expectedContentVersion = null, string? clientId = null)
     {
         var site = await GetByIdAsync(siteId, authorUserId, ct);
         if (site == null)
             return new AddCommentResult { Error = "站点不存在或无权访问", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null, ipAddress: null, ct, anchor, parentId, revisionId, expectedContentVersion);
+        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null,
+            ipAddress: null, ct, anchor, parentId, revisionId, expectedContentVersion, clientId);
     }
 
     public async Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
         string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null)
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null, string? clientId = null)
     {
         if (string.IsNullOrWhiteSpace(authorUserId))
             return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
@@ -5502,7 +5503,8 @@ public class HostedSiteService : IHostedSiteService
         if (access.Site == null)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(access.Site, authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion);
+        return await InsertCommentAsync(access.Site, authorUserId, authorName, avatarFileName, content, shareToken: token,
+            ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion, clientId);
     }
 
     public async Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
@@ -5566,7 +5568,8 @@ public class HostedSiteService : IHostedSiteService
 
     private async Task<AddCommentResult> InsertCommentAsync(
         HostedSite site, string authorUserId, string authorName, string? avatarFileName,
-        string content, string? shareToken, string? ipAddress, CancellationToken ct, HostedSiteCommentAnchor? anchor, string? parentId, string? revisionId, string? expectedContentVersion)
+        string content, string? shareToken, string? ipAddress, CancellationToken ct, HostedSiteCommentAnchor? anchor,
+        string? parentId, string? revisionId, string? expectedContentVersion, string? clientId)
     {
         if (!site.CommentsEnabled)
             return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
@@ -5579,6 +5582,19 @@ public class HostedSiteService : IHostedSiteService
 
         if (!HostedSiteCommentRules.IsValidAnchor(anchor))
             return new AddCommentResult { Error = "批注定位信息无效或过长", HttpStatus = 400, ErrorCode = "invalid" };
+
+        string? submissionId = null;
+        if (clientId != null)
+        {
+            if (!Guid.TryParseExact(clientId, "D", out var submission))
+                return new AddCommentResult { Error = "发送标识无效，请重新输入后发送", HttpStatus = 400, ErrorCode = "INVALID_CLIENT_ID" };
+            // MongoDB 的 _id 已有唯一约束。使用服务器按站点和作者生成的标识，避免新索引上线前的并发重复。
+            submissionId = HostedSiteCommentRules.SubmissionId(site.Id, authorUserId, submission);
+            var replay = await ReadCommentSubmissionAsync(site, authorUserId, submissionId, trimmed, anchor,
+                parentId, revisionId, expectedContentVersion, shareToken != null, ct);
+            if (replay != null) return replay;
+        }
+
         string? contentVersion = HostedSiteCommentRules.VersionKey(EffectiveContentVersion(site));
         string? commentRevisionId = site.PublishedRevisionId;
         if (parentId != null)
@@ -5635,7 +5651,18 @@ public class HostedSiteService : IHostedSiteService
             Content = trimmed,
             IpAddress = ipAddress,
         };
-        await _db.HostedSiteComments.InsertOneAsync(comment, cancellationToken: CancellationToken.None);
+        if (submissionId != null) comment.Id = submissionId;
+        try
+        {
+            await _db.HostedSiteComments.InsertOneAsync(comment, cancellationToken: CancellationToken.None);
+        }
+        catch (MongoWriteException error) when (submissionId != null && error.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var replay = await ReadCommentSubmissionAsync(site, authorUserId, submissionId, trimmed, anchor,
+                parentId, revisionId, expectedContentVersion, shareToken != null, CancellationToken.None);
+            if (replay != null) return replay;
+            throw;
+        }
         if (parentId != null)
         {
             var parentStillExists = await _db.HostedSiteComments.Find(c => c.Id == parentId
@@ -5680,6 +5707,24 @@ public class HostedSiteService : IHostedSiteService
         };
     }
 
+    private async Task<AddCommentResult?> ReadCommentSubmissionAsync(HostedSite site, string authorUserId, string submissionId,
+        string content, HostedSiteCommentAnchor? anchor, string? parentId, string? revisionId, string? expectedContentVersion,
+        bool maskUserId, CancellationToken ct)
+    {
+        var saved = await _db.HostedSiteComments.Find(c => c.Id == submissionId && c.SiteId == site.Id
+            && c.AuthorUserId == authorUserId).FirstOrDefaultAsync(ct);
+        if (saved == null) return null;
+        if (saved.IsDeleted || !HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(saved),
+            EffectiveContentVersion(site), await CanEditSiteAsync(site, authorUserId, ct)))
+            return new AddCommentResult { Error = "原评论已删除或没有继续查看的权限", HttpStatus = 404, ErrorCode = "not_found" };
+        if (!HostedSiteCommentRules.MatchesSubmission(saved, content, anchor, parentId, revisionId, expectedContentVersion))
+            return new AddCommentResult { Error = "本次发送标识已用于另一条内容，请编辑草稿后发送", HttpStatus = 409, ErrorCode = "CLIENT_ID_REUSED" };
+        if (saved.ParentId != null && !await _db.HostedSiteComments.Find(c => c.Id == saved.ParentId && c.SiteId == site.Id
+            && !c.IsDeleted && c.ParentId == null).AnyAsync(ct))
+            return new AddCommentResult { Error = "原讨论已删除，回复未发表", HttpStatus = 404, ErrorCode = "not_found" };
+        return new AddCommentResult { Comment = ToCommentDto(saved, site, authorUserId, maskUserId) };
+    }
+
     private static HostedSiteCommentDto ToCommentDto(HostedSiteComment comment, HostedSite site,
         string? viewerUserId, bool maskUserId = false) => new()
     {
@@ -5693,6 +5738,7 @@ public class HostedSiteService : IHostedSiteService
         IsResolved = comment.IsResolved,
         CanResolve = site.CommentsEnabled && HostedSiteCommentRules.CanResolve(comment, site, viewerUserId),
         AuthorUserId = maskUserId ? string.Empty : comment.AuthorUserId,
+        IsMine = !string.IsNullOrEmpty(viewerUserId) && viewerUserId == comment.AuthorUserId,
         AuthorName = comment.AuthorName,
         AuthorAvatarFileName = comment.AuthorAvatarFileName,
         CreatedAt = comment.CreatedAt,

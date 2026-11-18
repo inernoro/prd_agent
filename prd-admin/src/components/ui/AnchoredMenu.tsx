@@ -67,12 +67,14 @@ type AnchoredMenuProps = {
   anchorRef?: RefObject<HTMLElement | null>;
   anchorEl?: HTMLElement | null;
   children: ReactNode;
-  /** 菜单右边缘对齐锚点右边缘（默认 right），或左对齐 */
-  align?: 'left' | 'right';
+  /** 默认对齐锚点右缘。窄屏也可贴视口右缘。 */
+  align?: 'left' | 'right' | 'viewport-right';
+  offsetX?: number;
   /** 菜单与锚点之间的垂直间距 */
   gap?: number;
   minWidth?: number;
   className?: string;
+  theme?: 'light' | 'dark';
   style?: CSSProperties;
 };
 
@@ -83,9 +85,11 @@ export function AnchoredMenu({
   anchorEl,
   children,
   align = 'right',
+  offsetX = 0,
   gap = 6,
   minWidth = 180,
   className = '',
+  theme,
   style,
 }: AnchoredMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -106,7 +110,7 @@ export function AnchoredMenu({
     const mw = menu?.offsetWidth || minWidth;
     const mh = menu?.offsetHeight || 0;
 
-    let left = align === 'right' ? a.right - mw : a.left;
+    let left = (align === 'viewport-right' ? window.innerWidth - mw - 8 : align === 'right' ? a.right - mw : a.left) + offsetX;
     left = Math.min(Math.max(8, left), Math.max(8, window.innerWidth - mw - 8));
 
     let top = a.bottom + gap;
@@ -123,7 +127,7 @@ export function AnchoredMenu({
       left -= dx;
     }
     setPos({ top, left });
-  }, [getAnchor, align, gap, minWidth]);
+  }, [getAnchor, align, offsetX, gap, minWidth]);
 
   // 打开时先定位一次，拿到真实尺寸后再用 rAF 校正一次（对齐 / 夹取 / 上翻）
   useLayoutEffect(() => {
@@ -202,6 +206,7 @@ export function AnchoredMenu({
   return createPortal(
     <div
       ref={menuRef}
+      data-theme={theme}
       className={`fixed z-[9999] rounded-[10px] py-1 ${className} border border-token-subtle`}
       style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, minWidth: `min(${minWidth}px, calc(100vw - 16px))`, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100dvh - 16px)', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', visibility: pos ? 'visible' : 'hidden', background: 'var(--overlay-panel-solid)', boxShadow: 'var(--shadow-glass-dropdown)', ...style }}
       // portal 的 React 事件仍按组件树冒泡：挡住 mousedown/click，避免落到下层卡片的
