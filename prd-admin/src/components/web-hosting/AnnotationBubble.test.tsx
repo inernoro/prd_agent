@@ -8,12 +8,14 @@ import type { HostedAnnotations } from './useHostedAnnotations';
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let cleanup = async () => {};
 afterEach(async () => { await cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-async function setup() {
+async function setup(width = 900) {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
-  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(900);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(width);
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(700);
-  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(292);
-  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(120);
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(width < 820 ? 240 : 292);
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return width < 820 && this.classList.contains('is-active') ? 165 : 120;
+  });
   HTMLElement.prototype.setPointerCapture = vi.fn(); HTMLElement.prototype.releasePointerCapture = vi.fn();
   const container = document.createElement('div'); document.body.appendChild(container); const root = createRoot(container);
   const annotations = { enabled: false, draftAnchor: null, displayMode: 'bubble', activeId: 'two',
@@ -94,4 +96,18 @@ it('气泡提供全显全隐图标，超长内容只渲染短摘要', async () =
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="隐藏全部气泡"]')!.click()); expect(annotations.hideAllPreviews).toHaveBeenCalledOnce();
   annotations.allPreviewsHidden = true; await render();
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="显示全部气泡"]')!.click()); expect(annotations.showAllPreviews).toHaveBeenCalledOnce();
+});
+
+it('窄屏展开或收起一条时，保留其他气泡的位置', async () => {
+  const { container, annotations, render } = await setup(390);
+  annotations.previews = annotations.previews!.map(item => ({
+    ...item, rect: { left: 22, top: 90, width: 170, height: 40 },
+  }));
+  annotations.activeId = 'one'; await render();
+  const other = container.querySelector<HTMLElement>('[data-bubble-id="two"]')!;
+  const before = [other.style.left, other.style.top];
+  annotations.activeId = null; await render();
+  expect([other.style.left, other.style.top]).toEqual(before);
+  annotations.activeId = 'one'; await render();
+  expect([other.style.left, other.style.top]).toEqual(before);
 });

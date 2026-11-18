@@ -8,6 +8,8 @@ import { placeAnnotationBubble, placeAnnotationRail } from './annotationBubblePl
 
 type Point = { left: number; top: number };
 type Size = { width: number; height: number };
+type Placement = Point & { side: string };
+type CachedPlacement = { delta: Point; side: string; size: Size; viewport: Size };
 const clamp = (n: number, max: number) => Math.max(8, Math.min(n, Math.max(8, max - 8)));
 const marginWidth = 300;
 const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -16,7 +18,7 @@ const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'nu
 export function AnnotationBubble({ annotations, hidden = false }: { annotations: HostedAnnotations; hidden?: boolean }) {
   const canvas = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const autoPositions = useRef(new Map<string, { dx: number; dy: number; side: string }>());
+  const autoPositions = useRef(new Map<string, CachedPlacement>());
   const [positions, setPositions] = useState<Record<string, Point>>({});
   const [scrollTop, setScrollTop] = useState(0);
   const [geometry, setGeometry] = useState<Size & { cards: Record<string, Size> }>({ width: 0, height: 0, cards: {} });
@@ -44,11 +46,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
         cards[card.dataset.bubbleId!] = { width: card.offsetWidth, height: card.offsetHeight };
       });
       const next = { width: element.clientWidth, height: element.clientHeight, cards };
-      setGeometry(previous => {
-        if (JSON.stringify(previous) === JSON.stringify(next)) return previous;
-        autoPositions.current.clear();
-        return next;
-      });
+      setGeometry(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -81,29 +79,51 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   // Keep the gutter even when every anchor has scrolled out of the iframe.
   if (!visible) return null;
   const occupied: AnnotationRect[] = [];
+  // A resized card fits around the cards whose dimensions have not changed.
+  const stable = new Map<string, Placement>();
+  if (!wide) {
+    for (const { item } of entries) {
+      const size = geometry.cards[item.id];
+      if (!size) continue;
+      const saved = autoPositions.current.get(item.id);
+      const cached = saved && saved.size.width === size.width && saved.size.height === size.height
+        && saved.viewport.width === geometry.width && saved.viewport.height === geometry.height ? saved : null;
+      const position = positions[item.id];
+      const relative = position ? { ...position, side: 'moved' } : cached && { ...cached.delta, side: cached.side };
+      if (!relative) continue;
+      const placement = {
+        left: clamp(item.rect.left + relative.left, geometry.width - size.width),
+        top: clamp(item.rect.top + relative.top, geometry.height - size.height),
+        side: relative.side,
+      };
+      stable.set(item.id, placement);
+      occupied.push({ ...placement, ...size });
+    }
+  }
   const placed = entries.map(entry => {
     const { item } = entry;
     const size = geometry.cards[item.id];
     const position = positions[item.id];
-    let placement: (Point & { side: string }) | undefined;
+    let placement: Placement | undefined;
     if (size && position) {
       placement = { side: 'moved', left: clamp(item.rect.left + position.left, geometry.width - size.width),
         top: offset + clamp(item.rect.top + position.top, geometry.height - size.height) };
     } else if (size && wide) {
       placement = { side: 'right', left: geometry.width - marginWidth + 21, top: rail.tops.get(item.id) ?? 10 };
     } else if (size) {
-      let cached = autoPositions.current.get(item.id);
-      if (!cached) {
+      placement = stable.get(item.id);
+      if (!placement) {
         const fitted = placeAnnotationBubble(item.rect, size, geometry, item.obstacles, occupied.slice(-12), true, item.markers);
         if (fitted) {
-          cached = { dx: fitted.left - item.rect.left, dy: fitted.top - item.rect.top, side: fitted.side };
-          autoPositions.current.set(item.id, cached);
+          autoPositions.current.set(item.id, {
+            delta: { left: fitted.left - item.rect.left, top: fitted.top - item.rect.top },
+            side: fitted.side, size, viewport: { width: geometry.width, height: geometry.height },
+          });
+          placement = fitted;
+          occupied.push({ ...fitted, ...size });
         }
       }
-      if (cached) placement = { side: cached.side,
-        left: clamp(item.rect.left + cached.dx, geometry.width - size.width), top: clamp(item.rect.top + cached.dy, geometry.height - size.height) };
     }
-    if (placement && size && !wide) occupied.push({ ...placement, ...size });
     return { ...entry, size, placement };
   });
   return <div ref={canvas} className="annotation-bubble-canvas" aria-label="页面批注气泡">
@@ -145,7 +165,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
 
 function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement, onMove }: {
   thread: HostedSiteCommentDto; excerpt: string; number: number; time: string; hue: number; annotations: HostedAnnotations;
-  placement?: Point & { side: string }; onMove: (point: Point | null) => void;
+  placement?: Placement; onMove: (point: Point | null) => void;
 }) {
   const active = annotations.activeId === thread.id;
   const hasHidden = annotations.hasHiddenPreviews || annotations.allPreviewsHidden;
