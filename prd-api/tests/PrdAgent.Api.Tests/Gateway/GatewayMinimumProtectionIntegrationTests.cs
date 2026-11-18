@@ -7,6 +7,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -444,6 +445,48 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         var unchanged = await database.Alerts.Find(new BsonDocument("_id", alert["_id"])).SingleAsync();
         unchanged["QuotaUsed"].AsInt32.ShouldBe(0);
         database.UpstreamCalls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ExternalAsrContinuationConsumesApprovedHourlyQuotaOnce()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await using var serving = await Serving(database, new() { ["AutomaticAppCallerPerHour"] = 1 });
+        await using var console = await Console(database);
+        const string key = "isolated-fixture-asr-key";
+        const string caller = "future-business.audio::asr";
+        var admin = console.GetTestClient();
+        admin.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "admin"));
+        var serviceKey = new GatewayServiceKeyRecord
+        {
+            TenantId = Tenant, SourceSystem = "external", ClientCode = "resolution-fixture", Environment = "test",
+            Purpose = "external-platform", AppCallerCodes = [caller], IngressProtocols = ["gw-native"], Scopes = ["stream:invoke"],
+            KeyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant(),
+        };
+        await database.Data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(serviceKey);
+        await database.Data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
+            .InsertOneAsync(new GatewayServiceKeyDirectoryRecord { TenantId = Tenant, KeyHash = serviceKey.KeyHash, ServiceKeyId = serviceKey.Id });
+        var authorizer = serving.Services.GetRequiredService<IGatewayScopedKeyAuthorizer>();
+        var authorization = await authorizer.AuthorizeAsync(key, "", "external", caller, "gw-native", "stream:invoke", null, default,
+            requestPath: "/gw/v1/asr/live");
+        authorization.Allowed.ShouldBeTrue(authorization.ErrorCode + ": " + authorization.Detail);
+        var admission = serving.Services.GetRequiredService<IGatewayTaskAdmission>();
+        var http = new DefaultHttpContext { RequestServices = serving.Services };
+        http.Request.Headers["X-Gateway-Key"] = key;
+        Task<GatewayTaskAdmissionDecision> ContinueAsync() => admission.ReserveContinuationAsync(http, authorization, caller, default);
+
+        (await ContinueAsync()).Allowed.ShouldBeTrue();
+        (await ContinueAsync()).ErrorCode.ShouldBe("AUTOMATIC_CONSUMPTION_LIMITED");
+        var alert = await database.Alerts.Find(new BsonDocument("Kind", "blocked")).SingleAsync();
+        var resolution = "/gw/logs/consumption-alerts/" + Uri.EscapeDataString(alert["_id"].AsString) + "/resolution";
+        (await admin.PostAsJsonAsync(resolution, new { action = "request-quota", units = 1, reason = "Resume fixture recording" }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await admin.PostAsJsonAsync(resolution, new { action = "approve-quota" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await ContinueAsync()).Allowed.ShouldBeTrue();
+        (await ContinueAsync()).ErrorCode.ShouldBe("AUTOMATIC_CONSUMPTION_LIMITED");
+        var updated = await database.Alerts.Find(new BsonDocument("_id", alert["_id"])).SingleAsync();
+        updated["QuotaUsed"].AsInt32.ShouldBe(1);
     }
 
     [Fact]

@@ -3426,7 +3426,7 @@ public static class GatewayHttpEndpoints
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                     AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
 
-            var minimum = await safety.CheckAsync(tenantId, appCallerCode, requestType, caller?.TeamId,
+            var minimum = await safety.CheckBeforeOtherGovernanceAsync(tenantId, appCallerCode, requestType, caller?.TeamId,
                 requestId, identity, tenantGovernance?.RateLimitPerMinute, caller?.RateLimitPerMinute, ct);
             if (minimum.Rejected)
                 return new AppCallerGovernanceDecision(status, TenantRateLimitDecision.Allow(tenantId),

@@ -122,6 +122,24 @@ public sealed class GatewayMinimumProtectionCoordinator
         int? callerRateLimitPerMinute,
         CancellationToken ct)
     {
+        var minimum = await CheckBeforeOtherGovernanceAsync(tenantId, appCallerCode, requestType, teamId, requestId,
+            identity, tenantRateLimitPerMinute, callerRateLimitPerMinute, ct);
+        return minimum.Rejected ? minimum
+            : await CompleteTemporaryQuotaAsync(minimum, tenantId, appCallerCode, requestType, teamId, requestId, identity, ct)
+                ?? GatewayMinimumProtectionDecision.Allow;
+    }
+
+    internal async Task<GatewayMinimumProtectionDecision> CheckBeforeOtherGovernanceAsync(
+        string tenantId,
+        string appCallerCode,
+        string requestType,
+        string? teamId,
+        string requestId,
+        GatewayMinimumRequestIdentity identity,
+        int? tenantRateLimitPerMinute,
+        int? callerRateLimitPerMinute,
+        CancellationToken ct)
+    {
         var caller = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
         var type = GatewayAppCallerIdentity.NormalizePart(requestType);
         var limits = new List<(string Scope, string Origin, int Seconds, int Limit)>();
