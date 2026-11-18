@@ -574,6 +574,9 @@
       else post('map-annotation-locations', { missingIds: [data.id] });
     }
   });
+  document.addEventListener('pointerdown', function (event) {
+    if (context && context.dualColumn && event.isTrusted) post('map-annotation-pointerdown');
+  }, true);
   document.addEventListener('pointermove', function (event) {
     if (!context || !context.enabled) return;
     pointer = { x: event.clientX, y: event.clientY }; currentHover = selectable(event.target) ? event.target : null; hoverDirty = true; schedule(false);

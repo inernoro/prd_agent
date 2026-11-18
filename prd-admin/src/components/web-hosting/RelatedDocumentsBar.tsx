@@ -56,7 +56,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     if (!open) return;
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
-      event.preventDefault(); event.stopPropagation(); close(); anchor.current?.focus();
+    event.preventDefault(); event.stopPropagation(); close(); anchor.current?.focus({ preventScroll: true });
     };
     window.addEventListener('keydown', onEscape, true);
     return () => window.removeEventListener('keydown', onEscape, true);
@@ -109,7 +109,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       onPointerEnter={event => { if (variant !== 'toolbar' && event.pointerType === 'mouse') openPanel(false); }} onPointerLeave={leave} onClick={() => openPanel(true)}
       onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
         event.preventDefault(); keepOpen(); setMaxHeight(measureAvailableHeight()); setOpen(true); setPinned(true);
-        requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('input,a,button') ?? panel.current)?.focus());
+        requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('input,a,button') ?? panel.current)?.focus({ preventScroll: true }));
       } }}>
       {variant === 'badge' || reviewReader ? <Link2 size={reviewReader ? 15 : 12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
       {variant === 'badge' ? <>{!!summary?.count && <span className="related-count">{summary.count}</span>}<span className="related-badge-name">{summary?.isMain ? '主文档' : summary?.mainTitle || summary?.titles[0] || '关联'}</span></>

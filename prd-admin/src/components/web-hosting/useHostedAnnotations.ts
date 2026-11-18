@@ -7,7 +7,7 @@ export function withAnnotationRuntime(html: string): string {
   if (!html || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
     || /http-equiv\s*=\s*["']content-security-policy["']/i.test(html)) return html;
   html = html.replace(/<script\b[^>]*\bdata-map-annotations\s*=\s*(["'])[^"']*\1[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=13'), window.location.href);
+  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=14'), window.location.href);
   const safeUrl = url.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   return `${html}<script data-map-annotations="v1" src="${safeUrl}"></script>`;
 }
@@ -107,6 +107,9 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
       if (event.source !== frameRef.current?.contentWindow || !data || typeof data !== 'object'
         || data.nonce !== nonce || data.siteId !== siteId) return;
       if (data.type === 'map-annotation-ready') { connected.current = true; setReady(true); }
+      if (data.type === 'map-annotation-pointerdown' && dualColumn && frameRef.current) {
+        window.dispatchEvent(new CustomEvent('map-iframe-pointerdown', { detail: frameRef.current }));
+      }
       if (data.type === 'map-annotation-preview' && typeof data.id === 'string' && isRect(data.rect)) {
         const next = { id: data.id, rect: data.rect, obstacles: Array.isArray(data.obstacles) ? data.obstacles.slice(0, 100).filter(isRect) : [] };
         legacyPreview.current = next;
@@ -158,7 +161,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     const retry = window.setInterval(() => { if (!connected.current) initRef.current(); }, 800);
     const timeout = window.setTimeout(() => setConnectionChecked(true), 5000);
     return () => { window.removeEventListener('message', receive); window.clearInterval(retry); window.clearTimeout(timeout); };
-  }, [frameRef, nonce, siteId, revealPreview]);
+  }, [frameRef, nonce, siteId, revealPreview, dualColumn]);
   useEffect(() => { initRef.current(); }, [enabled, displayMode, threads, activeId, draftAnchor, contentVersionKey, dualColumn, suggestSelection]);
   const notifyFrame = useCallback(() => { connected.current = false; setReady(false); initRef.current(); }, []);
   const select = useCallback(() => { setDraftAnchor(null); setEnabled(true); setPreview(null); setDisplayMode(mode => mode === 'hidden' ? 'standard' : mode); }, []);

@@ -100,7 +100,7 @@ export function ShareMoreMenu({ children, adaptive = false }: { children: ReactN
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus());
+    const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   }, [open]);
   const close = useCallback(() => setOpen(false), []);
@@ -114,14 +114,14 @@ export function ShareMoreMenu({ children, adaptive = false }: { children: ReactN
       style={adaptive ? { background: 'var(--review-b-popover)' } : undefined}>
       <div ref={menu} role="menu" aria-label="更多网页操作" onClick={(event) => {
         const action = (event.target as Element).closest('button:not(:disabled), a[href]');
-        if (action && !action.hasAttribute('data-menu-keep-open')) { close(); anchor.current?.focus(); }
+        if (action && !action.hasAttribute('data-menu-keep-open')) { close(); anchor.current?.focus({ preventScroll: true }); }
       }} onKeyDown={(event) => {
-        if (event.key === 'Escape') { event.stopPropagation(); close(); anchor.current?.focus(); }
+        if (event.key === 'Escape') { event.stopPropagation(); close(); anchor.current?.focus({ preventScroll: true }); }
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
         event.preventDefault();
         const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]'));
         const current = items.indexOf(document.activeElement as HTMLElement);
-        items[(current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+        items[(current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus({ preventScroll: true });
       }}>{children}</div>
     </AnchoredMenu>
   </>;

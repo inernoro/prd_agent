@@ -120,7 +120,9 @@ export function AnchoredMenu({
       top = above >= 8 ? above : Math.max(8, window.innerHeight - mh - 8);
     }
     // 挂在 body 下时 fixed 就是视口坐标；挂进弹窗时按实际参照系换算
-    if (menu && menu.parentElement !== document.body) {
+    // A normal fixed menu already uses viewport coordinates, even in a portal inside a dialog.
+    // Only a real containing block needs translation. Skip the initial offscreen measurement.
+    if (menu?.offsetParent && menu.style.visibility !== 'hidden') {
       const r = menu.getBoundingClientRect();
       const { dx, dy } = containingBlockOffset(menu.style, r);
       top -= dy;
@@ -152,16 +154,21 @@ export function AnchoredMenu({
     const onScroll = () => reposition();
     const onResize = () => reposition();
     let closing = false;
-    const onDown = (e: PointerEvent | MouseEvent) => {
+    const closeOutside = (target: Node) => {
       if (closing) return;
-      const t = e.target as Node;
-      if (menuRef.current?.contains(t)) return;
-      if (getAnchor()?.contains(t)) return; // 锚点自己负责 toggle
+      if (menuRef.current?.contains(target)) return;
+      if (getAnchor()?.contains(target)) return; // 锚点自己负责 toggle
       // 从菜单里弹出的模态对话框（如发布前私有资料确认）渲染在别的 portal 里，DOM 上不在菜单内，
       // 但它是这次菜单操作的一部分：在对话框里点按钮不该把下层菜单关掉，否则确认后的结果
       // （例如刚生成的分享链接）没有地方就地显示。判定见 shouldCloseOnOutsidePointer。
-      if (!shouldCloseOnOutsidePointer(t instanceof Element ? t : null, getAnchor())) return;
+      if (!shouldCloseOnOutsidePointer(target instanceof Element ? target : null, getAnchor())) return;
       closing = true; onClose();
+    };
+    const onDown = (event: PointerEvent | MouseEvent) => { if (event.target instanceof Node) closeOutside(event.target); };
+    // A focus change alone does not reliably report touches inside a cross-origin document.
+    const onFrameDown = (event: Event) => {
+      const frame = (event as CustomEvent<unknown>).detail;
+      if (frame instanceof HTMLIFrameElement && frame.isConnected) closeOutside(frame);
     };
     let blurTimer: ReturnType<typeof setTimeout> | undefined;
     const onBlur = () => {
@@ -182,6 +189,7 @@ export function AnchoredMenu({
     window.addEventListener('resize', onResize);
     document.addEventListener('pointerdown', onDown, true);
     document.addEventListener('mousedown', onDown, true);
+    window.addEventListener('map-iframe-pointerdown', onFrameDown);
     window.addEventListener('blur', onBlur);
     document.addEventListener('keydown', onKey);
     // 弹窗出场动画期间带 transform、是 fixed 的参照系；动画一结束参照系换回视口，
@@ -195,6 +203,7 @@ export function AnchoredMenu({
       window.removeEventListener('resize', onResize);
       document.removeEventListener('pointerdown', onDown, true);
       document.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('map-iframe-pointerdown', onFrameDown);
       window.removeEventListener('blur', onBlur);
       clearTimeout(blurTimer);
       document.removeEventListener('keydown', onKey);

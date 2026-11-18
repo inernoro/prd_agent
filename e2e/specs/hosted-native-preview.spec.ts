@@ -670,7 +670,8 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await expect(menu).toHaveAttribute('aria-expanded', 'false');
       if (!mobile) await discussion.click();
       await tap(menu);
-      const point = await freePoint(page);
+      await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toBeVisible();
+      const point = await freePoint(page, true);
       if (mobile) await page.touchscreen.tap(point.x, point.y);
       else await page.mouse.click(point.x, point.y);
       await expect(menu).toHaveAttribute('aria-expanded', 'false');
