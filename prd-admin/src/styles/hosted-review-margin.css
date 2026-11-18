@@ -36,7 +36,7 @@
   background: var(--review-margin-selected);
   box-shadow: 0 0 0 1.5px var(--review-margin-ring), var(--review-margin-raised);
 }
-.annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble[data-placement='moved'] {
+.annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble[data-placement='moved']:not(.is-active) {
   box-shadow: var(--review-margin-raised);
 }
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-grip > span {

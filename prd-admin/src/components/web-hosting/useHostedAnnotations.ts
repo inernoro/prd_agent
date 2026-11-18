@@ -7,7 +7,7 @@ export function withAnnotationRuntime(html: string): string {
   if (!html || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
     || /http-equiv\s*=\s*["']content-security-policy["']/i.test(html)) return html;
   html = html.replace(/<script\b[^>]*\bdata-map-annotations\s*=\s*(["'])[^"']*\1[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=16'), window.location.href);
+  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=17'), window.location.href);
   const safeUrl = url.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   return `${html}<script data-map-annotations="v1" src="${safeUrl}"></script>`;
 }
@@ -70,6 +70,8 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const [headerTints, setHeaderTints] = useState<[string, string] | null>(null);
   const [discussionActions, setDiscussionActions] = useState<HostedDiscussionActions | null>(null);
   const [selectionCandidate, setSelectionCandidate] = useState<{ anchor: HostedSiteCommentAnchor; rect: AnnotationRect } | null>(null);
+  const [documentScrollTop, setDocumentScrollTop] = useState<number | null>(null);
+  const documentScroll = useRef<{ top: number; max: number } | null>(null);
   const dualColumn = options?.dualColumn === true;
   const suggestSelection = dualColumn && discussionActions?.canReply === true;
   const pinOpensDiscussion = useRef(false); pinOpensDiscussion.current = options?.pinOpensDiscussion === true;
@@ -98,6 +100,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null); setPreview(null); setPreviews(null);
     setMissingIds([]); setConnectionChecked(false);
     setAnchorLocations({}); setReadingId(null); setColumn(null); setHeaderTints(null); setSelectionCandidate(null);
+    documentScroll.current = null; setDocumentScrollTop(null);
     previewsHiddenRef.current = false; revealedPreviews.current.clear(); legacyPreview.current = null; setAllPreviewsHidden(false); dismissedPreviews.current = new Set(); setDismissedPreviewIds(dismissedPreviews.current);
   }, [siteId, siteUrl, contentVersionKey]);
   useEffect(() => { setThreads([]); }, [siteId]);
@@ -117,6 +120,13 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
       }
       if (data.type === 'map-annotation-preview-hide') setPreview(null);
       if (data.type === 'map-annotation-previews' && Array.isArray(data.items)) {
+        const scroll = data.documentScroll;
+        const validScroll = dualColumn && scroll && Number.isFinite(scroll.top) && Number.isFinite(scroll.max)
+          && scroll.top >= 0 && scroll.max >= 0 && scroll.max < 1e7;
+        if (validScroll) {
+          documentScroll.current = { top: Math.min(scroll.top, scroll.max), max: scroll.max };
+          setDocumentScrollTop(documentScroll.current.top);
+        }
         const items: AnnotationPreview[] = data.items.slice(0, 500).filter((item: AnnotationPreview) => item && typeof item.id === 'string' && isRect(item.rect) && !dismissedPreviews.current.has(item.id) && (!previewsHiddenRef.current || revealedPreviews.current.has(item.id)));
         const obstacles = Array.isArray(data.obstacles) ? data.obstacles.slice(0, 100).filter(isRect) : [];
         const markers = Array.isArray(data.markers) ? data.markers.slice(0, 100).filter(isRect) : [];
@@ -163,7 +173,20 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     return () => { window.removeEventListener('message', receive); window.clearInterval(retry); window.clearTimeout(timeout); };
   }, [frameRef, nonce, siteId, revealPreview, dualColumn]);
   useEffect(() => { initRef.current(); }, [enabled, displayMode, threads, activeId, draftAnchor, contentVersionKey, dualColumn, suggestSelection]);
-  const notifyFrame = useCallback(() => { connected.current = false; setReady(false); initRef.current(); }, []);
+  const notifyFrame = useCallback(() => {
+    connected.current = false; documentScroll.current = null; setDocumentScrollTop(null); setReady(false); initRef.current();
+  }, []);
+  const scrollDocument = useCallback((delta: number) => {
+    const scroll = documentScroll.current, frame = frameRef.current;
+    if (!frame?.contentWindow || !scroll || !Number.isFinite(delta) || !delta) return false;
+    const next = Math.max(0, Math.min(scroll.max, scroll.top + delta));
+    if (next === scroll.top) return false;
+    const step = Math.sign(delta) * Math.min(Math.abs(next - scroll.top), frame.clientHeight);
+    if (!step) return false;
+    scroll.top += step;
+    frame.contentWindow.postMessage({ type: 'map-annotation-scroll-document', siteId, nonce, delta: step }, '*');
+    return true;
+  }, [frameRef, siteId, nonce]);
   const select = useCallback(() => { setDraftAnchor(null); setEnabled(true); setPreview(null); setDisplayMode(mode => mode === 'hidden' ? 'standard' : mode); }, []);
   const clearDraft = useCallback(() => setDraftAnchor(null), []);
   const focus = useCallback((id: string) => {
@@ -205,10 +228,10 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   }, [frameRef, siteId, nonce]);
   return { enabled, ready, connectionChecked, displayMode, setDisplayMode, preview, previews, allPreviewsHidden, hasHiddenPreviews: allPreviewsHidden || dismissedPreviewIds.size > 0, hideAllPreviews, showAllPreviews, dismissPreview, openThread, draftAnchor, activeId, missingIds, threads,
     select, clearDraft, focus, notifyFrame, setThreads, setEnabled, setActiveId, dualColumn, anchorLocations, readingId, column, headerTints,
-    bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection };
+    bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection, documentScrollTop, scrollDocument };
 }
 
 type Annotations = ReturnType<typeof useHostedAnnotations>;
 type ReaderExtras = 'dualColumn' | 'anchorLocations' | 'readingId' | 'column' | 'headerTints' | 'bindDiscussionActions' | 'discussionActions'
-  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection';
+  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'scrollDocument';
 export type HostedAnnotations = Omit<Annotations, ReaderExtras> & Partial<Pick<Annotations, ReaderExtras>>;

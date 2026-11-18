@@ -175,8 +175,8 @@
       return;
     }
     var rect = found.range?.getClientRects()[0] || found.el.getBoundingClientRect();
-    var top = Math.max(0, scrollY + rect.top - innerHeight * .28);
-    if (Math.abs(top - scrollY) > 40) window.scrollTo({ top: top, behavior: behavior });
+    var top = Math.max(0, scrollY + rect.top - innerHeight * .32);
+    if (Math.abs(top - scrollY) > 1) window.scrollTo({ top: top, behavior: behavior });
   }
   function nestedScroller(el) {
     for (var parent = el.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
@@ -189,7 +189,6 @@
     revealedPreviews.add(activeId); dismissedPreview = null; dismissedPreviews.delete(activeId); previewLast = ''; previewsLast = '';
     markerStateDirty = true;
     post(type || (context.displayMode === 'bubble' ? 'map-annotation-preview-select' : 'map-annotation-activate'), { id: activeId });
-    if (context.dualColumn && !type && record.found) scrollToAnchor(record.found);
     schedule(false);
   }
   function reconcile() {
@@ -293,9 +292,10 @@
     return boxes;
   }
   function publishPreview(force) {
-    if (context.displayMode !== 'bubble' || context.enabled || context.pending || (previewsHidden && !revealedPreviews.size)) { hidePreviews(); return; }
+    var show = context.displayMode === 'bubble' && !context.enabled && !context.pending && (!previewsHidden || revealedPreviews.size);
+    if (!show && !context.dualColumn) { hidePreviews(); return; }
     var items = [], markers = [];
-    records.forEach(function (item) {
+    if (show) records.forEach(function (item) {
       if (!item.found || !item.found.el.isConnected) return;
       if (context.dualColumn && item.thread.isResolved && item.thread.id !== activeId) return;
       var pin = viewportGeometry(item, 'pin');
@@ -306,8 +306,12 @@
         items.push({ id: item.thread.id, rect: previewRect(rect), obstacles: [] });
     });
     var surrounding = items.length ? surroundingGeometry() : [];
-    var itemsKey = JSON.stringify([items, surrounding, markers]);
-    if (force || itemsKey !== previewsLast) { previewsLast = itemsKey; post('map-annotation-previews', { items: items, obstacles: surrounding, markers: markers }); }
+    var documentScroll = context.dualColumn ? { top: Math.max(0, scrollY), max: Math.max(0, (document.scrollingElement?.scrollHeight || 0) - innerHeight) } : undefined;
+    var itemsKey = JSON.stringify([items, surrounding, markers, documentScroll]);
+    if (force || itemsKey !== previewsLast) {
+      previewsLast = itemsKey;
+      post('map-annotation-previews', { items: items, obstacles: surrounding, markers: markers, documentScroll: documentScroll });
+    }
     var record = records.get(previewId || activeId) || (items.length ? records.get(items[0].id) : null);
     if (record) previewId = record.thread.id;
     if (!record || !items.some(function (item) { return item.id === record.thread.id; }) || dismissedPreview === record.thread.id) { hidePreview(); return; }
@@ -560,6 +564,11 @@
       mount(); observe(); post('map-annotation-ready'); schedule(structureDirty || pendingChanged); return;
     }
     if (!context || data.siteId !== context.siteId || data.nonce !== context.nonce) return;
+    if (data.type === 'map-annotation-scroll-document' && context.dualColumn
+      && Number.isFinite(data.delta) && Math.abs(data.delta) <= innerHeight * 2) {
+      window.scrollBy({ top: data.delta, behavior: 'instant' });
+      return;
+    }
     if (data.type === 'map-annotation-preview-dismiss') {
       dismissedPreview = data.id || previewId || activeId;
       if (dismissedPreview) { dismissedPreviews.add(dismissedPreview); revealedPreviews.delete(dismissedPreview); }
