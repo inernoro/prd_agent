@@ -160,10 +160,12 @@ public class UpstreamProxyTests
         finally { listener.Stop(); }
     }
 
-    [Fact]
-    public async Task Socks5ProxyReceivesDomainAndUsesRemoteDns()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(16)]
+    public async Task ModelRequestAllowsSlowSocks5HandshakeAndUsesRemoteDns(int handshakeDelaySeconds)
     {
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         try
@@ -175,6 +177,7 @@ public class UpstreamProxyTests
                 using var stream = peer.GetStream();
                 var greeting = new byte[2]; await stream.ReadExactlyAsync(greeting, cts.Token);
                 var methods = new byte[greeting[1]]; await stream.ReadExactlyAsync(methods, cts.Token);
+                await Task.Delay(TimeSpan.FromSeconds(handshakeDelaySeconds), cts.Token);
                 await stream.WriteAsync(new byte[] { 5, 0 }, cts.Token);
                 var command = new byte[5]; await stream.ReadExactlyAsync(command, cts.Token);
                 Assert.Equal(3, command[3]); // 域名类型，不能提前解析成 IP。
@@ -185,7 +188,9 @@ public class UpstreamProxyTests
                 await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"), cts.Token);
                 return Encoding.ASCII.GetString(name);
             }, cts.Token);
-            using var client = new HttpClient(UpstreamProxy.CreateHandler(new("custom", $"socks5://127.0.0.1:{port}", null, null), false));
+            using var clients = new UpstreamProxyClientScope(new CountingClientFactory(), false);
+            var resolution = new ModelResolutionResult { UpstreamProxy = new("custom", $"socks5://127.0.0.1:{port}", null, null) };
+            var client = clients.Get(resolution, 600);
             using var response = await client.GetAsync("http://socks-target.invalid/models", cts.Token);
             Assert.True(response.IsSuccessStatusCode);
             Assert.Equal("socks-target.invalid", await capture);
