@@ -1470,6 +1470,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
         session = await FindOwnedSessionAsync(userId, id, CancellationToken.None);
         if (session == null) return null;
+        if (session.StopLeaseOwner != stopLeaseOwner) return ToView(session);
         await AppendStatusEventAsync(
             session.Id,
             await NextEventSeqAsync(session.Id, CancellationToken.None),
@@ -1483,7 +1484,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             if (!string.IsNullOrWhiteSpace(session.CurrentRuntimeRunId) && cancelAdapter != null)
             {
                 var cancel = await RunBestEffortRuntimeCancelAsync(
-                    () => cancelAdapter.CancelAsync(session.CurrentRuntimeRunId, CancellationToken.None),
+                    () => cancelAdapter.CancelOwnedRunAsync(session.CurrentRuntimeRunId, session.UserId, CancellationToken.None),
                     ex => _logger.LogWarning(
                         ex,
                         "Runtime cancellation failed; continuing session cleanup session={SessionId}",
@@ -1499,8 +1500,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         runtimeAdapter = cancel?.AdapterKind ?? session.RuntimeAdapter,
                         runtimeRunId = session.CurrentRuntimeRunId,
                         message = cancel?.Cancelled == true
-                            ? "runtime run cancel requested"
-                            : "runtime run cancel did not complete; continuing session cleanup"
+                            ? "runtime run cancellation confirmed"
+                            : cancel?.Reason == "cancel_requested"
+                                ? "runtime run cancellation accepted; awaiting confirmation"
+                                : "runtime run cancel did not complete; continuing session cleanup"
                     }),
                     CancellationToken.None);
             }

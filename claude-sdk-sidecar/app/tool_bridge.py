@@ -1,23 +1,9 @@
-"""
-工具桥接：sidecar 收到 Claude tool_use 后，反向调主服务执行真实工具。
-
-主服务侧（prd-api 的 AgentToolsController）用 X-Sidecar-Token 校验：
-明文比对任一已配置 sidecar 的 Token。"调用方/被调用方对称同 token"是有意为之，
-免去 AgentApiKey 签发/吊销的心智负担。
-
-调用模板：
-  POST {callback_base_url}/api/agent-tools/invoke
-  Header:
-    X-Sidecar-Token: {token}     # 与 SIDECAR_TOKEN 一致
-    X-Sidecar-Name:  {sidecar_name?}
-  Body:   { "toolName": "...", "input": {...}, "runId": "...", "appCallerCode": "..." }
-  Resp:   { "success": true, "content": "..." } 或
-          { "success": false, "errorCode": "...", "message": "..." }
-
-如果未配置 callback_base_url（本地纯测试），fallback 返回固定串方便 smoke。
-"""
+"""Tool callback using a live, run-scoped continuation; no shared-token fallback."""
 import logging
 import os
+import uuid
+import asyncio
+import time
 from typing import Any
 import httpx
 
@@ -33,39 +19,44 @@ class ToolBridge:
         run_id: str,
         app_caller_code: str | None,
         timeout_seconds: int = 60,
+        authorization=None,
+        cancel_event=None,
+        allowed_tools=None,
     ) -> None:
         self.callback_base_url = (callback_base_url or "").rstrip("/")
-        # agent_api_key 字段历史保留，运行时含义是 X-Sidecar-Token：
-        # 优先用 prd-api 透传过来的值，缺省则回落到本进程的 SIDECAR_TOKEN env。
-        self.callback_token = (
-            agent_api_key
-            or os.environ.get("SIDECAR_TOKEN", "").strip()
-            or None
-        )
+        self.callback_token = agent_api_key
         self.run_id = run_id
         self.app_caller_code = app_caller_code
         self.timeout = timeout_seconds
+        self.authorization = authorization
+        self.cancel_event = cancel_event
+        self.allowed_tools = set(allowed_tools or [])
+
+    def authorized(self, tool_name: str) -> bool:
+        return bool(self.authorization and self.authorization.live() and tool_name in self.allowed_tools
+            and not (self.cancel_event and self.cancel_event.is_set()))
 
     @property
     def is_configured(self) -> bool:
         return bool(self.callback_base_url and self.callback_token)
 
     async def invoke(self, tool_name: str, tool_input: dict[str, Any]) -> tuple[bool, str]:
+        if not self.authorized(tool_name):
+            return False, "runtime authorization denied"
         if not self.is_configured:
-            logger.warning(
-                "tool bridge not configured; returning stub for tool=%s", tool_name
-            )
-            return (
-                True,
-                f"[sidecar-stub] tool '{tool_name}' invoked locally; "
-                f"configure callbackBaseUrl + token for real execution.",
-            )
-
-        approval_id = str(tool_input.pop("__approval_id", "") or "").strip()
+            return False, "tool bridge is not configured"
+        tool_input = dict(tool_input)
+        tool_input.pop("__approval_id", None)
+        approval_id = f"{self.run_id}:{uuid.uuid4().hex}"
+        requested, message = await self.request_permission(tool_name, tool_input, approval_id)
+        if not requested:
+            return False, message
         approved, approval_message = await self.wait_for_approval(tool_name, approval_id)
         if not approved:
             return False, approval_message
 
+        if not self.authorized(tool_name):
+            return False, "runtime authorization expired or cancelled"
         url = f"{self.callback_base_url}/api/agent-tools/invoke"
         payload = {
             "toolName": tool_name,
@@ -80,13 +71,13 @@ class ToolBridge:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False, trust_env=False) as client:
                 resp = await client.post(url, json=payload, headers=headers)
         except httpx.HTTPError as ex:
             logger.exception("tool callback transport error tool=%s", tool_name)
             return False, f"callback transport error: {ex}"
 
-        if resp.status_code >= 400:
+        if resp.status_code != 200:
             return False, f"callback HTTP {resp.status_code}: {resp.text[:500]}"
 
         try:
@@ -107,10 +98,12 @@ class ToolBridge:
         return True, str(data)
 
     async def wait_for_approval(self, tool_name: str, approval_id: str) -> tuple[bool, str]:
+        if not self.authorized(tool_name):
+            return False, "runtime authorization denied"
         if not self.is_configured:
-            return True, "tool bridge is not configured"
+            return False, "tool bridge is not configured"
         if not approval_id:
-            return True, "approval id not provided"
+            return False, "approval id not provided"
 
         url = (
             f"{self.callback_base_url}/api/agent-tools/approvals/"
@@ -126,13 +119,13 @@ class ToolBridge:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout + 5) as client:
+            async with httpx.AsyncClient(timeout=self.timeout + 5, follow_redirects=False, trust_env=False) as client:
                 resp = await client.post(url, json=payload, headers=headers)
         except httpx.HTTPError as ex:
             logger.exception("tool approval wait transport error tool=%s", tool_name)
             return False, f"approval wait transport error: {ex}"
 
-        if resp.status_code >= 400:
+        if resp.status_code != 200:
             return False, f"approval wait HTTP {resp.status_code}: {resp.text[:500]}"
 
         try:
@@ -155,6 +148,8 @@ class ToolBridge:
         approval_id: str,
         description: str | None = None,
     ) -> tuple[bool, str]:
+        if not self.authorized(tool_name):
+            return False, "runtime authorization denied"
         if not self.is_configured:
             return False, "tool bridge is not configured"
         if not approval_id:
@@ -175,13 +170,13 @@ class ToolBridge:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False, trust_env=False) as client:
                 resp = await client.post(url, json=payload, headers=headers)
         except httpx.HTTPError as ex:
             logger.exception("tool permission request transport error tool=%s", tool_name)
             return False, f"permission request transport error: {ex}"
 
-        if resp.status_code >= 400:
+        if resp.status_code != 200:
             return False, f"permission request HTTP {resp.status_code}: {resp.text[:500]}"
 
         try:

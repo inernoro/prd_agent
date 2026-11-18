@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Services.AgentTools;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 
@@ -28,6 +29,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    // Only dispatching processes hold cancellation credentials; never broadcast a shared bearer.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Token, string Url, TaskExecutionIdentity? Identity)> RunCredentials = new();
     private readonly IHttpClientFactory _httpFactory;
     private readonly IOptionsMonitor<ClaudeSidecarOptions> _options;
     private readonly ILogger<ClaudeSidecarRouter> _logger;
@@ -36,6 +39,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private readonly IConfiguration _configuration;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ITaskScopedRuntimeGrantIssuer? _runtimeGrantIssuer;
+    private readonly ISidecarReplayStore? _runControl;
 
     public ClaudeSidecarRouter(
         IHttpClientFactory httpFactory,
@@ -45,7 +49,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         IConfiguration configuration,
         IHttpContextAccessor httpContextAccessor,
         ILogger<ClaudeSidecarRouter> logger,
-        ITaskScopedRuntimeGrantIssuer? runtimeGrantIssuer = null)
+        ITaskScopedRuntimeGrantIssuer? runtimeGrantIssuer = null, ISidecarReplayStore? runControl = null)
     {
         _httpFactory = httpFactory;
         _options = options;
@@ -55,6 +59,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
         _runtimeGrantIssuer = runtimeGrantIssuer;
+        _runControl = runControl;
     }
 
     public bool IsConfigured =>
@@ -111,59 +116,58 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             yield break;
         }
 
-        var token = ResolveToken(instance);
-        if (string.IsNullOrWhiteSpace(token))
-        {
-            yield return new SidecarEvent
-            {
-                Type = SidecarEventType.Error,
-                ErrorCode = "sidecar_token_missing",
-                Message = $"sidecar '{instance.Name}' 未配置 Token / TokenEnvVar",
-            };
-            yield break;
-        }
-
         var url = CombineUrl(instance.BaseUrl, "/v1/agent/run");
         _logger.LogInformation(
             "[ClaudeSdk] dispatch run={RunId} sidecar={Name} url={Url}",
             request.RunId, instance.Name, url);
 
-        // 自动注入 callbackBaseUrl / 反向调用 token：调用方不传时由 options + 实例 token 兜底。
-        // 这是"无脑配置"的关键 —— 节点配置只关心 model / prompt / tools，不用管反向回调链路。
+        // 固定控制面回调地址；只转交平台签发的短期任务凭据，不回落到共享 token。
         var opts = _options.CurrentValue;
         var effectiveCallbackUrl = ResolveCallbackBaseUrl(request, instance, opts);
-        var effectiveCallbackToken = string.IsNullOrWhiteSpace(request.AgentApiKey)
-            ? token
-            : request.AgentApiKey;
-
-        var http = _httpFactory.CreateClient(HttpClientName);
-        http.Timeout = Timeout.InfiniteTimeSpan;
-
-        using var httpReq = new HttpRequestMessage(HttpMethod.Post, url)
+        var effectiveCallbackToken = request.AgentApiKey;
+        if (string.IsNullOrWhiteSpace(effectiveCallbackToken))
         {
-            Content = SerializeBody(request, effectiveCallbackUrl, effectiveCallbackToken),
-        };
-        httpReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        httpReq.Headers.Accept.ParseAdd("text/event-stream");
-
-        // C# 不允许 `yield return` 出现在 try-catch 中，所以把"发请求 + 拿响应流"
-        // 拆到独立 helper，由本方法只在异常路径上构造一次性的错误事件。
-        var dispatch = await DispatchAsync(http, httpReq, instance, ct);
-        if (dispatch.ErrorEvent != null)
+            yield return new SidecarEvent { Type = SidecarEventType.Error, ErrorCode = "runtime_authorization_missing" };
+            yield break;
+        }
+        if (!RunCredentials.TryAdd(request.RunId, (effectiveCallbackToken, instance.BaseUrl, TaskExecutionContext.Current)))
         {
-            yield return dispatch.ErrorEvent;
+            yield return new SidecarEvent { Type = SidecarEventType.Error, ErrorCode = "runtime_already_active" };
             yield break;
         }
 
-        await using var stream = dispatch.Stream!;
-        using var response = dispatch.Response!;
-
-        await foreach (var ev in ParseSseAsync(stream, instance.Name, ct))
+        try
         {
-            yield return ev;
-            if (ev.Type == SidecarEventType.Done || ev.Type == SidecarEventType.Error)
+            var http = _httpFactory.CreateClient(HttpClientName);
+            http.Timeout = Timeout.InfiniteTimeSpan;
+
+            using var httpReq = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = SerializeBody(request, effectiveCallbackUrl, effectiveCallbackToken),
+            };
+            httpReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", effectiveCallbackToken);
+            httpReq.Headers.Accept.ParseAdd("text/event-stream");
+
+            // C# 不允许 `yield return` 出现在 try-catch 中，所以把"发请求 + 拿响应流"
+            // 拆到独立 helper，由本方法只在异常路径上构造一次性的错误事件。
+            var dispatch = await DispatchAsync(http, httpReq, instance, ct);
+            if (dispatch.ErrorEvent != null)
+            {
+                yield return dispatch.ErrorEvent;
                 yield break;
+            }
+
+            await using var stream = dispatch.Stream!;
+            using var response = dispatch.Response!;
+
+            await foreach (var ev in ParseSseAsync(stream, instance.Name, ct))
+            {
+                yield return ev;
+                if (ev.Type == SidecarEventType.Done || ev.Type == SidecarEventType.Error)
+                    yield break;
+            }
         }
+        finally { RunCredentials.TryRemove(request.RunId, out _); }
     }
 
     public async Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct)
@@ -171,47 +175,35 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         if (string.IsNullOrWhiteSpace(runId))
             return new SidecarCancelResult(false, "run_id_empty");
 
-        var instances = GetRoutableInstances(_options.CurrentValue);
-        if (instances.Count == 0)
-            return new SidecarCancelResult(false, "sidecar_not_configured");
-
-        var http = _httpFactory.CreateClient(HttpClientName);
-        var lastReason = "not found";
-        foreach (var instance in instances)
+        // Authenticated user identity comes from the trusted HTTP principal, never request body/headers.
+        var user = _httpContextAccessor.HttpContext?.User;
+        if (user?.Identity?.IsAuthenticated == true)
         {
-            var token = ResolveToken(instance);
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                lastReason = "sidecar_token_missing";
-                continue;
-            }
-
-            var url = CombineUrl(instance.BaseUrl, $"/v1/agent/cancel/{Uri.EscapeDataString(runId)}");
-            using var httpReq = new HttpRequestMessage(HttpMethod.Post, url);
-            httpReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            try
-            {
-                using var response = await http.SendAsync(httpReq, ct);
-                var body = await SafeReadString(response, ct);
-                if (response.IsSuccessStatusCode)
-                {
-                    _state.RecordSuccess(instance.Name);
-                    return new SidecarCancelResult(true, null, instance.Name);
-                }
-
-                lastReason = string.IsNullOrWhiteSpace(body)
-                    ? $"sidecar_http_{(int)response.StatusCode}"
-                    : body;
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _state.RecordFailure(instance.Name);
-                lastReason = ex.Message;
-            }
+            if (_runControl is null) return new SidecarCancelResult(false, "cancel_store_unavailable");
+            var subject = user.FindFirst("sub")?.Value ?? user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrWhiteSpace(subject)) return new SidecarCancelResult(false, "cancel_subject_missing");
+            return await CancelOwnedRunAsync(runId, subject, ct);
         }
+        if (!RunCredentials.TryGetValue(runId, out var credential)
+            || TaskExecutionContext.Current is not { Lease: not null } current || current != credential.Identity)
+            return new SidecarCancelResult(false, "cancel_authority_missing");
+        var http = _httpFactory.CreateClient(HttpClientName);
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            CombineUrl(credential.Url, $"/v1/agent/cancel/{Uri.EscapeDataString(runId)}"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.Token);
+        using var response = await http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode) return new SidecarCancelResult(false, $"sidecar_http_{(int)response.StatusCode}");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        var cancelled = body.RootElement.TryGetProperty("cancelled", out var value) && value.ValueKind == JsonValueKind.True;
+        return new SidecarCancelResult(cancelled, body.RootElement.TryGetProperty("state", out var stateValue) ? stateValue.GetString() : "unconfirmed");
+    }
 
-        return new SidecarCancelResult(false, lastReason);
+    public async Task<SidecarCancelResult> CancelOwnedRunAsync(string runId, string subject, CancellationToken ct)
+    {
+        if (_runControl is null) return new SidecarCancelResult(false, "cancel_store_unavailable");
+        var state = await _runControl.CancelOwnedRunAsync(runId, subject, ct);
+        return new SidecarCancelResult(state.Result == ReplayResult.Accepted && state.State == "cancelled",
+            state.Result == ReplayResult.Accepted ? state.State : "cancel_denied_or_unavailable");
     }
 
     public async Task<SidecarPoolDiagnostics> GetDiagnosticsAsync(CancellationToken ct)
@@ -321,10 +313,6 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
 
         foreach (var instance in instances)
         {
-            if (!instance.TokenConfigured)
-            {
-                blockers.Add($"{instance.Name}: 缺少 sidecar bearer token");
-            }
             if (instance.HttpStatus is >= 400)
             {
                 blockers.Add($"{instance.Name}: /readyz 返回 HTTP {instance.HttpStatus}");
@@ -339,7 +327,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             }
             if (instance.SidecarTokenConfigured == false)
             {
-                blockers.Add($"{instance.Name}: 缺少 SIDECAR_TOKEN");
+                blockers.Add($"{instance.Name}: 缺少运行时授权服务配置");
             }
             foreach (var blocker in instance.ReadyzBlockers ?? Array.Empty<string>())
             {
@@ -550,7 +538,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 && (providerKeyElement.ValueKind == JsonValueKind.True || providerKeyElement.ValueKind == JsonValueKind.False)
                 ? providerKeyElement.GetBoolean()
                 : null;
-            bool? sidecarToken = root.TryGetProperty("sidecarToken", out var sidecarTokenElement)
+            bool? sidecarToken = (root.TryGetProperty("runtimeAuthorityConfigured", out var sidecarTokenElement)
+                || root.TryGetProperty("sidecarToken", out sidecarTokenElement))
                 && (sidecarTokenElement.ValueKind == JsonValueKind.True || sidecarTokenElement.ValueKind == JsonValueKind.False)
                 ? sidecarTokenElement.GetBoolean()
                 : null;
@@ -770,9 +759,6 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         DynamicSidecarInstance instance,
         ClaudeSidecarOptions opts)
     {
-        if (!string.IsNullOrWhiteSpace(request.CallbackBaseUrl))
-            return request.CallbackBaseUrl.TrimEnd('/');
-
         if (string.Equals(instance.Source, PairedCdsSource, StringComparison.OrdinalIgnoreCase))
         {
             var publicBaseUrl = ResolvePublicMapBaseUrl();

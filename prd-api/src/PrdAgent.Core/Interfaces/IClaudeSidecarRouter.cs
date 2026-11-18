@@ -35,9 +35,12 @@ public interface IClaudeSidecarRouter
 
     /// <summary>
     /// Best-effort cancellation for a previously dispatched run.
-    /// Implementations may broadcast to multiple sidecar instances when the owning instance is unknown.
+    /// Only the dispatching process may use the stored scoped credential; unknown ownership fails closed.
     /// </summary>
     Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct);
+    // Only for trusted service calls after validating ownership of the persisted resource.
+    Task<SidecarCancelResult> CancelOwnedRunAsync(string runId, string subject, CancellationToken ct)
+        => Task.FromResult(new SidecarCancelResult(false, "owned_cancel_unsupported"));
 
     /// <summary>
     /// Runtime pool diagnostics for UI/runbook checks. Does not include secrets.
@@ -107,7 +110,7 @@ public sealed class SidecarRunRequest
     /// <summary>sidecar 反向调主服务的 base URL，跨服务器时不能用 127.0.0.1。</summary>
     public string? CallbackBaseUrl { get; init; }
 
-    /// <summary>本次 run 临时签发的 sk-ak-* AgentApiKey 明文，sidecar 用它调主服务。</summary>
+    /// <summary>本次 run 临时签发的 map-task-v2.* 任务续接凭据，sidecar 用它调主服务。</summary>
     public string? AgentApiKey { get; init; }
 
     /// <summary>用于在主服务侧关联日志、限流、计费的应用主体标识。</summary>
@@ -153,8 +156,8 @@ public sealed class SidecarRunRequest
     public string? GitRef { get; init; }
 
     /// <summary>
-    /// per-request 覆盖运行时自带的内置工具（Read/Grep/Glob 之类）。
-    /// null = 沿用 sidecar 进程级默认（历史调用方行为不变）；
+    /// 请求选择运行时自带的内置工具子集（Read/Grep/Glob 之类）。
+    /// null = 使用服务端授权默认，并受部署工具上限约束；
     /// 空数组 = 一个内置工具都不开。通用对话走空数组，避免聊天顺带带上仓库读取能力。
     /// </summary>
     public IReadOnlyList<string>? BuiltinTools { get; init; }

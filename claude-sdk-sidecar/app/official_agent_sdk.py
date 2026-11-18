@@ -59,6 +59,7 @@ async def run_official_agent(
     try:
         from claude_agent_sdk import (  # type: ignore
             ClaudeSDKClient,
+            HookMatcher,
             ClaudeAgentOptions,
             PermissionResultAllow,
             PermissionResultDeny,
@@ -84,6 +85,9 @@ async def run_official_agent(
         run_id=req.run_id,
         app_caller_code=req.app_caller_code,
         timeout_seconds=req.timeout_seconds,
+        authorization=req._authorization,
+        cancel_event=cancel_event,
+        allowed_tools={t.name for t in req.tools} | set(req.builtin_tools or []),
     )
 
     sdk_tooling = build_sdk_tooling(
@@ -116,8 +120,8 @@ async def run_official_agent(
     unsafe_builtin_tools = sorted(
         {name for name in builtin_allowed if name.lower() in {"bash", "edit", "write"}}
     )
-    permission_mode = os.environ.get("CLAUDE_AGENT_SDK_PERMISSION_MODE", "default")
-    bare_mode = os.environ.get("CLAUDE_AGENT_SDK_BARE", "1").lower() not in {"0", "false", "no"}
+    permission_mode = "default"
+    bare_mode = True
     setting_sources = [] if bare_mode else _csv_env("CLAUDE_AGENT_SDK_SETTING_SOURCES", "project")
     extra_args = {"bare": None} if bare_mode else {}
     readonly_system_prompt = (
@@ -146,6 +150,8 @@ async def run_official_agent(
         )
         return
     cwd = request_cwd or git_cwd or env_cwd
+    req.workspace_root = cwd
+    req._cancel_event = cancel_event
     workspace_source = "request" if request_cwd else ("git" if git_cwd else ("env" if env_cwd else "unset"))
     missing_runtime = _runtime_preflight(cwd)
     if missing_runtime:
@@ -186,7 +192,8 @@ async def run_official_agent(
 
     option_kwargs: dict = dict(
         tools=builtin_allowed,
-        allowed_tools=[*builtin_allowed, *sdk_tooling.map_tool_names],
+        allowed_tools=[],  # Do not auto-approve built-ins ahead of the permission callback.
+        hooks={"PreToolUse": [HookMatcher(hooks=[sdk_tooling.pre_tool_use], timeout=min(req.timeout_seconds, 900), on_failure="block")]},
         disallowed_tools=builtin_disallowed,
         system_prompt={
             "type": "preset",
@@ -194,7 +201,7 @@ async def run_official_agent(
             "append": appended_system_prompt,
         },
         mcp_servers=sdk_tooling.mcp_servers,
-        strict_mcp_config=bool(sdk_tooling.mcp_servers),
+        strict_mcp_config=True,
         permission_mode=permission_mode,
         max_turns=req.max_turns,
         model=req.model,

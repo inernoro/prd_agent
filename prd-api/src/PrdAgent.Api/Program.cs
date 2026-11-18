@@ -212,6 +212,7 @@ builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAcces
 builder.Services.AddScoped<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>();
 builder.Services.AddSingleton<ITaskExecutionCoordinator, PrdAgent.Infrastructure.Security.TaskExecutionCoordinator>();
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Security.TaskContinuationTokens>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Security.ISidecarReplayStore, PrdAgent.Infrastructure.Security.MongoSidecarReplayStore>();
 builder.Services.AddSingleton<ITaskExecutionAuthorizer, PrdAgent.Infrastructure.Security.TaskExecutionAuthorizer>();
 builder.Services.AddMapModelEgressGuard();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
