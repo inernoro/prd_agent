@@ -229,11 +229,13 @@
   .annotation-chat-actions button { min-height: 44px; }
 }
 
-:root { --review-annotation-dock-size: 128px; }
+:root { --review-annotation-dock-size: 148px; }
 .review-document-stage:has(> .annotation-mobile-dock) { display: flex; flex-direction: column; }
 .review-document-stage:has(> .annotation-mobile-dock) > iframe { flex: 1 1 0; min-height: 0; }
 .annotation-mobile-dock {
-  flex: 0 0 auto; height: var(--review-annotation-dock-size);
+  --review-annotation-dock-inset: env(safe-area-inset-bottom, 0px);
+  flex: 0 0 auto; height: calc(var(--review-annotation-dock-size) + var(--review-annotation-dock-inset));
+  padding-bottom: var(--review-annotation-dock-inset);
   border-top: 1px solid var(--border-subtle); background: var(--bg-base);
 }
 .annotation-dock-list {
@@ -252,13 +254,14 @@
 .annotation-dock-author strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .annotation-dock-excerpt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--text-secondary); font-size: 13px; }
 .annotation-dock-empty { align-self: center; color: var(--text-secondary); font-size: 13px; }
-.annotation-chat-bubble[data-placement='dock'] {
-  width: calc(100% - 24px); height: calc(var(--review-annotation-dock-size) - 12px);
+.annotation-chat-bubble[data-placement='dock'] { width: calc(100% - 24px); }
+.annotation-chat-bubble[data-mobile-dock] {
+  height: calc(var(--review-annotation-dock-size) - 12px);
   display: flex; flex-direction: column; padding-block: 9px 4px;
 }
-.annotation-chat-bubble[data-placement='dock'] .annotation-chat-author { min-height: 27px; }
-.annotation-chat-bubble[data-placement='dock'] > p { margin: 2px 0 0; -webkit-line-clamp: 2; }
-.annotation-chat-bubble[data-placement='dock'] .annotation-chat-actions { margin: auto 0 0; padding-top: 0; }
+.annotation-chat-bubble[data-mobile-dock] .annotation-chat-author { min-height: 27px; }
+.annotation-chat-bubble[data-mobile-dock] > p { margin: 2px 0 0; -webkit-line-clamp: 2; }
+.annotation-chat-bubble[data-mobile-dock] .annotation-chat-actions { margin: auto 0 0; padding-top: 0; }
 body:has(.review-document-stage > .annotation-mobile-dock) { --share-assistant-clearance: var(--review-annotation-dock-size); }
 
 /* Compact chrome keeps the document and comments as the primary content. */

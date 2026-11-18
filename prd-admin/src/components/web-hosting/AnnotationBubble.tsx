@@ -178,7 +178,8 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
             })}
           </svg>}
           {placed.map(({ item, thread, excerpt, number, time, hue, placement, size }) => <BubbleCard key={item.id}
-            thread={thread} excerpt={excerpt} number={number} time={time} hue={hue} annotations={annotations} placement={placement} onBack={activeInDock ? returnToDock : undefined}
+            thread={thread} excerpt={excerpt} number={number} time={time} hue={hue} annotations={annotations}
+            placement={placement} mobileDock={docked} onBack={activeInDock ? returnToDock : undefined}
             onMove={point => setPositions(previous => {
               const next = { ...previous };
               if (point && size) next[item.id] = {
@@ -194,9 +195,9 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   </>;
 }
 
-function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement, onBack, onMove }: {
+function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement, mobileDock, onBack, onMove }: {
   thread: HostedSiteCommentDto; excerpt: string; number: number; time: string; hue: number; annotations: HostedAnnotations;
-  placement?: Placement; onBack?: () => void; onMove: (point: Point | null) => void;
+  placement?: Placement; mobileDock: boolean; onBack?: () => void; onMove: (point: Point | null) => void;
 }) {
   const active = annotations.activeId === thread.id;
   const hasHidden = annotations.hasHiddenPreviews || annotations.allPreviewsHidden;
@@ -213,7 +214,7 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
   };
   const choose = () => annotations.setActiveId(thread.id);
   return <div className={`annotation-chat-bubble${active ? ' is-active' : ''}`} role="dialog" aria-label={`批注气泡 ${number}`}
-    data-bubble-id={thread.id} data-placement={placement?.side}
+    data-bubble-id={thread.id} data-placement={placement?.side} data-mobile-dock={mobileDock ? '' : undefined}
     style={{ left: placement?.left, top: placement?.top, visibility: placement ? undefined : 'hidden' }}
     onPointerDown={start}
     onPointerMove={event => {

@@ -554,6 +554,9 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       expect(await frame.locator('body').evaluate(() => window.scrollY)).toBe(0);
     });
     if (mobile) test('密集批注显示在正文外，可横滑摘要、展开、显隐和拖移复位', async ({ page, context }) => {
+      const touch = await context.newCDPSession(page);
+      const bottomInset = 34;
+      await touch.send('Emulation.setSafeAreaInsetsOverride', { insets: { bottom: bottomInset } });
       const frame = await open(page, 16);
       const dock = page.getByRole('region', { name: '页边批注' });
       const summaries = dock.getByRole('button', { name: /^展开批注气泡/ });
@@ -566,7 +569,7 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
       await expect(frame.getByRole('button', { name: /打开批注/ })).toHaveCount(16);
       const scroller = dock.locator('.annotation-dock-list'), row = await scroller.boundingBox();
-      const touch = await context.newCDPSession(page);
+      expect((await rectangle(dock)).bottom - (await rectangle(scroller)).bottom).toBeGreaterThanOrEqual(bottomInset);
       const swipe = async (x: number, y: number, dx: number, dy: number) => {
         await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
         for (let i = 1; i <= 8; i++) {
@@ -585,9 +588,16 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       const selected = page.locator('.annotation-chat-bubble.is-active');
       await expect(selected).toHaveAttribute('data-placement', 'dock');
       expect((await rectangle(selected)).top).toBeGreaterThanOrEqual((await rectangle(document)).bottom - 1);
+      expect((await rectangle(dock)).bottom - (await rectangle(selected)).bottom).toBeGreaterThanOrEqual(bottomInset);
       const grip = await selected.getByRole('button', { name: /移动批注气泡/ }).boundingBox();
       await swipe(grip!.x + grip!.width / 2, grip!.y + grip!.height / 2, 0, -167);
       await expect(selected).toHaveAttribute('data-placement', 'moved');
+      expect((await rectangle(selected)).bottom).toBeLessThan((await rectangle(dock)).top);
+      const excerpt = await selected.locator('p').evaluate(el => ({
+        height: el.clientHeight,
+        twoLines: 2 * parseFloat(getComputedStyle(el).lineHeight),
+      }));
+      expect(excerpt.height).toBeGreaterThanOrEqual(Math.floor(excerpt.twoLines));
       await selected.getByRole('button', { name: '放回原位', exact: true }).tap();
       await expect(selected).toHaveAttribute('data-placement', 'dock');
 
