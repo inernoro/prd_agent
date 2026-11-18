@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { PORTRAIT_ASSETS } from '../src/components/entry/portraitMotionAsset.ts';
+import { PORTRAIT_ASSETS as MAP_PORTRAIT_ASSETS } from '../../../prd-admin/src/components/effects/portraitMotionAsset.ts';
 import { samplePortrait as gateway } from '../src/components/entry/portraitTimeline.ts';
 import { samplePortrait as map } from '../../../prd-admin/src/components/effects/portraitTimeline.ts';
 
 const readJson = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
-const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
 test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材同源', () => {
   for (let frame = 0; frame <= 432; frame++) assert.deepEqual(gateway(frame / 60), map(frame / 60));
@@ -32,10 +31,10 @@ test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材�
   assert.equal(distinctUrls.size, 6);
   assert.deepEqual(sources.daylightAuthoring.eyeKeyframes, night.eyeKeyframes);
   assert.equal(sources.daylightAuthoring.sha256, runtime.light.motion.sha256);
-  for (const [file, expected] of [['companion.webp', runtime.dark.open], ['companion-sleep.webp', runtime.dark.closed], [night.fileName, runtime.dark.motion]]) {
-    const original = new URL(`../../../prd-admin/public/media/entry/${file}`, import.meta.url);
-    assert.equal(sha256(readFileSync(original)), expected.sha256);
-  }
+  assert.deepEqual(MAP_PORTRAIT_ASSETS, PORTRAIT_ASSETS.dark);
+  assert.equal(runtime.dark.motion.sha256, night.sha256);
+  assert.equal(runtime.dark.open.sha256, night.sourceImages['companion.webp']);
+  assert.equal(runtime.dark.closed.sha256, night.sourceImages['companion-sleep.webp']);
   const geometry = file => readFileSync(new URL(file, import.meta.url));
   assert.deepEqual(geometry('../src/components/entry/portraitGeometry.ts'), geometry('../../../prd-admin/src/components/effects/portraitGeometry.ts'));
 });

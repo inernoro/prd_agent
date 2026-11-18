@@ -1,15 +1,18 @@
 import { flushSync } from 'react-dom';
-import { loadPortraitImages, preloadPortraitMotion } from './portraitRenderer';
+import { preloadPortraitMotion } from './portraitRenderer';
+import { PORTRAIT_ASSETS } from './portraitMotionAsset';
 import { prefersReducedMotion } from '@/lib/themeApplier';
 
 let preparation: Promise<unknown> | undefined;
-/** Decode both plates and load the landing chunk before removing the login scene. */
+/** Decode the landing portrait and load the landing chunk before removing the login scene. */
 export function prepareEntryScene() {
   preloadPortraitMotion();
-  return preparation ??= Promise.allSettled([
-    import('@/pages/AgentLauncherPage'),
-    loadPortraitImages(),
-  ]);
+  if (!preparation) {
+    const poster = new Image();
+    poster.src = PORTRAIT_ASSETS.open;
+    preparation = Promise.allSettled([import('@/pages/AgentLauncherPage'), poster.decode()]);
+  }
+  return preparation;
 }
 
 type TransitionDocument = Document & {

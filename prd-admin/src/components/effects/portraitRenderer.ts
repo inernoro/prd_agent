@@ -1,4 +1,4 @@
-import { PORTRAIT_MOTION_FILE } from './portraitMotionAsset';
+import { PORTRAIT_ASSETS } from './portraitMotionAsset';
 import { CLOSED_LID, EYE_X, OPEN_UPPER, OPEN_LOWER, eyeControlPoints, samplePortrait } from './portraitTimeline';
 
 const VERTEX = `attribute vec2 position; varying vec2 screen;
@@ -94,11 +94,12 @@ void main(){
 
 let imagesPromise: Promise<HTMLImageElement[]> | undefined;
 export function loadPortraitImages() {
-  return imagesPromise ??= Promise.all(['companion.webp', 'companion-sleep.webp'].map(file => new Promise<HTMLImageElement>((resolve, reject) => {
+  return imagesPromise ??= Promise.all([PORTRAIT_ASSETS.open, PORTRAIT_ASSETS.closed].map(url => new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
+    image.crossOrigin = 'anonymous';
     image.onload = () => { void image.decode().then(() => resolve(image), reject); };
     image.onerror = reject;
-    image.src = `/media/entry/${file}`;
+    image.src = url;
   }))).catch(error => { imagesPromise = undefined; throw error; });
 }
 
@@ -174,5 +175,5 @@ export function preloadPortraitMotion() {
   if (preparedMotion) return;
   preparedMotion = document.createElement('video');
   preparedMotion.muted = true; preparedMotion.preload = 'auto'; preparedMotion.playsInline = true;
-  preparedMotion.src = `/media/entry/${PORTRAIT_MOTION_FILE}`; preparedMotion.load();
+  preparedMotion.src = PORTRAIT_ASSETS.motion; preparedMotion.load();
 }

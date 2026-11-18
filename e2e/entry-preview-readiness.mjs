@@ -27,8 +27,9 @@ export async function waitForEntryPreviews({ map, gateway, motion, expectedCommi
         if (bundleUrl.origin !== origin.origin) return { ...result, reason: 'unexpected entry origin' };
         const bundle = await get(bundleUrl);
         const javascript = await bundle.text();
-        const requiredAssets = app === 'gateway' && gatewayAssets
-          ? Object.values(gatewayAssets).flatMap(theme => Object.values(theme))
+        const themes = app === 'gateway' ? gatewayAssets : gatewayAssets?.dark && { dark: gatewayAssets.dark };
+        const requiredAssets = themes
+          ? Object.values(themes).flatMap(theme => Object.values(theme))
           : [{ url: new URL(`/media/entry/${motion.fileName}`, origin).href, sha256: motion.sha256 }];
         // Both current app entry bundles contain their shared portrait constant.
         // MAP must not be accepted solely because Gateway or the branch API is ready.

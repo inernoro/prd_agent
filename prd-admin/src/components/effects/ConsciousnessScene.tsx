@@ -5,7 +5,6 @@ import { beginEntryArrival } from './entryArrival';
 import { prefersReducedMotion } from '@/lib/themeApplier';
 
 export type IdentityPhase = 'idle' | 'verifying' | 'authorized' | 'entering';
-export const COMPANION_ART = '/media/entry/companion.webp';
 let arrivalUntil = 0;
 
 /** Visual handoff only; authentication remains server-authoritative. */
