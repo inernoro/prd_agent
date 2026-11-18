@@ -221,6 +221,11 @@ try:
         drawing = drawing*(1-grid)+surface*grid
         exposure = smooth(1.94,2.70,t)
         reveal = smooth(0,.22,exposure-field*.56)
+        if daylight:
+            # Let the sky change as one continuous light field. Mottled spatial
+            # reveal is reserved for the portrait, where it reads as developing ink.
+            artwork_weight = smooth(.36,.61,xx)
+            reveal = np.float32(artwork_weight*reveal + (1-artwork_weight)*smooth(1.88,2.55,t))
         if t>=2.70: reveal = np.ones((H,W),np.float32)
         output = drawing*(1-reveal[:,:,None])+full_color(t)*reveal[:,:,None]
         if not daylight: output *= smooth(.06,.35,t)
@@ -246,6 +251,7 @@ proof['encoded']=probe
 thumbs=[]
 for frame in range(0,COUNT,15):
     im = cv2.resize(read(OUT/f'preview-{frame:03}.jpg'),(640,360),interpolation=cv2.INTER_AREA)
+    if daylight: cv2.rectangle(im,(6,5),(91,34),(38,31,24),cv2.FILLED)
     cv2.putText(im,f'{frame/FPS:.2f}s',(12,26),cv2.FONT_HERSHEY_SIMPLEX,.65,(220,230,240),1,cv2.LINE_AA); thumbs.append(im)
 for start in range(0,len(thumbs),6):
     sheet=np.zeros((1080,1280,3),np.uint8)
