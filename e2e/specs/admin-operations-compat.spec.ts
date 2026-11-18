@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { observeNativeAudio, nativeAudioEvidence } from '../fixtures/admin-operations-audio';
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
@@ -6,6 +7,11 @@ import {
   targetName,
   run,
 } from "../fixtures/admin-operations.mjs";
+
+const gatewayPortraitAssets = JSON.parse(
+  readFileSync(new URL('../fixtures/media/gateway-portrait-cdn.json', import.meta.url), 'utf8'),
+) as Record<'light' | 'dark', { open: { url: string } }>;
+
 test.beforeEach(async ({ browser, page }, testInfo) => {
   page.on("pageerror", (error) =>
     testInfo.annotations.push({
@@ -712,7 +718,7 @@ test("390 隔离发布成功闭环", async ({ page }) => {
 });
 
 for (const width of [390, 1440])
-  for (const theme of ["light", "dark"]) {
+  for (const theme of ["light", "dark"] as const) {
     test(`${width} ${theme} 电影式接入全流程与账户组织布局`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       const { writes } = await installOperationsFixtures(page, { quickstart: true });
@@ -741,14 +747,14 @@ for (const width of [390, 1440])
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
       const userMenu = page.locator("details.lg-user-menu");
       const userToggle = page.getByLabel("打开用户菜单", { exact: true });
-      const setTheme = async (next: string) => {
+      const setTheme = async (next: keyof typeof gatewayPortraitAssets) => {
         await userToggle.click();
         await page.getByRole("button", { name: next === "light" ? "切换浅色" : "切换深色", exact: true }).click();
         await expect(userMenu).not.toHaveAttribute("open", "");
         await expect(page.locator("html")).toHaveAttribute("data-theme", next);
         await expect(page.locator(".gateway-quickstart-stage")).toHaveCSS("color-scheme", next);
         await expect(page.locator(".consciousness-scene")).toHaveAttribute("data-portrait-theme", next);
-        await expect(page.locator(".consciousness-art")).toHaveAttribute("src", next === "light" ? /cfi\.miduo\.org\/.*daylight-open/ : /cfi\.miduo\.org\/.*night\/companion-/);
+        await expect(page.locator(".consciousness-art")).toHaveAttribute("src", gatewayPortraitAssets[next].open.url);
         await expect(page.locator(".consciousness-mist")).toHaveCount(0);
       };
       const navigateTo = async (name: string) => {
@@ -847,7 +853,9 @@ for (const width of [390, 1440])
       const assertScene = async (step: string) => {
         await expect(page.locator(".gateway-flow-frame")).toHaveAttribute("data-step", step);
         await expect(page.locator(".gateway-flow-frame")).toHaveCSS("transform", "none");
-        await expect(page.locator(".consciousness-art")).toHaveJSProperty("naturalWidth", 1672);
+        const artwork = page.locator(".consciousness-art");
+        await expect(artwork).toHaveAttribute("src", gatewayPortraitAssets[theme].open.url);
+        await expect.poll(() => artwork.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
         const state = await page.locator(".gateway-quickstart-stage").evaluate(stage => {
           const scene = stage.querySelector(".consciousness-scene")!.getBoundingClientRect(), main = stage.closest("main")!.getBoundingClientRect();
           const surface = stage.querySelector(".lg-qs-step-card, .lg-qs-key-hero");
