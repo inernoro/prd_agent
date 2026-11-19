@@ -4,7 +4,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
-import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
+import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle, type WatermarkStatus } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import { MarketplaceCard } from '@/components/marketplace';
 import {
@@ -66,10 +66,11 @@ import { runLiteraryImageBatch, type LiteraryImageAttempt } from './literaryImag
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square, ChevronDown } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { ArticleEditorToolbar } from './ArticleEditorToolbar';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
+import { LiterarySettingsSummary } from './LiterarySettingsSummary';
 import { useLiterarySettingSave } from './useLiterarySettingSave';
 import type { LiteraryAgentPreferences } from '@/services/contracts/userPreferences';
 import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
@@ -499,11 +500,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [historyOpen, setHistoryOpen] = useState(false);
   // 这篇文章自己的风格 / 水印（智能体或网页为它指定过才有）。有它时顶栏改的是这篇文章，不动账号级的「当前启用」
   const [articleChoice, setArticleChoice] = useState<LiteraryIllustrationChoice | null>(null);
-  const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
+  const [watermarkStatus, setWatermarkStatus] = useState<WatermarkStatus>({ hasActiveConfig: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
-  const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
-    setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
-  }, []);
   // 检查当前 workspace 是否已投稿
   useEffect(() => {
     checkSubmission({ workspaceId }).then((res) => {
@@ -774,10 +772,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
   const pendingSelectedPromptIdRef = useRef<string | null>(null);
 
-  // Phase 1: 位置策略（自动 / 固定位置 / 用户锚点）
-  // 存 sessionStorage，键 = 'articleMarkerStrategy:' + workspaceId
-  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.visual-agent.manual-image-marking.md
-  const [positionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  const [selectedPositionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  // 自动策略本来就优先使用原文锚点。根据已保存的正文显示实际策略，显式选的标题策略仍优先。
+  const positionStrategy = selectedPositionStrategy === 'auto' && userAnchorCount > 0
+    ? 'user-anchor'
+    : selectedPositionStrategy;
+  const positionStrategyLabel = positionStrategy === 'auto'
+    ? '自动安排'
+    : POSITION_STRATEGY_OPTIONS.find(option => option.value === positionStrategy)?.label ?? '自动安排';
   const [positionStrategyOpen, setPositionStrategyOpen] = useState(false);
   useEffect(() => {
     if (!workspaceId) return;
@@ -841,7 +843,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 列表读取失败必须和「真的没有水印」分开：把失败当成空列表，菜单就会给出「不加水印」，
   // 选了之后找不到当前绑定、不发解绑请求，界面却显示已关闭，而生成的图照旧带水印。
   const [watermarkLoadError, setWatermarkLoadError] = useState<string | null>(null);
-  const loadWatermarkOptions = async () => {
+  const loadWatermarkOptions = useCallback(async () => {
     setWatermarkLoadError(null);
     // 重读期间先让旧列表失效：旧列表可能已被管理面板改过（A 换成 B），
     // 这时若还能点「不加水印」，会按旧的 A 去解绑，B 在服务端仍然生效
@@ -853,7 +855,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
     setWatermarkOptions(null);
     setWatermarkLoadError(res.error?.message || '水印列表读取失败');
-  };
+  }, []);
+  const articleWatermarkId = articleChoice?.watermark.watermarkId;
+  const watermarkName = articleChoice
+    ? articleWatermarkId === 'none' ? '不加水印' : articleChoice.watermark.name
+    : watermarkStatus.hasActiveConfig ? watermarkStatus.activeName || '已启用' : '不加水印';
+  const watermarkId = articleWatermarkId === 'none' ? undefined : articleWatermarkId ?? watermarkStatus.activeId;
+  const watermarkUpdatedAt = watermarkId === watermarkStatus.activeId
+    ? watermarkStatus.activeUpdatedAt
+    : watermarkOptions?.find(option => option.id === watermarkId)?.updatedAt;
+  useEffect(() => {
+    if (articleWatermarkId && articleWatermarkId !== 'none' && articleWatermarkId !== watermarkStatus.activeId) {
+      void loadWatermarkOptions();
+    }
+  }, [articleWatermarkId, watermarkStatus.activeId, loadWatermarkOptions]);
+
   const switchWatermark = async (target: WatermarkConfig | null) => {
     if (articleChoice) {
       setWatermarkSaving(true);
@@ -863,7 +879,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const current = watermarkOptions?.find((w) => w.appKeys?.includes(LITERARY_APP_KEY)) ?? null;
     if ((target?.id ?? null) === (current?.id ?? null)) return;
     // 要关水印却找不到当前绑定记录：说明列表与实际状态对不上，不能只改界面状态了事
-    if (!target && !current && watermarkStatus.enabled) {
+    if (!target && !current && watermarkStatus.hasActiveConfig) {
       toast.error('关闭水印失败', '没有找到当前绑定的水印，请在「管理水印…」里处理');
       return;
     }
@@ -878,7 +894,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         toast.error('切换水印失败', res.error?.message || '未知错误');
         return;
       }
-      setWatermarkStatus(target ? { enabled: true, name: target.name || target.text || null } : { enabled: false, name: null });
+      setWatermarkStatus(target
+        ? { hasActiveConfig: true, activeId: target.id, activeName: target.name || target.text, activeUpdatedAt: target.updatedAt }
+        : { hasActiveConfig: false });
       await loadWatermarkOptions();
     } finally {
       setWatermarkSaving(false);
@@ -1123,11 +1141,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (res?.success && res.data) {
         const config = res.data;
         setWatermarkStatus({
-          enabled: true,
-          name: config.name || config.text || null,
+          hasActiveConfig: true,
+          activeId: config.id,
+          activeName: config.name || config.text,
+          activeUpdatedAt: config.updatedAt,
         });
       } else {
-        setWatermarkStatus({ enabled: false, name: null });
+        setWatermarkStatus({ hasActiveConfig: false });
       }
     })();
     return () => {
@@ -3459,7 +3479,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
           {/* 配置与模型共用原位展开区域，同一时间只展开一项。 */}
           <LiteraryInlineMenuGroup>
-            <div className="lit-settings" data-testid="literary-generation-settings">
+            <details key={phase === 2 ? 'results' : 'preparation'} open={phase !== 2} className="lit-settings" data-testid="literary-generation-settings">
+              <summary className="lit-settings-row lit-settings-disclosure">
+                <span className="lit-settings-label"><SlidersHorizontal size={16} aria-hidden /><span>生成设置</span></span>
+                <span className="lit-settings-value">{positionStrategyLabel}</span>
+                <LiterarySettingsSummary writingModel={effectiveChatModel?.actualModelId} imageModel={effectiveModel?.actualModelId}
+                  watermarkName={watermarkName} watermarkId={watermarkId} watermarkUpdatedAt={watermarkUpdatedAt}
+                  position={positionStrategy} positionLabel={positionStrategyLabel} />
+                <ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
+              </summary>
               <section className="lit-settings-section lit-settings-section--rows" aria-label="配图设置">
                 <div className="lit-settings-heading">
                   <h3>配图设置</h3>
@@ -3578,12 +3606,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         : <Square size={16} />}
                       label="水印"
                       warning={!!articleChoice?.watermark.missing}
-                      value={articleChoice
-                        ? (articleChoice.watermark.watermarkId === 'none' ? '不加水印' : articleChoice.watermark.name)
-                        : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '不加水印'}
+                      value={watermarkName}
                       title={articleChoice
                         ? articlePrefTitle('水印', articleChoice.watermark)
-                        : `水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
+                        : `水印：${watermarkName}`}
                       aria-label="水印"
                     />
                   }
@@ -3596,7 +3622,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <>
                       <QuickMenuItem
                         label="不加水印"
-                        selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.enabled}
+                        selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.hasActiveConfig}
                         disabled={watermarkSaving}
                         onSelect={() => void switchWatermark(null)}
                       />
@@ -3635,7 +3661,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <LiterarySettingsRow
                       icon={<Layers size={16} />}
                       label="插图位置"
-                      value={positionStrategy === 'auto' ? '自动安排' : POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动安排'}
+                      value={positionStrategyLabel}
                       title="配图位置：控制 AI 在哪些段落插入配图标记"
                       aria-label="配图位置"
                     />
@@ -3706,7 +3732,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 )}
               </section>
-            </div>
+            </details>
           </LiteraryInlineMenuGroup>
         </PanelCard>
 
@@ -4939,7 +4965,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </Button>
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={handleWatermarkStatusChange} hideAddButton />
+                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={setWatermarkStatus} hideAddButton />
               </div>
             </div>
           </div>

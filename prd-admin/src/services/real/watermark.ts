@@ -1,4 +1,4 @@
-import { apiRequest } from '@/services/real/apiClient';
+import { apiDownload, apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type {
@@ -35,6 +35,13 @@ export const getWatermarksReal: GetWatermarksContract = async () => {
 export const getWatermarkByAppReal: GetWatermarkByAppContract = async (input) => {
   return await apiRequest(api.watermark.byApp(encodeURIComponent(input.appKey)), { method: 'GET' });
 };
+
+export async function getWatermarkPreview(id: string, updatedAt?: string): Promise<Blob> {
+  const path = api.watermark.preview(id);
+  const url = updatedAt ? `${path}?version=${encodeURIComponent(updatedAt)}` : path;
+  const { blob } = await apiDownload(url, 'watermark.png');
+  return blob;
+}
 
 /**
  * 创建新的水印配置

@@ -145,6 +145,7 @@ jobs:
         working-directory: prd-admin
         env:
           VITE_API_BASE_URL: ""
+          VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
         run: |
           pnpm install --frozen-lockfile
           pnpm build

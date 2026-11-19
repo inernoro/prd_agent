@@ -26,7 +26,8 @@ async function mock(route) {
     if (request.method() !== 'GET' && endpoint !== '/auth/login') throw Error('business write forbidden');
     let data = { items: [], total: 0 };
     if (endpoint === '/auth/login') data = { token: 'local-fixture-only', expiresAt: '2099-01-01T00:00:00Z', username: 'owner', displayName: '审核', tenant, mustChangePassword: false };
-    else if (endpoint === '/healthz') data = { status: 'ok', mapHomeUrl: 'https://example.invalid' };
+    else if (endpoint === '/organization') data = { tenant: { id: tenant.id, name: tenant.name }, teams: [], members: [] };
+  else if (endpoint === '/healthz') data = { status: 'ok', mapHomeUrl: 'https://example.invalid' };
     else if (endpoint === '/platforms') data = { items: mode === 'empty' ? [] : mode === 'attention' ? [{ ...provider, keyStatus: 'unreadable', apiUrl: '', authority: 'map', recentCallStatus: 'quota_exhausted', recentCallAt: '2026-11-01T10:00:00Z', updatedAt: '2026-11-02T10:00:00Z' }, { ...provider, id: 'p1', name: 'preview-readability-20261115-beta', enabled: false, hasKey: false }] : [provider, { ...provider, id: 'p1', name: 'preview-readability-20261115-beta', enabled: false }] };
     else if (endpoint === '/models') data = { items: models() };
     else if (endpoint === '/logical-models') data = { items: mode === 'attention' ? [] : [{ id: 'l0', publicId: 'preview-public-alpha', offerings: [{ targetKind: 'model', targetId: 'm0' }] }] };
@@ -55,8 +56,8 @@ try {
         await p.goto(origin + '/login', { waitUntil: 'domcontentloaded' });
         await p.locator('#llmgw-username').fill('owner');
         await p.locator('#llmgw-password').fill('local-fixture');
-        await p.getByRole('button', { name: '进入租户工作区', exact: true }).click();
-        await p.waitForURL(origin + '/');
+        await p.locator('form button[type=submit]').click();
+        await p.waitForURL(origin + '/quickstart');
         const ready = async () => { await p.goto(origin + '/platforms', { waitUntil: 'domcontentloaded' }); await p.locator('.lg-collection-provider-row').first().waitFor(); await p.evaluate(t => { document.documentElement.dataset.theme = t; localStorage.setItem('llmgw-theme', t); }, theme); await p.evaluate(() => document.fonts.ready); };
         await ready();
         const measure = async (name) => { await p.waitForTimeout(100); await p.screenshot({ path: `${out}/${name}-${width}-${theme}.png` }); const m = await p.evaluate(() => { const rect = s => { const e = document.querySelector(s); if (!e)
