@@ -29,8 +29,13 @@ public partial class DocumentStoreController
             return Conflict(ApiResponse<object>.Fail("DELIVERY_PUBLIC_STORE", "请选择有访问控制的知识库作为交付范围"));
         if (request.Target is not ("web-hosting" or "knowledge-base") || !request.AuthorConfirmed)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择归档去向并确认成品和来源"));
-        if (request.Target == "web-hosting" && !AdminPermissionMiddleware.HasVerifiedPermission(HttpContext, AdminPermissionCatalog.WebPagesWrite))
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要网页托管写权限才能归档到网页托管"));
+        if (request.Target == "web-hosting")
+        {
+            // 知识库业务路由只走库权限校验，不一定有管理中间件注入的权限声明。
+            var permissions = User.HasClaim("authType", "agent-apikey") ? null : await GetEffectivePermissionsAsync();
+            if (!AdminPermissionMiddleware.HasVerifiedPermission(HttpContext, AdminPermissionCatalog.WebPagesWrite, permissions))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要网页托管写权限才能归档到网页托管"));
+        }
         var frontend = _config["CDS_PREVIEW_URL"] ?? _config["App:FrontendBaseUrl"] ?? Request.ResolveExternalBaseUrl();
         Uri? frontendBase = null;
         if (request.Target == "web-hosting" && (!Uri.TryCreate(frontend, UriKind.Absolute, out frontendBase)

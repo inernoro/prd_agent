@@ -35,6 +35,18 @@ public class AdminPermissionMiddlewareTests
         Assert.Equal(allowed, AdminPermissionMiddleware.HasVerifiedPermission(context, AdminPermissionCatalog.DocumentStoreWrite));
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void ObjectAuthorizedRoutesCanSupplyVerifiedUserPermissionsWithoutMiddlewareClaims(bool apiKey, bool allowed)
+    {
+        var identity = new ClaimsIdentity("test");
+        if (apiKey) identity.AddClaim(new Claim("authType", "agent-apikey"));
+        var context = new DefaultHttpContext { User = new ClaimsPrincipal(identity) };
+        Assert.Equal(allowed, AdminPermissionMiddleware.HasVerifiedPermission(context, AdminPermissionCatalog.WebPagesWrite,
+            [AdminPermissionCatalog.Access, AdminPermissionCatalog.WebPagesWrite]));
+    }
+
     /// <summary>
     /// 放行清单与控制器路由是两份判据，漏一条不会红、只会让那条路在 run 票据校验前先 401
     /// （判据与接线纪律 形状 3）。这里反射控制器的真实路由逐条比对，让「新增端点忘了登记」当场判红。

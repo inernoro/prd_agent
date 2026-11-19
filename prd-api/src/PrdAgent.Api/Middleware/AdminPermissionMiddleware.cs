@@ -79,13 +79,14 @@ public sealed class AdminPermissionMiddleware
         return false;
     }
 
-    internal static bool HasVerifiedPermission(HttpContext context, string permission)
+    internal static bool HasVerifiedPermission(HttpContext context, string permission, IReadOnlyCollection<string>? effectivePermissions = null)
     {
         var user = context.User;
         if (user.Identity?.IsAuthenticated != true) return false;
         if (user.HasClaim("authType", "agent-apikey")) return HasScopeGrant(context, permission);
-        return IsRoot(context) || user.HasClaim("permissions", AdminPermissionCatalog.Super)
-            || (user.HasClaim("permissions", AdminPermissionCatalog.Access) && user.HasClaim("permissions", permission));
+        var permissions = effectivePermissions ?? user.FindAll("permissions").Select(claim => claim.Value).ToArray();
+        return IsRoot(context) || permissions.Contains(AdminPermissionCatalog.Super)
+            || (permissions.Contains(AdminPermissionCatalog.Access) && permissions.Contains(permission));
     }
 
     internal static bool HasDefectShareScopeGrant(
