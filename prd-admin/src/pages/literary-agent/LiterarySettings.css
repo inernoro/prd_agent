@@ -5,6 +5,7 @@
   container-type: inline-size;
 }
 .lit-settings .lit-settings-disclosure {
+  --lit-settings-summary-icon-size: 16px;
   grid-template-columns: minmax(0, max-content) minmax(min(6em, 30cqi), 1fr) auto 15px;
   grid-template-rows: var(--lit-settings-row-height);
   gap: 6px;
@@ -21,11 +22,15 @@
   width: 21px; height: 21px; border-radius: 5px;
   background: var(--bg-input); color: var(--text-secondary);
 }
-.lit-settings-summary-icon img { width: 16px; height: 16px; object-fit: contain; }
+.lit-settings-summary-icon img {
+  width: var(--lit-settings-summary-icon-size);
+  height: var(--lit-settings-summary-icon-size);
+  object-fit: contain;
+}
 .lit-settings-summary-watermark { display: flex; align-items: center; min-width: 0; }
 .lit-settings-summary-watermark img {
   display: block;
-  height: var(--lit-settings-row-height);
+  height: var(--lit-settings-summary-icon-size);
   width: auto;
   max-width: 100%;
   object-fit: contain;
