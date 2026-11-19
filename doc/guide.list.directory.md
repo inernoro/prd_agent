@@ -132,6 +132,7 @@
 - [Toast 通知系统 · 设计](./design.frontend.toast.md) `design.frontend.toast`
 - [CDS Agent 工作区基础设施模型 · 设计](./design.knowledge-base.agent-architecture.md) `design.knowledge-base.agent-architecture`
 - [知识库 GitHub 目录同步 · 设计](./design.knowledge-base.github-sync.md) `design.knowledge-base.github-sync`
+- [知识库信息高效传递 · 设计](./design.knowledge-base.information-delivery.md) `design.knowledge-base.information-delivery`
 - [知识库引用网络（双链 + 反向链接 + 宇宙图） · 设计](./design.knowledge-base.mention-network.md) `design.knowledge-base.mention-network`
 - [录音交付流程与无 AI 纪要网页 · 设计](./design.knowledge-base.recording-delivery.md) `design.knowledge-base.recording-delivery`
 - [多文档知识库与文档类型系统 · 设计](./design.knowledge-base.multi-doc.md) `design.knowledge-base.multi-doc`
@@ -256,6 +257,7 @@
 - [规则文档原则：说明当前共同遵守的约束 · 指南](./guide.doc.pri.rule.md) `guide.doc.pri.rule`
 - [规格文档原则：说明当前产品必须做到什么 · 指南](./guide.doc.pri.spec.md) `guide.doc.pri.spec`
 - [百科全书导读 —— 人类怎么读这套文档 · 指南](./guide.doc.reading-map.md) `guide.doc.reading-map`
+- [知识库信息高效传递 · 操作与验收指南](./guide.knowledge-base.information-delivery.md) `guide.knowledge-base.information-delivery`
 - [MAP 平台文档索引 · 指南](./guide.list.directory.md) `guide.list.directory`
 - [文学创作 Agent 使用 · 指南](./guide.literary-agent.md) `guide.literary-agent`
 - [海鲜市场（配置市场）使用 · 指南](./guide.marketplace.md) `guide.marketplace`
