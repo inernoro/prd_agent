@@ -110,7 +110,19 @@ async function auditInteractiveReports() {
           try { id = decodeURIComponent(id); } catch { return true; }
           return document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length !== 1;
         });
-        return { linkCount: links.length, broken };
+        const bodyOrder = [...document.querySelectorAll('#reportBody .figure-anchor')].map((element) => element.id);
+        const linkedOrder = (selector) => [...document.querySelectorAll(selector)]
+          .map((element) => element.getAttribute('href').slice(1));
+        const surfaces = {
+          缩略图: linkedOrder('#evidence-gallery .evidence-card'),
+          侧栏: linkedOrder('.evidence-nav a[href^="#fig-"]'),
+          大图: [...document.querySelectorAll('#reportBody .shot[data-lb-src]')]
+            .map((element) => element.previousElementSibling?.id),
+        };
+        const orderErrors = Object.entries(surfaces)
+          .filter(([, order]) => order.length !== bodyOrder.length || order.some((id, index) => id !== bodyOrder[index]))
+          .map(([surface]) => `${surface}图序与正文不一致`);
+        return { linkCount: links.length, broken, orderErrors, orderedFigures: bodyOrder.length };
       });
 
       const clickErrors = [];
@@ -157,13 +169,16 @@ async function auditInteractiveReports() {
   }
   const broken = reports.flatMap((report) => report.broken || []);
   const clickErrors = reports.flatMap((report) => report.clickErrors || []);
+  const orderErrors = reports.flatMap((report) => report.orderErrors || []);
   return {
     reportCount: reports.length,
     linkCount: reports.reduce((sum, report) => sum + (report.linkCount || 0), 0),
     clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
     broken,
     clickErrors,
-    ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0,
+    orderErrors,
+    orderedFigures: reports.reduce((sum, report) => sum + (report.orderedFigures || 0), 0),
+    ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0 && orderErrors.length === 0,
   };
 }
 
@@ -204,6 +219,8 @@ try {
       attempts.push(result);
       console.log(`  第${attempt}次：标题命中=${result.hasText}  当前运行标识命中=${result.hasRequiredTexts}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
       console.log(`  第${attempt}次交互：报告=${result.interaction.reportCount}  内部链接=${result.interaction.linkCount}  已点击=${result.interaction.clicked}  断链=${result.interaction.broken.length}  点击失败=${result.interaction.clickErrors.length}`);
+      console.log(`  第${attempt}次图序：图数=${result.interaction.orderedFigures}  错序=${result.interaction.orderErrors.length}`);
+      if (result.interaction.orderErrors.length) console.log(`  错序明细：${result.interaction.orderErrors.join(' | ')}`);
       if (result.interaction.broken.length) {
         console.log(`  断链明细：${result.interaction.broken.map((item) => `${item.text || item.href} -> ${item.href}`).join(' | ')}`);
       }

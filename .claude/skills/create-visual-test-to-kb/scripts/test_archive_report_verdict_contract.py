@@ -820,6 +820,38 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
     }]
     figure_srcs = {"fig-01-proof": "https://assets.example.test/01-proof.png"}
 
+    def test_evidence_navigation_follows_reader_order_not_capture_order(self):
+        manifest = [
+            {"name": "01-supplement", "caption": "补充证据"},
+            {"name": "02-saved", "caption": "回答已保存"},
+            {"name": "03-draft", "caption": "初稿待确认"},
+        ]
+        sources = {f"fig-{shot['name']}": f"https://assets.example.test/{shot['name']}.png"
+                   for shot in manifest}
+        images = {shot["name"]: f"![{shot['caption']}]({sources['fig-' + shot['name']]})"
+                  for shot in manifest}
+        markdown = archive_report.assemble(
+            "操作顺序",
+            "## 步骤 1\n\n{{IMG:03-draft}}\n\n## 步骤 2\n\n{{IMG:02-saved}}",
+            "", "", images,
+        )
+        content = archive_report.build_interactive_html(
+            "操作顺序", "pass", markdown, manifest, figure_srcs=sources,
+        )
+        parser = archive_report._EvidenceHtmlParser()
+        parser.feed(content)
+        ordered = ["fig-03-draft", "fig-02-saved", "fig-01-supplement"]
+        self.assertEqual(ordered, [i for i in parser.ids if i.startswith("fig-")])
+        self.assertEqual(ordered, [card["href"] for card in parser.cards])
+        self.assertEqual(ordered, parser.side_evidence_hrefs)
+        self.assertIn("第 1 张 · 图03", content)
+        self.assertIn("第 3 张 · 图01", content)
+        self.assertEqual([], archive_report._interactive_evidence_errors(content, manifest))
+        altered = content.replace('data-evidence-nav-link href="#fig-03-draft"',
+                                  'data-evidence-nav-link href="#fig-02-saved"', 1)
+        errors = archive_report._interactive_evidence_errors(altered, manifest)
+        self.assertIn("[证据关系] 侧栏证据顺序/目标与正文图序不一致", errors)
+
     @staticmethod
     def business_decision_body(not_run: int, inconclusive: int) -> str:
         passed = 1

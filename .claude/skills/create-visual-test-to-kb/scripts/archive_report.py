@@ -1682,7 +1682,9 @@ class _EvidenceHtmlParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.ids = []
+        self.figure_anchors = []
         self.figure_hrefs = []
+        self.side_evidence_hrefs = []
         self.cards = []
         self.back_links = 0
         self.side_tabs = []
@@ -1702,6 +1704,10 @@ class _EvidenceHtmlParser(HTMLParser):
         if href.startswith("#fig-"):
             self.figure_hrefs.append(href[1:])
         classes = set(values.get("class", "").split())
+        if element_id and element_id.startswith("fig-") and "figure-anchor" in classes:
+            self.figure_anchors.append(element_id)
+        if tag == "a" and "data-evidence-nav-link" in values:
+            self.side_evidence_hrefs.append(href[1:] if href.startswith("#") else href)
         if href == "#evidence-gallery" and "figure-back-link" in classes:
             self.back_links += 1
         if tag == "button" and values.get("data-side-tab"):
@@ -1763,11 +1769,13 @@ def _interactive_evidence_errors(html_content, manifest):
             errors.append(f"[证据关系] 正文锚点 {anchor} 应出现 1 次，实际 {count} 次")
 
     card_targets = [card["href"] for card in parser.cards]
-    if card_targets != expected:
+    if sorted(parser.figure_anchors) != sorted(expected):
         errors.append(
-            "[证据关系] 缩略图卡片顺序/目标与 manifest 不一致："
-            f"expected={expected} actual={card_targets}"
+            "[证据关系] 正文图锚点与 manifest 的资产范围不一致"
         )
+    for label, targets in (("缩略图卡片", card_targets), ("侧栏证据", parser.side_evidence_hrefs)):
+        if targets != parser.figure_anchors:
+            errors.append(f"[证据关系] {label}顺序/目标与正文图序不一致")
     for index, card in enumerate(parser.cards, start=1):
         if not card["has_image"] or card["has_placeholder"]:
             errors.append(f"[证据关系] 第 {index} 张证据卡缺少真实缩略图")
@@ -2388,6 +2396,9 @@ def build_interactive_html(
     }
     body_html = _decorate_problem_figures(markdown_to_html(render_markdown), problem_anchors)
     body_html = _wrap_body_figures(body_html, manifest, figure_srcs)
+    body_figures = _EvidenceHtmlParser()
+    body_figures.feed(body_html)
+    shots_by_anchor = {_figure_anchor(_figure_key(shot.get("name"))): shot for shot in manifest}
     section_navigation = _collect_section_navigation(render_markdown, problem_items)
 
     def section_anchor(pattern):
@@ -2422,13 +2433,15 @@ def build_interactive_html(
     table_count = len(re.findall(r"^\|.+\|$", markdown_content, re.M))
     figures = []
     gallery_cards = []
-    for shot in manifest:
-        key = _figure_key(shot.get("name"))
-        anchor = _figure_anchor(key)
-        if not anchor:
+    # manifest describes the assets and can be in capture order. The rendered body
+    # is the reader's sequence, including any supplemental figures appended by assemble.
+    for position, anchor in enumerate(body_figures.figure_anchors, start=1):
+        shot = shots_by_anchor.get(anchor)
+        if shot is None:
             continue
-        num = _figure_number(shot.get("name")) or key
+        num = _figure_number(shot.get("name")) or _figure_key(shot.get("name"))
         label = f"图{num.upper()}"
+        navigation_label = f"第 {position} 张 · {label}"
         cap = html.escape(_evidence_caption(shot, label))
         raw_src = figure_srcs.get(anchor, "")
         if not raw_src:
@@ -2443,12 +2456,12 @@ def build_interactive_html(
         card_class = f"evidence-card is-{status_class}" if status_class else "evidence-card"
         badge = f'<em class="card-badge {status_class}">{html.escape(severity)}</em>' if severity else ""
         figures.append(
-            f'<a{nav_class} href="#{anchor}" title="{cap}">{nav_thumb}'
-            f'<div class="nav-copy"><span>{label}</span><small>{cap}</small></div></a>'
+            f'<a{nav_class} data-evidence-nav-link href="#{anchor}" title="{cap}">{nav_thumb}'
+            f'<div class="nav-copy"><span>{navigation_label}</span><small>{cap}</small></div></a>'
         )
         gallery_cards.append(
             f'<a class="{card_class}" href="#{anchor}">{badge}'
-            f'{thumb}<strong>{label}</strong><span>{cap}</span></a>'
+            f'{thumb}<strong>{navigation_label}</strong><span>{cap}</span></a>'
         )
     directory_items = []
     indexed_sections = list(enumerate(section_navigation, start=1))
@@ -3162,7 +3175,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     <button data-filter="gap">未覆盖</button>
     <span class="filter-count" id="filterCount"></span>
   </div>
-  <section id="evidence-gallery" class="evidence-gallery-wrap"><div class="gallery-head"><span class="gallery-kicker">证据版面 · EVIDENCE PLATES</span><div class="gallery-title">证据缩略图</div><span class="gallery-hint">点缩略图跳到正文对应位置，点正文图片可放大查看</span></div><div class="evidence-gallery">{gallery_html}</div></section>
+  <section id="evidence-gallery" class="evidence-gallery-wrap"><div class="gallery-head"><span class="gallery-kicker">证据版面 · EVIDENCE PLATES</span><div class="gallery-title">证据缩略图</div><span class="gallery-hint">按正文出现顺序排列。点缩略图跳到对应步骤，点正文图片可放大查看</span></div><div class="evidence-gallery">{gallery_html}</div></section>
   <article id="reportBody">{body_html}</article>
   <footer class="colophon">
     <p><b>{flavor_cn}</b> · {flavor_en} · {html.escape(report_version)}</p>
