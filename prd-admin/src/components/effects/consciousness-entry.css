@@ -172,7 +172,7 @@ html[data-entry-arriving] .app-aurora { background: var(--cinema-night); }
   .consciousness-shortcuts { gap: 7px; flex-wrap: wrap; margin-top: 20px; }
   .consciousness-shortcuts button { padding: 8px 11px; gap: 6px; font-size: 10px; }
   .consciousness-open-desk { bottom: 60px; }
-  .consciousness-search-results { max-height: 27vh; }
+  .consciousness-search-results { inset: auto 0 calc(100% + 8px); max-height: 27vh; }
 }
 @media (max-height: 650px) and (min-width: 761px) {
   .cinema-login-center { margin: 70px 24px; }
