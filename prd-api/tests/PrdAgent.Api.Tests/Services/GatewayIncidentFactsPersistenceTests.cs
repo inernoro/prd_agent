@@ -33,8 +33,8 @@ public sealed class GatewayIncidentFactsPersistenceTests
         Assert.Equal("active", notice.IncidentState);
         Assert.Equal("request_failed", notice.RequestOutcome);
         Assert.Equal(0, notice.PushEpisode);
-        Assert.Contains("primary", notice.Title);
-        Assert.Contains("future-model-z", notice.Title);
+        Assert.StartsWith("上游账户余额或额度不足，请求失败", notice.Title);
+        Assert.Contains("调用线路 primary · future-model-z", notice.Message);
         Assert.Contains("quota-181", notice.ActionUrl);
     }
 
@@ -51,7 +51,8 @@ public sealed class GatewayIncidentFactsPersistenceTests
         Assert.Null(notice.RecoveredAt);
         Assert.Contains("已由备用线路成功完成", notice.Message);
         Assert.Contains("无需重试", notice.Message);
-        Assert.Contains("primary", notice.Title);
+        Assert.Contains("备用线路已完成", notice.Title);
+        Assert.Contains("调用线路 primary", notice.Message);
         Assert.Equal(log.RequestId, notice.EvidenceRequestId);
     }
 
@@ -131,7 +132,8 @@ public sealed class GatewayIncidentFactsPersistenceTests
         pending.ProviderAttempts = [f.Attempt("primary", "failed", 402, 0, 1), f.Attempt("backup", "selected", 0, 1, 1)];
         await f.Gateway.LlmRequestLogs.InsertOneAsync(pending);
         await f.SweepAsync();
-        var primary = Assert.Single(await f.Notices(), n => n.Title.Contains("primary"));
+        var primary = Assert.Single(await f.Notices(), n => n.EvidenceRequestId == pending.RequestId);
+        Assert.Contains("调用线路 primary", primary.Message);
         Assert.Equal("unknown", primary.RequestOutcome);
         Assert.Contains("结果尚未确认", primary.Message);
         Assert.Equal("active", primary.IncidentState);

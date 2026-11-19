@@ -26,6 +26,7 @@ public class AdminNotification
     public string? IncidentId { get; set; }
     public string? IncidentState { get; set; }
     public string? IncidentCategory { get; set; }
+    public string? Environment { get; set; }
     public string? RequestOutcome { get; set; }
     public long OccurrenceCount { get; set; } = 1;
     public DateTime? FirstOccurredAt { get; set; }

@@ -141,6 +141,23 @@ describe('通知动作与事实真实组件交互', () => {
     expect(host.textContent).toContain('更早的额度通知');
   });
 
+  it('用结果图标区分失败与恢复，并把结论和环境放在详情之前', async () => {
+    const failed = { ...notice, id: 'failed', title: '生图请求失败', level: 'error', status: 'closed',
+      incidentState: 'recovered', source: 'gateway-alert', environment: '正式', message: '请查看线路详情。' };
+    const recovered = { ...failed, id: 'recovered', title: '生图线路已恢复', level: 'success', status: 'open' };
+    api.list.mockResolvedValue({ success: true, data: { items: [failed, recovered] } });
+    await render();
+    for (const [item, result] of [[failed, '失败'], [recovered, '已恢复']] as const) {
+      const row = host.querySelector(`[data-notification-id="${item.id}"]`)!;
+      expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(result);
+      const text = row.textContent || '';
+      expect(text.indexOf(item.title)).toBeLessThan(text.indexOf('环境 正式'));
+      expect(text.indexOf('环境 正式')).toBeLessThan(text.indexOf(item.message));
+    }
+    expect(host.querySelector('[data-notification-id="failed"] svg')?.getAttribute('class')).not.toBe(
+      host.querySelector('[data-notification-id="recovered"] svg')?.getAttribute('class'));
+  });
+
   it('旧告警的状态未确认，不补造独立故障数和发生次数', async () => {
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, incidentId: null, occurrenceCount: undefined, requestOutcome: 'unknown', incidentState: 'unknown' }] } });
     await render();

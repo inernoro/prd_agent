@@ -113,10 +113,22 @@ public sealed class LlmGatewayIncidentPolicyTests
     {
         var log = Log("quota", "failed", status, DateTime.UtcNow);
         log.Error = diagnostic;
+        log.Environment = "production";
         var signal = LlmGatewayIncidentPolicy.BuildSignals([log]).ShouldHaveSingleItem();
         signal.FailureCategory.ShouldBe(GatewayNotificationPolicy.Quota);
+        signal.Environment.ShouldBe("正式");
+        LlmGatewayIncidentWatchdog.BuildIncidentTitle(signal).ShouldStartWith("上游账户余额或额度不足，请求失败");
         GatewayNotificationPolicy.FailureLevel(signal).ShouldBe("error");
         GatewayNotificationPolicy.FailureLevel(signal with { RequestOutcome = "fallback_succeeded" }).ShouldBe("warning");
+    }
+
+    [Fact]
+    public void RecoveryIcon_UsesTheNotificationResult_NotTheCurrentIncidentState()
+    {
+        var failure = new AdminNotification { Level = "error", IncidentId = "same-incident", IncidentState = "recovered" };
+        GatewayNotificationPolicy.OutcomeIcon(failure).ShouldBe("failure");
+        failure.Level = "success";
+        GatewayNotificationPolicy.OutcomeIcon(failure).ShouldBe("recovery");
     }
 
     [Fact]

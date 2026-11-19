@@ -469,6 +469,7 @@ public sealed class NotificationsController : ControllerBase
             n.PushEpisode,
             n.IncidentId,
             n.IncidentCategory,
+            n.Environment,
             incidentState = n.IncidentState ?? (IsLegacyIncident(n) ? "unknown" : null),
             requestOutcome = n.RequestOutcome ?? (IsLegacyIncident(n) ? "unknown" : null),
             n.OccurrenceCount,

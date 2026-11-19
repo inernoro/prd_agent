@@ -95,7 +95,7 @@ import type { AdminNotificationItem, GetAdminNotificationsResponse } from '@/ser
 import { NotificationFacts } from '@/components/notifications/NotificationFacts';
 import { useNotificationActions } from '@/components/notifications/useNotificationActions';
 import { useNotificationToast } from '@/components/notifications/useNotificationToast';
-import { notificationToastKey } from '@/lib/notificationPresentation';
+import { notificationEnvironment, notificationToastKey } from '@/lib/notificationPresentation';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
@@ -908,15 +908,18 @@ export default function AppShell() {
                 <TypeIcon size={15} style={{ color: variant.fg }} />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
-                <div className="flex items-center gap-2">
+                <div className="text-[13px] font-semibold leading-snug break-words" style={{ color: 'var(--text-primary)' }}>
+                  {toastNotification.title}
+                </div>
+                {notificationEnvironment(toastNotification) && <div className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                  环境 {notificationEnvironment(toastNotification)}
+                </div>}
+                <div className="mt-1 flex flex-wrap items-center gap-2">
                   <span
                     className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none"
                     style={{ background: `${variant.accent}1f`, color: variant.fg }}
                   >
                     {variant.label}
-                  </span>
-                  <span className="text-[13px] font-semibold leading-snug break-words" style={{ color: 'var(--text-primary)' }}>
-                    {toastNotification.title}
                   </span>
                   {notificationCount > 0 && (
                     <span
@@ -1924,17 +1927,20 @@ export default function AppShell() {
                           >
                             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                               <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                  <ItemTypeIcon size={15} className="shrink-0" style={{ color: variant.fg }} aria-hidden="true" />
+                                  {item.title}
+                                </div>
+                                {notificationEnvironment(item) && <div className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                                  环境 {notificationEnvironment(item)}
+                                </div>}
+                                <div className="mt-1 flex flex-wrap items-center gap-2">
                                   <span
                                     className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
                                     style={{ background: `${variant.accent}1f`, color: variant.fg }}
                                   >
-                                    <ItemTypeIcon size={11} />
                                     {variant.label}
                                   </span>
-                                  <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                                    {item.title}
-                                  </div>
                                   {item.sourceLabel && item.sourceLabel !== variant.label && (
                                     <span
                                       className="rounded-full px-2 py-0.5 text-[10px]"

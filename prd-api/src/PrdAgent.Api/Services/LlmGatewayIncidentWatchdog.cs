@@ -156,6 +156,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .SetOnInsert(x => x.Message, notification.Message)
                 .SetOnInsert(x => x.Level, notification.Level)
                 .SetOnInsert(x => x.IncidentCategory, notification.IncidentCategory)
+                .SetOnInsert(x => x.Environment, notification.Environment)
                 .SetOnInsert(x => x.Status, notification.Status)
                 .SetOnInsert(x => x.Source, notification.Source)
                 .SetOnInsert(x => x.Section, notification.Section)
@@ -204,6 +205,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                       ) + $"来源部署：{alert.GetValue("SourceDeployment", "未标记")}；请求编号：{requestId}。",
             Level = blocked ? "warning" : "info", Source = GatewayNotificationPolicy.Source,
             IncidentCategory = blocked ? "policy-block" : "usage-warning",
+            Environment = GatewayNotificationPolicy.EnvironmentLabel(alert.GetValue("Environment", BsonNull.Value) is BsonString env ? env.Value : null),
             Section = AdminNotificationSections.Admin,
             ActionLabel = "查看消费预警", ActionUrl = $"/logs?requestId={Uri.EscapeDataString(requestId)}",
             ActionKind = "llm-gateway",
@@ -264,6 +266,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.IncidentId, signal.Fingerprint)
                 .Set(x => x.IncidentState, "active")
                 .Set(x => x.IncidentCategory, signal.FailureCategory)
+                .Set(x => x.Environment, signal.Environment ?? existing.Environment)
                 .Set(x => x.RequestOutcome, signal.RequestOutcome)
                 .Set(x => x.EvidenceRequestId, signal.RequestId)
                 .Set(x => x.FirstOccurredAt, existing.FirstOccurredAt ?? signal.FailureObservations.Min(x => x.At))
@@ -303,6 +306,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 IncidentId = signal.Fingerprint,
                 IncidentState = "active",
                 IncidentCategory = signal.FailureCategory,
+                Environment = signal.Environment,
                 RequestOutcome = signal.RequestOutcome,
                 EvidenceRequestId = signal.RequestId,
                 OccurrenceCount = signal.FailureCount,
@@ -396,11 +400,12 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         {
             Id = $"llmgw-recovered-{signal.Fingerprint}-{signal.RequestId}",
             Key = recoveryKey,
-            Title = signal.IsGatewayEntry ? $"{signal.AppCallerLabel} 请求入口已恢复" : $"{signal.PlatformLabel} · {signal.ModelLabel} 线路已恢复",
+            Title = signal.IsGatewayEntry ? $"请求入口已恢复 · {signal.AppCallerLabel}" : $"调用线路已恢复 · {signal.AppCallerLabel}",
             Message = $"{(signal.IsGatewayEntry ? signal.AppCallerLabel + " 的同一入口" : signal.PlatformLabel + " 的 " + signal.ModelLabel + " 线路")}已在 {signal.ObservedAt.ToUniversalTime():yyyy-MM-dd HH:mm:ss} UTC 完成一次成功调用，已关闭该线路对应故障。可查看恢复请求；历史失败请求不会自动重做。",
             IncidentId = signal.Fingerprint,
             IncidentState = "recovered",
             IncidentCategory = transitioned.IncidentCategory,
+            Environment = signal.Environment ?? transitioned.Environment,
             RequestOutcome = "request_succeeded",
             OccurrenceCount = transitioned.OccurrenceCount,
             FirstOccurredAt = transitioned.FirstOccurredAt,
@@ -424,9 +429,18 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
     }
 
     internal static string BuildIncidentTitle(LlmGatewayIncidentSignal signal)
-        => signal.IsGatewayEntry ? (signal.FailureCategory == GatewayNotificationPolicy.Quota
-                ? $"{signal.AppCallerLabel} 模型用量已达上限" : $"{signal.AppCallerLabel} 请求未能进入处理")
-            : $"{signal.PlatformLabel} · {signal.ModelLabel}：{FailureLabel(signal.FailureCategory)}";
+    {
+        var cause = signal.IsGatewayEntry
+            ? signal.FailureCategory == GatewayNotificationPolicy.Quota ? "模型用量已达上限" : "请求入口拒绝处理"
+            : FailureLabel(signal.FailureCategory);
+        var result = signal.RequestOutcome switch
+        {
+            "all_failed" or "request_failed" => "请求失败",
+            "fallback_succeeded" => "备用线路已完成",
+            _ => "请求结果待确认",
+        };
+        return $"{cause}，{result} · {signal.AppCallerLabel}";
+    }
 
     internal static string BuildIncidentMessage(LlmGatewayIncidentSignal signal)
     {
@@ -445,7 +459,8 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             : signal.FailureCategory == "access" ? "管理员请核对该线路访问权限与配置，再查看后续真实调用结果。"
             : signal.FailureCategory == GatewayNotificationPolicy.RateLimit ? "请等待限流解除，或切换可用线路后再重试。"
             : "管理员请查看该线路诊断与后续真实调用结果。";
-        return $"{signal.AppCallerLabel}：{impact}\n{next}";
+        var route = signal.IsGatewayEntry ? "" : $"\n调用线路 {signal.PlatformLabel} · {signal.ModelLabel}";
+        return $"{impact}{route}\n{next}";
     }
 
     private static string FailureLabel(string category) => category switch
@@ -541,12 +556,13 @@ internal static class LlmGatewayIncidentPolicy
             // correct that same observation once while preserving chronological ordering,
             // and older workers cannot overwrite it with the unsuffixed version. Apply it
             // to successes too, so pending outcomes can still be genuinely confirmed.
-            run.Count(x => x.Failure), latest.Version + ":facts-0003", latest.Entry, latest.At)
+            run.Count(x => x.Failure), latest.Version + ":facts-0004", latest.Entry, latest.At)
         {
             RouteFingerprint = latest.RouteFingerprint,
             FailureCategory = latest.Entry && log.Error == GatewayRouteFailure.ProviderQuotaExceeded ? GatewayNotificationPolicy.Quota : category,
             RequestOutcome = latest.Outcome,
             AttemptedRouteCount = latest.AttemptedRoutes,
+            Environment = GatewayNotificationPolicy.EnvironmentLabel(log.Environment),
             DistinctRecentFailedRequests = run.Where(x => x.Failure && latest.At - x.At <= GatewayNotificationPolicy.RepetitionWindow)
                 .Select(x => x.Log.RequestId).Distinct(StringComparer.Ordinal).Count(),
             // Counts use raw observation versions: upgrading the interpretation is not
@@ -736,5 +752,6 @@ internal sealed record LlmGatewayIncidentSignal(
     public string RequestOutcome { get; init; } = "unknown";
     public int AttemptedRouteCount { get; init; }
     public int DistinctRecentFailedRequests { get; init; }
+    public string? Environment { get; init; }
     public IReadOnlyList<LlmGatewayFailureObservation> FailureObservations { get; init; } = [];
 }

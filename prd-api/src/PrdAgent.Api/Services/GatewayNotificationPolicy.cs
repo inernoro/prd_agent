@@ -22,6 +22,24 @@ internal static class GatewayNotificationPolicy
 
     internal static int LevelRank(string? level) => level switch { "error" => 2, "warning" => 1, _ => 0 };
 
+    internal static string? EnvironmentLabel(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "production" or "prod" or "正式" or "正式环境" or "生产" => "正式",
+        "staging" or "preproduction" or "预发" or "灰度" => "预发",
+        "test" or "testing" or "测试" => "测试",
+        "preview" or "branch-preview" or "分支预览" => "分支预览",
+        "local" or "development" or "dev" or "本地" => "本地",
+        _ => null,
+    };
+
+    internal static string? OutcomeIcon(AdminNotification notification)
+    {
+        if (notification.Level == "success") return "recovery";
+        return notification.Level == "error" || notification.IncidentState == "active"
+            || notification.IncidentId is not null && notification.IncidentState == "recovered"
+            || notification.IncidentCategory == "policy-block" ? "failure" : null;
+    }
+
     internal static bool AllowsPush(AdminNotification notification)
         => !Source.Equals(notification.Source?.Trim(), StringComparison.OrdinalIgnoreCase)
            || notification.IncidentState != "recovered" && LevelRank(notification.Level) > 0;

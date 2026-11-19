@@ -4,6 +4,7 @@ import {
   Bug,
   CalendarClock,
   CheckCircle2,
+  CircleX,
   AlertTriangle,
   Megaphone,
   Server,
@@ -17,6 +18,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
+import { notificationOutcome } from '@/lib/notificationPresentation';
 
 /**
  * 通知类型注册表（Registry Pattern，见 .claude/rules/frontend-architecture.md）
@@ -118,9 +120,18 @@ export function isEscalationNotification(
  * 优先按 source 命中注册表；命中不到时，用 level 兜底给出「告警 / 默认」气质。
  * 特例：缺陷来源 + success 语义（如「缺陷已解决，待你验收」）走 celebrate 气质。
  */
-export function getNotificationType(
-  item: Pick<AdminNotificationItem, 'source' | 'level' | 'title' | 'incidentCategory'>
-): NotificationTypeConfig {
+type NotificationTypeInput = Pick<AdminNotificationItem, 'source' | 'level' | 'title' | 'incidentCategory' | 'incidentState' | 'incidentId'>;
+
+export function getNotificationType(item: NotificationTypeInput): NotificationTypeConfig {
+  const type = resolveNotificationType(item);
+  const outcome = notificationOutcome(item);
+  if (outcome === 'failed') return { ...type, icon: CircleX, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' };
+  if (outcome === 'recovered' || outcome === 'succeeded')
+    return { ...type, icon: CheckCircle2, accent: '#86efac', fg: 'var(--accent-fg-success)' };
+  return type;
+}
+
+function resolveNotificationType(item: NotificationTypeInput): NotificationTypeConfig {
   const source = (item.source ?? '').toLowerCase();
   const level = (item.level ?? '').toLowerCase();
   const base = NOTIFICATION_TYPE_REGISTRY[source];

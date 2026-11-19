@@ -10,6 +10,17 @@ export function notificationPriority(level: AdminNotificationItem['level']): Not
   return level === 'error' ? 'urgent' : level === 'warning' ? 'important' : 'routine';
 }
 
+export function notificationEnvironment(item: Pick<AdminNotificationItem, 'environment' | 'source'>): string | undefined {
+  return item.environment?.trim() || (item.source === 'gateway-alert' || item.source === 'llm-gateway-quota' ? '待确认' : undefined);
+}
+
+export function notificationOutcome(item: Pick<AdminNotificationItem, 'level' | 'incidentState' | 'incidentId' | 'incidentCategory'>) {
+  if (item.level === 'success') return item.incidentState === 'recovered' ? 'recovered' : 'succeeded';
+  if (item.level === 'error' || item.incidentState === 'active' || item.incidentCategory === 'policy-block'
+    || item.incidentId && item.incidentState === 'recovered') return 'failed';
+  return 'notice';
+}
+
 export const NOTIFICATION_INCIDENT_STATE: Record<string, string> = {
   active: '最近观测异常，尚无恢复证据', recovered: '已有恢复证据', unknown: '当前状态未确认',
 };

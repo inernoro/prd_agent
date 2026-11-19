@@ -15,7 +15,7 @@ import { useAppStoreColors } from '@/hooks/useAppStoreColors';
 import { NotificationFacts } from '@/components/notifications/NotificationFacts';
 import { useNotificationActions } from '@/components/notifications/useNotificationActions';
 import { toast } from '@/lib/toast';
-import { NOTIFICATION_PRIORITIES, notificationPriority } from '@/lib/notificationPresentation';
+import { NOTIFICATION_PRIORITIES, notificationEnvironment, notificationOutcome, notificationPriority } from '@/lib/notificationPresentation';
 
 /* ── 通知色调背景（iOS 语义色轻底，双主题通用；卡片边框/徽章走 registry 的 accent） ── */
 const TONE_BG: Record<string, string> = {
@@ -35,6 +35,30 @@ function PriorityLabel({ item }: { item: AdminNotificationItem }) {
   const tone = NOTIFICATION_PRIORITIES[notificationPriority(item.level)];
   return <span className="whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-semibold"
     style={{ borderColor: 'var(--border-subtle)', color: tone.color }}>{tone.label}</span>;
+}
+
+function NotificationResultIcon({ item }: { item: AdminNotificationItem }) {
+  const variant = getNotificationType(item);
+  const Icon = variant.icon;
+  const outcome = notificationOutcome(item);
+  const label = { failed: '失败', recovered: '已恢复', succeeded: '已完成', notice: variant.label }[outcome];
+  const tone = outcome === 'failed' ? 'error' : outcome === 'notice' ? item.level : 'success';
+  return <div role="img" aria-label={label} className="grid h-10 w-10 shrink-0 place-items-center rounded-[11px]"
+    style={{ background: getToneBg(tone), color: variant.fg }}><Icon size={19} aria-hidden="true" /></div>;
+}
+
+function NotificationLead({ item }: { item: AdminNotificationItem }) {
+  const variant = getNotificationType(item);
+  const environment = notificationEnvironment(item);
+  return <>
+    <div className="break-words text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{item.title}</div>
+    {environment && <div className="mt-1 text-xs" style={{ color: 'var(--text-secondary)' }}>环境 {environment}</div>}
+    <div className="my-1.5 flex flex-wrap items-center gap-2">
+      <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+        style={{ background: `${variant.accent}1f`, color: variant.fg }}>{variant.label}</span>
+      <PriorityLabel item={item} />
+    </div>
+  </>;
 }
 
 export default function MobileNotificationsPage() {
@@ -156,13 +180,12 @@ export default function MobileNotificationsPage() {
         {activeNotifications.length > 0 && (
           <div className="space-y-3 mb-6">
             {activeNotifications.map((item) => {
-              const variant = getNotificationType(item);
-              const ItemTypeIcon = variant.icon;
               const isHandling = handlingId === item.id || handlingAll;
               const clickable = !!item.actionUrl;
               return (
                 <div
                   key={item.id}
+                  data-notification-id={item.id}
                   className="rounded-2xl border px-4 py-3"
                   style={{
                     borderColor: C.hairline,
@@ -172,24 +195,11 @@ export default function MobileNotificationsPage() {
                   onClick={clickable ? () => void openNotification(item) : undefined}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-[11px]" style={{ background: getToneBg(item.level), color: variant.fg }}>
-                      <ItemTypeIcon size={19} aria-hidden="true" />
-                    </div>
+                    <NotificationResultIcon item={item} />
                     <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <span
-                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                          style={{ background: `${variant.accent}1f`, color: variant.fg }}
-                        >
-                          {variant.label}
-                        </span>
-                        <PriorityLabel item={item} />
-                      </div>
-                      <div className="text-[13px] font-semibold" style={{ color: C.label }}>
-                        {item.title}
-                      </div>
+                      <NotificationLead item={item} />
                       {item.message && (
-                        <div className="mt-1 text-[12px] leading-relaxed" style={{ color: C.labelSecondary }}>
+                        <div className="mt-1 whitespace-pre-line text-[12px] leading-relaxed" style={{ color: C.labelSecondary }}>
                           {item.message}
                         </div>
                       )}
@@ -264,12 +274,13 @@ export default function MobileNotificationsPage() {
               {handledNotifications.map((item) => (
                 <div
                   key={item.id}
-                  className="rounded-xl px-4 py-3"
+                  data-notification-id={item.id}
+                  className="flex items-start gap-3 rounded-xl px-4 py-3"
                   style={{ background: C.card, border: `1px solid ${C.hairline}` }}
                 >
-                  <div className="text-[12px] font-medium break-words" style={{ color: C.label }}>
-                    <span className="mr-2">{item.title}</span><PriorityLabel item={item} />
-                  </div>
+                  <NotificationResultIcon item={item} />
+                  <div className="min-w-0 flex-1">
+                  <NotificationLead item={item} />
                   {item.message && (
                     <div className="text-[11px] mt-0.5 line-clamp-1" style={{ color: C.labelSecondary }}>
                       {item.message}
@@ -279,6 +290,7 @@ export default function MobileNotificationsPage() {
                   {item.actionUrl && <button type="button" className="mt-2 text-[12px]" style={{ color: C.blue }} onClick={() => void openNotification(item)}>{item.actionLabel || '查看对应对象'}</button>}
                   <div className="mt-1 text-[10px]" style={{ color: C.labelTertiary }}>
                     {item.status === 'closed' ? '已归档' : item.handledAt ? `确认于 ${new Date(item.handledAt).toLocaleString('zh-CN')}` : '已确认通知'}
+                  </div>
                   </div>
                 </div>
               ))}

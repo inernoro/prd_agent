@@ -767,7 +767,7 @@ public sealed class AdminPushNotificationService
                     effectiveSubscription.BarkServerUrl,
                     effectiveSubscription.BarkKey,
                     notification.Title ?? "PRD Agent 通知",
-                    notification.Message ?? notification.Title ?? string.Empty,
+                    placeholders["message"],
                     placeholders,
                     effectiveSubscription.BarkGroup,
                     effectiveSubscription.BarkSound,
@@ -1082,16 +1082,21 @@ public sealed class AdminPushNotificationService
     private Dictionary<string, string> BuildPlaceholders(AdminNotification notification)
     {
         var resource = ResolveResource(notification);
+        var message = notification.Message ?? notification.Title ?? string.Empty;
+        if (notification.Environment is not null || notification.Source == GatewayNotificationPolicy.Source)
+            message = $"环境 {notification.Environment ?? "待确认"}\n{message}";
+        var resultIcon = GatewayNotificationPolicy.OutcomeIcon(notification);
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["appname"] = resource.AppName,
             ["title"] = notification.Title ?? string.Empty,
-            ["message"] = notification.Message ?? notification.Title ?? string.Empty,
+            ["message"] = message,
             ["level"] = notification.Level ?? string.Empty,
             ["source"] = notification.Source ?? string.Empty,
             ["actionUrl"] = ResolveActionUrl(notification.ActionUrl),
             ["actionPath"] = notification.ActionUrl ?? string.Empty,
-            ["iconUrl"] = ResolveIconUrl(resource),
+            ["iconUrl"] = resultIcon is not null && !string.IsNullOrWhiteSpace(_publicBaseUrl)
+                ? ResolveActionUrl($"/notification-icons/{resultIcon}.png") : ResolveIconUrl(resource),
             ["imageUrl"] = ResolveImageUrl(notification),
             ["createdAt"] = notification.CreatedAt.ToString("O"),
             ["notificationId"] = notification.Id,

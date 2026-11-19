@@ -14,6 +14,7 @@ export type AdminNotificationItem = {
   incidentId?: string | null;
   incidentState?: string | null;
   incidentCategory?: string | null;
+  environment?: string | null;
   requestOutcome?: string | null;
   occurrenceCount?: number;
   firstOccurredAt?: string | null;
