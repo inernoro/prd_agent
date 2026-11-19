@@ -83,9 +83,68 @@ jobs:
                   output.write(f"{key}={value}\n")
           PY
 
+  deep_readyz:
+    name: 读取网关授权就绪明细
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      key_present: ${{ steps.read.outputs.key_present }}
+      readyz_http: ${{ steps.read.outputs.readyz_http }}
+      failed_components: ${{ steps.read.outputs.failed_components }}
+    steps:
+      - name: 输出已授权的脱敏组件状态
+        id: read
+        env:
+          LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+
+          key = os.environ.get("LLMGW_GATE_KEY", "").strip()
+          result = {"key_present": "present" if key else "missing", "readyz_http": 0, "failed_components": "unavailable"}
+          class RejectRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, message, headers, newurl):
+                  return None
+          if key:
+              request = urllib.request.Request(
+                  "https://map.ebcone.net/llmgw/gw/v1/readyz",
+                  headers={"X-Gateway-Key": key, "User-Agent": "MAP-ReadOnly-Diagnosis/1.0"})
+              try:
+                  opener = urllib.request.build_opener(RejectRedirect)
+                  try:
+                      response = opener.open(request, timeout=35)
+                  except urllib.error.HTTPError as error:
+                      response = error
+                  with response:
+                      result["readyz_http"] = response.code
+                      payload = json.loads(response.read(65536).decode("utf-8"))
+                  components = []
+                  for item in payload.get("components", []):
+                      name = str(item.get("name", "unknown"))
+                      if not re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", name):
+                          name = "unknown"
+                      summary = str(item.get("summary", ""))[:200].replace(key, "[redacted]")
+                      summary = re.sub(r"https?://\S+", "[url redacted]", summary)
+                      components.append({"name": name, "ready": item.get("ready") is True,
+                          "durationMs": item.get("durationMs"), "summary": summary})
+                  result["failed_components"] = ",".join(item["name"] for item in components if not item["ready"]) or ("none" if components else "unavailable")
+                  print(json.dumps({"readyz_http": result["readyz_http"], "status": payload.get("status"), "components": components}, ensure_ascii=False, indent=2))
+              except Exception as error:
+                  print(json.dumps({"errorType": type(error).__name__}))
+          print(json.dumps(result, ensure_ascii=False))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for name, value in result.items():
+                  output.write(f"{name}={value}\n")
+          PY
+
   result:
-    needs: probe
-    name: API ${{ needs.probe.outputs.api_commit }} 网关 ${{ needs.probe.outputs.gateway_status }} ${{ needs.probe.outputs.gateway_commit }} 页面 ${{ needs.probe.outputs.frontend_commit }} HTTP ${{ needs.probe.outputs.api_http }} ${{ needs.probe.outputs.gateway_http }} ${{ needs.probe.outputs.frontend_http }}
+    needs: [probe, deep_readyz]
+    name: 组件 ${{ needs.deep_readyz.outputs.failed_components }} 密钥 ${{ needs.deep_readyz.outputs.key_present }} HTTP ${{ needs.deep_readyz.outputs.readyz_http }} API ${{ needs.probe.outputs.api_commit }} 网关 ${{ needs.probe.outputs.gateway_status }} ${{ needs.probe.outputs.gateway_commit }} 页面 ${{ needs.probe.outputs.frontend_commit }} HTTP ${{ needs.probe.outputs.api_http }} ${{ needs.probe.outputs.gateway_http }} ${{ needs.probe.outputs.frontend_http }}
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
