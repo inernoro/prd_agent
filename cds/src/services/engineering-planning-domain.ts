@@ -188,8 +188,10 @@ export class PlanningMutation {
     switch (command.type) {
       case 'debt.update': {
         const { criteria: values, ...patch } = command.patch;
-        return this.saveDebt(old, { ...patch, ...(values ? { criteria: criteria(values, old.criteria) } : {}) }, 'updated',
-          patch.dueAt !== undefined ? { dates: { dueAt: [old.dueAt ?? null, patch.dueAt] } } : {});
+        const updated = Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value ?? undefined]));
+        const oldDueAt = old.dueAt ?? null;
+        return this.saveDebt(old, { ...updated, ...(values ? { criteria: criteria(values, old.criteria) } : {}) }, 'updated',
+          patch.dueAt !== undefined && patch.dueAt !== oldDueAt ? { dates: { dueAt: [oldDueAt, patch.dueAt] } } : {});
       }
       case 'debt.branch':
         this.decision(command.decisionId ?? undefined);

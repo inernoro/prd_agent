@@ -7,12 +7,14 @@ import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createEngineeringPlanningRouter } from '../../src/routes/engineering-planning.js';
 import { EngineeringPlanningService, FileEngineeringPlanningStore } from '../../src/services/engineering-planning.js';
+import type { PlanningDebtBrief } from '../../src/shared/engineering-planning.js';
 
 type Permission = 'read' | 'propose' | 'write' | 'approve';
 type RequestOptions = {
   project?: string;
   actor?: 'anonymous' | 'owner' | 'agent' | 'agent-with-approve' | 'reader';
 };
+type BriefSection = PlanningDebtBrief['sections'][number];
 
 const projectA = 'test-planning-a';
 const projectB = 'test-planning-b';
@@ -141,6 +143,7 @@ describe('engineering planning HTTP contracts', () => {
     for (const resource of ['', '/debts', '/stats', `/debts/${hidden.id}`]) {
       const response = await call(resource, undefined, { project: projectB, actor: 'agent' });
       expect(response.status).toBe(404);
+      expect(response.body).not.toHaveProperty('brief');
       expect(JSON.stringify(response.body)).not.toContain(hidden.title);
     }
     expect((await call(`/debts/${hidden.id}`, undefined, { actor: 'agent' })).status).toBe(404);
@@ -262,6 +265,81 @@ describe('engineering planning HTTP contracts', () => {
     expect(detail.body.events).toHaveLength(2);
   });
 
+  it('reads a grounded handoff from the current debt and its own history', async () => {
+    now = new Date('2026-03-02T01:00:00Z');
+    const origin = await write({
+      type: 'decision.create', requestId: 'test-handoff-origin-0001',
+      title: '保留合成导出兼容路径', source: { type: 'adr', ref: 'fixture-handoff-origin' },
+    });
+    const debt = await write({
+      ...createCommand('test-handoff-debt-0001'), decisionId: origin.id,
+      impact: '合成导出的重复请求延迟交付',
+      rootCause: { state: 'suspected', text: '可能是合成缓存失效' },
+    });
+    const path = `/debts/${debt.id}`;
+    const initial = await call(path, undefined, { actor: 'reader' });
+    expect(initial.status).toBe(200);
+    expect(initial.body.brief).toMatchObject({
+      readiness: { score: expect.any(Number), max: 7, items: expect.any(Array) },
+      next: expect.any(Array), gaps: expect.any(Array), markdown: expect.any(String),
+    });
+    expect(initial.body.brief.readiness.items).toHaveLength(7);
+    expect(initial.body.brief.readiness.score).toBeLessThan(7);
+    expect(initial.body.brief.gaps.length).toBeGreaterThan(0);
+    expect(initial.body.brief.next.length).toBeGreaterThan(0);
+    const initialSections: BriefSection[] = initial.body.brief.sections;
+    expect(initialSections.map(section => section.id)).toEqual(['problem', 'attempts', 'why', 'direction']);
+    expect(initialSections.flatMap(section => section.lines)).toContainEqual(expect.objectContaining({
+      kind: 'inference', text: expect.stringContaining('可能是合成缓存失效'),
+    }));
+    expect(initialSections.flatMap(section => section.lines).some(line => line.kind === 'gap')).toBe(true);
+
+    const deferred = await write({
+      type: 'debt.defer', requestId: 'test-handoff-debt-0002', debtId: debt.id, expectedVersion: debt.version,
+      reason: '待合成回归环境开放', reviewAt: '2026-03-04',
+    });
+    const inProgress = await write({
+      type: 'debt.progress', requestId: 'test-handoff-debt-0003', debtId: debt.id, expectedVersion: deferred.version,
+      note: '合成回归已定位两次调用',
+    });
+    await write({
+      type: 'debt.update', requestId: 'test-handoff-debt-0004', debtId: debt.id, expectedVersion: inProgress.version,
+      patch: { rootCause: { state: 'confirmed', text: '合成重试入口重复调用', basis: '合成请求记录可回读' } },
+    });
+    const current = await call(path, undefined, { actor: 'reader' });
+    expect(current.status).toBe(200);
+    expect(current.body.brief.readiness.score).toBe(initial.body.brief.readiness.score + 1);
+    const sections: BriefSection[] = current.body.brief.sections;
+    const lines = sections.flatMap(section => section.lines);
+    const attempts = sections.find(section => section.id === 'attempts')?.lines;
+    const events: { id: string; type: string; projectId: string; entityId: string }[] = current.body.events;
+    expect(events.every(event => event.projectId === projectA && event.entityId === debt.id)).toBe(true);
+    const allowedReferences = {
+      record: new Set([debt.id]), event: new Set(events.map(event => event.id)),
+      decision: new Set([origin.id]), plan: new Set<string>(),
+    };
+    for (const line of lines) {
+      if (line.kind === 'fact') expect(line.cites.length).toBeGreaterThan(0);
+      for (const cite of line.cites) {
+        expect(allowedReferences[cite.kind].has(cite.id)).toBe(true);
+        expect(cite.label.trim()).not.toBe('');
+      }
+    }
+    expect(lines.find(line => line.text.includes('合成重试入口重复调用'))).toMatchObject({
+      kind: 'fact', cites: expect.arrayContaining([expect.objectContaining({ kind: 'record', id: debt.id })]),
+    });
+    expect(lines.some(line => line.text.includes('可能是合成缓存失效'))).toBe(false);
+    for (const [type, note] of [['deferred', '待合成回归环境开放'], ['progress', '合成回归已定位两次调用']] as const) {
+      expect(attempts?.find(line => line.text.includes(note))).toMatchObject({
+        kind: 'fact', cites: expect.arrayContaining([expect.objectContaining({
+          kind: 'event', id: events.find(event => event.type === type)?.id,
+        })]),
+      });
+    }
+    expect(current.body.brief.markdown).toContain('合成回归已定位两次调用');
+    expect(current.body.brief.markdown).toContain('合成重试入口重复调用');
+  });
+
   it('requires evidence to repay a debt and preserves that evidence after a reopen', async () => {
     const debt = await createDebt();
     const deferred = await call('/commands', {
@@ -286,6 +364,8 @@ describe('engineering planning HTTP contracts', () => {
     const repaid = await call('/commands', { ...repay, evidence: [evidence] });
     expect([200, 201]).toContain(repaid.status);
     expect(repaid.body.result.status).toBe('repaid');
+    const paidDetail = await call(`/debts/${debt.id}`);
+    expect(paidDetail.body.brief).toMatchObject({ markdown: expect.stringContaining(repay.summary) });
     const reopened = await call('/commands', {
       type: 'debt.reopen', requestId: 'test-lifecycle-0004', debtId: debt.id, expectedVersion: repaid.body.result.version,
       reason: 'Fixture run 22 reproduced the duplicate request',
@@ -295,6 +375,62 @@ describe('engineering planning HTTP contracts', () => {
     const detail = await call(`/debts/${debt.id}`);
     expect(detail.body.events).toHaveLength(5);
     expect(JSON.stringify(detail.body.events)).toContain(evidence.label);
+    expect(detail.body.debt).not.toHaveProperty('repayment');
+    const attempts: BriefSection | undefined = detail.body.brief.sections.find((section: BriefSection) => section.id === 'attempts');
+    expect(attempts?.lines).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'fact', text: expect.stringContaining(repay.summary) }),
+      expect.objectContaining({ kind: 'fact', text: expect.stringContaining('Fixture run 22 reproduced the duplicate request') }),
+    ]));
+  });
+
+  it('keeps explicit planning direction and approach states on the debt and in the handoff', async () => {
+    const direction = {
+      target: '合成导出仅请求一次',
+      approaches: [
+        { title: '合并合成重试入口', status: 'candidate' },
+        { title: '延长合成缓存', status: 'tried', note: '合成回归仍复现' },
+        { title: '移除合成重试', status: 'rejected', note: '合成兼容要求不允许' },
+      ],
+    };
+    const debt = await write({ ...createCommand('test-handoff-direction-0001'), direction });
+    const path = `/debts/${debt.id}`;
+    expect((await call(path)).body.debt.direction).toEqual(direction);
+    const revised = { ...direction, target: '合成导出复用同一请求' };
+    await write({
+      type: 'debt.update', requestId: 'test-handoff-direction-0002', debtId: debt.id, expectedVersion: debt.version,
+      patch: { direction: revised },
+    });
+    const current = await call(path, undefined, { actor: 'reader' });
+    expect(current.status).toBe(200);
+    expect(current.body.debt.direction).toEqual(revised);
+    expect(current.body.brief.markdown).toContain(revised.target);
+    expect(current.body.brief.markdown).not.toContain(direction.target);
+    expect(current.body.brief.markdown).toContain('合并合成重试入口');
+    expect(current.body.brief.markdown).toContain('合成回归仍复现');
+    expect(current.body.brief.markdown).toContain('合成兼容要求不允许');
+  });
+
+  it('clears debt ownership and repayment target only when explicitly requested', async () => {
+    now = new Date('2026-03-02T01:00:00Z');
+    const dueAt = '2026-03-20';
+    const debt = await write({
+      ...createCommand('test-handoff-clear-0001'), owner: '合成负责人', dueAt,
+    });
+    const retained = await write({
+      type: 'debt.update', requestId: 'test-handoff-clear-0002', debtId: debt.id, expectedVersion: debt.version,
+      patch: { summary: '合成更新没有传负责人和预计日期' },
+    });
+    expect(retained).toMatchObject({ owner: '合成负责人', dueAt });
+
+    await write({
+      type: 'debt.update', requestId: 'test-handoff-clear-0003', debtId: debt.id, expectedVersion: retained.version,
+      patch: { owner: null, dueAt: null },
+    });
+    const current = await call(`/debts/${debt.id}`, undefined, { actor: 'reader' });
+    expect(current.status).toBe(200);
+    expect(current.body.debt).not.toHaveProperty('owner');
+    expect(current.body.debt).not.toHaveProperty('dueAt');
+    expect(current.body.events[0]).toMatchObject({ type: 'updated', dates: { dueAt: [dueAt, null] } });
   });
 
   it('recovers committed records, audit history, and request receipts after restart', async () => {

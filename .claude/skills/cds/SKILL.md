@@ -339,10 +339,13 @@ $CLI planning capabilities
 $CLI planning show
 $CLI debt list --q "导出 回归"
 $CLI debt show <债务编号> --history
+$CLI debt brief <债务编号>
 $CLI debt create --title "补齐导出回归" --source-ref <稳定来源> --request-id <稳定请求编号>
 $CLI planning submit --file <当前动作的JSON文件>
 $CLI debt stats
 ```
+
+交接已有债务时，读取 `debt brief` 或用 `cds_planning_read` 的债务详情视图。接手卡、CLI 和 MCP 使用同一份已授权项目记录。逐条检查事实的出处，保留推测与缺口标签。人工复制可用 `$CLI --human debt brief <债务编号>` 取得与页面相同的 Markdown。
 
 提案文件包含 `type: proposal.submit`、`requestId`、`kind: debt|decision|plan`、`draft` 和 `source`。草稿最少填写标题，已有概况可以补上。来源填写类型与稳定原始编号，只有真实可访问的参考链接才填写 URL。例行重试复用原请求编号与内容，精确同源重入会拿到原记录。失联时先报告「结果待确认」，允许按原编号重试，不转写其他台账。状态、作者、项目归属和时间由 CDS 确认；回执只引用本次实际返回的编号。资料只写必要摘要与授权引用。
 

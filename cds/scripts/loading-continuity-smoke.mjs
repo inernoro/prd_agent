@@ -10,6 +10,7 @@ import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
 import { verifyCodeReviewDocument } from './code-review-document-smoke.mjs';
 import { verifyMonitorWorkspaceNavigation, verifyMonitorOnboardingSessionCleanup } from './monitor-workspace-navigation-smoke.mjs';
 import { verifyEngineeringPlanningRefresh } from './engineering-planning-refresh-smoke.mjs';
+import { verifyEngineeringPlanningDetail } from './engineering-planning-detail-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -136,6 +137,7 @@ try {
         await page.getByRole('heading', { name: '待你确认', exact: true }).waitFor();
         await page.getByText('当前范围 0 笔未还', { exact: true }).waitFor();
         result.debtMutationRefresh = await verifyEngineeringPlanningRefresh(browser, base, out);
+        result.debtDetail = await verifyEngineeringPlanningDetail(browser, base, out);
       }
       if (!before && scene.kind === 'release-console') {
         await page.getByRole('region', { name: '批次发布', exact: true }).waitFor();

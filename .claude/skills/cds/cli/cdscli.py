@@ -3801,11 +3801,16 @@ def cmd_planning(args: argparse.Namespace) -> None:
         result = request("GET", "/debts" + ("?" + query if query else ""))
         scoped_rows(result, "items")
         ok(result)
-    if action == "show":
+    if action in ("show", "brief"):
         result = request("GET", "/debts/" + urllib.parse.quote(args.id, safe=""))
         if scope(result.get("debt")).get("id") != args.id:
             die("CDS 返回的债务与请求编号不符")
         scoped_rows(result, "events")
+        if action == "brief":
+            brief = result.get("brief")
+            if not isinstance(brief, dict) or not isinstance(brief.get("markdown"), str) or not brief["markdown"].strip():
+                die("当前 CDS 未提供接手卡，请更新服务后再试")
+            ok(brief["markdown"] if _HUMAN else brief)
         ok(result)
     if action == "stats":
         query = urllib.parse.urlencode({k: v for k, v in {"from": args.from_date, "to": args.to_date, "branch": args.branch}.items()
@@ -3816,16 +3821,17 @@ def cmd_planning(args: argparse.Namespace) -> None:
 
 def _register_planning_parser(sub: Any) -> None:
     planning = sub.add_parser("planning", help="工程规划：推进、权限与结构化提交").add_subparsers(dest="planning_action", required=True)
-    debt = sub.add_parser("debt", help="工程债务：查询、登记、历史和演进").add_subparsers(dest="planning_action", required=True)
-    for routes, actions in ((planning, ("show", "capabilities", "submit", "stats")), (debt, ("list", "show", "create", "stats"))):
+    debt = sub.add_parser("debt", help="工程债务：查询、登记、接手与演进").add_subparsers(dest="planning_action", required=True)
+    for routes, actions in ((planning, ("show", "capabilities", "submit", "stats")), (debt, ("list", "show", "brief", "create", "stats"))):
         for action in actions:
             parser = routes.add_parser(action)
             parser.set_defaults(func=cmd_planning)
             parser.add_argument("--project", help="CDS 项目 ID，默认当前仓库绑定项目")
             if action == "submit":
                 parser.add_argument("--file", required=True, help="含 type 与 requestId 的命令 JSON")
-            if action == "show" and routes is debt:
+            if action in ("show", "brief") and routes is debt:
                 parser.add_argument("id")
+            if action == "show" and routes is debt:
                 parser.add_argument("--history", action="store_true", help="详情默认包含变更历史")
             if action == "create":
                 parser.add_argument("--request-id", required=True)

@@ -12,7 +12,7 @@ export const debtState = (row: PlanningDebt) => row.outcome ? inactiveLabels[row
 export function PlanningEmpty({ children }: { children: ReactNode }) {
   return <div className="ep-empty">{children}</div>;
 }
-export function PlanningBadge({ tone = 'quiet', children }: { tone?: 'quiet' | 'warning' | 'success' | 'accent'; children: ReactNode }) {
+export function PlanningBadge({ tone = 'quiet', children }: { tone?: 'quiet' | 'warning' | 'success' | 'accent' | 'info'; children: ReactNode }) {
   return <span className="ep-badge" data-tone={tone}>{children}</span>;
 }
 

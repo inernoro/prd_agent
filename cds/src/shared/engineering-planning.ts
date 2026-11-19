@@ -17,6 +17,11 @@ export type RootCause = { state: 'pending' | 'suspected' | 'confirmed'; text?: s
 export type Criterion = { id: string; text: string };
 export type CriterionResult = { criterionId: string; verdict: 'met' | 'na'; note?: string };
 export type Repayment = { at: string; by: PlanningIdentity; summary: string; results: CriterionResult[]; evidence: PlanningEvidence[] };
+export const debtApproachStates = ['candidate', 'tried', 'rejected'] as const;
+export type DebtDirection = {
+  target?: string;
+  approaches?: { title: string; status: typeof debtApproachStates[number]; note?: string }[];
+};
 export type DebtDraft = {
   title: string;
   summary?: string;
@@ -30,6 +35,12 @@ export type DebtDraft = {
   dueAt?: string;
   trigger?: string;
   tags?: string[];
+  direction?: DebtDirection;
+};
+export const clearableDebtFields = ['summary', 'whyDebt', 'impact', 'trigger', 'owner', 'dueAt', 'direction'] as const;
+type ClearableDebtField = typeof clearableDebtFields[number];
+export type DebtPatch = Partial<Omit<DebtDraft, 'decisionId' | ClearableDebtField>> & {
+  [Field in ClearableDebtField]?: DebtDraft[Field] | null;
 };
 export type DecisionDraft = { title: string; summary?: string; rationale?: string; owner?: string; reviewAt?: string; resolves?: string[] };
 export type PlanDraft = { title: string; summary?: string; decisionId?: string; owner?: string; dueAt?: string };
@@ -110,7 +121,21 @@ export type PlanningBoard = PlanningCapabilities & {
   pendingReviewCount: number;
 };
 export type PlanningDebtList = { projectId: string; today: string; items: PlanningDebt[]; nextCursor: string | null };
-export type PlanningDebtDetail = { projectId: string; debt: PlanningDebt; events: PlanningEvent[] };
+export type PlanningBriefTarget = 'header' | 'context' | 'criteria' | 'outcome';
+export type PlanningBriefCitation =
+  | { kind: 'record'; id: string; label: string; target: PlanningBriefTarget }
+  | { kind: 'event' | 'decision' | 'plan'; id: string; label: string };
+export type PlanningDebtBrief = {
+  readiness: { score: number; max: number; items: { label: string; ok: boolean }[] };
+  sections: {
+    id: 'problem' | 'attempts' | 'why' | 'direction'; title: string;
+    lines: { kind: 'fact' | 'inference' | 'gap'; text: string; cites: PlanningBriefCitation[] }[];
+  }[];
+  next: string[];
+  gaps: string[];
+  markdown: string;
+};
+export type PlanningDebtDetail = { projectId: string; debt: PlanningDebt; events: PlanningEvent[]; brief?: PlanningDebtBrief };
 export type PlanningCounts = {
   created: number;
   imported: number;
@@ -145,7 +170,7 @@ type PlanningCommandFields =
   | { type: 'proposal.reject'; proposalId: string; reason: string }
   | ({ type: 'debt.create'; source: PlanningSource } & DebtDraft)
   | { type: 'debt.import'; items: (DebtDraft & { source: PlanningSource; discoveredAt?: string })[] }
-  | ({ type: 'debt.update'; patch: Partial<Omit<DebtDraft, 'decisionId'>> } & VersionedDebt)
+  | ({ type: 'debt.update'; patch: DebtPatch } & VersionedDebt)
   | ({ type: 'debt.branch'; decisionId: string | null; reason: string } & VersionedDebt)
   | ({ type: 'debt.defer'; reason: string; reviewAt: string } & VersionedDebt)
   | ({ type: 'debt.start' | 'debt.progress'; note: string } & VersionedDebt)

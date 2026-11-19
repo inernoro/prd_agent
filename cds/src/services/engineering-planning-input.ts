@@ -1,6 +1,6 @@
 import {
-  debtPriorities, planningEvidenceTypes, planningSourceTypes, planningStepKinds,
-  type CriterionResult, type DebtDraft, type DecisionDraft, type PlanDraft, type PlanningCommand,
+  clearableDebtFields, debtApproachStates, debtPriorities, planningEvidenceTypes, planningSourceTypes, planningStepKinds,
+  type CriterionResult, type DebtDirection, type DebtDraft, type DebtPatch, type DecisionDraft, type PlanDraft, type PlanningCommand,
   type PlanningEvidence, type PlanningSource, type ProposalDraft, type RootCause,
 } from '../shared/engineering-planning.js';
 
@@ -114,7 +114,22 @@ function rootCause(value: unknown): RootCause {
   };
 }
 
-const debtFields = ['title', 'summary', 'whyDebt', 'decisionId', 'priority', 'criteria', 'rootCause', 'impact', 'owner', 'dueAt', 'trigger', 'tags'] as const;
+function debtDirection(value: unknown): DebtDirection {
+  const data = object(value, 'direction', ['target', 'approaches']);
+  return {
+    ...(data.target === undefined ? {} : { target: planningText(data.target, 'direction.target', 2000) }),
+    ...(data.approaches === undefined ? {} : { approaches: collection(data.approaches, 'direction.approaches', value => {
+      const entry = object(value, 'direction.approaches', ['title', 'status', 'note']);
+      return {
+        title: planningText(entry.title, 'direction.approaches.title', 120),
+        status: of(entry.status, 'direction.approaches.status', debtApproachStates),
+        ...(entry.note === undefined ? {} : { note: planningText(entry.note, 'direction.approaches.note', 2000) }),
+      };
+    }, 12) }),
+  };
+}
+
+const debtFields = ['title', 'summary', 'whyDebt', 'decisionId', 'priority', 'criteria', 'rootCause', 'impact', 'owner', 'dueAt', 'trigger', 'tags', 'direction'] as const;
 const decisionFields = ['title', 'summary', 'rationale', 'owner', 'reviewAt', 'resolves'] as const;
 const planFields = ['title', 'summary', 'decisionId', 'owner', 'dueAt'] as const;
 
@@ -130,6 +145,7 @@ function debtDraft(data: Record<string, unknown>, partial = false): Partial<Debt
   if (data.priority !== undefined) result.priority = of(data.priority, 'priority', debtPriorities);
   if (data.dueAt !== undefined) result.dueAt = planningDay(data.dueAt, 'dueAt');
   if (data.rootCause !== undefined) result.rootCause = rootCause(data.rootCause);
+  if (data.direction !== undefined) result.direction = debtDirection(data.direction);
   if (data.criteria !== undefined) {
     result.criteria = [...new Set(collection(data.criteria, 'criteria', row => planningText(row, 'criteria', 400)))];
   }
@@ -213,7 +229,14 @@ export function parsePlanningCommand(input: unknown): PlanningCommand {
       };
     case 'debt.update': {
       const target = debt('patch');
-      const patch = debtDraft(object(value.patch, 'patch', debtFields.filter(key => key !== 'decisionId')), true);
+      const draft = { ...object(value.patch, 'patch', debtFields.filter(key => key !== 'decisionId')) };
+      const clears: DebtPatch = {};
+      for (const key of clearableDebtFields) {
+        if (draft[key] !== null) continue;
+        clears[key] = null;
+        delete draft[key];
+      }
+      const patch = { ...debtDraft(draft, true), ...clears };
       if (!Object.keys(patch).length) invalid('patch', '请填写要修改的字段');
       return { type, requestId, ...target, patch };
     }

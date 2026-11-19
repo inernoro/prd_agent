@@ -7,6 +7,7 @@
   --ep-muted: hsl(var(--muted-foreground));
   --ep-accent: hsl(var(--primary));
   --ep-accent-ink: hsl(var(--primary-ink));
+  --ep-info: hsl(var(--info));
   --ep-ok: hsl(var(--ok));
   --ep-warn: hsl(var(--warn));
   --ep-danger: hsl(var(--destructive));
@@ -103,6 +104,7 @@
 .ep-badge[data-tone=accent] { color: var(--ep-accent-ink); background: color-mix(in srgb, var(--ep-accent) 10%, var(--ep-panel)); }
 .ep-badge[data-tone=success] { color: var(--ep-ok); background: color-mix(in srgb, var(--ep-ok) 8%, var(--ep-panel)); }
 .ep-badge[data-tone=warning] { color: var(--ep-warn); background: color-mix(in srgb, var(--ep-warn) 10%, var(--ep-panel)); }
+.ep-badge[data-tone=info] { color: color-mix(in srgb, var(--ep-info) 82%, var(--ep-fg)); background: color-mix(in srgb, var(--ep-info) 10%, var(--ep-panel)); }
 .ep-empty { color: var(--ep-muted); text-align: center; padding: 1.15rem .65rem; border: 1px dashed var(--ep-line); border-radius: .45rem; }
 .ep-text-button { border: 0; background: transparent; padding: 0; text-align: left; color: var(--ep-fg); cursor: pointer; overflow-wrap: anywhere; font-weight: 560; }
 .ep-text-button:hover, .ep-link:hover { color: var(--ep-accent-ink); text-decoration: underline; text-underline-offset: .2em; }
@@ -184,10 +186,69 @@
 .ep-panel-status { display: flex; flex-wrap: wrap; gap: .55rem; align-items: center; }
 .ep-dialog { max-width: min(43rem, calc(100vw - 1rem)); background: var(--ep-panel); }
 .ep-dialog--detail { right: 0; left: auto !important; top: 0 !important; width: min(54rem, 100vw) !important; max-width: 100%; max-height: 100dvh !important; height: 100dvh; transform: none !important; border-radius: 0; }
-.ep-dialog-head { padding: .9rem 2.6rem .7rem .95rem; border-bottom: 1px solid var(--ep-line); flex: 0 0 auto; text-align: left; overflow-wrap: anywhere; }
+.ep-dialog > button:last-child { display: grid; place-items: center; top: .3rem; right: .35rem; width: 3.5rem; height: 3.5rem; background: var(--ep-panel); }
+.ep-dialog > button:last-child:hover { background: var(--ep-inset); }
+.ep-dialog > button:last-child svg { width: 2rem; height: 2rem; }
+.ep-dialog-head { padding: .9rem 4.15rem .7rem .95rem; border-bottom: 1px solid var(--ep-line); flex: 0 0 auto; text-align: left; overflow-wrap: anywhere; }
+.ep-debt-head { display: grid; gap: .5rem; background: color-mix(in srgb, var(--ep-inset) 36%, var(--ep-panel)); }
+.ep-debt-kicker, .ep-debt-heading, .ep-debt-meta, .ep-debt-deadline { display: flex; gap: .45rem .8rem; align-items: center; min-width: 0; }
+.ep-debt-kicker, .ep-debt-meta, .ep-debt-deadline { flex-wrap: wrap; }
+.ep-debt-heading h2 { font-size: 1.62rem; font-weight: 700; line-height: 1.25; letter-spacing: -.018em; min-width: 0; }
+.ep-debt-heading .ep-coin { width: 2.65rem; height: 2.65rem; font-size: 1.03rem; }
+.ep-debt-meta { color: var(--ep-muted); font-size: .88rem; }
+.ep-debt-meta > span { min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ep-debt-meta svg { display: inline-block; vertical-align: -.12em; width: 1rem; height: 1rem; margin-right: .35rem; }
+.ep-debt-actions { gap: .5rem; }
 .ep-dialog-form { display: flex; flex-direction: column; min-height: 0; }
-.ep-dialog-content { display: grid; gap: .75rem; overflow-y: auto; padding: .8rem .95rem; min-height: 0; }
+.ep-dialog-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; overflow-y: auto; overscroll-behavior: contain; padding: .8rem .95rem; min-height: 0; }
+.ep-detail-scroll { display: block; flex: 1; padding: 0; scroll-padding-top: 4.15rem; }
+.ep-detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; padding: .8rem .95rem; }
 .ep-detail > .ep-surface { display: grid; gap: .55rem; }
+.ep-brief {
+  display: grid; gap: .42rem; padding: 1rem 1.1rem; min-width: 0; overflow-wrap: anywhere;
+  border: 1px solid color-mix(in srgb, var(--ep-info) 34%, var(--ep-line)); border-radius: .65rem;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ep-info) 8%, var(--ep-panel)), var(--ep-panel) 9rem);
+  font-size: .94rem;
+}
+.ep-brief h2 { font-size: 1.16rem; line-height: 1.22; }
+.ep-brief h3 { font-size: .95rem; }
+.ep-brief-brand, .ep-brief-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .52rem; }
+.ep-brief-brand { color: color-mix(in srgb, var(--ep-info) 82%, var(--ep-fg)); font-size: .87rem; font-weight: 650; }
+.ep-brief-brand svg, .ep-brief-readiness svg { width: 1rem; height: 1rem; }
+.ep-brief > .ep-caption, .ep-brief-next .ep-caption { font-size: .86rem; }
+.ep-brief-tools { margin: .3rem 0 .14rem; }
+.ep-brief-toggle { border-color: transparent; background: transparent; color: var(--ep-muted); }
+.ep-brief-readiness { min-width: 0; }
+.ep-brief-readiness summary {
+  padding: .4rem .65rem; border: 1px solid var(--ep-line); border-radius: .4rem; cursor: pointer;
+  color: var(--ep-muted); background: var(--ep-panel); font-size: .82rem;
+}
+.ep-brief-readiness summary strong { color: var(--ep-accent-ink); font-size: .99rem; font-variant-numeric: tabular-nums; }
+.ep-brief-readiness ul { margin: .3rem 0; padding: .45rem .7rem; list-style: none; border: 1px solid var(--ep-line); border-radius: .4rem; background: var(--ep-panel); }
+.ep-brief-readiness li { display: flex; align-items: center; gap: .25rem; padding: .18rem 0; }
+.ep-brief-readiness svg { color: var(--ep-ok); }
+.ep-brief-body:not([hidden]) { display: grid; gap: .7rem; }
+.ep-brief-body ul, .ep-brief-next ol { margin: .16rem 0 0; padding-left: 1.2rem; }
+.ep-brief-body ul { list-style: disc; }
+.ep-brief-next ol { list-style: decimal; }
+.ep-brief-body li { line-height: 1.55; padding: .1rem 0; }
+.ep-brief-label { display: inline-block; margin-right: .4rem; padding: 0 .3rem; border-radius: .3rem; font-size: .78rem; color: var(--ep-muted); background: var(--ep-inset); }
+.ep-brief-label[data-kind=inference] { color: var(--ep-warn); background: color-mix(in srgb, var(--ep-warn) 9%, var(--ep-panel)); }
+.ep-citation {
+  display: inline-grid; place-items: center; min-width: 1.875rem; min-height: 1.875rem; margin-inline-start: .35rem;
+  border: 1px solid color-mix(in srgb, var(--ep-info) 30%, var(--ep-line)); border-radius: 50%;
+  background: var(--ep-panel); color: color-mix(in srgb, var(--ep-info) 82%, var(--ep-fg)); font-size: .79rem; font-weight: 650;
+}
+.ep-citation:hover { background: color-mix(in srgb, var(--ep-info) 12%, var(--ep-panel)); }
+.ep-citation-target:focus { outline: 2px solid var(--ep-info); outline-offset: -2px; }
+.ep-brief-next { border-radius: .42rem; background: var(--ep-inset); padding: .6rem .8rem; }
+.ep-criterion-results { display: grid; gap: .42rem; margin: 0; padding: 0; list-style: none; }
+.ep-criterion-results > li { padding: .55rem .7rem; border: 1px solid var(--ep-line); border-radius: .42rem; }
+.ep-criterion-results > li > div { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .3rem .6rem; }
+.ep-criterion-results > li strong { min-width: 0; overflow-wrap: anywhere; }
+.ep-criterion-results > li > p { margin-top: .22rem; color: var(--ep-muted); }
+.ep-repayment-evidence { display: grid; gap: .32rem; padding-top: .55rem; border-top: 1px solid var(--ep-line); }
+.ep-repayment-evidence h4 { font-weight: 650; }
 .ep-dialog-footer { display: flex; align-items: center; justify-content: flex-end; border-top: 1px solid var(--ep-line); padding: .65rem .95rem; gap: .5rem; flex: 0 0 auto; }
 .ep-field { display: grid; gap: .24rem; min-width: 0; }
 .ep-field > span { color: var(--ep-muted); font-size: .77rem; }
@@ -222,6 +283,11 @@
   .ep-debt-header { display: none; }
   .ep-debts > li { display: flex; align-items: center; flex-wrap: wrap; column-gap: .5rem; row-gap: .25rem; }
   .ep-debt-title { flex-basis: 100%; }
+  .ep-debt-title .ep-text-button { min-height: 3.5rem; }
   .ep-debts > li > span:first-of-type { margin-left: 2.4rem; }
   .ep-category { grid-template-columns: minmax(0, 5.5rem) 1fr 3ch auto; gap: .3rem; }
+  .ep-debt-heading h2 { font-size: 1.35rem; }
+  .ep-debt-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ep-debt-actions .ep-button, .ep-dialog-footer .ep-button, .ep-brief-tools .ep-button { min-height: 3.5rem; }
+  .ep-brief { padding: .8rem; }
 }

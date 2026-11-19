@@ -5,6 +5,7 @@ import {
   type PlanningPlan, type PlanningReceipt, type PlanningStats,
 } from '../shared/engineering-planning.js';
 import { PlanningMutation, planningToday, unpaid, type PlanningState } from './engineering-planning-domain.js';
+import { buildDebtBrief } from './engineering-planning-brief.js';
 import { parsePlanningCommand, planningDay, planningId, planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { EngineeringPlanningCommit, EngineeringPlanningStore } from './engineering-planning-store.js';
 export { FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './engineering-planning-store.js';
@@ -201,7 +202,14 @@ export class EngineeringPlanningService {
     const state = await this.load(projectId);
     const debt = state.debts.get(id);
     if (!debt) rejectPlanning(404, 'not_found', '此项目没有这条债务');
-    return { projectId, debt, events: state.events.filter(item => item.entity === 'debt' && item.entityId === id).reverse() };
+    const events = state.events.filter(item => item.entity === 'debt' && item.entityId === id).reverse();
+    const plans = [...state.plans.values()].filter(plan => plan.steps.some(step => step.kind === 'debt' && step.relatedId === id));
+    const brief = buildDebtBrief(debt, events, {
+      origin: debt.originDecisionId ? state.decisions.get(debt.originDecisionId) : undefined,
+      current: debt.decisionId ? state.decisions.get(debt.decisionId) : undefined,
+      plans,
+    }, this.now());
+    return { projectId, debt, events, brief };
   }
 
   async stats(projectId: string, query: StatsQuery = {}): Promise<PlanningStats> {

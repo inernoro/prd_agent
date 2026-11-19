@@ -23,6 +23,26 @@ PROPOSAL = {
     "draft": {"title": "补齐导出测试", "whyDebt": "经确认安排下个版本"},
     "source": {"type": "manual", "ref": "fixture:confirmed-tradeoff-1"},
 }
+BRIEF = {
+    "readiness": {
+        "score": 1, "max": 7,
+        "items": [{"label": label, "ok": label == "问题与影响"} for label in
+                  ("问题与影响", "来源可追溯", "根因已确认", "欠债理由", "期望方向", "偿还标准", "近期确认")],
+    },
+    "sections": [
+        {"id": "problem", "title": "现在是什么问题", "lines": [
+            {"kind": "fact", "text": "合成导出重复请求", "cites": [
+                {"kind": "record", "id": "D-0001", "label": "当前记录", "target": "context"},
+            ]},
+        ]},
+        {"id": "attempts", "title": "之前如何处理", "lines": [{"kind": "gap", "text": "未记处理经过", "cites": []}]},
+        {"id": "why", "title": "为什么延后", "lines": [{"kind": "gap", "text": "未记欠债理由", "cites": []}]},
+        {"id": "direction", "title": "往哪个方向走", "lines": [{"kind": "gap", "text": "还没记录方向", "cites": []}]},
+    ],
+    "next": ["补记偿还标准"],
+    "gaps": ["缺乏偿还标准"],
+    "markdown": "# D-0001 导出结果\n\n- 合成导出重复请求（当前记录）\n\n## 建议的下一步\n\n- 补记偿还标准",
+}
 
 
 class PlanningCliTest(unittest.TestCase):
@@ -31,6 +51,7 @@ class PlanningCliTest(unittest.TestCase):
         self.committed = {}
         self.permissions = ["read", "propose", "write"]
         self.foreign = False
+        self.expose_brief = True
         self.drop_write_response = False
         self.reject_write = False
         fixture = self
@@ -70,7 +91,13 @@ class PlanningCliTest(unittest.TestCase):
                 elif url.path == BASE + "/debts":
                     self.respond(200, {"projectId": PROJECT, "items": [debt], "nextCursor": None})
                 elif url.path == BASE + "/debts/D-0001":
-                    self.respond(200, {"projectId": PROJECT, "debt": debt, "events": []})
+                    if "read" not in fixture.permissions:
+                        self.respond(404, {"error": "not_found", "message": KEY, "details": "upstream fixture detail"})
+                        return
+                    detail = {"projectId": PROJECT, "debt": debt, "events": []}
+                    if fixture.expose_brief:
+                        detail["brief"] = BRIEF
+                    self.respond(200, detail)
                 elif url.path == BASE + "/commands" and self.command == "POST":
                     if fixture.reject_write or body.get("type") != "proposal.submit" or "propose" not in fixture.permissions:
                         self.respond(403, {"error": "write_forbidden", "message": KEY, "details": "upstream fixture detail"})
@@ -119,7 +146,7 @@ class PlanningCliTest(unittest.TestCase):
             env={"PATH": os.defpath, "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"},
             capture_output=True, text=True, timeout=12, check=False,
         )
-        if not completed.stdout.strip():
+        if "--human" in args or not completed.stdout.strip():
             return completed, {}
         return completed, json.loads(completed.stdout)
 
@@ -155,6 +182,36 @@ class PlanningCliTest(unittest.TestCase):
         self.assertEqual(detail["debt"]["id"], "D-0001")
         self.assertEqual(self.requests[-1][1].path, BASE + "/debts/D-0001")
 
+    def test_reads_same_handoff_in_machine_and_human_output(self):
+        args = ("debt", "brief", "D-0001", "--project", PROJECT)
+        self.assertEqual(self.assert_ok(self.call(*args)), BRIEF)
+        self.assertEqual(self.requests[-1][0], "GET")
+        self.assertEqual(self.requests[-1][1].path, BASE + "/debts/D-0001")
+        self.assertEqual(self.requests[-1][3], KEY)
+        process, _ = self.call("--human", *args)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertEqual(process.stdout.rstrip("\n"), BRIEF["markdown"])
+        self.assertNotIn(KEY, process.stdout + process.stderr)
+
+    def test_missing_handoff_reports_old_server_without_breaking_show(self):
+        self.expose_brief = False
+        outcome = self.call("debt", "brief", "D-0001", "--project", PROJECT)
+        self.assert_error(outcome)
+        self.assertRegex(outcome[1]["error"], "接手卡|brief")
+        self.assertRegex(outcome[1]["error"], "升级|更新|旧版|不支持|未提供")
+        detail = self.assert_ok(self.call("debt", "show", "D-0001", "--project", PROJECT))
+        self.assertNotIn("brief", detail)
+
+    def test_handoff_refuses_other_projects_and_missing_read_access(self):
+        self.assert_error(self.call("debt", "brief", "D-0001", "--project", "other-project"))
+        self.assertEqual(self.requests, [])
+        self.permissions.remove("read")
+        outcome = self.call("debt", "brief", "D-0001", "--project", PROJECT)
+        self.assert_error(outcome)
+        self.assertNotIn(BRIEF["markdown"], outcome[0].stdout + outcome[0].stderr)
+        self.assertTrue(self.requests)
+        self.assertTrue(all(method == "GET" for method, *_rest in self.requests))
+
     def test_rejects_other_project_and_file_overrides_before_writing(self):
         self.assert_error(self.call("planning", "show", "--project", "other-project"))
         self.assertEqual(self.requests, [])
@@ -166,6 +223,7 @@ class PlanningCliTest(unittest.TestCase):
         self.foreign = True
         self.assert_error(self.call("debt", "list", "--project", PROJECT))
         self.assert_error(self.call("debt", "show", "D-0001", "--project", PROJECT))
+        self.assert_error(self.call("debt", "brief", "D-0001", "--project", PROJECT))
         self.assert_error(self.submit(PROPOSAL))
 
     def test_submission_reports_original_receipt_when_repeated(self):

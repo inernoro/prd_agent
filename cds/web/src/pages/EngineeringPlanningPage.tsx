@@ -36,7 +36,7 @@ export function EngineeringPlanningPage() {
   const [pages, setPages] = useState<string[]>([]);
   const [range, setRange] = useState(30);
   const [screen, setScreen] = useState(false);
-  const [action, setAction] = useState<PlanningAction>();
+  const [actionEntry, setActionEntry] = useState<{ key: string; value: PlanningAction; returnFocusTo?: HTMLElement | null }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -61,6 +61,8 @@ export function EngineeringPlanningPage() {
   const itemKind = params.get('kind') || '';
   const selected: PlanningSelection | undefined =
     itemId && (itemKind === 'debt' || itemKind === 'decision' || itemKind === 'plan') ? { kind: itemKind, id: itemId } : undefined;
+  const actionKey = JSON.stringify([activeProject, view, itemKind, itemId]);
+  const action = actionEntry?.key === actionKey ? actionEntry.value : undefined;
   const debtQuery = new URLSearchParams({ view: status, ...(q ? { q } : {}), ...(branch ? { branch } : {}), ...(tag ? { tag } : {}), ...(cursor ? { cursor } : {}) });
   const debts = usePlanningRead<PlanningDebtList>(target && view === 'debts' ? `${target}/debts?${debtQuery}` : null, reload);
   const debtDetail = usePlanningRead<PlanningDebtDetail>(target && selected?.kind === 'debt' ? `${target}/debts/${encodeURIComponent(selected.id)}` : null, reload);
@@ -88,6 +90,9 @@ export function EngineeringPlanningPage() {
       return next;
     }, { replace: true });
   }, [activeProject, params, setParams]);
+  useEffect(() => {
+    if (actionEntry && actionEntry.key !== actionKey) setActionEntry(undefined);
+  }, [actionEntry, actionKey]);
   useEffect(() => { setSearch(q); }, [q]);
   useEffect(() => {
     if (view !== 'debts' || q === search.trim()) return;
@@ -104,7 +109,7 @@ export function EngineeringPlanningPage() {
   }, [q, search, setParams, view]);
 
   function selectProject(project: string) {
-    setPages([]); setSearch(''); setNotice(''); setError(''); setAction(undefined);
+    setPages([]); setSearch(''); setNotice(''); setError(''); setActionEntry(undefined);
     change({ project, branch: '', tag: '', q: '', item: '', kind: '' });
   }
   function selectView(next: PlanningView) {
@@ -115,9 +120,9 @@ export function EngineeringPlanningPage() {
     setError('');
     change({ item: item.id, kind: item.kind });
   }
-  function openAction(next: PlanningAction) {
+  function openAction(next: PlanningAction, returnFocusTo?: HTMLElement | null) {
     setError('');
-    setAction(next);
+    setActionEntry({ key: actionKey, value: next, returnFocusTo });
   }
   async function submit(input: PlanningInput) {
     if (!target || working.current) return;
@@ -131,7 +136,7 @@ export function EngineeringPlanningPage() {
       const receipt = await apiRequest<PlanningReceipt>(`${target}/commands`, { method: 'POST', body: { ...input, requestId: pending.current.requestId } });
       if (receipt.projectId !== activeProject || receipt.result.projectId !== activeProject) throw new Error('invalid planning receipt');
       pending.current = undefined;
-      setAction(undefined);
+      setActionEntry(undefined);
       if (input.type === 'proposal.accept') setNotice('提案已确认');
       else if (input.type === 'proposal.reject') setNotice('提案已驳回');
       else if (input.type === 'debt.repay') setNotice('已记录偿还证据');
@@ -234,12 +239,14 @@ export function EngineeringPlanningPage() {
                 {stats.data ? <PlanningEvolution data={stats.data} screen={screen} /> : <ReadStatus loading={stats.loading} error={stats.error} onRetry={refresh} />}
               </>}
 
-              {selected && !action && <PlanningDetailDialog item={selected} board={data} detail={debtDetail.data}
+              {selected && <PlanningDetailDialog item={selected} board={data} detail={debtDetail.data}
+                projectLabel={activeLabel?.aliasName || activeLabel?.name || activeProject}
                 loading={selected.kind === 'debt' && debtDetail.loading && !debtDetail.data} error={selected.kind === 'debt' ? debtDetail.error : undefined}
                 actionsDisabled={busy || board.loading || (selected.kind === 'debt' && debtDetail.loading)}
-                onClose={() => change({ item: '', kind: '' }, true)} onRetry={refresh} onSelect={selectItem} onAction={openAction} />}
+                onClose={() => { if (!action) change({ item: '', kind: '' }, true); }} onRetry={refresh} onSelect={selectItem} onAction={openAction} />}
               {action && <PlanningActionDialog key={action.kind} action={action} board={data} busy={busy} error={error}
-                onClose={() => { setError(''); setAction(undefined); }} onSubmit={input => { void submit(input); }} />}
+                returnFocusTo={actionEntry?.returnFocusTo}
+                onClose={() => { setError(''); setActionEntry(undefined); }} onSubmit={input => { void submit(input); }} />}
             </>}
     </Workspace>
   </AppShell>;

@@ -42,14 +42,15 @@ export const DialogContent = React.forwardRef<
      * 底栏跟着长内容一起滚走，用户要「使劲拉下去才能看到下一步操作」）。
      */
     frame?: boolean;
+    overlayClassName?: string;
   }
->(({ className, children, style, frame, ...props }, ref) => {
+>(({ className, children, style, frame, overlayClassName, ...props }, ref) => {
   const viewport = useVisualViewport();
   const origin = React.useRef<HTMLElement | null>(null);
   const container = React.useRef<HTMLElement | null>(null);
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         ref={ref}
         className={cn(

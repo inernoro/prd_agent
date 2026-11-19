@@ -66,7 +66,8 @@ export async function verifyEngineeringPlanningRefresh(browser, base, out) {
     await page.getByRole('button', { name: /^债务分支/ }).click();
     await page.getByRole('button', { name: title, exact: true }).click();
     const drawer = page.getByRole('dialog', { name: title, exact: true });
-    await drawer.getByRole('button', { name: '暂缓', exact: true }).click();
+    await drawer.getByRole('button', { name: '更多操作', exact: true }).click();
+    await page.getByRole('menuitem', { name: '暂缓', exact: true }).click();
     const deferForm = page.getByRole('dialog', { name: '暂缓', exact: true });
     await deferForm.getByLabel('下次回看日期').fill('2026-11-23');
     await deferForm.getByLabel('暂缓原因').fill('合成暂缓原因');

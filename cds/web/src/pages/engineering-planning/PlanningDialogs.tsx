@@ -1,12 +1,15 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { CalendarDays, CheckCircle2, Folder, Link2, MoreHorizontal, Pencil, UserRound } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type {
-  DebtDraft, PlanningBoard, PlanningDebt, PlanningDebtDetail, PlanningDecision, PlanningEvidence, PlanningPlan,
+  Criterion, DebtDraft, DebtPatch, PlanningBoard, PlanningBriefCitation, PlanningBriefTarget, PlanningDebt, PlanningDebtDetail, PlanningDecision, PlanningEvidence, PlanningPlan,
   PlanningProposal, PlanningRecordKind, PlanningSource, PlanningStep, RootCause,
 } from '../../../../src/shared/engineering-planning';
-import { closedDebt, dateLabel, decisionLabels, events, kindLabels, priorityLabels, sourceLabels, stepKindLabels, stepLabels, type PlanningInput } from './planning-ui';
+import { closedDebt, dateLabel, decisionLabels, events, kindLabels, priorityLabels, shortId, sourceLabels, stepKindLabels, stepLabels, type PlanningInput } from './planning-ui';
 import { debtState, PlanningBadge, PlanningEmpty, type PlanningSelection } from './PlanningViews';
+import { DebtHandoffCard } from './DebtHandoffCard';
 
 export type PlanningAction =
   | { kind: 'create'; record: PlanningRecordKind }
@@ -17,7 +20,7 @@ export type PlanningAction =
   | { kind: 'step'; plan: PlanningPlan; step?: PlanningStep }
   | { kind: 'schedule'; debt: PlanningDebt };
 
-const debtActions = { edit: '补充债务', branch: '调整决策归属', defer: '暂缓', progress: '记录进展', repay: '标记已偿还', reopen: '重开债务', drop: '标记失效', hit: '我也踩到了' };
+const debtActions = { edit: '补齐内容', branch: '调整决策归属', defer: '暂缓', progress: '记录进展', repay: '核对偿还标准', reopen: '重开债务', drop: '标记失效', hit: '我也踩到了' };
 const decisionActions = { accepted: '采纳决策', amended: '补充决策说明', reviewed: '完成复核', superseded: '取代决策', deprecated: '废弃决策' };
 const evidenceLabels: Record<PlanningEvidence['type'], string> = {
   test: '测试结果', change: '变更记录', acceptance: '验收记录', metric: '监控指标', log: '运行记录', doc: '文档', screenshot: '截图引用',
@@ -62,6 +65,7 @@ function DebtFields({ debt }: { debt?: PlanningDebt }) {
     </div>
     <Field name="rootText" label="根因说明" initial={debt?.rootCause?.text} multiline />
     <Field name="rootBasis" label="确认根因的依据" initial={debt?.rootCause?.basis} multiline />
+    <Field name="direction" label="期望方向" initial={debt?.direction?.target} multiline max={2000} />
     <Field name="criteria" label="偿还标准（每行一项）" initial={debt?.criteria.map(row => row.text).join('\n')} multiline />
   </>;
 }
@@ -69,11 +73,25 @@ function DebtFields({ debt }: { debt?: PlanningDebt }) {
 function debtInput(form: FormData): Partial<DebtDraft> {
   const rootState = field(form, 'rootState') as RootCause['state'];
   const tags = field(form, 'tags').split(/[,，]/).map(tag => tag.trim()).filter(Boolean);
+  const direction = optional(form, 'direction');
   return {
     summary: optional(form, 'summary'), whyDebt: optional(form, 'whyDebt'), priority: field(form, 'priority') as DebtDraft['priority'],
     owner: optional(form, 'owner'), dueAt: optional(form, 'dueAt'), trigger: optional(form, 'trigger'), impact: optional(form, 'impact'),
     criteria: lines(optional(form, 'criteria')) ?? [], tags,
     rootCause: { state: rootState, text: optional(form, 'rootText'), basis: optional(form, 'rootBasis') },
+    direction: direction ? { target: direction } : undefined,
+  };
+}
+
+function debtPatch(form: FormData, debt: PlanningDebt): DebtPatch {
+  const fields = debtInput(form);
+  const target = fields.direction?.target;
+  const approaches = debt.direction?.approaches;
+  return {
+    ...fields, title: field(form, 'title'),
+    summary: fields.summary ?? null, whyDebt: fields.whyDebt ?? null, impact: fields.impact ?? null,
+    trigger: fields.trigger ?? null, owner: fields.owner ?? null, dueAt: fields.dueAt ?? null,
+    direction: target || approaches?.length ? { target, approaches } : null,
   };
 }
 
@@ -91,6 +109,16 @@ function actionTitle(action: PlanningAction) {
 
 function decisionOptions(board: PlanningBoard) {
   return board.decisions.filter(row => row.status !== 'superseded' && row.status !== 'deprecated').map(row => [row.id, row.title] as const);
+}
+
+function RepaymentCheck({ criterion }: { criterion: Criterion }) {
+  const [verdict, setVerdict] = useState('');
+  return <div><label className="ep-field"><span>{criterion.text}</span>
+    <select name={`result-${criterion.id}`} required value={verdict} onChange={event => setVerdict(event.target.value)}>
+      <option value="">请选择结果</option><option value="met">达标</option><option value="na">不适用</option>
+    </select></label>
+    <Field name={`note-${criterion.id}`} label="核对说明（不适用时必填）" required={verdict === 'na'} />
+  </div>;
 }
 
 function actionFields(action: PlanningAction, board: PlanningBoard): ReactNode {
@@ -116,10 +144,10 @@ function actionFields(action: PlanningAction, board: PlanningBoard): ReactNode {
         case 'hit': return <Field name="note" label="在哪里又遇到了问题" required multiline />;
         case 'repay': return <>
           <Field name="summary" label="处理结果" required multiline max={6000} />
-          <fieldset className="ep-criteria"><legend>逐项核对偿还标准</legend>{row.criteria.map(criterion => <div key={criterion.id}>
-            <Field name={`result-${criterion.id}`} label={criterion.text} required choices={[[ '', '请选择结果' ], ['met', '达标'], ['na', '不适用']]} />
-            <Field name={`note-${criterion.id}`} label="核对说明（不适用时必填）" />
-          </div>)}</fieldset>
+          <fieldset className="ep-criteria"><legend>逐项核对偿还标准</legend>
+            {row.criteria.map(criterion => <RepaymentCheck key={criterion.id} criterion={criterion} />)}
+          </fieldset>
+          <h3>本次偿还证据</h3>
           <Field name="evidenceType" label="证据类型" initial="test" choices={Object.entries(evidenceLabels)} />
           <Field name="evidenceLabel" label="证据说明" required max={500} />
           <Field name="evidenceUrl" label="证据链接（选填）" />
@@ -191,7 +219,7 @@ function actionCommand(action: PlanningAction, form: FormData, board: PlanningBo
     case 'debt': {
       const common = { debtId: action.debt.id, expectedVersion: action.debt.version };
       switch (action.action) {
-        case 'edit': return { type: 'debt.update', ...common, patch: { ...debtInput(form), title: field(form, 'title') } };
+        case 'edit': return { type: 'debt.update', ...common, patch: debtPatch(form, action.debt) };
         case 'branch': return { type: 'debt.branch', ...common, decisionId: optional(form, 'decisionId') ?? null, reason };
         case 'defer': return { type: 'debt.defer', ...common, reason, reviewAt: field(form, 'reviewAt') };
         case 'progress': return { type: 'debt.progress', ...common, note: field(form, 'note') };
@@ -227,8 +255,9 @@ function readImport(input: string): ImportRows {
   return rows as ImportRows;
 }
 
-export function PlanningActionDialog({ action, board, busy, error, onClose, onSubmit }: {
+export function PlanningActionDialog({ action, board, busy, error, returnFocusTo, onClose, onSubmit }: {
   action: PlanningAction; board: PlanningBoard; busy: boolean; error: string;
+  returnFocusTo?: HTMLElement | null;
   onClose: () => void; onSubmit: (input: PlanningInput) => void;
 }) {
   const [preview, setPreview] = useState<ImportRows>();
@@ -249,7 +278,12 @@ export function PlanningActionDialog({ action, board, busy, error, onClose, onSu
   const description = action.kind === 'debt' ? action.debt.title : action.kind === 'reject' ? action.proposal.draft.title
     : action.kind === 'decision' ? action.decision.title : action.kind === 'step' ? action.plan.title : '变更保存到当前项目';
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
-    <DialogContent className="ep-dialog ep-dialog--form" frame>
+    <DialogContent className="ep-dialog ep-dialog--form" overlayClassName="bg-black/35" frame
+      onInteractOutside={event => event.preventDefault()} onCloseAutoFocus={event => {
+        if (!returnFocusTo?.isConnected || returnFocusTo.matches(':disabled') || !returnFocusTo.getClientRects().length) return;
+        event.preventDefault();
+        returnFocusTo.focus({ preventScroll: true });
+      }}>
       <DialogHeader className="ep-dialog-head"><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
       <form className="ep-dialog-form" onSubmit={submit}>
         <div className="ep-dialog-content">
@@ -275,27 +309,66 @@ export function PlanningActionDialog({ action, board, busy, error, onClose, onSu
   </Dialog>;
 }
 
-export function PlanningDetailDialog({ item, board, detail, loading, error, actionsDisabled, onClose, onRetry, onSelect, onAction }: {
-  item: PlanningSelection; board: PlanningBoard; detail?: PlanningDebtDetail; loading: boolean; error?: string;
+const debtTarget = (id: string, target: PlanningBriefTarget) => `planning-debt-${id}-${target}`;
+const eventTarget = (id: string) => `planning-event-${id}`;
+const debtHeadingTones = { open: 'quiet', deferred: 'warning', in_progress: 'info', repaid: 'success', dropped: 'quiet' } as const;
+type OpenPlanningAction = (action: PlanningAction, returnFocusTo?: HTMLElement | null) => void;
+
+function DebtHeading({ debt, projectLabel, today }: { debt: PlanningDebt; projectLabel: string; today: string }) {
+  const closed = closedDebt(debt.status);
+  const days = debt.dueAt ? (Date.parse(debt.dueAt) - Date.parse(today)) / 86_400_000 : undefined;
+  return <DialogHeader className="ep-dialog-head ep-debt-head ep-citation-target" id={debtTarget(debt.id, 'header')} tabIndex={-1}>
+    <div className="ep-debt-kicker">
+      <PlanningBadge tone="accent">债务</PlanningBadge><code className="ep-id" title={debt.id}>{shortId(debt.id)}</code>
+      <PlanningBadge tone={debtHeadingTones[debt.status]}>{debtState(debt)}</PlanningBadge>
+      <PlanningBadge>{priorityLabels[debt.priority]}优先级</PlanningBadge>
+    </div>
+    <div className="ep-debt-heading">
+      <span className="ep-coin" data-status={debt.status} aria-hidden="true">欠</span>
+      <DialogTitle>{debt.title}</DialogTitle>
+    </div>
+    <DialogDescription className="sr-only">{debt.id}</DialogDescription>
+    <div className="ep-debt-meta">
+      <span title={projectLabel}><Folder />{projectLabel}</span>
+      <span title={debt.owner}><UserRound />{debt.owner ? `负责人 ${debt.owner}` : '待认领'}</span>
+      <span><CalendarDays />{debt.discoveredAt ? `发现于 ${debt.discoveredAt}` : `登记于 ${dateLabel(debt.createdAt)}`}</span>
+      <span title={debt.source.ref}><Link2 />{sourceLabels[debt.source.type]} · {debt.source.url
+        ? <a href={debt.source.url} target="_blank" rel="noreferrer">{debt.source.ref}</a> : debt.source.ref}</span>
+    </div>
+    {!closed && <div className="ep-debt-deadline">
+      {debt.reviewAt && <PlanningBadge tone={debt.reviewAt <= today ? 'warning' : 'quiet'}>下次回看 {debt.reviewAt}</PlanningBadge>}
+      {debt.dueAt && days !== undefined ? <PlanningBadge tone={days < 0 ? 'warning' : 'quiet'}>
+        {days === 0 ? '今日到期' : days > 0 ? `剩余 ${days} 天` : `逾期 ${-days} 天`} · 预计 {debt.dueAt}
+      </PlanningBadge> : <span className="ep-caption">偿还日期待定</span>}
+    </div>}
+  </DialogHeader>;
+}
+
+export function PlanningDetailDialog({ item, board, detail, projectLabel, loading, error, actionsDisabled, onClose, onRetry, onSelect, onAction }: {
+  item: PlanningSelection; board: PlanningBoard; detail?: PlanningDebtDetail; projectLabel: string; loading: boolean; error?: string;
   actionsDisabled: boolean;
-  onClose: () => void; onRetry: () => void; onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
+  onClose: () => void; onRetry: () => void; onSelect: (item: PlanningSelection) => void; onAction: OpenPlanningAction;
 }) {
-  const record = item.kind === 'debt' ? detail?.debt : item.kind === 'plan' ? board.plans.find(row => row.id === item.id)
+  const debt = item.kind === 'debt' ? detail?.debt : undefined;
+  const record = item.kind === 'debt' ? debt : item.kind === 'plan' ? board.plans.find(row => row.id === item.id)
     : board.decisions.find(row => row.id === item.id);
   const write = board.permissions.includes('write');
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
-    <DialogContent frame className="ep-dialog ep-dialog--detail">
-      <DialogHeader className="ep-dialog-head"><DialogTitle>{record?.title ?? `${kindLabels[item.kind]}详情`}</DialogTitle>
-        <DialogDescription>{record?.id ?? kindLabels[item.kind]}</DialogDescription></DialogHeader>
-      <div className="ep-dialog-content ep-detail">
-        {loading ? <ContentLoading variant="rows" label="正在读取记录" /> : error ? <div role="alert" className="ep-error">{error}<button type="button" className="ep-button" onClick={onRetry}>重试</button></div>
-          : !record ? <PlanningEmpty>没有可访问的记录</PlanningEmpty> : null}
-        {record && write && actionsDisabled && <p className="ep-caption" role="status">正在同步记录</p>}
-        {item.kind === 'debt' && detail && <DebtDetails data={detail} board={board} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />}
-        {item.kind === 'decision' && board.decisions.filter(row => row.id === item.id).map(row =>
-          <DecisionDetails key={row.id} row={row} board={board} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />)}
-        {item.kind === 'plan' && board.plans.filter(row => row.id === item.id).map(plan =>
-          <PlanDetails key={plan.id} plan={plan} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />)}
+    <DialogContent frame className="ep-dialog ep-dialog--detail" overlayClassName="bg-black/35">
+      <div className="ep-dialog-content ep-detail-scroll">
+        {debt ? <DebtHeading debt={debt} projectLabel={projectLabel} today={board.today} />
+          : <DialogHeader className="ep-dialog-head"><DialogTitle>{record?.title ?? `${kindLabels[item.kind]}详情`}</DialogTitle>
+            <DialogDescription>{record?.id ?? kindLabels[item.kind]}</DialogDescription></DialogHeader>}
+        <div className="ep-detail">
+          {loading ? <ContentLoading variant="rows" label="正在读取记录" /> : error ? <div role="alert" className="ep-error">{error}<button type="button" className="ep-button" onClick={onRetry}>重试</button></div>
+            : !record ? <PlanningEmpty>没有可访问的记录</PlanningEmpty> : null}
+          {record && write && actionsDisabled && <p className="ep-caption" role="status">正在同步记录</p>}
+          {item.kind === 'debt' && detail && <DebtDetails data={detail} board={board} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />}
+          {item.kind === 'decision' && board.decisions.filter(row => row.id === item.id).map(row =>
+            <DecisionDetails key={row.id} row={row} board={board} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />)}
+          {item.kind === 'plan' && board.plans.filter(row => row.id === item.id).map(plan =>
+            <PlanDetails key={plan.id} plan={plan} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />)}
+        </div>
       </div>
     </DialogContent>
   </Dialog>;
@@ -303,30 +376,43 @@ export function PlanningDetailDialog({ item, board, detail, loading, error, acti
 
 function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }: {
   data: PlanningDebtDetail; board: PlanningBoard; write: boolean; actionsDisabled: boolean;
-  onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
+  onSelect: (item: PlanningSelection) => void; onAction: OpenPlanningAction;
 }) {
+  const more = useRef<HTMLButtonElement>(null);
   const debt = data.debt;
   const active = !closedDebt(debt.status);
   const assigned = board.decisions.find(row => row.id === debt.decisionId);
   const origin = board.decisions.find(row => row.id === debt.originDecisionId);
   const repayment = debt.repayment;
+  const results = new Map(repayment?.results.map(result => [result.criterionId, result]));
+  const edit = (action: Extract<PlanningAction, { kind: 'debt' }>['action'], returnFocusTo?: HTMLElement | null) =>
+    onAction({ kind: 'debt', action, debt }, returnFocusTo);
+  function jumpToCitation(cite: PlanningBriefCitation) {
+    if (cite.kind === 'decision' || cite.kind === 'plan') { onSelect({ kind: cite.kind, id: cite.id }); return; }
+    const id = cite.kind === 'record' ? debtTarget(cite.id, cite.target) : eventTarget(cite.id);
+    const target = document.getElementById(id);
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'nearest' });
+  }
   return <>
-    <div className="ep-row">
-      <PlanningBadge tone={debt.status === 'repaid' ? 'success' : 'accent'}>{debtState(debt)}</PlanningBadge>
-      <PlanningBadge>{priorityLabels[debt.priority]}优先级</PlanningBadge>
-      {debt.reopenCount > 0 && <PlanningBadge tone="warning">重开 {debt.reopenCount} 次</PlanningBadge>}
-      {debt.hitCount > 0 && <PlanningBadge tone="warning">踩到 {debt.hitCount} 次</PlanningBadge>}
-    </div>
-    {write && <div className="ep-row">
-      {active ? (['progress', 'defer', 'repay', 'edit', 'branch', 'hit', 'drop'] as const).map(action =>
-        <button type="button" key={action} className={`ep-button${action === 'repay' ? ' ep-button--primary' : ''}`}
-          disabled={actionsDisabled || (action === 'repay' && !debt.criteria.length)} onClick={() => onAction({ kind: 'debt', action, debt })}>{debtActions[action]}</button>)
-        : debt.outcome?.kind !== 'merged' && <button type="button" className="ep-button" disabled={actionsDisabled}
-          onClick={() => onAction({ kind: 'debt', action: 'reopen', debt })}>重开债务</button>}
-      {active && board.plans.length > 0 && <button type="button" className="ep-button" disabled={actionsDisabled}
-        onClick={() => onAction({ kind: 'schedule', debt })}>排进落地计划</button>}
+    {write && <div className="ep-row ep-debt-actions">
+      {active ? <>
+        <button type="button" className="ep-button ep-button--primary" disabled={actionsDisabled || !debt.criteria.length}
+          onClick={() => edit('repay')}><CheckCircle2 aria-hidden="true" />{debtActions.repay}</button>
+        <button type="button" className="ep-button" disabled={actionsDisabled} onClick={() => edit('progress')}>{debtActions.progress}</button>
+        <button type="button" className="ep-button" disabled={actionsDisabled} onClick={() => edit('edit')}><Pencil aria-hidden="true" />{debtActions.edit}</button>
+        <DropdownMenu trigger={<button type="button" className="ep-button" ref={more} disabled={actionsDisabled}><MoreHorizontal aria-hidden="true" />更多操作</button>}>
+          <DropdownItem onSelect={() => edit('defer', more.current)}>{debtActions.defer}</DropdownItem>
+          <DropdownItem onSelect={() => edit('hit', more.current)}>{debtActions.hit}</DropdownItem>
+          <DropdownItem onSelect={() => edit('branch', more.current)}>{debtActions.branch}</DropdownItem>
+          {board.plans.length > 0 && <DropdownItem onSelect={() => onAction({ kind: 'schedule', debt }, more.current)}>排进落地计划</DropdownItem>}
+          <DropdownItem destructive onSelect={() => edit('drop', more.current)}>{debtActions.drop}</DropdownItem>
+        </DropdownMenu>
+      </> : debt.outcome?.kind !== 'merged' && <button type="button" className="ep-button" disabled={actionsDisabled}
+        onClick={() => edit('reopen')}>{debtActions.reopen}</button>}
     </div>}
-    <section className="ep-surface">
+    {data.brief && <DebtHandoffCard key={debt.id} brief={data.brief} onCitation={jumpToCitation} />}
+    <section className="ep-surface ep-citation-target" id={debtTarget(debt.id, 'context')} tabIndex={-1} aria-label="债务上下文">
       <h3>债务上下文</h3>
       <dl className="ep-facts">
         <dt>问题概况</dt><dd>{debt.summary || '待补充'}</dd><dt>已知影响</dt><dd>{debt.impact || '待补充'}</dd>
@@ -335,27 +421,52 @@ function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }
         <dt>欠债理由</dt><dd>{debt.whyDebt || '待补充'}</dd><dt>负责人</dt><dd>{debt.owner || '待认领'}</dd>
         <dt>回看日期</dt><dd>{debt.reviewAt || '未设置'}{debt.deferReason && ` · ${debt.deferReason}`}</dd>
         <dt>偿还计划</dt><dd>{[debt.dueAt, debt.trigger].filter(Boolean).join(' · ') || '未安排'}</dd>
+        {debt.direction?.target && <><dt>期望方向</dt><dd>{debt.direction.target}</dd></>}
+        {debt.direction?.approaches?.length ? <><dt>方案记录</dt><dd><ul className="ep-evidence">
+          {debt.direction.approaches.map((row, index) => <li key={index}>
+            {({ candidate: '候选', tried: '试过', rejected: '否决' })[row.status]} · {row.title}{row.note && ` · ${row.note}`}
+          </li>)}
+        </ul></dd></> : null}
         <dt>当前决策</dt><dd>{assigned ? <button type="button" className="ep-text-button" onClick={() => onSelect({ kind: 'decision', id: assigned.id })}>{assigned.title}</button> : '未归属决策'}</dd>
         {origin && origin.id !== assigned?.id && <><dt>来源决策</dt><dd><button type="button" className="ep-text-button" onClick={() => onSelect({ kind: 'decision', id: origin.id })}>{origin.title}</button></dd></>}
         {debt.tags?.length ? <><dt>标签</dt><dd>{debt.tags.join(' · ')}</dd></> : null}
       </dl>
     </section>
-    <section className="ep-surface">
+    <section className="ep-surface ep-citation-target" id={debtTarget(debt.id, 'criteria')} tabIndex={-1} aria-label="偿还标准与证据">
       <h3>偿还标准与证据</h3>
-      {debt.criteria.length ? <ol className="ep-evidence">{debt.criteria.map(row => <li key={row.id}>{row.text}</li>)}</ol> : <p>待补充偿还标准</p>}
-      {repayment && <><p>{repayment.summary} · {repayment.by.label} · {dateLabel(repayment.at)}</p>
-        <ul className="ep-evidence">{repayment.evidence.map((evidence, index) => <li key={index}>
-          <PlanningBadge tone="success">{evidenceLabels[evidence.type]}</PlanningBadge> {evidence.url
-            ? <a href={evidence.url} target="_blank" rel="noreferrer">{evidence.label}</a> : evidence.label}</li>)}</ul></>}
-      {debt.outcome && <p>{debt.outcome.reason}</p>}
+      {debt.criteria.length ? <ol className="ep-criterion-results">{debt.criteria.map(row => {
+        const result = results.get(row.id);
+        return <li key={row.id}><div><strong>{row.text}</strong>{result && <PlanningBadge tone={result.verdict === 'met' ? 'success' : 'quiet'}>
+          {result.verdict === 'met' ? '达标' : '不适用'}</PlanningBadge>}</div>{result?.note && <p>{result.note}</p>}</li>;
+      })}</ol> : <p>待补充偿还标准</p>}
+      {repayment && <div className="ep-repayment-evidence"><h4>本次偿还证据</h4>
+        <p>{repayment.summary} · {repayment.by.label} · {dateLabel(repayment.at)}</p>
+        <EvidenceList items={repayment.evidence} />
+      </div>}
+      {debt.outcome && <div className="ep-citation-target ep-repayment-evidence" id={debtTarget(debt.id, 'outcome')} tabIndex={-1}>
+        <h4>关闭依据</h4><p>{debt.outcome.reason}</p>
+        {debt.outcome.targetId && <button type="button" className="ep-text-button" onClick={() => onSelect({ kind: 'debt', id: debt.outcome!.targetId! })}>查看承接债务</button>}
+        <EvidenceList items={debt.outcome.evidence} />
+      </div>}
     </section>
-    <section className="ep-surface"><h3>变更历史</h3><ol className="ep-events">{data.events.map(event => <li key={event.id}>
+    <section className="ep-surface"><h3>变更历史</h3><ol className="ep-events">{data.events.map(event => <li key={event.id}
+      id={eventTarget(event.id)} className="ep-citation-target" tabIndex={-1}>
       <time dateTime={event.at}>{dateLabel(event.at)}</time><div><PlanningBadge>{events[event.type]}</PlanningBadge> {event.actor.label}
         {event.proposedBy && <p>提案来源 · {event.proposedBy.label}</p>}{event.note && <p>{event.note}</p>}
-        {event.evidence?.length ? <ul className="ep-evidence">{event.evidence.map((evidence, index) => <li key={index}>{evidence.url
-          ? <a href={evidence.url} target="_blank" rel="noreferrer">{evidence.label}</a> : evidence.label}</li>)}</ul> : null}</div>
+        {event.dates?.dueAt && <p>预计偿还 · {event.dates.dueAt.map(day => day ?? '未设置').join(' → ')}</p>}
+        {event.dates?.reviewAt && <p>下次回看 · {event.dates.reviewAt.map(day => day ?? '未设置').join(' → ')}</p>}
+        <EvidenceList items={event.evidence} />
+      </div>
     </li>)}</ol></section>
   </>;
+}
+
+function EvidenceList({ items }: { items?: PlanningEvidence[] }) {
+  if (!items?.length) return null;
+  return <ul className="ep-evidence">{items.map((item, index) => <li key={index}>
+    <PlanningBadge>{evidenceLabels[item.type]}</PlanningBadge> {item.url
+      ? <a href={item.url} target="_blank" rel="noreferrer">{item.label}</a> : item.label}
+  </li>)}</ul>;
 }
 
 function DecisionDetails({ row, board, write, actionsDisabled, onSelect, onAction }: {
