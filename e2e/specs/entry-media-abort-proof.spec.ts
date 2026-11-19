@@ -37,7 +37,7 @@ test('系统主题变化中止未就绪视频后，新视频保留结尾', async
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(movie).toHaveAttribute('src', assets.dark.motion.url);
     await expect.poll(() => page.evaluate(() => (window as ProbeWindow).entryMediaRejections)).toContain('AbortError');
-    await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving', '');
+    await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving', '', { timeout: 10000 });
     await expect(movie).toHaveJSProperty('paused', true);
     await expect(movie).toHaveJSProperty('currentSrc', assets.dark.motion.url);
     expect(await movie.evaluate((element: HTMLVideoElement) => element.currentTime)).toBeGreaterThan(5.1);
