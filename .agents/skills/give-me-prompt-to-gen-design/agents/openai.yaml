@@ -1,4 +1,4 @@
 interface:
   display_name: "give-me-prompt-to-gen-design"
-  short_description: "从 Design 提示词到真实系统实现，交付逐项对照验收表和拟真度评价"
-  default_prompt: "请使用 $give-me-prompt-to-gen-design，根据我的目标整理第三方设计提示词；收到设计文件后，在指定真实系统按稿实现，执行视觉、交互和业务验收，并交付至少包含标题、模块、验收报告、拟真度的对照表。"
+  short_description: "选设计时提供技术栈、容器和可复用代码，选定后接入真实页面验收"
+  default_prompt: "用 $give-me-prompt-to-gen-design 按实际技术栈和可编辑容器写一段选设计提示词；需要贴合现有产品时另附上下文 ZIP，选定后再接入真实页面验收。"
