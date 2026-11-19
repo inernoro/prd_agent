@@ -22,6 +22,8 @@ const emptyRecoveries: readonly string[] = [];
 const emptyFiles: readonly File[] = [];
 const compareCommentTime = (a: HostedSiteCommentDto, b: HostedSiteCommentDto) =>
   Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id);
+const isUnversionedPageComment = (comment: HostedSiteCommentDto) =>
+  !comment.anchor && !comment.contentVersion && !comment.revisionId;
 
 function readRecoveries(key?: string): readonly string[] {
   if (!key) return emptyRecoveries;
@@ -243,10 +245,18 @@ export default function CommentsSection(props: Props) {
   }, [notice]);
   const allRoots = useMemo(() => comments.filter(c => !c.parentId), [comments]);
   const isVersionScoped = !!review;
-  const versionRoots = useMemo(() => isVersionScoped ? allRoots.filter(c => c.contentVersion === versionKey && !!versionKey) : allRoots,
-    [allRoots, isVersionScoped, versionKey]);
-  const outsideRoots = useMemo(() => isVersionScoped ? allRoots.filter(c => c.contentVersion !== versionKey || !versionKey) : [],
-    [allRoots, isVersionScoped, versionKey]);
+  const showUnversionedPageComments = isAuthenticated && props.readerLayout && !props.versionOnly && review?.selected?.isCurrent;
+  const [versionRoots, outsideRoots] = useMemo(() => {
+    if (!isVersionScoped) return [allRoots, []];
+    const current: HostedSiteCommentDto[] = [], outside: HostedSiteCommentDto[] = [];
+    for (const comment of allRoots) {
+      // The service only returns unversioned records to readers who may view history.
+      const inCurrentDiscussion = versionKey && (comment.contentVersion === versionKey
+        || (showUnversionedPageComments && isUnversionedPageComment(comment)));
+      (inCurrentDiscussion ? current : outside).push(comment);
+    }
+    return [current, outside];
+  }, [allRoots, isVersionScoped, showUnversionedPageComments, versionKey]);
   const scopedRoots = otherVersions ? outsideRoots : versionRoots;
   const roots = useMemo(() => scopedRoots.filter(comment => !props.threadKind || (props.threadKind === 'annotation' ? !!comment.anchor : !comment.anchor)),
     [scopedRoots, props.threadKind]);
@@ -262,9 +272,8 @@ export default function CommentsSection(props: Props) {
     if (!loading && !versionPending && !error) callbacks.current.onThreadCountsChange?.({ annotations: annotationCount, discussions: discussionCount });
   }, [annotationCount, discussionCount, loading, versionPending, error]);
   useEffect(() => {
-    const activeRoots = comments.filter(c => !c.parentId && (!callbacks.current.review || (!!versionKey && c.contentVersion === versionKey)));
-    callbacks.current.annotations?.setThreads(activeRoots);
-  }, [comments, versionKey]);
+    callbacks.current.annotations?.setThreads(versionRoots);
+  }, [versionRoots]);
   useEffect(() => {
     const previous = confirmedDraftVersion.current;
     if (previous.identity !== identity || (versionKey && previous.versionKey && versionKey !== previous.versionKey)) {
@@ -654,6 +663,8 @@ export default function CommentsSection(props: Props) {
       {props.splitLayout && (anchorAction || (!chronological && <div className="review-thread-context"><span className="review-anchor-number">页</span>整页评论</div>))}
       <CommentMessage compact={props.readerLayout} isNew={!!messages?.size} comment={comment}
         busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)} onFile={getAttachment}>
+        {!otherVersions && showUnversionedPageComments && isUnversionedPageComment(comment)
+          && <div className="review-origin-version">整页评论 · 未标版本</div>}
         {otherVersions && <div className="review-origin-version"><span>来自 {originVersion?.versionLabel ?? (comment.contentVersion ? '未收录的旧版本' : '未标版本的历史评论')}</span>
           {canOpenOrigin && <button type="button" onClick={locate}>预览 {originVersion!.versionLabel}</button>}</div>}
       </CommentMessage>
