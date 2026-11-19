@@ -28,6 +28,8 @@
 - [MAP 与 CDS 磁盘容量治理 · 指南](./guide.platform.capacity.md) `guide.platform.capacity`
 
 - [知识库信息高效传递与复刻验收计划](./plan.knowledge-base.information-delivery.md) `plan.knowledge-base.information-delivery`
+- [MAP 信息高效传递 · 分阶段验收计划](./plan.knowledge-base.information-delivery.acceptance.md) `plan.knowledge-base.information-delivery.acceptance`
+  > 按阶段勾选，追踪实际进度、证据、问题和阻塞原因。
 
 - [CDS 自动化任务健康与安全恢复 · 指南](./guide.cds.automation-health.md) `guide.cds.automation-health`
 - [官方上游迁移与管理简化 · 计划](./plan.llmgw.official-upstreams.md) `plan.llmgw.official-upstreams`

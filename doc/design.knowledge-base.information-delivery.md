@@ -45,4 +45,4 @@
 4. **各个归档入口闭环。** 所选产物全部就绪后才交付。分别经网页托管和知识库打开实物，核对版本、访问范围和来源。刷新、失败重试或资料更新后，已交付版本仍可复查。
 5. **证据跟得上操作。** 桌面和手机各按相同顺序完整取证，每条记录用同一设备和同一任务贯穿模板、附件、生成、补答、文件和归档。记录入口、版本和任务标识，并保留错误与恢复。传递效率按前述任务比较另行记录。
 
-实操与测试数据见[操作与验收指南](./guide.knowledge-base.information-delivery.md)。已有设计执行能力见 [OpenDesign 运行时设计](./design.platform.design-runtime.md)。既有成文、发布和视觉验收见[原验收计划](./plan.knowledge-base.information-delivery.md)，其证据适用于该计划记录的流程。
+当前进度与逐项验收见[分阶段验收计划](./plan.knowledge-base.information-delivery.acceptance.md)。实操与测试数据见[操作与验收指南](./guide.knowledge-base.information-delivery.md)。已有设计执行能力见 [OpenDesign 运行时设计](./design.platform.design-runtime.md)。既有成文、发布和视觉验收见[原验收计划](./plan.knowledge-base.information-delivery.md)，其证据适用于该计划记录的流程。

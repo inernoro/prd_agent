@@ -48,4 +48,4 @@
 
 桌面和手机各自保留一条从「只看模板」开始的连续证据，标明设备、任务与实际版本。检查每张图和对应动作相符，保留打开模板骨架、开始、流式输出、补答、打开文件及归档后的结果。功能通过之后，分别记录初次接触案例的读者只看原文和使用交付物时的正确率、定位与任务用时、回问次数。另记录作者为整理、生成、补答、校对、重做和交付投入的时间。
 
-产品规则和成功标准见[设计稿](./design.knowledge-base.information-delivery.md)。
+产品规则和成功标准见[设计稿](./design.knowledge-base.information-delivery.md)。每一步的当前状态和证据记录在[分阶段验收计划](./plan.knowledge-base.information-delivery.acceptance.md)。
