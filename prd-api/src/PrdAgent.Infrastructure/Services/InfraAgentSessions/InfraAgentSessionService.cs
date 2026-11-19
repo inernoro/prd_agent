@@ -3001,7 +3001,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     {
                         return;
                     }
-                    if (readbackDisposition == CdsStopResponseDisposition.Retry)
+                    if ((int)readback.StatusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden)
+                        throw CdsRequestFailed(readback, readbackBody);
+                    if (readbackDisposition == CdsStopResponseDisposition.Retry
+                        || (IsUnattributedCdsBadRequest(response, body) && IsUnattributedCdsBadRequest(readback, readbackBody)))
                     {
                         disposition = CdsStopResponseDisposition.Retry;
                     }

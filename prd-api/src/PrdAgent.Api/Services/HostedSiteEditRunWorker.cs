@@ -741,6 +741,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 .Set(item => item.WorkspaceResultAssetKey, null)
                 .Set(item => item.WorkspaceResultSha256, null)
                 .Set(item => item.WorkspaceManifestSha256, null)
+                .Set(item => item.DeliverySavedResultRecoveryAttemptedAt, null)
                 .Set(item => item.LatestPreviewHtml, null)
                 .Set(item => item.DeliveryPreviewFiles, null)
                 .Set(item => item.UpdatedAt, now), cancellationToken: ct);
@@ -1424,29 +1425,49 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         var filters = Builders<DesignArtifactRun>.Filter;
         var current = DeploymentScope.Current;
         var scope = filters.Eq(item => item.DeploymentSlug, current);
+        var failed = filters.Where(item => item.Status == RunStatuses.Error && item.CompletedAt != null
+            && item.DeliverySavedResultRecoveryAttemptedAt == null
+            && (item.LeaseExpiresAt == null || item.LeaseExpiresAt <= now));
         if (DeploymentScope.CurrentDurable is { } stable && stable != current)
         {
             var older = filters.Regex(item => item.DeploymentSlug, "^" + System.Text.RegularExpressions.Regex.Escape(stable + "::revision::"));
-            scope |= older & filters.Lt(item => item.LeaseExpiresAt, now - RetiredRevisionAdoptionGrace);
+            var retirementCutoff = now - RetiredRevisionAdoptionGrace;
+            scope |= older & (filters.Lt(item => item.LeaseExpiresAt, retirementCutoff)
+                | (failed & filters.Lt(item => item.CompletedAt, (DateTime?)retirementCutoff)));
         }
-        var recoverable = scope & filters.Where(item => item.DeliverySessionContainers && item.Status == RunStatuses.Running
-            && item.LeaseExpiresAt != null && item.LeaseExpiresAt <= now && item.CancelRequestedAt == null
-            && item.WorkspaceResultAssetKey != null && item.DeliveryRuntimeSessionId != null
+        var interrupted = filters.Where(item => item.Status == RunStatuses.Running
+            && item.LeaseExpiresAt != null && item.LeaseExpiresAt <= now);
+        var recoverable = scope & (interrupted | failed) & filters.Where(item => item.DeliverySessionContainers
+            && item.CancelRequestedAt == null && item.DeliveryArchive == null && item.DeliveryRuntimeSessionId != null
+            && item.CleanupStartedAt == null && item.CleanupLeaseOwnerId == null
+            && item.WorkspaceResultAssetKey != null && item.WorkspaceResultSha256 != null && item.WorkspaceBaseRevision != null
             && item.ProducedArtifactSiteId == null && item.ProducedArtifactRevisionId == null);
         var candidates = await db.DesignArtifactRuns.Find(recoverable).Limit(16).ToListAsync(stoppingToken);
         foreach (var candidate in candidates)
         {
-            var fence = filters.Where(item => item.Id == candidate.Id && item.DeploymentSlug == candidate.DeploymentSlug
+            var fence = filters.Where(item => item.Id == candidate.Id && item.Status == candidate.Status
+                && item.DeploymentSlug == candidate.DeploymentSlug && item.LifecycleVersion == candidate.LifecycleVersion
                 && item.LeaseOwnerId == candidate.LeaseOwnerId && item.LeaseExpiresAt == candidate.LeaseExpiresAt
-                && item.WorkspaceResultAssetKey == candidate.WorkspaceResultAssetKey);
-            var write = await db.DesignArtifactRuns.UpdateOneAsync(recoverable & fence, Builders<DesignArtifactRun>.Update
+                && item.WorkspaceResultAssetKey == candidate.WorkspaceResultAssetKey
+                && item.WorkspaceResultSha256 == candidate.WorkspaceResultSha256);
+            var recovery = Builders<DesignArtifactRun>.Update
                 .Set(item => item.DeploymentSlug, current)
                 .Set(item => item.Status, RunStatuses.Queued)
+                .Set(item => item.PhaseCode, DesignArtifactPhaseCodes.Queued)
+                .Set(item => item.Phase, "已保留修订文件，等待确认工作区停止与保存结果")
                 .Set(item => item.LeaseOwnerId, null)
                 .Set(item => item.LeaseExpiresAt, null)
                 .Set(item => item.RuntimeTicketExpiresAt, null)
+                .Set(item => item.CompletedAt, null)
+                .Set(item => item.Error, null)
+                .Set(item => item.RuntimeFailure, null)
+                .Set(item => item.LifecycleFailureCode, null)
                 .Set(item => item.RecoveryEnqueuedAt, now)
-                .Set(item => item.UpdatedAt, now), cancellationToken: stoppingToken);
+                .Set(item => item.UpdatedAt, now);
+            // 已失败的提交结果只自动重验一次。文件损坏或来源被撤权时，由常规失败路径如实结束。
+            if (candidate.Status == RunStatuses.Error)
+                recovery = recovery.Set(item => item.DeliverySavedResultRecoveryAttemptedAt, now);
+            var write = await db.DesignArtifactRuns.UpdateOneAsync(recoverable & fence, recovery, cancellationToken: stoppingToken);
             if (write.MatchedCount != 0) await queue.EnqueueAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None);
         }
     }

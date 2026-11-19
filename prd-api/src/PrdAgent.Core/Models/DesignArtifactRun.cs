@@ -140,6 +140,9 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     public string? DeliveryRuntimeSessionId { get; set; }
 
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DateTime? DeliverySavedResultRecoveryAttemptedAt { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public InformationDeliveryCheckpoint? DeliveryCheckpoint { get; set; }
 
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]

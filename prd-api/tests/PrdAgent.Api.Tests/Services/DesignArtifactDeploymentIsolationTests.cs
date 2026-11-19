@@ -527,6 +527,49 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     }
 
     [DesignScopeMongoFact]
+    public async Task FailedDeliveryWithACommittedPackage_RecoversExactlyOnceInTheSameBranch()
+    {
+        DesignArtifactRun Failed(string id) => new()
+        {
+            Id = id, UserId = "author", Status = RunStatuses.Error, Progress = 85,
+            CompletedAt = Now.AddMinutes(-2), Error = "CDS stop rejected", DeliverySessionContainers = true,
+            DeliveryTemplateId = "team-tutorial", DeliveryRuntimeSessionId = "original-session",
+            WorkspaceResultAssetKey = "committed-package", WorkspaceResultSha256 = "package-sha",
+            WorkspaceBaseRevision = "original-base", TaskPermitId = "original-permit", RuntimeModelCallCount = 42,
+        };
+        var original = Failed("saved-after-failed-stop");
+        var alreadyRetried = Failed("already-recovered-once");
+        alreadyRetried.DeliverySavedResultRecoveryAttemptedAt = Now.AddMinutes(-3);
+        var cancelled = Failed("cancelled-after-result");
+        cancelled.CancelRequestedAt = Now.AddMinutes(-3);
+        var cleanup = Failed("cleanup-in-progress");
+        cleanup.CleanupStartedAt = Now.AddSeconds(-15);
+        cleanup.CleanupLeaseOwnerId = "cleanup-worker";
+        var sibling = Failed("saved-in-sibling-branch");
+        foreach (var sameBranch in new[] { original, alreadyRetried, cancelled, cleanup })
+            await InsertAsync(sameBranch, RetiredScope);
+        await InsertAsync(sibling, "project-a::branch-ab::revision::revision-b");
+
+        await HostedSiteEditRunWorker.RecoverSavedDeliveryTurnsAsync(_db, _queue, Now, default);
+        await HostedSiteEditRunWorker.RecoverSavedDeliveryTurnsAsync(_db, _queue, Now, default);
+
+        var recovered = await Read(original.Id);
+        Assert.Equal(RunStatuses.Queued, recovered.Status);
+        Assert.Equal(CurrentScope, recovered.DeploymentSlug);
+        Assert.NotNull(recovered.DeliverySavedResultRecoveryAttemptedAt);
+        Assert.Null(recovered.CompletedAt);
+        Assert.Null(recovered.Error);
+        Assert.Equal(original.WorkspaceResultSha256, recovered.WorkspaceResultSha256);
+        Assert.Equal(original.TaskPermitId, recovered.TaskPermitId);
+        Assert.Equal(original.RuntimeModelCallCount, recovered.RuntimeModelCallCount);
+        Assert.Equal(original.Progress, recovered.Progress);
+        Assert.Equal(original.Id, await _queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
+        Assert.Null(await _queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
+        foreach (var untouched in new[] { alreadyRetried, cancelled, cleanup, sibling })
+            Assert.Equal(RunStatuses.Error, (await Read(untouched.Id)).Status);
+    }
+
+    [DesignScopeMongoFact]
     public async Task OpenDesignOverview_ReadsOnlyOwnedBranchHistory_AndLinksOnlyCommittedDelivery()
     {
         var waiting = Run("owner-reserved", RunStatuses.Done);

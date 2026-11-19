@@ -704,9 +704,18 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
 
     private async Task ReleaseDeliverySessionAsync(DesignArtifactRun run, string? sessionId)
     {
-        if (sessionId == null || (await _sessions.StopAsync(run.UserId, sessionId, CancellationToken.None))?.Status
-                                    != InfraAgentSessionStatuses.Stopped)
-            throw new InvalidOperationException("草稿已保存，CDS 尚未确认释放工作区；请稍后重试");
+        const string retained = "修订文件已保留，CDS 尚未确认工作区停止";
+        try
+        {
+            if (sessionId != null && (await _sessions.StopAsync(run.UserId, sessionId, CancellationToken.None))?.Status
+                == InfraAgentSessionStatuses.Stopped)
+                return;
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            throw new InvalidOperationException(retained, ex);
+        }
+        throw new InvalidOperationException(retained);
     }
 
     /// <summary>
