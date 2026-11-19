@@ -18,6 +18,7 @@ const resolutions = { width: 1920, height: 1080 };
 async function prepare(page, theme) {
   await installOperationsFixtures(page, { quickstart: true });
   await page.goto(loginUrl);
+  await expect(page.locator('link[rel="preconnect"]')).toHaveAttribute('href', new URL(assets[theme].motion.url).origin);
   await expect(page.locator('.consciousness-scene')).toHaveAttribute('data-portrait-theme', theme);
   await expect(page.locator('.consciousness-art')).toHaveAttribute('src', (assets[theme].opening ?? assets[theme].closed).url);
   await expect.poll(() => page.locator('.consciousness-art').evaluate(img => img.naturalWidth)).toBeGreaterThan(0);
