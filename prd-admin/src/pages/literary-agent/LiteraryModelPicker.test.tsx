@@ -60,17 +60,21 @@ describe('工作台紧凑模型选择', () => {
     function Summary() {
       const watermarkPreview = useLiteraryWatermarkPreview('monochrome', 'test-revision');
       return <LiterarySettingsSummary writingModel="test-new-writing-model" imageModel="test-new-picture-model"
-        watermarkName="黑白" watermarkPreview={watermarkPreview} position="per-h2" positionLabel="每小标题一张" />;
+        watermarkName="黑白" watermarkPreview={watermarkPreview} position="user-anchor" positionLabel="尊重用户锚点" />;
     }
     await act(async () => root.render(<Summary />));
     expect(getWatermarkPreview).toHaveBeenCalledWith('monochrome', 'test-revision');
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(container.querySelector('[aria-label="写作模型：test-new-writing-model"] svg')).not.toBeNull();
     expect(container.querySelector('[aria-label="配图模型：test-new-picture-model"] svg')).not.toBeNull();
-    expect(container.querySelector('[title="每小标题一张"] svg')).not.toBeNull();
+    const position = container.querySelector('[aria-label="尊重用户锚点"]')!;
+    expect(position.querySelector('svg.lucide-map-pin')).not.toBeNull();
+    expect(position.getAttribute('title')).toBe('尊重用户锚点');
+    expect(container.textContent).not.toContain('尊重用户锚点');
     const watermark = container.querySelector('[aria-label="水印：黑白"]')!;
-    expect(container.firstElementChild).toBe(watermark);
-    expect(watermark.nextElementSibling?.textContent).toBe('每小标题一张');
+    expect(Array.from(container.querySelectorAll('.lit-settings-summary-icons > [role="img"]'), node => node.getAttribute('aria-label'))).toEqual([
+      '写作模型：test-new-writing-model', '配图模型：test-new-picture-model', '水印：黑白', '尊重用户锚点',
+    ]);
     const image = watermark.querySelector('img')!;
     expect(image.getAttribute('src')).toBe(preview);
     await act(async () => { image.dispatchEvent(new Event('error')); });

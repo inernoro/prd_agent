@@ -6,21 +6,22 @@
 }
 .lit-settings .lit-settings-disclosure {
   --lit-settings-summary-icon-size: 16px;
-  grid-template-columns: minmax(0, max-content) minmax(min(6em, 30cqi), 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto 15px;
   grid-template-rows: var(--lit-settings-row-height);
-  gap: 6px;
+  gap: 8px;
   list-style: none;
   margin-top: 4px;
   padding-block: 0;
 }
 .lit-settings-disclosure::-webkit-details-marker { display: none; }
-.lit-settings[open] > .lit-settings-disclosure > :is(.lit-settings-value, .lit-settings-summary-icons) { visibility: hidden; }
-.lit-settings[open] > .lit-settings-disclosure > .lit-settings-disclosure-indicator > .lit-settings-chevron { transform: rotate(180deg); }
-.lit-settings-disclosure-indicator { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
-.lit-settings-summary-icons { display: flex; align-items: center; gap: 3px; }
+.lit-settings[open] > .lit-settings-disclosure > .lit-settings-summary-icons { visibility: hidden; }
+.lit-settings[open] > .lit-settings-disclosure > .lit-settings-chevron { transform: rotate(180deg); }
+.lit-settings-disclosure-label { font-weight: 600; }
+.lit-settings-disclosure-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lit-settings-summary-icons { display: flex; align-items: center; gap: 4px; }
 .lit-settings-summary-icon {
   display: inline-grid; place-items: center;
-  width: 21px; height: 21px; border-radius: 5px;
+  width: 22px; height: 22px; border-radius: 6px;
   background: var(--bg-input); color: var(--text-secondary);
 }
 .lit-settings-summary-icon img {
@@ -28,17 +29,13 @@
   height: var(--lit-settings-summary-icon-size);
   object-fit: contain;
 }
-.lit-settings-summary-watermark { display: flex; align-items: center; min-width: 0; }
-.lit-settings-summary-watermark img {
-  display: block;
-  height: var(--lit-settings-summary-icon-size);
-  width: auto;
-  max-width: 100%;
-  object-fit: contain;
-  object-position: left center;
+.lit-settings-summary-watermark { width: auto; min-width: 22px; max-width: 90px; padding-inline: 3px; }
+.lit-settings-summary-watermark img { width: auto; max-width: 100%; }
+@container (max-width: 240px) {
+  .lit-settings-summary-watermark { display: none; }
 }
-@container (max-width: 320px) {
-  .lit-settings-summary-optional { display: none; }
+@container (max-width: 166px) {
+  .lit-settings-summary-position { display: none; }
 }
 .lit-settings-section { min-width: 0; padding-top: 16px; }
 .lit-settings-heading {

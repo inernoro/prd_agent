@@ -3490,14 +3490,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           <LiteraryInlineMenuGroup>
             <details key={phase === 2 ? 'results' : 'preparation'} open={phase !== 2} className="lit-settings" data-testid="literary-generation-settings">
               <summary className="lit-settings-row lit-settings-disclosure">
-                <span className="sr-only">生成设置</span>
+                <span className="lit-settings-label lit-settings-disclosure-label">
+                  <SlidersHorizontal size={16} aria-hidden />
+                  <span>生成设置</span>
+                </span>
                 <LiterarySettingsSummary writingModel={effectiveChatModel?.actualModelId} imageModel={effectiveModel?.actualModelId}
                   watermarkName={watermarkName} watermarkPreview={watermarkPreview}
                   position={positionStrategy} positionLabel={positionStrategyLabel} />
-                <span className="lit-settings-disclosure-indicator" aria-hidden="true">
-                  <SlidersHorizontal size={16} />
-                  <ChevronDown size={15} className="lit-settings-chevron" />
-                </span>
+                <ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
               </summary>
               <section className="lit-settings-section lit-settings-section--rows" aria-label="配图设置">
                 <div className="lit-settings-heading">

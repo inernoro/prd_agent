@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { createLucideIcon, Heading1, Heading2, Image, PenLine, Stamp, Wand2 } from 'lucide-react';
+import { createLucideIcon, Heading1, Heading2, Image, MapPin, PenLine, Stamp, Wand2 } from 'lucide-react';
 import { getAvatarUrlByModelName, useAvatarUpdates } from '@/assets/model-avatars';
 import { computeAlphaBounds } from '@/lib/layerTrim';
 import { getWatermarkPreview } from '@/services/real/watermark';
@@ -102,18 +102,15 @@ export function LiterarySettingsSummary({ writingModel, imageModel, watermarkNam
   useAvatarUpdates();
   const watermarkLabel = `水印：${watermarkName}`;
   return (
-    <>
-      <span className="lit-settings-summary-watermark" role="img" aria-label={watermarkLabel} title={watermarkLabel}>
+    <span className="lit-settings-summary-icons">
+      <ModelIcon label="写作模型" name={writingModel} fallback={<PenLine size={16} aria-hidden />} />
+      <ModelIcon label="配图模型" name={imageModel} fallback={<Image size={16} aria-hidden />} />
+      <span className="lit-settings-summary-icon lit-settings-summary-watermark" role="img" aria-label={watermarkLabel} title={watermarkLabel}>
         <LiterarySettingImage src={watermarkPreview} fallback={<Stamp size={15} aria-hidden />} />
       </span>
-      <span className="lit-settings-value">{positionLabel}</span>
-      <span className="lit-settings-summary-icons">
-        <ModelIcon label="写作模型" name={writingModel} fallback={<PenLine size={16} aria-hidden />} />
-        <ModelIcon label="配图模型" name={imageModel} fallback={<Image size={16} aria-hidden />} />
-        <span className="lit-settings-summary-icon lit-settings-summary-optional" aria-hidden="true" title={positionLabel}>
-          <LiteraryPositionIcon position={position} />
-        </span>
+      <span className="lit-settings-summary-icon lit-settings-summary-position" role="img" aria-label={positionLabel} title={positionLabel}>
+        {position === 'user-anchor' ? <MapPin size={16} aria-hidden /> : <LiteraryPositionIcon position={position} />}
       </span>
-    </>
+    </span>
   );
 }
