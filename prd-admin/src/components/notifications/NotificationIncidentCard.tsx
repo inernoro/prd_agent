@@ -26,13 +26,14 @@ export function incidentOwnerLabel(followUp: NotificationIncidentFollowUp | null
   return recovered ? '已恢复' : followUp?.canAssign ? '待接手' : '待本轮观测';
 }
 
-export function NotificationIncidentCard({ item, followUp, busy, assign, confirm, open }: {
+export function NotificationIncidentCard({ item, followUp, busy, assign, confirm, open, nextStep }: {
   item: AdminNotificationItem;
   followUp: NotificationIncidentFollowUp;
   busy: boolean;
   assign: (claim: boolean) => void;
   confirm: () => void;
-  open: (url: string) => void;
+  open?: (url: string) => void;
+  nextStep?: string;
 }) {
   const { evidence, owner } = followUp;
   const recovered = item.incidentState === 'recovered';
@@ -45,12 +46,12 @@ export function NotificationIncidentCard({ item, followUp, busy, assign, confirm
   const currentEvidence = evidence.find(entry => selectedEvidence && entry.observedAt === selectedEvidence.observedAt
     && entry.outcome === selectedEvidence.outcome && entry.requestId === selectedEvidence.requestId) ?? evidence.at(-1);
   const hasLogs = Boolean(item.actionUrl || evidence.some(entry => entry.actionUrl));
-  const next = recovered
+  const next = nextStep ?? (recovered
     ? failedCount > 0 ? '核对失败任务是否需要补做。' : '可查看恢复证据，并核对此前的任务结果。'
     : !hasLogs ? '请联系有网关权限的管理员核对故障。'
     : item.incidentCategory === 'quota' ? '核对供应商账户额度和可用线路。'
     : item.incidentCategory === 'rate-limit' ? '核对限流阈值、恢复窗口和受影响请求。'
-    : '检查异常线路的请求记录，等待同线路成功。';
+    : '检查异常线路的请求记录，等待同线路成功。');
 
   return <div className="space-y-4 text-sm">
     <div className="flex items-start gap-3">
@@ -101,7 +102,7 @@ export function NotificationIncidentCard({ item, followUp, busy, assign, confirm
       {currentEvidence && <div className="space-y-1" aria-live="polite">
         <p className="text-token-secondary">{EVIDENCE[currentEvidence.outcome].description}</p>
         {currentEvidence.requestId && <p className="break-all text-xs text-token-secondary">请求编号 <code className="select-all">{currentEvidence.requestId}</code></p>}
-        {currentEvidence.actionUrl && <button type="button" className={ACTION} disabled={busy} onClick={() => open(currentEvidence.actionUrl!)}>
+        {currentEvidence.actionUrl && open && <button type="button" className={ACTION} disabled={busy} onClick={() => open(currentEvidence.actionUrl!)}>
           查看网关请求 <ArrowUpRight size={14} aria-hidden="true" />
         </button>}
       </div>}

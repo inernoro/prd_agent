@@ -304,6 +304,9 @@ export default function MobileNotificationsPage() {
             {loading ? <MapSpinner size={24} /> : <Bell size={24} aria-hidden="true" />}
             <p>{loading ? '正在读取通知…' : failed ? '暂时无法读取通知，请刷新重试。' : view === 'attention' ? '暂无待关注通知'
               : incidentView ? '暂无已识别的网关故障' : '当前筛选下暂无通知'}</p>
+            {!loading && !failed && incidentView && <a href="/_dev/notification-handoff" className={`${BUTTON} border border-token-subtle text-token-primary`}>
+              打开故障接力演练 <ChevronRight size={15} aria-hidden="true" />
+            </a>}
             {!loading && !failed && (view === 'attention' || incidentView) && <button type="button" className={BUTTON} onClick={() => changeView('all')}>
               查看全部记录 <ChevronRight size={15} aria-hidden="true" />
             </button>}

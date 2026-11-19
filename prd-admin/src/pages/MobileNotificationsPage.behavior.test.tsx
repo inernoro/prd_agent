@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MobileNotificationsPage from './MobileNotificationsPage';
+import NotificationHandoffExercise from './_dev/NotificationHandoffExercise';
 
 const api = vi.hoisted(() => ({ list: vi.fn(), assign: vi.fn(), handle: vi.fn(), all: vi.fn(), batch: vi.fn(), ticket: vi.fn(), navigate: vi.fn(), error: vi.fn(), success: vi.fn() }));
 vi.mock('@/services', () => ({ getAdminNotifications: api.list, assignNotificationIncident: api.assign, handleAdminNotification: api.handle, handleAllAdminNotifications: api.all, handleBatchAdminNotifications: api.batch, createLlmGatewaySsoTicket: api.ticket }));
@@ -31,6 +32,35 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 describe('通知动作与事实真实组件交互', () => {
+  it('故障接力没有真实记录时提供独立演练入口', async () => {
+    api.list.mockResolvedValue({ success: true, data: { items: [] } });
+    await render();
+    await click(/^故障接力$/);
+    expect(host.textContent).toContain('暂无已识别的网关故障');
+    expect(host.querySelector('a[href="/_dev/notification-handoff"]')?.textContent).toContain('打开故障接力演练');
+    expect(host.querySelector('[data-notification-id]')).toBeNull();
+  });
+
+  it('演练起始有证据，接手与确认独立，复发重置本轮状态且不调用业务接口', async () => {
+    await act(async () => root.render(<NotificationHandoffExercise />));
+    expect(host.textContent).toContain('1 笔失败，1 笔备用成功');
+    await click(/^标记接手$/);
+    await click(/^确认通知$/);
+    expect(host.textContent).toContain('我已接手');
+    expect(host.textContent).toContain('异常，等待恢复证据');
+    const progress = host.querySelector('[aria-label="模拟进展"]')!;
+    const buttons = [...progress.querySelectorAll('button')];
+    await act(async () => buttons[2].click());
+    expect(host.textContent).toContain('已验证恢复');
+    expect(host.textContent).toContain('我已接手');
+    await act(async () => buttons[3].click());
+    expect(host.textContent).toContain('待接手');
+    expect(host.textContent).toContain('确认通知');
+    expect(api.list).not.toHaveBeenCalled();
+    expect(api.assign).not.toHaveBeenCalled();
+    expect(api.batch).not.toHaveBeenCalled();
+  });
+
   it('故障接力使用本轮代次，接手后仍显示故障与备用结果，选中证据可回看失败请求', async () => {
     const evidence = [
       { outcome: 'all_failed', observedAt: notice.firstOccurredAt, requestId: 'failed-request' },
