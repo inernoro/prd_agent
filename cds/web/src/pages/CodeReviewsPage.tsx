@@ -135,17 +135,17 @@ export function CodeReviewsPage(): JSX.Element {
       : selectedId ? selected ? <ReviewReportReader key={selected.id} task={selected} projectName={projectName(selected.projectId)} onBack={back} pending={pending} onAction={action => { void act(selected, action); }} />
         : listError ? <div className="cr-stack"><ErrorNotice message={listError} /><ReviewButton onClick={back}>返回审查列表</ReviewButton></div> : <CodeReviewsSkeleton />
       : <>
-        <header className="cr-page-header"><div><h1>代码审查</h1><p className="cr-subtitle">发现均为待验证结果；“已完成”只表示本次范围执行完毕，不代表代码质量通过。</p></div><div className="cr-page-actions">
+        <header className="cr-page-header"><div><h1>代码审查</h1><p className="cr-subtitle">选择项目与分支开始审查，在这里跟进进度、查看问题和阅读报告。</p></div><div className="cr-page-actions">
           <span className="cr-desktop"><ReviewButton tone="ghost" onClick={() => navigateView('mcp')}><Plug />MCP 接入</ReviewButton></span>
-          <span className="cr-desktop"><ReviewButton onClick={() => navigateView('import')}>导入报告</ReviewButton></span>
+          <ReviewButton onClick={() => navigateView('import')}>导入报告</ReviewButton>
           <ReviewButton tone="primary" onClick={() => navigateView('source')}><Plus />发起审查</ReviewButton>
-          <details className="cr-mobile"><summary className="cr-button cr-icon-button" aria-label="更多审查操作"><MoreHorizontal /></summary><div className="cr-overflow-menu"><ReviewButton tone="ghost" onClick={() => navigateView('import')}>导入报告</ReviewButton><ReviewButton tone="ghost" onClick={() => navigateView('mcp')}>MCP 接入</ReviewButton></div></details>
+          <details className="cr-mobile"><summary className="cr-button cr-icon-button" aria-label="更多审查操作"><MoreHorizontal /></summary><div className="cr-overflow-menu"><ReviewButton tone="ghost" onClick={() => navigateView('mcp')}>MCP 接入</ReviewButton></div></details>
         </div></header>
         <div className="cr-filters"><div className="cr-segment" role="group" aria-label="记录来源">{REVIEW_LIST_SOURCES.map(key => <button type="button" key={key} aria-pressed={source === key} onClick={() => updateList({ source: key })}>{sourceLabels[key]}{data ? <span className="cr-muted cr-num">{data.totals[key]}</span> : null}</button>)}</div><span className="cr-filter-divider cr-desktop" aria-hidden="true" />
           <select aria-label="筛选审查项目" className="cr-input cr-filter-project" value={projectId} onChange={e => updateList({ project: e.target.value || undefined })}><option value="">全部项目</option>{projects.map(p => <option key={p.id} value={p.id}>{p.aliasName || p.name}</option>)}</select>
           <select aria-label="筛选任务状态" className="cr-input cr-filter-state" value={status} onChange={e => updateList({ status: e.target.value })}><option value="all">全部状态</option><option value="active">处理中</option><option value="partial">部分覆盖</option><option value="attention">需处理</option><option value="completed">已完成 / 已保存</option><option value="failed">失败</option><option value="cancelled">已取消</option><option value="queued">排队中</option></select>
           <label className="cr-search cr-filter-query"><Search aria-hidden="true" /><span className="sr-only">搜索审查任务</span><input type="search" className="cr-input" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索报告、分支、SHA" maxLength={300} /></label>
-          <ReviewButton tone="ghost" className="cr-end" onClick={() => updateList({ history: history ? undefined : '1' })}>{history ? '仅看最近审查' : '全部执行（含历史）'}</ReviewButton>
+          <ReviewButton tone="ghost" className="cr-end" onClick={() => updateList({ history: history ? undefined : '1' })}>{history ? '返回最近审查' : '查看历史审查'}</ReviewButton>
         </div>
         {listError ? <div className="cr-row-inline"><ErrorNotice message={listError} title="审查记录暂时无法读取" next={data ? "以下保留上次读取结果，可继续阅读或重试读取。" : "请重试读取，或稍后返回。"} /><ReviewButton onClick={requestRefresh}>重试读取</ReviewButton></div> : null}
         {data?.newCount ? <div className="cr-notice cr-row-inline" role="status">有 {data.newCount} 条新记录<ReviewButton tone="ghost" onClick={() => { cutoff.current = { scope: requestScope }; updateList({ page: '1' }); requestRefresh(); }}>显示</ReviewButton></div> : null}
