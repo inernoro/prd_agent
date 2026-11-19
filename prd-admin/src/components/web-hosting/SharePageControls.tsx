@@ -98,15 +98,31 @@ export function ShareMoreMenu({ children, adaptive = false }: { children: ReactN
   const theme = useResolvedThemeMode();
   const anchor = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
+  const focusOnOpen = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    if (!open || !focusOnOpen.current) return;
     const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   }, [open]);
   const close = useCallback(() => setOpen(false), []);
   return <>
     <button ref={anchor} type="button" className="share-topbar-btn share-topbar-icon" title="更多" aria-label="更多"
-      aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((value) => !value)}>
+      aria-expanded={open} aria-haspopup="menu" onClick={event => {
+        focusOnOpen.current = event.detail === 0;
+        setOpen(value => !value);
+      }} onKeyDown={event => {
+        if (event.key === 'Escape' && open) {
+          event.stopPropagation();
+          close();
+        }
+        if (event.key !== 'ArrowDown') return;
+        event.preventDefault();
+        if (open) menu.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus({ preventScroll: true });
+        else {
+          focusOnOpen.current = true;
+          setOpen(true);
+        }
+      }}>
       <MoreHorizontal size={17} />
     </button>
     <AnchoredMenu open={open} onClose={close} anchorRef={anchor}

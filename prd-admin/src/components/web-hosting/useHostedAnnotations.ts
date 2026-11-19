@@ -143,8 +143,9 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
       if (data.type === 'map-annotation-scroll' && dualColumn && documentScroll.current?.predict
         && Number.isSafeInteger(data.ack) && data.ack >= wheelSequence.current
         && Number.isFinite(data.top) && data.top >= 0 && data.top < 1e7) {
-        documentScroll.current.top = Math.min(data.top, documentScroll.current.max);
-        scrollListeners.current.forEach(listener => listener(data.top));
+        const top = Math.min(data.top, documentScroll.current.max);
+        documentScroll.current.top = top;
+        scrollListeners.current.forEach(listener => listener(top));
       }
       if (data.type === 'map-annotation-previews' && Array.isArray(data.items)) {
         const scroll = data.documentScroll;
@@ -222,15 +223,19 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     if (next === scroll.top) return false;
     const step = Math.sign(delta) * Math.min(Math.abs(next - scroll.top), frame.clientHeight);
     if (!step) return false;
+    const geometryTop = lastDocumentScrollTop.current ?? scroll.top;
     scroll.top += step;
     const sequence = scroll.predict ? ++wheelSequence.current : undefined;
     frame.contentWindow.postMessage({ type: 'map-annotation-scroll-document', siteId, nonce, delta: step, sequence }, '*');
     if (sequence) {
       // The rail owns this wheel input and already knows the bounded delta. Let
       // it move with the gesture, then reconcile with the iframe's acknowledgement.
+      const top = scroll.top;
+      const displacement = top - geometryTop;
+      lastDocumentScrollTop.current = top;
       flushSync(() => {
-        setDocumentScrollTop(scroll.top);
-        setPreviews(items => items?.map(item => ({ ...item, rect: { ...item.rect, top: item.rect.top - step } })) ?? null);
+        setDocumentScrollTop(top);
+        setPreviews(items => items?.map(item => ({ ...item, rect: { ...item.rect, top: item.rect.top - displacement } })) ?? null);
       });
     }
     return true;

@@ -11,6 +11,7 @@ import type { HostedReview } from './useHostedReview';
 import { useDiscussionDraft } from './useDiscussionDraft';
 import { useDiscussionPolling } from './useDiscussionPolling';
 import { groupDiscussionThreads } from './discussionPresentation';
+import { saveBlobAsFile } from './sourceDownload';
 import { useSpeechInput } from '@/lib/useSpeechInput';
 import '../../styles/hosted-review-discussion.css';
 
@@ -217,11 +218,12 @@ export default function CommentsSection(props: Props) {
     }
     textareaRef.current?.focus({ preventScroll: true });
   }, [composerKey, draft, draftMode, draftScope, files, pendingPageDraft, recoverableReplies, setDraft, storeRecoveries, versionPending]);
-  const draftScopeRef = useRef({ key: draftScope, draft, draftMode, replyTo, anchor: draftAnchor });
+  const draftScopeRef = useRef({ key: draftScope, draft, files, draftMode, replyTo, anchor: draftAnchor });
   const previousDraftScope = draftScopeRef.current;
   if (previousDraftScope.key !== draftScope || previousDraftScope.draft !== draft
-    || previousDraftScope.draftMode !== draftMode || previousDraftScope.replyTo !== replyTo || previousDraftScope.anchor !== draftAnchor)
-    draftScopeRef.current = { key: draftScope, draft, draftMode, replyTo, anchor: draftAnchor };
+    || previousDraftScope.draftMode !== draftMode || previousDraftScope.replyTo !== replyTo
+    || previousDraftScope.anchor !== draftAnchor || previousDraftScope.files !== files)
+    draftScopeRef.current = { key: draftScope, draft, files, draftMode, replyTo, anchor: draftAnchor };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setReplyTo(null); }, [props.threadKind]);
   useEffect(() => {
@@ -350,7 +352,11 @@ export default function CommentsSection(props: Props) {
     return () => window.removeEventListener('hosted-comments-changed', refresh);
   }, [load]);
   useEffect(() => {
-    if (draftAnchor) { setReplyTo(null); textareaRef.current?.focus({ preventScroll: true }); }
+    if (draftAnchor) {
+      setReplyTo(null);
+      setOpenedRecovery(null);
+      textareaRef.current?.focus({ preventScroll: true });
+    }
   }, [draftAnchor]);
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -463,7 +469,8 @@ export default function CommentsSection(props: Props) {
         notifyChanged();
         setComments(prev => prev.filter(c => c.id !== id && c.parentId !== id));
         markRead(id);
-        if (replyTo === id) setReplyTo(null);
+        const currentDraft = draftScopeRef.current;
+        if (currentDraft.replyTo === id && !currentDraft.draft.trim() && !currentDraft.files.length) setReplyTo(null);
       }
       else setError(res.error?.message || '删除失败');
     } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，删除失败'); }
@@ -576,7 +583,12 @@ export default function CommentsSection(props: Props) {
     if (!loading && versionReady) callbacks.current.onHistoryHint?.(historyHintId && historyHintLabel && historyHintCount
       ? { id: historyHintId, label: historyHintLabel, count: historyHintCount } : null);
   }, [loading, versionReady, historyHintId, historyHintLabel, historyHintCount]);
-  const startPicking = () => { setReplyTo(null); annotations?.select(); props.onPickElement?.(); };
+  const startPicking = () => {
+    setReplyTo(null);
+    setOpenedRecovery(null);
+    annotations?.select();
+    props.onPickElement?.();
+  };
   const replyTarget = roots.find(c => c.id === replyTo);
   const replyDeleted = !!replyTo && !replyTarget && !loading;
   const cancelContext = () => {
@@ -600,12 +612,7 @@ export default function CommentsSection(props: Props) {
     try {
       const source = mode === 'share' ? { token, password, siteId } : { siteId };
       const { blob, fileName } = await downloadCommentFile(source, commentId, file);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      saveBlobAsFile(blob, fileName);
     } catch {
       if (mounted.current && identityRef.current === identity) setNotice({ text: '附件下载失败，请重试。' });
     }
@@ -666,7 +673,7 @@ export default function CommentsSection(props: Props) {
       <div className="review-thread-actions">
         {props.readerLayout && comment.isResolved && <span className="review-talk-resolved"><Check size={13} />已解决</span>}
         {actionable ? <button type="button" className="review-reply-action" disabled={submitting} onClick={() => {
-          choose(comment); annotations?.clearDraft(); setReplyTo(comment.id); textareaRef.current?.focus({ preventScroll: true });
+          choose(comment); annotations?.clearDraft(); setOpenedRecovery(null); setReplyTo(comment.id); textareaRef.current?.focus({ preventScroll: true });
         }}><CornerDownRight size={13} />回复{!props.readerLayout && replies.length ? ` ${replies.length}` : ''}</button> : <span />}
         {!props.splitLayout && anchorAction}
         {comment.canResolve && commentsEnabled && <button type="button" className="review-resolve-action" aria-label={comment.isResolved ? '重新打开' : '标记解决'} title={comment.isResolved ? '重新打开' : '标记解决'} disabled={busyId !== null} onClick={() => void resolve(comment)}>
@@ -794,7 +801,7 @@ export default function CommentsSection(props: Props) {
                 <button type="button" className="review-pick-action" title="添加附件" aria-label="添加附件" disabled={submitting || replyDeleted || files.length >= maxCommentAttachments}
                   onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
               </>}
-              {draftMode === 'page' && pickEntry}
+              {(draftMode === 'page' || recoveredReply) && pickEntry}
             </div>
             <div className="review-composer-tools-end">
               {props.readerLayout && speech.supported && <button type="button" className="review-pick-action" title={speech.listening ? '停止语音输入' : '语音输入'} aria-label={speech.listening ? '停止语音输入' : '语音输入'}

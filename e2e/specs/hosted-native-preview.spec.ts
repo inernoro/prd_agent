@@ -101,7 +101,7 @@ for (const width of [1440, 900, 390]) test(`${width}px 合集两份工具栏只�
 });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string; staleArchiveShape?: boolean;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; extraHistory?: boolean; unarchivedHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; extraHistory?: boolean; unarchivedHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean; noPublicAssetUrl?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   let listRequests = 0;
@@ -140,7 +140,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     const olderVersion = { ...inlineVersion, id: 'earlier-history', versionLabel: 'V0', contentVersionKey: '5000', canPreview: !options.unarchivedHistory };
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
     if (path.endsWith('/shares/view/qa-native')) {
-      data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [site],
+      data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [options.noPublicAssetUrl ? { ...site, siteUrl: '' } : site],
         ask: options.ask ? { enabled: true, siteId: site.id, allowAnonymous: true, openingQuestions: [] } : undefined };
     } else if (path === '/api/authz/me') {
       data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
@@ -407,6 +407,34 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         .toBeGreaterThanOrEqual(viewport.height - 1);
       await page.evaluate(() => document.exitFullscreen());
       await expect(page.locator('.share-topbar')).toBeVisible();
+    });
+
+    test('分享文档没有直链时，更多菜单仍能在新窗口打开同一文档', async ({ page }) => {
+      await serve(page, { noPublicAssetUrl: true });
+      await page.getByRole('button', { name: '更多', exact: true }).click();
+      const item = page.getByRole('menuitem', { name: '新窗口打开', exact: true });
+      await expect(item).toBeEnabled();
+      const popup = page.waitForEvent('popup');
+      await item.click();
+      const opened = await popup;
+      await opened.waitForURL('**/s/wp/qa-native?siteId=qa-native');
+      await opened.close();
+    });
+
+    test('站内预览首次展开更多时保留焦点，键盘可访问菜单后只关闭菜单', async ({ page }) => {
+      await serve(page, { shape: 'multi-file', modal: true, inlineHistory: true });
+      const dialog = page.getByRole('dialog');
+      const more = dialog.getByRole('button', { name: '更多', exact: true });
+      const menu = dialog.getByRole('menu', { name: '更多网页操作', exact: true });
+      await more.click();
+      await expect(menu).toBeVisible();
+      await expect(more).toBeFocused();
+      await page.keyboard.press('ArrowDown');
+      await expect(menu.locator('button:not(:disabled)').first()).toBeFocused();
+      await page.keyboard.press('Escape');
+      await expect(menu).toBeHidden();
+      await expect(more).toBeFocused();
+      await expect(dialog).toBeVisible();
     });
 
     test('站内弹窗越过等待窗口后不重载，保留输入和地址状态', async ({ page }, testInfo) => {

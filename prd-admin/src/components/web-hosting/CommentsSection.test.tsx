@@ -151,6 +151,9 @@ describe('review discussion', () => {
     await mount(layout);
     await act(async () => button('打开回复草稿').click());
     expect(container.querySelector('textarea')?.value).toBe(replyDraft);
+    await act(async () => button('绑定页面元素 / 选中文字').click());
+    expect(container.querySelector('textarea')?.value).toBe(pageDraft);
+    await act(async () => button('打开回复草稿').click());
     await act(async () => button('返回原整页草稿').click());
     expect(container.querySelector('textarea')?.value).toBe(pageDraft);
     await act(async () => button('打开回复草稿').click());
@@ -165,6 +168,20 @@ describe('review discussion', () => {
     await act(async () => button('重试').click());
     expect(add.mock.calls.at(-1)).toEqual(standalone);
     expect(container.querySelector('textarea')?.value).toBe(pageDraft);
+  });
+
+  it('自己删除原讨论时可把未发回复转为整页评论', async () => {
+    const deletable = { ...original, canDelete: true };
+    list.mockResolvedValue(response([deletable]));
+    removeComment.mockResolvedValue({ success: true });
+    await mount({ readerLayout: true });
+    await act(async () => button('回复').click());
+    await enterDraft('尚未发表的回复');
+    await act(async () => button('删除评论').click());
+    await act(async () => button('确认删除讨论及回复').click());
+    expect(container.querySelector('.review-composer [role="alert"]')?.textContent).toContain('原讨论已删除');
+    await act(async () => button('改为整页评论').click());
+    expect(container.querySelector('textarea')?.value).toBe('尚未发表的回复');
   });
 });
 

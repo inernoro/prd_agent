@@ -119,10 +119,8 @@ export function AnchoredMenu({
       const above = a.top - gap - mh;
       top = above >= 8 ? above : Math.max(8, window.innerHeight - mh - 8);
     }
-    // 挂在 body 下时 fixed 就是视口坐标；挂进弹窗时按实际参照系换算
-    // A normal fixed menu already uses viewport coordinates, even in a portal inside a dialog.
-    // Only a real containing block needs translation. Skip the initial offscreen measurement.
-    if (menu?.offsetParent && menu.style.visibility !== 'hidden') {
+    // 弹窗的滤镜等样式会改变 fixed 的参照系。用实际偏移换算，跳过首次离屏测量。
+    if (menu && menu.style.visibility !== 'hidden') {
       const r = menu.getBoundingClientRect();
       const { dx, dy } = containingBlockOffset(menu.style, r);
       top -= dy;

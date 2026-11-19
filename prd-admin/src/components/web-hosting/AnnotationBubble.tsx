@@ -133,6 +133,9 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const alignedCards = new Map(railLayout?.cards.map(card => [card.id, card]));
   const above = railLayout?.overflow.above ?? 0, below = railLayout?.overflow.below ?? 0;
   const shift = clampRail(railOffset, -above, below);
+  useLayoutEffect(() => {
+    if (railOffset !== shift) setRailOffset(shift);
+  }, [railOffset, shift]);
   const canScrollRail = above > 0 || below > 0 || rail.contentHeight > geometry.height;
 
   // Legacy embeds use the native scroller. The V4 rail can overflow both edges

@@ -7,20 +7,23 @@ import { ReviewVersionPreviewHost } from './ReviewVersionBar';
 import type { HostedReview } from './useHostedReview';
 import { __resetSitePreviewHtmlCache } from './useSitePreviewHtml';
 import type { HostedReviewSource } from '@/services/real/webPages';
-const { useReview, getSiteContent, getShareSiteContent } = vi.hoisted(() => ({
+const { useReview, getSiteContent, getShareSiteContent, listShareComments, downloadCommentFile, saveBlobAsFile } = vi.hoisted(() => ({
   useReview: vi.fn(), getSiteContent: vi.fn(), getShareSiteContent: vi.fn(),
+  listShareComments: vi.fn(), downloadCommentFile: vi.fn(), saveBlobAsFile: vi.fn(),
 }));
 vi.mock('./useHostedReview', () => ({ useHostedReview: useReview }));
+vi.mock('./sourceDownload', () => ({ saveBlobAsFile }));
 vi.mock('@/services/real/webPages', () => ({
   getSiteContent, getShareSiteContent, buildApiUrl: (path: string) => path,
   listSiteComments: async () => ({ success: true, data: { comments: [] } }),
-  listShareComments: async () => ({ success: true, data: { comments: [] } }),
+  listShareComments, downloadCommentFile,
 }));
 vi.mock('./CommentsSection', () => ({ default: () => <p data-test-comments>当前绑定的批注</p> }));
 vi.mock('./AnnotationBubble', () => ({ AnnotationBubble: () => null }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null }));
 vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, titleAction, content, actions }: { title: string; titleAction: React.ReactNode; content: React.ReactNode; actions: React.ReactNode }) => <section aria-label={title}>{titleAction}{content}{actions}</section> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+listShareComments.mockResolvedValue({ success: true, data: { comments: [] } });
 let cleanup = async () => {};
 afterEach(async () => { await cleanup(); __resetSitePreviewHtmlCache(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 async function setup(canRestore = true, failed = false, missingMetadata = false, commentId?: string, parentErrors?: { error: string; restoreError: string | null }) {
@@ -82,7 +85,7 @@ it('恢复操作自己的错误仍可见，不被父页面其他错误替换', a
   expect(container.querySelector('[role="alert"]')?.textContent).toBe('版本已更新，请核对后重试恢复');
 });
 
-async function setupCurrentVersion(contentShape: 'self-contained-html' | 'multi-file', source: HostedReviewSource) {
+async function setupReaderVersion(contentShape: 'self-contained-html' | 'multi-file', source: HostedReviewSource, historical = false) {
   vi.stubGlobal('ResizeObserver', class {
     observe() {}
     disconnect() {}
@@ -93,10 +96,13 @@ async function setupCurrentVersion(contentShape: 'self-contained-html' | 'multi-
   document.body.append(container, main);
   const root = createRoot(container);
   cleanup = async () => { await act(async () => root.unmount()); container.remove(); main.remove(); };
-  const version = { id: 'v3', versionLabel: 'V3', isCurrent: true, contentVersionKey: '3', canPreview: true };
+  const version = historical
+    ? { id: 'v2', versionLabel: 'V2', isCurrent: false, contentVersionKey: '2', canPreview: true }
+    : { id: 'v3', versionLabel: 'V3', isCurrent: true, contentVersionKey: '3', canPreview: true };
   const site = { id: 'site', title: '当前 V3', siteUrl: 'https://storage.example/site/index.html?v=3', entryFile: 'index.html', contentShape };
   useReview.mockReturnValue({
-    versions: [version], selected: version, selectVersion: vi.fn(), loading: false, preview: null,
+    versions: [version], selected: version, selectVersion: vi.fn(), loading: false,
+    preview: historical ? { html: '<h1>旧版正文</h1>' } : null, previewBaseUrl: site.siteUrl,
     site, liveSite: site, error: null, annotations: { setThreads: vi.fn(), setDisplayMode: vi.fn(), notifyFrame: vi.fn() },
   });
   await act(async () => root.render(<ReviewVersionPreview site={site} source={source} versionId={version.id} canRestore
@@ -112,7 +118,7 @@ it.each(['site', 'share'] as const)('当前行复用 %s 正文加载策略，等
   const request = mode === 'site' ? getSiteContent : getShareSiteContent;
   request.mockReturnValue(content);
   const source: HostedReviewSource = mode === 'site' ? { mode, siteId: 'site' } : { mode, siteId: 'site', token: 'share', password: 'secret' };
-  const { main, preview } = await setupCurrentVersion('self-contained-html', source);
+  const { main, preview } = await setupReaderVersion('self-contained-html', source);
   expect(preview()).toBeNull();
   expect(request).toHaveBeenCalledWith(...(mode === 'site' ? ['site'] : ['share', 'site', 'secret']));
   await act(async () => { complete({ success: true, data: { html: '<h1>当前 V3 的正文</h1>' } }); });
@@ -124,7 +130,7 @@ it.each(['site', 'share'] as const)('当前行复用 %s 正文加载策略，等
 });
 
 it('当前多文件页面沿用真实地址与资源同源，不加载独立的入口 HTML', async () => {
-  const { site, preview } = await setupCurrentVersion('multi-file', { mode: 'site', siteId: 'site' });
+  const { site, preview } = await setupReaderVersion('multi-file', { mode: 'site', siteId: 'site' });
   expect(preview()?.src).toBe(site.siteUrl);
   expect(preview()?.hasAttribute('srcdoc')).toBe(false);
   expect(preview()?.getAttribute('sandbox')).toContain('allow-same-origin');
@@ -134,11 +140,36 @@ it('当前多文件页面沿用真实地址与资源同源，不加载独立的�
 it('当前独立正文取回失败时保持窗口、允许原地重试', async () => {
   getSiteContent.mockResolvedValueOnce({ success: false, error: { message: '源暂不可读' } })
     .mockResolvedValueOnce({ success: true, data: { html: '<h1>重新取得的正文</h1>' } });
-  const { preview } = await setupCurrentVersion('self-contained-html', { mode: 'site', siteId: 'site' });
+  const { preview } = await setupReaderVersion('self-contained-html', { mode: 'site', siteId: 'site' });
   expect(preview()).toBeNull();
   expect(document.querySelector('.review-history-window [role="alert"]')?.textContent).toContain('V3 载入失败');
   const retry = [...document.querySelectorAll<HTMLButtonElement>('.review-history-window button')].find(button => button.textContent === '重试');
   await act(async () => retry?.click());
   expect(getSiteContent).toHaveBeenCalledTimes(2);
   expect(preview()?.srcdoc).toContain('重新取得的正文');
+});
+
+it('历史小窗显示附件评论和回复，并按分享凭据下载对应文件', async () => {
+  const source = { mode: 'share', token: 'share', password: 'secret', siteId: 'site' } as const;
+  const attachment = { index: 0, name: '旧版附件.txt', length: 4 };
+  const replyFile = { ...attachment, name: '旧版回复.txt' };
+  const original = { id: 'note', authorName: '旧版作者', content: '', contentVersion: '2', attachments: [attachment] };
+  listShareComments.mockResolvedValueOnce({ success: true, data: { comments: [
+    original, { ...original, id: 'reply', parentId: 'note', attachments: [replyFile] },
+  ] } });
+  const blob = new Blob(['test']);
+  downloadCommentFile.mockResolvedValueOnce({ blob, fileName: attachment.name }).mockRejectedValueOnce(new Error('暂时不可用'));
+  await setupReaderVersion('self-contained-html', source, true);
+  const click = async (text: string) => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>('.review-history-window button')].find(entry => entry.textContent === text);
+    expect(button).toBeDefined();
+    await act(async () => button?.click());
+  };
+  await click(attachment.name);
+  expect(downloadCommentFile).toHaveBeenCalledWith(source, 'note', attachment);
+  expect(saveBlobAsFile).toHaveBeenCalledWith(blob, attachment.name);
+  await click('1 条回复');
+  await click(replyFile.name);
+  expect(downloadCommentFile).toHaveBeenLastCalledWith(source, 'reply', replyFile);
+  expect(document.querySelector('.review-history-window [role="alert"]')?.textContent).toContain('附件下载失败');
 });

@@ -544,14 +544,14 @@
     if (!frame) frame = requestAnimationFrame(paint);
   }
   function followDocumentScroll() {
+    if (context.enabled) hoverDirty = true;
     if (pendingViewportPositioned || viewportAnchors) { schedule(); return; }
     if (context.dualColumn && !geometryDirty && !context.enabled) {
       // Let the host move its existing rail before rebuilding the visible
       // geometry. This is only valid for anchors that scroll with the document.
       post('map-annotation-scroll', { top: Math.max(0, scrollY), ack: wheelAck });
       schedule(false);
-    } else if (context.displayMode === 'bubble' || context.dualColumn) schedule(false);
-    if (context.enabled) { hoverDirty = true; schedule(false); }
+    } else if (context.enabled || context.displayMode === 'bubble' || context.dualColumn) schedule(false);
   }
   function invalidate() { structureDirty = true; schedule(); }
   window.addEventListener('message', function (event) {

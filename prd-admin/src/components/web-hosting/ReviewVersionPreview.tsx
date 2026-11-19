@@ -1,9 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject, type ReactNode } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { CircleAlert, History, RotateCcw, MessageSquare, Upload, X } from 'lucide-react';
+import { CircleAlert, History, RotateCcw, MessageSquare, Paperclip, Upload, X } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { listShareComments, listSiteComments, type HostedReviewSource, type HostedReviewVersion, type HostedSiteCommentDto } from '@/services/real/webPages';
+import { downloadCommentFile, listShareComments, listSiteComments, type HostedReviewSource, type HostedReviewVersion, type HostedSiteCommentDto, type HostedSiteCommentFile } from '@/services/real/webPages';
 import { useHostedReview, type HostedReview } from './useHostedReview';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
 import { canUseSrcDocPreview, directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, withPreviewBase } from './previewHtml';
@@ -11,6 +11,7 @@ import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationBubble } from './AnnotationBubble';
 import { annotationPreviewText } from './annotationPreviewText';
 import CommentsSection from './CommentsSection';
+import { saveBlobAsFile } from './sourceDownload';
 import '@/styles/hosted-review-history.css';
 
 type Point = { x: number; y: number };
@@ -177,6 +178,7 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
   const [commentAttempt, setCommentAttempt] = useState(0);
   const [expandedOpinion, setExpandedOpinion] = useState<string | null>(null);
   const [expandedReplies, setExpandedReplies] = useState<string | null>(null);
+  const [failedDownload, setFailedDownload] = useState<string | null>(null);
   const [showSkeleton, setShowSkeleton] = useState(false);
   const review = useHostedReview(frame, site, source, () => {}, undefined, { dualColumn: true });
   const { selected, selectVersion, versions, loading } = review;
@@ -217,6 +219,25 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
   const sharedToken = source.mode === 'share' ? source.token : undefined;
   const sharedPassword = source.mode === 'share' ? source.password : undefined;
   const sourceSite = source.siteId;
+  const getAttachment = async (commentId: string, file: HostedSiteCommentFile) => {
+    setFailedDownload(null);
+    try {
+      const { blob, fileName } = await downloadCommentFile(source, commentId, file);
+      saveBlobAsFile(blob, fileName);
+    } catch {
+      setFailedDownload(commentId);
+    }
+  };
+  const renderAttachments = (comment: HostedSiteCommentDto) => comment.attachments?.length ? <>
+    <ul className="review-comment-files" aria-label="评论附件">
+      {comment.attachments.map(file => <li key={file.index}>
+        <button type="button" title={file.name} onClick={() => void getAttachment(comment.id, file)}>
+          <Paperclip size={13} /><span>{file.name}</span>
+        </button>
+      </li>)}
+    </ul>
+    {failedDownload === comment.id && <p role="alert" className="review-history-window-restore-error">附件下载失败，请重试。</p>}
+  </> : null;
   useEffect(() => {
     let active = true;
     setCommentState({ rows: [], status: 'loading' });
@@ -353,10 +374,11 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
                     {expanded ? row.content : annotationPreviewText(row.content, historyOpinionPreviewLength)}</span>
                     {row.content.length > historyOpinionPreviewLength && <button type="button" className="review-history-window-expand"
                       aria-expanded={expanded} onClick={() => setExpandedOpinion(expanded ? null : row.id)}>{expanded ? '收起' : '展开全文'}</button>}
+                    {renderAttachments(row)}
                     {responses && <button type="button" className="review-history-window-expand" aria-expanded={showReplies}
                       onClick={() => setExpandedReplies(showReplies ? null : row.id)}>{responses.length} 条回复</button>}
                     {showReplies && responses && <ul className="review-history-window-replies">
-                      {responses.map(reply => <li key={reply.id}><strong>{reply.authorName}</strong> {reply.content}</li>)}
+                      {responses.map(reply => <li key={reply.id}><strong>{reply.authorName}</strong> {reply.content}{renderAttachments(reply)}</li>)}
                     </ul>}
                   </div>
                 </div>;

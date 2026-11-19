@@ -874,6 +874,9 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   if (data.sites.length === 1) {
     const liveSite = data.sites[0];
     const site = { ...liveSite, ...review.site };
+    const externalViewUrl = !review.historical && token
+      ? `/s/wp/${encodeURIComponent(token)}?${new URLSearchParams({ siteId: site.id })}`
+      : site.pdfAssetUrl || site.siteUrl || undefined;
     // 打包型 SPA（入口是外链 module 脚本）必须留在直链 iframe：srcDoc 的不透明源会让
     // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
     const fetchedHtml = review.historical ? (review.preview && site.contentShape === 'self-contained-html' && shouldFetchPreviewHtml(site) ? withPreviewBase(review.preview.html, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
@@ -1011,7 +1014,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                 <button
                   role="menuitem"
                   data-menu-keep-open
-                  className="share-topbar-btn share-topbar-icon"
+                  className="share-topbar-btn"
                   onClick={handleDownloadSource}
                   disabled={downloading || review.historical}
                   title={review.historical ? '正在查看历史版本，请在新窗口中打开该版源文件' : downloadHint}
@@ -1053,21 +1056,16 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                     {saving ? '保存中…' : saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
                   </button>
                 )}
-                <a
+                {externalViewUrl && <a
                   role="menuitem"
                   className="share-topbar-btn"
-                  href={review.historical ? site.pdfAssetUrl || site.siteUrl || undefined : `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: site.id })}`}
-                  aria-disabled={!site.pdfAssetUrl && !site.siteUrl}
-                  tabIndex={!site.pdfAssetUrl && !site.siteUrl ? -1 : undefined}
-                  onClick={event => { if (!site.pdfAssetUrl && !site.siteUrl) event.preventDefault(); }}
+                  href={externalViewUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title={site.pdfAssetUrl || site.siteUrl ? '新窗口打开' : '该历史快照仅支持页内预览'}
-                  aria-label="新窗口打开"
                 >
                   <ExternalLink size={isMobile ? 15 : 13} />
                   新窗口打开
-                </a>
+                </a>}
               </SharePageActions>
               {currentUser && <span className="review-reader-portrait" title={currentUser.displayName}>
                 {currentUser.avatarFileName ? <img src={getUserAvatarUrl(currentUser)} alt="" /> : Array.from(currentUser.displayName || currentUser.username).at(0)}

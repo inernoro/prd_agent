@@ -50,11 +50,15 @@ describe('hosted annotation bridge', () => {
       expect(annotations.previews?.[0].rect.top).toBe(64);
     });
     await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', { source: frame, data: {
+        ...config, type: 'map-annotation-scroll', top: 19, ack: 0,
+      } }));
       expect(annotations.scrollDocument?.(12)).toBe(true);
       expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'map-annotation-scroll-document', delta: 12, sequence: 1 });
-      expect(annotations.previews?.[0].rect.top).toBe(52);
+      expect(annotations.documentScrollTop).toBe(31);
+      expect(annotations.previews?.[0].rect.top).toBe(49);
       post(16);
-      expect(annotations.previews?.[0].rect.top).toBe(52);
+      expect(annotations.previews?.[0].rect.top).toBe(49);
       post(27, 1);
       expect(annotations.previews?.[0].rect.top).toBe(53);
     });
