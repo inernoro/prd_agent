@@ -2087,6 +2087,7 @@ export type ReleaseRunStatus =
   | 'rollback_failed';
 
 export interface ReleaseRun {
+  forceReason?: string;
   governance?: import('./domain/release-governance.js').ReleaseGovernanceReceipt;
   batchId?: string;
   batchAttemptId?: string;

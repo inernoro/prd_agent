@@ -459,9 +459,7 @@ persist_release_image_pins() {
     return
   fi
 
-  tmp_file="${dotenv_file}.tmp.$$"
   DOTENV_FILE="$dotenv_file" \
-  TMP_FILE="$tmp_file" \
   PRD_AGENT_API_IMAGE_VALUE="$PRD_AGENT_API_IMAGE" \
   PRD_AGENT_LLMGW_IMAGE_VALUE="$PRD_AGENT_LLMGW_IMAGE" \
   PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE="$PRD_AGENT_LLMGW_SERVE_IMAGE" \
@@ -470,10 +468,10 @@ persist_release_image_pins() {
   python3 - <<'PY'
 import os
 import re
+import tempfile
 from pathlib import Path
 
 env_path = Path(os.environ["DOTENV_FILE"])
-tmp_path = Path(os.environ["TMP_FILE"])
 updates = {
     "PRD_AGENT_API_IMAGE": os.environ["PRD_AGENT_API_IMAGE_VALUE"],
     "PRD_AGENT_LLMGW_IMAGE": os.environ["PRD_AGENT_LLMGW_IMAGE_VALUE"],
@@ -502,9 +500,18 @@ for key, value in updates.items():
     if not seen[key]:
         out.append(f"{key}={value}")
 
-tmp_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+tmp_path = None
+try:
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=env_path.parent, prefix=f".{env_path.name}.pins-", delete=False
+    ) as output:
+        tmp_path = Path(output.name)
+        output.write("\n".join(out) + "\n")
+    os.replace(tmp_path, env_path)
+finally:
+    if tmp_path is not None:
+        tmp_path.unlink(missing_ok=True)
 PY
-  mv "$tmp_file" "$dotenv_file"
   echo "Release image pins: persisted to $dotenv_file"
 }
 
@@ -673,18 +680,12 @@ if [ ! -x scripts/llmgw-prod-topology-preflight.sh ]; then
 fi
 scripts/llmgw-prod-topology-preflight.sh
 
-if [ "$static_only_mode" = "1" ]; then
-  echo "Release image pins: preserved for static-only release"
-else
-  persist_release_image_pins
-fi
-
 # api 与 design-opendesign 之间的内部密钥：没人需要知道它的值。shell 或 .env 里已有就原样使用；
 # 都没有时生成一把写进 .env（只追加这一行，不打印值），之后每次发布沿用同一把。
 ensure_design_runtime_api_key() {
   key_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
   if [ -n "${DESIGN_RUNTIME_API_KEY:-}" ] || [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
-    # persist_release_image_pins 每次发布都按进程 umask 重写 .env；密钥在里面就每次都收回只读属主。
+    # 继续收紧历史环境文件权限。后续镜像锁定写入也始终使用私有临时文件。
     if [ -f "$key_dotenv_file" ] && [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
       chmod 600 "$key_dotenv_file"
     fi
@@ -706,16 +707,10 @@ ensure_design_runtime_api_key() {
   fi
   printf '\nDESIGN_RUNTIME_API_KEY=%s\n' "$generated_key" >> "$key_dotenv_file"
   generated_key=""
-  # .env 可能刚由 persist_release_image_pins 按进程 umask（常见 0644）建出；装了密钥就只许属主读写。
+  # 带密钥的环境文件只允许属主读写。
   chmod 600 "$key_dotenv_file"
   echo "Design runtime key: generated and saved to $key_dotenv_file (value not printed)"
 }
-if [ "$static_only_mode" = "1" ]; then
-  echo "Design runtime key: preserved for static-only release"
-else
-  ensure_design_runtime_api_key
-fi
-
 if [ ! -f scripts/lib/static-release.sh ]; then
   echo "ERROR: missing scripts/lib/static-release.sh" >&2
   exit 1
@@ -740,6 +735,14 @@ export PRD_AGENT_ARTIFACT_AUDIT_PATH="$release_evidence_dir/${release_evidence_i
 export PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID="$release_evidence_id"
 public_smoke_json="$tmp_dir/public-surface.json"
 rollback_smoke_json="$tmp_dir/public-surface-rollback.json"
+gateway_readiness_baseline="$tmp_dir/gateway-readiness-before.json"
+runtime_rollback_dir="$tmp_dir/runtime-rollback"
+asset_readiness_baseline="$tmp_dir/asset-storage-readiness-before.json"
+force_external=0
+if [ "${CDS_RELEASE_FORCE_EXTERNAL:-0}" = "1" ]; then
+  force_external=1
+  echo "WARN: 强制发布已启用，外部业务依赖故障会记为警告。"
+fi
 asset_storage_readiness_json="$tmp_dir/asset-storage-readiness.json"
 static_staging_dir=""
 static_release_id=""
@@ -895,6 +898,9 @@ write_release_evidence() {
     --static-before-current "$static_before_current" \
     --static-before-previous "$static_before_previous" \
     --smoke-json "$public_smoke_json" \
+    --rollback-smoke-json "$rollback_smoke_json" \
+    --gateway-readiness-baseline "$gateway_readiness_baseline" \
+    --force-external "$force_external" \
     --asset-storage-readiness-json "$asset_storage_readiness_json" \
     --gateway-bind-state "$GATEWAY_BIND_STATE" \
     --gateway-bind-reason "$GATEWAY_BIND_REASON" \
@@ -980,6 +986,41 @@ run_asset_storage_readiness() {
     printf '{"status":"unhealthy","errorCode":"probe_request_failed","attempts":%s}\n' \
       "$readiness_attempts" > "$asset_storage_readiness_json"
   fi
+  if python3 - "${asset_readiness_baseline:-}" "$asset_storage_readiness_json" "${force_external:-0}" <<'PY'
+import json
+import sys
+
+def asset_failure(path):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            report = json.load(stream)
+        code = str(report.get("errorCode") or "").lower()
+        if "components" in report:
+            checks = {item["name"]: item["ready"] for item in report["components"]}
+            core_ready = checks.get("mongodb") is True and checks.get("redis") is True
+            failed = {name for name, ready in checks.items() if ready is not True}
+            return code if core_ready and failed == {"asset-storage"} and code == "asset_storage_unavailable" else ""
+        # The older storage-only endpoint reports the explicit failing operation.
+        return code if report.get("provider") and code in {
+            "provider_mismatch", "write_failed", "internal_read_failed", "public_read_failed",
+            "cleanup_failed", "probe_failed",
+        } else ""
+    except (OSError, ValueError, AttributeError, TypeError, KeyError):
+        return ""
+
+before, after = (asset_failure(path) for path in sys.argv[1:3])
+if not after:
+    raise SystemExit(1)
+if before == after:
+    print(f"WARN: 对象存储已有故障 {after}，故障在本次发布前已存在。")
+elif sys.argv[3] == "1":
+    print(f"WARN: 强制发布放行对象存储就绪检查（{after}）。")
+else:
+    raise SystemExit(1)
+PY
+  then
+    return 0
+  fi
   echo "ERROR: asset storage readiness failed after ${readiness_attempts} attempts: $readiness_url" >&2
   echo "RECOVERY: keep the gateway online, restore Tencent COS/CDN access or the API container, then retry the release gate." >&2
   return 1
@@ -996,8 +1037,110 @@ reload_active_gateway() {
     echo "ERROR: active gateway container is not running" >&2
     return 1
   fi
-  docker exec "$current_gateway_id" nginx -t
+  docker exec "$current_gateway_id" nginx -t || return 1
   docker exec "$current_gateway_id" nginx -s reload
+}
+
+capture_production_runtime() {
+  mkdir "$runtime_rollback_dir"
+  if [ -f "$compose_dotenv_file" ]; then
+    cp -p "$compose_dotenv_file" "$runtime_rollback_dir/dotenv"
+    chmod 600 "$runtime_rollback_dir/dotenv"
+  fi
+  for config in branches/_standalone.conf default.conf; do
+    if [ -e "$active_nginx_conf_root/$config" ] || [ -L "$active_nginx_conf_root/$config" ]; then
+      mkdir -p "$runtime_rollback_dir/nginx/$(dirname "$config")"
+      cp -a "$active_nginx_conf_root/$config" "$runtime_rollback_dir/nginx/$config"
+    fi
+  done
+  rollback_static_identity="$(read_static_entry_commit "$active_static_root/current" 2>/dev/null ||
+    read_static_entry_commit "$active_static_root" 2>/dev/null || true)"
+  rollback_api_id="$(compose_run ps -q "$api_service" | head -n 1)"
+  rollback_runtime_identity=""
+  if [ -n "$rollback_api_id" ]; then
+    rollback_runtime_identity="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$rollback_api_id")"
+  fi
+  python3 scripts/lib/production-runtime-rollback.py capture "$compose_project_name" "$gateway_service" "$runtime_rollback_dir" \
+    --compose "$COMPOSE" --env-file "$compose_dotenv_file"
+}
+
+select_release_features() {
+  if [ -z "$rollback_runtime_identity" ]; then
+    return 0
+  fi
+  case "$TAG" in sha-*) ;; *) return 0 ;; esac
+  if ! changed_files="$(git diff --name-only "$rollback_runtime_identity" "${TAG#sha-}" -- 2>/dev/null)"; then
+    return 0
+  fi
+  if ! printf '%s\n' "$changed_files" | grep -Eq '^(design-runtime/|docker-compose[^/]*\.yml$)|/(DesignAgent|DesignRuntime)'; then
+    design_in_scope=0
+  fi
+  if [ -z "${LLMGW_RELEASE_FEATURES:-}" ] &&
+     printf '%s\n' "$changed_files" | grep -Eq '/(ImageGenController|GatewayCapabilityContract|GatewayServingReadinessProbe|ModelResolver)\.cs$|/Services/(ImageGen|ImageGeneration)/'; then
+    export LLMGW_RELEASE_FEATURES="defect-agent,image-generation"
+  fi
+}
+
+verify_runtime_images() {
+  while read -r service expected_image; do
+    container="$(compose_run ps -a -q "$service" | head -n 1)"
+    expected_id="$(docker image inspect --format '{{.Id}}' "$expected_image")" || return 1
+    actual_id=""
+    if [ -n "$container" ]; then
+      actual_id="$(docker inspect --format '{{.Image}}' "$container")" || return 1
+    fi
+    if [ "$actual_id" != "$expected_id" ]; then
+      echo "ERROR: 服务 $service 未运行本次发布指定的镜像" >&2
+      return 1
+    fi
+  done <<IMAGES
+api $PRD_AGENT_API_IMAGE
+llmgw $PRD_AGENT_LLMGW_IMAGE
+llmgw-serve $PRD_AGENT_LLMGW_SERVE_IMAGE
+llmgw-serve-b $PRD_AGENT_LLMGW_SERVE_IMAGE
+llmgw-web $PRD_AGENT_LLMGW_WEB_IMAGE
+design-opendesign $PRD_AGENT_DESIGN_OPENDESIGN_IMAGE
+IMAGES
+}
+
+restore_production_runtime() {
+  restore_ok=1
+  if [ -f "$runtime_rollback_dir/dotenv" ]; then
+    if cp -p "$runtime_rollback_dir/dotenv" "${compose_dotenv_file}.rollback.$$"; then
+      mv -f "${compose_dotenv_file}.rollback.$$" "$compose_dotenv_file" || restore_ok=0
+    else
+      restore_ok=0
+    fi
+  else
+    rm -f "$compose_dotenv_file" || restore_ok=0
+  fi
+  if [ "$STATIC_RELEASE_SWITCH_PERFORMED" = "1" ]; then
+    static_release_rollback "$active_static_root" "$static_rollback_target" || restore_ok=0
+    if [ -n "$static_before_previous" ]; then
+      static_release_atomic_link "$active_static_root/previous" "$static_before_previous" || restore_ok=0
+    else
+      rm -f "$active_static_root/previous" || restore_ok=0
+    fi
+  fi
+  for config in branches/_standalone.conf default.conf; do
+    backup="$runtime_rollback_dir/nginx/$config"
+    active="$active_nginx_conf_root/$config"
+    if [ -e "$backup" ] || [ -L "$backup" ]; then
+      if cp -a "$backup" "${active}.rollback.$$"; then
+        mv -f "${active}.rollback.$$" "$active" || restore_ok=0
+      else
+        restore_ok=0
+      fi
+    else
+      rm -f "$active" || restore_ok=0
+    fi
+  done
+  python3 scripts/lib/production-runtime-rollback.py restore "$compose_project_name" "$gateway_service" "$runtime_rollback_dir" \
+    --compose "$COMPOSE" || restore_ok=0
+  if [ -n "$gateway_container_id" ] && [ -n "$(compose_run ps -q "$gateway_service")" ]; then
+    reload_active_gateway || restore_ok=0
+  fi
+  [ "$restore_ok" = "1" ]
 }
 
 write_static_only_rollback_evidence() {
@@ -1037,7 +1180,25 @@ release_exit() {
   exit_status=$?
   trap - EXIT
   if [ "$exit_status" -ne 0 ] && [ "$release_completed" != "1" ]; then
-    if [ "$STATIC_RELEASE_SWITCH_PERFORMED" = "1" ]; then
+    if [ "$compose_started" = "1" ]; then
+      echo "Release failed at stage '$release_failure_stage'; restoring pre-release runtime, gateway and static web..." >&2
+      echo "CDS_RELEASE_ROLLBACK=started" >&2
+      if restore_production_runtime; then
+        release_rollback_result="full-restored"
+        if [ -n "$rollback_static_identity" ] && [ -n "$rollback_runtime_identity" ] &&
+           run_public_surface_smoke "$rollback_smoke_json" 6 "$rollback_static_identity" "$rollback_runtime_identity"; then
+          release_rollback_result="full-restored-and-public-verified"
+          echo "生产回滚已验证：运行服务、网关配置和网页均已恢复到本次发布前的版本"
+          echo "CDS_RELEASE_ROLLBACK=verified"
+        else
+          release_rollback_result="full-restored-public-verification-failed"
+          echo "ERROR: 已恢复发布前运行版本，公网复验未通过" >&2
+        fi
+      else
+        release_rollback_result="full-rollback-failed"
+        echo "ERROR: 整套回滚未完成，请根据回滚日志恢复现场" >&2
+      fi
+    elif [ "$STATIC_RELEASE_SWITCH_PERFORMED" = "1" ]; then
       echo "Release failed at stage '$release_failure_stage'; restoring previous static release..." >&2
       if static_release_rollback "$active_static_root" "$static_rollback_target"; then
         release_rollback_result="static-restored"
@@ -1080,6 +1241,16 @@ release_exit() {
   fi
   if [ -n "$static_staging_dir" ] && [ -d "$static_staging_dir" ]; then
     rm -rf "$static_staging_dir"
+  fi
+  if [ "$release_rollback_result" = "full-rollback-failed" ]; then
+    recovery_root="${HOME:-.}/.prd-agent-release-recovery"
+    if (umask 077; mkdir -p "$recovery_root" && chmod 700 "$recovery_root" &&
+        mv "$runtime_rollback_dir" "$recovery_root/$release_evidence_id"); then
+      echo "回滚点已保留在私有目录 $recovery_root/$release_evidence_id" >&2
+    else
+      echo "回滚点仍位于受保护的临时目录 $runtime_rollback_dir" >&2
+      exit "$exit_status"
+    fi
   fi
   rm -rf "$tmp_dir"
   exit "$exit_status"
@@ -1284,10 +1455,6 @@ if [ ! -f "$STANDALONE_CONF" ]; then
   echo "  这通常意味着仓库不完整，请确认已 git pull 到最新。" >&2
   exit 1
 fi
-echo "Activating standalone nginx config (default.conf -> branches/_standalone.conf) ..."
-rm -f "$DEFAULT_CONF"
-ln -s "branches/_standalone.conf" "$DEFAULT_CONF"
-
 sync_active_gateway_nginx_config() {
   source_conf="deploy/nginx/conf.d/branches/_standalone.conf"
   target_conf="$active_nginx_conf_root/branches/_standalone.conf"
@@ -1559,12 +1726,19 @@ run_llmgw_post_deploy_verification_if_needed() {
   fi
   echo "LLM Gateway post-deploy serving probe: required (readyz with key + healthz commit stability + no-key auth)"
   echo "LLM Gateway release feature scope: $release_features (read-only metadata routing; no model calls)"
+  set --
+  if [ -n "${gateway_readiness_baseline:-}" ]; then
+    set -- --readiness-baseline "$gateway_readiness_baseline"
+  fi
+  if [ "${force_external:-0}" = "1" ]; then
+    set -- "$@" --force-external
+  fi
   # shellcheck disable=SC2086
-  LLMGW_GATE_KEY="$gate_key" LLMGW_RELEASE_FEATURES="$release_features" python3 scripts/llmgw-serving-probe.py $probe_args
+  LLMGW_GATE_KEY="$gate_key" LLMGW_RELEASE_FEATURES="$release_features" python3 scripts/llmgw-serving-probe.py $probe_args "$@"
 
   if [ "${LLMGW_POST_DEPLOY_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
-    GW_BASE="$gate_base" GW_KEY="$smoke_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py
+    GW_BASE="$gate_base" GW_KEY="$smoke_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py || return 1
   else
     echo "LLM Gateway post-deploy D-layer smoke: skipped（只有 serve key 时默认不调模型；要跑请设 LLMGW_POST_DEPLOY_SERVICE_KEY 或 LLMGW_GATE_RUN_SMOKE=1）"
   fi
@@ -1664,6 +1838,16 @@ else
 fi
 
 prepare_llmgw_post_deploy_verification
+release_failure_stage="gateway-readiness-baseline"
+LLMGW_GATE_KEY="$LLMGW_POST_DEPLOY_GATE_KEY" python3 scripts/llmgw-serving-probe.py \
+  --base "$LLMGW_POST_DEPLOY_GATE_BASE" --readiness-baseline-out "$gateway_readiness_baseline"
+if [ -n "$(compose_run ps -q "$api_service" | head -n 1)" ]; then
+  if ! compose_run exec -T "$api_service" curl --fail-with-body -sS --max-time 10 \
+    "${PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL:-http://localhost:8080/health/ready?force=true}" \
+    > "$asset_readiness_baseline"; then
+    echo "WARN: 发布前对象存储检查未通过，部署后将按故障代码复核。"
+  fi
+fi
 
 refresh_gateway_after_compose() {
   gateway_service="${PRD_AGENT_GATEWAY_SERVICE:-gateway}"
@@ -1772,7 +1956,7 @@ wait_for_design_runtime_readiness() {
   design_timeout_seconds="${DESIGN_RUNTIME_READY_TIMEOUT_SECONDS:-420}"
   if ! printf '%s' "$design_timeout_seconds" | grep -Eq '^[0-9]+$' || [ "$design_timeout_seconds" -lt 1 ]; then
     echo "ERROR: DESIGN_RUNTIME_READY_TIMEOUT_SECONDS must be a positive integer" >&2
-    exit 1
+    return 1
   fi
   echo "Waiting for design runtime readiness: service=$design_service timeout=${design_timeout_seconds}s"
   design_deadline=$(( $(date +%s) + design_timeout_seconds ))
@@ -1791,15 +1975,39 @@ wait_for_design_runtime_readiness() {
     fi
     if [ "$design_health" = "unhealthy" ] || [ "$design_running" = "false" ]; then
       echo "ERROR: design runtime $design_service cannot become ready ($design_state); see: docker logs $design_service" >&2
-      exit 1
+      return 1
     fi
     if [ "$(date +%s)" -ge "$design_deadline" ]; then
       echo "ERROR: design runtime readiness timeout after ${design_timeout_seconds}s: $design_service[$design_state]" >&2
-      exit 1
+      return 1
     fi
     sleep 3
   done
 }
+
+design_runtime_degraded() {
+  design_id="$(compose_run ps -q design-opendesign | head -n 1)"
+  [ -n "$design_id" ] && [ "$(docker inspect --format '{{.State.Running}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$design_id")" = "true/unhealthy" ]
+}
+
+check_design_runtime_after_deploy() {
+  if wait_for_design_runtime_readiness; then
+    return 0
+  fi
+  # /healthz/ready 验证容器内的浏览器、镜像资源和引擎兼容性，属于运行时检查。
+  if [ "$design_before_degraded" = "1" ] && [ "$design_in_scope" = "0" ] && design_runtime_degraded; then
+    echo "WARN: 设计引擎的就绪故障在本次发布前已存在，继续发布。" >&2
+    return 0
+  fi
+  return 1
+}
+
+design_in_scope=1
+design_before_degraded=0
+if design_runtime_degraded; then
+  design_before_degraded=1
+  echo "WARN: 发布前设计引擎就绪检查已异常。"
+fi
 
 if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
   echo "LLM Gateway verify-only: preserving current containers"
@@ -1807,16 +2015,22 @@ if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
     release_failure_stage="serving-readiness"
     wait_for_llmgw_serving_readiness
     release_failure_stage="design-runtime-readiness"
-    wait_for_design_runtime_readiness
+    design_in_scope=0
+    check_design_runtime_after_deploy
   fi
   release_failure_stage="asset-storage-readiness"
   run_asset_storage_readiness
   activate_pending_static_release
 else
   release_failure_stage="compose-update"
+  capture_production_runtime
+  select_release_features
   echo "Ensuring Docker network exists..."
   docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
   compose_started=1
+  ensure_design_runtime_api_key
+  echo "Activating standalone nginx config (default.conf -> branches/_standalone.conf) ..."
+  static_release_atomic_link "$DEFAULT_CONF" "branches/_standalone.conf"
 
   release_services="$(compose_services_without_gateway)"
   if [ -z "$release_services" ]; then
@@ -1833,11 +2047,14 @@ else
   if [ -n "$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)" ]; then
     reload_active_gateway
   fi
+  release_failure_stage="runtime-image-verification"
+  verify_runtime_images
 
+  release_failure_stage="serving-readiness"
   wait_for_llmgw_serving_readiness
 
   release_failure_stage="design-runtime-readiness"
-  wait_for_design_runtime_readiness
+  check_design_runtime_after_deploy
 
   release_failure_stage="asset-storage-readiness"
   run_asset_storage_readiness
@@ -1846,22 +2063,15 @@ else
 
   refresh_gateway_after_compose
 
-  deploy_receipt_file="$(printf '%s' "${LLMGW_DEPLOY_RECEIPT_FILE:-}" | xargs || true)"
-  if [ -n "$deploy_receipt_file" ]; then
-    deploy_receipt_dir="$(dirname -- "$deploy_receipt_file")"
-    mkdir -p "$deploy_receipt_dir"
-    deploy_receipt_tmp="${deploy_receipt_file}.tmp.$$"
-    {
-      printf 'RELEASE_REF=%s\n' "$TAG"
-      printf 'DEPLOYED_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    } > "$deploy_receipt_tmp"
-    mv "$deploy_receipt_tmp" "$deploy_receipt_file"
-    echo "LLM Gateway deploy receipt written: $deploy_receipt_file"
-  fi
 fi
 
 release_failure_stage="llmgw-post-deploy-verification"
 run_llmgw_post_deploy_verification_if_needed
+
+if [ "$compose_started" = "1" ]; then
+  release_failure_stage="release-image-pins"
+  persist_release_image_pins
+fi
 
 release_failure_stage="public-product-surface"
 if [ "$static_only_mode" = "1" ]; then
@@ -1881,7 +2091,31 @@ else
   run_public_surface_smoke "$public_smoke_json"
 fi
 
-release_failure_stage="release-evidence"
-write_release_evidence success "" "not-needed"
 release_completed=1
-echo "Production release completed with public surface evidence: $release_evidence_file"
+
+write_deploy_receipt() {
+  deploy_receipt_file="$(printf '%s' "${LLMGW_DEPLOY_RECEIPT_FILE:-}" | xargs || true)"
+  if [ -n "$deploy_receipt_file" ]; then
+    deploy_receipt_dir="$(dirname -- "$deploy_receipt_file")"
+    mkdir -p "$deploy_receipt_dir" || return 1
+    deploy_receipt_tmp="${deploy_receipt_file}.tmp.$$"
+    {
+      printf 'RELEASE_REF=%s\n' "$TAG"
+      printf 'DEPLOYED_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    } > "$deploy_receipt_tmp" || return 1
+    mv "$deploy_receipt_tmp" "$deploy_receipt_file" || return 1
+    echo "LLM Gateway deploy receipt written: $deploy_receipt_file"
+  fi
+}
+
+if [ "$compose_started" = "1" ] && ! write_deploy_receipt; then
+  echo "WARN: 发布已通过公网验证，写入网关发布回执失败。" >&2
+fi
+
+release_failure_stage="release-evidence"
+if write_release_evidence success "" "not-needed"; then
+  echo "Production release completed with public surface evidence: $release_evidence_file"
+else
+  echo "WARN: 无法写入本机证据文件，公网验证结果已保留在 CDS 发布日志中。" >&2
+  echo "Production release completed with public surface evidence: CDS release log for $TAG"
+fi
