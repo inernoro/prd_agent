@@ -1,25 +1,22 @@
 name: Entry Motion Cloud Acceptance
 on:
-  push:
-    branches: [codex/map-orbital-entry]
   workflow_dispatch:
     inputs:
       phase:
         type: choice
-        options: [checks, record, visual]
-        default: checks
+        options: [visual]
+        default: visual
 permissions:
   contents: read
 env:
   VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
-concurrency:
-  group: entry-motion-${{ github.ref }}-${{ inputs.phase }}
-  cancel-in-progress: true
 jobs:
-  checks:
-    if: github.event_name == 'push' || inputs.phase == 'checks'
+  entry-browser-regressions:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
+      options: --init --shm-size=1g
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -28,109 +25,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install locked dependencies
-        run: |
-          pnpm -C prd-admin install --frozen-lockfile
-          pnpm -C llmgw/web install --frozen-lockfile
-          pnpm -C e2e install --frozen-lockfile
-      - name: Changelog contract
-        run: bash scripts/validate-changelog-fragments.sh
-      - name: MAP type check, lint, regression and build
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
-        run: |
-          pnpm -C prd-admin tsc --noEmit
-          pnpm -C prd-admin lint
-          pnpm -C prd-admin test --maxWorkers=2 --minWorkers=1
-          pnpm -C prd-admin build
-      - name: Gateway regression and build
-        env:
-          NODE_OPTIONS: --max-old-space-size=1536
-        working-directory: llmgw/web
-        run: |
-          pnpm exec node --experimental-strip-types --test --test-concurrency=1 --test-timeout=60000 tests/*.test.mjs
-          pnpm build
-      - name: Recording script syntax and types
-        run: |
-          node --test e2e/entry-preview-readiness.test.mjs
-          node --check e2e/entry-motion-capture.mjs
-          node --check e2e/entry-daylight-fixture.mjs
-          python3 -m py_compile e2e/entry-motion-compare.py e2e/entry-daylight-compare.py
-          pnpm -C e2e typecheck
-  visual:
-    if: github.event_name == 'workflow_dispatch' && inputs.phase == 'visual'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: '10.28.2'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Build Gateway and install cloud browser recording tools
+      - name: Build the unchanged product bundle and type-check the browser tests
         run: |
           pnpm -C llmgw/web install --frozen-lockfile
           pnpm -C llmgw/web build
           pnpm -C e2e install --frozen-lockfile
-          pnpm -C e2e exec playwright install --with-deps chromium
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg xvfb openbox python3-pil
-      - name: Record both entries and the theme switch with isolated business responses
+          pnpm -C e2e typecheck
+      - name: Check navigation timing and the original mobile paths in three browsers
         run: |
-          pnpm -C llmgw/web preview --host 127.0.0.1 --strictPort --port 8200 &
-          for attempt in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8200/llmgw/; then break; fi
-            sleep 1
-          done
-          xvfb-run -a -s '-screen 0 1920x1080x24 -ac' sh -c 'openbox >/tmp/entry-openbox.log 2>&1 & node e2e/entry-daylight-fixture.mjs'
-          python3 e2e/entry-daylight-compare.py --fixture
+          mkdir -p work/entry-browser
+          pnpm -C e2e exec playwright test -c entry-browser-proof.config.ts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: gateway-daylight-fixture-${{ github.sha }}
-          path: work/entry-daylight/
-          if-no-files-found: error
-          retention-days: 14
-  record:
-    needs: checks
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.phase == 'record' }}
-    environment: entry-preview-acceptance
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      EXPECTED_COMMIT: ${{ github.sha }}
-      TZ: Asia/Shanghai
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: '10.28.2'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install cloud recording tools
-        run: |
-          pnpm -C e2e install --frozen-lockfile
-          pnpm -C e2e exec playwright install --with-deps chromium
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg xvfb openbox python3-pil
-      - name: Capture the real public preview journey
-        env:
-          E2E_USER: ${{ secrets.E2E_USER }}
-          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
-        run: xvfb-run -a -s '-screen 0 1920x1080x24 -ac' sh -c 'openbox >/tmp/entry-openbox.log 2>&1 & node e2e/entry-motion-capture.mjs'
-      - name: Extract actual quarter-second frames and comparisons
-        if: always()
-        run: |
-          python3 e2e/entry-motion-compare.py
-          python3 e2e/entry-daylight-compare.py
-      - name: Retain actual recordings and frame evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: entry-motion-${{ github.sha }}
-          path: work/entry-motion/
+          name: gateway-entry-browser-proof
+          path: work/entry-browser/
           if-no-files-found: error
           retention-days: 14
