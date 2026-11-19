@@ -354,6 +354,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
 
             executionCts.Token.ThrowIfCancellationRequested();
+            if (run.DeliveryTemplateId != null && !await db.DesignArtifactRuns.Find(item => item.Id == run.Id
+                    && item.LeaseOwnerId == leaseOwner && item.DeliveryCorrectionsClosedAt != null
+                    && item.DeliveryAppliedRevision == item.DeliveryCorrectionRevision
+                    && item.CancelRequestedAt == null).AnyAsync(executionCts.Token))
+                throw new InvalidOperationException("作者纠正尚未全部处理，交付草稿未就绪");
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
             var isOpenDesignPresentation = run.ArtifactType == DesignArtifactTypes.HtmlPpt
                                            && run.Runtime == DesignArtifactRuntimes.OpenDesign;
@@ -373,7 +378,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     throw new DesignArtifactRunLeaseLostException(run.Id);
             }
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 88,
-                run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页",
+                run.Operation == DesignArtifactOperations.Edit || run.DeliveryTemplateId != null
+                    ? "正在校验并保存草稿" : "正在校验并保存托管网页",
                 DesignArtifactPhaseCodes.SavingResult);
             executionCts.Token.ThrowIfCancellationRequested();
 
@@ -398,6 +404,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     verifiedFiles,
                     new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
                     CancellationToken.None);
+            }
+
+            if (run.DeliveryTemplateId != null)
+            {
+                await publicLifecycle.CompleteAsync(
+                    run.Id, new DesignArtifactLifecycleLeaseAuthority(leaseOwner), CancellationToken.None);
+                meta.Status = RunStatuses.Done;
+                meta.EndedAt = DateTime.UtcNow;
+                await projection.WriteAsync(() => _events.SetRunAsync(
+                    RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+                await projection.WriteAsync(() => _events.AppendEventAsync(
+                    RunKinds.DesignArtifact, run.Id, "done",
+                    new { runId = run.Id, deliveryDraft = true }, RunTtl, CancellationToken.None));
+                return;
             }
 
             if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)

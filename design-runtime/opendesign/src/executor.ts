@@ -17,6 +17,7 @@
 // 都走同一条「停引擎 → 清空目录 → 核对为空 → 重新拉起」的路径。
 import fs from 'node:fs';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   BROWSER_QUALITY_REPORT_PATH,
@@ -175,6 +176,7 @@ export interface DesignTaskInput {
   taskId: string;
   transfer: WorkspaceTransferRequest;
   previewUrl?: string;
+  deliveryCorrections?: boolean;
   model: OpenDesignModelAuthority;
   timeoutSeconds: number;
   /** 交给 OpenDesign 的第一轮指令：MAP 的任务信封（map-design-artifact-command-v2）序列化文本。 */
@@ -613,6 +615,60 @@ export class DesignTaskExecutor {
           break;
         }
       }
+      if (task.deliveryCorrections) {
+        let appliedRevision = 0;
+        let closed = false;
+        let waitingForAuthor = false;
+        while (remainingExecutionMs(executionDeadline) > 25_000) {
+          const courseText = this.readDeliveryCourse();
+          let questions: unknown;
+          try { questions = JSON.parse(courseText)?.openQuestions; } catch { /* Report invalid output below. */ }
+          if (!Array.isArray(questions))
+            throw new AgentWorkspaceRuntimeError('design_output_invalid', 'Delivery course is missing openQuestions');
+          const needsAuthor = questions.length > 0;
+          const feedback = await this.syncDeliveryCorrections(task, appliedRevision, !needsAuthor, executionDeadline, signal);
+          if (!feedback) {
+            await delay(1000, undefined, { signal });
+            continue;
+          }
+          if (feedback.closed) {
+            closed = true;
+            break;
+          }
+          const lastMessage = feedback.messages.at(-1);
+          if (!lastMessage) {
+            if (needsAuthor && !waitingForAuthor) {
+              waitingForAuthor = true;
+              onStage('open_design_delivery_waiting', {});
+              await previewPusher.poll();
+            }
+            await delay(4000, undefined, { signal });
+            continue;
+          }
+          waitingForAuthor = false;
+          onStage('open_design_delivery_corrections', { count: feedback.messages.length });
+          const reply = await client.odJson('/api/runs', {
+            method: 'POST',
+            body: buildRunBody(
+              '将以下作者裁定和纠正应用到当前工作区的实际文件。保留原始来源及未受影响的条件，输出修订后的交付文件。\n'
+              + feedback.messages.map((message) => `[${message.revision}] ${message.text}`).join('\n'),
+            ),
+            signal: signalForDeadline(executionDeadline, signal),
+            acceptedStatuses: [200, 202],
+          });
+          const replyRunId = typeof reply.runId === 'string' ? reply.runId : typeof reply.id === 'string' ? reply.id : '';
+          if (!replyRunId)
+            throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign correction returned no run id');
+          activeRunId = finalRunId = replyRunId;
+          runOutcome = await client.waitForRun(replyRunId, executionDeadline, signal, onStage, previewPusher.poll);
+          if (!runOutcome.deliverableValid)
+            throw new AgentWorkspaceRuntimeError('open_design_execution_failed', 'OpenDesign did not produce a valid corrected deliverable');
+          deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+          appliedRevision = lastMessage.revision;
+        }
+        if (!closed)
+          throw new AgentWorkspaceRuntimeError('open_design_execution_failed', 'Unable to freeze all author corrections before delivery');
+      }
       onStage('workspace_collecting');
       assertExecutionDeadline(executionDeadline);
       this.promoteDeliverableEntry(deliverableEntryFile, onStage);
@@ -766,6 +822,54 @@ export class DesignTaskExecutor {
       if (activeRunId) await client.cancelRun(activeRunId);
       await relay.close().catch(() => undefined);
       fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
+    }
+  }
+
+  private async syncDeliveryCorrections(
+    task: DesignTaskInput,
+    appliedRevision: number,
+    close: boolean,
+    deadline: number,
+    signal: AbortSignal,
+  ): Promise<{ closed: boolean; messages: { revision: number; text: string }[] } | undefined> {
+    const url = new URL(task.transfer.resultCommitUrl);
+    if (!url.pathname.endsWith('/workspace/result'))
+      throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'Invalid delivery workspace result URL');
+    url.pathname = url.pathname.replace(/\/result$/, '/corrections');
+    const response = await this.fetchPartnerTransfer(url.href, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${task.transfer.transferToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ appliedRevision, close }),
+      signal: signalForDeadline(deadline, signal),
+    }, 'workspaceTransfer.corrections');
+    const body = await readResponseLimited(response, 48_000);
+    if (response.status === 409) return undefined;
+    if (!response.ok)
+      throw new AgentWorkspaceRuntimeError('open_design_execution_failed', `Author correction service returned HTTP ${response.status}`);
+    const feedback = JSON.parse(body.toString('utf8')) as { closed?: unknown; messages?: unknown };
+    if (typeof feedback.closed !== 'boolean' || !Array.isArray(feedback.messages)
+      || feedback.messages.length > 8 || feedback.messages.some((message, index) => !message
+        || message.revision !== appliedRevision + index + 1 || typeof message.text !== 'string'))
+      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'Author correction response is invalid');
+    return { closed: feedback.closed, messages: feedback.messages };
+  }
+
+  private readDeliveryCourse(): string {
+    const directory = path.join(this.options.paths.workspaceDir, 'assets');
+    try {
+      // Pin the parent directory so replacing it while a preview is read cannot redirect the open.
+      const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+      try {
+        return readRegularFileNoFollow(`/proc/self/fd/${fd}/delivery.json`, 24_000).toString('utf8');
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return '';
     }
   }
 
@@ -1008,21 +1112,27 @@ export class DesignTaskExecutor {
       pushing = true;
       lastCheckAt = now;
       try {
-        let stat: fs.Stats;
-        try {
-          stat = fs.lstatSync(indexPath);
-        } catch {
-          return;
-        }
-        if (!stat.isFile()) return;
-        if (stat.size <= 0 || stat.size > PREVIEW_MAX_BYTES) return;
-        let html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
-        if (!html.trim()) return;
+        const readPreview = (filename: string, limit: number): string => {
+          try {
+            const stat = fs.lstatSync(filename);
+            if (!stat.isFile() || stat.size <= 0 || stat.size > limit) return '';
+            return readRegularFileNoFollow(filename, limit).toString('utf8');
+          } catch {
+            // The writer may replace a file between checks. The next poll reads it again.
+            return '';
+          }
+        };
+        const html = readPreview(indexPath, PREVIEW_MAX_BYTES);
+        const course = task.deliveryCorrections ? this.readDeliveryCourse() : '';
+        const deliveryFiles = task.deliveryCorrections
+          ? course.trim() ? [{ path: 'assets/delivery.json', content: course }] : []
+          : undefined;
+        if (!html.trim() && !deliveryFiles?.length) return;
         // Preview the exact OpenDesign bytes. Presentation content and layout are authored upstream;
         // MAP must not inject source text or require a local source-slot DOM shape before showing it.
         // 文件监听可能在同一毫秒内收到两版同字节数内容；只看 mtime/size 会吞掉真实变化。
         // 以正文摘要作为修订判据，轮询与 watch 共用同一条完整性口径。
-        const fingerprint = sha256(Buffer.from(html, 'utf8'));
+        const fingerprint = sha256(Buffer.from(JSON.stringify({ html, deliveryFiles }), 'utf8'));
         if (fingerprint === lastFingerprint) return;
         // 指纹只在对端确认收下之后才记：推送失败（超时 / 5xx）时下一轮要重推同一份内容，
         // 否则页面停止变化后预览永远卡在失败前那一版。修订号照常递增，保持单调。
@@ -1034,7 +1144,7 @@ export class DesignTaskExecutor {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          body: JSON.stringify({ html, revision }),
+          body: JSON.stringify({ html, revision, deliveryFiles }),
           signal: AbortSignal.timeout(10_000),
         }, 'workspaceTransfer.previewUrl');
         await readResponseLimited(response, 4096).catch(() => Buffer.alloc(0));

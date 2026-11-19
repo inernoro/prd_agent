@@ -1067,6 +1067,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const currentUserId = useAuthStore(state => state.user?.userId ?? null);
   const hasWritingPermission = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('document-store.write'));
+  const canStartInformationDelivery = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('web-pages.write'));
   const [canWriteEntries, setCanWriteEntries] = useState(false);
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [storeLoadError, setStoreLoadError] = useState('');
@@ -2468,6 +2469,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               </Button>
             </span>
             <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="surface-action inline-flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold text-token-primary" />
+            {canWriteEntries && canStartInformationDelivery && !isMobile && <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/delivery`)}><Wand2 size={13} />信息传递</Button>}
             {canWriteEntries && hasWritingPermission && <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry?.id}` : ''}`)}><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</Button>}
             {selectedDocEntry && (
               <Button
@@ -2726,6 +2728,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               </div>
               <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="hover-bg-soft flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary" />
               {canWriteEntries && hasWritingPermission && selectedDocEntry && <button type="button" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry.id}` : ''}`)} className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary"><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</button>}
+              {canWriteEntries && canStartInformationDelivery && <button type="button" onClick={() => navigate(`/document-store/${storeId}/delivery`)} className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary"><Wand2 size={13} />信息传递</button>}
               <button
                 type="button"
                 onClick={() => setShowShareDialog(true)}

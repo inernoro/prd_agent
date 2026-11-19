@@ -35,6 +35,8 @@ public sealed class OpenDesignStageProgress
         Reviewing,
         ReviewConverged,
         Repairing,
+        WaitingForAuthor,
+        ApplyingAuthorCorrection,
         BrowserChecking,
         Collecting,
         Committing,
@@ -114,6 +116,8 @@ public sealed class OpenDesignStageProgress
         "open_design_reviewing" => Macro.Reviewing,
         "open_design_review_budget_exhausted" => Macro.ReviewConverged,
         "open_design_quality_repairing" or "open_design_quality_repair_budget_exhausted" => Macro.Repairing,
+        "open_design_delivery_waiting" => Macro.WaitingForAuthor,
+        "open_design_delivery_corrections" => Macro.ApplyingAuthorCorrection,
         "open_design_browser_quality_checking" or "open_design_browser_quality_checked" => Macro.BrowserChecking,
         "workspace_collecting" or "deliverable_entry_resolved" => Macro.Collecting,
         "workspace_committing" => Macro.Committing,
@@ -154,6 +158,8 @@ public sealed class OpenDesignStageProgress
             Macro.Repairing => (_repairAttempt > 0
                 ? $"正在修复自查发现的问题（第 {_repairAttempt} 次）"
                 : "正在修复自查发现的问题") + suffix,
+            Macro.WaitingForAuthor => "课程还有待确认的问题，等待作者补答",
+            Macro.ApplyingAuthorCorrection => "OpenDesign 正在将作者裁定应用到草稿" + suffix,
             Macro.BrowserChecking => "正在检查桌面与移动端布局",
             Macro.Collecting => "正在收集并校验产物",
             Macro.Committing => "正在提交产物",

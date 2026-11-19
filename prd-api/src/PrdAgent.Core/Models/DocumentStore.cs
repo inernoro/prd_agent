@@ -57,6 +57,10 @@ public class DocumentStore
     /// <summary>空间内条目数量（含文件夹及订阅目录，沿用创建流程的冗余计数）</summary>
     public int DocumentCount { get; set; }
 
+    [System.Text.Json.Serialization.JsonIgnore]
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<string>? InformationDeliveryCountedEntryIds { get; set; }
+
     /// <summary>点赞数（冗余计数，便于列表排序）</summary>
     public int LikeCount { get; set; }
 

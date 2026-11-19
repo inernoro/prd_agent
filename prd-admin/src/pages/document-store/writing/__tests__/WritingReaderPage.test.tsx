@@ -118,15 +118,15 @@ describe('教学转换必须保留已发布的执行约束', () => {
   });
 });
 
-async function mountVideo(mobileVideoEntryId?: string) {
+async function mountVideo(mobileVideoEntryId?: string, takerStart = 130) {
   const data = fixture(); data.publication.videoEntryId = 'video';
   if (mobileVideoEntryId) Object.assign(data.publication, { mobileVideoEntryId });
   data.publication.chapters = [
     { id: 'intro', title: '为什么改流程', start: 0, steps: [{ id: 'intro-step', text: '了解目标', condition: '', at: 9 }] },
     { id: 'author', title: '交接人：提交清单', start: 50, steps: [{ id: 'author-step', text: '填写清单', condition: '离岗前3个工作日完成', at: 50 }] },
-    { id: 'taker', title: '接手人：逐项确认', start: 130, steps: [{ id: 'taker-1', text: '打开待接手事项', condition: '', at: 130 }, { id: 'taker-2', text: '逐项确认资料和权限', condition: '', at: 148 }, { id: 'taker-3', text: '缺少字段直接退回', condition: '退回后由交接人补齐', at: 168 }] },
+    { id: 'taker', title: '接手人：逐项确认', start: takerStart, steps: [{ id: 'taker-1', text: '打开待接手事项', condition: '', at: takerStart }, { id: 'taker-2', text: '逐项确认资料和权限', condition: '', at: 148 }, { id: 'taker-3', text: '缺少字段直接退回', condition: '退回后由交接人补齐', at: 168 }] },
   ];
-  data.publication.captions = [{ id: 'first', text: '教学第一句', at: 0 }, { id: 'current', text: '打开待接手事项的字幕', at: 130 }];
+  data.publication.captions = [{ id: 'first', text: '教学第一句', at: 0 }, { id: 'current', text: '打开待接手事项的字幕', at: takerStart }];
   api.read.mockResolvedValue(ok(data)); api.content.mockImplementation(async (id: string) => ({ success: true, data: { fileUrl: id === 'mobile' ? '/mobile.mp4' : '/course.mp4' } }));
   await mount(); const media = container.querySelector('video')!;
   Object.defineProperty(media, 'duration', { value: 260 });
@@ -138,6 +138,21 @@ async function mediaTime(media: HTMLVideoElement, time: number) {
 }
 
 describe('播放器状态必须与当前学习步骤一致', () => {
+  it('点击小数秒章节后，浏览器回报略小的播放时间也不退回上一章', async () => {
+    const chapterStart = 130.3270004;
+    const media = await mountVideo(undefined, chapterStart);
+    const chapters = container.querySelectorAll<HTMLButtonElement>('.writing-chapter-list .writing-chapter');
+    await click(chapters[2]);
+    expect(media.currentTime).toBe(chapterStart);
+    await mediaTime(media, 130.327);
+    expect(chapters[2].textContent).toContain('正在看');
+    expect(chapters[1].textContent).toContain('已看完');
+    expect(container.querySelector('.writing-tutorial-title')?.textContent).toBe('接手人：逐项确认');
+    expect(container.querySelector('.capbox')?.textContent).toContain('打开待接手事项的字幕');
+    await mediaTime(media, chapterStart - 0.1);
+    expect(chapters[1].textContent).toContain('正在看');
+  });
+
   it('教学顶栏按原稿只保留原文入口与主题，避免混入作者管理工具', async () => {
     const data = fixture(); data.canEdit = true; api.read.mockResolvedValue(ok(data)); await mount();
     const top = container.querySelector('.writing-desktop-top .writing-actions')!;

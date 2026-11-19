@@ -1502,6 +1502,46 @@ describe('collecting the deliverable', () => {
   });
 });
 
+describe('information delivery feedback', () => {
+  it('keeps author questions open, applies a correction in the same workspace, and commits the corrected files', async () => {
+    harness = await startHarness({ overrides: { browserQualityRunner: { run: async (job) => passingBrowserResult(job) } } });
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const requests: { appliedRevision: number; close: boolean }[] = [];
+    const correction = '恰好 200 条也要分包，由审核人逐包确认';
+    map.correctionsResponder = (request) => {
+      requests.push(request);
+      if (request.appliedRevision === 0)
+        return { closed: false, messages: [{ revision: 1, text: correction }] };
+      return { closed: request.close, messages: [] };
+    };
+    harness.daemon.onRun = ({ body, workspaceDir }) => {
+      const corrected = String(body.message).includes(correction);
+      const content = corrected ? correction : '待确认 200 条的规则';
+      const coursePath = path.join(workspaceDir, 'assets', 'delivery.json');
+      if (corrected) expect(fs.existsSync(coursePath)).toBe(true);
+      fs.mkdirSync(path.dirname(coursePath), { recursive: true });
+      fs.writeFileSync(coursePath, JSON.stringify({
+        chapters: [{ title: '分包', narration: content, steps: ['按规则提交'], basis: ['资料 A'] }],
+        openQuestions: corrected ? [] : ['等于 200 条怎么办？'],
+      }));
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><h1>归档示例</h1><p>${content}</p></main></body></html>`);
+      return { status: 'succeeded', deliverableEntryFile: 'index.html', deliverableValid: true };
+    };
+    const submitted = await harness.request('POST', '/v1/tasks', taskRequest(map, pkg, { deliveryCorrections: true }), auth);
+    expect(submitted.status).toBe(202);
+    const finished = await waitFor(async () => {
+      const { body } = await harness!.request('GET', `/v1/tasks/${pkg.runId}`, undefined, auth);
+      return body.task?.state === 'running' ? undefined : body.task;
+    }, 'information delivery correction to settle', 15_000);
+    expect(finished?.state, JSON.stringify(finished?.error)).toBe('succeeded');
+    expect(requests).toEqual([{ appliedRevision: 0, close: false }, { appliedRevision: 1, close: true }]);
+    expect(map.commits).toHaveLength(1);
+    expect(committedHtml(map.commits[0] as FakeMapCommit)).toContain(correction);
+    expect(map.commits[0].files.some((file: { path: string }) => file.path === 'assets/delivery.json')).toBe(true);
+  });
+});
+
 describe('live preview delivery', () => {
   it('re-pushes the same page after a failed preview POST instead of treating it as delivered', async () => {
     const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'design-preview-retry-'));

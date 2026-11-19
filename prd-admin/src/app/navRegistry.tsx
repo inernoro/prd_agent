@@ -33,6 +33,8 @@ const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => (
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const WritingWorkspacePage = lazy(() => import('@/pages/document-store/writing/WritingWorkspacePage'));
 const WritingCollectionPage = lazy(() => import('@/pages/document-store/writing/WritingCollectionPage'));
+const InformationDeliveryPage = lazy(() => import('@/pages/document-store/writing/InformationDeliveryPage'));
+const InformationDeliveryReaderPage = lazy(() => import('@/pages/document-store/writing/InformationDeliveryPage').then(m => ({ default: m.InformationDeliveryReaderPage })));
 const HostedTemplatePage = lazy(() => import('@/pages/hosted-collections/HostedTemplatePage'));
 const HostedCollectionsPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionsPage'));
 const HostedCollectionPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionPage'));
@@ -912,6 +914,10 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   })),
   { path: '/document-store/:storeId/collection', placement: 'fullscreen', permission: 'document-store.read',
     element: fullscreenGuarded('document-store.read', <WritingCollectionPage />) },
+  { path: '/document-store/:storeId/delivery', placement: 'fullscreen', permission: 'web-pages.write',
+    element: fullscreenGuarded('web-pages.write', <InformationDeliveryPage />) },
+  { path: '/document-store/:storeId/delivery/:runId/read', placement: 'fullscreen', permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <InformationDeliveryReaderPage />) },
   {
     // 录音交付页走独立全屏路由：设计稿这批「整屏」画板自带顶部栏与屏底主操作，
     // 套在平台外壳里还原不到位（结构与版式的失分大半在这一层）。

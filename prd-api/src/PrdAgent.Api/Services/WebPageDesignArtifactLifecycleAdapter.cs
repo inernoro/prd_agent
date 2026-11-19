@@ -400,6 +400,9 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
             try
             {
                 var current = candidate;
+                if (current.DeliveryTemplateId != null && (current.DeliveryCorrectionsClosedAt == null
+                    || current.DeliveryAppliedRevision != current.DeliveryCorrectionRevision))
+                    continue;
                 // 尚未保存完整 PPT 的结果交还原 Worker：它按同一 run/受信结果包恢复，不重新调用模型。
                 if (current.ArtifactType == DesignArtifactTypes.HtmlPpt
                     && (string.IsNullOrWhiteSpace(current.ProducedArtifactSiteId)
@@ -417,6 +420,16 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 if (current.ArtifactType == DesignArtifactTypes.HtmlPpt)
                 {
                     if (await RecoverPresentationAsync(current)) recovered++;
+                    continue;
+                }
+
+                if (current.DeliveryTemplateId != null)
+                {
+                    if (current.Status == RunStatuses.Committing)
+                    {
+                        await CompleteAsync(current.Id, RecoveryLease(current), CancellationToken.None);
+                        recovered++;
+                    }
                     continue;
                 }
 

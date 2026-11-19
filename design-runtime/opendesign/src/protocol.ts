@@ -126,6 +126,9 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
     invalid(`timeoutSeconds must be an integer in [${MIN_TASK_TIMEOUT_SECONDS}, ${MAX_TASK_TIMEOUT_SECONDS}]`);
   }
   const instruction = normalizeEnvelope(request.envelope, taskId);
+  if (request.deliveryCorrections !== undefined && typeof request.deliveryCorrections !== 'boolean')
+    invalid('deliveryCorrections must be a boolean');
+  const deliveryCorrections = request.deliveryCorrections === true;
   const fingerprint = sha256(JSON.stringify({
     taskId,
     attempt,
@@ -142,6 +145,7 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
     },
     timeoutSeconds,
     instruction,
+    ...(deliveryCorrections ? { deliveryCorrections } : {}),
   }));
   return {
     taskId,
@@ -152,5 +156,6 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
     model,
     timeoutSeconds: Number(timeoutSeconds),
     instruction,
+    ...(deliveryCorrections ? { deliveryCorrections } : {}),
   };
 }

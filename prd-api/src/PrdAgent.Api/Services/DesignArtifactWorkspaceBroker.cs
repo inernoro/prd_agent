@@ -51,6 +51,7 @@ public interface IDesignArtifactWorkspaceBroker
 
     /// <summary>校验 CDS 推来的实时预览：同一张工作区凭证、任务仍在运行窗口内。</summary>
     Task ValidatePreviewAsync(string runId, string token, CancellationToken ct);
+    Task<string> ValidateDeliveryFeedbackAsync(string runId, string token, CancellationToken ct);
 
     Task<DesignArtifactResultCommit> CommitResultAsync(
         string runId,
@@ -61,6 +62,7 @@ public interface IDesignArtifactWorkspaceBroker
     Task<string> ReadResultHtmlAsync(string runId, CancellationToken ct);
 
     Task<ParsedDesignWorkspaceResult> ReadResultAsync(string runId, CancellationToken ct);
+    Task<ParsedDesignWorkspaceResult> ReadDeliveryResultAsync(DesignArtifactRun authorizedRun);
 
     Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct);
 
@@ -477,10 +479,23 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
 
     public async Task ValidatePreviewAsync(string runId, string token, CancellationToken ct)
     {
-        ValidateTicket(token, runId, "workspace");
+        var ticket = ValidateTicket(token, runId, "workspace");
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
+        if (run.DeliveryTemplateId != null && ticket.WorkspaceLeaseOwner != run.LeaseOwnerId)
+            throw new UnauthorizedAccessException("远程工作区已变化，无法写入预览");
         EnsureActiveWorkspaceWindow(run);
+    }
+
+    public async Task<string> ValidateDeliveryFeedbackAsync(string runId, string token, CancellationToken ct)
+    {
+        var ticket = ValidateTicket(token, runId, "workspace");
+        var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+            && item.Id == runId && item.DeliveryTemplateId != null).SingleOrDefaultAsync(ct);
+        if (run == null || ticket.WorkspaceLeaseOwner == null || run.LeaseOwnerId != ticket.WorkspaceLeaseOwner)
+            throw new UnauthorizedAccessException("远程工作区已变更，无法读取纠正");
+        EnsureActiveWorkspaceWindow(run);
+        return ticket.WorkspaceLeaseOwner;
     }
 
     public async Task<DesignArtifactResultCommit> CommitResultAsync(
@@ -489,17 +504,21 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         byte[] packageBytes,
         CancellationToken ct)
     {
-        ValidateTicket(token, runId, "workspace");
+        var ticket = ValidateTicket(token, runId, "workspace");
         if (packageBytes.LongLength == 0 || packageBytes.LongLength > MaxOutputBytes)
             throw new InvalidOperationException("远程设计结果大小不符合要求，请重新生成");
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
+        if (run.DeliveryTemplateId != null && (ticket.WorkspaceLeaseOwner != run.LeaseOwnerId
+            || run.DeliveryCorrectionsClosedAt == null || run.DeliveryAppliedRevision != run.DeliveryCorrectionRevision))
+            throw new UnauthorizedAccessException("交付工作区未完成当前轮次的作者纠正");
         var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
             packageBytes,
             runId,
             run.WorkspaceBaseRevision ?? string.Empty,
             MaxOutputBytes);
+        if (run.DeliveryTemplateId != null) InformationDeliveryTemplates.EnsureReadyCourse(parsed);
         var packageSha = Sha256Hex(packageBytes);
         var manifestSha = parsed.Files.Single(file => file.Path == "manifest.json").Sha256;
         if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
@@ -699,6 +718,18 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     {
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
+        return await ReadRetainedResultAsync(run);
+    }
+
+    public Task<ParsedDesignWorkspaceResult> ReadDeliveryResultAsync(DesignArtifactRun authorizedRun)
+    {
+        if (authorizedRun.DeliveryTemplateId == null || authorizedRun.Status != RunStatuses.Done)
+            throw new InvalidOperationException("交付成品尚未就绪");
+        return ReadRetainedResultAsync(authorizedRun);
+    }
+
+    private async Task<ParsedDesignWorkspaceResult> ReadRetainedResultAsync(DesignArtifactRun run)
+    {
         if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
             throw new InvalidOperationException("远程设计任务没有提交可用页面，请重试");
         var bytes = await _storage.TryDownloadBytesAsync(run.WorkspaceResultAssetKey, CancellationToken.None)
@@ -707,7 +738,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("远程设计结果校验失败，请重新发起任务");
         var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
                 bytes,
-                runId,
+                run.Id,
                 run.WorkspaceBaseRevision ?? string.Empty,
                 MaxOutputBytes);
         return parsed with
@@ -808,7 +839,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             run.UserId,
             purpose,
             expiresAt,
-            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(), TaskExecutionContext.Current)));
+            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(), TaskExecutionContext.Current,
+            purpose == "workspace" ? run.LeaseOwnerId : null)));
 
     public async Task<TaskExecutionIdentity> RestoreExecutionAsync(string runId, string token, CancellationToken ct)
     {
@@ -822,7 +854,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         return identity;
     }
 
-    private void ValidateTicket(string token, string runId, string purpose)
+    private RuntimeTicket ValidateTicket(string token, string runId, string purpose)
     {
         try
         {
@@ -832,6 +864,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 || !FixedEquals(payload.RunId, runId)
                 || !FixedEquals(payload.Purpose, purpose))
                 throw new InvalidOperationException();
+            return payload;
         }
         catch (Exception ex) when (ex is CryptographicException or JsonException or InvalidOperationException)
         {
@@ -1055,7 +1088,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         string UserId,
         string Purpose,
         DateTime ExpiresAt,
-        string Nonce, TaskExecutionIdentity? Execution = null);
+        string Nonce, TaskExecutionIdentity? Execution = null, string? WorkspaceLeaseOwner = null);
 }
 
 public static class DesignArtifactWorkspaceContract

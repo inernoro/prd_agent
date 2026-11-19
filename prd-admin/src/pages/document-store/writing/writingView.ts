@@ -42,6 +42,12 @@ export function writingCitationLocation(source: WritingSource | undefined, quote
   return writingSourceBlocks(source).find(block => block.text.includes(quote))?.location ?? '';
 }
 
+// Match the media clock's microsecond precision when ordering chapters and captions.
+export function writingMediaTimeReached(time: number, boundary: number) {
+  return Number.isFinite(time) && Number.isFinite(boundary)
+    && Math.round(time * 1_000_000) >= Math.round(boundary * 1_000_000);
+}
+
 export function writingSourceHasSnapshot(source: WritingSource) {
   return source.status === 'read' && !!source.content.trim();
 }

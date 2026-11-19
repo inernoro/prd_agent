@@ -456,6 +456,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         {
             ["taskId"] = run.Id,
             ["attempt"] = attempt,
+            ["deliveryCorrections"] = run.DeliveryTemplateId != null,
             ["transfer"] = new JsonObject
             {
                 ["schemaVersion"] = DesignArtifactWorkspaceBroker.SchemaVersion,

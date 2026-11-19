@@ -195,6 +195,17 @@ export interface DesignArtifactRunSummary {
   operation: 'generate' | 'edit';
   sourceSurface: 'web-hosting' | 'knowledge-base' | 'html-ppt';
   runtime: string;
+  deliveryTemplateId?: string | null;
+  deliveryTemplateVersion?: string | null;
+  deliveryCorrectionRevision?: number;
+  deliveryAppliedRevision?: number;
+  deliveryCorrectionsClosedAt?: string | null;
+  deliveryCorrections?: { id: string; revision: number; text: string; receivedAt: string }[] | null;
+  deliveryResultHash?: string | null;
+  deliveryMediaFormats?: InformationDeliveryFormat[] | null;
+  deliveryMediaFiles?: InformationDeliveryMedia[] | null;
+  deliveryArchive?: { target: InformationDeliveryTarget; storeId: string; artifactId?: string | null; canShareUploads: boolean } | null;
+  uploadedSources?: { attachmentId: string; fileName: string; contentHash: string }[] | null;
   title?: string | null;
   progress: number;
   phase: string;
@@ -1755,6 +1766,100 @@ export async function regenerateSiteAskQuestions(
 /** 服务端探测执行器最多 8 秒；前端留出余量后封顶，卡住时以失败收场，界面才不会一直停在「正在检测」。 */
 const RUNTIME_CAPABILITIES_TIMEOUT_MS = 15_000;
 
+export interface InformationDeliveryTemplate {
+  id: string;
+  version: string;
+  title: string;
+  useWhen: string;
+  exampleTitle: string;
+  sections: { title: string; purpose: string; example: string }[];
+}
+
+export interface InformationDeliveryFile {
+  path: string;
+  mediaType: string;
+  draft: boolean;
+}
+
+export type InformationDeliveryTarget = 'web-hosting' | 'knowledge-base';
+export type InformationDeliveryFormat = 'audio' | 'video';
+
+export interface InformationDeliveryMedia {
+  format: InformationDeliveryFormat;
+  chapters: { title: string; start: number; duration: number }[];
+}
+
+export interface InformationDeliverySource {
+  kind: string;
+  title: string;
+  content: string;
+  contentHash: string;
+}
+
+export interface InformationDeliveryArchive {
+  title: string;
+  confirmedAt: string;
+  resultHash: string;
+  html: string;
+  course: string;
+  sources: InformationDeliverySource[];
+  media?: InformationDeliveryMedia[] | null;
+}
+
+export function listInformationDeliveryTemplates() {
+  return apiRequest<{ templates: InformationDeliveryTemplate[] }>('/api/design-artifacts/information-delivery/templates');
+}
+
+export function readInformationDeliveryFiles(runId: string, path?: string) {
+  const query = path ? `?${new URLSearchParams({ path })}` : '';
+  return apiRequest<{ files: InformationDeliveryFile[]; content: string | null }>(
+    `/api/design-artifacts/information-delivery/runs/${encodeURIComponent(runId)}/files${query}`,
+  );
+}
+
+export function readInformationDeliverySources(runId: string) {
+  return apiRequest<{ sources: InformationDeliverySource[] }>(
+    `/api/design-artifacts/information-delivery/runs/${encodeURIComponent(runId)}/sources`,
+  );
+}
+
+const informationDeliveryArchiveEndpoint = (storeId: string, runId: string) =>
+  `/api/document-store/stores/${encodeURIComponent(storeId)}/information-delivery/${encodeURIComponent(runId)}/archive`;
+
+export function archiveInformationDelivery(
+  storeId: string, runId: string,
+  input: { target: InformationDeliveryTarget; resultHash: string; authorConfirmed: boolean; canShareUploads: boolean },
+) {
+  return apiRequest<{ artifactId: string; readerPath: string; target: InformationDeliveryTarget }>(
+    informationDeliveryArchiveEndpoint(storeId, runId), { method: 'POST', body: input },
+  );
+}
+
+export function readInformationDeliveryArchive(storeId: string, runId: string) {
+  return apiRequest<InformationDeliveryArchive>(informationDeliveryArchiveEndpoint(storeId, runId));
+}
+
+const informationDeliveryMediaEndpoint = (storeId: string, runId: string) =>
+  `/api/document-store/stores/${encodeURIComponent(storeId)}/information-delivery/${encodeURIComponent(runId)}/media`;
+
+export function assembleInformationDeliveryMedia(storeId: string, runId: string, speechRunIds: string[]) {
+  return apiRequest<{ media: InformationDeliveryMedia[] }>(informationDeliveryMediaEndpoint(storeId, runId), {
+    method: 'POST', body: { speechRunIds }, timeoutMs: 300_000,
+  });
+}
+
+export function downloadInformationDeliveryMedia(storeId: string, runId: string, format: InformationDeliveryFormat) {
+  return apiDownload(`${informationDeliveryMediaEndpoint(storeId, runId)}/${format}`,
+    format === 'video' ? '教程.mp4' : '讲解.mp3');
+}
+
+export function addInformationDeliveryCorrection(runId: string, input: { id: string; revision: number; text: string }) {
+  return apiRequest<DesignArtifactRunSummary>(
+    `/api/design-artifacts/information-delivery/runs/${encodeURIComponent(runId)}/corrections`,
+    { method: 'POST', body: input },
+  );
+}
+
 export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   defaultRuntime: string;
   runtimes: DesignRuntimeCapability[];
@@ -1867,6 +1972,10 @@ export async function createDesignArtifactRun(input: {
   designSystemId?: string | null;
   /** 直接上传的文件（POST /api/v1/attachments 返回的 id），最多 5 个。 */
   attachmentIds?: string[];
+  deliveryTemplateId?: string;
+  deliveryTemplateVersion?: string;
+  deliveryRequestId?: string;
+  deliveryMediaFormats?: InformationDeliveryFormat[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;

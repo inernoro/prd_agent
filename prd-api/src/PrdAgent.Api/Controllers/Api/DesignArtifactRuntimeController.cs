@@ -76,6 +76,61 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         }
     }
 
+    [HttpPost("workspace/corrections")]
+    [RequestSizeLimit(2048)]
+    public async Task<IActionResult> SyncDeliveryCorrections(string runId, CancellationToken ct)
+    {
+        try
+        {
+            var lease = await _broker.ValidateDeliveryFeedbackAsync(runId, ReadBearerToken(), ct);
+            if (_db == null) return StatusCode(503, new { error = "delivery_corrections_unavailable" });
+            using var request = JsonDocument.Parse(await ReadBoundedBodyAsync(Request, 2048, ct));
+            if (request.RootElement.ValueKind != JsonValueKind.Object
+                || !request.RootElement.TryGetProperty("appliedRevision", out var revisionValue)
+                || !revisionValue.TryGetInt32(out var revision) || revision is < 0 or > 8)
+                return BadRequest(new { error = "delivery_corrections_invalid" });
+            var close = request.RootElement.TryGetProperty("close", out var closeValue) && closeValue.ValueKind == JsonValueKind.True;
+            var now = DateTime.UtcNow;
+            var filters = Builders<DesignArtifactRun>.Filter;
+            var active = filters.Where(item => item.Id == runId && item.DeploymentSlug == DeploymentScope.Current
+                && item.DeliveryTemplateId != null && item.Status == RunStatuses.Running
+                && item.LeaseExpiresAt > now && item.LeaseOwnerId == lease && item.CancelRequestedAt == null);
+            var current = await _db.DesignArtifactRuns.Find(active).SingleOrDefaultAsync(ct);
+            if (current == null) return NotFound(new { error = "delivery_task_inactive" });
+            if (revision > current.DeliveryCorrectionRevision)
+                return Conflict(new { error = "delivery_corrections_revision_conflict" });
+            var messages = (current.DeliveryCorrections ?? new List<InformationDeliveryCorrection>())
+                .Where(item => item.Revision > revision).Select(item => new { item.Revision, item.Text }).ToList();
+            if (current.DeliveryCorrectionsClosedAt != null)
+                return Ok(new { closed = revision == current.DeliveryAppliedRevision, messages });
+
+            var lastRevision = current.DeliveryCorrectionRevision;
+            var revisionFilter = filters.Eq(item => item.DeliveryCorrectionRevision, lastRevision);
+            if (lastRevision == 0) revisionFilter |= filters.Exists(item => item.DeliveryCorrectionRevision, false);
+            var updateFilter = active & revisionFilter & filters.Eq(item => item.LeaseOwnerId, current.LeaseOwnerId)
+                & filters.Eq(item => item.DeliveryCorrectionsClosedAt, null);
+            var closed = close && revision == lastRevision;
+            var update = Builders<DesignArtifactRun>.Update.Max(item => item.DeliveryAppliedRevision, revision);
+            if (closed) update = update.Set(item => item.DeliveryCorrectionsClosedAt, now)
+                .Set(item => item.DeliveryCorrectionRevision, revision);
+            var updated = await _db.DesignArtifactRuns.UpdateOneAsync(updateFilter, update, cancellationToken: ct);
+            if (updated.MatchedCount == 0) return Conflict(new { error = "delivery_corrections_revision_conflict" });
+            return Ok(new
+            {
+                closed,
+                messages,
+            });
+        }
+        catch (JsonException)
+        {
+            return BadRequest(new { error = "delivery_corrections_invalid" });
+        }
+        catch (Exception ex)
+        {
+            return MapRuntimeError(ex, runId);
+        }
+    }
+
     [HttpPost("workspace/result")]
     [RequestSizeLimit(DesignArtifactWorkspaceBroker.MaxOutputBytes)]
     public async Task<IActionResult> CommitWorkspaceResult(string runId, CancellationToken ct)
@@ -124,7 +179,28 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                            && revisionElement.TryGetInt32(out var parsedRevision)
                 ? parsedRevision
                 : 0;
-            if (html.Length == 0 || revision < 0 || Encoding.UTF8.GetByteCount(html) > MaxPreviewHtmlBytes)
+            List<InformationDeliveryPreviewFile>? deliveryFiles = null;
+            string? deliveryLease = null;
+            if (document.RootElement.TryGetProperty("deliveryFiles", out var rawDeliveryFiles))
+            {
+                deliveryLease = await _broker.ValidateDeliveryFeedbackAsync(runId, ReadBearerToken(), ct);
+                if (rawDeliveryFiles.ValueKind != JsonValueKind.Array || rawDeliveryFiles.GetArrayLength() > 4)
+                    return BadRequest(new { error = "preview_invalid", message = "交付草稿文件列表无效" });
+                deliveryFiles = new();
+                foreach (var file in rawDeliveryFiles.EnumerateArray())
+                {
+                    if (file.ValueKind != JsonValueKind.Object
+                        || !file.TryGetProperty("path", out var pathValue) || pathValue.ValueKind != JsonValueKind.String
+                        || !file.TryGetProperty("content", out var contentValue) || contentValue.ValueKind != JsonValueKind.String
+                        || pathValue.GetString() is not { } path || !InformationDeliveryTemplates.IsDraftTextPath(path)
+                        || contentValue.GetString() is not { } content || Encoding.UTF8.GetByteCount(content) > 24_000
+                        || deliveryFiles.Any(item => item.Path == path))
+                        return BadRequest(new { error = "preview_invalid", message = "交付草稿文件无效或超过大小限制" });
+                    deliveryFiles.Add(new InformationDeliveryPreviewFile(path, content));
+                }
+            }
+            if ((html.Length == 0 && (deliveryFiles?.Count ?? 0) == 0) || revision < 0
+                || Encoding.UTF8.GetByteCount(html) > MaxPreviewHtmlBytes)
                 return BadRequest(new { error = "preview_invalid", message = "预览内容为空、revision 无效或超过 1 MB" });
             if (_events == null)
                 return StatusCode(503, new { error = "preview_unavailable", message = "事件流未配置" });
@@ -137,33 +213,39 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                         && item.Status != RunStatuses.Cancelled)
                     & (Builders<DesignArtifactRun>.Filter.Eq(item => item.LatestPreviewRevision, null)
                        | Builders<DesignArtifactRun>.Filter.Lt(item => item.LatestPreviewRevision, revision));
-                await _db.DesignArtifactRuns.UpdateOneAsync(
-                    previewFilter,
-                    Builders<DesignArtifactRun>.Update.Pipeline(new BsonDocument[]
+                if (deliveryLease != null)
+                    previewFilter &= Builders<DesignArtifactRun>.Filter.Where(item => item.LeaseOwnerId == deliveryLease
+                        && item.LeaseExpiresAt > now && item.CancelRequestedAt == null);
+                var fields = new BsonDocument
+                {
                     {
-                        new("$set", new BsonDocument
-                        {
-                            {
-                                nameof(DesignArtifactRun.FirstPreviewAt),
-                                new BsonDocument("$ifNull", new BsonArray
-                                {
-                                    $"${nameof(DesignArtifactRun.FirstPreviewAt)}",
-                                    now,
-                                })
-                            },
-                            { nameof(DesignArtifactRun.LatestPreviewHtml), html },
-                            { nameof(DesignArtifactRun.LatestPreviewRevision), revision },
-                            { nameof(DesignArtifactRun.LastProgressAt), now },
-                            { nameof(DesignArtifactRun.UpdatedAt), now },
-                        }),
-                    }),
+                        nameof(DesignArtifactRun.FirstPreviewAt),
+                        new BsonDocument("$ifNull", new BsonArray { $"${nameof(DesignArtifactRun.FirstPreviewAt)}", now })
+                    },
+                    { nameof(DesignArtifactRun.LatestPreviewRevision), revision },
+                    { nameof(DesignArtifactRun.LastProgressAt), now },
+                    { nameof(DesignArtifactRun.UpdatedAt), now },
+                };
+                // An update pipeline interprets strings beginning with $ as expressions.
+                if (html.Length != 0)
+                    fields[nameof(DesignArtifactRun.LatestPreviewHtml)] = new BsonDocument("$literal", html);
+                if (deliveryFiles != null)
+                    fields[nameof(DesignArtifactRun.DeliveryPreviewFiles)] = new BsonDocument(
+                        "$literal", new BsonArray(deliveryFiles.Select(file => file.ToBsonDocument())));
+                var write = await _db.DesignArtifactRuns.UpdateOneAsync(
+                    previewFilter,
+                    Builders<DesignArtifactRun>.Update.Pipeline(new BsonDocument[] { new("$set", fields) }),
                     cancellationToken: CancellationToken.None);
+                if (deliveryFiles != null && write.MatchedCount == 0)
+                    return Ok(new { accepted = false, revision });
             }
             await _events.AppendEventAsync(
                 PrdAgent.Core.Models.RunKinds.DesignArtifact,
                 runId,
                 "preview",
-                new { html, revision },
+                deliveryFiles == null
+                    ? (object)new { html, revision }
+                    : new { revision, deliveryPaths = deliveryFiles.Select(file => file.Path) },
                 PreviewEventTtl,
                 CancellationToken.None);
             return Ok(new { accepted = true, revision });

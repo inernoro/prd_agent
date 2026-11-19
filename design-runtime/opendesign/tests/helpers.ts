@@ -297,6 +297,7 @@ export interface FakeMap {
   /** 测试可以改：输入包响应（例如 302 重定向）。 */
   inputResponder?: (res: http.ServerResponse) => void;
   previewStatus: number;
+  correctionsResponder?: (request: { appliedRevision: number; close: boolean }) => unknown;
   close(): Promise<void>;
 }
 
@@ -335,6 +336,11 @@ export async function startFakeMap(pkg: BuiltPackage, transferToken = 'transfer-
     if (url.pathname === `${prefix}/workspace/preview` && req.method === 'POST') {
       state.previews.push(JSON.parse((await readBody(req)).toString('utf8')));
       json(res, state.previewStatus, { accepted: true });
+      return;
+    }
+    if (url.pathname === `${prefix}/workspace/corrections` && req.method === 'POST' && state.correctionsResponder) {
+      const body = JSON.parse((await readBody(req)).toString('utf8'));
+      json(res, 200, state.correctionsResponder(body));
       return;
     }
     json(res, 404, { message: 'not found' });

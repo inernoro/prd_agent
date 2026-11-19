@@ -95,6 +95,46 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 
     public string SourceSurface { get; set; } = DesignArtifactSourceSurfaces.WebHosting;
 
+    /// <summary>Platform template runs stage a verified result before a separate delivery action.</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DeliveryTemplateId { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DeliveryTemplateVersion { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DeliveryRequestFingerprint { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<InformationDeliveryCorrection>? DeliveryCorrections { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfDefault]
+    public int DeliveryCorrectionRevision { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfDefault]
+    public int DeliveryAppliedRevision { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DateTime? DeliveryCorrectionsClosedAt { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<InformationDeliveryPreviewFile>? DeliveryPreviewFiles { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public InformationDeliveryArchive? DeliveryArchive { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<string>? DeliveryMediaFormats { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<InformationDeliveryMediaFile>? DeliveryMediaFiles { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DateTime? DeliveryMediaLeaseUntil { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DeliveryMediaLeaseId { get; set; }
+
     /// <summary>仅工作流服务器创建的原调用身份；不从用户变量或远端请求推断。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public WorkflowDesignSource? WorkflowSource { get; set; }
@@ -585,4 +625,30 @@ public sealed class WorkflowDesignSource
     public string NodeId { get; set; } = string.Empty;
     public string NodeType { get; set; } = string.Empty;
     public string InputFingerprint { get; set; } = string.Empty;
+}
+
+public sealed record InformationDeliveryCorrection(
+    string Id, int Revision, string Text, DateTime ReceivedAt);
+
+public sealed record InformationDeliveryPreviewFile(string Path, string Content);
+
+public sealed class InformationDeliveryArchive
+{
+    public string Target { get; set; } = string.Empty;
+    public string StoreId { get; set; } = string.Empty;
+    public string ResultHash { get; set; } = string.Empty;
+    public bool CanShareUploads { get; set; }
+    public string? ArtifactId { get; set; }
+    public DateTime ConfirmedAt { get; set; }
+}
+
+public sealed record InformationDeliveryChapterTime(string Title, double Start, double Duration);
+
+public sealed class InformationDeliveryMediaFile
+{
+    public string Format { get; set; } = string.Empty;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string ObjectKey { get; set; } = string.Empty;
+    public string Sha256 { get; set; } = string.Empty;
+    public List<InformationDeliveryChapterTime> Chapters { get; set; } = new();
 }

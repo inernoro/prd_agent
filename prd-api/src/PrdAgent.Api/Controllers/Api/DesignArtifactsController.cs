@@ -112,6 +112,10 @@ public sealed class DesignArtifactsController : ControllerBase
         }));
     }
 
+    [HttpGet("information-delivery/templates")]
+    public IActionResult InformationDeliveryTemplateCatalog() =>
+        Ok(ApiResponse<object>.Ok(new { templates = InformationDeliveryTemplates.All }));
+
     /// <summary>
     /// 在创建设计任务前读取知识来源的当前权威哈希。响应不返回正文；创建 Run 时仍会二次读取并校验。
     /// </summary>
@@ -181,11 +185,28 @@ public sealed class DesignArtifactsController : ControllerBase
                 DesignArtifactRequestAuthorityGuard.ErrorCode,
                 "运行时模型、网关地址和审计归属由 MAP 统一配置，请移除覆盖字段后重试"));
         }
-        var instruction = (request.Instruction ?? string.Empty).Trim();
-        if (instruction.Length == 0)
+        var authorFocus = (request.Instruction ?? string.Empty).Trim();
+        var isDelivery = request.DeliveryTemplateId != null || request.DeliveryTemplateVersion != null
+            || request.DeliveryRequestId != null || request.DeliveryMediaFormats != null;
+        var deliveryTemplate = isDelivery
+            ? InformationDeliveryTemplates.Find(request.DeliveryTemplateId, request.DeliveryTemplateVersion)
+            : null;
+        if (isDelivery && deliveryTemplate == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "模板版本已变更，请重新选择平台模板"));
+        var deliveryFormats = request.DeliveryMediaFormats?.Distinct().Order().ToList();
+        if (deliveryFormats?.Any(format => format is not ("audio" or "video")) == true)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持所选的讲解格式"));
+        if (authorFocus.Length == 0 && deliveryTemplate == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请用两句话说明网页用途和期望效果"));
-        if (instruction.Length > 4000)
+        if (authorFocus.Length > 4000)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "设计要求不能超过 4000 个字符"));
+        if (isDelivery && !string.IsNullOrWhiteSpace(request.DestinationTeamId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在成品就绪后选择交付范围"));
+        var deliveryRequestId = Guid.Empty;
+        if (isDelivery && (!Guid.TryParseExact(request.DeliveryRequestId, "D", out deliveryRequestId)
+                           || deliveryRequestId == Guid.Empty))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少有效的任务请求编号"));
+        var instruction = deliveryTemplate?.BuildInstructions(authorFocus) ?? authorFocus;
         if (!string.Equals(request.ArtifactType, DesignArtifactTypes.WebPage, StringComparison.OrdinalIgnoreCase))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "当前统一入口只支持生成网页，HTML PPT 请从对应工作台生成"));
 
@@ -197,6 +218,25 @@ public sealed class DesignArtifactsController : ControllerBase
         {
             return StatusCode(403, ApiResponse<object>.Fail(
                 ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法把生成的网页放进这个空间"));
+        }
+
+        var runId = isDelivery
+            ? DeliveryHash(new { Scope = DeploymentScope.Current, User = userId, Request = deliveryRequestId })[..32]
+            : Guid.NewGuid().ToString("N");
+        var deliveryFingerprint = isDelivery
+            ? DeliveryHash(new
+            {
+                request.DeliveryTemplateId, request.DeliveryTemplateVersion, authorFocus, request.Title,
+                request.StyleId, request.DesignSystemId,
+                MediaFormats = deliveryFormats,
+                References = request.KnowledgeReferences ?? new List<DesignKnowledgeReferenceRequest>(),
+                Attachments = request.AttachmentIds ?? new List<string>(),
+            })
+            : null;
+        if (isDelivery)
+        {
+            var existing = await FindDeliveryRequestAsync(runId);
+            if (existing != null) return ReplayedDelivery(existing, userId, deliveryFingerprint);
         }
 
         var runtimeDecision = WebPageDesignRuntimePolicy.ResolveForNewRun(request.Runtime);
@@ -267,10 +307,9 @@ public sealed class DesignArtifactsController : ControllerBase
             return KnowledgeReferenceFailure(ex);
         }
 
-        var sourceSurface = string.Equals(request.SourceSurface, DesignArtifactSourceSurfaces.KnowledgeBase, StringComparison.OrdinalIgnoreCase)
+        var sourceSurface = isDelivery || string.Equals(request.SourceSurface, DesignArtifactSourceSurfaces.KnowledgeBase, StringComparison.OrdinalIgnoreCase)
             ? DesignArtifactSourceSurfaces.KnowledgeBase
             : DesignArtifactSourceSurfaces.WebHosting;
-        var runId = Guid.NewGuid().ToString("N");
         var createdAt = DateTime.UtcNow;
         DesignArtifactLlmRequestPolicy requestPolicy;
         try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
@@ -288,6 +327,10 @@ public sealed class DesignArtifactsController : ControllerBase
             ArtifactType = DesignArtifactTypes.WebPage,
             Operation = DesignArtifactOperations.Generate,
             SourceSurface = sourceSurface,
+            DeliveryTemplateId = deliveryTemplate?.Id,
+            DeliveryTemplateVersion = deliveryTemplate?.Version,
+            DeliveryRequestFingerprint = deliveryFingerprint,
+            DeliveryMediaFormats = deliveryFormats,
             DestinationTeamId = destinationTeamId,
             Runtime = runtime,
             LlmRequestPolicy = requestPolicy,
@@ -314,7 +357,16 @@ public sealed class DesignArtifactsController : ControllerBase
         };
         DesignArtifactBriefFactory.Freeze(run, currentHtml: null);
         WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
-        await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        try
+        {
+            await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        }
+        catch (MongoWriteException ex) when (isDelivery && ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var existing = await FindDeliveryRequestAsync(runId);
+            if (existing == null) throw;
+            return ReplayedDelivery(existing, userId, deliveryFingerprint);
+        }
 
         var meta = new RunMeta
         {
@@ -353,6 +405,18 @@ public sealed class DesignArtifactsController : ControllerBase
         return Accepted(ApiResponse<object>.Ok(ToDto(run)));
     }
 
+    private static string DeliveryHash<T>(T input) =>
+        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(input))).ToLowerInvariant();
+
+    private Task<DesignArtifactRun?> FindDeliveryRequestAsync(string runId) =>
+        _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(CancellationToken.None);
+
+    private IActionResult ReplayedDelivery(DesignArtifactRun existing, string userId, string? fingerprint) =>
+        existing.DeploymentSlug == DeploymentScope.Current && existing.UserId == userId
+            && existing.DeliveryTemplateId != null && existing.DeliveryRequestFingerprint == fingerprint
+            ? Accepted(ApiResponse<object>.Ok(ToDto(existing)))
+            : Conflict(ApiResponse<object>.Fail("DELIVERY_REQUEST_CONFLICT", "这次请求的资料或模板已变更，请重新开始任务"));
+
     /// <summary>
     /// 从服务端发现当前用户的活动或可重开任务。客户端显式请求时，也可返回最近一条
     /// 带最后预览的结构化失败 Run；它只可展示，不能伪装成可续跑任务。浏览器存储只作加速，
@@ -376,6 +440,7 @@ public sealed class DesignArtifactsController : ControllerBase
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactType, DesignArtifactTypes.WebPage)
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.Runtime, DesignArtifactRuntimes.OpenDesign)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.DeliveryTemplateId, null)
                      & Builders<DesignArtifactRun>.Filter.Ne(item => item.SourceSurface, DesignArtifactSourceSurfaces.Workflow);
         if (normalizedOperation != null)
             filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.Operation, normalizedOperation);
@@ -419,6 +484,8 @@ public sealed class DesignArtifactsController : ControllerBase
             CancellationToken.None);
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
+        if (source.DeliveryTemplateId != null)
+            return Conflict(ApiResponse<object>.Fail("DELIVERY_RESTART_REQUIRES_DRAFT", "请从原信息传递任务重试"));
         if (source.SourceSurface == DesignArtifactSourceSurfaces.Workflow)
             return Conflict(ApiResponse<object>.Fail("WORKFLOW_RESTART_REQUIRES_NODE",
                 "请回到原工作流，重新运行对应节点；原输入和报告仍然保留"));
@@ -635,6 +702,136 @@ public sealed class DesignArtifactsController : ControllerBase
         return run == null
             ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"))
             : Ok(ApiResponse<object>.Ok(ToDto(run)));
+    }
+
+    [HttpGet("information-delivery/runs/{runId}/files")]
+    public async Task<IActionResult> ReadDeliveryFiles(
+        string runId, [FromQuery] string? path, [FromServices] IDesignArtifactWorkspaceBroker broker, CancellationToken ct)
+    {
+        var actor = this.GetRequiredUserId();
+        var run = await _db.FindDesignArtifactRunHistoryAsync(
+            item => item.Id == runId && item.UserId == actor && item.DeliveryTemplateId != null, ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "信息传递任务不存在"));
+
+        try
+        {
+            await CheckDeliverySourcesAsync(run, actor, ct);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            return KnowledgeReferenceFailure(ex);
+        }
+        catch (DesignRunInputException)
+        {
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "本任务的原上传文件已不可读取"));
+        }
+        Response.Headers.CacheControl = "no-store";
+        if (run.Status != RunStatuses.Done)
+        {
+            var drafts = run.DeliveryPreviewFiles ?? new List<InformationDeliveryPreviewFile>();
+            var draftFiles = drafts.Select(file => new { path = file.Path, mediaType = "text/plain", draft = true }).ToList();
+            if (run.LatestPreviewHtml != null) draftFiles.Insert(0, new { path = "index.html", mediaType = "text/html", draft = true });
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                files = draftFiles,
+                content = path == "index.html" ? run.LatestPreviewHtml : drafts.SingleOrDefault(file => file.Path == path)?.Content,
+            }));
+        }
+
+        var result = await broker.ReadDeliveryResultAsync(run);
+        var files = result.Files.Where(IsDeliveryReadableFile).ToList();
+        var selected = path == null ? null : files.SingleOrDefault(file => file.Path == path);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            files = files.Select(file => new { file.Path, file.MediaType, draft = false }),
+            content = selected == null ? null : Encoding.UTF8.GetString(Convert.FromBase64String(selected.ContentBase64)),
+        }));
+    }
+
+    private static bool IsDeliveryReadableFile(DesignWorkspaceFile file) =>
+        file.Path is "index.html" or InformationDeliveryTemplates.CoursePath;
+
+    private async Task CheckDeliverySourcesAsync(DesignArtifactRun run, string actor, CancellationToken ct)
+    {
+        if (run.KnowledgeReferences.Count != 0)
+            await _knowledgeSnapshots.ResolveAsync(actor, run.KnowledgeReferences.Select(source =>
+                new DesignKnowledgeReferenceIdentity(source.EntryId, source.StoreId ?? string.Empty, null)).ToArray(), ct);
+        if (run.UploadedSources?.Count > 0)
+            await DesignRunInputAttachments.ResolveSourcesAsync(_db, actor,
+                run.UploadedSources.Select(source => source.AttachmentId).ToList(), ct);
+    }
+
+    [HttpGet("information-delivery/runs/{runId}/sources")]
+    public async Task<IActionResult> ReadDeliverySources(string runId, CancellationToken ct)
+    {
+        var actor = this.GetRequiredUserId();
+        var run = await _db.FindDesignArtifactRunHistoryAsync(
+            item => item.Id == runId && item.UserId == actor && item.DeliveryTemplateId != null, ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "信息传递任务不存在"));
+        try
+        {
+            await CheckDeliverySourcesAsync(run, actor, ct);
+        }
+        catch (DesignKnowledgeSnapshotException ex)
+        {
+            return KnowledgeReferenceFailure(ex);
+        }
+        catch (DesignRunInputException)
+        {
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "本任务的原上传文件已不可读取"));
+        }
+        Response.Headers.CacheControl = "no-store";
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            sources = run.KnowledgeReferences.Select(source => new { kind = "knowledge", source.Title, source.Content, source.ContentHash })
+                .Concat((run.UploadedSources ?? new List<DesignUploadedSource>()).Select(source =>
+                    new { kind = "upload", Title = source.FileName, source.Content, source.ContentHash })),
+        }));
+    }
+
+    [HttpPost("information-delivery/runs/{runId}/corrections")]
+    public async Task<IActionResult> AddDeliveryCorrection(
+        string runId, [FromBody] InformationDeliveryCorrectionRequest request, CancellationToken ct)
+    {
+        var text = (request.Text ?? string.Empty).Trim();
+        if (text.Length is 0 or > 1000 || request.Revision is < 0 or > 8
+            || !Guid.TryParseExact(request.Id, "D", out var id) || id == Guid.Empty)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "纠正内容、编号或版本无效"));
+        var user = this.GetRequiredUserId();
+        var scope = Builders<DesignArtifactRun>.Filter.Where(item => item.Id == runId && item.UserId == user
+            && item.DeploymentSlug == DeploymentScope.Current && item.DeliveryTemplateId != null);
+        var current = await _db.DesignArtifactRuns.Find(scope).SingleOrDefaultAsync(ct);
+        if (current == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "信息传递任务不存在"));
+        var existing = current.DeliveryCorrections?.SingleOrDefault(item => item.Id == id.ToString("D"));
+        if (existing != null)
+            return existing.Text == text ? Ok(ApiResponse<object>.Ok(ToDto(current)))
+                : Conflict(ApiResponse<object>.Fail("DELIVERY_CORRECTION_CONFLICT", "该消息编号已用于另一条纠正"));
+        if (current.DeliveryCorrectionsClosedAt != null || current.Status is not (RunStatuses.Queued or RunStatuses.Running))
+            return Conflict(ApiResponse<object>.Fail("DELIVERY_CORRECTION_CLOSED", "这轮已停止接收纠正，请查看当前结果"));
+        if (current.DeliveryCorrectionRevision != request.Revision || request.Revision == 8)
+            return Conflict(ApiResponse<object>.Fail("DELIVERY_CORRECTION_CONFLICT", "已收到其他纠正或达到本轮上限，请刷新任务"));
+
+        var correction = new InformationDeliveryCorrection(id.ToString("D"), request.Revision + 1, text, DateTime.UtcNow);
+        var filters = Builders<DesignArtifactRun>.Filter;
+        var revision = filters.Eq(item => item.DeliveryCorrectionRevision, request.Revision);
+        if (request.Revision == 0) revision |= filters.Exists(item => item.DeliveryCorrectionRevision, false);
+        var active = scope & revision
+            & filters.In(item => item.Status, new[] { RunStatuses.Queued, RunStatuses.Running })
+            & filters.Eq(item => item.DeliveryCorrectionsClosedAt, null)
+            & filters.Eq(item => item.CancelRequestedAt, null);
+        var updated = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+            active,
+            Builders<DesignArtifactRun>.Update.Set(item => item.DeliveryCorrectionRevision, correction.Revision)
+                .Push(item => item.DeliveryCorrections, correction),
+            new FindOneAndUpdateOptions<DesignArtifactRun> { ReturnDocument = ReturnDocument.After }, ct);
+        if (updated != null) return Ok(ApiResponse<object>.Ok(ToDto(updated)));
+        var latest = await _db.DesignArtifactRuns.Find(scope).SingleOrDefaultAsync(ct);
+        if (latest?.DeliveryCorrections?.Any(item => item.Id == correction.Id && item.Text == text) == true)
+            return Ok(ApiResponse<object>.Ok(ToDto(latest)));
+        return Conflict(ApiResponse<object>.Fail("DELIVERY_CORRECTION_CONFLICT", "任务已变化，请刷新后重试"));
     }
 
     [HttpPost("runs/{runId}/cancel")]
@@ -1079,7 +1276,15 @@ public sealed class DesignArtifactsController : ControllerBase
                 {
                     var siteId = snapshot.ArtifactSiteId ?? snapshot.ProducedArtifactSiteId;
                     var revisionId = snapshot.ArtifactRevisionId ?? snapshot.ProducedArtifactRevisionId;
-                    if (!string.IsNullOrWhiteSpace(siteId))
+                    if (snapshot.DeliveryTemplateId != null && !string.IsNullOrWhiteSpace(snapshot.WorkspaceResultAssetKey)
+                        && snapshot.DeliveryCorrectionsClosedAt != null)
+                    {
+                        await WriteEventAsync(null, "done", JsonSerializer.Serialize(new
+                        {
+                            runId, deliveryDraft = true,
+                        }), ct);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(siteId))
                     {
                         // destinationApplyError 必须跟着走：正常路径的 done 带着它，
                         // 前端据此提醒「页面留在了个人空间」。兜底这条漏掉它，
@@ -1142,6 +1347,16 @@ public sealed class DesignArtifactsController : ControllerBase
         run.ArtifactType,
         run.Operation,
         run.SourceSurface,
+        run.DeliveryTemplateId,
+        run.DeliveryTemplateVersion,
+        run.DeliveryCorrectionRevision,
+        run.DeliveryAppliedRevision,
+        run.DeliveryCorrectionsClosedAt,
+        run.DeliveryCorrections,
+        run.DeliveryArchive,
+        run.DeliveryMediaFormats,
+        run.DeliveryMediaFiles,
+        deliveryResultHash = run.DeliveryTemplateId == null ? null : run.WorkspaceResultSha256,
         run.Runtime,
         // 实际执行的模型与平台：刷新或恢复未完成任务时，面板靠它显示「{模型} · {平台}」，
         // 而不是只显示运行时名字（ai-model-visibility §4）。
@@ -1189,7 +1404,7 @@ public sealed class DesignArtifactsController : ControllerBase
         run.FirstVisibleFeedbackAt,
         run.FirstPreviewAt,
         // 大页面不能跟着 1.5 秒一次的运行中轮询反复传输；只有终态失败恢复最后成果时才返回。
-        previewHtml = run.Status == RunStatuses.Error ? run.LatestPreviewHtml : null,
+        previewHtml = run.Status == RunStatuses.Error && run.DeliveryTemplateId == null ? run.LatestPreviewHtml : null,
         previewRevision = run.Status == RunStatuses.Error ? run.LatestPreviewRevision : null,
         run.LastProgressAt,
         run.MaxStaticGapSeconds,
@@ -1515,6 +1730,10 @@ public sealed class CreateDesignArtifactRunRequest
     public string? Runtime { get; set; }
     public string? Instruction { get; set; }
     public string? Title { get; set; }
+    public string? DeliveryTemplateId { get; set; }
+    public string? DeliveryTemplateVersion { get; set; }
+    public string? DeliveryRequestId { get; set; }
+    public List<string>? DeliveryMediaFormats { get; set; }
 
     /// <summary>
     /// 目标团队空间。在请求这一刻冻结，由服务端建站时应用——不要再依赖浏览器的完成回调，
@@ -1542,6 +1761,8 @@ public sealed class CreateDesignArtifactRunRequest
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
+
+public sealed record InformationDeliveryCorrectionRequest(string? Id, int Revision, string? Text);
 
 public sealed class DesignKnowledgeReferenceRequest
 {
