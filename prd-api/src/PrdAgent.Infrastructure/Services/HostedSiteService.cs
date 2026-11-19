@@ -5547,6 +5547,8 @@ public class HostedSiteService : IHostedSiteService
         if (comment == null || !HostedSiteCommentRules.CanResolve(comment, site, userId)
             || !HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(comment), EffectiveContentVersion(site), await CanEditSiteAsync(site, userId, ct)))
             return new AddCommentResult { Error = "讨论不存在或无权修改", HttpStatus = 404, ErrorCode = "not_found" };
+        if (!comment.IsAi && string.IsNullOrWhiteSpace(comment.AuthorAvatarFileName))
+            comment.AuthorAvatarFileName = await LookupAvatarFileNameAsync(comment.AuthorUserId, ct);
         var update = Builders<HostedSiteComment>.Update.Set(c => c.IsResolved, resolved).Set(c => c.UpdatedAt, DateTime.UtcNow);
         var changed = await _db.HostedSiteComments.UpdateOneAsync(
             c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted, update, cancellationToken: CancellationToken.None);

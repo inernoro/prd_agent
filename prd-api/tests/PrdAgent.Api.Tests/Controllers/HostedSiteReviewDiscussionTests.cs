@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -59,6 +60,15 @@ public class HostedSiteReviewDiscussionTests
             Assert.Equal("/local-assets/icon/backups/head/original.png", comments["saved"].GetProperty("authorAvatarUrl").GetString());
             Assert.Null(comments["ai"].GetProperty("authorAvatarUrl").GetString());
             Assert.All(comments.Values, row => Assert.Empty(row.GetProperty("authorUserId").GetString()!));
+
+            controller.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "author")], "test"));
+            var resolved = Assert.IsType<OkObjectResult>(await controller.SetShareCommentResolved("avatar-share", "old", null,
+                new SetCommentResolvedRequest { Resolved = true }));
+            var resolvedJson = System.Text.Json.JsonSerializer.SerializeToElement(resolved.Value,
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)).GetProperty("data");
+            Assert.True(resolvedJson.GetProperty("isResolved").GetBoolean());
+            Assert.Equal("/local-assets/icon/backups/head/avatar-test.png", resolvedJson.GetProperty("authorAvatarUrl").GetString());
+            Assert.Empty(resolvedJson.GetProperty("authorUserId").GetString()!);
             Assert.Null((await db.HostedSiteComments.Find(row => row.Id == "old").SingleAsync()).AuthorAvatarFileName);
         }
         finally

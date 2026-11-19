@@ -240,18 +240,27 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
     {failedDownload === comment.id && <p role="alert" className="review-history-window-restore-error">附件下载失败，请重试。</p>}
   </> : null;
   useEffect(() => {
-    let active = true;
     setCommentState({ rows: [], status: 'loading' });
-    const fetch = mode === 'share' && sharedToken
-      ? listShareComments(sharedToken, sharedPassword, sourceSite)
-      : listSiteComments(sourceSite ?? site.id);
-    void fetch.then(result => {
-      if (!active) return;
-      setCommentState(result.success && Array.isArray(result.data?.comments)
-        ? { rows: result.data.comments, status: 'ready' } : { rows: [], status: 'error' });
-    }).catch(() => { if (active) setCommentState({ rows: [], status: 'error' }); });
-    return () => { active = false; };
-  }, [mode, sharedToken, sharedPassword, sourceSite, site.id, commentAttempt]);
+  }, [mode, sharedToken, sharedPassword, sourceSite, site.id]);
+  useEffect(() => {
+    let request = 0;
+    const refresh = async () => {
+      const pending = ++request;
+      try {
+        const result = mode === 'share' && sharedToken
+          ? await listShareComments(sharedToken, sharedPassword, sourceSite)
+          : await listSiteComments(sourceSite ?? site.id);
+        if (pending !== request) return;
+        setCommentState(result.success && Array.isArray(result.data?.comments)
+          ? { rows: result.data.comments, status: 'ready' } : { rows: [], status: 'error' });
+      } catch {
+        if (pending === request) setCommentState({ rows: [], status: 'error' });
+      }
+    };
+    void refresh();
+    window.addEventListener('hosted-comments-changed', refresh);
+    return () => { request++; window.removeEventListener('hosted-comments-changed', refresh); };
+  }, [mode, sharedToken, sharedPassword, sourceSite, site.id, versionId, commentAttempt]);
 
   useEffect(() => {
     if (!versions.some(entry => entry.id === versionId)) return;
@@ -360,7 +369,10 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
         <section ref={commentList} className="review-history-window-opinions" aria-label={`${version.versionLabel} 的意见`}>
           {commentState.status === 'loading' ? <p role="status">正在载入 {version.versionLabel} 的意见…</p>
             : commentState.status === 'error' ? <div className="review-history-window-comment-error" role="alert">
-              <p>暂时无法读取历史意见。</p><button type="button" className="review-history-button" onClick={() => setCommentAttempt(attempt => attempt + 1)}>重试</button>
+              <p>暂时无法读取历史意见。</p><button type="button" className="review-history-button" onClick={() => {
+                setCommentState({ rows: [], status: 'loading' });
+                setCommentAttempt(attempt => attempt + 1);
+              }}>重试</button>
             </div>
             : <>
               <h3>{versionRows.length ? `${version.versionLabel} 的意见 · ${versionRows.length} 条（仍归 ${version.versionLabel}）` : `${version.versionLabel} 没有意见`}</h3>

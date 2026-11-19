@@ -173,3 +173,30 @@ it('历史小窗显示附件评论和回复，并按分享凭据下载对应文�
   expect(downloadCommentFile).toHaveBeenLastCalledWith(source, 'reply', replyFile);
   expect(document.querySelector('.review-history-window [role="alert"]')?.textContent).toContain('附件下载失败');
 });
+
+it('评论变动后历史小窗更新回复和附件，较早的响应不能恢复已删除的附件', async () => {
+  const source = { mode: 'share', token: 'share', siteId: 'site' } as const;
+  const note = { id: 'note', authorName: '旧版作者', content: '原意见', contentVersion: '2' };
+  const before = { success: true, data: { comments: [
+    { ...note, attachments: [{ index: 0, name: '旧附件.txt', length: 4 }] },
+  ] } };
+  let completeOldRequest!: (response: typeof before) => void;
+  const oldRequest = new Promise<typeof before>(resolve => { completeOldRequest = resolve; });
+  listShareComments.mockResolvedValueOnce(before).mockReturnValueOnce(oldRequest).mockResolvedValueOnce({
+    success: true, data: { comments: [note, { ...note, id: 'reply', parentId: note.id, content: '新回复' }] },
+  });
+  const { preview } = await setupReaderVersion('self-contained-html', source, true);
+  const originalFrame = preview();
+  const windowText = () => document.querySelector('.review-history-window')?.textContent;
+  const changed = () => window.dispatchEvent(new CustomEvent('hosted-comments-changed'));
+  expect(windowText()).toContain('旧附件.txt');
+  await act(async () => { changed(); });
+  expect(windowText()).toContain('原意见');
+  await act(async () => { changed(); });
+  expect(windowText()).toContain('1 条回复');
+  expect(windowText()).not.toContain('旧附件.txt');
+  await act(async () => { completeOldRequest(before); });
+  expect(windowText()).toContain('1 条回复');
+  expect(windowText()).not.toContain('旧附件.txt');
+  expect(preview()).toBe(originalFrame);
+});
