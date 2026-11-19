@@ -154,6 +154,11 @@ jobs:
       - name: Install Chromium for layout probes
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Verify preview asset retention across container replacement
+        run: |
+          docker pull node:20-bookworm-slim
+          node scripts/preview-compatibility-browser.mjs
+
       - name: Task health recovery diagnostic
         run: pnpm run smoke:task-health-recovery
 

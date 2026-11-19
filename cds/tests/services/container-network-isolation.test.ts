@@ -247,6 +247,25 @@ describe('ContainerService 多项目网络隔离', () => {
       const runCmd = mock.commands.find((c) => c.includes('docker run -d'))!;
       expect(runCmd).toContain('--network cds-proj-a');
       expect(runCmd).toContain('--label cds.network=cds-proj-a');
+      expect(runCmd).toContain('--ulimit nofile=64000:64000');
+      expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
+    });
+
+    it('非Mongo基础设施保留自己的句柄策略', async () => {
+      const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+      okDockerStubs(mock);
+      await service.startInfraService(makeInfraService('proj-a', { id: 'postgres', name: 'Postgres', dockerImage: 'postgres:16', containerName: 'cds-postgres', containerPort: 5432,
+        env: { POSTGRES_PASSWORD: 'synthetic-only' } }));
+      expect(mock.commands.find(c => c.includes('docker run -d'))).not.toContain('--ulimit');
+    });
+
+    it.each(['running', 'exited'])('复用%s的Mongo不为补nofile而重建或修改运行参数', async status => {
+      const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+      okDockerStubs(mock);
+      mock.addResponsePatternFirst(/docker inspect.*json \.State.Status/, () => ({ stdout: ['a'.repeat(64), status, '/cds-mongo'].map(value => JSON.stringify(value)).join('|'), stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker start /, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
+      await service.startInfraService(makeInfraService('proj-a'));
+      expect(mock.commands.filter(c => /docker (?:run|create|rm)|prlimit|ulimit/.test(c))).toEqual([]);
     });
 
     it('老 infra（projectId 指向无 dockerNetwork 项目）走 config 兜底', async () => {
