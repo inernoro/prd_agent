@@ -109,6 +109,27 @@ public sealed class McpPublicExposureGrantTests
         sites.VerifyAll(); sites.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task 已授权的对外更新仍需每次确认_文件夹和标签可独立修改()
+    {
+        var site = new HostedSite { Id = "s", OwnerUserId = "u", Visibility = "public" };
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(x => x.GetByIdAsync("s", "u", It.IsAny<CancellationToken>())).ReturnsAsync(site);
+        sites.Setup(x => x.CanEditSiteAsync(site, "u", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        using var body = new MemoryStream("<h1>changed</h1>"u8.ToArray());
+        var controller = WebController(sites.Object, granted: true);
+        (await controller.GetUploadInfo("s")).ShouldBeOfType<BadRequestObjectResult>();
+        (await controller.ReuploadFile("s", new FormFile(body, 0, body.Length, "file", "entry.html"), null, null))
+            .ShouldBeOfType<BadRequestObjectResult>();
+        (await controller.UpdatePage("s", new() { Title = "changed" })).ShouldBeOfType<BadRequestObjectResult>();
+
+        var tags = new List<string> { "demo" };
+        sites.Setup(x => x.UpdateAsync("s", "u", null, null, tags, "归档", null, It.IsAny<CancellationToken>())).ReturnsAsync(site);
+        (await WebController(sites.Object).UpdatePage("s", new() { Folder = "归档", Tags = tags }))
+            .ShouldBeOfType<OkObjectResult>();
+        sites.VerifyAll(); sites.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData("missing", false, false, "share", false, true)]
     [InlineData("null", false, false, "share", false, true)]

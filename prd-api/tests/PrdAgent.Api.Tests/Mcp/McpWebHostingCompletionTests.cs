@@ -33,6 +33,17 @@ namespace PrdAgent.Api.Tests.Mcp;
 public sealed class McpWebHostingCompletionTests
 {
     [Fact]
+    public void 网页交付_退队后所有者仍可见_原团队成员失去访问后不可见()
+    {
+        var sharedTeamIds = new[] { "former-team" };
+        HomeRecentWorkController.CanSeeWebDelivery("owner", "owner", sharedTeamIds, null).ShouldBeTrue();
+        HomeRecentWorkController.CanSeeWebDelivery("former-member", "owner", sharedTeamIds,
+            new Dictionary<string, string> { ["other-team"] = "editor" }).ShouldBeFalse();
+        HomeRecentWorkController.CanSeeWebDelivery("member", "owner", sharedTeamIds,
+            new Dictionary<string, string> { ["former-team"] = "viewer" }).ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task 原始ZIP上传_传原字节给同一站点服务_保留多页面与图片清单()
     {
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
@@ -63,14 +74,15 @@ public sealed class McpWebHostingCompletionTests
     public async Task 重传指定原站_不会退化成创建新站()
     {
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
-        var site = new HostedSite { Id = "existing", SiteUrl = "https://files.example/existing/index.html" };
+        var site = new HostedSite { Id = "existing", SiteUrl = "https://files.example/existing/index.html", Visibility = "public" };
         sites.Setup(x => x.GetByIdAsync("existing", "u", It.IsAny<CancellationToken>())).ReturnsAsync(site);
         sites.Setup(x => x.CanEditSiteAsync(site, "u", It.IsAny<CancellationToken>())).ReturnsAsync(true);
         sites.Setup(x => x.ReuploadAsync("existing", "u", It.IsAny<Stream>(), "new.zip", null,
             It.IsAny<CancellationToken>(), null, null)).ReturnsAsync(site);
         var bytes = Zip(("index.html", "updated"));
         using var input = new MemoryStream(bytes);
-        var response = await Controller(sites.Object).ReuploadFile("existing", new FormFile(input, 0, input.Length, "file", "new.zip"), null, null);
+        var response = await Controller(sites.Object).ReuploadFile("existing", new FormFile(input, 0, input.Length, "file", "new.zip"),
+            null, null, confirmedExposure: true);
         Body(response).GetProperty("siteId").GetString().ShouldBe("existing");
         sites.VerifyAll();
         sites.VerifyNoOtherCalls();

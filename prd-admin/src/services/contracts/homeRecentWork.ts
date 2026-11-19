@@ -4,7 +4,7 @@ import type { ApiResponse } from '@/types/api';
 export type RecentWorkItemDto = {
   /** 一键回到工作现场的前端路由（如 /visual-agent/{id}） */
   route: string;
-  /** 归属智能体：visual-agent | literary-agent | workflow-agent */
+  /** 归属应用，如 visual-agent、workflow-agent 或 web-pages */
   agentKey: string;
   title: string;
   lastActiveAt: string;
@@ -14,4 +14,7 @@ export type RecentWorkItemDto = {
   progressLabel?: string | null;
 };
 
-export type ListRecentWorkContract = (input?: { limit?: number }) => Promise<ApiResponse<{ items: RecentWorkItemDto[] }>>;
+export type ListRecentWorkContract = (input?: {
+  limit?: number;
+  webDeliveriesOnly?: boolean;
+}) => Promise<ApiResponse<{ items: RecentWorkItemDto[] }>>;
