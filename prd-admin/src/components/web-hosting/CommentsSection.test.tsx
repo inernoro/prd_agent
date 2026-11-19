@@ -65,6 +65,32 @@ describe('review discussion', () => {
     } finally { height.mockRestore(); }
   });
 
+  it('主阅读区显示接口已授权的旧整页评论，保留真实批注和历史小窗的版本边界', async () => {
+    const legacy = { ...original, content: '未标版本的整页意见', contentVersion: null, revisionId: null, anchor: null };
+    const anchor = { kind: 'text', text: '正文' };
+    const current = { ...original, id: 'current', content: '本版的定位批注', contentVersion: 'current', anchor };
+    const old = { ...original, id: 'other', content: '其他版本的意见', contentVersion: 'old' };
+    const unverifiedPin = { ...legacy, id: 'unverified', content: '无版本号的原文标记', anchor };
+    list.mockResolvedValue(response([legacy, current, old, unverifiedPin]));
+    const review = { loading: false, versions: [], selected: { id: 'v1', isCurrent: true, contentVersionKey: 'current' } } as unknown as HostedReview;
+    const host = annotations(), counts = vi.fn();
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (versionOnly = false) => root.render(<CommentsSection mode="share" token="share"
+      readerLayout splitLayout review={review} annotations={host} versionOnly={versionOnly} onThreadCountsChange={counts} />);
+    await act(async () => render());
+    expect(container.querySelector('.review-thread-scroll')?.textContent).toContain(legacy.content);
+    expect(container.querySelectorAll('.review-origin-version')).toHaveLength(1);
+    expect(container.querySelectorAll('.review-anchor-quote')).toHaveLength(1);
+    expect(container.textContent).not.toContain(old.content);
+    expect(container.textContent).not.toContain(unverifiedPin.content);
+    expect(counts).toHaveBeenLastCalledWith({ annotations: 1, discussions: 1 });
+    expect(host.setThreads).toHaveBeenLastCalledWith([legacy, current]);
+
+    await act(async () => render(true));
+    expect(container.textContent).not.toContain(legacy.content);
+    expect(counts).toHaveBeenLastCalledWith({ annotations: 1, discussions: 0 });
+  });
+
   it('sends on plain Enter after IME composition and includes selected attachments', async () => {
     const file = new File(['content'], '材料.txt', { type: 'text/plain' });
     const message = { ...original, id: 'sent', content: '两行\n评论', attachments: [{ index: 0, name: file.name, length: file.size }] };
