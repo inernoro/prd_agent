@@ -1,0 +1,91 @@
+name: 产品管理独立发布候选校验
+on:
+  push:
+    branches:
+      - codex/map-production-readonly-diagnosis-20261119
+    paths:
+      - .github/workflows/map-product-only-validation.yml
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a7a12cd3c05ffee3d6a3e9a469a57d3fa1e7c825
+          persist-credentials: false
+      - name: 装配已核实的三个产品管理文件
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const crypto = require('crypto');
+            const files = [{"path":"prd-admin/src/pages/product-agent/VersionWorkflowTab.tsx","sha":"27e234c057d15bec8dc8af3a0f5ce834d602c8ba"},{"path":"prd-admin/src/pages/product-agent/InitiationApplicationFlow.test.ts","sha":"7de97db282b268cb200cb64749e4674b9c81f7bf"},{"path":"changelogs/2026-11-17_内部版本立项表单引导.md","sha":"c7efbf1744b825bee2306543e2732ca8b0154fed"}];
+            for (const item of files) {
+              const {data} = await github.rest.git.getBlob({...context.repo, file_sha: item.sha});
+              const bytes = Buffer.from(data.content, 'base64');
+              const digest = crypto.createHash('sha1').update(Buffer.from('blob ' + bytes.length + '\0')).update(bytes).digest('hex');
+              if (digest !== item.sha) throw new Error('文件校验不一致: ' + item.path);
+              fs.mkdirSync(path.dirname(item.path), {recursive: true});
+              fs.writeFileSync(item.path, bytes);
+              core.info('已校验 ' + item.path);
+            }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: prd-admin/pnpm-lock.yaml
+      - name: 安装锁定依赖
+        working-directory: prd-admin
+        run: pnpm install --frozen-lockfile
+      - name: 类型检查
+        working-directory: prd-admin
+        run: pnpm tsc --noEmit
+      - name: 完整 lint
+        working-directory: prd-admin
+        run: pnpm lint
+      - name: 改动文件零告警
+        working-directory: prd-admin
+        run: pnpm exec eslint src/pages/product-agent/VersionWorkflowTab.tsx src/pages/product-agent/InitiationApplicationFlow.test.ts --max-warnings=0
+      - name: 完整前端测试
+        working-directory: prd-admin
+        run: pnpm test
+      - name: 完整前端构建
+        working-directory: prd-admin
+        run: pnpm build
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: 校验通过后创建产品管理分支并启动既有构建
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = 'codex/product-management-hotfix-20261119';
+            const candidate = '37fe00fb9ee5dd95f3eac353173b202ae7cb33f7';
+            let found;
+            try {
+              found = await github.rest.git.getRef({...context.repo, ref: 'heads/' + branch});
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (found && found.data.object.sha !== candidate) throw new Error('分支已有其他提交，停止以保护已有代码');
+            if (!found) await github.rest.git.createRef({...context.repo, ref: 'refs/heads/' + branch, sha: candidate});
+            core.info('发布候选分支 ' + branch + ' @ ' + candidate);
+            for (const item of [
+              {workflow_id: 'ci.yml', inputs: {}},
+              {workflow_id: 'branch-image.yml', inputs: {}},
+              {workflow_id: 'web-latest-pages.yml', inputs: {publish_latest: 'false'}}
+            ]) {
+              await github.rest.actions.createWorkflowDispatch({...context.repo, workflow_id: item.workflow_id, ref: branch, inputs: item.inputs});
+              core.info('已启动 ' + item.workflow_id);
+            }
