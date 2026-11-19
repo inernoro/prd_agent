@@ -66,7 +66,7 @@ import { runLiteraryImageBatch, type LiteraryImageAttempt } from './literaryImag
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square, ChevronDown } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { ArticleEditorToolbar } from './ArticleEditorToolbar';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
@@ -774,10 +774,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
   const pendingSelectedPromptIdRef = useRef<string | null>(null);
 
-  // Phase 1: 位置策略（自动 / 固定位置 / 用户锚点）
-  // 存 sessionStorage，键 = 'articleMarkerStrategy:' + workspaceId
-  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.visual-agent.manual-image-marking.md
-  const [positionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  const [selectedPositionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  // 自动策略本来就优先使用原文锚点。根据已保存的正文显示实际策略，显式选的标题策略仍优先。
+  const positionStrategy = selectedPositionStrategy === 'auto' && userAnchorCount > 0
+    ? 'user-anchor'
+    : selectedPositionStrategy;
+  const positionStrategyLabel = positionStrategy === 'auto'
+    ? '自动安排'
+    : POSITION_STRATEGY_OPTIONS.find(option => option.value === positionStrategy)?.label ?? '自动安排';
   const [positionStrategyOpen, setPositionStrategyOpen] = useState(false);
   useEffect(() => {
     if (!workspaceId) return;
@@ -3459,7 +3463,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
           {/* 配置与模型共用原位展开区域，同一时间只展开一项。 */}
           <LiteraryInlineMenuGroup>
-            <div className="lit-settings" data-testid="literary-generation-settings">
+            <details key={phase === 2 ? 'results' : 'preparation'} open={phase !== 2} className="lit-settings" data-testid="literary-generation-settings">
+              <summary className="lit-settings-row lit-settings-disclosure">
+                <span className="lit-settings-label"><SlidersHorizontal size={16} aria-hidden /><span>生成设置</span></span>
+                <span className="lit-settings-value">{positionStrategyLabel}</span>
+                <ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
+              </summary>
               <section className="lit-settings-section lit-settings-section--rows" aria-label="配图设置">
                 <div className="lit-settings-heading">
                   <h3>配图设置</h3>
@@ -3635,7 +3644,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <LiterarySettingsRow
                       icon={<Layers size={16} />}
                       label="插图位置"
-                      value={positionStrategy === 'auto' ? '自动安排' : POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动安排'}
+                      value={positionStrategyLabel}
                       title="配图位置：控制 AI 在哪些段落插入配图标记"
                       aria-label="配图位置"
                     />
@@ -3706,7 +3715,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 )}
               </section>
-            </div>
+            </details>
           </LiteraryInlineMenuGroup>
         </PanelCard>
 

@@ -3,6 +3,10 @@
   margin-top: 14px;
   border-top: 1px solid var(--border-subtle);
 }
+.lit-settings-disclosure { list-style: none; margin-top: 4px; }
+.lit-settings-disclosure::-webkit-details-marker { display: none; }
+.lit-settings[open] > .lit-settings-disclosure > .lit-settings-value { visibility: hidden; }
+.lit-settings[open] > .lit-settings-disclosure > .lit-settings-chevron { transform: rotate(180deg); }
 .lit-settings-section { min-width: 0; padding-top: 16px; }
 .lit-settings-heading {
   display: flex; align-items: center; justify-content: space-between;
