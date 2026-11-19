@@ -2,7 +2,7 @@
 name: map-agent
 description: 通过已经连接的 MAP MCP 操作知识库、创作、技能市场和网页托管；用于安装或更新 MAP 配套技能、原样上传网站、修改分享权限及检查交付结果。
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # MAP 智能体接入与托管
@@ -46,11 +46,15 @@ WorkBuddy 更新时在接入台查看当前版本，对照 WorkBuddy 已安装�
 
 用户给 ZIP 时，其目标通常是原样托管。多页面、相对链接、图片、样式、脚本和目录结构必须保留；不能把 ZIP 重写或拼成单页 HTML 当作完成。图片上传也不要转成模型重绘。
 
-1. 用 `map_web_get_upload_info` 取上传地址、字段、限制及短时 `uploadToken`；更新时传 `siteId` 取得该站点的上传入口。通过本地文件工具或 HTTP 客户端把原文件作为 multipart 的 `file` 发送，并把返回的 `uploadToken` 放进 `Authorization: Bearer` 请求头。令牌只用于该次上传，不打印、不写日志、不放 URL；不要索要或复制客户端的长效密钥，也不要把 ZIP 编成 base64 塞进 MCP 对话。上传进度用 `map_web_get_upload_progress` 查询。
-2. 用返回的 `siteId` 调 `map_web_get_page` 读回资源和当前状态。更新已有站点使用指引返回的重传地址，保留同一个站点标识；不要每次新建。
-3. 元数据修改使用 `map_web_update_page`；站点可见性使用 `map_web_set_visibility`。仅在用户已明确要求公开后传 `confirmedExposure=true`。服务若要求私有资料确认，先展示具体来源，再按用户的明确选择提交返回的指纹。
-4. `map_web_create_share` / `map_web_update_share` 中 `expiresInDays=0` 表示永久；`visibility=public` 表示匿名公开，`logged-in` 表示需登录，`owner-only` 表示本人及团队。分享范围与站点可见性分别读回，不混为一个开关。
-5. 查看已有分享用 `map_web_list_shares`；撤销用 `map_web_revoke_share`。撤销分享不删除站点。
+每次网页写入生成一个新的 `clientRequestId`，同一次操作重试用相同值。MCP 写入工具声明该参数时传在工具参数里，multipart 上传则传在表单里。
+
+1. 更新原站时，在渲染或打包前先用 `map_web_get_page_settings` 检查 `externalAccess` 和 `canUpdateContent`。已有访问链接的私有站点也可能对外。旧服务没有这项工具时，可调用 `map_web_get_upload_info(siteId)` 做预检，提交前按需重新取短期凭证。
+2. 更新对外内容前，请用户确认更新的站点和影响范围，提供「更新对外原站」「另存私有副本」「先不更新」中当前可执行的选项。缺少客户端发布授权时，说明原站更新尚未提交，并提供私有副本或暂缓的选择。用户明确要持续委托这台客户端时，再提供接入台的授权入口。
+3. 用 `map_web_get_upload_info` 取上传地址、限制及短时 `uploadToken`。更新时传 `siteId`，已确认对外更新时加 `confirmedExposure=true`。把原文件作为 multipart 的 `file` 发送，同时附带服务返回的 `requiredAdditionalFormFields`。上传凭证放在 `Authorization: Bearer` 请求头，只用于该次上传，避免写入日志或 URL。上传进度用 `map_web_get_upload_progress` 查询。
+4. 更新后用同一个 `siteId` 调 `map_web_get_page` 读回资源、状态和版本；把回执的 `managementUrl` 提供给用户用于定位站点。渲染完成、服务已接收文件和原站已更新分别报告，只有成功回执读回后才报告完成。
+5. `map_web_get_organization` 列出文件夹和标签，`map_web_update_page` 修改对应元数据，`map_web_set_comments_enabled` 管理评论。对外更新标题或描述、对外开启评论均需发布授权和本次确认。
+6. `map_web_set_visibility` 管理站点的 private / public 状态，分享链接有独立的访问范围。升为公开或登录可见之前，明确让用户选择范围，再带 `confirmedExposure=true`。服务要求私有资料确认时，先展示具体来源，取得确认后提交对应指纹。
+7. `map_web_create_share` / `map_web_update_share` 的 `expiresInDays=0` 表示永久；`public` 表示匿名公开，`logged-in` 表示需登录，`owner-only` 表示本人及团队。用 `map_web_list_shares` 读回分享范围、到期和状态，需要收回时用 `map_web_revoke_share`。将站点改为私有后也要检查仍有效的分享链接。
 
 交付时分别说明：原文件是否保留、站点是否更新、返回的分享范围和到期时间、实际打开验证结果。用户要求“公开永久”时，应明确看到 `visibility=public`、无到期时间，并以未登录浏览器打开实际分享链接。检查至少一个子页面跳转、一个图片、一项脚本交互。撤销后再验证旧链接被拒。只有接口返回成功时，写“接口已设置，浏览器访问未验证”，不要写“验收通过”。
 

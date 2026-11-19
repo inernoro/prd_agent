@@ -94,6 +94,7 @@ import { createLlmGatewaySsoTicket, getAdminNotifications, uploadMyAvatar } from
 import type { AdminNotificationItem, GetAdminNotificationsResponse } from '@/services/contracts/notifications';
 import { NotificationFacts } from '@/components/notifications/NotificationFacts';
 import { useNotificationActions } from '@/components/notifications/useNotificationActions';
+import { finishEntryArrival, useEntryArrival } from '@/components/effects/entryArrival';
 import { useNotificationToast } from '@/components/notifications/useNotificationToast';
 import { notificationToastKey } from '@/lib/notificationPresentation';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
@@ -215,8 +216,12 @@ function getNotificationTone(level?: string) {
 }
 
 export default function AppShell() {
+  const entryActive = useEntryArrival();
   const navigate = useNavigate();
   const location = useLocation();
+  useEffect(() => {
+    if (!['/', '/agent-launcher'].includes(location.pathname)) finishEntryArrival();
+  }, [location.pathname]);
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
   const patchUser = useAuthStore((s) => s.patchUser);
@@ -731,7 +736,7 @@ export default function AppShell() {
     });
   }, []);
   const pendingToastNotification = useNotificationToast({ notifications: activeNotifications, dismissed: dismissedToastIds,
-    paused: toastHovering || notificationDialogOpen, snoozed: isSnoozed, collapsed: toastCollapsed,
+    paused: entryActive || toastHovering || notificationDialogOpen, snoozed: isSnoozed, collapsed: toastCollapsed,
     onDismiss: dismissToastKey, onCollapsedChange: setToastCollapsed });
   const toastNotification = pendingToastNotification ?? (toastCollapsed ? activeNotifications[0] : undefined);
 
@@ -825,7 +830,7 @@ export default function AppShell() {
       <GlobalDefectSubmitDialog />
       {/* TipsDrawer 已上移到 App 根挂载(全局唯一,跨路由不卸载),此处不再渲染 */}
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
-      {!suppressFloatingDock && !isMobile && !notificationDialogOpen && toastNotification && (() => {
+      {!entryActive && !suppressFloatingDock && !isMobile && !notificationDialogOpen && toastNotification && (() => {
         const tone = getNotificationTone(toastNotification.level);
         // 通知类型注册表：不同类型（缺陷协作 / 周报 / 系统告警 …）展示不同图标、强调色与弹窗气质
         const variant = getNotificationType(toastNotification);
@@ -1120,7 +1125,7 @@ export default function AppShell() {
           （返回 + 标题 + 字号/全屏/更多同一行），AppShell 不再渲染自己的顶栏。 */}
       {isMobile && !readerOverride && (
         <header
-          className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
+          className="entry-shell-chrome fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{
             ...glassMobileHeader,
             gridTemplateColumns: '44px minmax(0, 1fr) 92px',
@@ -1297,7 +1302,7 @@ export default function AppShell() {
       )}
 
       {/* ── 移动端: 底部 Tab 栏 (5 固定 Tab: 首页/浏览/+/资产/我的) ── */}
-      {isMobile && <MobileTabBar />}
+      {isMobile && <MobileTabBar className="entry-shell-chrome" />}
 
       {/* 主体容器（背景动画已临时移除以消除渲染卡顿） */}
       <div className="relative h-full w-full">
@@ -1307,7 +1312,7 @@ export default function AppShell() {
             浮岛侧栏与贴边内容不成对，通到顶底的直边栏两种画布都协调。 */}
         <aside
           className={cn(
-            'absolute flex flex-col p-2 transition-[width] duration-220 ease-out',
+            'entry-shell-chrome absolute flex flex-col p-2 transition-[width] duration-220 ease-out',
             collapsed ? 'gap-1.5 items-center' : 'gap-1.5'
           )}
           style={{

@@ -1583,6 +1583,90 @@ html[data-perf-mode="performance"] .app-aurora {
   animation: none !important;
 }
 
+/* B 双栏审阅 · 正文之外的工具栏、讨论、页边、历史和悬浮菜单共用色板。 */
+:root,
+[data-theme="dark"] {
+  --review-b-paper: #17181b;
+  --review-b-panel: #1c1d21;
+  --review-b-field: #222429;
+  --review-b-ink: #ecedef;
+  --review-b-muted: #9296a0;
+  --review-b-line: rgb(255 255 255 / 8%);
+  --review-b-glass: rgb(23 24 27 / 72%);
+  --review-b-ui: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --review-b-popover: #212327;
+  --review-b-popover-line: #48484f;
+  --review-b-popover-ink: #f4f4f5;
+  --review-b-popover-muted: #a6a6ad;
+  --review-b-popover-hover: #37373d;
+  --review-b-avatar-ink: #fff;
+  --review-b-history-hint: #f0a421;
+  --review-b-secondary: #bec1c7;
+  --review-b-line-strong: rgb(255 255 255 / .16);
+  --review-b-action: #86a8ff;
+  --review-b-on-action: #0b1430;
+  --review-b-ring: #f4c35c;
+  --review-b-selected: #2a261b;
+  --review-b-pin: #4b3a16;
+  --review-b-on-pin: #fbde9e;
+  --review-b-note: rgb(245 185 66 / .15);
+  --review-b-success: #5cc48d;
+  --review-b-error: #ff8a7a;
+  --review-b-error-bg: rgb(255 138 122 / .10);
+  --review-b-shadow: 0 1px 2px rgb(0 0 0 / .4), 0 4px 14px rgb(0 0 0 / .32);
+  --review-b-history-line: rgb(255 255 255 / 8%);
+  --review-b-strong-line: rgb(255 255 255 / 15%);
+  --review-b-action-ink: #12182d;
+  --review-b-action-soft: rgb(134 168 255 / 14%);
+  --review-b-current-soft: rgb(92 196 141 / 14%);
+  --review-b-error-soft: rgb(255 138 122 / 12%);
+  --review-b-card: #212327;
+  --review-b-grip: rgb(255 255 255 / 16%);
+  --review-b-margin-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 14px rgb(0 0 0 / 32%);
+  --review-b-raised: 0 2px 8px rgb(0 0 0 / 45%), 0 16px 40px rgb(0 0 0 / 50%);
+}
+
+[data-theme="light"] {
+  --review-b-paper: #fff;
+  --review-b-panel: #f7f7f5;
+  --review-b-field: #fff;
+  --review-b-ink: #1b1c1f;
+  --review-b-muted: #676b73;
+  --review-b-line: rgb(24 26 31 / 9%);
+  --review-b-glass: rgb(255 255 255 / 74%);
+  --review-b-ui: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --review-b-popover: #fff;
+  --review-b-popover-line: #d9dadc;
+  --review-b-popover-ink: #18191c;
+  --review-b-popover-muted: #626871;
+  --review-b-popover-hover: #f2f2f3;
+  --review-b-avatar-ink: #fff;
+  --review-b-history-hint: #f0a421;
+  --review-b-secondary: #45484e;
+  --review-b-line-strong: rgb(24 26 31 / .17);
+  --review-b-action: #2a5bd7;
+  --review-b-on-action: #fff;
+  --review-b-ring: #a06400;
+  --review-b-selected: #fffbf1;
+  --review-b-pin: #fbe1a6;
+  --review-b-on-pin: #5a3a00;
+  --review-b-note: rgb(240 170 40 / .20);
+  --review-b-success: #1d7448;
+  --review-b-error: #b8321f;
+  --review-b-error-bg: rgb(184 50 31 / .08);
+  --review-b-shadow: 0 1px 2px rgb(20 22 26 / .06), 0 3px 12px rgb(20 22 26 / .07);
+  --review-b-history-line: rgb(0 0 0 / 8%);
+  --review-b-strong-line: rgb(0 0 0 / 15%);
+  --review-b-action-ink: #fff;
+  --review-b-action-soft: rgb(42 91 215 / 8%);
+  --review-b-current-soft: rgb(29 116 72 / 14%);
+  --review-b-error-soft: rgb(184 50 31 / 9%);
+  --review-b-card: #fff;
+  --review-b-grip: rgb(24 26 31 / 17%);
+  --review-b-margin-shadow: 0 1px 2px rgb(20 22 26 / 6%), 0 3px 12px rgb(20 22 26 / 7%);
+  --review-b-raised: 0 2px 6px rgb(20 22 26 / 8%), 0 14px 36px rgb(20 22 26 / 16%);
+}
+
 /* 生图等待态（GenDevelopLoader）的「跟随主题」档。
    上面 --gen-wait-* 一族故意恒为暗色，因为视觉创作画布舞台被钉死成暗色。
    但同一个组件也用在会翻浅色的普通页面上（文学创作的配图卡片与正文占位，
@@ -1723,3 +1807,17 @@ html[data-perf-mode="performance"] .app-aurora {
 :root{--writing-caption-ink:#fff}
 
 :root{--writing-author-scrim:rgba(12,14,18,.45);--writing-sheet-shadow:0 -8px 30px rgba(0,0,0,.18)}
+
+/* Cinematic entry media palette. These are invariant scene colors, like an
+   artwork cover: fog-white authentication reveals the same night-blue scene
+   in both app skins. The expanded workbench follows the normal theme tokens. */
+:root {
+  --cinema-paper: #eff0f1;
+  --cinema-ink: #15171b;
+  --cinema-night: #02050a;
+  --cinema-light: #f0f5ff;
+  --cinema-accent: #71dce7;
+  --cinema-amber: #ff9b3d;
+  --cinema-glass: rgba(23, 37, 54, 0.60);
+  --cinema-border: rgba(185, 218, 250, 0.26);
+}

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { observeNativeAudio, nativeAudioEvidence } from '../fixtures/admin-operations-audio';
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   installOperationsFixtures,
@@ -5,6 +7,11 @@ import {
   targetName,
   run,
 } from "../fixtures/admin-operations.mjs";
+
+const gatewayPortraitAssets = JSON.parse(
+  readFileSync(new URL('../fixtures/media/gateway-portrait-cdn.json', import.meta.url), 'utf8'),
+) as typeof import('../fixtures/media/gateway-portrait-cdn.json');
+
 test.beforeEach(async ({ browser, page }, testInfo) => {
   page.on("pageerror", (error) =>
     testInfo.annotations.push({
@@ -38,8 +45,14 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await page.route('**/api/branches?*',route=>route.fulfill({json:{branches:[{id:'compat-branch',projectId:target.projectId,branch:'compat-branch',githubCommitSha:b,commitSha:b,status:'running'}]}}));
     await page.route('**/api/releases/governance?*',route=>route.fulfill({json:{authorizations:records,attempts:[],mergeBacks:[],deploymentVersions:[{id:'saved-a',branchId:'compat-branch',commitSha:a,createdAt:stamp}]}}));
     await page.route('**/api/releases/targets/compat-target/authorizations',async route=>{
-      const body=route.request().postDataJSON();writes.push(body);records=[{...body,id:'fixed-a-approval',projectId:target.projectId,targetId:target.id,branchName:'compat-branch',candidateSha:a,requestedBy:'user:requester:申请人',status:'pending',createdAt:stamp}];await route.fulfill({json:{authorization:records[0]}});
+      const body=route.request().postDataJSON();writes.push(body);records=[{...body,id:'fixed-a-approval',projectId:target.projectId,targetId:target.id,branchName:'compat-branch',candidateSha:a,mainSha:b,requestedBy:'user:requester:申请人',status:'pending',createdAt:stamp}];await route.fulfill({json:{authorization:records[0]}});
     });
+    await page.route('**/api/releases/authorizations/fixed-a-approval', route => route.fulfill({json:{
+      authorization:records[0],target:{name:targetName},viewer:{applicant:true,mayReview:false,mayReapply:false},
+    }}));
+    await page.route('**/api/releases/approval-inbox?*', route => route.fulfill({json:{
+      target:{name:targetName},records:records.map(record=>({...record,purpose:record.reason,applicant:true,mayReview:false})),
+    }}));
     await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
     const panel=page.getByRole('region',{name:'发布审批与连续调试'});await panel.getByRole('button',{name:'新建申请',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'申请发布批准',exact:true});
@@ -47,10 +60,13 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await dialog.getByRole('combobox',{name:'批准发布版本',exact:true}).selectOption('saved-a');
     await dialog.getByRole('textbox',{name:'发布目的',exact:true}).fill('批次固定已验收A而分支已经前进B');
     await dialog.getByRole('button',{name:'提交独立审批',exact:true}).click();await expect(dialog).toBeHidden();
-    await expect(panel.getByText('fixed-a-approval',{exact:true})).toHaveCount(0);
-    await expect(panel.getByText('saved-a',{exact:true})).toBeVisible();await expect(panel.getByText(a,{exact:true})).toBeVisible();
+    const receipt=page.getByRole('dialog',{name:'单次发布申请',exact:true});
+    await expect(receipt.getByText('等待另一位成员审批',{exact:true})).toBeVisible();
+    await receipt.getByText('申请依据与审批记录',{exact:true}).click();
+    await expect(receipt.getByText(/固定部署版本：saved-a/)).toBeVisible();
+    await expect(receipt.getByText(new RegExp('候选版本：'+a))).toBeVisible();
     expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({kind:'single',action:'release',deploymentVersionId:'saved-a',branchId:'compat-branch'});
-    expect(page.url()).toContain('release-center');
+    await expect(page).toHaveURL(/\/release-center\/approval\?request=fixed-a-approval$/);
   });
   test(`${viewport.width} 已受理的单次批准仍可撤销且不重新批准`, async ({ page }) => {
     await page.setViewportSize(viewport);
@@ -71,6 +87,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     });
     await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
     const panel=page.getByRole('region',{name:'发布审批与连续调试'});
+    await panel.getByText('查看审批历史与撤销',{exact:true}).click();
     await expect(panel.getByText('本次批准已使用',{exact:true})).toBeVisible();
     await expect(panel.getByText('回滚目标记录',{exact:true})).toBeVisible();
     await expect(panel.getByText('approved-history',{exact:true})).toBeVisible();
@@ -78,8 +95,9 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await expect(panel.getByText('已刷新审批记录',{exact:true})).toBeVisible();
     await expect(panel.getByRole('button',{name:'独立批准',exact:true})).toHaveCount(0);
     await expect(panel.getByRole('button',{name:'拒绝',exact:true})).toHaveCount(0);
+    await panel.locator('summary').filter({hasText:'撤销授权'}).click();
     await expect(panel.getByRole('button',{name:'撤销授权',exact:true})).toBeVisible();
-    await panel.getByRole('textbox',{name:'审批意见',exact:true}).fill('连接期间停止本次发布');
+    await panel.getByRole('textbox',{name:'撤销意见',exact:true}).fill('连接期间停止本次发布');
     await panel.getByRole('button',{name:'撤销授权',exact:true}).click();
     await expect(panel.getByText('审批决定已保存',{exact:true})).toBeVisible();
     await expect(panel.getByText('已撤销',{exact:true})).toBeVisible();
@@ -284,7 +302,7 @@ for (const route of ['release-console', 'release-center']) {
     const project = page.getByRole('combobox', { name: route === 'release-console' ? '当前项目' : '项目', exact: true });
     await expect(page.getByRole('alert')).toContainText('项目不在此实例中');
     await expect(project).toHaveValue('');
-    if (route === 'release-console') await expect(page.getByRole('note')).toContainText('不能执行真实发布');
+    if (route === 'release-console') await expect(page.getByRole('note')).toContainText('真实发布请在有发布数据与权限的 CDS 实例中操作');
     expect(invalidRequests).toEqual([]);
     const validProjectId = await project.locator('option:not([value=""])').first().getAttribute('value');
     expect(validProjectId).toBeTruthy();
@@ -311,10 +329,43 @@ async function loginGateway(page: Page) {
   await page.goto("http://127.0.0.1:8200/llmgw/login", {
     waitUntil: "domcontentloaded",
   });
+  const scene = page.locator(".consciousness-scene");
+  const loginArtwork = page.locator(".consciousness-art");
+  const theme = await scene.getAttribute("data-portrait-theme");
+  expect(["light", "dark"]).toContain(theme);
+  const portrait = theme === "light" ? gatewayPortraitAssets.light.opening : gatewayPortraitAssets.dark.closed;
+  await expect(loginArtwork).toHaveAttribute("src", portrait.url);
+  await expect.poll(() => loginArtwork.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
   await page.locator("#llmgw-username").fill("demo");
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();
+  await expect(page.locator(".gateway-entry")).toHaveAttribute("data-phase", "authorized");
+  await expect(page).toHaveURL(/\/llmgw\/quickstart$/);
+  await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toBeEditable();
+  await expect(page.getByRole("button", { name: "进入控制台", exact: true })).toHaveCount(0);
+  const coverage = await page.locator('.gateway-quickstart-stage').evaluate(stage => {
+    const main = stage.closest('main')!.getBoundingClientRect();
+    const scene = stage.querySelector('.consciousness-scene')!.getBoundingClientRect();
+    const heading = stage.querySelector('h1')!.getBoundingClientRect();
+    return { gaps: [scene.left-main.left, scene.top-main.top, main.right-scene.right, main.bottom-scene.bottom], headingInside: heading.top >= scene.top && heading.bottom <= scene.bottom, radius: getComputedStyle(stage).borderRadius };
+  });
+  expect(coverage.gaps.every(gap => Math.abs(gap) < 2)).toBe(true);
+  expect(coverage.headingInside).toBe(true);
+  expect(coverage.radius).toBe('0px');
   await expect(page.locator(".lg-console-content")).toBeVisible();
+  await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
+  await expect(page.locator(".lg-console-header input")).toHaveCount(0);
+  await expect(page.locator(".gateway-quickstart-stage textarea")).toHaveCount(1);
+  const expandMenu = page.getByRole("button", { name: "展开菜单", exact: true });
+  if (await expandMenu.isVisible()) {
+    const sidebar = page.locator(".lg-console-sidebar");
+    await expect.poll(() => sidebar.evaluate(el => Math.round(el.getBoundingClientRect().width))).toBe(64);
+    await expandMenu.click();
+    await expect.poll(() => sidebar.evaluate(el => Math.round(el.getBoundingClientRect().width))).toBe(224);
+    await expect(page.getByRole("button", { name: "收起菜单", exact: true })).toHaveAttribute("aria-expanded", "true");
+    await page.getByRole("button", { name: "收起菜单", exact: true }).click();
+    await expect.poll(() => sidebar.evaluate(el => Math.round(el.getBoundingClientRect().width))).toBe(64);
+  }
   if (await page.getByLabel("打开导航", { exact: true }).isVisible())
     await page.getByLabel("打开导航", { exact: true }).click();
   await page.locator('nav a[href="/llmgw/logical-models"]').click();
@@ -330,7 +381,7 @@ for (const viewport of [
       page,
     }, testInfo) => {
       await page.setViewportSize(viewport);
-      await installOperationsFixtures(page);
+      const fixture = await installOperationsFixtures(page);
       await page.addInitScript((t) => {
         localStorage.setItem("cds_theme", t);
         localStorage.setItem("cds_ui_scale", "100");
@@ -349,16 +400,12 @@ for (const viewport of [
       await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
       await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
       await reachable(page.getByLabel("要发布的版本"));
-      await page.getByRole("button", { name: "开始发布", exact: true }).click();
-      const confirm = page.getByRole("button", {
-        name: `确认发布到 ${targetName}`,
-        exact: true,
-      });
-      await reachable(confirm);
-      await confirm.click();
+      await page.getByRole("button", { name: "发布前检查", exact: true }).click();
       await expect(
         page.getByText("隔离预检失败", { exact: false }).first(),
       ).toBeVisible();
+      await expect(page.getByRole("button", { name: "开始发布", exact: true })).toBeDisabled();
+      expect(fixture.writes.filter(write => write.path.endsWith('/runs'))).toHaveLength(0);
       await page.getByRole("button", { name: "流水线", exact: true }).click();
       await reachable(page.getByRole("button", { name: "关闭", exact: true }));
       await page.getByRole("button", { name: "关闭", exact: true }).click();
@@ -577,7 +624,8 @@ for (const theme of ["light", "dark"])
 for (const theme of ["light", "dark"]) {
   test(`320 ${theme} CDS 双倍字号完整确认目标`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 320, height: 568 });
-    await installOperationsFixtures(page);
+    const fixture = await installOperationsFixtures(page);
+    fixture.setPreflightPass(true);
     await page.addInitScript((t) => localStorage.setItem("cds_theme", t), theme);
     await page.goto("http://127.0.0.1:5273/project-list");
     await page.getByLabel("打开导航菜单").click();
@@ -595,6 +643,7 @@ for (const theme of ["light", "dark"]) {
       document.documentElement.style.fontSize = "200%";
     });
     await reachable(page.getByLabel("要发布的版本"));
+    await page.getByRole("button", { name: "发布前检查", exact: true }).click();
     await page.getByRole("button", { name: "开始发布", exact: true }).click();
     const confirm = page.getByRole("button", {
       name: `确认发布到 ${targetName}`,
@@ -638,9 +687,10 @@ for (const theme of ["light", "dark"]) {
     await expect(
       page.getByRole("button", { name: "开始发布", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "开始发布", exact: true }).click();
-    await confirm.click();
+    fixture.setPreflightPass(false);
+    await page.getByRole("button", { name: "重新检查", exact: true }).click();
     await expect(page.getByText("隔离预检失败", { exact: false }).first()).toBeVisible();
+    expect(fixture.writes.filter(write => write.path.endsWith('/runs'))).toHaveLength(0);
   });
 }
 test("390 隔离发布成功闭环", async ({ page }) => {
@@ -658,6 +708,7 @@ test("390 隔离发布成功闭环", async ({ page }) => {
   await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
   await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
   await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
+  await page.getByRole("button", { name: "发布前检查", exact: true }).click();
   await page.getByRole("button", { name: "开始发布", exact: true }).click();
   const confirm = page.getByRole("button", {
     name: `确认发布到 ${targetName}`,
@@ -678,10 +729,269 @@ test("390 隔离发布成功闭环", async ({ page }) => {
     {
       path: "/api/releases/branches/compat-branch/runs",
       method: "POST",
-      body: { targetId: "compat-target", previewUrl: "https://example.test", expectedCommitSha: run.commitSha },
+      body: { targetId: "compat-target", previewUrl: "https://example.test", expectedCommitSha: run.commitSha, preflightId: "compat-preflight" },
     },
   ]);
 });
+
+test('网关对话在临界宽度保持首项可点并可折叠侧栏', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 800 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await installOperationsFixtures(page, { quickstart: true });
+  await page.goto('http://127.0.0.1:8200/llmgw/login');
+  await page.locator('#llmgw-username').fill('demo');
+  await page.locator('#llmgw-password').fill('demo');
+  await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
+  await expect(page).toHaveURL(/\/quickstart$/);
+  const header = page.locator('.lg-console-header');
+  const sidebar = page.getByRole('complementary', { name: '主导航', exact: true });
+  const dialogue = sidebar.getByRole('link', { name: '对话', exact: true });
+  await expect(header).toHaveCSS('left', '64px');
+  await expect(sidebar).toHaveCSS('width', '64px');
+  await dialogue.click({ trial: true });
+  await sidebar.getByRole('button', { name: '展开菜单', exact: true }).click();
+  await expect(header).toHaveCSS('left', '224px');
+  await dialogue.click({ trial: true });
+  await page.setViewportSize({ width: 860, height: 800 });
+  await expect(header).toHaveCSS('left', '0px');
+  await page.getByRole('button', { name: '打开导航', exact: true }).click();
+  await dialogue.click();
+  await expect(page.getByRole('button', { name: '打开导航', exact: true })).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('慢加载日景超过首屏保护时限后仍按电影收尾', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  await installOperationsFixtures(page, { quickstart: true });
+  let releaseMedia!: () => void;
+  const mediaGate = new Promise<void>(resolve => { releaseMedia = resolve; });
+  await page.route(gatewayPortraitAssets.light.motion.url, async route => {
+    await mediaGate;
+    await route.continue();
+  });
+  try {
+    await page.goto('http://127.0.0.1:8200/llmgw/login', { waitUntil: 'domcontentloaded' });
+    await page.locator('#llmgw-username').fill('demo');
+    await page.locator('#llmgw-password').fill('demo');
+    await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
+    await expect(page).toHaveURL(/\/quickstart$/);
+    const arrivingAt = Date.now();
+    const movie = page.locator('video.portrait-motion');
+    await expect(movie).toHaveJSProperty('currentTime', 0);
+    await page.waitForTimeout(3450);
+    releaseMedia();
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>('video.portrait-motion');
+      return video && video.currentTime >= 7.15 && !video.ended;
+    });
+    expect(Date.now() - arrivingAt).toBeGreaterThan(10000);
+    const root = page.locator('html');
+    await expect(root).toHaveAttribute('data-entry-arriving', '');
+    const header = page.locator('.lg-console-header');
+    const sidebar = page.locator('.lg-console-sidebar');
+    await expect(header).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
+    await expect(sidebar).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
+    await expect(movie).toHaveJSProperty('ended', true);
+    await expect(root).not.toHaveAttribute('data-entry-arriving', '');
+    await expect(header).toHaveCSS('opacity', '1');
+    await expect(sidebar).toHaveCSS('opacity', '1');
+  } finally {
+    releaseMedia();
+  }
+});
+
+for (const width of [390, 1440])
+  for (const theme of ["light", "dark"] as const) {
+    test(`${width} ${theme} 电影式接入全流程与账户组织布局`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      const { writes } = await installOperationsFixtures(page, { quickstart: true });
+      await observeNativeAudio(page);
+      await page.addInitScript(t => {
+        // Seed only the cold start; reload must exercise the user's persisted choice.
+        if (!sessionStorage.getItem("compat-entry-theme-seeded")) {
+          localStorage.setItem("llmgw.theme", t);
+          sessionStorage.setItem("compat-entry-theme-seeded", "1");
+        }
+      }, theme);
+      await page.goto("http://127.0.0.1:8200/llmgw/login");
+      await page.locator("#llmgw-username").fill("demo");
+      await page.locator("#llmgw-password").fill("demo");
+      await page.getByRole("button", { name: "开始身份确认", exact: true }).click();
+      await expect(page).toHaveURL(/\/quickstart$/);
+      await expect(page.locator(".lg-console-header")).toBeVisible({ timeout: 12000 });
+
+      await page.waitForLoadState("networkidle");
+      await page.reload();
+      const firstNavigation = page.locator(".lg-console-sidebar nav a").first();
+      await expect(firstNavigation).toHaveAttribute("aria-label", "对话");
+      await expect(firstNavigation).toHaveAttribute("href", /\/quickstart$/);
+      await expect(page.locator(".gateway-identity-card")).toHaveCount(0);
+      await expect(page.locator(".consciousness-ghost > span")).toHaveText("LLM Gateway");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      const userMenu = page.locator("details.lg-user-menu");
+      const userToggle = page.getByLabel("打开用户菜单", { exact: true });
+      const setTheme = async (next: keyof typeof gatewayPortraitAssets) => {
+        await userToggle.click();
+        await page.getByRole("button", { name: next === "light" ? "切换浅色" : "切换深色", exact: true }).click();
+        await expect(userMenu).not.toHaveAttribute("open", "");
+        await expect(page.locator("html")).toHaveAttribute("data-theme", next);
+        await expect(page.locator(".gateway-quickstart-stage")).toHaveCSS("color-scheme", next);
+        await expect(page.locator(".consciousness-scene")).toHaveAttribute("data-portrait-theme", next);
+        await expect(page.locator(".consciousness-art")).toHaveAttribute("src", gatewayPortraitAssets[next].open.url);
+        await expect(page.locator(".consciousness-mist")).toHaveCount(0);
+      };
+      const navigateTo = async (name: string) => {
+        if (await page.getByLabel("打开导航", { exact: true }).isVisible()) await page.getByLabel("打开导航", { exact: true }).click();
+        await page.locator(".lg-console-sidebar nav").getByRole("link", { name, exact: true }).click();
+        await page.waitForLoadState("networkidle");
+      };
+      const otherTheme = theme === "light" ? "dark" : "light";
+      const originalInk = await page.locator(".gateway-intent-heading").evaluate(el => getComputedStyle(el).color);
+      await setTheme(otherTheme);
+      expect(await page.locator(".gateway-intent-heading").evaluate(el => getComputedStyle(el).color)).not.toBe(originalInk);
+      await navigateTo("概览");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", otherTheme);
+      const readOrganization = () => page.waitForResponse(response =>
+        response.request().method() === "GET" && new URL(response.url()).pathname === "/llmgw/gw/organization",
+      );
+      // SPA navigation can retain an earlier network-idle state. Wait for the new organization read before reloading.
+      const [openedOrganization] = await Promise.all([readOrganization(), navigateTo("对话")]);
+      expect(openedOrganization.status()).toBe(200);
+      expect(await openedOrganization.json()).toMatchObject({ success: true, data: { tenant: { id: "t1" } } });
+      const [reloadedOrganization] = await Promise.all([readOrganization(), page.reload()]);
+      expect(reloadedOrganization.status()).toBe(200);
+      expect(await reloadedOrganization.json()).toMatchObject({ success: true, data: { tenant: { id: "t1" } } });
+      await expect(page.locator("html")).toHaveAttribute("data-theme", otherTheme);
+      await expect(page.locator(".gateway-quickstart-stage")).toHaveCSS("color-scheme", otherTheme);
+      await setTheme(theme);
+      await userToggle.click();
+      await page.locator(".lg-user-popover").getByLabel("切换组织", { exact: true }).click();
+      const organizations = page.locator("details.gateway-account-organizations");
+      await expect(organizations).toHaveAttribute("open", "");
+      await expect(userMenu).toHaveAttribute("open", "");
+      await page.locator(".lg-console-brand > span:last-child").click();
+      await expect(userMenu).not.toHaveAttribute("open", "");
+      await expect(organizations).not.toHaveAttribute("open", "");
+      await userToggle.click();
+      await page.keyboard.press("Escape");
+      await expect(userMenu).not.toHaveAttribute("open", "");
+      await expect(userToggle).toBeFocused();
+      await page.locator(".gateway-entry-help > summary").click();
+      await page.locator(".lg-console-brand > span:last-child").click();
+      await expect(page.locator(".gateway-entry-help")).not.toHaveAttribute("open", "");
+      const hoverTarget = page.locator(".gateway-intent-starters button").first();
+      const idleBackground = await hoverTarget.evaluate(el => getComputedStyle(el).backgroundColor);
+      await hoverTarget.hover();
+      await expect.poll(() => hoverTarget.evaluate(el => getComputedStyle(el).backgroundColor)).not.toBe(idleBackground);
+      await page.mouse.move(0, 0);
+      const starters = page.getByRole("group", { name: "从一个想法开始" });
+      await expect(starters.getByRole("button")).toHaveCount(4);
+      const draftCalls = () => writes.filter(write => write.path === "/app-callers/draft").length;
+      const before = draftCalls();
+      await expect(page.getByText('智能建议费用由平台承担', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: '手动接入', exact: true }).click();
+      await expect(page.getByRole('textbox', { name: '应用标识（英文）', exact: true })).toBeVisible();
+      expect(draftCalls()).toBe(before);
+      await page.getByRole('button', { name: '使用智能建议（会调用模型，费用由平台承担）', exact: true }).click();
+      await expect(page.getByRole('textbox', { name: '我想做什么', exact: true })).toBeVisible();
+      expect(draftCalls()).toBe(before);
+      await starters.getByRole("button", { name: "搭建知识库助手", exact: true }).click();
+      await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toHaveValue(/团队知识库助手/);
+      expect(draftCalls()).toBe(before);
+      await page.locator(".gateway-entry-help > summary").click();
+      await expect(page.locator(".gateway-entry-help-body")).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+      await page.getByRole("button", { name: "试试这句", exact: true }).click();
+      await expect(page.locator(".gateway-entry-help")).not.toHaveAttribute("open", "");
+      await page.getByRole("button", { name: "准备接入", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "确认你的接入", exact: true })).toBeVisible();
+      await page.waitForLoadState("networkidle");
+      await page.reload();
+      await page.locator(".gateway-entry-resume button").click();
+      await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toHaveValue(/产品文档.*售后同事/);
+      expect(draftCalls()).toBe(before + 1);
+      const sound = page.locator(".gateway-chrome-sound");
+      await expect(sound).toHaveAttribute("data-audio-status", "pending");
+      if (await sound.getAttribute("data-audio-status") === "ready") await sound.click();
+      await sound.click();
+      try {
+        await expect(sound).toHaveAttribute("data-audio-status", "ready");
+      } finally {
+        const evidence = await nativeAudioEvidence(page);
+        console.log("Layout native audio evidence:", testInfo.title, JSON.stringify(evidence));
+        await testInfo.attach("layout-native-audio", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
+      }
+      await sound.click();
+      await expect(sound).toHaveAttribute("data-audio-status", "muted");
+      await page.getByLabel("打开用户菜单", { exact: true }).click();
+      await page.locator(".lg-user-popover").getByLabel("切换组织", { exact: true }).click();
+      const account = page.locator(".lg-user-popover");
+      await expect(account.getByRole("menu", { name: "可用组织" })).toBeVisible();
+      const menuBounds = await account.evaluate(el => {
+        const list = el.querySelector(".gateway-account-organization-list")!.getBoundingClientRect();
+        const menu = el.getBoundingClientRect();
+        const name = el.querySelector(".gateway-account-organizations > summary > span")!;
+        return { inside: list.left >= menu.left && list.right <= menu.right, overflow: el.scrollWidth > el.clientWidth, nameWidth: name.getBoundingClientRect().width, nameBackground: getComputedStyle(name).backgroundColor };
+      });
+      expect(menuBounds.inside).toBe(true);
+      expect(menuBounds.overflow).toBe(false);
+      expect(menuBounds.nameWidth).toBeGreaterThan(100);
+      expect(menuBounds.nameBackground).toBe("rgba(0, 0, 0, 0)");
+      await testInfo.attach("account-organization", { body: await page.screenshot(), contentType: "image/png" });
+      await page.getByLabel("打开用户菜单", { exact: true }).click();
+
+      const assertScene = async (step: string) => {
+        await expect(page.locator(".gateway-flow-frame")).toHaveAttribute("data-step", step);
+        await expect(page.locator(".gateway-flow-frame")).toHaveCSS("transform", "none");
+        const artwork = page.locator(".consciousness-art");
+        await expect(artwork).toHaveAttribute("src", gatewayPortraitAssets[theme].open.url);
+        await expect.poll(() => artwork.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+        const state = await page.locator(".gateway-quickstart-stage").evaluate(stage => {
+          const scene = stage.querySelector(".consciousness-scene")!.getBoundingClientRect(), main = stage.closest("main")!.getBoundingClientRect();
+          const surface = stage.querySelector(".lg-qs-step-card, .lg-qs-key-hero");
+          return { gaps: [scene.left - main.left, scene.top - main.top, main.right - scene.right, main.bottom - scene.bottom], blur: surface ? getComputedStyle(surface).backdropFilter : "", overflow: document.documentElement.scrollWidth > innerWidth };
+        });
+        expect(state.gaps.every(gap => Math.abs(gap) < 2)).toBe(true);
+        expect(state.overflow).toBe(false);
+        expect(state.blur).toContain("blur");
+        await testInfo.attach(step, { body: await page.screenshot(), contentType: "image/png" });
+      };
+      await page.getByRole("textbox", { name: "我想做什么", exact: true }).fill("为团队知识库接入问答助手");
+      await page.getByRole("textbox", { name: "我想做什么", exact: true }).press("Enter");
+      await expect(page.getByRole("button", { name: "下一步", exact: true })).toBeEnabled();
+      await assertScene("draft");
+      await page.getByRole("button", { name: "下一步", exact: true }).click();
+      await page.getByRole('textbox', { name: '应用标识（英文）', exact: true }).fill('knowledge-assistant');
+      await page.getByRole("radio", { name: "知识库团队", exact: true }).click();
+      await page.getByRole("textbox", { name: "月预算（美元）", exact: true }).fill("25");
+      await assertScene("owner");
+      const advancedGap = await page.locator(".lg-qs-create-footer").evaluate(el => {
+        const summary = el.parentElement!.querySelector(".lg-explainer > summary")!;
+        return el.getBoundingClientRect().top - summary.getBoundingClientRect().bottom;
+      });
+      expect(advancedGap).toBeGreaterThanOrEqual(0);
+      await page.getByRole("button", { name: "修改建议", exact: true }).click();
+      await expect(page.getByText("team.knowledge::chat", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "下一步", exact: true }).click();
+      await expect(page.getByRole("textbox", { name: "月预算（美元）", exact: true })).toHaveValue("25");
+      await page.getByRole("button", { name: "创建密钥", exact: true }).click();
+      await expect(page.getByText("gwk_fixture_visual_only_not_a_credential", { exact: true })).toBeVisible();
+      await assertScene("result");
+      await expect(page.getByText(/未访问上游。/)).toBeVisible();
+      const governance = writes.find(w => w.path === "/app-callers/fixture-caller" && w.method === "PUT")!.body as { monthlyBudgetUsd: number; budgetReservationUsd: number };
+      expect(governance.monthlyBudgetUsd).toBe(25);
+      expect(governance.budgetReservationUsd).toBeGreaterThan(0);
+      expect(writes.filter(w => w.path === "/service-keys" && w.method === "POST")).toHaveLength(1);
+      await page.getByRole("tab", { name: "cURL", exact: true }).click();
+      await expect(page.getByRole("textbox", { name: "试跑要发送的内容", exact: true })).toBeVisible();
+      await assertScene("result");
+      await page.getByRole("tab", { name: "提示词", exact: true }).click();
+      await expect(page.getByRole("radiogroup", { name: "调用方式" })).toBeVisible();
+      await page.waitForLoadState("networkidle");
+      await page.reload();
+      await expect(page.locator(".gateway-intent-starters")).toBeVisible();
+      await expect(page.locator(".gateway-entry-resume button")).toHaveCount(0);
+    });
+  }
 
 for (const routePath of ['release-console', 'release-center']) {
   for (const width of [1440, 390]) {
@@ -719,3 +1029,16 @@ for (const routePath of ['release-console', 'release-center']) {
     });
   }
 }
+
+test('账务角色普通登录默认落在可访问概览', async ({ page }) => {
+  await installOperationsFixtures(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.route('**/auth/login', route => route.fulfill({json:{success:true,data:{token:'fixture',username:'billing-user',expiresAt:new Date(Date.now()+3600000).toISOString(),mustChangePassword:false,tenant:{id:'t1',name:'验收租户',isInternal:true,role:'billing',teamIds:[]}}}}));
+  await page.goto('http://127.0.0.1:8200/llmgw/login');
+  await page.locator('#llmgw-username').fill('billing-user');
+  await page.locator('#llmgw-password').fill('fixture-only');
+  await page.getByRole('button',{name:'开始身份确认',exact:true}).click();
+  await expect(page).toHaveURL(/\/llmgw\/?$/);
+  await expect(page.getByText('当前角色不包含此页面')).toHaveCount(0);
+  await expect(page.locator('.lg-console-sidebar nav a').first()).toHaveAttribute('href',/\/llmgw\/?$/);
+});

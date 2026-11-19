@@ -1,4 +1,5 @@
-import type { BranchEntry, SchedulerConfig } from '../types.js';
+import type { BranchEntry, BranchPin, SchedulerConfig } from '../types.js';
+import { createBranchPin, pinExpired, pinNeedsReview, reviewedConfigPin } from './branch-pin.js';
 import type { StateService } from './state.js';
 import { resolveBranchProtection } from './branch-protection.js';
 import { resolvePreviewActivity, type PreviewActivityUnknownReason } from '../forwarder/preview-activity.js';
@@ -10,7 +11,7 @@ import { serviceRuntimeRefs } from './service-runtime.js';
  * Core idea: CDS does NOT keep every branch running forever. It maintains a
  * bounded "warm pool" of HOT branches. When a new branch needs to wake, if the
  * pool is full, the least-recently-accessed non-pinned branch is cooled down.
- * Idle branches are cooled automatically after `idleTTLSeconds`.
+ * Idle branches become eligible after `idleTTLSeconds`; confirmed ample resources defer idle cooling.
  *
  * See `doc/design.cds.resilience.md` for the full design.
  *
@@ -52,6 +53,9 @@ export interface SchedulerSnapshot {
   cold: Array<{ slug: string; lastAccessedAt: string | undefined }>;
   capacityUsage: { current: number; max: number };
   previewActivity?: PreviewActivityStatus;
+  resourcePressure: 'ample' | 'pressure' | 'unknown';
+  occupancy: Array<{ slug: string; state: 'resident' | 'reserved' | 'unknown' | 'nonresident'; reason: string }>;
+  protections: Array<{ slug: string; source: string; active: boolean; reviewRequired: boolean; pin?: BranchPin }>;
 }
 
 export type WakeFn = (slug: string) => Promise<void>;
@@ -76,6 +80,7 @@ export const systemClock: Clock = {
  */
 const TOUCH_PERSIST_THROTTLE_MS = 15_000;
 const ACTIVITY_RECOVERY_GRACE_MS = 60_000;
+export const MAX_HOT_BRANCHES = 25;
 
 export class SchedulerService {
   private tickHandle: NodeJS.Timeout | null = null;
@@ -84,6 +89,13 @@ export class SchedulerService {
   private runtimePresence?: () => ReadonlySet<string> | null;
   private operationProtection?: (slug: string) => boolean;
   private readonly cooling = new Set<string>();
+  private readonly coolingTasks = new Map<string, Promise<void>>();
+  private readonly waking = new Map<string, Promise<void>>();
+  private readonly reservations = new Set<string>();
+  private admission: Promise<unknown> = Promise.resolve();
+  private tickInFlight?: Promise<void>;
+  private pressure?: () => SchedulerSnapshot['resourcePressure'] | Promise<SchedulerSnapshot['resourcePressure']>;
+  private observedPressure: SchedulerSnapshot['resourcePressure'] = 'unknown';
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
   private activitySource?: { read: () => Promise<unknown>; isProbe: (fingerprint: string) => boolean; masterStartedAt: number };
@@ -159,13 +171,38 @@ export class SchedulerService {
 
   setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null): void { this.runtimePresence = provider; }
   setOperationProtection(provider: (slug: string) => boolean): void { this.operationProtection = provider; }
+  setResourcePressureProvider(provider: NonNullable<SchedulerService['pressure']>): void { this.pressure = provider; }
+  private async refreshResourcePressure(): Promise<void> {
+    try { this.observedPressure = await this.pressure?.() ?? 'unknown'; } catch { this.observedPressure = 'unknown'; }
+  }
+  private maxHot(): number { return Math.min(MAX_HOT_BRANCHES, this.config.maxHotBranches > 0 ? this.config.maxHotBranches : MAX_HOT_BRANCHES); }
+
+  private occupancy(branch: BranchEntry): SchedulerSnapshot['occupancy'][number] {
+    const row = (state: SchedulerSnapshot['occupancy'][number]['state'], reason: string) => ({ slug: branch.id, state, reason });
+    if (this.reservations.has(branch.id) || this.operationProtection?.(branch.id)) return row('reserved', '在途操作');
+    if (this.hasResidentRuntime(branch) || Object.values(branch.services || {}).some(s => s.status === 'running' && (s.staticWeb || s.runtimeKind === 'static'))) return row('resident', '已确认运行资源');
+    const hinted = branch.heatState === 'hot' || branch.heatState === 'warming' || (branch.heatState === undefined && branch.status === 'running');
+    if (!this.runtimePresence) return row(hinted ? 'resident' : 'nonresident', '兼容未接入运行盘点的实例');
+    const services = Object.values(branch.services || {});
+    const members = Object.values(branch.replicaSets || {}).flatMap(set => set.members);
+    if (!this.readRunningNames()) return row(hinted || services.length > 0 || members.length > 0 ? 'unknown' : 'nonresident', '运行盘点未知，保留既有预约');
+    // Absence alone is insufficient: require explicit idle/stop intent as well.
+    const idle = branch.status === 'idle' && services.every(s => ['idle', 'stopped'].includes(s.status))
+      && members.every(m => ['idle', 'stopped'].includes(m.status));
+    if (idle && branch.heatState !== 'warming') return row('nonresident', services.length || members.length ? '已确认停止且无驻留资源' : '空闲登记，无服务或副本预约');
+    return row(hinted || services.length > 0 || members.length > 0 ? 'unknown' : 'nonresident', '用途或运行状态待核对，保留预约');
+  }
 
   private hasResidentRuntime(branch: BranchEntry): boolean {
-    const names = this.runtimePresence?.();
+    const names = this.readRunningNames();
     return Boolean(names && (Object.values(branch.services || {}).some(service =>
       serviceRuntimeRefs(service).some(runtime => names.has(runtime.containerName)))
       || Object.values(branch.replicaSets || {}).some(set => set.members.some(member =>
         member.containerName && names.has(member.containerName)))));
+  }
+
+  private readRunningNames(): ReadonlySet<string> | null {
+    try { return this.runtimePresence?.() ?? null; } catch { return null; }
   }
 
   setWakeFn(fn: WakeFn): void {
@@ -307,11 +344,19 @@ export class SchedulerService {
    * Pinned branches are never cooled — the call is a silent no-op.
    */
   async markCold(slug: string): Promise<void> {
+    if (this.coolingTasks.has(slug)) return;
+    const task = this.performCold(slug);
+    this.coolingTasks.set(slug, task);
+    try { await task; } finally { this.coolingTasks.delete(slug); }
+  }
+
+  private async performCold(slug: string): Promise<void> {
     if (!this.isEnabled()) return;
     const branch = this.stateService.getBranch(slug);
     if (!branch) return;
     if (this.isPinned(branch)) return;
     if ((branch.heatState === 'cold' && !this.hasResidentRuntime(branch)) || this.cooling.has(slug)) return;
+    if (!this.coolFn) throw new Error('降温执行器未接入，保留现有占用');
 
     this.cooling.add(slug);
     branch.heatState = 'cooling';
@@ -349,14 +394,27 @@ export class SchedulerService {
     const branch = this.stateService.getBranch(slug);
     // Note: branch may not yet exist if this is a first-time request. In that
     // case we still call wakeFn (it will create the branch), and mark hot after.
-    if (branch && (branch.heatState === 'hot' || branch.heatState === 'warming')) {
+    if (this.waking.has(slug)) return this.waking.get(slug);
+    if (branch && branch.heatState === 'hot' && this.occupancy(branch).state === 'resident') {
       // Already hot — just refresh access time.
       this.touch(slug);
       return;
     }
 
-    // Evict LRU if the new branch would push us over capacity.
-    await this.evictLruIfOverCapacity(slug);
+    const operation = this.performWake(slug, branch);
+    this.waking.set(slug, operation);
+    try { await operation; } finally { this.waking.delete(slug); this.reservations.delete(slug); }
+  }
+
+  private async performWake(slug: string, branch: BranchEntry | undefined): Promise<void> {
+    // Do not start a runtime while an already dispatched stop is still pending.
+    await this.coolingTasks.get(slug);
+    const admitted = this.admission.then(async () => {
+      await this.evictLruIfOverCapacity(slug);
+      this.reservations.add(slug);
+    });
+    this.admission = admitted.catch(() => {});
+    await admitted;
 
     if (branch) {
       branch.heatState = 'warming';
@@ -386,10 +444,11 @@ export class SchedulerService {
   /**
    * Mark a branch as pinned-by-user.
    */
-  pin(slug: string): void {
+  pin(slug: string, pin: BranchPin = createBranchPin({}, {}, 'internal', this.clock.now())): void {
     const branch = this.stateService.getBranch(slug);
     if (!branch) throw new Error(`分支 "${slug}" 不存在`);
     branch.pinnedByUser = true;
+    branch.userPin = pin;
     this.stateService.save();
   }
 
@@ -404,6 +463,13 @@ export class SchedulerService {
     this.stateService.save();
   }
 
+  reviewConfigPin(slug: string, pin: BranchPin): void {
+    const branch = this.stateService.getBranch(slug);
+    if (!branch || !this.config.pinnedBranches.includes(slug) || !pin.authorizationRef) throw new Error('仅可复核已登记的配置保护，且必须保留授权依据');
+    branch.configPinReview = { ...pin, configuredBranches: [...this.config.pinnedBranches] };
+    this.stateService.save();
+  }
+
   /**
    * Is this branch protected from eviction?
    *
@@ -415,7 +481,7 @@ export class SchedulerService {
    * 收敛到同一个函数后，两处漂移在结构上不再可能发生。行为与此前逐条判定完全一致。
    */
   isPinned(branch: BranchEntry): boolean {
-    return resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? []).protected
+    return resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? [], this.clock.now()).protected
       || Boolean(this.operationProtection?.(branch.id));
   }
 
@@ -424,7 +490,8 @@ export class SchedulerService {
    * Returns null if there's nothing to evict.
    */
   selectLruVictim(excludeSlug?: string): BranchEntry | null {
-    const hotBranches = this.getHotBranches().filter(b => b.id !== excludeSlug && !this.isPinned(b));
+    const hotBranches = this.getHotBranches().filter(b => b.id !== excludeSlug && !this.isPinned(b)
+      && this.occupancy(b).state === 'resident' && !this.cooling.has(b.id) && !this.reservations.has(b.id));
     if (hotBranches.length === 0) return null;
 
     return hotBranches.reduce<BranchEntry | null>((oldest, b) => {
@@ -439,27 +506,27 @@ export class SchedulerService {
    * If the hot pool would exceed maxHotBranches after waking `excludeSlug`,
    * cool the LRU victim. Returns the number of branches cooled (0 or 1).
    *
-   * maxHotBranches === 0 means unlimited.
+   * Effective capacity never exceeds 25, including legacy unlimited settings.
    */
   async evictLruIfOverCapacity(excludeSlug?: string): Promise<number> {
     if (!this.isEnabled()) return 0;
-    const max = this.config.maxHotBranches;
-    if (!max || max <= 0) return 0;
+    const max = this.maxHot();
 
-    const hotCount = this.getHotBranches().filter(b => b.id !== excludeSlug).length;
+    const hotCount = this.hotIds(excludeSlug).size;
     // +1 for the branch we're about to wake (if it's not already hot).
     if (hotCount + 1 <= max) return 0;
     if (!await this.refreshPreviewActivity()) throw new Error('预览访问状态暂不可确认，请稍后重试');
 
-    const victim = this.selectLruVictim(excludeSlug);
-    if (!victim) {
-      if (this.activityUnknown) throw new Error('预览访问状态暂不可确认，且没有可安全降温的分支，请稍后重试');
-      console.warn(`[scheduler] capacity overrun: ${hotCount + 1} hot but no evictable branch (all pinned)`);
-      return 0;
+    let cooled = 0;
+    while (this.hotIds(excludeSlug).size + 1 > max) {
+      const victim = this.selectLruVictim(excludeSlug);
+      const before = this.hotIds(excludeSlug).size;
+      if (!victim) throw new Error(`热池已满（${before}/${max}），现有保护或用途待确认，暂不新增唤醒`);
+      await this.markCold(victim.id);
+      if (this.hotIds(excludeSlug).size >= before) throw new Error('降温未确认释放容量，暂不新增唤醒');
+      cooled++;
     }
-
-    await this.markCold(victim.id);
-    return 1;
+    return cooled;
   }
 
   /**
@@ -467,16 +534,24 @@ export class SchedulerService {
    * and ensure capacity is within budget.
    */
   async tick(): Promise<void> {
+    if (this.tickInFlight) return this.tickInFlight;
+    this.tickInFlight = this.runTick();
+    try { await this.tickInFlight; } finally { this.tickInFlight = undefined; }
+  }
+
+  private async runTick(): Promise<void> {
     if (!this.isEnabled()) return;
     if (!await this.refreshPreviewActivity()) return;
+    await this.refreshResourcePressure();
 
     const now = this.clock.now();
     const idleTTLMs = (this.config.idleTTLSeconds || 900) * 1000;
 
     // 1. Idle-based cooling
     const hotBranches = this.getHotBranches();
-    for (const branch of hotBranches) {
+    for (const branch of this.observedPressure === 'ample' ? [] : hotBranches) {
       if (this.isPinned(branch)) continue;
+      if (this.occupancy(branch).state !== 'resident') continue;
       const lastAccess = branch.lastAccessedAt ? Date.parse(branch.lastAccessedAt) : 0;
       if (lastAccess <= 0) continue; // never accessed; don't cool yet
       if (now - lastAccess > idleTTLMs) {
@@ -489,15 +564,15 @@ export class SchedulerService {
     }
 
     // 2. Capacity-based cooling (in case external deploys bypassed wake())
-    const max = this.config.maxHotBranches;
+    const max = this.maxHot();
     if (max > 0) {
-      let hotCount = this.getHotBranches().length;
-      while (hotCount > max) {
+      const attempted = new Set<string>();
+      while (this.hotIds().size > max) {
         const victim = this.selectLruVictim();
-        if (!victim) break;
+        if (!victim || attempted.has(victim.id)) break;
+        attempted.add(victim.id);
         try {
           await this.markCold(victim.id);
-          hotCount--;
         } catch {
           break;
         }
@@ -511,13 +586,11 @@ export class SchedulerService {
    * but the branch is actually running (legacy branches pre-scheduler).
    */
   private getHotBranches(): BranchEntry[] {
-    const all = this.stateService.getAllBranches();
-    return all.filter(b => {
-      if (b.heatState === 'hot') return true;
-      if (this.hasResidentRuntime(b)) return true;
-      if (b.heatState === undefined && b.status === 'running') return true;
-      return false;
-    });
+    return this.stateService.getAllBranches().filter(b => this.occupancy(b).state !== 'nonresident');
+  }
+
+  private hotIds(exclude?: string): Set<string> {
+    return new Set([...this.getHotBranches().map(b => b.id), ...this.reservations].filter(id => id !== exclude));
   }
 
   /**
@@ -525,8 +598,7 @@ export class SchedulerService {
    */
   getSnapshot(): SchedulerSnapshot {
     const all = this.stateService.getAllBranches();
-    const hot = all
-      .filter(b => b.heatState === 'hot' || this.hasResidentRuntime(b) || (b.heatState === undefined && b.status === 'running'))
+    const hot = this.getHotBranches()
       .map(b => ({
         slug: b.id,
         lastAccessedAt: b.lastAccessedAt,
@@ -541,13 +613,28 @@ export class SchedulerService {
 
     return {
       enabled: this.isEnabled(),
-      config: this.config,
+      config: { ...this.config, maxHotBranches: this.maxHot() },
       hot,
       cold,
       capacityUsage: {
-        current: hot.length,
-        max: this.config.maxHotBranches,
+        current: this.hotIds().size,
+        max: this.maxHot(),
       },
+      resourcePressure: this.observedPressure,
+      occupancy: all.map(b => this.occupancy(b)),
+      protections: all.flatMap(branch => {
+        const rows: SchedulerSnapshot['protections'] = [];
+        for (const [source, enabled, pin] of [['user', branch.pinnedByUser, branch.userPin], ['debug', branch.isColorMarked, branch.colorMarkPin]] as const) {
+          if (enabled) rows.push({ slug: branch.id, source, active: !pinExpired(pin, this.clock.now()), reviewRequired: pinNeedsReview(pin), pin });
+        }
+        if (this.config.pinnedBranches.includes(branch.id)) {
+          const pin = reviewedConfigPin(branch.configPinReview, this.config.pinnedBranches);
+          rows.push({ slug: branch.id, source: 'config-pinned', active: !pinExpired(pin, this.clock.now()), reviewRequired: pinNeedsReview(pin), pin });
+        }
+        const implicit = resolveBranchProtection({ ...branch, pinnedByUser: false, isColorMarked: false }, this.stateService, [], this.clock.now());
+        if (implicit.protected) rows.push({ slug: branch.id, source: implicit.reason!, active: true, reviewRequired: implicit.reason === 'config-pinned' });
+        return rows;
+      }),
       ...(this.activitySource ? { previewActivity: { status: this.activityUnknown ? 'unknown' as const : 'ready' as const,
         reason: this.activityReason, observedAt: this.activityObservedAt, lastUnknownAt: this.activityLastUnknownAt,
         recoveryGraceRemainingMs: this.activityUnknown && this.activityGraceDeadline !== undefined

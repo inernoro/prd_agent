@@ -45,6 +45,7 @@ import {
   deleteSiteGroup,
   setSiteGroup,
   copySiteToTeam,
+  listRecentWork,
 } from '@/services';
 import type { HostedSite, HostedSiteActivity, HostedSiteTraffic, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import { getSite, getSiteAskConfig } from '@/services/real/webPages';
@@ -306,12 +307,17 @@ export type { SiteCaps };
 export default function WebPagesPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const focusSiteId = new URLSearchParams(location.search).get('focusSite');
+  const routeParams = new URLSearchParams(location.search);
+  const focusSiteId = routeParams.get('focusSite');
+  const deliveryVersion = Number(routeParams.get('mcpDelivery'));
+  const checkedRecentDelivery = useRef(Boolean(location.search));
   const [returnTargetId, setReturnTargetId] = useState<string | null>(null);
+  const [ownerReturnSite, setOwnerReturnSite] = useState<HostedSite | null>(null);
   const pendingReturnId = useRef<string | null>(null);
   const { isMobile } = useBreakpoint();
   const username = useAuthStore(s => s.user?.username);
   const currentUserId = useAuthStore(s => s.user?.userId);
+  const seenDeliveryKey = currentUserId ? `web-hosting:mcp-delivery:${currentUserId}` : null;
   const [sites, setSites] = useState<HostedSite[]>([]);
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'restricted'>('all');
   const [total, setTotal] = useState(0);
@@ -325,7 +331,7 @@ export default function WebPagesPage() {
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   // 「从个人空间添加」复制选择器
   const [showCopyFromPersonal, setShowCopyFromPersonal] = useState(false);
-  const { teams, loadTeams } = useTeamStore();
+  const { teams, loadTeams, loaded: teamsLoaded } = useTeamStore();
   const [movingSite, setMovingSite] = useState<HostedSite | null>(null);
   const [siteTraffic, setSiteTraffic] = useState<Record<string, HostedSiteTraffic>>({});
   const [siteActivity, setSiteActivity] = useState<Record<string, HostedSiteActivity>>({});
@@ -504,6 +510,30 @@ export default function WebPagesPage() {
   const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares'>('library');
 
   useEffect(() => {
+    if (checkedRecentDelivery.current || location.search || !seenDeliveryKey) return;
+    let active = true;
+    const enterLibrary = () => {
+      if (!active) return;
+      checkedRecentDelivery.current = true;
+      navigate({ pathname: location.pathname }, { replace: true, state: { webPagesEntry: 'library' } });
+    };
+    void listRecentWork({ webDeliveriesOnly: true, limit: 1 }).then((response) => {
+      if (!active) return;
+      const item = response.success ? response.data.items[0] : undefined;
+      const deliveredAt = item ? Date.parse(item.lastActiveAt) : 0;
+      const seenAt = Number(readUiPreference(seenDeliveryKey, '0')) || 0;
+      if (item && deliveredAt > Math.max(seenAt, Date.now() - 86_400_000)) {
+        checkedRecentDelivery.current = true;
+        navigate(item.route, { replace: true });
+      } else {
+        enterLibrary();
+      }
+    }).catch(enterLibrary);
+    return () => { active = false; };
+  }, [location.pathname, location.search, navigate, seenDeliveryKey]);
+
+  useEffect(() => {
+    setOwnerReturnSite(null);
     if (!focusSiteId) { pendingReturnId.current = null; setReturnTargetId(null); return; }
     pendingReturnId.current = focusSiteId;
     let active = true;
@@ -511,10 +541,12 @@ export default function WebPagesPage() {
       if (!active) return;
       if (!siteResult.success) throw new Error('网页不存在，或你已没有访问权限');
       const target = siteResult.data;
-      const space = returnedSiteSpace(target, teamResult.success ? teamResult.data.items.map((item) => item.team.id) : [], readLastSpace());
-      if (!space) throw new Error('暂时无法进入这个网页所属的团队空间');
+      const preferredSpace = returnedSiteSpace(target, teamResult.success ? teamResult.data.items.map((item) => item.team.id) : [], readLastSpace());
+      if (!preferredSpace && target.ownerUserId !== currentUserId) throw new Error('暂时无法进入这个网页所属的团队空间');
+      const space: Space = preferredSpace ?? { kind: 'personal' };
+      if (!preferredSpace) setOwnerReturnSite(target);
       setKeyword(''); setActiveTag(null); setActiveSource(null);
-      setActiveFolder(null); setActiveGroupId(null); setWorkspaceTab('library');
+      setActiveFolder(null); setActiveGroupId(null); setWorkspaceTab('library'); setVisibilityFilter('all');
       setCurrentSpace(space); rememberSpace(space);
       setSites(previous => [target, ...previous.filter(site => site.id !== target.id)]);
       setReturnTargetId(target.id);
@@ -522,7 +554,7 @@ export default function WebPagesPage() {
       if (active) toast.error('无法定位网页', error instanceof Error ? error.message : '请稍后重试');
     });
     return () => { active = false; };
-  }, [focusSiteId]);
+  }, [focusSiteId, currentUserId]);
 
   // ─── Load ───
 
@@ -805,11 +837,17 @@ export default function WebPagesPage() {
   };
 
   // 分组：保持服务端排序顺序，仅按 first-seen 切分节（排序与分组并存）
-  // 当前空间的网页：个人空间=我拥有且未进任何团队空间的（客户端剔除）；团队空间=后端已按 Id 过滤
-  const spaceSites = useMemo(
-    () => currentSpace.kind === 'team' ? sites : sites.filter((site) => !site.sharedTeamIds?.length),
-    [sites, currentSpace],
-  );
+  // 个人空间保留所有者当前没有可访问团队空间的网页，团队空间由服务端按 Id 过滤。
+  const spaceSites = useMemo(() => {
+    if (currentSpace.kind === 'team') return sites;
+    const teamIds = new Set(teams.map(item => item.team.id));
+    const returnSite = ownerReturnSite?.id === returnTargetId && !keyword && !activeTag && !activeSource
+      ? ownerReturnSite : null;
+    const personal = sites.filter(({ id, ownerUserId, sharedTeamIds }) => id === returnSite?.id || !sharedTeamIds?.length
+      || (teamsLoaded && ownerUserId === currentUserId && !sharedTeamIds.some(teamId => teamIds.has(teamId))));
+    if (returnSite && !personal.some(site => site.id === returnSite.id)) return [returnSite, ...personal];
+    return personal;
+  }, [sites, currentSpace, teams, teamsLoaded, currentUserId, ownerReturnSite, returnTargetId, keyword, activeTag, activeSource]);
   const spaceFolderCanonicalNames = useMemo(() => new Map(
     spaceSites
       .filter((site) => !!site.folder)
@@ -874,14 +912,23 @@ export default function WebPagesPage() {
       .find((item) => item.dataset.hostedSiteId === focusSiteId);
     if (!element) return;
     const cleanup = highlightReturnedSite(element);
+    if (seenDeliveryKey && Number.isSafeInteger(deliveryVersion) && deliveryVersion > 0 && deliveryVersion <= Date.now()) {
+      const seenAt = Number(readUiPreference(seenDeliveryKey, '0')) || 0;
+      if (deliveryVersion > seenAt) {
+        writeUiPreference(seenDeliveryKey, String(deliveryVersion));
+        toast.info('已定位 MCP 交付', displaySites.find((site) => site.id === focusSiteId)?.title);
+      }
+    }
     const timer = window.setTimeout(() => {
       cleanup();
       const query = new URLSearchParams(location.search);
       query.delete('focusSite');
-      navigate({ pathname: location.pathname, search: query.toString() }, { replace: true });
+      query.delete('mcpDelivery');
+      navigate({ pathname: location.pathname, search: query.toString() },
+        { replace: true, state: { webPagesEntry: 'delivery' } });
     }, 2600);
     return () => { clearTimeout(timer); cleanup(); };
-  }, [loading, focusSiteId, returnTargetId, displaySites, location.pathname, location.search, navigate]);
+  }, [loading, focusSiteId, returnTargetId, displaySites, location.pathname, location.search, navigate, deliveryVersion, seenDeliveryKey]);
 
   // 「未分组」是树导航的虚拟节点：投送/移入分组时必须还原成 null
   const activeRealGroupId = activeGroupId === UNGROUPED_ID ? null : activeGroupId;

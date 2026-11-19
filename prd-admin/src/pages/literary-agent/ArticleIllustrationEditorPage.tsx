@@ -4,7 +4,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
-import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
+import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle, type WatermarkStatus } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import { MarketplaceCard } from '@/components/marketplace';
 import {
@@ -66,10 +66,11 @@ import { runLiteraryImageBatch, type LiteraryImageAttempt } from './literaryImag
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square, ChevronDown } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { ArticleEditorToolbar } from './ArticleEditorToolbar';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
+import { LiterarySettingsSummary } from './LiterarySettingsSummary';
 import { useLiterarySettingSave } from './useLiterarySettingSave';
 import type { LiteraryAgentPreferences } from '@/services/contracts/userPreferences';
 import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
@@ -110,40 +111,54 @@ type PositionStrategy = 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
 // 用户锚点占位符：匹配 [IMG] / [配图] / 【插图位置】（整行）
 const USER_ANCHOR_LINE_REGEX = /^\s*(?:\[IMG\]|\[配图\]|【插图位置】)\s*$/;
 
-function splitParagraphs(content: string): string[] {
-  const blocks: string[] = [];
-  let current: string[] = [];
-  for (const line of (content ?? '').split('\n')) {
-    if (line.trim() === '') {
-      if (current.length) { blocks.push(current.join('\n')); current = []; }
-    } else {
-      current.push(line);
-    }
+type ParagraphRange = { start: number; end: number; text: string };
+
+function paragraphRanges(content: string): ParagraphRange[] {
+  const blocks: ParagraphRange[] = [];
+  let start: number | undefined;
+  let end = 0;
+  const finish = () => {
+    if (start !== undefined) blocks.push({ start, end, text: content.slice(start, end) });
+    start = undefined;
+  };
+
+  for (const match of content.matchAll(/[^\r\n]+/g)) {
+    const line = match[0];
+    const lineStart = match.index;
+    if (start !== undefined && /\n[^\S\r\n]*\r?\n/.test(content.slice(end, lineStart))) finish();
+    if (!line.trim() || isAnchorParagraph(line)) finish();
+    if (!line.trim()) continue;
+
+    start ??= lineStart;
+    end = lineStart + line.length;
+    if (isAnchorParagraph(line)) finish();
   }
-  if (current.length) blocks.push(current.join('\n'));
+  finish();
   return blocks;
 }
 
-function joinParagraphs(blocks: string[]): string {
-  return blocks.join('\n\n');
+function splitParagraphs(content: string): string[] {
+  return paragraphRanges(content).map(({ text }) => text);
 }
 
 function isAnchorParagraph(text: string): boolean {
-  return USER_ANCHOR_LINE_REGEX.test(text.trim());
+  return USER_ANCHOR_LINE_REGEX.test(text);
 }
 
-function insertAnchorAt(content: string, insertAt: number): string {
-  const blocks = splitParagraphs(content);
-  const clamped = Math.max(0, Math.min(insertAt, blocks.length));
-  blocks.splice(clamped, 0, '[IMG]');
-  return joinParagraphs(blocks);
+function insertAnchorAt(content: string, paragraphIndex: number, side: 'above' | 'below'): string {
+  const target = paragraphRanges(content)[paragraphIndex];
+  if (!target) return content;
+  const separator = content.includes('\r\n') ? '\r\n\r\n' : '\n\n';
+  const offset = side === 'above' ? target.start : target.end;
+  const anchor = side === 'above' ? `[IMG]${separator}` : `${separator}[IMG]`;
+  return content.slice(0, offset) + anchor + content.slice(offset);
 }
 
-function removeParagraphAt(content: string, pIdx: number): string {
-  const blocks = splitParagraphs(content);
-  if (pIdx < 0 || pIdx >= blocks.length) return content;
-  blocks.splice(pIdx, 1);
-  return joinParagraphs(blocks);
+function removeParagraphAt(content: string, paragraphIndex: number): string {
+  const target = paragraphRanges(content)[paragraphIndex];
+  if (!target || !isAnchorParagraph(target.text)) return content;
+  const end = target.end + (content.slice(target.end).match(/^\r?\n/)?.[0].length ?? 0);
+  return content.slice(0, target.start) + content.slice(end);
 }
 
 const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string; hint: string }> = [
@@ -161,7 +176,7 @@ const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string;
   {
     value: 'user-anchor',
     label: '尊重用户锚点',
-    hint: '【位置策略】用户已在文章中用 [IMG] / [配图] / 【插图位置】等占位符标记了期望插图的位置。请严格在这些占位符位置插入 [插图] 标记，不要在用户未标记的段落插入；若用户未标记任何占位符，再按你的判断选择 3 个最合适的场景段落插入。',
+    hint: '',
   },
 ];
 
@@ -403,56 +418,6 @@ const PRD_MD_STYLE = `
   }
 `;
 
-/**
- * 前端锚点匹配：在文章中找到锚点文本的位置（模仿后端 4 级模糊匹配）
- * 返回锚点所在行的末尾位置，失败返回 -1
- */
-function findAnchorInsertPos(article: string, anchor: string): number {
-  const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
-  const normalizeP = (s: string) =>
-    s.replace(/，/g, ',').replace(/。/g, '.').replace(/！/g, '!').replace(/？/g, '?')
-     .replace(/；/g, ';').replace(/：/g, ':').replace(/\u201c/g, '"').replace(/\u201d/g, '"')
-     .replace(/\u2018/g, "'").replace(/\u2019/g, "'");
-
-  // 1. 精确匹配
-  let idx = article.indexOf(anchor);
-  if (idx < 0) {
-    // 2. 忽略大小写
-    idx = article.toLowerCase().indexOf(anchor.toLowerCase());
-  }
-  if (idx < 0) {
-    // 3. 归一化空白
-    const na = normalizeWs(article);
-    const nc = normalizeWs(anchor);
-    const ni = na.indexOf(nc);
-    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
-  }
-  if (idx < 0) {
-    // 4. 归一化标点
-    const na = normalizeP(normalizeWs(article));
-    const nc = normalizeP(normalizeWs(anchor));
-    const ni = na.indexOf(nc);
-    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
-  }
-  if (idx < 0) return -1;
-  // 找到行尾
-  const lineEnd = article.indexOf('\n', idx);
-  return lineEnd >= 0 ? lineEnd : article.length;
-}
-
-/**
- * 将一个新的 marker 增量插入到当前文章内容中。
- * 按锚点定位，在对应行后插入 [插图]: text。
- */
-function insertMarkerIntoArticle(currentArticle: string, anchor: string, markerText: string): string {
-  const pos = findAnchorInsertPos(currentArticle, anchor);
-  if (pos < 0) {
-    // 未匹配时追加到末尾
-    return currentArticle + `\n\n[插图]: ${markerText}\n`;
-  }
-  return currentArticle.slice(0, pos) + `\n\n[插图]: ${markerText}\n` + currentArticle.slice(pos);
-}
-
 // 用户自定义提示词模板类型（对应后端 LiteraryPrompt）
 type PromptTemplate = {
   id: string;
@@ -505,6 +470,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
+  const previewParagraphs = useMemo(() => splitParagraphs(articleContent), [articleContent]);
+  const userAnchorCount = previewParagraphs.filter(isAnchorParagraph).length;
   // 迟到的工作区读取不能覆盖本次读取期间已经成功读入的新文章。
   const articleMutationVersionRef = useRef(0);
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
@@ -521,6 +488,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   useEffect(() => { submissionStateRef.current = submissionState; }, [submissionState]);
   const hasGeneratedImagesRef = useRef(false); // synced from markerRunItems later
   const [markerStreaming, setMarkerStreaming] = useState(false);
+  const [streamedMarkerCount, setStreamedMarkerCount] = useState(0);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   // 统一图片灯箱（支持放大/缩小/拖拽预览）：右侧卡片与正文内联图片共用
@@ -532,11 +500,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [historyOpen, setHistoryOpen] = useState(false);
   // 这篇文章自己的风格 / 水印（智能体或网页为它指定过才有）。有它时顶栏改的是这篇文章，不动账号级的「当前启用」
   const [articleChoice, setArticleChoice] = useState<LiteraryIllustrationChoice | null>(null);
-  const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
+  const [watermarkStatus, setWatermarkStatus] = useState<WatermarkStatus>({ hasActiveConfig: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
-  const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
-    setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
-  }, []);
   // 检查当前 workspace 是否已投稿
   useEffect(() => {
     checkSubmission({ workspaceId }).then((res) => {
@@ -765,10 +730,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const generationGateRef = useRef(false);
   const modelMigrationNoticeRef = useRef<string | null>(null);
   useEffect(() => () => { genAbortRef.current?.abort(); }, [workspaceId]);
-  const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
-  const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
   const [editingMarkerIdx, setEditingMarkerIdx] = useState<number | null>(null); // 正在弹窗编辑 prompt 的 marker 索引
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
@@ -793,13 +756,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems]);
 
-  // 当配图列表增加时，只在流式输出过程中自动滚动到底部
-  useEffect(() => {
-    if (isStreamingRef.current && markerListRef.current && markerRunItems.length > 0) {
-      markerListRef.current.scrollTop = markerListRef.current.scrollHeight;
-    }
-  }, [markerRunItems.length]);
-
   // 思考/生成面板自动滚动到底部
   useEffect(() => {
     if (thinkingPanelRef.current && (thinkingContent || rawMarkerOutput)) {
@@ -816,10 +772,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
   const pendingSelectedPromptIdRef = useRef<string | null>(null);
 
-  // Phase 1: 位置策略（自动 / 固定位置 / 用户锚点）
-  // 存 sessionStorage，键 = 'articleMarkerStrategy:' + workspaceId
-  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.visual-agent.manual-image-marking.md
-  const [positionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  const [selectedPositionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  // 自动策略本来就优先使用原文锚点。根据已保存的正文显示实际策略，显式选的标题策略仍优先。
+  const positionStrategy = selectedPositionStrategy === 'auto' && userAnchorCount > 0
+    ? 'user-anchor'
+    : selectedPositionStrategy;
+  const positionStrategyLabel = positionStrategy === 'auto'
+    ? '自动安排'
+    : POSITION_STRATEGY_OPTIONS.find(option => option.value === positionStrategy)?.label ?? '自动安排';
   const [positionStrategyOpen, setPositionStrategyOpen] = useState(false);
   useEffect(() => {
     if (!workspaceId) return;
@@ -883,7 +843,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 列表读取失败必须和「真的没有水印」分开：把失败当成空列表，菜单就会给出「不加水印」，
   // 选了之后找不到当前绑定、不发解绑请求，界面却显示已关闭，而生成的图照旧带水印。
   const [watermarkLoadError, setWatermarkLoadError] = useState<string | null>(null);
-  const loadWatermarkOptions = async () => {
+  const loadWatermarkOptions = useCallback(async () => {
     setWatermarkLoadError(null);
     // 重读期间先让旧列表失效：旧列表可能已被管理面板改过（A 换成 B），
     // 这时若还能点「不加水印」，会按旧的 A 去解绑，B 在服务端仍然生效
@@ -895,7 +855,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
     setWatermarkOptions(null);
     setWatermarkLoadError(res.error?.message || '水印列表读取失败');
-  };
+  }, []);
+  const articleWatermarkId = articleChoice?.watermark.watermarkId;
+  const watermarkName = articleChoice
+    ? articleWatermarkId === 'none' ? '不加水印' : articleChoice.watermark.name
+    : watermarkStatus.hasActiveConfig ? watermarkStatus.activeName || '已启用' : '不加水印';
+  const watermarkId = articleWatermarkId === 'none' ? undefined : articleWatermarkId ?? watermarkStatus.activeId;
+  const watermarkUpdatedAt = watermarkId === watermarkStatus.activeId
+    ? watermarkStatus.activeUpdatedAt
+    : watermarkOptions?.find(option => option.id === watermarkId)?.updatedAt;
+  useEffect(() => {
+    if (articleWatermarkId && articleWatermarkId !== 'none' && articleWatermarkId !== watermarkStatus.activeId) {
+      void loadWatermarkOptions();
+    }
+  }, [articleWatermarkId, watermarkStatus.activeId, loadWatermarkOptions]);
+
   const switchWatermark = async (target: WatermarkConfig | null) => {
     if (articleChoice) {
       setWatermarkSaving(true);
@@ -905,7 +879,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const current = watermarkOptions?.find((w) => w.appKeys?.includes(LITERARY_APP_KEY)) ?? null;
     if ((target?.id ?? null) === (current?.id ?? null)) return;
     // 要关水印却找不到当前绑定记录：说明列表与实际状态对不上，不能只改界面状态了事
-    if (!target && !current && watermarkStatus.enabled) {
+    if (!target && !current && watermarkStatus.hasActiveConfig) {
       toast.error('关闭水印失败', '没有找到当前绑定的水印，请在「管理水印…」里处理');
       return;
     }
@@ -920,7 +894,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         toast.error('切换水印失败', res.error?.message || '未知错误');
         return;
       }
-      setWatermarkStatus(target ? { enabled: true, name: target.name || target.text || null } : { enabled: false, name: null });
+      setWatermarkStatus(target
+        ? { hasActiveConfig: true, activeId: target.id, activeName: target.name || target.text, activeUpdatedAt: target.updatedAt }
+        : { hasActiveConfig: false });
       await loadWatermarkOptions();
     } finally {
       setWatermarkSaving(false);
@@ -1003,6 +979,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 自动保存：3秒防抖（仅在允许编辑时启用；当前页面已移除手动编辑入口，保留逻辑以兼容未来扩展）
   const debouncedArticleContent = useDebounce(articleContent, 3000);
+  const pendingArticleSave = useRef(Promise.resolve());
 
   // 加载工作空间数据
   useEffect(() => {
@@ -1164,11 +1141,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (res?.success && res.data) {
         const config = res.data;
         setWatermarkStatus({
-          enabled: true,
-          name: config.name || config.text || null,
+          hasActiveConfig: true,
+          activeId: config.id,
+          activeName: config.name || config.text,
+          activeUpdatedAt: config.updatedAt,
         });
       } else {
-        setWatermarkStatus({ enabled: false, name: null });
+        setWatermarkStatus({ hasActiveConfig: false });
       }
     })();
     return () => {
@@ -1468,23 +1447,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const isBusy = generating || markerStreaming;
 
   useEffect(() => {
-    if (debouncedArticleContent && workspaceId && phase === 1 && !isBusy) { // Editing
-      void saveArticleContent();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedArticleContent, isBusy]);
-
-  async function saveArticleContent() {
-    try {
-      await updateVisualAgentWorkspace({
-        id: workspaceId,
-        articleContent: debouncedArticleContent,
-        idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
-      });
-    } catch (error) {
-      console.error('自动保存失败:', error);
-    }
-  }
+    if (!debouncedArticleContent || debouncedArticleContent !== articleContent || !workspaceId || phase !== 1 || isBusy) return;
+    pendingArticleSave.current = pendingArticleSave.current.then(async () => {
+      try {
+        await updateVisualAgentWorkspace({
+          id: workspaceId,
+          articleContent: debouncedArticleContent,
+          idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
+        });
+      } catch (error) {
+        console.error('自动保存失败:', error);
+      }
+    });
+  }, [articleContent, debouncedArticleContent, isBusy, phase, workspaceId]);
 
   // 文件上传处理
   const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1579,14 +1554,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // Phase 1: 段落级锚点操作（仅 phase=1 编辑阶段使用）
   const addAnchorAbove = useCallback((pIdx: number) => {
-    setArticleContent(prev => insertAnchorAt(prev, pIdx));
+    articleMutationVersionRef.current += 1;
+    setArticleContent(prev => insertAnchorAt(prev, pIdx, 'above'));
     setPositionStrategy('user-anchor');
   }, [setPositionStrategy]);
   const addAnchorBelow = useCallback((pIdx: number) => {
-    setArticleContent(prev => insertAnchorAt(prev, pIdx + 1));
+    articleMutationVersionRef.current += 1;
+    setArticleContent(prev => insertAnchorAt(prev, pIdx, 'below'));
     setPositionStrategy('user-anchor');
   }, [setPositionStrategy]);
   const removeAnchorParagraph = useCallback((pIdx: number) => {
+    articleMutationVersionRef.current += 1;
     setArticleContent(prev => removeParagraphAt(prev, pIdx));
   }, []);
 
@@ -1596,8 +1574,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
+    if (chatModelPrefId && !effectiveChatModel) {
+      toast.warning('写作模型不可用，请在模型设置中重新选择。');
+      return;
+    }
+
     // 使用选中的风格提示词（可选，不选则后端使用系统推断风格）
-    // Phase 1: 位置策略以文本提示形式拼到 userInstruction 前部，后端无需改动
     const strategyHint = POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.hint ?? '';
     const basePrompt = selectedPrompt?.content ?? '';
     const systemPrompt = strategyHint
@@ -1606,20 +1588,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     setMarkerStreaming(true);
     setThinkingContent('');
-    setRawMarkerOutput(''); // 重置原始输出
+    setRawMarkerOutput('');
+    setStreamedMarkerCount(0);
     setGlowingMarkers(new Set()); // 重置入场动画追踪
     knownMarkerIndicesRef.current.clear();
-    isStreamingRef.current = true; // 标记开始流式输出
 
     // 保存当前滚动位置，phase 切换导致 DOM 重建会丢失 scrollTop
     const savedScrollTop = articlePreviewRef.current?.scrollTop ?? 0;
 
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
-    setMarkers([]);
-
-    // 锚点模式：预先显示原文（LLM 不会流式返回文章内容）
-    setArticleWithMarkers(articleContent);
 
     // 恢复滚动位置（等 React 完成渲染后）
     requestAnimationFrame(() => {
@@ -1629,39 +1607,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
 
     try {
-      // 使用 SSE 流式接口
+      // 等已发出的草稿保存完成，避免它在新方案落库后清空生成结果。
+      await pendingArticleSave.current;
       const stream = generateArticleMarkers({
         id: workspaceId,
         articleContent,
         userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
         insertionMode: 'anchor',
-        modelId: effectiveChatModel?.modelName,
+        positionStrategy,
+        modelId: chatModelPrefId ? effectiveChatModel?.modelName : undefined,
       });
-
-      let fullText = '';
-
-      const extractedMarkers: ArticleMarker[] = []; // 已提取的标记
-      let runningArticle = articleContent; // 锚点模式：跟踪增量插入后的文章
-      const newMarkerIndices = new Set<number>(); // 跟踪新插入的 marker 索引（用于动画）
-
-      // 直接设置 marker 为已解析（跳过意图模型，尺寸由 LLM 直接提供）
-      const setMarkerDirectParsed = (markerIndex: number, markerText: string, size: string) => {
-        const planItem = { prompt: markerText, count: 1, size };
-        setMarkerRunItems((prev) => {
-          if (prev.some((x) => x.markerIndex === markerIndex)) return prev;
-          return [
-            ...prev,
-            { markerIndex, markerText, draftText: markerText, status: 'parsed' as MarkerRunStatus, planItem },
-          ];
-        });
-
-        void updateMarkerStatus(markerIndex, {
-          status: 'parsed',
-          draftText: markerText,
-          planItem: { prompt: markerText, count: 1, size },
-        });
-      };
 
       for await (const chunk of stream) {
         // 服务端在模型首 token 前推送阶段消息，立即替换静止等待态。
@@ -1676,80 +1632,35 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           continue;
         }
 
-        // ====== Anchor 模式：处理 marker 事件 ======
-        if (chunk.type === 'marker' && chunk.text && chunk.index != null) {
-          const markerIndex = chunk.index;
-          const markerText = chunk.text;
-          extractedMarkers.push({
-            index: markerIndex,
-            text: markerText,
-            startPos: -1,
-            endPos: -1,
-          });
-          setMarkers([...extractedMarkers]);
-
-          // 增量插入 marker 到文章中（实时反馈）
-          if (chunk.anchor) {
-            runningArticle = insertMarkerIntoArticle(runningArticle, chunk.anchor, markerText);
-            newMarkerIndices.add(markerIndex);
-            setArticleWithMarkers(runningArticle);
-          }
-
-          // Anchor 模式：marker text 即 prompt，无需意图模型解析，统一默认 1:1
-          setMarkerDirectParsed(markerIndex, markerText, '1024x1024');
-        }
-        // ====== Delta 事件：Anchor 模式为原始输出视觉反馈 ======
-        else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
-          // Anchor 模式：LLM 原始输出仅用于视觉反馈，文章由 marker 事件增量更新
-          setRawMarkerOutput((prev) => prev + chunk.text);
-        }
-        // ====== 后处理中事件 ======
-        else if (chunk.type === 'finalizing') {
-          setRawMarkerOutput((prev) => prev + '\n\n✓ 标记生成完成，正在保存…');
-        }
-        // ====== 完成事件 ======
-        else if (chunk.type === 'done' && chunk.fullText) {
-          fullText = chunk.fullText;
-          setArticleWithMarkers(fullText);
-
-          // 提取标记（确保最终状态一致）
-          const extracted = extractMarkers(fullText);
+        if (chunk.type === 'marker') {
+          setStreamedMarkerCount(count => count + 1);
+        } else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
+          setRawMarkerOutput(prev => prev + chunk.text);
+        } else if (chunk.type === 'finalizing') {
+          setRawMarkerOutput(prev => prev + '\n\n标记生成完成，正在保存…');
+        } else if (chunk.type === 'done' && chunk.fullText) {
+          const extracted = extractMarkers(chunk.fullText);
+          setArticleWithMarkers(chunk.fullText);
           setMarkers(extracted);
-
-          // 对于 done 事件中的标记但尚未处理的，补充直接设为 parsed（无需意图模型）
-          extracted.forEach((marker) => {
-            setMarkerRunItems((prev) => {
-              const existingItem = prev.find((x) => x.markerIndex === marker.index);
-              if (existingItem && existingItem.status !== 'idle') return prev;
-              if (!existingItem) {
-                return [
-                  ...prev,
-                  {
-                    markerIndex: marker.index,
-                    markerText: marker.text,
-                    draftText: marker.text,
-                    status: 'parsed' as MarkerRunStatus,
-                    planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
-                  },
-                ];
-              }
-              return prev;
-            });
-          });
-
-          setPhase(2); // MarkersGenerated
+          setMarkerRunItems(extracted.map(marker => ({
+            markerIndex: marker.index,
+            markerText: marker.text,
+            draftText: marker.text,
+            status: 'parsed',
+            planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
+          })));
+          return;
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
         }
       }
+      throw new Error('生成结果未返回，请刷新查看，或重新生成配图标记。');
     } catch (error) {
       console.error('Generate markers error:', error);
       toast.error('生成失败', error instanceof Error ? error.message : '未知错误');
-      setMarkers([]);
-      setPhase(1); // Editing
+      setPhase(phase);
     } finally {
       setMarkerStreaming(false);
-      isStreamingRef.current = false; // 标记流式输出结束
     }
   };
 
@@ -2780,7 +2691,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 忙碌主按钮的进度文案：标记流式中报「已识别 N 处」（不定进度），批量生图报「已完成 X/Y」（确定进度）
   const busyProgress: { text: string; ratio: number | null } = (() => {
-    if (markerStreaming) return { text: `正在生成配图标记 · 已识别 ${markerRunItems.length} 处`, ratio: null };
+    if (markerStreaming) return { text: `正在生成配图标记 · 已识别 ${streamedMarkerCount} 处`, ratio: null };
     const total = markerRunItems.length;
     const done = markerRunItems.filter((x) => x.status === 'done').length;
     return total > 0
@@ -3059,7 +2970,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div className="p-4 relative">
                 {/* 策略引导横幅：user-anchor 但还没锚点时提示用户怎么打 */}
                 {positionStrategy === 'user-anchor' &&
-                  !splitParagraphs(articleContent).some(isAnchorParagraph) &&
+                  userAnchorCount === 0 &&
                   articleContent.trim() && (
                   <div
                     className="mb-3 rounded-xl px-3 py-2.5 flex items-center gap-2"
@@ -3096,7 +3007,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                 <div className="prd-md">
                   {(() => {
-                    const paragraphs = splitParagraphs(articleContent);
+                    const paragraphs = previewParagraphs;
                     // Phase 1.6: 基于策略计算哪些段落后方需要渲染"配图占位"ghost
                     const ghostAfter = new Set<number>();
                     if (positionStrategy === 'per-h1') {
@@ -3271,7 +3182,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   })()}
                 </div>
                 {/* 空态提示 */}
-                {splitParagraphs(articleContent).length === 0 && (
+                {previewParagraphs.length === 0 && (
                   <div className="text-[12px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>
                     请先上传文章
                   </div>
@@ -3347,7 +3258,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         />
                         <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 输出</span>
                         <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                          · {markerStreaming ? '正在识别配图位置' : '识别完成'} · 已识别 {markerRunItems.length} 处
+                          · {markerStreaming ? '正在识别配图位置' : '识别完成'} · 已识别 {streamedMarkerCount} 处
                         </span>
                       </div>
                       <div
@@ -3568,7 +3479,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
           {/* 配置与模型共用原位展开区域，同一时间只展开一项。 */}
           <LiteraryInlineMenuGroup>
-            <div className="lit-settings" data-testid="literary-generation-settings">
+            <details key={phase === 2 ? 'results' : 'preparation'} open={phase !== 2} className="lit-settings" data-testid="literary-generation-settings">
+              <summary className="lit-settings-row lit-settings-disclosure">
+                <span className="lit-settings-label"><SlidersHorizontal size={16} aria-hidden /><span>生成设置</span></span>
+                <span className="lit-settings-value">{positionStrategyLabel}</span>
+                <LiterarySettingsSummary writingModel={effectiveChatModel?.actualModelId} imageModel={effectiveModel?.actualModelId}
+                  watermarkName={watermarkName} watermarkId={watermarkId} watermarkUpdatedAt={watermarkUpdatedAt}
+                  position={positionStrategy} positionLabel={positionStrategyLabel} />
+                <ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
+              </summary>
               <section className="lit-settings-section lit-settings-section--rows" aria-label="配图设置">
                 <div className="lit-settings-heading">
                   <h3>配图设置</h3>
@@ -3687,12 +3606,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         : <Square size={16} />}
                       label="水印"
                       warning={!!articleChoice?.watermark.missing}
-                      value={articleChoice
-                        ? (articleChoice.watermark.watermarkId === 'none' ? '不加水印' : articleChoice.watermark.name)
-                        : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '不加水印'}
+                      value={watermarkName}
                       title={articleChoice
                         ? articlePrefTitle('水印', articleChoice.watermark)
-                        : `水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
+                        : `水印：${watermarkName}`}
                       aria-label="水印"
                     />
                   }
@@ -3705,7 +3622,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <>
                       <QuickMenuItem
                         label="不加水印"
-                        selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.enabled}
+                        selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.hasActiveConfig}
                         disabled={watermarkSaving}
                         onSelect={() => void switchWatermark(null)}
                       />
@@ -3739,12 +3656,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   width={260}
                   open={positionStrategyOpen}
                   onOpenChange={setPositionStrategyOpen}
-                  note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里写 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。这些位置在「尊重用户锚点」下生效。</>}
+                  note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里单独写一行 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。「自动安排」和「尊重用户锚点」都会优先使用这些位置。</>}
                   trigger={
                     <LiterarySettingsRow
                       icon={<Layers size={16} />}
                       label="插图位置"
-                      value={positionStrategy === 'auto' ? '自动安排' : POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动安排'}
+                      value={positionStrategyLabel}
                       title="配图位置：控制 AI 在哪些段落插入配图标记"
                       aria-label="配图位置"
                     />
@@ -3815,7 +3732,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 )}
               </section>
-            </div>
+            </details>
           </LiteraryInlineMenuGroup>
         </PanelCard>
 
@@ -3823,14 +3740,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         {phase === 2 && (
           <PanelCard className="flex-1 min-h-0 flex flex-col">
             {/* 紧凑标题栏 */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
-                  {markerRunItems.filter(x => x.status === 'done').length}/{markerRunItems.length}
-                </span>
-              </div>
-              <div className="flex items-center gap-1">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="shrink-0 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
+              <div className="flex flex-wrap items-center justify-end gap-1 whitespace-nowrap">
                 <Button
                   size="xs"
                   variant="primary"
@@ -3968,7 +3880,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-3 pr-0.5">
+            {!markerStreaming && (
+              <p className="mb-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                {userAnchorCount > 0 && `原文 ${userAnchorCount} 个锚点 · `}{markers.length} 条提示词 · {markerRunItems.filter(x => x.status === 'done' && markerItemImageUrl(x)).length}/{markers.length} 张图片
+              </p>
+            )}
+            <div className="flex-1 min-h-0 overflow-auto space-y-3 pr-0.5">
               {/* 标记生成中的进度提示 */}
               {markerStreaming && (
                 <div
@@ -3981,10 +3898,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   }}
                 >
                   <MapSpinner size={14} />
-                  <span>AI 正在分析文章并生成配图标记…已识别 {markerRunItems.length} 个位置</span>
+                  <span>AI 正在分析文章并生成配图标记…已识别 {streamedMarkerCount} 个位置</span>
                 </div>
               )}
-              {markerRunItems.map((it, idx) => {
+              {!markerStreaming && markerRunItems.map((it, idx) => {
                 const statusLabel =
                   it.status === 'parsing'
                     ? '解析中'
@@ -5048,7 +4965,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </Button>
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={handleWatermarkStatusChange} hideAddButton />
+                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={setWatermarkStatus} hideAddButton />
               </div>
             </div>
           </div>

@@ -4,20 +4,27 @@ import { useNavigate } from 'react-router-dom';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
 import { updateSite, type SharedSiteInfo } from '@/services/real/webPages';
 
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 
 const SiteSettingsDialog = lazy(() => import('./SiteSettingsDialog'));
 
-export function SharePageTitle({ site, onRenamed }: {
+export function SharePageTitle({ site, onRenamed, rename }: {
   site: SharedSiteInfo;
   onRenamed: (title: string) => void;
+  rename?: { open: boolean; onOpenChange: (open: boolean) => void; menuOnly: boolean };
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = rename?.open ?? localOpen;
+  const setOpen = rename?.onOpenChange ?? setLocalOpen;
   const [title, setTitle] = useState(site.title);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (open) { setTitle(site.title); setError(''); }
+  }, [open, site.title]);
   const save = async () => {
     const next = title.trim();
     if (!next || saving) return;
@@ -38,10 +45,10 @@ export function SharePageTitle({ site, onRenamed }: {
   return <>
     <span title={site.title}>{site.title}</span>
     {site.viewerIsOwner && <>
-      <button type="button" className="share-topbar-btn" aria-label="修改标题" title="修改标题"
-        onClick={() => { setTitle(site.title); setError(''); setOpen(true); }}>
+      {!rename?.menuOnly && <button type="button" className="share-topbar-btn" aria-label="修改标题" title="修改标题"
+        onClick={() => setOpen(true)}>
         <Pencil size={14} />
-      </button>
+      </button>}
       <Dialog open={open} onOpenChange={(value) => { if (!saving) setOpen(value); }} title="修改网页标题"
         description="修改后原分享链接仍然有效。"
         content={<form id="rename-hosted-page" onSubmit={(event) => { event.preventDefault(); void save(); }}>
@@ -59,21 +66,27 @@ export function SharePageTitle({ site, onRenamed }: {
   </>;
 }
 
-export function SharePageActions({ site, compact, onSettingsSaved }: {
+export function SharePageActions({ site, compact, menu, children, onSettingsSaved }: {
   site: SharedSiteInfo;
   compact: boolean;
+  menu?: boolean;
+  children?: ReactNode;
   onSettingsSaved: () => Promise<void>;
 }) {
   const navigate = useNavigate();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  return <>
-    {site.viewerIsOwner && <button type="button" className="share-topbar-btn share-topbar-icon" title="设置" aria-label="设置"
-      onClick={() => setSettingsOpen(true)}><Settings2 size={15} /></button>}
-    <button type="button" className="share-topbar-btn" title="返回网页托管" aria-label="返回网页托管"
+  const role = menu ? 'menuitem' : undefined;
+  const actions = <>
+    {site.viewerIsOwner && <button type="button" role={role} className="share-topbar-btn" title="设置" aria-label="设置"
+      onClick={() => setSettingsOpen(true)}><Settings2 size={15} />{menu && '设置'}</button>}
+    <button type="button" role={role} className="share-topbar-btn" title="返回网页托管" aria-label="返回网页托管"
       onClick={() => navigate(site.viewerCanEdit
         ? `/web-pages?focusSite=${encodeURIComponent(site.id)}` : '/web-pages')}>
-      <ArrowLeft size={15} />{!compact && '返回网页托管'}
-    </button>
+      <ArrowLeft size={15} />{(menu || !compact) && '返回网页托管'}
+    </button>{children}
+  </>;
+  return <>
+    {menu ? <ShareMoreMenu adaptive>{actions}</ShareMoreMenu> : actions}
     {settingsOpen && site.viewerIsOwner && <Suspense fallback={<MapSpinner size={16} />}>
       <SiteSettingsDialog siteId={site.id} siteTitle={site.title} onClose={() => setSettingsOpen(false)}
         onSaved={async () => {
@@ -86,32 +99,51 @@ export function SharePageActions({ site, compact, onSettingsSaved }: {
 
 
 /** 低频动作放在同一个锚定菜单里，避免占满阅读页顶栏。 */
-export function ShareMoreMenu({ children }: { children: ReactNode }) {
+export function ShareMoreMenu({ children, adaptive = false }: { children: ReactNode; adaptive?: boolean }) {
   const [open, setOpen] = useState(false);
+  const theme = useResolvedThemeMode();
   const anchor = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
+  const focusOnOpen = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus());
+    if (!open || !focusOnOpen.current) return;
+    const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   }, [open]);
   const close = useCallback(() => setOpen(false), []);
   return <>
     <button ref={anchor} type="button" className="share-topbar-btn share-topbar-icon" title="更多" aria-label="更多"
-      aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((value) => !value)}>
+      aria-expanded={open} aria-haspopup="menu" onClick={event => {
+        focusOnOpen.current = event.detail === 0;
+        setOpen(value => !value);
+      }} onKeyDown={event => {
+        if (event.key === 'Escape' && open) {
+          event.stopPropagation();
+          close();
+        }
+        if (event.key !== 'ArrowDown') return;
+        event.preventDefault();
+        if (open) menu.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus({ preventScroll: true });
+        else {
+          focusOnOpen.current = true;
+          setOpen(true);
+        }
+      }}>
       <MoreHorizontal size={17} />
     </button>
-    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} className="surface-tone-dark share-more-menu" minWidth={180}>
+    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} ignoreAutomaticFrameFocus
+      className={`share-more-menu ${adaptive ? '' : 'surface-tone-dark'}`} minWidth={180} theme={adaptive ? theme : undefined}
+      style={adaptive ? { background: 'var(--review-b-popover)' } : undefined}>
       <div ref={menu} role="menu" aria-label="更多网页操作" onClick={(event) => {
         const action = (event.target as Element).closest('button:not(:disabled), a[href]');
-        if (action && !action.hasAttribute('data-menu-keep-open')) { close(); anchor.current?.focus(); }
+        if (action && !action.hasAttribute('data-menu-keep-open')) { close(); anchor.current?.focus({ preventScroll: true }); }
       }} onKeyDown={(event) => {
-        if (event.key === 'Escape') { event.stopPropagation(); close(); anchor.current?.focus(); }
+        if (event.key === 'Escape') { event.stopPropagation(); close(); anchor.current?.focus({ preventScroll: true }); }
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
         event.preventDefault();
         const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]'));
         const current = items.indexOf(document.activeElement as HTMLElement);
-        items[(current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+        items[(current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus({ preventScroll: true });
       }}>{children}</div>
     </AnchoredMenu>
   </>;

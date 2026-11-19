@@ -96,6 +96,7 @@ __pycache__/
 /.cds/
 /.cds-data/
 /.cds-static-previews/
+/.cds-preview-assets-v1/
 /.cds-cache/
 /.cds-worktrees/
 .cds/state.json

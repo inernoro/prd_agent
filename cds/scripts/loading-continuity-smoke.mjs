@@ -61,6 +61,7 @@ try {
       if (p === '/api/report-folders') payload = {folders:[]};
       if (/\/identity-history$/.test(p)) payload = {records:[],nextCursor:null,coverage:'complete'};
       if (p === '/api/cds-system/connections') payload = {connections:[]};
+      if (p === '/api/releases/approval-inbox') payload = { target: { name: '合成审批环境' }, records: [] };
       if (p === '/api/auth/activity') payload = { activity: [] };
       try { await route.fulfill({ json: payload }); } catch (e) { if (!/closed|handled|canceled/i.test(String(e))) throw e; }
     });
@@ -69,6 +70,7 @@ try {
     if (scene.kind === 'settings') route += '#auth';
     if (route === '/branch-list') route += '?project=fixture-project';
     if (route === '/branch-topology') route += '?project=fixture-project';
+    if (route === '/release-center/approval/:authorizationId?') route = '/release-center/approval?project=fixture-project&target=fixture-release-target';
     if (route === '/dts') route += '?project=fixture-project';
     const selector = selectors[scene.kind];
     const result = { route, kind: scene.kind, errors, syntheticApis: true };
@@ -97,6 +99,11 @@ try {
       await page.getByRole('status', { name: '页面加载中', exact: true }).waitFor({ state: 'hidden' });
       await page.locator('main .cds-workspace .cds-loading-skeleton-line').first().waitFor();
       result.data = await inspect('data');
+      if (route.startsWith('/release-center/approval?')) {
+        const crumbs = page.getByRole('navigation', { name: '面包屑', exact: true });
+        assert(await crumbs.getByText('审批列表', { exact: true }).isVisible(), 'approval list lost its heading while loading');
+        assert.equal(await crumbs.getByRole('link', { name: '环境管理', exact: true }).getAttribute('href'), '/release-center?project=fixture-project&target=fixture-release-target');
+      }
       await fs.writeFile(path.join(out, `pending-${scene.kind}.html`), await page.content());
       result.sameShape = result.code.present && result.data.present && result.code.shape === result.data.shape;
       result.maxGeometryDelta = result.code.present && result.data.present ? Math.max(...['x', 'y', 'width', 'height'].map(k => Math.abs(result.code[k] - result.data[k]))) : null;

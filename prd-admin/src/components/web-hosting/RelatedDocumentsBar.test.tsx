@@ -55,6 +55,25 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
+  it('没有外部关联时顶部入口完全隐藏，管理仍可从完整关联栏进入', async () => {
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, version: 0, mainSiteId: null, items: [data.items[0]] }, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
+    expect(container.querySelector('[aria-label="关联文档导航"]')).toBeNull();
+    expect(document.querySelector('.related-popover')).toBeNull();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="bar" />));
+    await open();
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(0);
+    expect(document.querySelector('.related-popover')?.textContent).toContain('暂无关联文档');
+    await clickText('管理关联');
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
+  });
+  it('关联数量和列表只包含其他文档', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
+    expect(container.querySelector('.related-count')?.textContent).toBe('1');
+    await open();
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('技术设计');
+  });
   it('卡片只保留一个悬浮入口，没有合集时直接显示文档', async () => {
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation siteTitle="总体方案" summary={{ count: 1, isMain: true, titles: ['技术设计'] }} />));
     expect(getCollectionContexts).not.toHaveBeenCalled();
@@ -65,7 +84,7 @@ describe('顶部关联文档', () => {
     expect(document.querySelectorAll('.related-popover')).toHaveLength(1);
     expect(container.querySelectorAll('button')).toHaveLength(1);
     expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
     expect(document.querySelector('[aria-label="文档关系类型"]')).toBeNull();
     expect(saveRelatedDocuments).not.toHaveBeenCalled();
   });
@@ -127,7 +146,7 @@ describe('顶部关联文档', () => {
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', 'collection:one');
     await clickText('关联文档');
-    expect(document.querySelector('.related-document-card')?.textContent).toContain('总体方案');
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('技术设计');
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe('');
     await clickText('管理关联');
     expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
@@ -157,7 +176,7 @@ describe('顶部关联文档', () => {
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
     expect([...document.querySelectorAll('button')].some(button => button.textContent === '管理关联')).toBe(false);
     await clickText('关联文档');
-    expect(document.querySelector('.related-document-card')?.textContent).toContain('总体方案');
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('技术设计');
     expect(document.querySelector('[aria-label="关联文档"].collection-context-select')?.textContent).not.toContain('暂时无法读取');
     await clickText('管理关联');
     expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
@@ -248,7 +267,7 @@ describe('顶部关联文档', () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('合集暂时无法读取');
     expect(getRelatedDocuments).not.toHaveBeenCalled();
     await clickText('重试');
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
   });
 
   it('Escape 先关闭关联浮层并归还焦点，再按一次才交给父阅读器', async () => {
@@ -274,7 +293,7 @@ describe('顶部关联文档', () => {
     expect(container.querySelector('.related-trigger')?.getAttribute('title')).toContain('技术设计');
     await open();
     expect(getRelatedDocuments).toHaveBeenCalledTimes(1);
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
   });
   it('紧凑浮层删除重复说明，保留主文档角标、权限操作和外开入口', async () => {
     const navigate = vi.fn();
@@ -285,7 +304,7 @@ describe('顶部关联文档', () => {
     expect(container.querySelector('.related-trigger')?.getAttribute('title')).toContain('权限不一致');
     await open();
     expect(document.querySelector('.related-context-row')).toBeNull();
-    expect(document.querySelector('.related-main-badge')?.textContent).toContain('主文档');
+    expect(document.querySelector('.related-main-badge')).toBeNull();
     expect(document.querySelector('[aria-label="权限不一致"]')).not.toBeNull();
     expect(document.querySelector('.related-panel-heading')?.textContent).not.toContain('份可见文档');
     expect(document.body.textContent).not.toContain('每份文档独立授权');
@@ -313,7 +332,7 @@ describe('顶部关联文档', () => {
   it('真实页面预览接入，并支持列表与卡片视图切换和记忆', async () => {
     const previewItem = { ...data.items[1], preview: { id: 'b', siteUrl: 'https://assets.test/b.html', entryFile: 'index.html', useShareAccess: false } };
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [previewItem] }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="b" />)); await open();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" />)); await open();
     expect(document.querySelector('[data-page-preview="https://assets.test/b.html"]')).not.toBeNull();
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="列表视图"]')!.click());
     expect(document.querySelector('.related-document-grid')?.classList.contains('is-list')).toBe(true);
@@ -336,7 +355,7 @@ describe('顶部关联文档', () => {
   it('文档标签通过现有文档接口保存，并在评论变化后重新读取关联列表', async () => {
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [{ ...data.items[0], canEditTags: true, tags: ['原标签'] }] }, error: null });
     vi.mocked(updateSite).mockResolvedValue({ success: true, data: {} as never, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" />)); await open();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="b" />)); await open();
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="编辑标签：总体方案"]')!.click());
     await clickText('保存标签');
     expect(updateSite).toHaveBeenCalledWith('a', { tags: ['原标签'] });
@@ -349,8 +368,8 @@ describe('顶部关联文档', () => {
     const navigate = vi.fn();
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" onNavigate={navigate} />));
     await open();
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
-    expect(document.querySelector('[aria-current="page"]')?.textContent).toContain('总体方案');
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
+    expect(document.querySelector('[aria-current="page"]')).toBeNull();
     await act(async () => [...document.querySelectorAll<HTMLButtonElement>('button.related-document-card')].find(item => item.textContent?.includes('技术设计'))!.click());
     expect(navigate).toHaveBeenCalledWith(data.items[1]);
     expect(document.querySelector('.related-popover')).toBeNull();
@@ -360,7 +379,7 @@ describe('顶部关联文档', () => {
     await act(async () => root.render(<RelatedDocumentsBar siteId="b" source={{ token: 'limited-share', password: 'password' }} />));
     await open();
     expect(getRelatedDocuments).toHaveBeenCalledWith('b', { token: 'limited-share', password: 'password' });
-    expect(container.querySelector('.related-count')?.textContent).toBe('1');
+    expect(container.querySelector('.related-count')?.textContent).toBe('0');
     expect(document.body.textContent).not.toContain('总体方案');
     expect(document.body.textContent).not.toContain('管理关联');
     expect(document.body.textContent).not.toContain('权限不一致');
@@ -411,7 +430,7 @@ describe('顶部关联文档', () => {
     await open();
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(9);
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="下一页"]')!.click());
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(3);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
     expect([...document.querySelectorAll('button.related-document-card')].some(item => item.textContent?.includes('文档 11'))).toBe(true);
     expect(document.querySelector('a[href*="openSite="]')).toBeNull();
   });

@@ -10,6 +10,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Filters;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Services;
 
@@ -67,6 +68,7 @@ public partial class WebPagesController : ControllerBase
     private readonly ITeamService _teams;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.IHostedSitePrivateSourceGate? _privateSources;
+    private readonly IConfiguration? _commentAvatarConfiguration;
 
     public WebPagesController(
         IHostedSiteService siteService,
@@ -76,7 +78,8 @@ public partial class WebPagesController : ControllerBase
         ITeamService teams,
         IHttpClientFactory httpClientFactory,
         PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
-        PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null)
+        PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null,
+        IConfiguration? configuration = null)
     {
         _siteService = siteService;
         _optimizationService = optimizationService;
@@ -87,6 +90,7 @@ public partial class WebPagesController : ControllerBase
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
         _reviewStorage = assetStorage;
+        _commentAvatarConfiguration = configuration;
     }
 
     /// <summary>旧的整包审查入口已停用，避免大文件在 API 内存中形成多份副本。</summary>
@@ -2030,16 +2034,21 @@ public partial class WebPagesController : ControllerBase
         var result = await _siteService.ListCommentsBySiteAsync(siteId, GetUserId());
         if (result == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+        foreach (var comment in result.Comments) SetCommentAvatarUrl(comment);
         return Ok(ApiResponse<object>.Ok(result));
     }
 
     /// <summary>在某站点发表评论（owner / 团队成员视角，需登录）</summary>
     [HttpPost("{siteId}/comments")]
-    public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
+    [Consumes("application/json")]
+    public Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req) =>
+        SaveSiteCommentAsync(siteId, req);
+
+    private async Task<IActionResult> SaveSiteCommentAsync(string siteId, AddSiteCommentRequest req, IReadOnlyList<HostedSiteCommentFile>? files = null)
     {
         var result = await _siteService.AddCommentBySiteAsync(
             siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId,
-            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion);
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, clientId: req.ClientId, attachments: files);
         return MapAddCommentResult(result);
     }
 
@@ -2052,18 +2061,23 @@ public partial class WebPagesController : ControllerBase
         var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId, siteId: siteId);
         if (result.Error != null)
             return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
+        foreach (var comment in result.Comments) SetCommentAvatarUrl(comment);
         return Ok(ApiResponse<object>.Ok(result));
     }
 
     /// <summary>经分享链接发表评论（需登录）</summary>
     [HttpPost("shares/view/{token}/comments")]
-    public async Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req)
+    [Consumes("application/json")]
+    public Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req) =>
+        SaveShareCommentAsync(token, password, req);
+
+    private async Task<IActionResult> SaveShareCommentAsync(string token, string? password, AddSiteCommentRequest req, IReadOnlyList<HostedSiteCommentFile>? files = null)
     {
         var userId = GetUserId();
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
             token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId,
-            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId);
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId, clientId: req.ClientId, attachments: files);
         return MapAddCommentResult(result);
     }
 
@@ -2104,7 +2118,14 @@ public partial class WebPagesController : ControllerBase
     {
         if (result.Error != null)
             return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
+        if (result.Comment != null) SetCommentAvatarUrl(result.Comment);
         return Ok(ApiResponse<object>.Ok(result.Comment));
+    }
+
+    private void SetCommentAvatarUrl(HostedSiteCommentDto comment)
+    {
+        if (_commentAvatarConfiguration != null && !comment.IsAi && !string.IsNullOrWhiteSpace(comment.AuthorAvatarFileName))
+            comment.AuthorAvatarUrl = AvatarUrlBuilder.Build(_commentAvatarConfiguration, comment.AuthorAvatarFileName);
     }
 
     private IActionResult MapCommentError(string error, int httpStatus, string? errorCode, int? retryAfterSeconds = null)
@@ -2306,6 +2327,7 @@ public class SetCommentResolvedRequest
 
 public class AddSiteCommentRequest
 {
+    public string? ClientId { get; set; }
     public string? SiteId { get; set; }
     public string? RevisionId { get; set; }
     public string? ExpectedContentVersion { get; set; }

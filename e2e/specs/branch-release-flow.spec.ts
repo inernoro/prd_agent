@@ -1,5 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
-import { installOperationsFixtures } from '../fixtures/admin-operations.mjs';
+import { installOperationsFixtures, run } from '../fixtures/admin-operations.mjs';
+
+function releaseRequest(targetId: string) {
+  return {
+    path: '/api/releases/branches/compat-branch/runs', method: 'POST',
+    body: { targetId, previewUrl: 'https://example.test', preflightId: 'compat-preflight', expectedCommitSha: run.commitSha },
+  };
+}
 
 test.beforeEach(async ({ browser, page }, info) => {
   info.annotations.push({ type: 'engine-version', description: browser.version() });
@@ -25,7 +32,7 @@ async function branchCard(page: Page) {
 }
 
 for (const width of [1440, 390, 320]) for (const theme of ['light', 'dark']) {
-  test(`分支卡片 ${width} ${theme} 选择环境即发布`, async ({ page }, info) => {
+  test(`分支卡片 ${width} ${theme} 选择环境后预检并主动提交`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 844 });
     const fixture = await installOperationsFixtures(page);
     fixture.setPreflightPass(true);
@@ -38,7 +45,7 @@ for (const width of [1440, 390, 320]) for (const theme of ['light', 'dark']) {
     const bounds = await option.boundingBox();
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
-    await expect(dialog.getByText('选择一个环境，自动检查并发布当前分支。')).toBeVisible();
+    await expect(dialog.getByText('选择发布环境，查看检查结果后开始发布。')).toBeVisible();
     const onboarding = dialog.getByRole('button', { name: '接入新环境', exact: true });
     await onboarding.scrollIntoViewIfNeeded();
     // 按钮边界在屏内仍可能有 nowrap 文字溢出；检查实际内容宽度。
@@ -55,8 +62,12 @@ for (const width of [1440, 390, 320]) for (const theme of ['light', 'dark']) {
     expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(0);
     await page.screenshot({ path: info.outputPath('branch-release-environments.png') });
     await dialog.getByRole('button', { name: '发布到 预发环境', exact: true }).click();
+    const submit = dialog.getByRole('button', { name: '开始发布', exact: true });
+    await expect(submit).toBeEnabled();
+    expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(0);
+    await submit.click();
     await expect(page.getByRole('dialog', { name: '发布成功', exact: true })).toBeVisible();
-    expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toEqual([{ path: '/api/releases/branches/compat-branch/runs', method: 'POST', body: { targetId: 'compat-target', previewUrl: 'https://example.test' } }]);
+    expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toEqual([releaseRequest('compat-target')]);
     await page.screenshot({ path: info.outputPath('branch-release-success.png') });
   });
 }
@@ -81,8 +92,9 @@ test('Agent 接入环境后在原窗口出现，排除其他项目、停用与�
   await expect(dialog.getByRole('button', { name: /发布到 (其他项目|停用环境|归档环境)/ })).toHaveCount(0);
   expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(0);
   await dialog.getByRole('button', { name: '发布到 Agent 新接入环境', exact: true }).click();
+  await dialog.getByRole('button', { name: '开始发布', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '发布成功', exact: true })).toBeVisible();
-  expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toEqual([{ path: '/api/releases/branches/compat-branch/runs', method: 'POST', body: { targetId: 'compat-new-environment', previewUrl: 'https://example.test' } }]);
+  expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toEqual([releaseRequest('compat-new-environment')]);
 });
 
 test('预检失败不会发布，修复后重新选择环境只发布一次', async ({ page }) => {
@@ -90,13 +102,17 @@ test('预检失败不会发布，修复后重新选择环境只发布一次', as
   fixture.setReleaseTargets([{ id: 'compat-target', projectId: 'fixture-project', name: '测试环境', isEnabled: true }]);
   const dialog = await branchCard(page);
   await dialog.getByRole('button', { name: '发布到 测试环境', exact: true }).click();
-  await expect(dialog.getByRole('alert')).toContainText('未开始发布');
+  const blocker = dialog.getByText(/阻断 · 隔离预检失败/);
+  const submit = dialog.getByRole('button', { name: '开始发布', exact: true });
+  await expect(blocker).toBeVisible();
+  await expect(submit).toBeDisabled();
   expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(0);
   // 后台环境刷新不能抹掉检查失败的反馈。
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await expect(dialog.getByRole('alert')).toContainText('未开始发布');
+  await expect(blocker).toBeVisible();
   fixture.setPreflightPass(true);
   await dialog.getByRole('button', { name: '发布到 测试环境', exact: true }).click();
+  await submit.click();
   await expect(page.getByRole('dialog', { name: '发布成功', exact: true })).toBeVisible();
   expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(1);
 });
@@ -107,6 +123,10 @@ test('快速重复选择只受理一次发布', async ({ page }) => {
   fixture.setReleaseTargets([{ id: 'compat-target', projectId: 'fixture-project', name: '测试环境', isEnabled: true }]);
   const dialog = await branchCard(page);
   await dialog.getByRole('button', { name: '发布到 测试环境', exact: true }).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+  const submit = dialog.getByRole('button', { name: '开始发布', exact: true });
+  await expect(submit).toBeEnabled();
+  expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(0);
+  await submit.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
   await expect(page.getByRole('dialog', { name: '发布成功', exact: true })).toBeVisible();
   expect(fixture.writes.filter(x => x.path.endsWith('/preflight'))).toHaveLength(1);
   expect(fixture.writes.filter(x => x.path.endsWith('/runs'))).toHaveLength(1);
@@ -164,6 +184,7 @@ for (const terminal of ['success', 'failed']) test(`运行中发布通过实际 
   });
   const dialog = await branchCard(page);
   await dialog.getByRole('button', { name: '发布到 流式测试环境', exact: true }).click();
+  await dialog.getByRole('button', { name: '开始发布', exact: true }).click();
   const active = page.getByRole('dialog');
   await active.getByText('查看发布日志', { exact: true }).click();
   await expect(active.locator('pre')).toContainText('STREAM_BOOT_HISTORY');

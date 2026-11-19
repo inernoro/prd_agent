@@ -1047,6 +1047,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /releases/batches/:id/targets/:targetId/rollback': '恢复目标原版',
     'GET /releases/center': '查看发布中心',
     'GET /releases/governance': '查看发布审批',
+    'GET /releases/approval-inbox': '查看环境审批列表',
+    'GET /releases/authorizations/:id': '查看单笔发布审批',
     'POST /releases/targets/:id/governance/enable': '启用发布审批',
     'POST /releases/targets/:id/conflict-check': '核验真实冲突',
     'POST /releases/targets/:id/authorizations': '申请发布批准',
@@ -1360,6 +1362,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/releases\/runs\/[^/]+\/cancel$/, '取消进行中发布'],
     [/^GET \/releases\/runs\/[^/]+\/stream$/, '订阅发布日志流'],
     [/^GET \/releases\/runs\/[^/]+$/, '查看发布记录'],
+    [/^GET \/releases\/authorizations\/[^/]+$/, '查看单笔发布审批'],
     [/^POST \/releases\/targets\/[^/]+\/archive$/, '归档发布目标并保留审计证据'],
     [/^GET \/releases\/targets\/[^/]+\/changes$/, '查看发布目标变更历史'],
     [/^GET \/releases\/targets\/[^/]+\/remote-state$/, '查看远端发布现场'],
@@ -5718,13 +5721,13 @@ export function installSpaFallback(
       try {
         rel = decodeURIComponent(req.path.slice('/assets/'.length));
       } catch {
-        return next();
+        return res.sendStatus(400);
       }
       let filePath = '';
       for (const assetRoot of assetSearchDirs) {
         const candidate = path.join(assetRoot, rel);
         // Path-traversal guard: resolved path must stay inside the selected assets root.
-        if (!candidate.startsWith(assetRoot + path.sep)) return next();
+        if (!candidate.startsWith(assetRoot + path.sep)) return res.sendStatus(404);
         try {
           if (fs.statSync(candidate).isFile()) {
             filePath = candidate;
@@ -5734,7 +5737,7 @@ export function installSpaFallback(
           /* try previous generation */
         }
       }
-      if (!filePath) return next();
+      if (!filePath) return res.sendStatus(404);
 
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.setHeader('Vary', 'Accept-Encoding');

@@ -865,6 +865,7 @@ export const api = {
     list: () => '/api/watermarks',
     byApp: (appKey: string) => `/api/watermarks/app/${appKey}`,
     byId: (id: string) => `/api/watermarks/${id}`,
+    preview: (id: string) => `/api/watermark/preview/${encodeURIComponent(id)}.png`,
     bind: (id: string, appKey: string) => `/api/watermarks/${id}/bind/${appKey}`,
     unbind: (id: string, appKey: string) => `/api/watermarks/${id}/unbind/${appKey}`,
     icons: () => '/api/watermark/icons',

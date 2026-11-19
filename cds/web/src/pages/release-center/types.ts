@@ -51,6 +51,7 @@ export interface ReleaseTarget {
   name: string;
   type: string;
   isEnabled: boolean;
+  updatedAt?: string;
   lifecycle?: 'active' | 'archived';
   archivedAt?: string;
   archivedBy?: string;
@@ -80,6 +81,9 @@ export interface ReleaseLogEntry {
 }
 
 export interface ReleaseRun {
+  forceReason?: string;
+  autoRestoreStartedAt?: string;
+  autoRestoredAt?: string;
   governance?: import('../../../../src/domain/release-governance').ReleaseGovernanceReceipt;
   releaseId: string;
   /** 既有后端审计关联号；不是幂等键。 */
@@ -280,6 +284,9 @@ export interface SiteDraft {
 /** 发布前检查结果。与 ReleaseService.preflight 的响应对齐。 */
 export interface ReleasePreflightResult {
   ok: boolean;
+  forceAvailable?: boolean;
+  preflightId?: string;
+  artifact?: { commitSha: string };
   checks: Array<{
     id: string;
     label: string;
@@ -295,6 +302,7 @@ export interface BranchOption {
   branch: string;
   commitSha?: string;
   githubCommitSha?: string;
+  pinnedCommit?: string;
   subject?: string;
   previewSlug?: string;
   /** CDS 后端算好的主预览地址（SSOT），发布弹窗展示与提交都以它优先。 */

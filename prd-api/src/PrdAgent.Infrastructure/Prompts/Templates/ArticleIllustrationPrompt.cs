@@ -10,13 +10,13 @@ public static class ArticleIllustrationPrompt
     /// 后端将此约束包裹在用户提示词外层，确保 LLM 输出锚点格式。
     /// 用户的原始提示词（风格、内容偏好等）仍被保留并注入。
     /// </summary>
-    public const string AnchorFormatConstraint = """
+    private static string AnchorFormatConstraint(bool useUserAnchors) => $$"""
 【强制输出格式 — 必须严格遵守】
 你只能输出"插入指令"，绝对不要复述、引用或输出原文内容。
 
 每条插入指令的格式（两行为一组）：
 
-@AFTER 原文中的一句话（作为定位锚点，必须与原文完全一致）
+@AFTER {{(useUserAnchors ? "原文中的编号占位符（例如 [IMG:1]），逐字复制编号占位符" : "原文中的一句话（作为定位锚点，必须与原文完全一致）")}}
 [插图](宽x高): 配图描述
 
 可选尺寸（必须从以下列表中选择一个，根据配图场景选择最合适的比例）：
@@ -28,10 +28,10 @@ public static class ArticleIllustrationPrompt
 
 规则：
 - 【最高优先级】无论文章是什么体裁（叙事散文、技术文档、教程、学术论文、代码手册、FAQ等），你都必须为其生成配图指令，绝不可以拒绝或建议用户换方式。技术文档可配概念图、流程图、架构示意图、场景插画等；即使原文已有 ASCII 图表或代码块，仍然需要生成视觉化配图
-- 锚点必须是原文中完整、连续的一句话（含标点），确保唯一匹配
+- {{(useUserAnchors ? "按编号为原文中的每一个占位符输出一组指令。只能使用原文的编号占位符，不得增减、重复或用原文句子代替" : "锚点必须是原文中完整、连续的一句话（含标点），确保唯一匹配")}}
 - 每组插入指令之间用空行分隔
 - 除插入指令外不输出任何内容（无开场白、无分析、无总结、无拒绝说明）
-- 根据文章长度合理安排配图数量（约每 300-500 字一张）
+- {{(useUserAnchors ? "配图数量和位置以编号占位符为准。每个锚点先理解紧邻正文中用户特意标出的场景，再结合全文与用户的创作指导生成配图描述；优先画这处的细节" : "根据文章长度合理安排配图数量（约每 300-500 字一张）")}}
 - 配图描述必须使用中文，便于用户阅读和理解
 - 配图描述中如果涉及画面中需要出现的文字（如标题、标语、按钮文字、标签等），必须明确写成中文，并注明"中文文字"
 - 在每条配图描述的末尾追加"，图中所有文字使用中文"，确保生图模型生成中文内容
@@ -57,12 +57,12 @@ public static class ArticleIllustrationPrompt
     /// 格式约束在前（优先级高），用户创作指导在后。
     /// 若 userInstruction 为空，则使用系统默认风格推断指导（而非无风格指导）。
     /// </summary>
-    public static string WrapForAnchorMode(string userInstruction)
+    public static string WrapForAnchorMode(string userInstruction, bool useUserAnchors = false)
     {
         if (string.IsNullOrWhiteSpace(userInstruction))
         {
             return $"""
-{AnchorFormatConstraint}
+{AnchorFormatConstraint(useUserAnchors)}
 ---
 
 {DefaultStyleInference}
@@ -70,7 +70,7 @@ public static class ArticleIllustrationPrompt
         }
 
         return $"""
-{AnchorFormatConstraint}
+{AnchorFormatConstraint(useUserAnchors)}
 ---
 
 以下是用户的创作指导（请遵循其中关于配图风格、数量、内容偏好的要求，但输出格式必须严格遵循上述锚点格式）：

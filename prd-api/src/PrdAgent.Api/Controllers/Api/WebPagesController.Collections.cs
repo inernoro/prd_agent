@@ -1,3 +1,4 @@
+using PrdAgent.Infrastructure.Services;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -113,7 +114,7 @@ public partial class WebPagesController
         if (metadata) await RefreshCollectionMetadata(site);
         var memberships = publicRead ? new List<object>() : (await Collections.Find(c => c.OwnerUserId == GetUserId() && c.DissolvedAt == null && c.SiteIds.Contains(site.Id))
             .Project(c => new { c.Id, c.Name }).ToListAsync()).Cast<object>().ToList();
-        var threads = metadata ? await _db.HostedSiteComments.Find(c => c.SiteId == site.Id && !c.IsDeleted && c.ParentId == null).ToListAsync() : new();
+        var threads = metadata ? await _db.HostedSiteComments.Find(c => c.SiteId == site.Id && !c.IsDeleted && c.ParentId == null).Project(HostedSiteService.CommentMetadata).ToListAsync() : new();
         threads = threads.Where(c => HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(c), site.ContentVersion, false)).ToList();
         return new { site.Id, site.Title, site.SiteUrl, site.EntryFile, site.WrappedAssetType, site.ContentShape, summary = site.Description, excerpt = site.DocumentTextExcerpt,
             headings = site.DocumentHeadings, templateId = site.WritingTemplateId,

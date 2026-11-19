@@ -3,12 +3,13 @@ import { act, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHostedReview, type HostedReview } from './useHostedReview';
+import type { HostedSiteCommentDto } from '@/services/real/webPages';
 import { shouldFetchPreviewHtml } from './previewHtml';
 import { resolveSitePreviewSource } from './sitePreviewSource';
 
-const { list, preview, upload } = vi.hoisted(() => ({ list: vi.fn(), preview: vi.fn(), upload: vi.fn() }));
+const { list, preview, upload, rollback } = vi.hoisted(() => ({ list: vi.fn(), preview: vi.fn(), upload: vi.fn(), rollback: vi.fn() }));
 vi.mock('@/services/real/webPages', () => ({ listHostedReviewVersions: list, previewHostedReviewVersion: preview,
-  reuploadSite: upload, buildApiUrl: (path: string) => path }));
+  reuploadSite: upload, rollbackHostedSiteRevision: rollback, buildApiUrl: (path: string) => path }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (selector: (state: { token: string }) => unknown) => selector({ token: 'session' }) }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement, review: HostedReview;
@@ -29,6 +30,53 @@ beforeEach(() => { vi.clearAllMocks(); list.mockResolvedValue({ success: true, d
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('versioned webpage review', () => {
+  it('恢复历史版作为新发布，旧元数据未刷新前不把新正文归入旧版本', async () => {
+    const nextSite = { ...site, siteUrl: 'https://assets.example/index.html?v=30000' };
+    rollback.mockResolvedValue({ success: true, data: { site: nextSite } });
+    await mount();
+    await act(async () => { expect(await review.restoreVersion('v1', 'restore-key')).toBe(true); });
+    expect(rollback).toHaveBeenCalledWith('site', 'v1', 'restore-key');
+    expect(review.liveSite?.siteUrl).toBe(nextSite.siteUrl);
+    expect(review.selected).toBeUndefined();
+    expect(review.loading).toBe(true);
+    list.mockResolvedValue({ success: true, data: [{ ...current, id: 'v3', versionLabel: 'V3', contentVersionKey: '30000', siteUrl: nextSite.siteUrl }, { ...current, isCurrent: false }, previous] });
+    await act(async () => review.refresh());
+    expect(review.selected?.id).toBe('v3');
+    expect(review.historical).toBe(false);
+  });
+  it('恢复失败保留当前内容，重试使用同一个操作标识；禁止恢复当前版本', async () => {
+    rollback.mockResolvedValueOnce({ success: false, error: { message: '版本冲突' } }).mockRejectedValueOnce(new Error('network'));
+    await mount();
+    await act(async () => { expect(await review.restoreVersion('v2', 'restore-key')).toBe(false); });
+    expect(rollback).not.toHaveBeenCalled();
+    await act(async () => { expect(await review.restoreVersion('v1', 'restore-key')).toBe(false); });
+    expect(review.restoreError).toBe('版本冲突'); expect(review.site?.siteUrl).toBe(site.siteUrl);
+    await act(async () => { expect(await review.restoreVersion('v1', 'restore-key')).toBe(false); });
+    expect(rollback.mock.calls.map(call => call[2])).toEqual(['restore-key', 'restore-key']);
+    expect(review.restoreError).toContain('尚未确认');
+  });
+  it('恢复错误与上传/版本列表错误隔离，换窗口后清除，重试中不显示旧失败', async () => {
+    upload.mockResolvedValue({ success: false, error: { message: '上传失败，请重新上传' } });
+    rollback.mockResolvedValueOnce({ success: false, error: { message: '版本已更新，请重试恢复' } });
+    await mount();
+    await act(async () => review.upload(new File(['bad'], 'bad.html')));
+    expect(review.error).toBe('上传失败，请重新上传');
+    expect(review.restoreError).toBeNull();
+    await act(async () => review.setVersionPreview({ id: 'v1' }));
+    expect(review.restoreError).toBeNull();
+    await act(async () => review.restoreVersion('v1', 'restore-key'));
+    expect(review.error).toBeNull();
+    expect(review.restoreError).toBe('版本已更新，请重试恢复');
+    let finish!: (value: unknown) => void;
+    rollback.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    let request!: Promise<boolean>;
+    await act(async () => { request = review.restoreVersion('v1', 'restore-key'); });
+    expect(review.restoreError).toBeNull();
+    await act(async () => { finish({ success: false, error: { message: '恢复未完成，请重试' } }); await request; });
+    expect(review.restoreError).toBe('恢复未完成，请重试');
+    await act(async () => review.setVersionPreview(null));
+    expect(review.restoreError).toBeNull();
+  });
   it('keeps no-source previews idle without requesting version metadata', async () => {
     await mount(site, false);
     expect(review.loading).toBe(false);
@@ -89,6 +137,20 @@ describe('versioned webpage review', () => {
     expect(review.previewBaseUrl).toBe('https://assets.example/index.html');
     expect(review.preview?.html).toContain('只有旧版正文');
   });
+  it('keeps the real discussion scope available for an unarchived version without fetching or restoring a snapshot', async () => {
+    const unarchived = { ...previous, canPreview: false, siteUrl: null };
+    list.mockResolvedValue({ success: true, data: [current, unarchived] });
+    await mount();
+    await act(async () => review.selectVersion(unarchived.id));
+    expect(review.selected?.contentVersionKey).toBe(unarchived.contentVersionKey);
+    expect(review.historical).toBe(true);
+    expect(review.preview).toBeNull();
+    expect(review.site?.siteUrl).toBe('');
+    expect(review.liveSite?.siteUrl).toBe(site.siteUrl);
+    expect(preview).not.toHaveBeenCalled();
+    await act(async () => { expect(await review.restoreVersion(unarchived.id, 'unarchived')).toBe(false); });
+    expect(rollback).not.toHaveBeenCalled();
+  });
   it('uses the historical entry name when the current AI publication has a generated filename', async () => {
     const inline = { ...previous, siteUrl: null, contentShape: 'self-contained-html' };
     const generated = { ...current, siteUrl: 'https://assets.example/pack/index.vnew.html?v=20000', entryFile: 'pack/index.html' };
@@ -118,7 +180,7 @@ describe('versioned webpage review', () => {
     await mount();
     await act(async () => review.selectVersion('v1'));
     expect(review.historical).toBe(false);
-    expect(review.error).toContain('历史版本未保留可用的预览');
+    expect(review.error).toContain('暂时无法预览，请重试或选择其他版本');
     expect(review.preview).toBeNull();
   });
   it('reports an unavailable module snapshot instead of presenting the live page as history', async () => {
@@ -128,7 +190,7 @@ describe('versioned webpage review', () => {
     await mount();
     await act(async () => review.selectVersion('v1'));
     expect(review.historical).toBe(false);
-    expect(review.error).toContain('历史版本未保留可用的预览');
+    expect(review.error).toContain('暂时无法预览，请重试或选择其他版本');
     expect(review.site?.siteUrl).toBe(site.siteUrl);
     expect(review.preview).toBeNull();
   });
@@ -166,6 +228,19 @@ describe('versioned webpage review', () => {
     expect(review.liveSite?.siteUrl).toBe(moved.siteUrl);
     expect(review.site?.siteUrl).toBe(moved.siteUrl);
   });
+  it('keeps the published document eligible for inline review when its restored revision has stale archive metadata', async () => {
+    const live = { ...site, entryFile: 'report.html', contentShape: 'self-contained-html' as const };
+    const archiveShape = 'multi-file' as const;
+    const historicalSnapshot = { ...previous, contentShape: archiveShape };
+    list.mockResolvedValue({ success: true, data: [{ ...current, contentShape: archiveShape }, historicalSnapshot] });
+    preview.mockResolvedValue({ success: true, data: { revision: historicalSnapshot, siteUrl: previous.siteUrl } });
+    await mount(live);
+    expect(review.site?.entryFile).toBe('report.html');
+    expect(shouldFetchPreviewHtml(review.site!)).toBe(true);
+    await act(async () => review.selectVersion(previous.id));
+    expect(review.site?.entryFile).toBe(previous.entryFile);
+    expect(shouldFetchPreviewHtml(review.site!)).toBe(false);
+  });
   it('does not replace a newer live publication with an older version-list response', async () => {
     await mount();
     const newer = { ...site, siteUrl: 'https://assets.example/.versions/new/nested/page.html?v=30000', entryFile: 'nested/page.html' };
@@ -190,4 +265,21 @@ describe('versioned webpage review', () => {
     expect(review.preview).toBeNull();
     expect(review.site?.siteUrl).toBe(site.siteUrl);
   });
+});
+
+it('历史原文定位等待目标意见载入，运行时先就绪时不消耗请求', async () => {
+  preview.mockResolvedValue({ success: true, data: { revision: previous, html: '<h1>旧版</h1>', siteUrl: previous.siteUrl } });
+  await mount();
+  const frame = container.querySelector('iframe')!.contentWindow!;
+  const send = vi.spyOn(frame, 'postMessage');
+  await act(async () => review.selectVersion('v1', 'target-old'));
+  const config = send.mock.calls.filter(call => call[0].type === 'map-annotation-init').at(-1)![0];
+  await act(async () => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, type: 'map-annotation-ready' } })));
+  expect(review.annotations.ready).toBe(true);
+  expect(send.mock.calls.filter(call => call[0].type === 'map-annotation-focus')).toHaveLength(0);
+  const threads = [{ id: 'target-old', contentVersion: '10000', anchor: { kind: 'element' } }] as HostedSiteCommentDto[];
+  await act(async () => review.annotations.setThreads(threads));
+  expect(send.mock.calls.filter(call => call[0].type === 'map-annotation-focus').map(call => call[0].id)).toEqual(['target-old']);
+  await act(async () => review.annotations.setThreads([...threads]));
+  expect(send.mock.calls.filter(call => call[0].type === 'map-annotation-focus')).toHaveLength(1);
 });

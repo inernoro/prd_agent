@@ -193,6 +193,8 @@ public class HostedSite
     /// </summary>
     public bool? AskEnabled { get; set; }
 
+    public bool AiReplyEnabled { get; set; }
+
     /// <summary>提问面板的欢迎语；空则前端用站点标题兜底</summary>
     public string? AskWelcome { get; set; }
 

@@ -2,7 +2,7 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./specs",
-  testMatch: ["admin-operations-compat.spec.ts", "branch-release-flow.spec.ts", "collection-scroll-compat.spec.ts"],
+  testMatch: ["admin-operations-compat.spec.ts", "branch-release-flow.spec.ts", "gateway-audio.spec.ts", "collection-scroll-compat.spec.ts"],
   timeout: 90000,
   outputDir: process.env.COMPAT_OUTPUT || "../work/compat/test-results",
   reporter: [
@@ -30,7 +30,11 @@ export default defineConfig({
   },
   projects: ["chromium", "firefox", "webkit"].map((browserName) => ({
     name: browserName,
-    use: { browserName: browserName as "chromium" | "firefox" | "webkit" },
+    use: {
+      browserName: browserName as "chromium" | "firefox" | "webkit",
+      // Headless Chromium defaults to --mute-audio; keep the real speaker path audible.
+      launchOptions: browserName === "chromium" ? { ignoreDefaultArgs: ["--mute-audio"] } : undefined,
+    },
   })),
   webServer: [
     {

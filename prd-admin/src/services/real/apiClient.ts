@@ -338,6 +338,7 @@ export async function apiMultipartRequest<T>(
     createFormData: () => FormData;
     headers?: Record<string, string>;
     signal?: AbortSignal;
+    credentials?: RequestCredentials;
   },
 ): Promise<ApiResponse<T>> {
   return apiMultipartRequestInner(path, withTaskIntent(options, 'POST'), false);
@@ -350,6 +351,7 @@ async function apiMultipartRequestInner<T>(
     createFormData: () => FormData;
     headers?: Record<string, string>;
     signal?: AbortSignal;
+    credentials?: RequestCredentials;
   },
   didRefresh: boolean,
   session = captureAuthSession(),
@@ -376,6 +378,7 @@ async function apiMultipartRequestInner<T>(
       method: options.method ?? 'POST',
       headers,
       body: options.createFormData(),
+      credentials: options.credentials,
       signal: options.signal,
     });
   } catch (error) {

@@ -16,6 +16,8 @@ MIRROR_FILES = {'/etc/apt/apt-mirrors.txt', '/etc/apt/apt-mirrors-security.txt'}
 MIRRORS = {
     'canonical': {'archive': 'https://archive.ubuntu.com/ubuntu', 'security': 'https://security.ubuntu.com/ubuntu'},
     'kernel': {'archive': 'https://mirrors.kernel.org/ubuntu', 'security': 'https://mirrors.kernel.org/ubuntu'},
+    'princeton': {'archive': 'https://mirror.math.princeton.edu/pub/ubuntu',
+                  'security': 'https://mirror.math.princeton.edu/pub/ubuntu'},
 }
 NETWORK_BOUNDS = '''// CI network bounds; package signature and TLS verification remain unchanged.
 Acquire::Retries "2";
@@ -34,9 +36,9 @@ def canonical_uri(uri, security=False, mirror='canonical'):
                      and parsed.path.rstrip('/') == '/ubuntu'
                      and ((parsed.hostname or '').lower() in {'archive.ubuntu.com', 'security.ubuntu.com'}
                           or (parsed.hostname or '').lower().endswith('.archive.ubuntu.com')))
-    # Recognize only our exact managed output so canonical can explicitly undo kernel.
-    managed_kernel = uri == MIRRORS['kernel']['archive']
-    if not mirror_file and not official_http and not managed_kernel:
+    # Recognize only exact managed outputs when switching between fixed mirrors.
+    managed_mirror = any(uri in urls.values() for urls in MIRRORS.values())
+    if not mirror_file and not official_http and not managed_mirror:
         return uri
     security = security or parsed.hostname == 'security.ubuntu.com' or parsed.path.endswith('apt-mirrors-security.txt')
     return MIRRORS[mirror]['security' if security else 'archive']
@@ -112,7 +114,7 @@ def prepare(root, mirror='canonical'):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True, help='APT filesystem root; use / only on the CI runner')
-    parser.add_argument('--mirror', choices=('canonical', 'kernel'), default='canonical', help='fixed HTTPS mirror; Ubuntu signature and expiry checks remain enabled')
+    parser.add_argument('--mirror', choices=tuple(MIRRORS), default='canonical', help='fixed HTTPS mirror; Ubuntu signature and expiry checks remain enabled')
     args = parser.parse_args()
     changed = prepare(args.root, args.mirror)
     print(f'Ubuntu CI APT ({args.mirror}): normalized {changed} source files; retries=2, connect/data timeout=20s')
