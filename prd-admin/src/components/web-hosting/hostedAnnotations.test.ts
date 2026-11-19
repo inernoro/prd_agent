@@ -41,7 +41,7 @@ describe('hosted page annotation runtime', () => {
     await expect.poll(() => t.messages.find(message => message.type === 'map-annotation-paragraphs')).toMatchObject({
       items: [{ id: 'one', paragraph: 1 }, { id: 'resolved', paragraph: 1 }, { id: 'two', paragraph: 1 }],
     });
-    expect(t.layer()!.querySelector('[aria-label="第 1 段，2 条意见"]')).toBeTruthy();
+    expect(t.layer()!.querySelector('.pnum')).toBeNull();
     expect([...t.layer()!.querySelectorAll('.pin:not([hidden])')].map(pin => pin.textContent)).toEqual(['1', '3']);
     const firstPin = t.layer()!.querySelector<HTMLElement>('.pin:not([hidden])')!;
     const highlight = t.layer()!.querySelector<HTMLElement>('.highlight:not([hidden])')!;

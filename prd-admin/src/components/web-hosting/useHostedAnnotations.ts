@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { flushSync } from 'react-dom';
 import { buildApiUrl } from '@/services/real/webPages';
 import type { HostedSiteCommentAnchor, HostedSiteCommentDto } from '@/services/real/webPages';
 
@@ -7,7 +8,7 @@ export function withAnnotationRuntime(html: string): string {
   if (!html || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
     || /http-equiv\s*=\s*["']content-security-policy["']/i.test(html)) return html;
   html = html.replace(/<script\b[^>]*\bdata-map-annotations\s*=\s*(["'])[^"']*\1[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=17'), window.location.href);
+  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=18'), window.location.href);
   const safeUrl = url.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   return `${html}<script data-map-annotations="v1" src="${safeUrl}"></script>`;
 }
@@ -71,7 +72,9 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const [discussionActions, setDiscussionActions] = useState<HostedDiscussionActions | null>(null);
   const [selectionCandidate, setSelectionCandidate] = useState<{ anchor: HostedSiteCommentAnchor; rect: AnnotationRect } | null>(null);
   const [documentScrollTop, setDocumentScrollTop] = useState<number | null>(null);
-  const documentScroll = useRef<{ top: number; max: number } | null>(null);
+  const documentScroll = useRef<{ top: number; max: number; predict: boolean } | null>(null);
+  const lastDocumentScrollTop = useRef<number | null>(null);
+  const wheelSequence = useRef(0);
   const dualColumn = options?.dualColumn === true;
   const suggestSelection = dualColumn && discussionActions?.canReply === true;
   const pinOpensDiscussion = useRef(false); pinOpensDiscussion.current = options?.pinOpensDiscussion === true;
@@ -100,7 +103,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null); setPreview(null); setPreviews(null);
     setMissingIds([]); setConnectionChecked(false);
     setAnchorLocations({}); setReadingId(null); setColumn(null); setHeaderTints(null); setSelectionCandidate(null);
-    documentScroll.current = null; setDocumentScrollTop(null);
+    documentScroll.current = null; lastDocumentScrollTop.current = null; wheelSequence.current = 0; setDocumentScrollTop(null);
     previewsHiddenRef.current = false; revealedPreviews.current.clear(); legacyPreview.current = null; setAllPreviewsHidden(false); dismissedPreviews.current = new Set(); setDismissedPreviewIds(dismissedPreviews.current);
   }, [siteId, siteUrl, contentVersionKey]);
   useEffect(() => { setThreads([]); }, [siteId]);
@@ -123,14 +126,24 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
         const scroll = data.documentScroll;
         const validScroll = dualColumn && scroll && Number.isFinite(scroll.top) && Number.isFinite(scroll.max)
           && scroll.top >= 0 && scroll.max >= 0 && scroll.max < 1e7;
-        if (validScroll) {
-          documentScroll.current = { top: Math.min(scroll.top, scroll.max), max: scroll.max };
-          setDocumentScrollTop(documentScroll.current.top);
-        }
+        const nextScroll = validScroll ? { top: Math.min(scroll.top, scroll.max), max: Number(scroll.max), predict: scroll.predict === true } : null;
+        if (nextScroll && Number.isSafeInteger(scroll.ack) && scroll.ack < wheelSequence.current) return;
+        if (nextScroll) documentScroll.current = nextScroll;
         const items: AnnotationPreview[] = data.items.slice(0, 500).filter((item: AnnotationPreview) => item && typeof item.id === 'string' && isRect(item.rect) && !dismissedPreviews.current.has(item.id) && (!previewsHiddenRef.current || revealedPreviews.current.has(item.id)));
         const obstacles = Array.isArray(data.obstacles) ? data.obstacles.slice(0, 100).filter(isRect) : [];
         const markers = Array.isArray(data.markers) ? data.markers.slice(0, 100).filter(isRect) : [];
-        setPreviews([...new Map(items.map(item => [item.id, { id: item.id, rect: item.rect, obstacles, markers }])).values()]);
+        const previews = [...new Map(items.map(item => [item.id, { id: item.id, rect: item.rect, obstacles, markers }])).values()];
+        const render = () => {
+          if (nextScroll) setDocumentScrollTop(nextScroll.top);
+          setPreviews(previews);
+        };
+        // The iframe has already moved in this frame. Commit the matching rail
+        // and connector together before React can defer them to a later frame.
+        const previousTop = lastDocumentScrollTop.current;
+        if (nextScroll) lastDocumentScrollTop.current = nextScroll.top;
+        if (previews.length && nextScroll && previousTop !== null && nextScroll.top !== previousTop
+          && frameRef.current?.parentElement?.querySelector('[data-review-margin]')) flushSync(render);
+        else render();
       }
       if (data.type === 'map-annotation-preview-select' && typeof data.id === 'string') {
         revealPreview(data.id); setActiveId(data.id);
@@ -174,7 +187,8 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   }, [frameRef, nonce, siteId, revealPreview, dualColumn]);
   useEffect(() => { initRef.current(); }, [enabled, displayMode, threads, activeId, draftAnchor, contentVersionKey, dualColumn, suggestSelection]);
   const notifyFrame = useCallback(() => {
-    connected.current = false; documentScroll.current = null; setDocumentScrollTop(null); setReady(false); initRef.current();
+    connected.current = false; documentScroll.current = null; lastDocumentScrollTop.current = null; wheelSequence.current = 0;
+    setDocumentScrollTop(null); setReady(false); initRef.current();
   }, []);
   const getDocumentScroll = useCallback(() => documentScroll.current, []);
   const scrollDocument = useCallback((delta: number) => {
@@ -185,7 +199,16 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     const step = Math.sign(delta) * Math.min(Math.abs(next - scroll.top), frame.clientHeight);
     if (!step) return false;
     scroll.top += step;
-    frame.contentWindow.postMessage({ type: 'map-annotation-scroll-document', siteId, nonce, delta: step }, '*');
+    const sequence = scroll.predict ? ++wheelSequence.current : undefined;
+    frame.contentWindow.postMessage({ type: 'map-annotation-scroll-document', siteId, nonce, delta: step, sequence }, '*');
+    if (sequence) {
+      // The rail owns this wheel input and already knows the bounded delta. Let
+      // it move with the gesture, then reconcile with the iframe's acknowledgement.
+      flushSync(() => {
+        setDocumentScrollTop(scroll.top);
+        setPreviews(items => items?.map(item => ({ ...item, rect: { ...item.rect, top: item.rect.top - step } })) ?? null);
+      });
+    }
     return true;
   }, [frameRef, siteId, nonce]);
   const select = useCallback(() => { setDraftAnchor(null); setEnabled(true); setPreview(null); setDisplayMode(mode => mode === 'hidden' ? 'standard' : mode); }, []);

@@ -6,11 +6,12 @@
   var context = null, host = null, shadow = null, hover = null, frame = 0;
   var currentHover = null, pending = null, lastLocations = '', activeId = null;
   var records = new Map(), structureDirty = true, geometryDirty = true, hoverDirty = true, threadsKey = '';
+  var viewportAnchors = false, previewSent = false, wheelAck = 0;
   var pendingBoxes = [], pointer = null;
   var previewId = null, dismissedPreview = null, previewLast = '';
   var previewsHidden = false, revealedPreviews = new Set();
   var dismissedPreviews = new Set(), previewsLast = '';
-  var paragraphs = new Map(), paragraphIndices = new Map(), readingLast, paragraphsLast = '', markerStateDirty = true;
+  var paragraphIndices = new Map(), readingLast, paragraphsLast = '', markerStateDirty = true;
   var headerTints = [], headerTintsLast = '';
   var selectionFrame = 0, selectionLast = '';
   var excluded = 'script,style,noscript,input,textarea,select,option,[contenteditable="true"]';
@@ -141,8 +142,8 @@
       + '.outline.active,.highlight.active{border:1px solid #a15b08;background:#efb24b4d}'
       + '.pin{z-index:2;position:absolute;pointer-events:auto;width:25px;height:25px;border-radius:50%;border:2px solid #fff;background:#f3d08a;color:#392509;font:650 12px/1 system-ui;box-shadow:0 1px 4px #0002;cursor:pointer}'
       + '.pin.active{background:#262526;color:#fff}.pin:focus-visible{outline:2px solid #2563eb}'
-      + ':host([data-dual-column]){--mark:#f0aa2833;--mark-selected:#f0aa2870;--mark-line:#d29312;--mark-ring:#a06400;--pin:#fbe1a6;--pin-ink:#5a3a00;--pin-selected:#1b1c1f;--pin-selected-ink:#fff;--paper:#fff;--muted:#676b73;--deemphasis:#181a1f2b}'
-      + ':host([data-dual-column][data-dark-paper]){--mark:#f5b94226;--mark-selected:#f5b94254;--mark-line:#dda232;--mark-ring:#f4c35c;--pin:#4b3a16;--pin-ink:#fbde9e;--pin-selected:#f4c35c;--pin-selected-ink:#1a1305;--paper:#17181b;--muted:#9296a0;--deemphasis:#ffffff29}'
+      + ':host([data-dual-column]){--mark:#f0aa2833;--mark-selected:#f0aa2870;--mark-line:#d29312;--mark-ring:#a06400;--pin:#fbe1a6;--pin-ink:#5a3a00;--pin-selected:#1b1c1f;--pin-selected-ink:#fff;--paper:#fff;--deemphasis:#181a1f2b}'
+      + ':host([data-dual-column][data-dark-paper]){--mark:#f5b94226;--mark-selected:#f5b94254;--mark-line:#dda232;--mark-ring:#f4c35c;--pin:#4b3a16;--pin-ink:#fbde9e;--pin-selected:#f4c35c;--pin-selected-ink:#1a1305;--paper:#17181b;--deemphasis:#ffffff29}'
       + ':host([data-dual-column]) .outline:not(.hover){border:1px solid var(--mark-line);background:var(--mark)}'
       + ':host([data-dual-column]) .highlight{border:0;background:var(--mark);box-shadow:inset 0 -1.5px var(--mark-line);border-radius:2px}'
       + ':host([data-dual-column]) .highlight.active,:host([data-dual-column]) .outline.active{background:var(--mark-selected);box-shadow:0 0 0 1.5px var(--mark-ring);border:0}'
@@ -154,11 +155,8 @@
       + ':host([data-dual-column][data-dark-paper]) .pending-mark{background:#86a8ff24;box-shadow:inset 0 -1.5px #86a8ff}'
       + ':host([data-dual-column]) .pin{display:grid;place-items:center;padding:0;border:0;box-shadow:none;border-radius:20px;background:var(--pin);color:var(--pin-ink);font:600 11px/1 Inter,system-ui,sans-serif;font-variant-numeric:tabular-nums}'
       + ':host([data-dual-column]) .pin.active{background:var(--pin-selected);color:var(--pin-selected-ink);box-shadow:0 0 0 2px var(--paper)}'
-      + ':host([data-dual-column]) .pin[hidden],.pnum[hidden]{display:none}'
-      + '.pnum{position:absolute;display:flex;align-items:center;flex-direction:column;gap:2px;border:0;padding:2px 0;border-radius:7px;background:transparent;color:var(--muted);font:600 12px/18px Inter,system-ui,sans-serif;font-variant-numeric:tabular-nums;cursor:pointer;pointer-events:auto}'
-      + '.pnum:disabled{pointer-events:none}.pnum:not(:disabled):hover{background:var(--deemphasis)}.pnum.is-current{color:var(--pin-selected)}'
-      + '.pnum i{font:700 10.5px/18px Inter,system-ui,sans-serif;background:var(--pin);color:var(--pin-ink);padding:0 5px;border-radius:6px}.pnum i[hidden]{display:none}'
-      + '@media(max-width:767px){:host([data-dual-column]) .pin{font-size:12px}:host([data-dual-column]) .pin::after{position:absolute;content:"";inset:-9px -3px}.pnum:not(:disabled)::after{position:absolute;content:"";inset:-2px -5px}}'
+      + ':host([data-dual-column]) .pin[hidden]{display:none}'
+      + '@media(max-width:767px){:host([data-dual-column]) .pin{font-size:12px}:host([data-dual-column]) .pin::after{position:absolute;content:"";inset:-9px -3px}}'
       + '.hover{border:1px dashed #ad6a23;background:#efb24b1a}';
     shadow.appendChild(style); document.body.appendChild(host);
     hover = document.createElement('div'); hover.className = 'outline hover'; hover.hidden = true; shadow.appendChild(hover);
@@ -217,46 +215,19 @@
     structureDirty = false;
   }
   function reconcileParagraphs() {
-    var anchored = new Map();
-    records.forEach(function (record) {
-      var paragraph = context.dualColumn && record.found ? record.found.el.closest('p') : null;
-      record.paragraph = paragraph;
-      if (!paragraph) return;
-      var members = anchored.get(paragraph) || [];
-      members.push(record);
-      anchored.set(paragraph, members);
-    });
     paragraphIndices.clear();
+    if (!context.dualColumn) return;
+    var content = document.querySelector('main,article,[role="main"]') || document.body;
     var wanted = new Set();
-    if (context.dualColumn) {
-      var content = document.querySelector('main,article,[role="main"]') || document.body;
-      var nodes = content.querySelectorAll('p');
-      // Mark the whole reading column only for ordinary articles. For long pages keep
-      // accurate paragraph indices, but paint only the paragraphs with annotations.
-      nodes.forEach(function (el, index) {
-        if (!selectable(el)) return;
-        paragraphIndices.set(el, index + 1);
-        if (nodes.length > 500 && !anchored.has(el)) return;
-        wanted.add(el);
-        var info = paragraphs.get(el);
-        if (!info) {
-          var button = document.createElement('button'), number = document.createElement('span'), count = document.createElement('i');
-          button.className = 'pnum'; button.type = 'button';
-          button.append(number, count); shadow.appendChild(button);
-          info = { button: button, number: number, count: count, members: [] };
-          paragraphs.set(el, info);
-          button.onclick = function (event) {
-            event.stopPropagation();
-            if (info.members[0]) activate(info.members[0], 'map-annotation-activate');
-          };
-        }
-        info.members = (anchored.get(el) || []).filter(function (member) { return !member.thread.isResolved; });
-        info.number.textContent = String(index + 1); info.count.textContent = String(info.members.length);
-        info.count.hidden = !info.members.length; info.button.disabled = !info.members.length;
-        info.button.setAttribute('aria-label', '第 ' + (index + 1) + ' 段' + (info.members.length ? '，' + info.members.length + ' 条意见' : ''));
-      });
-    }
-    paragraphs.forEach(function (info, el) { if (!wanted.has(el)) { info.button.remove(); paragraphs.delete(el); } });
+    records.forEach(function (record) {
+      record.paragraph = record.found?.el.closest('p');
+      if (record.paragraph) wanted.add(record.paragraph);
+    });
+    if (!wanted.size) return;
+    // Indices identify groups in the discussion, with no labels in the document gutter.
+    content.querySelectorAll('p').forEach(function (el, index) {
+      if (wanted.has(el) && selectable(el)) paragraphIndices.set(el, index + 1);
+    });
   }
   function hidePreview() {
     if (previewLast) post('map-annotation-preview-hide');
@@ -306,7 +277,8 @@
         items.push({ id: item.thread.id, rect: previewRect(rect), obstacles: [] });
     });
     var surrounding = items.length ? surroundingGeometry() : [];
-    var documentScroll = context.dualColumn ? { top: Math.max(0, scrollY), max: Math.max(0, (document.scrollingElement?.scrollHeight || 0) - innerHeight) } : undefined;
+    var documentScroll = context.dualColumn ? { top: Math.max(0, scrollY), max: Math.max(0, (document.scrollingElement?.scrollHeight || 0) - innerHeight),
+      predict: !viewportAnchors && !pendingViewportPositioned, ack: wheelAck } : undefined;
     var itemsKey = JSON.stringify([items, surrounding, markers, documentScroll]);
     if (force || itemsKey !== previewsLast) {
       previewsLast = itemsKey;
@@ -357,25 +329,14 @@
     var colors = visible ? visible.colors : null, key = JSON.stringify(colors);
     if (key !== headerTintsLast) { headerTintsLast = key; post('map-annotation-header-tints', { colors: colors }); }
   }
-  function layoutParagraphs(origin) {
+  function layoutParagraphs() {
     if (!context.dualColumn) return;
-    var desktop = innerWidth >= 768, right = 0;
-    paragraphs.forEach(function (info, element) {
-      var rect = element.getBoundingClientRect(), gutter = desktop ? 52 : 38;
-      right = Math.max(right, rect.width > 0 ? rect.right : 0);
-      // A hosted page can use every pixel. Use its existing left margin instead of
-      // padding or wrapping its DOM to simulate an article.
-      info.button.hidden = rect.left < gutter || !rect.width || !rect.height;
-      if (!info.button.hidden) place(info.button, {
-        left: rect.left - gutter, top: rect.top + 5, width: desktop ? 34 : 30, height: info.members.length ? 42 : 22,
-      }, origin);
-    });
-    var items = [];
-    var hasColumn = right > 0;
+    var right = 0, items = [];
+    paragraphIndices.forEach(function (_, element) { right = Math.max(right, element.getBoundingClientRect().right); });
     records.forEach(function (record) {
       var paragraph = paragraphIndices.get(record.paragraph);
       if (paragraph) items.push({ id: record.thread.id, group: 'p:' + paragraph, paragraph: paragraph });
-      if (!hasColumn && record.found) right = Math.max(right, record.found.el.getBoundingClientRect().right);
+      if (!paragraph && record.found) right = Math.max(right, record.found.el.getBoundingClientRect().right);
     });
     var paper = readPaper();
     host.toggleAttribute('data-dark-paper', .2126 * paper[0] + .7152 * paper[1] + .0722 * paper[2] < 100);
@@ -448,10 +409,12 @@
     // moves with the page natively; no DOM lookup, layout read or marker update is needed.
     var origin = host.getBoundingClientRect(), updates = [], missing = [], pinCounts = new Map(), occupiedPins = [];
     if (geometryDirty) {
+      viewportAnchors = false;
       var textLines = new Map();
       records.forEach(function (record) {
         var found = record.found;
         record.viewportPositioned = !!found && viewportPositioned(found.el);
+        if (record.viewportPositioned) viewportAnchors = true;
         if (!found || !found.el.isConnected) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
         var rect = found.range ? found.range.getBoundingClientRect() : found.el.getBoundingClientRect();
         if (!rect.width || !rect.height) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
@@ -522,10 +485,9 @@
       }
       if (selectedRecord) paintRecord(selectedRecord);
       records.forEach(function (record) { if (record !== selectedRecord) paintRecord(record); });
-      paragraphs.forEach(function (info, element) { info.button.classList.toggle('is-current', selectedRecord?.paragraph === element); });
     }
     if (geometryDirty) {
-      layoutParagraphs(origin);
+      layoutParagraphs();
       if (context.dualColumn) layoutHeaderTints();
       while (pendingBoxes.length > pendingRects.length) pendingBoxes.pop().remove();
       pendingRects.forEach(function (rect, index) {
@@ -540,10 +502,24 @@
     hover.hidden = !hoverRect; if (hoverRect) place(hover, hoverRect, origin);
     if (context.dualColumn) publishHeaderTints();
     publishReadingPosition();
-    publishPreview(geometryDirty);
+    if (!previewSent || geometryDirty) publishPreview(geometryDirty);
     geometryDirty = false; hoverDirty = false; markerStateDirty = false;
   }
-  function schedule(geometry) { if (geometry !== false) geometryDirty = true; if (!frame) frame = requestAnimationFrame(paint); }
+  function schedule(geometry, sent) {
+    if (geometry !== false) geometryDirty = true;
+    previewSent = !!sent;
+    if (!frame) frame = requestAnimationFrame(paint);
+  }
+  function followDocumentScroll() {
+    if (pendingViewportPositioned || viewportAnchors) { schedule(); return; }
+    if (context.dualColumn && !geometryDirty && !context.enabled) {
+      // Ordinary anchors already have document coordinates. Send them directly
+      // from the scroll event, before other frame work such as the reading hint.
+      publishPreview(false);
+      schedule(false, true);
+    } else if (context.displayMode === 'bubble' || context.dualColumn) schedule(false);
+    if (context.enabled) { hoverDirty = true; schedule(false); }
+  }
   function invalidate() { structureDirty = true; schedule(); }
   window.addEventListener('message', function (event) {
     var data = event.data;
@@ -553,7 +529,7 @@
       try { new URL(data.siteUrl); } catch (_) { return; }
       if (!context || context.displayMode !== data.displayMode || context.contentVersion !== data.contentVersion) { previewId = null; dismissedPreview = null; dismissedPreviews.clear(); hidePreview(); }
       var nextKey = JSON.stringify(data.threads || []);
-      if (!context || context.nonce !== data.nonce) { paragraphsLast = ''; readingLast = undefined; headerTintsLast = ''; }
+      if (!context || context.nonce !== data.nonce) { paragraphsLast = ''; readingLast = undefined; headerTintsLast = ''; wheelAck = 0; }
       if (!context || context.siteUrl !== data.siteUrl || context.contentVersion !== data.contentVersion || context.dualColumn !== data.dualColumn || nextKey !== threadsKey) structureDirty = true;
       if (typeof data.previewsHidden === 'boolean') { previewsHidden = data.previewsHidden; revealedPreviews = new Set(Array.isArray(data.revealedPreviewIds) ? data.revealedPreviewIds.slice(0, 500) : []); }
       if (Array.isArray(data.dismissedPreviewIds)) dismissedPreviews = new Set(data.dismissedPreviewIds.slice(0, 500).filter(function (id) { return typeof id === 'string'; }));
@@ -566,7 +542,10 @@
     if (!context || data.siteId !== context.siteId || data.nonce !== context.nonce) return;
     if (data.type === 'map-annotation-scroll-document' && context.dualColumn
       && Number.isFinite(data.delta) && Math.abs(data.delta) <= innerHeight * 2) {
+      if (Number.isSafeInteger(data.sequence) && data.sequence > 0) wheelAck = data.sequence;
+      var beforeWheel = scrollY;
       window.scrollBy({ top: data.delta, behavior: 'instant' });
+      if (scrollY === beforeWheel) followDocumentScroll();
       return;
     }
     if (data.type === 'map-annotation-preview-dismiss') {
@@ -638,11 +617,7 @@
     if (!context) return;
     clearSelectionCandidate();
     if (event.target === document || event.target === window) {
-      if (context.displayMode === 'bubble' || context.dualColumn) schedule(false);
-      // Absolute markers follow ordinary content natively. Fixed/sticky targets (including
-      // descendants) move relative to the document and need fresh viewport geometry.
-      if (pendingViewportPositioned || Array.from(records.values()).some(function (record) { return record.viewportPositioned; })) schedule();
-      if (context.enabled) { hoverDirty = true; schedule(false); }
+      followDocumentScroll();
       return;
     }
     schedule();

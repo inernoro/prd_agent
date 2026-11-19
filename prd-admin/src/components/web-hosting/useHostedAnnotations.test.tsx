@@ -11,19 +11,48 @@ let root: Root;
 let container: HTMLDivElement;
 let annotations: HostedAnnotations;
 const initial = { id: 'site-a', siteUrl: 'https://assets.example/a/index.html?v=1' };
-function Harness({ site = initial }: { site?: typeof initial }) {
+function Harness({ site = initial, dualColumn = false }: { site?: typeof initial; dualColumn?: boolean }) {
   const frame = useRef<HTMLIFrameElement>(null);
-  annotations = useHostedAnnotations(frame, site, vi.fn());
-  return <iframe ref={frame} />;
+  annotations = useHostedAnnotations(frame, site, vi.fn(), undefined, { dualColumn });
+  return <div><iframe ref={frame} />{dualColumn && <div data-review-margin="" />}</div>;
 }
-async function mount() {
+async function mount(dualColumn = false) {
   container = document.createElement('div'); document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => root.render(<Harness />));
+  await act(async () => root.render(<Harness dualColumn={dualColumn} />));
 }
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('hosted annotation bridge', () => {
+  it('commits new scroll positions immediately and reconciles predicted wheel steps', async () => {
+    await mount(true);
+    const iframe = container.querySelector('iframe')!;
+    Object.defineProperty(iframe, 'clientHeight', { value: 200 });
+    const frame = iframe.contentWindow!;
+    const send = vi.spyOn(frame, 'postMessage');
+    await act(async () => annotations.notifyFrame());
+    const config = send.mock.calls.at(-1)![0];
+    const post = (top: number, ack = 0) => window.dispatchEvent(new MessageEvent('message', { source: frame, data: {
+      ...config, type: 'map-annotation-previews', documentScroll: { top, max: 200, predict: true, ack },
+      items: [{ id: 'note', rect: { left: 30, top: 80 - top, width: 120, height: 20 } }],
+    } }));
+    await act(async () => post(0));
+    await act(async () => {
+      post(16);
+      expect(annotations.documentScrollTop).toBe(16);
+      expect(annotations.previews?.[0].rect.top).toBe(64);
+    });
+    await act(async () => {
+      expect(annotations.scrollDocument?.(12)).toBe(true);
+      expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'map-annotation-scroll-document', delta: 12, sequence: 1 });
+      expect(annotations.previews?.[0].rect.top).toBe(52);
+      post(16);
+      expect(annotations.previews?.[0].rect.top).toBe(52);
+      post(27, 1);
+      expect(annotations.previews?.[0].rect.top).toBe(53);
+    });
+  });
+
   it('keeps comment text in the host and accepts only finite preview geometry from its frame', async () => {
     await mount();
     const frame = container.querySelector('iframe')!.contentWindow!;
