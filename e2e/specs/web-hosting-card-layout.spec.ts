@@ -439,7 +439,8 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       await expect(sourceFrame.getByLabel('保留输入')).toHaveValue('原页面状态');
     }
     const listReads = apiRequests.filter(path => path === '/api/web-pages').length;
-    await page.locator('.related-document-card').filter({ hasText: '关联目标' }).click();
+    const related = page.getByRole('dialog', { name: '关联文档', exact: true });
+    await related.getByText('关联目标', { exact: true }).click();
     const modal = mode === 'guest-share' ? page.getByRole('dialog', { name: '关联文档预览', exact: true })
       : page.getByRole('dialog', { name: '关联目标', exact: true });
     await expect(modal).toBeVisible();
@@ -449,7 +450,10 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
     expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
     if (mode === 'guest-share') expect(apiRequests).not.toContain('/api/web-pages/target');
     if (mode === 'list') {
-      const [external] = await Promise.all([page.context().waitForEvent('page'), modal.getByRole('button', { name: '新窗口打开', exact: true }).click()]);
+      await modal.getByRole('button', { name: '更多', exact: true }).click();
+      const open = page.getByRole('menuitem', { name: '新窗口打开', exact: true });
+      await expect(open).toBeInViewport();
+      const [external] = await Promise.all([page.context().waitForEvent('page'), open.click()]);
       await expect(external).toHaveURL(/\/s\/wp\/qa-visit$/);
       await expect(external.locator('.share-topbar')).toBeVisible();
       await expect(external.locator('.hosted-ledger,[role="dialog"]')).toHaveCount(0);

@@ -3,11 +3,17 @@
   'use strict';
   if (window.__mapAnnotationsV1 || window.parent === window) return;
   window.__mapAnnotationsV1 = true;
-  var context = null, host = null, shadow = null, hover = null, frame = 0;
+  var context = null, host = null, shadow = null, flowLayer = null, hover = null, frame = 0;
   var currentHover = null, pending = null, lastLocations = '', activeId = null;
   var records = new Map(), structureDirty = true, geometryDirty = true, hoverDirty = true, threadsKey = '';
-  var pendingBox = null, pointer = null;
-  var previewId = null, dismissedPreview = null, previewLast = '', previewMuted = false, previewTimer = 0;
+  var viewportAnchors = false, wheelAck = 0;
+  var pendingBoxes = [], pointer = null;
+  var previewId = null, dismissedPreview = null, previewLast = '';
+  var previewsHidden = false, revealedPreviews = new Set();
+  var dismissedPreviews = new Set(), previewsLast = '';
+  var paragraphIndices = new Map(), readingLast, paragraphsLast = '', markerStateDirty = true;
+  var headerTints = [], headerTintsLast = '';
+  var selectionFrame = 0, selectionLast = '';
   var excluded = 'script,style,noscript,input,textarea,select,option,[contenteditable="true"]';
   function post(type, extra) {
     if (!context) return;
@@ -48,6 +54,35 @@
   function baseAnchor(el) {
     return { kind: 'element', pagePath: path(), selector: selector(el), tagName: el.tagName.toLowerCase(),
       text: fingerprint(el), elementText: fingerprint(el), prefix: '', suffix: '', contentVersion: context.contentVersion || '' };
+  }
+  function selectedTextAnchor(el, range) {
+    var anchor = baseAnchor(el);
+    anchor.kind = 'text'; anchor.text = range.toString();
+    var before = range.cloneRange(); before.selectNodeContents(el); before.setEnd(range.startContainer, range.startOffset);
+    var after = range.cloneRange(); after.selectNodeContents(el); after.setStart(range.endContainer, range.endOffset);
+    anchor.prefix = before.toString().slice(-100); anchor.suffix = after.toString().slice(0, 100);
+    return anchor;
+  }
+  function clearSelectionCandidate() {
+    if (!selectionLast) return;
+    selectionLast = '';
+    post('map-annotation-selection', { anchor: null });
+  }
+  function updateSelectionCandidate() {
+    selectionFrame = 0;
+    var selection = window.getSelection();
+    if (!context?.suggestSelection || context.enabled || context.pending || !selection || selection.isCollapsed || selection.rangeCount !== 1)
+      return clearSelectionCandidate();
+    var range = selection.getRangeAt(0), value = range.toString();
+    if (value.trim().length < 2 || value.length > 1000) return clearSelectionCandidate();
+    var common = range.commonAncestorContainer;
+    var paragraph = (common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement)?.closest('p');
+    if (!selectable(paragraph)) return clearSelectionCandidate();
+    var rect = range.getBoundingClientRect();
+    if (!rect.width || !rect.height || rect.bottom < 0 || rect.top > innerHeight) return clearSelectionCandidate();
+    var candidate = { anchor: selectedTextAnchor(paragraph, range), rect: previewRect(rect) };
+    var key = JSON.stringify(candidate);
+    if (key !== selectionLast) { selectionLast = key; post('map-annotation-selection', candidate); }
   }
   function textRange(el, anchor) {
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, { acceptNode: function (node) {
@@ -100,75 +135,198 @@
     host.style.cssText = 'all:initial;position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483646;';
     shadow = host.attachShadow({ mode: 'open' });
     var style = document.createElement('style');
-    style.textContent = ':host{all:initial}*{box-sizing:border-box}.outline{position:absolute;pointer-events:none;border:2px solid #f59e0b;border-radius:4px;background:rgba(245,158,11,.09)}.highlight{position:absolute;pointer-events:none;background:rgba(245,158,11,.23);border-bottom:2px solid #f59e0b;border-radius:2px}.pin{position:absolute;pointer-events:auto;width:25px;height:25px;border-radius:50%;border:2px solid #fff;background:#d97706;color:#fff;font:600 12px/1 system-ui;box-shadow:0 2px 7px #0003;cursor:pointer}.pin.active{background:#2563eb;outline:3px solid #2563eb40}.pin:focus-visible{outline:3px solid #2563eb}.hover{border-style:dashed;background:rgba(245,158,11,.06)}';
-    shadow.appendChild(style); document.body.appendChild(host);
-    hover = document.createElement('div'); hover.className = 'outline hover'; hover.hidden = true; shadow.appendChild(hover);
+    style.textContent = ':host{all:initial}*{box-sizing:border-box}'
+      + '.outline,.highlight{z-index:0;position:absolute;pointer-events:none;border-radius:3px}'
+      + '.outline{border:1px solid #ad6a2359}'
+      + '.highlight{background:#efb24b30;border-bottom:1px solid #b6690b}'
+      + '.outline.active,.highlight.active{border:1px solid #a15b08;background:#efb24b4d}'
+      + '.pin{z-index:2;position:absolute;pointer-events:auto;width:25px;height:25px;border-radius:50%;border:2px solid #fff;background:#f3d08a;color:#392509;font:650 12px/1 system-ui;box-shadow:0 1px 4px #0002;cursor:pointer}'
+      + '.pin.active{background:#262526;color:#fff}.pin:focus-visible{outline:2px solid #2563eb}'
+      + ':host([data-dual-column]){--mark:#f0aa2833;--mark-selected:#f0aa2870;--mark-line:#d29312;--mark-ring:#a06400;--pin:#fbe1a6;--pin-ink:#5a3a00;--pin-selected:#1b1c1f;--pin-selected-ink:#fff;--paper:#fff;--deemphasis:#181a1f2b}'
+      + ':host([data-dual-column][data-dark-paper]){--mark:#f5b94226;--mark-selected:#f5b94254;--mark-line:#dda232;--mark-ring:#f4c35c;--pin:#4b3a16;--pin-ink:#fbde9e;--pin-selected:#f4c35c;--pin-selected-ink:#1a1305;--paper:#17181b;--deemphasis:#ffffff29}'
+      + ':host([data-dual-column]) [data-pen]{--mark:hsl(var(--pen) 73% 49%/.16);--mark-selected:hsl(var(--pen) 73% 49%/.28);--mark-line:hsl(var(--pen) 68% 34%);--mark-ring:hsl(var(--pen) 68% 31%);--pin:hsl(var(--pen) 78% 88%);--pin-ink:hsl(var(--pen) 73% 20%);--pin-selected:var(--mark-ring)}'
+      + ':host([data-dual-column][data-dark-paper]) [data-pen]{--mark:hsl(var(--pen) 80% 72%/.14);--mark-selected:hsl(var(--pen) 80% 72%/.27);--mark-line:hsl(var(--pen) 80% 70%);--mark-ring:hsl(var(--pen) 88% 78%);--pin:hsl(var(--pen) 52% 24%);--pin-ink:hsl(var(--pen) 89% 90%);--pin-selected:var(--mark-ring);--pin-selected-ink:#15171a}'
+      + ':host([data-dual-column]) .outline:not(.hover){border:1px solid var(--mark-line);background:var(--mark)}'
+      + ':host([data-dual-column]) .highlight{border:0;background:var(--mark);box-shadow:inset 0 -1.5px var(--mark-line);border-radius:2px}'
+      + ':host([data-dual-column]) .highlight.active,:host([data-dual-column]) .outline.active{background:var(--mark-selected);box-shadow:0 0 0 1.5px var(--mark-ring);border:0}'
+      + ':host([data-dual-column]) .highlight.first.active{box-shadow:-1.5px 0 var(--mark-ring),0 -1.5px var(--mark-ring),0 1.5px var(--mark-ring)}'
+      + ':host([data-dual-column]) .highlight.middle.active{box-shadow:0 -1.5px var(--mark-ring),0 1.5px var(--mark-ring)}'
+      + ':host([data-dual-column]) .highlight.last.active{box-shadow:1.5px 0 var(--mark-ring),0 -1.5px var(--mark-ring),0 1.5px var(--mark-ring)}'
+      + ':host([data-dual-column]) .highlight.dim,:host([data-dual-column]) .outline.dim{background:transparent;box-shadow:inset 0 -1px var(--deemphasis);border:0}'
+      + ':host([data-dual-column]) .pending-mark{position:absolute;pointer-events:none;border-radius:2px;background:#2a5bd71a;box-shadow:inset 0 -1.5px #2a5bd7}'
+      + ':host([data-dual-column][data-dark-paper]) .pending-mark{background:#86a8ff24;box-shadow:inset 0 -1.5px #86a8ff}'
+      + ':host([data-dual-column]) .pin{display:grid;place-items:center;padding:0;border:0;box-shadow:none;border-radius:20px;background:var(--pin);color:var(--pin-ink);font:600 11px/1 Inter,system-ui,sans-serif;font-variant-numeric:tabular-nums}'
+      + ':host([data-dual-column]) .pin.active{background:var(--pin-selected);color:var(--pin-selected-ink);box-shadow:0 0 0 2px var(--paper)}'
+      + ':host([data-dual-column]) .pin[hidden]{display:none}'
+      + '@media(max-width:767px){:host([data-dual-column]) .pin{font-size:12px}:host([data-dual-column]) .pin::after{position:absolute;content:"";inset:-9px -3px}}'
+      + '.hover{border:1px dashed #ad6a23;background:#efb24b1a}';
+    shadow.appendChild(style);
+    flowLayer = document.createElement('div');
+    flowLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+    shadow.appendChild(flowLayer); document.body.appendChild(host);
+    hover = document.createElement('div'); hover.className = 'outline hover'; hover.hidden = true; flowLayer.appendChild(hover);
+  }
+  function mountMark(mark, viewportPositioned) {
+    var parent = viewportPositioned ? shadow : flowLayer;
+    if (mark.parentNode !== parent) parent.appendChild(mark);
   }
   function place(box, rect, origin) {
     box.style.transform = 'translate(' + (rect.left - origin.left) + 'px,' + (rect.top - origin.top) + 'px)';
     box.style.left = '0'; box.style.top = '0';
     box.style.width = rect.width + 'px'; box.style.height = rect.height + 'px';
   }
+  function closedSections(node) {
+    var sections = [];
+    for (var details = node.parentElement?.closest('details:not([open])'); details;
+      details = details.parentElement?.closest('details:not([open])')) {
+      var summary = Array.from(details.children).find(function (child) { return child.tagName === 'SUMMARY'; });
+      if (!summary?.contains(node)) sections.push(details);
+    }
+    return sections;
+  }
+  function canPaintAnchor(node) {
+    if (closedSections(node).length) return false;
+    var style = getComputedStyle(node);
+    return style.visibility === 'visible' && (style.display === 'contents'
+      || node.checkVisibility?.({ visibilityProperty: true, opacityProperty: true }) !== false);
+  }
+  function scrollToAnchor(found) {
+    if (context.dualColumn) closedSections(found.el).reverse().forEach(function (section) { section.open = true; });
+    var behavior = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'instant' : 'smooth';
+    if (!context.dualColumn || nestedScroller(found.el)) {
+      found.el.scrollIntoView({ block: 'center', behavior: behavior });
+      return;
+    }
+    var rect = found.range?.getClientRects()[0] || found.el.getBoundingClientRect();
+    var top = Math.max(0, scrollY + rect.top - innerHeight * .32);
+    if (Math.abs(top - scrollY) > 1) window.scrollTo({ top: top, behavior: behavior });
+  }
+  function nestedScroller(el) {
+    for (var parent = el.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+      if (parent.scrollHeight > parent.clientHeight && /^(auto|scroll|overlay)$/.test(getComputedStyle(parent).overflowY)) return true;
+    }
+    return false;
+  }
+  function activate(record, type) {
+    activeId = previewId = record.thread.id;
+    revealedPreviews.add(activeId); dismissedPreview = null; dismissedPreviews.delete(activeId); previewLast = ''; previewsLast = '';
+    markerStateDirty = true;
+    post(type || (context.displayMode === 'bubble' ? 'map-annotation-preview-select' : 'map-annotation-activate'), { id: activeId });
+    schedule(false);
+  }
+  function setPen(node, hue) {
+    var colored = Number.isInteger(hue) && hue >= 0 && hue < 360;
+    node.toggleAttribute('data-pen', colored);
+    if (colored) node.style.setProperty('--pen', String(hue));
+    else node.style.removeProperty('--pen');
+  }
   function reconcile() {
     var keep = new Set();
     (context.threads || []).forEach(function (thread, index) {
-      if (!thread.anchor || (thread.isResolved && thread.id !== activeId) || logicalPath(thread.anchor.pagePath) !== path()) return;
+      if (!thread.anchor || logicalPath(thread.anchor.pagePath) !== path()) return;
       keep.add(thread.id);
       var record = records.get(thread.id);
       if (!record) {
-        var pin = document.createElement('button'); pin.setAttribute('data-mark', '');
+        var pin = document.createElement('button'); pin.type = 'button'; pin.setAttribute('data-mark', '');
         pin.onclick = function (event) {
           event.stopPropagation();
-          if (context.displayMode === 'bubble') { previewId = thread.id; dismissedPreview = null; previewLast = ''; schedule(false); return; }
-          activeId = thread.id;
-          post('map-annotation-activate', { id: thread.id }); schedule(false);
+          activate(record);
         };
-        pin.onpointerenter = function () {
-          if (context && context.displayMode === 'bubble' && !context.enabled) { previewId = thread.id; dismissedPreview = null; previewLast = ''; schedule(false); }
-        };
-        shadow.appendChild(pin);
+        flowLayer.appendChild(pin);
         record = { boxes: [], pin: pin }; records.set(thread.id, record);
       }
       record.thread = thread; record.index = index; record.found = resolve(thread.anchor);
+      setPen(record.pin, thread.penHue);
+      record.boxes.forEach(function (box) { setPen(box, thread.penHue); });
       record.pin.textContent = String(index + 1);
       record.pin.setAttribute('aria-label', '打开批注 ' + (index + 1));
     });
     records.forEach(function (record, id) {
       if (!keep.has(id)) { record.pin.remove(); record.boxes.forEach(function (box) { box.remove(); }); records.delete(id); }
     });
+    reconcileParagraphs();
     structureDirty = false;
+  }
+  function reconcileParagraphs() {
+    paragraphIndices.clear();
+    if (!context.dualColumn) return;
+    var content = document.querySelector('main,article,[role="main"]') || document.body;
+    var wanted = new Set();
+    records.forEach(function (record) {
+      record.paragraph = record.found?.el.closest('p');
+      if (record.paragraph) wanted.add(record.paragraph);
+    });
+    if (!wanted.size) return;
+    // Indices identify groups in the discussion, with no labels in the document gutter.
+    content.querySelectorAll('p').forEach(function (el, index) {
+      if (wanted.has(el) && selectable(el)) paragraphIndices.set(el, index + 1);
+    });
   }
   function hidePreview() {
     if (previewLast) post('map-annotation-preview-hide');
     previewLast = '';
   }
+  function hidePreviews() {
+    hidePreview();
+    if (previewsLast) post('map-annotation-previews', { items: [] });
+    previewsLast = '';
+  }
   function previewRect(rect) { return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; }
-  function publishPreview(force) {
-    if (context.displayMode !== 'bubble' || context.enabled || context.pending || previewMuted) { hidePreview(); return; }
-    var record = records.get(previewId || activeId);
-    if (!record) {
-      for (var item of records.values()) {
-        if (!item.found || !item.found.el.isConnected) continue;
-        var candidate = item.found.el.getBoundingClientRect();
-        if (candidate.bottom > 0 && candidate.top < innerHeight) { record = item; previewId = item.thread.id; break; }
-      }
+  function viewportGeometry(record, key) {
+    if (!record.geometry) return null;
+    var rect = record.geometry[key];
+    if (!rect) return null;
+    var left = rect.left - (scrollX - record.geometry.x), top = rect.top - (scrollY - record.geometry.y);
+    return { left: left, top: top, width: rect.width, height: rect.height, right: left + rect.width, bottom: top + rect.height };
+  }
+  function surroundingGeometry() {
+    // Sample the viewport, never scan the full document on scroll. Work is independent
+    // of article length and preview text remains entirely in the trusted host.
+    var boxes = [], seen = new Set(), anchors = new Set();
+    if (!document.elementFromPoint) return boxes;
+    records.forEach(function (record) { if (record.found) anchors.add(record.found.el); });
+    for (var row = 0; row < 8; row++) for (var column = 0; column < 6; column++) {
+      var target = document.elementFromPoint((column + 0.5) * innerWidth / 6, (row + 0.5) * innerHeight / 8);
+      var element = target && target.closest('h1,h2,h3,h4,p,li,button,a,img,input,pre,table,blockquote');
+      if (!element || element === host || host.contains(element) || anchors.has(element) || seen.has(element)) continue;
+      seen.add(element);
+      var rect = element.getBoundingClientRect();
+      if (rect.width && rect.height) boxes.push(previewRect(rect));
     }
-    if (!record || !record.found || !record.found.el.isConnected || dismissedPreview === record.thread.id) { hidePreview(); return; }
-    var target = record.found.range ? record.found.range.getBoundingClientRect() : record.found.el.getBoundingClientRect();
-    if (!target.width || !target.height || target.bottom <= 0 || target.top >= innerHeight || target.right <= 0 || target.left >= innerWidth) { hidePreview(); return; }
-    var rect = previewRect(target), key = record.thread.id + JSON.stringify(rect);
+    return boxes;
+  }
+  function publishPreview(force, topInset) {
+    var show = context.displayMode === 'bubble' && !context.enabled && !context.pending && (!previewsHidden || revealedPreviews.size);
+    if (!show && !context.dualColumn) { hidePreviews(); return; }
+    var items = [], markers = [];
+    if (show) records.forEach(function (item) {
+      if (!item.found || !item.found.el.isConnected) return;
+      if (context.dualColumn && item.thread.isResolved && item.thread.id !== activeId) return;
+      var pin = viewportGeometry(item, 'pin');
+      if (pin && pin.bottom > (item.viewportPositioned ? 0 : topInset) && pin.top < innerHeight) markers.push(previewRect(pin));
+      if (dismissedPreviews.has(item.thread.id) || (previewsHidden && !revealedPreviews.has(item.thread.id))) return;
+      var rect = viewportGeometry(item, 'anchor');
+      // Let the open card follow its anchor out past the top of the clipped rail.
+      var topLimit = context.dualColumn && item.thread.id === activeId ? -Math.max(innerHeight, 720)
+        : item.viewportPositioned ? 0 : topInset;
+      if (rect && rect.width && rect.height && rect.bottom > topLimit && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth)
+        items.push({ id: item.thread.id, rect: previewRect(rect), obstacles: [], viewportPositioned: item.viewportPositioned });
+    });
+    var surrounding = items.length ? surroundingGeometry() : [];
+    var documentScroll = context.dualColumn ? { top: Math.max(0, scrollY), max: Math.max(0, (document.scrollingElement?.scrollHeight || 0) - innerHeight),
+      predict: !viewportAnchors && !pendingViewportPositioned, ack: wheelAck } : undefined;
+    var itemsKey = JSON.stringify([items, surrounding, markers, documentScroll, topInset]);
+    if (force || itemsKey !== previewsLast) {
+      previewsLast = itemsKey;
+      post('map-annotation-previews', { items: items, obstacles: surrounding, markers: markers, documentScroll: documentScroll, topInset: topInset });
+    }
+    var record = records.get(previewId || activeId) || (items.length ? records.get(items[0].id) : null);
+    if (record) previewId = record.thread.id;
+    if (!record || !items.some(function (item) { return item.id === record.thread.id; }) || dismissedPreview === record.thread.id) { hidePreview(); return; }
+    var rect = previewRect(viewportGeometry(record, 'anchor')), key = record.thread.id + JSON.stringify(rect);
     if (!force && key === previewLast) return;
-    var obstacles = [];
-    // Geometry only. Comment text and author information never enter the uploaded page.
-    for (var element of document.querySelectorAll('h1,h2,h3,h4,p,li,button,a,img,input,pre,table,header,section,aside,blockquote,article,div,span')) {
-      if (element === record.found.el || record.found.el.contains(element) || element.contains(record.found.el)) continue;
-      if (/^(DIV|SECTION|ASIDE|ARTICLE|HEADER)$/.test(element.tagName) && !Array.from(element.childNodes).some(function (node) { return node.nodeType === Node.TEXT_NODE && node.textContent.trim(); })) continue;
-      var box = element.getBoundingClientRect();
-      if (box.width && box.height && box.bottom > 0 && box.top < innerHeight) obstacles.push(previewRect(box));
-      if (obstacles.length >= 80) break;
-    }
     previewLast = key;
-    post('map-annotation-preview', { id: record.thread.id, rect: rect, obstacles: obstacles });
+    post('map-annotation-preview', { id: record.thread.id, rect: rect, obstacles: surrounding });
   }
   function viewportPositioned(el) {
     for (var node = el; node && node !== document.documentElement; node = node.parentElement) {
@@ -177,6 +335,124 @@
     }
     return false;
   }
+  function readTopInset() {
+    if (!context.dualColumn || !document.elementsFromPoint) return 0;
+    var seen = new Set(), inset = 0;
+    // Only the viewport's top edge is sampled. Narrow sidebars and full-height
+    // positioned app shells do not occlude the document's reading area.
+    [.2, .5, .8].forEach(function (column) {
+      document.elementsFromPoint(innerWidth * column, 1).forEach(function (hit) {
+        for (var node = hit; node && node !== document.body && node !== document.documentElement && !seen.has(node); node = node.parentElement) {
+          seen.add(node);
+          if (node === host) continue;
+          var position = getComputedStyle(node).position;
+          if (position !== 'sticky' && position !== 'fixed') continue;
+          var rect = node.getBoundingClientRect();
+          if (rect.left <= innerWidth * .05 && rect.right >= innerWidth * .95 && rect.top <= 1 && rect.bottom > 0 && rect.height <= innerHeight / 2)
+            inset = Math.max(inset, rect.bottom);
+        }
+      });
+    });
+    return inset;
+  }
+  function readPaper() {
+    for (var node of [document.body, document.documentElement]) {
+      var color = readRgb(getComputedStyle(node).backgroundColor);
+      if (color) return color;
+    }
+    return [255, 255, 255];
+  }
+  function readRgb(value) {
+    var match = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([.\d]+)\s*)?\)$/.exec(value);
+    if (!match || (match[4] && Number(match[4]) < .2)) return null;
+    var rgb = match.slice(1, 4).map(Number);
+    return rgb.every(function (part) { return part <= 255; }) ? rgb : null;
+  }
+  function layoutHeaderTints() {
+    headerTints = Array.from(document.querySelectorAll('header,[role="banner"]')).slice(0, 8).flatMap(function (header) {
+      var rect = header.getBoundingClientRect();
+      if (rect.width < innerWidth * .7 || rect.height < 36 || viewportPositioned(header)) return [];
+      var style = getComputedStyle(header), linear = style.backgroundImage.lastIndexOf('linear-gradient(');
+      var gradient = linear >= 0 ? style.backgroundImage.slice(linear) : style.backgroundImage;
+      var colors = (gradient.match(/rgba?\([^)]*\)/g) || []).map(readRgb).filter(Boolean);
+      var color = readRgb(style.backgroundColor);
+      if (!colors.length && color) colors.push(color);
+      return colors.length ? [{ top: rect.top + scrollY, bottom: rect.bottom + scrollY, colors: [colors[0], colors.at(-1)] }] : [];
+    });
+  }
+  function publishHeaderTints() {
+    var visible = headerTints.find(function (item) { return item.top <= scrollY + 3 && item.bottom > scrollY + 3; });
+    var colors = visible ? visible.colors : null, key = JSON.stringify(colors);
+    if (key !== headerTintsLast) { headerTintsLast = key; post('map-annotation-header-tints', { colors: colors }); }
+  }
+  function layoutParagraphs() {
+    if (!context.dualColumn) return;
+    var right = 0, items = [];
+    paragraphIndices.forEach(function (_, element) { right = Math.max(right, element.getBoundingClientRect().right); });
+    records.forEach(function (record) {
+      var paragraph = paragraphIndices.get(record.paragraph);
+      if (paragraph) items.push({ id: record.thread.id, group: 'p:' + paragraph, paragraph: paragraph });
+      if (!paragraph && record.found) right = Math.max(right, record.found.el.getBoundingClientRect().right);
+    });
+    var paper = readPaper();
+    host.toggleAttribute('data-dark-paper', .2126 * paper[0] + .7152 * paper[1] + .0722 * paper[2] < 100);
+    var state = { items: items, contentRight: Math.round(right), paper: paper };
+    var key = JSON.stringify(state);
+    if (key !== paragraphsLast) { paragraphsLast = key; post('map-annotation-paragraphs', state); }
+  }
+  function publishReadingPosition(topInset) {
+    if (!context.dualColumn) return;
+    var nearest = null, distance = Infinity;
+    records.forEach(function (record) {
+      if (record.thread.isResolved) return;
+      var box = viewportGeometry(record, 'anchor');
+      var visibleTop = record.viewportPositioned ? 0 : topInset;
+      if (!box || box.bottom <= visibleTop || box.top >= innerHeight) return;
+      var current = Math.abs((Math.max(box.top, visibleTop) + box.bottom) / 2 - (topInset + (innerHeight - topInset) * .35));
+      if (current < distance) { distance = current; nearest = record; }
+    });
+    var id = nearest ? nearest.thread.id : null;
+    if (id === readingLast) return;
+    readingLast = id;
+    post('map-annotation-reading', { id: id });
+  }
+  function reviewPin(last, range, occupied, lines) {
+    var size = innerWidth < 768 ? 22 : 18, step = size + 3;
+    var right = Math.max(2, Math.min(innerWidth, document.documentElement.scrollWidth - scrollX) - size - 2);
+    var left = Math.max(2, Math.min(right, last.right + (range ? 4 : -size / 2)));
+    var minTop = 2 - scrollY;
+    var top = Math.max(minTop, range ? last.top + (last.height - size) / 2 : last.top - size / 2);
+    function placePin(x, y, avoidText) {
+      if (occupied.some(function (pin) { return Math.abs(pin.top - y) < size + 1 && Math.abs(pin.left - x) < size + 1; })) return null;
+      if (avoidText && lines.some(function (box) { return box.left < x + size && box.right > x && box.top < y + size && box.bottom > y; })) return null;
+      var pin = { left: x, top: y, width: size, height: size };
+      occupied.push(pin);
+      return pin;
+    }
+    function searchRow(y, avoidText) {
+      for (var offset = 0; left - offset >= 2 || (range && left + offset <= right); offset += step) {
+        var before = left - offset >= 2 ? placePin(left - offset, y, avoidText) : null;
+        if (before) return before;
+        var after = range && offset && left + offset <= right ? placePin(left + offset, y, avoidText) : null;
+        if (after) return after;
+      }
+      return null;
+    }
+    // No inline space is reserved in an author's document. Recheck the text on
+    // every alternate row, including the line immediately above the selection.
+    var above = Math.max(minTop, last.top - size);
+    var placed = placePin(left, top, range) || (range && above < top ? placePin(left, above, true) : null);
+    if (placed) return placed;
+    for (var row = 0; row < 10; row++) {
+      var y = (range && row ? above : top) - row * step;
+      if (y >= minTop) placed = searchRow(y, range);
+      if (!placed && range && row) placed = searchRow(top + row * step, true);
+      if (placed) return placed;
+    }
+    // In dense passages, extend below the anchor so every numbered target can be opened.
+    for (var collisionRow = 0; !placed; collisionRow++) placed = searchRow(top + collisionRow * step, false);
+    return placed;
+  }
   var pendingViewportPositioned = false;
   function paint() {
     frame = 0;
@@ -184,29 +460,51 @@
     mount(); if (!shadow) return;
     host.style.display = context.displayMode === 'hidden' && !context.enabled ? 'none' : 'block';
     host.setAttribute('data-display-mode', context.displayMode || 'bubble');
+    host.toggleAttribute('data-dual-column', !!context.dualColumn);
     if (structureDirty) { reconcile(); geometryDirty = true; }
     // Read all geometry before writing. On ordinary document scroll the absolute layer
     // moves with the page natively; no DOM lookup, layout read or marker update is needed.
-    var origin = host.getBoundingClientRect(), updates = [], missing = [], pinCounts = new Map();
+    var origin = host.getBoundingClientRect(), topInset = readTopInset(), updates = [], missing = [], pinCounts = new Map(), occupiedPins = [];
     if (geometryDirty) {
+      viewportAnchors = false;
+      var textLines = new Map();
       records.forEach(function (record) {
         var found = record.found;
         record.viewportPositioned = !!found && viewportPositioned(found.el);
+        if (record.viewportPositioned) viewportAnchors = true;
         if (!found || !found.el.isConnected) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
+        // Range geometry may still be non-empty inside collapsed details.
+        // Keep the anchor for discussion, but never paint it over unrelated text.
+        if (!canPaintAnchor(found.el)) { updates.push({ record: record, rects: [] }); return; }
         var rect = found.range ? found.range.getBoundingClientRect() : found.el.getBoundingClientRect();
         if (!rect.width || !rect.height) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
         var count = pinCounts.get(found.el) || 0; pinCounts.set(found.el, count + 1);
-        updates.push({ record: record, rects: found.range ? Array.from(found.range.getClientRects()) : [rect],
-          pin: { left: Math.max(-scrollX, Math.min(rect.right - 12 - count * 28, document.documentElement.scrollWidth - scrollX - 27)),
-            top: Math.max(record.viewportPositioned ? 2 : -scrollY + 2, rect.top - 12), width: 25, height: 25 } });
+        var rects = found.range ? Array.from(found.range.getClientRects()).filter(function (box) { return box.width && box.height; }) : [rect];
+        var lines = [];
+        if (context.dualColumn && found.range) {
+          var paragraph = record.paragraph || found.el;
+          if (!textLines.has(paragraph)) {
+            var contents = document.createRange();
+            contents.selectNodeContents(paragraph);
+            textLines.set(paragraph, Array.from(contents.getClientRects()));
+          }
+          lines = textLines.get(paragraph);
+        }
+        var pin = context.dualColumn ? reviewPin(rects.at(-1) || rect, !!found.range, occupiedPins, lines) :
+          { left: Math.max(-scrollX, Math.min(rect.right - 12 - count * 28, document.documentElement.scrollWidth - scrollX - 27)),
+            top: Math.max(record.viewportPositioned ? 2 : -scrollY + 2, rect.top - 12), width: 25, height: 25 };
+        updates.push({ record: record, anchor: previewRect(rect), rects: rects, pin: pin });
       });
     }
-    var pendingRect = null;
+    var pendingRects = [];
     if (geometryDirty) {
       pendingViewportPositioned = false;
       if (pending) {
         var selected = resolve(pending);
-        if (selected) { pendingRect = selected.el.getBoundingClientRect(); pendingViewportPositioned = viewportPositioned(selected.el); }
+        if (selected && canPaintAnchor(selected.el)) {
+          pendingRects = context.dualColumn && selected.range ? Array.from(selected.range.getClientRects()) : [selected.el.getBoundingClientRect()];
+          pendingViewportPositioned = viewportPositioned(selected.el);
+        }
       }
     }
     if (hoverDirty && context.enabled && pointer) {
@@ -214,34 +512,83 @@
       currentHover = selectable(target) ? target : null;
     }
     var hoverRect = currentHover && context.enabled && currentHover.isConnected ? currentHover.getBoundingClientRect() : null;
+    var hoverViewportPositioned = !!hoverRect && viewportPositioned(currentHover);
+    // The absolute marks keep following the native document scroll. Translate only
+    // the clip edge into the mark layer's coordinates instead of moving the marks.
+    flowLayer.style.clipPath = topInset ? 'inset(' + (topInset - origin.top) + 'px -' + (innerWidth * 2 + Math.abs(origin.left))
+      + 'px -' + (innerHeight * 2 + Math.abs(origin.top)) + 'px)' : '';
     updates.forEach(function (update) {
       var record = update.record;
       record.located = !!update.pin;
-      if (update.pin) place(record.pin, update.pin, origin);
+      record.geometry = update.pin ? { anchor: update.anchor, pin: update.pin, rects: update.rects.map(previewRect), x: scrollX, y: scrollY } : null;
+      if (update.pin) { mountMark(record.pin, record.viewportPositioned); place(record.pin, update.pin, origin); }
       while (record.boxes.length > update.rects.length) record.boxes.pop().remove();
       update.rects.forEach(function (rect, index) {
         var box = record.boxes[index];
-        if (!box) { box = document.createElement('div'); box.setAttribute('data-mark', ''); record.boxes.push(box); shadow.appendChild(box); }
-        box.className = record.found.range ? 'highlight' : 'outline'; place(box, rect, origin);
+        if (!box) {
+          box = document.createElement('div'); box.setAttribute('data-mark', ''); setPen(box, record.thread.penHue);
+          record.boxes.push(box);
+        }
+        mountMark(box, record.viewportPositioned);
+        box.className = record.found.range ? 'highlight' : 'outline';
+        if (record.found.range && update.rects.length > 1) box.classList.add(index === 0 ? 'first' : index === update.rects.length - 1 ? 'last' : 'middle');
+        place(box, rect, origin);
       });
     });
-    records.forEach(function (record) {
-      record.pin.hidden = !record.located;
-      record.pin.className = 'pin' + (record.thread.id === activeId ? ' active' : '');
-    });
+    if (geometryDirty || markerStateDirty) {
+      var selectedRecord = records.get(activeId), paintedBoxes = new Set();
+      function paintRecord(record) {
+        var selected = record.thread.id === activeId, resolved = context.dualColumn && record.thread.isResolved;
+        var visible = record.located && (!resolved || selected);
+        if (record.pin.hidden === visible) record.pin.hidden = !visible;
+        var pinClass = 'pin' + (selected ? ' active' : '');
+        if (record.pin.className !== pinClass) record.pin.className = pinClass;
+        var muted = context.dualColumn && (resolved || (previewsHidden && !selected && !revealedPreviews.has(record.thread.id)));
+        record.boxes.forEach(function (box) {
+          var key = box.style.transform + ':' + box.style.width + ':' + box.style.height + ':' + (record.found?.range ? 'range' : 'element');
+          box.hidden = !visible || (context.dualColumn && paintedBoxes.has(key));
+          if (!box.hidden && context.dualColumn) paintedBoxes.add(key);
+          box.classList.toggle('active', selected);
+          box.classList.toggle('dim', !!muted);
+        });
+      }
+      if (selectedRecord) paintRecord(selectedRecord);
+      records.forEach(function (record) { if (record !== selectedRecord) paintRecord(record); });
+    }
     if (geometryDirty) {
-      if (pendingRect) {
-        if (!pendingBox) { pendingBox = document.createElement('div'); pendingBox.className = 'outline'; shadow.appendChild(pendingBox); }
-        pendingBox.hidden = false; place(pendingBox, pendingRect, origin);
-      } else if (pendingBox) pendingBox.hidden = true;
+      layoutParagraphs();
+      if (context.dualColumn) layoutHeaderTints();
+      while (pendingBoxes.length > pendingRects.length) pendingBoxes.pop().remove();
+      pendingRects.forEach(function (rect, index) {
+        var box = pendingBoxes[index];
+        if (!box) { box = document.createElement('div'); pendingBoxes.push(box); }
+        mountMark(box, pendingViewportPositioned);
+        box.className = context.dualColumn ? 'pending-mark' : 'outline';
+        place(box, rect, origin);
+      });
       var serialized = JSON.stringify(missing.sort());
       if (serialized !== lastLocations) { lastLocations = serialized; post('map-annotation-locations', { missingIds: missing }); }
     }
-    hover.hidden = !hoverRect; if (hoverRect) place(hover, hoverRect, origin);
-    publishPreview(geometryDirty);
-    geometryDirty = false; hoverDirty = false;
+    hover.hidden = !hoverRect; if (hoverRect) { mountMark(hover, hoverViewportPositioned); place(hover, hoverRect, origin); }
+    if (context.dualColumn) publishHeaderTints();
+    publishReadingPosition(topInset);
+    publishPreview(geometryDirty, topInset);
+    geometryDirty = false; hoverDirty = false; markerStateDirty = false;
   }
-  function schedule(geometry) { if (geometry !== false) geometryDirty = true; if (!frame) frame = requestAnimationFrame(paint); }
+  function schedule(geometry) {
+    if (geometry !== false) geometryDirty = true;
+    if (!frame) frame = requestAnimationFrame(paint);
+  }
+  function followDocumentScroll() {
+    if (context.enabled) hoverDirty = true;
+    if (pendingViewportPositioned || viewportAnchors) { schedule(); return; }
+    if (context.dualColumn && !geometryDirty && !context.enabled) {
+      // Let the host move its existing rail before rebuilding the visible
+      // geometry. This is only valid for anchors that scroll with the document.
+      post('map-annotation-scroll', { top: Math.max(0, scrollY), ack: wheelAck });
+      schedule(false);
+    } else if (context.enabled || context.displayMode === 'bubble' || context.dualColumn) schedule(false);
+  }
   function invalidate() { structureDirty = true; schedule(); }
   window.addEventListener('message', function (event) {
     var data = event.data;
@@ -249,61 +596,109 @@
     if (data.type === 'map-annotation-init') {
       if (typeof data.nonce !== 'string' || data.nonce.length > 100 || !data.nonce || typeof data.siteId !== 'string' || !data.siteId) return;
       try { new URL(data.siteUrl); } catch (_) { return; }
-      if (!context || context.displayMode !== data.displayMode || context.contentVersion !== data.contentVersion) { previewId = null; dismissedPreview = null; previewMuted = false; hidePreview(); }
+      if (!context || context.displayMode !== data.displayMode || context.contentVersion !== data.contentVersion) { previewId = null; dismissedPreview = null; dismissedPreviews.clear(); hidePreview(); }
       var nextKey = JSON.stringify(data.threads || []);
-      if (!context || context.siteUrl !== data.siteUrl || context.contentVersion !== data.contentVersion || activeId !== (data.activeId || null) || nextKey !== threadsKey) structureDirty = true;
+      if (!context || context.nonce !== data.nonce) { paragraphsLast = ''; readingLast = undefined; headerTintsLast = ''; wheelAck = 0; }
+      if (!context || context.siteUrl !== data.siteUrl || context.contentVersion !== data.contentVersion || context.dualColumn !== data.dualColumn || nextKey !== threadsKey) structureDirty = true;
+      if (typeof data.previewsHidden === 'boolean') { previewsHidden = data.previewsHidden; revealedPreviews = new Set(Array.isArray(data.revealedPreviewIds) ? data.revealedPreviewIds.slice(0, 500) : []); }
+      if (Array.isArray(data.dismissedPreviewIds)) dismissedPreviews = new Set(data.dismissedPreviewIds.slice(0, 500).filter(function (id) { return typeof id === 'string'; }));
+      var pendingChanged = !!context?.pending !== !!data.pending;
       threadsKey = nextKey; context = data; activeId = data.activeId || null; if (!data.pending) pending = null;
-      mount(); observe(); post('map-annotation-ready'); schedule(); return;
+      markerStateDirty = true;
+      if (!context.suggestSelection || context.enabled || context.pending) clearSelectionCandidate();
+      mount(); observe(); post('map-annotation-ready'); schedule(structureDirty || pendingChanged); return;
     }
     if (!context || data.siteId !== context.siteId || data.nonce !== context.nonce) return;
-    if (data.type === 'map-annotation-preview-dismiss') { dismissedPreview = previewId || activeId; hidePreview(); return; }
+    if (data.type === 'map-annotation-scroll-document' && context.dualColumn
+      && Number.isFinite(data.delta) && Math.abs(data.delta) <= innerHeight * 2) {
+      if (Number.isSafeInteger(data.sequence) && data.sequence > 0) wheelAck = data.sequence;
+      var beforeWheel = scrollY;
+      window.scrollBy({ top: data.delta, behavior: 'instant' });
+      if (scrollY === beforeWheel) followDocumentScroll();
+      return;
+    }
+    if (data.type === 'map-annotation-preview-dismiss') {
+      dismissedPreview = data.id || previewId || activeId;
+      if (dismissedPreview) { dismissedPreviews.add(dismissedPreview); revealedPreviews.delete(dismissedPreview); }
+      markerStateDirty = true; hidePreview(); schedule(false); return;
+    }
+    if (data.type === 'map-annotation-previews-hide') { previewsHidden = true; revealedPreviews.clear(); markerStateDirty = true; hidePreviews(); schedule(false); return; }
+    if (data.type === 'map-annotation-previews-show') { previewsHidden = false; revealedPreviews.clear(); dismissedPreviews.clear(); dismissedPreview = null; previewsLast = ''; markerStateDirty = true; schedule(false); return; }
+    if (data.type === 'map-annotation-accept-selection' && context.suggestSelection && data.anchor?.kind === 'text') {
+      if (resolve(data.anchor)) {
+        pending = data.anchor; clearSelectionCandidate(); window.getSelection()?.removeAllRanges(); schedule();
+      }
+      return;
+    }
+    if (data.type === 'map-annotation-dismiss-selection' && context.suggestSelection) {
+      clearSelectionCandidate(); window.getSelection()?.removeAllRanges(); return;
+    }
     if (data.type === 'map-annotation-focus') {
       var thread = (context.threads || []).find(function (item) { return item.id === data.id; });
       var found = thread && resolve(thread.anchor);
-      if (found) { activeId = thread.id; previewId = thread.id; dismissedPreview = null; structureDirty = true; found.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); schedule(); }
+      if (found) { activeId = thread.id; previewId = thread.id; revealedPreviews.add(thread.id); dismissedPreview = null; dismissedPreviews.delete(thread.id); structureDirty = true; scrollToAnchor(found); schedule(); }
       else post('map-annotation-locations', { missingIds: [data.id] });
     }
   });
+  document.addEventListener('pointerdown', function (event) {
+    if (context && context.dualColumn && event.isTrusted) post('map-annotation-pointerdown');
+  }, true);
   document.addEventListener('pointermove', function (event) {
     if (!context || !context.enabled) return;
     pointer = { x: event.clientX, y: event.clientY }; currentHover = selectable(event.target) ? event.target : null; hoverDirty = true; schedule(false);
   }, true);
   document.addEventListener('click', function (event) {
-    if (!context || !context.enabled || !selectable(event.target) || event.composedPath().indexOf(host) >= 0) return;
+    if (!context || !selectable(event.target) || event.composedPath().indexOf(host) >= 0) return;
+    if (!context.enabled) {
+      if (!context.dualColumn || context.displayMode === 'hidden' || event.ctrlKey || event.metaKey || event.shiftKey
+        || !window.getSelection()?.isCollapsed) return;
+      var matches = [];
+      records.forEach(function (record) {
+        var shape = record.geometry;
+        if (!record.found?.range || !shape || !record.found.el.contains(event.target)
+          || (record.thread.isResolved && record.thread.id !== activeId)) return;
+        var x = event.clientX + scrollX - shape.x, y = event.clientY + scrollY - shape.y;
+        if (shape.rects.some(function (rect) { return x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height; })) matches.push(record);
+      });
+      if (matches.length) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        var selected = matches.find(function (record) { return record.thread.id === activeId; });
+        activate(matches[(matches.indexOf(selected) + 1) % matches.length]);
+      }
+      return;
+    }
     event.preventDefault(); event.stopImmediatePropagation();
     var selection = window.getSelection(), anchor, el = event.target;
     if (selection && !selection.isCollapsed && selection.toString().trim()) {
       var range = selection.getRangeAt(0), common = range.commonAncestorContainer;
       el = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement;
       if (!selectable(el) || range.toString().length > 1000) return;
-      anchor = baseAnchor(el); anchor.kind = 'text'; anchor.text = range.toString();
-      var before = range.cloneRange(); before.selectNodeContents(el); before.setEnd(range.startContainer, range.startOffset);
-      var after = range.cloneRange(); after.selectNodeContents(el); after.setStart(range.endContainer, range.endOffset);
-      anchor.prefix = before.toString().slice(-100); anchor.suffix = after.toString().slice(0, 100);
+      anchor = selectedTextAnchor(el, range);
     } else anchor = baseAnchor(el);
     pending = anchor; context.enabled = false; currentHover = null;
     post('map-annotation-selected', { anchor: anchor }); schedule();
   }, true);
   document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') clearSelectionCandidate();
     if (context && context.enabled && event.key === 'Escape') { context.enabled = false; currentHover = null; post('map-annotation-cancel'); schedule(); }
   }, true);
   window.addEventListener('scroll', function (event) {
     if (!context) return;
+    clearSelectionCandidate();
     if (event.target === document || event.target === window) {
-      if (context.displayMode === 'bubble') {
-        previewMuted = true; hidePreview(); clearTimeout(previewTimer);
-        previewTimer = setTimeout(function () { previewMuted = false; schedule(false); }, 120);
-      }
-      // Absolute markers follow ordinary content natively. Fixed/sticky targets (including
-      // descendants) move relative to the document and need fresh viewport geometry.
-      if (pendingViewportPositioned || Array.from(records.values()).some(function (record) { return record.viewportPositioned; })) schedule();
-      if (context.enabled) { hoverDirty = true; schedule(false); }
+      followDocumentScroll();
       return;
     }
     schedule();
   }, { capture: true, passive: true });
+  document.addEventListener('selectionchange', function () {
+    if (context?.suggestSelection && !selectionFrame) selectionFrame = requestAnimationFrame(updateSelectionCandidate);
+  });
   window.addEventListener('resize', function () { schedule(); }, { passive: true });
   document.addEventListener('load', function () { schedule(); }, true);
+  document.addEventListener('toggle', function (event) {
+    if (context && event.target instanceof HTMLDetailsElement) schedule();
+  }, true);
   window.addEventListener('hashchange', invalidate);
   var observer = new MutationObserver(function (changes) {
     var relevant = changes.filter(function (record) {
@@ -319,5 +714,10 @@
       attributeFilter: ['class', 'style', 'hidden', 'id'] });
   }
   observe();
-  window.addEventListener('pagehide', function () { observer.disconnect(); if (frame) cancelAnimationFrame(frame); clearTimeout(previewTimer); frame = 0; context = null; });
+  window.addEventListener('pagehide', function () {
+    observer.disconnect();
+    if (frame) cancelAnimationFrame(frame);
+    if (selectionFrame) cancelAnimationFrame(selectionFrame);
+    frame = selectionFrame = 0; context = null;
+  });
 })();

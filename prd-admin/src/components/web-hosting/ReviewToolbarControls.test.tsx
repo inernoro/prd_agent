@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ReviewToolbarControls } from './ReviewToolbarControls';
 import type { HostedReview } from './useHostedReview';
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null }));
+vi.mock('./ReviewVersionPreview', () => ({ ReviewVersionPreview: ({ versionId }: { versionId: string }) => <section aria-label="历史版本预览小窗">{versionId}</section> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
 const versions = [
@@ -15,28 +16,24 @@ const versions = [
 async function mount() {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   const selectVersion = vi.fn(), setDisplayMode = vi.fn(), onOpen = vi.fn();
-  const review = { versions, selected: versions[0], selectVersion, annotations: { displayMode: 'bubble', setDisplayMode } } as unknown as HostedReview;
-  await act(async () => root.render(<ReviewToolbarControls review={review} canUpload={true} onOpen={onOpen} expanded={false} count={3} />));
+  function Harness() {
+    const [versionPreview, setVersionPreview] = useState<{ id: string } | null>(null);
+    const review = { versions, selected: versions[0], selectVersion, versionPreview, setVersionPreview, source: { mode: 'site', siteId: 'site' }, liveSite: { id: 'site' }, annotations: { displayMode: 'bubble', setDisplayMode } } as unknown as HostedReview;
+    return <ReviewToolbarControls review={review} canUpload={true} onOpen={onOpen} expanded={false} count={3} />;
+  }
+  await act(async () => root.render(<Harness />));
   return { selectVersion, setDisplayMode, onOpen };
 }
 const find = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('hosted review toolbar', () => {
-  it('keeps discussion and display controls first, and exposes all three display choices', async () => {
-    const { onOpen, setDisplayMode } = await mount();
+  it('只保留批注与版本入口，不再提供显示方式菜单', async () => {
+    const { onOpen } = await mount();
     expect([...container.querySelectorAll('button')].map(button => button.getAttribute('aria-label')))
-      .toEqual(['批注与讨论', '批注显示方式', '网页版本：V2']);
-    await act(async () => find('批注与讨论').click());
-    expect(onOpen).toHaveBeenCalledOnce();
-    await act(async () => find('批注显示方式').click());
-    const choices = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
-    expect(choices).toHaveLength(3);
-    expect(choices[2].getAttribute('aria-checked')).toBe('true');
-    await act(async () => choices[0].click());
-    expect(setDisplayMode).toHaveBeenCalledWith('hidden');
-    expect(document.querySelector('[role="menu"]')).toBeNull();
-    expect(document.activeElement).toBe(find('批注显示方式'));
+      .toEqual(['批注与讨论', '网页版本：V2']);
+    expect(document.querySelector('[aria-label="批注显示方式"]')).toBeNull();
+    await act(async () => find('批注与讨论').click()); expect(onOpen).toHaveBeenCalledOnce();
   });
   it('offers keyboard-selectable version history and rejects unavailable snapshots', async () => {
     const { selectVersion } = await mount();
@@ -47,7 +44,8 @@ describe('hosted review toolbar', () => {
     expect(document.activeElement).toBe(choices[1]);
     expect(choices[2].disabled).toBe(true);
     await act(async () => choices[1].click());
-    expect(selectVersion).toHaveBeenCalledWith('v1');
+    expect(selectVersion).not.toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="历史版本预览小窗"]')?.textContent).toBe('v1');
     expect(document.querySelector('[role="listbox"]')).toBeNull();
   });
   it('closes the active popover with Escape without closing the surrounding preview', async () => {
@@ -58,10 +56,6 @@ describe('hosted review toolbar', () => {
       await act(async () => find('网页版本：V2').click());
       await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
       expect(document.querySelector('[role="listbox"]')).toBeNull();
-      expect(parentEscape).not.toHaveBeenCalled();
-      await act(async () => find('批注显示方式').click());
-      await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-      expect(document.querySelector('[role="menu"]')).toBeNull();
       expect(parentEscape).not.toHaveBeenCalled();
     } finally { window.removeEventListener('keydown', parentEscape); }
   });

@@ -6,13 +6,53 @@ import { SitePreview } from '@/components/SitePreview';
 import { useHostedSiteWindow } from './useHostedSiteWindow';
 import type { RelatedDocument, RelatedDocuments, RelatedDocumentSource } from '@/services/real/relatedDocuments';
 
-export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档' }: {
-  siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number;
+function useRelatedNavigation(onNavigate: ((item: RelatedDocument) => void) | undefined, onClose: () => void) {
+  const siteWindow = useHostedSiteWindow();
+  const navigate = (event: React.MouseEvent, item: RelatedDocument, isLink: boolean) => {
+    const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+    if (isLink && modified) return;
+    if (onNavigate && !modified) { event.preventDefault(); onNavigate(item); }
+    else if (!isLink) void siteWindow.open(item.id);
+    onClose();
+  };
+  return { navigate, siteWindow };
+}
+
+export function RelatedReaderList({ items, data, error, maxHeight, onReload, onManage, onPermissions, onNavigate, onClose }: {
+  items: RelatedDocument[]; data: RelatedDocuments | null; error: string; maxHeight: number;
+  onReload: () => void; onManage: () => void; onPermissions: () => void;
+  onNavigate?: (item: RelatedDocument) => void; onClose: () => void;
+}) {
+  const { navigate } = useRelatedNavigation(onNavigate, onClose);
+  return <section className="related-reader-list" style={{ maxHeight }}>
+    <div className="related-reader-heading"><span>关联文档 · {items.length} 篇</span>
+      {data?.canManage && <div className="related-reader-actions">
+        {data.version > 0 && <button type="button" title="权限与分享" aria-label="权限与分享" onClick={onPermissions}>{data.hasPermissionDifferences ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />}</button>}
+        <button type="button" title="管理关联" aria-label="管理关联" onClick={onManage}><FolderPlus size={14} /></button>
+      </div>}
+    </div>
+    {error ? <div className="related-reader-error" role="alert">{error}<Button size="sm" onClick={onReload}>重新加载</Button></div> : <ul>
+      {items.map(item => {
+        const Link = item.href?.startsWith('/s/') ? 'a' : 'button';
+        const date = item.updatedAt && new Date(item.updatedAt);
+        const detail = [item.mentions?.[0]?.authorName, date && Number.isFinite(date.getTime()) ? date.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' }) : undefined].filter(Boolean).join(' · ');
+        return <li key={item.id}><Link className="related-reader-link" href={Link === 'a' ? item.href : undefined}
+          type={Link === 'button' ? 'button' : undefined} onClick={event => navigate(event, item, Link === 'a')}>
+          <span>{item.title}</span>{(detail || item.description) && <small>{detail || item.description}</small>}
+        </Link></li>;
+      })}
+    </ul>}
+    {!error && <footer>当前文档不计入关联</footer>}
+  </section>;
+}
+
+export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, includeCurrent = false, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档' }: {
+  siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number; includeCurrent?: boolean;
   onReload: () => void; onManage: () => void; onPermissions: () => void; onTagEdit: (item: RelatedDocument) => void;
   onNavigate?: (item: RelatedDocument) => void; onClose: () => void; heading?: string;
 }) {
   const [page, setPage] = useState(0);
-  const siteWindow = useHostedSiteWindow();
+  const { navigate, siteWindow } = useRelatedNavigation(onNavigate, onClose);
   const [referenceScope, setReferenceScope] = useState<'all' | 'members' | 'references'>('all');
   const [view, setView] = useState<'cards' | 'list'>(() => {
     try { return localStorage.getItem('hosted-related-view') === 'list' ? 'list' : 'cards'; } catch { return 'cards'; }
@@ -27,7 +67,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
   const openPermissions = onPermissions;
   const setTagTarget = onTagEdit;
   const refresh = onReload;
-  const displayed = data?.items.filter(item => referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false)) ?? [];
+  const displayed = data?.items.filter(item => (includeCurrent || item.id !== siteId)).filter(item => referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false)) ?? [];
   const pages = Math.max(1, Math.ceil(displayed.length / 9));
   const currentPage = Math.min(page, pages - 1);
   return <section className="related-document-content" aria-label={heading} style={{ minHeight: 0, maxHeight: maxHeight ?? 'calc(100dvh - 44px)' }}>
@@ -50,11 +90,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
                   <Card href={Card === 'a' ? item.href : undefined} type={Card === 'button' ? 'button' : undefined} className={`related-document-card ${item.id === siteId ? 'is-current' : ''}`} aria-current={item.id === siteId ? 'page' : undefined}
                     onClick={event => {
                       if (item.id === siteId) { event.preventDefault(); close(); return; }
-                      const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
-                      if (Card === 'a' && modified) return;
-                      if (onNavigate && !modified) { event.preventDefault(); onNavigate(item); }
-                      else if (Card === 'button') void siteWindow.open(item.id);
-                      close();
+                      navigate(event, item, Card === 'a');
                     }}>
                     <div className="related-card-preview">
                       {item.preview ? <SitePreview url={item.preview.siteUrl} site={{ ...item.preview,
@@ -78,7 +114,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
                   {item.canEditTags && <button type="button" className="related-tag-edit" aria-label={`编辑标签：${item.title}`} title="编辑文档标签"
                     onClick={() => { close(); setTagTarget(item); }}><Tags size={13} /></button>}
                 </div>; })}
-                {!displayed.length && <p className="related-small-note">没有符合条件的关联文档。</p>}
+                {!displayed.length && <p className="related-small-note">{referenceScope === 'all' ? '暂无关联文档。' : '没有符合条件的关联文档。'}</p>}
               </div>}
 
         </div>

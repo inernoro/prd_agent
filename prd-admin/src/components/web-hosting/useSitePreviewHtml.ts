@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { getSiteContent, getShareSiteContent } from '@/services/real/webPages';
 import { canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
 
@@ -84,9 +84,16 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
 export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: boolean) {
   const [entry, setEntry] = useState<CacheEntry & { key: string }>({ key: '', srcDoc: null, error: null });
   const [loading, setLoading] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   const key = site ? cacheKey(site) : '';
   const fetchable = !!site && shouldFetchPreviewHtml(site);
+  const retry = useCallback(() => {
+    if (!enabled || !fetchable) return;
+    cache.delete(key);
+    setEntry({ key: '', srcDoc: null, error: null });
+    setAttempt(value => value + 1);
+  }, [enabled, fetchable, key]);
 
   useEffect(() => {
     if (!site || !enabled || !fetchable) {
@@ -110,13 +117,15 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
     return () => { alive = false; };
     // site 是每次渲染新建的对象字面量，依赖它会无限重取；key 已经涵盖 id + siteUrl 的变化。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, enabled, fetchable]);
+  }, [key, enabled, fetchable, attempt]);
 
   const current = entryForKey(entry, key);
   return {
     srcDoc: fetchable ? current.srcDoc : null,
     error: fetchable ? current.error : null,
     loading: fetchable && loading,
+    settled: !enabled || !fetchable || (entry.key === key && !loading),
+    retry,
   };
 }
 

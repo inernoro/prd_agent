@@ -143,7 +143,7 @@ function ContextDocuments({ siteId, context, maxHeight, onRelatedLoaded, ...acti
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [siteId, contextId, reload, onRelatedLoaded]);
-  return <RelatedDocumentContent siteId={siteId} maxHeight={maxHeight} data={data} loading={loading} error={error} heading={context?.title ?? '关联文档'}
+  return <RelatedDocumentContent includeCurrent={!!context} siteId={siteId} maxHeight={maxHeight} data={data} loading={loading} error={error} heading={context?.title ?? '关联文档'}
     onReload={() => setReload(value => value + 1)} onManage={() => { if (data) actions.onManage(data); }} onPermissions={() => { if (data) actions.onPermissions(data); }}
     onTagEdit={actions.onTagEdit} onClose={actions.onClose} onNavigate={actions.onNavigate} />;
 }

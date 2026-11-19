@@ -1777,6 +1777,14 @@ public class MongoDbContext
             Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.ReferencedSiteIds).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_comments_references" }));
 
+        HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
+            Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.AiReplyDeployment).Ascending(x => x.AiReplyDueAt),
+            new CreateIndexOptions<HostedSiteComment>
+            {
+                Name = "idx_hosted_comment_ai_reply_due",
+                PartialFilterExpression = Builders<HostedSiteComment>.Filter.Type(x => x.AiReplyDueAt, MongoDB.Bson.BsonType.DateTime),
+            }));
+
         // ========== Hosted Sites 网页托管索引 ==========
 
         // HostedSites：按用户 + 创建时间查询

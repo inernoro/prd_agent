@@ -11,19 +11,74 @@ let root: Root;
 let container: HTMLDivElement;
 let annotations: HostedAnnotations;
 const initial = { id: 'site-a', siteUrl: 'https://assets.example/a/index.html?v=1' };
-function Harness({ site = initial }: { site?: typeof initial }) {
+function Harness({ site = initial, dualColumn = false }: { site?: typeof initial; dualColumn?: boolean }) {
   const frame = useRef<HTMLIFrameElement>(null);
-  annotations = useHostedAnnotations(frame, site, vi.fn());
-  return <iframe ref={frame} />;
+  annotations = useHostedAnnotations(frame, site, vi.fn(), undefined, { dualColumn });
+  return <div><iframe ref={frame} />{dualColumn && <div data-review-margin="" />}</div>;
 }
-async function mount() {
+async function mount(dualColumn = false) {
   container = document.createElement('div'); document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => root.render(<Harness />));
+  await act(async () => root.render(<Harness dualColumn={dualColumn} />));
 }
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('hosted annotation bridge', () => {
+  it('commits new scroll positions immediately and reconciles predicted wheel steps', async () => {
+    await mount(true);
+    const iframe = container.querySelector('iframe')!;
+    Object.defineProperty(iframe, 'clientHeight', { value: 200 });
+    const frame = iframe.contentWindow!;
+    const send = vi.spyOn(frame, 'postMessage');
+    await act(async () => annotations.notifyFrame());
+    const config = send.mock.calls.at(-1)![0];
+    const post = (top: number, ack = 0) => window.dispatchEvent(new MessageEvent('message', { source: frame, data: {
+      ...config, type: 'map-annotation-previews', documentScroll: { top, max: 200, predict: true, ack },
+      items: [{ id: 'note', rect: { left: 30, top: 80 - top, width: 120, height: 20 } }],
+    } }));
+    await act(async () => post(0));
+    const listener = vi.fn();
+    const unsubscribe = annotations.subscribeDocumentScroll?.(listener);
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', { source: frame, data: {
+        ...config, type: 'map-annotation-scroll', top: 16, ack: 0,
+      } }));
+      expect(listener).toHaveBeenCalledWith(16);
+      expect(annotations.documentScrollTop).toBe(0);
+      post(16);
+      expect(annotations.documentScrollTop).toBe(16);
+      expect(annotations.previews?.[0].rect.top).toBe(64);
+    });
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', { source: frame, data: {
+        ...config, type: 'map-annotation-scroll', top: 19, ack: 0,
+      } }));
+      expect(annotations.scrollDocument?.(12)).toBe(true);
+      expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'map-annotation-scroll-document', delta: 12, sequence: 1 });
+      expect(annotations.documentScrollTop).toBe(31);
+      expect(annotations.previews?.[0].rect.top).toBe(49);
+      post(16);
+      expect(annotations.previews?.[0].rect.top).toBe(49);
+      post(27, 1);
+      expect(annotations.previews?.[0].rect.top).toBe(53);
+    });
+    unsubscribe?.();
+  });
+
+  it('assigns one pen per author and keeps author identities out of the iframe', async () => {
+    await mount(true);
+    const frame = container.querySelector('iframe')!.contentWindow!;
+    const send = vi.spyOn(frame, 'postMessage');
+    const thread = (id: string, authorUserId: string, createdAt: string) => ({ id, authorUserId, createdAt, anchor: { kind: 'element' } }) as HostedSiteCommentDto;
+    await act(async () => annotations.setThreads([
+      thread('one', 'private-author-1', '2026-11-10'), thread('two', 'private-author-2', '2026-11-11'), thread('three', 'private-author-1', '2026-11-12'),
+    ]));
+    expect(annotations.penHues).toEqual({ one: undefined, two: 218, three: undefined });
+    const config = send.mock.calls.at(-1)![0];
+    expect(config.threads[1].penHue).toBe(218);
+    expect(JSON.stringify(config)).not.toContain('private-author');
+  });
+
   it('keeps comment text in the host and accepts only finite preview geometry from its frame', async () => {
     await mount();
     const frame = container.querySelector('iframe')!.contentWindow!;
@@ -43,6 +98,7 @@ describe('hosted annotation bridge', () => {
   });
   it('sends display preferences without replacing the page context and makes a new selection visible', async () => {
     await mount();
+    expect(annotations.displayMode).toBe('bubble');
     const frame = container.querySelector('iframe')!.contentWindow!;
     const send = vi.spyOn(frame, 'postMessage');
     await act(async () => annotations.notifyFrame());
@@ -78,4 +134,68 @@ describe('hosted annotation bridge', () => {
     await act(async () => root.render(<Harness site={{ id: 'site-b', siteUrl: 'https://assets.example/b/index.html?v=1' }} />));
     expect(annotations.threads).toEqual([]);
   });
+});
+
+it('全隐过滤旧帧迟到几何，点编号可单独恢复，再全显恢复所有', async () => {
+  await mount(); const frame = container.querySelector('iframe')!.contentWindow!, send = vi.spyOn(frame, 'postMessage');
+  await act(async () => annotations.notifyFrame()); const config = send.mock.calls.filter(call => call[0].type === 'map-annotation-init').at(-1)![0];
+  const items = ['one', 'two'].map(id => ({ id, rect: { left: 10, top: 20, width: 100, height: 40 } }));
+  const post = (extra: object) => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, ...extra } }));
+  await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(2);
+  await act(async () => annotations.hideAllPreviews()); await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(0);
+  await act(async () => post({ type: 'map-annotation-preview-select', id: 'two' })); await act(async () => post({ type: 'map-annotation-previews', items }));
+  expect(annotations.previews?.map(item => item.id)).toEqual(['two']); expect(annotations.allPreviewsHidden).toBe(true);
+  await act(async () => annotations.showAllPreviews()); await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(2);
+});
+it('仅有旧单气泡协议时全隐后仍可点击编号重新显示', async () => {
+  await mount(); const frame = container.querySelector('iframe')!.contentWindow!, send = vi.spyOn(frame, 'postMessage');
+  await act(async () => annotations.notifyFrame()); const config = send.mock.calls.filter(call => call[0].type === 'map-annotation-init').at(-1)![0];
+  const post = (extra: object) => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, ...extra } }));
+  await act(async () => post({ type: 'map-annotation-preview', id: 'one', rect: { left: 10, top: 20, width: 100, height: 40 } }));
+  await act(async () => annotations.hideAllPreviews()); expect(annotations.preview).toBeNull(); expect(annotations.previews).toBeNull();
+  await act(async () => post({ type: 'map-annotation-activate', id: 'one' })); expect(annotations.preview?.id).toBe('one');
+});
+
+it('单条收起即时过滤迟到几何，重载重放收起集合，编号与全显能显式恢复', async () => {
+  await mount(); const frame = container.querySelector('iframe')!.contentWindow!, send = vi.spyOn(frame, 'postMessage');
+  await act(async () => annotations.notifyFrame()); const config = send.mock.calls.filter(call => call[0].type === 'map-annotation-init').at(-1)![0];
+  const items = ['one', 'two'].map(id => ({ id, rect: { left: 10, top: 20, width: 100, height: 40 } }));
+  const post = (extra: object) => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, ...extra } }));
+  await act(async () => post({ type: 'map-annotation-previews', items }));
+  await act(async () => { annotations.dismissPreview('one'); post({ type: 'map-annotation-previews', items }); });
+  expect(annotations.previews?.map(item => item.id)).toEqual(['two']);
+  await act(async () => annotations.notifyFrame());
+  expect(send.mock.calls.at(-1)![0]).toMatchObject({ dismissedPreviewIds: ['one'], revealedPreviewIds: [] });
+  await act(async () => post({ type: 'map-annotation-preview-select', id: 'one' }));
+  await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(2);
+  await act(async () => annotations.dismissPreview('one')); await act(async () => annotations.notifyFrame());
+  expect(send.mock.calls.at(-1)![0]).toMatchObject({ dismissedPreviewIds: ['one'], revealedPreviewIds: [] });
+  await act(async () => annotations.focus('one')); await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(2);
+  await act(async () => annotations.dismissPreview('one'));
+  await act(async () => annotations.showAllPreviews()); await act(async () => annotations.notifyFrame());
+  expect(send.mock.calls.at(-1)![0]).toMatchObject({ dismissedPreviewIds: [] });
+  await act(async () => post({ type: 'map-annotation-previews', items })); expect(annotations.previews).toHaveLength(2);
+});
+it('旧单气泡几何迟到也不能重开单独收起的气泡', async () => {
+  await mount(); const frame = container.querySelector('iframe')!.contentWindow!, send = vi.spyOn(frame, 'postMessage');
+  await act(async () => annotations.notifyFrame()); const config = send.mock.calls.at(-1)![0];
+  const data = { ...config, type: 'map-annotation-preview', id: 'one', rect: { left: 10, top: 20, width: 100, height: 40 } };
+  const post = () => window.dispatchEvent(new MessageEvent('message', { source: frame, data }));
+  await act(async () => post()); await act(async () => { annotations.dismissPreview(); post(); }); expect(annotations.preview).toBeNull();
+  await act(async () => annotations.showAllPreviews()); expect(annotations.preview?.id).toBe('one');
+});
+
+it('查看讨论不等于收起气泡，并保留其他气泡的主动关闭状态', async () => {
+  await mount(); const frame = container.querySelector('iframe')!.contentWindow!, send = vi.spyOn(frame, 'postMessage');
+  await act(async () => annotations.notifyFrame()); const config = send.mock.calls.at(-1)![0];
+  const items = ['one', 'two'].map(id => ({ id, rect: { left: 10, top: 20, width: 100, height: 40 } }));
+  const post = () => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, type: 'map-annotation-previews', items } }));
+  await act(async () => post());
+  await act(async () => annotations.dismissPreview('two'));
+  await act(async () => annotations.openThread('one'));
+  await act(async () => post());
+  expect(annotations.previews?.map(item => item.id)).toEqual(['one']);
+  expect(annotations.activeId).toBe('one');
+  await act(async () => annotations.notifyFrame());
+  expect(send.mock.calls.at(-1)![0]).toMatchObject({ dismissedPreviewIds: ['two'] });
 });

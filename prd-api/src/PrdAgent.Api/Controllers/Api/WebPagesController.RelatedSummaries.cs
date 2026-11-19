@@ -43,12 +43,12 @@ public partial class WebPagesController
         await Load(members);
         var visibleMembers = members.Where(readable.ContainsKey).ToList();
         var outgoing = await _db.HostedSiteComments.Find(x => visibleMembers.Contains(x.SiteId) && !x.IsDeleted)
-            .SortByDescending(x => x.CreatedAt).Limit(10000).ToListAsync();
+            .SortByDescending(x => x.CreatedAt).Limit(10000).Project(HostedSiteService.CommentMetadata).ToListAsync();
         var incoming = await _db.HostedSiteComments.Find(Builders<HostedSiteComment>.Filter.And(
                 Builders<HostedSiteComment>.Filter.AnyIn(x => x.ReferencedSiteIds, seeds),
                 Builders<HostedSiteComment>.Filter.Eq(x => x.IsDeleted, false),
                 Builders<HostedSiteComment>.Filter.Nin(x => x.SiteId, visibleMembers)))
-            .SortByDescending(x => x.CreatedAt).Limit(2000).ToListAsync();
+            .SortByDescending(x => x.CreatedAt).Limit(2000).Project(HostedSiteService.CommentMetadata).ToListAsync();
         await Load(incoming.Select(x => x.SiteId));
         var canReview = new Dictionary<string, bool>();
         var allowed = new List<HostedSiteComment>();
