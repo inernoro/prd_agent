@@ -11,7 +11,7 @@ describe('内部版本在申领表单内选择应用', () => {
     expect(versions).toContain('setActionProductId(productId)');
     expect(application).toContain('useState(productId)');
     expect(application).toContain('seed?.linkedProductId ?? productId');
-    expect(application).toContain('<Field label="所属应用 *" full>');
+    expect(application).toContain("<Field label=\"所属应用 *\" full {...fieldProps('application')}>");
     expect(application).not.toContain('setProductId(');
   });
 
@@ -25,8 +25,8 @@ describe('内部版本在申领表单内选择应用', () => {
 
   it('未选应用不请求空产品目录，也不能继续申领', () => {
     expect(application).not.toContain('listProductMembers(');
-    expect(application).toContain("if (!linkedProductId.trim()) return setMessage('请选择所属应用')");
-    expect(application).toContain('disabled={busy || !linkedProductId.trim()}');
+    expect(application).toContain("if (!linkedProductId.trim()) errors.application = '请选择所属应用'");
+    expect(application).toContain('form={formId} disabled={busy}');
   });
 
   it('新建接口归属与所选应用一致，已有记录和重试仍使用原更新路径', () => {
@@ -105,5 +105,20 @@ describe('内部版本在申领表单内选择应用', () => {
     expect(application).toContain('getInitiationPlanDefaults(planName, planFileName)');
     expect(versions).toContain('seed={retrySeed} onClose={() => setRetrySeed(null)} onChanged={reload}');
     expect(versions).not.toContain('onChanged={async () => { setRetrySeed(null); await reload(); }}');
+  });
+  it('免开会无需录入日期，历史日期和开会日期随原接口处理', () => {
+    expect(application).toContain('if (!editingIssued && meeting && !plannedProjectAt)');
+    expect(application).toContain('plannedProjectAt: meeting && plannedProjectAt');
+    expect(application).toContain(': item?.plannedProjectAt ?? undefined');
+    expect(application).toMatch(/\{meeting && <div[^>]*>\s*<Field label="计划立项时间 \*"/);
+    expect(application).toContain('expectedMeetingAt: meeting ? reviewed.plannedProjectAt ?? undefined : undefined');
+  });
+
+  it('点击确认列出所有缺项，定位首项，并可逐条跳到对应控件', () => {
+    expect(application).toContain("errors.reviewSource = '请选择已有方案，或切换到上传新方案'");
+    expect(application).toContain('requestAnimationFrame(() => focusField(firstMissing))');
+    expect(application).toContain('Object.entries(errors).map');
+    expect(application).toContain('onClick={() => focusField(field)}');
+    expect(application.indexOf('if (firstMissing)')).toBeLessThan(application.indexOf('submittingRef.current = true'));
   });
 });
