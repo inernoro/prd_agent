@@ -66,6 +66,7 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         var escalated = await f.FaultAsync();
         Assert.Equal(1, escalated.PushEpisode);
         Assert.Equal(0, escalated.IncidentEpisode);
+        Assert.False(escalated.IncidentIsRecurrence);
         Assert.Equal(owner, escalated.IncidentOwnerUserId);
         Assert.Equal(new[] { "fallback", "failed" }, escalated.IncidentEvidence!.Select(x => x.RequestId));
 
@@ -73,7 +74,11 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         await f.SweepAsync();
         var restored = Assert.Single(Data(await a.List(state: "incidents")).GetProperty("items").EnumerateArray());
         Assert.Equal("recovered", restored.GetProperty("incidentState").GetString());
-        Assert.Equal("recovered", restored.GetProperty("incidentFollowUp").GetProperty("evidence")[2].GetProperty("outcome").GetString());
+        var proof = restored.GetProperty("incidentFollowUp").GetProperty("evidence")[2];
+        Assert.Equal("recovered", proof.GetProperty("outcome").GetString());
+        Assert.Equal("primary · future-model-z", proof.GetProperty("routeLabel").GetString());
+        var restricted = Assert.Single(Data(await b.List(state: "incidents")).GetProperty("items").EnumerateArray());
+        Assert.Equal(JsonValueKind.Null, restricted.GetProperty("incidentFollowUp").GetProperty("evidence")[2].GetProperty("routeLabel").ValueKind);
         Assert.IsType<ConflictObjectResult>(await winner.AssignIncident(fault.Id, new() { Episode = 0, Claim = false }, default));
 
         await f.LogRouteAsync("recurrence", -60, failed: true);
@@ -81,6 +86,7 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         var next = await f.FaultAsync();
         Assert.Equal(fault.Id, next.Id);
         Assert.Equal(2, next.IncidentEpisode);
+        Assert.True(next.IncidentIsRecurrence);
         Assert.Null(next.IncidentOwnerUserId);
         Assert.Equal("recurrence", Assert.Single(next.IncidentEvidence!).RequestId);
         var history = await f.Db.AdminNotifications.Find(x => x.Level == "success").SingleAsync();

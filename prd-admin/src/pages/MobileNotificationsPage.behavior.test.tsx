@@ -44,18 +44,29 @@ describe('通知动作与事实真实组件交互', () => {
   it('演练起始有证据，接手与确认独立，复发重置本轮状态且不调用业务接口', async () => {
     await act(async () => root.render(<NotificationHandoffExercise />));
     expect(host.textContent).toContain('1 笔失败，1 笔备用成功');
+    expect([...host.querySelectorAll('dl[aria-label="故障当前状态"] dt')].map(label => label.textContent)).toEqual(['请求影响', '线路状态', '跟进状态']);
     await click(/^标记接手$/);
     await click(/^确认通知$/);
     expect(host.textContent).toContain('我已接手');
-    expect(host.textContent).toContain('异常，等待恢复证据');
+    expect(host.textContent).toContain('原线路仍异常');
     const progress = host.querySelector('[aria-label="模拟进展"]')!;
     const buttons = [...progress.querySelectorAll('button')];
     await act(async () => buttons[2].click());
-    expect(host.textContent).toContain('已验证恢复');
+    expect(host.textContent).toContain('原线路已恢复');
     expect(host.textContent).toContain('我已接手');
+    const proof = host.querySelector('[aria-label="恢复证据"]')!;
+    expect(proof.textContent).toContain('生图主线路');
+    expect(proof.textContent).toContain('exercise-image-1623');
+    expect(host.querySelector<HTMLDetailsElement>('details')?.open).toBe(false);
+    await click(/^查看恢复证据/);
+    expect(host.querySelector<HTMLDetailsElement>('details')?.open).toBe(true);
     await act(async () => buttons[3].click());
-    expect(host.textContent).toContain('待接手');
+    expect(host.textContent).toContain('新一轮待接手');
     expect(host.textContent).toContain('确认通知');
+    await act(async () => buttons[4].click());
+    expect(host.textContent).toContain('当前状态待核实');
+    expect(host.textContent).toContain('最后可核实的观测');
+    expect(host.textContent).not.toContain('原线路已恢复');
     expect(api.list).not.toHaveBeenCalled();
     expect(api.assign).not.toHaveBeenCalled();
     expect(api.batch).not.toHaveBeenCalled();
@@ -80,8 +91,9 @@ describe('通知动作与事实真实组件交互', () => {
     expect(api.batch).not.toHaveBeenCalled();
     const detail = host.querySelector('aside')!;
     expect(detail.textContent).toContain('我已接手');
-    expect(detail.textContent).toContain('异常，等待恢复证据');
+    expect(detail.textContent).toContain('原线路仍异常');
     expect(detail.textContent).toContain('1 笔失败，1 笔备用成功');
+    await act(async () => detail.querySelector('summary')!.click());
     await click(/请求失败$/);
     expect(detail.querySelector('code')?.textContent).toBe('failed-request');
   });
@@ -134,8 +146,8 @@ describe('通知动作与事实真实组件交互', () => {
     expect(api.batch).toHaveBeenCalledWith({ items: [{ id: notice.id, pushEpisode: 2, updatedAt: notice.updatedAt }] });
     expect(host.textContent).toContain('暂无待关注通知');
     await click(/^已归档$/);
-    expect(host.textContent).toContain('最近观测异常，尚无恢复证据');
-    expect(host.textContent).toContain('确认不代表故障已修复');
+    expect(host.textContent).toContain('原线路仍异常');
+    expect(host.textContent).toContain('已确认通知');
     expect(host.textContent).not.toContain('已有恢复证据');
   });
 
@@ -205,7 +217,7 @@ describe('通知动作与事实真实组件交互', () => {
 
   it('用结果图标区分失败与恢复，并把结论和环境放在详情之前', async () => {
     const failed = { ...notice, id: 'failed', title: '生图请求失败', level: 'error', status: 'closed',
-      incidentState: 'recovered', source: 'gateway-alert', environment: '正式', message: '请查看线路详情。' };
+      incidentState: 'recovered', recoveredAt: notice.updatedAt, source: 'gateway-alert', environment: '正式', message: '请查看线路详情。' };
     const recovered = { ...failed, id: 'recovered', title: '生图线路已恢复', level: 'success', status: 'open' };
     api.list.mockResolvedValueOnce({ success: true, data: { items: [] } })
       .mockResolvedValue({ success: true, data: { items: [failed, recovered] } });
@@ -242,7 +254,7 @@ describe('通知动作与事实真实组件交互', () => {
   it('旧告警的状态未确认，不补造独立故障数和发生次数', async () => {
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, incidentId: null, occurrenceCount: undefined, requestOutcome: 'unknown', incidentState: 'unknown' }] } });
     await render();
-    expect(host.textContent).toContain('当前状态未确认');
+    expect(host.textContent).toContain('当前状态待核实');
     expect(host.textContent).not.toContain('同一故障累计');
   });
 
@@ -256,7 +268,7 @@ describe('通知动作与事实真实组件交互', () => {
       firstOccurredAt: undefined, lastOccurredAt: undefined, recoveredAt: undefined, actionUrl: null,
     }] } });
     await render();
-    expect(host.textContent).toContain('当前状态未确认');
+    expect(host.textContent).toContain('当前状态待核实');
     expect(host.textContent).not.toContain('历史');
     expect(host.textContent).not.toContain('同一故障累计');
     expect(host.textContent).not.toContain('已有恢复证据');

@@ -47,7 +47,11 @@ internal static class GatewayIncidentFollowUp
     }
 
     internal static List<GatewayIncidentEvidence> RecordRecovery(AdminNotification item, LlmGatewayIncidentSignal signal)
-        => [.. ReadEvidence(item), Create(signal.RequestId, null, "recovered", signal.ObservedAt)];
+    {
+        var recovery = Create(signal.RequestId, null, "recovered", signal.ObservedAt);
+        recovery.RouteLabel = signal.IsGatewayEntry ? $"{signal.AppCallerLabel} · 调用入口" : $"{signal.PlatformLabel} · {signal.ModelLabel}";
+        return [.. ReadEvidence(item), recovery];
+    }
 
     internal static string RequestUrl(string requestId) => $"/logs?requestId={Uri.EscapeDataString(requestId)}";
 

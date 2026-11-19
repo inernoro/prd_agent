@@ -266,6 +266,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.IncidentId, signal.Fingerprint)
                 .Set(x => x.IncidentState, "active")
                 .Set(x => x.IncidentEpisode, shouldReopen ? existing.PushEpisode + 1 : GatewayIncidentFollowUp.Episode(existing))
+                .Set(x => x.IncidentIsRecurrence, shouldReopen || existing.IncidentIsRecurrence)
                 .Set(x => x.IncidentEvidence, evidence)
                 .Set(x => x.IncidentCategory, signal.FailureCategory)
                 .Set(x => x.Environment, signal.Environment ?? existing.Environment)
@@ -416,6 +417,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             IncidentId = signal.Fingerprint,
             IncidentState = "recovered",
             IncidentEpisode = episode,
+            IncidentIsRecurrence = transitioned.IncidentIsRecurrence,
             IncidentEvidence = evidence,
             IncidentOwnerUserId = transitioned.IncidentOwnerUserId,
             IncidentOwnerDisplayName = transitioned.IncidentOwnerDisplayName,

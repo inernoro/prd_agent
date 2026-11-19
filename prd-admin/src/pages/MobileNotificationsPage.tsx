@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Bell, ChevronRight, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { ArrowUpRight, Bell, ChevronRight, CircleHelp, RefreshCw } from 'lucide-react';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { incidentOwnerLabel, incidentTitle, NotificationIncidentCard } from '@/components/notifications/NotificationIncidentCard';
+import { incidentLineLabel, incidentLineStatus, incidentOwnerLabel, incidentTitle, IncidentStatusSummary, NotificationIncidentCard } from '@/components/notifications/NotificationIncidentCard';
 import { useNotificationActions } from '@/components/notifications/useNotificationActions';
 import { useIsDesktop } from '@/hooks/useBreakpoint';
 import {
-  NOTIFICATION_INCIDENT_STATE, NOTIFICATION_PRIORITIES, NOTIFICATION_REQUEST_OUTCOME,
+  NOTIFICATION_PRIORITIES, NOTIFICATION_REQUEST_OUTCOME,
   notificationEnvironment, notificationOutcome, notificationPriority,
 } from '@/lib/notificationPresentation';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
@@ -32,12 +32,14 @@ function isServiceAlert(item: AdminNotificationItem) {
   return Boolean(item.incidentState || item.incidentId) || item.source === 'gateway-alert' || item.source === 'llm-gateway-quota';
 }
 
-function NotificationIcon({ item }: { item: AdminNotificationItem }) {
+function NotificationIcon({ item, unverified = false }: { item: AdminNotificationItem; unverified?: boolean }) {
   const type = getNotificationType(item);
-  const Icon = type.icon;
+  const Icon = unverified ? CircleHelp : type.icon;
   const outcome = notificationOutcome(item);
-  return <span role="img" aria-label={outcome === 'notice' ? type.label : OUTCOME_LABEL[outcome]}
-    className="grid h-9 w-9 shrink-0 place-items-center rounded-lg" style={{ color: type.fg, background: `${type.accent}20` }}>
+  return <span role="img" aria-label={unverified ? '状态待核实' : outcome === 'notice' ? type.label : OUTCOME_LABEL[outcome]}
+    className="grid h-9 w-9 shrink-0 place-items-center rounded-lg" style={unverified
+      ? { color: 'var(--text-secondary)', background: 'var(--bg-card-hover)' }
+      : { color: type.fg, background: `${type.accent}20` }}>
     <Icon size={19} aria-hidden="true" />
   </span>;
 }
@@ -52,23 +54,27 @@ function NotificationTime({ value, short = false }: { value: string; short?: boo
   return <time dateTime={value}>{Number.isNaN(date.valueOf()) ? '时间未记录' : (short ? shortDate : fullDate).format(date)}</time>;
 }
 
-function NotificationRow({ item, incidentView, selected, select }: { item: AdminNotificationItem; incidentView: boolean; selected: boolean; select: () => void }) {
+function NotificationRow({ item, incidentView, showLiveState, selected, select }: { item: AdminNotificationItem; incidentView: boolean; showLiveState: boolean; selected: boolean; select: () => void }) {
   const type = getNotificationType(item);
   const environment = notificationEnvironment(item);
-  const recovered = incidentView && item.incidentState === 'recovered';
+  const status = incidentLineStatus(item);
+  const recovered = incidentView && status === 'recovered';
+  const unverified = showLiveState && isServiceAlert(item) && status === 'unknown';
   const evidenceAt = recovered || notificationOutcome(item) === 'recovered' ? item.recoveredAt : item.lastOccurredAt;
   const impact = item.requestOutcome && item.requestOutcome !== 'unknown' ? NOTIFICATION_REQUEST_OUTCOME[item.requestOutcome] : undefined;
   return <li data-notification-id={item.id} className="border-b border-token-subtle last:border-b-0">
     <button type="button" aria-current={selected ? 'true' : undefined} onClick={select}
       className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-l-2 px-3 py-3 text-left hover-bg-soft sm:px-4"
       style={{ background: selected ? 'var(--bg-card-hover)' : undefined, borderLeftColor: selected ? 'var(--accent-fg-blue)' : 'transparent' }}>
-      <NotificationIcon item={recovered ? { ...item, level: 'success' } : item} />
+      <NotificationIcon item={recovered ? { ...item, level: 'success' } : item} unverified={unverified} />
       <span className="min-w-0">
         <span className="block break-words text-sm font-semibold leading-5 text-token-primary">{incidentView ? incidentTitle(item) : item.title}</span>
         <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-4 text-token-secondary">
           {environment && <span className="font-medium text-token-primary">环境 {environment}</span>}
           <span>{type.label}</span>
-          {incidentView ? <span>{recovered ? '已验证恢复' : incidentOwnerLabel(item.incidentFollowUp, false)}</span> : <>
+          {incidentView ? <><span>{incidentLineLabel(status, item.incidentFollowUp?.isRecurrence)}</span>
+            <span>{incidentOwnerLabel(item.incidentFollowUp, status)}</span></> : <>
+            {unverified && <span>当前状态待核实</span>}
             {item.incidentId && item.occurrenceCount != null && <span>记录 {item.occurrenceCount} 次</span>}
             {item.status !== 'open' && <span>{item.status === 'closed' ? '已归档' : '已确认'}</span>}
           </>}
@@ -93,18 +99,20 @@ function NotificationDetail({ item, handling, busy, onOpen, onConfirm }: {
   const environment = notificationEnvironment(item);
   const type = getNotificationType(item);
   const incident = isServiceAlert(item);
-  const state = NOTIFICATION_INCIDENT_STATE[item.incidentState ?? 'unknown'] ?? NOTIFICATION_INCIDENT_STATE.unknown;
-  const impact = NOTIFICATION_REQUEST_OUTCOME[item.requestOutcome ?? 'unknown'] ?? NOTIFICATION_REQUEST_OUTCOME.unknown;
+  const lineStatus = incidentLineStatus(item, null);
+  const confirmScopeId = useId();
+  const canViewRecovery = lineStatus === 'recovered' && item.level === 'success' && Boolean(item.actionUrl);
   const facts = [
     { label: incident ? '最近发生' : '通知时间', value: incident ? item.lastOccurredAt : item.createdAt },
     { label: '首次发生', value: item.firstOccurredAt },
-    { label: '恢复时间', value: item.incidentState === 'recovered' ? item.recoveredAt : null },
+    { label: '通知记录时间', value: lineStatus !== 'unknown' && !item.firstOccurredAt && !item.lastOccurredAt ? item.createdAt : null },
   ];
+  const hasOccurrenceCount = item.incidentId && item.occurrenceCount != null;
   return <div className="space-y-4 text-sm">
     <div className="flex items-start gap-3">
-      <NotificationIcon item={item} />
+      <NotificationIcon item={item} unverified={incident && lineStatus === 'unknown'} />
       <div className="min-w-0">
-        <h3 className="break-words text-lg font-semibold leading-snug text-token-primary">{item.title}</h3>
+        <h3 className="break-words text-lg font-semibold leading-snug text-token-primary">{incident ? incidentTitle(item, null) : item.title}</h3>
         <div className="mt-1 text-xs text-token-secondary">
           {environment && <span className="mr-2 font-medium text-token-primary">环境 {environment}</span>}
           <PriorityLabel item={item} />
@@ -113,31 +121,32 @@ function NotificationDetail({ item, handling, busy, onOpen, onConfirm }: {
       </div>
     </div>
 
-    {incident && <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-token-subtle bg-token-card p-3">
-      <div><dt className="text-xs text-token-secondary">请求影响</dt><dd className="mt-1 font-semibold text-token-primary">{impact}</dd></div>
-      <div><dt className="text-xs text-token-secondary">故障状态</dt><dd className="mt-1 font-semibold text-token-primary">{state}</dd></div>
+    {incident && <IncidentStatusSummary item={item} busy={busy} onViewRecovery={canViewRecovery ? onOpen : undefined} />}
+
+    {incident && (hasOccurrenceCount || facts.some(fact => fact.value)) && <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
       {facts.map(fact => fact.value && <div key={fact.label}>
         <dt className="text-xs text-token-secondary">{fact.label}</dt>
         <dd className="mt-1 text-token-primary"><NotificationTime value={fact.value} /></dd>
       </div>)}
-      {item.incidentId && item.occurrenceCount != null && <div>
+      {hasOccurrenceCount && <div>
         <dt className="text-xs text-token-secondary">同一故障累计</dt><dd className="mt-1 font-semibold text-token-primary">{item.occurrenceCount} 次</dd>
-      </div>}
-      {!item.firstOccurredAt && !item.lastOccurredAt && <div>
-        <dt className="text-xs text-token-secondary">通知记录时间</dt><dd className="mt-1 text-token-primary"><NotificationTime value={item.createdAt} /></dd>
       </div>}
     </dl>}
 
     <div className="flex flex-wrap items-center gap-2">
-      {item.actionUrl && <button type="button" className={BUTTON} disabled={busy} onClick={onOpen}
+      {item.actionUrl && !canViewRecovery && <button type="button" className={BUTTON} disabled={busy} onClick={onOpen}
         style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>
         {item.actionLabel || '查看对应对象'} <ArrowUpRight size={15} aria-hidden="true" />
       </button>}
       {item.status === 'open' ? <button type="button" className={`${BUTTON} border border-token-subtle text-token-secondary`}
+        aria-describedby={!item.targetUserId ? confirmScopeId : undefined}
         disabled={busy} onClick={onConfirm} aria-label={`确认通知：${item.title}`}>
         {handling && <MapSpinner size={13} />}确认通知
       </button> : <span className="text-xs text-token-secondary">{item.status === 'closed' ? '已归档' : '已确认通知'}</span>}
     </div>
+    {item.status === 'open' && !item.targetUserId && <p id={confirmScopeId} className="text-xs leading-relaxed text-token-secondary">
+      共享确认 · 会同步给所有有权查看的人
+    </p>}
 
     {item.message && <section aria-label="通知说明">
       <h4 className="mb-1 text-xs font-semibold text-token-primary">{incident ? '情况与处理建议' : '通知内容'}</h4>
@@ -150,10 +159,6 @@ function NotificationDetail({ item, handling, busy, onOpen, onConfirm }: {
     </div>}
     {item.evidenceRequestId && <div className="break-all text-xs text-token-secondary">定位编号 <code className="ml-1 select-all text-token-primary">{item.evidenceRequestId}</code></div>}
 
-    {item.status === 'open' && !item.targetUserId && <p className="text-xs leading-relaxed text-token-secondary">
-      共享通知的确认对所有有权查看者生效。
-    </p>}
-    {incident && item.status === 'handled' && <p className="text-xs text-token-secondary">确认不代表故障已修复。</p>}
   </div>;
 }
 
@@ -240,6 +245,7 @@ export default function MobileNotificationsPage() {
   };
   const showRows = (items: AdminNotificationItem[]) => <ul>{items.map(item => <NotificationRow key={item.id} item={item}
     incidentView={incidentView || view === 'attention' && Boolean(item.incidentFollowUp)}
+    showLiveState={incidentView || view === 'attention'}
     selected={desktop && selected?.id === item.id} select={() => select(item)} />)}</ul>;
   const changeView = (next: View) => {
     if (view === next) return;

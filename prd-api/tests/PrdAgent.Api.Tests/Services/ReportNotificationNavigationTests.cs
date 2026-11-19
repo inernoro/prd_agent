@@ -44,7 +44,7 @@ public sealed class ReportNotificationNavigationTests
             ActionUrl = "/report-agent", Title = "标题不决定对象"
         };
         var method = typeof(NotificationsController).GetMethod("ToNotificationDto", BindingFlags.Static | BindingFlags.NonPublic)!;
-        var dto = method.Invoke(null, new object[] { notification, false })!;
+        var dto = method.Invoke(null, new object[] { notification, false, "owner", false })!;
         Assert.Equal(expected, dto.GetType().GetProperty("actionUrl")!.GetValue(dto));
         Assert.Equal("open", notification.Status);
         Assert.Null(notification.HandledAt);

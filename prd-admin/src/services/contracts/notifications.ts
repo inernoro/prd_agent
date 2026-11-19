@@ -10,12 +10,14 @@ export type NotificationAttachment = {
 export type NotificationIncidentEvidence = {
   outcome: 'request_failed' | 'all_failed' | 'fallback_succeeded' | 'recovered' | 'unknown';
   observedAt: string;
+  routeLabel?: string | null;
   requestId?: string | null;
   actionUrl?: string | null;
 };
 
 export type NotificationIncidentFollowUp = {
   episode: number;
+  isRecurrence?: boolean;
   canAssign: boolean;
   owner?: { displayName?: string | null; isMe: boolean; claimedAt?: string | null } | null;
   evidence: NotificationIncidentEvidence[];

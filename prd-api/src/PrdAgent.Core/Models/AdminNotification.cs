@@ -36,6 +36,7 @@ public class AdminNotification
 
     // 以本轮开启时的投递代次为锚点，同一轮严重程度升级不改变接手身份。
     public long? IncidentEpisode { get; set; }
+    public bool IncidentIsRecurrence { get; set; }
     public string? IncidentOwnerUserId { get; set; }
     public string? IncidentOwnerDisplayName { get; set; }
     public DateTime? IncidentClaimedAt { get; set; }
@@ -85,6 +86,7 @@ public sealed class GatewayIncidentEvidence
     public string RequestKey { get; set; } = string.Empty;
     public string Outcome { get; set; } = string.Empty;
     public DateTime ObservedAt { get; set; }
+    public string? RouteLabel { get; set; }
 }
 
 public class NotificationAttachment

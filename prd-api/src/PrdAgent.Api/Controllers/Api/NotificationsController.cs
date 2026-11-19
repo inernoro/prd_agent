@@ -552,6 +552,7 @@ public sealed class NotificationsController : ControllerBase
             incidentFollowUp = includeFollowUp && GatewayIncidentFollowUp.IsTracked(n) ? new
             {
                 episode = GatewayIncidentFollowUp.Episode(n),
+                isRecurrence = n.IncidentIsRecurrence,
                 canAssign = n.IncidentState == "active" && n.IncidentEpisode.HasValue && n.IncidentEvidence is not null,
                 owner = n.IncidentOwnerUserId is null ? null : new
                 {
@@ -563,6 +564,7 @@ public sealed class NotificationsController : ControllerBase
                 {
                     item.Outcome,
                     item.ObservedAt,
+                    routeLabel = canOpenGateway ? item.RouteLabel : null,
                     requestId = canOpenGateway ? item.RequestId : null,
                     actionUrl = canOpenGateway ? GatewayIncidentFollowUp.RequestUrl(item.RequestId) : null,
                 }),
