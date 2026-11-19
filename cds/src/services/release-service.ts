@@ -2287,38 +2287,37 @@ function isMapProductionRelease(target?: ReleaseTarget): boolean {
 }
 
 function buildMapReadinessCheck(target: ReleaseTarget): string {
-  const readinessUrl = new URL('/llmgw/gw/v1/readyz', target.ssh!.healthcheckUrl);
-  if (readinessUrl.protocol !== 'https:') throw new Error('生产网关探针要求 HTTPS');
+  // The release target URL is editable. Use the running Serving container's
+  // loopback and its own credential for the authenticated part of preflight.
   const program = String.raw`
-import json, re, sys, urllib.error, urllib.request
+import json, re, subprocess
 from pathlib import Path
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        return None
-key = ''
-for line in Path(sys.argv[1]).read_text().splitlines():
-    match = re.fullmatch(r'\s*(?:export\s+)?LLMGW_SERVE_KEY\s*=\s*(.*?)\s*', line)
-    if match:
-        key = match.group(1).strip('"\'')
-if not key:
+containers = subprocess.run(
+    ['docker', 'ps', '--filter', f'label=com.docker.compose.project.working_dir={Path.cwd()}',
+     '--filter', 'label=com.docker.compose.service=llmgw-serve', '--format', '{{.ID}}'],
+    check=True, capture_output=True, text=True, timeout=4).stdout.split()
+if len(containers) != 1 or not re.fullmatch(r'[a-f0-9]{12,64}', containers[0]):
     raise SystemExit(1)
-request = urllib.request.Request(sys.argv[2], headers={'X-Gateway-Key': key})
-try:
-    response = urllib.request.build_opener(NoRedirect).open(request, timeout=6)
-except urllib.error.HTTPError as error:
-    response = error
-with response:
-    status = response.code
-    components = []
-    if status == 503:
-        payload = json.loads(response.read(65536))
-        components = sorted({item['name'] for item in payload.get('components', [])
-            if isinstance(item, dict) and item.get('ready') is False
-            and isinstance(item.get('name'), str) and re.fullmatch(r'[a-z0-9-]{1,70}', item['name'])})
+probe = r'''
+[ -n "$LlmGwServe__ApiKey" ] || exit 1
+printf 'X-Gateway-Key: %s\n' "$LlmGwServe__ApiKey" |
+  curl -q --noproxy '*' --silent --show-error --max-time 5 --header @- \
+    --write-out '\n%{http_code}' http://127.0.0.1:8091/gw/v1/readyz
+'''
+output = subprocess.run(['docker', 'exec', containers[0], 'sh', '-c', probe],
+    check=True, capture_output=True, text=True, timeout=7).stdout
+body, _, code = output.rpartition('\n')
+status = int(code)
+components = []
+if status == 503:
+    payload = json.loads(body)
+    components = sorted({item['name'] for item in payload.get('components', [])
+        if isinstance(item, dict) and item.get('ready') is False
+        and isinstance(item.get('name'), str) and re.fullmatch(r'[a-z0-9-]{1,70}', item['name'])})
 print(json.dumps({'status': status, 'components': components}))
 `;
   const appPath = target.ssh!.appPath || '.';
-  return `cd ${shellQuote(appPath)} && python3 -c ${shellQuote(program)} .env ${shellQuote(readinessUrl.href)}`;
+  return `cd ${shellQuote(appPath)} && python3 -c ${shellQuote(program)}`;
 }
 
 export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {

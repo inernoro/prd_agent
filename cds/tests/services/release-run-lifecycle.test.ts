@@ -208,10 +208,15 @@ describe('ReleaseService 阶段一止血', () => {
       ...target.ssh!, deployCommand: './exec_dep.sh --commit "$CDS_COMMIT_SHA"',
     } });
     const dispatched: string[] = [];
+    const readiness: string[] = [];
     const service = new ReleaseService(stateService, {
       verifyProjectCI: async () => ({ ok: true, message: '同提交通过' }),
       sshExecutor: async (req) => {
         if (req.command.includes('CDS_REPO_ORIGIN=')) return 'CDS_REPO_ORIGIN=https://github.com/owner/map.git\n';
+        if (req.command.includes('label=com.docker.compose.service=llmgw-serve')) {
+          readiness.push(req.command);
+          return '{"status":503,"components":["scenario-capability"]}';
+        }
         if (!isDeployCommand(req.command)) return 'ok';
         dispatched.push(req.command);
         req.onOutput('warn', 'Release failed at stage \'public-product-surface\'; restoring pre-release runtime, gateway and static web...\n');
@@ -226,6 +231,12 @@ describe('ReleaseService 阶段一止血', () => {
     });
     await waitFor(() => isReleaseRunTerminal(stateService.getReleaseRun(run.releaseId)!.status));
     expect(dispatched).toHaveLength(1);
+    expect(readiness).toHaveLength(1);
+    expect(readiness[0]).toContain('http://127.0.0.1:8091/gw/v1/readyz');
+    expect(readiness[0]).not.toContain(new URL(healthUrl).host);
+    expect(stateService.getReleasePreflight(run.preflightId!)?.checks).toContainEqual(expect.objectContaining({
+      id: 'map-readiness', status: 'warn', blocking: false, message: expect.stringContaining('scenario-capability'),
+    }));
     expect(dispatched[0]).toContain("CDS_RELEASE_FORCE_EXTERNAL='1'");
     expect(stateService.getReleaseRun(run.releaseId)).toMatchObject({
       forceReason: '恢复外部依赖中断后的业务', status: 'failed',
