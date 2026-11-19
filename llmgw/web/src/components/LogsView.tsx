@@ -433,9 +433,11 @@ export function LogsView() {
   const setSubtab = (value: LogsSubTab) => updateQuery('view', value === 'upstream' ? 'physical' : value === 'sessions' ? 'sessions' : '');
   const [trendOpen, setTrendOpen] = useState(false);
   const presetKey = ['1d', '7d', '30d'].includes(query.get('range') || '') ? query.get('range')! : '30d';
+  const [refreshToken, setRefreshToken] = useState(0);
   const setPresetKey = (value: string) => {
     const next = new URLSearchParams(location.search);
     next.set('range', value); next.delete('from'); next.delete('to'); next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    setRefreshToken(Date.now());
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const filterModel = query.get('model') || '';
@@ -556,33 +558,31 @@ export function LogsView() {
     window.localStorage.setItem(TABLE_PREFERENCES_KEY, JSON.stringify(tablePreferences));
   }, [tablePreferences]);
 
+  const fixedFrom = query.get('from');
+  const fixedTo = query.get('to');
+  const fixedRange = useMemo(() => (
+    fixedFrom && fixedTo && Number.isFinite(Date.parse(fixedFrom)) && Number.isFinite(Date.parse(fixedTo))
+      ? { from: fixedFrom, to: fixedTo }
+      : null
+  ), [fixedFrom, fixedTo]);
+  const range = useMemo(() => {
+    if (fixedRange) return fixedRange;
+    const preset = TIME_RANGE_PRESETS.find((item) => item.key === presetKey) ?? TIME_RANGE_PRESETS[2];
+    return rangeFromPreset(preset.days, refreshToken || undefined);
+  }, [presetKey, fixedRange, refreshToken]);
+
   const openLogDetail = useCallback((id: string, replace = false) => {
     const query = new URLSearchParams(location.search);
+    query.set('from', range.from); query.set('to', range.to);
     query.set('transaction', id); query.set('anchor', id); query.delete('openRequest');
     navigate({ pathname: location.pathname, search: `?${query.toString()}` }, { replace });
-  }, [location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate, range.from, range.to]);
 
   const closeLogDetail = useCallback(() => {
     const query = new URLSearchParams(location.search);
     query.delete('transaction');
     navigate({ pathname: location.pathname, search: query.size ? `?${query.toString()}` : '' }, { replace: true });
   }, [location.pathname, location.search, navigate]);
-
-  const fixedFrom = query.get('from');
-  const fixedTo = query.get('to');
-  const range = useMemo(() => {
-    if (fixedFrom && fixedTo && Number.isFinite(Date.parse(fixedFrom)) && Number.isFinite(Date.parse(fixedTo))) return { from: fixedFrom, to: fixedTo };
-    const p = TIME_RANGE_PRESETS.find((x) => x.key === presetKey) ?? TIME_RANGE_PRESETS[2];
-    return rangeFromPreset(p.days);
-  }, [presetKey, fixedFrom, fixedTo]);
-
-  // Freeze the selected window in the URL so Back/refresh refers to the same task.
-  useEffect(() => {
-    if (fixedFrom && fixedTo) return;
-    const next = new URLSearchParams(location.search);
-    next.set('from', range.from); next.set('to', range.to);
-    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
-  }, [fixedFrom, fixedTo, range.from, range.to, location.pathname, location.search, navigate]);
 
   const baseParams = useMemo(
     () => ({
@@ -647,10 +647,6 @@ export function LogsView() {
   const loadedPage = useRef(0);
   const rowsKey = useRef<string | null>(null);
   const loadedSessPage = useRef(0);
-  // 刷新令牌：refresh 时递增，驱动首页重取。不用 setPage(1) 是因为 page 已经不是 state，
-  // 而且当页码本来就是 1 时 setState 同值不会触发 effect，刷新会静默失效。
-  const [refreshToken, setRefreshToken] = useState(0);
-
   // 追加时按 id 去重。
   // 服务端分页只要排序不稳定（并列 StartedAt 跨页边界），前后两页就可能重叠；
   // 累加语义下重复行会把 rows.length 顶高，而 hasMore 判据是 `rows.length < total`,
@@ -800,7 +796,16 @@ export function LogsView() {
   }, [subtab, loadSessions, refreshToken]);
   useEffect(() => {
     void loadInsights();
-  }, [loadInsights]);
+  }, [loadInsights, refreshToken]);
+
+  useEffect(() => {
+    if (fixedRange || selectedLogId || anchorId) return;
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') setRefreshToken(Date.now());
+    };
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    return () => document.removeEventListener('visibilitychange', refreshOnReturn);
+  }, [fixedRange, selectedLogId, anchorId]);
 
   const requestMatches = useMemo(() => {
     const requestId = filterRequestId.trim();
@@ -827,12 +832,13 @@ export function LogsView() {
     openLogDetail(matched.id, query.get('openRequest') === '1');
   }, [filterRequestId, selectedLogId, query, openLogDetail, requestLookupReady, requestMatches, total, location.key]);
 
-  // 刷新 = 回到第 1 页重新取并**替换**列表。
-  // 之前写的是 loadList(page)：累加语义下，停在第 2 页时刷新会把第 2 页再追加一遍
-  // （实测 60 行刷成 90 行）。刷新是「重新看一眼现在的样子」，不是「再取一次当前页」。
   const refresh = () => {
-    void loadInsights();
-    setRefreshToken((t) => t + 1);
+    if (fixedRange && !selectedLogId) {
+      const next = new URLSearchParams(location.search);
+      for (const key of ['from', 'to', 'anchor']) next.delete(key);
+      navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+    }
+    setRefreshToken(Date.now());
   };
 
   // ── 单元格渲染 ──

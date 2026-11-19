@@ -18,14 +18,21 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
   dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   dom.window.HTMLElement.prototype.scrollTo = () => {};
   const router = await import('react-router-dom'); globalThis.__journeyRouter = { ...router.default, ...router };
-  const base = { appCallerCode: 'shared-code', requestType: 'chat', platformId: 'upstream', status: 'failed', statusCode: 403, model: 'sample-model', provider: 'example-upstream', operation: 'invoke', startedAt: '2026-11-01T12:00:00Z', upstreamCallCount: 1, error: '账户额度不足', providerAttempts: [] };
+  const base = { appCallerCode: 'shared-code', requestType: 'chat', platformId: 'upstream', status: 'failed', statusCode: 403, model: 'sample-model', provider: 'example-upstream', operation: 'invoke', startedAt: new Date(Date.now() - 60 * 60_000).toISOString(), upstreamCallCount: 1, error: '账户额度不足', providerAttempts: [] };
   globalThis.__journey = { calls: [], rows: [1, 2, 3, 4].map(i => ({ ...base, id: `row-${i}`, requestId: `request-${i}` })) };
   const apiSource = await readFile(new URL('../src/lib/api.ts', import.meta.url), 'utf8');
   const apiNames = [...apiSource.matchAll(/^export (?:async )?function (\w+)/gm)].map(match => match[1]);
   const server = await createServer({ root: process.env.W2_TEST_ROOT || fileURLToPath(new URL('../', import.meta.url)), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent', optimizeDeps: { noDiscovery: true, include: [] }, ssr: { noExternal: ['react-router-dom'] }, plugins: [{ name: 'journey-api', enforce: 'pre', resolveId(id) { if (id === 'react-router-dom') return '\0journey-router'; }, load(id) {
     if (id === '\0journey-router') return Object.keys(globalThis.__journeyRouter).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__journeyRouter.${name};`).join('\n');
     if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
-      if (name === 'getLogs') return 'export async function getLogs(params){globalThis.__journey.calls.push(params);if(globalThis.__journey.delay && params.status==="succeeded")return new Promise(resolve=>{globalThis.__journey.resolve=resolve});const rows=globalThis.__journey.rows.filter(row=>!params.requestId||row.requestId===params.requestId||row.id===params.requestId);return {success:true,data:{items:rows.slice((params.page-1)*2,params.page*2),total:rows.length}}}';
+      if (name === 'getLogs') return `export async function getLogs(params) {
+        globalThis.__journey.calls.push(params);
+        if (globalThis.__journey.delay && params.status === 'succeeded') return new Promise(resolve => { globalThis.__journey.resolve = resolve; });
+        const rows = globalThis.__journey.rows.filter(row =>
+          Date.parse(row.startedAt) >= Date.parse(params.from) && Date.parse(row.startedAt) < Date.parse(params.to)
+          && (!params.requestId || row.requestId === params.requestId || row.id === params.requestId));
+        return { success: true, data: { items: rows.slice((params.page - 1) * 2, params.page * 2), total: rows.length } };
+      }`;
       if (name === 'getLogDetail') return 'export async function getLogDetail(id){return {success:true,data:globalThis.__journey.rows.find(row=>row.id===id)}}';
       if (name === 'getLogTrace') return 'export async function getLogTrace(){return {success:true,data:{ambiguous:false,total:1,page:1,pageSize:50,items:[{log:globalThis.__journey.rows[3],recordKind:"request",sameReceiptRecords:0,attempts:[]}]}}}';
       return `export async function ${name}(){return {success:true,data:{items:[],statuses:['failed','succeeded'],models:['sample-model']}}}`;
@@ -106,6 +113,41 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     await act(async () => globalThis.__journey.navigate(-1));
     assert.match(document.querySelector('#route').textContent, /^\/logs/); assert.doesNotMatch(document.querySelector('#route').textContent, /transaction=/, 'manual detail Back closes one list drill-down');
 
+    const oldTo = Date.now() - 10 * 60_000;
+    const oldWindow = new URLSearchParams({
+      range: '7d', status: 'failed', model: 'sample-model',
+      from: new Date(oldTo - 7 * 24 * 60 * 60_000).toISOString(),
+      to: new Date(oldTo).toISOString(),
+    });
+    globalThis.__journey.rows.unshift({ ...base, id: 'new-failed', startedAt: new Date(oldTo + 1000).toISOString() });
+    await act(async () => globalThis.__journey.navigate('/logs?' + oldWindow));
+    assert.equal(document.querySelector('[data-log-row-id="new-failed"]'), null);
+    await click(document.querySelector('[aria-label="刷新日志"]'));
+    assert.ok(document.querySelector('[data-log-row-id="new-failed"]'), 'refresh advances an old list window and finds the failed request');
+    const refreshed = globalThis.__journey.calls.at(-1);
+    assert.equal(refreshed.page, 1);
+    assert.equal(refreshed.status, 'failed');
+    assert.equal(refreshed.model, 'sample-model');
+    assert.equal(Date.parse(refreshed.to) - Date.parse(refreshed.from), 7 * 24 * 60 * 60_000);
+    assert.doesNotMatch(document.querySelector('#route').textContent, /[?&]to=/, 'preset list URLs stay live');
+
+    const realNow = Date.now;
+    const newRequestAt = Date.parse(refreshed.to) + 1000;
+    globalThis.__journey.rows.unshift({ ...base, id: 'newer-failed', startedAt: new Date(newRequestAt).toISOString() });
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    Date.now = () => newRequestAt + 1000;
+    try {
+      await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange')));
+      assert.ok(document.querySelector('[data-log-row-id="newer-failed"]'), 'returning to the tab queries the new request');
+      await click(document.querySelector('[data-log-row-id="newer-failed"]'));
+      const frozenDetail = document.querySelector('#route').textContent;
+      const detailCalls = globalThis.__journey.calls.length;
+      await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange')));
+      assert.equal(document.querySelector('#route').textContent, frozenDetail);
+      assert.equal(globalThis.__journey.calls.length, detailCalls, 'request details keep their original window when returning to the tab');
+    } finally {
+      Date.now = realNow;
+    }
 
   } finally {
     if (root) await act(async () => root.unmount()); await server.close(); dom.window.close();
