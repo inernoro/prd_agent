@@ -8,7 +8,7 @@ export function withAnnotationRuntime(html: string): string {
   if (!html || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
     || /http-equiv\s*=\s*["']content-security-policy["']/i.test(html)) return html;
   html = html.replace(/<script\b[^>]*\bdata-map-annotations\s*=\s*(["'])[^"']*\1[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=18'), window.location.href);
+  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=19'), window.location.href);
   const safeUrl = url.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   return `${html}<script data-map-annotations="v1" src="${safeUrl}"></script>`;
 }
@@ -46,6 +46,7 @@ const isRect = (value: unknown): value is AnnotationRect => {
 const asRgb = (value: unknown) => Array.isArray(value) && value.length === 3
   && value.every(component => Number.isInteger(component) && component >= 0 && component <= 255)
   ? `rgb(${value.join(', ')})` : null;
+const penPalette = [undefined, 218, 171, 276, 330, 103] as const;
 
 export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, site: { id: string; siteUrl: string } | null,
   onOpen: () => void, contentVersionKey?: string, options?: HostedAnnotationOptions) {
@@ -75,7 +76,24 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const documentScroll = useRef<{ top: number; max: number; predict: boolean } | null>(null);
   const lastDocumentScrollTop = useRef<number | null>(null);
   const wheelSequence = useRef(0);
+  const scrollListeners = useRef(new Set<(top: number) => void>());
+  const subscribeDocumentScroll = useCallback((listener: (top: number) => void) => {
+    scrollListeners.current.add(listener);
+    return () => { scrollListeners.current.delete(listener); };
+  }, []);
   const dualColumn = options?.dualColumn === true;
+  const penHues = useMemo(() => {
+    const byAuthor = new Map<string, number | undefined>();
+    const byThread: Record<string, number | undefined> = Object.create(null);
+    if (dualColumn) threads.filter(thread => thread.anchor && !thread.parentId)
+      .sort((left, right) => left.createdAt?.localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id))
+      .forEach(thread => {
+        const author = thread.authorUserId || thread.authorName || '';
+        if (!byAuthor.has(author)) byAuthor.set(author, penPalette[byAuthor.size % penPalette.length]);
+        byThread[thread.id] = byAuthor.get(author);
+      });
+    return byThread;
+  }, [dualColumn, threads]);
   const suggestSelection = dualColumn && discussionActions?.canReply === true;
   const pinOpensDiscussion = useRef(false); pinOpensDiscussion.current = options?.pinOpensDiscussion === true;
   const nonce = useMemo(() => siteId && siteUrl ? `${crypto.randomUUID()}:${contentVersionKey ?? 'live'}` : '', [siteId, siteUrl, contentVersionKey]);
@@ -94,7 +112,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-init', nonce, siteId, siteUrl: new URL(siteUrl, window.location.href).href,
       previewsHidden: previewsHiddenRef.current, revealedPreviewIds: [...revealedPreviews.current], dismissedPreviewIds: [...dismissedPreviews.current],
       contentVersion: contentVersionKey ?? new URL(siteUrl, window.location.href).searchParams.get('v') ?? '', enabled, displayMode,
-      threads: threads.filter(t => !t.parentId && t.anchor).map(t => ({ id: t.id, anchor: t.anchor, isResolved: t.isResolved })),
+      threads: threads.filter(t => !t.parentId && t.anchor).map(t => ({ id: t.id, anchor: t.anchor, isResolved: t.isResolved, penHue: penHues[t.id] })),
       activeId, pending: !!draftAnchor, dualColumn, suggestSelection,
     }, '*');
   };
@@ -122,6 +140,12 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
         if (!dismissedPreviews.current.has(data.id) && (!previewsHiddenRef.current || revealedPreviews.current.has(data.id))) setPreview(next);
       }
       if (data.type === 'map-annotation-preview-hide') setPreview(null);
+      if (data.type === 'map-annotation-scroll' && dualColumn && documentScroll.current?.predict
+        && Number.isSafeInteger(data.ack) && data.ack >= wheelSequence.current
+        && Number.isFinite(data.top) && data.top >= 0 && data.top < 1e7) {
+        documentScroll.current.top = Math.min(data.top, documentScroll.current.max);
+        scrollListeners.current.forEach(listener => listener(data.top));
+      }
       if (data.type === 'map-annotation-previews' && Array.isArray(data.items)) {
         const scroll = data.documentScroll;
         const validScroll = dualColumn && scroll && Number.isFinite(scroll.top) && Number.isFinite(scroll.max)
@@ -185,7 +209,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     const timeout = window.setTimeout(() => setConnectionChecked(true), 5000);
     return () => { window.removeEventListener('message', receive); window.clearInterval(retry); window.clearTimeout(timeout); };
   }, [frameRef, nonce, siteId, revealPreview, dualColumn]);
-  useEffect(() => { initRef.current(); }, [enabled, displayMode, threads, activeId, draftAnchor, contentVersionKey, dualColumn, suggestSelection]);
+  useEffect(() => { initRef.current(); }, [enabled, displayMode, threads, activeId, draftAnchor, contentVersionKey, dualColumn, suggestSelection, penHues]);
   const notifyFrame = useCallback(() => {
     connected.current = false; documentScroll.current = null; lastDocumentScrollTop.current = null; wheelSequence.current = 0;
     setDocumentScrollTop(null); setReady(false); initRef.current();
@@ -251,11 +275,11 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-dismiss-selection', siteId, nonce }, '*');
   }, [frameRef, siteId, nonce]);
   return { enabled, ready, connectionChecked, displayMode, setDisplayMode, preview, previews, allPreviewsHidden, hasHiddenPreviews: allPreviewsHidden || dismissedPreviewIds.size > 0, hideAllPreviews, showAllPreviews, dismissPreview, openThread, draftAnchor, activeId, missingIds, threads,
-    select, clearDraft, focus, notifyFrame, setThreads, setEnabled, setActiveId, dualColumn, anchorLocations, readingId, column, headerTints,
-    bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection, documentScrollTop, getDocumentScroll, scrollDocument };
+    select, clearDraft, focus, notifyFrame, setThreads, setEnabled, setActiveId, dualColumn, anchorLocations, readingId, column, headerTints, penHues,
+    bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection, documentScrollTop, getDocumentScroll, scrollDocument, subscribeDocumentScroll };
 }
 
 type Annotations = ReturnType<typeof useHostedAnnotations>;
-type ReaderExtras = 'dualColumn' | 'anchorLocations' | 'readingId' | 'column' | 'headerTints' | 'bindDiscussionActions' | 'discussionActions'
-  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'getDocumentScroll' | 'scrollDocument';
+type ReaderExtras = 'dualColumn' | 'anchorLocations' | 'readingId' | 'column' | 'headerTints' | 'penHues' | 'bindDiscussionActions' | 'discussionActions'
+  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'getDocumentScroll' | 'scrollDocument' | 'subscribeDocumentScroll';
 export type HostedAnnotations = Omit<Annotations, ReaderExtras> & Partial<Pick<Annotations, ReaderExtras>>;

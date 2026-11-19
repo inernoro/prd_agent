@@ -6,7 +6,7 @@
   var context = null, host = null, shadow = null, hover = null, frame = 0;
   var currentHover = null, pending = null, lastLocations = '', activeId = null;
   var records = new Map(), structureDirty = true, geometryDirty = true, hoverDirty = true, threadsKey = '';
-  var viewportAnchors = false, previewSent = false, wheelAck = 0;
+  var viewportAnchors = false, wheelAck = 0;
   var pendingBoxes = [], pointer = null;
   var previewId = null, dismissedPreview = null, previewLast = '';
   var previewsHidden = false, revealedPreviews = new Set();
@@ -144,6 +144,8 @@
       + '.pin.active{background:#262526;color:#fff}.pin:focus-visible{outline:2px solid #2563eb}'
       + ':host([data-dual-column]){--mark:#f0aa2833;--mark-selected:#f0aa2870;--mark-line:#d29312;--mark-ring:#a06400;--pin:#fbe1a6;--pin-ink:#5a3a00;--pin-selected:#1b1c1f;--pin-selected-ink:#fff;--paper:#fff;--deemphasis:#181a1f2b}'
       + ':host([data-dual-column][data-dark-paper]){--mark:#f5b94226;--mark-selected:#f5b94254;--mark-line:#dda232;--mark-ring:#f4c35c;--pin:#4b3a16;--pin-ink:#fbde9e;--pin-selected:#f4c35c;--pin-selected-ink:#1a1305;--paper:#17181b;--deemphasis:#ffffff29}'
+      + ':host([data-dual-column]) [data-pen]{--mark:hsl(var(--pen) 73% 49%/.16);--mark-selected:hsl(var(--pen) 73% 49%/.28);--mark-line:hsl(var(--pen) 68% 34%);--mark-ring:hsl(var(--pen) 68% 31%);--pin:hsl(var(--pen) 78% 88%);--pin-ink:hsl(var(--pen) 73% 20%);--pin-selected:var(--mark-ring)}'
+      + ':host([data-dual-column][data-dark-paper]) [data-pen]{--mark:hsl(var(--pen) 80% 72%/.14);--mark-selected:hsl(var(--pen) 80% 72%/.27);--mark-line:hsl(var(--pen) 80% 70%);--mark-ring:hsl(var(--pen) 88% 78%);--pin:hsl(var(--pen) 52% 24%);--pin-ink:hsl(var(--pen) 89% 90%);--pin-selected:var(--mark-ring);--pin-selected-ink:#15171a}'
       + ':host([data-dual-column]) .outline:not(.hover){border:1px solid var(--mark-line);background:var(--mark)}'
       + ':host([data-dual-column]) .highlight{border:0;background:var(--mark);box-shadow:inset 0 -1.5px var(--mark-line);border-radius:2px}'
       + ':host([data-dual-column]) .highlight.active,:host([data-dual-column]) .outline.active{background:var(--mark-selected);box-shadow:0 0 0 1.5px var(--mark-ring);border:0}'
@@ -166,7 +168,23 @@
     box.style.left = '0'; box.style.top = '0';
     box.style.width = rect.width + 'px'; box.style.height = rect.height + 'px';
   }
+  function closedSections(node) {
+    var sections = [];
+    for (var details = node.parentElement?.closest('details:not([open])'); details;
+      details = details.parentElement?.closest('details:not([open])')) {
+      var summary = Array.from(details.children).find(function (child) { return child.tagName === 'SUMMARY'; });
+      if (!summary?.contains(node)) sections.push(details);
+    }
+    return sections;
+  }
+  function canPaintAnchor(node) {
+    if (closedSections(node).length) return false;
+    var style = getComputedStyle(node);
+    return style.visibility === 'visible' && (style.display === 'contents'
+      || node.checkVisibility?.({ visibilityProperty: true, opacityProperty: true }) !== false);
+  }
   function scrollToAnchor(found) {
+    if (context.dualColumn) closedSections(found.el).reverse().forEach(function (section) { section.open = true; });
     var behavior = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'instant' : 'smooth';
     if (!context.dualColumn || nestedScroller(found.el)) {
       found.el.scrollIntoView({ block: 'center', behavior: behavior });
@@ -189,6 +207,12 @@
     post(type || (context.displayMode === 'bubble' ? 'map-annotation-preview-select' : 'map-annotation-activate'), { id: activeId });
     schedule(false);
   }
+  function setPen(node, hue) {
+    var colored = Number.isInteger(hue) && hue >= 0 && hue < 360;
+    node.toggleAttribute('data-pen', colored);
+    if (colored) node.style.setProperty('--pen', String(hue));
+    else node.style.removeProperty('--pen');
+  }
   function reconcile() {
     var keep = new Set();
     (context.threads || []).forEach(function (thread, index) {
@@ -205,6 +229,8 @@
         record = { boxes: [], pin: pin }; records.set(thread.id, record);
       }
       record.thread = thread; record.index = index; record.found = resolve(thread.anchor);
+      setPen(record.pin, thread.penHue);
+      record.boxes.forEach(function (box) { setPen(box, thread.penHue); });
       record.pin.textContent = String(index + 1);
       record.pin.setAttribute('aria-label', '打开批注 ' + (index + 1));
     });
@@ -416,6 +442,9 @@
         record.viewportPositioned = !!found && viewportPositioned(found.el);
         if (record.viewportPositioned) viewportAnchors = true;
         if (!found || !found.el.isConnected) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
+        // Range geometry may still be non-empty inside collapsed details.
+        // Keep the anchor for discussion, but never paint it over unrelated text.
+        if (!canPaintAnchor(found.el)) { updates.push({ record: record, rects: [] }); return; }
         var rect = found.range ? found.range.getBoundingClientRect() : found.el.getBoundingClientRect();
         if (!rect.width || !rect.height) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
         var count = pinCounts.get(found.el) || 0; pinCounts.set(found.el, count + 1);
@@ -441,7 +470,7 @@
       pendingViewportPositioned = false;
       if (pending) {
         var selected = resolve(pending);
-        if (selected) {
+        if (selected && canPaintAnchor(selected.el)) {
           pendingRects = context.dualColumn && selected.range ? Array.from(selected.range.getClientRects()) : [selected.el.getBoundingClientRect()];
           pendingViewportPositioned = viewportPositioned(selected.el);
         }
@@ -460,7 +489,10 @@
       while (record.boxes.length > update.rects.length) record.boxes.pop().remove();
       update.rects.forEach(function (rect, index) {
         var box = record.boxes[index];
-        if (!box) { box = document.createElement('div'); box.setAttribute('data-mark', ''); record.boxes.push(box); shadow.appendChild(box); }
+        if (!box) {
+          box = document.createElement('div'); box.setAttribute('data-mark', ''); setPen(box, record.thread.penHue);
+          record.boxes.push(box); shadow.appendChild(box);
+        }
         box.className = record.found.range ? 'highlight' : 'outline';
         if (record.found.range && update.rects.length > 1) box.classList.add(index === 0 ? 'first' : index === update.rects.length - 1 ? 'last' : 'middle');
         place(box, rect, origin);
@@ -502,21 +534,20 @@
     hover.hidden = !hoverRect; if (hoverRect) place(hover, hoverRect, origin);
     if (context.dualColumn) publishHeaderTints();
     publishReadingPosition();
-    if (!previewSent || geometryDirty) publishPreview(geometryDirty);
+    publishPreview(geometryDirty);
     geometryDirty = false; hoverDirty = false; markerStateDirty = false;
   }
-  function schedule(geometry, sent) {
+  function schedule(geometry) {
     if (geometry !== false) geometryDirty = true;
-    previewSent = !!sent;
     if (!frame) frame = requestAnimationFrame(paint);
   }
   function followDocumentScroll() {
     if (pendingViewportPositioned || viewportAnchors) { schedule(); return; }
     if (context.dualColumn && !geometryDirty && !context.enabled) {
-      // Ordinary anchors already have document coordinates. Send them directly
-      // from the scroll event, before other frame work such as the reading hint.
-      publishPreview(false);
-      schedule(false, true);
+      // Let the host move its existing rail before rebuilding the visible
+      // geometry. This is only valid for anchors that scroll with the document.
+      post('map-annotation-scroll', { top: Math.max(0, scrollY), ack: wheelAck });
+      schedule(false);
     } else if (context.displayMode === 'bubble' || context.dualColumn) schedule(false);
     if (context.enabled) { hoverDirty = true; schedule(false); }
   }
@@ -627,6 +658,9 @@
   });
   window.addEventListener('resize', function () { schedule(); }, { passive: true });
   document.addEventListener('load', function () { schedule(); }, true);
+  document.addEventListener('toggle', function (event) {
+    if (context && event.target instanceof HTMLDetailsElement) schedule();
+  }, true);
   window.addEventListener('hashchange', invalidate);
   var observer = new MutationObserver(function (changes) {
     var relevant = changes.filter(function (record) {

@@ -64,8 +64,10 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const summaryId = useId();
   const canvas = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const scrollingContent = useRef<HTMLDivElement>(null);
   const scrollDocument = annotations.scrollDocument;
   const getDocumentScroll = annotations.getDocumentScroll;
+  const subscribeDocumentScroll = annotations.subscribeDocumentScroll;
   const dock = useRef<HTMLElement>(null);
   const autoPositions = useRef(new Map<string, CachedPlacement>());
   const replies = useRef(new Map<string, MarginReply>());
@@ -138,6 +140,27 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const maxScroll = rail.contentHeight - geometry.height;
   const selectedHeight = annotations.activeId ? geometry.cards[annotations.activeId]?.height : undefined;
   const offset = Math.min(scrollTop, maxScroll);
+  const committedTop = annotations.documentScrollTop;
+  const selectedCard = annotations.activeId ? alignedCards.get(annotations.activeId) : undefined;
+  const selectedTop = selectedCard?.top;
+  const selectedBottom = selectedCard?.bottom;
+  const selectedAnchorTop = entries.find(({ item }) => item.id === annotations.activeId)?.item.rect.top;
+  const canTranslate = dualColumn && visible && !shift && !Object.keys(positions).length
+    && (!selectedCard || (selectedAnchorTop !== undefined && Math.abs(selectedCard.top - selectedAnchorTop) < 1));
+  useLayoutEffect(() => {
+    const layer = scrollingContent.current;
+    if (!layer) return;
+    // A committed layout has already incorporated the same scroll distance.
+    layer.style.transform = '';
+    if (!canTranslate || committedTop == null) return;
+    return subscribeDocumentScroll?.(top => {
+      const dy = committedTop - top;
+      const staysInView = selectedTop === undefined || selectedBottom === undefined
+        || (selectedTop + dy >= 12 && selectedBottom + dy <= geometry.height - 12);
+      layer.style.transform = staysInView && dy && Math.abs(dy) < geometry.height
+        ? `translateY(${dy}px)` : '';
+    });
+  }, [canTranslate, committedTop, geometry.height, selectedTop, selectedBottom, subscribeDocumentScroll]);
   useLayoutEffect(() => {
     const margin = scroller.current;
     const id = annotations.activeId;
@@ -257,6 +280,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     {docked && <section ref={dock} className="annotation-mobile-dock" aria-label="页边批注">
       <div className="annotation-dock-list" hidden={activeInDock}>
         {entries.map(({ item, thread, number, excerpt }) => <button type="button" key={item.id} data-annotation-number={number}
+          data-pen={annotations.penHues?.[item.id]} style={{ '--annotation-pen': annotations.penHues?.[item.id] } as CSSProperties}
           className="annotation-dock-preview" aria-label={`展开批注气泡 ${number}`} aria-describedby={`${summaryId}-${number}`}
           onClick={event => {
             annotations.setActiveId(item.id);
@@ -288,44 +312,48 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
         }}>
         <div className="annotation-bubble-space" style={{ minHeight: rail.contentHeight }}>
           {(canScrollRail || (dualColumn && annotations.documentScrollTop != null)) && <div className="annotation-bubble-scroll-area" style={dualColumn ? { left: marginLeft, right: 'auto', width: 264 } : undefined} />}
-          {wide && <svg className="annotation-bubble-connectors" aria-hidden="true">
-            {placed.map(({ item, placement, size }) => {
-              if (!placement || !size || (placement.side !== 'moved' && annotations.activeId !== item.id)) return null;
-              const { rect } = item;
-              const x = dualColumn && annotations.column ? Math.min(annotations.column.right + 10, marginLeft - 2)
-                : Math.min(rect.left + rect.width + 8, geometry.width - marginWidth + 5);
-              const start = Math.max(0, rect.top) + offset;
-              const end = Math.min(geometry.height, rect.top + rect.height) + offset;
-              const detached = placement.side === 'moved';
-              const from = (start + end) / 2;
-              const link = dualColumn ? connectCard({ pinX: x, pinY: from }, { x: placement.left, top: placement.top,
-                bottom: placement.top + size.height, width: size.width }, detached) : null;
-              const target = link?.x ?? (placement.left > x ? placement.left - 1 : placement.left + size.width + 1);
-              const to = link?.y ?? placement.top + 27;
-              if (dualColumn && (start >= end || to < 0 || to > geometry.height)) return null;
-              const elbow = from + (to - from) / 2;
-              const bend = Math.sign(target - x) * Math.min(16, Math.abs(target - x) / 2);
-              const curve = link?.side === 'top' || link?.side === 'bottom' ? `${x},${elbow} ${target},${elbow}`
-                : `${x + bend},${from} ${target - bend},${to}`;
-              return <g key={item.id} data-active-connector={annotations.activeId === item.id ? '' : undefined} className={detached ? 'is-moved' : undefined}>
-                <path d={`M${x - 4},${start}h4V${end}h-4 M${x},${from} C${curve} ${target},${to}`} />
-                <circle cx={target} cy={to} r={2} />
-              </g>;
-            })}
-          </svg>}
-          {placed.map(({ item, thread, excerpt, number, time, hue, placement, size }) => <BubbleCard key={item.id}
-            thread={thread} excerpt={excerpt} number={number} time={time} hue={hue} annotations={annotations}
-            placement={placement} mobileDock={docked} dualColumn={dualColumn} replyDrafts={replies.current} refreshReplies={refreshReplies}
-            onBack={activeInDock ? returnToDock : undefined}
-            onMove={point => setPositions(previous => {
-              const next = { ...previous };
-              if (point && size) next[item.id] = {
-                left: clamp(point.left, geometry.width - size.width) - item.rect.left,
-                top: clamp(point.top - offset, geometry.height - size.height) - item.rect.top,
-              };
-              else delete next[item.id];
-              return next;
-            })} />)}
+          <div className="annotation-bubble-content" ref={scrollingContent}>
+            {wide && <svg className="annotation-bubble-connectors" aria-hidden="true">
+              {placed.map(({ item, placement, size }) => {
+                if (!placement || !size || (placement.side !== 'moved' && annotations.activeId !== item.id)) return null;
+                const { rect } = item;
+                const x = dualColumn && annotations.column ? Math.min(annotations.column.right + 10, marginLeft - 2)
+                  : Math.min(rect.left + rect.width + 8, geometry.width - marginWidth + 5);
+                const start = Math.max(0, rect.top) + offset;
+                const end = Math.min(geometry.height, rect.top + rect.height) + offset;
+                const detached = placement.side === 'moved';
+                const from = (start + end) / 2;
+                const link = dualColumn ? connectCard({ pinX: x, pinY: from }, { x: placement.left, top: placement.top,
+                  bottom: placement.top + size.height, width: size.width }, detached) : null;
+                const target = link?.x ?? (placement.left > x ? placement.left - 1 : placement.left + size.width + 1);
+                const to = link?.y ?? placement.top + 27;
+                if (dualColumn && (start >= end || to < 0 || to > geometry.height)) return null;
+                const elbow = from + (to - from) / 2;
+                const bend = Math.sign(target - x) * Math.min(16, Math.abs(target - x) / 2);
+                const curve = link?.side === 'top' || link?.side === 'bottom' ? `${x},${elbow} ${target},${elbow}`
+                  : `${x + bend},${from} ${target - bend},${to}`;
+                const hue = annotations.penHues?.[item.id];
+                return <g key={item.id} data-active-connector={annotations.activeId === item.id ? '' : undefined} className={detached ? 'is-moved' : undefined}
+                  data-pen={hue} style={hue === undefined ? undefined : { '--annotation-pen': hue } as CSSProperties}>
+                  <path d={`M${x - 4},${start}h4V${end}h-4 M${x},${from} C${curve} ${target},${to}`} />
+                  <circle cx={target} cy={to} r={2} />
+                </g>;
+              })}
+            </svg>}
+            {placed.map(({ item, thread, excerpt, number, time, hue, placement, size }) => <BubbleCard key={item.id}
+              thread={thread} excerpt={excerpt} number={number} time={time} hue={hue} annotations={annotations}
+              placement={placement} mobileDock={docked} dualColumn={dualColumn} replyDrafts={replies.current} refreshReplies={refreshReplies}
+              onBack={activeInDock ? returnToDock : undefined}
+              onMove={point => setPositions(previous => {
+                const next = { ...previous };
+                if (point && size) next[item.id] = {
+                  left: clamp(point.left, geometry.width - size.width) - item.rect.left,
+                  top: clamp(point.top - offset, geometry.height - size.height) - item.rect.top,
+                };
+                else delete next[item.id];
+                return next;
+              })} />)}
+          </div>
         </div>
       </div>
     </div>
@@ -396,9 +424,10 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const choose = () => annotations.setActiveId(thread.id);
+  const pen = annotations.penHues?.[thread.id];
   return <div className={`annotation-chat-bubble${active ? ' is-active' : ''}`} role={dualColumn && !active ? 'group' : 'dialog'} aria-label={`批注气泡 ${number}`}
-    data-bubble-id={thread.id} data-placement={placement?.side} data-mobile-dock={mobileDock ? '' : undefined}
-    style={{ left: placement?.left, top: placement?.top, visibility: placement ? undefined : 'hidden' }}
+    data-bubble-id={thread.id} data-placement={placement?.side} data-mobile-dock={mobileDock ? '' : undefined} data-pen={pen}
+    style={{ '--annotation-pen': pen, left: placement?.left, top: placement?.top, visibility: placement ? undefined : 'hidden' } as CSSProperties}
     onPointerDown={start}
     onPointerMove={event => {
       const d = drag.current;

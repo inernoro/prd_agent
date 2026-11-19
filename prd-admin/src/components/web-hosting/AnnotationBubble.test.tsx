@@ -58,6 +58,27 @@ it('所有锚点暂时离开视口时保留页边容器，避免宽度反复变�
   expect(container.querySelector('.annotation-bubble-canvas')).toBe(canvas);
 });
 
+it('独立滚动消息先移动气泡与连线的共同容器，布局提交后接管', async () => {
+  const { container, annotations, render } = await setup(1280);
+  annotations.dualColumn = true;
+  annotations.documentScrollTop = 80;
+  let follow = (_top: number) => {};
+  annotations.subscribeDocumentScroll = listener => {
+    follow = listener;
+    return () => {};
+  };
+  await render();
+  const layer = container.querySelector<HTMLElement>('.annotation-bubble-content')!;
+  expect(layer.querySelector('[data-active-connector]')).not.toBeNull();
+  expect(layer.querySelector('[data-bubble-id="two"]')).not.toBeNull();
+  follow(100);
+  expect(layer.style.transform).toBe('translateY(-20px)');
+  annotations.documentScrollTop = 100;
+  annotations.previews = annotations.previews!.map(item => ({ ...item, rect: { ...item.rect, top: item.rect.top - 20 } }));
+  await render();
+  expect(layer.style.transform).toBe('');
+});
+
 it('边缘拖动有限位，滚动暂时离屏再回来保留位置，正文按钮保持可点', async () => {
   const { container, annotations, render } = await setup();
   let card = container.querySelector<HTMLElement>('[data-bubble-id="one"]')!;

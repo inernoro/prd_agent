@@ -18,12 +18,26 @@
 
 .annotation-bubble-canvas[data-review-margin]::before { background: var(--review-margin-paper, var(--bg-base)); }
 .annotation-bubble-canvas[data-review-margin] .annotation-bubble-scroll { overflow: clip; }
+.annotation-bubble-content { position: absolute; inset: 0; }
+.annotation-bubble-canvas[data-review-margin] .annotation-bubble-content { will-change: transform; }
 /* The iframe already supplies live geometry. Only selection animates the cards. */
 .annotation-bubble-canvas[data-review-margin] :is(.annotation-bubble-scroll, .annotation-bubble-space, .annotation-bubble-connectors, .annotation-bubble-connectors *) {
   transition: none;
 }
 .annotation-bubble-canvas[data-review-margin] .annotation-bubble-connectors { stroke: var(--review-margin-ring); stroke-width: 1.5; }
 .annotation-bubble-canvas[data-review-margin] .annotation-bubble-connectors circle { fill: var(--review-margin-ring); }
+:is(.review-workbench, .review-history-window) [data-pen] {
+  --annotation-pen-bg: hsl(var(--annotation-pen) 78% 88%);
+  --annotation-pen-ink: hsl(var(--annotation-pen) 73% 20%);
+  --annotation-pen-ring: hsl(var(--annotation-pen) 68% 31%);
+}
+:is(.review-workbench, .review-history-window)[data-theme='dark'] [data-pen] {
+  --annotation-pen-bg: hsl(var(--annotation-pen) 52% 24%);
+  --annotation-pen-ink: hsl(var(--annotation-pen) 89% 90%);
+  --annotation-pen-ring: hsl(var(--annotation-pen) 88% 78%);
+}
+.annotation-bubble-canvas[data-review-margin] .annotation-bubble-connectors [data-pen] { stroke: var(--annotation-pen-ring, var(--review-margin-ring)); }
+.annotation-bubble-canvas[data-review-margin] .annotation-bubble-connectors [data-pen] circle { fill: var(--annotation-pen-ring, var(--review-margin-ring)); }
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble {
   width: 264px;
   padding: 8px 12px;
@@ -40,7 +54,7 @@
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble.is-active {
   padding: 11px 12px 10px;
   background: var(--review-margin-selected);
-  box-shadow: 0 0 0 1.5px var(--review-margin-ring), var(--review-margin-raised);
+  box-shadow: 0 0 0 1.5px var(--annotation-pen-ring, var(--review-margin-ring)), var(--review-margin-raised);
 }
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble[data-placement='moved']:not(.is-active) {
   box-shadow: var(--review-margin-raised);
@@ -59,6 +73,11 @@
 }
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-author time { color: var(--review-margin-muted); font-size: 12px; }
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-number { height: 18px; min-width: 18px; background: var(--review-margin-pin-bg); color: var(--review-margin-pin-ink); font-size: 11px; }
+:is(.review-workbench, .review-history-window) :is(.annotation-bubble-canvas[data-review-margin], .annotation-mobile-dock, .review-discussion)
+  [data-pen] :is(.annotation-chat-number, .review-anchor-number) {
+  background: var(--annotation-pen-bg);
+  color: var(--annotation-pen-ink);
+}
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble > p { margin-top: 3px; font-size: 13.5px; line-height: 1.6; color: var(--review-margin-secondary); }
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble.is-active > p { margin-top: 5px; -webkit-line-clamp: 6; color: var(--review-margin-ink); }
 .annotation-bubble-canvas[data-review-margin] .annotation-chat-bubble > p.annotation-chat-full { display: block; max-height: min(300px, 36dvh); overflow-y: auto; touch-action: pan-y; }

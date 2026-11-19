@@ -37,7 +37,14 @@ describe('hosted annotation bridge', () => {
       items: [{ id: 'note', rect: { left: 30, top: 80 - top, width: 120, height: 20 } }],
     } }));
     await act(async () => post(0));
+    const listener = vi.fn();
+    const unsubscribe = annotations.subscribeDocumentScroll?.(listener);
     await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', { source: frame, data: {
+        ...config, type: 'map-annotation-scroll', top: 16, ack: 0,
+      } }));
+      expect(listener).toHaveBeenCalledWith(16);
+      expect(annotations.documentScrollTop).toBe(0);
       post(16);
       expect(annotations.documentScrollTop).toBe(16);
       expect(annotations.previews?.[0].rect.top).toBe(64);
@@ -51,6 +58,21 @@ describe('hosted annotation bridge', () => {
       post(27, 1);
       expect(annotations.previews?.[0].rect.top).toBe(53);
     });
+    unsubscribe?.();
+  });
+
+  it('assigns one pen per author and keeps author identities out of the iframe', async () => {
+    await mount(true);
+    const frame = container.querySelector('iframe')!.contentWindow!;
+    const send = vi.spyOn(frame, 'postMessage');
+    const thread = (id: string, authorUserId: string, createdAt: string) => ({ id, authorUserId, createdAt, anchor: { kind: 'element' } }) as HostedSiteCommentDto;
+    await act(async () => annotations.setThreads([
+      thread('one', 'private-author-1', '2026-11-10'), thread('two', 'private-author-2', '2026-11-11'), thread('three', 'private-author-1', '2026-11-12'),
+    ]));
+    expect(annotations.penHues).toEqual({ one: undefined, two: 218, three: undefined });
+    const config = send.mock.calls.at(-1)![0];
+    expect(config.threads[1].penHue).toBe(218);
+    expect(JSON.stringify(config)).not.toContain('private-author');
   });
 
   it('keeps comment text in the host and accepts only finite preview geometry from its frame', async () => {

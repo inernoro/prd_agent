@@ -546,8 +546,10 @@ export default function CommentsSection(props: Props) {
       }
     };
     const quote = comment.anchor?.text || (comment.anchor && elementLabel(comment.anchor.tagName));
+    const pen = props.readerLayout && !otherVersions ? annotations?.penHues?.[comment.id] : undefined;
     const anchorAction = comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready}
-      className="review-anchor-quote" title={`定位原文：${quote}`}>
+      className="review-anchor-quote" title={`定位原文：${quote}`}
+      data-pen={pen} style={pen === undefined ? undefined : { '--annotation-pen': pen } as CSSProperties}>
       <span className="review-anchor-number">{otherVersions ? <History size={13} /> : number}</span>
       <span className="review-anchor-label">{props.readerLayout ? `「${quote}」` : props.splitLayout ? quote : '原文'}</span>
       {props.readerLayout && location && <span className="review-thread-paragraph">第 {location.paragraph} 段</span>}

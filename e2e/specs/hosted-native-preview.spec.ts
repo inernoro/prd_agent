@@ -535,14 +535,16 @@ test.describe('长文批注连续跟随与菜单外点', () => {
   const title = '长文批注跟随样例';
   const content = '这是一条需要保留完整内容的长意见。'.repeat(3000);
   const html = `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font:16px/1.7 system-ui}main{padding:32px}p{margin:12px 0}</style><main><h1>${title}</h1><p id="note-one">定位段落一</p><p id="note-two">定位段落二</p>${'<p>长文压力段落，滚动时不应遍历全部正文寻找位置。</p>'.repeat(10000)}</main></html>`;
-  async function open(page: Page, denseCount = 0, compactRange = false) {
+  async function open(page: Page, denseCount = 0, compactRange = false, authors?: string[]) {
     const sourceHtml = compactRange
       ? '<meta name="viewport" content="width=device-width,initial-scale=1"><p id="note-one" style="margin:22px 42px 0 16px;font:16px/20px sans-serif">上一行' + '文字'.repeat(8) + '<br>批注目标' + '继续'.repeat(7) + '</p>'
       : html;
     const site = { id: 'qa-follow', title, siteUrl: 'https://hosting.example/sites/qa-follow/index.html?v=20000', entryFile: 'index.html', contentShape: 'self-contained-html', viewerCanEdit: false, totalSize: sourceHtml.length, fileCount: 1, files: [], tags: [] };
     const version = { id: 'v2', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, entryFile: site.entryFile, siteUrl: site.siteUrl, contentShape: site.contentShape };
     const names = denseCount ? ['one', ...Array.from({ length: denseCount - 1 }, (_, index) => 'dense-' + index)] : ['one', 'two'];
-    const comments = names.map((name, index) => ({ id: name, siteId: site.id, revisionId: 'v2', contentVersion: '20000', authorName: '复验作者', content, createdAt: '2026-11-17T00:00:00Z', anchor: { kind: compactRange ? 'text' : 'element', pagePath: '/sites/qa-follow/index.html', selector: '#note-' + (denseCount ? 'one' : name), tagName: 'p', text: compactRange ? '批注目标' : '定位段落' + (index + 1), elementText: '定位段落' + (index + 1), prefix: '', suffix: '', contentVersion: '20000' } }));
+    const comments = names.map((name, index) => ({ id: name, siteId: site.id, revisionId: 'v2', contentVersion: '20000',
+      authorUserId: authors?.[index], authorName: authors?.[index] ?? '复验作者', content, createdAt: new Date(Date.UTC(2026, 10, 17, 0, index)).toISOString(),
+      anchor: { kind: compactRange ? 'text' : 'element', pagePath: '/sites/qa-follow/index.html', selector: '#note-' + (denseCount ? 'one' : name), tagName: 'p', text: compactRange ? '批注目标' : '定位段落' + (index + 1), elementText: '定位段落' + (index + 1), prefix: '', suffix: '', contentVersion: '20000' } }));
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname;
       if (path.endsWith('/annotation-runtime.js')) { await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') }); return; }
@@ -582,6 +584,48 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     test.use({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: mobile, hasTouch: mobile,
       contextOptions: { reducedMotion: 'reduce' } });
     const tap = async (locator: ReturnType<Page['getByRole']>) => mobile ? locator.tap() : locator.click();
+    if (!mobile) test('折叠正文时不留下选区或气泡，点讨论引用可展开并恢复对应标注', async ({ page }) => {
+      const frame = await open(page, 1, true);
+      const pin = frame.getByRole('button', { name: '打开批注 1', exact: true });
+      await expect(pin).toBeVisible();
+      await frame.locator('#note-one').evaluate(paragraph => {
+        const details = document.createElement('details');
+        const title = document.createElement('summary');
+        title.textContent = '折叠区';
+        paragraph.before(details); details.append(title, paragraph);
+      });
+      await expect(pin).toHaveCount(0);
+      await expect(frame.locator('[data-map-annotation-layer] .highlight:not([hidden])')).toHaveCount(0);
+      await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
+      await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
+      await page.locator('.review-anchor-quote').click();
+      await expect(frame.locator('details')).toHaveJSProperty('open', true);
+      await expect(pin).toBeVisible();
+      await frame.getByText('折叠区', { exact: true }).click();
+      await expect(pin).toHaveCount(0);
+      await expect(frame.locator('[data-map-annotation-layer] .highlight:not([hidden])')).toHaveCount(0);
+    });
+    if (!mobile) test('两位作者的笔色在正文、气泡和连线成组，深浅主题均可辨识', async ({ page }, testInfo) => {
+      await page.addInitScript(() => { localStorage.setItem('map-mobile-theme-v2', JSON.stringify({ state: { mode: 'system' }, version: 0 })); });
+      const frame = await open(page, 0, false, ['林岚', '周岐']);
+      await expect(frame.getByRole('button', { name: '打开批注 1', exact: true })).not.toHaveAttribute('data-pen', '');
+      const secondPin = frame.getByRole('button', { name: '打开批注 2', exact: true });
+      await expect(secondPin).toHaveAttribute('data-pen', '');
+      const theme = page.locator('.review-workbench');
+      for (const mode of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme: mode });
+        await expect(theme).toHaveAttribute('data-theme', mode);
+        const first = page.locator('[data-bubble-id="one"] .annotation-chat-number');
+        const second = page.locator('[data-bubble-id="two"] .annotation-chat-number');
+        const blue = mode === 'light' ? 'rgb(201, 218, 248)' : 'rgb(29, 53, 93)';
+        await expect(second).toHaveCSS('background-color', blue);
+        await expect(first).not.toHaveCSS('background-color', blue);
+        await page.screenshot({ path: testInfo.outputPath(`author-pens-${mode}.png`) });
+      }
+      await secondPin.click();
+      await expect(page.locator('[data-active-connector]')).toHaveAttribute('data-pen', '218');
+      await expect(page.getByRole('dialog', { name: '批注气泡 2' })).toHaveAttribute('data-pen', '218');
+    });
     if (!mobile) test('页边宽度不随可见锚点增减，右侧绝对定位内容不触发缩放闪烁', async ({ page }) => {
       await page.setViewportSize({ width: 1000, height: 900 });
       const frame = await open(page);
