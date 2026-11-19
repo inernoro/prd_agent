@@ -69,6 +69,8 @@ public static class TaskAdmissionPolicies
         Add("DocumentStoreController", "CreativePublishEntry SelectionRewrite GenerateSubtitle TranscribeEntry RestyleTranscribeRun Reprocess SendReprocessChat GenerateWritingDraft StartRecordingUpload CompleteRecordingUpload RetryRecordingArchive LiveTranscription StartAutoLink", new[] { "document-store.", "transcript-agent.", "prd-agent-web.web-hosting.", "md-to-ppt-agent." });
         Add("ShortVideoMaterialController", "CreateRun", new[] { "video-agent.", "workflow-agent.", "transcript-agent.", "document-store." });
         Add("DesignArtifactsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
+        Add("DesignArtifactsController", "RestartRun", new[] { "prd-agent-web.web-hosting." }, maxCalls: 256,
+            timing: TaskAdmissionTiming.AuthenticatedPaidBranch);
         Add("HostedSiteEditsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
         Add("WebPageAskController", "RegenerateAskQuestions AskStream AskStreamByShare", new[] { "prd-agent-web.web-hosting." });
         Add("WeeklyPosterController", "Autopilot AutopilotStream GeneratePageImage GenerateImagesRun", new[] { "report-agent.", "visual-agent." });

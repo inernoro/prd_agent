@@ -106,11 +106,15 @@ public sealed class TaskAdmissionPolicyTests
             "PrdAgent.Api.Controllers.Api.LabController.SimulateMessage",
             "PrdAgent.Api.Controllers.GroupsController.Create",
             "PrdAgent.Api.Controllers.Api.DocumentStoreController.UpdateEntryContent",
+            "PrdAgent.Api.Controllers.Api.DesignArtifactsController.RestartRun",
             reportController + ".CreateReport",
             "PrdAgent.Api.Controllers.Api.DefectAgentController.StreamScores",
             "PrdAgent.Api.Controllers.Api.ReviewAgentController.StreamReviewResult",
             "PrdAgent.Api.Controllers.Api.MarketplaceSkillsController.Upload",
         }, onDemand);
+        var restart = TaskAdmissionPolicies.Find("PrdAgent.Api.Controllers.Api.DesignArtifactsController", "RestartRun")!;
+        Assert.NotEmpty(restart.AppCallers);
+        Assert.All(restart.AppCallers, caller => Assert.StartsWith("prd-agent-web.web-hosting.", caller));
         // 上传与重置评审仅处理普通数据，不能在模型调用之前要求治理库可用。
         Assert.Null(TaskAdmissionPolicies.Find("PrdAgent.Api.Controllers.Api.ReviewAgentController", "CreateSubmission"));
         Assert.Null(TaskAdmissionPolicies.Find("PrdAgent.Api.Controllers.Api.ReviewAgentController", "RerunSubmission"));

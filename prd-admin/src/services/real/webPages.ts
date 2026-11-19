@@ -2028,6 +2028,7 @@ export async function restartDesignArtifactRun(
 ): Promise<ApiResponse<DesignArtifactRunSummary>> {
   return apiRequest(api.designArtifacts.restart(runId), {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: { idempotencyKey },
   });
 }

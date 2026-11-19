@@ -6,11 +6,12 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Middleware;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
-using PrdAgent.Api.Middleware;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -649,6 +650,12 @@ public sealed class DesignArtifactsController : ControllerBase
 
         var now = DateTime.UtcNow;
         var restarted = CloneForRestart(source, capability, deterministicId, keyHash, now);
+        if (isDelivery)
+        {
+            var admission = HttpContext.RequestServices.GetRequiredService<TaskAdmissionService>();
+            var execution = await admission.AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
+            restarted.TaskPermitId = execution.PermitId;
+        }
         if (isPresentationQualityRepair)
         {
             var candidate = source.LatestPreviewHtml!.Trim();
@@ -698,6 +705,7 @@ public sealed class DesignArtifactsController : ControllerBase
 
         var meta = new RunMeta
         {
+            TaskPermitId = restarted.TaskPermitId,
             RunId = restarted.Id,
             Kind = RunKinds.DesignArtifact,
             Status = RunStatuses.Queued,
