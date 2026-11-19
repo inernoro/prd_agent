@@ -737,6 +737,10 @@ select.atb-input { cursor: pointer; }
 
 .atb-check-circle--ghost { border-style: dashed; cursor: default; }
 
+/* 保留草稿列表的完整高度，由外层浮层滚动，避免列表的 overflow: hidden 裁掉后续草稿。 */
+.atb-draft-list { flex-shrink: 0; }
+.atb-import-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+
 .atb-draft { align-items: flex-start; padding-top: 4px; padding-bottom: 4px; }
 /* 候选行的标题：可换行、看得全。
    上一版是 input + min-width:0 + ellipsis，那是修错了方向 —— input 天生单行，
@@ -745,12 +749,18 @@ select.atb-input { cursor: pointer; }
 .atb-draft .atb-row__body { min-width: 0; }
 
 .atb-inline-input--wrap {
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 3px 6px;
+  box-sizing: border-box;
   resize: none;
   overflow: hidden;
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.atb-inline-input--wrap:focus-visible { box-shadow: var(--ring-focus); }
 .atb-draft--off { opacity: 0.45; }
 .atb-draft--off .atb-inline-input { text-decoration: line-through; }
 

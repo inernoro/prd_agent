@@ -1,4 +1,3 @@
-import { HomeTaskQueue } from '@/components/workspace/HomeTaskQueue';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Search,
@@ -826,7 +825,6 @@ export default function AgentLauncherPage() {
               </nav>
             )}
 
-            {!query && (isRoot || permissions.includes('super') || permissions.includes('active-tasks.use')) && <HomeTaskQueue />}
             {!query && (
               <div className="home-desk-deck-body">
                 <section className="home-desk-col" aria-labelledby="home-continue-heading">

@@ -18,6 +18,8 @@ export interface DraftTaskListProps {
   rows: DraftRow[];
   onToggle: (key: string) => void;
   onRename: (key: string, title: string) => void;
+  disabled?: boolean;
+  focusKey?: string;
   /** 还在流式吐的时候给一行骨架，别让人以为没了 */
   streaming?: boolean;
 }
@@ -29,15 +31,16 @@ function dueText(iso?: string | null): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-export function DraftTaskList({ rows, onToggle, onRename, streaming }: DraftTaskListProps) {
+export function DraftTaskList({ rows, onToggle, onRename, disabled, focusKey, streaming }: DraftTaskListProps) {
   return (
-    <div className="atb-list" role="list">
+    <div className="atb-list atb-draft-list" role="list">
       {rows.map((r) => (
         <div className={`atb-row atb-draft${r.picked ? '' : ' atb-draft--off'}`} role="listitem" key={r.key}>
           <button
             className={`atb-check-circle${r.picked ? ' atb-check-circle--on' : ''}`}
-            aria-label={r.picked ? `不要这条：${r.title}` : `要这条：${r.title}`}
+            aria-label={`${r.picked ? '不要这条' : '要这条'}：${r.title.trim() || '未命名任务'}`}
             aria-pressed={r.picked}
+            disabled={disabled}
             onClick={() => onToggle(r.key)}
           >
             {r.picked && (
@@ -56,12 +59,16 @@ export function DraftTaskList({ rows, onToggle, onRename, streaming }: DraftTask
               rows={1}
               value={r.title}
               aria-label="任务标题"
-              ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
-              onChange={(e) => {
-                e.target.style.height = 'auto';
-                e.target.style.height = `${e.target.scrollHeight}px`;
-                onRename(r.key, e.target.value);
+              placeholder="输入任务标题"
+              disabled={disabled}
+              autoFocus={r.key === focusKey}
+              ref={(el) => {
+                if (!el) return;
+                el.style.height = 'auto';
+                const borderHeight = el.offsetHeight - el.clientHeight;
+                el.style.height = `${el.scrollHeight + borderHeight}px`;
               }}
+              onChange={(e) => onRename(r.key, e.target.value)}
             />
             {(r.from || r.why) && (
               <span className="atb-row__sub">
