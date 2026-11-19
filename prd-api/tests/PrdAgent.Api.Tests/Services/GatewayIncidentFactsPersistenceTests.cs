@@ -355,12 +355,11 @@ public sealed class GatewayIncidentFactsPersistenceTests
         attempt.Reason = "outcome_unknown; recovery=stop; response interrupted";
         log.ProviderAttempts = [attempt];
         var signal = Assert.Single(LlmGatewayIncidentPolicy.BuildSignals([log]), x => x.IsFailure);
-        var rawVersion = Assert.Single(signal.FailureObservations).Version;
         var corrected = new AdminNotification {
             Id = "policy-corrected-before-old-worker", Key = "llmgw-upstream:" + signal.Fingerprint,
             Source = "gateway-alert", Section = AdminNotificationSections.Admin, Status = "handled",
             IncidentId = signal.Fingerprint, IncidentState = "active", RequestOutcome = "unknown",
-            GatewaySignalVersion = rawVersion + ":facts-0002", EvidenceRequestId = log.RequestId,
+            GatewaySignalVersion = signal.SignalVersion, EvidenceRequestId = log.RequestId,
             OccurrenceCount = 182, FirstOccurredAt = log.StartedAt, LastOccurredAt = attempt.EndedAt,
             UpdatedAt = log.StartedAt.AddDays(-1), PushEpisode = 7, ExpiresAt = null,
         };

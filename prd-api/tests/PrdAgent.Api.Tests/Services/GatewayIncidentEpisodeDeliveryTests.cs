@@ -32,7 +32,7 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         Assert.Equal("closed", (await f.FaultAsync()).Status);
         Assert.Equal(1, await f.Db.AdminNotifications.CountDocumentsAsync(n => n.Level == "success"));
         f.Clock.Advance(TimeSpan.FromMinutes(6)); await f.DispatchAsync();
-        Assert.Equal(2, f.Http.Calls);
+        Assert.Equal(1, f.Http.Calls);
         await f.LogAsync("recurrence", "failed", -60);
         await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => f.SweepAsync()));
         var reopened = await f.FaultAsync();
@@ -42,7 +42,7 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         f.Clock.Advance(TimeSpan.FromMinutes(31));
         await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => f.DispatchAsync()));
         await f.SweepAsync(); await f.DispatchAsync();
-        Assert.Equal(3, f.Http.Calls);
+        Assert.Equal(2, f.Http.Calls);
         var receipts = await f.Db.AdminPushDeliveryLogs.Find(l => l.NotificationId == original.Id).ToListAsync();
         Assert.Equal(2, receipts.Count);
         Assert.All(receipts, l => Assert.True(l.Success));
@@ -82,7 +82,7 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => f.SweepAsync()));
         Assert.Equal(1, (await f.FaultAsync()).PushEpisode);
         f.Clock.Advance(TimeSpan.FromMinutes(31)); await f.DispatchAsync(); await f.DispatchAsync();
-        // Recovery and current fault share one route and are sent in one batch.
+        // Recovery remains in history; the new fault gets its own delivery.
         Assert.Equal(1, f.Http.Calls);
         Assert.Contains(fault.Id + ":episode:1", (await f.Db.AdminPushDeliveryLogs.Find(l => l.Success && l.Id != "legacy-0").ToListAsync())
             .SelectMany(l => l.CoveredNotificationDeliveryKeys));

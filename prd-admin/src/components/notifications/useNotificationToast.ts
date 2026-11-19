@@ -16,14 +16,16 @@ type Options = {
 export function useNotificationToast({ notifications, dismissed, paused, snoozed, collapsed, onDismiss, onCollapsedChange }: Options) {
   const observed = useRef(new Set<string>());
   const pendingWake = useRef(false);
+  const attention = useMemo(() => notifications.filter(item => item.source !== 'gateway-alert'
+    || item.incidentState !== 'recovered' && (item.level === 'error' || item.level === 'warning')), [notifications]);
   const current = useMemo(() => {
-    const pending = notifications.filter(item => !dismissed.has(notificationToastKey(item)));
-    return pending.find(item => item.level === 'error') ?? pending[0];
-  }, [notifications, dismissed]);
+    const pending = attention.filter(item => !dismissed.has(notificationToastKey(item)));
+    return pending.find(item => item.level === 'error') ?? pending.find(item => item.level === 'warning') ?? pending[0];
+  }, [attention, dismissed]);
   const currentKey = current ? notificationToastKey(current) : undefined;
 
   useEffect(() => {
-    for (const item of notifications) {
+    for (const item of attention) {
       const key = notificationToastKey(item);
       if (observed.current.has(key)) continue;
       observed.current.add(key);
@@ -33,7 +35,7 @@ export function useNotificationToast({ notifications, dismissed, paused, snoozed
       pendingWake.current = false;
       onCollapsedChange(false);
     }
-  }, [notifications, dismissed, snoozed, onCollapsedChange]);
+  }, [attention, dismissed, snoozed, onCollapsedChange]);
 
   useEffect(() => {
     if (!currentKey || paused || snoozed || collapsed) return;

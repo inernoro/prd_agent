@@ -70,7 +70,7 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         await TraceAsync(f, "after-stale-failure", false);
         Assert.Equal("closed", (await f.FaultAsync()).Status);
         Assert.Equal(0, (await f.FaultAsync()).PushEpisode);
-        Assert.Equal(2, f.Http.Calls);
+        Assert.Equal(1, f.Http.Calls);
     }
 
     [Fact]
