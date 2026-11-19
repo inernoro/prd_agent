@@ -99,13 +99,13 @@ public static class UpstreamProxy
         return null;
     }
 
-    public static SocketsHttpHandler CreateHandler(ResolvedUpstreamProxy proxy, bool publicOnly)
+    public static SocketsHttpHandler CreateHandler(ResolvedUpstreamProxy proxy, bool publicOnly, TimeSpan? connectTimeout = null)
     {
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
             UseProxy = proxy.Mode is "custom" or "system",
-            ConnectTimeout = TimeSpan.FromSeconds(15),
+            ConnectTimeout = connectTimeout ?? TimeSpan.FromSeconds(15),
         };
         if (proxy.Mode == "custom")
         {
