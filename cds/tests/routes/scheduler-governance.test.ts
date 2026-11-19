@@ -28,6 +28,14 @@ describe('真实HTTP固定授权与期限', () => {
     app.use((req, _res, next) => {
       if (req.headers['x-fixture-role'] === 'owner') Object.assign(req, { _cdsBasicHumanAuth: true, cdsUser: { username: 'owner', isSystemOwner: true } });
       if (req.headers['x-fixture-role'] === 'other-project') Object.assign(req, { cdsProjectKey: { projectId: 'other' } });
+      const role = req.headers['x-fixture-role'];
+      if (role === 'project-first' || role === 'project-second') {
+        Object.assign(req, { cdsProjectKey: { projectId: 'default', keyId: role } });
+      }
+      if (role === 'global-first' || role === 'global-second') {
+        Object.assign(req, { cdsAccess: { keyId: role, access: { projects: 'all' } } });
+      }
+      if (role === 'session-first' || role === 'session-second') Object.assign(req, { _aiSession: { id: role } });
       next();
     });
     app.use('/api', createBranchRouter({ stateService: state, worktreeService: new WorktreeService(shell, root),
@@ -42,13 +50,13 @@ describe('真实HTTP固定授权与期限', () => {
   }
 
   it('AI空body默认24小时；AI伪造永久授权被拒绝；旧保护不能被AI覆盖/解除', async () => {
-    const created = await request('/scheduler/pin/branch'); expect(created.status).toBe(200);
+    const created = await request('/scheduler/pin/branch', {}, 'project-first'); expect(created.status).toBe(200);
     const payload = await created.json(); expect(payload.pin.kind).toBe('temporary');
     expect(Date.parse(payload.pin.expiresAt) - Date.parse(payload.pin.createdAt)).toBe(86400000);
-    expect((await request('/scheduler/pin/branch', { ...permanent, cdsUser: { isSystemOwner: true } })).status).toBe(400);
+    expect((await request('/scheduler/pin/branch', { ...permanent, cdsUser: { isSystemOwner: true } }, 'project-first')).status).toBe(400);
     state.getBranch('branch')!.userPin = undefined;
-    expect((await request('/scheduler/unpin/branch')).status).toBe(403);
-    expect((await request('/scheduler/pin/branch')).status).toBe(403);
+    expect((await request('/scheduler/unpin/branch', {}, 'project-first')).status).toBe(403);
+    expect((await request('/scheduler/pin/branch', {}, 'project-first')).status).toBe(403);
     expect(state.getBranch('branch')!.pinnedByUser).toBe(true);
   });
 
@@ -62,6 +70,29 @@ describe('真实HTTP固定授权与期限', () => {
     expect(snapshot.protections).toContainEqual(expect.objectContaining({ source: 'user', active: true,
       pin: expect.objectContaining({ kind: 'permanent', authorizationRef: permanent.authorizationRef }) }));
     expect(state.getActivityLogs('default').some(log => log.type === 'scheduler-pin' && log.pin?.authorizationRef === permanent.authorizationRef)).toBe(true);
+    expect((await request('/scheduler/unpin/branch')).status).toBe(403);
+    expect((await request('/scheduler/unpin/branch', {}, 'owner')).status).toBe(200);
+  });
+
+  it.each([
+    ['project-first', 'project-second', 'project-automation:default:project-first'],
+    ['global-first', 'global-second', 'global-automation:global-first'],
+    ['session-first', 'session-second', 'automation-session:session-first'],
+  ])('按认证层的凭据身份维护临时固定（%s）', async (first, second, actor) => {
+    const created = await request('/scheduler/pin/branch', { ttlSeconds: 60 }, first);
+    expect(created.status).toBe(200);
+    expect((await created.json()).pin.actor).toBe(actor);
+    expect((await request('/scheduler/pin/branch', { ttlSeconds: 120 }, second)).status).toBe(403);
+    expect((await request('/scheduler/unpin/branch', {}, second)).status).toBe(403);
+    expect((await request('/scheduler/pin/branch', { ttlSeconds: 120 }, first)).status).toBe(200);
+    expect((await request('/scheduler/unpin/branch', {}, first)).status).toBe(200);
+  });
+
+  it('未确认身份的临时固定仍有期限，通用身份无权接管已有固定', async () => {
+    const created = await request('/scheduler/pin/branch', { ttlSeconds: 60 });
+    expect(created.status).toBe(200);
+    const { pin } = await created.json();
+    expect(Date.parse(pin.expiresAt) - Date.parse(pin.createdAt)).toBe(60000);
     expect((await request('/scheduler/unpin/branch')).status).toBe(403);
     expect((await request('/scheduler/unpin/branch', {}, 'owner')).status).toBe(200);
   });

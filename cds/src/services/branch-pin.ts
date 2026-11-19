@@ -1,16 +1,31 @@
 import type { BranchPin } from '../types.js';
+import type { ClusterIdentityContext } from './cluster-identity-context.js';
 import { isAuthenticatedHuman, isHumanSystemOwner } from './human-auth.js';
 
 export const DEFAULT_PIN_SECONDS = 24 * 3600;
 export const MAX_PIN_SECONDS = 7 * 24 * 3600;
+const UNATTRIBUTED_PIN_ACTOR = 'global-automation:unattributed';
 export interface PinRequest { permanent?: unknown; ttlSeconds?: unknown; reason?: unknown; authorizationRef?: unknown }
 
 /** Protection receipts use authenticated middleware stamps, never impersonation/trigger headers. */
 export function branchPinActor(request: unknown): string {
-  const auth = request as { cdsUser?: { id?: string; username?: string; githubLogin?: string }; cdsProjectKey?: { id?: string; projectId?: string }; cdsAgentGlobalKey?: { id?: string } };
-  if (isAuthenticatedHuman(request)) return `human:${auth.cdsUser?.id || auth.cdsUser?.username || auth.cdsUser?.githubLogin || 'authenticated'}`;
-  if (auth.cdsProjectKey) return `project-automation:${auth.cdsProjectKey.projectId || 'unknown'}:${auth.cdsProjectKey.id || 'unattributed'}`;
-  return `global-automation:${auth.cdsAgentGlobalKey?.id || 'unattributed'}`;
+  const auth = request as {
+    cdsUser?: ClusterIdentityContext['user'];
+    cdsProjectKey?: ClusterIdentityContext['projectKey'];
+    cdsAccess?: ClusterIdentityContext['access'];
+    _aiSession?: ClusterIdentityContext['aiSession'];
+  };
+  if (isAuthenticatedHuman(request)) {
+    const identity = auth.cdsUser?.id || auth.cdsUser?.username || auth.cdsUser?.githubLogin;
+    return identity ? `human:${identity}` : UNATTRIBUTED_PIN_ACTOR;
+  }
+  if (auth.cdsAccess?.keyId) return `global-automation:${auth.cdsAccess.keyId}`;
+  if (auth.cdsProjectKey?.projectId && auth.cdsProjectKey.keyId) {
+    return `project-automation:${auth.cdsProjectKey.projectId}:${auth.cdsProjectKey.keyId}`;
+  }
+  const sessionId = auth._aiSession?.id;
+  // A shared static credential stamp does not distinguish between credential holders.
+  return sessionId && sessionId !== 'static' ? `automation-session:${sessionId}` : UNATTRIBUTED_PIN_ACTOR;
 }
 
 /** Invalid or missing old metadata never withdraws protection. */
@@ -40,7 +55,8 @@ export function createBranchPin(body: PinRequest, request: unknown, actor: strin
 
 /** Agent cannot replace/revoke a legacy, permanent, or another actor's protection. */
 export function mayChangePin(enabled: boolean | undefined, pin: BranchPin | undefined, request: unknown, actor: string): boolean {
-  return !enabled || isHumanSystemOwner(request) || Boolean(!pinNeedsReview(pin) && pin?.kind === 'temporary' && pin.actor === actor);
+  return !enabled || isHumanSystemOwner(request) || Boolean(actor !== UNATTRIBUTED_PIN_ACTOR
+    && !pinNeedsReview(pin) && pin?.kind === 'temporary' && pin.actor === actor);
 }
 
 export function reviewedConfigPin(pin: (BranchPin & { configuredBranches: string[] }) | undefined, configured: readonly string[]): BranchPin | undefined {
