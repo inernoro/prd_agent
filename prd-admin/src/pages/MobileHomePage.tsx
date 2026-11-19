@@ -1,6 +1,4 @@
-import { HomeTaskQueue } from '@/components/workspace/HomeTaskQueue';
 import { Badge } from '@/components/design/Badge';
-import { useAuthStore } from '@/stores/authStore';
 /**
  * 移动端首页（<768px）—— 「摘要」仪表盘（iOS 健康摘要风,2026-07-15 定稿）。
  *
@@ -79,7 +77,6 @@ const ARCHIVE_ROWS: Array<{ key: string; title: string; desc: string; route: str
 export default function MobileHomePage() {
   // 打开智能体一律走带记账的出口，否则手机上的启动不计入「你常用的」
   const openRoute = useTrackedNavigate();
-  const canUseTasks = useAuthStore(s => s.isRoot || s.permissions.includes('super') || s.permissions.includes('active-tasks.use'));
   const data = useMobileHomeData();
   const setThemeMode = useMobileThemeStore((st) => st.setMode);
   // 用解析后的明暗，不用偏好本身：选了「随系统」时 mode === 'dark' 永远为 false，
@@ -274,7 +271,6 @@ export default function MobileHomePage() {
 
 
         {/* ── 近 7 日（健康摘要式:大数 + 真实七日迷你柱） ── */}
-        {canUseTasks && <HomeTaskQueue />}
         <Section C={C} title="近 7 日">
           <div style={{ ...cardStyle, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '18px 14px', padding: '16px 14px' }}>
             {stats.map((s) => (
