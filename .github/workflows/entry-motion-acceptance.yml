@@ -8,39 +8,35 @@ on:
         default: visual
 permissions:
   contents: read
-env:
-  VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
 jobs:
-  entry-browser-regressions:
+  public-media-readback:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    container:
-      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
-      options: --init --shm-size=1g
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
         with:
-          version: '10.28.2'
+          ref: 7c82dd337e57c9f40814dfd2eaac1326e083242b
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Exercise the actual MAP homepage component on mobile
+      - name: Verify public preview revision, HTML, bundles, and media hashes
         run: |
-          pnpm -C prd-admin install --frozen-lockfile
-          pnpm -C e2e install --frozen-lockfile
-          pnpm -C prd-admin exec vite --host 127.0.0.1 --port 8170 --strictPort &
-          server=$!
-          trap 'kill "$server" 2>/dev/null || true' EXIT
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8170/entry-mobile-search-proof.html >/dev/null; then break; fi
-            sleep 1
-          done
-          node e2e/entry-mobile-search-proof.mjs
+          node --input-type=module <<'JS'
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { waitForEntryPreviews } from './e2e/entry-preview-readiness.mjs';
+          const json = async path => JSON.parse(await readFile(path, 'utf8'));
+          const target = await json('e2e/fixtures/entry-preview.json');
+          const gatewayAssets = await json('e2e/fixtures/media/gateway-portrait-cdn.json');
+          const ready = await waitForEntryPreviews({
+            map: target.mapUrl, gateway: target.gatewayUrl, gatewayAssets,
+            expectedCommit: '7c82dd337e57c9f40814dfd2eaac1326e083242b',
+            timeoutMs: 90_000, retryMs: 5_000,
+          });
+          await writeFile('preview-readiness.json', JSON.stringify(ready, null, 2));
+          for (const app of ready.apps) console.log(app.app, app.commit, app.media.length, app.bundle);
+          JS
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: map-mobile-search-clipping
-          path: work/entry-browser/
+          name: entry-public-media-readback
+          path: preview-readiness.json
           if-no-files-found: error
-          retention-days: 14
