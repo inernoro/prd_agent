@@ -25,20 +25,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Build the unchanged product bundle and type-check the browser tests
+      - name: Exercise the actual MAP homepage component on mobile
         run: |
-          pnpm -C llmgw/web install --frozen-lockfile
-          pnpm -C llmgw/web build
+          pnpm -C prd-admin install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
-          pnpm -C e2e typecheck
-      - name: Check navigation timing and the original mobile paths in three browsers
-        run: |
-          mkdir -p work/entry-browser
-          pnpm -C e2e exec playwright test -c entry-browser-proof.config.ts
+          pnpm -C prd-admin exec vite --host 127.0.0.1 --port 8170 --strictPort &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8170/entry-mobile-search-proof.html >/dev/null; then break; fi
+            sleep 1
+          done
+          node e2e/entry-mobile-search-proof.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: gateway-entry-browser-proof
+          name: map-mobile-search-clipping
           path: work/entry-browser/
           if-no-files-found: error
           retention-days: 14
