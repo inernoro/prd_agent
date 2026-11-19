@@ -43,15 +43,32 @@ public sealed class NotificationsController : ControllerBase
 
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> List([FromQuery] bool includeHandled = false, CancellationToken ct = default)
+    public async Task<IActionResult> List([FromQuery] bool includeHandled = false, CancellationToken ct = default,
+        [FromQuery] string? priority = null, [FromQuery] string? state = null, [FromQuery] string? cursor = null)
     {
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
         var filter = BuildVisibleNotificationFilter(userId, now, includeHandled, await HasAdminNotificationPermissionAsync(ct));
+        var builder = Builders<AdminNotification>.Filter;
+        if (priority == "urgent") filter &= builder.Eq(x => x.Level, "error");
+        if (priority == "important") filter &= builder.Eq(x => x.Level, "warning");
+        if (priority == "routine") filter &= builder.Nin(x => x.Level, new[] { "error", "warning" });
+        if (state == "open") filter &= builder.Eq(x => x.Status, "open");
+        if (state == "archived") filter &= builder.Ne(x => x.Status, "open");
+        if (!string.IsNullOrEmpty(cursor))
+        {
+            var position = cursor.IndexOf('.');
+            if (position < 1 || !long.TryParse(cursor.AsSpan(0, position), out var ticks)
+                || ticks < 0 || ticks > DateTime.MaxValue.Ticks || position >= cursor.Length - 1 || cursor.Length > 512)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "通知列表游标已失效，请刷新列表。"));
+            var before = new DateTime(ticks, DateTimeKind.Utc);
+            filter &= builder.Lt(x => x.UpdatedAt, before)
+                | (builder.Eq(x => x.UpdatedAt, before) & builder.Lt(x => x.Id, cursor[(position + 1)..]));
+        }
 
         var items = await _db.AdminNotifications
             .Find(filter)
-            .SortByDescending(x => x.UpdatedAt)
+            .SortByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id)
             .Limit(201)
             .ToListAsync(ct);
 
@@ -64,6 +81,7 @@ public sealed class NotificationsController : ControllerBase
         {
             items = items.Select(n => ToNotificationDto(n, canOpenGateway)),
             hasMore,
+            nextCursor = hasMore ? $"{items[^1].UpdatedAt.Ticks}.{items[^1].Id}" : null,
             summary = new
             {
                 notificationCount = openItems.Count,
@@ -450,6 +468,7 @@ public sealed class NotificationsController : ControllerBase
             n.TargetUserId,
             n.PushEpisode,
             n.IncidentId,
+            n.IncidentCategory,
             incidentState = n.IncidentState ?? (IsLegacyIncident(n) ? "unknown" : null),
             requestOutcome = n.RequestOutcome ?? (IsLegacyIncident(n) ? "unknown" : null),
             n.OccurrenceCount,

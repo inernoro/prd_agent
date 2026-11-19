@@ -106,6 +106,34 @@ public sealed class LlmGatewayIncidentPolicyTests
         signals.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(402, null)]
+    [InlineData(429, "{\"error\":{\"code\":\"organization_usage_limit_exceeded\"}}")]
+    public void ConfirmedQuota_IsUrgentOnFirstFailedRequest(int status, string? diagnostic)
+    {
+        var log = Log("quota", "failed", status, DateTime.UtcNow);
+        log.Error = diagnostic;
+        var signal = LlmGatewayIncidentPolicy.BuildSignals([log]).ShouldHaveSingleItem();
+        signal.FailureCategory.ShouldBe(GatewayNotificationPolicy.Quota);
+        GatewayNotificationPolicy.FailureLevel(signal).ShouldBe("error");
+        GatewayNotificationPolicy.FailureLevel(signal with { RequestOutcome = "fallback_succeeded" }).ShouldBe("warning");
+    }
+
+    [Fact]
+    public void UpstreamRateLimit_IsRoutineUntilThreeDifferentRequestsWithinFiveMinutes()
+    {
+        var now = DateTime.UtcNow;
+        var one = Log("rate-a", "failed", 429, now);
+        var replay = Log("rate-a", "failed", 429, now.AddSeconds(1));
+        var two = Log("rate-b", "failed", 429, now.AddSeconds(2));
+        var three = Log("rate-c", "failed", 429, now.AddSeconds(3));
+        var below = LlmGatewayIncidentPolicy.BuildSignals([one, replay, two]).ShouldHaveSingleItem();
+        below.FailureCategory.ShouldBe(GatewayNotificationPolicy.RateLimit);
+        GatewayNotificationPolicy.FailureLevel(below).ShouldBe("info");
+        GatewayNotificationPolicy.FailureLevel(LlmGatewayIncidentPolicy.BuildSignals([one, replay, two, three])
+            .ShouldHaveSingleItem()).ShouldBe("warning");
+    }
+
     [Fact]
     public void FailedWithoutStatusOrUpstreamEvidence_ShouldNotBecomeIncident()
     {

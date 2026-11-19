@@ -18,8 +18,12 @@ import type {
 } from '@/services/contracts/notifications';
 
 export const getAdminNotificationsReal: GetAdminNotificationsContract = async (args) => {
-  const includeHandled = Boolean(args?.includeHandled);
-  const qs = includeHandled ? '?includeHandled=true' : '';
+  const params = new URLSearchParams();
+  if (args?.includeHandled) params.set('includeHandled', 'true');
+  if (args?.priority) params.set('priority', args.priority);
+  if (args?.state) params.set('state', args.state);
+  if (args?.cursor) params.set('cursor', args.cursor);
+  const qs = params.size ? `?${params}` : '';
   return await apiRequest<GetAdminNotificationsResponse>(`${api.dashboard.notifications.list()}${qs}`, { method: 'GET' });
 };
 

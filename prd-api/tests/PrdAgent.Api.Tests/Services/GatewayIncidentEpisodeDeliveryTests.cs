@@ -195,7 +195,8 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
         public Task LogAsync(string id, string status, int seconds) => _gateway.LlmRequestLogs.InsertOneAsync(new LlmRequestLog {
             Id = id, RequestId = id, TenantId = "episode-fixture", AppCallerCode = "fixture.image",
             Path = "/v1/images/generations", Provider = status == "failed" ? "gateway-auth" : "fixture",
-            Status = status, StatusCode = status == "failed" ? 503 : 200, Model = status == "failed" ? "" : "fake-image",
+            Status = status, StatusCode = status == "failed" ? 429 : 200, Model = status == "failed" ? "" : "fake-image",
+            Error = status == "failed" ? PrdAgent.Core.LlmGateway.GatewayRouteFailure.ProviderQuotaExceeded : null,
             StartedAt = _logBase.AddSeconds(seconds), RequestType = "image"
         });
         public async Task SweepAsync()

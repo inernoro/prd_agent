@@ -447,12 +447,12 @@ export default function App() {
         <Route path="data-transfers" element={<RequirePermission perm="access"><DataTransferPage /></RequirePermission>} />
         <Route path="executive" element={<RequirePermission perm="access"><ExecutivePage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
+        <Route path="notifications" element={<RequirePermission perm="access"><MobileNotificationsPage /></RequirePermission>} />
 
         {/* 移动端专属路由 */}
         <Route path="profile" element={<RequirePermission perm="access"><MobileProfilePage /></RequirePermission>} />
         {/* 米多早报：首页的报纸版副页面（移动优先，宽屏收栏宽居中） */}
         <Route path="daily-post" element={<RequirePermission perm="access"><DailyPostPage /></RequirePermission>} />
-        <Route path="notifications" element={<RequirePermission perm="access"><MobileNotificationsPage /></RequirePermission>} />
         <Route path="stats" element={<Navigate to="/" replace />} />
       </Route>
 

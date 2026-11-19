@@ -1,4 +1,14 @@
-import type { AdminNotificationItem } from '@/services/contracts/notifications';
+import type { AdminNotificationItem, NotificationPriority } from '@/services/contracts/notifications';
+
+export const NOTIFICATION_PRIORITIES: Record<NotificationPriority, { label: string; rank: number; color: string }> = {
+  urgent: { label: '紧急', rank: 2, color: 'var(--accent-fg-danger)' },
+  important: { label: '重要', rank: 1, color: 'var(--accent-fg-warning)' },
+  routine: { label: '一般', rank: 0, color: 'var(--text-secondary)' },
+};
+
+export function notificationPriority(level: AdminNotificationItem['level']): NotificationPriority {
+  return level === 'error' ? 'urgent' : level === 'warning' ? 'important' : 'routine';
+}
 
 export const NOTIFICATION_INCIDENT_STATE: Record<string, string> = {
   active: '最近观测异常，尚无恢复证据', recovered: '已有恢复证据', unknown: '当前状态未确认',

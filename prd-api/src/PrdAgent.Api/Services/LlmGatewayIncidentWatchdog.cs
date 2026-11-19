@@ -155,6 +155,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .SetOnInsert(x => x.Title, notification.Title)
                 .SetOnInsert(x => x.Message, notification.Message)
                 .SetOnInsert(x => x.Level, notification.Level)
+                .SetOnInsert(x => x.IncidentCategory, notification.IncidentCategory)
                 .SetOnInsert(x => x.Status, notification.Status)
                 .SetOnInsert(x => x.Source, notification.Source)
                 .SetOnInsert(x => x.Section, notification.Section)
@@ -201,7 +202,8 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                       + $"{alert.GetValue("Count", 0)}/{alert.GetValue("Limit", 0)} 次。"
                       + (blocked ? "超额请求已在发送上游之前拒绝。" : "已达到预警阈值，请检查是否存在异常自动触发。")
                       ) + $"来源部署：{alert.GetValue("SourceDeployment", "未标记")}；请求编号：{requestId}。",
-            Level = blocked ? "error" : "warning", Source = "gateway-alert",
+            Level = blocked ? "warning" : "info", Source = GatewayNotificationPolicy.Source,
+            IncidentCategory = blocked ? "policy-block" : "usage-warning",
             Section = AdminNotificationSections.Admin,
             ActionLabel = "查看消费预警", ActionUrl = $"/logs?requestId={Uri.EscapeDataString(requestId)}",
             ActionKind = "llm-gateway",
@@ -226,7 +228,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         var actionUrl = $"/logs?requestId={Uri.EscapeDataString(signal.RequestId)}";
         var title = BuildIncidentTitle(signal);
         var message = BuildIncidentMessage(signal);
-        var level = signal.RequestOutcome is "fallback_succeeded" or "unknown" ? "warning" : "error";
+        var level = GatewayNotificationPolicy.FailureLevel(signal);
 
         if (existing is not null)
         {
@@ -242,7 +244,11 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 && existing.IncidentId == null && existing.IncidentState == null;
             var shouldReopen = string.Equals(existing.IncidentState, "recovered", StringComparison.Ordinal)
                 || legacySystemClosedEntry;
-            var impactEscalated = !shouldReopen && IsImpactEscalation(existing.RequestOutcome, signal.RequestOutcome);
+            var existingRank = GatewayNotificationPolicy.LevelRank(existing.Level);
+            var levelRank = GatewayNotificationPolicy.LevelRank(level);
+            var priorityEscalated = levelRank > existingRank;
+            if (!shouldReopen && existing.IncidentCategory is not null && levelRank < existingRank)
+                level = existing.Level;
             var newFailures = signal.FailureObservations
                 .Where(x => string.CompareOrdinal(x.Version, existing.GatewaySignalVersion) > 0).ToList();
 
@@ -257,6 +263,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.GatewaySignalVersion, signal.SignalVersion)
                 .Set(x => x.IncidentId, signal.Fingerprint)
                 .Set(x => x.IncidentState, "active")
+                .Set(x => x.IncidentCategory, signal.FailureCategory)
                 .Set(x => x.RequestOutcome, signal.RequestOutcome)
                 .Set(x => x.EvidenceRequestId, signal.RequestId)
                 .Set(x => x.FirstOccurredAt, existing.FirstOccurredAt ?? signal.FailureObservations.Min(x => x.At))
@@ -265,7 +272,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.OccurrenceCount, existing.FirstOccurredAt.HasValue
                     ? existing.OccurrenceCount + newFailures.Count : Math.Max(1, signal.FailureCount));
             var transitionFilter = CurrentFailureFilter(existing, signal, confirmsPendingOutcome);
-            if (shouldReopen || impactEscalated)
+            if (shouldReopen || priorityEscalated)
             {
                 // 只有一个扫描者能从所观察到的关闭代次切换为新代次。
                 // 缺字段的存量记录按第 0 代处理，不清理任何历史投递回执。
@@ -278,7 +285,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             var transitioned = await _mapDb.AdminNotifications.UpdateOneAsync(transitionFilter, update,
                 new UpdateOptions { Collation = new Collation("simple") }, ct);
             if (transitioned.MatchedCount != 1) return null;
-            return (shouldReopen || impactEscalated) && transitioned.ModifiedCount == 1;
+            return (shouldReopen || priorityEscalated) && transitioned.ModifiedCount == 1;
         }
 
         try
@@ -295,6 +302,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 GatewaySignalVersion = signal.SignalVersion,
                 IncidentId = signal.Fingerprint,
                 IncidentState = "active",
+                IncidentCategory = signal.FailureCategory,
                 RequestOutcome = signal.RequestOutcome,
                 EvidenceRequestId = signal.RequestId,
                 OccurrenceCount = signal.FailureCount,
@@ -392,6 +400,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             Message = $"{(signal.IsGatewayEntry ? signal.AppCallerLabel + " 的同一入口" : signal.PlatformLabel + " 的 " + signal.ModelLabel + " 线路")}已在 {signal.ObservedAt.ToUniversalTime():yyyy-MM-dd HH:mm:ss} UTC 完成一次成功调用，已关闭该线路对应故障。可查看恢复请求；历史失败请求不会自动重做。",
             IncidentId = signal.Fingerprint,
             IncidentState = "recovered",
+            IncidentCategory = transitioned.IncidentCategory,
             RequestOutcome = "request_succeeded",
             OccurrenceCount = transitioned.OccurrenceCount,
             FirstOccurredAt = transitioned.FirstOccurredAt,
@@ -415,7 +424,8 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
     }
 
     internal static string BuildIncidentTitle(LlmGatewayIncidentSignal signal)
-        => signal.IsGatewayEntry ? $"{signal.AppCallerLabel} 请求未能进入处理"
+        => signal.IsGatewayEntry ? (signal.FailureCategory == GatewayNotificationPolicy.Quota
+                ? $"{signal.AppCallerLabel} 模型用量已达上限" : $"{signal.AppCallerLabel} 请求未能进入处理")
             : $"{signal.PlatformLabel} · {signal.ModelLabel}：{FailureLabel(signal.FailureCategory)}";
 
     internal static string BuildIncidentMessage(LlmGatewayIncidentSignal signal)
@@ -428,9 +438,12 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             "request_failed" => "本次请求失败。请查看请求结果，再重试或切换可用模型；不能据此认定其他请求均失败。",
             _ => "这条线路返回异常，整次请求结果尚未确认。请查看请求最新状态，避免重复提交。",
         };
-        var next = signal.IsGatewayEntry ? "管理员请检查该入口的模型授权和路由配置。"
+        var next = signal.IsGatewayEntry
+            ? signal.FailureCategory == GatewayNotificationPolicy.Quota ? "管理员请核对该入口的模型用量配额和可用线路。"
+                : "管理员请检查该入口的模型授权和路由配置。"
             : signal.FailureCategory == "quota" ? "管理员请补足该供应商账户额度或配置可用线路，再查看后续真实调用结果。"
             : signal.FailureCategory == "access" ? "管理员请核对该线路访问权限与配置，再查看后续真实调用结果。"
+            : signal.FailureCategory == GatewayNotificationPolicy.RateLimit ? "请等待限流解除，或切换可用线路后再重试。"
             : "管理员请查看该线路诊断与后续真实调用结果。";
         return $"{signal.AppCallerLabel}：{impact}\n{next}";
     }
@@ -438,14 +451,12 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
     private static string FailureLabel(string category) => category switch
     {
         "quota" => "上游账户余额或额度不足",
+        GatewayNotificationPolicy.RateLimit => "上游请求受到限流",
         "access" => "上游拒绝访问",
         "timeout" => "上游响应超时",
         "connection" => "上游连接失败",
         _ => "调用服务异常",
     };
-
-    private static bool IsImpactEscalation(string? previous, string current)
-        => (previous is "fallback_succeeded" or "unknown") && (current is "request_failed" or "all_failed");
 
     private static FilterDefinition<AdminNotification> NewerSignalFilter(LlmGatewayIncidentSignal signal)
         => Builders<AdminNotification>.Filter.Eq(x => x.GatewaySignalVersion, null)
@@ -530,12 +541,14 @@ internal static class LlmGatewayIncidentPolicy
             // correct that same observation once while preserving chronological ordering,
             // and older workers cannot overwrite it with the unsuffixed version. Apply it
             // to successes too, so pending outcomes can still be genuinely confirmed.
-            run.Count(x => x.Failure), latest.Version + ":facts-0002", latest.Entry, latest.At)
+            run.Count(x => x.Failure), latest.Version + ":facts-0003", latest.Entry, latest.At)
         {
             RouteFingerprint = latest.RouteFingerprint,
-            FailureCategory = category,
+            FailureCategory = latest.Entry && log.Error == GatewayRouteFailure.ProviderQuotaExceeded ? GatewayNotificationPolicy.Quota : category,
             RequestOutcome = latest.Outcome,
             AttemptedRouteCount = latest.AttemptedRoutes,
+            DistinctRecentFailedRequests = run.Where(x => x.Failure && latest.At - x.At <= GatewayNotificationPolicy.RepetitionWindow)
+                .Select(x => x.Log.RequestId).Distinct(StringComparer.Ordinal).Count(),
             // Counts use raw observation versions: upgrading the interpretation is not
             // another failure occurrence, nor does it start a new delivery episode.
             FailureObservations = run.Where(x => x.Failure)
@@ -638,14 +651,16 @@ internal static class LlmGatewayIncidentPolicy
            && (IsGatewayEntry(log)
                ? HasEntryIdentity(log) && (log.StatusCode is 401 or 403 or 404 or >= 500
                    || GatewayRouteFailure.All.Contains(log.Error ?? string.Empty))
-               : IsQuota(log) || log.StatusCode is 401 or 403 or >= 500
+               : IsQuota(log) || log.StatusCode is 401 or 403 or 429 or >= 500
                  || ContainsAny(log.Error, "timeout", "timed out", "connection", "HTTP 502", "HTTP 503", "HTTP 504", "不可用"));
 
     private static bool IsQuota(LlmRequestLog log)
-        => PrdAgent.GatewayTransport.UpstreamQuotaPolicy.IsExceeded(log.StatusCode ?? 0, log.Error);
+        => GatewayBillingFailure.Classify(log.StatusCode, log.Error, log.Error) is not null
+           || (log.Error?.TrimStart().StartsWith('{') != true
+               && PrdAgent.GatewayTransport.UpstreamQuotaPolicy.IsExceeded(log.StatusCode ?? 0, log.Error));
 
     private static string Category(LlmRequestLog log)
-        => IsQuota(log) ? "quota" : log.StatusCode is 401 or 403 ? "access"
+        => IsQuota(log) ? GatewayNotificationPolicy.Quota : log.StatusCode is 429 ? GatewayNotificationPolicy.RateLimit : log.StatusCode is 401 or 403 ? "access"
             : log.StatusCode is 504 || ContainsAny(log.Error, "timeout", "timed out") ? "timeout"
             : ContainsAny(log.Error, "connection") ? "connection" : "availability";
 
@@ -689,6 +704,7 @@ internal static class LlmGatewayIncidentPolicy
         if (IsQuota(log)) return "上游账户余额或额度不足";
         return log.StatusCode switch
         {
+            429 => "上游请求受到限流",
             401 or 403 => "上游拒绝访问，请核对服务凭据、访问权限及服务器 IP 白名单",
             502 => "上游返回 HTTP 502",
             503 => "上游返回 HTTP 503",
@@ -719,5 +735,6 @@ internal sealed record LlmGatewayIncidentSignal(
     public string FailureCategory { get; init; } = "availability";
     public string RequestOutcome { get; init; } = "unknown";
     public int AttemptedRouteCount { get; init; }
+    public int DistinctRecentFailedRequests { get; init; }
     public IReadOnlyList<LlmGatewayFailureObservation> FailureObservations { get; init; } = [];
 }

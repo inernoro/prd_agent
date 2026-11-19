@@ -25,6 +25,7 @@ public class AdminNotification
     // 通知确认状态与故障事实分离；缺失字段表示历史数据没有证据，不能推断恢复。
     public string? IncidentId { get; set; }
     public string? IncidentState { get; set; }
+    public string? IncidentCategory { get; set; }
     public string? RequestOutcome { get; set; }
     public long OccurrenceCount { get; set; } = 1;
     public DateTime? FirstOccurredAt { get; set; }

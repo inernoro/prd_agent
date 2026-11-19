@@ -127,6 +127,7 @@ cds/branch-claim-entry-output/
 !.agents/skills/kill-debt
 !.agents/skills/create-debt
 !.agents/skills/first-principles
+!.agents/skills/notification-triage
 # 项目级原型导出技能由仓库维护，统一源头剪枝与上传前预检
 !.agents/skills/prototype-export/
 !.agents/skills/prototype-export/**

@@ -72,12 +72,15 @@ public sealed class AdminPushNotificationServiceTests
         Assert.Single(http.Requests);
         var receipt = await testDb.Context.AdminPushDeliveryLogs.Find(_ => true).SingleAsync();
         Assert.True(receipt.Success);
-        Assert.Equal(2, receipt.CoveredNotificationIds.Count);
-        Assert.All(notices, n => Assert.Contains(n.Id, receipt.CoveredNotificationIds));
+        Assert.Single(receipt.CoveredNotificationIds);
+        await push.DispatchPendingAsync(default);
+        Assert.Single(http.Requests);
         await watchdog.SweepOnceAsync(default);
         await ExpireRecipientWindowAsync(testDb.Context);
         await CreateService(testDb.Context, http).DispatchPendingAsync(default);
-        Assert.Single(http.Requests);
+        Assert.Equal(2, http.Requests.Count);
+        var delivered = await testDb.Context.AdminPushDeliveryLogs.Find(x => x.Success).ToListAsync();
+        Assert.All(notices, n => Assert.Contains(delivered, row => row.CoveredNotificationIds.SequenceEqual(new[] { n.Id })));
         Assert.Equal(2, await testDb.Context.AdminNotifications.CountDocumentsAsync(_ => true));
     }
 
@@ -93,7 +96,7 @@ public sealed class AdminPushNotificationServiceTests
         LlmRequestLog Log(string id, string status, DateTime at) => new() {
             RequestId = id, TenantId = "test-tenant", Provider = "test-provider", Model = "image-model",
             AppCallerCode = "test.image::generation", AppCallerTitle = "配图", RequestType = "generation",
-            Status = status, StatusCode = status == "failed" ? 502 : 200, StartedAt = at,
+            Status = status, StatusCode = status == "failed" ? 402 : 200, StartedAt = at,
         };
         await db.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription {
             UserId = "u1", TopicKey = "api-request-alert", Enabled = true, ChannelType = "url", Method = "GET",

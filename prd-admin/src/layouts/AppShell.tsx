@@ -1883,6 +1883,9 @@ export default function AppShell() {
                   {notificationSummary && <div>{notificationSummary.independentIncidentCount} 个已识别独立故障 · {notificationSummary.unclassifiedCount} 条未分类通知</div>}
                   <div>确认只更新通知处理状态，不代表故障已修复。共享通知的确认对所有有权查看者生效。</div>
                   {notificationsHaveMore && <div>当前只显示最近一批通知；批量确认只作用于当前列表。</div>}
+                  <button type="button" className="mr-4 mt-1 underline" onClick={() => { setNotificationDialogOpen(false); navigate('/notifications'); }}>
+                    查看全部通知
+                  </button>
                   <button type="button" className="mt-1 underline" disabled={notificationsLoading} onClick={() => void loadNotifications()}>刷新通知列表</button>
                 </div>
                 <div className="flex-1 overflow-auto pr-2 space-y-4">

@@ -566,13 +566,17 @@ public sealed class AdminPushNotificationService
                 || now - urgentAttempts.Last()["at"].ToUniversalTime() >= TimeSpan.FromMinutes(1));
             var freshUrgent = routes.Where(r => IsFreshUrgent(r.Notice, budget)).ToList();
             var useUrgent = urgentReady && freshUrgent.Count > 0;
+            if (!useUrgent)
+                routes.RemoveAll(r => r.Notice.Source == GatewayNotificationPolicy.Source && IsFreshUrgent(r.Notice, budget));
             var normalReady = budget.Attempts.Count - urgentAttempts.Count < 2
                 && (budget.Attempts.Count == 0 || now - budget.Attempts.Last()["at"].ToUniversalTime() >= TimeSpan.FromMinutes(1));
-            if (!useUrgent && !normalReady) return;
+            if (!useUrgent && (!normalReady || routes.Count == 0)) return;
             var selected = (useUrgent ? freshUrgent : routes).OrderByDescending(r => r.Notice.Level == "error")
                 .ThenBy(r => r.Notice.CreatedAt).First();
-            var batch = routes.Where(r => r.Key == selected.Key).DistinctBy(r => r.Notice.Id)
-                .OrderByDescending(r => IsFreshUrgent(r.Notice, budget)).ToList();
+            List<(AdminPushSubscription Route, AdminNotification Notice, string Key)> batch = selected.Notice.Source == GatewayNotificationPolicy.Source
+                ? [selected]
+                : routes.Where(r => r.Key == selected.Key && r.Notice.Source != GatewayNotificationPolicy.Source)
+                    .DistinctBy(r => r.Notice.Id).OrderByDescending(r => IsFreshUrgent(r.Notice, budget)).ToList();
             if (!useUrgent && now - batch.Min(r => r.Notice.CreatedAt) < _aggregationDelay) return;
             var notices = batch.Select(r => r.Notice).ToList();
             var notification = notices.Count == 1 ? notices[0] : BuildDigest(notices, userId, now, useUrgent);
@@ -979,6 +983,7 @@ public sealed class AdminPushNotificationService
 
     internal static bool MatchesTopic(string topicKey, AdminNotification notification)
     {
+        if (!GatewayNotificationPolicy.AllowsPush(notification)) return false;
         var source = (notification.Source ?? string.Empty).Trim();
         if (topicKey.Equals("defect-management", StringComparison.OrdinalIgnoreCase))
             return source.Equals("defect-agent", StringComparison.OrdinalIgnoreCase)

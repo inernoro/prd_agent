@@ -13,6 +13,7 @@ export type AdminNotificationItem = {
   pushEpisode?: number;
   incidentId?: string | null;
   incidentState?: string | null;
+  incidentCategory?: string | null;
   requestOutcome?: string | null;
   occurrenceCount?: number;
   firstOccurredAt?: string | null;
@@ -41,6 +42,7 @@ export type AdminNotificationItem = {
 export type GetAdminNotificationsResponse = {
   items: AdminNotificationItem[];
   hasMore?: boolean;
+  nextCursor?: string | null;
   summary?: { notificationCount: number; independentIncidentCount: number; unclassifiedCount: number };
 };
 
@@ -166,7 +168,14 @@ export type UpdateAdminPushSubscriptionRequest = {
 
 export type UpdateAdminPushProfileRequest = Omit<UpdateAdminPushSubscriptionRequest, 'enabled' | 'useDefaultProfile'>;
 
-export type GetAdminNotificationsContract = (args?: { includeHandled?: boolean }) => Promise<ApiResponse<GetAdminNotificationsResponse>>;
+export type NotificationPriority = 'urgent' | 'important' | 'routine';
+export type NotificationListState = 'open' | 'archived';
+export type GetAdminNotificationsContract = (args?: {
+  includeHandled?: boolean;
+  priority?: NotificationPriority;
+  state?: NotificationListState;
+  cursor?: string;
+}) => Promise<ApiResponse<GetAdminNotificationsResponse>>;
 export type HandleAdminNotificationContract = (id: string) => Promise<ApiResponse<{ handled: boolean }>>;
 export type HandleAllAdminNotificationsContract = () => Promise<ApiResponse<{ handled: boolean }>>;
 export type GetAdminPushSubscriptionsContract = () => Promise<ApiResponse<GetAdminPushSubscriptionsResponse>>;

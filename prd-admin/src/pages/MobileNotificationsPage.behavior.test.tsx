@@ -125,6 +125,22 @@ describe('通知动作与事实真实组件交互', () => {
     expect(api.handle).not.toHaveBeenCalled();
   });
 
+  it('通过优先级筛选并翻页，保留已归档通知', async () => {
+    const urgent = { ...notice, id: 'quota', level: 'error', title: '额度已用尽', incidentCategory: 'quota' };
+    api.list.mockResolvedValueOnce({ success: true, data: { items: [urgent, notice] } })
+      .mockResolvedValueOnce({ success: true, data: { items: [urgent], hasMore: true, nextCursor: 'page-2' } })
+      .mockResolvedValueOnce({ success: true, data: { items: [{ ...urgent, id: 'closed', title: '更早的额度通知', status: 'closed' }] } });
+    await render();
+    expect(host.textContent).toContain('重要');
+    await click(/^紧急$/);
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ priority: 'urgent', includeHandled: true }));
+    expect(host.textContent).not.toContain(notice.title);
+    await click(/加载更早通知/);
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ priority: 'urgent', cursor: 'page-2' }));
+    expect(host.textContent).toContain('额度已用尽');
+    expect(host.textContent).toContain('更早的额度通知');
+  });
+
   it('旧告警的状态未确认，不补造独立故障数和发生次数', async () => {
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, incidentId: null, occurrenceCount: undefined, requestOutcome: 'unknown', incidentState: 'unknown' }] } });
     await render();

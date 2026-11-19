@@ -12,6 +12,9 @@ import {
   ListTodo,
   ClipboardCheck,
   Workflow,
+  Wallet,
+  Timer,
+  ShieldAlert,
 } from 'lucide-react';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 
@@ -78,6 +81,12 @@ export const NOTIFICATION_TYPE_REGISTRY: Record<string, NotificationTypeConfig> 
   'stable-smoke': { key: 'stable-smoke', label: '稳定冒烟', icon: ClipboardCheck, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' },
 };
 
+const GATEWAY_TYPES: Record<string, NotificationTypeConfig> = {
+  quota: { key: 'quota', label: '余额或额度', icon: Wallet, accent: '#fcd34d', fg: 'var(--accent-fg-amber)', popupStyle: 'alert' },
+  'rate-limit': { key: 'rate-limit', label: '上游限流', icon: Timer, accent: '#fdba74', fg: 'var(--accent-fg-warning)', popupStyle: 'alert' },
+  'policy-block': { key: 'policy-block', label: '平台拦截', icon: ShieldAlert, accent: '#c4b5fd', fg: 'var(--accent-fg-violet)', popupStyle: 'alert' },
+};
+
 /**
  * 判断是否为「催办 / 超时提醒」类通知（已下线的 defect-escalation / defect-reminder / pm-reminder）。
  * 用户要求：通知右下角不再出现催办。作为兜底，前端不渲染任何残留的催办通知。
@@ -110,11 +119,14 @@ export function isEscalationNotification(
  * 特例：缺陷来源 + success 语义（如「缺陷已解决，待你验收」）走 celebrate 气质。
  */
 export function getNotificationType(
-  item: Pick<AdminNotificationItem, 'source' | 'level' | 'title'>
+  item: Pick<AdminNotificationItem, 'source' | 'level' | 'title' | 'incidentCategory'>
 ): NotificationTypeConfig {
   const source = (item.source ?? '').toLowerCase();
   const level = (item.level ?? '').toLowerCase();
   const base = NOTIFICATION_TYPE_REGISTRY[source];
+  const gatewayType = source === 'llm-gateway-quota' ? GATEWAY_TYPES.quota
+    : source === 'gateway-alert' && item.incidentCategory ? GATEWAY_TYPES[item.incidentCategory] : undefined;
+  if (gatewayType) return gatewayType;
 
   if (base) {
     // 缺陷协作 + 成功语义 → 庆祝气质（缺陷已解决 / 已修复）
