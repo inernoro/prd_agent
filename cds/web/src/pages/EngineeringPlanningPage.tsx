@@ -236,6 +236,7 @@ export function EngineeringPlanningPage() {
 
               {selected && !action && <PlanningDetailDialog item={selected} board={data} detail={debtDetail.data}
                 loading={selected.kind === 'debt' && debtDetail.loading && !debtDetail.data} error={selected.kind === 'debt' ? debtDetail.error : undefined}
+                actionsDisabled={busy || board.loading || (selected.kind === 'debt' && debtDetail.loading)}
                 onClose={() => change({ item: '', kind: '' }, true)} onRetry={refresh} onSelect={selectItem} onAction={openAction} />}
               {action && <PlanningActionDialog key={action.kind} action={action} board={data} busy={busy} error={error}
                 onClose={() => { setError(''); setAction(undefined); }} onSubmit={input => { void submit(input); }} />}

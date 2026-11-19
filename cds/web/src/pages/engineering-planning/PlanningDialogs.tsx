@@ -275,8 +275,9 @@ export function PlanningActionDialog({ action, board, busy, error, onClose, onSu
   </Dialog>;
 }
 
-export function PlanningDetailDialog({ item, board, detail, loading, error, onClose, onRetry, onSelect, onAction }: {
+export function PlanningDetailDialog({ item, board, detail, loading, error, actionsDisabled, onClose, onRetry, onSelect, onAction }: {
   item: PlanningSelection; board: PlanningBoard; detail?: PlanningDebtDetail; loading: boolean; error?: string;
+  actionsDisabled: boolean;
   onClose: () => void; onRetry: () => void; onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
 }) {
   const record = item.kind === 'debt' ? detail?.debt : item.kind === 'plan' ? board.plans.find(row => row.id === item.id)
@@ -289,18 +290,20 @@ export function PlanningDetailDialog({ item, board, detail, loading, error, onCl
       <div className="ep-dialog-content ep-detail">
         {loading ? <ContentLoading variant="rows" label="正在读取记录" /> : error ? <div role="alert" className="ep-error">{error}<button type="button" className="ep-button" onClick={onRetry}>重试</button></div>
           : !record ? <PlanningEmpty>没有可访问的记录</PlanningEmpty> : null}
-        {item.kind === 'debt' && detail && <DebtDetails data={detail} board={board} write={write} onSelect={onSelect} onAction={onAction} />}
+        {record && write && actionsDisabled && <p className="ep-caption" role="status">正在同步记录</p>}
+        {item.kind === 'debt' && detail && <DebtDetails data={detail} board={board} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />}
         {item.kind === 'decision' && board.decisions.filter(row => row.id === item.id).map(row =>
-          <DecisionDetails key={row.id} row={row} board={board} write={write} onSelect={onSelect} onAction={onAction} />)}
+          <DecisionDetails key={row.id} row={row} board={board} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />)}
         {item.kind === 'plan' && board.plans.filter(row => row.id === item.id).map(plan =>
-          <PlanDetails key={plan.id} plan={plan} write={write} onSelect={onSelect} onAction={onAction} />)}
+          <PlanDetails key={plan.id} plan={plan} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />)}
       </div>
     </DialogContent>
   </Dialog>;
 }
 
-function DebtDetails({ data, board, write, onSelect, onAction }: {
-  data: PlanningDebtDetail; board: PlanningBoard; write: boolean; onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
+function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }: {
+  data: PlanningDebtDetail; board: PlanningBoard; write: boolean; actionsDisabled: boolean;
+  onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
 }) {
   const debt = data.debt;
   const active = !closedDebt(debt.status);
@@ -317,9 +320,11 @@ function DebtDetails({ data, board, write, onSelect, onAction }: {
     {write && <div className="ep-row">
       {active ? (['progress', 'defer', 'repay', 'edit', 'branch', 'hit', 'drop'] as const).map(action =>
         <button type="button" key={action} className={`ep-button${action === 'repay' ? ' ep-button--primary' : ''}`}
-          disabled={action === 'repay' && !debt.criteria.length} onClick={() => onAction({ kind: 'debt', action, debt })}>{debtActions[action]}</button>)
-        : debt.outcome?.kind !== 'merged' && <button type="button" className="ep-button" onClick={() => onAction({ kind: 'debt', action: 'reopen', debt })}>重开债务</button>}
-      {active && board.plans.length > 0 && <button type="button" className="ep-button" onClick={() => onAction({ kind: 'schedule', debt })}>排进落地计划</button>}
+          disabled={actionsDisabled || (action === 'repay' && !debt.criteria.length)} onClick={() => onAction({ kind: 'debt', action, debt })}>{debtActions[action]}</button>)
+        : debt.outcome?.kind !== 'merged' && <button type="button" className="ep-button" disabled={actionsDisabled}
+          onClick={() => onAction({ kind: 'debt', action: 'reopen', debt })}>重开债务</button>}
+      {active && board.plans.length > 0 && <button type="button" className="ep-button" disabled={actionsDisabled}
+        onClick={() => onAction({ kind: 'schedule', debt })}>排进落地计划</button>}
     </div>}
     <section className="ep-surface">
       <h3>债务上下文</h3>
@@ -353,8 +358,9 @@ function DebtDetails({ data, board, write, onSelect, onAction }: {
   </>;
 }
 
-function DecisionDetails({ row, board, write, onSelect, onAction }: {
-  row: PlanningDecision; board: PlanningBoard; write: boolean; onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
+function DecisionDetails({ row, board, write, actionsDisabled, onSelect, onAction }: {
+  row: PlanningDecision; board: PlanningBoard; write: boolean; actionsDisabled: boolean;
+  onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
 }) {
   const available = row.status === 'proposed' || row.status === 'accepted';
   return <>
@@ -366,7 +372,7 @@ function DecisionDetails({ row, board, write, onSelect, onAction }: {
     </section>
     {write && available && <div className="ep-row">{(Object.keys(decisionActions) as (keyof typeof decisionActions)[])
       .filter(action => action !== 'accepted' || row.status === 'proposed').map(action => <button key={action} type="button" className="ep-button"
-        onClick={() => onAction({ kind: 'decision', decision: row, action })}>{decisionActions[action]}</button>)}</div>}
+        disabled={actionsDisabled} onClick={() => onAction({ kind: 'decision', decision: row, action })}>{decisionActions[action]}</button>)}</div>}
     <section className="ep-surface"><h3>落地计划</h3>{board.plans.filter(plan => plan.decisionId === row.id).map(plan =>
       <button type="button" className="ep-text-button" key={plan.id} onClick={() => onSelect({ kind: 'plan', id: plan.id })}>{plan.title}</button>)}</section>
     <section className="ep-surface"><h3>决策历史</h3>
@@ -376,21 +382,24 @@ function DecisionDetails({ row, board, write, onSelect, onAction }: {
   </>;
 }
 
-function PlanDetails({ plan, write, onSelect, onAction }: {
-  plan: PlanningPlan; write: boolean; onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
+function PlanDetails({ plan, write, actionsDisabled, onSelect, onAction }: {
+  plan: PlanningPlan; write: boolean; actionsDisabled: boolean;
+  onSelect: (item: PlanningSelection) => void; onAction: (action: PlanningAction) => void;
 }) {
   return <>
     {plan.summary && <p>{plan.summary}</p>}
     <div className="ep-row"><PlanningBadge>{plan.steps.filter(step => step.status === 'done').length} / {plan.steps.length} 步完成</PlanningBadge>
       {plan.dueAt && <PlanningBadge>{plan.dueAt}</PlanningBadge>}
       {plan.decisionId && <button type="button" className="ep-button" onClick={() => onSelect({ kind: 'decision', id: plan.decisionId! })}>关联决策</button>}
-      {write && <button type="button" className="ep-button ep-button--primary" onClick={() => onAction({ kind: 'step', plan })}>添加步骤</button>}</div>
+      {write && <button type="button" className="ep-button ep-button--primary" disabled={actionsDisabled}
+        onClick={() => onAction({ kind: 'step', plan })}>添加步骤</button>}</div>
     <section className="ep-surface"><h3>落地步骤</h3>
       {!plan.steps.length ? <PlanningEmpty>暂无落地步骤</PlanningEmpty> : <ol className="ep-plan-steps">{plan.steps.map(step => <li key={step.id}>
         <div><PlanningBadge>{stepKindLabels[step.kind]}</PlanningBadge> <strong>{step.title}</strong>
           <p>{stepLabels[step.status]}{step.dueAt && ` · ${step.dueAt}`}</p></div>
         {step.relatedId && <button type="button" className="ep-text-button" onClick={() => onSelect({ kind: step.kind === 'debt' ? 'debt' : 'decision', id: step.relatedId! })}>打开记录</button>}
-        {write && step.kind !== 'debt' && <button type="button" className="ep-button" onClick={() => onAction({ kind: 'step', plan, step })}>更新步骤</button>}
+        {write && step.kind !== 'debt' && <button type="button" className="ep-button" disabled={actionsDisabled}
+          onClick={() => onAction({ kind: 'step', plan, step })}>更新步骤</button>}
       </li>)}</ol>}
     </section>
   </>;
