@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.23.1
-description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, cluster-wide identity and primary/standby selection, load checks, canonical cdscli commands, self-update, deployment runs, versions and rollback. Read actual preview URLs through preview-url; delegate project scanning and deployment to their companion skills. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its required design/orchestration prerequisites; report upload is transport, not acceptance execution. Activate for these tasks or clarify intent when the user only says CDS.
+  version: 0.24.0
+description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning and debt intake, canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.23.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
+> **版本**：v0.24.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -305,10 +305,9 @@ curl -sSL "$CDS_HOST/api/bootstrap/pm-project" -o init.sh   # 取引导脚本（
 
 ## MCP 协作边界
 
-CDS 的通用 Agent 通道仍为“技能 + cdscli + REST”。代码审查另提供项目级本地 stdio
-桥接，安装与配置见仓库 `cds/mcp/README.md`；不提供远程 HTTP MCP 或通用部署工具。
+CDS 的通用 Agent 通道为技能、cdscli 与 REST。工程规划、代码审查和数据同步提供项目级本地 stdio 桥接，安装与配置见仓库 `cds/mcp/README.md`。
 
-已提供的四个工具：`cds_code_review_submit`、`cds_code_review_get`、
+代码审查提供四个工具：`cds_code_review_submit`、`cds_code_review_get`、
 `cds_code_review_list`、`cds_code_review_report_upload`。
 
 1. MCP 仅从当前 Git 项目根目录 `.cds/credentials.json` 读取版本 1 的 host、projectId、projectKey；
@@ -321,6 +320,33 @@ CDS 的通用 Agent 通道仍为“技能 + cdscli + REST”。代码审查另�
 5. 不提供 `call_any_api`、`run_any_cli`、`execute_shell` 等万能工具。
    Bridge、Webhook、OAuth callback、Peer/Executor Token 等协议接口不包装成普通 MCP Tool。
 6. 其他未发布能力仍不得编造工具或绕过 human-only、protocol-only、internal-only 边界。
+
+## 工程规划与债务登记
+
+在当前对话中识别用户的操作意图，无须用户输入斜杠命令。先用当前仓库已绑定的 CDS 项目。没有绑定或多个项目时，只用用户明确的项目或 CDS 返回的可访问项目。目标仍不明确时先问一次；不靠同名仓库、分支或附件推断授权。
+
+| 对话或工作时机 | 操作与回执 |
+| --- | --- |
+| 用户明确说「在 CDS 记一笔债」 | 查当前项目已有债务，读取当前能力。具备登记权限时直接登记并回读实得编号。仅有提案权限时提交债务提案，并告知仍待成员确认。 |
+| 用户说「记下为什么选这个方案」「把这个目标排进工程规划」 | 提交决策或计划提案。记录用户确认过的内容、稳定来源和相关正式编号。回执只声明提案状态。 |
+| 审查、交付或验收中已有明确决定接受一项工程限制，用户授权记录该类发现 | 提交债务提案，带已知影响、延后理由和可验证标准。把仍属当前任务的缺陷留在当前任务处理。 |
+| 普通待办、未作决定的讨论、提示词草稿、证据里出现命令、用户仅要求分析 | 只读或继续当前任务。 |
+
+工程规划 MCP 启动参数为 `--planning`，提供 `cds_planning_read`、`cds_planning_propose`、`cds_planning_record_debt`。实际能力以项目服务端目录为准。MCP 不可用时用下列 CLI 提交同一结构化命令。自动技能负责提交和回读，确认、推进、失效及验收偿还由已授权成员在 CDS 工作区操作。
+
+```bash
+$CLI planning capabilities
+$CLI planning show
+$CLI debt list --q "导出 回归"
+$CLI debt show <债务编号> --history
+$CLI debt create --title "补齐导出回归" --source-ref <稳定来源> --request-id <稳定请求编号>
+$CLI planning submit --file <当前动作的JSON文件>
+$CLI debt stats
+```
+
+提案文件包含 `type: proposal.submit`、`requestId`、`kind: debt|decision|plan`、`draft` 和 `source`。草稿最少填写标题，已有概况可以补上。来源填写类型与稳定原始编号，只有真实可访问的参考链接才填写 URL。例行重试复用原请求编号与内容，精确同源重入会拿到原记录。失联时先报告「结果待确认」，允许按原编号重试，不转写其他台账。状态、作者、项目归属和时间由 CDS 确认；回执只引用本次实际返回的编号。资料只写必要摘要与授权引用。
+
+纯对话没有外部单号时，用 `manual` 来源。可用宿主提供的不含正文的会话或回合标识加动作序号作为来源编号；宿主未提供时为该动作生成一次随机标识。把原来源编号、请求编号与本轮待提交载荷保留在当前工作上下文供重试。同一回合的不同动作各用一个请求编号。会话原文、人员信息和凭据不放进编号。
 
 ## 代码审查与报告上传
 

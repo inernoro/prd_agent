@@ -55,6 +55,10 @@ import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
+import { createEngineeringPlanningRouter, normalizedPlanningPath } from './routes/engineering-planning.js';
+import { resolveEngineeringPlanningAccess } from './services/engineering-planning-access.js';
+import { EngineeringPlanningService, FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './services/engineering-planning.js';
+import type { EngineeringPlanningStore } from './services/engineering-planning-store.js';
 import { dtsManagedFreeBytes } from './services/dts-capacity.js';
 import { createDtsRouter } from './routes/dts.js';
 import { DtsService } from './services/dts.js';
@@ -598,6 +602,7 @@ export interface ServerDeps {
   storageModeContext?: StorageModeContext;
   /** P4 Part 18 (D.3): path to the json state file, used for rollback. */
   stateFile?: string;
+  engineeringPlanningStore?: EngineeringPlanningStore;
   /**
    * FU-02: Optional pre-initialised AuthStore backend. When provided (by
    * index.ts after calling initAuthStore()), it is used instead of the
@@ -692,6 +697,8 @@ function isDatabasePassCredentialRequest(req: express.Request): boolean {
 
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
+  const planning = normalizedPlanningPath(raw);
+  if (planning) return planning;
   if (/^\/api\/cluster\/identity\//i.test(raw)) return raw.split('?')[0];
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
@@ -1321,6 +1328,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/janitor\/tasks\/data-cases\/[^/]+\/confirm$/, '登记数据处置'],
     [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
+    [/^GET \/projects\/[^/]+\/planning$/, '查看工程规划'],
+    [/^GET \/projects\/[^/]+\/planning\/capabilities$/, '查看规划权限'],
+    [/^GET \/projects\/[^/]+\/planning\/debts$/, '查询债务'],
+    [/^GET \/projects\/[^/]+\/planning\/debts\/[^/]+$/, '查看债务详情'],
+    [/^GET \/projects\/[^/]+\/planning\/stats$/, '查看债务演进'],
+    [/^POST \/projects\/[^/]+\/planning\/commands$/, '提交规划变更'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
@@ -2199,7 +2212,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)) {
+    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPlanningPath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2230,6 +2243,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use((req, res, next) => {
     if (isSealedStorageRequest(req)) return next();
+    if (normalizedPlanningPath(req.path)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
     if (req.path === '/api/code-reviews' || req.path.startsWith('/api/code-reviews/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
@@ -2587,7 +2601,7 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)
+    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || !!normalizedPlanningPath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)
       || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
@@ -4704,16 +4718,17 @@ export function createServer(deps: ServerDeps): express.Express {
     (req as any).cdsRequestId = requestId;
     (res.locals as { cdsRequestId?: string }).cdsRequestId = requestId;
     res.setHeader('X-CDS-Request-Id', requestId);
-    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const privatePlanningPath = normalizedPlanningPath(req.originalUrl || `/api${req.path}`);
+    const suppressPreviewDetails = Boolean(privatePlanningPath) || isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
     const { branchId, projectId, profileId } = suppressPreviewDetails ? {} : extractApiMutationContext(req, deps);
     const suppressRequestDetails = Boolean(
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
     );
-    const actor = suppressRequestDetails ? 'human-admin' : resolveActorFromRequest(req);
+    const actor = privatePlanningPath ? undefined : suppressRequestDetails ? 'human-admin' : resolveActorFromRequest(req);
     res.on('finish', () => {
       const status = res.statusCode || 200;
       const severity: ServerEventSeverity = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
-      const fullPath = redactHostedSitePreviewLog(`/api${req.path}`);
+      const fullPath = privatePlanningPath ?? redactHostedSitePreviewLog(`/api${req.path}`);
       deps.serverEventLogStore?.record({
         category: 'system',
         severity,
@@ -5262,6 +5277,19 @@ export function createServer(deps: ServerDeps): express.Express {
     },
   });
   app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
+
+  const planningMongoUri = process.env.CDS_STORAGE_MODE === 'json' ? undefined : process.env.CDS_MONGO_URI;
+  const planningStore: EngineeringPlanningStore = deps.engineeringPlanningStore ?? (planningMongoUri
+    ? new MongoEngineeringPlanningStore(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db')
+    : new FileEngineeringPlanningStore(path.join(path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'engineering-planning')));
+  const planning = new EngineeringPlanningService(planningStore);
+  app.use('/api', createEngineeringPlanningRouter({
+    service: planning,
+    resolveAccess: (req, projectId) => resolveEngineeringPlanningAccess(req, deps.stateService, projectId),
+  }));
+  const closePlanning = async () => { await planningStore.close?.(); };
+  app.once('close', () => { void closePlanning(); });
+  deps.registerResourceShutdown?.(closePlanning);
 
   const dtsActor = (req: express.Request): DtsActor => {
     const r = req as express.Request & { cdsProjectKey?: { projectId: string; keyId: string }; _aiSession?: { id: string; token: string };

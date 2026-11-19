@@ -87,6 +87,16 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       next(); return;
     }
     if (kind?.toLowerCase() === 'projects') {
+      if (action?.toLowerCase() === 'planning') {
+        // The planning router checks command permissions as well as project membership.
+        const tail = segments.slice(3);
+        const read = method === 'GET' && (tail.length === 0
+          || (tail.length === 1 && /^(capabilities|debts|stats)$/i.test(tail[0]))
+          || (tail.length === 2 && /^debts$/i.test(tail[0])));
+        const command = method === 'POST' && tail.length === 1 && /^commands$/i.test(tail[0]);
+        if ((read || command) && checkProject(id)) { next(); return; }
+        res.status(404).json({ error: 'not_found', message: '没有可访问的工程规划项目' }); return;
+      }
       if (!id && method === 'GET') { next(); return; }
       // Credentials and cross-project migration remain system-owner actions.
       if (!id || /^(agent-keys|migration|migrate|github)$/i.test(action || '') || !checkProject(id)) { deny(); return; }

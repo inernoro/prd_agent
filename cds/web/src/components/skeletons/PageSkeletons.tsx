@@ -198,6 +198,13 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
     case 'release-console': return <ReleaseConsoleSkeleton />;
     case 'rows': return <LoadingBlock />;
     case 'code-reviews': return <CodeReviewsSkeleton />;
+    case 'engineering-planning': return <div className="space-y-4" role="status" aria-label="加载工程规划" aria-busy="true">
+      <div className="cds-loading-skeleton-line h-7 w-32" aria-hidden="true" />
+      <div className="flex gap-3" aria-hidden="true"><div className="cds-loading-skeleton-panel h-12 w-36" /><div className="cds-loading-skeleton-panel h-12 w-32" /></div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-hidden="true">
+        {Array.from({ length: 4 }, (_, index) => <ContentLoading key={index} variant="panel" label="加载推进看板" />)}
+      </div>
+    </div>;
     default: return <ConsoleGenericSkeleton />;
   }
 }

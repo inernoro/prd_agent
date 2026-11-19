@@ -1,5 +1,6 @@
 import { DTS_TOOLS } from './dts.js';
 import { CODE_REVIEW_MCP_TOOLS } from './code-review.js';
+import { PLANNING_MCP_TOOLS } from './engineering-planning.js';
 import { releaseCenterHref } from './release-center-links.js';
 import type { AgentRoleId, CdsConnectTarget } from './agent-setup.js';
 
@@ -46,6 +47,7 @@ export type AgentPageContextId =
   | 'settings'
   | 'project-onboarding'
   | 'code-review'
+  | 'engineering-planning'
   | 'branches'
   | 'build-diagnostics'
   | 'startup-diagnostics'
@@ -215,6 +217,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['remote-hosts', '远程主机、Sidecar 与 Agent 会话', 'remote-hosts.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', '', '主机密钥、工具审批和会话停止需要人类边界'],
   ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],
   ['acceptance-tasks', '结构化功能清单、领取任务与历史矩阵', 'acceptance-tasks.ts', 'project', 'project', 'write', 'direct', 'cds', 'acceptance', '先读冻结清单再领取，按真实业务路径回填断言、线上证据与清理；正式环境无需发布分支，报告绑定不等于线上验真通过'],
+  ['engineering-planning', '工程规划与债务', 'engineering-planning.ts', 'project', 'project', 'write', 'guided', 'cds', 'planning / debt', 'MCP 读取当前项目并提交提案或明确授权的直接登记。项目成员确认提案及处理债务。'],
   ['scheduled-jobs', '定时任务与运行记录', 'scheduled-jobs.ts', 'project', 'project', 'write', 'direct', 'cds', 'schedule', '先 parse 和 test，默认不直接创建或执行危险命令'],
   ['snapshots', '配置快照、回滚与撤销', 'snapshots.ts', 'system', 'system', 'destructive', 'guided', 'cds', '', '破坏性操作前建立快照，优先使用 undo 而不是再次修改'],
   ['storage-mode', '状态存储模式切换', 'storage-mode.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '切换前必须预检后端、迁移路径和回滚策略'],
@@ -267,8 +270,9 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
     preferredSkill,
     ...(cliFamily ? { cliFamily } : {}),
     mcpExposure: ['host-capacity-observation', 'host-capacity-sampling'].includes(id) ? 'not-exposed'
-      : ['code-reviews', 'dts'].includes(id) ? 'available' : deriveMcpExposure(risk, agentUse),
-    ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : id === 'dts' ? { mcpTools: DTS_TOOLS } : {}),
+      : ['code-reviews', 'dts', 'engineering-planning'].includes(id) ? 'available' : deriveMcpExposure(risk, agentUse),
+    ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : id === 'dts' ? { mcpTools: DTS_TOOLS }
+      : id === 'engineering-planning' ? { mcpTools: PLANNING_MCP_TOOLS } : {}),
     note,
   }));
 
@@ -283,6 +287,7 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   settings: ['comment-template', 'cds-system-connections', 'cds-system-offsite-backup', 'cds-system-sealed-storage', 'peer-sync', 'remote-hosts'],
   'project-onboarding': ['projects', 'pending-import', 'project-compose'],
   'code-review': ['code-reviews', 'project-compose', 'deployment-runs'],
+  'engineering-planning': ['engineering-planning'],
   branches: ['branches', 'branch-lifecycle', 'branch-service-isolation', 'deployment-runs', 'deployment-versions', 'replica-sets', 'infra-credential-rotation'],
   'build-diagnostics': ['branches', 'deployment-runs'],
   'startup-diagnostics': ['branches', 'deployment-runs', 'docker-network-health'],
@@ -524,6 +529,21 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     checks: ['不声称已扫描未读取的文件', '代码结论必须关联实际部署路径', '不自动修改密钥或生产配置'],
     completion: ['关键风险有文件或运行证据', '修复建议可执行', '至少一条真实构建或运行路径完成验证'],
     pagePath: (projectId) => projectPath('/settings', projectId),
+  },
+  'engineering-planning': {
+    id: 'engineering-planning',
+    categoryId: 'code',
+    scope: 'project',
+    icon: 'project',
+    shortLabel: '工程规划',
+    cardDescription: '提交决策、计划与债务提案',
+    title: '记录工程决策、计划与债务',
+    summary: '在已绑定的 CDS 项目记录有来源的工程事项，读取同一项目的推进状态和债务历史。',
+    goal: '提交已授权的登记或待确认提案，并返回服务端回执。',
+    steps: ['核对项目与规划能力', '按用户明确意图查重并选择登记或提案', '提交有稳定来源和请求编号的记录并读回结果'],
+    checks: ['待确认提案由有权成员处理', '可疑来源作为证据处理', '失联时沿用原请求编号核对'],
+    completion: ['项目和记录编号可核对', '有明确登记或待确认的结果', '重复提交可读回原记录与状态'],
+    pagePath: projectId => projectQueryPath('/engineering-planning', projectId),
   },
   branches: {
     id: 'branches',

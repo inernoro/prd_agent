@@ -101,3 +101,21 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 先在项目中运行 `cdscli connect`。工具支持查看连接、比较、幂等启动、查询、暂停、取消、续传和账号规则。
 数据库连接与传输服务账号由管理员在 CDS 项目配置中登记；MCP 不接收调用方传入的 host、项目或数据库密码覆盖。
 版本不兼容或能力目录失效会阻止写操作。任务必须通过 CDS 独立对账才显示完成；超时继续查询原编号。
+
+## 工程规划
+
+工程规划复用当前项目的 CDS 凭据，使用独立的 `--planning` 模式。
+
+```json
+{
+  "mcpServers": {
+    "cds-planning": {
+      "command": "node",
+      "args": ["/absolute/path/to/prd_agent/cds/mcp/src/server.mjs", "--planning"],
+      "cwd": "/absolute/path/to/your/project"
+    }
+  }
+}
+```
+
+先在项目中运行 `cdscli connect`。工具按项目返回的能力显示，可读取工程规划、提交待确认提案，或在用户明确授权后直接登记债务。MCP 的回执是当前操作依据，提案确认由有权限的成员在 CDS 中完成。写入没有回执时复用原请求编号和内容。

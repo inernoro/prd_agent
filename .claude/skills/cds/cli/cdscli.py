@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.23.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.24.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3709,6 +3709,145 @@ def _acceptance_lease(task_id: str) -> str:
         return token
     except (OSError, ValueError, AttributeError):
         die("没有可用的领取票据，请先领取任务", code=1)
+
+
+def cmd_planning(args: argparse.Namespace) -> None:
+    bound = os.environ.get("CDS_PROJECT_ID", "").strip()
+    project = (args.project or bound).strip()
+    if not project:
+        die("工程规划需要项目，请先 cdscli connect 或指定 --project")
+    if os.environ.get("CDS_PROJECT_KEY", "").strip() and bound and project != bound:
+        die("项目凭据只能访问已绑定项目的工程规划")
+    path = "/api/projects/" + urllib.parse.quote(project, safe="") + "/planning"
+
+    def scope(resource: Any) -> dict[str, Any]:
+        if not isinstance(resource, dict) or resource.get("projectId") != project:
+            die("CDS 返回的工程规划记录与当前项目不符")
+        return resource
+
+    def scoped_rows(value: dict[str, Any], field: str) -> None:
+        if field not in value:
+            return
+        rows = value[field]
+        if not isinstance(rows, list):
+            die("CDS 工程规划列表格式无效")
+        for row in rows:
+            scope(row)
+
+    def request(method: str, endpoint: str, body: Any = None) -> dict[str, Any]:
+        try:
+            status, result, _ = _request(method, path + endpoint, body=body, timeout=45,
+                                         fatal_network_errors=False, follow_redirects=False)
+        except (http.client.HTTPException, OSError):
+            status, result = 0, None
+        if not 200 <= status < 300:
+            if status == 0:
+                die("CDS 未返回可确认的结果，请检查连接后用原请求编号和内容重试" if body
+                    else "工程规划读取失败，请检查连接后重试")
+            messages = {
+                400: "工程规划参数不符合要求", 401: "项目凭据无效或已过期",
+                403: "当前授权不允许此操作", 404: "项目或记录不存在，或当前账户无法访问",
+                409: "版本或请求编号冲突，请先查询现有记录",
+                413: "提交内容过大，请分批提交", 503: "工程规划暂不可用，请稍后重试",
+            }
+            die(f"HTTP {status}: {messages.get(status, '工程规划请求失败')}", code=2 if status < 500 else 3)
+        return scope(result)
+
+    def submit(body: Any) -> None:
+        if not isinstance(body, dict) or not isinstance(body.get("type"), str) or not isinstance(body.get("requestId"), str):
+            die("请用 JSON 对象提交命令类型 type 和请求编号 requestId")
+        if any(field in body for field in ("projectId", "host", "actor", "permissions", "projectKey")):
+            die("项目和操作者由已授权的 CDS 凭据确定，请移除覆盖字段")
+        receipt = request("POST", "/commands", body)
+        result = scope(receipt.get("result"))
+        if not isinstance(receipt.get("reused"), bool) or not (
+            isinstance(result.get("id"), str) or isinstance(result.get("items"), list)
+        ):
+            die("CDS 返回的工程规划回执不完整")
+        ok(receipt)
+
+    action = args.planning_action
+    if args.cmd == "planning" and action == "submit":
+        try:
+            with open(args.file, "rb") as stream:
+                content = stream.read(3 * 1024 * 1024 + 1)
+            if len(content) > 3 * 1024 * 1024:
+                die("提交文件过大，请分批提交")
+            body = json.loads(content)
+        except (OSError, ValueError):
+            die("无法读取命令文件，请提供有效 JSON")
+        submit(body)
+    if action == "capabilities":
+        ok(request("GET", "/capabilities"))
+    if args.cmd == "planning" and action == "show":
+        board = request("GET", "")
+        for field in ("proposals", "decisions", "plans", "events"):
+            scoped_rows(board, field)
+        ok(board)
+    if action == "create":
+        source = {"type": args.source_type, "ref": args.source_ref}
+        if args.source_url:
+            source["url"] = args.source_url
+        body = {"type": "debt.create", "requestId": args.request_id, "title": args.title, "source": source}
+        for key, value in (("summary", args.summary), ("whyDebt", args.why_debt), ("criteria", args.criterion),
+                           ("priority", args.priority), ("decisionId", args.decision)):
+            if value is not None:
+                body[key] = value
+        submit(body)
+    if action == "list":
+        query = urllib.parse.urlencode({k: v for k, v in {
+            "q": args.q, "cursor": args.cursor, "view": args.view, "branch": args.branch, "limit": args.limit,
+        }.items() if v is not None})
+        result = request("GET", "/debts" + ("?" + query if query else ""))
+        scoped_rows(result, "items")
+        ok(result)
+    if action == "show":
+        result = request("GET", "/debts/" + urllib.parse.quote(args.id, safe=""))
+        if scope(result.get("debt")).get("id") != args.id:
+            die("CDS 返回的债务与请求编号不符")
+        scoped_rows(result, "events")
+        ok(result)
+    if action == "stats":
+        query = urllib.parse.urlencode({k: v for k, v in {"from": args.from_date, "to": args.to_date, "branch": args.branch}.items()
+                                       if v is not None})
+        ok(request("GET", "/stats" + ("?" + query if query else "")))
+    die("不支持的工程规划操作")
+
+
+def _register_planning_parser(sub: Any) -> None:
+    planning = sub.add_parser("planning", help="工程规划：推进、权限与结构化提交").add_subparsers(dest="planning_action", required=True)
+    debt = sub.add_parser("debt", help="工程债务：查询、登记、历史和演进").add_subparsers(dest="planning_action", required=True)
+    for routes, actions in ((planning, ("show", "capabilities", "submit", "stats")), (debt, ("list", "show", "create", "stats"))):
+        for action in actions:
+            parser = routes.add_parser(action)
+            parser.set_defaults(func=cmd_planning)
+            parser.add_argument("--project", help="CDS 项目 ID，默认当前仓库绑定项目")
+            if action == "submit":
+                parser.add_argument("--file", required=True, help="含 type 与 requestId 的命令 JSON")
+            if action == "show" and routes is debt:
+                parser.add_argument("id")
+                parser.add_argument("--history", action="store_true", help="详情默认包含变更历史")
+            if action == "create":
+                parser.add_argument("--request-id", required=True)
+                parser.add_argument("--title", required=True)
+                parser.add_argument("--source-type", choices=("manual", "review", "test", "incident", "code", "adr"), default="manual")
+                parser.add_argument("--source-ref", required=True)
+                parser.add_argument("--source-url")
+                parser.add_argument("--summary")
+                parser.add_argument("--why-debt")
+                parser.add_argument("--criterion", action="append")
+                parser.add_argument("--priority", choices=("high", "mid", "low"))
+                parser.add_argument("--decision")
+            if action == "list":
+                parser.add_argument("--q")
+                parser.add_argument("--view")
+                parser.add_argument("--cursor")
+                parser.add_argument("--limit", type=int)
+            if action in ("list", "stats"):
+                parser.add_argument("--branch")
+            if action == "stats":
+                parser.add_argument("--from", dest="from_date")
+                parser.add_argument("--to", dest="to_date")
 
 
 def cmd_dts(args: argparse.Namespace) -> None:
@@ -11439,6 +11578,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     _register_acceptance_parser(sub)
     _register_dts_parser(sub)
+    _register_planning_parser(sub)
 
     # 验收报告(CDS 自托管 HTML/Markdown,登录态门控,可按项目/文件夹归类)
     rep = sub.add_parser("report", help="验收报告:列出/查看/创建/删除/直达深链").add_subparsers(dest="sub", required=True)

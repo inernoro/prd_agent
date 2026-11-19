@@ -84,6 +84,13 @@
     "workspace": "fluid"
   },
   {
+    "route": "/engineering-planning",
+    "name": "工程规划",
+    "page": "pages/EngineeringPlanningPage.tsx",
+    "kind": "engineering-planning",
+    "workspace": "fluid"
+  },
+  {
     "route": "/reports",
     "name": "验收报告",
     "page": "pages/ReportsPage.tsx",

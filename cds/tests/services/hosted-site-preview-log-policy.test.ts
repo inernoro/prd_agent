@@ -8,6 +8,7 @@ import { HttpLogStore, redactHeaders, redactBodyText } from '../../src/services/
 import { isHostedSitePreviewRequest, redactHostedSitePreviewLog } from '../../src/services/hosted-site-preview-log-policy.js';
 import { ProxyService } from '../../src/services/proxy.js';
 import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
+import { normalizedPlanningPath } from '../../src/routes/engineering-planning.js';
 
 const ticket = 'SyntheticPreviewCanary-ONLY-0123456789';
 const preview = `/api/hosted-site-preview-files/${ticket}/assets/app.js?private=another-canary`;
@@ -209,6 +210,27 @@ describe('hosted site preview logging boundary', () => {
     expect(req.body.instruction).toContain(ticket);
     expect(res.sent.join('')).toContain(ticket);
   });
+
+  it.each(['early-failure', 'mutation'] as const)('redacts planning project paths and input from the master %s log', (kind) => {
+    const canary = 'SyntheticPlanningCanary';
+    const output: unknown[] = [];
+    const exposedPath = `/projects/${canary}/planning/commands`;
+    const req = {
+      method: 'POST', originalUrl: `/api${exposedPath}?q=${canary}`, url: exposedPath, path: exposedPath,
+      headers: { referer: `https://cds.test/${canary}`, 'x-cds-request-id': canary },
+      body: { title: canary }, query: { q: canary },
+    };
+    const res = makeResponse();
+    res.locals = { cdsSuppressRequestDetails: true };
+    res.statusCode = 400;
+    const next = vi.fn();
+    loadMasterMiddleware(kind, output)(req, res, next);
+    expect(next).toHaveBeenCalledOnce();
+    res.end(JSON.stringify({ message: canary }));
+    expect(JSON.stringify(output)).toContain('/api/projects/:projectId/planning/commands');
+    expect(JSON.stringify(output)).not.toContain(canary);
+    expect(res.sent.join('')).toContain(canary);
+  });
 });
 
 // Transpile and execute the real registered middleware bodies, not a parallel
@@ -233,7 +255,7 @@ function loadMasterMiddleware(kind: 'early-failure' | 'activity' | 'mutation', o
     deps: { config: { repoRoot: '/synthetic-no-read' }, stateService: { getBranch: () => undefined }, serverEventLogStore: { record: (value: unknown) => output.push(value) } },
     console: { warn: (...args: unknown[]) => output.push(args) },
     createRequestId: () => 'synthetic-master-request', readBundledCdsCliVersion: () => undefined,
-    isHostedSitePreviewRequest, redactHostedSitePreviewLog,
+    isHostedSitePreviewRequest, redactHostedSitePreviewLog, normalizedPlanningPath,
     normalizedSealedStoragePath: () => null, resolveApiLabel: () => 'Synthetic endpoint', activitySeq: 0,
     broadcastActivity: (value: unknown) => output.push(value), getRemoteAddr: () => '127.0.0.1',
     extractApiMutationContext: () => ({}), resolveActorFromRequest: () => 'synthetic-user',

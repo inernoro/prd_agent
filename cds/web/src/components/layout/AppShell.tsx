@@ -208,6 +208,7 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
   if (pathname.startsWith('/code-reviews')) return 'code-reviews';
+  if (pathname.startsWith('/engineering-planning')) return 'engineering-planning';
   if (pathname.startsWith('/status')) return 'status';
   if (pathname.startsWith('/overview')) return 'overview';
   return 'projects';
@@ -658,6 +659,12 @@ function RailNav({
           <SearchCode />
           <span className="cds-rail-full">代码审查报告</span>
           <span className="cds-rail-short">审查</span>
+        </Link>
+        <Link to="/engineering-planning" className="cds-rail-item" onClick={onNavigate}
+          data-active={active === 'engineering-planning' ? 'true' : 'false'} aria-label="工程规划" title="工程规划">
+          <Waypoints />
+          <span className="cds-rail-full">工程规划</span>
+          <span className="cds-rail-short">规划</span>
         </Link>
       </div>
       {/*
