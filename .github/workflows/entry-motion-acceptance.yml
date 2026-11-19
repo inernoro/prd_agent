@@ -38,7 +38,7 @@ jobs:
               export MAP_ENTRY=https://main-prd-agent.miduo.org
               export GATEWAY_ENTRY=https://main-prd-agent-llmgw.miduo.org
               python3 scripts/prd-agent-public-surface-smoke.py --base "$MAP_ENTRY" \
-                --llmgw-page-path "$GATEWAY_ENTRY/" --llmgw-console-health-path "$GATEWAY_ENTRY/gw/healthz" \
+                --root-health-path /api/health/ready --llmgw-page-path "$GATEWAY_ENTRY/" --llmgw-console-health-path "$GATEWAY_ENTRY/gw/healthz" \
                 --llmgw-serving-health-path "$GATEWAY_ENTRY/gw/v1/healthz" \
                 --json-out work/entry-release-readback/map.json
               ;;
