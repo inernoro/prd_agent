@@ -59,6 +59,7 @@ public class AdminPermissionMiddlewareTests
     [InlineData("GET", "/api/design-artifacts/runtime/run-1/workspace/input")]
     [InlineData("POST", "/api/design-artifacts/runtime/run-1/workspace/result")]
     [InlineData("POST", "/api/design-artifacts/runtime/run-1/workspace/preview")]
+    [InlineData("POST", "/api/design-artifacts/runtime/run-1/workspace/corrections")]
     [InlineData("GET", "/api/design-artifacts/runtime/run-1/llm/v1/models")]
     [InlineData("POST", "/api/design-artifacts/runtime/run-1/llm/v1/chat/completions")]
     // OpenDesign 的 Codex 运行时是 wire_api = "responses"，漏掉这条等于每次真实模型调用先吃 401。
@@ -96,6 +97,8 @@ public class AdminPermissionMiddlewareTests
     [InlineData("GET", "/api/design-artifacts/runtime/run-1/workspace/input-extra", true)]
     [InlineData("GET", "/api/design-artifacts/runtime/run-1/workspace/input/debug", true)]
     [InlineData("POST", "/api/design-artifacts/runtime/run-1/workspace/input", true)]
+    [InlineData("GET", "/api/design-artifacts/runtime/run-1/workspace/corrections", true)]
+    [InlineData("POST", "/api/design-artifacts/runtime/run-1/workspace/corrections/extra", true)]
     [InlineData("GET", "/api/web-pages/public", true)]
     public async Task RequestsOutsideExactDesignRuntimeDataPlaneStillRequireAdminAuthentication(
         string method,

@@ -4,6 +4,7 @@ import { BookOpen, FileText, Library, Upload } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import type { KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
 import KnowledgeInlineBrowser from '@/components/web-hosting/KnowledgeInlineBrowser';
+import { runtimeFailureRecoveryMessage } from '@/components/web-hosting/siteGenerateProgress';
 import { DESIGN_ATTACHMENT_ACCEPT, MAX_GENERATE_ATTACHMENTS, useDesignAttachmentUploads } from '@/components/web-hosting/designAttachments';
 import { ComposerSheet, WorkbenchComposer, type ComposerChip } from '@/components/web-hosting/workbench/WorkbenchParts';
 import {
@@ -17,11 +18,12 @@ import { generateSpeech, getSpeechCapabilities, getSpeechRun } from '@/services/
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import { useAuthStore } from '@/stores/authStore';
-import { writingMediaTimeReached } from './writingView';
+import { writingKnowledgeHref, writingMediaTimeReached } from './writingView';
 
 const cardClass = 'rounded-xl border border-subtle bg-surface p-5';
 const terminal = (status: string) => ['done', 'error', 'cancelled'].includes(status.toLowerCase());
 const fileLabels: Record<string, string> = { 'index.html': '网页预览', 'assets/delivery.json': '教程与依据' };
+type DeliveryProgress = { code: string; message: string };
 
 export default function InformationDeliveryPage() {
   const { storeId = '' } = useParams();
@@ -141,7 +143,7 @@ export default function InformationDeliveryPage() {
       <div className="mx-auto max-w-5xl">
         <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold">信息传递</h1>
-          <Link className="text-sm text-token-secondary underline" to={`/document-store?openStore=${encodeURIComponent(storeId)}`}>返回知识库</Link>
+          <Link className="text-sm text-token-secondary underline" to={writingKnowledgeHref(storeId)}>返回知识库</Link>
         </header>
         {runId ? <DeliveryExecution key={runId} runId={runId} storeId={storeId} /> : <>
           {error && <div role="alert" className="mb-4 text-sm text-token-primary">{error}{!templates && <> <Button onClick={() => { setError(''); setCatalogAttempt((v) => v + 1); }}>重试</Button></>}</div>}
@@ -223,6 +225,7 @@ export default function InformationDeliveryPage() {
 function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string }) {
   const [run, setRun] = useState<DesignArtifactRunSummary>();
   const [phase, setPhase] = useState('');
+  const [progressLog, setProgressLog] = useState<DeliveryProgress[]>([]);
   const [error, setError] = useState('');
   const [reconnect, setReconnect] = useState(0);
   const [files, setFiles] = useState<InformationDeliveryFile[]>([]);
@@ -268,8 +271,18 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
             const sequence = Number(event.id);
             if (Number.isFinite(sequence)) afterSeq.current = Math.max(afterSeq.current, sequence);
             try {
-              const data: { message?: string; revision?: number } = JSON.parse(event.data);
-              if (event.event === 'phase' && data.message) setPhase(data.message);
+              const data: { message?: string; phaseCode?: string; revision?: number } = JSON.parse(event.data);
+              if (event.event === 'phase' && data.message) {
+                setPhase(data.message);
+                const entry = { code: data.phaseCode || data.message, message: data.message };
+                setProgressLog((history) => {
+                  const previous = history.at(-1);
+                  if (entry.code === previous?.code) {
+                    return entry.message === previous.message ? history : [...history.slice(0, -1), entry];
+                  }
+                  return [...history.slice(-9), entry];
+                });
+              }
               if (event.event === 'preview' && (data.revision ?? 0) > previewVersion.current) {
                 previewVersion.current = data.revision ?? 0;
                 setFileRevision(previewVersion.current);
@@ -289,6 +302,7 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
   }, [runId, reconnect]);
 
   const done = run?.status.toLowerCase() === 'done';
+  const failed = run?.status.toLowerCase() === 'error';
   const running = !!run && !terminal(run.status);
   const [mediaUpdate, setMediaUpdate] = useState<InformationDeliveryMedia[]>();
   const readyMedia = mediaUpdate ?? run?.deliveryMediaFiles ?? [];
@@ -356,9 +370,16 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
   return (
     <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
       <section className={cardClass}>
-        <h2 className="text-lg font-semibold">{done ? '生成结果' : '生成进度'}</h2>
+        <h2 className="text-lg font-semibold">{done ? '生成结果' : failed ? '生成未完成' : '生成进度'}</h2>
         <p role="status" className="my-3 text-sm text-token-secondary">{phase || '正在读取任务'}</p>
         {run?.resolvedModel && <p className="mb-4 text-xs text-token-secondary">{run.resolvedModel} · {run.resolvedPlatform}</p>}
+        {failed && run && <p role="alert" className="mb-4 text-sm">{runtimeFailureRecoveryMessage(run, 'generate')}</p>}
+        {progressLog.length > 1 && <details className="mb-4 text-sm">
+          <summary className="cursor-pointer font-medium">执行记录</summary>
+          <ol className="mt-2 grid list-decimal gap-1 pl-5 text-xs text-token-secondary" aria-label="执行记录">
+            {progressLog.map((entry, index) => <li key={`${index}-${entry.code}`}>{entry.message}</li>)}
+          </ol>
+        </details>}
         {error && <div role="alert" className="mb-4 text-sm">{error} <Button variant="secondary" onClick={() => setReconnect((v) => v + 1)}>重连</Button></div>}
         {!!run?.deliveryCorrections?.length && <ol aria-label="作者纠正" className="mb-4 grid gap-2">
           {run.deliveryCorrections.map((message) => <li key={message.id} className="rounded-lg border border-subtle p-3 text-sm">
@@ -552,7 +573,7 @@ function InformationDeliveryReader({ storeId, runId }: { storeId: string; runId:
   }, [storeId, runId]);
   return <main className="min-h-screen bg-base px-4 py-6 text-token-primary sm:px-8">
     <div className="mx-auto max-w-4xl">
-      <Link className="text-sm text-token-secondary underline" to={`/document-store?openStore=${encodeURIComponent(storeId)}`}>返回知识库</Link>
+      <Link className="text-sm text-token-secondary underline" to={writingKnowledgeHref(storeId)}>返回知识库</Link>
       {error && <p role="alert" className="mt-4">{error}</p>}
       {!result && !error && <p role="status" className="mt-4">正在读取成品</p>}
       {result && <div className="mt-4">

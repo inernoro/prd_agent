@@ -2642,6 +2642,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               </Button>
               {/* createPortal 到 body：PageHeader 是 overflow-hidden 圆角玻璃条，绝对定位下拉会被裁掉。见 AnchoredMenu / frontend-modal.md */}
               <AnchoredMenu open={moreOpen} onClose={() => setMoreOpen(false)} anchorRef={moreRef} minWidth={200}>
+                {isMobile && canWriteEntries && canStartInformationDelivery && (
+                  <MoreItem icon={<Wand2 size={14} />} label="信息传递" onClick={() => { setMoreOpen(false); navigate(`/document-store/${storeId}/delivery`); }} />
+                )}
                 {store.isPublic ? (
                   <>
                     <MoreItem icon={<ArrowUpRight size={14} />} label="前往公开页" onClick={() => { setMoreOpen(false); onOpenLibrary(store.id); }} />
