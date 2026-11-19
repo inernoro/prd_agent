@@ -8,49 +8,45 @@ on:
         default: visual
 permissions:
   contents: read
-env:
-  VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
 jobs:
-  full-browser-regression:
+  entry-recorder-tooling:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    container:
-      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
-      options: --init --shm-size=1g
-    strategy:
-      fail-fast: false
-      matrix:
-        browser: [webkit]
+    env:
+      VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 098a3dea0a2c5a31b78eddb1b9c0c006e1307d03
+          ref: 90783510ee6f4b6fc74359e73385734e366034dd
       - uses: pnpm/action-setup@v4
         with:
           version: '10.28.2'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Prepare bundles with frozen dependencies
+      - name: Install cloud recording tools
         run: |
-          pnpm -C cds/web install --frozen-lockfile
-          pnpm -C llmgw/web install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
-          pnpm -C cds/web typecheck
-          pnpm -C cds/web build
-          pnpm -C llmgw/web build
-          pnpm -C e2e typecheck
-      - name: Verify organization before and after reload in WebKit
-        env:
-          SELECTED_ENTRY_BROWSER: ${{ matrix.browser }}
+          # Keep Ubuntu's signed packages and use the Azure archive on hosted runners.
+          sudo sed -Ei 's|https?://(azure\.)?archive\.ubuntu\.com/ubuntu/?|https://azure.archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources
+          pnpm -C e2e exec playwright install --with-deps chromium
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg xvfb openbox python3-pil
+      - name: Verify the existing desktop recorder can capture and compare frames
         run: |
-          test "$(id -u)" -eq 0
-          test "$HOME" = /github/home
-          chown 0:0 /github/home
-          pnpm -C e2e exec playwright test -c admin-operations.config.ts --project "$SELECTED_ENTRY_BROWSER" --grep '电影式接入全流程' --repeat-each=2 --workers=1
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C llmgw/web build
+          pnpm -C llmgw/web preview --host 127.0.0.1 --strictPort --port 8200 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8200/llmgw/; then break; fi
+            sleep 1
+          done
+          xvfb-run -a -s '-screen 0 1920x1080x24 -ac' sh -c 'openbox >/tmp/entry-openbox.log 2>&1 & node e2e/entry-daylight-fixture.mjs'
+          python3 e2e/entry-daylight-compare.py --fixture
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
-          name: entry-organization-recheck-${{ matrix.browser }}
-          path: work/compat/
-          retention-days: 14
+          name: entry-recorder-tooling
+          path: |
+            work/entry-daylight/fixture-evidence.json
+            work/entry-daylight/night-vs-daylight-entry.mp4
+          if-no-files-found: error
