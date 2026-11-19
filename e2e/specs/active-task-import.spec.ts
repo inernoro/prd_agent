@@ -68,7 +68,9 @@ for (const device of ['桌面', '手机']) {
     expect(taskReads).toBe(0);
 
     if (mobile) {
-      await page.goto('/active-tasks');
+      await page.getByRole('button', { name: '打开导航菜单' }).click();
+      const menu = page.getByRole('dialog', { name: '导航菜单' });
+      await menu.getByRole('button', { name: '任务台', exact: true }).click();
     } else {
       await page.keyboard.press('Control+k');
       const palette = page.getByRole('dialog', { name: '命令面板' });
