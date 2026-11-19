@@ -88,7 +88,6 @@ export default function CommentsSection(props: Props) {
   const [notice, setNotice] = useState<{ text: string; undo?: () => void } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const lastManualScroll = useRef(0);
   const keptScroll = useRef<number | null>(null);
   const threadElements = useRef(new Map<string, HTMLElement>());
   const fetchId = useRef(0);
@@ -317,12 +316,6 @@ export default function CommentsSection(props: Props) {
     }, 50);
     return () => window.clearTimeout(timer);
   }, [annotations?.activeId, loading, props.visible, props.readerLayout, markRead]);
-  useEffect(() => {
-    const readingId = annotations?.readingId;
-    if (!props.readerLayout || props.visible === false || otherVersions || annotations?.activeId
-      || !readingId || Date.now() - lastManualScroll.current < 1500) return;
-    threadElements.current.get(readingId)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [annotations?.readingId, annotations?.activeId, otherVersions, props.readerLayout, props.visible]);
 
   async function sendComment(content: string, options: HostedSiteCommentOptions) {
     const operationIdentity = identity;
@@ -475,7 +468,6 @@ export default function CommentsSection(props: Props) {
   const unread = roots.filter(comment => newThreads.has(comment.id));
   const walkable = roots.filter(comment => comment.anchor && !comment.isResolved).sort((a, b) => (numbers.get(a.id) ?? 0) - (numbers.get(b.id) ?? 0));
   const picked = walkable.findIndex(comment => comment.id === annotations?.activeId);
-  const preserveReading = () => { lastManualScroll.current = Date.now(); };
   const choose = (comment: HostedSiteCommentDto, moveDocument = false) => {
     markRead(comment.id);
     if (annotations && comment.anchor) {
@@ -627,7 +619,7 @@ export default function CommentsSection(props: Props) {
       {historyHintId && <p className="review-talk-note">当前版本暂无意见，{historyHintLabel} 有 {historyHintCount} 条。<button type="button" onClick={() => review?.setVersionPreview({ id: historyHintId })}>在小窗查看</button></p>}
       {props.readerLayout && annotations?.connectionChecked && !annotations.ready && <p className="review-talk-note">这个页面不能加载批注脚本，只支持整页评论。</p>}
       {props.readerLayout && unread.length > 0 && <button className="review-talk-new" type="button" onClick={jumpUnread}><MessageSquare size={14} />{unread.length} 条讨论有新内容 · 查看</button>}
-      <div className="review-thread-scroll" ref={listRef} onWheel={preserveReading} onTouchMove={preserveReading} onPointerDown={preserveReading}>
+      <div className="review-thread-scroll" ref={listRef}>
         {loading || versionPending ? <MapSectionLoader text={versionPending ? '正在确认网页版本…' : '正在加载讨论…'} /> : <>
           {visible.length === 0 && !error && <div className="review-empty">
             {!props.readerLayout && <MessageSquare size={23} />}<strong>{filter === 'resolved' ? '还没有已解决的讨论' : filter === 'open' && resolvedCount ? '全部意见都已解决' : props.readerLayout ? '还没有意见' : props.threadKind === 'discussion' ? '讨论这份文档' : '让意见留在对应的位置'}</strong>

@@ -299,7 +299,9 @@
       if (pin && pin.bottom > 0 && pin.top < innerHeight) markers.push(previewRect(pin));
       if (dismissedPreviews.has(item.thread.id) || (previewsHidden && !revealedPreviews.has(item.thread.id))) return;
       var rect = viewportGeometry(item, 'anchor');
-      if (rect && rect.width && rect.height && rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth)
+      // Let the open card follow its anchor out past the top of the clipped rail.
+      var topLimit = context.dualColumn && item.thread.id === activeId ? -Math.max(innerHeight, 720) : 0;
+      if (rect && rect.width && rect.height && rect.bottom > topLimit && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth)
         items.push({ id: item.thread.id, rect: previewRect(rect), obstacles: [] });
     });
     var surrounding = items.length ? surroundingGeometry() : [];

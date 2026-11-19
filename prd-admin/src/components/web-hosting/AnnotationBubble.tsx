@@ -124,7 +124,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     id: item.id, top: item.rect.top, height: geometry.cards[item.id].height,
   })), geometry.height, annotations.activeId);
   const railLayout = dualColumn ? layoutCards({
-    anchors: attached.map(({ item: { id, rect }, number }) => ({ id, n: number, top: rect.top, bottom: rect.top + rect.height, left: rect.left })),
+    anchors: attached.map(({ item: { id, rect }, number }) => ({ id, n: number, top: rect.top, left: rect.left })),
     heights: Object.fromEntries(attached.map(({ item: { id } }) => [id, geometry.cards[id].height])),
     selectedId: annotations.activeId,
     viewport: { top: 0, bottom: geometry.height },
@@ -141,12 +141,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const selectedHeight = annotations.activeId ? geometry.cards[annotations.activeId]?.height : undefined;
   const offset = Math.min(scrollTop, maxScroll);
   const committedTop = annotations.documentScrollTop;
-  const selectedCard = annotations.activeId ? alignedCards.get(annotations.activeId) : undefined;
-  const selectedTop = selectedCard?.top;
-  const selectedBottom = selectedCard?.bottom;
-  const selectedAnchorTop = entries.find(({ item }) => item.id === annotations.activeId)?.item.rect.top;
-  const canTranslate = dualColumn && visible && !shift && !Object.keys(positions).length
-    && (!selectedCard || (selectedAnchorTop !== undefined && Math.abs(selectedCard.top - selectedAnchorTop) < 1));
+  const canTranslate = dualColumn && visible && !shift && !Object.keys(positions).length;
   useLayoutEffect(() => {
     const layer = scrollingContent.current;
     if (!layer) return;
@@ -155,12 +150,10 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     if (!canTranslate || committedTop == null) return;
     return subscribeDocumentScroll?.(top => {
       const dy = committedTop - top;
-      const staysInView = selectedTop === undefined || selectedBottom === undefined
-        || (selectedTop + dy >= 12 && selectedBottom + dy <= geometry.height - 12);
-      layer.style.transform = staysInView && dy && Math.abs(dy) < geometry.height
+      layer.style.transform = dy && Math.abs(dy) < geometry.height
         ? `translateY(${dy}px)` : '';
     });
-  }, [canTranslate, committedTop, geometry.height, selectedTop, selectedBottom, subscribeDocumentScroll]);
+  }, [canTranslate, committedTop, geometry.height, subscribeDocumentScroll]);
   useLayoutEffect(() => {
     const margin = scroller.current;
     const id = annotations.activeId;

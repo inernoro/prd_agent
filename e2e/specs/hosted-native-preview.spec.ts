@@ -675,6 +675,40 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       expect(await frame.locator('body').evaluate(() => window.scrollY)).toBe(0);
       expect(await margin.evaluate(el => el.scrollTop)).toBe(0);
     });
+    if (!mobile) test('选中气泡在下边缘仍贴住锚点，下方由视口裁切', async ({ page }) => {
+      const frame = await open(page);
+      const anchor = frame.locator('#note-two');
+      await anchor.evaluate(element => {
+        (element as HTMLElement).style.marginTop = '120vh';
+        window.scrollBy(0, element.getBoundingClientRect().top - innerHeight + 125);
+      });
+      await frame.getByRole('button', { name: '打开批注 2', exact: true }).click();
+      const card = page.getByRole('dialog', { name: '批注气泡 2', exact: true });
+      const stage = page.locator(`iframe[title="${title}"]`);
+      const point = await freePoint(page);
+      await page.mouse.move(point.x, point.y);
+      const before = (await anchor.boundingBox())!.y;
+      await page.mouse.wheel(0, -70);
+      await expect.poll(async () => (await anchor.boundingBox())!.y - before).toBeGreaterThan(60);
+      await expect.poll(async () => Math.abs((await card.boundingBox())!.y - (await anchor.boundingBox())!.y)).toBeLessThan(2);
+      const [box, canvas] = await Promise.all([card.boundingBox(), stage.boundingBox()]);
+      expect(box!.y + box!.height).toBeGreaterThan(canvas!.y + canvas!.height);
+    });
+    if (!mobile) test('正文滚动只更新讨论中的阅读提示，讨论列表保留滚动位置', async ({ page }) => {
+      const frame = await open(page);
+      await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
+      const list = page.locator('.review-thread-scroll');
+      const first = list.locator('.review-thread').first();
+      await first.evaluate(row => { (row as HTMLElement).style.minHeight = '1200px'; });
+      const anchor = frame.locator('#note-two');
+      await anchor.evaluate(element => { (element as HTMLElement).style.marginTop = '120vh'; });
+      await expect(first).toHaveClass(/is-following/);
+      const oldPosition = await list.evaluate(el => el.scrollTop);
+      await anchor.evaluate(element => window.scrollBy(0, element.getBoundingClientRect().top - innerHeight * .35));
+      const next = list.locator('.review-thread').nth(1);
+      await expect(next).toHaveClass(/is-following/);
+      await expect.poll(() => list.evaluate(el => el.scrollTop)).toBe(oldPosition);
+    });
     if (!mobile) test('点正文编号不改阅读位置，卡片仅点选时过渡，页边滚轮跟正文', async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.emulateMedia({ reducedMotion: 'no-preference' });

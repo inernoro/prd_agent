@@ -1,22 +1,14 @@
-// Port of the B V4 delivery's workbench/layout.js. All coordinates are relative
-// to the same viewport; the host supplies anchor rectangles and measured heights.
+// The B prototype packs neighbouring cards around the selected anchor in document flow.
 export const railMotion = { duration: 200, easing: 'cubic-bezier(.2,.7,.2,1)' };
 
-type RailAnchor = { id: string; n: number; top: number; bottom: number; left: number };
+type RailAnchor = { id: string; n: number; top: number; left: number };
 type RailCard = { x: number; top: number; bottom: number; width: number };
 type Viewport = { top: number; bottom: number };
 type Overflow = { above: number; below: number };
 type ScrollRange = { top: number; max: number };
 
-const gap = 8, pad = 12, reach = 28, linkInset = 14;
+const gap = 12, pad = 12, linkInset = 14;
 export const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-
-function stickyTop(anchor: RailAnchor, height: number, viewport: Viewport) {
-  const { top, bottom } = anchor;
-  const atTop = Math.min(Math.max(top, bottom - reach), Math.max(top, viewport.top + pad));
-  if (height > viewport.bottom - viewport.top - 2 * pad) return atTop;
-  return Math.max(Math.min(top, top + reach - height), Math.min(atTop, viewport.bottom - pad - height));
-}
 
 export function layoutCards({ anchors, heights, selectedId, viewport, railLeft }: {
   anchors: RailAnchor[];
@@ -33,7 +25,7 @@ export function layoutCards({ anchors, heights, selectedId, viewport, railLeft }
   let prev = -Infinity;
   if (selected >= 0) {
     const item = flow[selected];
-    const top = stickyTop(item.a, item.h, viewport);
+    const top = item.want;
     pos.set(item.id, top);
     prev = top + item.h;
     let next = top;
