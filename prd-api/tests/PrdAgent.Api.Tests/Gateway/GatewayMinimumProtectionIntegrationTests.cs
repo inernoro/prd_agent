@@ -422,9 +422,16 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         (await Dispatch(HttpMethod.Post, retryPath, sourceKey, partialClaim)).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await Dispatch(HttpMethod.Post, retryPath, sourceKey, new { partialClaim.id, partialClaim.claimId, outcome = "failed", completedCount = 2 }))
             .StatusCode.ShouldBe(HttpStatusCode.OK);
+        const string callerTitle = "Synthetic batch automation";
+        const string callerOwner = "Fixture owner";
+        await database.Data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").UpdateOneAsync(
+            entry => entry.TenantId == Tenant && entry.AppCallerCode == Caller,
+            Builders<GatewayAppCallerRecord>.Update.Set(entry => entry.Title, callerTitle).Set(entry => entry.Owner, callerOwner));
         using var resolved = JsonDocument.Parse(await operatorClient.GetStringAsync("/gw/logs/consumption-alerts"));
         var resolvedAlert = resolved.RootElement.GetProperty("data").GetProperty("items").EnumerateArray()
             .Single(item => item.GetProperty("id").GetString() == alert["_id"].AsString);
+        resolvedAlert.GetProperty("appCallerTitle").GetString().ShouldBe(callerTitle);
+        resolvedAlert.GetProperty("owner").GetString().ShouldBe(callerOwner);
         var retrySummary = resolvedAlert.GetProperty("retry");
         retrySummary.GetProperty("completed").GetInt32().ShouldBe(1);
         retrySummary.GetProperty("failed").GetInt32().ShouldBe(1);

@@ -1,7 +1,9 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
+using PrdAgent.LlmGw.LogicalModels;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Mongo;
 
@@ -11,6 +13,12 @@ public static class GatewayConsumptionAlertsEndpoint
 {
     private static readonly FilterDefinitionBuilder<BsonDocument> Where = Builders<BsonDocument>.Filter;
     private static readonly UpdateDefinitionBuilder<BsonDocument> Update = Builders<BsonDocument>.Update;
+    private static readonly IEqualityComparer<(string Code, string RequestType)> CallerIdentityComparer =
+        EqualityComparer<(string Code, string RequestType)>.Create(
+            (left, right) => AppCallerIdentityPolicy.Comparer.Equals(left.Code, right.Code)
+                && AppCallerIdentityPolicy.Comparer.Equals(left.RequestType, right.RequestType),
+            identity => HashCode.Combine(AppCallerIdentityPolicy.Comparer.GetHashCode(identity.Code),
+                AppCallerIdentityPolicy.Comparer.GetHashCode(identity.RequestType)));
 
     public static void MapGatewayConsumptionAlerts(this WebApplication app, IMongoDatabase database, JsonSerializerOptions jsonOptions)
     {
@@ -145,15 +153,20 @@ public static class GatewayConsumptionAlertsEndpoint
         IMongoDatabase database, HttpContext http, IEnumerable<BsonDocument> alerts)
     {
         var identities = alerts.Where(doc => doc.GetStringOrEmpty("Scope") == "app-caller")
-            .Select(CallerIdentity).Distinct().ToArray();
-        if (identities.Length == 0) return new();
+            .Select(CallerIdentity).Distinct(CallerIdentityComparer).ToArray();
+        if (identities.Length == 0) return new(CallerIdentityComparer);
+        // 只对调用方身份忽略大小写，租户、团队和用户的访问范围仍精确匹配。
         var filter = TenantAccess.FilterTeamScope(http, Where.Or(identities.Select(identity =>
-            Where.Eq("AppCallerCode", identity.Code) & Where.Eq("RequestType", identity.RequestType))));
+            Where.Regex("AppCallerCode", MatchCallerIdentityPart(identity.Code))
+            & Where.Regex("RequestType", MatchCallerIdentityPart(identity.RequestType)))));
         var documents = await database.GetCollection<BsonDocument>("llmgw_app_callers").Find(filter)
             .Project(Builders<BsonDocument>.Projection.Include("AppCallerCode").Include("RequestType").Include("Title").Include("Owner"))
             .ToListAsync(http.RequestAborted);
-        return documents.GroupBy(CallerIdentity).ToDictionary(group => group.Key, group => group.First());
+        return documents.GroupBy(CallerIdentity, CallerIdentityComparer)
+            .ToDictionary(group => group.Key, group => group.First(), CallerIdentityComparer);
     }
+
+    private static BsonRegularExpression MatchCallerIdentityPart(string value) => new($@"\A{Regex.Escape(value)}\z", "i");
 
     private static object? ReadQuota(BsonDocument doc, DateTime now)
     {
