@@ -176,6 +176,30 @@ Signed-By: /key/microsoft.gpg
         apt.prepare(self.root, 'canonical')
         self.assertEqual(path.read_text(), 'deb https://archive.ubuntu.com/ubuntu jammy main\ndeb https://security.ubuntu.com/ubuntu jammy-security main\n')
 
+    def test_princeton_switches_archive_and_security_without_changing_apt_trust(self):
+        original = '''Types: deb
+URIs: https://archive.ubuntu.com/ubuntu
+Suites: jammy jammy-updates
+Components: main universe
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: https://security.ubuntu.com/ubuntu
+Suites: jammy-security
+Components: main universe
+Check-Valid-Until: yes
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+'''
+        path = self.write('etc/apt/sources.list.d/ubuntu.sources', original)
+        mirror = 'https://mirror.math.princeton.edu/pub/ubuntu'
+        expected = original.replace('https://archive.ubuntu.com/ubuntu', mirror)
+        expected = expected.replace('https://security.ubuntu.com/ubuntu', mirror)
+        self.assertEqual(apt.prepare(self.root, 'princeton'), 1)
+        self.assertEqual(path.read_text(), expected)
+        self.assertEqual(apt.prepare(self.root, 'princeton'), 0)
+        self.assertEqual(apt.prepare(self.root, 'canonical'), 1)
+        self.assertEqual(path.read_text(), original)
+
     def test_arbitrary_mirror_values_are_rejected_before_any_write(self):
         original = 'deb http://azure.archive.ubuntu.com/ubuntu noble main\n'
         path = self.write('etc/apt/sources.list', original)
@@ -215,7 +239,7 @@ class WorkflowAptWiring(unittest.TestCase):
 
     def test_all_host_apt_consumers_explicitly_select_the_fixed_backup(self):
         source = WORKFLOW.read_text()
-        self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror canonical'), 3)
+        self.assertEqual(source.count('scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton'), 4)
 
     def test_all_host_consumers_prepare_sources_before_unchanged_dependency_commands(self):
         source = WORKFLOW.read_text()
@@ -224,6 +248,7 @@ class WorkflowAptWiring(unittest.TestCase):
             'Install video test dependencies': ['sudo apt-get update', 'sudo apt-get install -y ffmpeg'],
             'Install Chromium for recording acceptance': ['pnpm exec playwright install --with-deps chromium'],
             'Install system dependencies (Linux)': ['sudo apt-get update', 'sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf'],
+            'Install browser regression dependencies': ['pnpm --dir cds exec playwright install --with-deps chromium'],
         }
         for name, commands in steps.items():
             with self.subTest(step=name):
@@ -237,7 +262,7 @@ class WorkflowAptWiring(unittest.TestCase):
                 for command in commands:
                     self.assertIn(command, executable)
                     self.assertLess(executable.index(helper), executable.index(command))
-        self.assertEqual(source.count(helper), 3)
+        self.assertEqual(source.count(helper), len(steps))
         self.assertNotIn('sudo sed -i', source, 'the former partial Azure rewrite must not survive')
 
     def test_helper_changes_trigger_actual_host_jobs_and_fixture_guard_is_unconditional(self):
@@ -250,7 +275,7 @@ class WorkflowAptWiring(unittest.TestCase):
             condition = re.search(r'(?m)^    if: needs\.changes\.outputs\.([a-z_]+)', job[2])
             self.assertIsNotNone(condition, f'APT consumer {job[1]} must declare its change filter')
             consumers.append(condition[1])
-        self.assertEqual(len(consumers), 3)
+        self.assertEqual(set(consumers), {'server', 'admin', 'desktop', 'release_scripts'})
         for section in consumers:
             block = re.search(rf'(?ms)^            {section}:\n(.*?)(?=^            [a-z_]+:)', source)
             self.assertIsNotNone(block)

@@ -240,6 +240,8 @@ jobs:
         with:
           context: ./prd-admin
           file: ./prd-admin/Dockerfile
+          build-args: |
+            VITE_ENTRY_MEDIA_CDN_ORIGIN=${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -363,6 +365,8 @@ jobs:
         with:
           context: ./llmgw/web
           file: ./llmgw/web/Dockerfile
+          build-args: |
+            VITE_ENTRY_MEDIA_CDN_ORIGIN=${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
