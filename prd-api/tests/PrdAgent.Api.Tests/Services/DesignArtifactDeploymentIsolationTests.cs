@@ -479,6 +479,53 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal(before, await Raw(run.Id));
     }
 
+    [DesignScopeMongoTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SavedDeliveryTurn_AdoptsOnlyExpiredSameBranchCheckpointWithoutMintingPermit(bool correctionsClosed)
+    {
+        var now = Now;
+        DesignArtifactRun Ready(string id, DateTime until) => new()
+        {
+            Id = id, UserId = "author", Status = RunStatuses.Running, LeaseOwnerId = "original-worker",
+            LeaseExpiresAt = until, DeliverySessionContainers = true, DeliveryTemplateId = "team-tutorial",
+            DeliveryRuntimeSessionId = "original-session", WorkspaceResultAssetKey = "committed-package",
+            WorkspaceResultSha256 = "package-sha", WorkspaceBaseRevision = "original-base", TaskPermitId = "original-permit",
+        };
+        var expired = Ready("expired-same-branch", now.AddMinutes(-2));
+        if (correctionsClosed)
+        {
+            expired.DeliveryCorrectionsClosedAt = now.AddMinutes(-3);
+            expired.DeliveryTurnRevision = expired.DeliveryAppliedRevision = expired.DeliveryCorrectionRevision = 1;
+        }
+        var live = Ready("live-same-branch", now.AddMinutes(1));
+        var sibling = Ready("expired-sibling", now.AddMinutes(-3));
+        await InsertAsync(expired, RetiredScope);
+        await InsertAsync(live, RetiredScope);
+        await InsertAsync(sibling, "project-a::branch-ab::revision::revision-b");
+        var liveBefore = await Raw(live.Id);
+        var siblingBefore = await Raw(sibling.Id);
+
+        await HostedSiteEditRunWorker.RecoverSavedDeliveryTurnsAsync(_db, _queue, now, default);
+        await HostedSiteEditRunWorker.RecoverSavedDeliveryTurnsAsync(_db, _queue, now, default);
+
+        var adopted = await Read(expired.Id);
+        Assert.Equal(CurrentScope, adopted.DeploymentSlug);
+        Assert.Equal(RunStatuses.Queued, adopted.Status);
+        Assert.Null(adopted.LeaseOwnerId);
+        Assert.Equal(expired.WorkspaceResultAssetKey, adopted.WorkspaceResultAssetKey);
+        Assert.Equal(expired.WorkspaceResultSha256, adopted.WorkspaceResultSha256);
+        Assert.Equal(expired.WorkspaceBaseRevision, adopted.WorkspaceBaseRevision);
+        Assert.Equal(expired.TaskPermitId, adopted.TaskPermitId);
+        Assert.Equal(expired.DeliveryRuntimeSessionId, adopted.DeliveryRuntimeSessionId);
+        Assert.Equal(expired.DeliveryCorrectionsClosedAt, adopted.DeliveryCorrectionsClosedAt);
+        Assert.Equal(expired.DeliveryAppliedRevision, adopted.DeliveryAppliedRevision);
+        Assert.Equal(expired.Id, await _queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
+        Assert.Null(await _queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
+        Assert.Equal(liveBefore, await Raw(live.Id));
+        Assert.Equal(siblingBefore, await Raw(sibling.Id));
+    }
+
     [DesignScopeMongoFact]
     public async Task OpenDesignOverview_ReadsOnlyOwnedBranchHistory_AndLinksOnlyCommittedDelivery()
     {

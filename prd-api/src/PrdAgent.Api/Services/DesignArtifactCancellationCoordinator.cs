@@ -78,6 +78,14 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
             .FirstOrDefaultAsync(ct);
         if (elsewhere == null) return null;
 
+        var parked = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+            HostedSiteEditRunWorker.ParkedDeliveryInThisBranch()
+            & Builders<DesignArtifactRun>.Filter.Where(item => item.Id == runId && item.UserId == userId
+                && item.DeploymentSlug == elsewhere.DeploymentSlug),
+            Builders<DesignArtifactRun>.Update.Set(item => item.DeploymentSlug, DeploymentScope.Current),
+            new FindOneAndUpdateOptions<DesignArtifactRun> { ReturnDocument = ReturnDocument.After }, ct);
+        if (parked != null) return parked;
+
         var adopted = await HostedSiteEditRunWorker.TryAdoptRetiredRevisionRunAsync(
             _db, elsewhere, DateTime.UtcNow, ct);
         if (adopted != null) return adopted;

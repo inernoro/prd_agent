@@ -3067,10 +3067,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         try
         {
             using var doc = JsonDocument.Parse(body);
-            return doc.RootElement.TryGetProperty("error", out var error)
+            var code = doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("error", out var error)
                 && error.ValueKind == JsonValueKind.Object
                 ? GetString(error, "code")
                 : null;
+            return code != null && Regex.IsMatch(code, "^[A-Za-z0-9_.-]{1,80}$", RegexOptions.CultureInvariant) ? code : null;
         }
         catch (JsonException)
         {
@@ -3100,12 +3102,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode && !allowErrorResponse)
         {
-            var text = await response.Content.ReadAsStringAsync(ct);
-            throw new InfraAgentSessionException(
-                InfraAgentSessionErrorCodes.CdsRequestFailed,
-                BuildCdsRequestFailureMessage((int)response.StatusCode, text),
-                StatusCodes.Status502BadGateway,
-                (int)response.StatusCode);
+            using (response)
+            {
+                var text = await response.Content.ReadAsStringAsync(ct);
+                throw CdsRequestFailed(response, text);
+            }
         }
         return response;
     }
@@ -3127,21 +3128,27 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             try
             {
-                return await SendCdsJsonAsync(
+                var response = await SendCdsJsonAsync(
                     HttpMethod.Post,
                     connection,
                     token,
                     $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(cdsSessionId)}/messages",
                     new { content, clientMessageId },
-                    recoveryCts.Token, dispatchSession: session);
-            }
-            catch (InfraAgentSessionException ex) when (IsCdsSessionNotFound(ex))
-            {
-                throw;
-            }
-            catch (InfraAgentSessionException ex) when (
-                ex.Message.Contains("HTTP 5", StringComparison.OrdinalIgnoreCase))
-            {
+                    recoveryCts.Token, allowErrorResponse: true, dispatchSession: session);
+                if (response.IsSuccessStatusCode) return response;
+
+                using (response)
+                {
+                    var body = await response.Content.ReadAsStringAsync(recoveryCts.Token);
+                    var unattributed = IsUnattributedCdsBadRequest(response, body);
+                    if ((int)response.StatusCode < 500 && !unattributed)
+                        throw CdsRequestFailed(response, body);
+                    if (unattributed)
+                    {
+                        _logger.LogWarning("CDS dispatch received HTTP 400 without a CDS response session={SessionId} attempt={Attempt}",
+                            session.Id, attempt + 1);
+                    }
+                }
                 if (attempt == 2) throw new CdsMessageDispatchUncertainException();
             }
             catch (Exception ex) when (
@@ -3176,7 +3183,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         CdsCreateSessionResponse createResponse;
         try
         {
-            createResponse = await ReadCdsCreateResponseAsync(response, recoveryCts.Token);
+            var text = await response.Content.ReadAsStringAsync(recoveryCts.Token);
+            if (IsUnattributedCdsBadRequest(response, text))
+            {
+                createResponse = new CdsCreateSessionResponse(null, "CDS 创建会话未返回可归因的 HTTP 400");
+                uncertainStatus = true;
+            }
+            else
+            {
+                createResponse = ParseCdsCreateSessionResponse(response.IsSuccessStatusCode, text);
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
         {
@@ -3190,13 +3206,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             if (recoverAsync == null) throw CreateCdsCreatePendingException();
             createResponse = new CdsCreateSessionResponse(null, null);
         }
-        if (recoverAsync != null && (accepted || (!createResponse.Item.HasValue
-            && uncertainStatus)))
+        if (accepted || (!createResponse.Item.HasValue && uncertainStatus))
         {
             // A proxy failure page does not prove the durable CDS attempt failed. Reconcile the
             // SAME clientRequestId, just as with 202, before persisting a dispatchable identity.
             // A truncated 202 may contain no identity. Recovery is keyed by the already persisted
             // clientRequestId, not by an untrusted or partially received response body.
+            if (recoverAsync == null) throw CreateCdsCreatePendingException();
             JsonElement? recovered;
             try
             {
@@ -3274,13 +3290,25 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private static CdsCreatePendingException CreateCdsCreatePendingException()
         => new();
 
-    private static async Task<CdsCreateSessionResponse> ReadCdsCreateResponseAsync(
-        HttpResponseMessage response,
-        CancellationToken ct)
+    internal static bool IsUnattributedCdsBadRequest(HttpResponseMessage response, string text)
     {
-        var text = await response.Content.ReadAsStringAsync(ct);
-        return ParseCdsCreateSessionResponse(response.IsSuccessStatusCode, text);
+        if (response.StatusCode != System.Net.HttpStatusCode.BadRequest
+            || response.Headers.Contains("X-CDS-Request-Id")) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            return document.RootElement.ValueKind != JsonValueKind.Object;
+        }
+        catch (JsonException)
+        {
+            return true;
+        }
     }
+
+    private static InfraAgentSessionException CdsRequestFailed(HttpResponseMessage response, string body) =>
+        new(InfraAgentSessionErrorCodes.CdsRequestFailed,
+            BuildCdsRequestFailureMessage((int)response.StatusCode, body),
+            StatusCodes.Status502BadGateway, (int)response.StatusCode, ReadCdsErrorCode(body));
 
     internal static CdsCreateSessionResponse ParseCdsCreateSessionResponse(bool success, string text)
     {
@@ -3288,6 +3316,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             using var doc = JsonDocument.Parse(text);
             var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return new CdsCreateSessionResponse(null, "CDS 创建会话响应格式不正确");
             JsonElement? item = root.TryGetProperty("item", out var itemElement)
                 && itemElement.ValueKind == JsonValueKind.Object
                 ? itemElement.Clone()
@@ -3302,8 +3332,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     "CDS 创建会话失败");
             }
             var errorCode = success ? null : ReadCdsErrorCode(text);
-            return new CdsCreateSessionResponse(item, errorMessage,
-                ErrorCode: errorCode != null && Regex.IsMatch(errorCode, "^[A-Za-z0-9_.-]{1,80}$") ? errorCode : null);
+            return new CdsCreateSessionResponse(item, errorMessage, ErrorCode: errorCode);
         }
         catch (JsonException)
         {
@@ -3349,6 +3378,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return fallback;
             if (root.TryGetProperty("error", out var error))
             {
                 if (error.ValueKind == JsonValueKind.Object)
@@ -3373,10 +3403,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     internal static string BuildCdsRequestFailureMessage(int statusCode, string body)
     {
         var errorCode = ReadCdsErrorCode(body);
-        var safeCode = errorCode is not null
-            && Regex.IsMatch(errorCode, "^[A-Za-z0-9_.-]{1,80}$", RegexOptions.CultureInvariant)
-            ? $" [{errorCode}]"
-            : string.Empty;
+        var safeCode = errorCode == null ? string.Empty : $" [{errorCode}]";
         return $"CDS 请求失败：HTTP {statusCode}{safeCode} {ReadSafeCdsErrorMessage(body, "CDS 远端请求失败")}";
     }
 

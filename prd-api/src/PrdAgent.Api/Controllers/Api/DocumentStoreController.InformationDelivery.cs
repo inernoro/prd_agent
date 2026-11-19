@@ -166,6 +166,8 @@ public partial class DocumentStoreController
             html = package.IndexHtml,
             course = Encoding.UTF8.GetString(Convert.FromBase64String(
                 package.Files.Single(item => item.Path == InformationDeliveryTemplates.CoursePath).ContentBase64)),
+            authorDecisions = (run.DeliveryCorrections ?? []).Where(item => item.Revision <= run.DeliveryAppliedRevision)
+                .OrderBy(item => item.Revision).Select(item => new { item.Id, item.Revision, item.Text }),
             sources = run.KnowledgeReferences.Select(source => new { kind = "knowledge", source.Title, source.Content, source.ContentHash })
                 .Concat((run.UploadedSources ?? new List<DesignUploadedSource>()).Select(source =>
                     new { kind = "upload", Title = source.FileName, source.Content, source.ContentHash })),

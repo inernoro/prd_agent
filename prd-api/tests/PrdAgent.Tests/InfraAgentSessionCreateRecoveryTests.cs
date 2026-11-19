@@ -191,6 +191,46 @@ public sealed class InfraAgentSessionCreateRecoveryTests
         Assert.Equal(InfraAgentSessionErrorCodes.SessionCreationPending, error.ErrorCode);
     }
 
+    [Theory]
+    [InlineData("text/html", "<html>gateway rejected request</html>")]
+    [InlineData("text/plain", "")]
+    public async Task UnattributedBadRequestReconcilesTheOriginalCreateReservation(string mediaType, string body)
+    {
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, mediaType)
+        };
+        string? persisted = null;
+        var result = await InfraAgentSessionService.ProcessCdsCreateResponseAsync(response,
+            (item, _) =>
+            {
+                persisted = item.Item!.Value.GetProperty("id").GetString();
+                return Task.CompletedTask;
+            },
+            recoverAsync: _ => Task.FromResult<System.Text.Json.JsonElement?>(System.Text.Json.JsonSerializer.SerializeToElement(
+                new { id = "original-reservation", status = "running" })));
+        Assert.True(result.Succeeded);
+        Assert.Equal("original-reservation", persisted);
+    }
+
+    [Theory]
+    [InlineData(400, "text/html", "proxy error", null, true)]
+    [InlineData(400, "text/plain", "", null, true)]
+    [InlineData(400, "application/json", "{\"error\":\"invalid input\"}", null, false)]
+    [InlineData(400, "application/json", "{\"error\":{\"code\":\"content_required\"}}", null, false)]
+    [InlineData(400, "text/html", "proxy error", "cds-a1b2c3", false)]
+    [InlineData(401, "text/html", "proxy error", null, false)]
+    [InlineData(403, "text/html", "proxy error", null, false)]
+    public void OnlyBadRequestsWithoutCdsAttributionAllowReplay(int status, string mediaType, string body, string? requestId, bool expected)
+    {
+        using var response = new HttpResponseMessage((System.Net.HttpStatusCode)status)
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, mediaType)
+        };
+        if (requestId != null) response.Headers.Add("X-CDS-Request-Id", requestId);
+        Assert.Equal(expected, InfraAgentSessionService.IsUnattributedCdsBadRequest(response, body));
+    }
+
     [Fact]
     public async Task RecoveredDurableFailureRetainsIdentityAndSanitizedReasonBeforeThrowing()
     {

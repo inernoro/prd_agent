@@ -906,7 +906,7 @@ public sealed class DesignArtifactsController : ControllerBase
         var user = this.GetRequiredUserId();
         var filters = Builders<DesignArtifactRun>.Filter;
         var scope = filters.Where(item => item.Id == runId && item.UserId == user && item.DeliveryTemplateId != null)
-            & (filters.Eq(item => item.DeploymentSlug, DeploymentScope.Current) | ParkedDeliveryInThisBranch());
+            & (filters.Eq(item => item.DeploymentSlug, DeploymentScope.Current) | HostedSiteEditRunWorker.ParkedDeliveryInThisBranch());
         var current = await _db.DesignArtifactRuns.Find(scope).SingleOrDefaultAsync(ct);
         if (current == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "信息传递任务不存在"));
@@ -973,16 +973,6 @@ public sealed class DesignArtifactsController : ControllerBase
         if (latest?.DeliveryCorrections?.Any(item => item.Id == correction.Id && item.Text == text) == true)
             return Ok(ApiResponse<object>.Ok(ToDto(latest)));
         return Conflict(ApiResponse<object>.Fail("DELIVERY_CORRECTION_CONFLICT", "任务已变化，请刷新后重试"));
-    }
-
-    private static FilterDefinition<DesignArtifactRun> ParkedDeliveryInThisBranch()
-    {
-        var filters = Builders<DesignArtifactRun>.Filter;
-        var stableScope = DeploymentScope.CurrentDurable;
-        if (stableScope == null) return filters.Where(item => false);
-        return filters.Regex(item => item.DeploymentSlug, "^" + System.Text.RegularExpressions.Regex.Escape(stableScope + "::revision::"))
-            & filters.Where(item => item.DeliverySessionContainers && item.Status == RunStatuses.Queued
-                && item.DeliveryWaitingSince != null && item.DeliveryCheckpoint != null && item.LeaseOwnerId == null);
     }
 
     [HttpPost("runs/{runId}/cancel")]

@@ -426,7 +426,9 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
       <section className={cardClass}>
         <h2 className="text-lg font-semibold">{done ? '生成结果' : failed ? '生成未完成' : '生成进度'}</h2>
         <p role="status" className="my-3 text-sm text-token-secondary">{phase || '正在读取任务'}</p>
-        {run?.resolvedModel && <p className="mb-4 text-xs text-token-secondary">{run.resolvedModel} · {run.resolvedPlatform}</p>}
+        {run?.resolvedModel && <p className="mb-4 text-xs text-token-secondary">
+          {run.resolvedModel}{run.resolvedPlatform ? ` · ${run.resolvedPlatform}` : ''}
+        </p>}
         {failed && run && <div className="mb-4 grid gap-2 text-sm">
           <p role="alert">{runtimeFailureRecoveryMessage(run, 'generate')}</p>
           <Button variant="secondary" disabled={restarting} onClick={() => void restart()}>
@@ -603,6 +605,7 @@ function DeliveryArchiveForm({ storeId, run }: { storeId: string; run: DesignArt
         : '接收者需有当前知识库和引用来源的访问权限。'}</p>
       {!!run.uploadedSources?.length && <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={sharing}
         onChange={(event) => setSharing(event.currentTarget.checked)} />允许有权读本库和引用来源的人查阅成品及我上传的原文快照</label>}
+      {Boolean(run.deliveryAppliedRevision) && <p className="text-xs text-token-secondary">已应用的作者裁定会和原文依据一起交给接收者。</p>}
       <label className="flex items-start gap-2 text-sm"><input className="mt-1" type="checkbox" checked={confirmed}
         onChange={(event) => setConfirmed(event.currentTarget.checked)} />我已核对这版成品和来源</label>
       <Button variant="primary" onClick={() => void submit()} disabled={!confirmed || busy}>{busy ? '正在归档' : '归档'}</Button>
@@ -621,6 +624,10 @@ function InformationDeliveryReader({ storeId, runId }: { storeId: string; runId:
   const [result, setResult] = useState<InformationDeliveryArchive>();
   const [error, setError] = useState('');
   const [view, setView] = useState<'course' | 'web' | 'sources'>('course');
+  const sourcesHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (view === 'sources') sourcesHeading.current?.focus();
+  }, [view]);
   useEffect(() => {
     let active = true;
     void readInformationDeliveryArchive(storeId, runId).then((response) => {
@@ -644,9 +651,21 @@ function InformationDeliveryReader({ storeId, runId }: { storeId: string; runId:
           <Button aria-pressed={view === 'sources'} variant={view === 'sources' ? 'primary' : 'secondary'} onClick={() => setView('sources')}>查看原文</Button>
         </div>
         <section className={cardClass}>
-          {view === 'course' && <CoursePreview content={result.course} />}
+          {view === 'course' && <CoursePreview content={result.course} onOpenSources={() => setView('sources')} />}
           {view === 'web' && <DeliveryHtml content={result.html} />}
-          {view === 'sources' && <DeliverySources sources={result.sources} />}
+          {view === 'sources' && <>
+            <h2 ref={sourcesHeading} tabIndex={-1} className="text-lg font-semibold">原文与作者裁定</h2>
+            <DeliverySources sources={result.sources} />
+            {!!result.authorDecisions?.length && <section className="mt-5 border-t border-token-subtle pt-3" aria-label="作者裁定">
+              <h3 className="font-semibold">作者裁定</h3>
+              <ol className="mt-2 grid gap-3">
+                {result.authorDecisions.map(item => <li key={item.id}>
+                  <p className="text-sm font-medium">裁定 {item.revision}</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm">{item.text}</p>
+                </li>)}
+              </ol>
+            </section>}
+          </>}
         </section>
       </div>}
     </div>
@@ -710,7 +729,7 @@ function DeliveryMediaPreview({ storeId, runId, media, course }: {
 }
 
 function DeliveryHtml({ content }: { content: string }) {
-  return <iframe title="网页预览" className="min-h-[60vh] w-full rounded-lg border border-token-subtle" sandbox=""
+  return <iframe title="网页预览" className="block h-[60vh] min-h-96 w-full rounded-lg border border-token-subtle" sandbox=""
     referrerPolicy="no-referrer" srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">${content}`} />;
 }
 
@@ -750,7 +769,7 @@ function parseCourse(content: string): DeliveryCourse | null {
   }
 }
 
-function CoursePreview({ content }: { content: string }) {
+function CoursePreview({ content, onOpenSources }: { content: string; onOpenSources?: () => void }) {
   const course = parseCourse(content);
   if (!course) return <p role="status" className="text-sm text-token-secondary">课程文件还在写入，完整后即可阅读</p>;
   return <article className="space-y-5 break-words">
@@ -763,6 +782,7 @@ function CoursePreview({ content }: { content: string }) {
       <p className="my-2 text-sm leading-relaxed">{chapter.narration}</p>
       <ol className="ml-5 list-decimal text-sm">{chapter.steps.map((step, i) => <li key={i}>{step}</li>)}</ol>
       <p className="mt-2 text-xs text-token-secondary">{chapter.basis.join(' · ')}</p>
+      {onOpenSources && <button type="button" className="mt-2 text-sm underline" onClick={onOpenSources}>查看原文与裁定</button>}
       {chapter.practice && <section className="mt-3 rounded-lg border border-token-subtle p-3 text-sm">
         <h4 className="font-medium">试一试</h4>
         <p className="my-2">{chapter.practice.question}</p>

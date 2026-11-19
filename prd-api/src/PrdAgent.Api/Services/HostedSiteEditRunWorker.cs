@@ -137,7 +137,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             LeaseDuration,
             ct);
         if (run == null) return;
-        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        // 已经提交的轮次只读取并核验结果，执行器会先结束原会话，不会发出模型请求。
+        var recoveringSavedTurn = run.DeliverySessionContainers && run.WorkspaceResultAssetKey != null;
+        await using var taskExecutionAttempt = recoveringSavedTurn
+            ? new TaskExecutionAttempt(null, false)
+            : await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
         if (taskExecutionAttempt.ShouldSkip) return;
         using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
             ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
@@ -694,6 +698,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 && item.LeaseExpiresAt > now && item.CancelRequestedAt == null && item.WorkspaceResultAssetKey != null);
             var current = await db.DesignArtifactRuns.Find(active).SingleOrDefaultAsync(ct)
                 ?? throw new DesignArtifactRunLeaseLostException(run.Id);
+            if (current.DeliveryCorrectionsClosedAt.HasValue)
+            {
+                if (pending || current.DeliveryAppliedRevision != current.DeliveryTurnRevision
+                    || current.DeliveryTurnRevision != current.DeliveryCorrectionRevision)
+                    throw new InvalidOperationException("已确认的作者裁定与恢复的课程版本不一致");
+                return true;
+            }
             var revision = filters.Eq(item => item.DeliveryCorrectionRevision, current.DeliveryCorrectionRevision);
             if (current.DeliveryCorrectionRevision == 0) revision |= filters.Exists(item => item.DeliveryCorrectionRevision, false);
             var hasNewCorrection = current.DeliveryCorrectionRevision > current.DeliveryTurnRevision;
@@ -1387,6 +1398,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var publicLifecycle = scope.ServiceProvider.GetRequiredService<IWebPageDesignArtifactLifecycleAdapter>();
+        await RecoverSavedDeliveryTurnsAsync(db, _queue, DateTime.UtcNow, stoppingToken: ct);
         await publicLifecycle.RecoverPendingAsync(100, CancellationToken.None);
         await RecoverInterruptedRunsAsync(
             db,
@@ -1401,6 +1413,49 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             publicLifecycle,
             scope.ServiceProvider.GetRequiredService<IDesignArtifactLifecycleService>(),
             _logger);
+    }
+
+    internal static async Task RecoverSavedDeliveryTurnsAsync(MongoDbContext db, IRunQueue queue,
+        DateTime now, CancellationToken stoppingToken)
+    {
+        var filters = Builders<DesignArtifactRun>.Filter;
+        var current = DeploymentScope.Current;
+        var scope = filters.Eq(item => item.DeploymentSlug, current);
+        if (DeploymentScope.CurrentDurable is { } stable && stable != current)
+        {
+            var older = filters.Regex(item => item.DeploymentSlug, "^" + System.Text.RegularExpressions.Regex.Escape(stable + "::revision::"));
+            scope |= older & filters.Lt(item => item.LeaseExpiresAt, now - RetiredRevisionAdoptionGrace);
+        }
+        var recoverable = scope & filters.Where(item => item.DeliverySessionContainers && item.Status == RunStatuses.Running
+            && item.LeaseExpiresAt != null && item.LeaseExpiresAt <= now && item.CancelRequestedAt == null
+            && item.WorkspaceResultAssetKey != null && item.DeliveryRuntimeSessionId != null
+            && item.ProducedArtifactSiteId == null && item.ProducedArtifactRevisionId == null);
+        var candidates = await db.DesignArtifactRuns.Find(recoverable).Limit(16).ToListAsync(stoppingToken);
+        foreach (var candidate in candidates)
+        {
+            var fence = filters.Where(item => item.Id == candidate.Id && item.DeploymentSlug == candidate.DeploymentSlug
+                && item.LeaseOwnerId == candidate.LeaseOwnerId && item.LeaseExpiresAt == candidate.LeaseExpiresAt
+                && item.WorkspaceResultAssetKey == candidate.WorkspaceResultAssetKey);
+            var write = await db.DesignArtifactRuns.UpdateOneAsync(recoverable & fence, Builders<DesignArtifactRun>.Update
+                .Set(item => item.DeploymentSlug, current)
+                .Set(item => item.Status, RunStatuses.Queued)
+                .Set(item => item.LeaseOwnerId, null)
+                .Set(item => item.LeaseExpiresAt, null)
+                .Set(item => item.RuntimeTicketExpiresAt, null)
+                .Set(item => item.RecoveryEnqueuedAt, now)
+                .Set(item => item.UpdatedAt, now), cancellationToken: stoppingToken);
+            if (write.MatchedCount != 0) await queue.EnqueueAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None);
+        }
+    }
+
+    internal static FilterDefinition<DesignArtifactRun> ParkedDeliveryInThisBranch()
+    {
+        var filters = Builders<DesignArtifactRun>.Filter;
+        var stableScope = DeploymentScope.CurrentDurable;
+        if (stableScope == null) return filters.Where(item => false);
+        return filters.Regex(item => item.DeploymentSlug, "^" + System.Text.RegularExpressions.Regex.Escape(stableScope + "::revision::"))
+            & filters.Where(item => item.DeliverySessionContainers && item.Status == RunStatuses.Queued
+                && item.DeliveryWaitingSince != null && item.DeliveryCheckpoint != null && item.LeaseOwnerId == null);
     }
 
     internal static async Task<PersistedDesignArtifact> PersistArtifactWithLeaseAsync(

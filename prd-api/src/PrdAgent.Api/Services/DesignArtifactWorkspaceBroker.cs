@@ -1275,7 +1275,9 @@ public static class DesignArtifactWorkspaceContract
         if (run.DeliverySessionContainers)
         {
             workspaceInstruction += "\n这轮生成结束前，把网页与课程实际写入 index.html 和 assets/delivery.json。"
-                + "若仍缺作者裁定，留下带来源的 openQuestions 和可读草稿并结束本轮，MAP 会交还执行位。";
+                + "若仍缺作者裁定，留下带来源的 openQuestions 和可读草稿并结束本轮，MAP 会交还执行位。"
+                + "尽早各写出一份可读文件，再完善本轮结果。网页中的数字、单位和适用对象应放在同一句，并用原文支持。"
+                + "练习使用已写明的条件或作者已裁定的边界。若边界未决，就问遇到该情况应查看哪条依据、向谁确认。";
             if (run.DeliveryCheckpoint != null)
                 workspaceInstruction += "\n从 current/ 的已保存草稿继续，在可编辑副本中保留已经核实的内容与依据。";
             if (corrections.Length > 0)

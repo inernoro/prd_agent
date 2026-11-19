@@ -1808,6 +1808,7 @@ export interface InformationDeliveryArchive {
   html: string;
   course: string;
   sources: InformationDeliverySource[];
+  authorDecisions?: { id: string; revision: number; text: string }[];
   media?: InformationDeliveryMedia[] | null;
 }
 
