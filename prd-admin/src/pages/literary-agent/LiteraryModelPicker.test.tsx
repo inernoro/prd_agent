@@ -3,7 +3,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
-import { LiterarySettingsSummary } from './LiterarySettingsSummary';
+import { LiterarySettingsSummary, useLiteraryWatermarkPreview } from './LiterarySettingsSummary';
 import type { LiteraryModelOption } from './literaryModelOptions';
 import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
 import { QuickMenu, QuickMenuItem } from './LiteraryQuickMenu';
@@ -57,10 +57,12 @@ describe('工作台紧凑模型选择', () => {
     vi.stubGlobal('URL', Object.assign(class extends URL {}, { createObjectURL, revokeObjectURL }));
     const blob = new Blob(['png'], { type: 'image/png' });
     vi.mocked(getWatermarkPreview).mockResolvedValueOnce(blob);
-    await act(async () => root.render(
-      <LiterarySettingsSummary writingModel="test-new-writing-model" imageModel="test-new-picture-model"
-        watermarkName="黑白" watermarkId="monochrome" watermarkUpdatedAt="test-revision" position="per-h2" positionLabel="每小标题一张" />,
-    ));
+    function Summary() {
+      const watermarkPreview = useLiteraryWatermarkPreview('monochrome', 'test-revision');
+      return <LiterarySettingsSummary writingModel="test-new-writing-model" imageModel="test-new-picture-model"
+        watermarkName="黑白" watermarkPreview={watermarkPreview} position="per-h2" positionLabel="每小标题一张" />;
+    }
+    await act(async () => root.render(<Summary />));
     expect(getWatermarkPreview).toHaveBeenCalledWith('monochrome', 'test-revision');
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(container.querySelector('[aria-label="写作模型：test-new-writing-model"] svg')).not.toBeNull();
@@ -85,6 +87,7 @@ describe('工作台紧凑模型选择', () => {
     expect(items[0].textContent).toContain(models[0].name);
     expect(items[0].textContent).toContain('系统默认');
     expect(items[0].getAttribute('aria-checked')).toBe('true');
+    expect(items[0].querySelector('.lit-model-icon')).not.toBeNull();
     await act(async () => items[1].click());
     expect(onSelect).toHaveBeenCalledOnce();
     expect(onSelect).toHaveBeenCalledWith(models[1].id);

@@ -6,7 +6,7 @@
 }
 .lit-settings .lit-settings-disclosure {
   --lit-settings-summary-icon-size: 16px;
-  grid-template-columns: minmax(0, max-content) minmax(min(6em, 30cqi), 1fr) auto 15px;
+  grid-template-columns: minmax(0, max-content) minmax(min(6em, 30cqi), 1fr) auto auto;
   grid-template-rows: var(--lit-settings-row-height);
   gap: 6px;
   list-style: none;
@@ -15,7 +15,8 @@
 }
 .lit-settings-disclosure::-webkit-details-marker { display: none; }
 .lit-settings[open] > .lit-settings-disclosure > :is(.lit-settings-value, .lit-settings-summary-icons) { visibility: hidden; }
-.lit-settings[open] > .lit-settings-disclosure > .lit-settings-chevron { transform: rotate(180deg); }
+.lit-settings[open] > .lit-settings-disclosure > .lit-settings-disclosure-indicator > .lit-settings-chevron { transform: rotate(180deg); }
+.lit-settings-disclosure-indicator { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
 .lit-settings-summary-icons { display: flex; align-items: center; gap: 3px; }
 .lit-settings-summary-icon {
   display: inline-grid; place-items: center;
@@ -56,7 +57,7 @@
 .lit-settings-section--rows > .lit-inline-menu:last-child { border-bottom: 0; }
 .lit-settings-row {
   --lit-settings-row-height: 40px;
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) 15px;
+  display: grid; grid-template-columns: max-content minmax(0, 1fr) 15px;
   align-items: center; gap: 12px; width: 100%; min-height: var(--lit-settings-row-height); padding: 8px 6px;
   border: 0; border-radius: 6px; background: transparent; cursor: pointer;
   color: var(--text-secondary); font-size: 14px; line-height: 1.5; text-align: left;
@@ -65,6 +66,12 @@
 .lit-settings-label { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
 .lit-settings-label svg { flex-shrink: 0; }
 .lit-settings-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--text-primary); }
+.lit-settings-row-value { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+.lit-settings-row-value > svg { flex: none; }
+.lit-settings-watermark-preview, .lit-settings-reference-preview { flex: none; display: block; object-fit: contain; }
+.lit-settings-watermark-preview { width: auto; height: 22px; max-width: 76px; }
+.lit-settings-reference-preview { width: 36px; height: 24px; border-radius: 4px; background: var(--bg-input); }
+.lit-settings-value--excerpt { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lit-settings-row:hover { background: var(--bg-input-hover); }
 .lit-settings-row[data-warning="true"] .lit-settings-value { color: var(--accent-fg-amber); }
 .lit-settings-chevron { flex-shrink: 0; color: var(--text-muted); transition: transform .15s ease; }
@@ -76,7 +83,7 @@
 .lit-inline-note { padding: 5px 8px 8px; font-size: 11px; line-height: 1.6; color: var(--text-muted); overflow-wrap: anywhere; }
 .lit-inline-options { scrollbar-width: thin; }
 .lit-inline-option {
-  display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 11px 8px;
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 8px;
   border: 0; border-bottom: 1px solid var(--border-subtle); background: transparent;
   color: var(--text-primary); text-align: left; font-size: 13px; line-height: 1.5;
   cursor: pointer; outline: none;
@@ -107,6 +114,8 @@
 .lit-model-trigger:hover { background: var(--bg-input-hover); }
 .lit-model-trigger[data-state="open"] { border-color: var(--accent-primary); }
 .lit-model-label { font-size: 12px; white-space: nowrap; color: var(--text-secondary); }
+.lit-model-icon { display: grid; place-items: center; flex: none; align-self: center; width: 16px; height: 16px; }
+.lit-model-icon img { width: 100%; height: 100%; object-fit: contain; }
 .lit-model-summary { min-width: 0; border-left: 1px solid var(--border-default); padding-left: 12px; }
 .lit-model-name { display: block; font-size: 13px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
 .lit-model-detail { display: block; font-size: 11px; line-height: 1.5; color: var(--text-muted); overflow-wrap: anywhere; }
