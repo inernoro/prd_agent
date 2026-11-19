@@ -81,58 +81,46 @@ public static class AnchorInsertionService
     /// </summary>
     private static int FindAnchorPosition(string article, string anchor)
     {
-        // 1. 精确匹配
-        var idx = article.IndexOf(anchor, StringComparison.Ordinal);
-        if (idx >= 0) return idx;
+        if (string.IsNullOrWhiteSpace(anchor)) return -1;
+        var index = article.IndexOf(anchor, StringComparison.Ordinal);
+        if (index < 0) index = article.IndexOf(anchor, StringComparison.OrdinalIgnoreCase);
+        if (index >= 0) return index + anchor.Length - 1;
 
-        // 2. 忽略大小写匹配
-        idx = article.IndexOf(anchor, StringComparison.OrdinalIgnoreCase);
-        if (idx >= 0) return idx;
-
-        // 3. 归一化空白后匹配（处理换行、多空格差异）
+        var originalOffsets = new List<int>(article.Length);
+        var normalizedArticle = NormalizeWhitespace(article, originalOffsets);
         var normalizedAnchor = NormalizeWhitespace(anchor);
-        var normalizedArticle = NormalizeWhitespace(article);
-        idx = normalizedArticle.IndexOf(normalizedAnchor, StringComparison.Ordinal);
-        if (idx >= 0)
-        {
-            // 映射回原始文章中的位置
-            return MapNormalizedPosition(article, normalizedArticle, idx);
-        }
 
-        // 4. 去除标点差异后匹配（中英文标点互换）
-        var punctNormAnchor = NormalizePunctuation(normalizedAnchor);
-        var punctNormArticle = NormalizePunctuation(normalizedArticle);
-        idx = punctNormArticle.IndexOf(punctNormAnchor, StringComparison.Ordinal);
-        if (idx >= 0)
+        index = normalizedArticle.IndexOf(normalizedAnchor, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
         {
-            return MapNormalizedPosition(article, punctNormArticle, idx);
+            index = NormalizePunctuation(normalizedArticle)
+                .IndexOf(NormalizePunctuation(normalizedAnchor), StringComparison.OrdinalIgnoreCase);
         }
-
-        return -1; // 未找到
+        return index < 0 ? -1 : originalOffsets[index + normalizedAnchor.Length - 1];
     }
 
-    /// <summary>归一化空白：连续空白字符替换为单个空格</summary>
-    private static string NormalizeWhitespace(string text)
+    /// <summary>归一化空白并记录每个字符在原文中的位置</summary>
+    private static string NormalizeWhitespace(string text, List<int>? originalOffsets = null)
     {
         var sb = new StringBuilder(text.Length);
-        bool lastWasSpace = false;
-        foreach (var ch in text)
+        var spaceAt = -1;
+        for (var i = 0; i < text.Length; i++)
         {
-            if (char.IsWhiteSpace(ch))
+            if (char.IsWhiteSpace(text[i]))
             {
-                if (!lastWasSpace)
-                {
-                    sb.Append(' ');
-                    lastWasSpace = true;
-                }
+                if (spaceAt < 0) spaceAt = i;
+                continue;
             }
-            else
+            if (spaceAt >= 0 && sb.Length > 0)
             {
-                sb.Append(ch);
-                lastWasSpace = false;
+                sb.Append(' ');
+                originalOffsets?.Add(spaceAt);
             }
+            spaceAt = -1;
+            sb.Append(text[i]);
+            originalOffsets?.Add(i);
         }
-        return sb.ToString().Trim();
+        return sb.ToString();
     }
 
     /// <summary>归一化标点：中文标点转英文标点（用于容错匹配）</summary>
@@ -149,15 +137,6 @@ public static class AnchorInsertionService
             .Replace('"', '"')
             .Replace('\u2018', '\'')
             .Replace('\u2019', '\'');
-    }
-
-    /// <summary>将归一化字符串中的位置映射回原始字符串中的大致位置</summary>
-    private static int MapNormalizedPosition(string original, string normalized, int normalizedPos)
-    {
-        // 简单映射：按比例推算
-        if (normalized.Length == 0) return 0;
-        var ratio = (double)normalizedPos / normalized.Length;
-        return Math.Min((int)(ratio * original.Length), original.Length - 1);
     }
 
     /// <summary>找到从 position 开始所在行的末尾（\n 之前的位置）</summary>
