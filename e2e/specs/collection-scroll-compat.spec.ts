@@ -27,7 +27,9 @@ for (const width of [390, 320]) for (const theme of ["light", "dark"]) {
     await page.locator("#llmgw-username").fill("demo");
     await page.locator("#llmgw-password").fill("demo");
     await page.locator("button[type=submit]").click();
-    await page.getByRole("button", { name: "打开导航", exact: true }).click();
+    const navigation = page.getByRole("button", { name: "打开导航", exact: true });
+    await expect(navigation).toBeVisible({ timeout: 15000 });
+    await navigation.click();
     await page.getByRole("link", { name: "接入密钥", exact: true }).click();
     const cards = page.locator(".lg-service-key-card");
     await expect(cards).toHaveCount(2);
@@ -123,7 +125,9 @@ for (const theme of ["light", "dark"]) test(`390 ${theme} 菜单导航后新任�
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();
   const menu = page.locator(".lg-user-menu");
-  await menu.locator(":scope > summary").click();
+  const accountButton = menu.locator(":scope > summary");
+  await expect(accountButton).toBeVisible({ timeout: 15000 });
+  await accountButton.click();
   await expect(menu).toHaveAttribute("open", "");
   await menu.getByRole("link", { name: "账号与安全", exact: true }).click();
   await expect(page).toHaveURL(/\/account$/);
