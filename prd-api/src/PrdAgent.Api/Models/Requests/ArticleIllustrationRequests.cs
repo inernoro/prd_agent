@@ -18,7 +18,8 @@ public record GenerateArticleMarkersRequest(
     /// <summary>
     /// 用户指定的模型 ID（可选，用于模型切换，不传则走模型池自动解析）
     /// </summary>
-    string? ModelId
+    string? ModelId,
+    string? PositionStrategy = null
 );
 
 /// <summary>

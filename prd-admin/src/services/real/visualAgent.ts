@@ -297,6 +297,7 @@ export async function* generateArticleMarkersReal(input: {
   userInstruction?: string;
   idempotencyKey?: string;
   insertionMode?: 'legacy' | 'anchor';
+  positionStrategy?: 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
   modelId?: string;
 }): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string; index?: number; mode?: string; markerCount?: number; size?: string; anchor?: string }> {
   const headers: Record<string, string> = {
@@ -319,6 +320,7 @@ export async function* generateArticleMarkersReal(input: {
       articleContent: input.articleContent,
       userInstruction: input.userInstruction,
       insertionMode: input.insertionMode,
+      positionStrategy: input.positionStrategy,
       modelId: input.modelId || undefined,
     }),
   });
@@ -357,6 +359,7 @@ export async function* generateArticleMarkersReal(input: {
       }
     }
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
