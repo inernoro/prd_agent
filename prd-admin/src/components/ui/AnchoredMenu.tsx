@@ -48,19 +48,6 @@ export function shouldCloseOnOutsidePointer(target: ClosestCapable | null, ancho
   return anchor ? dialog.contains(anchor) : false;
 }
 
-/**
- * fixed 定位以视口为准，但挂进弹窗后，若弹窗带 transform 等属性，fixed 会改以弹窗为参照。
- * 用「上一次写进去的坐标」与「实际落点」之差量出这个偏移，换算回视口坐标。
- */
-export function containingBlockOffset(
-  applied: { top: string; left: string },
-  actual: { top: number; left: number },
-): { dx: number; dy: number } {
-  const top = parseFloat(applied.top);
-  const left = parseFloat(applied.left);
-  if (!Number.isFinite(top) || !Number.isFinite(left)) return { dx: 0, dy: 0 };
-  return { dx: actual.left - left, dy: actual.top - top };
-}
 type AnchoredMenuProps = {
   open: boolean;
   onClose: () => void;
@@ -76,6 +63,7 @@ type AnchoredMenuProps = {
   className?: string;
   theme?: 'light' | 'dark';
   style?: CSSProperties;
+  ignoreAutomaticFrameFocus?: boolean;
 };
 
 export function AnchoredMenu({
@@ -91,8 +79,10 @@ export function AnchoredMenu({
   className = '',
   theme,
   style,
+  ignoreAutomaticFrameFocus = false,
 }: AnchoredMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const originRef = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   const getAnchor = useCallback(
@@ -107,8 +97,12 @@ export function AnchoredMenu({
     if (!anchor || !anchor.isConnected) return;
     const a = anchor.getBoundingClientRect();
     const menu = menuRef.current;
-    const mw = menu?.offsetWidth || minWidth;
-    const mh = menu?.offsetHeight || 0;
+    // 固定原点与菜单共用弹窗参照系，不依赖正在更新的菜单坐标。
+    const origin = originRef.current?.getBoundingClientRect();
+    const scaleX = origin?.width || 1;
+    const scaleY = origin?.height || 1;
+    const mw = (menu?.offsetWidth || minWidth) * scaleX;
+    const mh = (menu?.offsetHeight || 0) * scaleY;
 
     let left = (align === 'viewport-right' ? window.innerWidth - mw - 8 : align === 'right' ? a.right - mw : a.left) + offsetX;
     left = Math.min(Math.max(8, left), Math.max(8, window.innerWidth - mw - 8));
@@ -119,14 +113,7 @@ export function AnchoredMenu({
       const above = a.top - gap - mh;
       top = above >= 8 ? above : Math.max(8, window.innerHeight - mh - 8);
     }
-    // 弹窗的滤镜等样式会改变 fixed 的参照系。用实际偏移换算，跳过首次离屏测量。
-    if (menu && menu.style.visibility !== 'hidden') {
-      const r = menu.getBoundingClientRect();
-      const { dx, dy } = containingBlockOffset(menu.style, r);
-      top -= dy;
-      left -= dx;
-    }
-    setPos({ top, left });
+    setPos({ top: (top - (origin?.top ?? 0)) / scaleY, left: (left - (origin?.left ?? 0)) / scaleX });
   }, [getAnchor, align, offsetX, gap, minWidth]);
 
   // 打开时先定位一次，拿到真实尺寸后再用 rAF 校正一次（对齐 / 夹取 / 上翻）
@@ -173,7 +160,16 @@ export function AnchoredMenu({
       clearTimeout(blurTimer);
       blurTimer = setTimeout(() => {
         const target = document.activeElement;
-        if (target instanceof HTMLIFrameElement && !menuRef.current?.contains(target) && !getAnchor()?.contains(target) && shouldCloseOnOutsidePointer(target, getAnchor()) && !closing) { closing = true; onClose(); }
+        const anchor = getAnchor();
+        if (!(target instanceof HTMLIFrameElement) || menuRef.current?.contains(target)
+          || anchor?.contains(target) || !shouldCloseOnOutsidePointer(target, anchor) || closing) return;
+        // A hosted page may acquire focus during startup while the pointer is still on the toolbar.
+        if (ignoreAutomaticFrameFocus && !target.matches(':hover')) {
+          anchor?.focus({ preventScroll: true });
+          return;
+        }
+        closing = true;
+        onClose();
       }, 0);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -206,24 +202,27 @@ export function AnchoredMenu({
       clearTimeout(blurTimer);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open, reposition, onClose, getAnchor]);
+  }, [open, reposition, onClose, getAnchor, ignoreAutomaticFrameFocus]);
 
   if (!open) return null;
 
-  return createPortal(
+  const portalTarget = resolveMenuPortalTarget(getAnchor(), document.body);
+  return createPortal(<>
+    {portalTarget !== document.body && <span ref={originRef} aria-hidden="true"
+      style={{ position: 'fixed', inset: '0 auto auto 0', width: 1, height: 1, visibility: 'hidden', pointerEvents: 'none' }} />}
     <div
       ref={menuRef}
       data-theme={theme}
       className={`fixed z-[9999] rounded-[10px] py-1 ${className} border border-token-subtle`}
-      style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, minWidth: `min(${minWidth}px, calc(100vw - 16px))`, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100dvh - 16px)', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', visibility: pos ? 'visible' : 'hidden', background: 'var(--overlay-panel-solid)', boxShadow: 'var(--shadow-glass-dropdown)', ...style }}
+      style={{ top: pos?.top ?? 0, left: pos?.left ?? 0, minWidth: `min(${minWidth}px, calc(100vw - 16px))`, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100dvh - 16px)', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', visibility: pos ? 'visible' : 'hidden', background: 'var(--overlay-panel-solid)', boxShadow: 'var(--shadow-glass-dropdown)', ...style }}
       // portal 的 React 事件仍按组件树冒泡：挡住 mousedown/click，避免落到下层卡片的
       // onClick（导航）或触发其它点外关闭逻辑
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       {children}
-    </div>,
-    resolveMenuPortalTarget(getAnchor(), document.body),
+    </div>
+    </>, portalTarget,
   );
 }
 

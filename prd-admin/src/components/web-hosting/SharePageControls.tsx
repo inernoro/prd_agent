@@ -125,7 +125,7 @@ export function ShareMoreMenu({ children, adaptive = false }: { children: ReactN
       }}>
       <MoreHorizontal size={17} />
     </button>
-    <AnchoredMenu open={open} onClose={close} anchorRef={anchor}
+    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} ignoreAutomaticFrameFocus
       className={`share-more-menu ${adaptive ? '' : 'surface-tone-dark'}`} minWidth={180} theme={adaptive ? theme : undefined}
       style={adaptive ? { background: 'var(--review-b-popover)' } : undefined}>
       <div ref={menu} role="menu" aria-label="更多网页操作" onClick={(event) => {

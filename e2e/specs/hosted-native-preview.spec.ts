@@ -422,12 +422,19 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     });
 
     test('站内预览首次展开更多时保留焦点，键盘可访问菜单后只关闭菜单', async ({ page }) => {
-      await serve(page, { shape: 'multi-file', modal: true, inlineHistory: true });
+      const { frame, preview } = await serve(page, { shape: 'multi-file', modal: true, inlineHistory: true });
       const dialog = page.getByRole('dialog');
       const more = dialog.getByRole('button', { name: '更多', exact: true });
       const menu = dialog.getByRole('menu', { name: '更多网页操作', exact: true });
+      await dialog.evaluate((element: HTMLElement) => { element.style.transform = 'translateX(8px)'; });
       await more.click();
       await expect(menu).toBeVisible();
+      await expect.poll(async () => {
+        const trigger = await more.boundingBox();
+        const popup = await menu.boundingBox();
+        return trigger && popup ? Math.abs(popup.x + popup.width - trigger.x - trigger.width) : Infinity;
+      }).toBeLessThan(5);
+      await preview.evaluate((iframe: HTMLIFrameElement) => iframe.focus());
       await expect(more).toBeFocused();
       await page.keyboard.press('ArrowDown');
       await expect(menu.locator('button:not(:disabled)').first()).toBeFocused();
@@ -435,6 +442,9 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await expect(menu).toBeHidden();
       await expect(more).toBeFocused();
       await expect(dialog).toBeVisible();
+      await more.click();
+      await frame.getByLabel('保留输入').click();
+      await expect(menu).toBeHidden();
     });
 
     test('站内弹窗越过等待窗口后不重载，保留输入和地址状态', async ({ page }, testInfo) => {
