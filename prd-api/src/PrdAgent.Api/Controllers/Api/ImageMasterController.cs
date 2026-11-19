@@ -2420,6 +2420,18 @@ public class ImageMasterController : ControllerBase
                 : null;
             var hasUserAnchors = userAnchors is { Count: > 0 };
 
+            if (isAnchorMode && request?.PositionStrategy == "user-anchor" && !hasUserAnchors)
+            {
+                var missingAnchors = JsonSerializer.Serialize(new
+                {
+                    type = "error",
+                    code = "ARTICLE_ANCHORS_REQUIRED",
+                    message = "正文还没有配图锚点。请先在想配图的段落添加锚点，再生成配图标记。"
+                }, JsonOptions);
+                await Response.WriteAsync($"data: {missingAnchors}\n\n", ct);
+                return;
+            }
+
             if (hasUserAnchors && PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(articleContent).Count > 0)
             {
                 var conflictData = JsonSerializer.Serialize(new
@@ -2478,6 +2490,7 @@ public class ImageMasterController : ControllerBase
             // 只有显式取消 API 才能中断任务
             var fullResponse = new StringBuilder();
             var clientDisconnected = false;
+            var modelCompleted = false;
 
             // Anchor 模式：增量解析状态
             string? pendingAnchor = null;
@@ -2491,13 +2504,15 @@ public class ImageMasterController : ControllerBase
                 var parsed = PrdAgent.Core.Services.AnchorInsertionParser.TryParseLine(
                     line, ref pendingAnchor, anchorInsertions.Count);
                 if (parsed == null) return;
-                if (hasUserAnchors &&
-                    (!userAnchors!.Contains(parsed.AnchorText) || !promptsByAnchor.TryAdd(parsed.AnchorText, parsed)))
+                if (hasUserAnchors)
                 {
-                    return;
+                    if (!userAnchors!.TryAddPrompt(promptsByAnchor, parsed)) return;
+                }
+                else
+                {
+                    anchorInsertions.Add(parsed);
                 }
 
-                anchorInsertions.Add(parsed);
                 if (clientDisconnected) return;
                 try
                 {
@@ -2602,13 +2617,28 @@ public class ImageMasterController : ControllerBase
                         }
                     }
                 }
+                else if (chunk.Type == "done")
+                {
+                    modelCompleted = true;
+                }
                 else if (chunk.Type == "error")
                 {
+                    if (hasUserAnchors && chunk.ErrorCode is ("TIMEOUT" or "NETWORK_ERROR" or "UPSTREAM_OUTCOME_UNKNOWN"))
+                    {
+                        _logger.LogWarning("GenerateArticleMarkers: using source text for missing prompts after {Code}, workspace {WorkspaceId}, request {RequestId}",
+                            chunk.ErrorCode, wid, requestId);
+                        break;
+                    }
                     if (!clientDisconnected)
                     {
                         try
                         {
-                            var errorData = JsonSerializer.Serialize(new { type = "error", message = chunk.ErrorMessage }, JsonOptions);
+                            var errorData = JsonSerializer.Serialize(new
+                            {
+                                type = "error",
+                                code = chunk.ErrorCode,
+                                message = "写作模型暂时无法生成配图标记。请检查模型设置，或稍后重试。"
+                            }, JsonOptions);
                             await Response.WriteAsync($"data: {errorData}\n\n");
                             await Response.Body.FlushAsync();
                         }
@@ -2618,8 +2648,8 @@ public class ImageMasterController : ControllerBase
                 }
             }
 
-            // Anchor 模式：处理 lineBuffer 中最后一个不完整行
-            if (isAnchorMode && !string.IsNullOrWhiteSpace(lineBuffer))
+            // 用户锚点只在收到完成事件后接受末尾没有换行的一条，避免保留中断时截断的描述。
+            if (isAnchorMode && (!hasUserAnchors || modelCompleted) && !string.IsNullOrWhiteSpace(lineBuffer))
             {
                 await ParseMarkerLineAsync(lineBuffer);
             }
@@ -2638,30 +2668,30 @@ public class ImageMasterController : ControllerBase
 
             // 生成最终的带标记文章内容
             string generatedContent;
+            var fallbackCount = 0;
             List<PrdAgent.Core.Services.ArticleMarker> extractedMarkers;
 
             if (hasUserAnchors)
             {
-                var anchoredContent = userAnchors!.Apply(promptsByAnchor);
-                if (anchoredContent == null)
+                (generatedContent, fallbackCount) = userAnchors!.Apply(promptsByAnchor);
+                extractedMarkers = PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(generatedContent);
+                if (extractedMarkers.Count != userAnchors.Count)
                 {
-                    _logger.LogWarning("GenerateArticleMarkers: {Matched}/{Total} user anchors returned for workspace {WorkspaceId}",
-                        promptsByAnchor.Count, userAnchors.Count, wid);
+                    _logger.LogError("GenerateArticleMarkers: rendered {MarkerCount} markers for {AnchorCount} user anchors, workspace {WorkspaceId}, request {RequestId}",
+                        extractedMarkers.Count, userAnchors.Count, wid, requestId);
                     if (!clientDisconnected)
                     {
                         var missingData = JsonSerializer.Serialize(new
                         {
                             type = "error",
-                            code = "ARTICLE_ANCHORS_INCOMPLETE",
-                            message = $"模型只为 {userAnchors.Count} 个锚点中的 {promptsByAnchor.Count} 个生成了提示词。请重新生成配图标记。"
+                            code = "ARTICLE_ANCHOR_COUNT_MISMATCH",
+                            message = "配图标记数量与锚点不一致，本次结果未保存。请刷新后重新生成。"
                         }, JsonOptions);
                         await Response.WriteAsync($"data: {missingData}\n\n");
                         await Response.Body.FlushAsync();
                     }
                     return;
                 }
-                generatedContent = anchoredContent;
-                extractedMarkers = PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(generatedContent);
             }
             else if (isAnchorMode)
             {
@@ -2744,8 +2774,8 @@ public class ImageMasterController : ControllerBase
             // 重置 images 进度。旧配图不再删除：落库成功后盖上旧版本号归入「历史配图」。
             await PrdAgent.Api.Services.LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow?.Version ?? 0);
 
-            _logger.LogInformation("GenerateArticleMarkers completed for workspace {WorkspaceId}, mode: {Mode}, markers: {MarkerCount}, clientDisconnected: {ClientDisconnected}",
-                wid, insertionMode, extractedMarkers.Count, clientDisconnected);
+            _logger.LogInformation("GenerateArticleMarkers completed for workspace {WorkspaceId}, request {RequestId}, mode {Mode}, markers {MarkerCount}, source fallbacks {FallbackCount}, clientDisconnected {ClientDisconnected}",
+                wid, requestId, insertionMode, extractedMarkers.Count, fallbackCount, clientDisconnected);
 
             // 发送完成事件（如果客户端仍连接）
             if (!clientDisconnected)
@@ -2757,7 +2787,8 @@ public class ImageMasterController : ControllerBase
                         type = "done",
                         fullText = generatedContent,
                         mode = insertionMode,
-                        markerCount = extractedMarkers.Count
+                        markerCount = extractedMarkers.Count,
+                        message = fallbackCount > 0 ? $"其中 {fallbackCount} 条提示词根据锚点附近的原文补齐。生成配图前可以先查看或修改。" : null
                     }, JsonOptions);
                     await Response.WriteAsync($"data: {doneData}\n\n");
                     await Response.Body.FlushAsync();

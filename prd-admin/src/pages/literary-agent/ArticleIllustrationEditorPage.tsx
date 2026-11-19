@@ -1649,6 +1649,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             status: 'parsed',
             planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
           })));
+          if (chunk.message) toast.warning('已按原文补齐提示词', chunk.message);
           return;
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
@@ -1716,22 +1717,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
 
         // "立刻插入"：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
+        const markerHtml = base.slice(m.startPos, m.endPos)
+          .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
         const isGenerating = it?.status === 'running';
         if (isGenerating) {
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n<div data-gen-slot="${i}" data-gen-size="${String(it?.planItem?.size || '1024x1024').replace(/[^0-9xX×]/g, '')}"></div>\n\n`,
+            replacement: `<span data-marker-idx="${i}">${markerHtml}</span>\n\n<div data-gen-slot="${i}" data-gen-size="${String(it?.planItem?.size || '1024x1024').replace(/[^0-9xX×]/g, '')}"></div>\n\n`,
           });
           continue;
         }
 
         // 空闲/无运行项 — 包裹 data-marker-idx 用于定位（保留原文供 highlightText 高亮）
-        const originalText = base.slice(m.startPos, m.endPos);
         patches.push({
           start: m.startPos,
           end: m.endPos,
-          replacement: `<span data-marker-idx="${i}">${originalText}</span>`,
+          replacement: `<span data-marker-idx="${i}">${markerHtml}</span>`,
         });
       }
 

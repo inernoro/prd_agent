@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Heading1, Heading2, Image, MapPin, PenLine, Stamp, Wand2 } from 'lucide-react';
+import { createLucideIcon, Heading1, Heading2, Image, PenLine, Stamp, Wand2 } from 'lucide-react';
 import { getAvatarUrlByModelName, useAvatarUpdates } from '@/assets/model-avatars';
 import { computeAlphaBounds } from '@/lib/layerTrim';
 import { getWatermarkPreview } from '@/services/real/watermark';
 
-const positionIcons = { auto: Wand2, 'user-anchor': MapPin, 'per-h1': Heading1, 'per-h2': Heading2 };
+const ParagraphBookmark = createLucideIcon('ParagraphBookmark', [
+  ['path', { d: 'M3 5h18M3 10h9M3 15h8M3 20h5', key: 'paragraph' }],
+  ['path', { d: 'M15 10h6v10l-3-2-3 2z', stroke: 'var(--accent-primary)', key: 'bookmark' }],
+]);
+
+const positionIcons = { auto: Wand2, 'user-anchor': ParagraphBookmark, 'per-h1': Heading1, 'per-h2': Heading2 };
 
 async function cropWatermarkPreview(blob: Blob): Promise<Blob> {
   try {
