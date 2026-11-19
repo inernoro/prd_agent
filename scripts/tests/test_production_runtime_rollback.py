@@ -36,6 +36,43 @@ def container(name, image, config_file, running=True):
 
 
 class RuntimeRollbackTests(unittest.TestCase):
+    def test_inventory_prefers_running_service_and_rejects_multiple_live_instances(self):
+        running = container("api", "sha256:live", "/active/compose.yml")
+        stopped = container("api", "sha256:stale", "/previous/compose.yml", running=False)
+        with patch.dict(TOOLS["inventory"].__globals__, {
+            "docker": lambda *args: "live stale" if args[0] == "ps" else json.dumps([running, stopped]),
+        }):
+            self.assertEqual(TOOLS["inventory"]("map"), {"api": running})
+            stopped["State"]["Running"] = True
+            with self.assertRaisesRegex(RuntimeError, "服务 api 有多个运行实例"):
+                TOOLS["inventory"]("map")
+
+    def test_capture_and_restore_use_standalone_and_custom_environment_file(self):
+        before = container("api", "sha256:old", "/old/compose.yml")
+        current = {"api": before}
+        commands = []
+
+        def run(executable, *args):
+            commands.append((executable, *args))
+            if "config" in args:
+                return '{"services":{"api":{}}}'
+            if "up" in args:
+                current["api"] = before
+            return ""
+
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            environment = directory / "production.env"
+            environment.touch()
+            with patch.dict(TOOLS["capture"].__globals__, {"run_command": run, "inventory": lambda _name: current}):
+                TOOLS["capture"]("map", "gateway", directory, "docker-compose", environment)
+                current["api"] = container("api", "sha256:new", "/new/compose.yml")
+                TOOLS["restore"]("map", "gateway", directory, "docker-compose")
+        render = next(command for command in commands if "config" in command)
+        self.assertEqual(render[0], "docker-compose")
+        self.assertEqual(render[render.index("--env-file") + 1], str(environment.resolve()))
+        self.assertEqual(next(command for command in commands if "up" in command)[0], "docker-compose")
+
     def test_persist_release_image_pins_remains_private_with_umask_022(self):
         script = (Path(__file__).resolve().parents[2] / "exec_dep.sh").read_text()
         start = script.index("persist_release_image_pins() {")

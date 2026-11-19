@@ -1051,7 +1051,8 @@ capture_production_runtime() {
   if [ -n "$rollback_api_id" ]; then
     rollback_runtime_identity="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$rollback_api_id")"
   fi
-  python3 scripts/lib/production-runtime-rollback.py capture "$compose_project_name" "$gateway_service" "$runtime_rollback_dir"
+  python3 scripts/lib/production-runtime-rollback.py capture "$compose_project_name" "$gateway_service" "$runtime_rollback_dir" \
+    --compose "$COMPOSE" --env-file "$compose_dotenv_file"
 }
 
 select_release_features() {
@@ -1125,7 +1126,8 @@ restore_production_runtime() {
       rm -f "$active" || restore_ok=0
     fi
   done
-  python3 scripts/lib/production-runtime-rollback.py restore "$compose_project_name" "$gateway_service" "$runtime_rollback_dir" || restore_ok=0
+  python3 scripts/lib/production-runtime-rollback.py restore "$compose_project_name" "$gateway_service" "$runtime_rollback_dir" \
+    --compose "$COMPOSE" || restore_ok=0
   if [ -n "$gateway_container_id" ] && [ -n "$(compose_run ps -q "$gateway_service")" ]; then
     reload_active_gateway || restore_ok=0
   fi

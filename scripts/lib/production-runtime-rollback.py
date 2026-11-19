@@ -9,31 +9,48 @@ from pathlib import Path
 import subprocess
 
 
-def docker(*args):
-    result = subprocess.run(["docker", *args], capture_output=True, text=True)
+def run_command(executable, *args):
+    result = subprocess.run([executable, *args], capture_output=True, text=True)
     if result.returncode:
         # Docker can put expanded Compose values in diagnostics.
         raise RuntimeError(f"Docker {args[0]} failed (exit {result.returncode})")
     return result.stdout
 
 
+def docker(*args):
+    return run_command("docker", *args)
+
+
+def compose(executable, *args):
+    if executable == "docker-compose":
+        return run_command(executable, *args)
+    return docker("compose", *args)
+
+
 def inventory(project):
     ids = docker("ps", "-aq", "--filter", f"label=com.docker.compose.project={project}").split()
     containers = json.loads(docker("inspect", *ids)) if ids else []
-    return {
-        row["Config"]["Labels"]["com.docker.compose.service"]: row
-        for row in containers
-        if row["Config"]["Labels"].get("com.docker.compose.oneoff", "").lower() != "true"
-    }
+    services = {}
+    for row in containers:
+        labels = row["Config"]["Labels"]
+        if labels.get("com.docker.compose.oneoff", "").lower() == "true":
+            continue
+        name = labels["com.docker.compose.service"]
+        previous = services.get(name)
+        if previous and previous["State"]["Running"] and row["State"]["Running"]:
+            raise RuntimeError(f"服务 {name} 有多个运行实例，无法确认回滚版本")
+        # Docker lists the newest containers first. Keep the first stopped
+        # instance as a fallback for inactive services, but prefer a live one.
+        if not previous or row["State"]["Running"]:
+            services[name] = row
+    return services
 
 
-def compose_prefix(project, row):
+def compose_source(row):
     labels = row["Config"]["Labels"]
     directory = labels.get("org.map.release.source-directory") or labels["com.docker.compose.project.working_dir"]
     files = (labels.get("org.map.release.source-files") or labels["com.docker.compose.project.config_files"]).split(",")
-    return ["compose", "-p", project, "--project-directory", directory] + [
-        part for file in files for part in ("-f", file)
-    ]
+    return directory, tuple(files)
 
 
 def escape_interpolation(value):
@@ -119,14 +136,19 @@ def configuration_proof(configuration):
     }
 
 
-def capture(project, gateway, directory):
+def capture(project, gateway, directory, executable="docker compose", env_file=None):
     containers = inventory(project)
     groups = {}
     for name, row in containers.items():
-        groups.setdefault(tuple(compose_prefix(project, row)), []).append(name)
+        groups.setdefault(compose_source(row), []).append(name)
     snapshot = {}
-    for index, (prefix, names) in enumerate(groups.items()):
-        model = json.loads(docker(*prefix, "config", "--format", "json"))
+    for index, ((working_dir, files), names) in enumerate(groups.items()):
+        options = ["-p", project, "--project-directory", working_dir]
+        if env_file and env_file.is_file():
+            options.extend(["--env-file", str(env_file.resolve())])
+        for file in files:
+            options.extend(["-f", file])
+        model = json.loads(compose(executable, *options, "config", "--format", "json"))
         model["services"] = {name: model["services"][name] for name in names}
         model["volumes"] = {}
         filename = f"compose-{index}.json"
@@ -143,8 +165,8 @@ def capture(project, gateway, directory):
                 if mount["type"] == "volume":
                     model["volumes"][mount["source"]] = {"external": True, "name": mount["source"]}
             labels = service.setdefault("labels", {})
-            labels["org.map.release.source-directory"] = prefix[4]
-            labels["org.map.release.source-files"] = ",".join(prefix[6::2])
+            labels["org.map.release.source-directory"] = working_dir
+            labels["org.map.release.source-files"] = ",".join(files)
             snapshot[name] = {"image": row["Image"], "running": row["State"]["Running"],
                               "id": row["Id"], "compose": filename,
                               "configuration": configuration_proof(configuration)}
@@ -152,7 +174,7 @@ def capture(project, gateway, directory):
     (directory / "containers.json").write_text(json.dumps(snapshot))
 
 
-def restore(project, gateway, directory):
+def restore(project, gateway, directory, executable="docker compose"):
     snapshot = json.loads((directory / "containers.json").read_text())
     current = inventory(project)
     for name in sorted(current.keys() - snapshot.keys()):
@@ -166,11 +188,11 @@ def restore(project, gateway, directory):
                 or configuration_proof(running_configuration(row)) != expected["configuration"]):
             changed.setdefault((name == gateway, expected["compose"]), []).append(name)
     for (_, filename), names in changed.items():
-        prefix = ["compose", "-p", project, "-f", str(directory / filename)]
-        docker(*prefix, "up", "-d", "--force-recreate", "--no-deps", "--pull", "never", *names)
+        prefix = ["-p", project, "-f", str(directory / filename)]
+        compose(executable, *prefix, "up", "-d", "--force-recreate", "--no-deps", "--pull", "never", *names)
         stopped = [name for name in names if not snapshot[name]["running"]]
         if stopped:
-            docker(*prefix, "stop", *stopped)
+            compose(executable, *prefix, "stop", *stopped)
     actual = inventory(project)
     for name, expected in snapshot.items():
         row = actual.get(name)
@@ -188,11 +210,15 @@ def main():
     parser.add_argument("project")
     parser.add_argument("gateway")
     parser.add_argument("directory", type=Path)
+    parser.add_argument("--compose", choices=("docker compose", "docker-compose"), default="docker compose")
+    parser.add_argument("--env-file", type=Path)
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        handler = capture if args.action == "capture" else restore
-        handler(args.project, args.gateway, args.directory)
+        if args.action == "capture":
+            capture(args.project, args.gateway, args.directory, args.compose, args.env_file)
+        else:
+            restore(args.project, args.gateway, args.directory, args.compose)
     except (KeyError, OSError, RuntimeError, ValueError) as error:
         # KeyError/ValueError can include raw Compose input. Report the type only.
         detail = str(error) if isinstance(error, RuntimeError) else type(error).__name__
