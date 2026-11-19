@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowRight, GitBranch, LayoutGrid, Maximize2, Minimize2, Plus, RefreshCw, Timer } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { EngineeringPlanningSkeleton } from '@/components/skeletons/PageSkeletons';
 import { apiRequest } from '@/lib/api';
 import type {
   PlanningBoard, PlanningDebtDetail, PlanningDebtList, PlanningReceipt, PlanningStats,
@@ -153,6 +154,10 @@ export function EngineeringPlanningPage() {
   const activeLabel = options.find(row => row.id === activeProject);
   const tabs: PlanningView[] = debtLevel ? ['debts', 'map', 'evolution'] : ['plan', 'timeline'];
   const header = <TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '工程规划' }, { label: debtLevel ? '债务分支' : '决策主线' }, { label: viewLabels[view] }]} />} />;
+  const initialLoading = (projects.loading && !projects.data) || (allowed && board.loading && !data);
+  if (initialLoading) return <AppShell active="engineering-planning" topbar={header} wide>
+    <Workspace fluid><EngineeringPlanningSkeleton /></Workspace>
+  </AppShell>;
   return <AppShell active="engineering-planning" topbar={header} wide>
     <Workspace fluid className={`ep-workspace${screen ? ' ep-screen' : ''}`}>
       <header className="ep-page-header">

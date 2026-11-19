@@ -28,6 +28,7 @@ const selectors = {
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
   'code-reviews': '[data-code-reviews-skeleton]',
+  'engineering-planning': '[aria-label="加载工程规划"]',
   dts: '[aria-label="正在加载数据同步"]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
@@ -110,7 +111,7 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews', 'dts'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews', 'engineering-planning', 'dts'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
       }
       if (!before) {
         await page.emulateMedia({reducedMotion:'reduce'});
@@ -129,6 +130,10 @@ try {
       result.dataReplacedSkeleton = true;
       if (!before && scene.kind === 'release-center') {
         await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();
+      }
+      if (!before && scene.kind === 'engineering-planning') {
+        await page.getByRole('heading', { name: '待你确认', exact: true }).waitFor();
+        await page.getByText('当前范围 0 笔未还', { exact: true }).waitFor();
       }
       if (!before && scene.kind === 'release-console') {
         await page.getByRole('region', { name: '批次发布', exact: true }).waitFor();
