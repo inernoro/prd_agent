@@ -570,6 +570,13 @@ export function LogsView() {
       : null
   ), [fixedFrom, fixedTo]);
   const openedFromLiveList = query.get('liveList') === '1';
+  const isHistorical = Boolean(fixedRange && !openedFromLiveList);
+  const [wasHistorical, setWasHistorical] = useState(isHistorical);
+  // 离开历史链接时推进窗口。实时列表的详情往返沿用已加载窗口。
+  if (wasHistorical !== isHistorical) {
+    setWasHistorical(isHistorical);
+    if (wasHistorical) setRefreshToken(Date.now());
+  }
   const [initialRangeAt] = useState(Date.now);
   const [returnRange] = useState(() => openedFromLiveList && anchorId ? fixedRange : null);
   const range = useMemo(() => {
@@ -606,7 +613,6 @@ export function LogsView() {
     }),
     [range.from, range.to, subtab, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterOperation, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment, filterPlatformId],
   );
-  const resumeKey = JSON.stringify(baseParams);
   const listContext: LogTaskContext = {
     source: 'logs',
     ...Object.fromEntries(query),
@@ -731,6 +737,7 @@ export function LogsView() {
     [baseParams],
   );
 
+  const resumeKey = JSON.stringify(baseParams);
   const resumeRef = useRef({ key: rowsKey.current, rows, total, page: loadedPage.current, ready: false });
   resumeRef.current = { key: rowsKey.current, rows, total, page: loadedPage.current, ready: rowsKey.current === resumeKey && !loading && !loadingMore && !listError };
   const resumeScroll = useRef(0);
@@ -825,13 +832,13 @@ export function LogsView() {
   }, [loadInsights, refreshToken]);
 
   useEffect(() => {
-    if (selectedLogId || (fixedRange && !openedFromLiveList)) return;
+    if (selectedLogId || isHistorical) return;
     const refreshOnReturn = () => {
       if (document.visibilityState === 'visible') refresh();
     };
     document.addEventListener('visibilitychange', refreshOnReturn);
     return () => document.removeEventListener('visibilitychange', refreshOnReturn);
-  }, [fixedRange, selectedLogId, openedFromLiveList, refresh]);
+  }, [isHistorical, selectedLogId, refresh]);
 
   const requestMatches = useMemo(() => {
     const requestId = filterRequestId.trim();

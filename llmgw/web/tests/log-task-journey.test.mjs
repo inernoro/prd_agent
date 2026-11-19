@@ -133,8 +133,14 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     await act(async () => globalThis.__journey.navigate('/overview'));
     await act(async () => globalThis.__journey.navigate('/logs?' + oldWindow));
     assert.equal(document.querySelector('[data-log-row-id="new-failed"]'), null);
-    await act(async () => globalThis.__journey.navigate('/logs?range=7d&status=failed&model=sample-model'));
-    assert.ok(document.querySelector('[data-log-row-id="new-failed"]'), 'ordinary sidebar navigation from a historical URL uses the live window');
+    const realNow = Date.now;
+    const whileHistorical = realNow() + 1000;
+    globalThis.__journey.rows.unshift({ ...base, id: 'arrived-while-historical', startedAt: new Date(whileHistorical).toISOString() });
+    Date.now = () => whileHistorical + 1000;
+    try {
+      await act(async () => globalThis.__journey.navigate('/logs?range=7d&status=failed&model=sample-model'));
+      assert.ok(document.querySelector('[data-log-row-id="arrived-while-historical"]'), 'sidebar navigation picks up requests made while viewing history');
+    } finally { Date.now = realNow; }
     await act(async () => globalThis.__journey.navigate('/logs?' + oldWindow));
     assert.equal(document.querySelector('[data-log-row-id="new-failed"]'), null);
     await click(document.querySelector('[aria-label="刷新日志"]'));
@@ -146,7 +152,6 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     assert.equal(Date.parse(refreshed.to) - Date.parse(refreshed.from), 7 * 24 * 60 * 60_000);
     assert.doesNotMatch(document.querySelector('#route').textContent, /[?&]to=/, 'preset list URLs stay live');
 
-    const realNow = Date.now;
     const newRequestAt = Date.parse(refreshed.to) + 1000;
     globalThis.__journey.rows.unshift({ ...base, id: 'newer-failed', startedAt: new Date(newRequestAt).toISOString() });
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
