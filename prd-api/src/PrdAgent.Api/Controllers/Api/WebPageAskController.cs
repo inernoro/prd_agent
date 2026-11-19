@@ -99,6 +99,7 @@ public class WebPageAskController : ControllerBase
             // 有效值与站点自己的三态必须同时返回：null 表示继续继承 owner 全局设置。
             // 配置抽屉只改欢迎语等字段时，不能把有效值误写成站点级覆盖。
             siteEnabled = site.AskEnabled,
+            aiReplyEnabled = site.AiReplyEnabled,
             welcome = site.AskWelcome,
             suggestedQuestions = site.AskSuggestedQuestions ?? new List<string>(),
             // 这批题是系统读正文写的还是 owner 自己写的。自动填的值必须看得出来、可改、
@@ -130,7 +131,7 @@ public class WebPageAskController : ControllerBase
 
         // 视频包装站这类没有正文的形态，开关一旦打开每个访客都会吃 422 —— 那是把人耍着玩。
         // 在写库之前拒绝，理由与快照服务、配置面板同一个判定源。
-        if (req.Enabled == true)
+        if (req.Enabled == true || req.AiReplyEnabled == true)
         {
             var existing = await _siteService.GetByIdAsync(siteId, this.GetRequiredUserId());
             if (existing == null)
@@ -144,6 +145,7 @@ public class WebPageAskController : ControllerBase
         var site = await _siteService.SetAskConfigAsync(siteId, this.GetRequiredUserId(), new AskConfigUpdate
         {
             Enabled = req.Enabled,
+            AiReplyEnabled = req.AiReplyEnabled,
             Welcome = req.Welcome,
             SuggestedQuestions = req.SuggestedQuestions,
             AllowAnonymous = req.AllowAnonymous,
@@ -158,6 +160,7 @@ public class WebPageAskController : ControllerBase
             siteId = site.Id,
             enabled = await IsAskOnAsync(site),
             siteEnabled = site.AskEnabled,
+            aiReplyEnabled = site.AiReplyEnabled,
             welcome = site.AskWelcome,
             suggestedQuestions = site.AskSuggestedQuestions,
             allowAnonymous = site.AskAllowAnonymous,
@@ -933,6 +936,8 @@ public class WebPageAskController : ControllerBase
 
 public class AskConfigRequest
 {
+    public bool? AiReplyEnabled { get; set; }
+
     /// <summary>null = 本次不改站点开关，继续保留原来的继承/覆盖关系。</summary>
     public bool? Enabled { get; set; }
     public string? Welcome { get; set; }

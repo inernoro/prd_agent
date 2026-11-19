@@ -7,7 +7,7 @@ import { ok } from '@/types/api';
 import { __resetSitePreviewHtmlCache, useSitePreviewHtml, type SitePreviewHtmlSite } from './useSitePreviewHtml';
 import SitePreviewModal from './SitePreviewModal';
 
-vi.mock('@/services/real/webPages', () => ({ getSiteContent: vi.fn(), getSiteAskConfig: vi.fn(), setSiteCommentsEnabled: vi.fn() }));
+vi.mock('@/services/real/webPages', () => ({ buildApiUrl: (path: string) => path, getSiteContent: vi.fn(), getSiteAskConfig: vi.fn(), setSiteCommentsEnabled: vi.fn() }));
 vi.mock('./useHostedPdfDownload', async () => {
   const { useRef } = await import('react');
   return { useHostedPdfDownload: () => ({ iframeRef: useRef(null), notifyFrame: vi.fn(), decorateHtml: (html: string) => html }), HostedPdfDownloadStatus: () => null };
@@ -15,7 +15,7 @@ vi.mock('./useHostedPdfDownload', async () => {
 vi.mock('./CommentsSection', () => ({ default: () => null }));
 vi.mock('./ask/AskPanelInline', () => ({ default: () => null }));
 vi.mock('./ask/AskConfigDrawer', () => ({ default: () => null }));
-vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: () => null }));
+vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: ({ text }: { text: string }) => <div data-testid="preview-loading">{text}</div> }));
 const host = document.createElement('div');
 let root: ReturnType<typeof createRoot>;
 let observed: ReturnType<typeof useSitePreviewHtml>;
@@ -38,7 +38,7 @@ afterEach(async () => { await act(async () => root.unmount()); });
 it('多文件站不请求正文，也不产生正文错误或等待状态', async () => {
   await act(async () => root.render(<Probe value={{ ...site, contentShape: 'multi-file' }} />));
   expect(getSiteContent).not.toHaveBeenCalled();
-  expect(observed).toEqual({ srcDoc: null, error: null, loading: false });
+  expect(observed).toMatchObject({ srcDoc: null, error: null, loading: false, settled: true });
 });
 
 it('相同 URL 的站点类型变化不会复用旧正文，迟到响应不能覆盖当前策略', async () => {
@@ -48,7 +48,7 @@ it('相同 URL 的站点类型变化不会复用旧正文，迟到响应不能�
   expect(getSiteContent).toHaveBeenCalledOnce();
   await act(async () => root.render(<Probe value={{ ...site, contentShape: 'multi-file' }} />));
   await act(async () => finish(ok(content('<html><head></head><body>旧正文</body></html>'))));
-  expect(observed).toEqual({ srcDoc: null, error: null, loading: false });
+  expect(observed).toMatchObject({ srcDoc: null, error: null, loading: false, settled: true });
 });
 
 it('旧站点仍能取回正文并注入原资源基址', async () => {
@@ -84,4 +84,48 @@ it('原地址弹窗结束等待时保留同一个 iframe，发布新地址仍能
     vi.useRealTimers();
     vi.unstubAllGlobals();
   }
+});
+
+it('相同地址元数据令内联失效时切换原地址并显示加载与慢提示', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('requestAnimationFrame', vi.fn());
+  vi.mocked(getSiteContent).mockResolvedValue(ok(content('<html><head></head><body>恢复的正文</body></html>')));
+  const hosted = { ...site, contentShape: 'self-contained-html', title: '恢复后预览', askEnabled: false } as HostedSite;
+  try {
+    await act(async () => root.render(<SitePreviewModal site={hosted} onClose={() => {}} />));
+    const initial = document.querySelector('iframe')!;
+    expect(initial.getAttribute('srcdoc')).toContain('恢复的正文');
+    await act(async () => initial.dispatchEvent(new Event('load')));
+    expect(document.querySelector('[data-testid="preview-loading"]')).toBeNull();
+    await act(async () => root.render(<SitePreviewModal site={{ ...hosted, contentShape: 'multi-file' }} onClose={() => {}} />));
+    const frame = document.querySelector('iframe')!;
+    expect(frame.getAttribute('srcdoc')).toBeNull();
+    expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
+    expect(document.querySelector('[data-testid="preview-loading"]')).not.toBeNull();
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(document.querySelector('[data-testid="preview-loading"]')).toBeNull();
+    expect(document.body.textContent).toContain('加载较慢');
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    expect(document.body.textContent).not.toContain('加载较慢');
+  } finally { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); }
+});
+
+it('直链已加载后迟到的多文件元数据不会重新盖住同一网页', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('requestAnimationFrame', vi.fn());
+  vi.mocked(getSiteContent).mockResolvedValue(ok(content('<html><body><script type="module">console.log("module")</script></body></html>')));
+  const hosted = { ...site, contentShape: 'self-contained-html', title: '直链预览', askEnabled: false } as HostedSite;
+  try {
+    await act(async () => root.render(<SitePreviewModal site={hosted} onClose={() => {}} />));
+    const frame = document.querySelector('iframe')!;
+    expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(document.querySelector('[data-testid="preview-loading"]')).toBeNull();
+    await act(async () => root.render(<SitePreviewModal site={{ ...hosted, contentShape: 'multi-file' }} onClose={() => {}} />));
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(document.querySelector('iframe')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(hosted.siteUrl);
+    expect(document.querySelector('[data-testid="preview-loading"]')).toBeNull();
+  } finally { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); }
 });

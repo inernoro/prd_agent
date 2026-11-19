@@ -37,7 +37,8 @@ describe('托管预览接线', () => {
     const source = read('components/web-hosting/SitePreviewModal.tsx');
     expect(source).toContain('useSitePreviewHtml');
     expect(source).toMatch(/srcDoc=\{/);
-    expect(source).toContain('bg-token-card text-token-primary');
+    expect(source).toContain('className="review-workbench');
+    expect(source).toContain('data-theme={theme}');
     expect(source).not.toContain("bg-[#0f1014]");
     expect(source).not.toContain('bg-black/70 px-3 py-1.5 text-[12px] text-token-secondary');
   });

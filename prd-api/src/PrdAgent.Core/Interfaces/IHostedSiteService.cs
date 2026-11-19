@@ -428,14 +428,14 @@ public interface IHostedSiteService
     Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
         string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null);
+        string? revisionId = null, string? expectedContentVersion = null, string? clientId = null, IReadOnlyList<HostedSiteCommentFile>? attachments = null);
 
     /// <summary>经分享链接发表评论（公开路径，需登录）。校验分享访问门 + 评论开关；通过后插入。</summary>
     Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
         string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null);
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null, string? clientId = null, IReadOnlyList<HostedSiteCommentFile>? attachments = null);
 
     Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
         bool resolved, CancellationToken ct = default);
@@ -465,6 +465,8 @@ public record HostedSiteEditableEntry(
 /// <summary>站点「向我提问」配置的写入入参（owner 在提问设置抽屉里改的那几项）。</summary>
 public class AskConfigUpdate
 {
+    public bool? AiReplyEnabled { get; set; }
+
     /// <summary>是否开放提问；null 表示本次不改站点自己的三态配置。</summary>
     public bool? Enabled { get; set; }
 
@@ -503,6 +505,9 @@ public class ShareSiteResolveResult
 
 public class HostedSiteCommentDto
 {
+    public bool IsAi { get; set; }
+    public string? AiReplyStatus { get; set; }
+    public IReadOnlyList<HostedSiteCommentFileDto> Attachments { get; set; } = Array.Empty<HostedSiteCommentFileDto>();
     public string? ContentVersion { get; set; }
     public string? RevisionId { get; set; }
     public HostedSiteCommentAnchor? Anchor { get; set; }
@@ -513,12 +518,16 @@ public class HostedSiteCommentDto
     public string SiteId { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public string AuthorUserId { get; set; } = string.Empty;
+    public bool IsMine { get; set; }
     public string AuthorName { get; set; } = "用户";
     public string? AuthorAvatarFileName { get; set; }
+    public string? AuthorAvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; }
     /// <summary>当前 viewer 是否可删除本评论（作者本人或站点 owner）</summary>
     public bool CanDelete { get; set; }
 }
+
+public record HostedSiteCommentFileDto(int Index, string Name, long Length);
 
 public class SiteCommentsResult
 {
