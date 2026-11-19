@@ -51,6 +51,11 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     const click = async node => { assert.ok(node, 'expected action exists'); await act(async () => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))); };
     await click([...document.querySelectorAll('button')].find(node => node.textContent === '加载更多'));
     assert.equal(document.querySelectorAll('.lg-log-table-row').length, 4);
+    const callsBeforeBack = globalThis.__journey.calls.length;
+    await click(document.querySelectorAll('.lg-log-table-row')[3]);
+    await act(async () => globalThis.__journey.navigate(-1));
+    assert.equal(document.querySelectorAll('.lg-log-table-row').length, 4, 'Back retains every page of the live list');
+    assert.equal(globalThis.__journey.calls.length, callsBeforeBack, 'Back keeps the same query window and does not load page 1');
     const lastRow = document.querySelectorAll('.lg-log-table-row')[3];
     for (const path of ['/models/view', '/platforms/view', '/app-callers/view']) {
       const link = lastRow.querySelector(`a[href^="${path}"]`);assert.ok(link,`rendered ${path} entry`);const target=new URL(link.getAttribute('href'),'http://local');const context=new URLSearchParams(target.searchParams.get('context'));assert.equal(context.get('status'),'failed');assert.equal(context.get('model'),'sample-model');assert.equal(context.get('selectedLogId'),'row-4');assert.ok(context.get('from'));assert.ok(context.get('to'));if(path==='/app-callers/view')assert.equal(target.searchParams.get('requestType'),'chat');
@@ -145,6 +150,14 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
       await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange')));
       assert.equal(document.querySelector('#route').textContent, frozenDetail);
       assert.equal(globalThis.__journey.calls.length, detailCalls, 'request details keep their original window when returning to the tab');
+      await click(document.querySelector('[aria-label="关闭详情"]'));
+      assert.doesNotMatch(document.querySelector('#route').textContent, /[?&](to|anchor)=/, 'closing live details resumes the live list');
+      assert.equal(globalThis.__journey.calls.length, detailCalls, 'closing live details keeps the loaded query until the next refresh');
+      const afterClose = Date.now() + 1000;
+      globalThis.__journey.rows.unshift({ ...base, id: 'after-close', startedAt: new Date(afterClose).toISOString() });
+      Date.now = () => afterClose + 1000;
+      await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange')));
+      assert.ok(document.querySelector('[data-log-row-id="after-close"]'), 'returning after closing details finds new requests');
     } finally {
       Date.now = realNow;
     }

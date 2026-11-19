@@ -433,6 +433,7 @@ export function LogsView() {
   const setSubtab = (value: LogsSubTab) => updateQuery('view', value === 'upstream' ? 'physical' : value === 'sessions' ? 'sessions' : '');
   const [trendOpen, setTrendOpen] = useState(false);
   const presetKey = ['1d', '7d', '30d'].includes(query.get('range') || '') ? query.get('range')! : '30d';
+  const [initialRangeAt] = useState(Date.now);
   const [refreshToken, setRefreshToken] = useState(0);
   const setPresetKey = (value: string) => {
     const next = new URLSearchParams(location.search);
@@ -568,21 +569,28 @@ export function LogsView() {
   const range = useMemo(() => {
     if (fixedRange) return fixedRange;
     const preset = TIME_RANGE_PRESETS.find((item) => item.key === presetKey) ?? TIME_RANGE_PRESETS[2];
-    return rangeFromPreset(preset.days, refreshToken || undefined);
-  }, [presetKey, fixedRange, refreshToken]);
+    return rangeFromPreset(preset.days, refreshToken || initialRangeAt);
+  }, [presetKey, fixedRange, refreshToken, initialRangeAt]);
 
+  const openedFromLiveList = location.state?.openedFromLiveList === true;
   const openLogDetail = useCallback((id: string, replace = false) => {
     const query = new URLSearchParams(location.search);
     query.set('from', range.from); query.set('to', range.to);
     query.set('transaction', id); query.set('anchor', id); query.delete('openRequest');
-    navigate({ pathname: location.pathname, search: `?${query.toString()}` }, { replace });
-  }, [location.pathname, location.search, navigate, range.from, range.to]);
+    navigate({ pathname: location.pathname, search: `?${query.toString()}` }, {
+      replace,
+      state: { openedFromLiveList: !fixedRange || openedFromLiveList },
+    });
+  }, [location.pathname, location.search, navigate, range.from, range.to, fixedRange, openedFromLiveList]);
 
   const closeLogDetail = useCallback(() => {
     const query = new URLSearchParams(location.search);
     query.delete('transaction');
+    if (openedFromLiveList) {
+      for (const key of ['from', 'to', 'anchor']) query.delete(key);
+    }
     navigate({ pathname: location.pathname, search: query.size ? `?${query.toString()}` : '' }, { replace: true });
-  }, [location.pathname, location.search, navigate]);
+  }, [location.pathname, location.search, navigate, openedFromLiveList]);
 
   const baseParams = useMemo(
     () => ({
