@@ -31,6 +31,10 @@ if ((args[0]==='ps'||args[0]==='images') && process.env.CDS_JANITOR_QUERY_FAILUR
 else if(args[0]==='ps') {
  if(args.includes('-aq'))console.log('111a\\n222b');
  else if(!args.includes('--filter'))console.log(${JSON.stringify(image)});
+} else if(args[0]==='container'&&args[1]==='inspect') {
+ console.log(args.slice(4).map(Id=>JSON.stringify({Id,Image:'sha256:fixture'})).join('\\n'));
+} else if(args[0]==='image'&&args[1]==='inspect') {
+ console.log(JSON.stringify({Id:'sha256:fixture',RepoTags:[${JSON.stringify(image)}]}));
 } else if(args[0]==='inspect') {
  if(process.env.CDS_JANITOR_INSPECT!=='empty')console.log('/owned/mounted');
  if(process.env.CDS_JANITOR_INSPECT)process.exitCode=1;
@@ -78,7 +82,7 @@ describe('Janitor 真实命令与观测隔离', () => {
     const [images, inUse, mounts] = await Promise.all([
       f.adapters.imageDocker.listImages(), f.adapters.imageDocker.listInUseImages(), f.adapters.orphanWorktreeFs.listMountedHostPaths(),
     ]);
-    expect(images).toEqual([f.image]); expect(inUse).toEqual([f.image]); expect(mounts).toEqual(['/owned/mounted']);
+    expect(images).toEqual([f.image]); expect(inUse).toEqual(['sha256:fixture', f.image]); expect(mounts).toEqual(['/owned/mounted']);
     const trace = await f.trace();
     // 原默认 execFile 路径中，真实 fixture 进程以 Master 为父进程，此断言失败。
     expect(trace.every(item => item.ppid !== process.pid)).toBe(true);

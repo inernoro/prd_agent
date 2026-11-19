@@ -287,9 +287,9 @@ describe('forwarder活动收据的有限资格与恢复', () => {
       (_lease: unknown, status: string) => { completed.push(status); }, f.scheduler,
       { restartServiceInPlace: async () => { restarts++; return false; } });
     await revive('cold');
-    expect(restarts).toBe(mode === 'unknown' ? 0 : 1);
+    expect(restarts).toBe(mode === 'free-room' ? 1 : 0);
     expect(released).toBe(1);
-    if (mode === 'unknown') {
+    if (mode !== 'free-room') {
       expect(f.state.getBranch('cold')).toMatchObject({ status: 'idle', heatState: 'cold', services: { api: { status: 'stopped' } } });
       expect(completed).toEqual(['cancelled']); expect(f.cooled).toEqual([]);
       expect(f.state.getBranch('cold')!.lastDeployStartedAt).toBeUndefined();

@@ -39,6 +39,8 @@ export interface ImageRetentionInput {
   keepGenerations: number;
   /** 单轮最多删几个，避免一次 sweep 长时间占住 docker 与磁盘 IO。 */
   maxRemovals?: number;
+  /** Last attempted tag, persisted by Janitor; failures also advance the fair scan. */
+  afterImage?: string;
 }
 
 export interface ImageRetentionPlan {
@@ -177,6 +179,9 @@ export function computeImageRetentionPlan(input: ImageRetentionInput): ImageRete
   // 3. 稳定排序（同输入同输出，便于测试与复盘），再按单轮上限截断
   candidates.sort();
   const maxRemovals = Math.max(0, Math.floor(input.maxRemovals ?? candidates.length));
-  const remove = candidates.slice(0, maxRemovals);
+  const cursor = input.afterImage ? candidates.findIndex(image => image > input.afterImage!) : 0;
+  const start = cursor < 0 ? 0 : cursor;
+  const ordered = [...candidates.slice(start), ...candidates.slice(0, start)];
+  const remove = ordered.slice(0, maxRemovals);
   return { remove, keptReasons, deferred: candidates.length - remove.length };
 }
