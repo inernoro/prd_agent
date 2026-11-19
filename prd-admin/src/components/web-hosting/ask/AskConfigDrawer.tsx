@@ -167,10 +167,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
   }, [aiReplyDirty, aiReplyEnabled, allowAnonymous, configReady, dailyLimit, embedded, enabled, enabledDirty, onClose, onSaved, questions, questionsDirty, regenerating, saving, siteId, welcome]);
 
   const body = (
-    // z-index 必须高于 SitePreviewModal 的 z-[100]：本抽屉唯一的入口就在那个弹窗的顶栏里，
-    // 两者又是并列的 portal（都挂 body）。80 < 100 意味着抽屉永远被弹窗盖住点不到，
-    // 而这里是单站点提问开关的入口，盖住它就等于 owner 无法覆盖自己的全局默认。
-    <div style={embedded ? { display: 'flex', width: '100%', minHeight: 0 } : { position: 'fixed', inset: 0, zIndex: 110 }}>
+    // 独立抽屉高于站内审阅和全局通知，右下角保存按钮需要完整的点击区域。
+    <div style={embedded ? { display: 'flex', width: '100%', minHeight: 0 } : { position: 'fixed', inset: 0, zIndex: 140 }}>
       {!embedded && <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'var(--overlay-scrim, rgba(0,0,0,0.45))' }} />}
       <aside role={embedded ? undefined : 'dialog'} aria-modal={embedded ? undefined : true}
         aria-label={embedded ? undefined : '提问设置'}
