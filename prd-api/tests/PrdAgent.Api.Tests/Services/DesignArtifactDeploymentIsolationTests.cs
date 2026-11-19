@@ -562,6 +562,26 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.DoesNotContain(otherOwner.Id, System.Text.Json.JsonSerializer.Serialize(foreignResponse.Value));
     }
 
+    [DesignScopeMongoTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunningDelivery_ExposesOnlyTheDraftVersionForRefreshFallback(bool informationDelivery)
+    {
+        var run = Run("live-preview", RunStatuses.Running);
+        run.DeliveryTemplateId = informationDelivery ? "team-tutorial" : null;
+        run.LatestPreviewRevision = 7;
+        run.LatestPreviewHtml = "<html>private draft content</html>";
+        await InsertAsync(run, CurrentScope);
+
+        var response = Assert.IsType<OkObjectResult>(await GenerationController().GetRun(run.Id));
+        var serialized = JsonSerializer.SerializeToElement(response.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var data = serialized.GetProperty("data");
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("previewHtml").ValueKind);
+        var revision = data.GetProperty("previewRevision");
+        if (informationDelivery) Assert.Equal(7, revision.GetInt32());
+        else Assert.Equal(JsonValueKind.Null, revision.ValueKind);
+    }
+
     [DesignScopeMongoFact]
     public async Task LegacyHistory_RemainsReadableThroughAllPublicReads_ButCannotCancelOrAdvanceLifecycle()
     {

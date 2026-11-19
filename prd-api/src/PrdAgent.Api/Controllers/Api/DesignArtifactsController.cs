@@ -1548,7 +1548,8 @@ public sealed class DesignArtifactsController : ControllerBase
         run.FirstPreviewAt,
         // 大页面不能跟着 1.5 秒一次的运行中轮询反复传输；只有终态失败恢复最后成果时才返回。
         previewHtml = run.Status == RunStatuses.Error && run.DeliveryTemplateId == null ? run.LatestPreviewHtml : null,
-        previewRevision = run.Status == RunStatuses.Error ? run.LatestPreviewRevision : null,
+        // 作者页按版本回读受权限保护的文件，SSE 暂时断开也能发现已经保存的预览。
+        previewRevision = run.DeliveryTemplateId != null || run.Status == RunStatuses.Error ? run.LatestPreviewRevision : null,
         run.LastProgressAt,
         run.MaxStaticGapSeconds,
         run.StreamReconnectCount,

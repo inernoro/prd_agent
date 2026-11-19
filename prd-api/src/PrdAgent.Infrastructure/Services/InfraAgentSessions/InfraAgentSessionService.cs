@@ -3091,24 +3091,32 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         InfraAgentSession? dispatchSession = null)
     {
         var baseUrl = connection.PartnerBaseUrl.TrimEnd('/');
-        using var request = new HttpRequestMessage(method, $"{baseUrl}{path}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        if (body != null)
+        for (var attempt = 0; ; attempt++)
         {
-            request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        }
-        if (dispatchSession != null)
-            await PrdAgent.Infrastructure.Security.AuthorizedCdsDesignDispatch.PrepareAsync(request, connection, dispatchSession, _taskExecutions, ct);
-        var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!response.IsSuccessStatusCode && !allowErrorResponse)
-        {
-            using (response)
+            using var request = new HttpRequestMessage(method, $"{baseUrl}{path}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            if (body != null)
+                request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            if (dispatchSession != null)
+                await PrdAgent.Infrastructure.Security.AuthorizedCdsDesignDispatch.PrepareAsync(request, connection, dispatchSession, _taskExecutions, ct);
+            var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (response.IsSuccessStatusCode) return response;
+
+            var canRetryRead = method == HttpMethod.Get && attempt < 2 && response.StatusCode == System.Net.HttpStatusCode.BadRequest;
+            if (allowErrorResponse && !canRetryRead) return response;
+
+            string text;
+            try { text = await response.Content.ReadAsStringAsync(ct); }
+            catch { response.Dispose(); throw; }
+            if (!canRetryRead || !IsUnattributedCdsBadRequest(response, text))
             {
-                var text = await response.Content.ReadAsStringAsync(ct);
-                throw CdsRequestFailed(response, text);
+                if (allowErrorResponse) return response;
+                using (response) throw CdsRequestFailed(response, text);
             }
+            using (response)
+                _logger.LogWarning("CDS read received HTTP 400 without a CDS response attempt={Attempt}", attempt + 1);
+            await Task.Delay(TimeSpan.FromMilliseconds(120 * (attempt + 1)), ct);
         }
-        return response;
     }
 
     private async Task<HttpResponseMessage> SendCdsMessageIdempotentlyAsync(

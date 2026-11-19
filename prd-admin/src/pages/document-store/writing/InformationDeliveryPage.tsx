@@ -163,7 +163,9 @@ export default function InformationDeliveryPage() {
         deliveryMediaFormats: mediaFormats,
       });
       if (!result.success) {
-        setError(result.error?.message || '无法开始生成');
+        setError(result.error?.code === 'RUNTIME_NOT_READY'
+          ? 'OpenDesign 暂时无法接单。所选资料已保留，可以稍后从这里重试。'
+          : result.error?.message || '无法开始生成');
         return;
       }
       setParams({ run: result.data.runId }, { replace: true });
