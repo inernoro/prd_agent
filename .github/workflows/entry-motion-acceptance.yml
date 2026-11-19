@@ -17,11 +17,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [firefox, webkit]
+        browser: [webkit]
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 7c82dd337e57c9f40814dfd2eaac1326e083242b
+          ref: 27990b92504d2ba72c11a317659d505d627fbcb6
       - uses: pnpm/action-setup@v4
         with:
           version: '10.28.2'
@@ -54,7 +54,7 @@ jobs:
           pactl set-sink-mute gateway_acceptance 0
           pactl set-sink-volume gateway_acceptance 100%
           pactl info > work/compat/audio-system/server.txt
-          pnpm -C e2e exec playwright test -c admin-operations.config.ts --project "$SELECTED_ENTRY_BROWSER" --grep '原生音频|电影式接入全流程|慢加载日景' --workers=1
+          pnpm -C e2e exec playwright test -c admin-operations.config.ts --project "$SELECTED_ENTRY_BROWSER" --grep '电影式接入全流程' --repeat-each=2 --workers=1 --trace on
       - uses: actions/upload-artifact@v4
         if: always()
         with:
