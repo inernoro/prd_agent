@@ -214,7 +214,7 @@ function useFontFace(font: WatermarkFontInfo | null | undefined, enabled: boolea
   }, [enabled, font]);
 }
 
-type WatermarkStatus = { hasActiveConfig: boolean; activeId?: string; activeName?: string };
+export type WatermarkStatus = { hasActiveConfig: boolean; activeId?: string; activeName?: string; activePreviewUrl?: string | null };
 export type WatermarkSettingsPanelHandle = { addSpec: () => void; editCurrentSpec: () => void };
 type WatermarkSettingsPanelProps = {
   /** 当前应用的 appKey，用于绑定/解绑水印 */
@@ -303,6 +303,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
       hasActiveConfig: activeConfig !== null,
       activeId: activeConfig?.id,
       activeName: activeConfig?.name,
+      activePreviewUrl: activeConfig?.previewUrl,
     });
   }, [onStatusChange, activeConfig]);
 

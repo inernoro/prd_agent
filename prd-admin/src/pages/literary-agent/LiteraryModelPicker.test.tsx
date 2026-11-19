@@ -3,6 +3,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
+import { LiterarySettingsSummary } from './LiterarySettingsSummary';
 import type { LiteraryModelOption } from './literaryModelOptions';
 import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
 import { QuickMenu, QuickMenuItem } from './LiteraryQuickMenu';
@@ -44,6 +45,23 @@ describe('工作台紧凑模型选择', () => {
     expect(trigger.querySelector('.lit-model-name')?.textContent).toBe('DeepSeek-V4');
     expect(trigger.title).toContain(models[0].name);
     expect(trigger.getAttribute('aria-label')).toBe('写作模型');
+  });
+
+  it('折叠栏保留未知模型名称并展示当前水印样张，样张失败后仍可辨认水印', async () => {
+    const preview = '/watermark-preview.png';
+    await act(async () => root.render(
+      <LiterarySettingsSummary writingModel="test-new-writing-model" imageModel="test-new-picture-model"
+        watermarkName="黑白" watermarkPreview={preview} position="per-h2" positionLabel="每小标题一张" />,
+    ));
+    expect(container.querySelector('[aria-label="写作模型：test-new-writing-model"] svg')).not.toBeNull();
+    expect(container.querySelector('[aria-label="配图模型：test-new-picture-model"] svg')).not.toBeNull();
+    expect(container.querySelector('[title="每小标题一张"] svg')).not.toBeNull();
+    const watermark = container.querySelector('[aria-label="水印：黑白"]')!;
+    const image = watermark.querySelector('img')!;
+    expect(image.getAttribute('src')).toBe(preview);
+    await act(async () => { image.dispatchEvent(new Event('error')); });
+    expect(watermark.querySelector('img')).toBeNull();
+    expect(watermark.querySelector('svg')).not.toBeNull();
   });
 
   it('选择菜单项仍提交原始选项 ID，保留完整名称和默认标记', async () => {
