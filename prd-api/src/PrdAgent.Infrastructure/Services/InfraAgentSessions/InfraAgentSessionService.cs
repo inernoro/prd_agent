@@ -900,7 +900,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 using var postResponse = await SendCdsMessageIdempotentlyAsync(
                     currentConnection,
                     currentToken,
-                    currentSession.CdsProjectId,
+                    currentSession,
                     currentCdsSessionId,
                     content,
                     outboundMessage.Id,
@@ -961,7 +961,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 using var retryResponse = await SendCdsMessageIdempotentlyAsync(
                     currentConnection,
                     currentToken,
-                    currentSession.CdsProjectId,
+                    currentSession,
                     restartedCdsSessionId,
                     content,
                     outboundMessage.Id,
@@ -3085,7 +3085,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         string path,
         object? body,
         CancellationToken ct,
-        bool allowErrorResponse = false)
+        bool allowErrorResponse = false,
+        InfraAgentSession? dispatchSession = null)
     {
         var baseUrl = connection.PartnerBaseUrl.TrimEnd('/');
         using var request = new HttpRequestMessage(method, $"{baseUrl}{path}");
@@ -3094,6 +3095,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
         }
+        if (dispatchSession != null)
+            await PrdAgent.Infrastructure.Security.AuthorizedCdsDesignDispatch.PrepareAsync(request, connection, dispatchSession, _taskExecutions, ct);
         var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode && !allowErrorResponse)
         {
@@ -3110,7 +3113,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private async Task<HttpResponseMessage> SendCdsMessageIdempotentlyAsync(
         InfraConnection connection,
         string token,
-        string projectId,
+        InfraAgentSession session,
         string cdsSessionId,
         string content,
         string clientMessageId,
@@ -3128,9 +3131,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     HttpMethod.Post,
                     connection,
                     token,
-                    $"/api/projects/{Uri.EscapeDataString(projectId)}/agent-sessions/{Uri.EscapeDataString(cdsSessionId)}/messages",
+                    $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(cdsSessionId)}/messages",
                     new { content, clientMessageId },
-                    recoveryCts.Token);
+                    recoveryCts.Token, dispatchSession: session);
             }
             catch (InfraAgentSessionException ex) when (IsCdsSessionNotFound(ex))
             {

@@ -3,6 +3,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Infrastructure.Security;
@@ -65,7 +67,7 @@ public sealed class MapModelEgressHandler(string clientName, Uri gatewayBase) : 
         }
         // 网关内部凭据不能被带往其它目的地；HTTP 自报许可不会放开供应商直连。
         if (request.Headers.Contains("X-Gateway-Key") || request.Headers.Contains("X-Gateway-Task-Permit")
-            || IsPaidModelProtocol(request))
+            || IsPaidModelProtocol(request) && !AuthorizedCdsDesignDispatch.WasAuthorized(request))
             throw Denied();
     }
 
@@ -131,6 +133,42 @@ public sealed class MapModelEgressHandler(string clientName, Uri gatewayBase) : 
 
     private static TaskExecutionAdmissionException Denied()
         => new("MODEL_EGRESS_NOT_ADMITTED", "本次模型调用未获得平台许可，请从正常操作入口重新发起。", 403);
+}
+
+/// <summary>CDS 的会话命令只负责调度。容器后续每次模型调用仍用本任务票据经 MAP 网关。</summary>
+internal static class AuthorizedCdsDesignDispatch
+{
+    private sealed record Stamp(Uri Target, TaskExecutionLeaseProof Lease);
+    private static readonly HttpRequestOptionsKey<Stamp> Authorization = new("map.cds-design-session-dispatch");
+
+    internal static async Task PrepareAsync(HttpRequestMessage request, InfraConnection connection,
+        InfraAgentSession session, ITaskExecutionCoordinator? coordinator, CancellationToken ct)
+    {
+        if (session.Runtime != InfraAgentRuntimes.OpenDesign) return;
+        var identity = TaskExecutionContext.Current;
+        var expectedPath = $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId ?? "")}/messages";
+        var modelPath = $"/api/design-artifacts/runtime/{Uri.EscapeDataString(session.TraceId)}/llm/v1";
+        if (session.WorkloadKind != InfraAgentWorkloadKinds.DesignArtifact
+            || session.IsolationMode != InfraAgentIsolationModes.SessionContainer
+            || string.IsNullOrWhiteSpace(session.CdsSessionId) || string.IsNullOrWhiteSpace(session.TraceId)
+            || session.ConnectionId != connection.Id || session.CdsProjectId != connection.ProjectId
+            || identity?.Lease is not { } lease || identity.RunId != session.TraceId || lease.RunId != session.TraceId
+            || lease.PermitId != identity.PermitId
+            || !Uri.TryCreate(connection.PartnerBaseUrl.TrimEnd('/') + expectedPath, UriKind.Absolute, out var target)
+            || target.Scheme != Uri.UriSchemeHttps || target.UserInfo.Length != 0 || target.AbsolutePath != expectedPath
+            || request.Method != HttpMethod.Post || request.RequestUri?.AbsoluteUri != target.AbsoluteUri || request.Headers.Host != null
+            || !Uri.TryCreate(session.ModelBaseUrl, UriKind.Absolute, out var model) || model.AbsolutePath != modelPath
+            || coordinator == null || !await coordinator.ValidateAsync(lease, false, ct))
+            throw new TaskExecutionAdmissionException("TASK_CDS_DESIGN_DISPATCH_NOT_ADMITTED",
+                "当前设计任务没有可用的 CDS 调度授权，请从原任务入口重试。", 403);
+
+        request.Options.Set(Authorization, new(target, lease));
+    }
+
+    internal static bool WasAuthorized(HttpRequestMessage request) =>
+        request.Options.TryGetValue(Authorization, out var stamp) && stamp != null
+        && request.Method == HttpMethod.Post && request.RequestUri?.AbsoluteUri == stamp.Target.AbsoluteUri && request.Headers.Host == null
+        && TaskExecutionContext.Current?.Lease == stamp.Lease;
 }
 
 internal sealed class MapModelEgressFilter(IConfiguration configuration) : IHttpMessageHandlerBuilderFilter

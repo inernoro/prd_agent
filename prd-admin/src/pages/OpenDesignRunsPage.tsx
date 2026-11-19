@@ -125,8 +125,10 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
   const [cancelStatus, setCancelStatus] = useState('');
-  const ongoing = !['done', 'error', 'cancelled'].includes(run.status.toLowerCase());
-  const cancellable = ['queued', 'running'].includes(run.status.toLowerCase());
+  const status = run.status.toLowerCase();
+  const ongoing = !['done', 'error', 'cancelled'].includes(status);
+  const cancellable = ['queued', 'running'].includes(status);
+  const statusText = ongoing ? phaseText(run.phase, run.phaseCode) || statusNames[status] : statusNames[status];
   const deploymentSha = run.deploymentScope?.match(/::revision::([a-f0-9]{7,64})$/i)?.[1];
   useEffect(() => {
     const controller = new AbortController();
@@ -164,7 +166,8 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
     <section className={`${panel} space-y-4 p-4 sm:p-5`} aria-label="任务详情">
       <header>
         <h2 className="break-words text-lg font-semibold">{taskName(run)}</h2>
-        <p role="status" className="mt-1 text-sm text-token-secondary">{phaseText(run.phase, run.phaseCode) || statusNames[run.status.toLowerCase()]}</p>
+        <p role="status" className="mt-1 text-sm text-token-secondary">{statusText}</p>
+        {run.error && <p className="mt-2 break-words text-sm text-token-secondary">{run.error}</p>}
       </header>
       <dl className="grid grid-cols-2 gap-3 text-sm">
         <div><dt className="text-xs text-token-secondary">任务编号</dt><dd className="break-all font-mono text-xs">{run.runId}</dd></div>

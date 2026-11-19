@@ -466,6 +466,7 @@ public sealed class DesignArtifactsController : ControllerBase
             run.RuntimeFailure == null ? run.LifecycleFailureCode : run.RuntimeFailure.Code,
             run.DeliveryTemplateId != null, run.WorkspaceRef == null ? null : run.WorkspaceRef.WorkspaceId,
             run.DeploymentSlug, run.DeliveryRuntimeSessionId, run.DeliveryWaitingSince,
+            run.Status == RunStatuses.Error ? run.Error : null,
             run.DeliveryCheckpoint == null ? null : run.DeliveryCheckpoint.PackageSha256);
 
     private sealed record OpenDesignRunOverview(
@@ -473,7 +474,7 @@ public sealed class DesignArtifactsController : ControllerBase
         DateTime CreatedAt, DateTime? LastProgressAt, DateTime? FirstPreviewAt, DateTime? CompletedAt,
         string? ResolvedModel, string? ResolvedPlatform, string? ProducedArtifactSiteId, string? DeliveryOriginStoreId,
         string? DeliveryStoreId, string? FailureCode, bool HasDeliveryWorkspace, string? WorkspaceId, string? DeploymentScope,
-        string? DeliveryRuntimeSessionId, DateTime? DeliveryWaitingSince, string? DeliveryCheckpointHash);
+        string? DeliveryRuntimeSessionId, DateTime? DeliveryWaitingSince, string? Error, string? DeliveryCheckpointHash);
 
     /// <summary>
     /// 从服务端发现当前用户的活动或可重开任务。客户端显式请求时，也可返回最近一条

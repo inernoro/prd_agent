@@ -2031,6 +2031,7 @@ export type OpenDesignRun = Pick<DesignArtifactRunSummary,
   deliveryRuntimeSessionId?: string | null;
   deliveryWaitingSince?: string | null;
   deliveryCheckpointHash?: string | null;
+  error?: string | null;
 };
 
 export interface OpenDesignRunEvent {

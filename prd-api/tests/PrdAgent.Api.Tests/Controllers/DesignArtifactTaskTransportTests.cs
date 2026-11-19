@@ -59,6 +59,54 @@ public sealed class DesignArtifactTaskTransportTests
         Assert.Equal(0, transport.Sends);
     }
 
+    [Theory]
+    [InlineData(true, "run", null, true)]
+    [InlineData(false, "run", null, false)]
+    [InlineData(true, "other-run", null, false)]
+    [InlineData(true, "run", "target", false)]
+    [InlineData(true, "run", "host", false)]
+    [InlineData(true, "run", "gateway-permit", false)]
+    [InlineData(true, "run", "expired-context", false)]
+    public async Task CdsDesignCommand_RequiresMatchingLiveLeaseAndExactPartnerEndpoint(
+        bool live, string leaseRun, string? change, bool allowed)
+    {
+        var transport = new Transport();
+        using var http = new HttpClient(new MapModelEgressHandler("CDS", new Uri("https://gateway.invalid")) { InnerHandler = transport });
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            "https://cds.invalid/api/projects/project/agent-sessions/session/messages");
+        var session = new InfraAgentSession
+        {
+            Runtime = InfraAgentRuntimes.OpenDesign, WorkloadKind = InfraAgentWorkloadKinds.DesignArtifact,
+            IsolationMode = InfraAgentIsolationModes.SessionContainer, ConnectionId = "connection", CdsProjectId = "project",
+            CdsSessionId = "session", TraceId = "run", ModelBaseUrl = "https://map.invalid/api/design-artifacts/runtime/run/llm/v1",
+        };
+        var connection = new InfraConnection { Id = "connection", ProjectId = "project", PartnerBaseUrl = "https://cds.invalid" };
+        var lease = new TaskExecutionLeaseProof("permit", leaseRun, "owner", 1);
+        using var execution = TaskExecutionContext.Enter(new("permit", leaseRun, lease));
+        var coordinator = new Mock<ITaskExecutionCoordinator>();
+        coordinator.Setup(item => item.ValidateAsync(lease, false, It.IsAny<CancellationToken>())).ReturnsAsync(live);
+        if (!live || leaseRun != "run")
+            await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+                AuthorizedCdsDesignDispatch.PrepareAsync(request, connection, session, coordinator.Object, CancellationToken.None));
+        else
+            await AuthorizedCdsDesignDispatch.PrepareAsync(request, connection, session, coordinator.Object, CancellationToken.None);
+
+        if (change == "target") request.RequestUri = new Uri("https://vendor.invalid/v1/messages");
+        if (change == "host") request.Headers.Host = "different.invalid";
+        if (change == "gateway-permit") request.Headers.Add("X-Gateway-Task-Permit", "test-value");
+        using var activeScope = TaskExecutionContext.Enter(change == "expired-context" ? null : TaskExecutionContext.Current);
+        if (allowed)
+        {
+            using var response = await http.SendAsync(request);
+            Assert.True(response.IsSuccessStatusCode);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => http.SendAsync(request));
+        }
+        Assert.Equal(allowed ? 1 : 0, transport.Sends);
+    }
+
     private static DesignArtifactRun Run(string? permit) => new()
     {
         Id = "run-model", UserId = "owner", TaskPermitId = permit, Status = RunStatuses.Running,
@@ -119,9 +167,9 @@ public sealed class DesignArtifactTaskTransportTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Sends++;
-            Permit = request.Headers.GetValues("X-Gateway-Task-Permit").Single();
-            RunId = request.Headers.GetValues("X-Gateway-Run-Id").Single();
-            UserId = request.Headers.GetValues("X-Gateway-User-Id").Single();
+            Permit = request.Headers.TryGetValues("X-Gateway-Task-Permit", out var permit) ? permit.Single() : null;
+            RunId = request.Headers.TryGetValues("X-Gateway-Run-Id", out var runid) ? runid.Single() : null;
+            UserId = request.Headers.TryGetValues("X-Gateway-User-Id", out var userid) ? userid.Single() : null;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
         }
     }
