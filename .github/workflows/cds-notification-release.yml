@@ -25,3 +25,4 @@ jobs:
           python3 cds/scripts/test-independent-monitor.py
           python3 cds/scripts/test-independent-alarm-relay.py
           python3 cds/scripts/test-phone-dispatch.py
+          python3 cds/scripts/test-perception-inbox.py

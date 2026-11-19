@@ -166,6 +166,7 @@
 - [通知分类与短讯报告 · 设计](./design.platform.notification.templates.md) `design.platform.notification.templates`
 - [桌面端更新与分布式登录/会话审计说明 · 设计](./design.platform.ops-auth.md) `design.platform.ops-auth`
 - [系统级跨节点互传（Peer Sync） · 设计](./design.platform.peer-sync.md) `design.platform.peer-sync`
+- [感知系统架构 · 设计](./design.platform.perception.md) `design.platform.perception`
 - [RBAC 权限系统 · 设计](./design.platform.rbac-permission.md) `design.platform.rbac-permission`
 - [服务器权威性 · 设计](./design.platform.server-authority.md) `design.platform.server-authority`
 - [平台存储切换与资产登记设计 · 设计](./design.platform.storage-migration.md) `design.platform.storage-migration`

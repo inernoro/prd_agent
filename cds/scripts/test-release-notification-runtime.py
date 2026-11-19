@@ -17,7 +17,10 @@ class ReleaseTests(unittest.TestCase):
         for file in ['config.json', 'phone-dispatch-state.json', 'relay-state.json']:
             (root / file).write_text(json.dumps({'private': 'do-not-copy', 'existing': file}))
             (root / file).chmod(0o600)
-        return {p.name: p.read_bytes() for p in root.glob('*.json')}
+        inbox = root / 'perception-events.sqlite3'
+        inbox.write_bytes(b'private inbox fixture')
+        inbox.chmod(0o600)
+        return {p.name: p.read_bytes() for p in root.iterdir() if p != root / 'independent-monitor.py'}
 
     def test_real_filesystem_switch_keeps_private_data_and_only_one_sender(self):
         with tempfile.TemporaryDirectory() as d:

@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 FILES = ['cds/scripts/independent-monitor.py', 'cds/scripts/independent-alarm-relay.py',
-         'cds/scripts/phone-dispatch.py', 'cds/src/shared/notification-templates.json']
+         'cds/scripts/phone-dispatch.py', 'cds/scripts/perception-inbox.py', 'cds/src/shared/notification-templates.json']
 UNIT = 'cds-independent-monitor.service'
 LAUNCHER = b"from pathlib import Path\nimport runpy\nrunpy.run_path(str(Path(__file__).parent / 'notification-current/cds/scripts/independent-monitor.py'), run_name='__main__')\n"
 
@@ -64,7 +64,8 @@ def publish(root, source, revision, service):
     try:
         service('stop'); stopped = True
         # 发送者停止后核对私有数据；切换过程不写入这些文件。
-        private = {p: (p.read_bytes(), p.stat().st_mode & 0o777) for p in root.glob('*.json')}
+        private_files = [*root.glob('*.json'), *root.glob('perception-events.sqlite3*')]
+        private = {p: (p.read_bytes(), p.stat().st_mode & 0o777) for p in private_files}
         link = root / 'notification-current.next'
         if link.is_symlink(): link.unlink()
         link.symlink_to(release.relative_to(root))

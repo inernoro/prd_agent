@@ -272,6 +272,15 @@ def main():
     dispatch_path = config_path.with_name('phone-dispatch-state.json')
     dispatch_state = json.loads(dispatch_path.read_text(encoding='utf-8')) if dispatch_path.exists() else {}
     dispatcher = guard_module.PhoneDispatch(dispatch_state, lambda: relay.save(dispatch_path, dispatch_state), relay.send)
+    perception = None
+    if 'perception' in config:
+        perception_config = config['perception']
+        inbox_spec = importlib.util.spec_from_file_location('perception_inbox', Path(__file__).with_name('perception-inbox.py'))
+        inbox_module = importlib.util.module_from_spec(inbox_spec)
+        inbox_spec.loader.exec_module(inbox_module)
+        perception = inbox_module.PerceptionInbox(config_path.with_name('perception-events.sqlite3'), perception_config)
+        listener = perception.listen(perception_config['port'])
+        print(json.dumps({'result': 'perception-intake-ready', 'port': listener.server_port}), flush=True)
     relay_path = config_path.with_name('relay-state.json')
     relay_state = json.loads(relay_path.read_text(encoding='utf-8')) if relay_path.exists() else {}
     cached_channels = relay_state.get('channels', [])
@@ -282,6 +291,8 @@ def main():
     while True:
         started = time.time()
         try:
+            if perception:
+                perception.dispatch(dispatcher, started)
             if config.get('relayPrivateKey'):
                 try:
                     relay.poll(config, relay_state, started)
@@ -298,7 +309,7 @@ def main():
                     print(json.dumps({'at': iso(started), 'result': 'relay-sync-unavailable'}), flush=True)
                 relay.process(relay_state, started, lambda: relay.save(relay_path, relay_state),
                     dispatcher=dispatcher, platform_incident=state.get('incident') if any(d.get('accepted') and d.get('incidentId') == (state.get('incident') or {}).get('id') for d in state.get('deliveries', [])) else None)
-            if started - last_inspect >= config.get('intervalSeconds', 60):
+            if config.get('cdsBase') and started - last_inspect >= config.get('intervalSeconds', 60):
                 tick(config, state, started, dispatcher, lambda: relay.save(path, state))
                 last_inspect = started
             dispatcher.flush(started)
