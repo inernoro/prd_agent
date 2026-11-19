@@ -19,7 +19,7 @@ import { MotionLink as Link } from '@/components/layout/RouteMotion';
  *   GET  /api/projects                              项目列表
  *   GET  /api/releases/center?project=<id>          目标 / 记录 / 提交说明
  *   GET  /api/branches?project=<id>&live=false      可发布的分支
- *   POST /api/releases/branches/:branchId/preflight 发布前检查（发布的第一步，不单独暴露）
+ *   POST /api/releases/branches/:branchId/preflight 检查选定的版本与目标
  *   POST /api/releases/branches/:branchId/runs      开始发布
  *   GET  /api/releases/runs/:id/stream              实时状态与输出（SSE）
  *   POST /api/releases/runs/:id/cancel              中止
@@ -29,7 +29,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, type Rea
 import { useSearchParams } from 'react-router-dom';
 import { chooseReleaseWorkbenchBranch, releaseApprovalInboxPath, releaseApprovalPath, releaseWorkbenchCommit } from '@/lib/releaseApproval';
 import {
-  AlertTriangle, Ban, Boxes, CheckCircle2, CircleDashed, Clipboard, Clock, Github, History, Loader2,
+  AlertTriangle, Ban, Boxes, CheckCircle2, CircleDashed, Clipboard, Clock, Gauge, Github, History, Loader2,
   PauseCircle, Play, Plug, RefreshCw, Rocket, RotateCcw, Search, XCircle, Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -45,7 +45,7 @@ import { ApiError, apiRequest, apiUrl, isChildPreviewCdsInstance } from '@/lib/a
 import { buildReleaseAgentTask } from '@/lib/releaseAgentTask';
 import { detectStall, resolveStepDetails, type ConsolePlanLike } from '@/lib/releaseConsoleView';
 import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/releaseEnvironments';
-import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress';
+import { collapseCheckMessage, resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress';
 import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
 import { buildConsoleStance, isShownRunCurrent, planRollbackToVersion, sameCommit } from '@/lib/releaseConsoleState';
 import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
@@ -58,12 +58,10 @@ import { ReleaseLogDialog } from './release-center/dialogs';
 import { Chip, formatClock, formatDateTime, formatDuration, runTone, statusLabel } from './release-center/shared';
 // BranchOption 复用发布中心那一份：分支的展示名是 `branch` 不是 `name`，
 // 自己再声明一个接口只会让 TS 对着一个不存在的字段点头（真实数据里下拉全是空的）。
-import type { BranchOption, CenterResponse, CenterRow, ReleaseCommitMeta, ReleaseLogEntry, ReleaseRun } from './release-center/types';
+import type { BranchOption, CenterResponse, CenterRow, ReleaseCommitMeta, ReleaseLogEntry, ReleasePreflightResult, ReleaseRun } from './release-center/types';
 import { isReleaseFailed, isReleaseTerminal } from './release-center/types';
 
 interface ProjectLite { id: string; name?: string; githubRepoFullName?: string }
-interface PreflightCheck { id?: string; label?: string; name?: string; status: string; blocking?: boolean; detail?: string }
-interface PreflightResult { checks: PreflightCheck[] }
 
 type RailPane = 'history' | 'failed';
 /** 配置与 Agent 走全屏浮层，不塞进 348px 的窄栏（demo 修掉的就是这条结构问题）。 */
@@ -249,8 +247,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
   const [arrivedIntent, setArrivedIntent] = useState(params.get('intent') || '');
   const [pane, setPane] = useState<RailPane>('history');
   const [sheet, setSheet] = useState<SheetKind>(null);
-  /** 受保护环境的二次确认：存住待确认的目标 id，null 表示没有待确认动作。 */
-  const [confirmTargetId, setConfirmTargetId] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{ key: string; force: boolean } | null>(null);
   const [rowBusy, setRowBusy] = useState('');
   const [run, setRun] = useState<ReleaseRun | null>(null);
   /**
@@ -266,7 +263,8 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
   const historyRunRef = useRef(historyRun);
   historyRunRef.current = historyRun;
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
-  const [preflight, setPreflight] = useState<PreflightResult | null>(null);
+  const [preflightState, setPreflight] = useState<{ key: string; result: ReleasePreflightResult } | null>(null);
+  const [forceReason, setForceReason] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   useEffect(() => {
@@ -320,7 +318,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
     currentProject.current = id;
     linkedApprovalBranch.current = '';
     setBranchId('');
-    setProjectId(id); setCenter(null); setBranches([]); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setBatchLog(null); setTargetId(''); setConfirmTargetId(null);
+    setProjectId(id); setCenter(null); setBranches([]); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setBatchLog(null); setTargetId(''); setConfirmation(null);
     setParams((current) => {
       const next = new URLSearchParams(current); next.set('project', id);
       for (const key of ['target', 'intent', 'batch', 'batchView', 'branch']) next.delete(key);
@@ -505,6 +503,10 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
    */
   const sourceUrls = resolveReleaseSourceUrls({ branch });
   const previewUrl = sourceUrls[0] || '';
+  const preflightKey = JSON.stringify([projectId, row?.target.id, row?.target.updatedAt, branchId, commitSha, previewUrl]);
+  const preflight = preflightState?.key === preflightKey ? preflightState.result : null;
+  const preflightMatchesCommit = Boolean(commitSha && preflight?.artifact?.commitSha === commitSha);
+  const previewOnly = isChildPreviewCdsInstance();
   const etaText = running ? releaseEtaText(shown?.startedAt, row?.releaseEstimate, nowMs) : '';
 
   /**
@@ -538,7 +540,8 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
    * 这是本页的 UI 策略，不是服务端约束 —— 界面上按这个口径说话。
    */
   const isProtected = Boolean(row?.target.isCanonical && row.target.environment === 'production');
-  const awaitingConfirm = Boolean(row && confirmTargetId === row.target.id);
+  const pendingConfirmation = confirmation?.key === preflightKey ? confirmation : null;
+  const awaitingConfirm = Boolean(pendingConfirmation);
 
   const filteredProjects = projects.filter((item) => {
     const q = search.trim().toLowerCase();
@@ -555,10 +558,14 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
   const commandPending = Boolean(busy || rowBusy);
   const targetRequest = recovery.requests.find(request => request.projectId === projectId && request.targetId === row?.target.id);
   const targetUnconfirmed = Boolean(row && recovery.hasUnconfirmed(projectId, row.target.id));
+  const canPreflight = Boolean(row && branchId && !branchesError && !running && !blockedByOther && !commandPending && !targetUnconfirmed);
+  const canStart = canPreflight && !previewOnly && preflightMatchesCommit && preflight?.ok === true;
+  const canForce = canPreflight && !previewOnly && preflightMatchesCommit && preflight?.forceAvailable === true && Boolean(forceReason.trim());
   const [cancelUnknown, setCancelUnknown] = useState<ReleaseRun | null>(null);
   const adoptRun = (next: ReleaseRun): void => {
     setHistoryRun(null); setRun(next); setLogs(dedupeLogs(next.logs || []));
     setTargetId(next.targetId); setFollowing(true);
+    setPreflight(null); setConfirmation(null);
   };
   const beginCommand = (target: string): string | null => {
     if (commandLock.current || recovery.hasUnconfirmed(projectId, target)) return null;
@@ -593,21 +600,40 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
       if (mounted.current) await recovery.verify(request);
     }
   };
-  const startRelease = async (): Promise<void> => {
-    if (!row || !branchId || !commitSha) { setCommandError('尚未确认所选分支的来源版本，请刷新分支后再发布。'); return; }
-    const target = row.target.id, sourceBranch = branchId, sha = commitSha, sourceUrl = previewUrl;
+  const runPreflight = async (): Promise<void> => {
+    if (!row || !canPreflight) return;
+    const target = row.target.id;
     const scope = beginCommand(target); if (!scope) return;
-    setBusy('deploy'); setPreflight(null);
+    setBusy('preflight'); setPreflight(null); setConfirmation(null); setForceReason('');
     try {
-      const check = await apiRequest<PreflightResult>(`/api/releases/branches/${encodeURIComponent(sourceBranch)}/preflight`, { method: 'POST', body: { targetId: target, previewUrl: sourceUrl } });
+      const result = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branchId)}/preflight`, { method: 'POST', body: { targetId: target, previewUrl } });
       if (!stillHere(scope)) return;
-      const blocking = check.checks.filter(item => item.blocking && item.status === 'fail');
-      setPreflight(blocking.length ? check : null);
-      if (blocking.length) { setCommandError(`发布前检查有 ${blocking.length} 项未通过，尚未发送发布命令。请修复下列问题后重试。`); return; }
-      await submitRelease(makeRequest('deploy', target, sourceBranch, sha), `/api/releases/branches/${encodeURIComponent(sourceBranch)}/runs`, scope, { targetId: target, previewUrl: sourceUrl, expectedCommitSha: sha });
+      setPreflight({ key: preflightKey, result });
+      if (commitSha && result.artifact?.commitSha && result.artifact.commitSha !== commitSha) {
+        setCommandError('检查到的版本已变化。请刷新分支，确认版本后重新检查。');
+      }
     } catch (error) {
-      if (stillHere(scope)) setCommandError(`发布前检查未完成，尚未发送发布命令：${releaseFailureReason(error)}`);
+      if (stillHere(scope)) setCommandError(`发布前检查未完成，尚未发送发布命令。请重试检查。${releaseFailureReason(error)}`);
     } finally { finishCommand(); }
+  };
+  const startRelease = async (force: boolean): Promise<void> => {
+    if (!row || !preflight || !(force ? canForce : canStart)) return;
+    const target = row.target.id;
+    const scope = beginCommand(target); if (!scope) return;
+    setBusy('deploy'); setConfirmation(null);
+    try {
+      await submitRelease(makeRequest('deploy', target, branchId, commitSha), `/api/releases/branches/${encodeURIComponent(branchId)}/runs`, scope, {
+        targetId: target, previewUrl, expectedCommitSha: commitSha, preflightId: preflight.preflightId,
+        ...(force ? { forceReason: forceReason.trim() } : {}),
+      });
+    } finally { finishCommand(); }
+  };
+  const requestRelease = (force: boolean): void => {
+    if ((isProtected || force) && pendingConfirmation?.force !== force) {
+      setConfirmation({ key: preflightKey, force });
+      return;
+    }
+    void startRelease(force);
   };
   const verifyCancellation = async (original: ReleaseRun): Promise<void> => {
     try {
@@ -664,7 +690,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
     activeRunId.current = undefined;
     if (projectId !== request.projectId) { setCenter(null); setBranches([]); }
     setProjectId(request.projectId); setBranchId(request.branchId);
-    setTargetId(request.targetId); setBatchLog(null); setConfirmTargetId(null);
+    setTargetId(request.targetId); setBatchLog(null); setConfirmation(null);
     setParams(current => {
       const next = new URLSearchParams(current);
       next.set('project', request.projectId); next.set('target', request.targetId); next.set('mode', 'single');
@@ -789,7 +815,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
           <p><strong>{row.target.name}</strong><span className="ml-2 text-muted-foreground">发布前需要有效审批。已有批准时，选择获批分支再执行。</span></p>
           <Button asChild variant="outline" size="sm"><Link to={releaseApprovalInboxPath(projectId, row.target.id)}>查看此环境审批</Link></Button>
         </div> : null}
-        {isChildPreviewCdsInstance() ? <p role="note" className="border-b border-warn/30 bg-warn-soft px-6 py-3 text-sm">当前是隔离预览，只能查看界面，不能执行真实发布。请在有发布数据与权限的 CDS 实例中操作。</p> : null}
+        {previewOnly ? <p role="note" className="border-b border-warn/30 bg-warn-soft px-6 py-3 text-sm">当前是隔离预览，可以查看发布前检查。真实发布请在有发布数据与权限的 CDS 实例中操作。</p> : null}
         {commandError || recovery.error || branchesError ? <div role="alert" className="mx-3 mt-3 shrink-0 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">{commandError || recovery.error || branchesError}</div> : null}
         {cancelUnknown ? <div className="mx-3 mt-3 flex shrink-0 flex-wrap items-center gap-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm"><span>正在核对 {cancelUnknown.releaseId} 的取消结果，确认终态前不会再次取消。</span><Button size="sm" variant="outline" onClick={() => void verifyCancellation(cancelUnknown)}>核对原任务</Button></div> : null}
         {recovery.requests.length ? <section aria-label="结果未确认的发布请求" className="mx-3 mt-3 shrink-0 space-y-3 rounded-md border border-warn/30 bg-warn-soft p-3">
@@ -899,7 +925,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                               if (commandLock.current) return;
                               activeRunId.current = undefined;
                               setTargetId(item.target.id);
-                              setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setConfirmTargetId(null);
+                              setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setConfirmation(null);
                             }}
                             className={`flex items-center gap-2.5 rounded-[0.5625rem] border px-2.5 py-2 text-left transition-colors duration-150 ${
                               selected
@@ -1012,7 +1038,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                       id="release-source-version"
                       value={branchId}
                       disabled={commandPending || !!branchesError || targetUnconfirmed}
-                      onChange={(event) => { linkedApprovalBranch.current = ''; setBranchId(event.target.value); setConfirmTargetId(null); }}
+                      onChange={(event) => { linkedApprovalBranch.current = ''; setBranchId(event.target.value); setPreflight(null); setConfirmation(null); }}
                       title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，发布前检查会拦下这一项'}
                       aria-label="要发布的版本"
                       className="cds-ident min-h-11 min-w-0 max-w-full shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-sm outline-none focus:border-[hsl(var(--hairline-strong))] sm:max-w-[14rem]"
@@ -1054,8 +1080,6 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                   </> : null}
                 </div>
 
-                {/* 顺序照用户 2026-08-14 定的：开始永远在最右，中止只在跑的时候出现。
-                    「试跑」这个按钮删了——它现在是发布的第一步，不是一个并列选项。 */}
                 <div className="flex min-w-0 w-full max-w-full flex-wrap items-center justify-end gap-2 [&_button]:min-h-10 sm:w-auto sm:shrink-0">
                   {running ? (
                     <Button variant="outline" onClick={() => void cancelRun()} disabled={commandPending || cancelUnknown?.releaseId === shown?.releaseId}>
@@ -1071,28 +1095,30 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                           {row?.target.name}
                         </div>
                       </div>
-                      <Button variant="ghost" onClick={() => setConfirmTargetId(null)}>取消</Button>
+                      <Button variant="ghost" onClick={() => setConfirmation(null)}>取消</Button>
                     </>
                   ) : null}
-                  {/* 受保护环境走两段式：第一下先展示完整目标供审阅，第二下才真发。
-                      完整目标放在上方有界滚动区，按钮不承担长文本；辅助技术仍读出完整目标。 */}
+                  {!running && !awaitingConfirm ? (
+                    <Button variant="outline" onClick={() => void runPreflight()} disabled={!canPreflight}>
+                      {busy === 'preflight' ? <Loader2 className="animate-spin" /> : <Gauge />}
+                      {busy === 'preflight' ? '正在检查' : preflight ? '重新检查' : '发布前检查'}
+                    </Button>
+                  ) : null}
+                  {preflight?.forceAvailable && !pendingConfirmation ? (
+                    <Button variant="outline" onClick={() => requestRelease(true)} disabled={!canForce}>强制发布</Button>
+                  ) : null}
                   <Button
-                    aria-label={awaitingConfirm ? `确认发布到 ${row?.target.name}` : undefined}
+                    aria-label={awaitingConfirm ? `确认${pendingConfirmation?.force ? '强制' : ''}发布到 ${row?.target.name}` : undefined}
                     aria-describedby={awaitingConfirm ? 'release-confirm-target' : undefined}
-                    onClick={() => {
-                      if (!row) return;
-                      if (isProtected && !awaitingConfirm) { setConfirmTargetId(row.target.id); return; }
-                      setConfirmTargetId(null);
-                      void startRelease();
-                    }}
-                    disabled={!row || !branchId || !commitSha || !!branchesError || running || blockedByOther || commandPending || targetUnconfirmed}
+                    onClick={() => requestRelease(Boolean(pendingConfirmation?.force))}
+                    disabled={pendingConfirmation?.force ? !canForce : !canStart}
                     className={`h-auto min-h-10 w-full max-w-full whitespace-normal break-words px-2 py-2 text-left sm:w-auto sm:px-4 ${awaitingConfirm ? 'ring-2 ring-bad/60' : ''}`}
                   >
                     {busy === 'deploy' || running ? <Loader2 className="animate-spin" /> : <Rocket />}
                     <span className="min-w-0 w-full break-words sm:w-auto">
                       {awaitingConfirm
-                        ? '确认发布'
-                        : busy === 'deploy' ? '检查并发布'
+                        ? pendingConfirmation?.force ? '确认强制发布' : '确认发布'
+                        : busy === 'deploy' ? '正在提交'
                         : targetUnconfirmed ? '等待核对结果' : stance.primaryLabel}
                     </span>
                   </Button>
@@ -1111,6 +1137,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
               <span>批准人 {releaseActorLabel(shown.governance.approvedBy)}</span>
               <Link className="font-medium text-primary underline" to={releaseApprovalPath(shown.governance.authorizationId)}>查看这笔审批</Link>
             </div> : null}
+            {shown?.forceReason && !targetUnconfirmed ? <p className="break-words text-sm text-warn">强制发布 · {shown.forceReason}</p> : null}
             {!targetUnconfirmed && stance.hint ? (
               <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-[0.625rem] border px-3.5 py-2.5 text-xs ${
                 stance.selectedIsLive
@@ -1186,6 +1213,9 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
                       : `这是一条历史记录：${shown.commitSha.slice(0, 7)} 曾发布成功，${row?.target.name || '该环境'}当前跑的不是这一版`}${
                       formatDuration(shown.startedAt, shown.finishedAt) ? `，用时 ${formatDuration(shown.startedAt, shown.finishedAt)}` : ''}`}
                 </span>
+                {shown.autoRestoreStartedAt ? <span className="basis-full font-medium">
+                  {shown.autoRestoredAt ? '已恢复发布前的运行版本，公网复验通过。' : '自动回滚尚未验证，请查看发布日志。'}
+                </span> : null}
                 {failed ? (
                   <>
                     <Button variant="outline" size="sm" onClick={() => setSheet('agent')}>
@@ -1207,29 +1237,33 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
               </div>
             ) : null}
 
-            {/* 只在检查拦下来时出现（passesPreflight 里全过就置 null）。
-                全过的话没必要拿一屏绿勾去打扰人——它已经继续往下发了。 */}
             {preflight ? (
-              <div className="shrink-0 rounded-[0.625rem] border border-warn/40 bg-warn-soft px-3.5 py-2.5">
+              <div aria-label="发布前检查结果" className="cds-surface-raised cds-hairline shrink-0 rounded-[0.625rem] border px-3.5 py-2.5">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-warn">
-                    发布前检查未通过，已停在发布前
-                  </span>
-                  <Chip tone={preflight.checks.some((c) => c.status === 'fail' && c.blocking) ? 'bad' : 'ok'}>
-                    {preflight.checks.filter((c) => c.status === 'fail').length} 项未通过
+                  <span className="text-xs font-semibold">发布前检查结果</span>
+                  <Chip tone={!preflight.ok ? 'bad' : preflightMatchesCommit ? 'ok' : 'warn'}>
+                    {!preflight.ok ? `${preflight.checks.filter(item => item.blocking && item.status === 'fail').length} 项阻断`
+                      : preflightMatchesCommit ? '检查通过' : '来源版本待确认'}
                   </Chip>
                 </div>
-                <ul className="flex flex-col gap-1">
-                  {preflight.checks.map((check, index) => (
-                    <li key={check.id || check.name || index} className="flex items-start gap-2 text-[0.7188rem]">
-                      <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${check.status === 'fail' ? 'bg-bad' : check.status === 'warn' ? 'bg-warn' : 'bg-ok'}`} />
-                      <span className="min-w-0 break-words">
-                        {check.label || check.name || check.id}
-                        {check.detail ? <span className="text-muted-foreground"> · {check.detail}</span> : null}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                {preflight.checks.some(check => check.status !== 'pass') ? (
+                  <ul className="flex flex-col gap-1">
+                    {preflight.checks.filter(check => check.status !== 'pass').map(check => (
+                      <li key={check.id} className="flex items-start gap-2 break-words text-xs">
+                        <strong className={`shrink-0 ${check.blocking ? 'text-bad' : 'text-warn'}`}>{check.blocking ? '阻断' : '告警'}</strong>
+                        <span className="min-w-0">{check.label} · {collapseCheckMessage(check.message).summary}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {preflight.forceAvailable ? (
+                  <label className="mt-2 grid min-w-0 gap-1 text-xs">
+                    强制发布原因
+                    <input className="min-h-10 min-w-0 rounded-md border bg-background px-3 py-2"
+                      value={forceReason} onChange={event => { setForceReason(event.target.value); setConfirmation(null); }}
+                      maxLength={300} placeholder="将外部业务依赖故障记为告警" />
+                  </label>
+                ) : null}
               </div>
             ) : null}
 

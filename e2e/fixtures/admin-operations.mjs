@@ -117,6 +117,8 @@ export async function installOperationsFixtures(page, { quickstart = false } = {
       if (path.endsWith("/preflight"))
         return reply({
           ok: preflightPass,
+          preflightId: "compat-preflight",
+          artifact: { commitSha: sha },
           checks: preflightPass
             ? []
             : [
@@ -125,7 +127,7 @@ export async function installOperationsFixtures(page, { quickstart = false } = {
                   label: "隔离预检失败",
                   status: "fail",
                   blocking: true,
-                  detail: "错误说明 " + "diagnostic-".repeat(200),
+                  message: "错误说明 " + "diagnostic-".repeat(200),
                 },
               ],
         });

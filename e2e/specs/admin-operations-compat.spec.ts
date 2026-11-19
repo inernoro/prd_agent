@@ -302,7 +302,7 @@ for (const route of ['release-console', 'release-center']) {
     const project = page.getByRole('combobox', { name: route === 'release-console' ? '当前项目' : '项目', exact: true });
     await expect(page.getByRole('alert')).toContainText('项目不在此实例中');
     await expect(project).toHaveValue('');
-    if (route === 'release-console') await expect(page.getByRole('note')).toContainText('不能执行真实发布');
+    if (route === 'release-console') await expect(page.getByRole('note')).toContainText('真实发布请在有发布数据与权限的 CDS 实例中操作');
     expect(invalidRequests).toEqual([]);
     const validProjectId = await project.locator('option:not([value=""])').first().getAttribute('value');
     expect(validProjectId).toBeTruthy();
@@ -381,7 +381,7 @@ for (const viewport of [
       page,
     }, testInfo) => {
       await page.setViewportSize(viewport);
-      await installOperationsFixtures(page);
+      const fixture = await installOperationsFixtures(page);
       await page.addInitScript((t) => {
         localStorage.setItem("cds_theme", t);
         localStorage.setItem("cds_ui_scale", "100");
@@ -400,16 +400,12 @@ for (const viewport of [
       await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
       await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
       await reachable(page.getByLabel("要发布的版本"));
-      await page.getByRole("button", { name: "开始发布", exact: true }).click();
-      const confirm = page.getByRole("button", {
-        name: `确认发布到 ${targetName}`,
-        exact: true,
-      });
-      await reachable(confirm);
-      await confirm.click();
+      await page.getByRole("button", { name: "发布前检查", exact: true }).click();
       await expect(
         page.getByText("隔离预检失败", { exact: false }).first(),
       ).toBeVisible();
+      await expect(page.getByRole("button", { name: "开始发布", exact: true })).toBeDisabled();
+      expect(fixture.writes.filter(write => write.path.endsWith('/runs'))).toHaveLength(0);
       await page.getByRole("button", { name: "流水线", exact: true }).click();
       await reachable(page.getByRole("button", { name: "关闭", exact: true }));
       await page.getByRole("button", { name: "关闭", exact: true }).click();
@@ -628,7 +624,8 @@ for (const theme of ["light", "dark"])
 for (const theme of ["light", "dark"]) {
   test(`320 ${theme} CDS 双倍字号完整确认目标`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 320, height: 568 });
-    await installOperationsFixtures(page);
+    const fixture = await installOperationsFixtures(page);
+    fixture.setPreflightPass(true);
     await page.addInitScript((t) => localStorage.setItem("cds_theme", t), theme);
     await page.goto("http://127.0.0.1:5273/project-list");
     await page.getByLabel("打开导航菜单").click();
@@ -646,6 +643,7 @@ for (const theme of ["light", "dark"]) {
       document.documentElement.style.fontSize = "200%";
     });
     await reachable(page.getByLabel("要发布的版本"));
+    await page.getByRole("button", { name: "发布前检查", exact: true }).click();
     await page.getByRole("button", { name: "开始发布", exact: true }).click();
     const confirm = page.getByRole("button", {
       name: `确认发布到 ${targetName}`,
@@ -689,9 +687,10 @@ for (const theme of ["light", "dark"]) {
     await expect(
       page.getByRole("button", { name: "开始发布", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "开始发布", exact: true }).click();
-    await confirm.click();
+    fixture.setPreflightPass(false);
+    await page.getByRole("button", { name: "重新检查", exact: true }).click();
     await expect(page.getByText("隔离预检失败", { exact: false }).first()).toBeVisible();
+    expect(fixture.writes.filter(write => write.path.endsWith('/runs'))).toHaveLength(0);
   });
 }
 test("390 隔离发布成功闭环", async ({ page }) => {
@@ -709,6 +708,7 @@ test("390 隔离发布成功闭环", async ({ page }) => {
   await page.getByRole('link', { name: '发布工作台', exact: true }).filter({ visible: true }).last().click();
   await expect(page.getByRole('heading', { name: '选择版本与目标', exact: true })).toBeVisible();
   await page.getByRole('navigation', { name: '发布方式' }).getByRole('link', { name: '逐目标发布', exact: true }).click();
+  await page.getByRole("button", { name: "发布前检查", exact: true }).click();
   await page.getByRole("button", { name: "开始发布", exact: true }).click();
   const confirm = page.getByRole("button", {
     name: `确认发布到 ${targetName}`,
@@ -729,7 +729,7 @@ test("390 隔离发布成功闭环", async ({ page }) => {
     {
       path: "/api/releases/branches/compat-branch/runs",
       method: "POST",
-      body: { targetId: "compat-target", previewUrl: "https://example.test", expectedCommitSha: run.commitSha },
+      body: { targetId: "compat-target", previewUrl: "https://example.test", expectedCommitSha: run.commitSha, preflightId: "compat-preflight" },
     },
   ]);
 });

@@ -160,6 +160,7 @@ jobs:
               - 'scripts/lib/release-artifacts.py'
               - 'scripts/lib/static-release.sh'
               - 'scripts/lib/gateway-bind-mount.sh'
+              - 'scripts/lib/production-runtime-rollback.py'
               - 'scripts/prd-agent-public-surface-smoke.py'
               - 'scripts/prd-agent-release-evidence.py'
               - 'scripts/tests/static-release-*.test.sh'
