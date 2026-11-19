@@ -3630,7 +3630,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   width={260}
                   open={positionStrategyOpen}
                   onOpenChange={setPositionStrategyOpen}
-                  note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里写 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。这些位置在「尊重用户锚点」下生效。</>}
+                  note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里单独写一行 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。「自动安排」和「尊重用户锚点」都会优先使用这些位置。</>}
                   trigger={
                     <LiterarySettingsRow
                       icon={<Layers size={16} />}
@@ -3714,16 +3714,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         {phase === 2 && (
           <PanelCard className="flex-1 min-h-0 flex flex-col">
             {/* 紧凑标题栏 */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
-                  {markerStreaming ? `${streamedMarkerCount} 条提示词生成中` : (
-                    <>{userAnchorCount > 0 && `原文 ${userAnchorCount} 个锚点 · `}{markers.length} 条提示词 · {markerRunItems.filter(x => x.status === 'done' && markerItemImageUrl(x)).length}/{markers.length} 张图片</>
-                  )}
-                </span>
-              </div>
-              <div className="flex items-center gap-1">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="shrink-0 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
+              <div className="flex flex-wrap items-center justify-end gap-1 whitespace-nowrap">
                 <Button
                   size="xs"
                   variant="primary"
@@ -3861,6 +3854,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
+            {!markerStreaming && (
+              <p className="mb-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                {userAnchorCount > 0 && `原文 ${userAnchorCount} 个锚点 · `}{markers.length} 条提示词 · {markerRunItems.filter(x => x.status === 'done' && markerItemImageUrl(x)).length}/{markers.length} 张图片
+              </p>
+            )}
             <div className="flex-1 min-h-0 overflow-auto space-y-3 pr-0.5">
               {/* 标记生成中的进度提示 */}
               {markerStreaming && (
