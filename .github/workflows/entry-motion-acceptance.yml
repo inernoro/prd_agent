@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: e68814c17b8e47b99f0f446527e80ec968fd0604
+          ref: fd837b5919a87286519b13c539a7a8a8d5236338
       - uses: pnpm/action-setup@v4
         with:
           version: '10.28.2'
@@ -32,7 +32,7 @@ jobs:
           pnpm -C e2e install --frozen-lockfile
           # The pinned container provides Chromium, its system libraries, and fonts.
           # Keep Ubuntu's signed packages while downloading the capture tools over HTTPS.
-          sed -Ei 's|https?://(archive|security)\.ubuntu\.com/ubuntu/?|https://mirrors.edge.kernel.org/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources
+          sed -Ei 's#https?://(archive|security)\.ubuntu\.com/ubuntu/?#https://mirrors.edge.kernel.org/ubuntu/#g' /etc/apt/sources.list.d/ubuntu.sources
           apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update
           apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg xvfb openbox python3-pil
       - name: Verify the existing desktop recorder can capture and compare frames
