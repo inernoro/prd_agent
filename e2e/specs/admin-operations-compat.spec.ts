@@ -746,11 +746,11 @@ test('网关对话在临界宽度保持首项可点并可折叠侧栏', async ({
   const header = page.locator('.lg-console-header');
   const sidebar = page.getByRole('complementary', { name: '主导航', exact: true });
   const dialogue = sidebar.getByRole('link', { name: '对话', exact: true });
-  await expect(header).toHaveCSS('left', '224px');
-  await dialogue.click({ trial: true });
-  await sidebar.getByRole('button', { name: '收起菜单', exact: true }).click();
   await expect(header).toHaveCSS('left', '64px');
   await expect(sidebar).toHaveCSS('width', '64px');
+  await dialogue.click({ trial: true });
+  await sidebar.getByRole('button', { name: '展开菜单', exact: true }).click();
+  await expect(header).toHaveCSS('left', '224px');
   await dialogue.click({ trial: true });
   await page.setViewportSize({ width: 860, height: 800 });
   await expect(header).toHaveCSS('left', '0px');
