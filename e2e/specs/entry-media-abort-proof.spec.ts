@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { installOperationsFixtures } from '../fixtures/admin-operations.mjs';
-import assets from '../fixtures/media/gateway-portrait-cdn.json';
+import { readFileSync } from 'node:fs';
+
+const assets = JSON.parse(readFileSync(new URL('../fixtures/media/gateway-portrait-cdn.json', import.meta.url), 'utf8'));
 
 type ProbeWindow = Window & { entryMediaRejections: string[] };
 
