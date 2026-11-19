@@ -119,7 +119,8 @@ public sealed class LlmGatewayIncidentPolicyTests
         signal.Environment.ShouldBe("正式");
         LlmGatewayIncidentWatchdog.BuildIncidentTitle(signal).ShouldStartWith("上游账户余额或额度不足，请求失败");
         GatewayNotificationPolicy.FailureLevel(signal).ShouldBe("error");
-        GatewayNotificationPolicy.FailureLevel(signal with { RequestOutcome = "fallback_succeeded" }).ShouldBe("warning");
+        GatewayNotificationPolicy.FailureLevel(signal with { RequestOutcome = "fallback_succeeded", FailureObservations = [] }).ShouldBe("warning");
+        GatewayNotificationPolicy.FailureLevel(signal with { RequestOutcome = "fallback_succeeded" }).ShouldBe("error");
     }
 
     [Fact]

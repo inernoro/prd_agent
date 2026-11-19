@@ -224,11 +224,10 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
 
     private async Task<bool?> UpsertFailureOnceAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)
     {
-        var key = $"llmgw-upstream:{signal.Fingerprint}";
+        var key = GatewayIncidentFollowUp.IncidentKeyPrefix + signal.Fingerprint;
         var existing = await FindCurrentFailureAsync(key, ct);
         var now = DateTime.UtcNow;
-        var actionUrl = $"/logs?requestId={Uri.EscapeDataString(signal.RequestId)}";
-        var title = BuildIncidentTitle(signal);
+        var actionUrl = GatewayIncidentFollowUp.RequestUrl(signal.RequestId);
         var message = BuildIncidentMessage(signal);
         var level = GatewayNotificationPolicy.FailureLevel(signal);
 
@@ -253,9 +252,10 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 level = existing.Level;
             var newFailures = signal.FailureObservations
                 .Where(x => string.CompareOrdinal(x.Version, existing.GatewaySignalVersion) > 0).ToList();
+            var evidence = GatewayIncidentFollowUp.RecordFailures(shouldReopen ? null : existing, signal, newFailures);
 
             var update = Builders<AdminNotification>.Update
-                .Set(x => x.Title, title)
+                .Set(x => x.Title, BuildIncidentTitle(signal, evidence))
                 .Set(x => x.Message, message)
                 .Set(x => x.Level, level)
                 .Set(x => x.ActionLabel, "查看网关日志")
@@ -265,6 +265,8 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.GatewaySignalVersion, signal.SignalVersion)
                 .Set(x => x.IncidentId, signal.Fingerprint)
                 .Set(x => x.IncidentState, "active")
+                .Set(x => x.IncidentEpisode, shouldReopen ? existing.PushEpisode + 1 : GatewayIncidentFollowUp.Episode(existing))
+                .Set(x => x.IncidentEvidence, evidence)
                 .Set(x => x.IncidentCategory, signal.FailureCategory)
                 .Set(x => x.Environment, signal.Environment ?? existing.Environment)
                 .Set(x => x.RequestOutcome, signal.RequestOutcome)
@@ -274,6 +276,8 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.RecoveredAt, null)
                 .Set(x => x.OccurrenceCount, existing.FirstOccurredAt.HasValue
                     ? existing.OccurrenceCount + newFailures.Count : Math.Max(1, signal.FailureCount));
+            if (shouldReopen)
+                update = update.Unset(x => x.IncidentOwnerUserId).Unset(x => x.IncidentOwnerDisplayName).Unset(x => x.IncidentClaimedAt);
             var transitionFilter = CurrentFailureFilter(existing, signal, confirmsPendingOutcome);
             if (shouldReopen || priorityEscalated)
             {
@@ -293,11 +297,12 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
 
         try
         {
+            var evidence = GatewayIncidentFollowUp.RecordFailures(null, signal, signal.FailureObservations);
             await _mapDb.AdminNotifications.InsertOneAsync(new AdminNotification
             {
                 Id = $"llmgw-upstream-{signal.Fingerprint}",
                 Key = key,
-                Title = title,
+                Title = BuildIncidentTitle(signal, evidence),
                 Message = message,
                 Level = level,
                 Status = "open",
@@ -305,6 +310,8 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 GatewaySignalVersion = signal.SignalVersion,
                 IncidentId = signal.Fingerprint,
                 IncidentState = "active",
+                IncidentEpisode = 0,
+                IncidentEvidence = evidence,
                 IncidentCategory = signal.FailureCategory,
                 Environment = signal.Environment,
                 RequestOutcome = signal.RequestOutcome,
@@ -337,7 +344,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         // A successful observation can recover only the exact route boundary, but it may
         // resolve several independently tracked failure reasons on that route. Include
         // failures outside this sweep's rolling log window by querying persisted identities.
-        var prefix = $"llmgw-upstream:{signal.RouteFingerprint}";
+        var prefix = GatewayIncidentFollowUp.IncidentKeyPrefix + signal.RouteFingerprint;
         var matches = await _mapDb.AdminNotifications.Find(
                 Builders<AdminNotification>.Filter.Regex(x => x.Key,
                     "^" + System.Text.RegularExpressions.Regex.Escape(prefix) + "(?::|$)"))
@@ -346,7 +353,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         foreach (var current in matches.GroupBy(x => x.Key)
                      .Select(g => g.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).First()))
         {
-            var exactSignal = signal with { Fingerprint = current.Key!["llmgw-upstream:".Length..] };
+            var exactSignal = signal with { Fingerprint = current.Key![GatewayIncidentFollowUp.IncidentKeyPrefix.Length..] };
             for (var attempt = 0; attempt < 3; attempt++)
             {
                 var result = await CloseFailureAndNotifyRecoveryOnceAsync(exactSignal, ct);
@@ -360,7 +367,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
 
     private async Task<bool?> CloseFailureAndNotifyRecoveryOnceAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)
     {
-        var failureKey = $"llmgw-upstream:{signal.Fingerprint}";
+        var failureKey = GatewayIncidentFollowUp.IncidentKeyPrefix + signal.Fingerprint;
         var existing = await FindCurrentFailureAsync(failureKey, ct);
         if (existing is null || string.CompareOrdinal(existing.GatewaySignalVersion, signal.SignalVersion) >= 0)
             return false;
@@ -375,12 +382,16 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 new UpdateOptions { Collation = new Collation("simple") }, ct);
             return advanced.MatchedCount == 1 ? false : null;
         }
+        var evidence = GatewayIncidentFollowUp.RecordRecovery(existing, signal);
+        var episode = GatewayIncidentFollowUp.Episode(existing);
         var transitionUpdate = Builders<AdminNotification>.Update
                 .Set(x => x.Status, "closed")
                 .Set(x => x.HandledAt, now)
                 .Set(x => x.UpdatedAt, now)
                 .Set(x => x.GatewaySignalVersion, signal.SignalVersion)
                 .Set(x => x.IncidentState, "recovered")
+                .Set(x => x.IncidentEpisode, episode)
+                .Set(x => x.IncidentEvidence, evidence)
                 .Set(x => x.RecoveredAt, signal.ObservedAt)
                 .Set(x => x.EvidenceRequestId, signal.RequestId);
         var transitioned = await _mapDb.AdminNotifications.FindOneAndUpdateAsync(
@@ -395,7 +406,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             return null;
         }
 
-        var recoveryKey = $"llmgw-upstream-recovered:{signal.Fingerprint}:{signal.RequestId}";
+        var recoveryKey = $"{GatewayIncidentFollowUp.RecoveryKeyPrefix}{signal.Fingerprint}:{signal.RequestId}";
         await _mapDb.AdminNotifications.InsertOneAsync(new AdminNotification
         {
             Id = $"llmgw-recovered-{signal.Fingerprint}-{signal.RequestId}",
@@ -404,6 +415,11 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             Message = $"{(signal.IsGatewayEntry ? signal.AppCallerLabel + " 的同一入口" : signal.PlatformLabel + " 的 " + signal.ModelLabel + " 线路")}已在 {signal.ObservedAt.ToUniversalTime():yyyy-MM-dd HH:mm:ss} UTC 完成一次成功调用，已关闭该线路对应故障。可查看恢复请求；历史失败请求不会自动重做。",
             IncidentId = signal.Fingerprint,
             IncidentState = "recovered",
+            IncidentEpisode = episode,
+            IncidentEvidence = evidence,
+            IncidentOwnerUserId = transitioned.IncidentOwnerUserId,
+            IncidentOwnerDisplayName = transitioned.IncidentOwnerDisplayName,
+            IncidentClaimedAt = transitioned.IncidentClaimedAt,
             IncidentCategory = transitioned.IncidentCategory,
             Environment = signal.Environment ?? transitioned.Environment,
             RequestOutcome = "request_succeeded",
@@ -417,7 +433,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             Source = "gateway-alert",
             Section = AdminNotificationSections.Admin,
             ActionLabel = "查看恢复请求",
-            ActionUrl = $"/logs?requestId={Uri.EscapeDataString(signal.RequestId)}",
+            ActionUrl = GatewayIncidentFollowUp.RequestUrl(signal.RequestId),
             ActionKind = "llm-gateway",
             ExpiresAt = now.AddDays(7),
         }, cancellationToken: ct);
@@ -428,7 +444,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         return true;
     }
 
-    internal static string BuildIncidentTitle(LlmGatewayIncidentSignal signal)
+    internal static string BuildIncidentTitle(LlmGatewayIncidentSignal signal, IReadOnlyList<GatewayIncidentEvidence>? evidence = null)
     {
         var cause = signal.IsGatewayEntry
             ? signal.FailureCategory == GatewayNotificationPolicy.Quota ? "模型用量已达上限" : "请求入口拒绝处理"
@@ -436,6 +452,8 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         var result = signal.RequestOutcome switch
         {
             "all_failed" or "request_failed" => "请求失败",
+            "fallback_succeeded" when evidence?.Any(x => x.Outcome is "request_failed" or "all_failed") == true
+                => "有请求失败，备用完成部分请求",
             "fallback_succeeded" => "备用线路已完成",
             _ => "请求结果待确认",
         };
@@ -568,7 +586,7 @@ internal static class LlmGatewayIncidentPolicy
             // Counts use raw observation versions: upgrading the interpretation is not
             // another failure occurrence, nor does it start a new delivery episode.
             FailureObservations = run.Where(x => x.Failure)
-                .Select(x => new LlmGatewayFailureObservation(x.Version, x.At)).ToList(),
+                .Select(x => new LlmGatewayFailureObservation(x.Version, x.At, x.Log.RequestId, x.Log.LogicalRequestId, x.Outcome)).ToList(),
         };
     }
 
@@ -637,7 +655,8 @@ internal static class LlmGatewayIncidentPolicy
 
     private static LlmRequestLog ProjectAttempt(LlmRequestLog request, LlmProviderAttempt attempt) => new()
     {
-        Id = request.Id, RequestId = request.RequestId, TenantId = request.TenantId, TeamId = request.TeamId,
+        Id = request.Id, RequestId = request.RequestId, LogicalRequestId = request.LogicalRequestId,
+        TenantId = request.TenantId, TeamId = request.TeamId,
         SourceDeployment = request.SourceDeployment, Environment = request.Environment,
         AppCallerCode = request.AppCallerCode, AppCallerCodeDisplayName = request.AppCallerCodeDisplayName,
         AppCallerTitle = request.AppCallerTitle, Path = request.Path, RequestType = request.RequestType,
@@ -740,7 +759,8 @@ internal static class LlmGatewayIncidentPolicy
         string Category, string Version, DateTime At, string Outcome, int AttemptedRoutes);
 }
 
-internal sealed record LlmGatewayFailureObservation(string Version, DateTime At);
+internal sealed record LlmGatewayFailureObservation(string Version, DateTime At,
+    string? RequestId = null, string? RequestKey = null, string? Outcome = null);
 
 internal sealed record LlmGatewayIncidentSignal(
     string Fingerprint, bool IsFailure, string RequestId, string AppCallerLabel, string PlatformLabel,

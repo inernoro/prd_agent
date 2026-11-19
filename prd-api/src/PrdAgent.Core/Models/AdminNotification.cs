@@ -34,6 +34,13 @@ public class AdminNotification
     public DateTime? RecoveredAt { get; set; }
     public string? EvidenceRequestId { get; set; }
 
+    // 以本轮开启时的投递代次为锚点，同一轮严重程度升级不改变接手身份。
+    public long? IncidentEpisode { get; set; }
+    public string? IncidentOwnerUserId { get; set; }
+    public string? IncidentOwnerDisplayName { get; set; }
+    public DateTime? IncidentClaimedAt { get; set; }
+    public List<GatewayIncidentEvidence>? IncidentEvidence { get; set; }
+
     /// <summary>
     /// 故障关闭后重新打开的投递代次。存量通知为 0，持续故障不递增。
     /// </summary>
@@ -70,6 +77,14 @@ public class AdminNotification
     /// 显式指定时（如 webhook / 自动化规则）以指定值为准；需要永驻的通知可显式设 null。
     /// </summary>
     public DateTime? ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(7);
+}
+
+public sealed class GatewayIncidentEvidence
+{
+    public string RequestId { get; set; } = string.Empty;
+    public string RequestKey { get; set; } = string.Empty;
+    public string Outcome { get; set; } = string.Empty;
+    public DateTime ObservedAt { get; set; }
 }
 
 public class NotificationAttachment

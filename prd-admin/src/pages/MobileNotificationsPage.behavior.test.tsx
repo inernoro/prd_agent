@@ -4,8 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MobileNotificationsPage from './MobileNotificationsPage';
 
-const api = vi.hoisted(() => ({ list: vi.fn(), handle: vi.fn(), all: vi.fn(), batch: vi.fn(), ticket: vi.fn(), navigate: vi.fn(), error: vi.fn(), success: vi.fn() }));
-vi.mock('@/services', () => ({ getAdminNotifications: api.list, handleAdminNotification: api.handle, handleAllAdminNotifications: api.all, handleBatchAdminNotifications: api.batch, createLlmGatewaySsoTicket: api.ticket }));
+const api = vi.hoisted(() => ({ list: vi.fn(), assign: vi.fn(), handle: vi.fn(), all: vi.fn(), batch: vi.fn(), ticket: vi.fn(), navigate: vi.fn(), error: vi.fn(), success: vi.fn() }));
+vi.mock('@/services', () => ({ getAdminNotifications: api.list, assignNotificationIncident: api.assign, handleAdminNotification: api.handle, handleAllAdminNotifications: api.all, handleBatchAdminNotifications: api.batch, createLlmGatewaySsoTicket: api.ticket }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => api.navigate }));
 vi.mock('@/lib/toast', () => ({ toast: { error: api.error, success: api.success } }));
 vi.mock('@/hooks/useBreakpoint', () => ({ useIsDesktop: () => true }));
@@ -31,6 +31,31 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 describe('通知动作与事实真实组件交互', () => {
+  it('故障接力使用本轮代次，接手后仍显示故障与备用结果，选中证据可回看失败请求', async () => {
+    const evidence = [
+      { outcome: 'all_failed', observedAt: notice.firstOccurredAt, requestId: 'failed-request' },
+      { outcome: 'fallback_succeeded', observedAt: notice.lastOccurredAt, requestId: 'backup-request' },
+    ];
+    const episode = { ...notice, incidentFollowUp: { episode: 0, canAssign: true, evidence } };
+    api.list.mockResolvedValueOnce({ success: true, data: { items: [episode] } })
+      .mockResolvedValueOnce({ success: true, data: { items: [episode] } })
+      .mockResolvedValue({ success: true, data: { items: [{ ...episode, incidentFollowUp: { ...episode.incidentFollowUp,
+        owner: { isMe: true, displayName: '当班同事' } } }] } });
+    api.assign.mockResolvedValue({ success: true, data: { assigned: true } });
+    await render();
+    await click(/^故障接力$/);
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'incidents' }));
+    await click(/^标记接手$/);
+    expect(api.assign).toHaveBeenCalledWith(notice.id, 0, true);
+    expect(api.batch).not.toHaveBeenCalled();
+    const detail = host.querySelector('aside')!;
+    expect(detail.textContent).toContain('我已接手');
+    expect(detail.textContent).toContain('异常，等待恢复证据');
+    expect(detail.textContent).toContain('1 笔失败，1 笔备用成功');
+    await click(/请求失败$/);
+    expect(detail.querySelector('code')?.textContent).toBe('failed-request');
+  });
+
   it('历史故障未记录发生时间时仍显示通知记录时间，不把记录时刻当作故障发生或恢复', async () => {
     const recordedAt = '2026-11-12T10:17:56Z';
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, title: '历史额度异常', message: '历史通知记录了服务额度异常。', requestOutcome: 'unknown', incidentId: undefined, incidentState: 'unknown', occurrenceCount: undefined, firstOccurredAt: undefined, lastOccurredAt: undefined, recoveredAt: undefined, createdAt: recordedAt }] } });

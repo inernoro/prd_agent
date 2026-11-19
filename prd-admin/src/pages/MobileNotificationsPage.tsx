@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Bell, ChevronRight, RefreshCw } from 'lucide-react';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { incidentOwnerLabel, incidentTitle, NotificationIncidentCard } from '@/components/notifications/NotificationIncidentCard';
 import { useNotificationActions } from '@/components/notifications/useNotificationActions';
 import { useIsDesktop } from '@/hooks/useBreakpoint';
 import {
@@ -10,11 +11,12 @@ import {
 } from '@/lib/notificationPresentation';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { toast } from '@/lib/toast';
-import { getAdminNotifications } from '@/services';
+import { assignNotificationIncident, getAdminNotifications } from '@/services';
 import type { AdminNotificationItem, NotificationPriority } from '@/services/contracts/notifications';
 
 const VIEWS = [
   { key: 'attention', label: '待关注' },
+  { key: 'incidents', label: '故障接力' },
   { key: 'all', label: '全部记录' },
   { key: 'archived', label: '已归档' },
 ] as const;
@@ -50,28 +52,31 @@ function NotificationTime({ value, short = false }: { value: string; short?: boo
   return <time dateTime={value}>{Number.isNaN(date.valueOf()) ? '时间未记录' : (short ? shortDate : fullDate).format(date)}</time>;
 }
 
-function NotificationRow({ item, selected, select }: { item: AdminNotificationItem; selected: boolean; select: () => void }) {
+function NotificationRow({ item, incidentView, selected, select }: { item: AdminNotificationItem; incidentView: boolean; selected: boolean; select: () => void }) {
   const type = getNotificationType(item);
   const environment = notificationEnvironment(item);
-  const evidenceAt = notificationOutcome(item) === 'recovered' ? item.recoveredAt : item.lastOccurredAt;
+  const recovered = incidentView && item.incidentState === 'recovered';
+  const evidenceAt = recovered || notificationOutcome(item) === 'recovered' ? item.recoveredAt : item.lastOccurredAt;
   const impact = item.requestOutcome && item.requestOutcome !== 'unknown' ? NOTIFICATION_REQUEST_OUTCOME[item.requestOutcome] : undefined;
   return <li data-notification-id={item.id} className="border-b border-token-subtle last:border-b-0">
     <button type="button" aria-current={selected ? 'true' : undefined} onClick={select}
       className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-l-2 px-3 py-3 text-left hover-bg-soft sm:px-4"
       style={{ background: selected ? 'var(--bg-card-hover)' : undefined, borderLeftColor: selected ? 'var(--accent-fg-blue)' : 'transparent' }}>
-      <NotificationIcon item={item} />
+      <NotificationIcon item={recovered ? { ...item, level: 'success' } : item} />
       <span className="min-w-0">
-        <span className="block break-words text-sm font-semibold leading-5 text-token-primary">{item.title}</span>
+        <span className="block break-words text-sm font-semibold leading-5 text-token-primary">{incidentView ? incidentTitle(item) : item.title}</span>
         <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-4 text-token-secondary">
           {environment && <span className="font-medium text-token-primary">环境 {environment}</span>}
           <span>{type.label}</span>
-          {item.incidentId && item.occurrenceCount != null && <span>记录 {item.occurrenceCount} 次</span>}
-          {item.status !== 'open' && <span>{item.status === 'closed' ? '已归档' : '已确认'}</span>}
+          {incidentView ? <span>{recovered ? '已验证恢复' : incidentOwnerLabel(item.incidentFollowUp, false)}</span> : <>
+            {item.incidentId && item.occurrenceCount != null && <span>记录 {item.occurrenceCount} 次</span>}
+            {item.status !== 'open' && <span>{item.status === 'closed' ? '已归档' : '已确认'}</span>}
+          </>}
         </span>
-        {impact && <span className="mt-1 block text-xs leading-4 text-token-secondary lg:hidden">{impact}</span>}
+        {!incidentView && impact && <span className="mt-1 block text-xs leading-4 text-token-secondary lg:hidden">{impact}</span>}
       </span>
       <span className="flex min-w-0 flex-col items-end gap-1 text-xs leading-4 text-token-secondary">
-        <PriorityLabel item={item} />
+        {recovered ? <span style={{ color: 'var(--accent-fg-success)' }}>恢复</span> : <PriorityLabel item={item} />}
         <span className="whitespace-nowrap tabular-nums" title={evidenceAt ? '故障证据时间' : '通知更新时间'}><NotificationTime value={evidenceAt || item.updatedAt} short /></span>
       </span>
     </button>
@@ -154,13 +159,14 @@ function NotificationDetail({ item, handling, busy, onOpen, onConfirm }: {
 
 export default function MobileNotificationsPage() {
   const desktop = useIsDesktop();
-  const [view, setView] = useState<View>('attention');
+  const [view, setView] = useState<View>(() => new URLSearchParams(window.location.search).get('view') === 'incidents' ? 'incidents' : 'attention');
   const [priority, setPriority] = useState<PriorityFilter>('all');
   const [result, setResult] = useState<{ query: string; items: AdminNotificationItem[]; nextCursor?: string; hasMore: boolean }>();
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [selection, setSelection] = useState<string>();
   const [showMobileDetail, setShowMobileDetail] = useState(false);
+  const [assigning, setAssigning] = useState(false);
   const requestSequence = useRef(0);
   const query = `${view}:${priority}`;
   const current = result?.query === query ? result : undefined;
@@ -171,7 +177,7 @@ export default function MobileNotificationsPage() {
     setFailed(false);
     try {
       const response = await getAdminNotifications({
-        includeHandled: true, cursor, priority: priority === 'all' ? undefined : priority,
+        includeHandled: true, includeIncidentFollowUp: true, cursor, priority: priority === 'all' ? undefined : priority,
         state: view === 'all' ? undefined : view,
       });
       if (request !== requestSequence.current) return;
@@ -200,20 +206,40 @@ export default function MobileNotificationsPage() {
   useEffect(() => { void refresh(); return () => { requestSequence.current += 1; }; }, [refresh]);
 
   const notifications = current?.items ?? [];
+  const incidentView = view === 'incidents';
   const serviceAlerts = view === 'attention' ? notifications.filter(isServiceAlert) : [];
   const otherNotifications = view === 'attention' ? notifications.filter(item => !isServiceAlert(item)) : notifications;
   const selectedByUser = notifications.find(item => item.id === selection);
   const selected = selectedByUser ?? serviceAlerts[0] ?? notifications[0];
   const urgentCount = view === 'attention' ? notifications.filter(item => notificationPriority(item.level) === 'urgent').length : 0;
   const confirmable = notifications.filter(item => item.status === 'open').slice(0, 200);
-  const busy = handlingAll || Boolean(handlingId);
-  const detail = selected && <NotificationDetail item={selected} busy={busy} handling={handlingId === selected.id}
-    onOpen={() => void openNotification(selected)} onConfirm={() => void confirmNotifications([selected], false)} />;
+  const busy = assigning || handlingAll || Boolean(handlingId);
+  const assign = async (item: AdminNotificationItem, episode: number, claim: boolean) => {
+    if (busy) return;
+    setAssigning(true);
+    try {
+      const response = await assignNotificationIncident(item.id, episode, claim);
+      if (!response.success) toast.error('接手状态更新失败', response.error?.message ?? '请查看最新状态后重试。');
+    } catch {
+      toast.error('接手状态更新失败', '请查看最新状态后重试。');
+    } finally {
+      await refresh();
+      setAssigning(false);
+    }
+  };
+  const followUp = view === 'attention' || incidentView || selected?.level === 'success' ? selected?.incidentFollowUp : null;
+  const detail = !selected ? null : followUp ? <NotificationIncidentCard
+    key={`${selected.id}:${followUp.episode}`} item={selected} followUp={followUp} busy={busy}
+    assign={claim => void assign(selected, followUp.episode, claim)} confirm={() => void confirmNotifications([selected], false)}
+    open={actionUrl => void openNotification({ ...selected, actionUrl, actionKind: 'llm-gateway' })} />
+    : <NotificationDetail item={selected} busy={busy} handling={handlingId === selected.id}
+      onOpen={() => void openNotification(selected)} onConfirm={() => void confirmNotifications([selected], false)} />;
   const select = (item: AdminNotificationItem) => {
     setSelection(item.id);
     if (!desktop) setShowMobileDetail(true);
   };
   const showRows = (items: AdminNotificationItem[]) => <ul>{items.map(item => <NotificationRow key={item.id} item={item}
+    incidentView={incidentView || view === 'attention' && Boolean(item.incidentFollowUp)}
     selected={desktop && selected?.id === item.id} select={() => select(item)} />)}</ul>;
   const changeView = (next: View) => {
     if (view === next) return;
@@ -228,7 +254,10 @@ export default function MobileNotificationsPage() {
       <header className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight sm:text-[30px]">通知中心</h1>
-          <p className="mt-1 text-sm text-token-secondary">{view === 'attention' ? '紧急和重要的待确认通知' : view === 'all' ? '查看收到的通知和处理记录' : '查看已确认或已关闭的通知'}</p>
+          <p className="mt-1 text-sm text-token-secondary">{
+            view === 'attention' ? '紧急和重要的待确认通知' : incidentView ? '查看仍在发生的故障、接手人和恢复证据'
+              : view === 'all' ? '查看收到的通知和处理记录' : '查看已确认或已关闭的通知'
+          }</p>
         </div>
         <button type="button" className={`${BUTTON} border border-token-subtle text-token-secondary`} disabled={loading || busy} onClick={() => void refresh()}>
           <RefreshCw size={15} aria-hidden="true" />刷新
@@ -246,7 +275,7 @@ export default function MobileNotificationsPage() {
         <select aria-label="通知优先级" value={priority} disabled={busy} className="mb-1 min-h-9 max-w-full rounded-lg border border-token-subtle bg-token-card px-2 text-sm text-token-primary"
           onChange={event => { setPriority(event.target.value as PriorityFilter); setSelection(undefined); }}>
           <option value="all">全部级别</option>
-          {PRIORITIES.filter(key => view !== 'attention' || key !== 'routine').map(key => <option key={key} value={key}>{NOTIFICATION_PRIORITIES[key].label}</option>)}
+          {PRIORITIES.filter(key => (view !== 'attention' && !incidentView) || key !== 'routine').map(key => <option key={key} value={key}>{NOTIFICATION_PRIORITIES[key].label}</option>)}
         </select>
       </div>
 
@@ -258,9 +287,9 @@ export default function MobileNotificationsPage() {
                 {current.hasMore && <span>已显示</span>}
                 {urgentCount > 0 && <span style={{ color: NOTIFICATION_PRIORITIES.urgent.color }}>{urgentCount} 条紧急</span>}
                 {urgentCount < notifications.length && <span style={{ color: NOTIFICATION_PRIORITIES.important.color }}>{notifications.length - urgentCount} 条重要</span>}
-              </> : <span>{current.hasMore ? '已显示 ' : ''}{notifications.length} 条通知</span>}
+              </> : <span>{current.hasMore ? '已显示 ' : ''}{notifications.length} {incidentView ? '起故障' : '条通知'}</span>}
             </div>
-            {confirmable.length > 0 && <button type="button" className={`${BUTTON} text-xs text-token-secondary`} disabled={busy || loading}
+            {!incidentView && confirmable.length > 0 && <button type="button" className={`${BUTTON} text-xs text-token-secondary`} disabled={busy || loading}
               onClick={() => void confirmNotifications(confirmable, true)}>确认当前 {confirmable.length} 条通知</button>}
           </div>}
           {serviceAlerts.length > 0 && <section aria-label="服务告警">
@@ -273,22 +302,23 @@ export default function MobileNotificationsPage() {
           </section> : showRows(otherNotifications))}
           {notifications.length === 0 && <div className="flex min-h-52 flex-col items-center justify-center gap-3 px-4 text-center text-sm text-token-secondary" role="status">
             {loading ? <MapSpinner size={24} /> : <Bell size={24} aria-hidden="true" />}
-            <p>{loading ? '正在读取通知…' : failed ? '暂时无法读取通知，请刷新重试。' : view === 'attention' ? '暂无待关注通知' : '当前筛选下暂无通知'}</p>
-            {!loading && !failed && view === 'attention' && <button type="button" className={BUTTON} onClick={() => changeView('all')}>
+            <p>{loading ? '正在读取通知…' : failed ? '暂时无法读取通知，请刷新重试。' : view === 'attention' ? '暂无待关注通知'
+              : incidentView ? '暂无已识别的网关故障' : '当前筛选下暂无通知'}</p>
+            {!loading && !failed && (view === 'attention' || incidentView) && <button type="button" className={BUTTON} onClick={() => changeView('all')}>
               查看全部记录 <ChevronRight size={15} aria-hidden="true" />
             </button>}
           </div>}
           {current?.nextCursor && <div className="flex justify-center border-t border-token-subtle p-2">
             <button type="button" className={`${BUTTON} text-token-secondary`} disabled={loading || busy}
-              onClick={() => void loadPage(current.nextCursor)}>{loading ? '加载中…' : '加载更多通知'}</button>
+              onClick={() => void loadPage(current.nextCursor)}>{loading ? '加载中…' : incidentView ? '加载更多故障' : '加载更多通知'}</button>
           </div>}
         </section>
         {desktop && selected && <aside aria-labelledby="notification-detail-title" className="sticky top-4 min-w-0 rounded-xl border border-token-subtle bg-token-card px-5 pb-5 pt-4">
-          <h2 id="notification-detail-title" className="mb-4 border-b border-token-subtle pb-3 text-sm font-semibold text-token-secondary">通知详情</h2>
+          <h2 id="notification-detail-title" className="mb-4 border-b border-token-subtle pb-3 text-sm font-semibold text-token-secondary">{followUp ? '故障详情' : '通知详情'}</h2>
           {detail}
         </aside>}
       </div>
     </div>
-    {!desktop && <BottomSheet open={showMobileDetail && Boolean(selectedByUser)} onOpenChange={setShowMobileDetail} title="通知详情">{detail}</BottomSheet>}
+    {!desktop && <BottomSheet open={showMobileDetail && Boolean(selectedByUser)} onOpenChange={setShowMobileDetail} title={followUp ? '故障详情' : '通知详情'}>{detail}</BottomSheet>}
   </div>;
 }

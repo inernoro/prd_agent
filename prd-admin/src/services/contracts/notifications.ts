@@ -7,6 +7,20 @@ export type NotificationAttachment = {
   mimeType?: string | null;
 };
 
+export type NotificationIncidentEvidence = {
+  outcome: 'request_failed' | 'all_failed' | 'fallback_succeeded' | 'recovered' | 'unknown';
+  observedAt: string;
+  requestId?: string | null;
+  actionUrl?: string | null;
+};
+
+export type NotificationIncidentFollowUp = {
+  episode: number;
+  canAssign: boolean;
+  owner?: { displayName?: string | null; isMe: boolean; claimedAt?: string | null } | null;
+  evidence: NotificationIncidentEvidence[];
+};
+
 export type AdminNotificationItem = {
   id: string;
   targetUserId?: string | null;
@@ -14,6 +28,7 @@ export type AdminNotificationItem = {
   incidentId?: string | null;
   incidentState?: string | null;
   incidentCategory?: string | null;
+  incidentFollowUp?: NotificationIncidentFollowUp | null;
   environment?: string | null;
   requestOutcome?: string | null;
   occurrenceCount?: number;
@@ -170,13 +185,15 @@ export type UpdateAdminPushSubscriptionRequest = {
 export type UpdateAdminPushProfileRequest = Omit<UpdateAdminPushSubscriptionRequest, 'enabled' | 'useDefaultProfile'>;
 
 export type NotificationPriority = 'urgent' | 'important' | 'routine';
-export type NotificationListState = 'open' | 'archived' | 'attention';
+export type NotificationListState = 'open' | 'archived' | 'attention' | 'incidents';
 export type GetAdminNotificationsContract = (args?: {
   includeHandled?: boolean;
+  includeIncidentFollowUp?: boolean;
   priority?: NotificationPriority;
   state?: NotificationListState;
   cursor?: string;
 }) => Promise<ApiResponse<GetAdminNotificationsResponse>>;
+export type AssignNotificationIncidentContract = (id: string, episode: number, claim: boolean) => Promise<ApiResponse<{ assigned: boolean }>>;
 export type HandleAdminNotificationContract = (id: string) => Promise<ApiResponse<{ handled: boolean }>>;
 export type HandleAllAdminNotificationsContract = () => Promise<ApiResponse<{ handled: boolean }>>;
 export type GetAdminPushSubscriptionsContract = () => Promise<ApiResponse<GetAdminPushSubscriptionsResponse>>;

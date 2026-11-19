@@ -44,11 +44,13 @@ public sealed class NotificationsController : ControllerBase
     [HttpGet]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> List([FromQuery] bool includeHandled = false, CancellationToken ct = default,
-        [FromQuery] string? priority = null, [FromQuery] string? state = null, [FromQuery] string? cursor = null)
+        [FromQuery] string? priority = null, [FromQuery] string? state = null, [FromQuery] string? cursor = null,
+        [FromQuery] bool includeIncidentFollowUp = false)
     {
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
-        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled, await HasAdminNotificationPermissionAsync(ct));
+        var incidents = state == "incidents";
+        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled || incidents, await HasAdminNotificationPermissionAsync(ct));
         var builder = Builders<AdminNotification>.Filter;
         var attention = state == "attention";
         if (priority == "urgent") filter &= builder.Eq(x => x.Level, "error");
@@ -58,13 +60,19 @@ public sealed class NotificationsController : ControllerBase
         if (state == "archived") filter &= builder.Ne(x => x.Status, "open");
         if (attention)
             filter &= builder.Eq(x => x.Status, "open") & builder.In(x => x.Level, new[] { "error", "warning" });
+        if (incidents) filter &= TrackedGatewayIncidentFilter() & builder.In(x => x.Level, new[] { "error", "warning" });
+        System.Linq.Expressions.Expression<Func<AdminNotification, string?>>? groupingField =
+            attention ? x => x.Level : incidents ? x => x.IncidentState : null;
         if (!string.IsNullOrEmpty(cursor))
         {
-            string? level = null;
-            if (attention)
+            string? group = null;
+            if (groupingField is not null)
             {
                 var separator = cursor.IndexOf('.');
-                if (separator < 1 || (level = cursor[..separator]) is not ("error" or "warning"))
+                if (separator < 1)
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "通知列表游标已失效，请刷新列表。"));
+                group = cursor[..separator];
+                if (attention ? group is not ("error" or "warning") : group is not ("active" or "recovered"))
                     return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "通知列表游标已失效，请刷新列表。"));
                 cursor = cursor[(separator + 1)..];
             }
@@ -75,15 +83,14 @@ public sealed class NotificationsController : ControllerBase
             var before = new DateTime(ticks, DateTimeKind.Utc);
             var earlier = builder.Lt(x => x.UpdatedAt, before)
                 | (builder.Eq(x => x.UpdatedAt, before) & builder.Lt(x => x.Id, cursor[(position + 1)..]));
-            filter &= level is null ? earlier
-                : builder.Gt(x => x.Level, level) | (builder.Eq(x => x.Level, level) & earlier);
+            filter &= groupingField is null ? earlier
+                : builder.Gt(groupingField, group) | (builder.Eq(groupingField, group) & earlier);
         }
 
         var list = _db.AdminNotifications.Find(filter);
-        var sorted = attention
-            ? list.SortBy(x => x.Level).ThenByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id)
-            : list.SortByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id);
-        var items = await sorted.Limit(201).ToListAsync(ct);
+        var grouped = attention ? list.SortBy(x => x.Level) : incidents ? list.SortBy(x => x.IncidentState!) : null;
+        var sorted = grouped is null ? list.SortByDescending(x => x.UpdatedAt) : grouped.ThenByDescending(x => x.UpdatedAt);
+        var items = await sorted.ThenByDescending(x => x.Id).Limit(201).ToListAsync(ct);
 
         var hasMore = items.Count > 200;
         items = items.Take(200).ToList();
@@ -92,9 +99,9 @@ public sealed class NotificationsController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            items = items.Select(n => ToNotificationDto(n, canOpenGateway)),
+            items = items.Select(n => ToNotificationDto(n, canOpenGateway, userId, incidents || includeIncidentFollowUp)),
             hasMore,
-            nextCursor = hasMore ? $"{(attention ? items[^1].Level + "." : "")}{items[^1].UpdatedAt.Ticks}.{items[^1].Id}" : null,
+            nextCursor = hasMore ? $"{(attention ? items[^1].Level + "." : incidents ? items[^1].IncidentState + "." : "")}{items[^1].UpdatedAt.Ticks}.{items[^1].Id}" : null,
             summary = new
             {
                 notificationCount = openItems.Count,
@@ -103,6 +110,58 @@ public sealed class NotificationsController : ControllerBase
                 unclassifiedCount = openItems.Count(x => string.IsNullOrWhiteSpace(x.IncidentId)),
             }
         }));
+    }
+
+    [HttpPut("incidents/{id}/assignment")]
+    public async Task<IActionResult> AssignIncident([FromRoute] string id, [FromBody] IncidentAssignmentRequest request, CancellationToken ct)
+    {
+        if (request.Episode is null or < 0 || request.Claim is null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "故障接手信息已失效，请刷新后重试。"));
+
+        if (User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value == "1"
+            || User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value == "1"
+            || !await HasAdminNotificationPermissionAsync(ct))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前账号无法接手此故障。"));
+
+        var userId = this.GetRequiredUserId();
+        var actor = await _db.Users.Find(x => x.UserId == userId && x.Status == UserStatus.Active && x.UserType == UserType.Human)
+            .FirstOrDefaultAsync(ct);
+        if (actor is null)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前账号无法接手此故障。"));
+
+        var now = DateTime.UtcNow;
+        var builder = Builders<AdminNotification>.Filter;
+        var visible = BuildVisibleNotificationFilter(userId, now, includeHandled: true, includeAdmin: true)
+            & TrackedGatewayIncidentFilter() & builder.Eq(x => x.Id, id);
+        // 存量记录在新版观测建立本轮身份前仍可查看。它们与旧版扫描器共库，后者不会管理接手状态。
+        var current = visible & builder.Eq(x => x.IncidentEpisode, request.Episode)
+            & builder.Ne(x => x.IncidentEvidence, null) & builder.Eq(x => x.IncidentState, "active");
+        var claim = request.Claim.Value;
+        var owner = builder.Eq(x => x.IncidentOwnerUserId, claim ? null : userId);
+        var updates = Builders<AdminNotification>.Update;
+        var update = claim
+            ? updates.Set(x => x.IncidentOwnerUserId, userId)
+                .Set(x => x.IncidentOwnerDisplayName, actor.DisplayName)
+                .Set(x => x.IncidentClaimedAt, now)
+            : updates.Unset(x => x.IncidentOwnerUserId).Unset(x => x.IncidentOwnerDisplayName).Unset(x => x.IncidentClaimedAt);
+        var changed = await _db.AdminNotifications.UpdateOneAsync(current & owner, update, cancellationToken: ct);
+        if (changed.MatchedCount == 1 || await _db.AdminNotifications.Find(current
+                & builder.Eq(x => x.IncidentOwnerUserId, claim ? userId : null)).AnyAsync(ct))
+            return Ok(ApiResponse<object>.Ok(new { assigned = claim }));
+
+        if (!await _db.AdminNotifications.Find(visible).AnyAsync(ct))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "故障不存在或无权查看。"));
+        return Conflict(ApiResponse<object>.Fail("INCIDENT_ASSIGNMENT_CHANGED", "故障已变化或已有负责人，请查看最新状态。"));
+    }
+
+    private static FilterDefinition<AdminNotification> TrackedGatewayIncidentFilter()
+    {
+        var builder = Builders<AdminNotification>.Filter;
+        return builder.Eq(x => x.Source, GatewayNotificationPolicy.Source)
+            & builder.Eq(x => x.TargetUserId, null)
+            & builder.Regex(x => x.Key, new BsonRegularExpression("^" + GatewayIncidentFollowUp.IncidentKeyPrefix))
+            & builder.Regex(x => x.IncidentId, new BsonRegularExpression(@"\S"))
+            & builder.In(x => x.IncidentState, new[] { "active", "recovered" });
     }
 
     [HttpGet("subscriptions")]
@@ -446,7 +505,7 @@ public sealed class NotificationsController : ControllerBase
         return globalPool | explicitAdmin | (absentOrBlank & sourceIsAdmin & builder.Not(personalDataTransfer) & builder.Not(targetedPool));
     }
 
-    private static object ToNotificationDto(AdminNotification n, bool canOpenGateway = false)
+    private static object ToNotificationDto(AdminNotification n, bool canOpenGateway, string viewerUserId, bool includeFollowUp)
     {
         var legacyPersonalDataTransfer = string.IsNullOrWhiteSpace(n.Section)
                                          && AdminNotificationSourceCatalog.NormalizeSource(n.Source) == "system"
@@ -490,6 +549,24 @@ public sealed class NotificationsController : ControllerBase
             n.LastOccurredAt,
             n.RecoveredAt,
             evidenceRequestId = restrictDiagnostic ? null : n.EvidenceRequestId,
+            incidentFollowUp = includeFollowUp && GatewayIncidentFollowUp.IsTracked(n) ? new
+            {
+                episode = GatewayIncidentFollowUp.Episode(n),
+                canAssign = n.IncidentState == "active" && n.IncidentEpisode.HasValue && n.IncidentEvidence is not null,
+                owner = n.IncidentOwnerUserId is null ? null : new
+                {
+                    displayName = n.IncidentOwnerDisplayName,
+                    isMe = n.IncidentOwnerUserId == viewerUserId,
+                    claimedAt = n.IncidentClaimedAt,
+                },
+                evidence = GatewayIncidentFollowUp.ReadEvidence(n).Select(item => new
+                {
+                    item.Outcome,
+                    item.ObservedAt,
+                    requestId = canOpenGateway ? item.RequestId : null,
+                    actionUrl = canOpenGateway ? GatewayIncidentFollowUp.RequestUrl(item.RequestId) : null,
+                }),
+            } : null,
             n.ActionLabel,
             actionUrl = restrictDiagnostic || n.ActionKind == "llm-gateway" && !canOpenGateway ? null : ReportNotificationNavigation.Resolve(n),
             n.ActionKind,
@@ -543,6 +620,12 @@ public sealed class NotificationsController : ControllerBase
 
     private static bool IsLegacyIncident(AdminNotification n) => n.Source is
         "llm-gateway-quota" or "gateway-alert" or "uptime-alert" or "system-alert" or "api-request-alert" or "model-pool-probe";
+}
+
+public sealed class IncidentAssignmentRequest
+{
+    public long? Episode { get; set; }
+    public bool? Claim { get; set; }
 }
 
 public sealed class NotificationBatchHandleRequest

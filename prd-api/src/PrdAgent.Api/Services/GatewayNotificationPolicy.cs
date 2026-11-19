@@ -12,7 +12,8 @@ internal static class GatewayNotificationPolicy
 
     internal static string FailureLevel(LlmGatewayIncidentSignal signal)
     {
-        var requestFailed = signal.RequestOutcome is "request_failed" or "all_failed";
+        var requestFailed = signal.RequestOutcome is "request_failed" or "all_failed"
+            || signal.FailureObservations.Any(item => item.Outcome is "request_failed" or "all_failed");
         if (signal.FailureCategory is Quota or "access")
             return requestFailed ? "error" : "warning";
         if (signal.DistinctRecentFailedRequests < 3)

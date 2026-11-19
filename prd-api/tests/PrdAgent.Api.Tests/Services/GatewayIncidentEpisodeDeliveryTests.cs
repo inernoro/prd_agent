@@ -199,6 +199,25 @@ public sealed partial class GatewayIncidentEpisodeDeliveryTests
             Error = status == "failed" ? PrdAgent.Core.LlmGateway.GatewayRouteFailure.ProviderQuotaExceeded : null,
             StartedAt = _logBase.AddSeconds(seconds), RequestType = "image"
         });
+        public Task LogRouteAsync(string id, int seconds, bool failed = false, bool fallback = false)
+        {
+            var log = GatewayIncidentFactsTests.Request(id, failed ? "failed" : "succeeded", failed ? 402 : 200);
+            log.TenantId = "episode-fixture";
+            log.StartedAt = _logBase.AddSeconds(seconds);
+            log.Environment = "production";
+            log.Error = failed ? "insufficient_balance" : null;
+            if (fallback)
+            {
+                log.PlatformId = "backup";
+                log.PlatformName = "backup";
+                var primary = GatewayIncidentFactsTests.Attempt("primary", "failed", 402, 0);
+                var backup = GatewayIncidentFactsTests.Attempt("backup", "succeeded", 200, 1);
+                primary.EndedAt = log.StartedAt;
+                backup.EndedAt = log.StartedAt.AddMilliseconds(1);
+                log.ProviderAttempts = [primary, backup];
+            }
+            return _gateway.LlmRequestLogs.InsertOneAsync(log);
+        }
         public async Task SweepAsync()
         {
             using var watchdog = new LlmGatewayIncidentWatchdog(_gateway, Db, new AdminPushDispatchSignal(), _configuration,

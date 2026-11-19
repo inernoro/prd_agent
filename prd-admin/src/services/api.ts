@@ -321,6 +321,7 @@ export const api = {
   dashboard: {
     notifications: {
       handleBatch: () => '/api/dashboard/notifications/handle-batch',
+      incidentAssignment: (id: string) => `/api/dashboard/notifications/incidents/${encodeURIComponent(id)}/assignment`,
       list: () => '/api/dashboard/notifications',
       handle: (id: string) => `/api/dashboard/notifications/${id}/handle`,
       handleAll: () => '/api/dashboard/notifications/handle-all',

@@ -22,6 +22,7 @@ import type {
 } from '@/services/contracts/authz';
 import type {
   GetAdminNotificationsContract,
+  AssignNotificationIncidentContract,
   HandleAdminNotificationContract,
   HandleBatchAdminNotificationsContract,
   HandleAllAdminNotificationsContract,
@@ -620,6 +621,7 @@ import {
 } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
+  assignNotificationIncidentReal,
   handleAdminNotificationReal,
   handleBatchAdminNotificationsReal,
   handleAllAdminNotificationsReal,
@@ -891,6 +893,7 @@ export const resetBuiltInSystemRoles: ResetBuiltInSystemRolesContract = withAuth
 export const getUserAuthz: GetUserAuthzContract = withAuth(getUserAuthzReal);
 export const updateUserAuthz: UpdateUserAuthzContract = withAuth(updateUserAuthzReal);
 export const getAdminNotifications: GetAdminNotificationsContract = withAuth(getAdminNotificationsReal);
+export const assignNotificationIncident: AssignNotificationIncidentContract = withAuth(assignNotificationIncidentReal);
 export const handleAdminNotification: HandleAdminNotificationContract = withAuth(handleAdminNotificationReal);
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
 export const getAdminPushSubscriptions: GetAdminPushSubscriptionsContract = withAuth(getAdminPushSubscriptionsReal);
