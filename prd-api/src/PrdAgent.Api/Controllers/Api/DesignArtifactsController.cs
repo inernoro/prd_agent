@@ -460,7 +460,8 @@ public sealed class DesignArtifactsController : ControllerBase
             run.Id, run.Title, run.Operation, run.SourceSurface, run.Status, run.Phase, run.PhaseCode,
             run.CreatedAt, run.LastProgressAt, run.FirstPreviewAt, run.CompletedAt,
             run.ResolvedModel, run.ResolvedPlatform, run.ProducedArtifactSiteId, run.DeliveryOriginStoreId,
-            run.DeliveryArchive == null ? null : run.DeliveryArchive.StoreId,
+            run.DeliveryArchive == null || run.DeliveryArchive.ArtifactId == null || run.DeliveryArchive.ArtifactId == ""
+                ? null : run.DeliveryArchive.StoreId,
             run.RuntimeFailure == null ? run.LifecycleFailureCode : run.RuntimeFailure.Code);
 
     private sealed record OpenDesignRunOverview(

@@ -480,6 +480,42 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     }
 
     [DesignScopeMongoFact]
+    public async Task OpenDesignOverview_ReadsOnlyOwnedBranchHistory_AndLinksOnlyCommittedDelivery()
+    {
+        var waiting = Run("owner-reserved", RunStatuses.Done);
+        waiting.Runtime = DesignArtifactRuntimes.OpenDesign;
+        waiting.DeliveryOriginStoreId = "author-started-here";
+        waiting.DeliveryArchive = new InformationDeliveryArchive { StoreId = "reserved-only" };
+        await InsertAsync(waiting, RetiredScope);
+
+        var committed = Run("owner-committed", RunStatuses.Done);
+        committed.Runtime = DesignArtifactRuntimes.OpenDesign;
+        committed.DeliveryArchive = new InformationDeliveryArchive { StoreId = "ready-store", ArtifactId = "artifact" };
+        await InsertAsync(committed, CurrentScope);
+
+        var otherBranch = Run("wrong-branch", RunStatuses.Done);
+        otherBranch.Runtime = DesignArtifactRuntimes.OpenDesign;
+        await InsertAsync(otherBranch, "project-a::branch-ab::revision::revision-a");
+        var otherOwner = Run("wrong-owner", RunStatuses.Done);
+        otherOwner.UserId = "another-user";
+        otherOwner.Runtime = DesignArtifactRuntimes.OpenDesign;
+        await InsertAsync(otherOwner, CurrentScope);
+
+        var controller = GenerationController();
+        var response = Assert.IsType<OkObjectResult>(await controller.ListOpenDesignRuns(waiting.Id, default));
+        var json = System.Text.Json.JsonSerializer.Serialize(response.Value);
+        Assert.Contains(waiting.Id, json);
+        Assert.Contains(committed.Id, json);
+        Assert.Contains("author-started-here", json);
+        Assert.Contains("ready-store", json);
+        Assert.DoesNotContain("reserved-only", json);
+        Assert.DoesNotContain(otherBranch.Id, json);
+        Assert.DoesNotContain(otherOwner.Id, json);
+        var foreignResponse = Assert.IsType<OkObjectResult>(await controller.ListOpenDesignRuns(otherOwner.Id, default));
+        Assert.DoesNotContain(otherOwner.Id, System.Text.Json.JsonSerializer.Serialize(foreignResponse.Value));
+    }
+
+    [DesignScopeMongoFact]
     public async Task LegacyHistory_RemainsReadableThroughAllPublicReads_ButCannotCancelOrAdvanceLifecycle()
     {
         var legacy = _db.Database.GetCollection<DesignArtifactRun>("design_artifact_runs");
