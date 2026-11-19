@@ -762,6 +762,65 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       const [box, canvas] = await Promise.all([card.boundingBox(), stage.boundingBox()]);
       expect(box!.y + box!.height).toBeGreaterThan(canvas!.y + canvas!.height);
     });
+    if (!mobile) test('吸顶导航盖住正文时，同时裁切标记、气泡和连线，滚回后恢复', async ({ page }) => {
+      const frame = await open(page);
+      const pin = frame.getByRole('button', { name: '打开批注 1', exact: true });
+      await pin.click();
+      const card = page.locator('.annotation-chat-bubble.is-active');
+      const canvas = page.locator('.annotation-bubble-canvas');
+      const rail = canvas.locator('.annotation-bubble-scroll');
+      await expect(card).toBeVisible();
+      const body = frame.locator('body');
+      await body.evaluate(node => {
+        const header = document.createElement('header');
+        header.setAttribute('aria-label', '吸顶导航');
+        header.style.cssText = 'position:sticky;top:0;z-index:5;height:72px;background:#263548;';
+        const button = document.createElement('button');
+        button.textContent = '网页原有操作';
+        button.style.cssText = 'width:100%;height:100%;';
+        button.onclick = () => { button.textContent = '已调用网页原有操作'; };
+        header.append(button);
+        node.prepend(header);
+      });
+      const anchor = frame.locator('#note-one');
+      await anchor.evaluate(el => window.scrollBy(0, el.getBoundingClientRect().top - 56));
+      await expect(rail).toHaveCSS('clip-path', /^inset\(72px/);
+      await expect(canvas).toHaveCSS('clip-path', 'none');
+      await expect.poll(() => body.evaluate(node => {
+        const host = node.querySelector('[data-map-annotation-layer]')!;
+        const mark = host.shadowRoot?.querySelector<HTMLElement>('.outline.active');
+        const pin = host.shadowRoot?.querySelector<HTMLElement>('.pin.active');
+        const layer = mark?.parentElement;
+        if (!layer || !pin) return null;
+        const rect = pin.getBoundingClientRect();
+        return {
+          clipped: layer === pin.parentElement && getComputedStyle(layer).clipPath !== 'none',
+          pinIsBehindNavigation: document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+            ?.closest('header')?.getAttribute('aria-label') === '吸顶导航',
+        };
+      })).toEqual({ clipped: true, pinIsBehindNavigation: true });
+      const viewport = (await canvas.boundingBox())!;
+      const active = (await card.boundingBox())!;
+      expect(active.y - viewport.y).toBeLessThan(72);
+      expect(active.y + active.height - viewport.y).toBeGreaterThan(75);
+      expect(await card.evaluate((el, y) => {
+        const x = el.getBoundingClientRect().left + el.clientWidth / 2;
+        return el.contains(document.elementFromPoint(x, y));
+      }, viewport.y + 67)).toBe(false);
+      await expect(page.locator('[data-active-connector] path')).toHaveAttribute('d', /^M[^,]+,72h4/);
+      await frame.getByRole('button', { name: '网页原有操作', exact: true }).click();
+      await expect(frame.getByRole('button', { name: '已调用网页原有操作', exact: true })).toBeVisible();
+      await body.evaluate(node => { node.querySelector('header')!.style.position = 'fixed'; });
+      await frame.getByRole('banner', { name: '吸顶导航' }).evaluate((el: HTMLElement) => { el.style.insetInline = '0'; });
+      await expect(rail).toHaveCSS('clip-path', /^inset\(72px/);
+      await frame.getByRole('banner', { name: '吸顶导航' }).evaluate((el: HTMLElement) => { el.style.width = '50%'; });
+      await expect(rail).toHaveCSS('clip-path', 'none');
+      await frame.getByRole('banner', { name: '吸顶导航' }).evaluate(el => el.remove());
+      await expect(rail).toHaveCSS('clip-path', 'none');
+      await body.evaluate(() => window.scrollTo(0, 0));
+      await expect(pin).toBeInViewport();
+      await expect(card).toBeInViewport();
+    });
     if (!mobile) test('正文滚动只更新讨论中的阅读提示，讨论列表保留滚动位置', async ({ page }) => {
       const frame = await open(page);
       await page.getByRole('button', { name: '批注与讨论', exact: true }).click();

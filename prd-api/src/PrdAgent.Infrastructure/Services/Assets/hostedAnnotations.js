@@ -3,7 +3,7 @@
   'use strict';
   if (window.__mapAnnotationsV1 || window.parent === window) return;
   window.__mapAnnotationsV1 = true;
-  var context = null, host = null, shadow = null, hover = null, frame = 0;
+  var context = null, host = null, shadow = null, flowLayer = null, hover = null, frame = 0;
   var currentHover = null, pending = null, lastLocations = '', activeId = null;
   var records = new Map(), structureDirty = true, geometryDirty = true, hoverDirty = true, threadsKey = '';
   var viewportAnchors = false, wheelAck = 0;
@@ -160,8 +160,15 @@
       + ':host([data-dual-column]) .pin[hidden]{display:none}'
       + '@media(max-width:767px){:host([data-dual-column]) .pin{font-size:12px}:host([data-dual-column]) .pin::after{position:absolute;content:"";inset:-9px -3px}}'
       + '.hover{border:1px dashed #ad6a23;background:#efb24b1a}';
-    shadow.appendChild(style); document.body.appendChild(host);
-    hover = document.createElement('div'); hover.className = 'outline hover'; hover.hidden = true; shadow.appendChild(hover);
+    shadow.appendChild(style);
+    flowLayer = document.createElement('div');
+    flowLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+    shadow.appendChild(flowLayer); document.body.appendChild(host);
+    hover = document.createElement('div'); hover.className = 'outline hover'; hover.hidden = true; flowLayer.appendChild(hover);
+  }
+  function mountMark(mark, viewportPositioned) {
+    var parent = viewportPositioned ? shadow : flowLayer;
+    if (mark.parentNode !== parent) parent.appendChild(mark);
   }
   function place(box, rect, origin) {
     box.style.transform = 'translate(' + (rect.left - origin.left) + 'px,' + (rect.top - origin.top) + 'px)';
@@ -225,7 +232,7 @@
           event.stopPropagation();
           activate(record);
         };
-        shadow.appendChild(pin);
+        flowLayer.appendChild(pin);
         record = { boxes: [], pin: pin }; records.set(thread.id, record);
       }
       record.thread = thread; record.index = index; record.found = resolve(thread.anchor);
@@ -288,7 +295,7 @@
     }
     return boxes;
   }
-  function publishPreview(force) {
+  function publishPreview(force, topInset) {
     var show = context.displayMode === 'bubble' && !context.enabled && !context.pending && (!previewsHidden || revealedPreviews.size);
     if (!show && !context.dualColumn) { hidePreviews(); return; }
     var items = [], markers = [];
@@ -296,21 +303,22 @@
       if (!item.found || !item.found.el.isConnected) return;
       if (context.dualColumn && item.thread.isResolved && item.thread.id !== activeId) return;
       var pin = viewportGeometry(item, 'pin');
-      if (pin && pin.bottom > 0 && pin.top < innerHeight) markers.push(previewRect(pin));
+      if (pin && pin.bottom > (item.viewportPositioned ? 0 : topInset) && pin.top < innerHeight) markers.push(previewRect(pin));
       if (dismissedPreviews.has(item.thread.id) || (previewsHidden && !revealedPreviews.has(item.thread.id))) return;
       var rect = viewportGeometry(item, 'anchor');
       // Let the open card follow its anchor out past the top of the clipped rail.
-      var topLimit = context.dualColumn && item.thread.id === activeId ? -Math.max(innerHeight, 720) : 0;
+      var topLimit = context.dualColumn && item.thread.id === activeId ? -Math.max(innerHeight, 720)
+        : item.viewportPositioned ? 0 : topInset;
       if (rect && rect.width && rect.height && rect.bottom > topLimit && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth)
-        items.push({ id: item.thread.id, rect: previewRect(rect), obstacles: [] });
+        items.push({ id: item.thread.id, rect: previewRect(rect), obstacles: [], viewportPositioned: item.viewportPositioned });
     });
     var surrounding = items.length ? surroundingGeometry() : [];
     var documentScroll = context.dualColumn ? { top: Math.max(0, scrollY), max: Math.max(0, (document.scrollingElement?.scrollHeight || 0) - innerHeight),
       predict: !viewportAnchors && !pendingViewportPositioned, ack: wheelAck } : undefined;
-    var itemsKey = JSON.stringify([items, surrounding, markers, documentScroll]);
+    var itemsKey = JSON.stringify([items, surrounding, markers, documentScroll, topInset]);
     if (force || itemsKey !== previewsLast) {
       previewsLast = itemsKey;
-      post('map-annotation-previews', { items: items, obstacles: surrounding, markers: markers, documentScroll: documentScroll });
+      post('map-annotation-previews', { items: items, obstacles: surrounding, markers: markers, documentScroll: documentScroll, topInset: topInset });
     }
     var record = records.get(previewId || activeId) || (items.length ? records.get(items[0].id) : null);
     if (record) previewId = record.thread.id;
@@ -326,6 +334,26 @@
       if (position === 'fixed' || position === 'sticky') return true;
     }
     return false;
+  }
+  function readTopInset() {
+    if (!context.dualColumn || !document.elementsFromPoint) return 0;
+    var seen = new Set(), inset = 0;
+    // Only the viewport's top edge is sampled. Narrow sidebars and full-height
+    // positioned app shells do not occlude the document's reading area.
+    [.2, .5, .8].forEach(function (column) {
+      document.elementsFromPoint(innerWidth * column, 1).forEach(function (hit) {
+        for (var node = hit; node && node !== document.body && node !== document.documentElement && !seen.has(node); node = node.parentElement) {
+          seen.add(node);
+          if (node === host) continue;
+          var position = getComputedStyle(node).position;
+          if (position !== 'sticky' && position !== 'fixed') continue;
+          var rect = node.getBoundingClientRect();
+          if (rect.left <= innerWidth * .05 && rect.right >= innerWidth * .95 && rect.top <= 1 && rect.bottom > 0 && rect.height <= innerHeight / 2)
+            inset = Math.max(inset, rect.bottom);
+        }
+      });
+    });
+    return inset;
   }
   function readPaper() {
     for (var node of [document.body, document.documentElement]) {
@@ -372,14 +400,15 @@
     var key = JSON.stringify(state);
     if (key !== paragraphsLast) { paragraphsLast = key; post('map-annotation-paragraphs', state); }
   }
-  function publishReadingPosition() {
+  function publishReadingPosition(topInset) {
     if (!context.dualColumn) return;
     var nearest = null, distance = Infinity;
     records.forEach(function (record) {
       if (record.thread.isResolved) return;
       var box = viewportGeometry(record, 'anchor');
-      if (!box || box.bottom <= 0 || box.top >= innerHeight) return;
-      var current = Math.abs((box.top + box.bottom) / 2 - innerHeight * .35);
+      var visibleTop = record.viewportPositioned ? 0 : topInset;
+      if (!box || box.bottom <= visibleTop || box.top >= innerHeight) return;
+      var current = Math.abs((Math.max(box.top, visibleTop) + box.bottom) / 2 - (topInset + (innerHeight - topInset) * .35));
       if (current < distance) { distance = current; nearest = record; }
     });
     var id = nearest ? nearest.thread.id : null;
@@ -435,7 +464,7 @@
     if (structureDirty) { reconcile(); geometryDirty = true; }
     // Read all geometry before writing. On ordinary document scroll the absolute layer
     // moves with the page natively; no DOM lookup, layout read or marker update is needed.
-    var origin = host.getBoundingClientRect(), updates = [], missing = [], pinCounts = new Map(), occupiedPins = [];
+    var origin = host.getBoundingClientRect(), topInset = readTopInset(), updates = [], missing = [], pinCounts = new Map(), occupiedPins = [];
     if (geometryDirty) {
       viewportAnchors = false;
       var textLines = new Map();
@@ -483,18 +512,24 @@
       currentHover = selectable(target) ? target : null;
     }
     var hoverRect = currentHover && context.enabled && currentHover.isConnected ? currentHover.getBoundingClientRect() : null;
+    var hoverViewportPositioned = !!hoverRect && viewportPositioned(currentHover);
+    // The absolute marks keep following the native document scroll. Translate only
+    // the clip edge into the mark layer's coordinates instead of moving the marks.
+    flowLayer.style.clipPath = topInset ? 'inset(' + (topInset - origin.top) + 'px -' + (innerWidth * 2 + Math.abs(origin.left))
+      + 'px -' + (innerHeight * 2 + Math.abs(origin.top)) + 'px)' : '';
     updates.forEach(function (update) {
       var record = update.record;
       record.located = !!update.pin;
       record.geometry = update.pin ? { anchor: update.anchor, pin: update.pin, rects: update.rects.map(previewRect), x: scrollX, y: scrollY } : null;
-      if (update.pin) place(record.pin, update.pin, origin);
+      if (update.pin) { mountMark(record.pin, record.viewportPositioned); place(record.pin, update.pin, origin); }
       while (record.boxes.length > update.rects.length) record.boxes.pop().remove();
       update.rects.forEach(function (rect, index) {
         var box = record.boxes[index];
         if (!box) {
           box = document.createElement('div'); box.setAttribute('data-mark', ''); setPen(box, record.thread.penHue);
-          record.boxes.push(box); shadow.appendChild(box);
+          record.boxes.push(box);
         }
+        mountMark(box, record.viewportPositioned);
         box.className = record.found.range ? 'highlight' : 'outline';
         if (record.found.range && update.rects.length > 1) box.classList.add(index === 0 ? 'first' : index === update.rects.length - 1 ? 'last' : 'middle');
         place(box, rect, origin);
@@ -526,17 +561,18 @@
       while (pendingBoxes.length > pendingRects.length) pendingBoxes.pop().remove();
       pendingRects.forEach(function (rect, index) {
         var box = pendingBoxes[index];
-        if (!box) { box = document.createElement('div'); pendingBoxes.push(box); shadow.appendChild(box); }
+        if (!box) { box = document.createElement('div'); pendingBoxes.push(box); }
+        mountMark(box, pendingViewportPositioned);
         box.className = context.dualColumn ? 'pending-mark' : 'outline';
         place(box, rect, origin);
       });
       var serialized = JSON.stringify(missing.sort());
       if (serialized !== lastLocations) { lastLocations = serialized; post('map-annotation-locations', { missingIds: missing }); }
     }
-    hover.hidden = !hoverRect; if (hoverRect) place(hover, hoverRect, origin);
+    hover.hidden = !hoverRect; if (hoverRect) { mountMark(hover, hoverViewportPositioned); place(hover, hoverRect, origin); }
     if (context.dualColumn) publishHeaderTints();
-    publishReadingPosition();
-    publishPreview(geometryDirty);
+    publishReadingPosition(topInset);
+    publishPreview(geometryDirty, topInset);
     geometryDirty = false; hoverDirty = false; markerStateDirty = false;
   }
   function schedule(geometry) {

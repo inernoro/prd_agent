@@ -27,7 +27,7 @@ export function isAnnotationAnchor(value: unknown): value is HostedSiteCommentAn
 
 export type AnnotationDisplayMode = 'hidden' | 'standard' | 'bubble';
 export type AnnotationRect = { left: number; top: number; width: number; height: number };
-export type AnnotationPreview = { id: string; rect: AnnotationRect; obstacles: AnnotationRect[]; markers?: AnnotationRect[] };
+export type AnnotationPreview = { id: string; rect: AnnotationRect; obstacles: AnnotationRect[]; markers?: AnnotationRect[]; viewportPositioned?: boolean };
 export type HostedAnnotationOptions = { dualColumn?: boolean; pinOpensDiscussion?: boolean };
 export type HostedAnnotationLocation = { group: string; paragraph: number };
 export type HostedDiscussionActions = {
@@ -73,6 +73,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const [discussionActions, setDiscussionActions] = useState<HostedDiscussionActions | null>(null);
   const [selectionCandidate, setSelectionCandidate] = useState<{ anchor: HostedSiteCommentAnchor; rect: AnnotationRect } | null>(null);
   const [documentScrollTop, setDocumentScrollTop] = useState<number | null>(null);
+  const [documentTopInset, setDocumentTopInset] = useState(0);
   const documentScroll = useRef<{ top: number; max: number; predict: boolean } | null>(null);
   const lastDocumentScrollTop = useRef<number | null>(null);
   const wheelSequence = useRef(0);
@@ -121,7 +122,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null); setPreview(null); setPreviews(null);
     setMissingIds([]); setConnectionChecked(false);
     setAnchorLocations({}); setReadingId(null); setColumn(null); setHeaderTints(null); setSelectionCandidate(null);
-    documentScroll.current = null; lastDocumentScrollTop.current = null; wheelSequence.current = 0; setDocumentScrollTop(null);
+    documentScroll.current = null; lastDocumentScrollTop.current = null; wheelSequence.current = 0; setDocumentScrollTop(null); setDocumentTopInset(0);
     previewsHiddenRef.current = false; revealedPreviews.current.clear(); legacyPreview.current = null; setAllPreviewsHidden(false); dismissedPreviews.current = new Set(); setDismissedPreviewIds(dismissedPreviews.current);
   }, [siteId, siteUrl, contentVersionKey]);
   useEffect(() => { setThreads([]); }, [siteId]);
@@ -157,9 +158,13 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
         const items: AnnotationPreview[] = data.items.slice(0, 500).filter((item: AnnotationPreview) => item && typeof item.id === 'string' && isRect(item.rect) && !dismissedPreviews.current.has(item.id) && (!previewsHiddenRef.current || revealedPreviews.current.has(item.id)));
         const obstacles = Array.isArray(data.obstacles) ? data.obstacles.slice(0, 100).filter(isRect) : [];
         const markers = Array.isArray(data.markers) ? data.markers.slice(0, 100).filter(isRect) : [];
-        const previews = [...new Map(items.map(item => [item.id, { id: item.id, rect: item.rect, obstacles, markers }])).values()];
+        const previews = [...new Map(items.map(item => [item.id, { id: item.id, rect: item.rect, obstacles, markers,
+          viewportPositioned: item.viewportPositioned === true }])).values()];
+        const topInset = dualColumn && Number.isFinite(data.topInset)
+          ? Math.max(0, Math.min(data.topInset, (frameRef.current?.clientHeight ?? 0) / 2)) : 0;
         const render = () => {
           if (nextScroll) setDocumentScrollTop(nextScroll.top);
+          setDocumentTopInset(topInset);
           setPreviews(previews);
         };
         // The iframe has already moved in this frame. Commit the matching rail
@@ -213,7 +218,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   useEffect(() => { initRef.current(); }, [enabled, displayMode, threads, activeId, draftAnchor, contentVersionKey, dualColumn, suggestSelection, penHues]);
   const notifyFrame = useCallback(() => {
     connected.current = false; documentScroll.current = null; lastDocumentScrollTop.current = null; wheelSequence.current = 0;
-    setDocumentScrollTop(null); setReady(false); initRef.current();
+    setDocumentScrollTop(null); setDocumentTopInset(0); setReady(false); initRef.current();
   }, []);
   const getDocumentScroll = useCallback(() => documentScroll.current, []);
   const scrollDocument = useCallback((delta: number) => {
@@ -281,10 +286,10 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   }, [frameRef, siteId, nonce]);
   return { enabled, ready, connectionChecked, displayMode, setDisplayMode, preview, previews, allPreviewsHidden, hasHiddenPreviews: allPreviewsHidden || dismissedPreviewIds.size > 0, hideAllPreviews, showAllPreviews, dismissPreview, openThread, draftAnchor, activeId, missingIds, threads,
     select, clearDraft, focus, notifyFrame, setThreads, setEnabled, setActiveId, dualColumn, anchorLocations, readingId, column, headerTints, penHues,
-    bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection, documentScrollTop, getDocumentScroll, scrollDocument, subscribeDocumentScroll };
+    bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection, documentScrollTop, documentTopInset, getDocumentScroll, scrollDocument, subscribeDocumentScroll };
 }
 
 type Annotations = ReturnType<typeof useHostedAnnotations>;
 type ReaderExtras = 'dualColumn' | 'anchorLocations' | 'readingId' | 'column' | 'headerTints' | 'penHues' | 'bindDiscussionActions' | 'discussionActions'
-  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'getDocumentScroll' | 'scrollDocument' | 'subscribeDocumentScroll';
+  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'documentTopInset' | 'getDocumentScroll' | 'scrollDocument' | 'subscribeDocumentScroll';
 export type HostedAnnotations = Omit<Annotations, ReaderExtras> & Partial<Pick<Annotations, ReaderExtras>>;

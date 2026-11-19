@@ -92,6 +92,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   }).sort((a, b) => a.item.rect.top - b.item.rect.top || a.number - b.number);
   const wide = geometry.width >= 820;
   const dualColumn = wide && annotations.dualColumn === true;
+  const topInset = annotations.dualColumn ? annotations.documentTopInset ?? 0 : 0;
   const farRight = geometry.width - marginWidth + 21;
   const marginLeft = dualColumn && annotations.column ? Math.max(8, Math.min(farRight, annotations.column.right + 40)) : farRight;
   // Reserve space based on the version's annotation count, not the number seen on any one scroll frame.
@@ -123,10 +124,12 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     id: item.id, top: item.rect.top, height: geometry.cards[item.id].height,
   })), geometry.height, annotations.activeId);
   const railLayout = dualColumn ? layoutCards({
-    anchors: attached.map(({ item: { id, rect }, number }) => ({ id, n: number, top: rect.top, left: rect.left })),
+    anchors: attached.map(({ item: { id, rect, viewportPositioned }, number }) => ({
+      id, n: number, top: viewportPositioned ? Math.max(topInset, rect.top) : rect.top, left: rect.left,
+    })),
     heights: Object.fromEntries(attached.map(({ item: { id } }) => [id, geometry.cards[id].height])),
     selectedId: annotations.activeId,
-    viewport: { top: 0, bottom: geometry.height },
+    viewport: { top: topInset, bottom: geometry.height },
     railLeft: marginLeft,
   }) : null;
   const alignedCards = new Map(railLayout?.cards.map(card => [card.id, card]));
@@ -199,7 +202,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     && annotations.discussionActions?.canReply ? annotations.selectionCandidate : null;
   const selectionAction = candidate ? <div className="annotation-selection-action" style={{
     '--annotation-selection-left': `${Math.max(8, candidate.rect.left + candidate.rect.width - 48)}px`,
-    '--annotation-selection-top': `${Math.max(4, candidate.rect.top - 40)}px`,
+    '--annotation-selection-top': `${Math.max(topInset + 4, candidate.rect.top - 40)}px`,
   } as CSSProperties}>
     <span className="annotation-selection-quote">已选「{candidate.anchor.text}」</span>
     <button type="button" className="annotation-selection-cancel" onClick={annotations.dismissSelection}>取消</button>
@@ -235,7 +238,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     let placement: Placement | undefined;
     if (size && position) {
       placement = { side: 'moved', left: clamp(item.rect.left + position.left, geometry.width - size.width),
-        top: offset + clamp(item.rect.top + position.top, geometry.height - size.height) };
+        top: offset + clampRail(item.rect.top + position.top, topInset + 8, geometry.height - size.height - 8) };
     } else if (size && docked) {
       placement = { side: 'dock', left: Math.round((geometry.width - size.width) / 2),
         top: geometry.height - geometry.dockHeight + 6 };
@@ -290,6 +293,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     <div ref={canvas} className="annotation-bubble-canvas" aria-label="页面批注气泡" data-review-margin={dualColumn ? '' : undefined}
       style={dualColumn && annotations.column?.paper ? { '--review-margin-paper': annotations.column.paper } as CSSProperties : undefined}>
       <div className="annotation-bubble-scroll" ref={scroller} onScroll={event => { if (!dualColumn) setScrollTop(event.currentTarget.scrollTop); }}
+        style={topInset ? { clipPath: `inset(${topInset}px 0 0)` } : undefined}
         tabIndex={canScrollRail ? 0 : undefined} aria-label={canScrollRail ? '滚动查看更多页边批注' : undefined}
         onKeyDown={event => {
           if (!dualColumn || event.target !== event.currentTarget) return;
@@ -302,7 +306,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
         onFocus={event => {
           if (!dualColumn || event.target === event.currentTarget || !event.target.matches(':focus-visible')) return;
           const target = event.target.getBoundingClientRect(), view = event.currentTarget.getBoundingClientRect();
-          const over = Math.min(0, target.top - view.top - 4) || Math.max(0, target.bottom - view.bottom + 4);
+          const over = Math.min(0, target.top - view.top - topInset - 4) || Math.max(0, target.bottom - view.bottom + 4);
           if (over) setRailOffset(clampRail(shift + over, -above, below));
         }}>
         <div className="annotation-bubble-space" style={{ minHeight: rail.contentHeight }}>
@@ -314,7 +318,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
                 const { rect } = item;
                 const x = dualColumn && annotations.column ? Math.min(annotations.column.right + 10, marginLeft - 2)
                   : Math.min(rect.left + rect.width + 8, geometry.width - marginWidth + 5);
-                const start = Math.max(0, rect.top) + offset;
+                const start = Math.max(topInset, rect.top) + offset;
                 const end = Math.min(geometry.height, rect.top + rect.height) + offset;
                 const detached = placement.side === 'moved';
                 const from = (start + end) / 2;
@@ -343,7 +347,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
                 const next = { ...previous };
                 if (point && size) next[item.id] = {
                   left: clamp(point.left, geometry.width - size.width) - item.rect.left,
-                  top: clamp(point.top - offset, geometry.height - size.height) - item.rect.top,
+                  top: clampRail(point.top - offset, topInset + 8, geometry.height - size.height - 8) - item.rect.top,
                 };
                 else delete next[item.id];
                 return next;
