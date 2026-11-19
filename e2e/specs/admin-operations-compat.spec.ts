@@ -723,6 +723,65 @@ test("390 隔离发布成功闭环", async ({ page }) => {
   ]);
 });
 
+test('网关对话在临界宽度保持首项可点并可折叠侧栏', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 800 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await installOperationsFixtures(page, { quickstart: true });
+  await page.goto('http://127.0.0.1:8200/llmgw/login');
+  await page.locator('#llmgw-username').fill('demo');
+  await page.locator('#llmgw-password').fill('demo');
+  await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
+  await expect(page).toHaveURL(/\/quickstart$/);
+  const header = page.locator('.lg-console-header');
+  const sidebar = page.getByRole('complementary', { name: '主导航', exact: true });
+  const dialogue = sidebar.getByRole('link', { name: '对话', exact: true });
+  await expect(header).toHaveCSS('left', '224px');
+  await dialogue.click({ trial: true });
+  await sidebar.getByRole('button', { name: '收起菜单', exact: true }).click();
+  await expect(header).toHaveCSS('left', '64px');
+  await expect(sidebar).toHaveCSS('width', '64px');
+  await dialogue.click({ trial: true });
+  await page.setViewportSize({ width: 860, height: 800 });
+  await expect(header).toHaveCSS('left', '0px');
+  await page.getByRole('button', { name: '打开导航', exact: true }).click();
+  await dialogue.click();
+  await expect(page.getByRole('button', { name: '打开导航', exact: true })).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('慢加载日景超过首屏保护时限后仍按电影收尾', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  await installOperationsFixtures(page, { quickstart: true });
+  let releaseMedia!: () => void;
+  const mediaGate = new Promise<void>(resolve => { releaseMedia = resolve; });
+  await page.route(gatewayPortraitAssets.light.motion.url, async route => {
+    await mediaGate;
+    await route.continue();
+  });
+  try {
+    await page.goto('http://127.0.0.1:8200/llmgw/login', { waitUntil: 'domcontentloaded' });
+    await page.locator('#llmgw-username').fill('demo');
+    await page.locator('#llmgw-password').fill('demo');
+    await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
+    await expect(page).toHaveURL(/\/quickstart$/);
+    const arrivingAt = Date.now();
+    const movie = page.locator('video.portrait-motion');
+    await expect(movie).toHaveJSProperty('currentTime', 0);
+    await page.waitForTimeout(3450);
+    releaseMedia();
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>('video.portrait-motion');
+      return video && video.currentTime >= 7.15 && !video.ended;
+    });
+    expect(Date.now() - arrivingAt).toBeGreaterThan(10000);
+    const root = page.locator('html');
+    await expect(root).toHaveAttribute('data-entry-arriving', '');
+    await expect(movie).toHaveJSProperty('ended', true);
+    await expect(root).not.toHaveAttribute('data-entry-arriving', '');
+  } finally {
+    releaseMedia();
+  }
+});
+
 for (const width of [390, 1440])
   for (const theme of ["light", "dark"] as const) {
     test(`${width} ${theme} 电影式接入全流程与账户组织布局`, async ({ page }, testInfo) => {

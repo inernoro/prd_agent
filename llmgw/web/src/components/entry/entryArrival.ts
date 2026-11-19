@@ -15,11 +15,15 @@ export function finishEntryArrival() {
   document.documentElement.removeAttribute('data-entry-chrome-visible');
 }
 export function beginEntryArrival() {
-  clearTimeout(deadline);
   document.documentElement.style.setProperty('--entry-chrome', '0');
   document.documentElement.removeAttribute('data-entry-chrome-visible');
   publish(true);
-  // A failed canvas or an unrelated return URL must never keep navigation hidden.
+  refreshEntryArrivalWatchdog();
+}
+export function refreshEntryArrivalWatchdog() {
+  if (!active) return;
+  clearTimeout(deadline);
+  // If the scene disappears or stops reporting progress, release the shell.
   deadline = setTimeout(finishEntryArrival, 10000);
 }
 export function setEntryChrome(value: number) {

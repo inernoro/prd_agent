@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { FACE_CLIP, PORTRAIT_LINES, PORTRAIT_MESH, PORTRAIT_DETAILS, portraitStrokeProgress, CLOSED_LASHES, HEAD_CLIP, PORTRAIT_HEAD_MESH, PORTRAIT_NODES, PORTRAIT_BRACES } from './portraitGeometry';
 import { PORTRAIT_DURATION, samplePortrait } from './portraitTimeline';
 import { createPortraitRenderer, loadPortraitImages } from './portraitRenderer';
-import { finishEntryArrival, setEntryChrome } from './entryArrival';
+import { finishEntryArrival, refreshEntryArrivalWatchdog, setEntryChrome } from './entryArrival';
 
 type Props = { fog: boolean; arriving: boolean; frameTime?: number; theme: ResolvedTheme };
 
@@ -87,6 +87,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
         raf = requestAnimationFrame(tick);
       };
       movie.addEventListener('playing', playingVideo);
+      if (openingPoster) movie.addEventListener('timeupdate', refreshEntryArrivalWatchdog);
       movie.addEventListener('ended', complete);
       movie.addEventListener('error', failed);
       const timeout = window.setTimeout(() => { if (!started) failed(); }, 5000);
@@ -95,6 +96,7 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
       return () => {
         cancelled = true; cancelAnimationFrame(raf); window.clearTimeout(timeout); movie.pause();
         movie.removeEventListener('playing', playingVideo); movie.removeEventListener('ended', complete); movie.removeEventListener('error', failed);
+        movie.removeEventListener('timeupdate', refreshEntryArrivalWatchdog);
       };
     }
     const paint = (time: number) => { renderer?.draw(time); paintState(time); };
