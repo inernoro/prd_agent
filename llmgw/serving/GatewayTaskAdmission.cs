@@ -26,6 +26,8 @@ public static class GatewayTaskRoutePolicy
     {
         path = Normalize(path).ToLowerInvariant();
         var route = Normalize(routePattern ?? path).ToLowerInvariant();
+        if (route == GatewayConsumptionRetries.Path && path == route)
+            return HttpMethods.IsGet(method) || HttpMethods.IsPost(method);
         if (HttpMethods.IsGet(method))
             return route is "/gw/v1/readyz" or "/gw/v1/route-self-test" or "/gw/v1/pools" or "/gw/v1/image-models" or "/v1/models"
                    || route == "/v1/models/{**modelid}" && path.StartsWith("/v1/models/", StringComparison.Ordinal)
