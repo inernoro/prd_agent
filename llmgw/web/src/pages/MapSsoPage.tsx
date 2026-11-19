@@ -1,4 +1,10 @@
-import { Activity, ArrowLeft, LoaderCircle } from 'lucide-react';
+import { gatewayLoginDestination, markQuickstartArrival } from '@/components/entry/quickstartArrival';
+import { ArrowLeft } from 'lucide-react';
+import { ConsciousnessScene, ConsciousnessHud, IdentityScanner } from '@/components/entry/ConsciousnessScene';
+import { preloadPortraitMotion } from '@/components/entry/portraitRenderer';
+import { PORTRAIT_ASSETS } from '@/components/entry/portraitMotionAsset';
+import { readThemePreference, resolveTheme } from '@/lib/theme';
+import './GatewayEntry.css';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
@@ -41,10 +47,15 @@ export function MapSsoPage() {
       return () => { active = false; };
     }
 
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      preloadPortraitMotion(PORTRAIT_ASSETS[resolveTheme(readThemePreference())]);
+    }
     void loginWithMapCode(code).then((result) => {
       if (!active) return;
       if (result.success) {
-        navigate(returnTo, { replace: true });
+        const destination = gatewayLoginDestination(returnTo, result.data?.tenant);
+        if (!result.data?.mustChangePassword && destination.split(/[?#]/)[0] === '/quickstart') markQuickstartArrival();
+        navigate(destination, { replace: true });
         return;
       }
       setError('安全登录未完成。一次性链接可能已使用或已过期，请从 MAP 重新打开。');
@@ -53,22 +64,14 @@ export function MapSsoPage() {
   }, [code, loginWithMapCode, navigate, returnTo]);
 
   return (
-    <main className="lg-map-sso-page">
-      <section className="lg-map-sso-card" aria-labelledby="map-sso-title">
-        <span className="lg-map-sso-mark" aria-hidden="true"><Activity size={22} /></span>
-        {!error ? <LoaderCircle className="lg-map-sso-spinner" size={28} aria-hidden="true" /> : null}
-        <div>
-          <p>MAP 与 LLM Gateway</p>
-          <h1 id="map-sso-title">{error ? '需要重新发起安全登录' : '正在从 MAP 安全登录'}</h1>
-          <span role={error ? 'alert' : 'status'} aria-live="polite">
-            {error ?? '正在核验一次性授权并建立网关会话，请稍候。'}
-          </span>
-        </div>
-        {error ? (
-          <a className="lg-map-sso-return" href={resolveMapHomeHref()}>
-            <ArrowLeft size={16} />返回 MAP 重新打开
-          </a>
-        ) : null}
+    <main className="gateway-entry cinema-login" data-phase="verifying">
+      <ConsciousnessScene fog />
+      <ConsciousnessHud login />
+      <IdentityScanner phase={error ? 'idle' : 'verifying'} />
+      <section className="gateway-sso-copy" aria-labelledby="map-sso-title">
+        <h1 id="map-sso-title">{error ? '需要重新发起安全登录' : '正在从 MAP 安全登录'}</h1>
+        <p role={error ? 'alert' : 'status'} aria-live="polite">{error ?? '正在核验身份，工作空间即将展开。'}</p>
+        {error && <a href={resolveMapHomeHref()}><ArrowLeft size={16} />返回 MAP 重新打开</a>}
       </section>
     </main>
   );

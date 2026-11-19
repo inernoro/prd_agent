@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useEntryArrival } from './entryArrival';
 
 // requestIdleCallback 不在标准 Window 类型里（实验性 API），通过全局辅助类型访问
 type IdleWindow = Window & {
@@ -106,6 +107,7 @@ const MIN_DURATION_MS = 1500; // 最小显示时长，防止"一闪而过"
 const IDLE_TIMEOUT_MS = 5000; // requestIdleCallback 超时兜底
 
 export function NavigationProgressBar() {
+  const entryActive = useEntryArrival();
   const [visible, setVisible] = useState(false);
   const [progress, setProgress] = useState(0);
   // animating=false 时 width 无 transition（用于导航开始时瞬时 snap 到 0%）
@@ -241,7 +243,7 @@ export function NavigationProgressBar() {
       style={{
         height: 3,
         zIndex: 9999,
-        opacity: visible ? 1 : 0,
+        opacity: visible && !entryActive ? 1 : 0,
         // 永远只动 opacity，不动 width（width 由 animating 控制）
         transition: visible ? 'opacity 120ms ease-out' : 'opacity 350ms ease-out',
       }}

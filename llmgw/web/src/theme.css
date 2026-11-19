@@ -905,7 +905,7 @@ a:focus-visible {
 .lg-tenant-switcher,
 .lg-header-actions,
 .lg-header-link,
-.lg-user-menu summary,
+.lg-user-menu > summary,
 .lg-card-kicker,
 .lg-text-link,
 .lg-secondary-link,
@@ -1119,7 +1119,7 @@ a:focus-visible {
 }
 
 .lg-header-link,
-.lg-user-menu summary {
+.lg-user-menu > summary {
   height: 34px;
   gap: 7px;
   padding: 0 9px;
@@ -1131,7 +1131,7 @@ a:focus-visible {
 }
 
 .lg-header-link:hover,
-.lg-user-menu summary:hover {
+.lg-user-menu > summary:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
@@ -1140,15 +1140,15 @@ a:focus-visible {
   position: relative;
 }
 
-.lg-user-menu summary {
+.lg-user-menu > summary {
   list-style: none;
 }
 
-.lg-user-menu summary::-webkit-details-marker {
+.lg-user-menu > summary::-webkit-details-marker {
   display: none;
 }
 
-.lg-user-menu summary > span {
+.lg-user-menu > summary > span {
   width: 24px;
   height: 24px;
   display: inline-flex;
@@ -8042,13 +8042,13 @@ a:focus-visible {
   }
 
   .lg-header-link span,
-  .lg-user-menu summary strong,
-  .lg-user-menu summary > svg {
+  .lg-user-menu > summary strong,
+  .lg-user-menu > summary > svg {
     display: none;
   }
 
   .lg-header-link,
-  .lg-user-menu summary {
+  .lg-user-menu > summary {
     min-width: 44px;
     min-height: 44px;
     justify-content: center;
