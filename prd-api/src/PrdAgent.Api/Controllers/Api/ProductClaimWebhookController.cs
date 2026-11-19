@@ -113,7 +113,7 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
     [HttpPost("notifications/{kind}/{id}/debug")]
     public async Task<IActionResult> DebugNotify(string kind, string id)
     {
-        if (DeploymentAuthority.IsCdsBranchPreview(configuration) || !DeploymentAuthority.CanRunSharedScheduledWork(configuration))
+        if (ProductClaimNotificationQueue.GetDeploymentBlockReason(configuration) is not null)
             return BadRequest(ApiResponse<object>.Fail("PREVIEW_READ_ONLY", "请在正式环境手工推送调试通知"));
         var actor = this.GetRequiredUserId();
         var admin = await IsMapAdminAsync();

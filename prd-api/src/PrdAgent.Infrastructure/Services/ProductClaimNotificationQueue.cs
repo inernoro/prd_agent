@@ -19,13 +19,18 @@ public enum SharedScheduledWorkBlockReason
 
 public static class ProductClaimNotificationQueue
 {
+    // 专用授权仅控制产品管理通知，预览及共享状态退出仍由部署隔离判据否决。
+    public const string NotificationsEnabledKey = "ProductAgent:ClaimNotificationsEnabled";
+
     public static SharedScheduledWorkBlockReason? GetDeploymentBlockReason(IConfiguration configuration)
     {
         if (DeploymentAuthority.HasOptedOutOfSharedState(configuration)) return SharedScheduledWorkBlockReason.SharedStateOptedOut;
         if (DeploymentAuthority.IsCdsBranchPreview(configuration)) return SharedScheduledWorkBlockReason.BranchPreview;
         if (string.IsNullOrWhiteSpace(configuration[DeploymentAuthority.DeploymentIdentityKey])) return SharedScheduledWorkBlockReason.DeploymentIdentityMissing;
 
-        var authorization = configuration[DeploymentAuthority.SharedScheduledWorkEnabledKey];
+        var authorization = configuration[NotificationsEnabledKey];
+        if (string.IsNullOrWhiteSpace(authorization))
+            authorization = configuration[DeploymentAuthority.SharedScheduledWorkEnabledKey];
         if (string.IsNullOrWhiteSpace(authorization)) return SharedScheduledWorkBlockReason.AuthorizationMissing;
         if (!bool.TryParse(authorization, out var enabled)) return SharedScheduledWorkBlockReason.AuthorizationInvalid;
         return enabled ? null : SharedScheduledWorkBlockReason.AuthorizationDisabled;
@@ -36,9 +41,9 @@ public static class ProductClaimNotificationQueue
         SharedScheduledWorkBlockReason.SharedStateOptedOut => "当前实例已退出共享任务",
         SharedScheduledWorkBlockReason.BranchPreview => "当前实例被识别为分支预览",
         SharedScheduledWorkBlockReason.DeploymentIdentityMissing => "当前实例缺少部署身份",
-        SharedScheduledWorkBlockReason.AuthorizationMissing => "当前实例未配置共享后台任务授权",
-        SharedScheduledWorkBlockReason.AuthorizationDisabled => "当前实例已停用共享后台任务",
-        SharedScheduledWorkBlockReason.AuthorizationInvalid => "当前实例的共享后台任务授权值无效",
+        SharedScheduledWorkBlockReason.AuthorizationMissing => "当前实例未配置版本申领通知任务授权",
+        SharedScheduledWorkBlockReason.AuthorizationDisabled => "当前实例已停用版本申领通知后台任务",
+        SharedScheduledWorkBlockReason.AuthorizationInvalid => "当前实例的版本申领通知任务授权值无效",
         _ => "当前实例的后台通知任务未获授权",
     };
 

@@ -202,7 +202,7 @@ public class ProductClaimWebhookTests
         var saved = await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync();
         Assert.Equal(issued!.TCode, saved.TCode);
         Assert.Equal("blocked", saved.ClaimNotification!.Status);
-        Assert.Equal("当前实例未配置共享后台任务授权", saved.ClaimNotification.Error);
+        Assert.Equal("当前实例未配置版本申领通知任务授权", saved.ClaimNotification.Error);
         Assert.IsType<ConflictObjectResult>(await f.Controller().Retry("T", "t"));
         await f.ProcessTAsync();
         Assert.Empty(f.Http.Bodies);
@@ -383,6 +383,36 @@ public class ProductClaimWebhookTests
         Assert.Single(results.Where(x => x));
         Assert.Equal(1, await f.Db.ProductAgentSettings.CountDocumentsAsync(_ => true));
         Assert.Empty(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task PreviouslyBlockedNoticeIsNotReplayedWhenNewClaimsCanSend()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Db.ProductInitiations.InsertOneAsync(new ProductInitiation
+        {
+            Id = "already-notified-manually",
+            TCode = "T3.51.2",
+            ClaimNotification = new ProductClaimNotification
+            {
+                Status = "blocked",
+                Error = "当前实例已停用共享后台任务",
+            },
+        });
+        await f.AddPendingAsync();
+
+        await f.ProcessTAsync();
+        await f.ProcessTAsync();
+
+        var old = await f.Db.ProductInitiations.Find(x => x.Id == "already-notified-manually").SingleAsync();
+        Assert.Equal("blocked", old.ClaimNotification!.Status);
+        Assert.Equal("当前实例已停用共享后台任务", old.ClaimNotification.Error);
+        Assert.Equal(0, old.ClaimNotification.Attempts);
+        var current = await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync();
+        Assert.Equal("sent", current.ClaimNotification!.Status);
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        Assert.DoesNotContain("T3.51.2", payload.RootElement.GetProperty("text").GetProperty("content").GetString()!);
     }
 
     private sealed class Fixture : IAsyncDisposable
