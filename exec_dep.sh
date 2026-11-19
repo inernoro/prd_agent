@@ -459,9 +459,7 @@ persist_release_image_pins() {
     return
   fi
 
-  tmp_file="${dotenv_file}.tmp.$$"
   DOTENV_FILE="$dotenv_file" \
-  TMP_FILE="$tmp_file" \
   PRD_AGENT_API_IMAGE_VALUE="$PRD_AGENT_API_IMAGE" \
   PRD_AGENT_LLMGW_IMAGE_VALUE="$PRD_AGENT_LLMGW_IMAGE" \
   PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE="$PRD_AGENT_LLMGW_SERVE_IMAGE" \
@@ -470,10 +468,10 @@ persist_release_image_pins() {
   python3 - <<'PY'
 import os
 import re
+import tempfile
 from pathlib import Path
 
 env_path = Path(os.environ["DOTENV_FILE"])
-tmp_path = Path(os.environ["TMP_FILE"])
 updates = {
     "PRD_AGENT_API_IMAGE": os.environ["PRD_AGENT_API_IMAGE_VALUE"],
     "PRD_AGENT_LLMGW_IMAGE": os.environ["PRD_AGENT_LLMGW_IMAGE_VALUE"],
@@ -502,9 +500,18 @@ for key, value in updates.items():
     if not seen[key]:
         out.append(f"{key}={value}")
 
-tmp_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+tmp_path = None
+try:
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=env_path.parent, prefix=f".{env_path.name}.pins-", delete=False
+    ) as output:
+        tmp_path = Path(output.name)
+        output.write("\n".join(out) + "\n")
+    os.replace(tmp_path, env_path)
+finally:
+    if tmp_path is not None:
+        tmp_path.unlink(missing_ok=True)
 PY
-  mv "$tmp_file" "$dotenv_file"
   echo "Release image pins: persisted to $dotenv_file"
 }
 
@@ -678,7 +685,7 @@ scripts/llmgw-prod-topology-preflight.sh
 ensure_design_runtime_api_key() {
   key_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
   if [ -n "${DESIGN_RUNTIME_API_KEY:-}" ] || [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
-    # persist_release_image_pins 每次发布都按进程 umask 重写 .env；密钥在里面就每次都收回只读属主。
+    # 继续收紧历史环境文件权限。后续镜像锁定写入也始终使用私有临时文件。
     if [ -f "$key_dotenv_file" ] && [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
       chmod 600 "$key_dotenv_file"
     fi
@@ -700,7 +707,7 @@ ensure_design_runtime_api_key() {
   fi
   printf '\nDESIGN_RUNTIME_API_KEY=%s\n' "$generated_key" >> "$key_dotenv_file"
   generated_key=""
-  # .env 可能刚由 persist_release_image_pins 按进程 umask（常见 0644）建出；装了密钥就只许属主读写。
+  # 带密钥的环境文件只允许属主读写。
   chmod 600 "$key_dotenv_file"
   echo "Design runtime key: generated and saved to $key_dotenv_file (value not printed)"
 }

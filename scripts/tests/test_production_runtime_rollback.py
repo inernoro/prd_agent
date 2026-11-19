@@ -1,6 +1,8 @@
 import json
+import os
 from pathlib import Path
 import runpy
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -34,6 +36,25 @@ def container(name, image, config_file, running=True):
 
 
 class RuntimeRollbackTests(unittest.TestCase):
+    def test_persist_release_image_pins_remains_private_with_umask_022(self):
+        script = (Path(__file__).resolve().parents[2] / "exec_dep.sh").read_text()
+        start = script.index("persist_release_image_pins() {")
+        end = script.index("read_dotenv_value() {", start)
+        command = script[start:end] + "umask 022\npersist_release_image_pins\n"
+        with tempfile.TemporaryDirectory() as root:
+            dotenv = Path(root) / ".env"
+            dotenv.write_text("DESIGN_RUNTIME_API_KEY=fixture-only\n")
+            dotenv.chmod(0o600)
+            env = dict(os.environ, PRD_AGENT_DOTENV_FILE=str(dotenv))
+            for component in ("API", "LLMGW", "LLMGW_SERVE", "LLMGW_WEB", "DESIGN_OPENDESIGN"):
+                env[f"PRD_AGENT_{component}_IMAGE"] = "registry/fixture:new"
+            result = subprocess.run(["sh", "-euc", command], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(dotenv.stat().st_mode & 0o777, 0o600)
+            self.assertIn("DESIGN_RUNTIME_API_KEY=fixture-only", dotenv.read_text())
+            self.assertIn("PRD_AGENT_API_IMAGE=registry/fixture:new", dotenv.read_text())
+            self.assertNotIn("fixture-only", result.stdout + result.stderr)
+
     def test_restores_changed_images_and_gateway_after_partial_update(self):
         api = container("api", "sha256:old-api", "/old/compose.yml")
         mongo = container("mongodb", "sha256:mongo", "/old/compose.yml")
