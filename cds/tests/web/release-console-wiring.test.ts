@@ -114,14 +114,13 @@ describe('发布控制台 · 数据接线', () => {
    * 而不是字面量。
    */
   it('发布来源地址取自后端下发的 previewUrl（SSOT），不是空串也不是前端拼的', () => {
-    expect(PAGE).toContain("import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress'");
+    expect(PAGE).toMatch(/import \{[^}]*\bresolveReleaseSourceUrls\b[^}]*\} from '@\/lib\/releaseDialogAddress'/);
     expect(PAGE).toContain('resolveReleaseSourceUrls({ branch })');
-    const start = bodyAfter(PAGE, 'const startRelease = async ()');
-    expect(start).toContain('sourceUrl = previewUrl');
-    expect(start).toContain('previewUrl: sourceUrl, expectedCommitSha: sha');
+    const start = bodyAfter(PAGE, 'const startRelease = async (force: boolean)');
+    expect(start).toContain('targetId: target, previewUrl, expectedCommitSha: commitSha');
     expect(start).not.toContain("previewUrl: ''");
-    const preflight = bodyAfter(PAGE, 'const startRelease = async ()');
-    expect(preflight).toContain('previewUrl: sourceUrl');
+    const preflight = bodyAfter(PAGE, 'const runPreflight = async ()');
+    expect(preflight).toContain('body: { targetId: target, previewUrl }');
     expect(preflight).not.toContain("previewUrl: ''");
     // 前端自己 slugify 预览域名是 CLAUDE.md §11 明令禁止的
     expect(PAGE).not.toContain('.miduo.org');
@@ -179,8 +178,10 @@ describe('发布控制台 · 并发口径不许对后端撒谎', () => {
    */
   it('受保护环境要点两下才真发', () => {
     expect(PAGE).toContain("row?.target.isCanonical && row.target.environment === 'production'");
-    expect(PAGE).toContain('if (isProtected && !awaitingConfirm) { setConfirmTargetId(row.target.id); return; }');
-    expect(PAGE).toContain('确认发布到 ');
+    const request = bodyAfter(PAGE, 'const requestRelease = (force: boolean)');
+    expect(request).toContain('(isProtected || force) && pendingConfirmation?.force !== force');
+    expect(request.indexOf('setConfirmation({ key: preflightKey, force })')).toBeLessThan(request.indexOf('void startRelease(force)'));
+    expect(PAGE).toContain('确认强制发布');
   });
 });
 
@@ -529,7 +530,7 @@ describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
       expect(text.length, `按钮文案「${text}」太长，会把状态条顶成两行`).toBeLessThanOrEqual(8);
     }
     // 二次确认那一下例外：要人看清发到哪
-    expect(PAGE).toContain('`确认发布到 ${row?.target.name}`');
+    expect(PAGE).toContain("`确认${pendingConfirmation?.force ? '强制' : ''}发布到 ${row?.target.name}`");
   });
 });
 
@@ -608,28 +609,27 @@ describe('发布控制台 · 节奏', () => {
   });
 });
 
-/**
- * 发布前检查并进发布，不再是一个并列按钮（用户 2026-08-14：「干脆合并，不让单独
- * 试跑，让软件根据情况自动做决定」）。后端 startRelease 本来就会先跑一遍
- * （release-service 的 resolvePreflight，不过就抛错），单独摆个按钮既多一步，
- * 又让人以为不点就不检查。
- */
-describe('发布控制台 · 发布前检查是发布的第一步', () => {
-  it('没有单独的试跑按钮，检查在 startRelease 里先跑', () => {
+describe('发布控制台 · 发起发布前展示预检结论', () => {
+  it('检查只生成结论，发布使用同一份回执和已确认的完整版本', () => {
     const group = sectionAfter(PAGE, 'flex min-w-0 w-full max-w-full flex-wrap items-center justify-end');
-    expect(group, '操作组里不该再有试跑按钮').not.toContain('试跑');
-    const start = bodyAfter(PAGE, 'const startRelease = async ()');
-    expect(start.indexOf('/preflight')).toBeLessThan(start.indexOf('await submitRelease'));
-    expect(start).toContain('if (!stillHere(scope)) return;');
-    expect(start).toMatch(/if \(blocking.length\).*return;/);
+    expect(group).toContain('void runPreflight()');
+    const check = bodyAfter(PAGE, 'const runPreflight = async ()');
+    expect(check).toContain('/preflight');
+    expect(check).toContain('if (!stillHere(scope)) return;');
+    expect(check).toContain('setPreflight({ key: preflightKey, result })');
+    expect(check).not.toContain('submitRelease');
+    const start = bodyAfter(PAGE, 'const startRelease = async (force: boolean)');
+    expect(start).toContain('expectedCommitSha: commitSha, preflightId: preflight.preflightId');
+    expect(start).toContain('...(force ? { forceReason: forceReason.trim() } : {})');
+    expect(PAGE).toContain('preflightState?.key === preflightKey');
+    expect(PAGE).toContain('preflight?.artifact?.commitSha === commitSha');
   });
 
-  /** 检查全过时不弹结果面板——它已经继续往下发了，一屏绿勾是噪音。 */
-  it('检查全过不打扰，只有被拦下才摊开原因', () => {
-    const fn = bodyAfter(PAGE, 'const startRelease = async ()');
-    expect(fn).toContain("item.blocking && item.status === 'fail'");
-    expect(fn).toContain('setPreflight(blocking.length ? check : null)');
-    expect(fn).toContain('尚未发送发布命令');
+  it('普通发布与强制发布分别按检查结果授权，告警显示服务端原因', () => {
+    expect(PAGE).toContain('preflightMatchesCommit && preflight?.ok === true');
+    expect(PAGE).toContain('preflightMatchesCommit && preflight?.forceAvailable === true && Boolean(forceReason.trim())');
+    expect(PAGE).toContain("{check.blocking ? '阻断' : '告警'}");
+    expect(PAGE).toContain('collapseCheckMessage(check.message).summary');
   });
 
   /**

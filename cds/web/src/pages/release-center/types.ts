@@ -51,6 +51,7 @@ export interface ReleaseTarget {
   name: string;
   type: string;
   isEnabled: boolean;
+  updatedAt?: string;
   lifecycle?: 'active' | 'archived';
   archivedAt?: string;
   archivedBy?: string;
