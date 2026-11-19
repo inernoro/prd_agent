@@ -96,7 +96,21 @@ jobs:
                     renderer: document.querySelector('.consciousness-portrait')?.dataset.renderer,
                   };
                 });
-                observations.push({ attempt, ...observation });
+                const midpoint = await page.waitForFunction(() => {
+                  const film = document.querySelector('video.portrait-motion');
+                  const arriving = document.documentElement.hasAttribute('data-entry-arriving');
+                  if (!arriving || (film && film.currentTime >= 5.25)) {
+                    return { arriving, currentTime: film?.currentTime ?? null,
+                      header: getComputedStyle(document.querySelector('.lg-console-header')).visibility };
+                  }
+                }, null, { timeout: 10000 }).then(result => result.jsonValue());
+                const end = await page.waitForFunction(() => {
+                  if (!document.documentElement.hasAttribute('data-entry-arriving')) {
+                    const film = document.querySelector('video.portrait-motion');
+                    return { ended: film?.ended ?? false, time: film?.currentTime ?? null, duration: film?.duration ?? null };
+                  }
+                }, null, { timeout: 15000 }).then(result => result.jsonValue());
+                observations.push({ attempt, ...observation, midpoint, end });
               } finally {
                 release();
                 await page.close();
