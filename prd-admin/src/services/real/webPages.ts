@@ -1983,6 +1983,7 @@ export async function createDesignArtifactRun(input: {
   deliveryTemplateId?: string;
   deliveryTemplateVersion?: string;
   deliveryRequestId?: string;
+  deliveryOriginStoreId?: string;
   deliveryMediaFormats?: InformationDeliveryFormat[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
@@ -2009,6 +2010,35 @@ export async function getDesignArtifactRun(
   runId: string,
 ): Promise<ApiResponse<DesignArtifactRunSummary>> {
   return apiRequest(api.designArtifacts.byId(runId));
+}
+
+export type OpenDesignRun = Pick<DesignArtifactRunSummary,
+  'runId' | 'title' | 'status' | 'phase' | 'phaseCode' | 'createdAt' | 'completedAt' | 'lastProgressAt' |
+  'firstPreviewAt' | 'resolvedModel' | 'resolvedPlatform' | 'producedArtifactSiteId'> & {
+  operation: string;
+  sourceSurface: string;
+  deliveryStoreId?: string | null;
+  deliveryOriginStoreId?: string | null;
+  failureCode?: string | null;
+};
+
+export interface OpenDesignRunEvent {
+  sequence: number;
+  type: string;
+  phase?: string | null;
+  phaseCode?: string | null;
+  occurredAt: string;
+}
+
+export function listOpenDesignRuns(runId: string | null, signal: AbortSignal) {
+  const query = runId ? `?${new URLSearchParams({ runId })}` : '';
+  return apiRequest<{ items: OpenDesignRun[]; selected?: OpenDesignRun | null }>(`${api.designArtifacts.runs()}${query}`, { signal, timeoutMs: 8000 });
+}
+
+export function readOpenDesignRunEvents(runId: string, afterSeq: number, signal: AbortSignal) {
+  return apiRequest<{ items: OpenDesignRunEvent[]; nextSeq: number; lastAvailableSeq: number }>(
+    `${api.designArtifacts.byId(encodeURIComponent(runId))}/contract/events?afterSeq=${afterSeq}`, { signal, timeoutMs: 8000 },
+  );
 }
 
 export async function getActiveDesignArtifactRun(input: {

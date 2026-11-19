@@ -1334,6 +1334,7 @@ export default function WebPagesPage() {
         </span>
       </div>
       <Button size="sm" variant="ghost" onClick={() => setShowCollectionLibrary(true)}><FolderOpen size={14} />我的合集</Button>
+      <Button size="sm" variant="ghost" onClick={() => navigate('/web-pages/opendesign')}>OpenDesign 运行</Button>
                 {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
                 <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
                   <button
@@ -1678,6 +1679,7 @@ export default function WebPagesPage() {
         {/* 搜索 / 筛选：移动端从搜索开始；桌面端默认只保留一条工作台工具区。 */}
         {isMobile ? (
           <div className="px-2 pt-1 flex flex-col gap-2">
+            <Button className="self-start" size="sm" variant="ghost" onClick={() => navigate('/web-pages/opendesign')}>OpenDesign 运行</Button>
             <div className="flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />

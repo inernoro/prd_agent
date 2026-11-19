@@ -102,6 +102,10 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public string? DeliveryTemplateVersion { get; set; }
 
+    /// <summary>进入作者界面时的库，仅用于导航。归档权限继续由目标库校验。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DeliveryOriginStoreId { get; set; }
+
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public string? DeliveryRequestFingerprint { get; set; }
 

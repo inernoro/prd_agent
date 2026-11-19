@@ -159,6 +159,7 @@ export default function InformationDeliveryPage() {
         deliveryTemplateId: template.id,
         deliveryTemplateVersion: template.version,
         deliveryRequestId: previousRequest.current.id,
+        deliveryOriginStoreId: storeId,
         deliveryMediaFormats: mediaFormats,
       });
       if (!result.success) {
@@ -178,7 +179,10 @@ export default function InformationDeliveryPage() {
       <div className="mx-auto max-w-5xl">
         <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold">信息传递</h1>
-          <Link className="text-sm text-token-secondary underline" to={writingKnowledgeHref(storeId)}>返回知识库</Link>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-token-secondary">
+            <Link className="underline" to={`/web-pages/opendesign${runId ? `?${new URLSearchParams({ run: runId, store: storeId })}` : ''}`}>OpenDesign 运行</Link>
+            <Link className="underline" to={writingKnowledgeHref(storeId)}>返回知识库</Link>
+          </div>
         </header>
         {runId ? <DeliveryExecution key={runId} runId={runId} storeId={storeId} /> : recovering
           ? <p role="status">正在恢复上次开始的任务</p> : <>

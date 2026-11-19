@@ -34,6 +34,7 @@ const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ de
 const WritingWorkspacePage = lazy(() => import('@/pages/document-store/writing/WritingWorkspacePage'));
 const WritingCollectionPage = lazy(() => import('@/pages/document-store/writing/WritingCollectionPage'));
 const InformationDeliveryPage = lazy(() => import('@/pages/document-store/writing/InformationDeliveryPage'));
+const OpenDesignRunsPage = lazy(() => import('@/pages/OpenDesignRunsPage'));
 const InformationDeliveryReaderPage = lazy(() => import('@/pages/document-store/writing/InformationDeliveryPage').then(m => ({ default: m.InformationDeliveryReaderPage })));
 const HostedTemplatePage = lazy(() => import('@/pages/hosted-collections/HostedTemplatePage'));
 const HostedCollectionsPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionsPage'));
@@ -1035,6 +1036,8 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   },
   { path: '/web-pages/new-document', placement: 'fullscreen', permission: 'web-pages.read',
     element: fullscreenGuarded('web-pages.read', <HostedTemplatePage />) },
+  { path: '/web-pages/opendesign', permission: 'web-pages.read',
+    element: shellGuarded('web-pages.read', <OpenDesignRunsPage />) },
   { path: '/web-pages/collections', placement: 'fullscreen', permission: 'web-pages.read',
     element: fullscreenGuarded('web-pages.read', <HostedCollectionsPage />) },
   { path: '/web-pages/collections/:collectionId', placement: 'fullscreen', permission: 'web-pages.read',

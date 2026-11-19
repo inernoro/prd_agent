@@ -341,6 +341,7 @@ public sealed class DesignArtifactsController : ControllerBase
             SourceSurface = sourceSurface,
             DeliveryTemplateId = deliveryTemplate?.Id,
             DeliveryTemplateVersion = deliveryTemplate?.Version,
+            DeliveryOriginStoreId = isDelivery ? TrimOptional(request.DeliveryOriginStoreId, 128) : null,
             DeliveryRequestFingerprint = deliveryFingerprint,
             DeliveryMediaFormats = deliveryFormats,
             DestinationTeamId = destinationTeamId,
@@ -431,6 +432,42 @@ public sealed class DesignArtifactsController : ControllerBase
             && existing.DeliveryTemplateId != null && existing.DeliveryRequestFingerprint == fingerprint
             ? Accepted(ApiResponse<object>.Ok(ToDto(existing)))
             : Conflict(ApiResponse<object>.Fail("DELIVERY_REQUEST_CONFLICT", "这次请求的资料或模板已变更，请重新开始任务"));
+
+    [HttpGet("runs")]
+    public async Task<IActionResult> ListOpenDesignRuns([FromQuery] string? runId, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var scope = DeploymentScope.CurrentDurable;
+        var filters = Builders<DesignArtifactRun>.Filter;
+        var deployment = filters.Eq(run => run.DeploymentSlug, scope);
+        if (scope != null)
+            deployment |= filters.Regex(run => run.DeploymentSlug, "^" + System.Text.RegularExpressions.Regex.Escape(scope + "::revision::"));
+
+        var ownerScope = deployment & filters.Eq(run => run.UserId, userId)
+            & filters.Eq(run => run.Runtime, DesignArtifactRuntimes.OpenDesign);
+        var runs = await _db.DesignArtifactRuns.Find(ownerScope)
+            .SortByDescending(run => run.CreatedAt).ThenByDescending(run => run.Id)
+            .Limit(40).Project(OpenDesignRunProjection).ToListAsync(ct);
+        var selected = runs.FirstOrDefault(run => run.RunId == runId);
+        if (selected == null && !string.IsNullOrWhiteSpace(runId) && runId.Length <= 128)
+            selected = await _db.DesignArtifactRuns.Find(ownerScope & filters.Eq(run => run.Id, runId))
+                .Project(OpenDesignRunProjection).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items = runs, selected }));
+    }
+
+    private static readonly System.Linq.Expressions.Expression<Func<DesignArtifactRun, OpenDesignRunOverview>> OpenDesignRunProjection =
+        run => new OpenDesignRunOverview(
+            run.Id, run.Title, run.Operation, run.SourceSurface, run.Status, run.Phase, run.PhaseCode,
+            run.CreatedAt, run.LastProgressAt, run.FirstPreviewAt, run.CompletedAt,
+            run.ResolvedModel, run.ResolvedPlatform, run.ProducedArtifactSiteId, run.DeliveryOriginStoreId,
+            run.DeliveryArchive == null ? null : run.DeliveryArchive.StoreId,
+            run.RuntimeFailure == null ? run.LifecycleFailureCode : run.RuntimeFailure.Code);
+
+    private sealed record OpenDesignRunOverview(
+        string RunId, string? Title, string Operation, string SourceSurface, string Status, string Phase, string PhaseCode,
+        DateTime CreatedAt, DateTime? LastProgressAt, DateTime? FirstPreviewAt, DateTime? CompletedAt,
+        string? ResolvedModel, string? ResolvedPlatform, string? ProducedArtifactSiteId, string? DeliveryOriginStoreId,
+        string? DeliveryStoreId, string? FailureCode);
 
     /// <summary>
     /// 从服务端发现当前用户的活动或可重开任务。客户端显式请求时，也可返回最近一条
@@ -1553,6 +1590,7 @@ public sealed class DesignArtifactsController : ControllerBase
         UploadedSources = source.UploadedSources,
         DeliveryTemplateId = source.DeliveryTemplateId,
         DeliveryTemplateVersion = source.DeliveryTemplateVersion,
+        DeliveryOriginStoreId = source.DeliveryOriginStoreId,
         DeliveryMediaFormats = source.DeliveryMediaFormats,
         DeliveryCorrections = source.DeliveryCorrections,
         DeliveryCorrectionRevision = source.DeliveryCorrectionRevision,
@@ -1783,6 +1821,7 @@ public sealed class CreateDesignArtifactRunRequest
     public string? DeliveryTemplateId { get; set; }
     public string? DeliveryTemplateVersion { get; set; }
     public string? DeliveryRequestId { get; set; }
+    public string? DeliveryOriginStoreId { get; set; }
     public List<string>? DeliveryMediaFormats { get; set; }
 
     /// <summary>
