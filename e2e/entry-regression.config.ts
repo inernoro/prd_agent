@@ -2,8 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './specs',
-  testMatch: 'admin-operations-compat.spec.ts',
-  grep: /临界宽度|慢加载日景/,
+  testMatch: 'entry-media-abort-proof.spec.ts',
   timeout: 45000,
   workers: 1,
   reporter: [['list'], ['json']],
