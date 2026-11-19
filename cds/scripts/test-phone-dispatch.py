@@ -96,6 +96,23 @@ class DispatchTests(unittest.TestCase):
         for i in range(100): self.submit('drill-' + str(i))
         self.guard.flush(30); self.assertEqual(len(self.calls), 1)
 
+    def test_production_change_in_inbox_is_sent_without_cds_and_retains_each_receipt(self):
+        items = {}
+        for identifier, body in [('begin', '开始发布'), ('finish', '发布完成')]:
+            items[identifier] = {'id': identifier, 'channelId': 'phone', 'receivedAt': 0,
+                'message': {'title': '正式 MAP', 'body': body, 'routineChange': True},
+                'event': {'kind': 'production-change', 'targetId': 'same-site', 'eventId': identifier}}
+        state = {'channels': [self.channel], 'inbox': items}
+        relay.process(state, 0, lambda: None, dispatcher=self.guard)
+        self.assertFalse(state.get('receipts'))
+        restarted = m.PhoneDispatch(json.loads(json.dumps(self.state)), lambda: None, lambda c, msg: self.calls.append(msg) or True)
+        restarted.flush(30)
+        relay.process(state, 31, lambda: None, dispatcher=restarted)
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(self.calls[0]['routineChange'])
+        self.assertEqual(state['acks'], [{'id': identifier, 'ok': True, 'merged': False} for identifier in ('begin', 'finish')])
+        self.assertFalse(state['inbox'])
+
 class PriorityTests(DispatchTests):
     def urgent(self, identifier, now, root=None):
         return self.guard.submit(self.channel, {'title': identifier, 'body': 'test'}, identifier, now, urgent_key=root or identifier)
@@ -122,6 +139,15 @@ class PriorityTests(DispatchTests):
         self.guard.flush(0); self.assertEqual(len(self.calls), 1)
         relay.process(state, 1, lambda: None, dispatcher=self.guard)
         self.assertTrue(state['receipts']['a']['ok'])
+
+    def test_failed_release_healthcheck_uses_urgent_budget(self):
+        self.submit('ordinary')
+        state = {'channels': [self.channel], 'inbox': {'a': {'id': 'a', 'channelId': 'phone', 'receivedAt': 0,
+            'message': {'title': '正式 MAP', 'body': '入口失败', 'level': 'critical'}, 'event': {'urgency': 'urgent',
+                'kind': 'production-change', 'eventId': 'release-failed', 'projectId': 'map', 'targetId': 'production'}}}}
+        relay.process(state, 0, lambda: None, dispatcher=self.guard)
+        self.guard.flush(0)
+        self.assertEqual(self.calls[0]['level'], 'critical')
     def test_severe_new_keys_have_five_per_rolling_window_limit(self):
         self.guard.persist = lambda: None
         for i in range(1200): self.submit('old-' + str(i))

@@ -2097,6 +2097,8 @@ export interface ReleaseRun {
   commitSha: string;
   artifact: ReleaseArtifact;
   targetId: string;
+  targetEnvironment?: ReleaseTarget['environment'];
+  targetName?: string;
   planId: string;
   status: ReleaseRunStatus;
   startedAt: string;

@@ -2097,7 +2097,6 @@ export function createServer(deps: ServerDeps): express.Express {
     resolveProjectRepository: resolveReleaseRepository,
   });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
-  startReleaseRunReaper({ service: releaseReconciler });
   // 远端现场巡检（阶段三 · 记账）：另起一个 starter 而不塞进上面的收割器 —— 收割器
   // 是纯内存状态机、从不外呼，混进 SSH 巡检后一台目标机器不通就会把它拖住，所有目标
   // 的在途 run 都释放不掉，失败语义也变糊（收敛失败还是网络失败？）。同频不同体。
@@ -2137,6 +2136,7 @@ export function createServer(deps: ServerDeps): express.Express {
     publish: (type, data) => { cdsEventsBus.publish(type, data); },
     logger: { warn: (m) => console.warn(m) },
   });
+  startReleaseRunReaper({ service: releaseReconciler });
   const hostCapacityObservation = deps.hostCapacityObservation ?? new HostCapacityObservationService({
     reportPath: process.env.CDS_HOST_CAPACITY_REPORT_PATH,
     expectedHost: process.env.CDS_HOST_CAPACITY_EXPECTED_HOST,

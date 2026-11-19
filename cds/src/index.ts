@@ -7,6 +7,7 @@ import { createProjectInspectionsRouter } from './routes/project-inspections.js'
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
 import { AlarmRelay, registerAlarmRelayRoutes } from './services/alarm-relay.js';
+import { subscribeProductionReleaseNotifications } from './services/production-release-notifications.js';
 import { identityForAlarm } from './services/alarm-identity.js';
 import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
 import { isSelfUpdateDraining } from './services/deploy-drain.js';
@@ -5692,6 +5693,14 @@ const serverDeps: ServerDeps = {
   branchOperationCoordinator,
   offhostAudit: activeServerEventLogStore instanceof OffHostAuditLogSink ? activeServerEventLogStore : null,
 };
+const alarmRelay = config.mode !== 'executor' ? new AlarmRelay(path.join(config.repoRoot, '.cds', 'alarm-relay.json')) : undefined;
+if (alarmRelay && !isPreviewInstance()) {
+  const unsubscribe = subscribeProductionReleaseNotifications({ relay: alarmRelay,
+    channels: () => stateService.listAlarmChannels(), settings: () => stateService.getMonitorNotifications(),
+    target: id => stateService.getReleaseTarget(id), projectSlug: id => stateService.getProject(id)?.slug,
+    publicBaseUrl: config.publicBaseUrl });
+  serverDeps.registerResourceShutdown?.(async () => unsubscribe());
+}
 const app = createServer(serverDeps);
 if (config.mode !== 'executor' && !isPreviewInstance()) {
   branchLifecycleService.start();
@@ -6238,7 +6247,6 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * 很具体——要先定「发给哪个 MAP 账号、用哪个 MAP 实例」两件只有人能定的事，
    * 于是铃一直没接。Bark key 是一个人当场就能粘进来的东西，这条路不等任何决定。
    */
-  const alarmRelay = new AlarmRelay(path.join(config.repoRoot, '.cds', 'alarm-relay.json'));
   const alarmLedger = new AlarmLedger({
     // 最近一次投递结果写回通道配置：进程重启后台账清空，已验证过的通道不该退回「未知」。
     persist: (channelId, last) => {
@@ -6414,7 +6422,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
 
       for (const channel of routeAlarm(stateService.listAlarmChannels(), event, stateService.getMonitorNotifications())) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
-        if (alarmRelay.owns(channel.id)) {
+        if (alarmRelay?.owns(channel.id)) {
           alarmRelay.enqueue(channel.id, { ...event, recoveryConfirmed: data.recoveryChannelIds?.includes(channel.id) }, boardUrl);
           continue;
         }
@@ -6688,9 +6696,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // 通知通道的读写与演练。挂在同一个 /api 前缀下，与监控摘要同一条身份闸。
   app.use('/api', (() => {
     const r = express.Router();
-    registerAlarmRelayRoutes(r, alarmRelay, {
+    registerAlarmRelayRoutes(r, alarmRelay!, {
       channels: () => stateService.listAlarmChannels(),
       getNotifications: () => stateService.getMonitorNotifications(),
+      processStartedAt: () => (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT,
       acknowledged: async (item, result) => {
         if (result.merged) activeServerEventLogStore?.record({
           category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',

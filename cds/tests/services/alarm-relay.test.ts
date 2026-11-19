@@ -6,6 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { AlarmRelay } from '../../src/services/alarm-relay.js';
+import { subscribeProductionReleaseNotifications } from '../../src/services/production-release-notifications.js';
+import { releaseEvents } from '../../src/services/release-events.js';
+import type { ReleaseRun } from '../../src/types.js';
 import { AlarmLedger } from '../../src/services/alarm-channel.js';
 import { withAlarmDeliveryHistory } from '../../src/services/alarm-delivery-history.js';
 import { renderAlarmMessage, type AlarmChannelConfig, type AlarmEvent, type MonitorNotificationSettings } from '../../src/services/alarm-route.js';
@@ -97,6 +100,49 @@ async function retiredChannelFixture(withNotifications = false) {
     close: async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); fs.rmSync(dir, {recursive: true, force: true}); },
   };
 }
+
+it('正式发布按运行和阶段进独立队列，预发和未订阅的手机不接收', async () => {
+  const f = await retiredChannelFixture();
+  f.channels[0].events = ['production-change'];
+  f.channels[0].projects = ['map-project'];
+  f.channels[1].events = ['business-down'];
+  const stop = subscribeProductionReleaseNotifications({ relay: f.relay, channels: () => f.channels,
+    settings: () => ({}), target: () => undefined, projectSlug: () => 'map', publicBaseUrl: 'https://cds.example.test' });
+  const emit = (releaseId: string, status: ReleaseRun['status'], extra: Partial<ReleaseRun> = {}) => {
+    const run = { releaseId, targetEnvironment: 'production', status, projectId: 'map-project', targetId: 'map-site', targetName: 'MAP 正式',
+      branchId: 'branch-a', startedAt: '2026-11-19T08:00:00Z', commitSha: '123456789abcdef', logs: [], ...extra } as ReleaseRun;
+    releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId, run } });
+  };
+  try {
+    emit('release-notice-a', 'queued');
+    emit('release-notice-a', 'running');
+    emit('release-notice-a', 'success');
+    emit('release-notice-b', 'queued');
+    emit('release-notice-c', 'queued', { targetEnvironment: 'staging' });
+    emit('release-notice-b', 'failed', {
+      failure: { code: 'release.healthcheck.failed', owner: 'code', retryable: true, summary: '入口探测失败', evidenceRefs: [] },
+      progress: { planId: 'plan-a', steps: [{ kind: 'healthcheck', id: 'healthcheck', title: '验证入口', state: 'failed' }] },
+    });
+    const rebooted = new AlarmRelay(f.file);
+    expect(f.decrypt(rebooted.envelope(f.channels)).items).toHaveLength(1);
+    const response = await f.request('/poll', 'POST', { proof: f.proof, productionChanges: true });
+    expect(response.status).toBe(200);
+    expect(f.relay.status().productionChangesReady).toBe(true);
+    const packet = f.decrypt(await response.json());
+    const changes = packet.items.filter((item: { event: AlarmEvent }) => item.event.kind === 'production-change');
+    expect(changes.map((item: { channelId: string; message: { body: string } }) => [item.channelId, item.message.body])).toEqual([
+      ['phone', '开始发布123456789abc'], ['phone', '123456789abc发布完成'], ['phone', '开始发布123456789abc'], ['phone', '123456789abc发布失败'],
+    ]);
+    expect(new Set(changes.map((item: { id: string }) => item.id)).size).toBe(4);
+    expect(changes[1].message.url).toContain('run=release-notice-a');
+    expect(changes[3]).toMatchObject({ event: { urgency: 'urgent' }, message: { level: 'critical' } });
+    f.channels[0].events = ['business-down'];
+    expect(f.decrypt(f.relay.envelope(f.channels, undefined, undefined, true)).items).toHaveLength(1);
+  } finally {
+    stop();
+    await f.close();
+  }
+});
 
 it.each(['停用', '删除'])('%s通道后取消孤立待投递项，保留其它故障并可正常交回所有权', async mode => {
   const f = await retiredChannelFixture();

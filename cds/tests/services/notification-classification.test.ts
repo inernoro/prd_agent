@@ -89,8 +89,8 @@ describe('通知交叉分类与唯一模板目录', () => {
     } finally { await service.stop(); }
   });
 
-  it('30 个模板均产生一句完整短事实，非截断原始日志', () => {
-    expect(Object.keys(NOTIFICATION_TEMPLATES)).toHaveLength(30);
+  it('35 个模板均产生一句完整短事实，非截断原始日志', () => {
+    expect(Object.keys(NOTIFICATION_TEMPLATES)).toHaveLength(35);
     for (const id of Object.keys(NOTIFICATION_TEMPLATES) as Array<keyof typeof NOTIFICATION_TEMPLATES>) {
       const text = renderNotification(id, { ...facts, system: id === 'GW-06' || id === 'GW-07' ? 'llmgw' : facts.system }).sentence;
       expect(Array.from(text).length, id).toBeLessThanOrEqual(40);

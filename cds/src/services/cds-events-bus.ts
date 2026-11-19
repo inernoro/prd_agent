@@ -17,6 +17,7 @@
 //   - emit 永远不抛(包内 try/catch),listener 抛错被吞掉防止串扰
 
 import { EventEmitter } from 'node:events';
+import type { NotificationTemplateId } from '../shared/notification-templates.js';
 
 export type CdsEventType =
   | 'self.status'
@@ -230,8 +231,7 @@ const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
   'preview.canary.alert': { title: '预览入口探测失败', source: 'uptime', level: 'warning', link: 'status', actionLabel: '查看状态页' },
   'preview.canary.recovered': null,
   'agent-session.activity': null,
-  'release.started': null,
-  // 成功默认不入账(见 shouldLedgerEvent):只有自动触发的那种成功才值得打扰人。
+  'release.started': { title: '正式发布已开始', source: 'release', level: 'info', link: 'release', actionLabel: '查看发布记录' },
   'release.succeeded': { title: '生产发布完成', source: 'release', level: 'info', link: 'release', actionLabel: '查看发布记录' },
   'release.failed': { title: '生产发布失败', source: 'release', level: 'danger', link: 'release', actionLabel: '查看发布记录' },
   'release.rolled-back': { title: '生产已回滚', source: 'release', level: 'warning', link: 'release', actionLabel: '查看发布记录' },
@@ -249,18 +249,37 @@ export function cdsEventNoticeCopy(type: CdsEventType): CdsEventNoticeCopy | nul
   return CDS_EVENT_NOTICE_COPY[type] ?? null;
 }
 
+interface ReleaseNoticeFacts {
+  targetEnvironment?: string;
+  releaseId?: string;
+  rollbackOf?: string;
+  status?: string;
+  autoRestoredAt?: string;
+}
+
+export function productionReleaseNotice(type: CdsEventType, data: ReleaseNoticeFacts | undefined): { template: NotificationTemplateId; title: string } | undefined {
+  if (data?.targetEnvironment !== 'production' || !data.releaseId) return undefined;
+  switch (type) {
+    case 'release.started': return data.rollbackOf
+      ? { template: 'REL-05', title: '正式回滚已开始' }
+      : { template: 'REL-04', title: '正式发布已开始' };
+    case 'release.succeeded': return { template: 'REL-01', title: '正式发布完成' };
+    case 'release.rolled-back': return { template: 'REL-03', title: '正式回滚完成' };
+    case 'release.failed': return data.rollbackOf || data.status === 'rollback_failed'
+      ? { template: 'REL-06', title: '正式回滚失败' }
+      : data.autoRestoredAt ? { template: 'REL-07', title: '正式发布失败，已恢复上一版本' }
+      : { template: 'REL-02', title: '正式发布失败' };
+    default: return undefined;
+  }
+}
+
 /**
- * 这条事件要不要记进站内信账本 —— **唯一**判定源,别处不许再按事件名判一遍。
- *
- * 两段口径:
- *  1. 有文案 + 告警级 → 一律入账(告警的定义就是「没人盯屏时也要叫醒人」);
- *  2. 有文案但非告警级(即成功类)→ 只有**自动触发**的才入账。判据是 payload 里
- *     带 rollbackOf(这次成功属于一次回滚 run)或 autoRestoredAt(自动恢复)。
- *     人点按钮发出来的成功他自己看得见,再发一条站内信纯属噪声;而系统半夜自己
- *     回滚过一次,不通知就等于没发生。
+ * 正式发布和回滚的开始与结果一律记账，其余事件沿用已有告警和自动恢复规则。
  */
 export function shouldLedgerEvent(type: CdsEventType, data: unknown): boolean {
   if (!CDS_EVENT_NOTICE_COPY[type]) return false;
+  if (productionReleaseNotice(type, data as ReleaseNoticeFacts | undefined)) return true;
+  if (type === 'release.started') return false;
   if (isAlertCdsEvent(type)) return true;
   const payload = (data ?? {}) as { rollbackOf?: unknown; autoRestoredAt?: unknown };
   const auto = payload.rollbackOf ?? payload.autoRestoredAt;

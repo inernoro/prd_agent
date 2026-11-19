@@ -6,6 +6,7 @@ import {
   type CdsEventType,
 } from '../../src/services/cds-events-bus.js';
 import { releaseEvents, releaseEventTypeForStatus } from '../../src/services/release-events.js';
+import { NoticeLedgerService, startNoticeLedger } from '../../src/services/notice-ledger.js';
 import type { DeploymentFailure, ReleaseRun, ReleaseRunStatus } from '../../src/types.js';
 
 /**
@@ -84,6 +85,25 @@ describe('发布生命周期事件上 cds-events-bus', () => {
     emitStatus(makeRun('rel-1', 'success', { finishedAt: '2026-07-28T00:05:00.000Z' }));
 
     expect(typesOf()).toEqual(['release.started', 'release.succeeded']);
+  });
+
+  it('正式发布按运行记账，并保留自动回退后的失败结论', () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    const notices = startNoticeLedger({ ledger, outbound: null });
+    const production = { targetEnvironment: 'production', targetName: 'MAP 正式' } as const;
+    try {
+      emitStatus(makeRun('rel-prod-a', 'queued', production));
+      emitStatus(makeRun('rel-prod-a', 'failed', { ...production, autoRestoredAt: '2026-07-28T00:05:00Z' }));
+      emitStatus(makeRun('rel-prod-b', 'queued', production));
+      emitStatus(makeRun('rel-stg', 'queued', { targetEnvironment: 'staging' }));
+      expect(ledger.list()).toHaveLength(3);
+      expect(ledger.list().find(item => item.level === 'danger')).toMatchObject({
+        title: '正式发布失败，已恢复上一版本', href: expect.stringContaining('run=rel-prod-a'),
+      });
+      expect(ledger.list().filter(item => item.title === '正式发布已开始')).toHaveLength(2);
+    } finally {
+      notices.stop();
+    }
   });
 
   it('步骤推进复用 release.status，重复的同一状态只外发一次开始事件', () => {

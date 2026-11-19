@@ -40,7 +40,7 @@ export function checkPurpose(target: UptimeTargetSummary): string {
   if (target.source === 'release') return '检查正式站点入口是否可访问。';
   return target.observeMode === 'passive' ? '读取最近真实业务记录，观察这项业务的运行结果。' : '按配置执行这项检查，详细判据可在检查详情中查看。';
 }
-export const EVENT_NAMES: Record<string, string> = { 'business-down': '业务异常', 'business-recovered': '业务恢复', 'infra-down': '基础设施异常', 'infra-recovered': '基础设施恢复', recovered: '业务恢复' };
+export const EVENT_NAMES: Record<string, string> = { 'business-down': '业务异常', 'business-recovered': '业务恢复', 'infra-down': '基础设施异常', 'infra-recovered': '基础设施恢复', 'production-change': '正式环境变更', recovered: '业务恢复' };
 export interface ChannelStatus { id: string; name: string; kind: string; status: string; enabled: boolean; projects: string[]; events: string[]; last?: { at: number; ok: boolean }; }
 export function projectChannels(channels: ChannelStatus[] | undefined, projectId: string): ChannelStatus[] | undefined {
   return channels?.filter(c => !c.projects.length || c.projects.includes(projectId));

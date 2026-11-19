@@ -25,7 +25,7 @@ import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 type ChannelKind = 'bark' | 'webhook' | 'map';
-type EventKind = 'business-down' | 'business-recovered' | 'infra-down' | 'infra-recovered';
+type EventKind = 'business-down' | 'business-recovered' | 'infra-down' | 'infra-recovered' | 'production-change';
 type ChannelStatus = 'unconfigured' | 'untested' | 'healthy' | 'failing';
 
 const KIND_LABEL: Record<ChannelKind, string> = {
@@ -40,6 +40,7 @@ const EVENT_META: Record<EventKind, { label: string; what: string; noisy?: boole
   'business-recovered': { label: '业务恢复', what: '之前挂掉的那条业务重新通了' },
   'infra-down': { label: '基础设施故障', what: '容器、端口、预览域名不通 —— 分支预览重建时也会触发', noisy: true },
   'infra-recovered': { label: '基础设施恢复', what: '容器重新起来了 —— 分支预览一天重建几十次，这一档最吵', noisy: true },
+  'production-change': { label: '正式环境变更', what: '正式发布、回滚和 CDS 重启。由接管此 Bark 通道的独立通知进程发送' },
 };
 
 const STATUS_META: Record<ChannelStatus, { text: string; tone: string }> = {
@@ -397,7 +398,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
           <div className="flex flex-col gap-1.5">
             <span className={LABEL}>收哪几类事件</span>
             <div className="flex flex-wrap gap-1.5">
-              {(Object.keys(EVENT_META) as EventKind[]).map((k) => (
+              {(Object.keys(EVENT_META) as EventKind[]).filter(k => k !== 'production-change' || draft.kind === 'bark').map((k) => (
                 <button key={k} type="button" title={EVENT_META[k].what} onClick={() => toggleEvent(k)}
                   aria-pressed={draft.events.includes(k)}
                   className={cn('inline-flex min-h-[3.25rem] items-center gap-1 rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',

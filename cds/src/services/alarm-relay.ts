@@ -10,7 +10,7 @@ import { independentIncidentUrl } from './alarm-dispatch.js';
 import { notificationChannelSelected, renderAlarmMessage, type AlarmChannelConfig, type AlarmEvent, type MonitorNotificationSettings } from './alarm-route.js';
 
 interface Item { id: string; channelId: string; event: AlarmEvent; boardUrl?: string; at: number }
-interface RelayState { enabled: boolean; publicKey: string; channelIds: string[]; challenge: string; readyAt: number; queue: Item[] }
+interface RelayState { enabled: boolean; publicKey: string; channelIds: string[]; challenge: string; readyAt: number; productionChanges?: boolean; queue: Item[] }
 export class AlarmRelay {
   private state: RelayState;
   constructor(private file: string) {
@@ -22,15 +22,21 @@ export class AlarmRelay {
     fs.writeFileSync(tmp, JSON.stringify(this.state), { mode: 0o600 });
     fs.chmodSync(tmp, 0o600); fs.renameSync(tmp, this.file);
   }
-  status() { return { enabled: this.state.enabled, channelIds: this.state.channelIds, pending: this.state.queue.length,
-    readyAt: this.state.readyAt, receiverHealthy: Date.now() - this.state.readyAt < 180_000,
-    fingerprint: this.state.publicKey ? crypto.createHash('sha256').update(this.state.publicKey).digest('hex') : null }; }
+  status() {
+    const receiverHealthy = Date.now() - this.state.readyAt < 180_000;
+    return {
+      enabled: this.state.enabled, channelIds: this.state.channelIds, pending: this.state.queue.length,
+      readyAt: this.state.readyAt, receiverHealthy,
+      productionChangesReady: this.state.enabled && receiverHealthy && this.state.productionChanges === true,
+      fingerprint: this.state.publicKey ? crypto.createHash('sha256').update(this.state.publicKey).digest('hex') : null,
+    };
+  }
   configure(publicKey: string, channelIds: string[]) {
     if (this.state.enabled || this.state.queue.length) throw new Error('先完成待投递事件并停用外部所有者，才能更换接收端');
     const key = crypto.createPublicKey(publicKey);
     if (key.asymmetricKeyType !== 'rsa' || (key.asymmetricKeyDetails?.modulusLength || 0) < 2048) throw new Error('需要至少 2048 位 RSA 公钥');
     if (!channelIds.length) throw new Error('请选择通知通道');
-    this.state = { ...this.state, publicKey, channelIds, challenge: crypto.randomBytes(32).toString('hex'), readyAt: 0 }; this.save();
+    this.state = { ...this.state, publicKey, channelIds, challenge: crypto.randomBytes(32).toString('hex'), readyAt: 0, productionChanges: false }; this.save();
   }
   activate(enabled: boolean) {
     if (enabled && (!this.state.readyAt || Date.now() - this.state.readyAt > 180_000)) throw new Error('接收端尚未解密并确认就绪');
@@ -39,20 +45,28 @@ export class AlarmRelay {
   }
   owns(channelId: string) { return this.state.enabled && this.state.channelIds.includes(channelId); }
   enqueue(channelId: string, event: AlarmEvent, boardUrl?: string) {
-    const id = crypto.createHash('sha256').update(JSON.stringify([channelId, event.targetId, event.kind, event.detectedAt])).digest('hex');
+    const identity = event.kind === 'production-change'
+      ? [channelId, event.kind, event.projectId, event.eventId]
+      : [channelId, event.targetId, event.kind, event.detectedAt];
+    const id = crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex');
     if (!this.state.queue.some(i => i.id === id)) {
       this.state.queue.push({ id, channelId, event, boardUrl, at: Date.now() }); this.save();
     }
     return id;
   }
-  confirm(proof: string) {
+  confirm(proof: string, productionChanges = false) {
     if (!proof || proof !== this.state.challenge) throw new Error('接收端确认无效');
-    this.state.readyAt = Date.now(); this.save();
+    this.state.readyAt = Date.now(); this.state.productionChanges = productionChanges; this.save();
   }
   getItem(id: string) { return this.state.queue.find(i => i.id === id); }
   unavailableReason(item: Item, channels: AlarmChannelConfig[], notifications?: MonitorNotificationSettings): string | undefined {
-    if (!channels.some(c => c.id === item.channelId && c.enabled && c.kind === 'bark')) {
+    const channel = channels.find(c => c.id === item.channelId && c.enabled && c.kind === 'bark');
+    if (!channel) {
       return '通知通道已停用或删除，本次投递已取消';
+    }
+    if (item.event.kind === 'production-change' && (!channel.events.includes(item.event.kind)
+      || (channel.projects.length > 0 && !channel.projects.includes(item.event.projectId)))) {
+      return '正式环境变更订阅范围已调整，本次投递已取消';
     }
     // Drills retain their existing explicit-send behavior. This exemption never
     // bypasses channel removal/disablement above, nor changes projects/events.
@@ -68,13 +82,14 @@ export class AlarmRelay {
     const item = this.state.queue.find(i => i.id === id);
     this.state.queue = this.state.queue.filter(i => i.id !== id); this.save(); return item;
   }
-  envelope(channels: AlarmChannelConfig[], notifications?: MonitorNotificationSettings) {
+  envelope(channels: AlarmChannelConfig[], notifications?: MonitorNotificationSettings, processStartedAt?: string, productionChanges = false) {
     if (!this.state.publicKey) throw new Error('尚未登记接收端');
     const selected = channels.filter(c => c.enabled && c.kind === 'bark' && this.state.channelIds.includes(c.id));
-    const payload = { enabled: this.state.enabled, challenge: this.state.challenge, channels: selected,
-      items: this.state.enabled ? this.state.queue.filter(i => this.unavailableReason(i, selected, notifications) === undefined).slice(0, 100).map(i => {
+    const payload = { enabled: this.state.enabled, challenge: this.state.challenge, channels: selected, processStartedAt,
+      items: this.state.enabled ? this.state.queue.filter(i => (productionChanges || i.event.kind !== 'production-change')
+        && this.unavailableReason(i, selected, notifications) === undefined).slice(0, 100).map(i => {
         const channel = selected.find(c => c.id === i.channelId);
-        const url = channel ? independentIncidentUrl(channel, i.event, i.boardUrl) || i.boardUrl : i.boardUrl;
+        const url = channel && i.event.kind !== 'production-change' ? independentIncidentUrl(channel, i.event, i.boardUrl) || i.boardUrl : i.boardUrl;
         return { ...i, message: renderAlarmMessage(i.event, { boardUrl: url }) };
       }) : [] };
     const key = crypto.randomBytes(32), iv = crypto.randomBytes(12);
@@ -88,6 +103,7 @@ export class AlarmRelay {
 export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps: {
   channels: () => AlarmChannelConfig[];
   getNotifications?: () => MonitorNotificationSettings;
+  processStartedAt?: () => string | undefined;
   acknowledged: (item: Item, result: { ok: boolean; reason?: string; merged?: boolean; cancelled?: boolean }) => Promise<void>;
 }) {
   const retireUnavailable = async () => {
@@ -123,8 +139,9 @@ export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps
   });
   router.post('/cds-system/alarm-relay/poll', async (req, res) => {
     try {
+      const productionChanges = Boolean(req.body.proof) && req.body.productionChanges === true;
       if (req.body.proof) {
-        relay.confirm(String(req.body.proof));
+        relay.confirm(String(req.body.proof), productionChanges);
         for (const ack of (Array.isArray(req.body.acks) ? req.body.acks.slice(0, 100) : [])) {
           if (typeof ack.id !== 'string' || typeof ack.ok !== 'boolean') continue;
           const item = relay.getItem(ack.id);
@@ -133,7 +150,7 @@ export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps
         }
       }
       await retireUnavailable();
-      res.json(relay.envelope(deps.channels(), deps.getNotifications?.()));
+      res.json(relay.envelope(deps.channels(), deps.getNotifications?.(), deps.processStartedAt?.(), productionChanges));
     } catch { res.status(400).json({ message: '外部通知同步失败，请检查接收端配置与回执' }); }
   });
 }

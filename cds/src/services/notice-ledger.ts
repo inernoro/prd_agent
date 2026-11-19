@@ -31,10 +31,12 @@ import type { MapNotifierConfig } from './map-notifier.js';
 import {
   cdsEventNoticeCopy,
   cdsEventsBus,
+  productionReleaseNotice,
   shouldLedgerEvent,
   type CdsEventEnvelope,
   type CdsEventType,
 } from './cds-events-bus.js';
+import type { ReleaseLifecycleEventData } from './release-events.js';
 import {
   forwardNoticeToMap,
   resolveNoticeOutboundConfig,
@@ -418,21 +420,25 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     releaseId?: string;
     branchId?: string;
     commitSha?: string;
+    operator?: string;
     message?: string;
     errorMessage?: string;
     failure?: { summary?: string; reason?: string };
   };
+  const release = productionReleaseNotice(envelope.type, envelope.data as ReleaseLifecycleEventData);
 
   // 同一目标的同一类事件归成一条。targetId 优先（发布/存活都以目标为单位），
   // 没有目标的系统级事件（infra 熔断 / 自更新）退到项目或全局。
-  const scopeKey = data.jobId || data.targetId || data.branchId || data.projectId || 'system';
+  const scopeKey = (release && data.releaseId) || data.jobId || data.targetId || data.branchId || data.projectId || 'system';
   const dedupeKey = `${envelope.type}:${scopeKey}`;
 
   // 结构化摘要优先于原始 stderr。原始发布日志可能有数百行，只能去发布记录展开。
   const detail = [data.message, data.failure?.summary, data.failure?.reason, data.errorMessage]
     .find((text) => typeof text === 'string' && text.trim().length > 0);
   const subject = data.targetName || data.projectName || data.projectSlug || data.branchId || '';
-  const body = compactNoticeText([subject, detail].filter(Boolean).join(' — ') || copy.title);
+  const version = release && data.commitSha && /^[a-f0-9]{7,64}$/i.test(data.commitSha) ? data.commitSha.slice(0, 12) : undefined;
+  const title = release?.title || copy.title;
+  const body = compactNoticeText([subject, version, release ? data.operator : undefined, detail].filter(Boolean).join(' — ') || title);
 
   let href: string | undefined;
   if (copy.link === 'release') {
@@ -463,7 +469,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     id: `ntc_${dedupeKey.replace(/[^a-zA-Z0-9_.-]/g, '_')}`,
     dedupeKey,
     level: copy.level,
-    title: copy.title,
+    title,
     body,
     source: copy.source,
     eventType: envelope.type,

@@ -50,7 +50,7 @@ def publish(root, source, revision, service):
         for file in FILES:
             if file.endswith('.py'): compile((stage / file).read_text(encoding='utf-8'), file, 'exec')
         catalog = json.loads((stage / FILES[-1]).read_text(encoding='utf-8'))
-        if len(catalog['templates']) != 30: raise ValueError('通知模板目录不完整')
+        if len(catalog['templates']) != 35: raise ValueError('通知模板目录不完整')
         for path in [stage, *stage.rglob('*')]:
             os.chmod(path, 0o755 if path.is_dir() else 0o644)
             os.chown(path, stat.st_uid, stat.st_gid)

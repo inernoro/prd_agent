@@ -6,6 +6,7 @@ import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionM
 import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
+import { normalizeReleaseEnvironment } from './release-environment.js';
 import { classifyDeploymentFailure } from './deployment-failure-classifier.js';
 import { formatSshExecFailure, maskSshExecSecrets } from './ssh-exec-failure.js';
 import { parseDfAvailableMb, parseDiskGuardShortfall } from './release-disk-guard.js';
@@ -1042,6 +1043,8 @@ export class ReleaseService {
         commitSha: preflight.artifact.commitSha,
         artifact: preflight.artifact,
         targetId: preflight.target.id,
+        targetEnvironment: normalizeReleaseEnvironment(preflight.target.environment),
+        targetName: preflight.target.name,
         planId: preflight.plan.id,
         status: 'queued',
         startedAt,
@@ -1073,6 +1076,7 @@ export class ReleaseService {
       this.stateService.addReleaseRun(run);
       acceptedRunId = releaseId;
       this.notifyRunStarted(run);
+      releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId, run } });
       this.emitLog(releaseId, 'info', 'release queued', 'queued');
       if (forceReason) this.emitLog(releaseId, 'warn', `强制发布：${forceReason}`, 'queued');
       for (const check of preflight.checks.filter((item) => item.status === 'warn')) {
@@ -1151,6 +1155,8 @@ export class ReleaseService {
         artifact: previous.artifact,
         executionSnapshot: previous.executionSnapshot,
         targetId: current.targetId,
+        targetEnvironment: normalizeReleaseEnvironment(target.environment),
+        targetName: target.name,
         planId: current.planId,
         status: 'rollback_running',
         startedAt: rollbackStartedAt,

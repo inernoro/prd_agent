@@ -171,6 +171,30 @@
         "version"
       ]
     },
+    "REL-04": {
+      "categories": ["release"],
+      "text": "开始发布{version}",
+      "required": ["version"]
+    },
+    "REL-05": {
+      "categories": ["release"],
+      "text": "开始回滚至{version}",
+      "required": ["version"]
+    },
+    "REL-06": {
+      "categories": ["release"],
+      "text": "回滚至{version}失败",
+      "required": ["version"]
+    },
+    "REL-07": {
+      "categories": ["release"],
+      "text": "{version}发布失败，已恢复上一版本",
+      "required": ["version"]
+    },
+    "REL-08": {
+      "categories": ["release"],
+      "text": "控制面已重启"
+    },
     "ACC-01": {
       "categories": [
         "acceptance"

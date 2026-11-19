@@ -1,5 +1,5 @@
 import { alarmNotification } from './notification-report.js';
-import { NOTIFICATION_ENVIRONMENTS, type NotificationFacts } from '../shared/notification-templates.js';
+import { NOTIFICATION_ENVIRONMENTS, renderNotification, type NotificationFacts, type NotificationTemplateId } from '../shared/notification-templates.js';
 import { identityLabel, type AlarmIdentity } from './alarm-identity.js';
 import { classifyAlert as sharedClassifyAlert, type AlarmEventKind } from '../shared/alarm-classification.js';
 export type { AlarmEventKind } from '../shared/alarm-classification.js';
@@ -37,7 +37,7 @@ export type AlarmChannelKind = 'bark' | 'webhook' | 'map';
  */
 
 export const ALARM_EVENT_KINDS: ReadonlyArray<AlarmEventKind> = [
-  'business-down', 'business-recovered', 'infra-down', 'infra-recovered',
+  'business-down', 'business-recovered', 'infra-down', 'infra-recovered', 'production-change',
 ];
 
 export const ALARM_EVENT_LABEL: Record<AlarmEventKind, string> = {
@@ -45,6 +45,7 @@ export const ALARM_EVENT_LABEL: Record<AlarmEventKind, string> = {
   'business-recovered': '业务恢复',
   'infra-down': '基础设施故障',
   'infra-recovered': '基础设施恢复',
+  'production-change': '正式环境变更',
 };
 
 /**
@@ -158,6 +159,7 @@ export function alarmTransportFingerprint(c: Pick<AlarmChannelConfig, 'kind' | '
 export interface AlarmEvent {
   incidentId?: string;
   notificationFacts?: NotificationFacts;
+  releaseTemplate?: NotificationTemplateId;
   reportId?: string;
   eventId?: string;
   firstOccurredAt?: string;
@@ -219,6 +221,7 @@ export function routeAlarm(
 
 /** 一条渲染好的通知。协议层只管把它变成各自的请求，不再自己拼句子。 */
 export interface AlarmMessage {
+  routineChange?: boolean;
   notificationOrigin?: Pick<NotificationFacts, 'environment' | 'system'>;
   icon?: string;
   group?: string;
@@ -245,6 +248,13 @@ export function renderAlarmMessage(event: AlarmEvent, opts: { boardUrl?: string 
     group: `${event.businessName || event.projectId} · ${NOTIFICATION_ENVIRONMENTS[message.notificationOrigin?.environment || 'unknown']}` };
 }
 function renderAlarmContent(event: AlarmEvent, opts: { boardUrl?: string }): AlarmMessage {
+  if (event.kind === 'production-change' && event.releaseTemplate && event.notificationFacts) {
+    const facts = event.notificationFacts;
+    const { title, body } = renderNotification(event.releaseTemplate, facts);
+    const urgent = event.urgency === 'urgent';
+    return { title, body, notificationOrigin: { environment: facts.environment, system: facts.system },
+      routineChange: !urgent, level: urgent ? 'critical' : 'active', ...(opts.boardUrl ? { url: opts.boardUrl } : {}) };
+  }
   const notification = alarmNotification(event);
   return { title: notification.title, body: notification.body, notificationOrigin: { environment: notification.facts.environment, system: notification.id === 'MON-02' ? 'cds' : notification.facts.system },
     level: event.kind.endsWith('-recovered') ? 'passive' : 'active',

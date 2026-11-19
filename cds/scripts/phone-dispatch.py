@@ -52,13 +52,19 @@ class PhoneDispatch:
                 systems = {o.get('system', 'unknown') for o in origins}
                 env = CATALOG['environments'].get(next(iter(environments)), CATALOG['environments']['unknown']) if len(environments) == 1 else CATALOG['digest']['mixedEnvironment']
                 system = CATALOG['systems'].get(next(iter(systems)), CATALOG['systems']['unknown']) if len(systems) == 1 else CATALOG['digest']['mixedSystem']
+                levels = {i['message'].get('level', 'active') for i in items}
+                level = 'critical' if 'critical' in levels else 'passive' if levels == {'passive'} else 'active'
                 message.update(title=env + ' ' + system,
                     body=CATALOG['templates']['MSG-01']['text'].replace('{count}', str(len(items))),
-                    level='active' if any(i['message'].get('level') != 'passive' for i in items) else 'passive')
+                    level=level,
+                    routineChange=all(i['message'].get('routineChange') is True for i in items))
                 # 摘要落到列表，不能让多项故障都只指向第一项。原始深链仍在私有台账中。
                 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
                 url = urlsplit(message.get('url', ''))
-                query = [(k, v) for k, v in parse_qsl(url.query) if k not in ('target', 'detectedAt', 'incident', 'report')]
+                detail_keys = {'target', 'detectedAt', 'incident', 'report'}
+                if url.path == '/release-center':
+                    detail_keys.update(('run', 'commit', 'branch'))
+                query = [(k, v) for k, v in parse_qsl(url.query) if k not in detail_keys]
                 fragment = dict(parse_qsl(url.fragment))
                 from datetime import datetime, timezone
                 notice = {'detectedAt': datetime.fromtimestamp(now, timezone.utc).isoformat(), 'name': '监控通知汇总', 'finding': message['body'], 'count': len(items), 'assessment': 'notification-digest'}

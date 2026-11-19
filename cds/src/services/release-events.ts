@@ -49,6 +49,8 @@ export interface ReleaseLifecycleEventData {
   releaseId: string;
   projectId: string;
   targetId: string;
+  targetEnvironment?: ReleaseRun['targetEnvironment'];
+  targetName?: string;
   branchId: string;
   commitSha: string;
   status: ReleaseRunStatus;
@@ -56,6 +58,8 @@ export interface ReleaseLifecycleEventData {
   finishedAt?: string;
   operator?: string;
   rollbackOf?: string;
+  autoRestoredAt?: string;
+  healthcheckFailed?: boolean;
   /** 结构化的人话结论（如磁盘差额），站内信 detail 的第一优先字段。 */
   message?: string;
   errorMessage?: string;
@@ -128,6 +132,8 @@ class ReleaseEventBus extends EventEmitter {
         releaseId: run.releaseId,
         projectId: run.projectId,
         targetId: run.targetId,
+        ...(run.targetEnvironment ? { targetEnvironment: run.targetEnvironment } : {}),
+        ...(run.targetName ? { targetName: run.targetName } : {}),
         branchId: run.branchId,
         commitSha: run.commitSha,
         status: run.status,
@@ -135,6 +141,9 @@ class ReleaseEventBus extends EventEmitter {
         ...(run.finishedAt ? { finishedAt: run.finishedAt } : {}),
         ...(run.operator ? { operator: run.operator } : {}),
         ...(run.rollbackOf ? { rollbackOf: run.rollbackOf } : {}),
+        ...(run.autoRestoredAt ? { autoRestoredAt: run.autoRestoredAt } : {}),
+        ...(run.failure?.code === 'release.healthcheck.failed'
+          && run.progress?.steps.some(step => step.kind === 'healthcheck' && step.state === 'failed') ? { healthcheckFailed: true } : {}),
         ...(diskShortfall ? { message: describeDiskShortfall(diskShortfall) } : {}),
         ...(run.errorMessage ? { errorMessage: run.errorMessage } : {}),
         ...(run.failure ? { failure: run.failure } : {}),

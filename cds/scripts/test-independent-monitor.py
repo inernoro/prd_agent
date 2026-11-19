@@ -1,11 +1,31 @@
 import importlib.util
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 s=importlib.util.spec_from_file_location('monitor', Path(__file__).with_name('independent-monitor.py'))
 m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 
 class IndependentMonitorTest(unittest.TestCase):
+    def test_restart_uses_confirmed_boot_change_and_selected_production_channel(self):
+        channel = {'id': 'phone', 'enabled': True, 'events': ['production-change'], 'projects': []}
+        state = {'enabled': True, 'channels': [channel, {**channel, 'projects': ['other']}], 'processStartedAt': m.iso(1000)}
+        config = {'identity': {'subject': {'id': 'cds-live', 'environment': '生产'}}, 'publicUrl': 'https://example.test/status'}
+        dispatcher = Mock()
+        m.observe_restart(config, state, 1100, dispatcher)
+        dispatcher.submit.assert_not_called()
+        state['processStartedAt'] = m.iso(1150)
+        m.observe_restart(config, state, 1200, dispatcher)
+        m.observe_restart(config, state, 1210, dispatcher)
+        dispatcher.submit.assert_called_once()
+        args = dispatcher.submit.call_args.args
+        self.assertEqual(args[0], channel)
+        self.assertEqual(args[1]['body'], '控制面已重启')
+        self.assertEqual(args[2], 'restart:cds-live:' + m.iso(1150))
+        state['processStartedAt'] = m.iso(1220)
+        config['identity']['subject']['environment'] = '测试'
+        m.observe_restart(config, state, 1230, dispatcher)
+        dispatcher.submit.assert_called_once()
+
     def inspect_targets(self, targets, now=30000):
         def read(url, *args, **kwargs):
             return b'<html><script></script></html>' if url.endswith('/status') else m.json.dumps({'generatedAt': now * 1000, 'targets': targets}).encode()
@@ -79,6 +99,17 @@ class IndependentMonitorTest(unittest.TestCase):
         with patch.object(m,'inspect',return_value={'reason':'unreachable'}),patch.object(m,'publish',side_effect=RuntimeError()):
             with self.assertRaises(RuntimeError):m.tick({'cdsBase':'https://example.com'},state,1060)
         self.assertEqual(state['pending']['transition'],'down')
+
+    def test_snapshot_failure_does_not_block_independent_outage_delivery(self):
+        state = {'failures': 2, 'checkedAt': 1000}
+        config = {'cdsBase': 'https://example.test', 'publicUrl': 'https://status.example.test/', 'bark': {'key': 'fixture'}}
+        dispatcher = Mock()
+        dispatcher.submit.return_value = None
+        with patch.object(m, 'inspect', return_value={'reason': 'unreachable'}), patch.object(m, 'publish', side_effect=OSError()):
+            m.tick(config, state, 1060, dispatcher)
+        dispatcher.submit.assert_called_once()
+        self.assertEqual(dispatcher.submit.call_args.args[1]['url'], config['publicUrl'])
+        self.assertIsNotNone(dispatcher.submit.call_args.kwargs['urgent_key'])
     def test_fresh_cds_report_does_not_duplicate_internal_notification(self):
         state={'failures':2,'checkedAt':1000}
         with patch.object(m,'inspect',return_value={'reason':'collection','notifyEligible':False}),patch.object(m,'publish'):

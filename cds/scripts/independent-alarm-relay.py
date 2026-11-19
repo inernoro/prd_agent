@@ -27,13 +27,14 @@ def decrypt(envelope, private_key):
 
 
 def poll(config, state, now):
-    body = {'proof': state.get('proof'), 'acks': state.get('acks', [])[:100]}
+    body = {'proof': state.get('proof'), 'acks': state.get('acks', [])[:100], 'productionChanges': True}
     request = urllib.request.Request(config['cdsBase'] + '/api/cds-system/alarm-relay/poll',
         data=json.dumps(body).encode(), headers={**config['headers'], 'Content-Type': 'application/json'})
     with urllib.request.urlopen(request, timeout=15) as response:
         packet = decrypt(json.loads(response.read(4_000_000)), config['relayPrivateKey'])
     state['acks'] = state.get('acks', [])[len(body['acks']):]
     state.update(proof=packet['challenge'], enabled=packet['enabled'], channels=packet['channels'], syncedAt=now)
+    state['processStartedAt'] = packet.get('processStartedAt')
     for item in packet['items']:
         if item['id'] in state.setdefault('receipts', {}):
             state.setdefault('acks', []).append(state['receipts'][item['id']])
@@ -43,12 +44,13 @@ def poll(config, state, now):
 
 def send(channel, message):
     bark = channel['bark']
+    routine = message.get('routineChange') is True
     payload = {'device_key': bark['key'], 'title': message['title'], 'body': message['body'],
         'url': message.get('url', ''), 'group': message.get('group') or bark.get('group') or '业务监控',
-        'level': bark.get('level') or message.get('level', 'active')}
+        'level': 'active' if routine else bark.get('level') or message.get('level', 'active')}
     if message.get('icon'): payload['icon'] = message['icon']
     for key in ('sound', 'call'):
-        if bark.get(key): payload[key] = bark[key]
+        if not routine and bark.get(key): payload[key] = bark[key]
     request = urllib.request.Request(bark.get('serverUrl', 'https://api.day.app').rstrip('/') + '/push',
         data=json.dumps(payload, ensure_ascii=False).encode(), headers={'Content-Type': 'application/json'})
     try:
@@ -62,11 +64,18 @@ def send(channel, message):
 def process(state, now, persist, sender=send, platform_incident=None, dispatcher=None):
     channels = {c['id']: c for c in state.get('channels', []) if c.get('enabled')}
     for item in list(state.get('inbox', {}).values()):
-        urgent = (item['event'].get('urgency') == 'urgent' and not item['event'].get('drill')
-            and not item['event']['kind'].endswith('-recovered'))
-        if now - item['receivedAt'] < 30 and not urgent and not item['event'].get('drill'): continue
         event = item['event']; channel = channels.get(item['channelId'])
         if not channel: continue
+        if event['kind'] == 'production-change':
+            if dispatcher is None:
+                continue
+            urgent_key = json.dumps(['release-check', event['projectId'], event['targetId']]) if event.get('urgency') == 'urgent' else None
+            outcome = dispatcher.submit(channel, item['message'], 'change:' + event['eventId'], now, urgent_key=urgent_key)
+            if outcome is not None:
+                complete(state, item, outcome, False, persist)
+            continue
+        urgent = (event.get('urgency') == 'urgent' and not event.get('drill') and not event['kind'].endswith('-recovered'))
+        if now - item['receivedAt'] < 30 and not urgent and not event.get('drill'): continue
         key = item['channelId'] + '/' + (event.get('correlationKey') or event.get('targetId') or item['id'])
         if event.get('drill'): key = item['id']
         inherited = event.get('recoveryConfirmed', False) and event['kind'].endswith('-recovered')
@@ -110,8 +119,12 @@ def process(state, now, persist, sender=send, platform_incident=None, dispatcher
         if recovered and not targets:
             incident['notified'] = False
             incident['accepted'] = False
-        receipt = {'id': item['id'], 'ok': ok, 'merged': (prior or {}).get('state') == 'merged' if prior else not should_send}
-        state.setdefault('receipts', {})[item['id']] = receipt
-        state.setdefault('acks', []).append(receipt)
-        del state['inbox'][item['id']]
-        persist()
+        complete(state, item, ok, (prior or {}).get('state') == 'merged' if prior else not should_send, persist)
+
+
+def complete(state, item, ok, merged, persist):
+    receipt = {'id': item['id'], 'ok': ok, 'merged': merged}
+    state.setdefault('receipts', {})[item['id']] = receipt
+    state.setdefault('acks', []).append(receipt)
+    del state['inbox'][item['id']]
+    persist()

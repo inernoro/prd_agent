@@ -168,6 +168,7 @@ function parseChannelConfig(
   // 空事件不是「静音」——静音靠 enabled。一条什么都不订的通道是一个从落地那天起
   // 就不会响的铃，而它在列表里看着和正常的一模一样。
   if (events.length === 0) fail('至少勾一类事件 —— 想临时静音请用开关，不要把事件清空');
+  if (kind !== 'bark' && events.includes('production-change')) fail('正式环境变更通过独立进程投递到 Bark 手机通道');
 
   const projects = Array.isArray(body.projects)
     ? body.projects.map((p) => str(p, 128)).filter(Boolean)

@@ -128,6 +128,35 @@ def identity_label(value):
     return ' · '.join(str(value[k]) for k in ['name', 'environment', 'location'] if value.get(k)) or '身份尚未配置'
 
 
+def observe_restart(config, relay_state, now, dispatcher):
+    marker = relay_state.get('processStartedAt')
+    previous = relay_state.get('observedProcessStartedAt')
+    subject = config.get('identity', {}).get('subject', {})
+    declared = subject.get('environment')
+    production = declared in ('production', CATALOG['environments']['production']) or CATALOG['environmentAliases'].get(declared) == 'production'
+    if not relay_state.get('enabled') or not subject.get('id') or not production:
+        return
+    try:
+        started = dt.datetime.fromisoformat(marker.replace('Z', '+00:00'))
+        if started.tzinfo is None or started.timestamp() > now + 60:
+            return
+        if previous and started <= dt.datetime.fromisoformat(previous.replace('Z', '+00:00')):
+            return
+    except (AttributeError, ValueError, TypeError, OverflowError):
+        return
+    if previous:
+        title = CATALOG['environments']['production'] + ' ' + CATALOG['systems']['cds']
+        message = {'title': title, 'body': CATALOG['templates']['REL-08']['text'],
+                   'notificationOrigin': {'environment': 'production', 'system': 'cds'},
+                   'url': config['publicUrl'], 'group': title, 'level': 'active', 'routineChange': True}
+        for channel in relay_state.get('channels', []):
+            projects = channel.get('projects', [])
+            if (channel.get('enabled') and 'production-change' in channel.get('events', [])
+                    and (not projects or 'cds-self-monitor' in projects)):
+                dispatcher.submit(channel, message, 'restart:' + subject['id'] + ':' + marker, now)
+    relay_state['observedProcessStartedAt'] = marker
+
+
 def incident_url(config, event_id):
     url = urllib.parse.urlsplit(config['publicUrl'])
     query = urllib.parse.parse_qs(url.query)
@@ -135,7 +164,7 @@ def incident_url(config, event_id):
     return urllib.parse.urlunsplit(url._replace(query=urllib.parse.urlencode(query, doseq=True)))
 
 
-def notify(config, state, transition, now, dispatcher=None):
+def notify(config, state, transition, now, dispatcher=None, snapshot_available=True):
     bark = config.get('bark')
     if not bark or not bark.get('key') or not transition:
         return
@@ -151,7 +180,7 @@ def notify(config, state, transition, now, dispatcher=None):
     body = CATALOG['templates'][template_id]['text'].replace('{function}', function).replace('{subject}', CATALOG['systems']['cds'])
     payload = {'device_key': bark['key'], 'title': title, 'body': body,
                'notificationOrigin': {'environment': environment, 'system': 'cds'},
-               'url': incident_url(config, event.get('id', '')),
+               'url': incident_url(config, event.get('id', '')) if snapshot_available else config['publicUrl'],
                'group': title, 'level': 'passive' if transition == 'recovered' else 'active'}
     icon = identity.get('observer', {}).get('iconUrl') or bark.get('iconUrl')
     if icon:
@@ -202,11 +231,18 @@ def tick(config, state, now, dispatcher=None, persist=lambda: None):
         state['notificationIncidentId'] = event['id']
         state['pending'] = {'transition': 'escalated' if transition == 'escalated' else 'down', 'attempts': 0, 'nextAt': now}
     persist()
-    # 页面先留证，再发通知；手机链接不会指向尚未发布的事件。
-    publish(config, public_snapshot(state, config, now))
+    # 独立通知出口不能被状态页的对象存储拖停。快照不可用时通知回到状态页入口。
+    snapshot_available = True
+    try:
+        publish(config, public_snapshot(state, config, now))
+    except Exception:
+        if dispatcher is None:
+            raise
+        snapshot_available = False
+        print(json.dumps({'at': iso(now), 'result': 'snapshot-publish-unavailable'}), flush=True)
     pending = state.get('pending')
     if pending and (eligible or pending['transition'] == 'recovered') and config.get('bark') and now >= pending['nextAt']:
-        accepted = notify(config, state, pending['transition'], now, dispatcher)
+        accepted = notify(config, state, pending['transition'], now, dispatcher, snapshot_available)
         if accepted == 'queued':
             return
         pending['attempts'] += 1
@@ -249,6 +285,7 @@ def main():
             if config.get('relayPrivateKey'):
                 try:
                     relay.poll(config, relay_state, started)
+                    observe_restart(config, relay_state, started, dispatcher)
                     relay.save(relay_path, relay_state)
                     # 外部监控保留既有通道的安全副本，主站不可达时也能发送平台事故。
                     channels = relay_state.get('channels', [])
