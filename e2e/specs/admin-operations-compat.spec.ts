@@ -850,9 +850,16 @@ for (const width of [390, 1440])
       expect(await page.locator(".gateway-intent-heading").evaluate(el => getComputedStyle(el).color)).not.toBe(originalInk);
       await navigateTo("概览");
       await expect(page.locator("html")).toHaveAttribute("data-theme", otherTheme);
-      await navigateTo("对话");
-      await page.waitForLoadState("networkidle");
-      await page.reload();
+      const readOrganization = () => page.waitForResponse(response =>
+        response.request().method() === "GET" && new URL(response.url()).pathname === "/llmgw/gw/organization",
+      );
+      // SPA navigation can retain an earlier network-idle state. Wait for the new organization read before reloading.
+      const [openedOrganization] = await Promise.all([readOrganization(), navigateTo("对话")]);
+      expect(openedOrganization.status()).toBe(200);
+      expect(await openedOrganization.json()).toMatchObject({ success: true, data: { tenant: { id: "t1" } } });
+      const [reloadedOrganization] = await Promise.all([readOrganization(), page.reload()]);
+      expect(reloadedOrganization.status()).toBe(200);
+      expect(await reloadedOrganization.json()).toMatchObject({ success: true, data: { tenant: { id: "t1" } } });
       await expect(page.locator("html")).toHaveAttribute("data-theme", otherTheme);
       await expect(page.locator(".gateway-quickstart-stage")).toHaveCSS("color-scheme", otherTheme);
       await setTheme(theme);
