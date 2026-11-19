@@ -76,6 +76,8 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     await click(document.querySelector('[aria-label="关闭详情"]'));
     const route = new URL(document.querySelector('#route').textContent, 'http://local');
     assert.equal(route.searchParams.get('status'), 'failed'); assert.equal(route.searchParams.get('model'), 'sample-model'); assert.equal(route.searchParams.has('transaction'), false);
+    assert.equal(route.searchParams.has('to'), false, 'closing after the trace round trip restores a live list');
+    assert.equal(document.querySelectorAll('.lg-log-table-row').length, 4, 'restoring the live window keeps both loaded pages');
     // A delayed response from another filter must never overwrite a restored request list.
     const originalRoute = document.querySelector('#route').textContent;
     globalThis.__journey.delay = true;
@@ -151,7 +153,7 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
       assert.equal(document.querySelector('#route').textContent, frozenDetail);
       assert.equal(globalThis.__journey.calls.length, detailCalls, 'request details keep their original window when returning to the tab');
       await click(document.querySelector('[aria-label="关闭详情"]'));
-      assert.doesNotMatch(document.querySelector('#route').textContent, /[?&](to|anchor)=/, 'closing live details resumes the live list');
+      assert.doesNotMatch(document.querySelector('#route').textContent, /[?&]to=/, 'closing live details resumes the live list');
       assert.equal(globalThis.__journey.calls.length, detailCalls, 'closing live details keeps the loaded query until the next refresh');
       const afterClose = Date.now() + 1000;
       globalThis.__journey.rows.unshift({ ...base, id: 'after-close', startedAt: new Date(afterClose).toISOString() });

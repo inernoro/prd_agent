@@ -1,6 +1,6 @@
 /** Finite, refresh-safe task context. Never carries arbitrary return URLs or request bodies. */
 export const LOG_FILTER_KEYS = ['model', 'status', 'provider', 'appCallerCode', 'transport', 'requestType', 'operation', 'sourceSystem', 'ingressProtocol', 'modelPolicy', 'releaseCommit', 'runId', 'requestId', 'sessionId', 'modelPoolId', 'serviceKeyId', 'clientCode', 'environment', 'platformId'] as const;
-const CONTEXT_KEYS = ['source', 'range', 'from', 'to', 'view', ...LOG_FILTER_KEYS, 'selectedLogId', 'traceReference', 'traceAnchor', 'tracePage'] as const;
+const CONTEXT_KEYS = ['source', 'range', 'from', 'to', 'liveList', 'view', ...LOG_FILTER_KEYS, 'selectedLogId', 'traceReference', 'traceAnchor', 'tracePage'] as const;
 export type LogTaskContext = Partial<Record<typeof CONTEXT_KEYS[number], string>>;
 function clean(input: URLSearchParams): LogTaskContext {
   const result: LogTaskContext = {};
@@ -11,6 +11,7 @@ function clean(input: URLSearchParams): LogTaskContext {
   if (result.source !== 'overview' && result.source !== 'logs') delete result.source;
   if (result.range && !['1d', '7d', '30d'].includes(result.range)) delete result.range;
   for (const key of ['from', 'to'] as const) if (result[key] && !Number.isFinite(Date.parse(result[key]!))) delete result[key];
+  if (result.liveList !== '1' || !result.from || !result.to) delete result.liveList;
   if (result.view && !['physical', 'sessions'].includes(result.view)) delete result.view;
   if (result.tracePage && !/^[1-9]\d{0,4}$/.test(result.tracePage)) delete result.tracePage;
   return result;
@@ -25,7 +26,10 @@ export function buildLogListHref(context: LogTaskContext = {}, selectedId?: stri
   const safe = clean(new URLSearchParams(Object.entries(context).filter(([, value]) => !!value) as [string, string][]));
   const query = new URLSearchParams();
   for (const key of ['range', 'from', 'to', 'view', ...LOG_FILTER_KEYS] as const) if (safe[key]) query.set(key, safe[key]!);
-  if (selectedId) query.set('transaction', selectedId);
+  if (selectedId) {
+    query.set('transaction', selectedId);
+    if (safe.liveList) query.set('liveList', safe.liveList);
+  }
   if (context.selectedLogId) query.set('anchor', context.selectedLogId);
   return `/logs${query.size ? `?${query}` : ''}`;
 }

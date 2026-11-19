@@ -427,17 +427,20 @@ export function LogsView() {
     const next = new URLSearchParams(location.search);
     if (value) next.set(key, value); else next.delete(key);
     next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    if (next.get('liveList') === '1') {
+      for (const key of ['from', 'to', 'liveList']) next.delete(key);
+    }
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const subtab: LogsSubTab = query.get('view') === 'physical' ? 'upstream' : query.get('view') === 'sessions' ? 'sessions' : 'generations';
   const setSubtab = (value: LogsSubTab) => updateQuery('view', value === 'upstream' ? 'physical' : value === 'sessions' ? 'sessions' : '');
   const [trendOpen, setTrendOpen] = useState(false);
   const presetKey = ['1d', '7d', '30d'].includes(query.get('range') || '') ? query.get('range')! : '30d';
-  const [initialRangeAt] = useState(Date.now);
   const [refreshToken, setRefreshToken] = useState(0);
   const setPresetKey = (value: string) => {
     const next = new URLSearchParams(location.search);
-    next.set('range', value); next.delete('from'); next.delete('to'); next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    next.set('range', value);
+    for (const key of ['from', 'to', 'liveList', 'transaction', 'anchor', 'openRequest']) next.delete(key);
     setRefreshToken(Date.now());
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
@@ -566,31 +569,12 @@ export function LogsView() {
       ? { from: fixedFrom, to: fixedTo }
       : null
   ), [fixedFrom, fixedTo]);
+  const [initialRangeAt] = useState(() => fixedRange ? Date.parse(fixedRange.to) : Date.now());
   const range = useMemo(() => {
     if (fixedRange) return fixedRange;
     const preset = TIME_RANGE_PRESETS.find((item) => item.key === presetKey) ?? TIME_RANGE_PRESETS[2];
     return rangeFromPreset(preset.days, refreshToken || initialRangeAt);
   }, [presetKey, fixedRange, refreshToken, initialRangeAt]);
-
-  const openedFromLiveList = location.state?.openedFromLiveList === true;
-  const openLogDetail = useCallback((id: string, replace = false) => {
-    const query = new URLSearchParams(location.search);
-    query.set('from', range.from); query.set('to', range.to);
-    query.set('transaction', id); query.set('anchor', id); query.delete('openRequest');
-    navigate({ pathname: location.pathname, search: `?${query.toString()}` }, {
-      replace,
-      state: { openedFromLiveList: !fixedRange || openedFromLiveList },
-    });
-  }, [location.pathname, location.search, navigate, range.from, range.to, fixedRange, openedFromLiveList]);
-
-  const closeLogDetail = useCallback(() => {
-    const query = new URLSearchParams(location.search);
-    query.delete('transaction');
-    if (openedFromLiveList) {
-      for (const key of ['from', 'to', 'anchor']) query.delete(key);
-    }
-    navigate({ pathname: location.pathname, search: query.size ? `?${query.toString()}` : '' }, { replace: true });
-  }, [location.pathname, location.search, navigate, openedFromLiveList]);
 
   const baseParams = useMemo(
     () => ({
@@ -619,6 +603,24 @@ export function LogsView() {
     }),
     [range.from, range.to, subtab, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterOperation, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment, filterPlatformId],
   );
+  const resumeKey = JSON.stringify(baseParams);
+  const openedFromLiveList = query.get('liveList') === '1';
+  const openLogDetail = useCallback((id: string, replace = false) => {
+    const query = new URLSearchParams(location.search);
+    query.set('from', range.from); query.set('to', range.to);
+    if (!fixedRange) query.set('liveList', '1');
+    query.set('transaction', id); query.set('anchor', id); query.delete('openRequest');
+    navigate({ pathname: location.pathname, search: `?${query.toString()}` }, { replace });
+  }, [location.pathname, location.search, navigate, range.from, range.to, fixedRange]);
+
+  const closeLogDetail = useCallback(() => {
+    const query = new URLSearchParams(location.search);
+    query.delete('transaction');
+    if (openedFromLiveList) {
+      for (const key of ['from', 'to', 'liveList']) query.delete(key);
+    }
+    navigate({ pathname: location.pathname, search: query.size ? `?${query.toString()}` : '' }, { replace: true });
+  }, [location.pathname, location.search, navigate, openedFromLiveList]);
 
   useEffect(() => {
     getLogsMeta().then((res) => {
@@ -712,7 +714,6 @@ export function LogsView() {
     [baseParams],
   );
 
-  const resumeKey = JSON.stringify(baseParams);
   const resumeRef = useRef({ key: rowsKey.current, rows, total, page: loadedPage.current, ready: false });
   resumeRef.current = { key: rowsKey.current, rows, total, page: loadedPage.current, ready: rowsKey.current === resumeKey && !loading && !loadingMore && !listError };
   const resumeScroll = useRef(0);
@@ -807,13 +808,13 @@ export function LogsView() {
   }, [loadInsights, refreshToken]);
 
   useEffect(() => {
-    if (fixedRange || selectedLogId || anchorId) return;
+    if (fixedRange || selectedLogId) return;
     const refreshOnReturn = () => {
       if (document.visibilityState === 'visible') setRefreshToken(Date.now());
     };
     document.addEventListener('visibilitychange', refreshOnReturn);
     return () => document.removeEventListener('visibilitychange', refreshOnReturn);
-  }, [fixedRange, selectedLogId, anchorId]);
+  }, [fixedRange, selectedLogId]);
 
   const requestMatches = useMemo(() => {
     const requestId = filterRequestId.trim();
@@ -843,7 +844,7 @@ export function LogsView() {
   const refresh = () => {
     if (fixedRange && !selectedLogId) {
       const next = new URLSearchParams(location.search);
-      for (const key of ['from', 'to', 'anchor']) next.delete(key);
+      for (const key of ['from', 'to', 'liveList', 'anchor']) next.delete(key);
       navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
     }
     setRefreshToken(Date.now());
@@ -1173,6 +1174,9 @@ export function LogsView() {
     const next = new URLSearchParams(location.search);
     for (const key of LOG_FILTER_KEYS) next.delete(key);
     next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    if (next.get('liveList') === '1') {
+      for (const key of ['from', 'to', 'liveList']) next.delete(key);
+    }
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const hasMoreRows = rows.length < total;
