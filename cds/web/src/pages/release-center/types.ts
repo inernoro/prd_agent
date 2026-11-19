@@ -80,6 +80,9 @@ export interface ReleaseLogEntry {
 }
 
 export interface ReleaseRun {
+  forceReason?: string;
+  autoRestoreStartedAt?: string;
+  autoRestoredAt?: string;
   governance?: import('../../../../src/domain/release-governance').ReleaseGovernanceReceipt;
   releaseId: string;
   /** 既有后端审计关联号；不是幂等键。 */
@@ -280,6 +283,9 @@ export interface SiteDraft {
 /** 发布前检查结果。与 ReleaseService.preflight 的响应对齐。 */
 export interface ReleasePreflightResult {
   ok: boolean;
+  forceAvailable?: boolean;
+  preflightId?: string;
+  artifact?: { commitSha: string };
   checks: Array<{
     id: string;
     label: string;

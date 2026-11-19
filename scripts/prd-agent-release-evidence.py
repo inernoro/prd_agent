@@ -96,6 +96,9 @@ def main() -> int:
     parser.add_argument("--static-before-current", default="")
     parser.add_argument("--static-before-previous", default="")
     parser.add_argument("--smoke-json", default="")
+    parser.add_argument("--rollback-smoke-json", default="")
+    parser.add_argument("--gateway-readiness-baseline", default="")
+    parser.add_argument("--force-external", choices=["0", "1"], default="0")
     parser.add_argument("--asset-storage-readiness-json", default="")
     parser.add_argument("--failure-stage", default="")
     parser.add_argument("--rollback-result", default="not-needed")
@@ -161,6 +164,9 @@ def main() -> int:
             "previous": path_metadata(args.previous_link),
         },
         "publicSurface": read_json(args.smoke_json),
+        "rollbackPublicSurface": read_json(args.rollback_smoke_json),
+        "gatewayBeforeRelease": read_json(args.gateway_readiness_baseline),
+        "forcedExternalChecks": args.force_external == "1",
         "assetStorageReadiness": read_json(args.asset_storage_readiness_json),
         "gatewayBindMount": {
             "recreated": args.gateway_bind_recreated == "1",

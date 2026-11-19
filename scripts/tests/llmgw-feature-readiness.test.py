@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,15 @@ SPEC.loader.exec_module(probe)
 
 
 class FeatureReadinessTests(unittest.TestCase):
+    def test_existing_dependency_and_forced_release_preserve_hard_checks(self):
+        decide = runpy.run_path(str(SCRIPT))["_readiness_disposition"]
+        existing = {"failedComponents": ["scenario-capability"]}
+        self.assertEqual(decide(503, "not-ready", ["scenario-capability"], existing, False), "existing")
+        self.assertEqual(decide(503, "not-ready", ["scenario-capability"], existing, False, True), "fail")
+        self.assertEqual(decide(503, "not-ready", ["scenario-capability"], {}, False), "fail")
+        self.assertEqual(decide(503, "not-ready", ["scenario-capability"], {}, True), "forced")
+        self.assertEqual(decide(503, "not-ready", ["scenario-capability", "router"], existing, True), "fail")
+        self.assertEqual(decide(401, "", [], existing, True), "fail")
     def test_scope_rejects_unknown_and_does_not_scan_unselected_agents(self):
         self.assertEqual(probe._feature_routes(["none"]), [])
         self.assertEqual(len(probe._feature_routes(["defect-agent,defect-agent"])), 2)
@@ -52,7 +62,7 @@ class FeatureReadinessTests(unittest.TestCase):
 
     def test_failed_target_blocks_release_command_then_recovery_passes(self):
         requests = []
-        state = {"broken": True, "thinking": None}
+        state = {"broken": True, "thinking": None, "failed_components": []}
 
         class Handler(BaseHTTPRequestHandler):
             def reply(self, status, payload):
@@ -63,7 +73,11 @@ class FeatureReadinessTests(unittest.TestCase):
                 self.wfile.write(raw)
 
             def do_GET(self):
-                if self.path in ("/healthz", "/readyz"):
+                if self.path == "/readyz" and state["failed_components"]:
+                    self.reply(503, {"status": "not-ready", "commit": "test", "components": [
+                        {"name": name, "ready": False} for name in state["failed_components"]
+                    ]})
+                elif self.path in ("/healthz", "/readyz"):
                     self.reply(200, {"status": "ready", "commit": "test"})
                 else:
                     self.reply(401, {"error": {"code": "KEY_REQUIRED"}})
@@ -140,6 +154,22 @@ class FeatureReadinessTests(unittest.TestCase):
                 unselected = subprocess.run(["bash", "-euc", shell], cwd=ROOT, env=env, capture_output=True, text=True)
                 self.assertEqual(unselected.returncode, 0, unselected.stdout + unselected.stderr)
                 self.assertEqual(json.loads(output.read_text())["featureRoutes"], [])
+                baseline = Path(temp) / "before.json"
+                base = f"http://127.0.0.1:{server.server_port}"
+                state["failed_components"] = ["scenario-capability"]
+                captured = subprocess.run([sys.executable, str(SCRIPT), "--base", base,
+                                           "--readiness-baseline-out", str(baseline)],
+                                          env=env, capture_output=True, text=True)
+                self.assertEqual(captured.returncode, 0, captured.stderr)
+                self.assertIn("scenario-capability", captured.stdout)
+                env["gateway_readiness_baseline"] = str(baseline)
+                allowed = subprocess.run(["bash", "-euc", shell], cwd=ROOT, env=env, capture_output=True, text=True)
+                self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+                self.assertIn("生产环境已有依赖故障", allowed.stdout)
+                state["failed_components"].append("gateway-mongo")
+                blocked = subprocess.run(["bash", "-euc", shell], cwd=ROOT, env=env, capture_output=True, text=True)
+                self.assertEqual(blocked.returncode, 1)
+                self.assertIn("gateway-mongo", blocked.stderr)
         finally:
             server.shutdown()
             server.server_close()

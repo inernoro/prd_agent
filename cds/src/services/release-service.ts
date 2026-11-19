@@ -97,6 +97,7 @@ interface Ssh2ConnectOptions {
 export type { ReleasePreflightCheck } from '../types.js';
 
 export interface ReleasePreflightResult {
+  forceAvailable?: boolean;
   ok: boolean;
   checks: ReleasePreflightCheck[];
   artifact?: ReleaseArtifact;
@@ -113,6 +114,7 @@ export interface ReleasePreflightResult {
 }
 
 export interface ReleaseStartInput {
+  forceReason?: string;
   authorizationId?: string;
   /** Internal batch source: version selection is validated by ReleaseBatchService. */
   batchSource?: import('../domain/release-batch.js').ReleaseBatchSource;
@@ -298,6 +300,12 @@ const RELEASE_RULES: ReleaseFailureRule[] = [
     pattern: /CDS 重启导致执行体丢失/,
     owner: 'cds', retryable: true,
     suggestedAction: '确认目标主机上的实际版本，再重新发起一次发布',
+  },
+  {
+    code: 'release.gateway_verification.failed',
+    pattern: /网关发布验证失败/i,
+    owner: 'code', retryable: true,
+    suggestedAction: '查看发布记录里的失败组件及部署前状态，确认已恢复运行版本后再重试。',
   },
   {
     code: 'release.healthcheck.failed',
@@ -556,6 +564,7 @@ export class ReleaseService {
     const projectMismatch = Boolean(branch && target && branch.projectId !== target.projectId);
     const projectId = branch?.projectId || target?.projectId || 'default';
     const strategy = target ? effectiveReleaseStrategy(target) : { mode: 'existing-script' as const, command: '' };
+    const mapRelease = isMapProductionRelease(target);
     const planTemplate = strategy.mode === 'existing-script' ? 'ssh-script' : strategy.mode;
     const plan = this.ensureDefaultPlans(projectId).find((item) => item.template === planTemplate);
 
@@ -563,6 +572,9 @@ export class ReleaseService {
       push({ id: 'branch', label: '分支存在', status: 'fail', message: `分支不存在: ${input.branchId}`, blocking: true });
     } else if (input.batchSource) {
       push({ id: 'branch', label: '验收版本来源', status: 'pass', message: `${branch.branch} 的固定验收版本；后续分支运行态不影响本批次`, blocking: false });
+    } else if (branch.status !== 'running' && input.forceReason && mapRelease) {
+      push({ id: 'branch', label: '分支部署状态', status: 'warn', blocking: false,
+        message: `分支状态为 ${branch.status}，强制发布按锁定的提交继续` });
     } else if (branch.status !== 'running') {
       push({ id: 'branch', label: '分支部署成功', status: 'fail', message: `当前状态是 ${branch.status}，只允许从成功运行的分支发布`, blocking: true });
     } else {
@@ -574,6 +586,11 @@ export class ReleaseService {
       push({ id: 'commit', label: 'commit 明确', status: 'fail', message: '分支没有 githubCommitSha 或 pinnedCommit', blocking: true });
     } else {
       push({ id: 'commit', label: 'commit 明确', status: 'pass', message: commitSha, blocking: false });
+    }
+    if (input.forceReason && mapRelease && branch && commitSha && !projectMismatch) {
+      const ci = await this.verifyProjectCI(branch, commitSha, { mode: 'project-script' });
+      push({ id: 'release-ci', label: '强制发布的同提交 CI', status: ci.ok ? 'pass' : 'fail',
+        message: ci.message, blocking: !ci.ok });
     }
 
     const previewUrl = input.previewUrl || '';
@@ -707,7 +724,8 @@ export class ReleaseService {
           await probeHealthcheck(target.ssh.healthcheckUrl, 8_000, false);
           push({ id: 'healthcheck', label: '上线地址可访问', status: 'pass', message: target.ssh.healthcheckUrl, blocking: false });
         } catch (err) {
-          push({ id: 'healthcheck', label: '上线地址可访问', status: 'fail', message: (err as Error).message, blocking: true });
+          push({ id: 'healthcheck', label: '上线地址现状', status: 'warn',
+            message: `当前生产入口已有故障，发布后会复验：${(err as Error).message}`, blocking: false });
         }
       } else {
         push({ id: 'healthcheck', label: '上线地址可访问', status: 'warn', message: '目标未启用，已跳过健康检查探测', blocking: false });
@@ -782,6 +800,19 @@ export class ReleaseService {
             }
           }
           const strategyCheck = buildStrategyPreflightCommand(target);
+          if (mapRelease && checks.some((check) => check.id === 'remote-repository' && check.status === 'pass')) {
+            try {
+              const output = await this.sshExec(target, buildMapReadinessCheck(target));
+              const summary = JSON.parse(output.trim()) as { status: number; components: string[] };
+              push({ id: 'map-readiness', label: '生产网关已有故障', status: summary.status === 200 ? 'pass' : 'warn',
+                message: summary.status === 200 ? '生产网关就绪'
+                  : `HTTP ${summary.status || '无响应'}，${summary.components.join('、') || '组件状态未知'}。允许提交发布，部署后复查。`,
+                blocking: false });
+            } catch {
+              push({ id: 'map-readiness', label: '生产网关已有故障', status: 'warn',
+                message: '发布前暂未取得网关组件状态，执行发布时会重新检查。', blocking: false });
+            }
+          }
           if (strategyCheck) {
             try {
               await this.sshExec(target, strategyCheck);
@@ -849,6 +880,8 @@ export class ReleaseService {
         message: approval?.message || '发布审批服务不可用，尚未放行；请恢复服务后重试', blocking: true });
     }
     const result: ReleasePreflightResult = {
+      forceAvailable: mapRelease && Boolean(artifact) && checks.every((check) =>
+        check.id === 'branch' || !check.blocking || check.status !== 'fail'),
       ok: checks.every((check) => !check.blocking || check.status !== 'fail'),
       checks,
       artifact,
@@ -890,6 +923,7 @@ export class ReleaseService {
    * 而用户据以决策的是第一份；两份不一致时用户完全无从察觉。
    */
   private async resolvePreflight(input: ReleaseStartInput): Promise<ReleasePreflightResult> {
+    if (input.forceReason) return this.preflight(input);
     return this.findReusablePreflight(input) ?? this.preflight(input);
   }
 
@@ -953,6 +987,14 @@ export class ReleaseService {
   }
 
   async startRelease(input: ReleaseStartInput): Promise<ReleaseRun> {
+    const forceReason = input.forceReason?.trim();
+    if (input.forceReason !== undefined && (!forceReason || forceReason.length > 300 || /[\r\n]/.test(forceReason))) {
+      throw new ReleaseNotStartedError('强制发布须填写一行原因，最多 300 个字符');
+    }
+    if (forceReason && (!isMapProductionRelease(this.stateService.getReleaseTarget(input.targetId))
+      || !/^[a-f0-9]{40}$/i.test(input.expectedCommitSha || ''))) {
+      throw new ReleaseNotStartedError('强制发布需要支持此模式的生产目标和完整提交 SHA');
+    }
     const preflight = await this.resolvePreflight(input).catch(rejectBeforeReleaseStart);
     if (!preflight.ok || !preflight.artifact || !preflight.target || !preflight.plan) {
       if (preflight.target?.governance?.required && this.governance) {
@@ -961,7 +1003,7 @@ export class ReleaseService {
           action: 'release', authorizationId: input.authorizationId }, 'denied',
           preflight.checks.filter(c => c.blocking && c.status === 'fail').map(c => c.message).join('；').slice(0,2000), input.authorizationId);
       }
-      throw new ReleaseNotStartedError(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
+      throw new ReleaseNotStartedError(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => `${c.label}（${c.message}）`).join('；')}`);
     }
     // 版本钳制（fail-closed）：调用方说「我要发的是这个 commit」时，绝不能因为分支
     // 在这期间前进了就默默改发别的版本。见 ReleaseStartInput.expectedCommitSha。
@@ -991,6 +1033,7 @@ export class ReleaseService {
       const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
       const startedAt = this.nowIso();
       const run: ReleaseRun = {
+        ...(forceReason ? { forceReason } : {}),
         releaseId,
         batchId: input.batchId,
         batchAttemptId: input.batchAttemptId,
@@ -1031,6 +1074,10 @@ export class ReleaseService {
       acceptedRunId = releaseId;
       this.notifyRunStarted(run);
       this.emitLog(releaseId, 'info', 'release queued', 'queued');
+      if (forceReason) this.emitLog(releaseId, 'warn', `强制发布：${forceReason}`, 'queued');
+      for (const check of preflight.checks.filter((item) => item.status === 'warn')) {
+        this.emitLog(releaseId, 'warn', `发布前检查 · ${check.label}：${check.message}`, 'queued');
+      }
       // 把「放行依据是哪一份结论、是复用还是现跑」写进日志：出事时这是第一现场。
       if (preflight.preflightId) {
         this.emitLog(
@@ -1633,7 +1680,12 @@ export class ReleaseService {
       await this.runDeployCommand(releaseId, executionTarget, run, execution.command);
     } catch (error) {
       if (error instanceof ReleaseGovernanceError) throw error;
-      if (execution.mode === 'project-script' || execution.mode === 'managed-script') {
+      if (isMapProductionRelease(executionTarget)) {
+        const logs = this.stateService.getReleaseRun(releaseId)?.logs || [];
+        const started = logs.find((log) => log.message.includes('restoring pre-release runtime, gateway and static web'));
+        const verified = logs.find((log) => log.message === '生产回滚已验证：运行服务、网关配置和网页均已恢复到本次发布前的版本');
+        if (started) this.stateService.patchReleaseRun(releaseId, { autoRestoreStartedAt: started.at, autoRestoredAt: verified?.at });
+      } else if (execution.mode !== 'existing-script' || target.ssh.rollbackCommand?.trim()) {
         await this.restorePreviousAfterFailedProbe(releaseId, target, run, error, '发布脚本执行');
       }
       throw error;
@@ -1641,7 +1693,14 @@ export class ReleaseService {
     this.patchStatus(releaseId, 'healthchecking');
     this.beginStep(releaseId, 'healthcheck', `健康检查 ${target.ssh.healthcheckUrl}`);
     try {
-      await probeReleaseSurface(target.ssh.healthcheckUrl, execution.mode);
+      const verifiedByMap = isMapProductionRelease(executionTarget)
+        && this.stateService.getReleaseRun(releaseId)?.logs.some((log) =>
+          log.message.startsWith('Production release completed with public surface evidence:'));
+      if (verifiedByMap) {
+        this.emitLog(releaseId, 'info', '已采用发布锁内完成的公网入口验证', 'healthcheck');
+      } else {
+        await probeReleaseSurface(target.ssh.healthcheckUrl, execution.mode);
+      }
     } catch (err) {
       await this.restorePreviousAfterFailedProbe(releaseId, target, run, err);
       throw err;
@@ -1738,7 +1797,10 @@ export class ReleaseService {
       this.emitLog(releaseId, 'warn', '发布已被取消，跳过自动恢复（不再对目标机器做任何写操作）', 'auto-restore');
       return;
     }
-    if (failedRun.executionSnapshot?.mode === 'existing-script' || !failedRun.previousReleaseId) return;
+    if (!failedRun.previousReleaseId || isMapProductionRelease(target)) return;
+    const customRollback = failedRun.executionSnapshot?.mode === 'existing-script'
+      ? target.ssh?.rollbackCommand?.trim() : undefined;
+    if (failedRun.executionSnapshot?.mode === 'existing-script' && !customRollback) return;
     const previous = this.stateService.getReleaseRun(failedRun.previousReleaseId);
     if (!previous) return;
     const strategy = previous.executionSnapshot?.strategy || failedRun.executionSnapshot?.strategy;
@@ -1765,7 +1827,7 @@ export class ReleaseService {
     this.stateService.patchReleaseRun(releaseId, { autoRestoreStartedAt });
     this.emitLog(releaseId, 'warn', `${failureLabel}失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
     try {
-      await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command, 'automatic-recovery');
+      await this.runDeployCommand(releaseId, executionTarget, restoreRun, customRollback || execution.command, 'automatic-recovery');
       await probeReleaseSurface(target.ssh!.healthcheckUrl, execution.mode);
       // 自动恢复此前**只写日志**：没有 run、没有时间戳，原 run 仍是 failed。
       // 于是 DORA 的恢复配对在这条失败之后找不到任何恢复者，把它算成「进行中故障」
@@ -2216,6 +2278,49 @@ export function parseRemoteRepositoryIdentity(output: string): string {
   return normalizeRepositoryIdentity(line?.slice('CDS_REPO_ORIGIN='.length));
 }
 
+function isMapProductionRelease(target?: ReleaseTarget): boolean {
+  if (!target || target.environment !== 'production') return false;
+  const strategy = effectiveReleaseStrategy(target);
+  return strategy.mode === 'existing-script'
+    && /(?:^|[\s'";])\.\/exec_dep\.sh(?:\s|$)/.test(strategy.command || '')
+    && /\bCDS_COMMIT_SHA\b/.test(strategy.command || '');
+}
+
+function buildMapReadinessCheck(target: ReleaseTarget): string {
+  const readinessUrl = new URL('/llmgw/gw/v1/readyz', target.ssh!.healthcheckUrl);
+  if (readinessUrl.protocol !== 'https:') throw new Error('生产网关探针要求 HTTPS');
+  const program = String.raw`
+import json, re, sys, urllib.error, urllib.request
+from pathlib import Path
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+key = ''
+for line in Path(sys.argv[1]).read_text().splitlines():
+    match = re.fullmatch(r'\s*(?:export\s+)?LLMGW_SERVE_KEY\s*=\s*(.*?)\s*', line)
+    if match:
+        key = match.group(1).strip('"\'')
+if not key:
+    raise SystemExit(1)
+request = urllib.request.Request(sys.argv[2], headers={'X-Gateway-Key': key})
+try:
+    response = urllib.request.build_opener(NoRedirect).open(request, timeout=6)
+except urllib.error.HTTPError as error:
+    response = error
+with response:
+    status = response.code
+    components = []
+    if status == 503:
+        payload = json.loads(response.read(65536))
+        components = sorted({item['name'] for item in payload.get('components', [])
+            if isinstance(item, dict) and item.get('ready') is False
+            and isinstance(item.get('name'), str) and re.fullmatch(r'[a-z0-9-]{1,70}', item['name'])})
+print(json.dumps({'status': status, 'components': components}))
+`;
+  const appPath = target.ssh!.appPath || '.';
+  return `cd ${shellQuote(appPath)} && python3 -c ${shellQuote(program)} .env ${shellQuote(readinessUrl.href)}`;
+}
+
 export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {
   const ssh = target.ssh!;
   const env: Record<string, string> = {
@@ -2231,6 +2336,7 @@ export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawC
     CDS_ARTIFACT_PATH: run.artifact.artifactPath || '',
     CDS_PREVIOUS_RELEASE_ID: run.previousReleaseId || '',
     CDS_ROLLBACK_OF: run.rollbackOf || '',
+    CDS_RELEASE_FORCE_EXTERNAL: run.forceReason && !run.rollbackOf ? '1' : '0',
   };
   const renderedEnv = Object.entries(env)
     .map(([key, value]) => `${key}=${shellQuote(value)}`)
