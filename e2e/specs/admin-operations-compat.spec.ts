@@ -786,8 +786,14 @@ test('慢加载日景超过首屏保护时限后仍按电影收尾', async ({ pa
     expect(Date.now() - arrivingAt).toBeGreaterThan(10000);
     const root = page.locator('html');
     await expect(root).toHaveAttribute('data-entry-arriving', '');
+    const header = page.locator('.lg-console-header');
+    const sidebar = page.locator('.lg-console-sidebar');
+    await expect(header).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
+    await expect(sidebar).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
     await expect(movie).toHaveJSProperty('ended', true);
     await expect(root).not.toHaveAttribute('data-entry-arriving', '');
+    await expect(header).toHaveCSS('opacity', '1');
+    await expect(sidebar).toHaveCSS('opacity', '1');
   } finally {
     releaseMedia();
   }

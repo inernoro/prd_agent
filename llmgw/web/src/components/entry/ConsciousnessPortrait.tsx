@@ -39,7 +39,8 @@ export function ConsciousnessPortrait({ fog, arriving, frameTime, theme }: Props
     const paintState = (time: number) => {
       const state = samplePortrait(time);
       if (openingPoster) state.camera = 1;
-      setEntryChrome(state.chrome);
+      // The authored daylight film releases the header and sidebar on completion.
+      if (!openingPoster) setEntryChrome(state.chrome);
       for (const [key, value] of Object.entries(state)) {
         root.style.setProperty(`--portrait-${key}`, String(value));
         owner.style.setProperty(`--portrait-${key}`, String(value));

@@ -51,7 +51,16 @@ async function arrive(page, theme, name) {
   const align = await movie.evaluate(video => Date.now() / 1_000 - video.currentTime);
   if (expected.durationSeconds) {
     await expect(movie).toHaveAttribute('poster', assets[theme].opening.url);
+    await page.waitForFunction(() => {
+      const video = document.querySelector('.portrait-motion');
+      return video && video.currentTime >= 5 && !video.ended;
+    });
+    const header = page.locator('.lg-console-header');
+    const sidebar = page.locator('.lg-console-sidebar');
+    await expect(header).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
+    await expect(sidebar).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
     await expect.poll(() => movie.evaluate(video => video.ended), { timeout: 12_000 }).toBe(true);
+    await expect(header).toHaveCSS('opacity', '1');
     const playback = await movie.evaluate(video => ({ duration: video.duration, time: video.currentTime, seeks: window.__portraitSeeks }));
     assert.ok(Math.abs(playback.duration - expected.durationSeconds) < .05, 'The approved full-length edit must play');
     assert.equal(playback.time, playback.duration, 'The last frame must be reached');
