@@ -255,6 +255,38 @@ false
                 with self.assertRaisesRegex(RuntimeError, "配置与发布前不符：volumes"):
                     TOOLS["restore"]("map", "gateway", directory)
 
+    def test_captures_and_restores_a_service_removed_from_the_candidate(self):
+        retired = container("retired-worker", "sha256:old-worker", "/release/compose.yml")
+        retired["Name"] = "/map-retired-worker"
+        retired["NetworkSettings"] = {"Networks": {
+            "previous-network": {"Aliases": ["worker"], "IPAMConfig": {"IPv4Address": "172.22.0.7"}},
+        }}
+        api = container("api", "sha256:old-api", "/release/compose.yml")
+        current = {"api": api, "retired-worker": retired}
+
+        def docker(*args):
+            if "config" in args:
+                return '{"services":{"api":{}}}'
+            if "up" in args:
+                self.assertEqual(args[-1], "retired-worker")
+                current["retired-worker"] = retired
+            return ""
+
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            with patch.dict(TOOLS["capture"].__globals__, {"docker": docker, "inventory": lambda _name: dict(current)}):
+                TOOLS["capture"]("map", "gateway", directory)
+                model = json.loads((directory / "compose-0.json").read_text())
+                service = model["services"]["retired-worker"]
+                network, = service["networks"]
+                self.assertEqual(service["container_name"], "map-retired-worker")
+                self.assertEqual(service["image"], "sha256:old-worker")
+                self.assertEqual(model["networks"][network], {"name": "previous-network", "external": True})
+                self.assertEqual(service["networks"][network], {"aliases": ["worker"], "ipv4_address": "172.22.0.7"})
+                del current["retired-worker"]
+                TOOLS["restore"]("map", "gateway", directory)
+                self.assertEqual(current, {"api": api, "retired-worker": retired})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -136,6 +136,32 @@ def configuration_proof(configuration):
     }
 
 
+def retired_service(row, networks):
+    service = {}
+    if row.get("Name"):
+        service["container_name"] = row["Name"].lstrip("/")
+    interfaces = (row.get("NetworkSettings") or {}).get("Networks") or {}
+    mode = (row.get("HostConfig") or {}).get("NetworkMode") or ""
+    if mode in ("host", "none", "bridge") or mode.startswith("container:"):
+        service["network_mode"] = mode
+    elif interfaces:
+        service["networks"] = {}
+        for name, endpoint in sorted(interfaces.items()):
+            alias = next((key for key, network in networks.items() if network.get("name") == name), None)
+            if alias is None:
+                alias = f"observed-{hashlib.sha256(name.encode()).hexdigest()[:12]}"
+                networks[alias] = {"name": name, "external": True}
+            attachment = {}
+            if endpoint.get("Aliases"):
+                attachment["aliases"] = endpoint["Aliases"]
+            ipam = endpoint.get("IPAMConfig") or {}
+            for docker_key, compose_key in (("IPv4Address", "ipv4_address"), ("IPv6Address", "ipv6_address")):
+                if ipam.get(docker_key):
+                    attachment[compose_key] = ipam[docker_key]
+            service["networks"][alias] = attachment
+    return service
+
+
 def capture(project, gateway, directory, executable="docker compose", env_file=None):
     containers = inventory(project)
     groups = {}
@@ -149,12 +175,19 @@ def capture(project, gateway, directory, executable="docker compose", env_file=N
         for file in files:
             options.extend(["-f", file])
         model = json.loads(compose(executable, *options, "config", "--format", "json"))
-        model["services"] = {name: model["services"][name] for name in names}
+        declared_services = model.get("services", {})
+        networks = model.setdefault("networks", {})
+        model["services"] = {}
         model["volumes"] = {}
         filename = f"compose-{index}.json"
         for name in names:
             row = containers[name]
-            service = model["services"][name]
+            if name in declared_services:
+                service = declared_services[name]
+            else:
+                # A previous service can still run after its definition has been removed.
+                service = retired_service(row, networks)
+            model["services"][name] = service
             docker("image", "inspect", row["Image"], "--format", "{{.Id}}")
             service["image"] = row["Image"]
             service.pop("build", None)
