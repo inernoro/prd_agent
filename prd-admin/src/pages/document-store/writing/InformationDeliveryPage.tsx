@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { BookOpen, FileText, Library, Upload } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import type { KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
@@ -17,15 +17,17 @@ import {
 import { generateSpeech, getSpeechCapabilities, getSpeechRun } from '@/services/real/mcpSpeech';
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { writingKnowledgeHref, writingMediaTimeReached } from './writingView';
 
-const cardClass = 'rounded-xl border border-subtle bg-surface p-5';
+const cardClass = 'rounded-xl border border-token-subtle bg-token-card p-5';
 const terminal = (status: string) => ['done', 'error', 'cancelled'].includes(status.toLowerCase());
 const fileLabels: Record<string, string> = { 'index.html': '网页预览', 'assets/delivery.json': '教程与依据' };
 type DeliveryProgress = { code: string; message: string };
 
 export default function InformationDeliveryPage() {
+  useApplyDocumentTheme(useLocation().pathname);
   const { storeId = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const runId = params.get('run');
@@ -139,7 +141,7 @@ export default function InformationDeliveryPage() {
   };
 
   return (
-    <main className="min-h-screen bg-base px-4 py-6 text-token-primary sm:px-8">
+    <main className="min-h-screen bg-[var(--bg-base)] px-4 py-6 text-token-primary sm:px-8">
       <div className="mx-auto max-w-5xl">
         <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold">信息传递</h1>
@@ -154,7 +156,7 @@ export default function InformationDeliveryPage() {
               <div className="grid gap-2">
                 {templates.map((item) => (
                   <button key={item.id} type="button" aria-pressed={template?.id === item.id}
-                    className="rounded-lg border border-subtle px-4 py-3 text-left hover-bg-soft"
+                    className="rounded-lg border border-token-subtle px-4 py-3 text-left hover-bg-soft"
                     onClick={() => { setTemplate(item); setView('example'); }}>
                     <strong>{item.title}</strong><span className="mt-1 block text-sm text-token-secondary">{item.useWhen}</span>
                   </button>
@@ -211,6 +213,7 @@ export default function InformationDeliveryPage() {
                 {(!canGenerateSpeech || speechAvailable === false) && <p className="w-full text-xs text-token-secondary">当前账号没有可用语音能力，可以先生成网页与图文教程。</p>}
               </fieldset>}
               hint="开始后可查看生成进度与中间文件" />
+            {starting && <p role="status" className="mt-3 text-sm text-token-secondary">正在开始生成</p>}
             {showKnowledge && <ComposerSheet title="引用知识库" onClose={() => setShowKnowledge(false)}>
               <KnowledgeInlineBrowser recentEntries={recent} loadingRecent={loadingRecent} selectedEntries={knowledge}
                 onChange={(items) => setKnowledge(items.slice(0, 3))} />
@@ -382,7 +385,7 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
         </details>}
         {error && <div role="alert" className="mb-4 text-sm">{error} <Button variant="secondary" onClick={() => setReconnect((v) => v + 1)}>重连</Button></div>}
         {!!run?.deliveryCorrections?.length && <ol aria-label="作者纠正" className="mb-4 grid gap-2">
-          {run.deliveryCorrections.map((message) => <li key={message.id} className="rounded-lg border border-subtle p-3 text-sm">
+          {run.deliveryCorrections.map((message) => <li key={message.id} className="rounded-lg border border-token-subtle p-3 text-sm">
             <span className="block text-xs text-token-secondary">
               {message.revision <= (run.deliveryAppliedRevision ?? 0) ? '已应用，查看修订文件' : '已收到，等待执行轮次应用'}
             </span>
@@ -394,7 +397,7 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
           void sendCorrection();
         }}>
           <label htmlFor="delivery-correction" className="text-sm font-medium">给这次生成补答或纠正</label>
-          <textarea id="delivery-correction" className="rounded-lg border border-subtle bg-transparent p-2"
+          <textarea id="delivery-correction" className="rounded-lg border border-token-subtle bg-transparent p-2"
             value={correction} onChange={(event) => setCorrection(event.currentTarget.value)} maxLength={1000} rows={3} />
           <Button type="submit" disabled={sendingCorrection || !correction.trim()}>{sendingCorrection ? '正在提交' : '发送纠正'}</Button>
           {correctionError && <p role="alert" className="text-sm">{correctionError}</p>}
@@ -495,7 +498,7 @@ function PrepareDeliveryMedia({ storeId, runId, resultHash, onReady }: {
     void prepare();
     return () => { active = false; };
   }, [attempt, onReady, resultHash, runId, storeId]);
-  return <div className="mt-4 rounded-lg border border-subtle p-3 text-sm">
+  return <div className="mt-4 rounded-lg border border-token-subtle p-3 text-sm">
     {error ? <><p role="alert">{error}</p><Button variant="secondary" onClick={() => { setError(''); setAttempt((value) => value + 1); }}>继续查看讲解进度</Button></>
       : <p role="status">{phase}</p>}
   </div>;
@@ -528,14 +531,14 @@ function DeliveryArchiveForm({ storeId, run }: { storeId: string; run: DesignArt
       setBusy(false);
     }
   };
-  return <section className="mt-6 grid gap-3 border-t border-subtle pt-4">
+  return <section className="mt-6 grid gap-3 border-t border-t-token-subtle pt-4">
     <h3 className="font-semibold">{path ? '已归档' : '确认并归档'}</h3>
     {path ? <div className="grid gap-2 text-sm">
       <Link className="underline" to={path}>打开已归档成品</Link>
       {target === 'web-hosting' && artifactId && <Link className="underline" to={`/web-pages?openSite=${encodeURIComponent(artifactId)}`}>在网页托管查看归档入口</Link>}
     </div> : <>
       <label className="grid gap-1 text-sm">交付去向
-        <select className="rounded-lg border border-subtle bg-base px-3 py-2" value={target} onChange={(event) => setTarget(event.currentTarget.value as InformationDeliveryTarget)}>
+        <select className="rounded-lg border border-token-subtle bg-[var(--bg-base)] px-3 py-2" value={target} onChange={(event) => setTarget(event.currentTarget.value as InformationDeliveryTarget)}>
           <option value="knowledge-base">知识库</option>
           <option value="web-hosting">网页托管</option>
         </select>
@@ -554,6 +557,7 @@ function DeliveryArchiveForm({ storeId, run }: { storeId: string; run: DesignArt
 }
 
 export function InformationDeliveryReaderPage() {
+  useApplyDocumentTheme(useLocation().pathname);
   const { storeId = '', runId = '' } = useParams();
   return <InformationDeliveryReader key={`${storeId}:${runId}`} storeId={storeId} runId={runId} />;
 }
@@ -571,7 +575,7 @@ function InformationDeliveryReader({ storeId, runId }: { storeId: string; runId:
     });
     return () => { active = false; };
   }, [storeId, runId]);
-  return <main className="min-h-screen bg-base px-4 py-6 text-token-primary sm:px-8">
+  return <main className="min-h-screen bg-[var(--bg-base)] px-4 py-6 text-token-primary sm:px-8">
     <div className="mx-auto max-w-4xl">
       <Link className="text-sm text-token-secondary underline" to={writingKnowledgeHref(storeId)}>返回知识库</Link>
       {error && <p role="alert" className="mt-4">{error}</p>}
@@ -642,7 +646,7 @@ function DeliveryMediaPreview({ storeId, runId, media, course }: {
           setTime(chapter.start);
         }}>{chapter.title}</Button>)}
     </nav>}
-    {url && transcript && <details className="rounded-lg border border-subtle p-3 text-sm">
+    {url && transcript && <details className="rounded-lg border border-token-subtle p-3 text-sm">
       <summary className="cursor-pointer">本章讲稿与依据</summary>
       <p className="my-2">{transcript.narration}</p>
       <p className="text-token-secondary">{transcript.basis.join(' · ')}</p>
@@ -651,12 +655,12 @@ function DeliveryMediaPreview({ storeId, runId, media, course }: {
 }
 
 function DeliveryHtml({ content }: { content: string }) {
-  return <iframe title="网页预览" className="min-h-[60vh] w-full rounded-lg border border-subtle" sandbox=""
+  return <iframe title="网页预览" className="min-h-[60vh] w-full rounded-lg border border-token-subtle" sandbox=""
     referrerPolicy="no-referrer" srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">${content}`} />;
 }
 
 function DeliverySources({ sources }: { sources: InformationDeliverySource[] }) {
-  return <>{sources.map((source, index) => <details key={`${source.kind}-${index}`} className="mt-3 border-t border-subtle pt-3">
+  return <>{sources.map((source, index) => <details key={`${source.kind}-${index}`} className="mt-3 border-t border-t-token-subtle pt-3">
     <summary className="cursor-pointer break-words text-sm">{source.title}</summary>
     <p className="mt-2 text-xs text-token-secondary">{source.kind === 'upload' ? '上传文件 · 提取的原文' : '知识库 · 开始生成时的原文'}</p>
     <pre className="mt-2 whitespace-pre-wrap break-words text-sm">{source.content}</pre>
@@ -700,7 +704,7 @@ function CoursePreview({ content }: { content: string }) {
       <p className="my-2 text-sm leading-relaxed">{chapter.narration}</p>
       <ol className="ml-5 list-decimal text-sm">{chapter.steps.map((step, i) => <li key={i}>{step}</li>)}</ol>
       <p className="mt-2 text-xs text-token-secondary">{chapter.basis.join(' · ')}</p>
-      {chapter.practice && <section className="mt-3 rounded-lg border border-subtle p-3 text-sm">
+      {chapter.practice && <section className="mt-3 rounded-lg border border-token-subtle p-3 text-sm">
         <h4 className="font-medium">试一试</h4>
         <p className="my-2">{chapter.practice.question}</p>
         <details><summary className="cursor-pointer underline">看参考答案</summary><p className="mt-2">{chapter.practice.answer}</p></details>
