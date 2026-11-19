@@ -3,9 +3,13 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
+import { LiterarySettingsSummary } from './LiterarySettingsSummary';
 import type { LiteraryModelOption } from './literaryModelOptions';
 import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
 import { QuickMenu, QuickMenuItem } from './LiteraryQuickMenu';
+import { getWatermarkPreview } from '@/services/real/watermark';
+
+vi.mock('@/services/real/watermark', () => ({ getWatermarkPreview: vi.fn() }));
 
 const models: LiteraryModelOption[] = ['DeepSeek-V4', 'DeepSeek-V4-Pro'].map((name, i) => ({
   id: `pool_${i}`, poolId: String(i), name: `deepseek-ai/${name}`, modelName: `logical-${i}`,
@@ -44,6 +48,32 @@ describe('工作台紧凑模型选择', () => {
     expect(trigger.querySelector('.lit-model-name')?.textContent).toBe('DeepSeek-V4');
     expect(trigger.title).toContain(models[0].name);
     expect(trigger.getAttribute('aria-label')).toBe('写作模型');
+  });
+
+  it('折叠栏保留未知模型名称并展示当前水印样张，样张失败后仍可辨认水印', async () => {
+    const preview = 'blob:watermark-preview';
+    const createObjectURL = vi.fn(() => preview);
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', Object.assign(class extends URL {}, { createObjectURL, revokeObjectURL }));
+    const blob = new Blob(['png'], { type: 'image/png' });
+    vi.mocked(getWatermarkPreview).mockResolvedValueOnce(blob);
+    await act(async () => root.render(
+      <LiterarySettingsSummary writingModel="test-new-writing-model" imageModel="test-new-picture-model"
+        watermarkName="黑白" watermarkId="monochrome" watermarkUpdatedAt="test-revision" position="per-h2" positionLabel="每小标题一张" />,
+    ));
+    expect(getWatermarkPreview).toHaveBeenCalledWith('monochrome', 'test-revision');
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(container.querySelector('[aria-label="写作模型：test-new-writing-model"] svg')).not.toBeNull();
+    expect(container.querySelector('[aria-label="配图模型：test-new-picture-model"] svg')).not.toBeNull();
+    expect(container.querySelector('[title="每小标题一张"] svg')).not.toBeNull();
+    const watermark = container.querySelector('[aria-label="水印：黑白"]')!;
+    const image = watermark.querySelector('img')!;
+    expect(image.getAttribute('src')).toBe(preview);
+    await act(async () => { image.dispatchEvent(new Event('error')); });
+    expect(watermark.querySelector('img')).toBeNull();
+    expect(watermark.querySelector('svg')).not.toBeNull();
+    await act(async () => root.render(null));
+    expect(revokeObjectURL).toHaveBeenCalledWith(preview);
   });
 
   it('选择菜单项仍提交原始选项 ID，保留完整名称和默认标记', async () => {
