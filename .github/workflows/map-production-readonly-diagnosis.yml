@@ -1,0 +1,93 @@
+name: MAP 生产只读诊断
+
+on:
+  push:
+    branches:
+      - codex/map-production-readonly-diagnosis-20261119
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: 读取生产公开健康状态
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    outputs:
+      api_commit: ${{ steps.read.outputs.api_commit }}
+      gateway_commit: ${{ steps.read.outputs.gateway_commit }}
+      gateway_status: ${{ steps.read.outputs.gateway_status }}
+      frontend_commit: ${{ steps.read.outputs.frontend_commit }}
+      api_http: ${{ steps.read.outputs.api_http }}
+      gateway_http: ${{ steps.read.outputs.gateway_http }}
+      frontend_http: ${{ steps.read.outputs.frontend_http }}
+    steps:
+      - name: 读取版本与就绪结果
+        id: read
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+
+          base = "https://map.ebcone.net"
+
+          def read(path):
+              request = urllib.request.Request(base + path, headers={"User-Agent": "MAP-ReadOnly-Diagnosis/1.0"})
+              try:
+                  with urllib.request.urlopen(request, timeout=25) as response:
+                      return response.status, response.read(1048576).decode("utf-8", errors="replace")
+              except urllib.error.HTTPError as error:
+                  return error.code, error.read(1048576).decode("utf-8", errors="replace")
+              except Exception as error:
+                  print(json.dumps({"path": path, "errorType": type(error).__name__}))
+                  return 0, ""
+
+          def parse_json(body):
+              try:
+                  result = json.loads(body)
+                  return result if isinstance(result, dict) else {}
+              except ValueError:
+                  return {}
+
+          def commit(value):
+              return value[:8].lower() if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value) else "unknown"
+
+          api_http, api_body = read("/api/version")
+          api = parse_json(api_body)
+          gateway_http, gateway_body = read("/llmgw/gw/v1/healthz/ready")
+          gateway = parse_json(gateway_body)
+          frontend_http, frontend_body = read("/")
+          assets = re.findall(r"""(?:src|href)=["\']([^"\']+)["\']""", frontend_body)
+          asset_commits = sorted({item.lower() for asset in assets if "/assets/" in asset for item in re.findall(r"[0-9a-fA-F]{40}", asset)})
+          frontend_commit = asset_commits[0][:8] if len(asset_commits) == 1 else "unknown"
+          gateway_status = gateway.get("status", "unknown")
+          if gateway_status not in ("ready", "not-ready"):
+              gateway_status = "unknown"
+          result = {
+              "api_commit": commit(api.get("actualCommit") or api.get("commit")),
+              "gateway_commit": commit(gateway.get("commit")),
+              "gateway_status": gateway_status,
+              "frontend_commit": frontend_commit,
+              "api_http": api_http,
+              "gateway_http": gateway_http,
+              "frontend_http": frontend_http,
+          }
+          print(json.dumps(result, ensure_ascii=False, indent=2))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for key, value in result.items():
+                  output.write(f"{key}={value}\n")
+          PY
+
+  result:
+    needs: probe
+    name: API ${{ needs.probe.outputs.api_commit }} 网关 ${{ needs.probe.outputs.gateway_status }} ${{ needs.probe.outputs.gateway_commit }} 页面 ${{ needs.probe.outputs.frontend_commit }} HTTP ${{ needs.probe.outputs.api_http }} ${{ needs.probe.outputs.gateway_http }} ${{ needs.probe.outputs.frontend_http }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: 只读诊断结束
+        run: echo '已记录公开接口观测结果，尚未执行生产恢复操作。'
