@@ -118,8 +118,8 @@ jobs:
           pnpm -C e2e install --frozen-lockfile
           # The pinned container provides Chromium, its system libraries, and fonts.
           # Keep Ubuntu's signed packages while downloading the capture tools over HTTPS.
-          sed -Ei 's#https?://(archive|security)\.ubuntu\.com/ubuntu/?#https://mirrors.edge.kernel.org/ubuntu/#g' /etc/apt/sources.list.d/ubuntu.sources
-          apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update
+          sed -Ei 's#https?://([a-z0-9.-]+\.)?(archive|security)\.ubuntu\.com/ubuntu/?#https://azure.archive.ubuntu.com/ubuntu/#g' /etc/apt/sources.list.d/ubuntu.sources
+          apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update
           apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg xvfb openbox python3-pil
       - name: Capture the real public preview journey
         env:
