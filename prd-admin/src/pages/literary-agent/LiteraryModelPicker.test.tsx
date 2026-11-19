@@ -84,6 +84,32 @@ describe('工作台紧凑模型选择', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith(preview);
   });
 
+  it('取消后选回同一个水印时不会复用已释放的预览', async () => {
+    const createObjectURL = vi.fn()
+      .mockReturnValueOnce('blob:first-preview')
+      .mockReturnValueOnce('blob:second-preview');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', Object.assign(class extends URL {}, { createObjectURL, revokeObjectURL }));
+    const blob = new Blob(['png'], { type: 'image/png' });
+    let finishPreview!: (result: Blob) => void;
+    const nextPreview = new Promise<Blob>(resolve => { finishPreview = resolve; });
+    vi.mocked(getWatermarkPreview).mockResolvedValueOnce(blob).mockReturnValueOnce(nextPreview);
+    function Preview({ id }: { id?: string }) {
+      const url = useLiteraryWatermarkPreview(id, 'test-revision');
+      return url ? <img src={url} alt="" /> : null;
+    }
+
+    await act(async () => root.render(<Preview id="monochrome" />));
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:first-preview');
+    await act(async () => root.render(<Preview />));
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:first-preview');
+    await act(async () => root.render(<Preview id="monochrome" />));
+    expect(container.querySelector('img')).toBeNull();
+
+    await act(async () => finishPreview(blob));
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:second-preview');
+  });
+
   it('选择菜单项仍提交原始选项 ID，保留完整名称和默认标记', async () => {
     const onSelect = await render({ open: true });
     const items = document.querySelectorAll<HTMLElement>('[role="menuitemradio"]');

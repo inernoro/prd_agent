@@ -56,7 +56,10 @@ export function useLiteraryWatermarkPreview(id?: string, updatedAt?: string) {
     }).catch(() => {});
     return () => {
       active = false;
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        setPreview(current => current?.url === previewUrl ? undefined : current);
+      }
     };
   }, [id, updatedAt]);
 
