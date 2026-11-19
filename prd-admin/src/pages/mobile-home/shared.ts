@@ -14,6 +14,7 @@ import {
   Feather,
   FileText,
   FolderOpen,
+  Globe,
   Image as ImageIcon,
   Newspaper,
   Store,
@@ -65,6 +66,7 @@ export const RECENT_AGENT_META: Record<string, { label: string; Icon: LucideIcon
   'document-store': { label: '知识库', Icon: BookOpen, accent: '#FFB340' },
   'defect-agent': { label: '缺陷管理', Icon: Bug, accent: '#FB7185' },
   'report-agent': { label: '周报', Icon: FileText, accent: '#7DD3FC' },
+  'web-pages': { label: '网页托管', Icon: Globe, accent: '#7DD3FC' },
 };
 
 export function recentAgentMetaFor(agentKey: string): { label: string; Icon: LucideIcon; accent: string } {

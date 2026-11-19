@@ -12,6 +12,7 @@ import type { LauncherItem } from '@/lib/launcherCatalog';
 export const MOBILE_DRAWER_UTILITY_ROUTES: ReadonlyArray<{ route: string }> = [
   { route: '/mcp-console' },
   { route: '/authorization-health' },
+  { route: '/active-tasks' },
 ];
 
 export interface MobileDrawerUtility {

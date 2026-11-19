@@ -50,6 +50,12 @@ let memoryProvider = sampleHostMemoryMB;
 export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null): void {
   memoryProvider = provider || sampleHostMemoryMB;
 }
+/** Observation uses the same physical/daemon budget as startup admission. */
+export async function deploymentHostAvailableMemoryMB(): Promise<number> {
+  memoryProvider();
+  if (memoryRead) await memoryRead;
+  return memoryProvider();
+}
 
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
 export const DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS = 20 * 60_000;

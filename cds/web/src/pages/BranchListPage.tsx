@@ -10,6 +10,7 @@ import { ArchivedBranchCard, BranchLifecycleControls, type BranchArchiveView } f
 import { CiImageNotice } from '@/components/branch/CiImageNotice';
 import { ciImageNotice, type CiDiagnosisView } from '@/lib/ci-image-notice';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import type { ReleasePreflightResult } from './release-center/types';
 import { projectUnavailable } from '../lib/project-availability.js';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
 import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -366,6 +367,9 @@ interface ReleaseTargetSummary {
 }
 
 interface ReleaseRunSummary {
+  forceReason?: string;
+  autoRestoreStartedAt?: string;
+  autoRestoredAt?: string;
   releaseId: string;
   projectId: string;
   branchId: string;
@@ -388,20 +392,6 @@ interface ReleaseLogEntry {
   level: 'info' | 'warn' | 'error';
   message: string;
   phase?: string;
-}
-
-interface ReleasePreflightCheck {
-  id: string;
-  label: string;
-  status: 'pass' | 'warn' | 'fail';
-  message: string;
-  blocking: boolean;
-}
-
-interface ReleasePreflightResult {
-  ok: boolean;
-  checks: ReleasePreflightCheck[];
-  previousRelease?: ReleaseRunSummary;
 }
 
 interface PreviewModeResponse {
@@ -5107,6 +5097,7 @@ function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
   const [phase, setPhase] = useState<'choose' | 'checking' | 'starting' | 'running'>('choose');
   const [error, setError] = useState('');
   const [preflight, setPreflight] = useState<ReleasePreflightResult | null>(null);
+  const [forceReason, setForceReason] = useState('');
   const [run, setRun] = useState<ReleaseRunSummary | null>(null);
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
   const operation = useRef<AbortController | null>(null);
@@ -5115,7 +5106,7 @@ function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
   const [nowTick, setNowTick] = useState(() => Date.now());
   // 分支轮询会替换对象；不能因此重置已经开始的发布。
   useEffect(() => {
-    setTargets([]); setSelectedTarget(null); setLoadError(''); setRun(null); setLogs([]); setPreflight(null); setError(''); setPhase('choose');
+    setTargets([]); setSelectedTarget(null); setLoadError(''); setRun(null); setLogs([]); setPreflight(null); setForceReason(''); setError(''); setPhase('choose');
     hasRun.current = false; inFlight.current = false;
     if (!branch) return;
     const projectId = branch.projectId;
@@ -5160,15 +5151,30 @@ function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
     if (!branch || inFlight.current || hasRun.current) return;
     inFlight.current = true;
     const ctrl = new AbortController(); operation.current = ctrl;
-    setSelectedTarget(target); setError(''); setPreflight(null); setPhase('checking');
-    const body = { targetId: target.id, previewUrl };
+    setSelectedTarget(target); setError(''); setPreflight(null); setForceReason(''); setPhase('checking');
     try {
-      const check = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branch.id)}/preflight`, { method: 'POST', body, signal: ctrl.signal });
+      const check = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branch.id)}/preflight`, {
+        method: 'POST', body: { targetId: target.id, previewUrl }, signal: ctrl.signal,
+      });
       if (ctrl.signal.aborted) return;
       setPreflight(check);
-      if (!check.ok) { setError('未开始发布：环境检查未通过。请交给 Agent 处理后重试。'); setPhase('choose'); return; }
-      setPhase('starting');
-      const result = await apiRequest<{ run: ReleaseRunSummary }>(`/api/releases/branches/${encodeURIComponent(branch.id)}/runs`, { method: 'POST', body, signal: ctrl.signal });
+      setPhase('choose');
+    } catch (failure) {
+      if (!ctrl.signal.aborted) { setError(failure instanceof ApiError ? failure.message : '发布前检查失败'); setPhase('choose'); }
+    } finally { if (operation.current === ctrl) inFlight.current = false; }
+  };
+  const start = async (force = false): Promise<void> => {
+    if (!branch || !selectedTarget || !preflight || inFlight.current || hasRun.current) return;
+    inFlight.current = true;
+    const ctrl = new AbortController(); operation.current = ctrl;
+    setError(''); setPhase('starting');
+    try {
+      const result = await apiRequest<{ run: ReleaseRunSummary }>(`/api/releases/branches/${encodeURIComponent(branch.id)}/runs`, {
+        method: 'POST', signal: ctrl.signal,
+        body: { targetId: selectedTarget.id, previewUrl, preflightId: preflight.preflightId,
+          expectedCommitSha: preflight.artifact?.commitSha,
+          ...(force ? { forceReason: forceReason.trim() } : {}) },
+      });
       if (ctrl.signal.aborted) return;
       hasRun.current = true; setRun(result.run); setLogs(result.run.logs || []); setPhase('running'); onToast('发布已开始');
     } catch (failure) {
@@ -5189,7 +5195,7 @@ function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
         <DialogBody className="grid gap-4 p-4" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
         {error || loadError ? <div role="alert" className="break-words rounded-md border border-bad/30 bg-bad-soft p-3 text-sm text-bad">{error || loadError}</div> : null}
         {phase === 'choose' && !run ? <>
-          <p className="text-sm text-muted-foreground">选择一个环境，自动检查并发布当前分支。</p>
+          <p className="text-sm text-muted-foreground">选择发布环境，查看检查结果后开始发布。</p>
           {loadingTargets && targets.length === 0 ? <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />正在加载环境…</p> : null}
           <div className="grid min-w-0 gap-2">
             {targets.map((target) => <button key={target.id} type="button" aria-label={`发布到 ${target.name}`} onClick={() => void publish(target)}
@@ -5199,12 +5205,40 @@ function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
             </button>)}
           </div>
           {!loadingTargets && targets.length === 0 ? <p className="text-sm text-muted-foreground">还没有发布环境。告诉你的 Agent：“帮我接入 xxx 环境到 CDS。”</p> : null}
-          {preflight && !preflight.ok ? <details className="min-w-0 text-sm"><summary className="cursor-pointer">查看未通过的检查</summary><ul className="mt-2 grid gap-2">{preflight.checks.filter((check) => check.blocking && check.status === 'fail').map((check) => <li key={check.id} className="break-words">{check.label}：{check.message}</li>)}</ul></details> : null}
+          {preflight && selectedTarget ? (
+            <div className="grid gap-3 rounded-lg border p-3 text-sm">
+              <p className="font-medium">{selectedTarget.name} · {preflight.ok ? '可以发布' : '普通发布有阻断项'}</p>
+              <ul className="grid gap-2">
+                {preflight.checks.filter((check) => check.status !== 'pass').map((check) => (
+                  <li key={check.id} className="break-words">
+                    {check.blocking ? '阻断' : '警告'} · {check.label} · {check.message}
+                  </li>
+                ))}
+              </ul>
+              {preflight.forceAvailable ? (
+                <label className="grid gap-1">
+                  强制发布原因
+                  <input className="rounded-md border bg-background px-3 py-2" value={forceReason}
+                    maxLength={300} onChange={(event) => setForceReason(event.target.value)}
+                    placeholder="强制发布会将外部业务依赖故障记为警告" />
+                </label>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void start()} disabled={!preflight.ok}>开始发布</Button>
+                {preflight.forceAvailable ? <Button variant="outline" onClick={() => void start(true)}
+                  disabled={!forceReason.trim() || !preflight.artifact?.commitSha}>强制发布</Button> : null}
+              </div>
+            </div>
+          ) : null}
           <Button variant="ghost" className="h-auto min-w-0 whitespace-normal break-words py-2" title="复制接入任务给 Agent" onClick={() => void copyOnboarding()}>接入新环境</Button>
         </> : null}
-        {phase === 'checking' || phase === 'starting' ? <div className="grid min-w-0 gap-2 rounded-lg bg-primary/10 p-4 text-sm"><p className="break-words">{phase === 'checking' ? `正在检查 ${selectedTarget?.name || '环境'}，通过后自动发布…` : '正在开始发布…'}</p><ContentLoading variant="inline" label={phase === 'checking' ? '检查环境，通过后自动发布' : '开始发布'} /></div> : null}
+        {phase === 'checking' || phase === 'starting' ? <div className="grid min-w-0 gap-2 rounded-lg bg-primary/10 p-4 text-sm"><p className="break-words">{phase === 'checking' ? `正在检查 ${selectedTarget?.name || '环境'}…` : '正在开始发布…'}</p><ContentLoading variant="inline" label={phase === 'checking' ? '检查发布环境' : '开始发布'} /></div> : null}
         {run ? <div className="min-w-0 space-y-3">
           <p className="break-words text-sm">{selectedTarget?.name} · {releaseStatusLabel(run.status)}{!isReleaseTerminal(run.status) ? ` · 已用时 ${formatReleaseElapsed(Math.max(0, nowTick - Date.parse(run.startedAt)))}` : ''}</p>
+          {run.forceReason ? <p className="break-words text-sm text-warn">强制发布 · {run.forceReason}</p> : null}
+          {run.autoRestoreStartedAt && isReleaseTerminal(run.status) ? (
+            <p className="text-sm">{run.autoRestoredAt ? '已恢复发布前的运行版本，公网复验通过。' : '自动回滚尚未验证，请查看发布日志。'}</p>
+          ) : null}
           {!isReleaseTerminal(run.status) ? <p className="text-xs text-muted-foreground">当前阶段：{releaseCurrentStepText(run, logs)}</p> : null}
           <ReleaseRunStepList run={run} logs={logs} />
           <details open={run.status === 'failed' || undefined}><summary className="cursor-pointer text-sm">查看发布日志</summary><pre className="mt-2 max-h-72 min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-md bg-[hsl(var(--surface-sunken))] p-3 text-xs">{logs.map((log) => `[${formatShortTime(log.at)}] ${log.message}`).join('\n') || '等待发布日志…'}</pre></details>

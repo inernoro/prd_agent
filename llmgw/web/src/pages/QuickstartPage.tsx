@@ -1,3 +1,7 @@
+import { GatewayEntryCorners, GatewayIntentStarters } from '@/components/entry/GatewayEntryActions';
+import { clearQuickstartDraft, quickstartDraftScope, saveQuickstartDraft } from '@/lib/quickstartDraft';
+import { playGatewayCue } from '@/components/entry/gatewaySound';
+import { GatewayQuickstartStage } from '@/components/entry/GatewayQuickstartStage';
 // 自助接入：选客户端 → 生成接入配置 → 自动验证。
 //
 // 按「控制台风格调性 v1.2」原则 6 / 7 迁移（详见
@@ -11,8 +15,8 @@
 //   - 四协议接入片段（cURL / 环境变量 / 技能文件 / 客户端配置）是产品内容不是
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
+import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
+import { AlertCircle, ArrowRight, ArrowUpRight, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, getGatewayAppCallers, getServiceKeys, updateGatewayAppCaller } from '@/lib/api';
 import { buildLogRequestHref } from '@/lib/logNavigation';
@@ -136,13 +140,6 @@ const CLIENT_PRESETS: Array<{
   { id: 'openclaw', label: 'OpenClaw', description: '生成可直接粘贴的 provider 配置。', clientCode: 'openclaw-agent' },
 ];
 
-/** 第一屏的示例句：点一下就填进去，省掉「对着空白框发呆」那几秒。 */
-const INTENT_SAMPLES = [
-  '接入小米音响，对接大模型网关指令集',
-  '桌面客户端里做售后客服问答',
-  '后端服务批量做图片理解',
-];
-
 /**
  * 产物屏三个页签：一页只讲一件事。
  *
@@ -220,6 +217,9 @@ const TEST_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQ
 
 export function QuickstartPage() {
   const { tenant, user } = useAuth();
+  const draftScope = quickstartDraftScope(tenant?.id, user?.username);
+  const intentField = useRef<HTMLTextAreaElement>(null);
+  const chooseIntent = (text: string) => { setIntent(text); intentField.current?.focus(); };
   const canCreateAccess = canUseCapability(tenant?.role, 'appCallerWrite') && canUseCapability(tenant?.role, 'serviceKeyWrite');
   const { confirm } = useDialogs();
   const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
@@ -242,8 +242,8 @@ export function QuickstartPage() {
    * 三屏一条线：先说要做什么 → 看颁发的码 → 落归属与预算。签发完自动进产物屏。
    * 「怎么接进去」不再问用户——它是结果的呈现形态，收进产物屏的页签。
    */
-  const [stage, setStage] = useState<'intent' | 'draft' | 'owner'>('owner');
-  const [setupMethod, setSetupMethod] = useState<'form' | 'assisted'>('form');
+  const [stage, setStage] = useState<'intent' | 'draft' | 'owner'>('intent');
+  const [setupMethod, setSetupMethod] = useState<'form' | 'assisted'>('assisted');
   const [plainTask, setPlainTask] = useState('');
   const [drafting, setDrafting] = useState(false);
   /** 模型边推边吐的原文：等待期屏幕上动的就是它（规则 #6，不给静止的加载中）。 */
@@ -535,7 +535,9 @@ export function QuickstartPage() {
    */
   const submitIntent = async () => {
     const text = intent.trim();
-    if (text.length < MIN_INTENT_LENGTH) return;
+    if (!canCreateAccess || text.length < MIN_INTENT_LENGTH) return;
+    setSetupMethod('assisted');
+    saveQuickstartDraft(draftScope, text);
     /*
       与路由预检同一形状：用户点「改那句话」再提交时，上一条推导常常还在流。
       两条写的是同一批状态（trace / 两段码 / 依据 / loading），先发的那条后到，
@@ -550,6 +552,7 @@ export function QuickstartPage() {
     intentDraftAbort.current = abortController;
     const superseded = () => intentDraftSeq.current !== draftId;
     setStage('draft');
+    playGatewayCue('scan');
     setDrafting(true);
     setDraftTrace('');
     setDraftReason('');
@@ -707,7 +710,9 @@ export function QuickstartPage() {
       teamId,
       clientPreset,
     };
+    clearQuickstartDraft(draftScope);
     setBundle(nextBundle);
+    playGatewayCue('reveal');
     // 产物屏默认停在「接入信息」：刚签发出来，用户第一件事是把地址、密钥、用途码复制走。
     setResultTab('access');
     void checkRealRoute(nextBundle);
@@ -1262,19 +1267,36 @@ export function QuickstartPage() {
   // 创建屏与产物屏互斥：没有密钥时整屏只有一张创建卡，签出来之后整屏让给产物。
   // 两者不同时占版面，就不会出现「左右一起变」——这是本页改版要治的核心问题。
   const onCreateScreen = phase === 'idle' || phase === 'issuing';
+  const isIntentScreen = onCreateScreen && phase !== 'issuing' && stage === 'intent';
+  const flowStep = onCreateScreen ? (phase === 'issuing' ? 'issuing' : stage) : 'result';
+  const flowTitle = flowStep === 'draft' ? '确认你的接入' : flowStep === 'owner' ? '设定归属与预算' : flowStep === 'issuing' ? '正在建立连接' : '连接已就绪';
+  const flowFrameRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const body = flowFrameRef.current?.parentElement;
+    if (body) body.scrollTop = 0;
+  }, [flowStep]);
   const ribbonText = bundle
     ? `已签发 · ${bundle.appCallerCode} · 团队 ${selectedTeam?.name ?? '未指定'} · ${budgetPair.monthly !== null ? `${budgetPair.monthly} USD/月` : '预算不限'}`
     : '';
 
   return (
-    <PageShell>
-      <PageHeader
-        title="快速接入"
-        subtitle={onCreateScreen ? '填写应用、用途与团队，创建密钥并获取调用片段。' : '密钥只显示这一次，复制走再刷新。'}
-      />
+    <GatewayQuickstartStage>
+    <PageShell className={isIntentScreen ? 'is-intent' : 'is-flow'}>
+      {isIntentScreen ? <h1 className="gateway-visually-hidden">模型网关接入</h1> : <PageHeader
+        key={flowStep}
+        title={flowTitle}
+        subtitle={onCreateScreen ? '从想法到连接，每一步都在这里继续。' : '保存密钥，然后把连接带到你的应用。'}
+      />}
+
+        {!isIntentScreen && <nav className="gateway-flow-progress" aria-label="接入进度">
+          {['描述用途', '确认接入', '团队与预算', '连接就绪'].map((label, index) => {
+            const current = flowStep === 'draft' ? 1 : flowStep === 'owner' || flowStep === 'issuing' ? 2 : 3;
+            return <span key={label} className={index === current ? 'is-current' : index < current ? 'is-complete' : ''} aria-current={index === current ? 'step' : undefined}><i aria-hidden="true">{index < current ? <Check size={11} /> : index + 1}</i><span>{label}</span></span>;
+          })}
+        </nav>}
 
       <PageBody>
-        {onCreateScreen && !canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
+        <div className={`gateway-flow-frame is-${flowStep}`} key={flowStep} data-step={flowStep} ref={flowFrameRef}>
         {onCreateScreen ? (
           /*
             创建线是三屏一条路：说清要做什么 → 看颁发的码 → 落归属与预算。
@@ -1297,43 +1319,40 @@ export function QuickstartPage() {
                 </div>
               </Card>
             ) : stage === 'intent' ? (
-              /*
-                第一屏只有一件事：把那句话写下来。整块画布让给输入框，
-                没有第二个控件抢注意力——用户此刻唯一要做的决定就是「我想做什么」。
-              */
-              <section className="lg-qs-ask" aria-label="智能接入建议">
-                <button type="button" className="lg-text-link" onClick={() => { setSetupMethod('form'); setStage('owner'); }}>返回接入表单</button>
+              // Starters prepare editable language; only explicit submission begins inference.
+              <section className="lg-qs-ask" aria-label="第一步 说清要做什么">
                 <div className="lg-qs-ask-inner">
-                  <h2 className="lg-qs-ask-title">我想做什么</h2>
-                  <p className="lg-qs-ask-sub">描述应用与用途。</p>
-                  <textarea
-                    className="lg-qs-ask-input"
-                    aria-label="我想做什么"
-                    rows={4}
-                    autoFocus
-                    placeholder="例如：接入小米音响，对接大模型网关指令集"
-                    value={intent}
-                    maxLength={500}
-                    disabled={!canCreateAccess}
-                    onChange={(event) => setIntent(event.target.value)}
-                    onKeyDown={(event) => {
-                      // Ctrl/Cmd + Enter 直接提交：这一屏只有一个动作，不该逼人去够按钮。
-                      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void submitIntent();
-                    }}
-                  />
-                  <div className="lg-qs-ask-foot">
-                    <div className="lg-qs-ask-samples">
-                      {INTENT_SAMPLES.map((sample) => (
-                        <button key={sample} type="button" disabled={!canCreateAccess} onClick={() => setIntent(sample)}>{sample}</button>
-                      ))}
-                    </div>
-                    <Button
-                      variant="primary"
-                      className="lg-qs-primary"
-                      disabled={!canCreateAccess || intent.trim().length < MIN_INTENT_LENGTH}
-                      onClick={() => void submitIntent()}
-                    >请求智能建议（平台付费）</Button>
+                  <p className="gateway-intent-heading"><ArrowUpRight size={17} aria-hidden="true" /><span>从一个想法开始</span></p>
+                  <div className="gateway-intent-composer">
+                    <textarea
+                      className="lg-qs-ask-input"
+                      ref={intentField}
+                      aria-label="我想做什么"
+                      rows={1}
+                      autoFocus
+                      placeholder="你想让 AI 帮你的应用做些什么？"
+                      value={intent}
+                      maxLength={500}
+                      disabled={!canCreateAccess}
+                      onChange={(event) => setIntent(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                          event.preventDefault(); void submitIntent();
+                        }
+                      }}
+                    />
+                    <button type="button" className="gateway-intent-send" aria-label="准备接入" title="准备接入" disabled={!canCreateAccess || intent.trim().length < MIN_INTENT_LENGTH} onClick={() => void submitIntent()}>
+                      <ArrowUpRight size={21} aria-hidden="true" />
+                    </button>
                   </div>
+                  <GatewayIntentStarters disabled={!canCreateAccess} onChoose={chooseIntent} />
+                  <div className="gateway-intent-options">
+                    <small>智能建议费用由平台承担</small>
+                    <button type="button" disabled={!canCreateAccess} onClick={() => { setSetupMethod('form'); setStage('owner'); }}>
+                      手动接入 <ArrowRight size={14} aria-hidden="true" />
+                    </button>
+                  </div>
+                  {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
                 </div>
               </section>
             ) : stage === 'draft' ? (
@@ -1446,7 +1465,7 @@ export function QuickstartPage() {
                 <div className="lg-qs-create-footer">
                   <span style={{ ...BODY_TEXT, margin: 0 }}>先确认这条码说的是你要做的事。</span>
                   <Button variant="secondary" disabled={drafting} onClick={() => void submitIntent()}>重新生成</Button>
-                  <Button variant="primary" className="lg-qs-primary" disabled={!purposeReady || drafting} onClick={() => setStage('owner')}>下一步</Button>
+                  <Button variant="primary" className="lg-qs-primary" disabled={!purposeReady || drafting} onClick={() => { playGatewayCue('verified'); setStage('owner'); }}>下一步</Button>
                 </div>
               </Card>
             ) : (
@@ -1547,7 +1566,7 @@ export function QuickstartPage() {
               </Card>
             )}
 
-            <div className="lg-qs-footline">
+            {!isIntentScreen && <div className="lg-qs-footline">
               <DetailsBlock title="已经有密钥？看接入地址与现有密钥前缀">
                 <AccessSnippetBar />
               </DetailsBlock>
@@ -1564,7 +1583,7 @@ export function QuickstartPage() {
                 </dl>
                 <TutorialLink chapter="chapter-11">查看教程：第 11 章 自助接入</TutorialLink>
               </DetailsBlock>
-            </div>
+            </div>}
           </div>
         ) : (
           /*
@@ -1650,7 +1669,7 @@ export function QuickstartPage() {
                 </div>
 
                 {resultTab === 'access' ? (
-                  <div className="lg-qs-access-grid">
+                  <div className="lg-qs-access-grid gateway-result-panel">
                     <Card style={CARD_BODY} className="lg-qs-hero">
                       <div className="lg-qs-hero-head">
                         <strong>接入地址</strong>
@@ -1672,7 +1691,7 @@ export function QuickstartPage() {
                 ) : null}
 
                 {resultTab === 'curl' ? (
-                  <Card style={CARD_BODY} className="lg-qs-snippet-card lg-qs-curl-card">
+                  <Card style={CARD_BODY} className="lg-qs-snippet-card lg-qs-curl-card gateway-result-panel">
                     {/*
                       一键测试：类型是这把 key 的调用用途本身携带的（appCallerCode 以 ::chat / ::vision
                       结尾，签发后不可改），所以这里只读展示；能选的是模型——且只列该类型模型池里的
@@ -1836,7 +1855,7 @@ export function QuickstartPage() {
                 ) : null}
 
                 {resultTab === 'prompt' ? (
-                  <Card style={CARD_BODY} className="lg-qs-snippet-card">
+                  <Card style={CARD_BODY} className="lg-qs-snippet-card gateway-result-panel">
                     <div className="lg-qs-snippet-head">
                       <div className="lg-qs-type-row" role="radiogroup" aria-label="调用方式">
                         {PROMPT_WAYS.map((item) => (
@@ -1931,8 +1950,11 @@ export function QuickstartPage() {
             ) : null}
           </div>
         )}
+        </div>
       </PageBody>
     </PageShell>
+    {isIntentScreen && <GatewayEntryCorners key={draftScope} scope={draftScope} disabled={!canCreateAccess} onChoose={chooseIntent} />}
+    </GatewayQuickstartStage>
   );
 }
 

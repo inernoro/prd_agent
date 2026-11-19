@@ -4,7 +4,7 @@ import { runInNewContext } from 'node:vm';
 import * as ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
-// AST仅定位实际入口；执行原loadWorkspace、选文件及拖放回调，不复制竞态判断。
+// 从页面源码执行实际回调和状态推导，避免在测试中复制页面逻辑。
 const source = ts.createSourceFile('ArticleIllustrationEditorPage.tsx',
   readFileSync(path.resolve(__dirname, 'ArticleIllustrationEditorPage.tsx'), 'utf8'),
   ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -12,8 +12,9 @@ function actual(name: string) {
   const found: ts.Node[] = [];
   function visit(node: ts.Node) {
     if (ts.isFunctionDeclaration(node) && node.name?.text === name) found.push(node);
-    if (ts.isVariableDeclaration(node) && node.name.getText(source) === name
-      && node.initializer && ts.isCallExpression(node.initializer)) found.push(node.initializer.arguments[0]!);
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === name && node.initializer) {
+      found.push(ts.isCallExpression(node.initializer) ? node.initializer.arguments[0]! : node.initializer);
+    }
     ts.forEachChild(node, visit);
   }
   visit(source); expect(found).toHaveLength(1);
@@ -102,5 +103,27 @@ describe('文章上传与迟到工作区响应', () => {
     h.response.resolve(h.detail()); await loading;
     expect(h.state.article).toBe('旧文章'); expect(h.save).not.toHaveBeenCalled();
     expect(h.scope.toast.error).toHaveBeenCalledWith('文件读取失败');
+  });
+});
+
+describe('打开存量文章时恢复插图位置', () => {
+  it.each([
+    ['auto', '原文一\r\n [IMG]\r\n\r\n原文二\r\n【插图位置】', 'user-anchor'],
+    ['auto', '正文提到 [IMG]，但没有独立一行的锚点。', 'auto'],
+    ['per-h1', '# 标题\n\n[IMG]', 'per-h1'],
+    ['per-h2', '## 小标题\n\n[配图]', 'per-h2'],
+  ])('%s 策略打开「%s」时恢复为 %s', async (selectedPositionStrategy, article, expected) => {
+    const h = harness();
+    const loading = h.load();
+    h.response.resolve(h.detail(article));
+    await loading;
+    const USER_ANCHOR_LINE_REGEX = runInNewContext(actual('USER_ANCHOR_LINE_REGEX'));
+    const isAnchorParagraph = runInNewContext(actual('isAnchorParagraph'), { USER_ANCHOR_LINE_REGEX });
+    const paragraphRanges = runInNewContext(actual('paragraphRanges'), { isAnchorParagraph });
+    const splitParagraphs = runInNewContext(actual('splitParagraphs'), { paragraphRanges });
+    const previewParagraphs = splitParagraphs(h.state.article);
+    const userAnchorCount = runInNewContext(actual('userAnchorCount'), { previewParagraphs, isAnchorParagraph });
+
+    expect(runInNewContext(actual('positionStrategy'), { selectedPositionStrategy, userAnchorCount })).toBe(expected);
   });
 });

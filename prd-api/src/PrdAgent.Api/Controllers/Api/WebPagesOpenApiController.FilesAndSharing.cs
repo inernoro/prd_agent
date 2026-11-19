@@ -21,14 +21,14 @@ public partial class WebPagesOpenApiController
     /// <summary>MCP 取得受限上传凭证；原文件由客户端直接 multipart 上传，不经过模型转写。</summary>
     [HttpGet("upload-info")]
     [RequireScope(ScopeWrite)]
-    public async Task<IActionResult> GetUploadInfo([FromQuery] string? siteId = null)
+    public async Task<IActionResult> GetUploadInfo([FromQuery] string? siteId = null, [FromQuery] bool confirmedExposure = false)
     {
         if (siteId != null)
         {
             var site = await _sites.GetByIdAsync(siteId, GetBoundUserId(), CancellationToken.None);
             if (site == null || !await _sites.CanEditSiteAsync(site, GetBoundUserId(), CancellationToken.None))
                 return MissingSite();
-            var grantError = await RequireSiteContentExposureGrantAsync(site);
+            var grantError = await CheckSiteExposureAsync(site, confirmedExposure);
             if (grantError != null) return grantError;
         }
         var apiKey = PrdAgent.Api.Authentication.ApiKeyCredentialHeaders.Read(Request) ?? string.Empty;
@@ -55,7 +55,10 @@ public partial class WebPagesOpenApiController
             maxExtractedFileBytes = HostedSiteUploadLimits.MaxSingleFileBytes,
             supportedExtensions = new[] { ".html", ".htm", ".zip", ".md", ".markdown", ".pdf", ".mp4", ".m4v", ".webm", ".mov", ".ogg", ".ogv" }
                 .Concat(WebPagesController.ImageExtensions).OrderBy(x => x, StringComparer.Ordinal).ToList(),
-            fields = new[] { "file", "title", "description", "folder", "tags", "uploadId", "clientRequestId" },
+            fields = siteId == null ? new[] { "file", "title", "description", "folder", "tags", "uploadId", "clientRequestId" }
+                : new[] { "file", "uploadId", "clientRequestId", "confirmedExposure" },
+            requiredAdditionalFormFields = siteId != null && confirmedExposure
+                ? new Dictionary<string, string> { ["confirmedExposure"] = "true" } : null,
             instruction = "将原始文件作为 file 字段上传，直传文件最多 29 MiB；更大的文件请使用网页托管的分片上传。不要把 ZIP 重写成单页，不要把文件转为 base64。凭证仅用于本次指定上传路径，十分钟内有效；原密钥撤销或权限变化后立即失效。上传成功后读回 siteId 和文件清单核验。",
         }));
     }
@@ -74,11 +77,12 @@ public partial class WebPagesOpenApiController
     [RequestSizeLimit(MaxUploadRequestSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxDirectUploadFileBytes)]
     public Task<IActionResult> ReuploadFile(string siteId, IFormFile file,
-        [FromForm] string? uploadId, [FromForm] string? clientRequestId)
-        => StoreUploadedFileAsync(file, siteId, null, null, null, null, uploadId, clientRequestId);
+        [FromForm] string? uploadId, [FromForm] string? clientRequestId, [FromForm] bool confirmedExposure = false)
+        => StoreUploadedFileAsync(file, siteId, null, null, null, null, uploadId, clientRequestId, confirmedExposure);
 
     private async Task<IActionResult> StoreUploadedFileAsync(IFormFile? file, string? siteId,
-        string? title, string? description, string? folder, string? tags, string? uploadId, string? clientRequestId)
+        string? title, string? description, string? folder, string? tags, string? uploadId, string? clientRequestId,
+        bool confirmedExposure = false)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在 file 字段上传原始文件"));
@@ -89,15 +93,17 @@ public partial class WebPagesOpenApiController
         error ??= ValidateMetadata(metadata);
         if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
         var userId = GetBoundUserId();
+        var sourceRef = BuildSourceRef(clientRequestId);
         if (siteId != null)
         {
             var target = await _sites.GetByIdAsync(siteId, userId, CancellationToken.None);
             if (target == null || !await _sites.CanEditSiteAsync(target, userId, CancellationToken.None)) return MissingSite();
-            var grantError = await RequireSiteContentExposureGrantAsync(target);
+            var grantError = await CheckSiteExposureAsync(target, confirmedExposure);
             if (grantError != null) return grantError;
+            if (sourceRef != null && target.LastReuploadRef == sourceRef)
+                return Ok(ApiResponse<object>.Ok(SiteDto(target, deduplicated: true)));
         }
         var progressId = ScopedUploadId(uploadId);
-        var sourceRef = BuildSourceRef(clientRequestId);
         try
         {
             if (siteId == null && sourceRef != null)
@@ -204,11 +210,78 @@ public partial class WebPagesOpenApiController
         if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
         var target = await _sites.GetByIdAsync(siteId, GetBoundUserId(), CancellationToken.None);
         if (target == null || !await _sites.CanEditSiteAsync(target, GetBoundUserId(), CancellationToken.None)) return MissingSite();
-        var grantError = await RequireSiteContentExposureGrantAsync(target);
-        if (grantError != null) return grantError;
+        if (request.Title != null || request.Description != null)
+        {
+            var grantError = await CheckSiteExposureAsync(target, request.ConfirmedExposure);
+            if (grantError != null) return grantError;
+        }
         var site = await _sites.UpdateAsync(siteId, GetBoundUserId(), request.Title, request.Description,
             request.Tags, request.Folder, null, CancellationToken.None);
         return site == null ? MissingSite() : Ok(ApiResponse<object>.Ok(SiteDto(site)));
+    }
+
+    [HttpGet("pages/{siteId}/settings")]
+    [RequireScope(ScopeRead, ScopeWrite)]
+    public async Task<IActionResult> GetPageSettings(string siteId, CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+        var site = await _sites.GetByIdAsync(siteId, userId, ct);
+        if (site == null || !await _sites.CanEditSiteAsync(site, userId, ct)) return MissingSite();
+        var externalAccess = await IsSiteExternallyAccessibleAsync(site, ct);
+        var canWrite = User.HasClaim("scope", ScopeWrite);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            siteId, title = site.Title, visibility = site.Visibility, site.CommentsEnabled, externalAccess,
+            canWrite, canPublish = HasWebExposureGrant, canSetVisibility = canWrite && _sites.CanSetVisibility(site, userId),
+            canUpdateContent = canWrite && (!externalAccess || HasWebExposureGrant),
+            requiresExposureConfirmation = externalAccess,
+            clientSettingsUrl = Request.ResolveAbsoluteUrl("/mcp-console"),
+        }));
+    }
+
+    [HttpGet("organization")]
+    [RequireScope(ScopeRead, ScopeWrite)]
+    public async Task<IActionResult> GetPageOrganization([FromQuery] int limit = 50, CancellationToken ct = default)
+    {
+        var userId = GetBoundUserId();
+        var folders = await _sites.ListFoldersAsync(userId, ct);
+        if (_webFolders != null)
+        {
+            var configuredFolders = await _webFolders.ListAsync(userId, ct);
+            folders = configuredFolders.Select(folder => folder.Name).Concat(folders)
+                .DistinctBy(WebFolderName.Canonicalize).ToList();
+        }
+        var tags = await _sites.ListTagsAsync(userId, ct);
+        limit = Math.Clamp(limit, 1, 100);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            folders = folders.Take(limit).ToList(), tags = tags.Take(limit).ToList(),
+            folderCount = folders.Count, tagCount = tags.Count,
+        }));
+    }
+
+    public sealed class PageCommentsRequest
+    {
+        public bool? Enabled { get; set; }
+        public bool ConfirmedExposure { get; set; }
+    }
+
+    [HttpPatch("pages/{siteId}/comments-enabled")]
+    [RequireScope(ScopeWrite)]
+    public async Task<IActionResult> SetPageCommentsEnabled(string siteId, [FromBody] PageCommentsRequest request, CancellationToken ct)
+    {
+        if (request.Enabled is not bool enabled)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请指定 enabled=true 或 false"));
+        var userId = GetBoundUserId();
+        if (enabled)
+        {
+            var site = await _sites.GetByIdAsync(siteId, userId, ct);
+            if (site == null || !await _sites.CanEditSiteAsync(site, userId, ct)) return MissingSite();
+            var grantError = await CheckSiteExposureAsync(site, request.ConfirmedExposure, ct);
+            if (grantError != null) return grantError;
+        }
+        var updated = await _sites.SetCommentsEnabledAsync(siteId, userId, enabled, ct);
+        return updated == null ? MissingSite() : Ok(ApiResponse<object>.Ok(new { siteId, updated.CommentsEnabled }));
     }
 
     public class VisibilityRequest
@@ -406,7 +479,9 @@ public partial class WebPagesOpenApiController
     {
         siteId = site.Id, title = site.Title, description = site.Description,
         url = Request.ResolveAbsoluteUrl(site.SiteUrl), visibility = site.Visibility,
+        managementUrl = BuildSiteManagementUrl(site.Id),
         folder = site.Folder, tags = site.Tags, entryFile = site.EntryFile, contentVersion = site.ContentVersion,
+        commentsEnabled = site.CommentsEnabled,
         wrappedAssetType = site.WrappedAssetType, fileCount = site.Files.Count, totalSize = site.TotalSize, deduplicated,
         filesOffset = offset, filesHasMore = offset + limit < site.Files.Count,
         files = site.Files.Skip(offset).Take(limit).Select(f => new { path = f.Path, size = f.Size, mimeType = f.MimeType,

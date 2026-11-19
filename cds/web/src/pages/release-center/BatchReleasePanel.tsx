@@ -303,14 +303,21 @@ export function BatchReleasePanel({ projectId, targets, currentRows = [], onOpen
   const prepared = selected?.targets.filter((target) => target.status === 'ready').length || 0;
   const heading = creating ? '选择版本与目标' : stage === 2 ? '发布前确认' : stage === 3 ? '执行发布' : '发布结果';
 
+  const nextStep = creating ? loading ? '正在读取已验收版本与目标。' : !versions.length
+      ? '先完成分支验收并归档通过报告，再来选择发布版本。'
+      : eligibleTargets.length < 2 ? '当前不足两个可用目标。请到环境管理补齐，或改用逐目标发布。'
+      : !selectedRelease ? '先选择一个已验收版本。' : targetIds.length < 2 ? '再选择至少两个发布目标。' : '版本与目标已选定，可以开始预检。'
+    : selected?.status === 'blocked' ? '查看未通过的目标，处理后重新检查。'
+      : selected?.status === 'ready' ? '所有目标已通过预检，核对顺序后确认发布。'
+        : stage === 2 ? '先完成发布前检查。' : stage === 3 ? '发布正在执行，可以查看各目标进度。' : '查看各目标结果和执行记录。';
   return <section id="release-batches" aria-label="批次发布" className="mx-auto min-w-0 max-w-[90rem] space-y-6">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0"><h1 className="text-2xl font-bold">{historyOpen ? '历史批次 · ' : ''}{heading}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">同一个已验收版本，按顺序发布到所选目标。每个目标单独记录真实结果。</p></div>
+        <p className="mt-2 text-sm text-muted-foreground"><strong className="text-foreground">下一步：</strong>{nextStep}</p></div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" disabled={pollingPending || loading} onClick={() => void load()}><RefreshCw className={loading ? 'animate-spin' : ''} />刷新批次</Button>
         <Button variant="outline" size="sm" disabled={pollingPending} onClick={() => showHistory()}><History />历史批次</Button>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => newRelease()}><Plus />新建发布</Button>
+        {!creating ? <Button variant="outline" size="sm" disabled={busy} onClick={() => newRelease()}><Plus />新建发布</Button> : null}
       </div>
     </header>
     <ol aria-label="发布步骤" className="grid grid-cols-2 gap-3 md:grid-cols-4">{['选择版本与目标', '发布前确认', '执行发布', '查看结果'].map((label, index) => <li key={label} aria-current={stage === index + 1 ? 'step' : undefined}
@@ -319,6 +326,22 @@ export function BatchReleasePanel({ projectId, targets, currentRows = [], onOpen
     {error ? <div role="alert" className="rounded-md border border-destructive/30 bg-bad-soft p-4 text-sm text-bad">{error}</div> : null}
     {operationLabel ? <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground"><ContentLoading variant="inline" label={operationLabel} />{operationLabel}，请稍候</div> : null}
     {loading && !batches.length ? <ContentLoading label="读取批次与已验收版本" variant="rows" /> : null}
+    <footer className="cds-surface-raised cds-hairline flex flex-wrap items-center justify-between gap-4 rounded-lg border p-4 md:p-5">
+      <p className="text-sm text-muted-foreground">{creating ? '尚未开始发布' : selected ? `${historyOpen ? '历史记录 · ' : ''}${statusView(selected.status).label} · 更新于 ${formatDateTime(selected.updatedAt)}` : '尚无批次发布'}</p>
+      <div className="flex flex-wrap items-center gap-3">
+        {creating ? <Button disabled={!selectedRelease || targetIds.length < 2 || Boolean(pending) || targetIds.some(isTargetUnconfirmed)} onClick={() => {
+          if (!selectedRelease) return;
+          const body = { projectId, versionId: selectedRelease.versionId, reportId: selectedRelease.reportId, targetIds };
+          void mutate('正在创建批次', '/api/releases/batches', body, JSON.stringify(body));
+        }}>固定版本并检查目标</Button> : selected ? <>
+          {['draft', 'blocked', 'ready'].includes(selected.status) ? <Button variant="outline" disabled={busy} onClick={() => newRelease(true)}>返回修改（创建新批次）</Button> : null}
+          {['draft', 'blocked', 'ready'].includes(selected.status) ? <Button variant="outline" disabled={busy} onClick={() => batchAction('正在统一检查所有目标', '/preflight')}>{selected.status === 'draft' ? '统一发布前检查' : '重新检查所有目标'}</Button> : null}
+          {selected.status === 'ready' ? <Button disabled={busy || selected.targets.some(target => isTargetUnconfirmed(target.targetId))} onClick={() => batchAction('正在开始批次发布', '/start')}>确认发布到 {selected.targets.length} 个目标</Button> : null}
+          {['draft', 'blocked', 'ready'].includes(selected.status) || isActive(selected) || pending === '正在统一检查所有目标' ? <Button variant="outline" disabled={cancelling || selected.status === 'cancelled'} onClick={() => void cancelBatch()}><Square />{selected.status === 'cancelled' ? '正在取消' : '取消批次'}</Button> : null}
+          <Button variant="outline" disabled={pollingPending} onClick={() => batchAction('正在核对各目标实际运行版本', '/refresh')}><RefreshCw />核对实际运行版本</Button>
+        </> : null}
+      </div>
+    </footer>
     {historyOpen ? <div className="cds-surface-raised cds-hairline rounded-lg border p-4">
       <p className="mb-3 text-sm text-muted-foreground">这里展示历史执行记录，不会重新发起部署。实际版本以各记录的现场核对时间为准。</p>
       {batches.length ? <label className="flex flex-col gap-2 text-sm">批次记录<select aria-label="批次记录" disabled={pollingPending} value={selectedId} className={`${selectClass} w-full`} onChange={(event) => showHistory(event.target.value)}>{batches.map((batch) => <option value={batch.id} key={batch.id}>{formatDateTime(batch.createdAt)} · {batch.commitSha.slice(0, 12)} · {batch.targets.length} 个目标 · {statusView(batch.status).label}</option>)}</select></label> : <p className="text-sm text-muted-foreground">尚无历史批次，可点击「新建发布」开始。</p>}
@@ -356,22 +379,6 @@ export function BatchReleasePanel({ projectId, targets, currentRows = [], onOpen
         <p className="text-sm leading-relaxed text-muted-foreground">部分目标失败时，可仅重试失败目标；如需撤回，可按目标恢复原版本。</p>
       </aside>
     </div> : null}
-    <footer className="cds-surface-raised cds-hairline flex flex-wrap items-center justify-between gap-4 rounded-lg border p-4 md:p-5">
-      <p className="text-sm text-muted-foreground">{creating ? '尚未开始发布' : selected ? `${historyOpen ? '历史记录 · ' : ''}${statusView(selected.status).label} · 更新于 ${formatDateTime(selected.updatedAt)}` : '尚无批次发布'}</p>
-      <div className="flex flex-wrap items-center gap-3">
-        {creating ? <Button disabled={!selectedRelease || targetIds.length < 2 || Boolean(pending) || targetIds.some(isTargetUnconfirmed)} onClick={() => {
-          if (!selectedRelease) return;
-          const body = { projectId, versionId: selectedRelease.versionId, reportId: selectedRelease.reportId, targetIds };
-          void mutate('正在创建批次', '/api/releases/batches', body, JSON.stringify(body));
-        }}>固定版本并检查目标</Button> : selected ? <>
-          {['draft', 'blocked', 'ready'].includes(selected.status) ? <Button variant="outline" disabled={busy} onClick={() => newRelease(true)}>返回修改（创建新批次）</Button> : null}
-          {['draft', 'blocked', 'ready'].includes(selected.status) ? <Button variant="outline" disabled={busy} onClick={() => batchAction('正在统一检查所有目标', '/preflight')}>{selected.status === 'draft' ? '统一发布前检查' : '重新检查所有目标'}</Button> : null}
-          {selected.status === 'ready' ? <Button disabled={busy || selected.targets.some(target => isTargetUnconfirmed(target.targetId))} onClick={() => batchAction('正在开始批次发布', '/start')}>确认发布到 {selected.targets.length} 个目标</Button> : null}
-          {['draft', 'blocked', 'ready'].includes(selected.status) || isActive(selected) || pending === '正在统一检查所有目标' ? <Button variant="outline" disabled={cancelling || selected.status === 'cancelled'} onClick={() => void cancelBatch()}><Square />{selected.status === 'cancelled' ? '正在取消' : '取消批次'}</Button> : null}
-          <Button variant="outline" disabled={pollingPending} onClick={() => batchAction('正在核对各目标实际运行版本', '/refresh')}><RefreshCw />核对实际运行版本</Button>
-        </> : null}
-      </div>
-    </footer>
   </section>;
 }
 

@@ -85,6 +85,7 @@ export function StartReleaseDialog({
 }: StartReleaseDialogProps): JSX.Element {
   const [branchId, setBranchId] = useState('');
   const [preflight, setPreflight] = useState<ReleasePreflightResult | null>(null);
+  const [forceReason, setForceReason] = useState('');
   const [preflightState, setPreflightState] = useState<'idle' | 'running' | 'error'>('idle');
   const [run, setRun] = useState<ReleaseRun | null>(null);
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
@@ -148,6 +149,7 @@ export function StartReleaseDialog({
         { method: 'POST', body: { targetId: intent.row.target.id, previewUrl } },
       );
       setPreflight(result);
+      setForceReason('');
       setPreflightState('idle');
     } catch (err) {
       setPreflightState('error');
@@ -155,7 +157,7 @@ export function StartReleaseDialog({
     }
   }, [intent, branchId, previewUrl, onToast]);
 
-  const start = async (): Promise<void> => {
+  const start = async (force = false): Promise<void> => {
     if (!intent || !branchId) return;
     setStarting(true);
     try {
@@ -166,7 +168,9 @@ export function StartReleaseDialog({
           body: {
             targetId: intent.row.target.id,
             previewUrl,
-            ...(intent.expectedCommitSha ? { expectedCommitSha: intent.expectedCommitSha } : {}),
+            preflightId: preflight?.preflightId,
+            expectedCommitSha: intent.expectedCommitSha || preflight?.artifact?.commitSha,
+            ...(force ? { forceReason: forceReason.trim() } : {}),
           },
         },
       );
@@ -295,6 +299,10 @@ export function StartReleaseDialog({
                   {etaText ? <span className="text-xs text-primary">{etaText}</span> : null}
                   <CodeText className="text-muted-foreground">{run.releaseId}</CodeText>
                 </div>
+                {run.forceReason ? <p className="break-words text-sm text-warn">强制发布 · {run.forceReason}</p> : null}
+                {run.autoRestoreStartedAt && isReleaseTerminal(run.status) ? (
+                  <p className="text-sm">{run.autoRestoredAt ? '已恢复发布前的运行版本，公网复验通过。' : '自动回滚尚未验证，请查看发布日志。'}</p>
+                ) : null}
                 <div className="grid shrink-0 gap-2 sm:grid-cols-2">
                   {progress.steps.map((step, index) => (
                     <div key={step.id} className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[0.8125rem]">
@@ -335,6 +343,14 @@ export function StartReleaseDialog({
                     先跑一次发布前检查，确认这一版能发之后再动手。
                   </p>
                 )}
+                {preflight?.forceAvailable ? (
+                  <label className="grid gap-1 text-sm">
+                    强制发布原因
+                    <input className="rounded-md border bg-background px-3 py-2"
+                      value={forceReason} onChange={(event) => setForceReason(event.target.value)}
+                      maxLength={300} placeholder="强制发布会将外部业务依赖故障记为警告" />
+                  </label>
+                ) : null}
               </DialogBody>
             )}
 
@@ -358,6 +374,12 @@ export function StartReleaseDialog({
                       {starting ? <Loader2 className="animate-spin" /> : <Rocket />}
                       开始发布
                     </Button>
+                    {preflight?.forceAvailable ? (
+                      <Button variant="outline" onClick={() => void start(true)}
+                        disabled={!forceReason.trim() || !preflight.artifact?.commitSha || starting}>
+                        强制发布
+                      </Button>
+                    ) : null}
                   </>
                 ) : null}
               </div>

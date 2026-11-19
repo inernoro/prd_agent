@@ -2111,6 +2111,21 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
     { name: "idx_llmgw_consumption_alerts_tenant_status_created" }
   )
   // end collection: llmgw_consumption_alerts
+
+  // collection: llmgw_consumption_retries
+  ensureCatalogIndex("llmgw_consumption_retries",
+    { "TenantId": 1, "AlertId": 1, "State": 1 },
+    { name: "idx_llmgw_consumption_retry_alert" }
+  )
+  ensureCatalogIndex("llmgw_consumption_retries",
+    { "TenantId": 1, "ServiceKeyId": 1, "AppCallerCode": 1, "State": 1, "ReadyAt": 1 },
+    { name: "idx_llmgw_consumption_retry_worker" }
+  )
+  ensureCatalogIndex("llmgw_consumption_retries",
+    { "ExpiresAt": 1 },
+    { name: "ttl_llmgw_consumption_retry", expireAfterSeconds: 0 }
+  )
+  // end collection: llmgw_consumption_retries
 }
 
 

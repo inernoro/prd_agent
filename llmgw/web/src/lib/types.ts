@@ -1786,6 +1786,8 @@ export interface ConsumptionAlert {
   baselineSamples?: number | null;
   id: string;
   appCallerCode: string;
+  appCallerTitle?: string | null;
+  owner?: string | null;
   requestType: string;
   scope: string;
   origin: string;
@@ -1797,7 +1799,30 @@ export interface ConsumptionAlert {
   kind: string;
   createdAt: string;
   updatedAt: string;
+  restoresAt?: string | null;
+  canRequestResolution?: boolean;
+  canDecideQuota?: boolean;
+  retry?: {
+    available: number;
+    queued: number;
+    running: number;
+    completed: number;
+    failed: number;
+    expired: number;
+    completedCount: number;
+  } | null;
+  quota?: {
+    state: 'pending' | 'approved' | 'denied' | 'expired';
+    units: number;
+    used: number;
+    reason: string;
+    expiresAt: string;
+  } | null;
 }
+
+export type ConsumptionAlertAction =
+  | { action: 'retry' | 'approve-quota' | 'deny-quota' }
+  | { action: 'request-quota'; units: number; reason: string };
 
 export type UpstreamProxyMode = 'inherit' | 'direct' | 'custom';
 export type UpstreamProxyView = { mode: UpstreamProxyMode; address?: string | null; username?: string | null; hasPassword: boolean };

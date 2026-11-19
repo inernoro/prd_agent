@@ -12,6 +12,15 @@ import {
 describe('磁盘分档刹车', () => {
   beforeEach(() => diskGuard.reset());
 
+  it('跳过空闲降温必须知道所有挂载点余量，部分盘点和失败不能当作充裕', () => {
+    diskGuard.setProbe(() => [{ totalBytes: 1000, freeBytes: 900 }, { totalBytes: 1000, freeBytes: 100 }]);
+    expect(diskGuard.refreshNow()).toBe('freeze'); expect(diskGuard.minimumAvailableBytes()).toBe(100);
+    diskGuard.setProbe(() => [{ totalBytes: 1000, freeBytes: 900 }, null]);
+    diskGuard.refreshNow(); expect(diskGuard.minimumAvailableBytes()).toBeNull();
+    diskGuard.setProbe(() => { throw new Error('query unavailable'); });
+    diskGuard.refreshNow(); expect(diskGuard.minimumAvailableBytes()).toBeNull();
+  });
+
   it('按阈值归档，边界值归到更严的一档', () => {
     expect(classifyDiskTier(10)).toBe('ok');
     expect(classifyDiskTier(74.9)).toBe('ok');

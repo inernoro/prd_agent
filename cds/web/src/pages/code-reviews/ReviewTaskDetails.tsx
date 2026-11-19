@@ -34,7 +34,6 @@ export function ReviewDetail({ task, now, pending, onAction, onClose }: { task: 
   const count = task.findingsSummary ? Object.values(task.findingsSummary).reduce((n, value) => n + value, 0) : undefined;
   const phaseText = task.status === 'failed' || task.status === 'cancelled' ? task.error || reviewTaskExplanation(task) : task.phase;
   return <article aria-label="审查任务详情" className="cr-stack">
-    <ReviewKeyUsage task={task} />
     {onClose ? <ReviewButton tone="ghost" className="cr-icon-button cr-end" aria-label="关闭任务详情" onClick={onClose}><X /></ReviewButton> : null}
     {task.sourceType === 'report' ? <div className="cr-surface cr-progress-summary"><h2>文档信息</h2><dl className="cr-facts"><dt>来源</dt><dd>{task.sourceName}</dd><dt>保存时间</dt><dd>{formatDate(task.createdAt)}（UTC+8）</dd><dt>文档编号</dt><dd className="cr-mono">{task.id}</dd><dt>执行说明</dt><dd>上传的已有文档，未在 CDS 执行 AI 审查。</dd></dl>{reportUrl ? <a className="cr-task-action" href={reportUrl}>阅读上传档案<ChevronRight /></a> : null}</div> : <>
       <div className="cr-progress-grid"><div className="cr-surface cr-stages">{stage < 0 ? <p className="cr-form-note">任务已停止，原记录未提供精确终止阶段；以下不推断各阶段是否完成。</p> : null}{stages.map((item, index) => {
@@ -50,11 +49,11 @@ export function ReviewDetail({ task, now, pending, onAction, onClose }: { task: 
           {task.delivery.status === 'failed' && task.reportId ? <ReviewButton disabled={pending} onClick={() => onAction('delivery/retry')}><Mail />重试邮件</ReviewButton> : null}</div>
         {cancelConfirm && active ? <div role="group" aria-label="确认取消审查" className="cr-confirm-dialog"><p>取消后停止未完成部分，已保存的结果仍可阅读。</p><div className="cr-dialog-actions"><ReviewButton tone="danger" disabled={pending} onClick={() => { setCancelConfirm(false); onAction('cancel'); }}>确认取消</ReviewButton><ReviewButton tone="ghost" onClick={() => setCancelConfirm(false)}>继续等待</ReviewButton></div></div> : null}
         {retryConfirm && !active ? <div role="group" aria-label="确认重试审查" className="cr-confirm-dialog"><p>将继续跟踪原任务，并可能产生新的模型用量。已固定的源码和已有结果保留。</p><div className="cr-dialog-actions"><ReviewButton tone="primary" disabled={pending} onClick={() => { setRetryConfirm(false); onAction('retry'); }}>确认重试审查</ReviewButton><ReviewButton tone="ghost" onClick={() => setRetryConfirm(false)}>取消</ReviewButton></div></div> : null}
-      </div><p className="cr-form-note">此页自动查询任务状态，不会重新扫描；刷新浏览器后仍可继续查看本任务。最近记录更新 {formatDate(task.updatedAt)}（UTC+8）。</p></div></div>
+      </div><p className="cr-form-note">此页自动查询任务状态，不会重新扫描；刷新浏览器后仍可继续查看本任务。最近记录更新 {formatDate(task.updatedAt)}（UTC+8）。</p><ReviewKeyUsage task={task} /></div></div>
       <p className="cr-form-note" role="status">{coverage.text}。{reviewTaskExplanation(task)}{active ? `创建后 ${Math.max(0, Math.floor((now - Date.parse(task.createdAt)) / 60000))} 分钟（含排队）。` : ''}</p>
       {task.inputSkippedFiles ? <p className="cr-form-note">另有 {task.inputSkippedFiles.toLocaleString()} 项未纳入分析，请结合覆盖说明核对。</p> : null}
       {task.error ? <ErrorNotice message={task.error} title="本次审查失败" /> : null}
-      <ReviewEvents task={task} />
+      <details className="cr-execution-details"><summary>查看执行记录</summary><ReviewEvents task={task} /></details>
     </>}
     {task.delivery.status !== 'not_requested' ? <div className="cr-surface cr-progress-summary"><h3>{deliveryLabels[task.delivery.status]}</h3>{task.delivery.email ? <p className="cr-break cr-form-note">{task.delivery.email}</p> : null}{task.delivery.error ? <ErrorNotice message={task.delivery.error} title="报告已保存，邮件尚未送达" /> : null}</div> : null}
     {pending ? <ContentLoading label="正在处理审查操作" variant="inline" /> : null}

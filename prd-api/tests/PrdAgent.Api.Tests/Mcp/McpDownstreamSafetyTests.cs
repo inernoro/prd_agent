@@ -263,7 +263,7 @@ public class McpDownstreamSafetyTests
         dispatch.ShouldBeGreaterThan(-1, "派发点不见了，切片锚点要跟着改");
         invoked.ShouldBeLessThan(dispatch, "墙钟取在派发之后 —— 那就还是完成时刻");
 
-        var log = McpSourceGuard.Slice(src, "_usage.LogAsync(new McpCallLog", "}, CancellationToken.None);");
+        var log = McpSourceGuard.Slice(src, "var log = new McpCallLog", "return _usage.LogAsync(log, CancellationToken.None);");
         log.ShouldContain("CreatedAt = invokedAt",
             customMessage: "审计行没显式落发起时刻，会走模型默认（= 构造这个对象的时刻 = 调用完成之后）");
     }

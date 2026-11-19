@@ -1,26 +1,20 @@
+import { useEntrySkinStore } from '@/stores/entrySkinStore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
+import { ArrowRight, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
 import { takeReturnFragment } from '@/app/returnFragment';
 import { useAuthStore } from '@/stores/authStore';
 import { getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
 import type { SsoLoginOption } from '@/services/contracts/auth';
-import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
+import { ConsciousnessHud, ConsciousnessScene, IdentityScanner, markConsciousnessArrival, type IdentityPhase } from '@/components/effects/ConsciousnessScene';
+import { enterWorkspace, prepareEntryScene, profileEntryMotion } from '@/components/effects/entryMotion';
+import { prefersReducedMotion } from '@/lib/themeApplier';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { Reveal } from '@/pages/home/components/Reveal';
 
-/**
- * LoginPage — 沿用 /home 的 Linear × Retro-Futurism 视觉语言
- *
- * 设计原则见 doc/rule.frontend.landing-visual-style.md
- *
- * 结构：
- *   1 · StaticBackdrop 静态背景（六层 CSS）
- *   2 · Hero 本地 retro 装饰（synthwave 地平线 + 合成太阳 + Tron 地板）
- *   3 · 中心玻璃卡片（HUD chip eyebrow + Space Grotesk 标题 + 表单 + 登录页语义渐变主 CTA）
- *   4 · 所有元素走 Reveal 阶梯进场
- *
- * 业务逻辑（login / 首次登录重置密码 / 权限拉取）保持与旧版一致，只改视觉层。
+/** Cinematic entry follows the reference film: fog, identity scan, contour, character.
+ * Authentication, SSO return fragments and first-login password reset retain their existing flow.
  */
 
 const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
@@ -59,6 +53,8 @@ function createSsoState() {
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const cinematic = useEntrySkinStore(s => s.skin === 'companion');
+  useApplyDocumentTheme('/login');
   const setAuth = useAuthStore((s) => s.login);
   const setTokens = useAuthStore((s) => s.setTokens);
   const setPermissions = useAuthStore((s) => s.setPermissions);
@@ -109,6 +105,11 @@ export default function LoginPage() {
     return resolved;
   }, [returnUrlWithRef]);
   const [loading, setLoading] = useState(false);
+  useEffect(() => { if (cinematic) void prepareEntryScene(); }, [cinematic]);
+  const [gatePhase, setGatePhase] = useState<IdentityPhase>('idle');
+  const completingLogin = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const [username, setUsername] = useState(() => {
     try {
@@ -146,7 +147,7 @@ export default function LoginPage() {
   const canResetSubmit = useMemo(() => Boolean(newPassword.trim() && confirmPassword.trim()), [newPassword, confirmPassword]);
 
   useEffect(() => {
-    if (isAuthed) navigate(resolveReturnUrl(), { replace: true });
+    if (isAuthed && !completingLogin.current) navigate(resolveReturnUrl(), { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthed, navigate]);
 
@@ -231,6 +232,7 @@ export default function LoginPage() {
       setError('当前环境已禁用密码登录，请使用 SSO 登录');
       return;
     }
+    profileEntryMotion();
     setLoading(true);
     setError(null);
     try {
@@ -266,15 +268,22 @@ export default function LoginPage() {
     refreshToken: string,
     sessionKey: string
   ) => {
+    completingLogin.current = true;
     setAuth(user, accessToken);
     setTokens(accessToken, refreshToken, sessionKey);
     setPermissionsLoaded(false);
 
     // 拉取后台权限（决定菜单/路由可见性与准入）
-    const authz = await getAdminAuthzMe();
+    const authz = await getAdminAuthzMe().catch((cause: unknown) => {
+      completingLogin.current = false;
+      logout();
+      throw cause;
+    });
     if (!authz.success) {
       // 若无 admin.access 权限，后端会 403，这里直接回到登录态
       logout();
+      completingLogin.current = false;
+      setGatePhase('idle');
       setError(authz.error?.message || '无权限进入管理后台');
       return;
     }
@@ -296,7 +305,23 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
-    navigate(resolveReturnUrl(), { replace: true });
+    if (useEntrySkinStore.getState().skin !== 'companion') {
+      navigate(resolveReturnUrl(), { replace: true }); return;
+    }
+    // Preparation must not keep a verified user waiting on a failed resource.
+    if (!prefersReducedMotion()) await Promise.race([prepareEntryScene(), new Promise(resolve => window.setTimeout(resolve, 1000))]);
+    if (!mounted.current) return;
+    setGatePhase('authorized');
+    if (!prefersReducedMotion()) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 760));
+      if (!mounted.current) return;
+      setGatePhase('entering');
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 820));
+    }
+    if (!mounted.current) return;
+    const destination = resolveReturnUrl();
+    if (['/', '/agent-launcher'].includes(destination.split(/[?#]/)[0])) markConsciousnessArrival();
+    enterWorkspace(() => navigate(destination, { replace: true }));
   };
 
   const onResetPassword = async () => {
@@ -349,25 +374,14 @@ export default function LoginPage() {
     setResetError(null);
   };
 
+  const busy = loading || ssoLoading || resetLoading;
+  const phase: IdentityPhase = gatePhase === 'idle' && busy ? 'verifying' : gatePhase;
+  const authorized = phase === 'authorized' || phase === 'entering';
   return (
-    <div
-      className="relative min-h-screen w-full overflow-hidden text-white"
-      style={{ fontFamily: 'var(--font-body)', background: 'var(--login-bg)' }}
-    >
-      {/* Layer 1 · 全站静态背景 */}
-      <StaticBackdrop />
-      <div
-        aria-hidden
-        className="absolute inset-0 z-0 pointer-events-none"
-        style={{ background: 'var(--login-backdrop-overlay)' }}
-      />
-
-      {/* Layer 2 · Hero 局部 retro 装饰（synthwave 地平线 + 合成太阳 + Tron 地板）*/}
-      <RetroHorizon />
-
-      {/* Layer 3 · 居中玻璃卡片 */}
-      <div className="relative z-10 min-h-screen flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[460px]">
+    <div className={`cinema-login${cinematic ? '' : ' is-standard'}`} data-busy={busy} data-phase={phase}>
+      {cinematic && <><ConsciousnessScene fog /><ConsciousnessHud login /><IdentityScanner phase={phase} /></>}
+      <main className="cinema-login-center" aria-label={showResetPassword ? '设置新密码' : '登录 MAP'}>
+        {authorized ? <div className="cinema-identity-result" role="status"><div className="cinema-verified-copy"><p>读取完毕 · 核验通过</p><small>READ COMPLETE / VERIFIED</small></div><div className="cinema-welcome-copy"><p>WELCOME TO</p><small>YOUR INTELLIGENCE WORKSPACE</small><strong>MAP</strong></div></div> : <>
           {!showResetPassword ? (
             <LoginCard
               username={username}
@@ -400,163 +414,16 @@ export default function LoginPage() {
               onBack={onBackToLogin}
             />
           )}
-        </div>
+        </>}
+      </main>
+      <div className="cinema-login-status" role={phase === 'verifying' ? 'status' : undefined}>
+        {authorized ? '身份已确认，正在进入工作空间' : busy ? '正在读取身份与访问权限' : '身份资料确认 · 等待你的指令'}
+        <small>{authorized ? 'IDENTITY VERIFIED / ENTERING WORKSPACE' : busy ? 'READING IDENTITY / PLEASE WAIT' : 'IDENTITY AWAITING / READY TO CONNECT'}</small>
       </div>
-
-      {/* keyframes: 标题慢呼吸 + HUD 脉冲（与 HeroSection 完全同规格）*/}
-      <style>{`
-        @keyframes login-title-pulse {
-          0%, 100% {
-            text-shadow: var(--login-title-shadow);
-          }
-          50% {
-            text-shadow: var(--login-title-shadow-strong);
-          }
-        }
-        @keyframes login-hud-pulse {
-          0%, 100% {
-            box-shadow: var(--login-hud-shadow);
-          }
-          50% {
-            box-shadow: var(--login-hud-shadow-strong);
-          }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          [data-login-pulse] { animation: none !important; }
-        }
-      `}</style>
     </div>
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
- *  装饰：Synthwave 地平线 + 合成太阳 + Tron 地板
- *  （与 HeroSection.tsx 前 100 行完全同构，搬到本页做本地装饰）
- * ────────────────────────────────────────────────────────────────────────── */
-function RetroHorizon() {
-  return (
-    <>
-      {/* Synthwave 地平线光带 */}
-      <div
-        className="absolute inset-x-0 pointer-events-none z-0"
-        style={{
-          top: '72vh',
-          height: '2px',
-          background: 'var(--login-horizon)',
-          boxShadow: 'var(--login-horizon-shadow)',
-        }}
-      />
-
-      {/* 合成太阳半圆 */}
-      <div
-        className="absolute pointer-events-none z-0"
-        style={{
-          top: '72vh',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: 'clamp(360px, 34vw, 560px)',
-          height: 'clamp(360px, 34vw, 560px)',
-          background: 'var(--login-sun)',
-          filter: 'blur(6px)',
-        }}
-      />
-
-      {/* Tron 透视地板 */}
-      <div
-        className="absolute inset-x-0 pointer-events-none z-0"
-        style={{
-          top: '72vh',
-          bottom: '0',
-          perspective: '420px',
-          perspectiveOrigin: '50% 0%',
-        }}
-      >
-        <div
-          className="absolute inset-x-[-35%] top-0 bottom-0"
-          style={{
-            background: `
-              repeating-linear-gradient(
-                180deg,
-                transparent 0,
-                transparent 43px,
-                var(--login-grid-horizontal) 43px,
-                var(--login-grid-horizontal) 44px
-              ),
-              repeating-linear-gradient(
-                90deg,
-                transparent 0,
-                transparent 43px,
-                var(--login-grid-vertical) 43px,
-                var(--login-grid-vertical) 44px
-              )
-            `,
-            transform: 'rotateX(62deg)',
-            transformOrigin: '50% 0%',
-            maskImage:
-              'linear-gradient(180deg, transparent 0%, black 38%, black 100%)',
-            WebkitMaskImage:
-              'linear-gradient(180deg, transparent 0%, black 38%, black 100%)',
-          }}
-        />
-      </div>
-    </>
-  );
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
- *  HUD chip（eyebrow 状态条）—— 与 HeroSection 状态条同规格
- * ────────────────────────────────────────────────────────────────────────── */
-function HudChip({ label, sublabel }: { label: string; sublabel?: string }) {
-  return (
-    <div
-      data-login-pulse
-      className="inline-flex items-center gap-3 px-4 py-2 rounded-md"
-      style={{
-        background: 'var(--login-panel-bg)',
-        border: '1px solid var(--login-border-strong)',
-        boxShadow: 'var(--login-hud-shadow)',
-        fontFamily: 'var(--font-terminal)',
-        animation: 'login-hud-pulse 4s ease-in-out infinite',
-      }}
-    >
-      <span className="relative flex h-2 w-2">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-20" />
-        <span
-          className="relative inline-flex h-2 w-2 rounded-full"
-          style={{ background: 'rgba(226,228,232,0.82)', boxShadow: '0 0 10px rgba(226,228,232,0.28)' }}
-        />
-      </span>
-      <span
-        className="text-[14px]"
-        style={{
-          color: 'rgba(226,228,232,0.78)',
-          letterSpacing: '0.14em',
-          textShadow: '0 0 8px rgba(226,228,232,0.20)',
-        }}
-      >
-        {label}
-      </span>
-      {sublabel && (
-        <>
-          <span className="w-px h-3.5 bg-token-nested" />
-          <span
-            className="text-[14px] text-slate-200"
-            style={{
-              letterSpacing: '0.14em',
-              textShadow: '0 0 10px rgba(203, 213, 225, 0.5)',
-            }}
-          >
-            {sublabel}
-          </span>
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
- *  MAP logo —— 与 LandingPage 同规格
- * ────────────────────────────────────────────────────────────────────────── */
 function MapMark({ className = 'w-14 h-14' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
@@ -585,9 +452,6 @@ function MapMark({ className = 'w-14 h-14' }: { className?: string }) {
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
- *  输入框 —— 玻璃化 + accent focus ring
- * ────────────────────────────────────────────────────────────────────────── */
 interface FieldProps {
   label: string;
   value: string;
@@ -603,7 +467,7 @@ function Field({ label, value, onChange, onEnter, type = 'text', placeholder, au
   return (
     <label className="block">
       <span
-        className="block mb-2 text-[11px] uppercase text-white/55"
+        className="block mb-2 text-[11px] uppercase text-token-secondary"
         style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.2em' }}
       >
         {label}
@@ -618,7 +482,7 @@ function Field({ label, value, onChange, onEnter, type = 'text', placeholder, au
         }}
       >
         {Icon && (
-          <span className="pl-4 pr-1 text-white/45">
+          <span className="pl-4 pr-1 text-token-secondary">
             <Icon className="w-4 h-4" />
           </span>
         )}
@@ -631,7 +495,7 @@ function Field({ label, value, onChange, onEnter, type = 'text', placeholder, au
           type={type}
           placeholder={placeholder}
           autoComplete={autoComplete}
-          className="h-12 w-full bg-transparent px-4 text-[14.5px] text-white placeholder-white/30 outline-none"
+          className="h-12 w-full bg-transparent px-4 text-[14.5px] text-token-primary placeholder:text-token-muted outline-none"
           style={{ fontFamily: 'var(--font-body)' }}
         />
       </div>
@@ -658,7 +522,7 @@ function PrimaryPill({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="group relative inline-flex w-full items-center justify-center gap-2.5 h-12 px-8 rounded-full font-medium text-[14.5px] text-white transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+      className="group relative inline-flex w-full items-center justify-center gap-2.5 h-12 px-8 rounded-full font-medium text-[14.5px] text-token-primary transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
       style={{
         background: 'var(--login-cta-gradient)',
         boxShadow: 'var(--login-cta-shadow)',
@@ -672,7 +536,7 @@ function PrimaryPill({
           aria-hidden
         />
       ) : (
-        <Sparkles className="w-4 h-4" />
+        <Lock className="w-4 h-4" />
       )}
       <span>{children}</span>
       {!loading && (
@@ -688,7 +552,7 @@ function PrimaryPill({
 function ErrorBar({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="rounded-xl px-4 py-3 text-[13px]"
+      role="alert" className="rounded-xl px-4 py-3 text-[13px]"
       style={{
         background: 'rgba(244, 63, 94, 0.08)',
         border: '1px solid rgba(244, 63, 94, 0.35)',
@@ -706,26 +570,9 @@ function ErrorBar({ children }: { children: React.ReactNode }) {
  *  玻璃卡片外壳（遵循 R9）
  * ────────────────────────────────────────────────────────────────────────── */
 function GlassCard({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="rounded-[22px] p-8"
-      style={{
-        background: 'var(--login-panel-bg)',
-        border: '1px solid var(--login-border)',
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
-        boxShadow:
-          '0 18px 54px rgba(0, 0, 0, 0.55), inset 0 0 10px rgba(148, 163, 184, 0.04)',
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div className="cinema-form-content">{children}</div>;
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
- *  登录卡
- * ────────────────────────────────────────────────────────────────────────── */
 interface LoginCardProps {
   username: string;
   password: string;
@@ -793,59 +640,9 @@ function LoginCard({
   };
   return (
     <GlassCard>
-      {/* Brand row */}
-      <Reveal delay={0}>
-        <div className="flex items-center gap-4 mb-6">
-          <MapMark className="w-14 h-14 rounded-[16px]" />
-          <div className="min-w-0">
-            <div
-              className="text-[20px] font-medium text-white"
-              style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.01em' }}
-            >
-              MAP Admin
-            </div>
-            <div
-              className="text-[12.5px] text-white/55"
-              style={{ fontFamily: 'var(--font-body)' }}
-            >
-              米多 Agent 管理后台
-            </div>
-          </div>
-        </div>
-      </Reveal>
-
-      {/* HUD eyebrow */}
-      <Reveal delay={60}>
-        <div className="mb-5">
-          <HudChip label="LIVE · READY" sublabel="SECURE PORTAL" />
-        </div>
-      </Reveal>
-
-      {/* Heading */}
-      <Reveal delay={120}>
-        <h1
-          data-login-pulse
-          className="text-white font-medium"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 'clamp(1.75rem, 2.8vw, 2.25rem)',
-            lineHeight: 1.08,
-            letterSpacing: '-0.03em',
-            animation: 'login-title-pulse 5s ease-in-out infinite',
-          }}
-        >
-          欢迎回来
-        </h1>
-      </Reveal>
-
-      <Reveal delay={180}>
-        <p
-          className="mt-3 text-[14px] text-white/62 leading-relaxed"
-          style={{ fontFamily: 'var(--font-body)' }}
-        >
-          {passwordLoginDisabled ? '当前环境仅允许 SSO 登录。' : '使用管理员账号登录以进入控制台。'}
-        </p>
-      </Reveal>
+      <Reveal delay={0}><div className="cinema-form-index"><span />身份资料确认</div></Reveal>
+      <Reveal delay={60}><h2 className="cinema-form-heading">连接你的工作空间</h2></Reveal>
+      <Reveal delay={120}><p className="cinema-form-description">{passwordLoginDisabled ? '使用企业单点登录，连接你的工作。' : '以你的身份，连接无限可能。'}</p></Reveal>
 
       {/* Form */}
       <div className="mt-7 grid gap-4">
@@ -853,7 +650,7 @@ function LoginCard({
           <>
             <Reveal delay={240}>
               <Field
-                label="USERNAME"
+                label="用户名"
                 value={username}
                 onChange={onUsernameChange}
                 placeholder="admin"
@@ -865,10 +662,10 @@ function LoginCard({
             <Reveal delay={300}>
               <label className="block">
                 <span
-                  className="mb-2 flex items-center justify-between text-[11px] uppercase text-white/55"
+                  className="mb-2 flex items-center justify-between text-[11px] uppercase text-token-secondary"
                   style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.2em' }}
                 >
-                  <span>PASSWORD</span>
+                  <span>密码</span>
                   {capsLockOn && (
                     <span
                       className="normal-case tracking-normal text-[11px] text-amber-300/90"
@@ -887,7 +684,7 @@ function LoginCard({
                     WebkitBackdropFilter: 'blur(10px)',
                   }}
                 >
-                  <span className="pl-4 pr-1 text-white/45">
+                  <span className="pl-4 pr-1 text-token-secondary">
                     <Lock className="w-4 h-4" />
                   </span>
                   <input
@@ -908,16 +705,15 @@ function LoginCard({
                     type={showPassword ? 'text' : 'password'}
                     placeholder="••••••••"
                     autoComplete="current-password"
-                    className="h-12 w-full bg-transparent px-4 text-[14.5px] text-white placeholder-white/30 outline-none"
+                    className="h-12 w-full bg-transparent px-4 text-[14.5px] text-token-primary placeholder:text-token-muted outline-none"
                     style={{ fontFamily: 'var(--font-body)' }}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    tabIndex={-1}
                     aria-label={showPassword ? '隐藏密码' : '显示密码'}
                     title={showPassword ? '隐藏密码' : '显示密码'}
-                    className="mr-2 flex h-9 w-9 items-center justify-center rounded-lg text-white/55 hover:text-white/85 hover-bg-soft transition-colors"
+                    className="mr-2 flex h-9 w-9 items-center justify-center rounded-lg text-token-secondary hover:text-token-secondary hover-bg-soft transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -926,12 +722,12 @@ function LoginCard({
             </Reveal>
 
             <Reveal delay={340}>
-              <label className="flex items-center gap-2 cursor-pointer select-none text-[12.5px] text-white/65 hover:text-white/85 transition-colors">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-[12.5px] text-token-secondary hover:text-token-secondary transition-colors">
                 <input
                   type="checkbox"
                   checked={rememberUsername}
                   onChange={(e) => onRememberChange(e.target.checked)}
-                  className="h-3.5 w-3.5 cursor-pointer accent-white/85"
+                  className="h-3.5 w-3.5 cursor-pointer accent-current"
                 />
                 <span style={{ fontFamily: 'var(--font-body)' }}>记住用户名</span>
               </label>
@@ -949,7 +745,7 @@ function LoginCard({
           <Reveal delay={360}>
             <div className="mt-2">
               <PrimaryPill onClick={onSubmit} disabled={!canSubmit || loading} loading={loading}>
-                {loading ? '登录中…' : '进入控制台'}
+                {loading ? '正在确认身份…' : '开始身份确认'}
               </PrimaryPill>
             </div>
           </Reveal>
@@ -959,7 +755,7 @@ function LoginCard({
           <Reveal delay={400}>
             <div className="grid gap-2">
               <div
-                className="flex items-center gap-3 text-[11px] uppercase text-white/40"
+                className="flex items-center gap-3 text-[11px] uppercase text-token-secondary"
                 style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.16em' }}
               >
                 <span className="h-px flex-1 bg-token-nested" />
@@ -975,7 +771,7 @@ function LoginCard({
                     onClick={disabled ? undefined : (event) => handleSsoClick(event, option)}
                     aria-disabled={disabled}
                     title={disabled ? '未配置登录地址' : option.label}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-token-subtle bg-token-nested px-4 text-[13.5px] font-medium text-white/82 transition-all hover:border-token-subtle hover-bg-soft/[0.07] aria-disabled:pointer-events-none aria-disabled:opacity-45"
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-token-subtle bg-token-nested px-4 text-[13.5px] font-medium text-token-secondary transition-all hover:border-token-subtle hover-bg-soft/[0.07] aria-disabled:pointer-events-none aria-disabled:opacity-45"
                     style={{ fontFamily: 'var(--font-display)' }}
                   >
                     <Lock className="h-4 w-4" />
@@ -989,19 +785,23 @@ function LoginCard({
 
         {passwordLoginDisabled && ssoOptions.length === 0 && (
           <Reveal delay={420}>
-            <ErrorBar>当前已禁用密码登录，但没有可用 SSO。请配置 MAP_PASSWORD_LOGIN_BREAK_GLASS=true 后重启服务。</ErrorBar>
+            <ErrorBar>暂时没有可用的登录方式，请联系管理员恢复登录服务。</ErrorBar>
           </Reveal>
         )}
 
         {!passwordLoginDisabled && (
           <Reveal delay={ssoOptions.length > 0 ? 480 : 440}>
             <div
-              className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-white/45"
+              className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-token-secondary"
               style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
             >
               <Terminal className="w-3 h-3" />
-              <span>管理员凭据由部署环境安全注入</span>
+              <span>使用你的企业账号安全登录</span>
             </div>
+            <details className="mt-3 text-xs text-token-secondary">
+              <summary className="cursor-pointer">首次管理员登录帮助</summary>
+              <p className="mt-2 leading-relaxed">首位管理员密码由部署环境安全注入，请向部署负责人获取；首次登录后设置自己的密码。</p>
+            </details>
           </Reveal>
         )}
       </div>
@@ -1042,13 +842,13 @@ function ResetCard({
           <MapMark className="w-14 h-14 rounded-[16px]" />
           <div className="min-w-0">
             <div
-              className="text-[20px] font-medium text-white"
+              className="text-[20px] font-medium text-token-primary"
               style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.01em' }}
             >
               设置新密码
             </div>
             <div
-              className="text-[12.5px] text-white/55"
+              className="text-[12.5px] text-token-secondary"
               style={{ fontFamily: 'var(--font-body)' }}
             >
               首次登录需要重置密码
@@ -1059,7 +859,7 @@ function ResetCard({
 
       <Reveal delay={60}>
         <div className="mb-5">
-          <HudChip label="RESET · REQUIRED" sublabel="FIRST LOGIN" />
+          <div className="cinema-form-index">首次登录 / 设置密码</div>
         </div>
       </Reveal>
 
@@ -1140,7 +940,7 @@ function ResetCard({
           <button
             type="button"
             onClick={onBack}
-            className="self-start text-[12px] text-white/55 hover:text-white transition-colors"
+            className="self-start text-[12px] text-token-secondary hover:text-token-primary transition-colors"
             style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.14em' }}
           >
             ← BACK TO LOGIN
