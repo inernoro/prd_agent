@@ -34,4 +34,3 @@ export function markQuickstartArrival(audio?: EntryAudio | null) {
 }
 export const hasQuickstartArrival = () => Date.now() < arrivalUntil;
 export function consumeQuickstartArrival() { arrivalUntil = 0; }
-

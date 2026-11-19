@@ -189,4 +189,3 @@ html[data-entry-arriving] .app-aurora { background: var(--cinema-night); }
   .consciousness-art { opacity: .82; }
   .consciousness-home.is-arriving .consciousness-home-center, .consciousness-home.is-arriving .consciousness-shortcuts, .consciousness-home.is-arriving .consciousness-hud, .consciousness-home.is-arriving .consciousness-open-desk, .consciousness-scene.is-arriving .consciousness-ghost { opacity: 1; }
 }
-

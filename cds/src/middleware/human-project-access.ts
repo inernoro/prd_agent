@@ -74,6 +74,18 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       }
       next(); return;
     }
+    if (kind === 'releases' && id === 'approval-inbox' && method === 'GET' && segments.length === 2) {
+      const target = typeof req.query.targetId === 'string' ? state.getReleaseTarget(req.query.targetId) : undefined;
+      if (!target || target.projectId !== req.query.projectId || !checkProject(target.projectId)) { deny(); return; }
+      next(); return;
+    }
+    if (kind === 'releases' && id === 'authorizations' && segments[2]) {
+      const detail = method === 'GET' && segments.length === 3;
+      const decision = method === 'POST' && segments.length === 4 && ['approve', 'reject'].includes(segments[3]);
+      const record = detail || decision ? state.getReleaseGovernance().authorizations[segments[2]] : undefined;
+      if (!record || !checkProject(record.projectId)) { deny(); return; }
+      next(); return;
+    }
     if (kind?.toLowerCase() === 'projects') {
       if (!id && method === 'GET') { next(); return; }
       // Credentials and cross-project migration remain system-owner actions.

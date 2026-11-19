@@ -295,6 +295,7 @@ export interface BranchOption {
   branch: string;
   commitSha?: string;
   githubCommitSha?: string;
+  pinnedCommit?: string;
   subject?: string;
   previewSlug?: string;
   /** CDS 后端算好的主预览地址（SSOT），发布弹窗展示与提交都以它优先。 */

@@ -74,6 +74,8 @@ services:
       - LlmGateway__ModelUpgrades__CanaryDeployment=${LLMGW_MODEL_UPGRADE_CANARY_DEPLOYMENT:-}
       # 正式实例明确承担既有定时任务；共库预览仍由 CDS 标记与运行时权限拒绝。
       - Deployment__SharedScheduledWorkEnabled=${SHARED_SCHEDULED_WORK_ENABLED:-true}
+      # 正式部署独立启用产品申领通知，其他共享任务继续使用各自的授权。
+      - ProductAgent__ClaimNotificationsEnabled=${PRODUCT_CLAIM_NOTIFICATIONS_ENABLED:-true}
       # 首次引入部署域时，生产默认接管固定截止线前由旧 main owner 创建的任务。
       # 截止线之后由仍在线旧容器创建的新任务不会进入生产 worker；显式 false 可紧急关闭。
       - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}
