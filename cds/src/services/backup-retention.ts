@@ -16,6 +16,16 @@ export interface BackupRetentionReport {
   directories: Array<Record<string, any>>;
   counts: Record<string, number>;
 }
+
+export class BackupRetentionOperationError extends Error {
+  constructor(readonly diagnostic: {
+    action: string; failureKind: 'transport' | 'native-exit' | 'output-budget' | 'invalid-result';
+    exitCode: number | null; nativeException?: string; errno?: number; nativeLines?: number[];
+  }) {
+    super(`备份资源核查未确认（${diagnostic.action}，${diagnostic.failureKind}，exit=${diagnostic.exitCode ?? 'unknown'}${diagnostic.nativeException ? `，${diagnostic.nativeException}` : ''}${diagnostic.errno == null ? '' : `，errno=${diagnostic.errno}`}${diagnostic.nativeLines?.length ? `，native-lines=${diagnostic.nativeLines.join('/')}` : ''}），相关文件已保留。`);
+    this.name = 'BackupRetentionOperationError';
+  }
+}
 export class BackupRetentionService {
   private execution: { id: string; status: 'running' | 'completed' | 'failed'; startedAt: string; directory?: string; stopRequested?: boolean; report?: BackupRetentionReport; error?: string } | null = null;
   constructor(private readonly options: { shell: IShellExecutor; state: StateService; repoRoot: string; instanceId: string }) {
@@ -51,13 +61,31 @@ export class BackupRetentionService {
     return backupDirCandidates({ slug: this.options.state.projectSlug, repoRoot: this.options.repoRoot });
   }
   private async run(directory: string, input: Record<string, unknown>): Promise<any> {
-    const loader = `import base64;exec(base64.b64decode("${Buffer.from(BACKUP_RETENTION_PROGRAM).toString('base64')}"))`;
-    const result = await this.options.shell.exec(`python3 -c ${shellQuoteArg(loader)}`, {
+    const action = typeof input.action === 'string' && /^[a-z-]{1,40}$/.test(input.action) ? input.action : 'unknown';
+    // Persist exception type/errno/source lines, never native stderr or request contents.
+    const loader = `import base64,json,sys,traceback\ntry:\n exec(compile(base64.b64decode("${Buffer.from(BACKUP_RETENTION_PROGRAM).toString('base64')}"),'<cds-backup-retention>','exec'))\nexcept Exception as e:\n d={'nativeException':type(e).__name__,'nativeLines':[f.lineno for f in traceback.extract_tb(e.__traceback__) if f.filename=='<cds-backup-retention>'][-5:]}\n if isinstance(getattr(e,'errno',None),int):d['errno']=e.errno\n print('CDS_BACKUP_DIAGNOSTIC='+json.dumps(d),file=sys.stderr)\n sys.exit(70)`;
+    let result;
+    try { result = await this.options.shell.exec(`python3 -c ${shellQuoteArg(loader)}`, {
       stdin: JSON.stringify({ ...input, automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS }, catalog: path.join(directory, '.cds-retention'), directories: [directory], instanceId: this.options.instanceId }),
       timeout: input.action === 'register' ? 905_000 : input.action === 'reconcile' ? 305_000 : 30_000, executionLane: input.action === 'preview' ? 'observation' : 'operation',
-    });
-    if (result.exitCode !== 0 || result.stdout.length > 4 * 1024 * 1024) throw new Error('备份资源核查未完成，相关文件已保留。');
-    try { return JSON.parse(result.stdout); } catch { throw new Error('备份资源核查结果未知，相关文件已保留。'); }
+    }); } catch { throw new BackupRetentionOperationError({ action, failureKind: 'transport', exitCode: null }); }
+    if (result.exitCode !== 0) {
+      let native: { nativeException?: string; errno?: number; nativeLines?: number[] } = {};
+      const line = result.stderr.slice(-2048).split('\n').find(row => row.startsWith('CDS_BACKUP_DIAGNOSTIC='));
+      try {
+        const value = JSON.parse(line?.slice('CDS_BACKUP_DIAGNOSTIC='.length) || 'null');
+        if (value && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(value.nativeException)) native.nativeException = value.nativeException;
+        if (Number.isSafeInteger(value?.errno)) native.errno = value.errno;
+        if (Array.isArray(value?.nativeLines)) native.nativeLines = value.nativeLines.filter((n: unknown) => Number.isSafeInteger(n) && Number(n) > 0).slice(-5);
+      } catch { /* The exit remains failed when diagnostic metadata is missing. */ }
+      throw new BackupRetentionOperationError({ action, failureKind: 'native-exit', exitCode: result.exitCode, ...native });
+    }
+    if (Buffer.byteLength(result.stdout) > 4 * 1024 * 1024) throw new BackupRetentionOperationError({ action, failureKind: 'output-budget', exitCode: 0 });
+    try {
+      const value = JSON.parse(result.stdout);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+      return value;
+    } catch { throw new BackupRetentionOperationError({ action, failureKind: 'invalid-result', exitCode: 0 }); }
   }
   async captureSource(projectId: string, serviceId: string): Promise<string | undefined> {
     const service = this.options.state.getInfraServiceForProjectAndId(projectId, serviceId);

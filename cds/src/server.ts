@@ -5721,13 +5721,13 @@ export function installSpaFallback(
       try {
         rel = decodeURIComponent(req.path.slice('/assets/'.length));
       } catch {
-        return next();
+        return res.sendStatus(400);
       }
       let filePath = '';
       for (const assetRoot of assetSearchDirs) {
         const candidate = path.join(assetRoot, rel);
         // Path-traversal guard: resolved path must stay inside the selected assets root.
-        if (!candidate.startsWith(assetRoot + path.sep)) return next();
+        if (!candidate.startsWith(assetRoot + path.sep)) return res.sendStatus(404);
         try {
           if (fs.statSync(candidate).isFile()) {
             filePath = candidate;
@@ -5737,7 +5737,7 @@ export function installSpaFallback(
           /* try previous generation */
         }
       }
-      if (!filePath) return next();
+      if (!filePath) return res.sendStatus(404);
 
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.setHeader('Vary', 'Accept-Encoding');

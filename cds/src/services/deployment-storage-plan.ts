@@ -12,7 +12,8 @@ export class UnsafeDeploymentStorageError extends Error {
 }
 
 export type PlannedMount = Readonly<{ kind: 'bind' | 'volume' | 'tmpfs'; source: string; target: string; readOnly: boolean;
-  purpose: 'source' | 'config' | 'cache' | 'persistent' | 'ephemeral'; storage?: Readonly<StorageBinding>; sourceRoot?: string; workspaceTarget?: string; serverTool?: true }>;
+  purpose: 'source' | 'config' | 'cache' | 'persistent' | 'ephemeral'; storage?: Readonly<StorageBinding>; sourceRoot?: string; workspaceTarget?: string; serverTool?: true; previewAssets?: true }>;
+export const PREVIEW_COMPAT_ASSET_TARGET = '/app/cds/web/dist.previous/assets';
 export type StoragePlanOwner = Readonly<{instanceId?: string; projectId: string; branchId?: string; serviceId: string}>;
 export type DeploymentStoragePlan = Readonly<{ version: 1; owner?: StoragePlanOwner; mounts: readonly PlannedMount[]; digest: string }>;
 const quote = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
@@ -90,9 +91,21 @@ export function infraStoragePlan(service: Pick<InfraService, 'id' | 'projectId' 
 /** No -v auto-mkdir and no Docker image copy-up into fresh persistent storage. */
 export function renderStoragePlan(plan: DeploymentStoragePlan): string[] {
   if (plan.version !== 1 || createHash('sha256').update(JSON.stringify(plan.mounts)).digest('hex') !== plan.digest
-    || plan.mounts.some(m => m.purpose === 'source' && !m.readOnly || m.kind === 'bind' && (!m.readOnly || (m.purpose !== 'source' && m.serverTool !== true))
+    || plan.mounts.some(m => m.purpose === 'source' && !m.readOnly || m.kind === 'bind' && (!m.readOnly || (m.purpose !== 'source' && m.serverTool !== true && m.previewAssets !== true))
+      || m.previewAssets && (m.kind !== 'bind' || m.purpose !== 'cache' || m.target !== PREVIEW_COMPAT_ASSET_TARGET || !m.readOnly)
       || m.kind === 'tmpfs' && (m.source !== 'tmpfs' || m.target !== '/tmp' || m.purpose !== 'ephemeral' || m.readOnly))) fail('storage-plan-invalid');
   return plan.mounts.map(m => m.kind === 'tmpfs' ? `--tmpfs ${quote(m.target)}` : `--mount ${quote(`type=${m.kind},${m.kind === 'volume' ? 'source' : 'src'}=${m.source},dst=${m.target}${m.readOnly ? ',readonly' : ''}${m.kind === 'volume' ? ',volume-nocopy' : ''}`)}`);
+}
+
+/** This mount is created by the parent for the exact server-enrolled preview scope. */
+export function withPreviewCompatibilityAssets(plan: DeploymentStoragePlan, source: string): DeploymentStoragePlan {
+  renderStoragePlan(plan);
+  const target = PREVIEW_COMPAT_ASSET_TARGET;
+  const overlaps = (dst: string) => dst === target || dst.startsWith(`${target}/`) || target.startsWith(`${dst}/`);
+  if (!path.isAbsolute(source) || /[,:\r\n\x00]/.test(source) || plan.mounts.some(m => overlaps(m.target))) fail('preview-compatibility-mount-invalid');
+  const mount: PlannedMount = Object.freeze({kind: 'bind', purpose: 'cache', source, target, readOnly: true, previewAssets: true});
+  const mounts = Object.freeze([...plan.mounts, mount]);
+  return Object.freeze({...plan, mounts, digest: createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
 }
 
 /** The fixed runtime temporary layer is explicit and never a host/data binding. */

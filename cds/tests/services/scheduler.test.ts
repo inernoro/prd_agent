@@ -132,7 +132,7 @@ describe('SchedulerService', () => {
       expect(cooled).toEqual([]);
     });
 
-    it('maxHotBranches=0 means unlimited', async () => {
+    it('legacy maxHotBranches=0 still admits fewer than the hard ceiling', async () => {
       setup({ maxHotBranches: 0 });
       for (let i = 0; i < 10; i++) {
         stateService.addBranch(makeBranch(`b${i}`, 'running', {
@@ -142,6 +142,7 @@ describe('SchedulerService', () => {
       }
       await scheduler.evictLruIfOverCapacity();
       expect(cooled).toEqual([]);
+      expect(scheduler.getSnapshot().config.maxHotBranches).toBe(25);
     });
   });
 
@@ -235,8 +236,7 @@ describe('SchedulerService', () => {
         }));
       }
       stateService.addBranch(makeBranch('d'));
-      const count = await scheduler.evictLruIfOverCapacity('d');
-      expect(count).toBe(0);
+      await expect(scheduler.evictLruIfOverCapacity('d')).rejects.toThrow('热池已满');
       expect(cooled).toEqual([]);
     });
 
@@ -489,7 +489,7 @@ describe('SchedulerService', () => {
       scheduler.setCoolFn(async () => { throw new Error('unconfirmed stop'); });
       await expect(scheduler.markCold('failed')).rejects.toThrow('unconfirmed stop');
       expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
-      scheduler.setCoolFn(async () => { names.delete('resident'); });
+      scheduler.setCoolFn(async () => { names.delete('resident'); const b = stateService.getBranch('failed')!; b.status = 'idle'; b.services.api.status = 'stopped'; });
       await scheduler.markCold('failed');
       expect(scheduler.getSnapshot().capacityUsage.current).toBe(0);
     });
@@ -514,7 +514,7 @@ describe('SchedulerService', () => {
         servingRuntime: { containerName: 'old-live', hostPort: 10002 } } } });
     stateService.addBranch(b); const live = new Set(['old-live']); scheduler.setRuntimePresenceProvider(() => live);
     let attempts = 0;
-    scheduler.setCoolFn(async () => { if (++attempts === 1) throw new Error('executor unavailable'); live.clear(); });
+    scheduler.setCoolFn(async () => { if (++attempts === 1) throw new Error('executor unavailable'); live.clear(); const current = stateService.getBranch(b.id)!; current.status = 'idle'; current.services.api.status = 'stopped'; });
     expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
     expect(scheduler.getSnapshot().cold.some(row => row.slug === b.id)).toBe(false);
     await scheduler.tick(); expect(stateService.getBranch('resident')!.heatState).toBe('hot');
