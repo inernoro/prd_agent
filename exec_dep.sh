@@ -986,30 +986,39 @@ run_asset_storage_readiness() {
     printf '{"status":"unhealthy","errorCode":"probe_request_failed","attempts":%s}\n' \
       "$readiness_attempts" > "$asset_storage_readiness_json"
   fi
-  if [ -n "${asset_readiness_baseline:-}" ] && [ -s "$asset_readiness_baseline" ] &&
-     python3 - "$asset_readiness_baseline" "$asset_storage_readiness_json" <<'PY'
+  if python3 - "${asset_readiness_baseline:-}" "$asset_storage_readiness_json" "${force_external:-0}" <<'PY'
 import json
-import re
 import sys
 
-def code(path):
-    with open(path, encoding="utf-8") as stream:
-        result = json.load(stream).get("errorCode")
-    return result if isinstance(result, str) and re.fullmatch(r"[a-z0-9_]+", result) else ""
+def asset_failure(path):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            report = json.load(stream)
+        code = str(report.get("errorCode") or "").lower()
+        if "components" in report:
+            checks = {item["name"]: item["ready"] for item in report["components"]}
+            core_ready = checks.get("mongodb") is True and checks.get("redis") is True
+            failed = {name for name, ready in checks.items() if ready is not True}
+            return code if core_ready and failed == {"asset-storage"} and code == "asset_storage_unavailable" else ""
+        # The older storage-only endpoint reports the explicit failing operation.
+        return code if report.get("provider") and code in {
+            "provider_mismatch", "write_failed", "internal_read_failed", "public_read_failed",
+            "cleanup_failed", "probe_failed",
+        } else ""
+    except (OSError, ValueError, AttributeError, TypeError, KeyError):
+        return ""
 
-try:
-    before, after = (code(path) for path in sys.argv[1:])
-except (OSError, ValueError, AttributeError):
+before, after = (asset_failure(path) for path in sys.argv[1:3])
+if not after:
     raise SystemExit(1)
-if not before or before == "probe_request_failed" or after != before:
+if before == after:
+    print(f"WARN: 对象存储已有故障 {after}，故障在本次发布前已存在。")
+elif sys.argv[3] == "1":
+    print(f"WARN: 强制发布放行对象存储就绪检查（{after}）。")
+else:
     raise SystemExit(1)
-print(f"WARN: 对象存储已有故障 {after}，故障在本次发布前已存在。")
 PY
   then
-    return 0
-  fi
-  if [ "${force_external:-0}" = "1" ]; then
-    echo "WARN: 强制发布放行对象存储就绪检查，故障详情已记录。" >&2
     return 0
   fi
   echo "ERROR: asset storage readiness failed after ${readiness_attempts} attempts: $readiness_url" >&2
@@ -1230,6 +1239,16 @@ release_exit() {
   fi
   if [ -n "$static_staging_dir" ] && [ -d "$static_staging_dir" ]; then
     rm -rf "$static_staging_dir"
+  fi
+  if [ "$release_rollback_result" = "full-rollback-failed" ]; then
+    recovery_root="${HOME:-.}/.prd-agent-release-recovery"
+    if (umask 077; mkdir -p "$recovery_root" && chmod 700 "$recovery_root" &&
+        mv "$runtime_rollback_dir" "$recovery_root/$release_evidence_id"); then
+      echo "回滚点已保留在私有目录 $recovery_root/$release_evidence_id" >&2
+    else
+      echo "回滚点仍位于受保护的临时目录 $runtime_rollback_dir" >&2
+      exit "$exit_status"
+    fi
   fi
   rm -rf "$tmp_dir"
   exit "$exit_status"
@@ -1938,7 +1957,7 @@ wait_for_design_runtime_readiness() {
   design_timeout_seconds="${DESIGN_RUNTIME_READY_TIMEOUT_SECONDS:-420}"
   if ! printf '%s' "$design_timeout_seconds" | grep -Eq '^[0-9]+$' || [ "$design_timeout_seconds" -lt 1 ]; then
     echo "ERROR: DESIGN_RUNTIME_READY_TIMEOUT_SECONDS must be a positive integer" >&2
-    exit 1
+    return 1
   fi
   echo "Waiting for design runtime readiness: service=$design_service timeout=${design_timeout_seconds}s"
   design_deadline=$(( $(date +%s) + design_timeout_seconds ))
@@ -1957,11 +1976,11 @@ wait_for_design_runtime_readiness() {
     fi
     if [ "$design_health" = "unhealthy" ] || [ "$design_running" = "false" ]; then
       echo "ERROR: design runtime $design_service cannot become ready ($design_state); see: docker logs $design_service" >&2
-      exit 1
+      return 1
     fi
     if [ "$(date +%s)" -ge "$design_deadline" ]; then
       echo "ERROR: design runtime readiness timeout after ${design_timeout_seconds}s: $design_service[$design_state]" >&2
-      exit 1
+      return 1
     fi
     sleep 3
   done
@@ -1973,7 +1992,7 @@ design_runtime_degraded() {
 }
 
 check_design_runtime_after_deploy() {
-  if (wait_for_design_runtime_readiness); then
+  if wait_for_design_runtime_readiness; then
     return 0
   fi
   if design_runtime_degraded; then
@@ -2055,6 +2074,11 @@ fi
 release_failure_stage="llmgw-post-deploy-verification"
 run_llmgw_post_deploy_verification_if_needed
 
+if [ "$compose_started" = "1" ]; then
+  release_failure_stage="release-image-pins"
+  persist_release_image_pins
+fi
+
 release_failure_stage="public-product-surface"
 if [ "$static_only_mode" = "1" ]; then
   run_public_surface_smoke "$public_smoke_json" "${PRD_AGENT_PUBLIC_SMOKE_ATTEMPTS:-12}" "$static_commit" "$runtime_commit"
@@ -2073,24 +2097,31 @@ else
   run_public_surface_smoke "$public_smoke_json"
 fi
 
-if [ "$compose_started" = "1" ]; then
-  release_failure_stage="release-image-pins"
-  persist_release_image_pins
+release_completed=1
+
+write_deploy_receipt() {
   deploy_receipt_file="$(printf '%s' "${LLMGW_DEPLOY_RECEIPT_FILE:-}" | xargs || true)"
   if [ -n "$deploy_receipt_file" ]; then
     deploy_receipt_dir="$(dirname -- "$deploy_receipt_file")"
-    mkdir -p "$deploy_receipt_dir"
+    mkdir -p "$deploy_receipt_dir" || return 1
     deploy_receipt_tmp="${deploy_receipt_file}.tmp.$$"
     {
       printf 'RELEASE_REF=%s\n' "$TAG"
       printf 'DEPLOYED_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    } > "$deploy_receipt_tmp"
-    mv "$deploy_receipt_tmp" "$deploy_receipt_file"
+    } > "$deploy_receipt_tmp" || return 1
+    mv "$deploy_receipt_tmp" "$deploy_receipt_file" || return 1
     echo "LLM Gateway deploy receipt written: $deploy_receipt_file"
   fi
+}
+
+if [ "$compose_started" = "1" ] && ! write_deploy_receipt; then
+  echo "WARN: 发布已通过公网验证，写入网关发布回执失败。" >&2
 fi
 
 release_failure_stage="release-evidence"
-write_release_evidence success "" "not-needed"
-release_completed=1
-echo "Production release completed with public surface evidence: $release_evidence_file"
+if write_release_evidence success "" "not-needed"; then
+  echo "Production release completed with public surface evidence: $release_evidence_file"
+else
+  echo "WARN: 无法写入本机证据文件，公网验证结果已保留在 CDS 发布日志中。" >&2
+  echo "Production release completed with public surface evidence: CDS release log for $TAG"
+fi

@@ -8,7 +8,9 @@ import unittest
 from unittest.mock import patch
 
 
-TOOLS = runpy.run_path(str(Path(__file__).resolve().parents[1] / "lib/production-runtime-rollback.py"))
+SCRIPTS = Path(__file__).resolve().parents[1]
+DEPLOY = (SCRIPTS.parent / "exec_dep.sh").read_text()
+TOOLS = runpy.run_path(str(SCRIPTS / "lib/production-runtime-rollback.py"))
 
 
 def container(name, image, config_file, running=True):
@@ -36,6 +38,94 @@ def container(name, image, config_file, running=True):
 
 
 class RuntimeRollbackTests(unittest.TestCase):
+    def test_only_confirmed_storage_failure_can_be_waived(self):
+        start = DEPLOY.index("run_asset_storage_readiness() {")
+        end = DEPLOY.index("reload_active_gateway() {", start)
+        command = DEPLOY[start:end] + r'''
+compose_run() { printf '%s' "$FIXTURE"; return 22; }
+run_asset_storage_readiness
+'''
+        asset = {
+            "errorCode": "ASSET_STORAGE_UNAVAILABLE",
+            "components": [{"name": name, "ready": name != "asset-storage"}
+                           for name in ("mongodb", "redis", "asset-storage")],
+        }
+        redis = {
+            "errorCode": "REDIS_UNAVAILABLE",
+            "components": [{"name": name, "ready": name == "mongodb"}
+                           for name in ("mongodb", "redis", "asset-storage")],
+        }
+        with tempfile.TemporaryDirectory() as root:
+            baseline = Path(root) / "old.json"
+            for initial, latest, force, expected in (
+                (asset, asset, "0", 0),
+                ({}, asset, "0", 1),
+                ({}, asset, "1", 0),
+                (redis, redis, "1", 1),
+                ({}, {"errorCode": "probe_request_failed"}, "1", 1),
+            ):
+                baseline.write_text(json.dumps(initial))
+                env = dict(os.environ, tmp_dir=root, asset_readiness_baseline=str(baseline),
+                           asset_storage_readiness_json=str(Path(root) / "post.json"),
+                           api_service="api", force_external=force,
+                           PRD_AGENT_ASSET_STORAGE_READINESS_ATTEMPTS="1", FIXTURE=json.dumps(latest))
+                result = subprocess.run(["sh", "-euc", command], env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+    def test_design_warning_does_not_run_parent_exit_trap(self):
+        start = DEPLOY.index("wait_for_design_runtime_readiness() {")
+        end = DEPLOY.index("\ndesign_in_scope=1", start)
+        command = DEPLOY[start:end] + r'''
+compose_run() { case "$1" in config) echo design-opendesign ;; ps) echo fixture ;; esac; }
+docker() { case "$3" in *"/"*) echo true/unhealthy ;; *".State.Running"*) echo true ;; *) echo unhealthy ;; esac; }
+trap 'printf "outer-exit\n" >> "$TRAP_LOG"' EXIT
+force_external=0 design_before_degraded=1 design_in_scope=0
+check_design_runtime_after_deploy
+test ! -e "$TRAP_LOG"
+'''
+        with tempfile.TemporaryDirectory() as root:
+            log = Path(root) / "trap.log"
+            result = subprocess.run(["sh", "-euc", command], env=dict(os.environ, TRAP_LOG=str(log)),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(log.read_text().splitlines(), ["outer-exit"])
+
+    def test_failed_rollback_keeps_private_checkpoint(self):
+        start = DEPLOY.index("release_exit() {")
+        end = DEPLOY.index("\nreuse_static_dist=", start)
+        command = DEPLOY[start:end] + r'''
+restore_production_runtime() { return 1; }
+write_release_evidence() { return 0; }
+compose_started=1 release_completed=0 static_staging_dir=
+release_failure_stage=compose-update release_rollback_result=not-needed
+release_evidence_id=fixture
+false
+'''
+        with tempfile.TemporaryDirectory() as root:
+            temporary = Path(root) / "temporary"
+            checkpoint = temporary / "rollback"
+            checkpoint.mkdir(parents=True, mode=0o700)
+            (checkpoint / "compose.json").write_text("fixture")
+            env = dict(os.environ, HOME=root, tmp_dir=str(temporary), runtime_rollback_dir=str(checkpoint))
+            result = subprocess.run(["sh", "-euc", command], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            retained = Path(root) / ".prd-agent-release-recovery" / "fixture"
+            self.assertEqual((retained / "compose.json").read_text(), "fixture")
+            self.assertEqual(retained.parent.stat().st_mode & 0o777, 0o700)
+            self.assertFalse(temporary.exists())
+
+    def test_receipt_errors_after_verified_release_warn_and_keep_success(self):
+        command = DEPLOY[DEPLOY.index("release_completed=1\n\nwrite_deploy_receipt"): ]
+        command = "write_release_evidence() { return 1; }\ncompose_started=1 TAG=sha-fixture\n" + command
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root) / "not-a-directory"
+            parent.touch()
+            env = dict(os.environ, LLMGW_DEPLOY_RECEIPT_FILE=str(parent / "receipt.json"))
+            result = subprocess.run(["sh", "-euc", command], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Production release completed with public surface evidence:", result.stdout)
+            self.assertIn("写入网关发布回执失败", result.stderr)
+
     def test_inventory_prefers_running_service_and_rejects_multiple_live_instances(self):
         running = container("api", "sha256:live", "/active/compose.yml")
         stopped = container("api", "sha256:stale", "/previous/compose.yml", running=False)
@@ -74,10 +164,9 @@ class RuntimeRollbackTests(unittest.TestCase):
         self.assertEqual(next(command for command in commands if "up" in command)[0], "docker-compose")
 
     def test_persist_release_image_pins_remains_private_with_umask_022(self):
-        script = (Path(__file__).resolve().parents[2] / "exec_dep.sh").read_text()
-        start = script.index("persist_release_image_pins() {")
-        end = script.index("read_dotenv_value() {", start)
-        command = script[start:end] + "umask 022\npersist_release_image_pins\n"
+        start = DEPLOY.index("persist_release_image_pins() {")
+        end = DEPLOY.index("read_dotenv_value() {", start)
+        command = DEPLOY[start:end] + "umask 022\npersist_release_image_pins\n"
         with tempfile.TemporaryDirectory() as root:
             dotenv = Path(root) / ".env"
             dotenv.write_text("DESIGN_RUNTIME_API_KEY=fixture-only\n")
