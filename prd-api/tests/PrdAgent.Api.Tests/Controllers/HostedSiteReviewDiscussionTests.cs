@@ -1,6 +1,10 @@
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using Moq;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -12,6 +16,57 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public class HostedSiteReviewDiscussionTests
 {
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task PublicDiscussion_BackfillsMissingAvatarFromAuthorAccount_WithoutUpdatingCommentOrRevealingAuthorId()
+    {
+        var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27018";
+        var database = "hosted_review_avatar_" + Guid.NewGuid().ToString("N");
+        var client = new MongoClient(connection);
+        try
+        {
+            var db = new MongoDbContext(connection, database);
+            var site = new HostedSite { Id = "site", OwnerUserId = "author", CommentsEnabled = true,
+                ContentVersion = new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc) };
+            var version = HostedSiteCommentRules.VersionKey(site.ContentVersion);
+            await db.HostedSites.InsertOneAsync(site);
+            await db.Users.InsertOneAsync(new User { UserId = "author", AvatarFileName = "avatar-test.png" });
+            await db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink {
+                Token = "avatar-share", SiteId = site.Id, CreatedBy = site.OwnerUserId, Visibility = "public",
+            });
+            await db.HostedSiteComments.InsertManyAsync(new[]
+            {
+                new HostedSiteComment { Id = "old", SiteId = site.Id, AuthorUserId = "author", ContentVersion = version },
+                new HostedSiteComment { Id = "saved", SiteId = site.Id, AuthorUserId = "author", ContentVersion = version,
+                    ParentId = "old", AuthorAvatarFileName = "original.png" },
+                new HostedSiteComment { Id = "ai", SiteId = site.Id, AuthorUserId = "author", ContentVersion = version,
+                    ParentId = "old", IsAi = true },
+            });
+            var teams = Mock.Of<ITeamService>();
+            var service = new HostedSiteService(db, Mock.Of<IAssetStorage>(), null!, null!, teams, null!, null!, null!,
+                NullLogger<HostedSiteService>.Instance);
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+                ["ASSETS_PROVIDER"] = "local",
+            }).Build();
+            var controller = new WebPagesController(service, Mock.Of<IHostedSiteOptimizationService>(),
+                Mock.Of<IUploadProgressService>(), db, teams, Mock.Of<IHttpClientFactory>(), configuration: configuration);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            var response = Assert.IsType<OkObjectResult>(await controller.ListShareComments("avatar-share", null));
+            var json = System.Text.Json.JsonSerializer.SerializeToElement(response.Value, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            var comments = json.GetProperty("data").GetProperty("comments").EnumerateArray()
+                .ToDictionary(row => row.GetProperty("id").GetString()!);
+            Assert.Equal("/local-assets/icon/backups/head/avatar-test.png", comments["old"].GetProperty("authorAvatarUrl").GetString());
+            Assert.Equal("/local-assets/icon/backups/head/original.png", comments["saved"].GetProperty("authorAvatarUrl").GetString());
+            Assert.Null(comments["ai"].GetProperty("authorAvatarUrl").GetString());
+            Assert.All(comments.Values, row => Assert.Empty(row.GetProperty("authorUserId").GetString()!));
+            Assert.Null((await db.HostedSiteComments.Find(row => row.Id == "old").SingleAsync()).AuthorAvatarFileName);
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(database);
+        }
+    }
+
     [Fact]
     [Trait("Category", "Integration")]
     public async Task SharedReplyRetry_UsesOneRecordAndNotification_AndRechecksReadAccess()

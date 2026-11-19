@@ -176,6 +176,9 @@
   outline-offset: 2px;
 }
 .review-history-window-comment strong { margin-right: 4px; font-weight: 600; }
+.review-history-window-comment .review-talk-avatar {
+  display: inline-flex; width: 20px; height: 20px; margin-inline-end: 5px; vertical-align: middle;
+}
 .review-history-window-opinion-full { white-space: pre-wrap; }
 .review-history-window-expand {
   margin-inline-start: 6px;

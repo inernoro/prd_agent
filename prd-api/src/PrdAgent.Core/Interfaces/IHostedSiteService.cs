@@ -521,6 +521,7 @@ public class HostedSiteCommentDto
     public bool IsMine { get; set; }
     public string AuthorName { get; set; } = "用户";
     public string? AuthorAvatarFileName { get; set; }
+    public string? AuthorAvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; }
     /// <summary>当前 viewer 是否可删除本评论（作者本人或站点 owner）</summary>
     public bool CanDelete { get; set; }

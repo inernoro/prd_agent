@@ -11,14 +11,20 @@ import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 
 const SiteSettingsDialog = lazy(() => import('./SiteSettingsDialog'));
 
-export function SharePageTitle({ site, onRenamed }: {
+export function SharePageTitle({ site, onRenamed, rename }: {
   site: SharedSiteInfo;
   onRenamed: (title: string) => void;
+  rename?: { open: boolean; onOpenChange: (open: boolean) => void; menuOnly: boolean };
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = rename?.open ?? localOpen;
+  const setOpen = rename?.onOpenChange ?? setLocalOpen;
   const [title, setTitle] = useState(site.title);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (open) { setTitle(site.title); setError(''); }
+  }, [open, site.title]);
   const save = async () => {
     const next = title.trim();
     if (!next || saving) return;
@@ -39,10 +45,10 @@ export function SharePageTitle({ site, onRenamed }: {
   return <>
     <span title={site.title}>{site.title}</span>
     {site.viewerIsOwner && <>
-      <button type="button" className="share-topbar-btn" aria-label="修改标题" title="修改标题"
-        onClick={() => { setTitle(site.title); setError(''); setOpen(true); }}>
+      {!rename?.menuOnly && <button type="button" className="share-topbar-btn" aria-label="修改标题" title="修改标题"
+        onClick={() => setOpen(true)}>
         <Pencil size={14} />
-      </button>
+      </button>}
       <Dialog open={open} onOpenChange={(value) => { if (!saving) setOpen(value); }} title="修改网页标题"
         description="修改后原分享链接仍然有效。"
         content={<form id="rename-hosted-page" onSubmit={(event) => { event.preventDefault(); void save(); }}>

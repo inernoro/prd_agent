@@ -18,7 +18,7 @@ describe('mobile web hosting layout', () => {
     expect(previewSource).toContain('review-reader-toolbar');
     expect(previewSource).toContain('review-reader-actions');
     expect(previewSource).toContain('<ShareMoreMenu adaptive>');
-    expect(reviewStyles).toMatch(/grid-column:\s*2; grid-row:\s*1 \/ -1/);
+    expect(reviewStyles).toMatch(/grid-column:\s*3; grid-row:\s*1; justify-self:\s*end/);
   });
 
   it('gives every preview-header action at least a 44px touch target', () => {

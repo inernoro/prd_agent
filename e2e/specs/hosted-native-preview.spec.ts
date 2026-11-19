@@ -573,7 +573,7 @@ test.describe('长文批注连续跟随与菜单外点', () => {
   const title = '长文批注跟随样例';
   const content = '这是一条需要保留完整内容的长意见。'.repeat(3000);
   const html = `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;font:16px/1.7 system-ui}main{padding:32px}p{margin:12px 0}</style><main><h1>${title}</h1><p id="note-one">定位段落一</p><p id="note-two">定位段落二</p>${'<p>长文压力段落，滚动时不应遍历全部正文寻找位置。</p>'.repeat(10000)}</main></html>`;
-  async function open(page: Page, denseCount = 0, compactRange = false, authors?: string[]) {
+  async function open(page: Page, denseCount = 0, compactRange = false, authors?: string[], withDiscussionReply = false) {
     const sourceHtml = compactRange
       ? '<meta name="viewport" content="width=device-width,initial-scale=1"><p id="note-one" style="margin:22px 42px 0 16px;font:16px/20px sans-serif">上一行' + '文字'.repeat(8) + '<br>批注目标' + '继续'.repeat(7) + '</p>'
       : html;
@@ -583,12 +583,17 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     const comments = names.map((name, index) => ({ id: name, siteId: site.id, revisionId: 'v2', contentVersion: '20000',
       authorUserId: authors?.[index], authorName: authors?.[index] ?? '复验作者', content, createdAt: new Date(Date.UTC(2026, 10, 17, 0, index)).toISOString(),
       anchor: { kind: compactRange ? 'text' : 'element', pagePath: '/sites/qa-follow/index.html', selector: '#note-' + (denseCount ? 'one' : name), tagName: 'p', text: compactRange ? '批注目标' : '定位段落' + (index + 1), elementText: '定位段落' + (index + 1), prefix: '', suffix: '', contentVersion: '20000' } }));
+    const messages = withDiscussionReply ? [
+      { ...comments[0], isResolved: true, authorAvatarUrl: '/avatars/comment-character.webp' },
+      ...comments.slice(1),
+      { ...comments[1], id: 'reply', parentId: comments[1].id, anchor: null, authorName: 'AI 助手', isAi: true },
+    ] : comments;
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname;
       if (path.endsWith('/annotation-runtime.js')) { await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') }); return; }
       const data = path.endsWith('/shares/view/qa-follow') ? { title, shareType: 'single', sites: [site] }
         : path.endsWith('/content') ? { html: sourceHtml }
-        : path.endsWith('/comments') ? { siteId: site.id, commentsEnabled: true, canComment: false, comments }
+        : path.endsWith('/comments') ? { siteId: site.id, commentsEnabled: true, canComment: false, comments: messages }
         : path.endsWith('/revisions') ? [version]
         : path.endsWith('/related-documents') ? { version: 1, mainSiteId: site.id, canManage: false, items: [{ id: site.id, title }, { id: 'other', title: '关联样例', href: '/s/wp/other' }] }
         : { items: [], total: 0 };
@@ -622,6 +627,31 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     test.use({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, isMobile: mobile, hasTouch: mobile,
       contextOptions: { reducedMotion: 'reduce' } });
     const tap = async (locator: ReturnType<Page['getByRole']>) => mobile ? locator.tap() : locator.click();
+    if (mobile) test('窄屏两行导航的评论角标包含已解决，回复头像不计入数量', async ({ page }) => {
+      await page.setViewportSize({ width: 320, height: 780 });
+      await page.route('**/avatars/comment-character.webp', route => route.fulfill({
+        contentType: 'image/webp', path: '../prd-admin/public/avatars/nohead.webp',
+      }));
+      await open(page, 0, false, ['有头像的作者', '未设头像的作者'], true);
+      const toolbar = page.locator('.review-reader-toolbar');
+      const discussion = toolbar.getByRole('tab', { name: '讨论', exact: true });
+      const version = toolbar.getByRole('button', { name: '网页版本：V2', exact: true });
+      const more = toolbar.getByRole('button', { name: '更多', exact: true });
+      await expect(discussion).toHaveAccessibleDescription('2 条评论');
+      await expect(discussion.locator('.review-discussion-badge')).toHaveText('2');
+      const [v, d, m] = await Promise.all([version.boundingBox(), discussion.boundingBox(), more.boundingBox()]);
+      expect(v && d && m && Math.abs(v.y - d.y) < 2 && m.y + m.height <= d.y).toBeTruthy();
+      expect(v && d && m && Math.min(v.height, d.height, m.height) >= 44).toBeTruthy();
+      expect(await toolbar.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await discussion.tap();
+      const photos = page.locator('.review-thread .review-message-author img');
+      await expect(photos).toHaveCount(2);
+      await expect(photos.first()).toHaveAttribute('src', '/avatars/comment-character.webp');
+      await expect(photos.last()).toHaveAttribute('src', /\/avatars\/nohead\.webp$/);
+      await expect.poll(() => photos.evaluateAll(nodes => nodes.every(node => (node as HTMLImageElement).naturalWidth > 0))).toBe(true);
+      await expect(page.locator('.review-thread .review-message-author .review-ai-avatar')).toHaveCount(1);
+      await expect(discussion.locator('.review-discussion-badge')).toHaveText('2');
+    });
     if (!mobile) test('折叠正文时不留下选区或气泡，点讨论引用可展开并恢复对应标注', async ({ page }) => {
       const frame = await open(page, 1, true);
       const pin = frame.getByRole('button', { name: '打开批注 1', exact: true });
@@ -807,10 +837,11 @@ test.describe('长文批注连续跟随与菜单外点', () => {
     if (mobile) test('手机保持正文至底并由编号直达讨论，可按原位置返回', async ({ page }) => {
       const frame = await open(page, 16);
       const documentPanel = page.getByRole('tabpanel', { name: '正文', exact: true });
-      const discussionTab = page.getByRole('tab', { name: '讨论 16', exact: true });
+      const discussionTab = page.getByRole('tab', { name: '讨论', exact: true });
       const documentTab = page.getByRole('tab', { name: '正文', exact: true });
       const pins = frame.getByRole('button', { name: /打开批注/ });
       await expect(pins).toHaveCount(16);
+      await expect(discussionTab).toHaveAccessibleDescription('16 条评论');
       expect((await documentPanel.boundingBox())!.height).toBeGreaterThan(680);
       const initialScrollY = await frame.locator('body').evaluate(() => scrollY);
       await pins.nth(4).tap();
@@ -933,7 +964,7 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       const reads = await frame.locator('body').evaluate(() => (window as typeof window & { __followReads?: { scans: number; rects: number } }).__followReads!);
       const messages = await page.evaluate(() => (window as typeof window & { __followMessages?: number }).__followMessages!);
       expect(reads.scans).toBe(0); expect(reads.rects).toBeLessThanOrEqual((messages + 3) * 60);
-      if (mobile) await page.getByRole('tab', { name: '讨论 2', exact: true }).tap();
+      if (mobile) await page.getByRole('tab', { name: '讨论', exact: true }).tap();
       else await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
       expect((await page.locator('.review-message-body').first().textContent())!.length).toBeLessThanOrEqual(281);
       {

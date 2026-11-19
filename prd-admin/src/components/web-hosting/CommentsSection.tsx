@@ -1,8 +1,8 @@
 import { annotationPreviewText } from './annotationPreviewText';
 import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useId, type CSSProperties, type ReactNode } from 'react';
-import { MessageSquare, ArrowUp, Trash2, Lock, LogIn, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight, History, Eye, EyeOff, PanelRightClose, ChevronUp, ChevronDown, CircleAlert, Mic, MicOff, Paperclip, Bot } from 'lucide-react';
+import { MessageSquare, ArrowUp, Trash2, Lock, LogIn, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight, History, Eye, EyeOff, PanelRightClose, ChevronUp, ChevronDown, CircleAlert, Mic, MicOff, Paperclip } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '../ui/VideoLoader';
-import { getUserAvatarUrl } from '../../lib/avatar';
+import { ReviewCommentAvatar } from './ReviewReaderChrome';
 import { useAuthStore } from '../../stores/authStore';
 import { listShareComments, addShareComment, listSiteComments, addSiteComment, deleteSiteComment,
   setSiteCommentResolved, downloadCommentFile, commentAttachmentLimit, maxCommentAttachments, type HostedSiteCommentFile, type HostedSiteCommentDto, type HostedSiteCommentOptions } from '../../services/real/webPages';
@@ -853,14 +853,8 @@ function CommentMessage({ comment, busy, confirming, onDelete, onFile, children,
   const long = comment.content.length > limit;
   const updated = Date.parse(comment.createdAt);
   const time = compact && Number.isFinite(updated) && Date.now() - updated > 60_000 ? dateInReview.format(updated) : formatTime(comment.createdAt);
-  const nameCharacters = [...(comment.authorName || '?')];
-  const hue = nameCharacters.reduce((hash, character) => (hash * 31 + character.codePointAt(0)!) % 360, 0);
   return <div className="review-message">
-    <div className="review-message-author">{comment.isAi
-      ? <span className="review-talk-avatar review-ai-avatar" aria-hidden="true"><Bot size={14} /></span>
-      : compact && !comment.authorAvatarFileName
-      ? <span className="review-talk-avatar" aria-hidden="true" style={{ '--talk-avatar-hue': hue } as CSSProperties}>{nameCharacters[0]}</span>
-      : <img src={getUserAvatarUrl({ avatarFileName: comment.authorAvatarFileName, displayName: comment.authorName })} alt="" loading="lazy" />}
+    <div className="review-message-author"><ReviewCommentAvatar author={comment} />
       <strong>{comment.authorName}</strong>{!compact && <span>·</span>}<time dateTime={comment.createdAt}>{time}</time>
       {compact && isNew && <span className="review-talk-unread">新</span>}
       {comment.canDelete && <button type="button" disabled={busy} onClick={onDelete} aria-label={confirming ? '确认删除讨论及回复' : '删除评论'} title={confirming ? '再次点击确认删除' : '删除评论'}>

@@ -14,7 +14,7 @@ import CommentsSection from './CommentsSection';
 import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationModeBar } from './AnnotationModeBar';
 import { useHostedReview } from './useHostedReview';
-import { ReviewToolbarControls } from './ReviewToolbarControls';
+import { ReviewBubbleToggle, ReviewToolbarControls } from './ReviewToolbarControls';
 import { ReviewVersionBar } from './ReviewVersionBar';
 import { AnnotationBubble } from './AnnotationBubble';
 import { useIsMobile } from '@/hooks/useBreakpoint';
@@ -82,7 +82,7 @@ export default function SitePreviewModal({
   const pdfDownload = useHostedPdfDownload(review.historical ? null : { ...originalSite, ...review.liveSite }, undefined, iframeRef);
   const site = { ...originalSite, ...review.site };
   const annotations = review.annotations;
-  const unresolvedCount = annotations.threads.filter(thread => !thread.parentId && !thread.isResolved).length;
+  const commentCount = annotations.threads.filter(thread => !thread.parentId).length;
   const [historyHint, setHistoryHint] = useState<ReviewHistoryHintValue | null>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -290,12 +290,13 @@ export default function SitePreviewModal({
           </div>
           {!originalSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={canToggleComments} readerToolbar readerStage={iframeRef} />}
           <div className="review-reader-actions">
-            {historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
+            {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
             <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar" reviewReader
               onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
-            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)}
-              expanded={showComments} count={unresolvedCount} showVersions={false} showBubbleToggle={!originalSite.wrappedAssetType} readerLayout />
+            {!isMobile && <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)}
+              expanded={showComments} count={commentCount} showVersions={false} showBubbleToggle={!originalSite.wrappedAssetType} readerLayout />}
             <ShareMoreMenu adaptive>
+              {isMobile && historyHint && !review.historical && <ReviewHistoryHint menu value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
               {askEnabled && !review.historical && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => {
                 setAskEverOpened(true);
                 setRightPanel(rightPanel === 'ask' ? 'none' : 'ask');
@@ -317,9 +318,10 @@ export default function SitePreviewModal({
               <X size={16} />
             </button>
           </div>
+          {isMobile && <ReviewReaderTabs discussion={showComments} count={commentCount}
+            documentId={documentPanelId} discussionId={discussionPanelId} onChange={setShowComments}
+            trailing={!originalSite.wrappedAssetType && <ReviewBubbleToggle annotations={annotations} readerLayout />} />}
         </div>
-        {isMobile && <ReviewReaderTabs discussion={showComments} count={unresolvedCount}
-          documentId={documentPanelId} discussionId={discussionPanelId} onChange={setShowComments} />}
 
         {/* 主体：iframe + 可选评论面板 */}
         <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>

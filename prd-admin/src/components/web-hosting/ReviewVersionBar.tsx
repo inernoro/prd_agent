@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Check, ChevronDown, History, Upload, RefreshCw } from 'lucide-react';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { HostedReview } from './useHostedReview';
 import { ReviewVersionPreview, type ReviewHistoryPlacement } from './ReviewVersionPreview';
 
@@ -21,8 +20,6 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true, read
   const historyPosition = useRef<{ x: number; y: number } | null>(null);
   const [open, setOpen] = useState(false);
   const [historyUpload, setHistoryUpload] = useState(false);
-  const { width } = useBreakpoint();
-  const mobileReaderToolbar = readerToolbar && width < 768;
   const busy = review.loading || review.uploading;
   const directHistory = readerToolbar && !!review.selected;
   const expanded = directHistory ? !!review.versionPreview : open;
@@ -54,7 +51,7 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true, read
       {review.selected?.publishedAt && <time className="review-version-date" dateTime={review.selected.publishedAt}>{versionDate(review.selected.publishedAt)}</time>}
       <ChevronDown size={12} className={expanded ? 'review-chevron-open' : ''} />
     </button>
-    <AnchoredMenu open={open && !directHistory} onClose={() => setOpen(false)} anchorRef={trigger} gap={mobileReaderToolbar ? 54 : 6} minWidth={260} className={`review-popover review-version-popover${trigger.current?.closest('.surface-tone-dark') ? ' surface-tone-dark' : ''}`} style={{ width: 280, maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(420px, calc(100dvh - 88px))', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 2147483647 }}>
+    <AnchoredMenu open={open && !directHistory} onClose={() => setOpen(false)} anchorRef={trigger} minWidth={260} className={`review-popover review-version-popover${trigger.current?.closest('.surface-tone-dark') ? ' surface-tone-dark' : ''}`} style={{ width: 280, maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(420px, calc(100dvh - 88px))', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 2147483647 }}>
       <div className="review-popover-heading"><strong>网页版本</strong>{review.versions.some(version => version.historyRestricted) && <p>当前权限仅开放当前版本</p>}</div>
       <div ref={list} role="listbox" aria-label="网页版本" className="review-version-list" onKeyDown={event => {
         if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); return; }

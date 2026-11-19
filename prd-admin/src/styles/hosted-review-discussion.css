@@ -290,16 +290,12 @@
 }
 
 .review-talk-avatar {
-  display: grid;
-  place-items: center;
   flex-shrink: 0;
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  color: var(--review-b-avatar-ink);
-  background: hsl(var(--talk-avatar-hue) 48% 39%);
-  font-size: 11px;
-  font-weight: 700;
+  object-fit: cover;
+  background: var(--talk-line, var(--border-subtle));
 }
 
 .review-discussion--b .review-message-author strong {
@@ -701,7 +697,8 @@
 }
 
 .review-ai-avatar {
-  --talk-avatar-hue: 255;
+  color: var(--review-b-avatar-ink, white);
+  background: hsl(255 48% 39%);
   display: inline-flex;
   align-items: center;
   justify-content: center;

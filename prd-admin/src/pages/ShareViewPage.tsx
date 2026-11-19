@@ -15,9 +15,10 @@ import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
 import { getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
-import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, BookOpen, Download, FileDown, Check, LogIn, X, Maximize, Minimize } from 'lucide-react';
+import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, ArrowLeft, BookOpen, Download, FileDown, Check, LogIn, Pencil, Settings2, X, Maximize, Minimize } from 'lucide-react';
 import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
-import { getUserAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
@@ -27,7 +28,7 @@ import CommentsSection from '@/components/web-hosting/CommentsSection';
 import { withAnnotationRuntime } from '@/components/web-hosting/useHostedAnnotations';
 import { AnnotationModeBar } from '@/components/web-hosting/AnnotationModeBar';
 import { useHostedReview } from '@/components/web-hosting/useHostedReview';
-import { ReviewToolbarControls } from '@/components/web-hosting/ReviewToolbarControls';
+import { ReviewBubbleToggle, ReviewToolbarControls } from '@/components/web-hosting/ReviewToolbarControls';
 import { ReviewVersionBar } from '@/components/web-hosting/ReviewVersionBar';
 import { AnnotationBubble } from '@/components/web-hosting/AnnotationBubble';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
@@ -331,8 +332,9 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const pdfDownload = useHostedPdfDownload(review.historical || data?.sites.length !== 1 ? null : { ...data.sites[0], ...review.liveSite },
     token ? { token, password: password || undefined } : undefined, reviewFrameRef);
   const annotations = review.annotations;
-  const unresolvedCount = annotations.threads.filter(thread => !thread.parentId && !thread.isResolved).length;
+  const commentCount = annotations.threads.filter(thread => !thread.parentId).length;
   const [historyHint, setHistoryHint] = useState<ReviewHistoryHintValue | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
   const requestedReview = searchParams.get('review');
   const restoredReview = useRef<string | null>(null);
   const versionsForLogin = review.versions;
@@ -953,7 +955,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
               <span className="review-reader-icon" aria-hidden="true"><BookOpen size={16} /></span>
               <div className="review-reader-identity">
                 <div className="review-reader-identity-line">
-                  <SharePageTitle site={site} onRenamed={(title) => setData((current) => current ? {
+                  <SharePageTitle key={site.id} site={site} rename={{ open: renameOpen, onOpenChange: setRenameOpen, menuOnly: isMobile }} onRenamed={(title) => setData((current) => current ? {
                     ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
                   } : current)} />
                 </div>
@@ -964,9 +966,9 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
             {token && !liveSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} readerToolbar readerStage={reviewFrameRef} />}
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
-              {historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
-              {!embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
-              {!embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => openCollectionManager()}>管理合集</button>}
+              {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
+              {!isMobile && !embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
+              {!isMobile && !embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => openCollectionManager()}>管理合集</button>}
               {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
               <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" reviewReader source={{ token, password: password || undefined }}
                 onNavigate={openRelatedDocument} />
@@ -982,8 +984,8 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                 </div>} />
               <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }}
                 title="无法打开关联文档" content={<p role="alert">{relatedOpenError}</p>} />
-              {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
-                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={unresolvedCount} showVersions={false} showBubbleToggle={!liveSite.wrappedAssetType} readerLayout
+              {token && !isMobile && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
+                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={false} showBubbleToggle={!liveSite.wrappedAssetType} readerLayout
                 />}
               <SharePageActions site={site} compact menu onSettingsSaved={async () => {
                 if (!token) return;
@@ -991,6 +993,16 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                 if (!result.success) throw new Error('refresh failed');
                 setData(result.data);
               }}>
+              {isMobile && site.viewerIsOwner && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => setRenameOpen(true)}>
+                <Pencil size={15} />修改标题
+              </button>}
+              {isMobile && !embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a role="menuitem" className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>
+                <ArrowLeft size={15} />返回合集
+              </a>}
+              {isMobile && !embedded && isOwner && data.shareType === 'collection' && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => openCollectionManager()}>
+                <Settings2 size={15} />管理合集
+              </button>}
+              {isMobile && historyHint && !review.historical && <ReviewHistoryHint menu value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
               {!site.pdfAssetUrl && (
                 <button
                   role="menuitem"
@@ -1067,13 +1079,12 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                   新窗口打开
                 </a>}
               </SharePageActions>
-              {currentUser && <span className="review-reader-portrait" title={currentUser.displayName}>
-                {currentUser.avatarFileName ? <img src={getUserAvatarUrl(currentUser)} alt="" /> : Array.from(currentUser.displayName || currentUser.username).at(0)}
-              </span>}
+              {currentUser && <UserAvatar className="review-reader-portrait" title={currentUser.displayName} src={resolveAvatarUrl(currentUser)} />}
             </div>
+            {isMobile && token && <ReviewReaderTabs discussion={showComments} count={commentCount}
+              documentId={documentPanelId} discussionId={discussionPanelId} onChange={setShowComments}
+              trailing={!liveSite.wrappedAssetType && <ReviewBubbleToggle annotations={annotations} readerLayout />} />}
           </div>
-          {isMobile && token && <ReviewReaderTabs discussion={showComments} count={unresolvedCount}
-            documentId={documentPanelId} discussionId={discussionPanelId} onChange={setShowComments} />}
 
           {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
           {visibleNote && (

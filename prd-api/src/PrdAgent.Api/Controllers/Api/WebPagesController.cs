@@ -10,6 +10,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Filters;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Services;
 
@@ -66,6 +67,7 @@ public partial class WebPagesController : ControllerBase
     private readonly ITeamService _teams;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.IHostedSitePrivateSourceGate? _privateSources;
+    private readonly IConfiguration? _commentAvatarConfiguration;
 
     public WebPagesController(
         IHostedSiteService siteService,
@@ -75,7 +77,8 @@ public partial class WebPagesController : ControllerBase
         ITeamService teams,
         IHttpClientFactory httpClientFactory,
         PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
-        PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null)
+        PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null,
+        IConfiguration? configuration = null)
     {
         _siteService = siteService;
         _optimizationService = optimizationService;
@@ -86,6 +89,7 @@ public partial class WebPagesController : ControllerBase
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
         _reviewStorage = assetStorage;
+        _commentAvatarConfiguration = configuration;
     }
 
     /// <summary>旧的整包审查入口已停用，避免大文件在 API 内存中形成多份副本。</summary>
@@ -2029,6 +2033,7 @@ public partial class WebPagesController : ControllerBase
         var result = await _siteService.ListCommentsBySiteAsync(siteId, GetUserId());
         if (result == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+        foreach (var comment in result.Comments) SetCommentAvatarUrl(comment);
         return Ok(ApiResponse<object>.Ok(result));
     }
 
@@ -2055,6 +2060,7 @@ public partial class WebPagesController : ControllerBase
         var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId, siteId: siteId);
         if (result.Error != null)
             return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
+        foreach (var comment in result.Comments) SetCommentAvatarUrl(comment);
         return Ok(ApiResponse<object>.Ok(result));
     }
 
@@ -2111,7 +2117,14 @@ public partial class WebPagesController : ControllerBase
     {
         if (result.Error != null)
             return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
+        if (result.Comment != null) SetCommentAvatarUrl(result.Comment);
         return Ok(ApiResponse<object>.Ok(result.Comment));
+    }
+
+    private void SetCommentAvatarUrl(HostedSiteCommentDto comment)
+    {
+        if (_commentAvatarConfiguration != null && !comment.IsAi && !string.IsNullOrWhiteSpace(comment.AuthorAvatarFileName))
+            comment.AuthorAvatarUrl = AvatarUrlBuilder.Build(_commentAvatarConfiguration, comment.AuthorAvatarFileName);
     }
 
     private IActionResult MapCommentError(string error, int httpStatus, string? errorCode, int? retryAfterSeconds = null)

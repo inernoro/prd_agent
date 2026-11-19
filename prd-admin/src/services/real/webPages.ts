@@ -1520,7 +1520,8 @@ export interface HostedSiteCommentDto {
   authorUserId: string;
   isMine?: boolean;
   authorName: string;
-  authorAvatarFileName?: string;
+  authorAvatarFileName?: string | null;
+  authorAvatarUrl?: string | null;
   createdAt: string;
   canDelete: boolean;
   anchor?: HostedSiteCommentAnchor | null;

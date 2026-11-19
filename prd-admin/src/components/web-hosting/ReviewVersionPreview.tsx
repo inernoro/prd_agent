@@ -10,6 +10,7 @@ import { canUseSrcDocPreview, directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, with
 import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationBubble } from './AnnotationBubble';
 import { annotationPreviewText } from './annotationPreviewText';
+import { ReviewCommentAvatar } from './ReviewReaderChrome';
 import CommentsSection from './CommentsSection';
 import { saveBlobAsFile } from './sourceDownload';
 import '@/styles/hosted-review-history.css';
@@ -370,7 +371,7 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
                 return <div key={row.id} className="review-history-window-comment"
                   aria-current={selectedComment === row.id ? 'true' : undefined} data-review-history-thread={row.id}>
                   <span className="review-history-note-pin">{row.anchor ? ++number : '页'}</span>
-                  <div><strong>{row.authorName}</strong> <span className={expanded ? 'review-history-window-opinion-full' : undefined}>
+                  <div><ReviewCommentAvatar author={row} /><strong>{row.authorName}</strong> <span className={expanded ? 'review-history-window-opinion-full' : undefined}>
                     {expanded ? row.content : annotationPreviewText(row.content, historyOpinionPreviewLength)}</span>
                     {row.content.length > historyOpinionPreviewLength && <button type="button" className="review-history-window-expand"
                       aria-expanded={expanded} onClick={() => setExpandedOpinion(expanded ? null : row.id)}>{expanded ? '收起' : '展开全文'}</button>}
@@ -378,7 +379,7 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
                     {responses && <button type="button" className="review-history-window-expand" aria-expanded={showReplies}
                       onClick={() => setExpandedReplies(showReplies ? null : row.id)}>{responses.length} 条回复</button>}
                     {showReplies && responses && <ul className="review-history-window-replies">
-                      {responses.map(reply => <li key={reply.id}><strong>{reply.authorName}</strong> {reply.content}{renderAttachments(reply)}</li>)}
+                      {responses.map(reply => <li key={reply.id}><ReviewCommentAvatar author={reply} /><strong>{reply.authorName}</strong> {reply.content}{renderAttachments(reply)}</li>)}
                     </ul>}
                   </div>
                 </div>;

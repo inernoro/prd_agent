@@ -5802,8 +5802,20 @@ public class HostedSiteService : IHostedSiteService
         if (!canViewHistory) comments = comments.Where(c => HostedSiteCommentRules.CanViewReviewVersion(
             HostedSiteCommentRules.StoredVersion(c), EffectiveContentVersion(site), false)).ToList();
         var rootIds = comments.Where(c => string.IsNullOrEmpty(c.ParentId)).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-        return comments.Where(c => string.IsNullOrEmpty(c.ParentId) || rootIds.Contains(c.ParentId))
-            .Select(c => ToCommentDto(c, site, viewerUserId, maskUserId)).ToList();
+        var visible = comments.Where(c => string.IsNullOrEmpty(c.ParentId) || rootIds.Contains(c.ParentId)).ToList();
+        var missingAvatars = visible.Where(c => !c.IsAi && string.IsNullOrWhiteSpace(c.AuthorAvatarFileName)
+            && !string.IsNullOrWhiteSpace(c.AuthorUserId)).ToList();
+        if (missingAvatars.Count > 0)
+        {
+            var authorIds = missingAvatars.Select(c => c.AuthorUserId).Distinct().ToArray();
+            var authors = await _db.Users.Find(Builders<User>.Filter.In(u => u.UserId, authorIds))
+                .Project(u => new { u.UserId, u.AvatarFileName }).ToListAsync(ct);
+            var avatars = authors.ToDictionary(u => u.UserId, u => u.AvatarFileName);
+            foreach (var comment in missingAvatars)
+                if (avatars.TryGetValue(comment.AuthorUserId, out var avatar))
+                    comment.AuthorAvatarFileName = avatar;
+        }
+        return visible.Select(c => ToCommentDto(c, site, viewerUserId, maskUserId)).ToList();
     }
 
     /// <summary>

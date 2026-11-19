@@ -1,8 +1,8 @@
 import { useCallback, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { ArrowLeft, ArrowUpRight, Bot, Check, CornerDownLeft, Eye, EyeOff, RotateCcw, Send, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, CornerDownLeft, Eye, EyeOff, RotateCcw, Send, X } from 'lucide-react';
 import type { HostedAnnotations, AnnotationRect } from './useHostedAnnotations';
 import type { HostedSiteCommentDto } from '@/services/real/webPages';
-import { getUserAvatarUrl } from '@/lib/avatar';
+import { ReviewCommentAvatar } from './ReviewReaderChrome';
 import { annotationPreviewText } from './annotationPreviewText';
 import { placeAnnotationBubble, placeAnnotationRail } from './annotationBubblePlacement';
 import { clamp as clampRail, connectCard, layoutCards, railMotion, routeWheel } from './annotationRailLayout';
@@ -81,8 +81,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     const format = annotations.dualColumn ? marginDateFormat : dateFormat;
     return new Map(annotations.threads.filter(thread => thread.anchor && !thread.parentId).map(thread => {
       const time = Date.parse(thread.createdAt);
-      const hue = [...(thread.authorName || '')].reduce((hash, char) => (hash * 31 + char.codePointAt(0)!) % 360, 0);
-      return [thread.id, { thread, number: ++number, excerpt: annotationPreviewText(thread.content), time: Number.isFinite(time) ? format.format(time) : '', hue }];
+      return [thread.id, { thread, number: ++number, excerpt: annotationPreviewText(thread.content), time: Number.isFinite(time) ? format.format(time) : '' }];
     }));
   }, [annotations.threads, annotations.dualColumn]);
   const visible = !hidden && !annotations.enabled && !annotations.draftAnchor && annotations.displayMode === 'bubble' && indexed.size > 0;
@@ -336,8 +335,8 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
                 </g>;
               })}
             </svg>}
-            {placed.map(({ item, thread, excerpt, number, time, hue, placement, size }) => <BubbleCard key={item.id}
-              thread={thread} excerpt={excerpt} number={number} time={time} hue={hue} annotations={annotations}
+            {placed.map(({ item, thread, excerpt, number, time, placement, size }) => <BubbleCard key={item.id}
+              thread={thread} excerpt={excerpt} number={number} time={time} annotations={annotations}
               placement={placement} mobileDock={docked} dualColumn={dualColumn} replyDrafts={replies.current} refreshReplies={refreshReplies}
               onBack={activeInDock ? returnToDock : undefined}
               onMove={point => setPositions(previous => {
@@ -356,8 +355,8 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   </>;
 }
 
-function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement, mobileDock, dualColumn, replyDrafts, refreshReplies, onBack, onMove }: {
-  thread: HostedSiteCommentDto; excerpt: string; number: number; time: string; hue: number; annotations: HostedAnnotations;
+function BubbleCard({ thread, excerpt, number, time, annotations, placement, mobileDock, dualColumn, replyDrafts, refreshReplies, onBack, onMove }: {
+  thread: HostedSiteCommentDto; excerpt: string; number: number; time: string; annotations: HostedAnnotations;
   placement?: Placement; mobileDock: boolean; dualColumn: boolean; replyDrafts: Map<string, MarginReply>;
   refreshReplies: () => void; onBack?: () => void; onMove: (point: Point | null) => void;
 }) {
@@ -459,9 +458,7 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
       }}><span /></button>
     <div className="annotation-chat-author">
       <span className="annotation-chat-number">{number}</span>
-      {thread.authorAvatarFileName
-        ? <img className="annotation-chat-avatar" alt="" src={getUserAvatarUrl({ avatarFileName: thread.authorAvatarFileName, displayName: thread.authorName })} loading="lazy" />
-        : <span className="annotation-chat-avatar" aria-hidden="true" style={{ '--annotation-avatar-hue': hue } as CSSProperties}>{Array.from(thread.authorName || '?')[0]}</span>}
+      <ReviewCommentAvatar author={thread} className="annotation-chat-avatar" />
       <strong>{thread.authorName}</strong>
       {time && <time dateTime={thread.createdAt}>{time}</time>}
       {thread.isResolved && <span className="annotation-chat-status">已解决</span>}
@@ -475,7 +472,7 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
         {dualColumn && visibleReplies.length > 0 && <div className="annotation-chat-replies">
           {!showOlder && visibleReplies.length > 2 && <button type="button" onClick={() => setShowOlder(true)}>还有 {visibleReplies.length - 2} 条更早的回复</button>}
           {(showOlder ? visibleReplies : visibleReplies.slice(-2)).map(child => <div className="annotation-chat-reply" key={child.id}>
-            <span className="annotation-chat-reply-author">{child.isAi && <Bot size={14} aria-hidden="true" />}{child.authorName}</span>
+            <span className="annotation-chat-reply-author"><ReviewCommentAvatar author={child} className="annotation-chat-avatar" />{child.authorName}</span>
             <p>{annotationPreviewText(child.content) || (child.attachments?.length ? `附件 ${child.attachments.length} 个` : '')}</p>
           </div>)}
         </div>}
