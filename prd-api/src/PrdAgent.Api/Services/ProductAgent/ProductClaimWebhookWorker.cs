@@ -5,7 +5,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.Security;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Services.ProductAgent;
 
@@ -15,7 +15,12 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (DeploymentAuthority.IsCdsBranchPreview(configuration) || !DeploymentAuthority.CanRunSharedScheduledWork(configuration)) return;
+        if (ProductClaimNotificationQueue.GetDeploymentBlockReason(configuration) is { } blocked)
+        {
+            logger.LogWarning("版本申领通知发送任务未启动：{Reason}", ProductClaimNotificationQueue.DescribeDeploymentBlock(blocked));
+            return;
+        }
+        logger.LogInformation("版本申领通知发送任务已启动");
         await Task.Yield();
         while (!stoppingToken.IsCancellationRequested)
         {
