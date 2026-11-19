@@ -38,29 +38,7 @@ class EntryAssetParser(HTMLParser):
 
 
 def fetch_once(url: str, timeout: float) -> HttpResult:
-    request = urllib.request.Request(url, headers={"User-Agent": "prd-agent-public-surface-smoke/1.0"})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return HttpResult(
-                url=response.geturl(),
-                status=int(response.status),
-                content_type=response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower(),
-                body=response.read(),
-            )
-    except urllib.error.HTTPError as exc:
-        return HttpResult(
-            url=exc.geturl(),
-            status=int(exc.code),
-            content_type=exc.headers.get("Content-Type", "").split(";", 1)[0].strip().lower(),
-            body=exc.read(),
-        )
-    except urllib.error.URLError as exc:
-        return HttpResult(
-            url=url,
-            status=0,
-            content_type="network-error",
-            body=str(exc.reason).encode("utf-8", errors="replace"),
-        )
+    return request_once("GET", url, timeout)
 
 
 def request_once(method: str, url: str, timeout: float, body: bytes | None = None) -> HttpResult:
@@ -69,26 +47,24 @@ def request_once(method: str, url: str, timeout: float, body: bytes | None = Non
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        try:
+            response = urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
             return HttpResult(
                 url=response.geturl(),
                 status=int(response.status),
                 content_type=response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower(),
                 body=response.read(),
             )
-    except urllib.error.HTTPError as exc:
-        return HttpResult(
-            url=exc.geturl(),
-            status=int(exc.code),
-            content_type=exc.headers.get("Content-Type", "").split(";", 1)[0].strip().lower(),
-            body=exc.read(),
-        )
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, TimeoutError) as error:
+        reason = error.reason if isinstance(error, urllib.error.URLError) else error
         return HttpResult(
             url=url,
             status=0,
             content_type="network-error",
-            body=str(exc.reason).encode("utf-8", errors="replace"),
+            body=str(reason).encode("utf-8", errors="replace"),
         )
 
 

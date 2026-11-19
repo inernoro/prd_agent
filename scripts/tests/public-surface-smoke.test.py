@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -293,5 +295,48 @@ with tempfile.TemporaryDirectory() as temporary:
     MODULE.write_json(str(output), passed)
     persisted = json.loads(output.read_text(encoding="utf-8"))
     assert persisted["verdict"] == "pass"
+
+def run_public_asset_timeout_case(timeout_count: int, expected_code: int) -> None:
+    entry_asset = f"{BASE}assets/app-{COMMIT_A}.js"
+    asset_reads = 0
+
+    def urlopen_with_delayed_asset(request, *, timeout):
+        nonlocal asset_reads
+        path = request.full_url
+        fixture = RESPONSES[path]
+        response = MagicMock(status=fixture.status, headers={"Content-Type": fixture.content_type})
+        response.__enter__.return_value = response
+        response.geturl.return_value = fixture.url
+        response.read.return_value = fixture.body
+        if path == entry_asset:
+            asset_reads += 1
+            if asset_reads <= timeout_count:
+                response.read.side_effect = TimeoutError("The read operation timed out")
+        return response
+
+    with tempfile.TemporaryDirectory() as temporary:
+        output_path = Path(temporary) / "report.json"
+        args = ["public-surface-smoke", "--base", BASE, "--expect-commit", COMMIT_A,
+                "--attempts", "2", "--interval", "0", "--json-out", str(output_path)]
+        with patch.object(sys, "argv", args), patch.object(MODULE.urllib.request, "urlopen", side_effect=urlopen_with_delayed_asset):
+            assert MODULE.main() == expected_code
+        persisted = json.loads(output_path.read_text(encoding="utf-8"))
+        assert asset_reads == 2, persisted
+        assert persisted["attempt"] == 2, persisted
+        if expected_code:
+            assert persisted["verdict"] == "fail", persisted
+            check = next(check for check in persisted["checks"] if check["name"] == "entry-js-1")
+            assert check["status"] == 0 and check["contentType"] == "network-error" and not check["ok"], check
+        else:
+            assert persisted["verdict"] == "pass", persisted
+
+
+run_public_asset_timeout_case(timeout_count=1, expected_code=0)
+run_public_asset_timeout_case(timeout_count=2, expected_code=1)
+
+response_error = MODULE.urllib.error.HTTPError(BASE, 401, "Unauthorized", {"Content-Type": "application/json"}, io.BytesIO(GATEWAY_UNAUTHORIZED))
+with patch.object(MODULE.urllib.request, "urlopen", side_effect=response_error):
+    rejected = MODULE.request_once("POST", BASE, 1, b"{}")
+assert (rejected.status, rejected.content_type, rejected.body) == (401, "application/json", GATEWAY_UNAUTHORIZED), rejected
 
 print("Public surface smoke test: PASS")
