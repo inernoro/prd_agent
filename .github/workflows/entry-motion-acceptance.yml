@@ -9,48 +9,34 @@ on:
 permissions:
   contents: read
 jobs:
-  entry-recorder-tooling:
+  public-media-readback:
     runs-on: ubuntu-24.04
-    container:
-      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
-      options: --init --shm-size=1g
-    timeout-minutes: 20
-    env:
-      VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: b710af71fb45f2cb17e185873cb3f4b650cf9b1a
-      - uses: pnpm/action-setup@v4
-        with:
-          version: '10.28.2'
+          ref: 098a3dea0a2c5a31b78eddb1b9c0c006e1307d03
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install cloud recording tools
+      - name: Verify public preview revision, HTML, bundles, and media hashes
         run: |
-          pnpm -C e2e install --frozen-lockfile
-          # The pinned container provides Chromium, its system libraries, and fonts.
-          # Keep Ubuntu's signed packages while downloading the capture tools over HTTPS.
-          sed -Ei 's#https?://([a-z0-9.-]+\.)?(archive|security)\.ubuntu\.com/ubuntu/?#https://azure.archive.ubuntu.com/ubuntu/#g' /etc/apt/sources.list.d/ubuntu.sources
-          apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update
-          apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg xvfb openbox python3-pil
-      - name: Verify the existing desktop recorder can capture and compare frames
-        run: |
-          pnpm -C llmgw/web install --frozen-lockfile
-          pnpm -C llmgw/web build
-          pnpm -C llmgw/web preview --host 127.0.0.1 --strictPort --port 8200 &
-          for attempt in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8200/llmgw/; then break; fi
-            sleep 1
-          done
-          xvfb-run -a -s '-screen 0 1920x1080x24 -ac' sh -c 'openbox >/tmp/entry-openbox.log 2>&1 & node e2e/entry-daylight-fixture.mjs'
-          python3 e2e/entry-daylight-compare.py --fixture
+          node --input-type=module <<'JS'
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { waitForEntryPreviews } from './e2e/entry-preview-readiness.mjs';
+          const json = async path => JSON.parse(await readFile(path, 'utf8'));
+          const target = await json('e2e/fixtures/entry-preview.json');
+          const gatewayAssets = await json('e2e/fixtures/media/gateway-portrait-cdn.json');
+          const ready = await waitForEntryPreviews({
+            map: target.mapUrl, gateway: target.gatewayUrl, gatewayAssets,
+            expectedCommit: '098a3dea0a2c5a31b78eddb1b9c0c006e1307d03',
+            timeoutMs: 90_000, retryMs: 5_000,
+          });
+          await writeFile('preview-readiness.json', JSON.stringify(ready, null, 2));
+          for (const app of ready.apps) console.log(app.app, app.commit, app.media.length, app.bundle);
+          JS
       - uses: actions/upload-artifact@v4
-        if: success()
         with:
-          name: entry-recorder-tooling
-          path: |
-            work/entry-daylight/fixture-evidence.json
-            work/entry-daylight/night-vs-daylight-entry.mp4
+          name: entry-public-media-readback
+          path: preview-readiness.json
           if-no-files-found: error
