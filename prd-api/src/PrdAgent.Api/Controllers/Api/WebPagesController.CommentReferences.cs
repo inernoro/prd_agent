@@ -82,9 +82,9 @@ public partial class WebPagesController
         }
         var seedIds = visible.Select(x => x.Id).ToList();
         var comments = await _db.HostedSiteComments.Find(x => seedIds.Contains(x.SiteId) && !x.IsDeleted)
-            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Limit(500).ToListAsync();
+            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Limit(500).Project(HostedSiteService.CommentMetadata).ToListAsync();
         var incoming = await _db.HostedSiteComments.Find(x => x.ReferencedSiteIds.Contains(current.Id) && !x.IsDeleted && !seedIds.Contains(x.SiteId))
-            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Limit(100).ToListAsync();
+            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Limit(100).Project(HostedSiteService.CommentMetadata).ToListAsync();
         var allowed = new List<HostedSiteComment>();
         foreach (var comment in comments.Concat(incoming))
         {

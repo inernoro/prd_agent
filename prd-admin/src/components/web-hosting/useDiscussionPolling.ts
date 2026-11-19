@@ -1,8 +1,6 @@
 import { useEffect } from 'react';
 
-const interval = 30_000;
-
-export function useDiscussionPolling(active: boolean, refresh: () => Promise<boolean>) {
+export function useDiscussionPolling(active: boolean, refresh: () => Promise<boolean>, interval = 30_000) {
   useEffect(() => {
     if (!active) return;
     let timer: number | undefined;
@@ -39,5 +37,5 @@ export function useDiscussionPolling(active: boolean, refresh: () => Promise<boo
       window.removeEventListener('focus', run);
       document.removeEventListener('visibilitychange', visibility);
     };
-  }, [active, refresh]);
+  }, [active, refresh, interval]);
 }

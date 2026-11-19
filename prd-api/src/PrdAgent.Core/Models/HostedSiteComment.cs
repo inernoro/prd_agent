@@ -36,6 +36,12 @@ public class HostedSiteComment
     /// <summary>评论正文</summary>
     public string Content { get; set; } = string.Empty;
 
+    public List<HostedSiteCommentFile> Attachments { get; set; } = new();
+    public bool IsAi { get; set; }
+    public string? AiReplyStatus { get; set; }
+    public DateTime? AiReplyDueAt { get; set; }
+    public string? AiReplyDeployment { get; set; }
+
     /// <summary>从正文解析的站内引用索引，不授予访问权；读取时按原评论和目标文档的权限裁剪。</summary>
     public List<string> ReferencedSiteIds { get; set; } = new();
 
@@ -58,6 +64,15 @@ public class HostedSiteComment
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+[BsonIgnoreExtraElements]
+public class HostedSiteCommentFile
+{
+    public string Name { get; set; } = string.Empty;
+    public long Length { get; set; }
+    public string Sha256 { get; set; } = string.Empty;
+    public byte[] Data { get; set; } = Array.Empty<byte>();
 }
 
 /// <summary>网页批注的可迁移定位信息。选择器只作为定位数据，不作为代码执行。</summary>

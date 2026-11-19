@@ -117,7 +117,7 @@
 .annotation-chat-replies > button { justify-self: start; }
 .annotation-chat-reply { font-size: 12.5px; line-height: 1.6; overflow-wrap: anywhere; }
 .annotation-chat-reply p { margin: 2px 0 0; color: var(--review-margin-secondary); white-space: pre-wrap; }
-.annotation-chat-reply-author { font-weight: 600; }
+.annotation-chat-reply-author { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
 .annotation-chat-editor { margin-top: 8px; }
 .annotation-chat-editor-target { display: flex; justify-content: space-between; color: var(--review-margin-secondary); font-size: 12px; margin-bottom: 4px; }
 .annotation-chat-editor form { display: flex; align-items: flex-end; gap: 6px; border: 1px solid var(--review-margin-rule); border-radius: 8px; padding: 3px; background: var(--review-margin-card); }

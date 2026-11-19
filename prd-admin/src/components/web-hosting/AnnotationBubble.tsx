@@ -1,5 +1,5 @@
 import { useCallback, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { ArrowLeft, ArrowUpRight, Check, CornerDownLeft, Eye, EyeOff, RotateCcw, Send, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Bot, Check, CornerDownLeft, Eye, EyeOff, RotateCcw, Send, X } from 'lucide-react';
 import type { HostedAnnotations, AnnotationRect } from './useHostedAnnotations';
 import type { HostedSiteCommentDto } from '@/services/real/webPages';
 import { getUserAvatarUrl } from '@/lib/avatar';
@@ -463,7 +463,7 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
       {time && <time dateTime={thread.createdAt}>{time}</time>}
       {thread.isResolved && <span className="annotation-chat-status">已解决</span>}
     </div>
-    <p className={active && expanded ? 'annotation-chat-full' : undefined}>{dualColumn && active && expanded ? thread.content : excerpt}</p>
+    <p className={active && expanded ? 'annotation-chat-full' : undefined}>{dualColumn && active && expanded ? thread.content : excerpt || (thread.attachments?.length ? `附件 ${thread.attachments.length} 个` : '')}</p>
     {active
       ? <>
         {dualColumn && thread.content.length > 110 && <button type="button" className="annotation-chat-more" onClick={() => setExpanded(value => !value)}>
@@ -472,8 +472,8 @@ function BubbleCard({ thread, excerpt, number, time, hue, annotations, placement
         {dualColumn && visibleReplies.length > 0 && <div className="annotation-chat-replies">
           {!showOlder && visibleReplies.length > 2 && <button type="button" onClick={() => setShowOlder(true)}>还有 {visibleReplies.length - 2} 条更早的回复</button>}
           {(showOlder ? visibleReplies : visibleReplies.slice(-2)).map(child => <div className="annotation-chat-reply" key={child.id}>
-            <span className="annotation-chat-reply-author">{child.authorName}</span>
-            <p>{annotationPreviewText(child.content)}</p>
+            <span className="annotation-chat-reply-author">{child.isAi && <Bot size={14} aria-hidden="true" />}{child.authorName}</span>
+            <p>{annotationPreviewText(child.content) || (child.attachments?.length ? `附件 ${child.attachments.length} 个` : '')}</p>
           </div>)}
         </div>}
         <div className="annotation-chat-actions">

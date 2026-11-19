@@ -2034,11 +2034,15 @@ public partial class WebPagesController : ControllerBase
 
     /// <summary>在某站点发表评论（owner / 团队成员视角，需登录）</summary>
     [HttpPost("{siteId}/comments")]
-    public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
+    [Consumes("application/json")]
+    public Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req) =>
+        SaveSiteCommentAsync(siteId, req);
+
+    private async Task<IActionResult> SaveSiteCommentAsync(string siteId, AddSiteCommentRequest req, IReadOnlyList<HostedSiteCommentFile>? files = null)
     {
         var result = await _siteService.AddCommentBySiteAsync(
             siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId,
-            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, clientId: req.ClientId);
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, clientId: req.ClientId, attachments: files);
         return MapAddCommentResult(result);
     }
 
@@ -2056,13 +2060,17 @@ public partial class WebPagesController : ControllerBase
 
     /// <summary>经分享链接发表评论（需登录）</summary>
     [HttpPost("shares/view/{token}/comments")]
-    public async Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req)
+    [Consumes("application/json")]
+    public Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req) =>
+        SaveShareCommentAsync(token, password, req);
+
+    private async Task<IActionResult> SaveShareCommentAsync(string token, string? password, AddSiteCommentRequest req, IReadOnlyList<HostedSiteCommentFile>? files = null)
     {
         var userId = GetUserId();
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
             token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId,
-            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId, clientId: req.ClientId);
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId, clientId: req.ClientId, attachments: files);
         return MapAddCommentResult(result);
     }
 

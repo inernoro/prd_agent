@@ -1,5 +1,5 @@
 import { getWebHostingUploadError } from '@/lib/webHostingUploadLimits';
-import { apiDownload, apiRequest, type ApiDownloadedFile } from '@/services/real/apiClient';
+import { apiDownload, apiMultipartRequest, apiRequest, type ApiDownloadedFile } from '@/services/real/apiClient';
 import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -1492,7 +1492,17 @@ export interface HostedSiteCommentAnchor {
   contentVersion: string;
 }
 
+export const commentAttachmentLimit = 2 * 1024 * 1024;
+export const maxCommentAttachments = 3;
+
+export interface HostedSiteCommentFile {
+  index: number;
+  name: string;
+  length: number;
+}
+
 export interface HostedSiteCommentOptions {
+  files?: readonly File[];
   clientId?: string;
   siteId?: string;
   revisionId?: string;
@@ -1517,6 +1527,9 @@ export interface HostedSiteCommentDto {
   parentId?: string | null;
   isResolved?: boolean;
   canResolve?: boolean;
+  isAi?: boolean;
+  aiReplyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
+  attachments?: HostedSiteCommentFile[];
 }
 
 export interface SiteCommentsResult {
@@ -1543,11 +1556,7 @@ export async function listSiteComments(siteId: string): Promise<ApiResponse<Site
 
 /** 在某站点发表评论（owner / 团队成员视角，需登录） */
 export async function addSiteComment(siteId: string, content: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
-  return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/comments`, {
-    method: 'POST',
-    body: { content, ...options },
-    ...(options?.clientId && { headers: { 'Idempotency-Key': options.clientId } }),
-  });
+  return postHostedComment(`/api/web-pages/${encodeURIComponent(siteId)}/comments`, content, options);
 }
 
 /** 经分享链接列出评论（无需登录即可读）。走 raw fetch（公开端点 + 可选携带 token 识别身份） */
@@ -1636,11 +1645,35 @@ export function downloadHostedPdf(siteId: string, filePath: string,
 /** 经分享链接发表评论（需登录） */
 export async function addShareComment(token: string, content: string, password?: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
-  return apiRequest(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, {
-    method: 'POST',
-    body: { content, ...options },
-    ...(options?.clientId && { headers: { 'Idempotency-Key': options.clientId } }),
+  return postHostedComment(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, content, options);
+}
+
+function postHostedComment(path: string, content: string, options: HostedSiteCommentOptions = {}): Promise<ApiResponse<HostedSiteCommentDto>> {
+  const { files, ...metadata } = options;
+  const body = { content, ...metadata };
+  const headers = options.clientId ? { 'Idempotency-Key': options.clientId } : undefined;
+  if (!files?.length) return apiRequest(path, { method: 'POST', body, headers });
+  return apiMultipartRequest(path, {
+    headers,
+    createFormData: () => {
+      const form = new FormData();
+      form.append('comment', JSON.stringify(body));
+      for (const file of files) form.append('files', file);
+      return form;
+    },
   });
+}
+
+export function downloadCommentFile(source: { siteId: string } | { token: string; password?: string; siteId?: string },
+  commentId: string, file: HostedSiteCommentFile): Promise<ApiDownloadedFile> {
+  const params = new URLSearchParams();
+  const shared = 'token' in source;
+  if (shared && source.password) params.set('password', source.password);
+  if (shared && source.siteId) params.set('siteId', source.siteId);
+  const prefix = shared ? `shares/view/${encodeURIComponent(source.token)}` : encodeURIComponent(source.siteId);
+  const query = params.size ? `?${params}` : '';
+  return apiDownload(`/api/web-pages/${prefix}/comments/${encodeURIComponent(commentId)}/attachments/${file.index}${query}`,
+    file.name, false, shared);
 }
 
 /** 解决/重新打开根讨论；分享路径仍需验证当前分享链接和密码。 */
@@ -1672,6 +1705,7 @@ export async function deleteSiteComment(commentId: string): Promise<ApiResponse<
 /** 站点提问配置（owner 视角） */
 export interface SiteAskConfig {
   siteId: string;
+  aiReplyEnabled?: boolean;
   /** 叠加站点形态、站点覆盖与 owner 全局默认后的当前有效值 */
   enabled: boolean;
   /** 站点自己的三态：null = 未覆盖，继续继承 owner 全局默认 */
@@ -1712,6 +1746,7 @@ export async function updateSiteAskConfig(
   config: {
     /** 只在用户真的拨动开关时传；省略 = 保留站点原来的继承/覆盖关系 */
     enabled?: boolean;
+    aiReplyEnabled?: boolean;
     welcome?: string | null;
     /**
      * 只在用户**真的编辑过题库**时才传。省略（undefined）= 「这次不动题库」。

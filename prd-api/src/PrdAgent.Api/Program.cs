@@ -436,6 +436,7 @@ PrdAgent.Api.Services.OpenDesignTransportServiceCollectionExtensions.AddOpenDesi
 builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignArtifactProviderDefinitionSource, PrdAgent.Api.Services.BuiltInDesignArtifactProviderDefinitionSource>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog, PrdAgent.Api.Services.DesignArtifactProviderCatalog>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedCommentReplyWorker>();
 
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
 builder.Services.AddScoped<PrdAgent.Api.Services.IWorkflowWebpageDesignService,

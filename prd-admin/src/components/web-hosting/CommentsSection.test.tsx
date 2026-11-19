@@ -12,7 +12,7 @@ const { auth, list, login, select, add, resolveComment, removeComment } = vi.hoi
 }));
 vi.mock('../../stores/authStore', () => ({ useAuthStore: Object.assign((selector: (state: typeof auth) => unknown) => selector(auth), { getState: () => auth }) }));
 vi.mock('../../services/real/webPages', () => ({ listShareComments: list, listSiteComments: list,
-  addShareComment: add, addSiteComment: add, deleteSiteComment: removeComment, setSiteCommentResolved: resolveComment }));
+  addShareComment: add, addSiteComment: add, deleteSiteComment: removeComment, setSiteCommentResolved: resolveComment, commentAttachmentLimit: 2 * 1024 * 1024, maxCommentAttachments: 3 }));
 vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: ({ text }: { text?: string }) => <p>{text ?? '正在加载讨论…'}</p> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
@@ -51,6 +51,40 @@ describe('review discussion', () => {
   }
 
   beforeEach(() => { auth.isAuthenticated = true; auth.token = 'session'; });
+
+  it('opens the discussion at the newest root, with anchored and page comments ordered by time', async () => {
+    const height = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(1200);
+    try {
+      const newest = { ...original, id: 'latest', content: '最新评论', createdAt: '2026-11-16T11:00:00Z' };
+      const anchored = { ...original, id: 'anchored', content: '定位批注', createdAt: '2026-11-16T10:00:00Z', anchor: { kind: 'text', text: '正文' } };
+      list.mockResolvedValue(response([newest, anchored, original]));
+      await mount({ readerLayout: true });
+      expect([...container.querySelectorAll('.review-thread > .review-message .review-message-body')].map(row => row.textContent))
+        .toEqual(['原来的意见', '定位批注', '最新评论']);
+      expect(container.querySelector('.review-thread-scroll')?.scrollTop).toBe(1200);
+    } finally { height.mockRestore(); }
+  });
+
+  it('sends on plain Enter after IME composition and includes selected attachments', async () => {
+    const file = new File(['content'], '材料.txt', { type: 'text/plain' });
+    const message = { ...original, id: 'sent', content: '两行\n评论', attachments: [{ index: 0, name: file.name, length: file.size }] };
+    list.mockResolvedValueOnce(response([])).mockResolvedValue(response([message]));
+    add.mockResolvedValue({ success: true, data: message });
+    await mount({ readerLayout: true });
+    const input = await enterDraft(message.content);
+    const files = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(files, 'files', { value: [file] });
+    await act(async () => files.dispatchEvent(new Event('change', { bubbles: true })));
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+    });
+    expect(add).not.toHaveBeenCalled();
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+    expect(add).toHaveBeenCalledWith('share', message.content, undefined, expect.objectContaining({ files: [file] }));
+    expect(container.querySelector('[aria-label="待发送附件"]')).toBeNull();
+    expect(button(file.name)).toBeTruthy();
+  });
 
   it('keeps the failed reply in the fixed composer and retries once with the same identifier', async () => {
     const reply = { ...original, id: 'submitted', parentId: original.id, content: '待发送的回复', isMine: true };

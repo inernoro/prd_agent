@@ -1,22 +1,26 @@
 import { annotationPreviewText } from './annotationPreviewText';
 import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useId, type CSSProperties, type ReactNode } from 'react';
-import { MessageSquare, ArrowUp, Trash2, Lock, LogIn, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight, History, Eye, EyeOff, PanelRightClose, ChevronUp, ChevronDown, CircleAlert } from 'lucide-react';
+import { MessageSquare, ArrowUp, Trash2, Lock, LogIn, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight, History, Eye, EyeOff, PanelRightClose, ChevronUp, ChevronDown, CircleAlert, Mic, MicOff, Paperclip, Bot } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '../ui/VideoLoader';
 import { getUserAvatarUrl } from '../../lib/avatar';
 import { useAuthStore } from '../../stores/authStore';
 import { listShareComments, addShareComment, listSiteComments, addSiteComment, deleteSiteComment,
-  setSiteCommentResolved, type HostedSiteCommentDto, type HostedSiteCommentOptions } from '../../services/real/webPages';
+  setSiteCommentResolved, downloadCommentFile, commentAttachmentLimit, maxCommentAttachments, type HostedSiteCommentFile, type HostedSiteCommentDto, type HostedSiteCommentOptions } from '../../services/real/webPages';
 import type { HostedAnnotations } from './useHostedAnnotations';
 import type { HostedReview } from './useHostedReview';
 import { useDiscussionDraft } from './useDiscussionDraft';
 import { useDiscussionPolling } from './useDiscussionPolling';
 import { groupDiscussionThreads } from './discussionPresentation';
+import { useSpeechInput } from '@/lib/useSpeechInput';
 import '../../styles/hosted-review-discussion.css';
 
 const ELEMENT_LABELS: Record<string, string> = { button: '按钮', a: '链接', img: '图片', p: '段落',
   h1: '标题', h2: '标题', h3: '标题', h4: '标题', section: '区块', div: '区块', li: '列表项', svg: '图标' };
 const elementLabel = (tag: string) => ELEMENT_LABELS[tag] ?? '页面元素';
 const emptyRecoveries: readonly string[] = [];
+const emptyFiles: readonly File[] = [];
+const compareCommentTime = (a: HostedSiteCommentDto, b: HostedSiteCommentDto) =>
+  Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id);
 
 function readRecoveries(key?: string): readonly string[] {
   if (!key) return emptyRecoveries;
@@ -72,14 +76,14 @@ export default function CommentsSection(props: Props) {
   const [commentsEnabled, setCommentsEnabled] = useState(true);
   const [canComment, setCanComment] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
-  const [pendingPageDraft, setPendingPageDraft] = useState<{ scope: string; id: string; text: string } | null>(null);
+  const [pendingPageDraft, setPendingPageDraft] = useState<{ scope: string; id: string; text: string; files: readonly File[] } | null>(null);
   const [recoveriesByScope, setRecoveriesByScope] = useState<Record<string, readonly string[]>>({});
   const [openedRecovery, setOpenedRecovery] = useState<{ scope: string; id: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [otherVersions, setOtherVersions] = useState(false);
-  const [filter, setFilter] = useState<'open' | 'resolved' | 'all'>(props.readerLayout ? 'open' : 'all');
+  const [filter, setFilter] = useState<'open' | 'resolved' | 'all'>(props.readerLayout && props.threadKind === 'annotation' ? 'open' : 'all');
   const [error, setError] = useState<string | null>(null);
   const [syncFailed, setSyncFailed] = useState(false);
   const [lastSync, setLastSync] = useState<number | null>(null);
@@ -89,6 +93,7 @@ export default function CommentsSection(props: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const keptScroll = useRef<number | null>(null);
+  const openedTimeline = useRef('');
   const threadElements = useRef(new Map<string, HTMLElement>());
   const fetchId = useRef(0);
   const seen = useRef<{ identity: string; ids: Set<string> }>();
@@ -99,6 +104,7 @@ export default function CommentsSection(props: Props) {
   const mounted = useRef(true);
   const callbacks = useRef(props); callbacks.current = props;
   const { mode, token, password, siteId, annotations, review } = props;
+  const chronological = props.readerLayout && props.threadKind !== 'annotation';
   const draftAnchor = props.threadKind === 'discussion' ? null : annotations?.draftAnchor;
   const versionKey = review?.selected?.contentVersionKey;
   const versionPending = !!review?.loading && !review.error;
@@ -138,6 +144,49 @@ export default function CommentsSection(props: Props) {
   const { draft: savedDraft, update: setDraft } = useDiscussionDraft(`${draftScope}:${draftMode}`,
     draftStorage ? `${draftStorage}:${draftMode}` : undefined);
   const draft = savedDraft.text;
+  const composerKey = `${draftScope}:${draftMode}`;
+  const [fileDrafts, setFileDrafts] = useState<Record<string, readonly File[]>>({});
+  const files = fileDrafts[composerKey] ?? emptyFiles;
+  const [inputError, setInputError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const speechSession = useRef<{ key: string; base: string } | null>(null);
+  const speech = useSpeechInput({
+    onResult: finalText => {
+      const session = speechSession.current;
+      if (!session || session.key !== composerKey || !finalText) return;
+      const text = [session.base.trimEnd(), finalText].filter(Boolean).join(' ').slice(0, 2000);
+      if (text !== draft) setDraft({ text });
+    },
+    onError: setInputError,
+  });
+  const setFiles = (next: readonly File[]) => {
+    setFileDrafts(previous => {
+      const updated = { ...previous };
+      if (next.length) updated[composerKey] = next;
+      else delete updated[composerKey];
+      return updated;
+    });
+    setDraft({ text: draft });
+    setInputError(null);
+  };
+  const pickFiles = (incoming: FileList | null) => {
+    if (!incoming?.length) return;
+    const selected = Array.from(incoming);
+    if (files.length + selected.length > maxCommentAttachments || selected.some(file => !file.size || file.size > commentAttachmentLimit)) {
+      setInputError('最多添加 3 个附件，每个附件需大于 0 且不超过 2 MB。');
+      return;
+    }
+    setFiles([...files, ...selected]);
+  };
+  useEffect(() => {
+    setInputError(null);
+    if (speechSession.current && (speechSession.current.key !== composerKey || props.visible === false || !canWrite || otherVersions)) {
+      speechSession.current = null;
+      speech.cancel();
+    }
+    // An active session belongs to the composer context captured when recording started.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composerKey, props.visible, canWrite, otherVersions]);
   const storeRecoveries = useCallback((next: readonly string[]) => {
     setRecoveriesByScope(previous => ({ ...previous, [draftScope]: next }));
     if (!recoveryStorage) return;
@@ -155,11 +204,19 @@ export default function CommentsSection(props: Props) {
     if (draftMode !== 'page') return;
     setPendingPageDraft(null);
     const combined = [draft, pendingPageDraft.text].filter(Boolean).join('\n\n');
-    if (combined.length > 2000) {
+    const combinedFiles = [...files, ...pendingPageDraft.files];
+    if (combined.length > 2000 || combinedFiles.length > maxCommentAttachments) {
       if (!recoverableReplies.includes(pendingPageDraft.id)) storeRecoveries([...recoverableReplies, pendingPageDraft.id]);
-    } else if (combined !== draft) setDraft({ text: combined });
+    } else {
+      if (combined !== draft || pendingPageDraft.files.length) setDraft({ text: combined });
+      if (pendingPageDraft.files.length) setFileDrafts(previous => {
+        const next = { ...previous, [composerKey]: combinedFiles };
+        delete next[`${draftScope}:reply:${pendingPageDraft.id}`];
+        return next;
+      });
+    }
     textareaRef.current?.focus({ preventScroll: true });
-  }, [draft, draftMode, draftScope, pendingPageDraft, recoverableReplies, setDraft, storeRecoveries, versionPending]);
+  }, [composerKey, draft, draftMode, draftScope, files, pendingPageDraft, recoverableReplies, setDraft, storeRecoveries, versionPending]);
   const draftScopeRef = useRef({ key: draftScope, draft, draftMode, replyTo, anchor: draftAnchor });
   const previousDraftScope = draftScopeRef.current;
   if (previousDraftScope.key !== draftScope || previousDraftScope.draft !== draft
@@ -172,6 +229,7 @@ export default function CommentsSection(props: Props) {
     setSubmitting(false);
     setPendingPageDraft(null);
     setOpenedRecovery(null);
+    setFileDrafts({});
     setNewThreads(new Map());
     setShowOlderReplies(new Set());
     setNotice(null);
@@ -210,7 +268,7 @@ export default function CommentsSection(props: Props) {
     if (previous.identity !== identity || (versionKey && previous.versionKey && versionKey !== previous.versionKey)) {
       // A new publication starts on its own composer; this is not the first document load.
       if (previous.identity === identity) initialVersionScope.current = manualVersionScope;
-      setOtherVersions(false); setReplyTo(null); setFilter(callbacks.current.readerLayout ? 'open' : 'all');
+      setOtherVersions(false); setReplyTo(null); setFilter(callbacks.current.readerLayout && callbacks.current.threadKind === 'annotation' ? 'open' : 'all');
     }
     // An unresolved metadata response does not change which publication owns the draft.
     if (previous.identity !== identity || versionKey) confirmedDraftVersion.current = { identity, versionKey };
@@ -241,7 +299,8 @@ export default function CommentsSection(props: Props) {
         if (callbacks.current.readerLayout && previous) {
           const additions = comments.filter(comment => !previous.has(comment.id) && !comment.isMine && (!userId || comment.authorUserId !== userId));
           const currentPane = listRef.current;
-          if (currentPane) keptScroll.current = currentPane.scrollTop;
+          if (currentPane) keptScroll.current = chronological && Math.abs(currentPane.scrollHeight - currentPane.clientHeight - currentPane.scrollTop) < 32
+            ? Infinity : currentPane.scrollTop;
           setNewThreads(current => {
             const next = new Map<string, ReadonlySet<string>>();
             for (const [threadId, messages] of current) {
@@ -274,9 +333,11 @@ export default function CommentsSection(props: Props) {
     } finally {
       if (mounted.current && request === fetchId.current && identity === identityRef.current) setLoading(false);
     }
-  }, [mode, token, password, siteId, identity, userId]);
+  }, [mode, token, password, siteId, identity, userId, chronological]);
   const poll = useCallback(() => load('poll'), [load]);
-  useDiscussionPolling(!!props.readerLayout, poll);
+  const awaitingAi = comments.some(comment => (comment.aiReplyStatus === 'pending' || comment.aiReplyStatus === 'processing')
+    && Date.now() - Date.parse(comment.createdAt) < 120_000);
+  useDiscussionPolling(!!props.readerLayout, poll, awaitingAi ? 2500 : undefined);
   useEffect(() => {
     void load(callbacks.current.readerLayout && seen.current?.identity === identity ? 'silent' : 'show');
   }, [load, identity, authToken]);
@@ -292,9 +353,17 @@ export default function CommentsSection(props: Props) {
     if (draftAnchor) { setReplyTo(null); textareaRef.current?.focus({ preventScroll: true }); }
   }, [draftAnchor]);
   useLayoutEffect(() => {
-    if (keptScroll.current !== null && listRef.current) listRef.current.scrollTop = keptScroll.current;
+    const list = listRef.current;
+    const alreadyOpen = openedTimeline.current === defaultVersionScope;
+    if (props.visible === false) openedTimeline.current = '';
+    else if (list && chronological && !loading && !versionPending && !alreadyOpen) {
+      openedTimeline.current = defaultVersionScope;
+      if (!annotations?.activeId) list.scrollTop = list.scrollHeight;
+    } else if (list && keptScroll.current !== null) {
+      list.scrollTop = keptScroll.current === Infinity ? list.scrollHeight : keptScroll.current;
+    }
     keptScroll.current = null;
-  }, [comments, newThreads]);
+  }, [comments, newThreads, chronological, props.visible, defaultVersionScope, loading, versionPending, annotations?.activeId, filter]);
   const commentsRef = useRef(comments);
   commentsRef.current = comments;
   const markRead = useCallback((id: string) => setNewThreads(current => {
@@ -338,11 +407,14 @@ export default function CommentsSection(props: Props) {
     }
   }
   const submit = async () => {
-    if (!draft.trim() || submittingDraft.current || !canWrite) return;
+    if ((!draft.trim() && !files.length) || submittingDraft.current || !canWrite) return;
+    speechSession.current = null;
+    speech.cancel();
     const operationDraftScope = draftScopeRef.current;
     const clientId = savedDraft.clientId ?? crypto.randomUUID();
     if (!savedDraft.clientId || savedDraft.error) setDraft({ text: draft, clientId });
-    const options = replyTo ? { parentId: replyTo, clientId } : { anchor: draftAnchor ?? undefined, clientId,
+    const attachmentOptions = files.length ? { files } : {};
+    const options = replyTo ? { ...attachmentOptions, parentId: replyTo, clientId } : { ...attachmentOptions, anchor: draftAnchor ?? undefined, clientId,
       revisionId: review?.historical ? review.selected?.id : undefined, expectedContentVersion: versionKey };
     const attempt = {};
     submittingDraft.current = attempt;
@@ -355,6 +427,7 @@ export default function CommentsSection(props: Props) {
         if (props.readerLayout) textareaRef.current?.focus({ preventScroll: true });
         return;
       }
+      setFiles(emptyFiles);
       setDraft({ text: '' });
       setReplyTo(null);
       if (recoveredReply) {
@@ -368,7 +441,8 @@ export default function CommentsSection(props: Props) {
         annotations?.setActiveId(replyTo);
         window.requestAnimationFrame(() => threadElements.current.get(replyTo)?.scrollIntoView?.({ block: 'start' }));
       }
-      if (!replyTo) setFilter(props.readerLayout ? 'open' : 'all');
+      if (!replyTo && chronological) keptScroll.current = Infinity;
+      if (!replyTo) setFilter(props.readerLayout && props.threadKind === 'annotation' ? 'open' : 'all');
       if (props.readerLayout) setNotice({ text: replyTo ? '回复已发送' : draftAnchor ? '批注已发布' : '整页评论已发布' });
     } finally {
       if (submittingDraft.current === attempt) {
@@ -451,9 +525,12 @@ export default function CommentsSection(props: Props) {
       resolve: id => actionRef.current!.resolve(id),
     });
   }, [actionable, bindActions, props.readerLayout]);
-  const visible = useMemo(() => roots.filter(c => filter === 'all' || (filter === 'resolved' ? c.isResolved : !c.isResolved)), [filter, roots]);
-  const groups = useMemo(() => props.readerLayout && !otherVersions ? groupDiscussionThreads(visible, annotations?.anchorLocations) : [],
-    [props.readerLayout, otherVersions, visible, annotations?.anchorLocations]);
+  const visible = useMemo(() => {
+    const matching = roots.filter(c => filter === 'all' || (filter === 'resolved' ? c.isResolved : !c.isResolved));
+    return chronological ? matching.sort(compareCommentTime) : matching;
+  }, [chronological, filter, roots]);
+  const groups = useMemo(() => props.readerLayout && !chronological && !otherVersions ? groupDiscussionThreads(visible, annotations?.anchorLocations) : [],
+    [props.readerLayout, chronological, otherVersions, visible, annotations?.anchorLocations]);
   const replyGroups = useMemo(() => {
     const result = new Map<string, HostedSiteCommentDto[]>();
     for (const comment of comments) {
@@ -461,7 +538,7 @@ export default function CommentsSection(props: Props) {
       const replies = result.get(comment.parentId) ?? [];
       replies.push(comment); result.set(comment.parentId, replies);
     }
-    for (const replies of result.values()) replies.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const replies of result.values()) replies.sort(compareCommentTime);
     return result;
   }, [comments]);
   const numbers = useMemo(() => new Map(versionRoots.filter(comment => comment.anchor).map((comment, index) => [comment.id, index + 1])), [versionRoots]);
@@ -519,6 +596,20 @@ export default function CommentsSection(props: Props) {
     title={pickingHint} aria-describedby={pickingHintId} className={loginToAnnotate ? 'review-login-action' : 'review-pick-action'}>
     {loginToAnnotate ? <><LogIn size={15} />{isAuthenticated ? '重新登录后批注' : '登录后批注'}</> : <><MousePointer2 size={15} /><span className="sr-only">选取位置</span></>}
   </button> : null;
+  const getAttachment = async (commentId: string, file: HostedSiteCommentFile) => {
+    try {
+      const source = mode === 'share' ? { token, password, siteId } : { siteId };
+      const { blob, fileName } = await downloadCommentFile(source, commentId, file);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      if (mounted.current && identityRef.current === identity) setNotice({ text: '附件下载失败，请重试。' });
+    }
+  };
   const renderThread = (comment: HostedSiteCommentDto) => {
     const replies = replyGroups.get(comment.id) ?? [];
     const number = numbers.get(comment.id);
@@ -553,9 +644,9 @@ export default function CommentsSection(props: Props) {
         if ((event.target as HTMLElement).closest('button, a, input, textarea') || window.getSelection()?.toString()) return;
         choose(comment);
       } : undefined}>
-      {props.splitLayout && (anchorAction || <div className="review-thread-context"><span className="review-anchor-number">页</span>整页评论</div>)}
+      {props.splitLayout && (anchorAction || (!chronological && <div className="review-thread-context"><span className="review-anchor-number">页</span>整页评论</div>))}
       <CommentMessage compact={props.readerLayout} isNew={!!messages?.size} comment={comment}
-        busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)}>
+        busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)} onFile={getAttachment}>
         {otherVersions && <div className="review-origin-version"><span>来自 {originVersion?.versionLabel ?? (comment.contentVersion ? '未收录的旧版本' : '未标版本的历史评论')}</span>
           {canOpenOrigin && <button type="button" onClick={locate}>预览 {originVersion!.versionLabel}</button>}</div>}
       </CommentMessage>
@@ -566,8 +657,12 @@ export default function CommentsSection(props: Props) {
         }}>还有 {older} 条更早的回复</button>}
         {replies.slice(older).map(reply =>
           <CommentMessage compact={props.readerLayout} isNew={messages?.has(reply.id)} key={reply.id} comment={reply}
-            busy={busyId === reply.id} confirming={confirmDelete === reply.id} onDelete={() => void remove(reply.id)} />)}
+            busy={busyId === reply.id} confirming={confirmDelete === reply.id} onDelete={() => void remove(reply.id)} onFile={getAttachment} />)}
       </div>}
+      {(comment.aiReplyStatus === 'pending' || comment.aiReplyStatus === 'processing') && <div className="review-ai-status" role="status">
+        <MapSpinner size={13} /> AI 正在回复…
+      </div>}
+      {comment.aiReplyStatus === 'failed' && <div className="review-ai-status">AI 暂未回复</div>}
       <div className="review-thread-actions">
         {props.readerLayout && comment.isResolved && <span className="review-talk-resolved"><Check size={13} />已解决</span>}
         {actionable ? <button type="button" className="review-reply-action" disabled={submitting} onClick={() => {
@@ -612,7 +707,10 @@ export default function CommentsSection(props: Props) {
         <div role="tablist" aria-label="讨论状态" className="review-status-tabs">
           {([{ value: 'open', label: '未解决', count: openCount }, { value: 'resolved', label: '已解决', count: resolvedCount },
             { value: 'all', label: '全部', count: roots.length }] as const).map(tab => (
-            <button key={tab.value} type="button" role="tab" disabled={versionPending} aria-selected={filter === tab.value} onClick={() => setFilter(tab.value)}>{tab.label} <span>{versionPending ? '—' : tab.count}</span></button>
+            <button key={tab.value} type="button" role="tab" disabled={versionPending} aria-selected={filter === tab.value} onClick={() => {
+              if (chronological) keptScroll.current = Infinity;
+              setFilter(tab.value);
+            }}>{tab.label} <span>{versionPending ? '—' : tab.count}</span></button>
           ))}
         </div>
       </div>
@@ -649,7 +747,7 @@ export default function CommentsSection(props: Props) {
             <button type="button" disabled={submitting} onClick={() => {
               // The recovered text will be sent to the page, with different submission parameters.
               if (savedDraft.clientId || savedDraft.error) setDraft({ text: draft });
-              setPendingPageDraft({ scope: draftScope, id: replyTo, text: draft });
+              setPendingPageDraft({ scope: draftScope, id: replyTo, text: draft, files });
               setOpenedRecovery(null);
               setReplyTo(null);
             }}>改为整页评论</button>
@@ -661,7 +759,7 @@ export default function CommentsSection(props: Props) {
             <span>原回复可单独作为整页评论发送。</span>
             <button type="button" disabled={submitting} onClick={() => setOpenedRecovery(null)}>返回原整页草稿</button>
           </div> : draftMode === 'page' && recoverableReplies.length > 0 && <div className="review-composer-error" role="status">
-            <CircleAlert size={14} /><span>合并超过 2000 字，两份草稿可单独发送。</span>
+            <CircleAlert size={14} /><span>合并后超出单条评论上限，两份草稿可单独发送。</span>
             <button type="button" disabled={submitting} onClick={() => {
               setOpenedRecovery({ scope: draftScope, id: recoverableReplies[0] });
               textareaRef.current?.focus({ preventScroll: true });
@@ -670,17 +768,52 @@ export default function CommentsSection(props: Props) {
           <div className="review-composer-row">
           <textarea ref={textareaRef} aria-label={replyTo ? '回复内容' : props.threadKind === 'discussion' ? '讨论内容' : '批注内容'} value={draft}
             readOnly={props.readerLayout && submitting} disabled={!props.readerLayout && submitting}
-            onChange={e => setDraft({ text: e.target.value })} maxLength={2000} rows={1}
+            onChange={e => {
+              if (speechSession.current) { speechSession.current = null; speech.cancel(); }
+              setDraft({ text: e.target.value });
+            }} maxLength={2000} rows={props.readerLayout ? 3 : 1}
             onKeyDown={e => {
-              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); if (!replyDeleted) void submit(); }
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              if (e.key === 'Enter' && !e.shiftKey && (props.readerLayout || e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                if (!replyDeleted) void submit();
+              }
               if (e.key === 'Escape' && !submitting && (replyTo || draftAnchor || recoveredReply)) { e.preventDefault(); e.stopPropagation(); cancelContext(); }
             }}
             placeholder={replyTo ? (props.readerLayout ? '写回复…' : `回复 ${replyTarget?.authorName ?? ''}…`) : draftAnchor ? (props.readerLayout ? '写下对这段文字的意见…' : '写下对这个位置的意见…') : props.threadKind === 'discussion' ? '写下你的看法…' : props.readerLayout ? '写整页评论…' : '写下意见…'} />
-          {draftMode === 'page' && pickEntry}
-          <button type="button" onClick={() => void submit()} disabled={!draft.trim() || submitting || replyDeleted} className="review-send-action" title="Ctrl / ⌘ + Enter 发送">
-            {submitting ? <MapSpinner size={15} /> : <ArrowUp size={16} />}<span className="sr-only">{replyTo ? '发送回复' : props.threadKind === 'discussion' ? '发送讨论' : '发送批注'}</span></button></div>
+          {files.length > 0 && <ul className="review-comment-files" aria-label="待发送附件">
+            {files.map((file, index) => <li key={index}>
+              <Paperclip size={13} /><span title={file.name}>{file.name}</span>
+              <button type="button" aria-label={`移除 ${file.name}`} disabled={submitting} onClick={() => setFiles(files.filter((_, i) => i !== index))}><X size={13} /></button>
+            </li>)}
+          </ul>}
+          <div className="review-composer-tools">
+            <div className="review-composer-tools-start">
+              {props.readerLayout && <>
+                <input ref={fileInput} type="file" multiple hidden onChange={e => { pickFiles(e.target.files); e.target.value = ''; }} />
+                <button type="button" className="review-pick-action" title="添加附件" aria-label="添加附件" disabled={submitting || replyDeleted || files.length >= maxCommentAttachments}
+                  onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
+              </>}
+              {draftMode === 'page' && pickEntry}
+            </div>
+            <div className="review-composer-tools-end">
+              {props.readerLayout && speech.supported && <button type="button" className="review-pick-action" title={speech.listening ? '停止语音输入' : '语音输入'} aria-label={speech.listening ? '停止语音输入' : '语音输入'}
+                aria-pressed={speech.listening} disabled={submitting || replyDeleted} onClick={() => {
+                  setInputError(null);
+                  if (speech.listening) { speech.stop(); return; }
+                  speechSession.current = { key: composerKey, base: draft };
+                  try { speech.start(); }
+                  catch { speechSession.current = null; speech.cancel(); setInputError('无法启动语音输入，请检查麦克风后重试。'); }
+                }}>{speech.listening ? <MicOff size={17} /> : <Mic size={17} />}</button>}
+              <button type="button" onClick={() => void submit()} disabled={(!draft.trim() && !files.length) || submitting || replyDeleted}
+                className="review-send-action" title={props.readerLayout ? 'Enter 发送，Shift + Enter 换行' : 'Ctrl / ⌘ + Enter 发送'}>
+                {submitting ? <MapSpinner size={15} /> : <ArrowUp size={16} />}<span className="sr-only">{replyTo ? '发送回复' : props.threadKind === 'discussion' ? '发送讨论' : '发送批注'}</span>
+              </button>
+            </div>
+          </div></div>
+          {inputError && <div className="review-composer-error" role="alert">{inputError}</div>}
           {draft.length >= 1800 && <div className="review-composer-count">{draft.length}/2000</div>}
-          {props.readerLayout ? draftMode === 'page' && <div id={pickingHintId} className="review-talk-hint"><span>{annotations?.ready ? '选中正文文字可添加批注' : '此页面只支持整页评论'}</span><span>Ctrl + Enter 发送</span></div>
+          {props.readerLayout ? draftMode === 'page' && <div id={pickingHintId} className="review-talk-hint"><span>{annotations?.ready ? '选中正文文字可添加批注' : '此页面只支持整页评论'}</span><span>Enter 发送 · Shift + Enter 换行</span></div>
             : annotations && !annotations.draftAnchor && <p id={pickingHintId} className="review-composer-hint">{pickingHint}</p>}
         </>}
       </div>
@@ -705,8 +838,8 @@ function DiscussionSyncTime({ value }: { value: number | null }) {
   return <>{elapsed <= 5 ? '刚刚同步' : `${elapsed} 秒前同步`}</>;
 }
 
-function CommentMessage({ comment, busy, confirming, onDelete, children, compact, isNew }: {
-  comment: HostedSiteCommentDto; busy: boolean; confirming: boolean; onDelete: () => void; children?: ReactNode; compact?: boolean; isNew?: boolean;
+function CommentMessage({ comment, busy, confirming, onDelete, onFile, children, compact, isNew }: {
+  comment: HostedSiteCommentDto; busy: boolean; confirming: boolean; onDelete: () => void; onFile: (commentId: string, file: HostedSiteCommentFile) => void; children?: ReactNode; compact?: boolean; isNew?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const limit = compact ? 110 : 280;
@@ -716,7 +849,9 @@ function CommentMessage({ comment, busy, confirming, onDelete, children, compact
   const nameCharacters = [...(comment.authorName || '?')];
   const hue = nameCharacters.reduce((hash, character) => (hash * 31 + character.codePointAt(0)!) % 360, 0);
   return <div className="review-message">
-    <div className="review-message-author">{compact && !comment.authorAvatarFileName
+    <div className="review-message-author">{comment.isAi
+      ? <span className="review-talk-avatar review-ai-avatar" aria-hidden="true"><Bot size={14} /></span>
+      : compact && !comment.authorAvatarFileName
       ? <span className="review-talk-avatar" aria-hidden="true" style={{ '--talk-avatar-hue': hue } as CSSProperties}>{nameCharacters[0]}</span>
       : <img src={getUserAvatarUrl({ avatarFileName: comment.authorAvatarFileName, displayName: comment.authorName })} alt="" loading="lazy" />}
       <strong>{comment.authorName}</strong>{!compact && <span>·</span>}<time dateTime={comment.createdAt}>{time}</time>
@@ -725,7 +860,12 @@ function CommentMessage({ comment, busy, confirming, onDelete, children, compact
         {busy ? <MapSpinner size={13} /> : confirming ? <span>确认删除</span> : <Trash2 size={13} />}</button>}
     </div>
     {children}
-    <p className={`review-message-body${long && !expanded ? ' is-collapsed' : ''}`} style={{ overflowWrap: 'anywhere' }}>{expanded ? comment.content : annotationPreviewText(comment.content, limit)}</p>
+    {comment.content && <p className={`review-message-body${long && !expanded ? ' is-collapsed' : ''}`} style={{ overflowWrap: 'anywhere' }}>{expanded ? comment.content : annotationPreviewText(comment.content, limit)}</p>}
+    {!!comment.attachments?.length && <ul className="review-comment-files" aria-label="评论附件">
+      {comment.attachments.map((file, index) => <li key={index}><button type="button" title={file.name} onClick={() => onFile(comment.id, file)}>
+        <Paperclip size={13} /><span>{file.name}</span>
+      </button></li>)}
+    </ul>}
     {long && <button type="button" className="review-tool review-discussion-expand" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起全文' : compact ? `展开全文 · ${comment.content.length} 字` : '展开全文'}</button>}
   </div>;
 }

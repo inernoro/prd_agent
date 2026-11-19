@@ -2130,3 +2130,7 @@ db.hosted_document_groups.createIndex(
 
 // 评论反向引用查询；原评论授权仍独立校验。
 db.hosted_site_comments.createIndex({ ReferencedSiteIds: 1, CreatedAt: -1 }, { name: "idx_hosted_comments_references" });
+db.hosted_site_comments.createIndex(
+  { AiReplyDeployment: 1, AiReplyDueAt: 1 },
+  { name: "idx_hosted_comment_ai_reply_due", partialFilterExpression: { AiReplyDueAt: { $type: "date" } } }
+);

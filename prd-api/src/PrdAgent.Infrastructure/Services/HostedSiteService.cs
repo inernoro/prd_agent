@@ -3,11 +3,13 @@ using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.Services;
@@ -148,6 +150,7 @@ public class HostedSiteService : IHostedSiteService
     private readonly IUploadProgressService _uploadProgress;
     private readonly IAskOpeningQuestionGenerator _askOpeners;
     private readonly ILogger<HostedSiteService> _logger;
+    private readonly IConfiguration _configuration;
 
     // ZIP 上传与解压共用总量边界，防止入口已接受而发布阶段拒绝。
     private const long MaxExtractedSize = HostedSiteUploadLimits.MaxPackageBytes;
@@ -234,7 +237,7 @@ public class HostedSiteService : IHostedSiteService
         ITeamActivityService teamActivity,
         IUploadProgressService uploadProgress,
         IAskOpeningQuestionGenerator askOpeners,
-        ILogger<HostedSiteService> logger)
+        ILogger<HostedSiteService> logger, IConfiguration? configuration = null)
     {
         _db = db;
         _storage = storage;
@@ -245,6 +248,7 @@ public class HostedSiteService : IHostedSiteService
         _uploadProgress = uploadProgress;
         _askOpeners = askOpeners;
         _logger = logger;
+        _configuration = configuration ?? new ConfigurationBuilder().Build();
     }
 
     /// <summary>
@@ -4043,6 +4047,7 @@ public class HostedSiteService : IHostedSiteService
                     & Builders<HostedSiteComment>.Filter.Eq(c => c.IsDeleted, false)
                     & Builders<HostedSiteComment>.Filter.Gte(c => c.CreatedAt, rangeStart))
                 .SortByDescending(c => c.CreatedAt)
+                .Project(CommentMetadata)
                 .ToListAsync(ct);
 
         // 日趋势与时段分布**一次聚合**出来，按「哪天的第几个小时」分桶，两张图各自求和。
@@ -5405,6 +5410,8 @@ public class HostedSiteService : IHostedSiteService
             .Set(s => s.UpdatedAt, DateTime.UtcNow);
         if (update.Enabled.HasValue)
             updateDef = updateDef.Set(s => s.AskEnabled, update.Enabled.Value);
+        if (update.AiReplyEnabled.HasValue)
+            updateDef = updateDef.Set(s => s.AiReplyEnabled, update.AiReplyEnabled.Value);
         if (questions != null)
         {
             updateDef = updateDef
@@ -5416,6 +5423,8 @@ public class HostedSiteService : IHostedSiteService
 
         if (update.Enabled.HasValue)
             site.AskEnabled = update.Enabled.Value;
+        if (update.AiReplyEnabled.HasValue)
+            site.AiReplyEnabled = update.AiReplyEnabled.Value;
         site.AskWelcome = welcome;
         if (questions != null)
         {
@@ -5478,21 +5487,21 @@ public class HostedSiteService : IHostedSiteService
     public async Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
         string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null, string? clientId = null)
+        string? revisionId = null, string? expectedContentVersion = null, string? clientId = null, IReadOnlyList<HostedSiteCommentFile>? attachments = null)
     {
         var site = await GetByIdAsync(siteId, authorUserId, ct);
         if (site == null)
             return new AddCommentResult { Error = "站点不存在或无权访问", HttpStatus = 404, ErrorCode = "not_found" };
 
         return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null,
-            ipAddress: null, ct, anchor, parentId, revisionId, expectedContentVersion, clientId);
+            ipAddress: null, ct, anchor, parentId, revisionId, expectedContentVersion, clientId, attachments);
     }
 
     public async Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
         string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null, string? clientId = null)
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null, string? clientId = null, IReadOnlyList<HostedSiteCommentFile>? attachments = null)
     {
         if (string.IsNullOrWhiteSpace(authorUserId))
             return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
@@ -5504,7 +5513,7 @@ public class HostedSiteService : IHostedSiteService
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
         return await InsertCommentAsync(access.Site, authorUserId, authorName, avatarFileName, content, shareToken: token,
-            ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion, clientId);
+            ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion, clientId, attachments);
     }
 
     public async Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
@@ -5534,7 +5543,7 @@ public class HostedSiteService : IHostedSiteService
         if (!site.CommentsEnabled)
             return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
         var comment = await _db.HostedSiteComments
-            .Find(c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted).FirstOrDefaultAsync(ct);
+            .Find(c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted).Project(CommentMetadata).FirstOrDefaultAsync(ct);
         if (comment == null || !HostedSiteCommentRules.CanResolve(comment, site, userId)
             || !HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(comment), EffectiveContentVersion(site), await CanEditSiteAsync(site, userId, ct)))
             return new AddCommentResult { Error = "讨论不存在或无权修改", HttpStatus = 404, ErrorCode = "not_found" };
@@ -5549,12 +5558,13 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default)
     {
-        var comment = await _db.HostedSiteComments.Find(c => c.Id == commentId && !c.IsDeleted).FirstOrDefaultAsync(ct);
+        var comment = await _db.HostedSiteComments.Find(c => c.Id == commentId && !c.IsDeleted).Project(CommentMetadata).FirstOrDefaultAsync(ct);
         if (comment == null) return false;
 
         var site = await _db.HostedSites.Find(s => s.Id == comment.SiteId).FirstOrDefaultAsync(ct);
         if (site == null || (comment.AuthorUserId != userId && site.OwnerUserId != userId)) return false;
-        var deletion = Builders<HostedSiteComment>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow);
+        var deletion = Builders<HostedSiteComment>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow)
+            .Unset(c => c.AiReplyDueAt);
         // 先关闭根讨论，再清理回复。回复落库后也会复查根讨论，覆盖两次写入之间的并发窗口。
         await _db.HostedSiteComments.UpdateOneAsync(
             c => c.Id == commentId && c.SiteId == comment.SiteId, deletion, cancellationToken: CancellationToken.None);
@@ -5569,13 +5579,13 @@ public class HostedSiteService : IHostedSiteService
     private async Task<AddCommentResult> InsertCommentAsync(
         HostedSite site, string authorUserId, string authorName, string? avatarFileName,
         string content, string? shareToken, string? ipAddress, CancellationToken ct, HostedSiteCommentAnchor? anchor,
-        string? parentId, string? revisionId, string? expectedContentVersion, string? clientId)
+        string? parentId, string? revisionId, string? expectedContentVersion, string? clientId, IReadOnlyList<HostedSiteCommentFile>? attachments)
     {
         if (!site.CommentsEnabled)
             return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
 
         var trimmed = (content ?? string.Empty).Trim();
-        if (trimmed.Length == 0)
+        if (trimmed.Length == 0 && (attachments == null || attachments.Count == 0))
             return new AddCommentResult { Error = "评论内容不能为空", HttpStatus = 400, ErrorCode = "invalid" };
         if (trimmed.Length > 2000)
             return new AddCommentResult { Error = "评论内容不能超过 2000 字", HttpStatus = 400, ErrorCode = "invalid" };
@@ -5591,7 +5601,7 @@ public class HostedSiteService : IHostedSiteService
             // MongoDB 的 _id 已有唯一约束。使用服务器按站点和作者生成的标识，避免新索引上线前的并发重复。
             submissionId = HostedSiteCommentRules.SubmissionId(site.Id, authorUserId, submission);
             var replay = await ReadCommentSubmissionAsync(site, authorUserId, submissionId, trimmed, anchor,
-                parentId, revisionId, expectedContentVersion, shareToken != null, ct);
+                parentId, revisionId, expectedContentVersion, attachments, shareToken != null, ct);
             if (replay != null) return replay;
         }
 
@@ -5601,7 +5611,7 @@ public class HostedSiteService : IHostedSiteService
         {
             if (string.IsNullOrWhiteSpace(parentId) || parentId.Length > 80 || anchor != null)
                 return new AddCommentResult { Error = "回复必须关联有效讨论且不能另设批注位置", HttpStatus = 400, ErrorCode = "invalid" };
-            var parent = await _db.HostedSiteComments.Find(c => c.Id == parentId && c.SiteId == site.Id).FirstOrDefaultAsync(ct);
+            var parent = await _db.HostedSiteComments.Find(c => c.Id == parentId && c.SiteId == site.Id).Project(CommentMetadata).FirstOrDefaultAsync(ct);
             if (!HostedSiteCommentRules.CanReplyTo(parent, site.Id))
                 return new AddCommentResult { Error = "原讨论不存在或已删除", HttpStatus = 404, ErrorCode = "not_found" };
             contentVersion = HostedSiteCommentRules.StoredVersion(parent!);
@@ -5649,8 +5659,24 @@ public class HostedSiteService : IHostedSiteService
             AuthorName = string.IsNullOrWhiteSpace(authorName) ? "用户" : authorName,
             AuthorAvatarFileName = avatarFileName,
             Content = trimmed,
+            Attachments = attachments?.ToList() ?? new(),
+            AiReplyStatus = parentId == null && site.AiReplyEnabled && trimmed.Length > 0
+                && contentVersion == HostedSiteCommentRules.VersionKey(EffectiveContentVersion(site)) ? "pending" : null,
             IpAddress = ipAddress,
         };
+        if (comment.AiReplyStatus != null)
+        {
+            try
+            {
+                comment.AiReplyDeployment = TaskPermitDeployment.Resolve(_configuration);
+                comment.AiReplyDueAt = comment.CreatedAt;
+            }
+            catch (InvalidOperationException)
+            {
+                // A missing deployment identity must never prevent the human comment.
+                comment.AiReplyStatus = "failed";
+            }
+        }
         if (submissionId != null) comment.Id = submissionId;
         try
         {
@@ -5659,7 +5685,7 @@ public class HostedSiteService : IHostedSiteService
         catch (MongoWriteException error) when (submissionId != null && error.WriteError.Category == ServerErrorCategory.DuplicateKey)
         {
             var replay = await ReadCommentSubmissionAsync(site, authorUserId, submissionId, trimmed, anchor,
-                parentId, revisionId, expectedContentVersion, shareToken != null, CancellationToken.None);
+                parentId, revisionId, expectedContentVersion, attachments, shareToken != null, CancellationToken.None);
             if (replay != null) return replay;
             throw;
         }
@@ -5709,15 +5735,16 @@ public class HostedSiteService : IHostedSiteService
 
     private async Task<AddCommentResult?> ReadCommentSubmissionAsync(HostedSite site, string authorUserId, string submissionId,
         string content, HostedSiteCommentAnchor? anchor, string? parentId, string? revisionId, string? expectedContentVersion,
-        bool maskUserId, CancellationToken ct)
+        IReadOnlyList<HostedSiteCommentFile>? attachments, bool maskUserId, CancellationToken ct)
     {
         var saved = await _db.HostedSiteComments.Find(c => c.Id == submissionId && c.SiteId == site.Id
-            && c.AuthorUserId == authorUserId).FirstOrDefaultAsync(ct);
+            && c.AuthorUserId == authorUserId).Project(CommentMetadata).FirstOrDefaultAsync(ct);
         if (saved == null) return null;
         if (saved.IsDeleted || !HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(saved),
             EffectiveContentVersion(site), await CanEditSiteAsync(site, authorUserId, ct)))
             return new AddCommentResult { Error = "原评论已删除或没有继续查看的权限", HttpStatus = 404, ErrorCode = "not_found" };
-        if (!HostedSiteCommentRules.MatchesSubmission(saved, content, anchor, parentId, revisionId, expectedContentVersion))
+        if (!HostedSiteCommentRules.MatchesSubmission(saved, content, anchor, parentId, revisionId, expectedContentVersion)
+            || !saved.Attachments.Select(x => (x.Name, x.Sha256)).SequenceEqual((attachments ?? Array.Empty<HostedSiteCommentFile>()).Select(x => (x.Name, x.Sha256))))
             return new AddCommentResult { Error = "本次发送标识已用于另一条内容，请编辑草稿后发送", HttpStatus = 409, ErrorCode = "CLIENT_ID_REUSED" };
         if (saved.ParentId != null && !await _db.HostedSiteComments.Find(c => c.Id == saved.ParentId && c.SiteId == site.Id
             && !c.IsDeleted && c.ParentId == null).AnyAsync(ct))
@@ -5725,12 +5752,18 @@ public class HostedSiteService : IHostedSiteService
         return new AddCommentResult { Comment = ToCommentDto(saved, site, authorUserId, maskUserId) };
     }
 
+    public static readonly ProjectionDefinition<HostedSiteComment, HostedSiteComment> CommentMetadata =
+        new BsonDocumentProjectionDefinition<HostedSiteComment, HostedSiteComment>(new BsonDocument("Attachments.Data", 0));
+
     private static HostedSiteCommentDto ToCommentDto(HostedSiteComment comment, HostedSite site,
         string? viewerUserId, bool maskUserId = false) => new()
     {
         Id = comment.Id,
         SiteId = comment.SiteId,
         Content = comment.Content,
+        Attachments = comment.Attachments.Select((x, index) => new HostedSiteCommentFileDto(index, x.Name, x.Length)).ToArray(),
+        IsAi = comment.IsAi,
+        AiReplyStatus = comment.AiReplyStatus,
         Anchor = comment.Anchor,
         ParentId = comment.ParentId,
         ContentVersion = HostedSiteCommentRules.StoredVersion(comment),
@@ -5752,6 +5785,7 @@ public class HostedSiteService : IHostedSiteService
             .Find(c => c.SiteId == site.Id && !c.IsDeleted)
             .SortByDescending(c => c.CreatedAt)
             .Limit(500)
+            .Project(CommentMetadata)
             .ToListAsync(ct);
 
         // 最近 500 条里可能只有旧讨论的新回复，补齐其根讨论，避免用户看到无主回复。
@@ -5761,7 +5795,7 @@ public class HostedSiteService : IHostedSiteService
         if (missingParents.Count > 0)
         {
             var roots = await _db.HostedSiteComments.Find(c => c.SiteId == site.Id && !c.IsDeleted
-                && missingParents.Contains(c.Id) && c.ParentId == null).ToListAsync(ct);
+                && missingParents.Contains(c.Id) && c.ParentId == null).Project(CommentMetadata).ToListAsync(ct);
             comments.AddRange(roots);
         }
         var canViewHistory = !string.IsNullOrEmpty(viewerUserId) && await CanEditSiteAsync(site, viewerUserId, ct);

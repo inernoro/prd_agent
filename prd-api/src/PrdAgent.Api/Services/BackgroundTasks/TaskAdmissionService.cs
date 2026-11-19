@@ -130,8 +130,23 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
             new(requestId, fingerprint, "ModelUpgradeCanaryWorker"), null, ct, subjectUserId, budget);
     }
 
+    internal Task<TaskExecutionIdentity> AdmitHostedCommentReplyAsync(HostedSite site, HostedSiteComment comment,
+        CancellationToken ct)
+    {
+        if (!site.AiReplyEnabled || !site.CommentsEnabled || comment.SiteId != site.Id
+            || comment.AiReplyDeployment != TaskPermitDeployment.Resolve(configuration)
+            || comment.IsAi || comment.IsDeleted || comment.ParentId is not null || comment.AiReplyStatus != "processing")
+            throw new TaskExecutionAdmissionException("COMMENT_REPLY_NOT_ADMITTED", "当前评论未获得自动回复授权。");
+
+        const string operation = nameof(HostedCommentReplyWorker);
+        return IssueAsync(new(operation, new[] { AppCallerRegistry.Admin.WebHosting.Ask }),
+            $"platform-scheduler:{operation}", TaskExecutionOrigins.Scheduled, $"comment-reply:{site.Id}",
+            new(comment.Id, TaskExecutionCoordinator.Fingerprint(comment.Id + ":" + comment.ContentVersion), operation),
+            null, ct, site.OwnerUserId, maxCalls: 1);
+    }
+
     private async Task<TaskExecutionIdentity> IssueAsync(TaskAdmissionPolicy policy, string actor,
-        string origin, string credential, TaskBusinessIntent intent, HttpContext? http, CancellationToken ct, string? subjectUserId = null, TaskBudgetContractPolicy? canaryBudget = null)
+        string origin, string credential, TaskBusinessIntent intent, HttpContext? http, CancellationToken ct, string? subjectUserId = null, TaskBudgetContractPolicy? canaryBudget = null, int? maxCalls = null)
     {
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(credential)
             || actor.Length > 200 || credential.Length > 400 || policy.AppCallers.Count == 0
@@ -150,8 +165,8 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
             SourceDeployment = TaskPermitDeployment.Resolve(configuration),
             SourceTask = policy.Operation,
             AllowedAppCallerCodes = policy.AppCallers.ToList(),
-            MaxCalls = canaryBudget is not null ? 1 : origin == TaskExecutionOrigins.Interactive ? policy.InteractiveMaxCalls
-                : origin == TaskExecutionOrigins.Scheduled ? 8 : policy.AgentMaxCalls,
+            MaxCalls = maxCalls ?? (canaryBudget is not null ? 1 : origin == TaskExecutionOrigins.Interactive ? policy.InteractiveMaxCalls
+                : origin == TaskExecutionOrigins.Scheduled ? 8 : policy.AgentMaxCalls),
             MaxRuns = canaryBudget is not null ? 1 : origin == TaskExecutionOrigins.Interactive ? 16
                 : origin == TaskExecutionOrigins.Scheduled ? 1 : intent.DeclaredRunCount ?? 2,
             CreatedAt = now,

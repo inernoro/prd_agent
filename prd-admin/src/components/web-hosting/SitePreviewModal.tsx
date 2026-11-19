@@ -265,7 +265,7 @@ export default function SitePreviewModal({
   const modal = (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm sm:p-4"
-      onClick={onClose}
+      onClick={event => { if (event.target === event.currentTarget) onClose(); }}
     >
       <div
         ref={dialogRef}
