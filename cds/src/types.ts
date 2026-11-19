@@ -968,6 +968,15 @@ export interface CiImageDiagnosis {
   actionLabel: string;
 }
 
+export interface BranchPin {
+  kind: 'temporary' | 'permanent';
+  createdAt: string;
+  expiresAt?: string;
+  actor: string;
+  reason: string;
+  authorizationRef?: string;
+}
+
 export interface BranchEntry {
   /** 逻辑归档仍保留服务、工作区与数据；到期前可恢复。 */
   archive?: { archivedAt: string; retireAt: string; reason: string; actor: string } | null;
@@ -1041,6 +1050,11 @@ export interface BranchEntry {
    * The default branch and color-marked branches are also treated as pinned implicitly.
    */
   pinnedByUser?: boolean;
+  /** New protections carry provenance; missing/malformed legacy provenance remains protected. */
+  userPin?: BranchPin;
+  colorMarkPin?: BranchPin;
+  /** Owner review of a legacy config pin, bound to the exact configured list. */
+  configPinReview?: BranchPin & { configuredBranches: string[] };
   /**
    * Custom subdomain aliases for this branch. Each alias is a DNS label
    * (e.g. "paypal-webhook", "demo", "api-staging") that, when combined with
@@ -2405,6 +2419,7 @@ export interface CdsState {
    * `schedulerEnabledOverride`. `undefined` = no override. `0` = unlimited.
    */
   schedulerMaxHotOverride?: number;
+  imageRetentionCursor?: string;
   /**
    * UI-controlled override for the global janitor enable flag. When defined,
    * it supersedes `config.janitor.enabled` at runtime and is re-applied on boot.
@@ -3541,6 +3556,8 @@ export interface ProjectActivityLog {
     | 'restart'        // POST /branches/:id/restart（轻量重启，未重建）
     | 'crash'          // 容器异常退出，auto-restart 巡检发现
     | 'colormark-on'   // 标记调试中
+    | 'scheduler-pin'
+    | 'scheduler-unpin'
     | 'colormark-off'  // 取消调试中
     | 'ai-occupy'      // AI agent 开始操作
     | 'ai-release'     // AI agent 释放
@@ -3569,6 +3586,9 @@ export interface ProjectActivityLog {
   actor?: string;
   /** 自由文本，可空。展示用，<= 200 字符。 */
   note?: string;
+  /** Structured protection receipt retained alongside the actor and timestamp. */
+  pin?: BranchPin;
+  pinSource?: 'user' | 'config';
   /** 关联资源（如 app:frontend / infra:mysql）。 */
   resourceId?: string;
   /** 资源显示名缓存，避免 UI 再 join。 */

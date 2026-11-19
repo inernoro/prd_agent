@@ -16,7 +16,8 @@ import type { ObservationStreamExecutor } from './observation-stream-executor.js
 import { shellQuoteArg } from './secure-database-cli.js';
 import { worktreePathActivity } from './worktree-path-activity.js';
 import { assertProfileStorageBoundary, assertInfraStorageBoundary } from './deployment-storage-boundary.js';
-import { profileStoragePlan, infraStoragePlan, inspectStoragePlan, resolveStorageImage, renderStoragePlan, withReadOnlyTools, withRuntimeTmpfs, type DeploymentStoragePlan, type StorageBirthRequirements, UnsafeDeploymentStorageError } from './deployment-storage-plan.js';
+import { profileStoragePlan, infraStoragePlan, inspectStoragePlan, resolveStorageImage, renderStoragePlan, withReadOnlyTools, withRuntimeTmpfs, withPreviewCompatibilityAssets, type DeploymentStoragePlan, type StorageBirthRequirements, UnsafeDeploymentStorageError } from './deployment-storage-plan.js';
+import { preparePreviewCompatibilityAssets } from './preview-compatibility-assets.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
@@ -41,6 +42,7 @@ import { configuredImageCacheGovernance } from './image-cache-governance.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
 import { DOCKER_LOG_LIMIT_FLAGS, hasBoundedDockerLogs } from './docker-log-policy.js';
+import { detectInfraKind } from './infra-exposure-audit.js';
 export { DOCKER_LOG_LIMIT_FLAGS } from './docker-log-policy.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
@@ -2142,8 +2144,12 @@ export class ContainerService {
     const runImageReference = storageAdmission?.imageReference || profile.dockerImage;
     profile.dockerImage = await resolveStorageImage(shell, storageAdmission?.imageId || profile.dockerImage, acceptedStoragePlan, !storageAdmission);
     await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
+    const compatibilityAssets = await preparePreviewCompatibilityAssets({
+      repo: this.config.repoRoot, entry, profile, shell, projectEnv: customEnv, scope: process.env.CDS_PREVIEW_COMPAT_SCOPE,
+    });
+    const runtimePlan = compatibilityAssets ? withPreviewCompatibilityAssets(acceptedStoragePlan, compatibilityAssets) : acceptedStoragePlan;
     const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount, runtimeStoragePlan } =
-      await this.buildProfileVolumeFlags(entry, profile, command, onOutput, acceptedStoragePlan);
+      await this.buildProfileVolumeFlags(entry, profile, command, onOutput, runtimePlan);
     const checkRuntimeBinds = this.bindMountInspector(runtimeStoragePlan);
     checkBindMounts();
     shell = guardBindMountShell(shell, checkRuntimeBinds);
@@ -2270,7 +2276,7 @@ export class ContainerService {
       // 修复:隔离时改用 create → connect(infra) → start 时序 —— 进程启动前两张网都已就位,等价于
       // 旧路径下「容器进程开始前就在项目网上」。未隔离(connectNetworks 为空)仍走原 `docker run -d`,零回归。
       const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
-      const mustCreateBeforeStart = attachSharedBeforeStart || acceptedStoragePlan.mounts.some(m => m.kind === 'volume');
+      const mustCreateBeforeStart = attachSharedBeforeStart || runtimeStoragePlan.mounts.some(m => m.kind === 'volume' || m.previewAssets);
       const dockerCreateVerb = mustCreateBeforeStart ? 'docker create' : 'docker run -d';
       attemptRuntime = { containerName: service.containerName, hostPort: service.hostPort };
       const runCmd = [
@@ -4023,6 +4029,10 @@ export class ContainerService {
       ...healthFlags,
       // 同上：基础设施容器同样受日志限额约束（2026-07-27 复盘 P1）
       ...DOCKER_LOG_LIMIT_FLAGS,
+      // Mongo recommends 64000 open files. A daemon's inherited 1024 can exhaust
+      // both connection and WiredTiger handles. Only new containers receive this;
+      // existing databases keep the earlier reuse/start paths without recreation.
+      ...(detectInfraKind(service.dockerImage, service) === 'mongo' ? ['--ulimit nofile=64000:64000'] : []),
       // 共享 infra 也是托管工作负载,一并挂低权重 slice(2026-09-08)。
       ...workloadCgroupFlags(),
       ...(entrypointFlag ? [entrypointFlag] : []),
