@@ -115,9 +115,9 @@ export const TIME_RANGE_PRESETS: TimeRangePreset[] = [
   { key: '30d', label: '近 30 天', days: 30 },
 ];
 
-export function rangeFromPreset(days: number): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+export function rangeFromPreset(days: number, now = Date.now()): { from: string; to: string } {
+  const to = new Date(now);
+  const from = new Date(now - days * 24 * 60 * 60 * 1000);
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
