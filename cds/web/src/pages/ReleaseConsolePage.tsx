@@ -609,7 +609,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
       const result = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branchId)}/preflight`, { method: 'POST', body: { targetId: target, previewUrl } });
       if (!stillHere(scope)) return;
       setPreflight({ key: preflightKey, result });
-      if (result.artifact?.commitSha && result.artifact.commitSha !== commitSha) {
+      if (commitSha && result.artifact?.commitSha && result.artifact.commitSha !== commitSha) {
         setCommandError('检查到的版本已变化。请刷新分支，确认版本后重新检查。');
       }
     } catch (error) {
@@ -1241,8 +1241,9 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
               <div aria-label="发布前检查结果" className="cds-surface-raised cds-hairline shrink-0 rounded-[0.625rem] border px-3.5 py-2.5">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold">发布前检查结果</span>
-                  <Chip tone={preflight.ok ? 'ok' : 'bad'}>
-                    {preflight.ok ? '检查通过' : `${preflight.checks.filter(item => item.blocking && item.status === 'fail').length} 项阻断`}
+                  <Chip tone={!preflight.ok ? 'bad' : preflightMatchesCommit ? 'ok' : 'warn'}>
+                    {!preflight.ok ? `${preflight.checks.filter(item => item.blocking && item.status === 'fail').length} 项阻断`
+                      : preflightMatchesCommit ? '检查通过' : '来源版本待确认'}
                   </Chip>
                 </div>
                 {preflight.checks.some(check => check.status !== 'pass') ? (

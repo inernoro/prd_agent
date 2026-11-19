@@ -19,6 +19,7 @@ try{
  await context.addInitScript(()=>{window.EventSource=class{readyState=1;constructor(){setTimeout(()=>this.onopen?.({}),0)}addEventListener(){}removeEventListener(){}close(){}}});
  let account='account-a',releasePreflight,preflightSeen=false,posts=[],records=[],lookupFailure=false,refuseBeforeStart=true,batchPosts=[];
  let simulateForce=false;
+ let preflightCommitOverride;
  const sha='a'.repeat(40);let branchSha=sha;const projects=[{id:'project-a',name:'项目A',cloneStatus:'ready'},{id:'project-b',name:'项目B',cloneStatus:'ready'}];
  const run=extra=>({releaseId:'run-a',projectId:'project-a',targetId:'target-project-a',branchId:'branch-project-a',commitSha:sha,status:'success',startedAt:'2026-11-15T10:00:00Z',finishedAt:'2026-11-15T10:01:00Z',logs:[{seq:1,at:'2026-11-15T10:01:00Z',level:'info',message:'本次任务记录已接受'}],...extra});
  const batch=(project,status)=>({id:'batch-'+status,projectId:project,versionId:'version-a',reportId:'report-a',branchId:'branch-'+project,branchName:'main-'+project,commitSha:sha,status,createdAt:'2026-11-15T10:00:00Z',updatedAt:'2026-11-15T10:01:00Z',targets:[{targetId:'target-'+project,targetName:'测试环境-'+project,status,runId:'batch-run-a',previousReleaseId:'before-a',attempts:[]},{targetId:'second-'+project,targetName:'第二环境-'+project,status,runId:'batch-run-b',previousReleaseId:'before-b',attempts:[]}]});
@@ -42,7 +43,7 @@ try{
   else if(p==='/api/releases/center'){const project=url.searchParams.get('project');data={rows:['target-','second-'].map((prefix,index)=>({target:{id:prefix+project,projectId:project,name:(index?'第二环境-':'测试环境-')+project,type:'site',isEnabled:true,environment:'staging'},currentVersion:'',currentCommit:'',healthStatus:'unknown',canRollback:false})),runs:[],environments:[]};}
   else if(p.endsWith('/preflight')){
    if(!preflightSeen){preflightSeen=true;await new Promise(resolve=>releasePreflight=resolve);}
-   const commitSha=p.includes('branch-second-')?'b'.repeat(40):branchSha;
+   const commitSha=preflightCommitOverride ?? (p.includes('branch-second-')?'b'.repeat(40):branchSha);
    const checks=[{id:'health',label:'上线地址现状',status:'warn',message:'已有故障，允许提交发布，部署后复查。',blocking:false}];
    if(simulateForce) checks.push({id:'branch',label:'分支部署成功',status:'fail',message:'源预览暂停，普通发布被阻断。',blocking:true});
    data={ok:!simulateForce,forceAvailable:simulateForce,preflightId:'checked-'+commitSha.slice(0,8),artifact:{commitSha},checks};
@@ -147,8 +148,14 @@ try{
  assert(!recoveredParams.has('batch')&&!recoveredParams.has('batchView')&&!recoveredParams.has('intent'),'恢复结果清理批次与旧意图参数');
  await page.getByRole('button',{name:'发布所选版本',exact:true}).waitFor();assert(true,'恢复原任务后新来源版本不再被称为再发原版');await page.setViewportSize({width:390,height:900});await page.screenshot({path:out+'/recovered-390.png'});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'手机恢复结果无整页横向溢出');await page.setViewportSize({width:1440,height:900});branchSha='';await page.getByRole('button',{name:'刷新',exact:true}).click();await page.getByText('来源版本未确认，请刷新分支后再发布。',{exact:true}).waitFor();assert(await page.getByRole('button',{name:'发布所选版本',exact:true}).isDisabled(),'缺少下一次来源完整版本时禁写且说明恢复入口');await page.setViewportSize({width:390,height:900});await page.screenshot({path:out+'/missing-source-390.png'});assert(posts.length===2,'整条恢复路径从未自动重发');assert(hash()===provenance.sourceDiffSha256,'取证源码稳定');
 
- simulateForce=true;
  await page.setViewportSize({width:1440,height:900});
+ preflightCommitOverride='d'.repeat(40);
+ await checkRelease();
+ await page.getByText('来源版本待确认',{exact:true}).waitFor();
+ assert(await page.getByRole('alert').filter({hasText:'检查到的版本已变化'}).count()===0,'来源版本从未确认时仍可预检，状态不误报版本变化');
+ assert(await page.getByRole('button',{name:'发布所选版本',exact:true}).isDisabled(),'预检里的版本不能替代工作台确认的来源');
+ preflightCommitOverride=undefined;
+ simulateForce=true;
  await page.getByLabel('要发布的版本').selectOption('branch-second-project-a');
  await checkRelease();
  await page.getByText('源预览暂停，普通发布被阻断。',{exact:false}).waitFor();

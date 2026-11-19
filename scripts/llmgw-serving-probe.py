@@ -590,12 +590,11 @@ def main() -> int:
         report["featureRoutes"] = _check_feature_routes(base, key, feature_routes)
         for item in report["featureRoutes"]:
             if not item["ok"]:
-                detail = (f"feature route {item['appCallerCode']} failed: HTTP {item['httpStatus']} "
-                          f"{item['failureCode']}; {item['nextAction']}")
-                if args.force_external and item["httpStatus"] not in (401, 403):
-                    report["warnings"].append(f"强制发布放行业务路由检查：{detail}")
-                else:
-                    report["failures"].append(detail)
+                # /resolve 只读取路由和能力配置，既不调用模型，也不能确认上游业务服务故障。
+                report["failures"].append(
+                    f"feature route {item['appCallerCode']} failed: HTTP {item['httpStatus']} "
+                    f"{item['failureCode']}; {item['nextAction']}"
+                )
 
     report["verdict"] = "fail" if report["failures"] else "pass"
     _write_json(args.json_out, report)

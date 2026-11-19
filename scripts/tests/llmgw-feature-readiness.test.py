@@ -118,6 +118,16 @@ class FeatureReadinessTests(unittest.TestCase):
                         self.assertIn("defect-agent.polish-stream::chat", result.stdout)
                 self.assertTrue(all(path == "/resolve" and body["ReadOnlyMetadata"] is True for path, body in requests))
                 self.assertEqual(len(requests), 4)
+                for broken, thinking, failure_code in (
+                    (True, True, "APPCALLER_POOL_UNBOUND"), (False, False, "THINKING_UNSUPPORTED"),
+                ):
+                    with self.subTest(failure_code=failure_code):
+                        state.update(broken=broken, thinking=thinking)
+                        result = subprocess.run(command + ["--force-external"], capture_output=True, text=True, env=env)
+                        report = json.loads(output.read_text())
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertTrue(any(failure_code in item for item in report["failures"]))
+                state["thinking"] = None
                 # 跑发布脚本的真实验收函数；删掉其范围接线会让这一条错误地放行。
                 deploy = (ROOT / "exec_dep.sh").read_text()
                 function = deploy.split("run_llmgw_post_deploy_verification_if_needed() {", 1)[1].split(
