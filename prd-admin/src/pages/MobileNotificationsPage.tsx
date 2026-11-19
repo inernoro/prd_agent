@@ -1,307 +1,294 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Bell,
-  CheckCircle2,
-  Download,
-  Paperclip,
-  RefreshCw,
-} from 'lucide-react';
-import { getAdminNotifications } from '@/services';
-import type { AdminNotificationItem, GetAdminNotificationsResponse, NotificationListState, NotificationPriority } from '@/services/contracts/notifications';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowUpRight, Bell, ChevronRight, RefreshCw } from 'lucide-react';
+import { BottomSheet } from '@/components/ui/BottomSheet';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
-import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
-import { useAppStoreColors } from '@/hooks/useAppStoreColors';
-import { NotificationFacts } from '@/components/notifications/NotificationFacts';
 import { useNotificationActions } from '@/components/notifications/useNotificationActions';
+import { useIsDesktop } from '@/hooks/useBreakpoint';
+import {
+  NOTIFICATION_INCIDENT_STATE, NOTIFICATION_PRIORITIES, NOTIFICATION_REQUEST_OUTCOME,
+  notificationEnvironment, notificationOutcome, notificationPriority,
+} from '@/lib/notificationPresentation';
+import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { toast } from '@/lib/toast';
-import { NOTIFICATION_PRIORITIES, notificationEnvironment, notificationOutcome, notificationPriority } from '@/lib/notificationPresentation';
+import { getAdminNotifications } from '@/services';
+import type { AdminNotificationItem, NotificationPriority } from '@/services/contracts/notifications';
 
-/* ── 通知色调背景（iOS 语义色轻底，双主题通用；卡片边框/徽章走 registry 的 accent） ── */
-const TONE_BG: Record<string, string> = {
-  info: `${AS_COLOR.blue}14`,
-  warning: `${AS_COLOR.orange}1a`,
-  error: `${AS_COLOR.red}14`,
-  success: `${AS_COLOR.green}14`,
-};
-function getToneBg(level?: string) {
-  return TONE_BG[(level ?? '').toLowerCase()] ?? TONE_BG.info;
+const VIEWS = [
+  { key: 'attention', label: '待关注' },
+  { key: 'all', label: '全部记录' },
+  { key: 'archived', label: '已归档' },
+] as const;
+type View = typeof VIEWS[number]['key'];
+type PriorityFilter = NotificationPriority | 'all';
+const PRIORITIES = ['urgent', 'important', 'routine'] as const;
+const OUTCOME_LABEL = { failed: '失败', recovered: '已恢复', succeeded: '已完成', notice: '通知' };
+const BUTTON = 'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium hover-bg-soft disabled:opacity-50';
+const fullDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' });
+const shortDate = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+
+function isServiceAlert(item: AdminNotificationItem) {
+  return Boolean(item.incidentState || item.incidentId) || item.source === 'gateway-alert' || item.source === 'llm-gateway-quota';
 }
 
-const PRIORITIES = ['urgent', 'important', 'routine'] as const;
-const STATES = [{ key: 'all', label: '全部状态' }, { key: 'open', label: '待确认' }, { key: 'archived', label: '已归档' }] as const;
+function NotificationIcon({ item }: { item: AdminNotificationItem }) {
+  const type = getNotificationType(item);
+  const Icon = type.icon;
+  const outcome = notificationOutcome(item);
+  return <span role="img" aria-label={outcome === 'notice' ? type.label : OUTCOME_LABEL[outcome]}
+    className="grid h-9 w-9 shrink-0 place-items-center rounded-lg" style={{ color: type.fg, background: `${type.accent}20` }}>
+    <Icon size={19} aria-hidden="true" />
+  </span>;
+}
 
 function PriorityLabel({ item }: { item: AdminNotificationItem }) {
-  const tone = NOTIFICATION_PRIORITIES[notificationPriority(item.level)];
-  return <span className="whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] font-semibold"
-    style={{ borderColor: 'var(--border-subtle)', color: tone.color }}>{tone.label}</span>;
+  const priority = NOTIFICATION_PRIORITIES[notificationPriority(item.level)];
+  return <span className="whitespace-nowrap font-semibold" style={{ color: priority.color }}>{priority.label}</span>;
 }
 
-function NotificationResultIcon({ item }: { item: AdminNotificationItem }) {
-  const variant = getNotificationType(item);
-  const Icon = variant.icon;
-  const outcome = notificationOutcome(item);
-  const label = { failed: '失败', recovered: '已恢复', succeeded: '已完成', notice: variant.label }[outcome];
-  const tone = outcome === 'failed' ? 'error' : outcome === 'notice' ? item.level : 'success';
-  return <div role="img" aria-label={label} className="grid h-10 w-10 shrink-0 place-items-center rounded-[11px]"
-    style={{ background: getToneBg(tone), color: variant.fg }}><Icon size={19} aria-hidden="true" /></div>;
+function NotificationTime({ value, short = false }: { value: string; short?: boolean }) {
+  const date = new Date(value);
+  return <time dateTime={value}>{Number.isNaN(date.valueOf()) ? '时间未记录' : (short ? shortDate : fullDate).format(date)}</time>;
 }
 
-function NotificationLead({ item }: { item: AdminNotificationItem }) {
-  const variant = getNotificationType(item);
+function NotificationRow({ item, selected, select }: { item: AdminNotificationItem; selected: boolean; select: () => void }) {
+  const type = getNotificationType(item);
   const environment = notificationEnvironment(item);
-  return <>
-    <div className="break-words text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{item.title}</div>
-    {environment && <div className="mt-1 text-xs" style={{ color: 'var(--text-secondary)' }}>环境 {environment}</div>}
-    <div className="my-1.5 flex flex-wrap items-center gap-2">
-      <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-        style={{ background: `${variant.accent}1f`, color: variant.fg }}>{variant.label}</span>
-      <PriorityLabel item={item} />
+  const evidenceAt = notificationOutcome(item) === 'recovered' ? item.recoveredAt : item.lastOccurredAt;
+  const impact = item.requestOutcome && item.requestOutcome !== 'unknown' ? NOTIFICATION_REQUEST_OUTCOME[item.requestOutcome] : undefined;
+  return <li data-notification-id={item.id} className="border-b border-token-subtle last:border-b-0">
+    <button type="button" aria-current={selected ? 'true' : undefined} onClick={select}
+      className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-l-2 px-3 py-3 text-left hover-bg-soft sm:px-4"
+      style={{ background: selected ? 'var(--bg-card-hover)' : undefined, borderLeftColor: selected ? 'var(--accent-fg-blue)' : 'transparent' }}>
+      <NotificationIcon item={item} />
+      <span className="min-w-0">
+        <span className="block break-words text-sm font-semibold leading-5 text-token-primary">{item.title}</span>
+        <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs leading-4 text-token-secondary">
+          {environment && <span className="font-medium text-token-primary">环境 {environment}</span>}
+          <span>{type.label}</span>
+          {item.incidentId && item.occurrenceCount != null && <span>记录 {item.occurrenceCount} 次</span>}
+          {item.status !== 'open' && <span>{item.status === 'closed' ? '已归档' : '已确认'}</span>}
+        </span>
+        {impact && <span className="mt-1 block text-xs leading-4 text-token-secondary lg:hidden">{impact}</span>}
+      </span>
+      <span className="flex min-w-0 flex-col items-end gap-1 text-xs leading-4 text-token-secondary">
+        <PriorityLabel item={item} />
+        <span className="whitespace-nowrap tabular-nums" title={evidenceAt ? '故障证据时间' : '通知更新时间'}><NotificationTime value={evidenceAt || item.updatedAt} short /></span>
+      </span>
+    </button>
+  </li>;
+}
+
+function NotificationDetail({ item, handling, busy, onOpen, onConfirm }: {
+  item: AdminNotificationItem;
+  handling: boolean;
+  busy: boolean;
+  onOpen: () => void;
+  onConfirm: () => void;
+}) {
+  const environment = notificationEnvironment(item);
+  const type = getNotificationType(item);
+  const incident = isServiceAlert(item);
+  const state = NOTIFICATION_INCIDENT_STATE[item.incidentState ?? 'unknown'] ?? NOTIFICATION_INCIDENT_STATE.unknown;
+  const impact = NOTIFICATION_REQUEST_OUTCOME[item.requestOutcome ?? 'unknown'] ?? NOTIFICATION_REQUEST_OUTCOME.unknown;
+  const facts = [
+    { label: incident ? '最近发生' : '通知时间', value: incident ? item.lastOccurredAt : item.createdAt },
+    { label: '首次发生', value: item.firstOccurredAt },
+    { label: '恢复时间', value: item.incidentState === 'recovered' ? item.recoveredAt : null },
+  ];
+  return <div className="space-y-4 text-sm">
+    <div className="flex items-start gap-3">
+      <NotificationIcon item={item} />
+      <div className="min-w-0">
+        <h3 className="break-words text-lg font-semibold leading-snug text-token-primary">{item.title}</h3>
+        <div className="mt-1 text-xs text-token-secondary">
+          {environment && <span className="mr-2 font-medium text-token-primary">环境 {environment}</span>}
+          <PriorityLabel item={item} />
+          <span className="ml-2">{type.label}</span>
+        </div>
+      </div>
     </div>
-  </>;
+
+    {incident && <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-token-subtle bg-token-card p-3">
+      <div><dt className="text-xs text-token-secondary">请求影响</dt><dd className="mt-1 font-semibold text-token-primary">{impact}</dd></div>
+      <div><dt className="text-xs text-token-secondary">故障状态</dt><dd className="mt-1 font-semibold text-token-primary">{state}</dd></div>
+      {facts.map(fact => fact.value && <div key={fact.label}>
+        <dt className="text-xs text-token-secondary">{fact.label}</dt>
+        <dd className="mt-1 text-token-primary"><NotificationTime value={fact.value} /></dd>
+      </div>)}
+      {item.incidentId && item.occurrenceCount != null && <div>
+        <dt className="text-xs text-token-secondary">同一故障累计</dt><dd className="mt-1 font-semibold text-token-primary">{item.occurrenceCount} 次</dd>
+      </div>}
+      {!item.firstOccurredAt && !item.lastOccurredAt && <div>
+        <dt className="text-xs text-token-secondary">通知记录时间</dt><dd className="mt-1 text-token-primary"><NotificationTime value={item.createdAt} /></dd>
+      </div>}
+    </dl>}
+
+    <div className="flex flex-wrap items-center gap-2">
+      {item.actionUrl && <button type="button" className={BUTTON} disabled={busy} onClick={onOpen}
+        style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>
+        {item.actionLabel || '查看对应对象'} <ArrowUpRight size={15} aria-hidden="true" />
+      </button>}
+      {item.status === 'open' ? <button type="button" className={`${BUTTON} border border-token-subtle text-token-secondary`}
+        disabled={busy} onClick={onConfirm} aria-label={`确认通知：${item.title}`}>
+        {handling && <MapSpinner size={13} />}确认通知
+      </button> : <span className="text-xs text-token-secondary">{item.status === 'closed' ? '已归档' : '已确认通知'}</span>}
+    </div>
+
+    {item.message && <section aria-label="通知说明">
+      <h4 className="mb-1 text-xs font-semibold text-token-primary">{incident ? '情况与处理建议' : '通知内容'}</h4>
+      <p className="whitespace-pre-line break-words leading-relaxed text-token-secondary">{item.message}</p>
+    </section>}
+    {!incident && <div className="text-xs text-token-secondary">通知时间 <NotificationTime value={item.createdAt} /></div>}
+    {item.attachments && item.attachments.length > 0 && <div className="flex flex-wrap gap-2" aria-label="附件">
+      {item.attachments.map((file, index) => <a key={`${file.url}-${index}`} href={file.url} target="_blank" rel="noopener noreferrer"
+        className="max-w-full break-words rounded-lg border border-token-subtle px-2.5 py-1.5 text-xs hover-bg-soft">{file.name}</a>)}
+    </div>}
+    {item.evidenceRequestId && <div className="break-all text-xs text-token-secondary">定位编号 <code className="ml-1 select-all text-token-primary">{item.evidenceRequestId}</code></div>}
+
+    {item.status === 'open' && !item.targetUserId && <p className="text-xs leading-relaxed text-token-secondary">
+      共享通知的确认对所有有权查看者生效。
+    </p>}
+    {incident && item.status === 'handled' && <p className="text-xs text-token-secondary">确认不代表故障已修复。</p>}
+  </div>;
 }
 
 export default function MobileNotificationsPage() {
-  const C = useAppStoreColors();
-  const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
+  const desktop = useIsDesktop();
+  const [view, setView] = useState<View>('attention');
+  const [priority, setPriority] = useState<PriorityFilter>('all');
+  const [result, setResult] = useState<{ query: string; items: AdminNotificationItem[]; nextCursor?: string; hasMore: boolean }>();
   const [loading, setLoading] = useState(true);
-  const [summary, setSummary] = useState<GetAdminNotificationsResponse['summary']>();
-  const [hasMore, setHasMore] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string>();
-  const [priority, setPriority] = useState<NotificationPriority | 'all'>('all');
-  const [state, setState] = useState<NotificationListState | 'all'>('all');
+  const [failed, setFailed] = useState(false);
+  const [selection, setSelection] = useState<string>();
+  const [showMobileDetail, setShowMobileDetail] = useState(false);
   const requestSequence = useRef(0);
+  const query = `${view}:${priority}`;
+  const current = result?.query === query ? result : undefined;
 
   const loadPage = useCallback(async (cursor?: string) => {
     const request = ++requestSequence.current;
     setLoading(true);
+    setFailed(false);
     try {
-      const res = await getAdminNotifications({
-        includeHandled: true, cursor,
-        priority: priority === 'all' ? undefined : priority,
-        state: state === 'all' ? undefined : state,
+      const response = await getAdminNotifications({
+        includeHandled: true, cursor, priority: priority === 'all' ? undefined : priority,
+        state: view === 'all' ? undefined : view,
       });
       if (request !== requestSequence.current) return;
-      if (res.success) {
-        const items = res.data.items ?? [];
-        setNotifications(previous => cursor ? [...new Map([...previous, ...items].map(item => [item.id, item])).values()] : items);
-        if (!cursor) setSummary(res.data.summary);
-        setHasMore(Boolean(res.data.hasMore));
-        setNextCursor(res.data.nextCursor || undefined);
-      } else toast.error('通知读取失败', res.error?.message ?? '请稍后刷新重试。');
+      if (!response.success) {
+        setFailed(true);
+        toast.error('通知读取失败', response.error?.message ?? '请稍后刷新重试。');
+        return;
+      }
+      const items = (response.data.items ?? []).filter(item => !isEscalationNotification(item));
+      setResult(previous => ({
+        query, items: cursor && previous?.query === query
+          ? [...new Map([...previous.items, ...items].map(item => [item.id, item])).values()] : items,
+        nextCursor: response.data.nextCursor || undefined, hasMore: Boolean(response.data.hasMore),
+      }));
     } catch {
-      if (request === requestSequence.current) toast.error('通知读取失败', '请稍后刷新重试，已有列表已保留。');
+      if (request === requestSequence.current) {
+        setFailed(true);
+        toast.error('通知读取失败', '请稍后刷新重试。');
+      }
     } finally {
       if (request === requestSequence.current) setLoading(false);
     }
-  }, [priority, state]);
-  const loadNotifications = useCallback(() => loadPage(), [loadPage]);
-  const { openNotification, confirmNotifications, handlingId, handlingAll } = useNotificationActions({ refresh: loadNotifications });
+  }, [priority, query, view]);
+  const refresh = useCallback(() => loadPage(), [loadPage]);
+  const { openNotification, confirmNotifications, handlingId, handlingAll } = useNotificationActions({ refresh });
+  useEffect(() => { void refresh(); return () => { requestSequence.current += 1; }; }, [refresh]);
 
-  useEffect(() => { void loadNotifications(); return () => { requestSequence.current += 1; }; }, [loadNotifications]);
+  const notifications = current?.items ?? [];
+  const serviceAlerts = view === 'attention' ? notifications.filter(isServiceAlert) : [];
+  const otherNotifications = view === 'attention' ? notifications.filter(item => !isServiceAlert(item)) : notifications;
+  const selectedByUser = notifications.find(item => item.id === selection);
+  const selected = selectedByUser ?? serviceAlerts[0] ?? notifications[0];
+  const urgentCount = view === 'attention' ? notifications.filter(item => notificationPriority(item.level) === 'urgent').length : 0;
+  const confirmable = notifications.filter(item => item.status === 'open').slice(0, 200);
+  const busy = handlingAll || Boolean(handlingId);
+  const detail = selected && <NotificationDetail item={selected} busy={busy} handling={handlingId === selected.id}
+    onOpen={() => void openNotification(selected)} onConfirm={() => void confirmNotifications([selected], false)} />;
+  const select = (item: AdminNotificationItem) => {
+    setSelection(item.id);
+    if (!desktop) setShowMobileDetail(true);
+  };
+  const showRows = (items: AdminNotificationItem[]) => <ul>{items.map(item => <NotificationRow key={item.id} item={item}
+    selected={desktop && selected?.id === item.id} select={() => select(item)} />)}</ul>;
+  const changeView = (next: View) => {
+    if (view === next) return;
+    setView(next);
+    setPriority('all');
+    setSelection(undefined);
+    setShowMobileDetail(false);
+  };
 
-  const sortByPriorityThenTime = (a: AdminNotificationItem, b: AdminNotificationItem) =>
-    NOTIFICATION_PRIORITIES[notificationPriority(b.level)].rank - NOTIFICATION_PRIORITIES[notificationPriority(a.level)].rank
-    || (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0);
-
-  // 用户要求：通知不再出现催办。兜底过滤已下线的催办/超时提醒残留。
-  const visibleNotifications = useMemo(
-    () => notifications.filter(n => !isEscalationNotification(n)
-      && (priority === 'all' || notificationPriority(n.level) === priority)
-      && (state === 'all' || (n.status === 'open') === (state === 'open'))),
-    [notifications, priority, state],
-  );
-
-  const activeNotifications = useMemo(
-    () => visibleNotifications.filter(n => n.status === 'open').sort(sortByPriorityThenTime),
-    [visibleNotifications],
-  );
-
-  const handledNotifications = useMemo(
-    () => visibleNotifications.filter(n => n.status !== 'open').sort(sortByPriorityThenTime),
-    [visibleNotifications],
-  );
-
-
-  const confirmationPage = activeNotifications.slice(0, 200);
-  const filterStyle = (selected: boolean) => ({
-    color: selected ? C.blue : C.labelSecondary,
-    background: selected ? C.pillBg : C.card,
-    borderColor: C.hairline,
-  });
-  return (
-    <div className="h-full min-h-0 overflow-auto" style={{ background: C.bg, fontFamily: AS_FONT_FAMILY }}>
-      <div className="mx-auto max-w-[1080px] px-4 pt-5 pb-24 md:px-9 md:pt-9">
-        <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight md:text-[32px]" style={{ color: C.label }}>通知中心</h1>
-            <div className="mt-1 text-sm" style={{ color: C.labelSecondary }} role="status">
-            {loading ? '加载中...' : `${activeNotifications.length} 条待确认通知`}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs" style={filterStyle(false)}
-              disabled={loading} onClick={() => void loadNotifications()}><RefreshCw size={14} aria-hidden="true" />刷新</button>
-          {confirmationPage.length > 0 && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-transform active:scale-95"
-              style={{ background: C.pillBg, color: C.blue }}
-              onClick={() => void confirmNotifications(confirmationPage, true)}
-              disabled={handlingAll || Boolean(handlingId)}
-            >
-              <CheckCircle2 size={14} />
-              确认当前 {confirmationPage.length} 条通知
-            </button>
-          )}
-          </div>
-        </header>
-        <div className="mb-4 flex flex-wrap gap-3 rounded-xl border p-2 sm:items-center sm:justify-between"
-          style={{ background: C.card, borderColor: C.hairline }}>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="通知优先级">
-            {(['all', ...PRIORITIES] as const).map(key => <button key={key} type="button"
-              aria-pressed={priority === key} className="min-h-9 rounded-lg border px-3 text-xs font-medium"
-              style={filterStyle(priority === key)} onClick={() => setPriority(key)}>
-              {key === 'all' ? '全部优先级' : NOTIFICATION_PRIORITIES[key].label}
-            </button>)}
-          </div>
-          <select aria-label="通知状态" value={state} onChange={event => setState(event.target.value as typeof state)}
-            className="min-h-9 rounded-lg border px-3 text-xs" style={filterStyle(false)}>
-            {STATES.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
-          </select>
+  return <div className="h-full min-h-0 overflow-auto bg-[var(--bg-base)] text-token-primary">
+    <div className="mx-auto max-w-[1240px] px-4 pb-24 pt-5 sm:px-8 sm:pt-8">
+      <header className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-[30px]">通知中心</h1>
+          <p className="mt-1 text-sm text-token-secondary">{view === 'attention' ? '紧急和重要的待确认通知' : view === 'all' ? '查看收到的通知和处理记录' : '查看已确认或已关闭的通知'}</p>
         </div>
+        <button type="button" className={`${BUTTON} border border-token-subtle text-token-secondary`} disabled={loading || busy} onClick={() => void refresh()}>
+          <RefreshCw size={15} aria-hidden="true" />刷新
+        </button>
+      </header>
 
-        <div className="mb-3 text-[11px] leading-relaxed" style={{ color: C.labelSecondary }}>
-          {summary && <div>{summary.independentIncidentCount} 个已识别独立故障 · {summary.unclassifiedCount} 条未分类通知</div>}
-          <div>确认不代表故障已修复。共享通知的确认对所有有权查看者生效。</div>
-          {hasMore && !nextCursor && <div>当前服务仅返回最近一批通知。</div>}
-        </div>
-        {/* ── 未处理通知 ── */}
-        {activeNotifications.length > 0 && (
-          <div className="space-y-3 mb-6">
-            {activeNotifications.map((item) => {
-              const isHandling = handlingId === item.id || handlingAll;
-              const clickable = !!item.actionUrl;
-              return (
-                <div
-                  key={item.id}
-                  data-notification-id={item.id}
-                  className="rounded-2xl border px-4 py-3"
-                  style={{
-                    borderColor: C.hairline,
-                    background: C.card,
-                    cursor: clickable ? 'pointer' : 'default',
-                  }}
-                  onClick={clickable ? () => void openNotification(item) : undefined}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <NotificationResultIcon item={item} />
-                    <div className="min-w-0 flex-1">
-                      <NotificationLead item={item} />
-                      {item.message && (
-                        <div className="mt-1 whitespace-pre-line text-[12px] leading-relaxed" style={{ color: C.labelSecondary }}>
-                          {item.message}
-                        </div>
-                      )}
-                      {item.attachments && item.attachments.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mt-2">
-                          {item.attachments.map((att, idx) => (
-                            <a
-                              key={idx}
-                              href={att.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px]"
-                              style={{
-                                background: C.surface,
-                                color: C.labelSecondary,
-                                border: `1px solid ${C.hairline}`,
-                              }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Paperclip size={10} />
-                              <span className="truncate max-w-[120px]">{att.name}</span>
-                              <Download size={10} className="shrink-0 opacity-60" />
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                      <NotificationFacts item={item} />
-                      {item.actionUrl && <button
-                        type="button"
-                        className="mt-2 rounded-lg px-2 py-1.5 text-[11px]"
-                        style={{ background: C.surface, color: C.blue }}
-                        onClick={(event) => { event.stopPropagation(); void openNotification(item); }}
-                        disabled={handlingAll || Boolean(handlingId)}
-                      >{item.actionLabel || '查看对应对象'}</button>}
-                    </div>
-                    <button
-                      type="button"
-                      className="shrink-0 mt-0.5 rounded-lg p-1.5 transition-transform active:scale-90"
-                      style={{ background: C.surface }}
-                      onClick={(e) => { e.stopPropagation(); void confirmNotifications([item], false); }}
-                      disabled={handlingAll || Boolean(handlingId)}
-                      aria-label={`确认通知：${item.title}`}
-                      title="仅确认此通知，不会修复故障；共享通知的确认对所有有权查看者生效"
-                    >
-                      {isHandling
-                        ? <MapSpinner size={14} color={C.labelSecondary} />
-                        : <CheckCircle2 size={14} style={{ color: C.labelSecondary }} />
-                      }
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-token-subtle">
+        <nav aria-label="通知视图" className="flex gap-4 sm:gap-6">
+          {VIEWS.map(tab => <button key={tab.key} type="button" aria-pressed={view === tab.key} disabled={busy} onClick={() => changeView(tab.key)}
+            className="min-h-11 whitespace-nowrap border-b-2 px-0.5 text-sm font-semibold text-token-secondary"
+            style={view === tab.key ? { color: 'var(--text-primary)', borderColor: 'var(--accent-fg-blue)' } : { borderColor: 'transparent' }}>
+            {tab.label}
+          </button>)}
+        </nav>
+        <select aria-label="通知优先级" value={priority} disabled={busy} className="mb-1 min-h-9 max-w-full rounded-lg border border-token-subtle bg-token-card px-2 text-sm text-token-primary"
+          onChange={event => { setPriority(event.target.value as PriorityFilter); setSelection(undefined); }}>
+          <option value="all">全部级别</option>
+          {PRIORITIES.filter(key => view !== 'attention' || key !== 'routine').map(key => <option key={key} value={key}>{NOTIFICATION_PRIORITIES[key].label}</option>)}
+        </select>
+      </div>
 
-        {/* ── 空状态 ── */}
-        {!loading && activeNotifications.length === 0 && handledNotifications.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <Bell size={32} style={{ color: C.labelTertiary }} />
-            <div className="text-sm" style={{ color: C.labelSecondary }}>当前筛选下暂无通知</div>
-          </div>
-        )}
-
-        {/* ── 已处理通知 ── */}
-        {handledNotifications.length > 0 && (
-          <div>
-            <div className="text-xs font-medium mb-3" style={{ color: C.labelSecondary }}>
-              已归档通知
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-5">
+        <section aria-label="通知列表" aria-busy={loading} className="min-w-0 overflow-hidden rounded-xl border border-token-subtle bg-token-card">
+          {current && <div className="flex flex-wrap items-center justify-between gap-x-2 border-b border-token-subtle px-4 py-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-token-secondary" role="status">
+              {view === 'attention' && notifications.length > 0 ? <>
+                {current.hasMore && <span>已显示</span>}
+                {urgentCount > 0 && <span style={{ color: NOTIFICATION_PRIORITIES.urgent.color }}>{urgentCount} 条紧急</span>}
+                {urgentCount < notifications.length && <span style={{ color: NOTIFICATION_PRIORITIES.important.color }}>{notifications.length - urgentCount} 条重要</span>}
+              </> : <span>{current.hasMore ? '已显示 ' : ''}{notifications.length} 条通知</span>}
             </div>
-            <div className="space-y-2">
-              {handledNotifications.map((item) => (
-                <div
-                  key={item.id}
-                  data-notification-id={item.id}
-                  className="flex items-start gap-3 rounded-xl px-4 py-3"
-                  style={{ background: C.card, border: `1px solid ${C.hairline}` }}
-                >
-                  <NotificationResultIcon item={item} />
-                  <div className="min-w-0 flex-1">
-                  <NotificationLead item={item} />
-                  {item.message && (
-                    <div className="text-[11px] mt-0.5 line-clamp-1" style={{ color: C.labelSecondary }}>
-                      {item.message}
-                    </div>
-                  )}
-                  <NotificationFacts item={item} />
-                  {item.actionUrl && <button type="button" className="mt-2 text-[12px]" style={{ color: C.blue }} onClick={() => void openNotification(item)}>{item.actionLabel || '查看对应对象'}</button>}
-                  <div className="mt-1 text-[10px]" style={{ color: C.labelTertiary }}>
-                    {item.status === 'closed' ? '已归档' : item.handledAt ? `确认于 ${new Date(item.handledAt).toLocaleString('zh-CN')}` : '已确认通知'}
-                  </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        {nextCursor && <div className="mt-5 flex justify-center">
-          <button type="button" className="rounded-lg border px-5 py-2 text-sm" style={filterStyle(false)}
-            disabled={loading} onClick={() => void loadPage(nextCursor)}>{loading ? '加载中…' : '加载更早通知'}</button>
-        </div>}
+            {confirmable.length > 0 && <button type="button" className={`${BUTTON} text-xs text-token-secondary`} disabled={busy || loading}
+              onClick={() => void confirmNotifications(confirmable, true)}>确认当前 {confirmable.length} 条通知</button>}
+          </div>}
+          {serviceAlerts.length > 0 && <section aria-label="服务告警">
+            <h2 className="px-4 pb-1 pt-3 text-xs font-semibold text-token-secondary">服务告警</h2>
+            {showRows(serviceAlerts)}
+          </section>}
+          {otherNotifications.length > 0 && (view === 'attention' ? <section aria-label="其他提醒" className={serviceAlerts.length ? 'border-t border-token-subtle' : undefined}>
+            <h2 className="px-4 pb-1 pt-3 text-xs font-semibold text-token-secondary">其他提醒</h2>
+            {showRows(otherNotifications)}
+          </section> : showRows(otherNotifications))}
+          {notifications.length === 0 && <div className="flex min-h-52 flex-col items-center justify-center gap-3 px-4 text-center text-sm text-token-secondary" role="status">
+            {loading ? <MapSpinner size={24} /> : <Bell size={24} aria-hidden="true" />}
+            <p>{loading ? '正在读取通知…' : failed ? '暂时无法读取通知，请刷新重试。' : view === 'attention' ? '暂无待关注通知' : '当前筛选下暂无通知'}</p>
+            {!loading && !failed && view === 'attention' && <button type="button" className={BUTTON} onClick={() => changeView('all')}>
+              查看全部记录 <ChevronRight size={15} aria-hidden="true" />
+            </button>}
+          </div>}
+          {current?.nextCursor && <div className="flex justify-center border-t border-token-subtle p-2">
+            <button type="button" className={`${BUTTON} text-token-secondary`} disabled={loading || busy}
+              onClick={() => void loadPage(current.nextCursor)}>{loading ? '加载中…' : '加载更多通知'}</button>
+          </div>}
+        </section>
+        {desktop && selected && <aside aria-labelledby="notification-detail-title" className="sticky top-4 min-w-0 rounded-xl border border-token-subtle bg-token-card px-5 pb-5 pt-4">
+          <h2 id="notification-detail-title" className="mb-4 border-b border-token-subtle pb-3 text-sm font-semibold text-token-secondary">通知详情</h2>
+          {detail}
+        </aside>}
       </div>
     </div>
-  );
+    {!desktop && <BottomSheet open={showMobileDetail && Boolean(selectedByUser)} onOpenChange={setShowMobileDetail} title="通知详情">{detail}</BottomSheet>}
+  </div>;
 }

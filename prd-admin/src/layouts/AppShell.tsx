@@ -730,8 +730,9 @@ export default function AppShell() {
       return next;
     });
   }, []);
+  const viewingNotificationCenter = location.pathname === '/notifications';
   const pendingToastNotification = useNotificationToast({ notifications: activeNotifications, dismissed: dismissedToastIds,
-    paused: toastHovering || notificationDialogOpen, snoozed: isSnoozed, collapsed: toastCollapsed,
+    paused: toastHovering || notificationDialogOpen || viewingNotificationCenter, snoozed: isSnoozed, collapsed: toastCollapsed,
     onDismiss: dismissToastKey, onCollapsedChange: setToastCollapsed });
   const toastNotification = pendingToastNotification ?? (toastCollapsed ? activeNotifications[0] : undefined);
 
@@ -825,7 +826,7 @@ export default function AppShell() {
       <GlobalDefectSubmitDialog />
       {/* TipsDrawer 已上移到 App 根挂载(全局唯一,跨路由不卸载),此处不再渲染 */}
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
-      {!suppressFloatingDock && !isMobile && !notificationDialogOpen && toastNotification && (() => {
+      {!suppressFloatingDock && !isMobile && !notificationDialogOpen && !viewingNotificationCenter && toastNotification && (() => {
         const tone = getNotificationTone(toastNotification.level);
         // 通知类型注册表：不同类型（缺陷协作 / 周报 / 系统告警 …）展示不同图标、强调色与弹窗气质
         const variant = getNotificationType(toastNotification);

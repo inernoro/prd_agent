@@ -8,7 +8,7 @@ const api = vi.hoisted(() => ({ list: vi.fn(), handle: vi.fn(), all: vi.fn(), ba
 vi.mock('@/services', () => ({ getAdminNotifications: api.list, handleAdminNotification: api.handle, handleAllAdminNotifications: api.all, handleBatchAdminNotifications: api.batch, createLlmGatewaySsoTicket: api.ticket }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => api.navigate }));
 vi.mock('@/lib/toast', () => ({ toast: { error: api.error, success: api.success } }));
-vi.mock('@/hooks/useAppStoreColors', () => ({ useAppStoreColors: () => ({ bg: 'white', label: 'black' }) }));
+vi.mock('@/hooks/useBreakpoint', () => ({ useIsDesktop: () => true }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>提交中</span> }));
 
 const notice = { id: 'route-a', title: '线路甲余额不足', message: '本次请求已通过备用线路完成。', level: 'warning', status: 'open', actionUrl: '/logs?requestId=req-a', createdAt: '2026-11-13T00:00:00Z', updatedAt: '2026-11-13T01:00:00Z', pushEpisode: 2, incidentId: 'incident-a', incidentState: 'active', requestOutcome: 'fallback_succeeded', occurrenceCount: 182, firstOccurredAt: '2026-11-13T00:00:00Z', lastOccurredAt: '2026-11-13T01:00:00Z' };
@@ -35,8 +35,9 @@ describe('通知动作与事实真实组件交互', () => {
     const recordedAt = '2026-11-12T10:17:56Z';
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, title: '历史额度异常', message: '历史通知记录了服务额度异常。', requestOutcome: 'unknown', incidentId: undefined, incidentState: 'unknown', occurrenceCount: undefined, firstOccurredAt: undefined, lastOccurredAt: undefined, recoveredAt: undefined, createdAt: recordedAt }] } });
     await render();
-    expect(host.textContent).toContain('故障发生时间未记录；通知记录于');
-    const time = host.querySelector('time');
+    expect(host.textContent).toContain('通知记录时间');
+    expect(host.textContent).not.toContain('最近发生');
+    const time = host.querySelector<HTMLTimeElement>('aside time');
     expect(time?.dateTime).toBe(recordedAt);
     expect(time?.textContent).toContain('2026');
     expect(host.textContent).not.toContain('已有恢复证据');
@@ -44,8 +45,7 @@ describe('通知动作与事实真实组件交互', () => {
 
   it('进入正确对象只导航，不确认通知或改变故障', async () => {
     await render();
-    const title = [...host.querySelectorAll('div')].find(item => item.textContent === notice.title)!;
-    await act(async () => title.click());
+    await click(/查看对应对象/);
     expect(api.navigate).toHaveBeenCalledWith(notice.actionUrl);
     expect(api.handle).not.toHaveBeenCalled();
     expect(host.textContent).toContain(notice.title);
@@ -71,11 +71,14 @@ describe('通知动作与事实真实组件交互', () => {
   it('单条确认保留最近观测异常的事实，不把确认当恢复', async () => {
     api.batch.mockResolvedValue({ success: true, data: { requested: 1, handled: 1, failed: 0, results: [{ id: notice.id, handled: true }] } });
     api.list.mockResolvedValueOnce({ success: true, data: { items: [notice] } })
+      .mockResolvedValueOnce({ success: true, data: { items: [] } })
       .mockResolvedValue({ success: true, data: { items: [{ ...notice, status: 'handled' }] } });
     await render();
     const confirm = host.querySelector<HTMLButtonElement>(`[aria-label="确认通知：${notice.title}"]`)!;
     await act(async () => confirm.click());
     expect(api.batch).toHaveBeenCalledWith({ items: [{ id: notice.id, pushEpisode: 2, updatedAt: notice.updatedAt }] });
+    expect(host.textContent).toContain('暂无待关注通知');
+    await click(/^已归档$/);
     expect(host.textContent).toContain('最近观测异常，尚无恢复证据');
     expect(host.textContent).toContain('确认不代表故障已修复');
     expect(host.textContent).not.toContain('已有恢复证据');
@@ -100,8 +103,8 @@ describe('通知动作与事实真实组件交互', () => {
     await render();
     await click(/确认当前/);
     expect(api.batch).not.toHaveBeenCalled();
-    expect(host.textContent).toContain('1 个已识别独立故障');
-    expect(host.textContent).toContain('同一故障已记录 182 次');
+    expect(host.textContent).toContain('1 条重要');
+    expect(host.textContent).toContain('同一故障累计182 次');
     expect(host.textContent).not.toContain('182 个');
   });
 
@@ -116,10 +119,11 @@ describe('通知动作与事实真实组件交互', () => {
     expect(host.textContent).toContain(expected);
   });
 
-  it('展开定位详情不触发对象导航或确认', async () => {
+  it('查看定位编号不触发对象导航或确认', async () => {
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, evidenceRequestId: 'request-a' }] } });
     await render();
-    await act(async () => host.querySelector('summary')!.click());
+    expect(host.querySelector('aside code')?.textContent).toBe('request-a');
+    await act(async () => host.querySelector('aside code')!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(api.navigate).not.toHaveBeenCalled();
     expect(api.batch).not.toHaveBeenCalled();
     expect(api.handle).not.toHaveBeenCalled();
@@ -128,14 +132,17 @@ describe('通知动作与事实真实组件交互', () => {
   it('通过优先级筛选并翻页，保留已归档通知', async () => {
     const urgent = { ...notice, id: 'quota', level: 'error', title: '额度已用尽', incidentCategory: 'quota' };
     api.list.mockResolvedValueOnce({ success: true, data: { items: [urgent, notice] } })
+      .mockResolvedValueOnce({ success: true, data: { items: [urgent, notice] } })
       .mockResolvedValueOnce({ success: true, data: { items: [urgent], hasMore: true, nextCursor: 'page-2' } })
       .mockResolvedValueOnce({ success: true, data: { items: [{ ...urgent, id: 'closed', title: '更早的额度通知', status: 'closed' }] } });
     await render();
     expect(host.textContent).toContain('重要');
-    await click(/^紧急$/);
+    await click(/^全部记录$/);
+    const filter = host.querySelector('select')!;
+    await act(async () => { filter.value = 'urgent'; filter.dispatchEvent(new Event('change', { bubbles: true })); });
     expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ priority: 'urgent', includeHandled: true }));
     expect(host.textContent).not.toContain(notice.title);
-    await click(/加载更早通知/);
+    await click(/加载更多通知/);
     expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ priority: 'urgent', cursor: 'page-2' }));
     expect(host.textContent).toContain('额度已用尽');
     expect(host.textContent).toContain('更早的额度通知');
@@ -145,12 +152,16 @@ describe('通知动作与事实真实组件交互', () => {
     const failed = { ...notice, id: 'failed', title: '生图请求失败', level: 'error', status: 'closed',
       incidentState: 'recovered', source: 'gateway-alert', environment: '正式', message: '请查看线路详情。' };
     const recovered = { ...failed, id: 'recovered', title: '生图线路已恢复', level: 'success', status: 'open' };
-    api.list.mockResolvedValue({ success: true, data: { items: [failed, recovered] } });
+    api.list.mockResolvedValueOnce({ success: true, data: { items: [] } })
+      .mockResolvedValue({ success: true, data: { items: [failed, recovered] } });
     await render();
+    await click(/^全部记录$/);
     for (const [item, result] of [[failed, '失败'], [recovered, '已恢复']] as const) {
       const row = host.querySelector(`[data-notification-id="${item.id}"]`)!;
       expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe(result);
-      const text = row.textContent || '';
+      expect(row.textContent?.indexOf(item.title)).toBeLessThan(row.textContent?.indexOf('环境 正式') ?? -1);
+      await act(async () => row.querySelector('button')!.click());
+      const text = host.querySelector('aside')!.textContent || '';
       expect(text.indexOf(item.title)).toBeLessThan(text.indexOf('环境 正式'));
       expect(text.indexOf('环境 正式')).toBeLessThan(text.indexOf(item.message));
     }
@@ -158,12 +169,26 @@ describe('通知动作与事实真实组件交互', () => {
       host.querySelector('[data-notification-id="recovered"] svg')?.getAttribute('class'));
   });
 
+  it('默认将服务告警放在其他提醒之前并选中，切换记录不确认任何通知', async () => {
+    const reminder = { ...notice, id: 'report', title: '周报已逾期', level: 'error', incidentId: null, incidentState: null };
+    api.list.mockResolvedValue({ success: true, data: { items: [reminder, notice] } });
+    await render();
+    expect(api.list).toHaveBeenCalledWith(expect.objectContaining({ state: 'attention' }));
+    expect(host.querySelector('[data-notification-id]')?.getAttribute('data-notification-id')).toBe(notice.id);
+    const detail = host.querySelector('aside')!;
+    expect(detail.querySelector('h3')?.textContent).toBe(notice.title);
+    expect(detail.textContent).toContain('该次请求备用成功');
+    expect(detail.textContent).toContain('最近发生');
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-notification-id="report"] button')!.click());
+    expect(detail.querySelector('h3')?.textContent).toBe(reminder.title);
+    expect(api.batch).not.toHaveBeenCalled();
+  });
+
   it('旧告警的状态未确认，不补造独立故障数和发生次数', async () => {
     api.list.mockResolvedValue({ success: true, data: { items: [{ ...notice, incidentId: null, occurrenceCount: undefined, requestOutcome: 'unknown', incidentState: 'unknown' }] } });
     await render();
     expect(host.textContent).toContain('当前状态未确认');
-    expect(host.textContent).toContain('无法确认独立故障数或发生次数');
-    expect(host.textContent).not.toContain('同一故障已记录');
+    expect(host.textContent).not.toContain('同一故障累计');
   });
 
   it('当前新unknown事件缺少身份时不称为历史，不补造一次或恢复', async () => {
@@ -176,10 +201,10 @@ describe('通知动作与事实真实组件交互', () => {
       firstOccurredAt: undefined, lastOccurredAt: undefined, recoveredAt: undefined, actionUrl: null,
     }] } });
     await render();
-    expect(host.textContent).toContain('缺少可确认的故障身份，无法确认独立故障数或发生次数。');
+    expect(host.textContent).toContain('当前状态未确认');
     expect(host.textContent).not.toContain('历史');
-    expect(host.textContent).not.toContain('同一故障已记录');
+    expect(host.textContent).not.toContain('同一故障累计');
     expect(host.textContent).not.toContain('已有恢复证据');
-    expect(host.textContent).not.toContain('恢复证据时间');
+    expect(host.textContent).not.toContain('恢复时间');
   });
 });

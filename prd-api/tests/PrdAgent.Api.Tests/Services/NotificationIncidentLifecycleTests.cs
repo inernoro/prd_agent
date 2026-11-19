@@ -141,19 +141,32 @@ public sealed class NotificationIncidentLifecycleTests
         Assert.Equal(3, await db.Context.AdminNotifications.CountDocumentsAsync(n => n.Status == "open"));
     }
 
-    [Fact]
-    public async Task HistoryFiltersBeforePagination_AndKeepsSameTimestampRows()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ListFiltersBeforePagination_AndKeepsSameTimestampRows(bool attention)
     {
         await using var db = await AdminPushNotificationServiceTests.AdminPushTestDatabase.TryCreateAsync();
         var now = DateTime.UtcNow;
         var rows = Enumerable.Range(0, 202).Select(index => new AdminNotification {
             Id = $"notice-{index:D3}", TargetUserId = "u1", Source = "report-agent", UpdatedAt = now,
-            Level = "warning", Status = "closed",
+            Level = "warning", Status = attention ? "open" : "closed",
         }).Append(new AdminNotification {
-            Id = "other-user", TargetUserId = "u2", Source = "report-agent", Level = "warning", Status = "closed",
+            Id = "other-user", TargetUserId = "u2", Source = "report-agent", Level = "warning", Status = attention ? "open" : "closed",
         }).Append(new AdminNotification {
-            Id = "other-priority", TargetUserId = "u1", Source = "report-agent", Level = "error", Status = "closed",
+            Id = "archived-urgent", TargetUserId = "u1", Source = "report-agent", Level = "error", Status = "closed",
+        }).Append(new AdminNotification {
+            Id = "recent-routine", TargetUserId = "u1", Source = "report-agent", Level = "info", Status = "open", UpdatedAt = now.AddHours(1),
+        }).Append(new AdminNotification {
+            Id = "older-urgent", TargetUserId = "u1", Source = "report-agent", Level = "error", Status = "open", UpdatedAt = now.AddDays(-1),
         });
+        if (attention)
+        {
+            rows = rows.Concat(Enumerable.Range(0, 199).Select(index => new AdminNotification {
+                Id = $"urgent-{index:D3}", TargetUserId = "u1", Source = "report-agent", UpdatedAt = now,
+                Level = "error", Status = "open",
+            }));
+        }
         await db.Context.AdminNotifications.InsertManyAsync(rows);
         var permissions = new Mock<IAdminPermissionService>();
         permissions.Setup(p => p.GetEffectivePermissionsAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
@@ -166,15 +179,28 @@ public sealed class NotificationIncidentLifecycleTests
         async Task<JsonElement> Read(string? cursor = null)
         {
             var result = Assert.IsType<OkObjectResult>(await controller.List(
-                includeHandled: true, priority: "important", state: "archived", cursor: cursor));
+                includeHandled: true, priority: attention ? null : "important", state: attention ? "attention" : "archived", cursor: cursor));
             return JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("data");
         }
         var first = await Read();
         var second = await Read(first.GetProperty("nextCursor").GetString());
         Assert.Equal(200, first.GetProperty("items").GetArrayLength());
-        Assert.Equal(new[] { "notice-001", "notice-000" },
-            second.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()));
-        Assert.False(second.GetProperty("hasMore").GetBoolean());
+        var secondIds = second.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray();
+        if (attention)
+        {
+            Assert.All(first.GetProperty("items").EnumerateArray(), item => Assert.Equal("error", item.GetProperty("level").GetString()));
+            Assert.Equal("older-urgent", first.GetProperty("items")[199].GetProperty("id").GetString());
+            Assert.Equal("notice-201", secondIds[0]);
+            var third = await Read(second.GetProperty("nextCursor").GetString());
+            Assert.Equal(new[] { "notice-001", "notice-000" },
+                third.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()));
+            Assert.False(third.GetProperty("hasMore").GetBoolean());
+        }
+        else
+        {
+            Assert.Equal(new[] { "notice-001", "notice-000" }, secondIds);
+            Assert.False(second.GetProperty("hasMore").GetBoolean());
+        }
     }
 
     [Fact]

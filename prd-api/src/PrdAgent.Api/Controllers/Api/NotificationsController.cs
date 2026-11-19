@@ -50,27 +50,40 @@ public sealed class NotificationsController : ControllerBase
         var now = DateTime.UtcNow;
         var filter = BuildVisibleNotificationFilter(userId, now, includeHandled, await HasAdminNotificationPermissionAsync(ct));
         var builder = Builders<AdminNotification>.Filter;
+        var attention = state == "attention";
         if (priority == "urgent") filter &= builder.Eq(x => x.Level, "error");
         if (priority == "important") filter &= builder.Eq(x => x.Level, "warning");
         if (priority == "routine") filter &= builder.Nin(x => x.Level, new[] { "error", "warning" });
         if (state == "open") filter &= builder.Eq(x => x.Status, "open");
         if (state == "archived") filter &= builder.Ne(x => x.Status, "open");
+        if (attention)
+            filter &= builder.Eq(x => x.Status, "open") & builder.In(x => x.Level, new[] { "error", "warning" });
         if (!string.IsNullOrEmpty(cursor))
         {
+            string? level = null;
+            if (attention)
+            {
+                var separator = cursor.IndexOf('.');
+                if (separator < 1 || (level = cursor[..separator]) is not ("error" or "warning"))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "通知列表游标已失效，请刷新列表。"));
+                cursor = cursor[(separator + 1)..];
+            }
             var position = cursor.IndexOf('.');
             if (position < 1 || !long.TryParse(cursor.AsSpan(0, position), out var ticks)
                 || ticks < 0 || ticks > DateTime.MaxValue.Ticks || position >= cursor.Length - 1 || cursor.Length > 512)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "通知列表游标已失效，请刷新列表。"));
             var before = new DateTime(ticks, DateTimeKind.Utc);
-            filter &= builder.Lt(x => x.UpdatedAt, before)
+            var earlier = builder.Lt(x => x.UpdatedAt, before)
                 | (builder.Eq(x => x.UpdatedAt, before) & builder.Lt(x => x.Id, cursor[(position + 1)..]));
+            filter &= level is null ? earlier
+                : builder.Gt(x => x.Level, level) | (builder.Eq(x => x.Level, level) & earlier);
         }
 
-        var items = await _db.AdminNotifications
-            .Find(filter)
-            .SortByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id)
-            .Limit(201)
-            .ToListAsync(ct);
+        var list = _db.AdminNotifications.Find(filter);
+        var sorted = attention
+            ? list.SortBy(x => x.Level).ThenByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id)
+            : list.SortByDescending(x => x.UpdatedAt).ThenByDescending(x => x.Id);
+        var items = await sorted.Limit(201).ToListAsync(ct);
 
         var hasMore = items.Count > 200;
         items = items.Take(200).ToList();
@@ -81,7 +94,7 @@ public sealed class NotificationsController : ControllerBase
         {
             items = items.Select(n => ToNotificationDto(n, canOpenGateway)),
             hasMore,
-            nextCursor = hasMore ? $"{items[^1].UpdatedAt.Ticks}.{items[^1].Id}" : null,
+            nextCursor = hasMore ? $"{(attention ? items[^1].Level + "." : "")}{items[^1].UpdatedAt.Ticks}.{items[^1].Id}" : null,
             summary = new
             {
                 notificationCount = openItems.Count,

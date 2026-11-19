@@ -170,7 +170,7 @@ export type UpdateAdminPushSubscriptionRequest = {
 export type UpdateAdminPushProfileRequest = Omit<UpdateAdminPushSubscriptionRequest, 'enabled' | 'useDefaultProfile'>;
 
 export type NotificationPriority = 'urgent' | 'important' | 'routine';
-export type NotificationListState = 'open' | 'archived';
+export type NotificationListState = 'open' | 'archived' | 'attention';
 export type GetAdminNotificationsContract = (args?: {
   includeHandled?: boolean;
   priority?: NotificationPriority;
