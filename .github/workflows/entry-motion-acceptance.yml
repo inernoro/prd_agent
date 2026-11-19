@@ -11,13 +11,16 @@ permissions:
 jobs:
   entry-recorder-tooling:
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
+      options: --init --shm-size=1g
     timeout-minutes: 20
     env:
       VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 90783510ee6f4b6fc74359e73385734e366034dd
+          ref: e68814c17b8e47b99f0f446527e80ec968fd0604
       - uses: pnpm/action-setup@v4
         with:
           version: '10.28.2'
@@ -27,10 +30,11 @@ jobs:
       - name: Install cloud recording tools
         run: |
           pnpm -C e2e install --frozen-lockfile
-          # Keep Ubuntu's signed packages and use the Azure archive on hosted runners.
-          sudo sed -Ei 's|https?://(azure\.)?archive\.ubuntu\.com/ubuntu/?|https://azure.archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources
-          pnpm -C e2e exec playwright install --with-deps chromium
-          sudo apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg xvfb openbox python3-pil
+          # The pinned container provides Chromium, its system libraries, and fonts.
+          # Keep Ubuntu's signed packages while downloading the capture tools over HTTPS.
+          sed -Ei 's|https?://(archive|security)\.ubuntu\.com/ubuntu/?|https://mirrors.edge.kernel.org/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources
+          apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update
+          apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg xvfb openbox python3-pil
       - name: Verify the existing desktop recorder can capture and compare frames
         run: |
           pnpm -C llmgw/web install --frozen-lockfile
