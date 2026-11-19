@@ -20,6 +20,8 @@ namespace PrdAgent.LlmGatewayHost;
 public sealed record GatewayMinimumRequestIdentity(string Origin, string? SourceDeployment)
 {
     public bool Automatic => Origin == "automatic";
+    internal string? RetryRunId { get; init; }
+    internal string? RetryServiceKeyId { get; init; }
     public static GatewayMinimumRequestIdentity General { get; } = new("general", null);
 
     public static GatewayMinimumRequestIdentity Resolve(
@@ -47,6 +49,8 @@ public sealed record GatewayMinimumProtectionDecision(
     long Count,
     int Limit)
 {
+    internal GatewayTemporaryQuotaReservation? TemporaryQuota { get; init; }
+
     public string ErrorCode => Origin == "automatic" ? "AUTOMATIC_CONSUMPTION_LIMITED" : "GATEWAY_SAFETY_LIMITED";
     public string Message => Origin == "automatic"
         ? "后台自动任务已达到平台请求上限，已停止本次调用；请在网关请求记录查看预警并核对任务范围。"
@@ -95,19 +99,43 @@ public sealed record GatewayDynamicRateBaseline(decimal Average, int Samples, in
 public sealed class GatewayMinimumProtectionCoordinator
 {
     public const string WindowsCollection = "llmgw_consumption_rate_windows";
-    public const string AlertsCollection = "llmgw_consumption_alerts";
+    public const string AlertsCollection = GatewayTemporaryQuotaStore.AlertsCollection;
     private readonly LlmGatewayDataContext _data;
     private readonly IConfiguration _configuration;
     private readonly ILogger<GatewayMinimumProtectionCoordinator> _logger;
+    private readonly GatewayTemporaryQuotaStore _temporaryQuota;
+    private readonly GatewayConsumptionRetryStore _retries;
     private int _invalidDynamicPolicyReported;
 
     public GatewayMinimumProtectionCoordinator(
         LlmGatewayDataContext data,
         IConfiguration configuration,
         ILogger<GatewayMinimumProtectionCoordinator> logger)
-        => (_data, _configuration, _logger) = (data, configuration, logger);
+    {
+        (_data, _configuration, _logger) = (data, configuration, logger);
+        _temporaryQuota = new(data.Database, logger);
+        _retries = new(data.Database);
+    }
 
     public async Task<GatewayMinimumProtectionDecision> CheckAsync(
+        string tenantId,
+        string appCallerCode,
+        string requestType,
+        string? teamId,
+        string requestId,
+        GatewayMinimumRequestIdentity identity,
+        int? tenantRateLimitPerMinute,
+        int? callerRateLimitPerMinute,
+        CancellationToken ct)
+    {
+        var minimum = await CheckBeforeOtherGovernanceAsync(tenantId, appCallerCode, requestType, teamId, requestId,
+            identity, tenantRateLimitPerMinute, callerRateLimitPerMinute, ct);
+        return minimum.Rejected ? minimum
+            : await CompleteTemporaryQuotaAsync(minimum, tenantId, appCallerCode, requestType, teamId, requestId, identity, ct)
+                ?? GatewayMinimumProtectionDecision.Allow;
+    }
+
+    internal async Task<GatewayMinimumProtectionDecision> CheckBeforeOtherGovernanceAsync(
         string tenantId,
         string appCallerCode,
         string requestType,
@@ -142,33 +170,106 @@ public sealed class GatewayMinimumProtectionCoordinator
             _logger.LogWarning("[GatewaySafety] 动态速率预警策略未启用：{Reason}；固定保护保持有效", policyError);
         var dynamicScopes = new HashSet<string>(StringComparer.Ordinal);
         var now = DateTime.UtcNow;
-        foreach (var (scope, origin, seconds, limit) in limits)
+        GatewayTemporaryQuotaReservation? heldQuota = null;
+        GatewayMinimumProtectionDecision? temporaryQuota = null;
+        try
         {
-            var windowStart = WindowStart(now, seconds);
-            // tenant 合并所有调用方和请求类型；caller 合并全部实例和部署版本。
-            var counterCaller = scope == "tenant" ? "$tenant" : caller;
-            var counterType = scope == "tenant" ? "$aggregate" : type;
-            var count = await IncrementWindowAsync(tenantId, counterCaller, counterType, scope, origin, seconds, windowStart, ct);
-            await ObserveAsync(tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
-                requestId, identity.SourceDeployment, scope, origin, seconds, windowStart, count, limit, ct);
-            if (dynamicPolicy?.WindowSeconds == seconds)
+            foreach (var (scope, origin, seconds, limit) in limits)
             {
-                dynamicScopes.Add(scope);
-                await ObserveDynamicSafeAsync(dynamicPolicy, tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
-                    requestId, identity.SourceDeployment, scope, origin, windowStart, count, ct);
+                var windowStart = WindowStart(now, seconds);
+                // tenant 合并所有调用方和请求类型；caller 合并全部实例和部署版本。
+                var counterCaller = scope == "tenant" ? "$tenant" : caller;
+                var counterType = scope == "tenant" ? "$aggregate" : type;
+                var count = await IncrementWindowAsync(tenantId, counterCaller, counterType, scope, origin, seconds, windowStart, ct);
+                var blocked = count > limit;
+                if (blocked && GatewayTemporaryQuotaStore.AppliesTo(scope, origin, seconds))
+                {
+                    var alertId = Identity("alert", tenantId, counterCaller, counterType, scope, origin, seconds, windowStart) + ":blocked";
+                    heldQuota = await _temporaryQuota.TryReserveAsync(alertId, tenantId, ct);
+                    if (heldQuota is not null)
+                    {
+                        temporaryQuota = new(false, scope, origin, seconds, windowStart, count, limit)
+                        {
+                            TemporaryQuota = heldQuota,
+                        };
+                        blocked = false;
+                    }
+                    else
+                        await RecordHourlyRetryAsync(alertId, tenantId, counterCaller, requestId, windowStart.AddSeconds(seconds), identity, ct);
+                }
+                if (blocked || count <= limit)
+                    await ObserveAsync(tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
+                        requestId, identity.SourceDeployment, scope, origin, seconds, windowStart, count, limit, ct);
+                if (dynamicPolicy?.WindowSeconds == seconds)
+                {
+                    dynamicScopes.Add(scope);
+                    await ObserveDynamicSafeAsync(dynamicPolicy, tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
+                        requestId, identity.SourceDeployment, scope, origin, windowStart, count, ct);
+                }
+                if (blocked)
+                    return new(true, scope, origin, seconds, windowStart, count, limit);
             }
-            if (count > limit)
-                return new(true, scope, origin, seconds, windowStart, count, limit);
+            // 显式 RPM 配置会跳过 fallback 窗口；动态观测仍复用相同计数集合，不覆盖其硬限制。
+            if (dynamicPolicy is not null)
+            {
+                foreach (var scope in new[] { "tenant", "app-caller" }.Where(scope => !dynamicScopes.Contains(scope)))
+                    await ObserveDynamicSafeAsync(dynamicPolicy, tenantId, scope == "tenant" ? "$tenant" : caller,
+                        scope == "tenant" ? "$aggregate" : type, scope == "tenant" ? null : teamId, requestId,
+                        identity.SourceDeployment, scope, identity.Automatic ? "automatic" : "general", WindowStart(now, dynamicPolicy.WindowSeconds), null, ct);
+            }
+            heldQuota = null; // 返回的决定将占用交给剩余治理步骤。
+            return temporaryQuota ?? GatewayMinimumProtectionDecision.Allow;
         }
-        // 显式 RPM 配置会跳过 fallback 窗口；动态观测仍复用相同计数集合，不覆盖其硬限制。
-        if (dynamicPolicy is not null)
+        finally
         {
-            foreach (var scope in new[] { "tenant", "app-caller" }.Where(scope => !dynamicScopes.Contains(scope)))
-                await ObserveDynamicSafeAsync(dynamicPolicy, tenantId, scope == "tenant" ? "$tenant" : caller,
-                    scope == "tenant" ? "$aggregate" : type, scope == "tenant" ? null : teamId, requestId,
-                    identity.SourceDeployment, scope, identity.Automatic ? "automatic" : "general", WindowStart(now, dynamicPolicy.WindowSeconds), null, ct);
+            if (heldQuota is not null)
+                await ReleaseTemporaryQuotaAsync(heldQuota);
         }
-        return GatewayMinimumProtectionDecision.Allow;
+    }
+
+    internal Task ReleaseTemporaryQuotaAsync(GatewayTemporaryQuotaReservation reservation) => _temporaryQuota.ReleaseAsync(reservation);
+
+    internal async Task<GatewayMinimumProtectionDecision?> CompleteTemporaryQuotaAsync(
+        GatewayMinimumProtectionDecision candidate, string tenantId, string appCallerCode, string requestType,
+        string? teamId, string requestId, GatewayMinimumRequestIdentity identity, CancellationToken ct)
+    {
+        if (candidate.TemporaryQuota is not { } reservation)
+            return null;
+
+        var consumed = false;
+        try
+        {
+            consumed = await _temporaryQuota.TryConsumeAsync(reservation, ct);
+            if (consumed)
+                return null;
+        }
+        finally
+        {
+            if (!consumed)
+                await ReleaseTemporaryQuotaAsync(reservation);
+        }
+
+        var caller = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
+        var type = GatewayAppCallerIdentity.NormalizePart(requestType);
+        await RecordHourlyRetryAsync(reservation.AlertId, tenantId, caller, requestId,
+            candidate.WindowStart.AddSeconds(candidate.WindowSeconds), identity, ct);
+        await ObserveAsync(tenantId, caller, type, teamId, requestId, identity.SourceDeployment, candidate.Scope,
+            candidate.Origin, candidate.WindowSeconds, candidate.WindowStart, candidate.Count, candidate.Limit, ct);
+        return candidate with { Rejected = true, TemporaryQuota = null };
+    }
+
+    private async Task RecordHourlyRetryAsync(string alertId, string tenantId, string caller, string requestId,
+        DateTime restoresAt, GatewayMinimumRequestIdentity identity, CancellationToken ct)
+    {
+        if (identity.RetryServiceKeyId is not { } serviceKeyId || identity.RetryRunId is not { } runId) return;
+        try
+        {
+            await _retries.RecordAsync(alertId, new(tenantId, serviceKeyId, caller), runId, requestId, restoresAt, ct);
+        }
+        catch (MongoException error)
+        {
+            _logger.LogWarning(error, "[GatewaySafety] Could not associate blocked request {RequestId} with retry run", requestId);
+        }
     }
 
     private async Task<long> IncrementWindowAsync(string tenantId, string caller, string type, string scope, string origin,

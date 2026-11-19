@@ -16,6 +16,7 @@
 import type {
   AccountProfile,
   ConsumptionAlert,
+  ConsumptionAlertAction,
   ApiResponse,
   SystemGatewaySettings,
   SystemGatewayTestResult,
@@ -537,6 +538,13 @@ export function getLogs(params: LogsListParams): Promise<ApiResponse<LogsListDat
 
 export function getConsumptionAlerts(): Promise<ApiResponse<{ items: ConsumptionAlert[] }>> {
   return apiRequest<{ items: ConsumptionAlert[] }>('/logs/consumption-alerts', { query: { limit: 10 } });
+}
+
+export function resolveConsumptionAlert(id: string, action: ConsumptionAlertAction): Promise<ApiResponse<{ updated: boolean }>> {
+  return apiRequest<{ updated: boolean }>(`/logs/consumption-alerts/${encodeURIComponent(id)}/resolution`, {
+    method: 'POST',
+    body: action,
+  });
 }
 
 type HealthData = {
