@@ -7,6 +7,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -315,6 +316,289 @@ public sealed class GatewayMinimumProtectionIntegrationTests
     }
 
     [Fact]
+    public async Task HourlyAlertSupportsBoundedQuotaAndSourceOwnedRetryReceipt()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant);
+        const string sourceKey = "resolution-fixture-source-key";
+        const string otherKey = "resolution-fixture-other-key";
+        foreach (var key in new[] { sourceKey, otherKey })
+        {
+            var record = new GatewayServiceKeyRecord
+            {
+                TenantId = Tenant, KeyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant(),
+                KeyPrefix = "local-test", SourceSystem = "external", ClientCode = "resolution-fixture", Environment = "test",
+                Purpose = "external-platform", AppCallerCodes = [Caller], IngressProtocols = ["openai-compatible"], Scopes = ["invoke"],
+            };
+            await database.Data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(record);
+            await database.Data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
+                .InsertOneAsync(new GatewayServiceKeyDirectoryRecord { TenantId = Tenant, KeyHash = record.KeyHash, ServiceKeyId = record.Id });
+        }
+
+        await using var serving = await Serving(database, new() { ["AutomaticAppCallerPerHour"] = 1 });
+        await using var console = await Console(database);
+        var caller = serving.GetTestClient();
+        var operatorClient = console.GetTestClient();
+        var viewer = console.GetTestClient();
+        operatorClient.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "admin"));
+        viewer.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "viewer"));
+        const string retryPath = "/gw/v1/consumption-retries";
+
+        Task<HttpResponseMessage> SendChat(string runId = "batch-fixture") => Dispatch(HttpMethod.Post, "/v1/chat/completions", sourceKey,
+            new { messages = new[] { new { role = "user", content = "synthetic work" } } }, runId, Caller.ToUpperInvariant());
+
+        Task<HttpResponseMessage> Dispatch(HttpMethod method, string path, string key, object? body = null,
+            string? runId = null, string? callerCode = Caller)
+        {
+            var request = new HttpRequestMessage(method, path);
+            request.Headers.Add("X-Gateway-Key", key);
+            if (callerCode is not null) request.Headers.Add("X-Gateway-App-Caller", callerCode);
+            if (runId is not null) request.Headers.Add("X-Gateway-Retry-Run-Id", runId);
+            if (body is not null) request.Content = JsonContent.Create(body);
+            return caller.SendAsync(request);
+        }
+
+        var first = await SendChat();
+        first.StatusCode.ShouldBe(HttpStatusCode.OK, await first.Content.ReadAsStringAsync());
+        var blocked = await SendChat();
+        blocked.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        blocked.Headers.RetryAfter.ShouldNotBeNull();
+        var alert = await database.Alerts.Find(new BsonDocument("Kind", "blocked")).SingleAsync();
+        var resolution = "/gw/logs/consumption-alerts/" + Uri.EscapeDataString(alert["_id"].AsString) + "/resolution";
+        (await viewer.PostAsJsonAsync(resolution, new { action = "retry" })).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        var initial = await operatorClient.GetStringAsync("/gw/logs/consumption-alerts");
+        initial.ShouldContain("\"restoresAt\":");
+        initial.ShouldContain("\"available\":1");
+        initial.ShouldNotContain("batch-fixture");
+
+        (await operatorClient.PostAsJsonAsync(resolution, new { action = "request-quota", units = 1, reason = "Complete this fixture" }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await SendChat()).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        (await operatorClient.PostAsJsonAsync(resolution, new { action = "approve-quota" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var concurrent = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => SendChat()));
+        concurrent.Count(result => result.StatusCode == HttpStatusCode.OK).ShouldBe(1);
+        concurrent.Count(result => result.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(15);
+        database.UpstreamCalls.ShouldBe(2);
+        var laterWindows = await database.Windows.Find(new BsonDocument { { "Origin", "automatic" }, { "$or", new BsonArray
+        {
+            new BsonDocument { { "Scope", "app-caller" }, { "WindowSeconds", 86400 } },
+            new BsonDocument { { "Scope", "tenant" }, { "WindowSeconds", 3600 } },
+        } } }).ToListAsync();
+        laterWindows.Count.ShouldBe(2);
+        laterWindows.ShouldAllBe(window => window["Count"].ToInt64() == 2);
+
+        (await SendChat("partial-batch")).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        (await operatorClient.PostAsJsonAsync(resolution, new { action = "retry" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await operatorClient.PostAsJsonAsync(resolution, new { action = "retry" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
+
+        var retries = database.Data.Database.GetCollection<BsonDocument>("llmgw_consumption_retries");
+        var retry = await retries.Find(new BsonDocument("RunId", "batch-fixture")).SingleAsync();
+        // 以隔离库中的已到期窗口验证领取时序，无需等待下一个整点。
+        await retries.UpdateOneAsync(new BsonDocument("_id", retry["_id"]),
+            Builders<BsonDocument>.Update.Set("ReadyAt", DateTime.UtcNow.AddSeconds(-1)));
+        using var available = JsonDocument.Parse(await (await Dispatch(HttpMethod.Get, retryPath, sourceKey, callerCode: null)).Content.ReadAsStringAsync());
+        var queued = available.RootElement.GetProperty("items").EnumerateArray().Single();
+        queued.GetProperty("id").GetString().ShouldBe(retry["_id"].AsString);
+        queued.GetProperty("runId").GetString().ShouldBe("batch-fixture");
+        queued.GetProperty("firstBlockedRequestId").GetString().ShouldBe(retry["FirstBlockedRequestId"].AsString);
+        queued.GetProperty("expiresAt").GetDateTime().ShouldBe(retry["ExpiresAt"].AsBsonDateTime.ToUniversalTime());
+        (await (await Dispatch(HttpMethod.Get, retryPath, otherKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
+        var claim = new { id = retry["_id"].AsString, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
+        var otherClaim = new { claim.id, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
+        var receipt = new { claim.id, claim.claimId, outcome = "completed", completedCount = 1 };
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, claim)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, otherClaim)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, claim)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, retryPath, otherKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, receipt)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await (await Dispatch(HttpMethod.Get, retryPath, sourceKey)).Content.ReadAsStringAsync()).ShouldNotContain("batch-fixture");
+        var partial = await retries.Find(new BsonDocument("RunId", "partial-batch")).SingleAsync();
+        await retries.UpdateOneAsync(new BsonDocument("_id", partial["_id"]),
+            Builders<BsonDocument>.Update.Set("ReadyAt", DateTime.UtcNow.AddSeconds(-1)));
+        var partialClaim = new { id = partial["_id"].AsString, claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, partialClaim)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, retryPath, sourceKey, new { partialClaim.id, partialClaim.claimId, outcome = "failed", completedCount = 2 }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        const string callerTitle = "Synthetic batch automation";
+        const string callerOwner = "Fixture owner";
+        await database.Data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").UpdateOneAsync(
+            entry => entry.TenantId == Tenant && entry.AppCallerCode == Caller,
+            Builders<GatewayAppCallerRecord>.Update.Set(entry => entry.Title, callerTitle).Set(entry => entry.Owner, callerOwner));
+        using var resolved = JsonDocument.Parse(await operatorClient.GetStringAsync("/gw/logs/consumption-alerts"));
+        var resolvedAlert = resolved.RootElement.GetProperty("data").GetProperty("items").EnumerateArray()
+            .Single(item => item.GetProperty("id").GetString() == alert["_id"].AsString);
+        resolvedAlert.GetProperty("appCallerTitle").GetString().ShouldBe(callerTitle);
+        resolvedAlert.GetProperty("owner").GetString().ShouldBe(callerOwner);
+        var retrySummary = resolvedAlert.GetProperty("retry");
+        retrySummary.GetProperty("completed").GetInt32().ShouldBe(1);
+        retrySummary.GetProperty("failed").GetInt32().ShouldBe(1);
+        retrySummary.GetProperty("completedCount").GetInt32().ShouldBe(1);
+        resolvedAlert.GetProperty("quota").GetProperty("used").GetInt32().ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData("invoke")]
+    [InlineData("stream:invoke")]
+    [InlineData("raw:invoke")]
+    public async Task RetryControlUsesOriginalInvocationScopeWithoutRecordingBusinessTraffic(string originalScope)
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        const string tenant = "retry-cutover-fixture";
+        const string path = "/gw/v1/consumption-retries";
+        const string key = "resolution-fixture-cutover-key";
+        const string readKey = "resolution-fixture-read-only-key";
+        await database.TokenAsync(tenant, "admin");
+        async Task<GatewayServiceKeyRecord> AddKeyAsync(string secret, string scope)
+        {
+            var record = new GatewayServiceKeyRecord
+            {
+                TenantId = tenant, KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(secret),
+                SourceSystem = "map", ClientCode = "resolution-fixture", Environment = "production",
+                Purpose = "runtime", AppCallerCodes = [Caller], IngressProtocols = ["openai-compatible"], Scopes = [scope],
+            };
+            await database.Data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(record);
+            await database.Data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
+                .InsertOneAsync(new GatewayServiceKeyDirectoryRecord { TenantId = tenant, KeyHash = record.KeyHash, ServiceKeyId = record.Id });
+            return record;
+        }
+        var source = await AddKeyAsync(key, originalScope);
+        await AddKeyAsync(readKey, "route:read");
+        var cutovers = database.Data.Database.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
+        await cutovers.InsertOneAsync(new BsonDocument
+        {
+            { "TenantId", tenant }, { "Status", "observing" }, { "SuccessorServiceKeyIds", new BsonArray { source.Id } },
+            { "AllowedAppCallerCodes", new BsonArray { Caller } },
+            { "RequiredIngressProtocols", new BsonArray { "openai-compatible" } },
+            { "SuccessorObservedCount", 0 },
+        });
+        var retries = database.Data.Database.GetCollection<BsonDocument>("llmgw_consumption_retries");
+        var now = DateTime.UtcNow;
+        await retries.InsertOneAsync(new BsonDocument
+        {
+            { "_id", "retry-control-fixture" }, { "TenantId", tenant }, { "AppCallerCode", Caller },
+            { "ServiceKeyId", source.Id }, { "RunId", "test-run" }, { "FirstBlockedRequestId", "test-request" },
+            { "State", "queued" }, { "ReadyAt", now.AddMinutes(-1) }, { "ExpiresAt", now.AddHours(1) },
+        });
+
+        await using var serving = await Serving(database, new());
+        using var client = serving.GetTestClient();
+        Task<HttpResponseMessage> Dispatch(HttpMethod method, string secret, object? body = null)
+        {
+            var request = new HttpRequestMessage(method, path);
+            request.Headers.Add("X-Gateway-Key", secret);
+            request.Headers.Add("X-Gateway-App-Caller", Caller);
+            request.Headers.Add("X-Gateway-Source", "map");
+            if (body is not null) request.Content = JsonContent.Create(body);
+            return client.SendAsync(request);
+        }
+        (await Dispatch(HttpMethod.Get, readKey)).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        var poll = await Dispatch(HttpMethod.Get, key);
+        poll.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await poll.Content.ReadAsStringAsync()).ShouldContain("test-run");
+        var claim = new { id = "retry-control-fixture", claimId = Guid.NewGuid().ToString("N"), outcome = "claim" };
+        (await Dispatch(HttpMethod.Post, key, claim)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Dispatch(HttpMethod.Post, key, new { claim.id, claim.claimId, outcome = "completed", completedCount = 1 }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        var cutover = Builders<BsonDocument>.Filter.Eq("TenantId", tenant);
+        (await cutovers.Find(cutover).SingleAsync())["SuccessorObservedCount"].AsInt32.ShouldBe(0);
+
+        var authorizer = serving.Services.GetRequiredService<IGatewayScopedKeyAuthorizer>();
+        (await authorizer.AuthorizeAsync(key, InternalKey, "map", Caller, "openai-compatible", originalScope,
+            null, default)).Allowed.ShouldBeTrue();
+        (await cutovers.Find(cutover).SingleAsync())["SuccessorObservedCount"].AsInt32.ShouldBe(1);
+        if (originalScope != "invoke")
+            (await authorizer.AuthorizeAsync(key, InternalKey, "map", Caller, "openai-compatible", "invoke",
+                null, default)).Allowed.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("AutomaticAppCallerPerDay", "app-caller", 86400)]
+    [InlineData("AutomaticTenantPerHour", "tenant", 3600)]
+    [InlineData("budget", "", 0)]
+    public async Task LaterGovernanceRejectionDoesNotConsumeApprovedQuota(string laterLimit, string scope, int seconds)
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant);
+        await using var serving = await Serving(database, new() { ["AutomaticAppCallerPerHour"] = 1, [laterLimit] = 1 });
+        await using var console = await Console(database);
+        var caller = serving.GetTestClient();
+        var admin = console.GetTestClient();
+        admin.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "admin"));
+
+        (await Send(caller, true)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Send(caller, true)).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        var alert = await database.Alerts.Find(new BsonDocument("Kind", "blocked")).SingleAsync();
+        var resolution = "/gw/logs/consumption-alerts/" + Uri.EscapeDataString(alert["_id"].AsString) + "/resolution";
+        (await admin.PostAsJsonAsync(resolution, new { action = "request-quota", units = 1, reason = "Finish fixture" }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await admin.PostAsJsonAsync(resolution, new { action = "approve-quota" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        if (laterLimit == "budget")
+            await database.Data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").UpdateOneAsync(
+                callerRecord => callerRecord.TenantId == Tenant && callerRecord.AppCallerCode == Caller,
+                Builders<GatewayAppCallerRecord>.Update.Set(callerRecord => callerRecord.MonthlyBudgetUsd, 1m));
+
+        var denied = await Send(caller, true);
+        if (laterLimit == "budget")
+            (await denied.Content.ReadAsStringAsync()).ShouldContain("APP_CALLER_BUDGET_RESERVATION_UNCONFIGURED");
+        else
+        {
+            denied.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+            denied.Headers.GetValues("X-LLMGW-Safety-Scope").Single().ShouldBe(scope);
+            denied.Headers.GetValues("X-LLMGW-Safety-Window-Seconds").Single().ShouldBe(seconds.ToString());
+        }
+        var unchanged = await database.Alerts.Find(new BsonDocument("_id", alert["_id"])).SingleAsync();
+        unchanged["QuotaUsed"].AsInt32.ShouldBe(0);
+        unchanged.GetValue("QuotaReservations", new BsonArray()).AsBsonArray.ShouldBeEmpty();
+        database.UpstreamCalls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ExternalAsrContinuationConsumesApprovedHourlyQuotaOnce()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await using var serving = await Serving(database, new() { ["AutomaticAppCallerPerHour"] = 1 });
+        await using var console = await Console(database);
+        const string key = "isolated-fixture-asr-key";
+        const string caller = "future-business.audio::asr";
+        var admin = console.GetTestClient();
+        admin.DefaultRequestHeaders.Authorization = new("Bearer", await database.TokenAsync(Tenant, "admin"));
+        var serviceKey = new GatewayServiceKeyRecord
+        {
+            TenantId = Tenant, SourceSystem = "external", ClientCode = "resolution-fixture", Environment = "test",
+            Purpose = "external-platform", AppCallerCodes = [caller], IngressProtocols = ["gw-native"], Scopes = ["stream:invoke"],
+            KeyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant(),
+        };
+        await database.Data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys").InsertOneAsync(serviceKey);
+        await database.Data.Database.GetCollection<GatewayServiceKeyDirectoryRecord>("llmgw_service_key_directory")
+            .InsertOneAsync(new GatewayServiceKeyDirectoryRecord { TenantId = Tenant, KeyHash = serviceKey.KeyHash, ServiceKeyId = serviceKey.Id });
+        var authorizer = serving.Services.GetRequiredService<IGatewayScopedKeyAuthorizer>();
+        var authorization = await authorizer.AuthorizeAsync(key, "", "external", caller, "gw-native", "stream:invoke", null, default,
+            requestPath: "/gw/v1/asr/live");
+        authorization.Allowed.ShouldBeTrue(authorization.ErrorCode + ": " + authorization.Detail);
+        var admission = serving.Services.GetRequiredService<IGatewayTaskAdmission>();
+        var http = new DefaultHttpContext { RequestServices = serving.Services };
+        http.Request.Headers["X-Gateway-Key"] = key;
+        Task<GatewayTaskAdmissionDecision> ContinueAsync() => admission.ReserveContinuationAsync(http, authorization, caller, default);
+
+        (await ContinueAsync()).Allowed.ShouldBeTrue();
+        (await ContinueAsync()).ErrorCode.ShouldBe("AUTOMATIC_CONSUMPTION_LIMITED");
+        var alert = await database.Alerts.Find(new BsonDocument("Kind", "blocked")).SingleAsync();
+        var resolution = "/gw/logs/consumption-alerts/" + Uri.EscapeDataString(alert["_id"].AsString) + "/resolution";
+        (await admin.PostAsJsonAsync(resolution, new { action = "request-quota", units = 1, reason = "Resume fixture recording" }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await admin.PostAsJsonAsync(resolution, new { action = "approve-quota" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await ContinueAsync()).Allowed.ShouldBeTrue();
+        (await ContinueAsync()).ErrorCode.ShouldBe("AUTOMATIC_CONSUMPTION_LIMITED");
+        var updated = await database.Alerts.Find(new BsonDocument("_id", alert["_id"])).SingleAsync();
+        updated["QuotaUsed"].AsInt32.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task DynamicBaselineDetectsSharedSpikeWithoutWeakeningFixedLimit()
     {
         await using var database = await DiagnosticDatabase.CreateAsync();
@@ -458,6 +742,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
+        builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.PropertyNamingPolicy = null);
         var defaults = new Dictionary<string, string?>();
         foreach (var prefix in new[] { "Tenant", "AppCaller", "AutomaticTenant", "AutomaticAppCaller" })
             foreach (var period in new[] { "PerMinute", "PerHour", "PerDay" })

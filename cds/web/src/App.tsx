@@ -9,6 +9,9 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 // 首次进控制台立即渲染 chrome,只有页面内容走 lazy —— 这是"切页不卡"的另一半。
 import { ConsoleLayout, OwnerConsoleRoute } from '@/components/layout/AppShell';
 import { GlobalAgentAccess } from '@/components/GlobalAgentAccess';
+// 首页首屏与开场帷幕随入口一起就绪，避免先显示通用骨架再播放开场动画。
+// HomePage 内的 3D 叙事场景仍在首次滚动时按需加载。
+import { HomePage } from '@/pages/HomePage';
 // 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
 
 const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
@@ -19,13 +22,13 @@ const BranchRelationsPage = lazy(() => import('@/pages/BranchRelationsPage').the
 const OverviewPage = lazy(() => import('@/pages/OverviewPage').then((m) => ({ default: m.OverviewPage })));
 const CdsSettingsPage = lazy(() => import('@/pages/CdsSettingsPage').then((m) => ({ default: m.CdsSettingsPage })));
 const HelloPage = lazy(() => import('@/pages/HelloPage').then((m) => ({ default: m.HelloPage })));
-const HomePage = lazy(() => import('@/pages/HomePage').then((m) => ({ default: m.HomePage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const TicketSsoPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.TicketSsoPage })));
 const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').then((m) => ({ default: m.PreviewPreparingPage })));
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
 const PublicStatusPage = lazy(() => import('@/pages/PublicStatusPage').then((m) => ({ default: m.PublicStatusPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
+const ReleaseApprovalPage = lazy(() => import('@/pages/release-center/ReleaseApprovalPage').then(m => ({ default: m.ReleaseApprovalPage })));
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
 const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then((m) => ({ default: m.ReleaseConsolePage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
@@ -288,6 +291,7 @@ export function App(): JSX.Element {
               <Route path="/branch-relations/:branchId" element={<BranchRelationsPage />} />
               <Route path="/dts" element={<DtsPage />} />
               <Route path="/code-reviews" element={<CodeReviewsPage />} />
+              <Route path="/release-center/approval/:authorizationId?" element={<ReleaseApprovalPage />} />
               <Route element={<OwnerConsoleRoute />}>
               <Route path="/branch-topology" element={<BranchTopologyPage />} />
               <Route path="/overview" element={<OverviewPage />} />

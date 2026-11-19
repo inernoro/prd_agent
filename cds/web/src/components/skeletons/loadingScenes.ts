@@ -5,6 +5,11 @@ export function loadingSceneForPath(pathname: string): typeof scenes[number] | u
   const segments = pathname.replace(/\/+$/, '').split('/');
   return scenes.find(scene => {
     const pattern = scene.route.split('/');
-    return pattern.length === segments.length && pattern.every((part, i) => part.startsWith(':') ? Boolean(segments[i]) : part === segments[i]);
+    const last = pattern[pattern.length - 1];
+    const optionalLast = last.startsWith(':') && last.endsWith('?');
+    const matchesLength = pattern.length === segments.length || optionalLast && pattern.length === segments.length + 1;
+    return matchesLength && pattern.every((part, i) => part.startsWith(':')
+      ? Boolean(segments[i]) || (optionalLast && i === pattern.length - 1)
+      : part === segments[i]);
   });
 }

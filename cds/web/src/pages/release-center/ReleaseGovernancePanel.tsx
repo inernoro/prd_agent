@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Clock, GitPullRequest, Plus, RefreshCw, ShieldCheck, Square, X } from 'lucide-react';
+import { ClipboardList, Clock, GitPullRequest, Plus, RefreshCw, ShieldCheck, Square } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { canRevokeReleaseApproval, releaseApprovalInboxPath, releaseApprovalLabels, releaseApprovalPath, releaseApprovalState, releaseWorkbenchCommit } from '@/lib/releaseApproval';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -35,9 +37,10 @@ export function releaseGovernanceFailure(error: unknown): string {
 }
 const failure = releaseGovernanceFailure;
 
-export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChanged }: {
-  projectId: string; row?: CenterRow; refreshVersion: number; onChanged: () => void;
+export function ReleaseGovernancePanel({ projectId, row, targets, onSelectTarget, refreshVersion, onChanged }: {
+  projectId: string; row?: CenterRow; targets: CenterRow[]; onSelectTarget: (id: string) => void; refreshVersion: number; onChanged: () => void;
 }): JSX.Element | null {
+  const navigate = useNavigate();
   const [data, setData] = useState<GovernanceView>({ authorizations: [], attempts: [], mergeBacks: [] });
   const [loaded, setLoaded] = useState(false);
   const [branches, setBranches] = useState<BranchOption[]>([]);
@@ -64,7 +67,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
   const loadSequence = useRef(0);
   const observedRefresh = useRef(refreshVersion);
   const now = useNowTick(true);
-  const statusLabel = (record: ReleaseAuthorization) => record.status === 'approved' && record.consumedBy ? '本次批准已使用' : ['approved', 'pending'].includes(record.status) && Date.parse(record.expiresAt) <= now ? '已到期' : states[record.status];
+  const statusLabel = (record: ReleaseAuthorization) => releaseApprovalLabels[releaseApprovalState(record, now)];
   const targetId = row?.target.id || '';
   const load = useCallback(async (signal?: AbortSignal) => {
     const generation = scope.current, sequence = ++loadSequence.current;
@@ -109,30 +112,37 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
   const mergeBack = data.mergeBacks.find(a => a.targetId === targetId && a.sourceSha === row.currentCommit);
   const observedCheck = check || data.checks?.find(c => c.targetId === targetId && c.candidateSha === row.currentCommit);
   const base = `/api/releases/targets/${encodeURIComponent(targetId)}`;
-  const decide = (decision: 'approve' | 'reject' | 'revoke') => current && perform('保存审批决定',
+  const decide = (decision: 'revoke') => current && perform('保存审批决定',
     () => apiRequest(`/api/releases/authorizations/${current.id}/${decision}`, { method: 'POST', body: { reason: decisionReason } }), '审批决定已保存');
   const request = async () => {
-    const saved = await perform('更新主干并核验申请', () => apiRequest(`${base}/authorizations`, { method: 'POST', body: {
+    let createdId: string | undefined;
+    const saved = await perform('更新主干并核验申请', async () => { const result = await apiRequest<{ authorization: ReleaseAuthorization }>(`${base}/authorizations`, { method: 'POST', body: {
       branchId, kind, action, rollbackReleaseId: action === 'rollback' ? rollbackId : undefined,deploymentVersionId:kind==='single'&&action==='release'?deploymentVersionId||undefined:undefined,scheduledJobId: scheduledJobId || undefined,
       expiresAt: new Date(Date.now() + Number(minutes) * 60_000).toISOString(),
       allowedPaths: paths.split('\n').map(p => p.trim()).filter(Boolean), reason,
-    } }), '申请已保存，等待另一位项目成员批准');
-    if (saved) { setDialog(false); setReason(''); }
+    } }); createdId = result.authorization.id; }, '申请已保存，等待另一位项目成员批准');
+    if (saved) { setDialog(false); setReason(''); if (createdId) navigate(releaseApprovalPath(createdId)); }
   };
   return <section aria-label="发布审批与连续调试" className="min-w-0 border-b border-[hsl(var(--hairline))] py-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h2 className="text-lg font-semibold">批准与调试窗口</h2><p className="mt-1 text-xs text-muted-foreground">{row.target.name} · 每次执行都核对版本、生产基线和批准范围。</p></div>
+      <div className="min-w-0"><h2 className="text-lg font-semibold">审批与调试</h2><p className="mt-1 text-sm text-muted-foreground">在这里申请和审批；获批后去发布工作台执行。</p>
+        {targets.length > 1 ? <label className="mt-2 inline-flex flex-wrap items-center gap-2 text-sm text-muted-foreground">审批目标
+          <select className="min-h-8 max-w-full rounded-md border border-input bg-background px-2 text-sm text-foreground" value={targetId} onChange={event => onSelectTarget(event.target.value)}>
+            {targets.map(item => <option key={item.target.id} value={item.target.id}>{item.target.name}</option>)}
+          </select></label> : <p className="mt-2 text-sm font-medium">{row.target.name}</p>}</div>
       <div className="flex flex-wrap gap-2">
         {!row.target.governance?.required ? <Button variant="outline" disabled={!!busy} onClick={() => void perform('启用发布审批', () => apiRequest(`${base}/governance/enable`, { method: 'POST' }), '本环境已启用独立审批，所有发布入口均受约束')}><ShieldCheck />启用本环境审批</Button> : <Chip tone="ok">执行审批已启用</Chip>}
-        <Button variant="outline" disabled={!!busy} onClick={() => void perform('刷新审批记录', () => Promise.resolve(), '已刷新审批记录')}><RefreshCw />刷新记录</Button>
-        <Button disabled={!!busy || !loaded || !row.target.governance?.required} onClick={() => { setKind(tab === 'debug' ? 'debug' : 'single'); setAction('release');setDeploymentVersionId(''); setScheduledJobId(''); setBranchId(branches.find(b => b.status === 'running')?.id || branches[0]?.id || ''); setDialog(true); }}><Plus />新建申请</Button>
+        <Button asChild><Link to={releaseApprovalInboxPath(projectId, targetId)}><ClipboardList />审批列表</Link></Button>
+        <Button variant="ghost" disabled={!!busy} onClick={() => void perform('刷新审批记录', () => Promise.resolve(), '已刷新审批记录')}><RefreshCw />刷新记录</Button>
+        <Button variant="outline" disabled={!!busy || !loaded || !row.target.governance?.required} onClick={() => { setKind('single'); setAction('release');setDeploymentVersionId(''); setScheduledJobId(''); setBranchId(branches.find(b => b.status === 'running')?.id || branches[0]?.id || ''); setDialog(true); }}><Plus />新建申请</Button>
       </div>
     </div>
     {!row.target.governance?.required ? <p className="mt-2 text-xs text-muted-foreground">先启用本环境审批，再申请独立批准。</p> : null}
     {busy ? <p role="status" className="mt-3 flex items-center gap-2 text-sm"><RefreshCw className="h-4 w-4 animate-spin" />{busy}，请稍候…</p> : null}
     {error ? <p role="alert" className="mt-3 text-sm text-bad">{error}</p> : null}
     {notice ? <p role="status" className="mt-3 text-sm text-ok">{notice}</p> : null}
-    <div className="mt-4 flex gap-1" aria-label="授权类别"><Button variant={tab === 'approval' ? 'secondary' : 'ghost'} size="sm" onClick={() => setTab('approval')}>单次审批</Button><Button variant={tab === 'debug' ? 'secondary' : 'ghost'} size="sm" onClick={() => setTab('debug')}>连续调试</Button></div>
+    <details className="mt-3"><summary className="cursor-pointer text-sm text-muted-foreground">查看审批历史与撤销</summary>
+    <div className="mt-3 flex gap-1" aria-label="授权类别"><Button variant={tab === 'approval' ? 'secondary' : 'ghost'} size="sm" onClick={() => setTab('approval')}>单次审批</Button><Button variant={tab === 'debug' ? 'secondary' : 'ghost'} size="sm" onClick={() => setTab('debug')}>连续调试</Button></div>
     {!loaded && !error ? <ContentLoading label="读取审批与调试窗口" variant="panel" /> : <div className="mt-3 grid min-w-0 gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
       <div className="max-h-80 space-y-1 overflow-auto lg:border-r lg:border-[hsl(var(--hairline))] lg:pr-4">
         {records.length ? records.map(record => <button key={record.id} className={`w-full rounded-md p-3 text-left ${current?.id === record.id ? 'bg-muted' : 'hover:bg-muted/50'}`} onClick={() => { setSelected(record.id); setDecisionReason(''); }}>
@@ -146,7 +156,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
           <dl className="mt-4 grid min-w-0 gap-3 text-sm sm:grid-cols-2">
             <div><dt className="text-xs text-muted-foreground">申请人 / 执行凭据</dt><dd className="break-all">{releaseActorLabel(current.requestedBy)}</dd></div>
             {current.scheduledJobId ? <div><dt className="text-xs text-muted-foreground">执行任务</dt><dd className="break-all">{data.scheduledJobs?.find(job => job.id === current.scheduledJobId)?.name || current.scheduledJobId}</dd></div> : null}
-            <div><dt className="text-xs text-muted-foreground">审批人</dt><dd>{approval ? releaseActorLabel(approval.by) : current.status === 'approved' && current.decidedBy ? releaseActorLabel(current.decidedBy) : '等待独立批准'}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">审批人</dt><dd>{approval ? releaseActorLabel(approval.by) : current.status === 'approved' && current.decidedBy ? releaseActorLabel(current.decidedBy) : releaseApprovalState(current, now) === 'pending' ? '等待独立批准' : '无批准记录'}</dd></div>
             <div><dt className="text-xs text-muted-foreground">候选版本</dt><dd className="break-all font-mono text-xs">{current.candidateSha}</dd></div>
             {current.deploymentVersionId?<div><dt className="text-xs text-muted-foreground">固定部署版本</dt><dd className="break-all font-mono text-xs">{current.deploymentVersionId}</dd></div>:null}
             {current.action === 'rollback' ? <div><dt className="text-xs text-muted-foreground">回滚目标记录</dt><dd className="break-all font-mono text-xs">{current.rollbackReleaseId || '缺少历史记录，请重新申请'}</dd></div> : null}
@@ -156,14 +166,13 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
           </dl>
           {current.decisionReason ? <p className="mt-3 text-sm text-muted-foreground">审批意见：{current.decisionReason}</p> : null}
           {current.decisions?.length ? <ol aria-label="审批历史" className="mt-3 space-y-1 text-xs text-muted-foreground">{current.decisions.map((decision, index) => <li key={index}>{formatDateTime(decision.at)} · {releaseActorLabel(decision.by)} · {states[decision.action]}：{decision.reason}</li>)}</ol> : null}
-          {current.status === 'pending' || current.status === 'approved' ? <div className="mt-4 space-y-2">
-            <label className="block text-xs text-muted-foreground">审批 / 撤销意见<input aria-label="审批意见" className={`${inputClass} mt-1`} value={decisionReason} onChange={e => setDecisionReason(e.target.value)} placeholder="说明批准依据或拒绝原因" /></label>
-            <div className="flex flex-wrap gap-2">{current.status === 'pending' ? <><Button disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('approve')}><Check />独立批准</Button><Button variant="outline" disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('reject')}><X />拒绝</Button></> : null}<Button variant="outline" disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('revoke')}><Square />撤销授权</Button></div>
-          </div> : null}
+          <Button asChild variant="outline" className="mt-3"><Link to={releaseApprovalPath(current.id)}>打开这笔审批申请</Link></Button>
+          {canRevokeReleaseApproval(current) ? <details className="mt-3 text-xs text-muted-foreground"><summary className="cursor-pointer">撤销授权</summary><div className="mt-2 flex flex-wrap gap-2"><input aria-label="撤销意见" className={`${inputClass} flex-1`} value={decisionReason} onChange={e => setDecisionReason(e.target.value)} placeholder="说明撤销原因（至少 4 字）" /><Button variant="outline" disabled={!!busy || decisionReason.trim().length < 4} onClick={() => void decide('revoke')}><Square />撤销授权</Button></div></details> : null}
           {attempts.length ? <div className="mt-5"><h4 className="text-sm font-medium">逐次执行记录</h4><ol className="mt-2 max-h-52 space-y-2 overflow-auto">{attempts.map(attempt => <li key={attempt.id} className="border-l-2 border-[hsl(var(--hairline))] pl-3 text-xs"><span className={attempt.result === 'accepted' ? 'text-ok' : 'text-bad'}>{attempt.result === 'accepted' ? '已受理' : '已拦截'}</span> · {formatDateTime(attempt.at)} · {attempt.candidateSha.slice(0,12)}<p className="mt-1 text-muted-foreground">{attempt.reason}</p></li>)}</ol></div> : null}
         </> : null}
       </div>
     </div>}
+    </details>
     <div className="mt-5 grid min-w-0 gap-5 border-t border-[hsl(var(--hairline))] pt-4 lg:grid-cols-2">
       <div><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">真实合并冲突</h3><Button size="sm" variant="outline" disabled={!!busy || !row.currentCommit} onClick={() => void perform('更新主干并隔离核验', async () => { const generation = scope.current; const result = await apiRequest<{ check: ReleaseConflictCheck }>(`${base}/conflict-check`, { method: 'POST' }); if (scope.current === generation) setCheck(result.check); }, '冲突检查已完成')}><RefreshCw />核验线上与主干</Button></div>
         <p className="mt-2 text-sm text-muted-foreground">{observedCheck ? observedCheck.status === 'clean' ? '隔离合并通过，未发现文本冲突。' : observedCheck.status === 'conflicts' ? `真实冲突：${observedCheck.conflicts.join('、')}` : observedCheck.reason : '按固定提交执行隔离 Git 合并；文件重叠不等于文本冲突。'}</p>
@@ -178,7 +187,7 @@ export function ReleaseGovernancePanel({ projectId, row, refreshVersion, onChang
       <div className="grid min-w-0 gap-4 sm:grid-cols-2">
         <label className="text-sm">类型<select aria-label="批准类型" className={`${inputClass} mt-1`} value={kind} onChange={e => { setKind(e.target.value as 'single' | 'debug'); setAction('release');setDeploymentVersionId(''); }}><option value="single">单次版本批准</option><option value="debug">限定范围的连续调试</option></select></label>
         <label className="text-sm">操作<select aria-label="批准操作" className={`${inputClass} mt-1`} value={action} onChange={e => {setAction(e.target.value as 'release' | 'rollback');setDeploymentVersionId('');}}><option value="release">发布</option>{kind === 'single' ? <option value="rollback">恢复历史成功版本</option> : null}</select></label>
-        <label className="min-w-0 text-sm">执行分支<select aria-label="申请分支" className={`${inputClass} mt-1`} value={branchId} onChange={e => {setBranchId(e.target.value);setDeploymentVersionId('');}}><option value="">选择分支</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.branch} · {(branch.commitSha || branch.githubCommitSha || '').slice(0,12)}</option>)}</select></label>
+        <label className="min-w-0 text-sm">执行分支<select aria-label="申请分支" className={`${inputClass} mt-1`} value={branchId} onChange={e => {setBranchId(e.target.value);setDeploymentVersionId('');}}><option value="">选择分支</option>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.branch} · {releaseWorkbenchCommit(branch).slice(0,12)}</option>)}</select></label>
         {kind==='single'&&action==='release'&&data.deploymentVersions?.some(v=>v.branchId===branchId)?<label className="min-w-0 text-sm sm:col-span-2">发布版本<select aria-label="批准发布版本" className={`${inputClass} mt-1`} value={deploymentVersionId} onChange={e=>setDeploymentVersionId(e.target.value)}><option value="">分支当前固定 / 最新版本</option>{data.deploymentVersions.filter(v=>v.branchId===branchId).map(v=><option key={v.id} value={v.id}>{v.commitSha.slice(0,12)} · {formatDateTime(v.createdAt)} · {v.id}</option>)}</select><span className="mt-1 block text-xs text-muted-foreground">批次发布选择其已验收的固定部署版本；选择不会回退分支。</span></label>:null}
         <label className="text-sm">有效期<select aria-label="授权有效期" className={`${inputClass} mt-1`} value={minutes} onChange={e => setMinutes(e.target.value)}><option value="15">15 分钟</option><option value="60">1 小时</option><option value="240">4 小时</option><option value="1440">24 小时</option></select></label>
         {data.scheduledJobs?.some(job => job.targetIds.includes(targetId)) ? <label className="min-w-0 text-sm sm:col-span-2">执行方式<select aria-label="批准执行任务" className={`${inputClass} mt-1`} value={scheduledJobId} onChange={e => setScheduledJobId(e.target.value)}><option value="">由本次申请账号或执行凭据发布</option>{data.scheduledJobs.filter(job => job.targetIds.includes(targetId)).map(job => <option key={job.id} value={job.id}>定时任务：{job.name}</option>)}</select><span className="mt-1 block text-xs text-muted-foreground">任务批准只供该任务使用；任务配置变化后需要重新申请。</span></label> : null}

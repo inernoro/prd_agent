@@ -618,7 +618,7 @@
       "calls": {
         "call:CreateClient:007bf574b64ef30dbfccf6fc": 1,
         "call:CreateClient:c3dbeb32338105b6c2256b11": 1,
-        "new:HttpClient:44c248368d7640f892def6e2": 1
+        "new:HttpClient:67d03578c837dfa85f7fae84": 1
       },
       "purpose": "统一网关发送阶段的内部客户端作用域；只消费解析阶段已确定的代理快照，重试仍由原网关准入、发送授权及审计链路控制。MAP 不注册进程内发送器，不能从业务服务借此新建客户端；只登记当前构造与工厂调用，不放行后续新增调用。"
     },

@@ -325,7 +325,7 @@ describe('发布控制台：切项目后丢弃旧响应', () => {
     const reset = page.slice(page.indexOf('const selectProject ='), page.indexOf('const workspaceHref ='));
     expect(reset).toContain('currentProject.current = id');
     expect(reset).toMatch(/setProjectId\(id\);\s*setCenter\(null\);\s*setBranches\(\[\]\);/);
-    expect(reset).toContain("['target', 'intent', 'batch', 'batchView']");
+    expect(reset).toContain("['target', 'intent', 'batch', 'batchView', 'branch']");
     expect(page).toContain('onChange={(event) => selectProject(event.target.value)}');
     expect(page).toContain('onClick={() => selectProject(item.id)}');
   });

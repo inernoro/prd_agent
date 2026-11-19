@@ -38,8 +38,14 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await page.route('**/api/branches?*',route=>route.fulfill({json:{branches:[{id:'compat-branch',projectId:target.projectId,branch:'compat-branch',githubCommitSha:b,commitSha:b,status:'running'}]}}));
     await page.route('**/api/releases/governance?*',route=>route.fulfill({json:{authorizations:records,attempts:[],mergeBacks:[],deploymentVersions:[{id:'saved-a',branchId:'compat-branch',commitSha:a,createdAt:stamp}]}}));
     await page.route('**/api/releases/targets/compat-target/authorizations',async route=>{
-      const body=route.request().postDataJSON();writes.push(body);records=[{...body,id:'fixed-a-approval',projectId:target.projectId,targetId:target.id,branchName:'compat-branch',candidateSha:a,requestedBy:'user:requester:申请人',status:'pending',createdAt:stamp}];await route.fulfill({json:{authorization:records[0]}});
+      const body=route.request().postDataJSON();writes.push(body);records=[{...body,id:'fixed-a-approval',projectId:target.projectId,targetId:target.id,branchName:'compat-branch',candidateSha:a,mainSha:b,requestedBy:'user:requester:申请人',status:'pending',createdAt:stamp}];await route.fulfill({json:{authorization:records[0]}});
     });
+    await page.route('**/api/releases/authorizations/fixed-a-approval', route => route.fulfill({json:{
+      authorization:records[0],target:{name:targetName},viewer:{applicant:true,mayReview:false,mayReapply:false},
+    }}));
+    await page.route('**/api/releases/approval-inbox?*', route => route.fulfill({json:{
+      target:{name:targetName},records:records.map(record=>({...record,purpose:record.reason,applicant:true,mayReview:false})),
+    }}));
     await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
     const panel=page.getByRole('region',{name:'发布审批与连续调试'});await panel.getByRole('button',{name:'新建申请',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'申请发布批准',exact:true});
@@ -47,10 +53,13 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await dialog.getByRole('combobox',{name:'批准发布版本',exact:true}).selectOption('saved-a');
     await dialog.getByRole('textbox',{name:'发布目的',exact:true}).fill('批次固定已验收A而分支已经前进B');
     await dialog.getByRole('button',{name:'提交独立审批',exact:true}).click();await expect(dialog).toBeHidden();
-    await expect(panel.getByText('fixed-a-approval',{exact:true})).toHaveCount(0);
-    await expect(panel.getByText('saved-a',{exact:true})).toBeVisible();await expect(panel.getByText(a,{exact:true})).toBeVisible();
+    const receipt=page.getByRole('dialog',{name:'单次发布申请',exact:true});
+    await expect(receipt.getByText('等待另一位成员审批',{exact:true})).toBeVisible();
+    await receipt.getByText('申请依据与审批记录',{exact:true}).click();
+    await expect(receipt.getByText(/固定部署版本：saved-a/)).toBeVisible();
+    await expect(receipt.getByText(new RegExp('候选版本：'+a))).toBeVisible();
     expect(writes).toHaveLength(1);expect(writes[0]).toMatchObject({kind:'single',action:'release',deploymentVersionId:'saved-a',branchId:'compat-branch'});
-    expect(page.url()).toContain('release-center');
+    await expect(page).toHaveURL(/\/release-center\/approval\?request=fixed-a-approval$/);
   });
   test(`${viewport.width} 已受理的单次批准仍可撤销且不重新批准`, async ({ page }) => {
     await page.setViewportSize(viewport);
@@ -71,6 +80,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     });
     await page.goto(`http://127.0.0.1:5273/release-center?project=${target.projectId}`);
     const panel=page.getByRole('region',{name:'发布审批与连续调试'});
+    await panel.getByText('查看审批历史与撤销',{exact:true}).click();
     await expect(panel.getByText('本次批准已使用',{exact:true})).toBeVisible();
     await expect(panel.getByText('回滚目标记录',{exact:true})).toBeVisible();
     await expect(panel.getByText('approved-history',{exact:true})).toBeVisible();
@@ -78,8 +88,9 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     await expect(panel.getByText('已刷新审批记录',{exact:true})).toBeVisible();
     await expect(panel.getByRole('button',{name:'独立批准',exact:true})).toHaveCount(0);
     await expect(panel.getByRole('button',{name:'拒绝',exact:true})).toHaveCount(0);
+    await panel.locator('summary').filter({hasText:'撤销授权'}).click();
     await expect(panel.getByRole('button',{name:'撤销授权',exact:true})).toBeVisible();
-    await panel.getByRole('textbox',{name:'审批意见',exact:true}).fill('连接期间停止本次发布');
+    await panel.getByRole('textbox',{name:'撤销意见',exact:true}).fill('连接期间停止本次发布');
     await panel.getByRole('button',{name:'撤销授权',exact:true}).click();
     await expect(panel.getByText('审批决定已保存',{exact:true})).toBeVisible();
     await expect(panel.getByText('已撤销',{exact:true})).toBeVisible();
