@@ -1,6 +1,6 @@
 ---
 name: notification-triage
-description: 根据真实证据处理 MAP、LLM Gateway 和 CDS 通知，判断紧急、重要或一般，定位余额不足、上游限流、平台拦截和持续可用性故障。
+description: 当用户要求判断告警优先级，或排查额度耗尽、限流、连续请求失败、CDS 入口持续不可用时使用。根据真实证据处理 MAP、LLM Gateway 和 CDS 通知，判断紧急、重要或一般，定位余额不足、上游限流、平台拦截和持续可用性故障。
 ---
 
 # 通知分诊
