@@ -9,122 +9,60 @@ on:
 permissions:
   contents: read
 jobs:
-  theme-during-portrait:
-    runs-on: ubuntu-24.04
-    container:
-      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
-      options: --init --shm-size=1g
-    timeout-minutes: 7
+  ubuntu-dependency-source:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            suite: jammy
+          - runner: ubuntu-24.04
+            suite: noble
+    timeout-minutes: 6
     env:
-      VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+      UBUNTU_SUITE: ${{ matrix.suite }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: 098a3dea0a2c5a31b78eddb1b9c0c006e1307d03
-      - uses: pnpm/action-setup@v4
-        with:
-          version: '10.28.2'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Check whether a native playback abort ends the replacement clip
+      - name: Measure verified Ubuntu archive sources on the actual runner
         run: |
-          pnpm -C e2e install --frozen-lockfile
-          pnpm -C llmgw/web install --frozen-lockfile
-          pnpm -C llmgw/web build
-          pnpm -C llmgw/web preview --host 127.0.0.1 --strict-port --port 8200 &
-          for attempt in $(seq 1 20); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8200/llmgw/login; then break; fi
-            sleep 1
-          done
-          cd e2e
-          node --input-type=module <<'JS'
-          import { chromium, expect } from '@playwright/test';
-          import { installOperationsFixtures } from './fixtures/admin-operations.mjs';
-          import { readFile, writeFile } from 'node:fs/promises';
-          const assets = JSON.parse(await readFile('./fixtures/media/gateway-portrait-cdn.json','utf8'));
-          const browser = await chromium.launch();
-          const observations = [];
-          try {
-            for (let attempt = 1; attempt <= 3; attempt++) {
-              const page = await browser.newPage({ colorScheme: 'dark', reducedMotion: 'no-preference' });
-              let release;
-              const gate = new Promise(resolve => { release = resolve; });
-              try {
-                await installOperationsFixtures(page, { quickstart: true });
-                await page.route(assets.dark.motion.url, async route => {
-                  await gate;
-                  await route.continue().catch(() => {});
-                });
-                await page.addInitScript(() => {
-                  const originalPlay = HTMLMediaElement.prototype.play;
-                  window.portraitCalls = [];
-                  HTMLMediaElement.prototype.play = function (...args) {
-                    const promise = originalPlay.apply(this, args);
-                    if (this.matches('video.portrait-motion')) {
-                      const entry = { src: this.src, startReadyState: this.readyState, result: 'pending' };
-                      window.portraitCalls.push(entry);
-                      promise.then(
-                        () => { entry.result = 'playing'; },
-                        error => { entry.result = error.name; entry.connected = this.isConnected; },
-                      );
-                    }
-                    return promise;
-                  };
-                });
-                await page.goto('http://127.0.0.1:8200/llmgw/login');
-                await page.locator('#llmgw-username').fill('demo');
-                await page.locator('#llmgw-password').fill('demo');
-                await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
-                await page.waitForURL(/\/quickstart$/);
-                await page.waitForFunction(dark => window.portraitCalls.some(call => call.src === dark && call.result === 'pending'), assets.dark.motion.url);
-                await page.emulateMedia({ colorScheme: 'light' });
-                await expect(page.locator('.consciousness-scene')).toHaveAttribute('data-portrait-theme','light');
-                release();
-                await page.waitForFunction(light => {
-                  const film = document.querySelector('video.portrait-motion');
-                  const arriving = document.documentElement.hasAttribute('data-entry-arriving');
-                  return !arriving || (film?.currentSrc === light && film.currentTime > .3);
-                }, assets.light.motion.url, { timeout: 10000 });
-                const observation = await page.evaluate(() => {
-                  const film = document.querySelector('video.portrait-motion');
-                  return {
-                    portraitCalls: window.portraitCalls,
-                    arriving: document.documentElement.hasAttribute('data-entry-arriving'),
-                    currentTime: film?.currentTime ?? null,
-                    currentSrc: film?.currentSrc ?? null,
-                    renderer: document.querySelector('.consciousness-portrait')?.dataset.renderer,
-                  };
-                });
-                const midpoint = await page.waitForFunction(() => {
-                  const film = document.querySelector('video.portrait-motion');
-                  const arriving = document.documentElement.hasAttribute('data-entry-arriving');
-                  if (!arriving || (film && film.currentTime >= 5.25)) {
-                    return { arriving, currentTime: film?.currentTime ?? null,
-                      header: getComputedStyle(document.querySelector('.lg-console-header')).visibility };
-                  }
-                }, null, { timeout: 10000 }).then(result => result.jsonValue());
-                const end = await page.waitForFunction(() => {
-                  if (!document.documentElement.hasAttribute('data-entry-arriving')) {
-                    const film = document.querySelector('video.portrait-motion');
-                    return { ended: film?.ended ?? false, time: film?.currentTime ?? null, duration: film?.duration ?? null };
-                  }
-                }, null, { timeout: 15000 }).then(result => result.jsonValue());
-                observations.push({ attempt, ...observation, midpoint, end });
-              } finally {
-                release();
-                await page.close();
-              }
-            }
-          } finally {
-            console.log(JSON.stringify(observations));
-            await writeFile('../portrait-theme-recheck.json', JSON.stringify(observations, null, 2));
-            await browser.close();
+          python3 - <<'PY'
+          import concurrent.futures as cf
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+
+          suite = os.environ['UBUNTU_SUITE']
+          mirrors = {
+              'canonical': 'https://archive.ubuntu.com/ubuntu',
+              'kernel': 'https://mirrors.kernel.org/ubuntu',
+              'princeton': 'https://mirror.math.princeton.edu/pub/ubuntu',
+              'mit': 'https://mirrors.mit.edu/ubuntu',
+              'berkeley': 'https://mirrors.ocf.berkeley.edu/ubuntu',
+              'waterloo': 'https://mirror.csclub.uwaterloo.ca/ubuntu',
+              'hetzner': 'https://mirror.hetzner.com/ubuntu/packages',
+              'leaseweb': 'https://mirror.us.leaseweb.net/ubuntu',
+              'umich': 'https://mirrors.lug.mtu.edu/ubuntu',
           }
-          JS
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: entry-theme-midfilm-recheck
-          path: portrait-theme-recheck.json
-          if-no-files-found: error
+          suites = [suite, suite + '-security', suite + '-updates']
+
+          def check(item):
+              label, base = item
+              with tempfile.TemporaryDirectory() as d:
+                  for name in suites:
+                      target = Path(d) / name
+                      url = f'{base}/dists/{name}/InRelease'
+                      download = subprocess.run(['curl', '-fsSL', '--connect-timeout', '4', '--max-time', '9', url, '-o', str(target)], capture_output=True)
+                      if download.returncode:
+                          return label, name, download.stderr.decode().strip()
+                      verify = subprocess.run(['gpgv', '--keyring', '/usr/share/keyrings/ubuntu-archive-keyring.gpg', str(target)], capture_output=True)
+                      if verify.returncode:
+                          return label, name, f'archive signature rejected ({verify.returncode})'
+                      release = target.read_text()
+                      if f'Suite: {name}\n' not in release:
+                          return label, name, 'suite mismatch'
+                  return label, suite, 'verified HTTPS and Ubuntu signatures'
+          with cf.ThreadPoolExecutor(max_workers=len(mirrors)) as pool:
+              for result in pool.map(check, mirrors.items()):
+                  print(*result, sep=' | ')
+          PY
