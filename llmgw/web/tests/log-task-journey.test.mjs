@@ -44,7 +44,7 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     const { MemoryRouter, Routes, Route, useLocation, useNavigate } = globalThis.__journeyRouter;
     const { LogsView } = await server.ssrLoadModule('/src/components/LogsView.tsx');
     const { LogTracePage } = await server.ssrLoadModule('/src/pages/LogTracePage.tsx');
-    const { buildLogRequestHref } = await server.ssrLoadModule('/src/lib/logNavigation.ts');
+    const { buildLogRequestHref, getLogReturnTarget, getLogTaskContext } = await server.ssrLoadModule('/src/lib/logNavigation.ts');
     const Location = () => { globalThis.__journey.navigate = useNavigate(); return React.createElement('output', { id: 'route' }, useLocation().pathname + useLocation().search); };
     root = createRoot(document.getElementById('root'));
     await act(async () => root.render(React.createElement(MemoryRouter, { initialEntries: ['/logs?status=failed&model=sample-model'] }, React.createElement(React.Fragment, null, React.createElement(Location), React.createElement(Routes, null, React.createElement(Route, { path: '/usage', element: React.createElement('div', {id:'origin'}, '原账单') }), React.createElement(Route, { path: '/overview', element: React.createElement('div', {id:'origin'}, '原概览') }), React.createElement(Route, { path: '/logs', element: React.createElement(LogsView) }), React.createElement(Route, { path: '/logs/trace', element: React.createElement(LogTracePage) }))))));
@@ -57,8 +57,11 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
     assert.equal(document.querySelectorAll('.lg-log-table-row').length, 4, 'Back retains every page of the live list');
     assert.equal(globalThis.__journey.calls.length, callsBeforeBack, 'Back keeps the same query window and does not load page 1');
     const lastRow = document.querySelectorAll('.lg-log-table-row')[3];
+    let entityReturn;
     for (const path of ['/models/view', '/platforms/view', '/app-callers/view']) {
       const link = lastRow.querySelector(`a[href^="${path}"]`);assert.ok(link,`rendered ${path} entry`);const target=new URL(link.getAttribute('href'),'http://local');const context=new URLSearchParams(target.searchParams.get('context'));assert.equal(context.get('status'),'failed');assert.equal(context.get('model'),'sample-model');assert.equal(context.get('selectedLogId'),'row-4');assert.ok(context.get('from'));assert.ok(context.get('to'));if(path==='/app-callers/view')assert.equal(target.searchParams.get('requestType'),'chat');
+      entityReturn = getLogReturnTarget(getLogTaskContext(target.search)).href;
+      assert.equal(new URL(entityReturn, 'http://local').searchParams.get('liveList'), '1');
     }
     const body = document.querySelector('.lg-log-table-body'); body.scrollTop = 350; body.dispatchEvent(new dom.window.Event('scroll'));
     await click(document.querySelectorAll('.lg-log-table-row')[3]);
@@ -127,6 +130,11 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
       to: new Date(oldTo).toISOString(),
     });
     globalThis.__journey.rows.unshift({ ...base, id: 'new-failed', startedAt: new Date(oldTo + 1000).toISOString() });
+    await act(async () => globalThis.__journey.navigate('/overview'));
+    await act(async () => globalThis.__journey.navigate('/logs?' + oldWindow));
+    assert.equal(document.querySelector('[data-log-row-id="new-failed"]'), null);
+    await act(async () => globalThis.__journey.navigate('/logs?range=7d&status=failed&model=sample-model'));
+    assert.ok(document.querySelector('[data-log-row-id="new-failed"]'), 'ordinary sidebar navigation from a historical URL uses the live window');
     await act(async () => globalThis.__journey.navigate('/logs?' + oldWindow));
     assert.equal(document.querySelector('[data-log-row-id="new-failed"]'), null);
     await click(document.querySelector('[aria-label="刷新日志"]'));
@@ -160,6 +168,12 @@ test('第二批请求→详情→调用链→返回保留筛选、已加载记�
       Date.now = () => afterClose + 1000;
       await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange')));
       assert.ok(document.querySelector('[data-log-row-id="after-close"]'), 'returning after closing details finds new requests');
+      await act(async () => globalThis.__journey.navigate('/overview'));
+      await act(async () => globalThis.__journey.navigate(entityReturn));
+      assert.match(document.querySelector('#route').textContent, /liveList=1/);
+      await act(async () => document.dispatchEvent(new dom.window.Event('visibilitychange')));
+      assert.doesNotMatch(document.querySelector('#route').textContent, /[?&](to|liveList)=/);
+      assert.ok(document.querySelector('[data-log-row-id="after-close"]'), 'returning from an entity allows the list to refresh');
     } finally {
       Date.now = realNow;
     }

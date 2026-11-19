@@ -25,12 +25,12 @@ export function getLogTaskContext(search: string): LogTaskContext {
 export function buildLogListHref(context: LogTaskContext = {}, selectedId?: string): string {
   const safe = clean(new URLSearchParams(Object.entries(context).filter(([, value]) => !!value) as [string, string][]));
   const query = new URLSearchParams();
-  for (const key of ['range', 'from', 'to', 'view', ...LOG_FILTER_KEYS] as const) if (safe[key]) query.set(key, safe[key]!);
-  if (selectedId) {
-    query.set('transaction', selectedId);
-    if (safe.liveList) query.set('liveList', safe.liveList);
+  for (const key of ['range', 'view', ...LOG_FILTER_KEYS] as const) if (safe[key]) query.set(key, safe[key]!);
+  if (!safe.liveList || selectedId || safe.selectedLogId) {
+    for (const key of ['from', 'to', 'liveList'] as const) if (safe[key]) query.set(key, safe[key]!);
   }
-  if (context.selectedLogId) query.set('anchor', context.selectedLogId);
+  if (selectedId) query.set('transaction', selectedId);
+  if (safe.selectedLogId) query.set('anchor', safe.selectedLogId);
   return `/logs${query.size ? `?${query}` : ''}`;
 }
 function withContext(path: string, query: URLSearchParams, context: LogTaskContext): string {
