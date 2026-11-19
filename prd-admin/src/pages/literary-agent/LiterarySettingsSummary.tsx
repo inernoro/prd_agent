@@ -15,7 +15,7 @@ async function cropWatermarkPreview(blob: Blob): Promise<Blob> {
   try {
     const bitmap = await createImageBitmap(blob);
     const canvas = document.createElement('canvas');
-    const scale = Math.min(1, 256 / Math.max(bitmap.width, bitmap.height));
+    const scale = Math.min(1, 512 / Math.max(bitmap.width, bitmap.height));
     canvas.width = Math.max(1, Math.round(bitmap.width * scale));
     canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -81,16 +81,18 @@ export function LiterarySettingsSummary({ writingModel, imageModel, watermarkNam
   const PositionIcon = positionIcons[position];
   const watermarkLabel = `水印：${watermarkName}`;
   return (
-    <span className="lit-settings-summary-icons">
-      <ModelIcon label="写作模型" name={writingModel} fallback={PenLine} />
-      <ModelIcon label="配图模型" name={imageModel} fallback={Image} />
-      <span className="lit-settings-summary-icon lit-settings-summary-optional lit-settings-summary-watermark"
-        role="img" aria-label={watermarkLabel} title={watermarkLabel}>
+    <>
+      <span className="lit-settings-summary-watermark" role="img" aria-label={watermarkLabel} title={watermarkLabel}>
         <WatermarkIcon key={JSON.stringify([watermarkId, watermarkUpdatedAt])} id={watermarkId} updatedAt={watermarkUpdatedAt} />
       </span>
-      <span className="lit-settings-summary-icon lit-settings-summary-optional" aria-hidden="true" title={positionLabel}>
-        <PositionIcon size={15} />
+      <span className="lit-settings-value">{positionLabel}</span>
+      <span className="lit-settings-summary-icons">
+        <ModelIcon label="写作模型" name={writingModel} fallback={PenLine} />
+        <ModelIcon label="配图模型" name={imageModel} fallback={Image} />
+        <span className="lit-settings-summary-icon lit-settings-summary-optional" aria-hidden="true" title={positionLabel}>
+          <PositionIcon size={15} />
+        </span>
       </span>
-    </span>
+    </>
   );
 }

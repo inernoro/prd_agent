@@ -5,10 +5,12 @@
   container-type: inline-size;
 }
 .lit-settings .lit-settings-disclosure {
-  grid-template-columns: auto minmax(0, 1fr) auto 15px;
+  grid-template-columns: minmax(0, max-content) minmax(min(6em, 30cqi), 1fr) auto 15px;
+  grid-template-rows: var(--lit-settings-row-height);
   gap: 6px;
   list-style: none;
   margin-top: 4px;
+  padding-block: 0;
 }
 .lit-settings-disclosure::-webkit-details-marker { display: none; }
 .lit-settings[open] > .lit-settings-disclosure > :is(.lit-settings-value, .lit-settings-summary-icons) { visibility: hidden; }
@@ -20,8 +22,15 @@
   background: var(--bg-input); color: var(--text-secondary);
 }
 .lit-settings-summary-icon img { width: 16px; height: 16px; object-fit: contain; }
-.lit-settings-summary-watermark { width: 29px; }
-.lit-settings-summary-watermark img { width: 93%; height: 85%; }
+.lit-settings-summary-watermark { display: flex; align-items: center; min-width: 0; }
+.lit-settings-summary-watermark img {
+  display: block;
+  height: var(--lit-settings-row-height);
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left center;
+}
 @container (max-width: 320px) {
   .lit-settings-summary-optional { display: none; }
 }
@@ -41,8 +50,9 @@
 .lit-settings-section--rows > .lit-inline-menu { border-bottom: 1px solid var(--border-subtle); }
 .lit-settings-section--rows > .lit-inline-menu:last-child { border-bottom: 0; }
 .lit-settings-row {
+  --lit-settings-row-height: 40px;
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) 15px;
-  align-items: center; gap: 12px; width: 100%; min-height: 40px; padding: 8px 6px;
+  align-items: center; gap: 12px; width: 100%; min-height: var(--lit-settings-row-height); padding: 8px 6px;
   border: 0; border-radius: 6px; background: transparent; cursor: pointer;
   color: var(--text-secondary); font-size: 14px; line-height: 1.5; text-align: left;
   transition: background .15s ease, color .15s ease;
@@ -108,5 +118,5 @@
   .lit-settings-row, .lit-settings-chevron, .lit-model-trigger { transition: none; }
 }
 @media (max-width: 767px) {
-  .lit-settings-row { min-height: 44px; }
+  .lit-settings-row { --lit-settings-row-height: 44px; }
 }

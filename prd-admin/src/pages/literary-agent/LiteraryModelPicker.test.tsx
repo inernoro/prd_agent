@@ -67,6 +67,8 @@ describe('工作台紧凑模型选择', () => {
     expect(container.querySelector('[aria-label="配图模型：test-new-picture-model"] svg')).not.toBeNull();
     expect(container.querySelector('[title="每小标题一张"] svg')).not.toBeNull();
     const watermark = container.querySelector('[aria-label="水印：黑白"]')!;
+    expect(container.firstElementChild).toBe(watermark);
+    expect(watermark.nextElementSibling?.textContent).toBe('每小标题一张');
     const image = watermark.querySelector('img')!;
     expect(image.getAttribute('src')).toBe(preview);
     await act(async () => { image.dispatchEvent(new Event('error')); });
