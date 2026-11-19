@@ -46,7 +46,7 @@ public sealed class KeyMaintenanceContractMongoTests(ITestOutputHelper output)
             start.Environment["LlmGateway__DatabaseName"] = databaseName;
             start.Environment["LlmGateway__InternalTenantId"] = tenant;
             start.Environment["LLMGW_ADMIN_PASSWORD"] = "Isolated-Key-Contract-Only-2026";
-            start.Environment["LLMGW_ADMIN_FORCE_RESET"] = "true";
+            start.Environment["LLMGW_ADMIN_FORCE_RESET"] = "false";
             start.Environment["LlmGwJwt__Secret"] = "isolated-key-contract-test-secret-2026-0001";
             api = Process.Start(start)!;
             stdout = api.StandardOutput.ReadToEndAsync(); stderr = api.StandardError.ReadToEndAsync();
@@ -63,6 +63,17 @@ public sealed class KeyMaintenanceContractMongoTests(ITestOutputHelper output)
             login.EnsureSuccessStatusCode();
             var loginJson = await login.Content.ReadFromJsonAsync<JsonElement>();
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", loginJson.GetProperty("data").GetProperty("token").GetString());
+
+            // Fresh controlled bootstrap must be claimed before privileged maintenance.
+            var claim = await http.PostAsJsonAsync("/gw/auth/change-password", new
+            {
+                oldPassword = "Isolated-Key-Contract-Only-2026",
+                newPassword = Guid.NewGuid().ToString("N")
+            });
+            claim.EnsureSuccessStatusCode();
+            var claimJson = await claim.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.True(claimJson.GetProperty("success").GetBoolean());
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", claimJson.GetProperty("data").GetProperty("token").GetString());
 
             var policies = db.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
             var keys = db.GetCollection<BsonDocument>("llmgw_service_keys");

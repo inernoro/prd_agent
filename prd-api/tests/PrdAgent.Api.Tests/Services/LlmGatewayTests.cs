@@ -4214,9 +4214,6 @@ public class LlmGatewayTests
     [Fact]
     public void StreamToolCallDeltas_MergedByIndex_IntoOneCompleteCall()
     {
-        var accumType = typeof(Dictionary<int, JsonObject>);
-        var accum = Activator.CreateInstance(accumType)!;
-
         var accumulate = typeof(LlmGateway).GetMethod(
             "AccumulateToolCallDeltas",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
@@ -4225,6 +4222,7 @@ public class LlmGatewayTests
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         Assert.NotNull(accumulate);
         Assert.NotNull(build);
+        var accum = Activator.CreateInstance(accumulate!.GetParameters()[0].ParameterType)!;
 
         var delta1 = new JsonArray
         {

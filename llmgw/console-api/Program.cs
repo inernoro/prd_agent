@@ -17,6 +17,8 @@ using System.Security.Cryptography;
 using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
+using IPNetwork = System.Net.IPNetwork;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
@@ -76,14 +78,7 @@ if (jwtTooShort)
 }
 var jwtIssuer = config["LlmGwJwt:Issuer"] ?? "prdagent-llmgw";
 
-// 网关控制台登录账号：
-// - 默认模式下，长期权威是 llm_gateway.llmgw_console_users 里的 PBKDF2 哈希，UI 改密后重启不被 env 覆盖。
-// - LLMGW_ADMIN_ENV_AUTHORITY=1 时，LLMGW_ADMIN_PASSWORD 是长期权威；启动只在检测到漂移时修复，
-//   密码和状态一致时不写库、不递增 SecurityVersion，避免每次重启让已有会话失效。
-// - LLMGW_ADMIN_FORCE_RESET 保留为兼容的一次性破玻璃开关，同样采用幂等修复。
-// - 未设 bootstrap 口令时，内置 admin/admin 引导 + 首登强制改密，避免新环境锁死。
-const string AdminUser = "admin";
-const string DefaultAdminPwd = "admin";
+// 初始所有者只接受显式引导材料；持久化领取状态与不可变账号 ID。
 
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 
@@ -238,38 +233,38 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 builder.Services.AddModelReferences(gatewayDatabase, mapDatabase, config, internalTenantId);
 builder.Services.AddModelUpgrades(gatewayDatabase, mapDatabase, config, internalTenantId);
 
+var trustedLoginProxies = (config["LLMGW_TRUSTED_PROXIES"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Select(IPAddress.Parse).ToArray();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+    options.ForwardLimit = 1;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+    foreach (var proxy in trustedLoginProxies) options.KnownProxies.Add(proxy);
+});
+
 var app = builder.Build();
 
 // CORS 必须在 Auth 之前应用。
+if (trustedLoginProxies.Length > 0) app.UseForwardedHeaders();
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
 
-// ── 启动时幂等播种管理员账户（内置 admin/admin 引导，可选 env 长期托管）──
-// 破玻璃（break-glass）：设 LLMGW_ADMIN_FORCE_RESET 为真值（1/true/yes/on，大小写不敏感）时，显式校准 admin
-// 口令。用于「账号被认领但口令登不进」的死锁恢复。恢复后请把该 env 清掉。
-// **仅认真值**（Bugbot Medium）：只判「非空」会把 =0 / =false 误当开启，每次启动强制回 admin/admin 反而擦掉 env 口令。
-// 永久在线模式：LLMGW_ADMIN_ENV_AUTHORITY=1 时，env 是 admin 口令权威。该模式要求显式配置非默认强口令。
-var forceResetRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_FORCE_RESET") ?? string.Empty).Trim();
-var forceResetAdmin = new[] { "1", "true", "yes", "on" }.Contains(forceResetRaw, StringComparer.OrdinalIgnoreCase);
-var envAuthorityRaw = (Environment.GetEnvironmentVariable("LLMGW_ADMIN_ENV_AUTHORITY") ?? string.Empty).Trim();
-var envAuthorityAdmin = new[] { "1", "true", "yes", "on" }.Contains(envAuthorityRaw, StringComparer.OrdinalIgnoreCase);
-var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD")?.Trim();
-if (envAuthorityAdmin && (!GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd) || adminBootstrapPwd == DefaultAdminPwd))
-{
-    throw new InvalidOperationException(
-        $"LLMGW_ADMIN_ENV_AUTHORITY 已启用，但 LLMGW_ADMIN_PASSWORD 未达到至少 {GwPasswordPolicy.MinimumLength} 位的口令规则或仍为默认弱口令。" +
-        "请先配置独立强口令；服务拒绝以不可用的破窗账户启动。");
-}
+// 长期 env 覆盖不再允许：恢复必须绑定账号与一次性操作编号。
+bool Enabled(string name) => new[] { "1", "true", "yes", "on" }.Contains(
+    (Environment.GetEnvironmentVariable(name) ?? "").Trim(), StringComparer.OrdinalIgnoreCase);
+if (Enabled("LLMGW_ADMIN_ENV_AUTHORITY"))
+    throw new InvalidOperationException("长期环境口令覆盖已停用；请使用绑定账号 ID 和操作编号的一次性恢复。");
+var ownerBootstrap = new OwnerBootstrap(gatewayDatabase);
+var adminBootstrapPwd = Environment.GetEnvironmentVariable("LLMGW_ADMIN_PASSWORD");
+if (Enabled("LLMGW_ADMIN_FORCE_RESET"))
+    await ownerBootstrap.RecoverAsync(Environment.GetEnvironmentVariable("LLMGW_ADMIN_RECOVERY_USER_ID") ?? "",
+        Environment.GetEnvironmentVariable("LLMGW_ADMIN_RECOVERY_ID") ?? "", adminBootstrapPwd);
+var bootstrapOwnerId = await ownerBootstrap.InitializeAsync(adminBootstrapPwd);
 var operationAudits = gatewayDatabase.GetCollection<BsonDocument>("llmgw_operation_audits");
-await SeedAdminAsync(
-    gatewayDatabase,
-    operationAudits,
-    AdminUser,
-    DefaultAdminPwd,
-    internalTenantId,
-    forceResetAdmin,
-    envAuthorityAdmin,
-    adminBootstrapPwd);
+var loginAdmission = new LoginAdmission(gatewayDatabase);
+await loginAdmission.InitializeAsync();
 
 // GW 请求日志由 llmgw-serve 写入独立 llm_gateway 库；控制台和 runtime gates 必须读取同一权威来源。
 var logs = gatewayDatabase.GetCollection<BsonDocument>("llmrequestlogs");
@@ -342,14 +337,18 @@ foreach (var finding in capabilityMigration.UnknownFindings)
         string.Join(",", finding.UnknownCapabilities));
 }
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
-await EnsureInternalTenantAsync(
-    users,
-    tenants,
-    teams,
-    memberships,
-    AdminUser,
-    internalTenantId,
-    CancellationToken.None);
+if (await ownerBootstrap.NeedsProvisioningAsync())
+{
+    await EnsureInternalTenantAsync(
+        users,
+        tenants,
+        teams,
+        memberships,
+        bootstrapOwnerId,
+        internalTenantId,
+        CancellationToken.None);
+    await ownerBootstrap.CompleteProvisioningAsync();
+}
 await recoveryOperations.Indexes.CreateManyAsync(new[]
 {
     new CreateIndexModel<GatewayRecoveryOperation>(
@@ -1019,6 +1018,24 @@ app.MapPost("/gw/auth/login", async (HttpContext http, [FromBody] LoginRequestDt
 {
     var username = (req.Username ?? "").Trim();
     var password = req.Password ?? "";
+    // Admission precedes user lookup, PBKDF2 and every per-attempt audit write.
+    using var admissionTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    try
+    {
+        if (!await loginAdmission.TryAcquireAsync(username.Length <= 128 ? username : "oversized", http.Connection.RemoteIpAddress, admissionTimeout.Token))
+        {
+            loginAdmission.RecordDenied();
+            http.Response.Headers.RetryAfter = "60";
+            return Json(ApiEnvelope<LoginResultDto>.Fail("LOGIN_RATE_LIMITED", "登录尝试过多，请一分钟后重试；忘记口令可联系管理员恢复。"), jsonOptions, 429);
+        }
+    }
+    catch (Exception ex) when (ex is MongoException or OperationCanceledException or TimeoutException)
+    {
+        loginAdmission.RecordUnavailable();
+        return Json(ApiEnvelope<LoginResultDto>.Fail("LOGIN_UNAVAILABLE", "登录暂时不可用，请稍后重试或联系管理员。"), jsonOptions, 503);
+    }
+    if (username.Length > 128)
+        return Json(ApiEnvelope<LoginResultDto>.Fail("INVALID_CREDENTIALS", "用户名或密码格式不正确，请检查后重试。"), jsonOptions, 400);
     if (username.Length == 0 || password.Length == 0)
     {
         await WriteLoginAuditAsync(loginAudits, http, internalTenantId, username, null, false, "EMPTY_CREDENTIALS");
@@ -1547,25 +1564,6 @@ app.MapPost("/gw/auth/change-password", async (HttpContext http, [FromBody] Chan
     {
         return Json(ApiEnvelope<ChangePasswordResultDto>.Fail("UNAUTHORIZED", "账号不存在或已停用"), jsonOptions, statusCode: 401);
     }
-    if (envAuthorityAdmin && string.Equals(user.Username, AdminUser, StringComparison.Ordinal))
-    {
-        await WriteOperationAuditAsync(
-            operationAudits,
-            http,
-            action: "auth.change_password",
-            targetType: "llmgw_console_user",
-            targetId: user.Id,
-            targetName: user.Username,
-            success: false,
-            reason: "PASSWORD_MANAGED_BY_DEPLOYMENT");
-        return Json(
-            ApiEnvelope<ChangePasswordResultDto>.Fail(
-                "PASSWORD_MANAGED_BY_DEPLOYMENT",
-                "该管理员口令由部署配置统一管理，当前页面不能修改。请联系系统管理员更新后重新登录。"),
-            jsonOptions,
-            statusCode: 409);
-    }
-
     // 会话来源参与判定：从 MAP 一键登录进来的人此刻就能再走一遍 SSO，
     // 要求旧口令拦不住任何人，只会把忘记口令的本人锁死。
     var fromFederatedSession = http.User.FindFirst(GwJwt.FederatedSessionClaim)?.Value == "1";
@@ -16273,6 +16271,7 @@ app.MapGet("/gw/bug-reports", async (HttpContext http, int? limit) =>
     }), jsonOptions);
 }).RequireAuthorization();
 
+_ = loginAdmission.RunAuditLoopAsync(app.Logger, app.Lifetime.ApplicationStopping);
 _ = RunGatewayRecoveryLoopAsync(gatewayDatabase, app.Logger, app.Lifetime.ApplicationStopping);
 app.Run();
 
@@ -16368,10 +16367,13 @@ static async Task EnsureInternalTenantAsync(
     IMongoCollection<LlmGwTenant> tenants,
     IMongoCollection<LlmGwTeam> teams,
     IMongoCollection<LlmGwMembership> memberships,
-    string adminUsername,
+    string? bootstrapOwnerId,
     string tenantId,
     CancellationToken ct)
 {
+    if (bootstrapOwnerId is null) return;
+    var admin = await users.Find(x => x.Id == bootstrapOwnerId).FirstOrDefaultAsync(ct);
+    if (admin is null) return; // A deleted owner is never recreated by restart.
     var now = DateTime.UtcNow;
     var tenant = await tenants.Find(x => x.Id == tenantId).FirstOrDefaultAsync(ct);
     if (tenant is null)
@@ -16388,13 +16390,14 @@ static async Task EnsureInternalTenantAsync(
             CreatedAt = now,
             UpdatedAt = now,
         };
-        await tenants.InsertOneAsync(tenant, cancellationToken: ct);
+        try { await tenants.InsertOneAsync(tenant, cancellationToken: ct); }
+        catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey) { }
     }
 
     var defaultTeamId = $"{tenantId}_default";
     if (!await teams.Find(x => x.Id == defaultTeamId && x.TenantId == tenantId).AnyAsync(ct))
     {
-        await teams.InsertOneAsync(new LlmGwTeam
+        try { await teams.InsertOneAsync(new LlmGwTeam
         {
             Id = defaultTeamId,
             TenantId = tenantId,
@@ -16403,16 +16406,16 @@ static async Task EnsureInternalTenantAsync(
             Status = "active",
             CreatedAt = now,
             UpdatedAt = now,
-        }, cancellationToken: ct);
+        }, cancellationToken: ct); }
+        catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey) { }
     }
 
-    var admin = await users.Find(x => x.Username == adminUsername).FirstOrDefaultAsync(ct)
-        ?? throw new InvalidOperationException("LLM Gateway bootstrap admin 不存在，无法建立 internal tenant owner membership");
     var membership = await memberships.Find(x => x.TenantId == tenantId && x.UserId == admin.Id).FirstOrDefaultAsync(ct);
     if (membership is null)
     {
-        await memberships.InsertOneAsync(new LlmGwMembership
+        try { await memberships.InsertOneAsync(new LlmGwMembership
         {
+            Id = $"{tenantId}_bootstrap_owner",
             TenantId = tenantId,
             UserId = admin.Id,
             Role = LlmGwTenantRoles.Owner,
@@ -16421,7 +16424,8 @@ static async Task EnsureInternalTenantAsync(
             Version = 1,
             CreatedAt = now,
             UpdatedAt = now,
-        }, cancellationToken: ct);
+        }, cancellationToken: ct); }
+        catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey) { }
     }
 
     var userUpdate = Builders<LlmGwUser>.Update
@@ -16448,171 +16452,6 @@ static async Task EnsureInternalTenantAsync(
     }, cancellationToken: ct);
 }
 
-// 幂等播种管理员。优先级（从高到低）：
-//   1) envAuthority（LLMGW_ADMIN_ENV_AUTHORITY=1）：env 是长期权威，只在口令或账号状态漂移时修复。
-//   2) forceReset（LLMGW_ADMIN_FORCE_RESET=1）：一次性破玻璃，同样只在漂移时修复。
-//   3) 已有账号：数据库哈希是长期权威，只保活，不再被 LLMGW_ADMIN_PASSWORD 覆盖。
-//   4) 空库首次 bootstrap：用 LLMGW_ADMIN_PASSWORD；未设则内置 admin/admin + 首登强制改密。
-static async Task SeedAdminAsync(
-    IMongoDatabase db,
-    IMongoCollection<BsonDocument> operationAudits,
-    string username,
-    string defaultPwd,
-    string tenantId,
-    bool forceReset = false,
-    bool envAuthority = false,
-    string? envPassword = null)
-{
-    var users = db.GetCollection<LlmGwUser>("llmgw_console_users");
-
-    // 多租户账号由 membership 控制，不得在 bootstrap 时禁用其它租户用户。
-
-    // 环境变量长期托管或一次性破玻璃：只修复漂移。PBKDF2 每次 Hash 都有新盐，禁止在口令已经
-    // 匹配时重复写 Hash，否则每次启动都会制造无意义变更并使所有现有会话失效。
-    if (envAuthority || forceReset)
-    {
-        var resetPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
-        var resetMustChange = resetPassword == defaultPwd;
-        var existingForce = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
-        if (existingForce is not null)
-        {
-            var passwordDrifted = !PasswordHasher.Verify(resetPassword, existingForce.PasswordHash);
-            var activeDrifted = !existingForce.IsActive;
-            var mustChangeDrifted = existingForce.MustChangePassword != resetMustChange;
-            var ownershipDrifted = existingForce.PasswordChangedByUser;
-
-            if (!passwordDrifted && !activeDrifted && !mustChangeDrifted && !ownershipDrifted)
-                return;
-
-            var updates = new List<UpdateDefinition<LlmGwUser>>();
-            if (passwordDrifted)
-                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.PasswordHash, PasswordHasher.Hash(resetPassword)));
-            if (activeDrifted)
-                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.IsActive, true));
-            if (mustChangeDrifted)
-                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.MustChangePassword, resetMustChange));
-            if (ownershipDrifted)
-                updates.Add(Builders<LlmGwUser>.Update.Set(u => u.PasswordChangedByUser, false));
-
-            var securityStateChanged = passwordDrifted || activeDrifted || mustChangeDrifted;
-            if (securityStateChanged)
-                updates.Add(Builders<LlmGwUser>.Update.Inc(u => u.SecurityVersion, 1));
-            updates.Add(Builders<LlmGwUser>.Update.Set(u => u.UpdatedAt, DateTime.UtcNow));
-
-            await users.UpdateOneAsync(
-                u => u.Username == username,
-                Builders<LlmGwUser>.Update.Combine(updates));
-            await WriteSystemOperationAuditAsync(
-                operationAudits,
-                action: envAuthority ? "admin.env_authority_reconcile" : "admin.force_reset",
-                targetType: "llmgw_console_user",
-                targetId: existingForce.Id,
-                targetName: username,
-                success: true,
-                reason: null,
-                changes: new BsonDocument
-                {
-                    { "mode", envAuthority ? "env_authority" : "force_reset" },
-                    { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
-                    { "passwordDrifted", passwordDrifted },
-                    { "mustChangePassword", new BsonDocument { { "from", existingForce.MustChangePassword }, { "to", resetMustChange } } },
-                    { "passwordChangedByUser", new BsonDocument { { "from", existingForce.PasswordChangedByUser }, { "to", false } } },
-                    { "wasActive", existingForce.IsActive },
-                },
-                tenantId: tenantId);
-        }
-        else
-        {
-            var resetUser = new LlmGwUser
-            {
-                Username = username, PasswordHash = PasswordHasher.Hash(resetPassword), DisplayName = username,
-                IsActive = true, MustChangePassword = resetMustChange, PasswordChangedByUser = false,
-                Scopes = new[] { "logs:read" }, CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-            };
-            await users.InsertOneAsync(resetUser);
-            await WriteSystemOperationAuditAsync(
-                operationAudits,
-                action: envAuthority ? "admin.env_authority_bootstrap" : "admin.force_reset_bootstrap",
-                targetType: "llmgw_console_user",
-                targetId: resetUser.Id,
-                targetName: username,
-                success: true,
-                reason: null,
-                changes: new BsonDocument
-                {
-                    { "mode", envAuthority ? "env_authority" : "force_reset" },
-                    { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
-                    { "mustChangePassword", resetMustChange },
-                },
-                tenantId: tenantId);
-        }
-        return;
-    }
-
-    // 已有账号：数据库是长期权威。env 口令即便存在，也不能在每次启动覆盖已认领口令。
-    var existing = await users.Find(u => u.Username == username).FirstOrDefaultAsync();
-    if (existing is not null)
-    {
-        if (!existing.IsActive)
-        {
-            await users.UpdateOneAsync(u => u.Username == username,
-                Builders<LlmGwUser>.Update
-                    .Set(u => u.IsActive, true)
-                    .Inc(u => u.SecurityVersion, 1)
-                    .Set(u => u.UpdatedAt, DateTime.UtcNow));
-            await WriteSystemOperationAuditAsync(
-                operationAudits,
-                action: "admin.reactivate",
-                targetType: "llmgw_console_user",
-                targetId: existing.Id,
-                targetName: username,
-                success: true,
-                reason: null,
-                changes: BuildChangeDocument(("isActive", false, true)),
-                tenantId: tenantId);
-        }
-        return;
-    }
-
-    var bootstrapPassword = string.IsNullOrWhiteSpace(envPassword) ? defaultPwd : envPassword.Trim();
-    var mustChange = bootstrapPassword == defaultPwd;
-    var user = new LlmGwUser
-    {
-        Username = username,
-        PasswordHash = PasswordHasher.Hash(bootstrapPassword),
-        DisplayName = username,
-        IsActive = true,
-        MustChangePassword = mustChange,
-        PasswordChangedByUser = false,
-        Scopes = new[] { "logs:read" },
-        CreatedAt = DateTime.UtcNow,
-        UpdatedAt = DateTime.UtcNow,
-    };
-    try
-    {
-        await users.InsertOneAsync(user);
-        await WriteSystemOperationAuditAsync(
-            operationAudits,
-            action: "admin.bootstrap",
-            targetType: "llmgw_console_user",
-            targetId: user.Id,
-            targetName: username,
-            success: true,
-            reason: null,
-            changes: new BsonDocument
-            {
-                { "passwordSource", string.IsNullOrWhiteSpace(envPassword) ? "default" : "env" },
-                { "mustChangePassword", mustChange },
-            },
-            tenantId: tenantId);
-    }
-    catch (MongoWriteException)
-    {
-        // 并发启动场景下可能撞唯一冲突/重复插入，忽略即可（幂等）。
-    }
-}
-
 static async Task WriteLoginAuditAsync(
     IMongoCollection<LlmGwLoginAudit> audits,
     HttpContext http,
@@ -16632,7 +16471,7 @@ static async Task WriteLoginAuditAsync(
             Success = success,
             Reason = reason,
             RemoteIp = GetClientIp(http),
-            UserAgent = http.Request.Headers.UserAgent.ToString(),
+            UserAgent = http.Request.Headers.UserAgent.ToString() is { } agent ? agent[..Math.Min(agent.Length, 512)] : "",
             CreatedAt = DateTime.UtcNow,
         });
     }
@@ -16826,59 +16665,6 @@ static async Task TryCompleteRequiredOperationAuditAsync(
     }
 }
 
-static async Task WriteSystemOperationAuditAsync(
-    IMongoCollection<BsonDocument> audits,
-    string action,
-    string targetType,
-    string? targetId,
-    string? targetName,
-    bool success,
-    string? reason,
-    BsonDocument? changes = null,
-    string tenantId = "tenant_map_internal")
-{
-    try
-    {
-        var doc = new BsonDocument
-        {
-            { "_id", Guid.NewGuid().ToString("N") },
-            { "TenantId", tenantId },
-            { "TeamId", BsonNull.Value },
-            { "Action", action },
-            { "TargetType", targetType },
-            { "TargetId", ToBsonAuditValue(targetId) },
-            { "TargetName", ToBsonAuditValue(targetName) },
-            { "ActorUserId", BsonNull.Value },
-            { "ActorUsername", "system" },
-            { "Success", success },
-            { "Reason", ToBsonAuditValue(reason) },
-            { "Changes", changes ?? new BsonDocument() },
-            { "RemoteIp", BsonNull.Value },
-            { "UserAgent", "startup" },
-            { "CreatedAt", DateTime.UtcNow },
-        };
-        await audits.InsertOneAsync(doc);
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[LlmGw] system operation audit write failed: {ex.Message}");
-    }
-}
-
-static BsonDocument BuildChangeDocument(params (string Field, object? From, object? To)[] changes)
-{
-    var doc = new BsonDocument();
-    foreach (var (field, from, to) in changes)
-    {
-        doc[field] = new BsonDocument
-        {
-            { "from", ToBsonAuditValue(from) },
-            { "to", ToBsonAuditValue(to) },
-        };
-    }
-    return doc;
-}
-
 static BsonValue ToBsonAuditValue(object? value)
 {
     if (value is null) return BsonNull.Value;
@@ -16898,11 +16684,6 @@ static string NormalizeParameterPolicy(string value)
 
 static string? GetClientIp(HttpContext http)
 {
-    var forwardedFor = http.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-    if (!string.IsNullOrWhiteSpace(forwardedFor))
-    {
-        return forwardedFor.Split(',')[0].Trim();
-    }
     return http.Connection.RemoteIpAddress?.ToString();
 }
 

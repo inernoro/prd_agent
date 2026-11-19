@@ -10,11 +10,63 @@ using PrdAgent.Core.LlmGateway;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.LlmGatewayHost;
 using Xunit;
+using MongoDB.Driver;
+using MongoDB.Bson;
+using PrdAgent.Core.Interfaces;
+using System.Text.Json;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
 public class CodeReviewUserKeysTests
 {
+    [Theory]
+    [InlineData("invalid-token", null, 401, 0)]
+    [InlineData("wrong-owner", null, 401, 0)]
+    [InlineData("valid", null, 413, 1048577)]
+    [InlineData("valid", 100_000_000L, 413, 0)]
+    public async Task UserKeyAdmission_UsesActualBytesAfterTaskAndOwnerChecks(string mode, long? declaredLength, int status, long expectedRead)
+    {
+        var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27017";
+        var databaseName = "llmgw_byok_body_" + Guid.NewGuid().ToString("N");
+        var data = new LlmGatewayDataContext(connection, databaseName);
+        try
+        {
+            const string token = "cruk_body_budget_test";
+            await data.Database.GetCollection<CodeReviewUserKeyTask>("llmgw_code_review_user_key_tasks").InsertOneAsync(new()
+            {
+                Id = "task", TokenHash = CodeReviewUserKeys.Hash(token), KeyId = "key", Owner = "owner",
+                ProjectId = "project", Model = "chosen", ExpiresAt = DateTime.UtcNow.AddHours(1),
+            });
+            await data.Database.GetCollection<CodeReviewUserKey>("llmgw_code_review_user_keys").InsertOneAsync(new()
+            {
+                Id = "key", Owner = mode == "wrong-owner" ? "different" : "owner", ProjectId = "project", Provider = "openai",
+            });
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            builder.Services.AddSingleton(data);
+            builder.Services.AddSingleton<ILlmGateway>(new Moq.Mock<ILlmGateway>(Moq.MockBehavior.Strict).Object);
+            builder.Services.AddSingleton<ILLMRequestContextAccessor>(new PrdAgent.Core.Services.LLMRequestContextAccessor());
+            builder.Services.AddSingleton<GatewayCancellationRegistry>();
+            await using var app = builder.Build();
+            app.MapGatewayServingEndpoints(new JsonSerializerOptions(), "legacy", "body-budget-test");
+            app.MapCodeReviewUserKeys();
+            await app.StartAsync();
+            using var source = new GeneratedBodyStream(100_000_000, "{\"messages\":[{\"content\":\"");
+            var response = await app.GetTestServer().SendAsync(context =>
+            {
+                context.Request.Method = "POST";
+                context.Request.Path = "/byok/v1/chat/completions";
+                context.Request.Headers.Authorization = "Bearer " + (mode == "invalid-token" ? "cruk_unknown" : token);
+                context.Request.ContentType = "application/json";
+                context.Request.ContentLength = declaredLength;
+                context.Request.Body = source;
+            });
+            Assert.Equal(status, response.Response.StatusCode);
+            Assert.Equal(expectedRead, source.BytesRead);
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(databaseName); }
+    }
+
     [Fact]
     public async Task BoundResolverCannotEnterAnyPlatformPool()
     {

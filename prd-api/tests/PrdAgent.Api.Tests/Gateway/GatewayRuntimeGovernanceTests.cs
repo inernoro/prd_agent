@@ -1498,6 +1498,37 @@ public sealed class GatewayRuntimeGovernanceTests
     }
 
     [Fact]
+    public async Task ScopedKey_HeaderAdmissionDefersBodyClaimsButRejectsKnownScopeAndDoesNotChargeRate()
+    {
+        await using var scope = (await TryCreateDatabaseAsync())!;
+        const string key = "header-budget-key";
+        var record = new GatewayServiceKeyRecord
+        {
+            TenantId = "tenant-header-budget", Name = "header-budget",
+            KeyHash = GatewayScopedKeyAuthorizer.Sha256Hex(key), SourceSystem = "external",
+            AppCallerCodes = ["allowed::chat"], IngressProtocols = ["openai-compatible"],
+            Scopes = ["stream:invoke"], RateLimitPerMinute = 1,
+        };
+        await InsertServiceKeyAsync(scope.Context, record);
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+        for (var i = 0; i < 3; i++)
+        {
+            var header = await authorizer.AuthorizeAsync(key, "legacy", "", "", "openai-compatible", "invoke", null, default, headersOnly: true);
+            header.Allowed.ShouldBeTrue();
+        }
+        var wrongCaller = await authorizer.AuthorizeAsync(key, "legacy", "external", "denied::chat", "openai-compatible", "invoke", null, default, headersOnly: true);
+        wrongCaller.Allowed.ShouldBeFalse();
+        var wrongProtocol = await authorizer.AuthorizeAsync(key, "legacy", "", "", "claude-compatible", "invoke", null, default, headersOnly: true);
+        wrongProtocol.Allowed.ShouldBeFalse();
+        var finalNonstream = await authorizer.AuthorizeAsync(key, "legacy", "external", "allowed::chat", "openai-compatible", "invoke", null, default);
+        finalNonstream.Allowed.ShouldBeFalse();
+        var final = await authorizer.AuthorizeAsync(key, "legacy", "external", "allowed::chat", "openai-compatible", "stream:invoke", null, default);
+        final.Allowed.ShouldBeTrue();
+        var next = await authorizer.AuthorizeAsync(key, "legacy", "external", "allowed::chat", "openai-compatible", "stream:invoke", null, default);
+        next.StatusCode.ShouldBe(429);
+    }
+
+    [Fact]
     public async Task ScopedKey_RejectsCrossAppCallerAndWritesAudit()
     {
         var testDatabase = await TryCreateDatabaseAsync();
