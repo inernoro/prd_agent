@@ -163,10 +163,6 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
         meta.Status = RunStatuses.Running;
         meta.StartedAt ??= DateTime.UtcNow;
-        await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
-        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 8,
-            run.Operation == DesignArtifactOperations.Edit ? "正在读取当前页面" : "正在整理知识与页面目标",
-            DesignArtifactPhaseCodes.ReadingSources);
 
         var sites = scope.ServiceProvider.GetRequiredService<IHostedSiteService>();
         var revisions = scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>();
@@ -184,6 +180,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         try
         {
             executionCts.Token.ThrowIfCancellationRequested();
+            await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+            await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 8,
+                run.Operation == DesignArtifactOperations.Edit ? "正在读取当前页面" : "正在整理知识与页面目标",
+                DesignArtifactPhaseCodes.ReadingSources);
             if (executor == null)
                 throw new InvalidOperationException("所选设计执行器尚未部署或不支持当前任务，请先使用 MAP 模型");
 
@@ -976,8 +976,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string message,
         string phaseCode)
     {
-        // 同一已存结果恢复保存时保留已确认进度，不把读取/保存提示倒退成新一轮执行。
-        if (run.ArtifactType == DesignArtifactTypes.HtmlPpt || !string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+        // 补答接续和已提交结果恢复都沿用原任务的进度；新一轮仍可更新当前阶段和说明。
+        if (run.DeliverySessionContainers || run.ArtifactType == DesignArtifactTypes.HtmlPpt
+            || !string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
             progress = Math.Max(run.Progress, progress);
         var now = DateTime.UtcNow;
         run.Progress = progress;
@@ -1046,6 +1047,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             || current.ProducedArtifactRevisionId != null)
             return;
 
+        // 记录取消意图时已撤销付费租约。此处只结算同一任务的取消状态，由业务租约和原取消意图校验。
+        using var cancellationScope = TaskExecutionContext.Enter(null);
         DesignArtifactRun? cancelled = null;
         if (current.ContractVersion == DesignArtifactContractVersions.Current)
         {
