@@ -252,6 +252,7 @@
 .ep-dialog-footer { display: flex; align-items: center; justify-content: flex-end; border-top: 1px solid var(--ep-line); padding: .65rem .95rem; gap: .5rem; flex: 0 0 auto; }
 .ep-field { display: grid; gap: .24rem; min-width: 0; }
 .ep-field > span { color: var(--ep-muted); font-size: .77rem; }
+.ep-required { margin-inline-start: .35rem; font-size: .72rem; color: var(--ep-accent-ink); }
 .ep-dialog textarea { resize: vertical; min-height: 4rem; line-height: 1.45; }
 .ep-form-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
 .ep-check { display: flex; align-items: center; gap: .35rem; }

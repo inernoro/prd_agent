@@ -43,10 +43,10 @@ const button = (root, name) => root.getByRole('button', { name, exact: true });
 const dialog = (page, name) => page.getByRole('dialog', { name, exact: true });
 const repayLabel = /^(核对偿还标准|标记已偿还)$/;
 
-async function runWithDebtList(browser, base, mobile, run, initialDebt = active) {
+async function runWithDebtList(browser, base, mobile, run, initialDebt = active, mobileHeight = 800) {
   const status = { commands: 0 };
   const origin = new URL(base).origin;
-  const viewport = mobile ? { width: 320, height: 800 } : { width: 1440, height: 940 };
+  const viewport = mobile ? { width: 320, height: mobileHeight } : { width: 1440, height: 940 };
   const context = await browser.newContext({ viewport, isMobile: mobile, hasTouch: mobile,
     colorScheme: mobile ? 'dark' : 'light', reducedMotion: 'reduce' });
   try {
@@ -122,17 +122,15 @@ async function verifyLongMobileDebt(browser, base, out, check) {
   const longDebt = { ...active, title: '合成长标题用于验证债务抽屉'.repeat(10).slice(0, 120),
     owner: '合成长负责人名称保证来源可追溯'.repeat(10).slice(0, 120),
     source: { type: 'test', ref: '合成来源编号用于验证窄屏换行'.repeat(24).slice(0, 300) } };
-  return runWithDebtList(browser, base, true, async page => {
-    await page.setViewportSize({ width: 320, height: 700 });
-    await button(page, longDebt.title).tap();
-    const drawer = dialog(page, longDebt.title);
-    const card = drawer.getByRole('heading', { name: '接手卡', exact: true });
-    await card.waitFor({ state: 'attached' });
-    const close = button(drawer, '关闭');
-    const scroller = drawer.locator('.ep-dialog-content');
-    const results = [];
-    for (const height of [700, 568]) {
-      await page.setViewportSize({ width: 320, height });
+  const results = [];
+  for (const height of [700, 568]) {
+    results.push(await runWithDebtList(browser, base, true, async page => {
+      await button(page, longDebt.title).tap();
+      const drawer = dialog(page, longDebt.title);
+      const card = drawer.getByRole('heading', { name: '接手卡', exact: true });
+      await card.waitFor({ state: 'attached' });
+      const close = button(drawer, '关闭');
+      const scroller = drawer.locator('.ep-dialog-content');
       const before = await close.boundingBox();
       const pane = await scroller.evaluate(element => {
         const bounds = element.getBoundingClientRect();
@@ -142,13 +140,19 @@ async function verifyLongMobileDebt(browser, base, out, check) {
       check(usable, `320×${height} 的合法长标题和元信息挤压了债务详情滚动区（${pane.height.toFixed(1)} CSS px）`);
       if (!usable) {
         await page.screenshot({ path: path.join(out, `failure-planning-debt-long-mobile-${height}.png`), animations: 'disabled' });
-        results.push({ height, usable });
-        continue;
+        return { height, usable };
       }
+      await scroller.evaluate(element => { element.scrollTop = 0; });
+      await page.mouse.move(150, height / 2);
+      await page.mouse.wheel(0, 280);
+      const paneElement = await scroller.elementHandle();
+      try {
+        await page.waitForFunction(element => element.scrollTop > 0, paneElement, { timeout: 1500 });
+      } finally { await paneElement.dispose(); }
       await card.scrollIntoViewIfNeeded();
       const reachedCard = await card.evaluate(element => {
         const bounds = element.getBoundingClientRect();
-        return bounds.top >= 0 && bounds.bottom <= innerHeight && element.closest('.ep-dialog-content').scrollTop > 0;
+        return bounds.top >= 0 && bounds.bottom <= innerHeight;
       });
       const after = await close.boundingBox();
       const closeStayed = Math.abs(after.y - before.y) <= 1 && after.y + after.height <= height;
@@ -158,10 +162,10 @@ async function verifyLongMobileDebt(browser, base, out, check) {
       await invalid.click({ trial: true });
       await page.keyboard.press('Escape');
       await invalid.waitFor({ state: 'hidden' });
-      results.push({ height, usable, reachedCard, closeStayed, moreReachable: true });
-    }
-    return results;
-  }, longDebt);
+      return { height, usable, paneHeight: pane.height, scrolled: true, reachedCard, closeStayed, moreReachable: true };
+    }, longDebt, height));
+  }
+  return results;
 }
 
 export async function verifyEngineeringPlanningDetail(browser, base, out) {
@@ -281,11 +285,15 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
       await page.setViewportSize({ width, height: 800 });
       await overflow.focus();
       await page.keyboard.press('Enter');
-      await page.getByRole('menuitem', { name: '暂缓', exact: true }).focus();
+      const deferItem = page.getByRole('menuitem', { name: '暂缓', exact: true });
+      await deferItem.focus();
       await page.keyboard.press('Enter');
+      await page.locator('[role="menu"]').waitFor({ state: 'detached' });
       const defer = dialog(page, '暂缓');
-      await defer.waitFor();
-      await page.keyboard.press('Escape');
+      const reason = defer.getByLabel('暂缓原因');
+      await reason.focus();
+      assert(await receivesFocus(page, reason), '暂缓表单的原因字段未取得键盘焦点');
+      await reason.press('Escape');
       await defer.waitFor({ state: 'hidden' });
       const returned = await receivesFocus(page, overflow);
       check(returned, `${width}px 窄屏用键盘从更多操作进入暂缓，Esc 后焦点未返回更多操作`);

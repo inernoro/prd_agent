@@ -33,7 +33,7 @@ function lines(value?: string) { return value?.split(/\r?\n/).map(line => line.t
 function Field({ name, label, initial, required, multiline, choices, date, max }: {
   name: string; label: string; initial?: string; required?: boolean; multiline?: boolean; choices?: readonly (readonly [string, string])[]; date?: boolean; max?: number;
 }) {
-  return <label className="ep-field"><span>{label}</span>
+  return <label className="ep-field"><span>{label}{required && <small className="ep-required" aria-hidden="true">必填</small>}</span>
     {choices ? <select name={name} defaultValue={initial} required={required}>{choices.map(([value, title]) => <option key={value} value={value}>{title}</option>)}</select>
       : multiline ? <textarea name={name} defaultValue={initial} required={required} rows={3} maxLength={max ?? 4000} />
         : <input name={name} type={date ? 'date' : 'text'} defaultValue={initial} required={required} maxLength={max ?? 2000} />}
@@ -113,7 +113,7 @@ function decisionOptions(board: PlanningBoard) {
 
 function RepaymentCheck({ criterion }: { criterion: Criterion }) {
   const [verdict, setVerdict] = useState('');
-  return <div><label className="ep-field"><span>{criterion.text}</span>
+  return <div><label className="ep-field"><span>{criterion.text}<small className="ep-required" aria-hidden="true">必填</small></span>
     <select name={`result-${criterion.id}`} required value={verdict} onChange={event => setVerdict(event.target.value)}>
       <option value="">请选择结果</option><option value="met">达标</option><option value="na">不适用</option>
     </select></label>
