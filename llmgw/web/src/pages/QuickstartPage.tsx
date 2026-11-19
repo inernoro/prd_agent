@@ -16,7 +16,7 @@ import { GatewayQuickstartStage } from '@/components/entry/GatewayQuickstartStag
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
 import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ArrowUpRight, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
+import { AlertCircle, ArrowRight, ArrowUpRight, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, getGatewayAppCallers, getServiceKeys, updateGatewayAppCaller } from '@/lib/api';
 import { buildLogRequestHref } from '@/lib/logNavigation';
@@ -1346,7 +1346,12 @@ export function QuickstartPage() {
                     </button>
                   </div>
                   <GatewayIntentStarters disabled={!canCreateAccess} onChoose={chooseIntent} />
-                  <div className="gateway-intent-options"><small>智能建议费用由平台承担</small><button type="button" className="lg-text-link" disabled={!canCreateAccess} onClick={() => { setSetupMethod('form'); setStage('owner'); }}>手动接入</button></div>
+                  <div className="gateway-intent-options">
+                    <small>智能建议费用由平台承担</small>
+                    <button type="button" disabled={!canCreateAccess} onClick={() => { setSetupMethod('form'); setStage('owner'); }}>
+                      手动接入 <ArrowRight size={14} aria-hidden="true" />
+                    </button>
+                  </div>
                   {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
                 </div>
               </section>
