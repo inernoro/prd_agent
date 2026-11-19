@@ -29,7 +29,10 @@ class FeatureReadinessTests(unittest.TestCase):
         self.assertEqual(decide(503, "not-ready", ["scenario-capability"], existing, False), "existing")
         self.assertEqual(decide(503, "not-ready", ["scenario-capability"], existing, False, True), "fail")
         self.assertEqual(decide(503, "not-ready", ["scenario-capability"], {}, False), "fail")
-        self.assertEqual(decide(503, "not-ready", ["scenario-capability"], {}, True), "forced")
+        self.assertEqual(decide(503, "not-ready", ["scenario-capability"], {}, True), "fail")
+        self.assertEqual(decide(503, "not-ready", ["scenario-capability"], existing, True, True), "fail")
+        self.assertEqual(decide(503, "not-ready", ["asset-storage"], {}, True), "forced")
+        self.assertEqual(decide(503, "not-ready", ["scenario-capability", "asset-storage"], existing, True), "forced")
         self.assertEqual(decide(503, "not-ready", ["scenario-capability", "router"], existing, True), "fail")
         self.assertEqual(decide(401, "", [], existing, True), "fail")
     def test_scope_rejects_unknown_and_does_not_scan_unselected_agents(self):

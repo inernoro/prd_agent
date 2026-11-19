@@ -119,6 +119,7 @@ def running_configuration(row):
         "entrypoint": config.get("Entrypoint") or [],
         "user": config.get("User") or "",
         "working_dir": config.get("WorkingDir") or "",
+        "read_only": bool(host.get("ReadonlyRootfs")),
         "volumes": sorted(mounts, key=lambda mount: mount["target"]),
         "ports": sorted(ports, key=lambda port: json.dumps(port, sort_keys=True)),
         "tmpfs": [f"{target}:{options}" if options else target

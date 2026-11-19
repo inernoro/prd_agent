@@ -69,14 +69,13 @@ def _readiness_disposition(code: int, status: str, failed: list[str],
     if code == 200 and status.lower() in {"ready", "ok"}:
         return "pass"
     if code == 503 and status.lower() == "not-ready" and failed:
-        known = set(baseline.get("failedComponents", []))
-        # Scenarios are optional business routes. Core DB, integrity and router
-        # failures stay blocking because the candidate cannot serve safely.
-        if set(failed) <= known & {"scenario-capability", "asset-storage"} and not (
-            images_in_scope and "scenario-capability" in failed
-        ):
+        known = set(baseline.get("failedComponents", [])) & {"scenario-capability", "asset-storage"}
+        if images_in_scope:
+            known.discard("scenario-capability")
+        if set(failed) <= known:
             return "existing"
-        if forced and set(failed) <= {"scenario-capability", "asset-storage"}:
+        # 场景能力校验的是本地路由配置。强制发布只能放行已识别的外部故障。
+        if forced and set(failed) <= known | {"asset-storage"}:
             return "forced"
     return "fail"
 

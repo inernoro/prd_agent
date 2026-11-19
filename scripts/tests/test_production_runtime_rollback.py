@@ -258,6 +258,7 @@ false
     def test_captures_and_restores_a_service_removed_from_the_candidate(self):
         retired = container("retired-worker", "sha256:old-worker", "/release/compose.yml")
         retired["Name"] = "/map-retired-worker"
+        retired["HostConfig"]["ReadonlyRootfs"] = True
         retired["NetworkSettings"] = {"Networks": {
             "previous-network": {"Aliases": ["worker"], "IPAMConfig": {"IPv4Address": "172.22.0.7"}},
         }}
@@ -281,11 +282,15 @@ false
                 network, = service["networks"]
                 self.assertEqual(service["container_name"], "map-retired-worker")
                 self.assertEqual(service["image"], "sha256:old-worker")
+                self.assertIs(service["read_only"], True)
                 self.assertEqual(model["networks"][network], {"name": "previous-network", "external": True})
                 self.assertEqual(service["networks"][network], {"aliases": ["worker"], "ipv4_address": "172.22.0.7"})
                 del current["retired-worker"]
                 TOOLS["restore"]("map", "gateway", directory)
                 self.assertEqual(current, {"api": api, "retired-worker": retired})
+                retired["HostConfig"]["ReadonlyRootfs"] = False
+                with self.assertRaisesRegex(RuntimeError, "配置与发布前不符：read_only"):
+                    TOOLS["restore"]("map", "gateway", directory)
 
 
 if __name__ == "__main__":
