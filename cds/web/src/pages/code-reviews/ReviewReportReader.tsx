@@ -78,7 +78,7 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
   const totalFindings = result ? Object.values(result.summary).reduce((sum, n) => sum + n, 0) : undefined;
   const coverage = reviewCoverage(current), sha = current.commitSha || current.sourceHash;
   const tabs: Array<[ReaderTab, string, string?]> = imported ? [['findings', '报告内容'], ['details', '文档信息']]
-    : [['findings', '问题', totalFindings === undefined ? undefined : String(totalFindings)], ['original', '原始报告', task.reportId ? undefined : '未归档'], ['details', '审查详情']];
+    : [['findings', '问题', totalFindings === undefined ? undefined : String(totalFindings)], ['original', '原始报告', task.reportId ? undefined : '未归档'], ['details', isReviewActive(current) ? '审查进度' : '审查详情']];
   const select = (index: number) => {
     update({ issue: String(index), issueEdge: undefined });
     requestAnimationFrame(() => { if (detail.current && detail.current.getBoundingClientRect().top < (document.querySelector('.cds-main')?.getBoundingClientRect().top || 0)) detail.current.scrollIntoView({ block: 'start' }); });

@@ -19,7 +19,7 @@ function nativeFacts(plan: DeploymentStoragePlan): string {
         const root = mount.sourceRoot;
         if (!root || root !== path.resolve(root) || root === path.parse(root).root || !inside(root, source)) fail();
         if (!fs.lstatSync(root!).isDirectory() || fs.realpathSync(root!) !== root) fail();
-      } else if (mount.serverTool !== true) fail();
+      } else if (mount.serverTool !== true && mount.previewAssets !== true) fail();
       // All prefixes, including the anchor, are checked. Docker must not resolve a symlink
       // outside the accepted tree; read-only Unix sockets are not safe filesystem content.
       const parsed = path.parse(source); let current = parsed.root;
@@ -34,6 +34,7 @@ function nativeFacts(plan: DeploymentStoragePlan): string {
       const terminal = fs.lstatSync(source);
       if (mount.workspaceTarget && !terminal.isDirectory()) fail();
       if (mount.serverTool && !terminal.isFile()) fail();
+      if (mount.previewAssets && !terminal.isDirectory()) fail();
       if (fs.realpathSync(source) !== source) fail();
     }
     return JSON.stringify(facts);

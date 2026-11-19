@@ -1840,6 +1840,9 @@ describe('Server route ordering (regression)', () => {
     expect(asset.contentType).toContain('application/javascript');
     expect(asset.body).toContain('generation = "previous"');
     expect(asset.headers['cache-control']).toContain('immutable');
+    const missing = await request(server, '/assets/ProjectListPage-not-retained.js');
+    expect(missing.status).toBe(404);
+    expect(missing.body).not.toContain('CURRENT');
   });
 
   it('react mount: serves the previous index during the directory switch gap', async () => {

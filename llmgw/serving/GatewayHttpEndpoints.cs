@@ -295,6 +295,7 @@ public static class GatewayHttpEndpoints
                 context.Items["llmgw.route.failure-code"] as string ?? "GATEWAY_REQUEST_REJECTED");
         });
 
+        app.MapGatewayConsumptionRetries();
         app.MapGet("/gw/v1/healthz", () => Results.Content(JsonSerializer.Serialize(new
         {
             status = "ok",
@@ -2378,6 +2379,8 @@ public static class GatewayHttpEndpoints
 
     private static string ResolveIngressProtocol(string path)
     {
+        if (path.Equals(GatewayConsumptionRetries.Path, StringComparison.OrdinalIgnoreCase))
+            return "openai-compatible";
         if (path.StartsWith("/v1beta/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/gemini/v1beta/", StringComparison.OrdinalIgnoreCase))
             return "gemini-compatible";
@@ -2390,6 +2393,8 @@ public static class GatewayHttpEndpoints
 
     private static string ResolveRequiredScope(string path)
     {
+        if (path.Equals(GatewayConsumptionRetries.Path, StringComparison.OrdinalIgnoreCase))
+            return GatewayConsumptionRetries.ControlScope;
         if (path.Equals("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase)) return GatewayLegacyProbeScopes.Readiness;
         if (path.Equals("/gw/v1/route-self-test", StringComparison.OrdinalIgnoreCase))
             return GatewayLegacyProbeScopes.Route;
@@ -3300,6 +3305,8 @@ public static class GatewayHttpEndpoints
         var inputs = http.Items["llmgw.key.authorization.inputs"] as GatewayAuthorizationInputs;
         var identity = GatewayMinimumRequestIdentity.Resolve(http, authorization,
             inputs?.SourceSystem ?? string.Empty, inputs?.IngressProtocol ?? string.Empty);
+        if (identity.Automatic && GatewayConsumptionRetries.ReadRunId(http, authorization, inputs?.IngressProtocol) is { } retryRunId)
+            identity = identity with { RetryRunId = retryRunId, RetryServiceKeyId = authorization.KeyId };
         var decision = await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct, identity);
         ApplyGovernanceRateLimitHeaders(http, decision);
         return decision;
@@ -3382,6 +3389,7 @@ public static class GatewayHttpEndpoints
 
         GatewayAppCallerRecord? caller = null;
         GatewayTenantGovernanceRecord? tenantGovernance = null;
+        GatewayTemporaryQuotaReservation? temporaryQuota = null;
         try
         {
             tenantGovernance = await gatewayData.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
@@ -3421,8 +3429,9 @@ public static class GatewayHttpEndpoints
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                     AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
 
-            var minimum = await safety.CheckAsync(tenantId, appCallerCode, requestType, caller?.TeamId,
+            var minimum = await safety.CheckBeforeOtherGovernanceAsync(tenantId, appCallerCode, requestType, caller?.TeamId,
                 requestId, identity, tenantGovernance?.RateLimitPerMinute, caller?.RateLimitPerMinute, ct);
+            temporaryQuota = minimum.TemporaryQuota;
             if (minimum.Rejected)
                 return new AppCallerGovernanceDecision(status, TenantRateLimitDecision.Allow(tenantId),
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
@@ -3446,9 +3455,20 @@ public static class GatewayHttpEndpoints
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType, caller?.RateLimitPerMinute ?? 0),
                     budget);
 
+            async Task<AppCallerGovernanceDecision> CompleteAdmissionAsync(AppCallerRateLimitDecision rateLimit)
+            {
+                if (rateLimit.Rejected)
+                    return new(status, tenantRateLimit, rateLimit, budget);
+
+                temporaryQuota = null; // CompleteTemporaryQuotaAsync 接手占用并负责释放。
+                var quotaRejection = await safety.CompleteTemporaryQuotaAsync(
+                    minimum, tenantId, appCallerCode, requestType, caller?.TeamId, requestId, identity, ct);
+                return new(status, tenantRateLimit, rateLimit, budget, quotaRejection);
+            }
+
             var limit = caller?.RateLimitPerMinute ?? 0;
             if (limit <= 0)
-                return new AppCallerGovernanceDecision(status, tenantRateLimit, AppCallerRateLimitDecision.Allow(appCallerCode, requestType), budget);
+                return await CompleteAdmissionAsync(AppCallerRateLimitDecision.Allow(appCallerCode, requestType));
 
             var now = DateTime.UtcNow;
             var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
@@ -3506,13 +3526,18 @@ public static class GatewayHttpEndpoints
                 : AppCallerRateLimitDecision.Allow(appCallerCode, requestType, limit, count, windowStart);
             await safety.ObserveAsync(tenantId, normalizedAppCallerCode, normalizedRequestType, caller?.TeamId,
                 requestId, identity.SourceDeployment, "app-caller", "general", 60, windowStart, count, limit, ct);
-            return new AppCallerGovernanceDecision(status, tenantRateLimit, rateLimit, budget);
+            return await CompleteAdmissionAsync(rateLimit);
         }
         catch
         {
             // 无法读取租户治理配置时不能判断是否存在硬限制，因此统一 fail-closed；
             // 否则数据库故障会把已配置的租户总预算或总速率变成无限窗口。
             return AppCallerGovernanceDecision.RejectTenantGovernanceUnavailable(tenantId, appCallerCode, requestType);
+        }
+        finally
+        {
+            if (temporaryQuota is not null)
+                await safety.ReleaseTemporaryQuotaAsync(temporaryQuota);
         }
     }
 

@@ -103,7 +103,7 @@ export function describeDiskTier(tier: DiskTier, usedPercent: number | null): st
  */
 type DiskUsageReading = { totalBytes: number; freeBytes: number };
 /** 可返回单个挂载点，也可返回多个（如 worktree + docker 数据目录），取最紧张的一个。 */
-export type DiskUsageProbe = () => DiskUsageReading | DiskUsageReading[] | null;
+export type DiskUsageProbe = () => DiskUsageReading | Array<DiskUsageReading | null> | null;
 
 /** 读数被认为「新鲜」的时长；超过则在被问到时就地重测（见 blockReasonForDeploy）。 */
 export const DISK_READING_TTL_MS = 60_000;
@@ -114,6 +114,10 @@ class DiskGuardState {
   private updatedAt: string | null = null;
   private updatedAtMs = 0;
   private probe: DiskUsageProbe | null = null;
+  private minimumAvailable: { bytes: number; at: number } | null = null;
+  minimumAvailableBytes(): number | null {
+    return this.minimumAvailable && Date.now() - this.minimumAvailable.at <= DISK_READING_TTL_MS ? this.minimumAvailable.bytes : null;
+  }
 
   /**
    * 注册就地探测（Codex 第二十八轮 P1）。
@@ -125,6 +129,7 @@ class DiskGuardState {
    */
   setProbe(probe: DiskUsageProbe | null): void {
     this.probe = probe;
+    this.minimumAvailable = null;
   }
 
   /**
@@ -140,6 +145,8 @@ class DiskGuardState {
     try {
       const raw = this.probe();
       const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+      this.minimumAvailable = list.length && list.every(usage => usage && Number.isFinite(usage.freeBytes) && usage.freeBytes >= 0 && usage.totalBytes > 0)
+        ? { bytes: Math.min(...list.map(usage => usage!.freeBytes)), at: Date.now() } : null;
       let worst: number | null = null;
       for (const usage of list) {
         if (!usage || !usage.totalBytes) continue;
@@ -149,6 +156,7 @@ class DiskGuardState {
       if (worst === null) return this.tier;
       return this.update(worst, thresholds);
     } catch {
+      this.minimumAvailable = null;
       return this.tier;
     }
   }
@@ -201,6 +209,7 @@ class DiskGuardState {
     this.updatedAt = null;
     this.updatedAtMs = 0;
     this.probe = null;
+    this.minimumAvailable = null;
   }
 }
 

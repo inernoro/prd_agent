@@ -5,7 +5,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.Security;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Services.ProductAgent;
 
@@ -17,8 +17,7 @@ public static class ProductClaimWebhookBootstrap
     public static async Task<bool> TryInitializeAsync(MongoDbContext db, IDataProtectionProvider protection,
         IConfiguration configuration, string seedDirectory = SeedDirectory)
     {
-        if (DeploymentAuthority.IsCdsBranchPreview(configuration)
-            || !DeploymentAuthority.CanRunSharedScheduledWork(configuration)) return false;
+        if (ProductClaimNotificationQueue.GetDeploymentBlockReason(configuration) is not null) return false;
         var keyPath = Path.Combine(seedDirectory, "private.pem");
         var envelopePath = Path.Combine(seedDirectory, "url.enc");
         if (!File.Exists(keyPath) || !File.Exists(envelopePath)) return false;
