@@ -1182,12 +1182,14 @@ release_exit() {
   if [ "$exit_status" -ne 0 ] && [ "$release_completed" != "1" ]; then
     if [ "$compose_started" = "1" ]; then
       echo "Release failed at stage '$release_failure_stage'; restoring pre-release runtime, gateway and static web..." >&2
+      echo "CDS_RELEASE_ROLLBACK=started" >&2
       if restore_production_runtime; then
         release_rollback_result="full-restored"
         if [ -n "$rollback_static_identity" ] && [ -n "$rollback_runtime_identity" ] &&
            run_public_surface_smoke "$rollback_smoke_json" 6 "$rollback_static_identity" "$rollback_runtime_identity"; then
           release_rollback_result="full-restored-and-public-verified"
           echo "生产回滚已验证：运行服务、网关配置和网页均已恢复到本次发布前的版本"
+          echo "CDS_RELEASE_ROLLBACK=verified"
         else
           release_rollback_result="full-restored-public-verification-failed"
           echo "ERROR: 已恢复发布前运行版本，公网复验未通过" >&2

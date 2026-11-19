@@ -219,8 +219,11 @@ describe('ReleaseService 阶段一止血', () => {
         }
         if (!isDeployCommand(req.command)) return 'ok';
         dispatched.push(req.command);
-        req.onOutput('warn', 'Release failed at stage \'public-product-surface\'; restoring pre-release runtime, gateway and static web...\n');
-        req.onOutput('info', '生产回滚已验证：运行服务、网关配置和网页均已恢复到本次发布前的版本\n');
+        req.onOutput('warn', 'CDS_RELEASE_ROLL');
+        req.onOutput('info', 'CDS_RELEASE_ROLLBACK=ver');
+        req.onOutput('warn', 'BACK=started\r');
+        req.onOutput('warn', '\n');
+        req.onOutput('info', 'ified');
         throw new Error('入口版本不一致');
       },
     });

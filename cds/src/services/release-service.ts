@@ -1682,9 +1682,11 @@ export class ReleaseService {
       if (error instanceof ReleaseGovernanceError) throw error;
       if (isMapProductionRelease(executionTarget)) {
         const logs = this.stateService.getReleaseRun(releaseId)?.logs || [];
-        const started = logs.find((log) => log.message.includes('restoring pre-release runtime, gateway and static web'));
-        const verified = logs.find((log) => log.message === '生产回滚已验证：运行服务、网关配置和网页均已恢复到本次发布前的版本');
-        if (started) this.stateService.patchReleaseRun(releaseId, { autoRestoreStartedAt: started.at, autoRestoredAt: verified?.at });
+        const started = logs.find((log) => log.message === 'CDS_RELEASE_ROLLBACK=started');
+        const verified = logs.find((log) => log.message === 'CDS_RELEASE_ROLLBACK=verified');
+        if (started || verified) this.stateService.patchReleaseRun(releaseId, {
+          autoRestoreStartedAt: started?.at, autoRestoredAt: verified?.at,
+        });
       } else if (execution.mode !== 'existing-script' || target.ssh.rollbackCommand?.trim()) {
         await this.restorePreviousAfterFailedProbe(releaseId, target, run, error, '发布脚本执行');
       }
@@ -2027,6 +2029,15 @@ export class ReleaseService {
       ? global.setInterval(() => this.touchHeartbeat(releaseId), this.heartbeatIntervalMs)
       : undefined;
     heartbeat?.unref?.();
+    const partialOutput = { info: '', warn: '' };
+    const emitOutput = (level: 'info' | 'warn', chunk: string, flush = false): void => {
+      if (!releaseId) return;
+      const lines = (partialOutput[level] + chunk).split(/\r?\n/);
+      partialOutput[level] = flush ? '' : (lines.pop() || '').slice(0, 1000);
+      for (const line of lines) {
+        if (line) this.emitLog(releaseId, level, line.slice(0, 1000), logPhase);
+      }
+    };
 
     try {
       return await this.sshExecutor({
@@ -2041,17 +2052,14 @@ export class ReleaseService {
           this.governance.assertExecution(current);
         } : undefined,
         signal: controller.signal,
-        onOutput: (level, chunk) => {
-          if (!releaseId) return;
-          for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
-            this.emitLog(releaseId, level, line.slice(0, 1000), logPhase);
-          }
-        },
+        onOutput: emitOutput,
       });
     } finally {
       global.clearTimeout(timer);
       if (heartbeat) global.clearInterval(heartbeat);
       runHandle?.controller.signal.removeEventListener('abort', onRunAbort);
+      emitOutput('info', '', true);
+      emitOutput('warn', '', true);
     }
   }
 }
@@ -2080,7 +2088,7 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
     const rejectUnconfirmed = (cause?: unknown): void => {
       if (settled) return;
       const failure = new Error(`SSH 连接中断，远端执行结果未确认，请核对目标现场后再重试${cause ? `：${errorText(cause)}` : ''}`);
-      req.onOutput('warn', failure.message);
+      req.onOutput('warn', `\n${failure.message}\n`);
       settle(() => reject(failure));
     };
     function onAbort(): void {
