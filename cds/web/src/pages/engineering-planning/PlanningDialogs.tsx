@@ -278,7 +278,7 @@ export function PlanningActionDialog({ action, board, busy, error, returnFocusTo
   const description = action.kind === 'debt' ? action.debt.title : action.kind === 'reject' ? action.proposal.draft.title
     : action.kind === 'decision' ? action.decision.title : action.kind === 'step' ? action.plan.title : '变更保存到当前项目';
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
-    <DialogContent className="ep-dialog ep-dialog--form" overlayClassName="bg-black/35" frame
+    <DialogContent className="ep-dialog ep-dialog--form" overlayClassName="ep-dialog-overlay" frame
       onInteractOutside={event => event.preventDefault()} onCloseAutoFocus={event => {
         if (!returnFocusTo?.isConnected || returnFocusTo.matches(':disabled') || !returnFocusTo.getClientRects().length) return;
         event.preventDefault();
@@ -354,7 +354,7 @@ export function PlanningDetailDialog({ item, board, detail, projectLabel, loadin
     : board.decisions.find(row => row.id === item.id);
   const write = board.permissions.includes('write');
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
-    <DialogContent frame className="ep-dialog ep-dialog--detail" overlayClassName="bg-black/35">
+    <DialogContent frame className="ep-dialog ep-dialog--detail" overlayClassName="ep-dialog-overlay">
       <div className="ep-dialog-content ep-detail-scroll">
         {debt ? <DebtHeading debt={debt} projectLabel={projectLabel} today={board.today} />
           : <DialogHeader className="ep-dialog-head"><DialogTitle>{record?.title ?? `${kindLabels[item.kind]}详情`}</DialogTitle>
