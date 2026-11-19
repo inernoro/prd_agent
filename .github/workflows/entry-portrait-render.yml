@@ -1,0 +1,38 @@
+name: Render Portrait Motion Asset
+on:
+  push:
+    branches: [codex/map-orbital-entry]
+    paths:
+      - '.github/workflows/entry-portrait-render.yml'
+      - 'e2e/render-entry-portrait-cv.py'
+      - '.design/map-cinematic-entry/ai-v2/**'
+  workflow_dispatch:
+    inputs:
+      theme:
+        type: choice
+        options: [night, daylight]
+        default: night
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bounded cloud media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg python3-venv
+          python3 -m venv /tmp/entry-artwork-tools
+          /tmp/entry-artwork-tools/bin/pip install numpy==2.2.6 opencv-contrib-python-headless==4.12.0.88
+      - name: Register generated artwork and render actual strokes and eyelid poses
+        env:
+          ENTRY_ARTWORK_THEME: ${{ inputs.theme || 'night' }}
+        run: /tmp/entry-artwork-tools/bin/python e2e/render-entry-portrait-cv.py --theme "$ENTRY_ARTWORK_THEME"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: entry-portrait-${{ inputs.theme || 'night' }}-${{ github.sha }}
+          path: work/entry-portrait/
+          retention-days: 14

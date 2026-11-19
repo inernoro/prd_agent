@@ -700,7 +700,7 @@ export function ServiceKeysPage() {
         actions={(
           <>
             <Link className="lg-text-link" to="/organization">组织与团队</Link>
-            <Link className="lg-text-link" to="/quickstart">Quickstart</Link>
+            <Link className="lg-text-link" to="/quickstart">对话</Link>
             <Button size="sm" variant="ghost" disabled={reading} onClick={() => void load()}><RefreshCw size={14} />{reading ? '读取中…' : '刷新'}</Button>
             <Button size="sm" variant="primary" onClick={toggleCreate}>
               {showCreate ? <X size={14} /> : <Plus size={14} />}{showCreate ? '取消' : '新建密钥'}

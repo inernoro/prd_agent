@@ -2,6 +2,7 @@
 import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
+import { beginEntryArrival, finishEntryArrival, useEntryArrival } from '@/components/effects/entryArrival';
 import { useNotificationToast } from './useNotificationToast';
 import { notificationToastKey } from '@/lib/notificationPresentation';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
@@ -41,4 +42,26 @@ it('同批严重事件先展示，超时不吞未展示项；旧批不接力弹�
     expect(host.textContent).toBe(info.title);
     expect(consumed).not.toContain(notificationToastKey(upgrade));
   } finally { act(() => root.unmount()); host.remove(); vi.useRealTimers(); }
+});
+
+it('入场期间不消费未显示的通知，结束后保留同一条并重新计时', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.useFakeTimers();
+  const host = document.createElement('div'); const root = createRoot(host);
+  const dismiss = vi.fn(); const collapse = vi.fn(); const dismissed = new Set<string>();
+  function Probe() {
+    const paused = useEntryArrival();
+    const current = useNotificationToast({ notifications: [info], dismissed, collapsed: false, snoozed: false, paused,
+      onCollapsedChange: collapse, onDismiss: dismiss });
+    return <div>{paused ? '入场中' : current?.title}</div>;
+  }
+  try {
+    beginEntryArrival(); await act(async () => root.render(<Probe />));
+    await act(async () => vi.advanceTimersByTime(8000));
+    expect(dismiss).not.toHaveBeenCalled(); expect(host.textContent).toBe('入场中');
+    await act(async () => finishEntryArrival());
+    expect(host.textContent).toBe(info.title);
+    await act(async () => vi.advanceTimersByTime(11999)); expect(dismiss).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(1)); expect(dismiss).toHaveBeenCalledWith(notificationToastKey(info));
+  } finally { await act(async () => root.unmount()); finishEntryArrival(); vi.useRealTimers(); }
 });

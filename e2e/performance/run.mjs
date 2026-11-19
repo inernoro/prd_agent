@@ -212,7 +212,7 @@ async function browserJourney(round) {
     await page.locator('input[type="password"]').first().fill(password);
     await timed('home', async () => {
       const home = page.waitForResponse(r => r.url().includes('/api/home/recent-work') && r.ok());
-      await page.getByRole('button', { name: '进入控制台', exact: true }).click();
+      await page.getByRole('button', { name: /^(进入控制台|开始身份确认)$/ }).click();
       await page.waitForURL(url => !url.pathname.includes('/login'));
       await home;
       // The seeded recent-work cards must be usable in the actual homepage,

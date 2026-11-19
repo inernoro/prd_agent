@@ -5,7 +5,7 @@ export const target: {
   id: string; projectId: string; name: string; type: string; isEnabled: boolean;
   environment: string; isCanonical: boolean; strategy: { mode: string; command: string };
 };
-export function installOperationsFixtures(page: Page): Promise<{
+export function installOperationsFixtures(page: Page, options?: { quickstart?: boolean }): Promise<{
   writes: Array<{ path: string; method: string; body: unknown }>;
   setReleaseTargets(value: Array<{id: string; projectId: string; name: string; isEnabled: boolean; type?: string; lifecycle?: string}>): void;
   setError(value: boolean): void;

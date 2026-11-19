@@ -252,8 +252,8 @@ for marker in required:
 verify_start = deploy.index('if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then')
 verify_end = deploy.index('\nelse\n  release_failure_stage="compose-update"', verify_start)
 verify_block = deploy[verify_start:verify_end]
-assert verify_block.index('wait_for_llmgw_serving_readiness') < verify_block.index('wait_for_design_runtime_readiness')
-assert verify_block.index('wait_for_design_runtime_readiness') < verify_block.index('run_asset_storage_readiness')
+assert verify_block.index('wait_for_llmgw_serving_readiness') < verify_block.index('check_design_runtime_after_deploy')
+assert verify_block.index('check_design_runtime_after_deploy') < verify_block.index('run_asset_storage_readiness')
 assert verify_block.index('run_asset_storage_readiness') < verify_block.index('activate_pending_static_release')
 assert 'compose_run up' not in verify_block
 assert 'sync_active_gateway_nginx_config' not in verify_block

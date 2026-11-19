@@ -638,6 +638,10 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     }
     if (rejectBranchAndTargetMismatch(req, res, deps.stateService, req.params.branchId, body.targetId.trim())) return;
     if (rejectUnscopedAiMutation(req, res)) return;
+    if (body.forceReason !== undefined && typeof body.forceReason !== 'string') {
+      res.status(400).json({ error: '强制发布原因必须为文本' });
+      return;
+    }
     try {
       const run = await service.startRelease({
         authorizationId: typeof body.authorizationId === 'string' ? body.authorizationId : undefined,
@@ -645,6 +649,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         targetId: body.targetId.trim(),
         previewUrl: typeof body.previewUrl === 'string' ? body.previewUrl : '',
         operator: resolveReleaseActorFromRequest(req),
+        forceReason: typeof body.forceReason === 'string' ? body.forceReason : undefined,
+        preflightId: typeof body.preflightId === 'string' ? body.preflightId : undefined,
         // 跨轨道契约：概览页的手动「提升」按钮必须带上它，否则「把 A 环境正在跑的那一版
         // 原样发到 B」在分支已前进时会静默发出另一个版本（见 ReleaseStartInput 注释）。
         // 不传时行为与历史完全一致。

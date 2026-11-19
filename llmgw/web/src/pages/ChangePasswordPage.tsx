@@ -1,3 +1,4 @@
+import { gatewayLoginDestination } from '@/components/entry/quickstartArrival';
 // 首登强制改密页：使用管理员提供的初始口令验证，改密成功前无法进入控制台。
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -9,7 +10,7 @@ import { FIELD_LABEL } from '@/lib/typography';
 import './ChangePasswordPage.css';
 
 export function ChangePasswordPage() {
-  const { user, changePassword, logout } = useAuth();
+  const { user, tenant, changePassword, logout } = useAuth();
   const navigate = useNavigate();
 
   const [oldPassword, setOldPassword] = useState('');
@@ -57,7 +58,7 @@ export function ChangePasswordPage() {
         setNotice('口令已修改成功。原会话已到期，请用新口令重新登录。');
         return;
       }
-      navigate('/', { replace: true });
+      navigate(gatewayLoginDestination(null, tenant), { replace: true });
     } else {
       if (isPasswordChangeUncertain(res.error?.code)) setOutcomeUnknown(true);
       else setError(res.error?.message || '修改被拒绝');

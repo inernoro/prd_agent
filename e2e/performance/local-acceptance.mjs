@@ -162,7 +162,7 @@ try {
       await page.getByRole('button',{name:'登录 / 注册',exact:true}).filter({visible:true}).first().click();
       await page.locator('input[autocomplete="username"]').fill('perfadmin');
       await page.locator('input[type="password"]').fill(password);
-      await page.getByRole('button',{name:'进入控制台',exact:true}).click();
+      await page.getByRole('button',{name:/^(进入控制台|开始身份确认)$/}).click();
       if(width<768) {
         await expect(page.getByText('继续上次',{exact:true})).toBeVisible();
         await expect(page.getByText(/^性能知识库-\d+$/).first()).toBeVisible();

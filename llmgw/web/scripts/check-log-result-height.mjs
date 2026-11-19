@@ -29,6 +29,7 @@ async function mock(route) {
   if (request.method() !== 'GET' && endpoint !== '/auth/login') throw Error('Business write forbidden');
   const dataRows = rows(); let data = { items: [], total: 0 };
   if (endpoint === '/auth/login') data = { token: 'fixture-only', expiresAt: '2099-01-01T00:00:00Z', username: 'owner', displayName: '布局审核', tenant, mustChangePassword: false };
+  else if (endpoint === '/organization') data = { tenant: { id: tenant.id, name: tenant.name }, teams: [], members: [] };
   else if (endpoint === '/healthz') data = { status: 'ok', mapHomeUrl: 'https://example.invalid/' };
   else if (endpoint === '/overview') data = { totalRequests: 0, recentRequests: [], estimatedCosts: [], topUsers: [], topAppCallers: [], topModels: [], serviceKeys: { total: 0 } };
   else if (endpoint === '/logs/meta') data = { models: ['fixture-chat'], providers: ['受控供应方'], appCallers: ['fixture.reader'], statuses: ['failed', 'succeeded'] };
@@ -55,7 +56,7 @@ try {
     const nav = async name => { const link = page.getByRole('link', { name, exact: true }); if (!await link.isVisible()) await page.getByRole('button', { name: '打开导航', exact: true }).click(); await link.click(); await settle(); };
     await page.goto('http://127.0.0.1:8293/login', { waitUntil: 'domcontentloaded' });
     await page.locator('#llmgw-username').fill('owner'); await page.locator('#llmgw-password').fill('fixture-only');
-    await page.getByRole('button', { name: '进入租户工作区', exact: true }).click(); await page.waitForURL('http://127.0.0.1:8293/'); await page.locator('.lg-console-content').waitFor();
+    await page.locator('form button[type=submit]').click(); await page.waitForURL('http://127.0.0.1:8293/quickstart'); await page.locator('.lg-console-content').waitFor();
     await nav('请求记录'); assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), theme);
     await page.locator('.lg-log-empty').waitFor(); await settle();
     const geometry = async () => page.evaluate(() => {

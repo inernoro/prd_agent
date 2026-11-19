@@ -2390,7 +2390,7 @@ public class ImageMasterController : ControllerBase
             return;
         }
 
-        var articleContent = (request?.ArticleContent ?? string.Empty).Trim();
+        var articleContent = request?.ArticleContent ?? string.Empty;
         if (string.IsNullOrWhiteSpace(articleContent))
         {
             await WriteJsonResponseAsync(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "articleContent 不能为空"), StatusCodes.Status400BadRequest, ct);
@@ -2415,13 +2415,30 @@ public class ImageMasterController : ControllerBase
 
         try
         {
+            var userAnchors = isAnchorMode && request?.PositionStrategy is not ("per-h1" or "per-h2")
+                ? new PrdAgent.Core.Services.ArticleIllustrationAnchors(articleContent)
+                : null;
+            var hasUserAnchors = userAnchors is { Count: > 0 };
+
+            if (hasUserAnchors && PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(articleContent).Count > 0)
+            {
+                var conflictData = JsonSerializer.Serialize(new
+                {
+                    type = "error",
+                    code = "ARTICLE_ANCHORS_CONFLICT",
+                    message = "正文已有配图提示词。请移除旧的配图提示词标记，再按锚点生成。"
+                }, JsonOptions);
+                await Response.WriteAsync($"data: {conflictData}\n\n", ct);
+                return;
+            }
+
             // 先给浏览器一个用户可见阶段事件，再进入模型解析。模型首 token 可能受排队、
             // 冷启动影响；不能让用户在此期间只看到静止加载或仅收到不可见心跳。
             var preparingData = JsonSerializer.Serialize(new
             {
                 type = "progress",
                 stage = "preparing",
-                message = "正在准备文章配图标记"
+                message = hasUserAnchors ? $"已确认 {userAnchors!.Count} 个锚点，正在为每个锚点生成提示词" : "正在准备文章配图标记"
             }, JsonOptions);
             await Response.WriteAsync($"data: {preparingData}\n\n", ct);
             await Response.Body.FlushAsync(ct);
@@ -2448,9 +2465,9 @@ public class ImageMasterController : ControllerBase
             var client = llmClient;
             // Anchor 模式：自动包裹用户提示词，注入输出格式约束（用户旧提示词无需修改）
             var systemPrompt = isAnchorMode
-                ? PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.WrapForAnchorMode(userInstruction)
+                ? PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.WrapForAnchorMode(userInstruction, hasUserAnchors)
                 : userInstruction;
-            var userPrompt = articleContent;
+            var userPrompt = userAnchors?.ModelArticle ?? articleContent;
 
             var messages = new List<LLMMessage>
             {
@@ -2466,6 +2483,39 @@ public class ImageMasterController : ControllerBase
             string? pendingAnchor = null;
             var lineBuffer = string.Empty;
             var anchorInsertions = new List<PrdAgent.Core.Services.AnchorInsertion>();
+
+            var promptsByAnchor = new Dictionary<string, PrdAgent.Core.Services.AnchorInsertion>(StringComparer.Ordinal);
+
+            async Task ParseMarkerLineAsync(string line)
+            {
+                var parsed = PrdAgent.Core.Services.AnchorInsertionParser.TryParseLine(
+                    line, ref pendingAnchor, anchorInsertions.Count);
+                if (parsed == null) return;
+                if (hasUserAnchors &&
+                    (!userAnchors!.Contains(parsed.AnchorText) || !promptsByAnchor.TryAdd(parsed.AnchorText, parsed)))
+                {
+                    return;
+                }
+
+                anchorInsertions.Add(parsed);
+                if (clientDisconnected) return;
+                try
+                {
+                    var markerData = JsonSerializer.Serialize(new
+                    {
+                        type = "marker",
+                        index = parsed.Index,
+                        text = parsed.MarkerText,
+                        size = parsed.Size,
+                        anchor = parsed.AnchorText
+                    }, JsonOptions);
+                    await Response.WriteAsync($"data: {markerData}\n\n");
+                    await Response.Body.FlushAsync();
+                }
+                catch (OperationCanceledException) { clientDisconnected = true; }
+                catch (ObjectDisposedException) { clientDisconnected = true; }
+                catch (Exception ex) when (ex.InnerException is OperationCanceledException) { clientDisconnected = true; }
+            }
 
             await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
             {
@@ -2493,8 +2543,6 @@ public class ImageMasterController : ControllerBase
 
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
-                    fullResponse.Append(chunk.Content);
-
                     if (isAnchorMode)
                     {
                         // Anchor 模式：增量解析 @AFTER + [插图] 对，发现 marker 立即推送
@@ -2520,38 +2568,14 @@ public class ImageMasterController : ControllerBase
 
                             for (int li = 0; li < lines.Length - 1; li++)
                             {
-                                var parsed = PrdAgent.Core.Services.AnchorInsertionParser.TryParseLine(
-                                    lines[li], ref pendingAnchor, anchorInsertions.Count);
-                                if (parsed != null)
-                                {
-                                    anchorInsertions.Add(parsed);
-                                    // 立即推送 marker 事件，前端可以提前触发 planImageGen
-                                    if (!clientDisconnected)
-                                    {
-                                        try
-                                        {
-                                            var markerData = JsonSerializer.Serialize(new
-                                            {
-                                                type = "marker",
-                                                index = parsed.Index,
-                                                text = parsed.MarkerText,
-                                                size = parsed.Size,
-                                                anchor = parsed.AnchorText
-                                            }, JsonOptions);
-                                            await Response.WriteAsync($"data: {markerData}\n\n");
-                                            await Response.Body.FlushAsync();
-                                        }
-                                        catch (OperationCanceledException) { clientDisconnected = true; }
-                                        catch (ObjectDisposedException) { clientDisconnected = true; }
-                                        catch (Exception ex) when (ex.InnerException is OperationCanceledException) { clientDisconnected = true; }
-                                    }
-                                }
+                                await ParseMarkerLineAsync(lines[li]);
                             }
                         }
                     }
                     else
                     {
-                        // Legacy 模式：直接透传 delta
+                        // Legacy 模式：保存并透传完整文章。
+                        fullResponse.Append(chunk.Content);
                         if (!clientDisconnected)
                         {
                             try
@@ -2597,29 +2621,7 @@ public class ImageMasterController : ControllerBase
             // Anchor 模式：处理 lineBuffer 中最后一个不完整行
             if (isAnchorMode && !string.IsNullOrWhiteSpace(lineBuffer))
             {
-                var parsed = PrdAgent.Core.Services.AnchorInsertionParser.TryParseLine(
-                    lineBuffer, ref pendingAnchor, anchorInsertions.Count);
-                if (parsed != null)
-                {
-                    anchorInsertions.Add(parsed);
-                    if (!clientDisconnected)
-                    {
-                        try
-                        {
-                            var markerData = JsonSerializer.Serialize(new
-                            {
-                                type = "marker",
-                                index = parsed.Index,
-                                text = parsed.MarkerText,
-                                size = parsed.Size,
-                                anchor = parsed.AnchorText
-                            }, JsonOptions);
-                            await Response.WriteAsync($"data: {markerData}\n\n");
-                            await Response.Body.FlushAsync();
-                        }
-                        catch { /* 客户端已断开，忽略 */ }
-                    }
-                }
+                await ParseMarkerLineAsync(lineBuffer);
             }
 
             // 通知前端 LLM 流已结束，正在进行后处理（保存数据等）
@@ -2638,7 +2640,30 @@ public class ImageMasterController : ControllerBase
             string generatedContent;
             List<PrdAgent.Core.Services.ArticleMarker> extractedMarkers;
 
-            if (isAnchorMode)
+            if (hasUserAnchors)
+            {
+                var anchoredContent = userAnchors!.Apply(promptsByAnchor);
+                if (anchoredContent == null)
+                {
+                    _logger.LogWarning("GenerateArticleMarkers: {Matched}/{Total} user anchors returned for workspace {WorkspaceId}",
+                        promptsByAnchor.Count, userAnchors.Count, wid);
+                    if (!clientDisconnected)
+                    {
+                        var missingData = JsonSerializer.Serialize(new
+                        {
+                            type = "error",
+                            code = "ARTICLE_ANCHORS_INCOMPLETE",
+                            message = $"模型只为 {userAnchors.Count} 个锚点中的 {promptsByAnchor.Count} 个生成了提示词。请重新生成配图标记。"
+                        }, JsonOptions);
+                        await Response.WriteAsync($"data: {missingData}\n\n");
+                        await Response.Body.FlushAsync();
+                    }
+                    return;
+                }
+                generatedContent = anchoredContent;
+                extractedMarkers = PrdAgent.Core.Services.ArticleMarkerExtractor.Extract(generatedContent);
+            }
+            else if (isAnchorMode)
             {
                 // Anchor 模式：将锚点指令应用到原始文章
                 var mergeResult = PrdAgent.Core.Services.AnchorInsertionService.Apply(articleContent, anchorInsertions);
@@ -2674,7 +2699,14 @@ public class ImageMasterController : ControllerBase
             {
                 Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
                 Phase = 2, // MarkersGenerated
-                Markers = extractedMarkers.Select(m => new ArticleIllustrationMarker { Index = m.Index, Text = m.Text }).ToList(),
+                Markers = extractedMarkers.Select(m => new ArticleIllustrationMarker
+                {
+                    Index = m.Index,
+                    Text = m.Text,
+                    DraftText = isAnchorMode ? m.Text.Trim() : null,
+                    Status = isAnchorMode ? "parsed" : null,
+                    PlanItem = isAnchorMode ? new ArticleIllustrationPlanItem { Prompt = m.Text.Trim(), Size = "1024x1024" } : null
+                }).ToList(),
                 ExpectedImageCount = extractedMarkers.Count,
                 DoneImageCount = 0,
                 AssetIdByMarkerIndex = new Dictionary<string, string>(),
@@ -2687,6 +2719,7 @@ public class ImageMasterController : ControllerBase
             var replanResult = await _db.ImageMasterWorkspaces.UpdateOneAsync(
                 PrdAgent.Api.Services.LiteraryIllustrationArchive.SameWorkflowAs(ws),
                 Builders<ImageMasterWorkspace>.Update
+                    .Set(x => x.ArticleContent, articleContent)
                     .Set(x => x.ArticleContentWithMarkers, generatedContent)
                     .Set(x => x.ArticleWorkflow, newWorkflow)
                     .Set(x => x.ArticleWorkflowHistory, history)
