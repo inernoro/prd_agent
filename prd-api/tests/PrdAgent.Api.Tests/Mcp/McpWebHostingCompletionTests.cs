@@ -33,6 +33,17 @@ namespace PrdAgent.Api.Tests.Mcp;
 public sealed class McpWebHostingCompletionTests
 {
     [Fact]
+    public void 网页交付_退队后所有者仍可见_原团队成员失去访问后不可见()
+    {
+        var sharedTeamIds = new[] { "former-team" };
+        HomeRecentWorkController.CanSeeWebDelivery("owner", "owner", sharedTeamIds, null).ShouldBeTrue();
+        HomeRecentWorkController.CanSeeWebDelivery("former-member", "owner", sharedTeamIds,
+            new Dictionary<string, string> { ["other-team"] = "editor" }).ShouldBeFalse();
+        HomeRecentWorkController.CanSeeWebDelivery("member", "owner", sharedTeamIds,
+            new Dictionary<string, string> { ["former-team"] = "viewer" }).ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task 原始ZIP上传_传原字节给同一站点服务_保留多页面与图片清单()
     {
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);

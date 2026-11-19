@@ -295,6 +295,6 @@ public partial class WebPagesOpenApiController : ControllerBase
         return digest == null ? null : $"mcp:{digest}";
     }
 
-    private string BuildSiteManagementUrl(string siteId)
+    private string? BuildSiteManagementUrl(string siteId)
         => Request.ResolveAbsoluteUrl($"/web-pages?focusSite={Uri.EscapeDataString(siteId)}");
 }

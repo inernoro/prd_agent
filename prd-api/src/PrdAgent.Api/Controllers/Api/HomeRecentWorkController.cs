@@ -405,11 +405,9 @@ public sealed class HomeRecentWorkController : ControllerBase
         var sites = await _db.HostedSites.Find(site => ids.Contains(site.Id))
             .Project(site => new { site.Id, site.Title, site.OwnerUserId, site.SharedTeamIds, site.GroupId })
             .ToListAsync(ct);
-        var teamRoles = sites.Any(site => site.SharedTeamIds.Count > 0)
+        var teamRoles = sites.Any(site => site.OwnerUserId != userId && site.SharedTeamIds.Count > 0)
             ? await _teams.GetMyWebHostingTeamRolesAsync(userId, ct) : null;
-        var visibleSites = sites.Where(site => site.SharedTeamIds.Count == 0
-                ? site.OwnerUserId == userId
-                : teamRoles != null && site.SharedTeamIds.Any(teamRoles.ContainsKey))
+        var visibleSites = sites.Where(site => CanSeeWebDelivery(userId, site.OwnerUserId, site.SharedTeamIds, teamRoles))
             .ToDictionary(site => site.Id);
         var items = new List<RecentWorkItem>();
         foreach (var log in deliveries)
@@ -426,4 +424,8 @@ public sealed class HomeRecentWorkController : ControllerBase
         }
         return items;
     }
+
+    internal static bool CanSeeWebDelivery(string userId, string ownerUserId, IEnumerable<string> sharedTeamIds,
+        IReadOnlyDictionary<string, string>? teamRoles)
+        => ownerUserId == userId || (teamRoles != null && sharedTeamIds.Any(teamRoles.ContainsKey));
 }
