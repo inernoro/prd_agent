@@ -9,60 +9,34 @@ on:
 permissions:
   contents: read
 jobs:
-  ubuntu-dependency-source:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            suite: jammy
-          - runner: ubuntu-24.04
-            suite: noble
-    timeout-minutes: 6
-    env:
-      UBUNTU_SUITE: ${{ matrix.suite }}
+  public-media-readback:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
     steps:
-      - name: Measure verified Ubuntu archive sources on the actual runner
+      - uses: actions/checkout@v4
+        with:
+          ref: 15bd9950f5516f3b174f1096c085d96546ac560c
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify public preview revision, HTML, bundles, and media hashes
         run: |
-          python3 - <<'PY'
-          import concurrent.futures as cf
-          import os
-          from pathlib import Path
-          import subprocess
-          import tempfile
-
-          suite = os.environ['UBUNTU_SUITE']
-          mirrors = {
-              'canonical': 'https://archive.ubuntu.com/ubuntu',
-              'kernel': 'https://mirrors.kernel.org/ubuntu',
-              'princeton': 'https://mirror.math.princeton.edu/pub/ubuntu',
-              'mit': 'https://mirrors.mit.edu/ubuntu',
-              'berkeley': 'https://mirrors.ocf.berkeley.edu/ubuntu',
-              'waterloo': 'https://mirror.csclub.uwaterloo.ca/ubuntu',
-              'hetzner': 'https://mirror.hetzner.com/ubuntu/packages',
-              'leaseweb': 'https://mirror.us.leaseweb.net/ubuntu',
-              'umich': 'https://mirrors.lug.mtu.edu/ubuntu',
-          }
-          suites = [suite, suite + '-security', suite + '-updates']
-
-          def check(item):
-              label, base = item
-              with tempfile.TemporaryDirectory() as d:
-                  for name in suites:
-                      target = Path(d) / name
-                      url = f'{base}/dists/{name}/InRelease'
-                      download = subprocess.run(['curl', '-fsSL', '--connect-timeout', '4', '--max-time', '9', url, '-o', str(target)], capture_output=True)
-                      if download.returncode:
-                          return label, name, download.stderr.decode().strip()
-                      verify = subprocess.run(['gpgv', '--keyring', '/usr/share/keyrings/ubuntu-archive-keyring.gpg', str(target)], capture_output=True)
-                      if verify.returncode:
-                          return label, name, f'archive signature rejected ({verify.returncode})'
-                      release = target.read_text()
-                      if f'Suite: {name}\n' not in release:
-                          return label, name, 'suite mismatch'
-                  return label, suite, 'verified HTTPS and Ubuntu signatures'
-          with cf.ThreadPoolExecutor(max_workers=len(mirrors)) as pool:
-              for result in pool.map(check, mirrors.items()):
-                  print(*result, sep=' | ')
-          PY
+          node --input-type=module <<'JS'
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { waitForEntryPreviews } from './e2e/entry-preview-readiness.mjs';
+          const json = async path => JSON.parse(await readFile(path, 'utf8'));
+          const target = await json('e2e/fixtures/entry-preview.json');
+          const gatewayAssets = await json('e2e/fixtures/media/gateway-portrait-cdn.json');
+          const ready = await waitForEntryPreviews({
+            map: target.mapUrl, gateway: target.gatewayUrl, gatewayAssets,
+            expectedCommit: '15bd9950f5516f3b174f1096c085d96546ac560c',
+            timeoutMs: 400_000, retryMs: 5_000,
+          });
+          await writeFile('preview-readiness.json', JSON.stringify(ready, null, 2));
+          for (const app of ready.apps) console.log(app.app, app.commit, app.media.length, app.bundle);
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: entry-public-media-readback
+          path: preview-readiness.json
+          if-no-files-found: error
