@@ -532,7 +532,7 @@ public class McpGatewayController : ControllerBase
     /// 原来去重与正常两条分支各抄一遍同样的四行赋值 —— 那是判据分裂的现成温床：
     /// 截了一处、漏了另一处，谁也看不出来。收敛成一处，两条分支都从这儿走。
     /// </summary>
-    private static void ApplyArtifact(McpCallLog log, McpArtifactExtractor.Artifact artifact)
+    internal static void ApplyArtifact(McpCallLog log, McpArtifactExtractor.Artifact artifact)
     {
         // Kind 是我方枚举（不是调用方给的），原样留着。
         log.ArtifactKind = artifact.Kind;
