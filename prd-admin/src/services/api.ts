@@ -1270,6 +1270,7 @@ export const api = {
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
     content: (id: string) => `/api/web-pages/${id}/content`,
+    informationDelivery: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/information-delivery`,
     /** 单文件离线 HTML（站内资源内嵌）。站内入口：要求对该网页有编辑权 */
     pdf: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/download/pdf`,
     sharePdf: (token: string) => `/api/web-pages/shares/view/${encodeURIComponent(token)}/download/pdf`,

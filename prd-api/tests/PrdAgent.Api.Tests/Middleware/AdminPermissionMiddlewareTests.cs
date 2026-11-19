@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Microsoft.AspNetCore.Authorization;
@@ -21,6 +22,19 @@ namespace PrdAgent.Api.Tests.Middleware;
 
 public class AdminPermissionMiddlewareTests
 {
+    [Theory]
+    [InlineData(false, "permissions", "document-store.write", true)]
+    [InlineData(false, "permissions", "web-pages.write", false)]
+    [InlineData(true, "scope", "document-store:write", true)]
+    [InlineData(true, "permissions", "document-store.write", false)]
+    public void AdditionalPermissionCannotInheritApiKeyOwnerPrivileges(bool apiKey, string claimType, string value, bool allowed)
+    {
+        var identity = new ClaimsIdentity(new[] { new Claim("permissions", AdminPermissionCatalog.Access), new Claim(claimType, value) }, "test");
+        if (apiKey) identity.AddClaim(new Claim("authType", "agent-apikey"));
+        var context = new DefaultHttpContext { User = new ClaimsPrincipal(identity) };
+        Assert.Equal(allowed, AdminPermissionMiddleware.HasVerifiedPermission(context, AdminPermissionCatalog.DocumentStoreWrite));
+    }
+
     /// <summary>
     /// 放行清单与控制器路由是两份判据，漏一条不会红、只会让那条路在 run 票据校验前先 401
     /// （判据与接线纪律 形状 3）。这里反射控制器的真实路由逐条比对，让「新增端点忘了登记」当场判红。

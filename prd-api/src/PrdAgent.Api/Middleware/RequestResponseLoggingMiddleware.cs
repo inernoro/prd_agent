@@ -97,6 +97,7 @@ public class RequestResponseLoggingMiddleware
         // （`cross-project-isolation.md` 通道 4），等于把一个用户的私人产物摊给了所有分支。
         // 诊断能力不受影响：这条链路自己有 design run 与 infra agent 事件两份记录。
         "/api/design-artifacts/runtime",
+        "/api/design-artifacts/information-delivery/runs",
     };
 
     /// <summary>
@@ -116,7 +117,10 @@ public class RequestResponseLoggingMiddleware
             || path.EndsWith("/llm/v1/responses", StringComparison.OrdinalIgnoreCase));
 
     private static bool CarriesCredential(string path) =>
-        AskAnswerRating.CarriesReceipt(path) || CredentialBearingPathPrefixes.Any(p =>
+        AskAnswerRating.CarriesReceipt(path)
+        || (path.StartsWith("/api/document-store/stores/", StringComparison.OrdinalIgnoreCase)
+            && path.Contains("/information-delivery/", StringComparison.OrdinalIgnoreCase))
+        || CredentialBearingPathPrefixes.Any(p =>
         {
             var prefix = p.TrimEnd('/');
             return path.Equals(prefix, StringComparison.OrdinalIgnoreCase)

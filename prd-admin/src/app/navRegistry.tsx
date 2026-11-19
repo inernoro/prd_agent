@@ -915,7 +915,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   { path: '/document-store/:storeId/collection', placement: 'fullscreen', permission: 'document-store.read',
     element: fullscreenGuarded('document-store.read', <WritingCollectionPage />) },
   { path: '/document-store/:storeId/delivery', placement: 'fullscreen', permission: 'web-pages.write',
-    element: fullscreenGuarded('web-pages.write', <InformationDeliveryPage />) },
+    element: fullscreenGuarded('web-pages.write', shellGuarded('document-store.write', <InformationDeliveryPage />)) },
   { path: '/document-store/:storeId/delivery/:runId/read', placement: 'fullscreen', permission: 'document-store.read',
     element: fullscreenGuarded('document-store.read', <InformationDeliveryReaderPage />) },
   {

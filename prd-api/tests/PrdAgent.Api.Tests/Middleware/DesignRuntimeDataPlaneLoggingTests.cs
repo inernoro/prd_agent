@@ -20,6 +20,10 @@ public sealed class DesignRuntimeDataPlaneLoggingTests
     [Theory]
     [InlineData("/api/design-artifacts/runtime/abc123/workspace/result")]
     [InlineData("/api/design-artifacts/runtime/abc123/workspace/input")]
+    [InlineData("/api/design-artifacts/runtime/abc123/workspace/corrections")]
+    [InlineData("/api/design-artifacts/information-delivery/runs/abc123/corrections")]
+    [InlineData("/api/design-artifacts/information-delivery/runs/abc123/sources")]
+    [InlineData("/api/document-store/stores/library/information-delivery/abc123/archive")]
     [InlineData("/api/design-artifacts/runtime/abc123/llm/v1/responses")]
     public void 运行时数据面的请求体不得落进共享日志表(string path)
     {

@@ -1067,7 +1067,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const currentUserId = useAuthStore(state => state.user?.userId ?? null);
   const hasWritingPermission = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('document-store.write'));
-  const canStartInformationDelivery = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('web-pages.write'));
+  const hasWebWrite = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('web-pages.write'));
+  const canStartInformationDelivery = hasWritingPermission && hasWebWrite;
   const [canWriteEntries, setCanWriteEntries] = useState(false);
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [storeLoadError, setStoreLoadError] = useState('');

@@ -10,6 +10,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Api.Middleware;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -116,6 +117,16 @@ public sealed class DesignArtifactsController : ControllerBase
     public IActionResult InformationDeliveryTemplateCatalog() =>
         Ok(ApiResponse<object>.Ok(new { templates = InformationDeliveryTemplates.All }));
 
+    [HttpGet("information-delivery/requests/{requestId:guid}")]
+    public async Task<IActionResult> FindInformationDeliveryRequest(Guid requestId, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var runId = DeliveryRunId(userId, requestId);
+        var run = await _db.FindDesignArtifactRunHistoryAsync(
+            item => item.Id == runId && item.UserId == userId && item.DeliveryTemplateId != null, ct);
+        return Ok(ApiResponse<object?>.Ok(run == null ? null : new { runId = run.Id }));
+    }
+
     /// <summary>
     /// 在创建设计任务前读取知识来源的当前权威哈希。响应不返回正文；创建 Run 时仍会二次读取并校验。
     /// </summary>
@@ -193,6 +204,8 @@ public sealed class DesignArtifactsController : ControllerBase
             : null;
         if (isDelivery && deliveryTemplate == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "模板版本已变更，请重新选择平台模板"));
+        if (isDelivery && !AdminPermissionMiddleware.HasVerifiedPermission(HttpContext, AdminPermissionCatalog.DocumentStoreWrite))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要知识库写权限才能开始信息传递任务"));
         var deliveryFormats = request.DeliveryMediaFormats?.Distinct().Order().ToList();
         if (deliveryFormats?.Any(format => format is not ("audio" or "video")) == true)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持所选的讲解格式"));
@@ -220,9 +233,7 @@ public sealed class DesignArtifactsController : ControllerBase
                 ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法把生成的网页放进这个空间"));
         }
 
-        var runId = isDelivery
-            ? DeliveryHash(new { Scope = DeploymentScope.Current, User = userId, Request = deliveryRequestId })[..32]
-            : Guid.NewGuid().ToString("N");
+        var runId = isDelivery ? DeliveryRunId(userId, deliveryRequestId) : Guid.NewGuid().ToString("N");
         var deliveryFingerprint = isDelivery
             ? DeliveryHash(new
             {
@@ -408,6 +419,9 @@ public sealed class DesignArtifactsController : ControllerBase
     private static string DeliveryHash<T>(T input) =>
         Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(input))).ToLowerInvariant();
 
+    private static string DeliveryRunId(string userId, Guid requestId) =>
+        DeliveryHash(new { Scope = DeploymentScope.Current, User = userId, Request = requestId })[..32];
+
     private Task<DesignArtifactRun?> FindDeliveryRequestAsync(string runId) =>
         _db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(CancellationToken.None);
 
@@ -484,14 +498,16 @@ public sealed class DesignArtifactsController : ControllerBase
             CancellationToken.None);
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
-        if (source.DeliveryTemplateId != null)
-            return Conflict(ApiResponse<object>.Fail("DELIVERY_RESTART_REQUIRES_DRAFT", "请从原信息传递任务重试"));
+        var isDelivery = source.DeliveryTemplateId != null;
+        if (isDelivery && !AdminPermissionMiddleware.HasVerifiedPermission(HttpContext, AdminPermissionCatalog.DocumentStoreWrite))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要知识库写权限才能重试信息传递任务"));
         if (source.SourceSurface == DesignArtifactSourceSurfaces.Workflow)
             return Conflict(ApiResponse<object>.Fail("WORKFLOW_RESTART_REQUIRES_NODE",
                 "请回到原工作流，重新运行对应节点；原输入和报告仍然保留"));
         var isInterruptedRestart = IsRestartableInterrupted(source);
         var isPresentationQualityRepair = IsRestartablePresentationQualityFailure(source);
-        if (!isInterruptedRestart && !isPresentationQualityRepair)
+        var isDeliveryRetry = isDelivery && source.Status == RunStatuses.Error && source.DeliveryArchive == null;
+        if (!isInterruptedRestart && !isPresentationQualityRepair && !isDeliveryRetry)
             return Conflict(ApiResponse<object>.Fail(
                 "DESIGN_ARTIFACT_NOT_RESTARTABLE",
                 "只有被服务重启中断的任务或保留了受限候选的演示稿质量失败任务才能用冻结输入重开"));
@@ -509,6 +525,27 @@ public sealed class DesignArtifactsController : ControllerBase
                                           || existing.RestartIdempotencyKeyHash != keyHash)
                 return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_CONFLICT", "重开请求冲突，请刷新后重试"));
             return Accepted(ApiResponse<object>.Ok(ToDto(existing)));
+        }
+
+        if (isDelivery)
+        {
+            try
+            {
+                if (source.KnowledgeOriginals?.References.Any(item => item.File != null) == true)
+                    await _knowledgeSnapshots.ReadWorkspaceOriginalsAsync(userId, source.KnowledgeReferences,
+                        source.KnowledgeOriginals, CancellationToken.None);
+                else if (source.KnowledgeReferences.Count > 0)
+                    await _knowledgeSnapshots.ResolveForRunAsync(userId, source.KnowledgeReferences.Select(item =>
+                        new DesignKnowledgeReferenceIdentity(item.EntryId, item.StoreId ?? string.Empty, item.ContentHash)).ToList(), CancellationToken.None);
+                if (source.UploadedSources?.Count > 0)
+                    await DesignRunInputAttachments.ResolveSourcesAsync(_db, userId,
+                        source.UploadedSources.Select(item => item.AttachmentId).ToList(), CancellationToken.None);
+            }
+            catch (DesignKnowledgeSnapshotException ex) { return KnowledgeReferenceFailure(ex); }
+            catch (DesignRunInputException ex)
+            {
+                return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_INPUT_MISSING", ex.Message));
+            }
         }
 
         var capability = await _providers.FindAsync(userId, DesignArtifactRuntimes.OpenDesign, CancellationToken.None);
@@ -1506,6 +1543,11 @@ public sealed class DesignArtifactsController : ControllerBase
         DesignContextProvenance = source.DesignContextProvenance,
         PresentationInput = ClonePresentationInput(source.PresentationInput),
         UploadedSources = source.UploadedSources,
+        DeliveryTemplateId = source.DeliveryTemplateId,
+        DeliveryTemplateVersion = source.DeliveryTemplateVersion,
+        DeliveryMediaFormats = source.DeliveryMediaFormats,
+        DeliveryCorrections = source.DeliveryCorrections,
+        DeliveryCorrectionRevision = source.DeliveryCorrectionRevision,
         ReferenceImages = source.ReferenceImages,
         Progress = 2,
         PhaseCode = DesignArtifactPhaseCodes.Queued,

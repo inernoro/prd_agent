@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
 import { X, ExternalLink, FileWarning, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
-import { getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
+import { getHostedInformationDelivery, getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
 import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationModeBar } from './AnnotationModeBar';
@@ -70,6 +70,16 @@ export default function SitePreviewModal({
     () => setRightPanel('comments'), onSiteVersionChanged);
   const pdfDownload = useHostedPdfDownload(review.historical ? null : { ...originalSite, ...review.liveSite }, undefined, iframeRef);
   const site = { ...originalSite, ...review.site };
+  const isInformationDelivery = originalSite.sourceType === 'information-delivery' && !review.historical;
+  const [deliveryLink, setDeliveryLink] = useState<{ siteId: string; path?: string }>();
+  useEffect(() => {
+    if (!isInformationDelivery) return;
+    let active = true;
+    void getHostedInformationDelivery(originalSite.id).then((res) => {
+      if (active) setDeliveryLink({ siteId: originalSite.id, path: res.success ? res.data.readerPath : undefined });
+    });
+    return () => { active = false; };
+  }, [isInformationDelivery, originalSite.id]);
   const annotations = review.annotations;
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -343,6 +353,15 @@ export default function SitePreviewModal({
         <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
           <div className="flex-1 min-w-0 min-h-0 relative bg-token-nested" style={{ flex: isMobile && showComments ? '0 0 30%' : undefined }}>
+            {isInformationDelivery ? <section className="flex h-full flex-col items-start justify-center gap-4 p-6 sm:p-12">
+              <h4 className="text-lg font-semibold">已归档成品</h4>
+              {deliveryLink?.siteId !== originalSite.id ? <p role="status">正在读取归档入口</p>
+                : deliveryLink.path ? <>
+                  <p className="text-sm text-token-secondary">打开后可查看教程、可用媒体和原文依据。</p>
+                  <a className="rounded-lg border border-token-default px-4 py-2 text-sm font-semibold hover-bg-soft"
+                    href={deliveryLink.path}>打开已归档成品</a>
+                </> : <p role="alert">归档入口已失效或暂时无法读取</p>}
+            </section> : <>
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {(historicalLoading || (loading && !slow)) && (
@@ -407,6 +426,7 @@ export default function SitePreviewModal({
               title={site.title}
             />
             <AnnotationBubble annotations={annotations} hidden={isMobile && showComments} />
+            </>}
           </div>
 
           {/* 评论面板 */}

@@ -5,8 +5,10 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Middleware;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -27,6 +29,8 @@ public partial class DocumentStoreController
             return Conflict(ApiResponse<object>.Fail("DELIVERY_PUBLIC_STORE", "请选择有访问控制的知识库作为交付范围"));
         if (request.Target is not ("web-hosting" or "knowledge-base") || !request.AuthorConfirmed)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择归档去向并确认成品和来源"));
+        if (request.Target == "web-hosting" && !AdminPermissionMiddleware.HasVerifiedPermission(HttpContext, AdminPermissionCatalog.WebPagesWrite))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要网页托管写权限才能归档到网页托管"));
         var frontend = _config["CDS_PREVIEW_URL"] ?? _config["App:FrontendBaseUrl"] ?? Request.ResolveExternalBaseUrl();
         Uri? frontendBase = null;
         if (request.Target == "web-hosting" && (!Uri.TryCreate(frontend, UriKind.Absolute, out frontendBase)
@@ -195,7 +199,7 @@ public partial class DocumentStoreController
         return entryId;
     }
 
-    private static string DeliveryReaderPath(string storeId, string runId) =>
+    internal static string DeliveryReaderPath(string storeId, string runId) =>
         $"/document-store/{Uri.EscapeDataString(storeId)}/delivery/{Uri.EscapeDataString(runId)}/read";
 
     private static async Task<bool> CanReadDeliveryKnowledgeAsync(

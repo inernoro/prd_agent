@@ -1223,6 +1223,23 @@ public partial class WebPagesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(site));
     }
 
+    [HttpGet("{id}/information-delivery")]
+    public async Task<IActionResult> GetInformationDeliveryEntry(string id, CancellationToken ct)
+    {
+        var site = await _siteService.GetByIdAsync(id, GetUserId());
+        var reference = site?.SourceRef?.Split(':');
+        if (site?.SourceType != "information-delivery" || reference is not ["delivery", var runId, _]
+            || !Guid.TryParseExact(runId, "N", out _))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "找不到成品归档入口"));
+
+        var run = await _db.FindDesignArtifactRunHistoryAsync(item => item.Id == runId && item.Status == RunStatuses.Done
+            && item.DeliveryArchive != null && item.DeliveryArchive.Target == "web-hosting"
+            && item.DeliveryArchive.ArtifactId == id && item.DeliveryArchive.ResultHash == item.WorkspaceResultSha256, ct);
+        if (run?.DeliveryArchive is not { } archive)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "找不到成品归档入口"));
+        return Ok(ApiResponse<object>.Ok(new { readerPath = DocumentStoreController.DeliveryReaderPath(archive.StoreId, runId) }));
+    }
+
     /// <summary>读取站点入口 HTML 原文（owner / 共享团队成员可读）。
     /// 服务端代理取回，绕开浏览器跨域限制；供「知识库从网页托管导入」等场景使用。
     /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。</summary>

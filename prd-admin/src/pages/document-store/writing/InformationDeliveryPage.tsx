@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { BookOpen, FileText, Library, Upload } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import type { KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
@@ -9,8 +9,8 @@ import { DESIGN_ATTACHMENT_ACCEPT, MAX_GENERATE_ATTACHMENTS, useDesignAttachment
 import { ComposerSheet, WorkbenchComposer, type ComposerChip } from '@/components/web-hosting/workbench/WorkbenchParts';
 import {
   addInformationDeliveryCorrection, archiveInformationDelivery, assembleInformationDeliveryMedia,
-  createDesignArtifactRun, downloadInformationDeliveryMedia, getDesignArtifactRun, listInformationDeliveryTemplates,
-  readInformationDeliveryArchive, readInformationDeliveryFiles, readInformationDeliverySources, streamDesignArtifactRun,
+  createDesignArtifactRun, downloadInformationDeliveryMedia, findInformationDeliveryRequest, getDesignArtifactRun, listInformationDeliveryTemplates,
+  readInformationDeliveryArchive, readInformationDeliveryFiles, readInformationDeliverySources, restartDesignArtifactRun, streamDesignArtifactRun,
   type DesignArtifactRunSummary, type InformationDeliveryArchive, type InformationDeliveryFile, type InformationDeliverySource,
   type InformationDeliveryFormat, type InformationDeliveryMedia, type InformationDeliveryTarget, type InformationDeliveryTemplate,
 } from '@/services/real/webPages';
@@ -31,6 +31,8 @@ export default function InformationDeliveryPage() {
   const { storeId = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const runId = params.get('run');
+  const actorId = useAuthStore((state) => state.user?.userId);
+  const pendingKey = `map-information-delivery-admission:${actorId}:${storeId}`;
   const [templates, setTemplates] = useState<InformationDeliveryTemplate[]>();
   const [template, setTemplate] = useState<InformationDeliveryTemplate>();
   const [view, setView] = useState<'example' | 'outline'>('example');
@@ -46,12 +48,39 @@ export default function InformationDeliveryPage() {
   const [showKnowledge, setShowKnowledge] = useState(false);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [loadingRecent, setLoadingRecent] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const startGuard = useRef(false);
   const previousRequest = useRef<{ fingerprint: string; id: string }>();
   const uploads = useDesignAttachmentUploads('document', MAX_GENERATE_ATTACHMENTS);
+
+  useEffect(() => {
+    if (runId || !actorId) return;
+    let requestId: string | null;
+    try { requestId = sessionStorage.getItem(pendingKey); } catch { return; }
+    if (!requestId) return;
+    const pendingId = requestId;
+    let active = true;
+    setRecovering(true);
+    const resume = async () => {
+      for (let attempt = 0; attempt < 5 && active; attempt += 1) {
+        const result = await findInformationDeliveryRequest(pendingId);
+        if (!active) return;
+        if (result.success && result.data) {
+          setParams({ run: result.data.runId }, { replace: true });
+          try { sessionStorage.removeItem(pendingKey); } catch { /* The recovered task remains in the URL. */ }
+          setRecovering(false);
+          return;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      }
+      if (active) setRecovering(false);
+    };
+    void resume();
+    return () => { active = false; };
+  }, [actorId, pendingKey, runId, setParams]);
 
   useEffect(() => {
     if (runId) return;
@@ -106,7 +135,7 @@ export default function InformationDeliveryPage() {
       onRemove: () => uploads.remove(item.key),
     })),
   ];
-  const canStart = !!template && !starting && !uploads.busy
+  const canStart = !!template && !starting && !recovering && !uploads.busy
     && (knowledge.length + uploads.readyIds.length > 0)
     && uploads.items.every((item) => item.status === 'ready');
 
@@ -119,6 +148,9 @@ export default function InformationDeliveryPage() {
     if (previousRequest.current?.fingerprint !== fingerprint)
       previousRequest.current = { fingerprint, id: crypto.randomUUID() };
     try {
+      if (actorId) {
+        try { sessionStorage.setItem(pendingKey, previousRequest.current.id); } catch { /* The current page can still retry. */ }
+      }
       const result = await createDesignArtifactRun({
         instruction: prompt,
         sourceSurface: 'knowledge-base',
@@ -134,6 +166,7 @@ export default function InformationDeliveryPage() {
         return;
       }
       setParams({ run: result.data.runId }, { replace: true });
+      try { sessionStorage.removeItem(pendingKey); } catch { /* The accepted task remains in the URL. */ }
     } finally {
       startGuard.current = false;
       setStarting(false);
@@ -147,7 +180,8 @@ export default function InformationDeliveryPage() {
           <h1 className="text-2xl font-semibold">信息传递</h1>
           <Link className="text-sm text-token-secondary underline" to={writingKnowledgeHref(storeId)}>返回知识库</Link>
         </header>
-        {runId ? <DeliveryExecution key={runId} runId={runId} storeId={storeId} /> : <>
+        {runId ? <DeliveryExecution key={runId} runId={runId} storeId={storeId} /> : recovering
+          ? <p role="status">正在恢复上次开始的任务</p> : <>
           {error && <div role="alert" className="mb-4 text-sm text-token-primary">{error}{!templates && <> <Button onClick={() => { setError(''); setCatalogAttempt((v) => v + 1); }}>重试</Button></>}</div>}
           {!templates && !error && <p role="status">正在读取平台模板</p>}
           {templates && !selected && <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
@@ -226,11 +260,14 @@ export default function InformationDeliveryPage() {
 }
 
 function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string }) {
+  const navigate = useNavigate();
   const [run, setRun] = useState<DesignArtifactRunSummary>();
   const [phase, setPhase] = useState('');
   const [progressLog, setProgressLog] = useState<DeliveryProgress[]>([]);
   const [error, setError] = useState('');
   const [reconnect, setReconnect] = useState(0);
+  const [restarting, setRestarting] = useState(false);
+  const [restartError, setRestartError] = useState('');
   const [files, setFiles] = useState<InformationDeliveryFile[]>([]);
   const [selectedFile, setSelectedFile] = useState('index.html');
   const [content, setContent] = useState<string>();
@@ -370,13 +407,29 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
   };
 
   const fileList = files.length ? files : content ? [{ path: 'index.html', mediaType: 'text/html', draft: !done }] : [];
+  const restart = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    setRestartError('');
+    try {
+      const response = await restartDesignArtifactRun(runId, `information-delivery:${runId}`);
+      if (response.success) navigate({ search: `?run=${encodeURIComponent(response.data.runId)}` });
+      else setRestartError(response.error?.message || '重试无法开始');
+    } finally { setRestarting(false); }
+  };
   return (
     <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
       <section className={cardClass}>
         <h2 className="text-lg font-semibold">{done ? '生成结果' : failed ? '生成未完成' : '生成进度'}</h2>
         <p role="status" className="my-3 text-sm text-token-secondary">{phase || '正在读取任务'}</p>
         {run?.resolvedModel && <p className="mb-4 text-xs text-token-secondary">{run.resolvedModel} · {run.resolvedPlatform}</p>}
-        {failed && run && <p role="alert" className="mb-4 text-sm">{runtimeFailureRecoveryMessage(run, 'generate')}</p>}
+        {failed && run && <div className="mb-4 grid gap-2 text-sm">
+          <p role="alert">{runtimeFailureRecoveryMessage(run, 'generate')}</p>
+          <Button variant="secondary" disabled={restarting} onClick={() => void restart()}>
+            {restarting ? '正在重试' : '用原资料和作者纠正重试'}
+          </Button>
+          {restartError && <p role="alert">{restartError}</p>}
+        </div>}
         {progressLog.length > 1 && <details className="mb-4 text-sm">
           <summary className="cursor-pointer font-medium">执行记录</summary>
           <ol className="mt-2 grid list-decimal gap-1 pl-5 text-xs text-token-secondary" aria-label="执行记录">

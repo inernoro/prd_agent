@@ -79,6 +79,15 @@ public sealed class AdminPermissionMiddleware
         return false;
     }
 
+    internal static bool HasVerifiedPermission(HttpContext context, string permission)
+    {
+        var user = context.User;
+        if (user.Identity?.IsAuthenticated != true) return false;
+        if (user.HasClaim("authType", "agent-apikey")) return HasScopeGrant(context, permission);
+        return IsRoot(context) || user.HasClaim("permissions", AdminPermissionCatalog.Super)
+            || (user.HasClaim("permissions", AdminPermissionCatalog.Access) && user.HasClaim("permissions", permission));
+    }
+
     internal static bool HasDefectShareScopeGrant(
         IEnumerable<string> scopes,
         string requiredPermission,
