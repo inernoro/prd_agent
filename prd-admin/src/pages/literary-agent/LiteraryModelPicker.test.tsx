@@ -3,7 +3,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
-import { LiterarySettingsSummary } from './LiterarySettingsSummary';
+import { LiterarySettingsSummary, useLiteraryWatermarkPreview } from './LiterarySettingsSummary';
 import type { LiteraryModelOption } from './literaryModelOptions';
 import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
 import { QuickMenu, QuickMenuItem } from './LiteraryQuickMenu';
@@ -57,16 +57,24 @@ describe('工作台紧凑模型选择', () => {
     vi.stubGlobal('URL', Object.assign(class extends URL {}, { createObjectURL, revokeObjectURL }));
     const blob = new Blob(['png'], { type: 'image/png' });
     vi.mocked(getWatermarkPreview).mockResolvedValueOnce(blob);
-    await act(async () => root.render(
-      <LiterarySettingsSummary writingModel="test-new-writing-model" imageModel="test-new-picture-model"
-        watermarkName="黑白" watermarkId="monochrome" watermarkUpdatedAt="test-revision" position="per-h2" positionLabel="每小标题一张" />,
-    ));
+    function Summary() {
+      const watermarkPreview = useLiteraryWatermarkPreview('monochrome', 'test-revision');
+      return <LiterarySettingsSummary writingModel="test-new-writing-model" imageModel="test-new-picture-model"
+        watermarkName="黑白" watermarkPreview={watermarkPreview} position="user-anchor" positionLabel="尊重用户锚点" />;
+    }
+    await act(async () => root.render(<Summary />));
     expect(getWatermarkPreview).toHaveBeenCalledWith('monochrome', 'test-revision');
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(container.querySelector('[aria-label="写作模型：test-new-writing-model"] svg')).not.toBeNull();
     expect(container.querySelector('[aria-label="配图模型：test-new-picture-model"] svg')).not.toBeNull();
-    expect(container.querySelector('[title="每小标题一张"] svg')).not.toBeNull();
+    const position = container.querySelector('[aria-label="尊重用户锚点"]')!;
+    expect(position.querySelector('svg.lucide-map-pin')).not.toBeNull();
+    expect(position.getAttribute('title')).toBe('尊重用户锚点');
+    expect(container.textContent).not.toContain('尊重用户锚点');
     const watermark = container.querySelector('[aria-label="水印：黑白"]')!;
+    expect(Array.from(container.querySelectorAll('.lit-settings-summary-icons > [role="img"]'), node => node.getAttribute('aria-label'))).toEqual([
+      '写作模型：test-new-writing-model', '配图模型：test-new-picture-model', '水印：黑白', '尊重用户锚点',
+    ]);
     const image = watermark.querySelector('img')!;
     expect(image.getAttribute('src')).toBe(preview);
     await act(async () => { image.dispatchEvent(new Event('error')); });
@@ -76,6 +84,32 @@ describe('工作台紧凑模型选择', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith(preview);
   });
 
+  it('取消后选回同一个水印时不会复用已释放的预览', async () => {
+    const createObjectURL = vi.fn()
+      .mockReturnValueOnce('blob:first-preview')
+      .mockReturnValueOnce('blob:second-preview');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', Object.assign(class extends URL {}, { createObjectURL, revokeObjectURL }));
+    const blob = new Blob(['png'], { type: 'image/png' });
+    let finishPreview!: (result: Blob) => void;
+    const nextPreview = new Promise<Blob>(resolve => { finishPreview = resolve; });
+    vi.mocked(getWatermarkPreview).mockResolvedValueOnce(blob).mockReturnValueOnce(nextPreview);
+    function Preview({ id }: { id?: string }) {
+      const url = useLiteraryWatermarkPreview(id, 'test-revision');
+      return url ? <img src={url} alt="" /> : null;
+    }
+
+    await act(async () => root.render(<Preview id="monochrome" />));
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:first-preview');
+    await act(async () => root.render(<Preview />));
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:first-preview');
+    await act(async () => root.render(<Preview id="monochrome" />));
+    expect(container.querySelector('img')).toBeNull();
+
+    await act(async () => finishPreview(blob));
+    expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:second-preview');
+  });
+
   it('选择菜单项仍提交原始选项 ID，保留完整名称和默认标记', async () => {
     const onSelect = await render({ open: true });
     const items = document.querySelectorAll<HTMLElement>('[role="menuitemradio"]');
@@ -83,6 +117,7 @@ describe('工作台紧凑模型选择', () => {
     expect(items[0].textContent).toContain(models[0].name);
     expect(items[0].textContent).toContain('系统默认');
     expect(items[0].getAttribute('aria-checked')).toBe('true');
+    expect(items[0].querySelector('.lit-model-icon')).not.toBeNull();
     await act(async () => items[1].click());
     expect(onSelect).toHaveBeenCalledOnce();
     expect(onSelect).toHaveBeenCalledWith(models[1].id);

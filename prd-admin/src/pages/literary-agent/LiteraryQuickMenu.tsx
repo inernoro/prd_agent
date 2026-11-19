@@ -154,6 +154,7 @@ export function QuickMenuItem({
   selected,
   disabled,
   onSelect,
+  preview,
   trailing,
   tabIndex,
 }: {
@@ -162,6 +163,7 @@ export function QuickMenuItem({
   selected?: boolean;
   disabled?: boolean;
   onSelect: () => void;
+  preview?: React.ReactNode;
   trailing?: React.ReactNode;
   tabIndex?: number;
 }) {
@@ -175,6 +177,7 @@ export function QuickMenuItem({
           <span className="lit-inline-option-name">{label}</span>
           {description && <span className="lit-inline-option-detail">{description}</span>}
         </span>
+        {preview}
         {trailing && <span className="lit-inline-option-trailing">{trailing}</span>}
       </button>
     );
@@ -192,6 +195,7 @@ export function QuickMenuItem({
         <span className="block truncate">{label}</span>
         {description && <span className="lqm-item-desc">{description}</span>}
       </span>
+      {preview}
     </DropdownMenu.Item>
   );
 }

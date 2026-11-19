@@ -1,6 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { useAvatarUpdates } from '@/assets/model-avatars';
 import { QuickMenu, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
+import { LiteraryModelIcon } from './LiterarySettingsSummary';
 import type { LiteraryModelOption } from './literaryModelOptions';
 
 const shortName = (name: string) => name.replace(/^[^/]+\//, '');
@@ -17,6 +19,7 @@ export function LiteraryModelPicker({ label, icon, model, options, open, onOpenC
   disabled?: boolean;
   unavailable?: boolean;
 }) {
+  useAvatarUpdates();
   const [query, setQuery] = useState('');
   const visibleOptions = useMemo(() => options.filter(option => option.name.toLowerCase().includes(query.trim().toLowerCase())), [options, query]);
   const title = `${label}模型`;
@@ -25,7 +28,7 @@ export function LiteraryModelPicker({ label, icon, model, options, open, onOpenC
     : model && value !== model.name ? model.name : model?.isDefault ? '系统默认' : model ? '当前使用' : unavailable ? '请从列表重新选择' : '尚未选择';
   const summary = (
     <>
-      {icon}
+      <span className="lit-model-icon"><LiteraryModelIcon name={model?.actualModelId} fallback={icon} /></span>
       <span className="lit-model-label">{title}</span>
       <span className="lit-model-summary">
         <span className="lit-model-name">{value}</span>
@@ -56,6 +59,7 @@ export function LiteraryModelPicker({ label, icon, model, options, open, onOpenC
       {visibleOptions.length === 0 ? <QuickMenuEmpty>{options.length ? '未找到匹配模型' : '暂无可用模型池'}</QuickMenuEmpty> : visibleOptions.map((option, index) => (
         <QuickMenuItem key={option.id} label={shortName(option.name)}
           description={shortName(option.name) !== option.name ? option.name : undefined}
+          preview={<span className="lit-model-icon"><LiteraryModelIcon name={option.actualModelId} fallback={icon} /></span>}
           trailing={option.isDefault ? '系统默认' : undefined}
           tabIndex={index === 0 ? 0 : -1}
           disabled={disabled}

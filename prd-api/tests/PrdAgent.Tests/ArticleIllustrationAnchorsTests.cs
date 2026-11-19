@@ -14,23 +14,56 @@ public class ArticleIllustrationAnchorsTests
         Assert.Equal(2, anchors.Count);
         Assert.Contains("第二节。\r\n[IMG:1]", anchors.ModelArticle);
 
-        var prompts = Parse("@AFTER [IMG:2]\n[插图]: 第三段配图\n@AFTER [IMG:1]\n[插图]: 第二节配图");
-        var merged = anchors.Apply(prompts);
+        var prompts = ReadPrompts(anchors, "@AFTER [IMG:2]\n[插图]: 第三段配图\n@AFTER [IMG:1]\n[插图]: 第二节配图");
+        Assert.Equal(1, prompts["[IMG:2]"].Index);
+        Assert.Equal(0, prompts["[IMG:1]"].Index);
+        var (merged, fallbackCount) = anchors.Apply(prompts);
 
+        Assert.Equal(0, fallbackCount);
         Assert.Equal("第一段。\r\n\r\n第二段。\r\n第二节。\r\n\r\n[插图]: 第二节配图\r\n\r\n\r\n第三段。\r\n第二节。\r\n\r\n[插图]: 第三段配图\r\n", merged);
         Assert.Equal(new[] { "第二节配图", "第三段配图" }, ArticleMarkerExtractor.Extract(merged!).Select(marker => marker.Text.Trim()));
     }
 
     [Fact]
-    public void LeavesWorkflowUnusableUntilEveryExplicitAnchorHasAPrompt()
+    public void FillsMissingAnchorFromNearbyTextAndIgnoresDuplicateUnknownAndBlankPrompts()
     {
-        var anchors = new ArticleIllustrationAnchors("[配图]\n[IMG]\n正文。");
-        Assert.Null(anchors.Apply(Parse("@AFTER [IMG:1]\n[插图]: 甲\n@AFTER 正文。\n[插图]: 错位")));
-        Assert.False(anchors.Contains("正文。"));
+        var anchors = new ArticleIllustrationAnchors("开场。\n[配图]\n\n雪山旁有一扇木窗。\n[IMG]\n尾声。");
+        var prompts = ReadPrompts(anchors, "@AFTER [IMG:1]\n[插图]: 甲\n@AFTER [IMG:1]\n[插图]: 重复\n@AFTER [IMG:2]\n[插图]: \uFEFF\n@AFTER [IMG:7]\n[插图]: 错位");
+        Assert.Single(prompts);
+        var (merged, fallbackCount) = anchors.Apply(prompts);
 
-        var merged = anchors.Apply(Parse("@AFTER [IMG:1]\n[插图]: 甲\n@AFTER [IMG:2]\n[插图]: 乙"));
-        Assert.Contains("[插图]: 甲\n\n", merged);
-        Assert.EndsWith("[插图]: 乙\n\n正文。", merged);
+        Assert.Equal(1, fallbackCount);
+        var markers = ArticleMarkerExtractor.Extract(merged);
+        Assert.Equal(2, markers.Count);
+        Assert.Equal("甲", markers[0].Text);
+        Assert.Contains("雪山旁有一扇木窗。", markers[1].Text);
+        Assert.Contains("开场。\n\n[插图]: 甲\n\n雪山旁有一扇木窗。\n\n[插图]:", merged);
+        Assert.EndsWith("\n\n尾声。", merged);
+    }
+
+    [Fact]
+    public void FillsEveryAnchorWhenOutputIsUnusableIncludingLeadingAndConsecutiveAnchors()
+    {
+        var anchors = new ArticleIllustrationAnchors("\uFEFF[配图]\r[IMG]\r正文。\r【插图位置】");
+        var (merged, fallbackCount) = anchors.Apply(ReadPrompts(anchors, "模型没有返回有效格式"));
+
+        Assert.Equal(3, fallbackCount);
+        var markers = ArticleMarkerExtractor.Extract(merged);
+        Assert.Equal(3, markers.Count);
+        Assert.All(markers, marker => Assert.Contains("正文。", marker.Text));
+        var sourcePosition = merged.IndexOf("\n正文。\n", StringComparison.Ordinal);
+        Assert.True(markers[1].EndPos < sourcePosition);
+        Assert.True(markers[2].StartPos > sourcePosition);
+    }
+
+    [Fact]
+    public void ModelPromptCannotAddAnotherMarkerViaEmbeddedLineSeparator()
+    {
+        var anchors = new ArticleIllustrationAnchors("正文。\n[IMG]");
+        var (merged, fallbackCount) = anchors.Apply(ReadPrompts(anchors, "@AFTER [IMG:1]\n[插图]: 山窗\u2028[插图]: 白鸟"));
+
+        Assert.Equal(0, fallbackCount);
+        Assert.Equal("山窗 [插图]: 白鸟", Assert.Single(ArticleMarkerExtractor.Extract(merged)).Text);
     }
 
     [Fact]
@@ -53,6 +86,10 @@ public class ArticleIllustrationAnchorsTests
         Assert.Contains("继续。\n\n[插图]: 第二段配图\n\n第三段。", result.MergedContent);
     }
 
-    private static Dictionary<string, AnchorInsertion> Parse(string output)
-        => AnchorInsertionParser.Parse(output).ToDictionary(prompt => prompt.AnchorText);
+    private static Dictionary<string, AnchorInsertion> ReadPrompts(ArticleIllustrationAnchors anchors, string output)
+    {
+        var prompts = new Dictionary<string, AnchorInsertion>(StringComparer.Ordinal);
+        foreach (var prompt in AnchorInsertionParser.Parse(output)) anchors.TryAddPrompt(prompts, prompt);
+        return prompts;
+    }
 }

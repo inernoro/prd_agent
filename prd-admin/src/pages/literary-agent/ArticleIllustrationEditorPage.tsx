@@ -70,7 +70,9 @@ import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy,
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { ArticleEditorToolbar } from './ArticleEditorToolbar';
 import { LiteraryModelPicker } from './LiteraryModelPicker';
-import { LiterarySettingsSummary } from './LiterarySettingsSummary';
+import {
+  LiteraryPositionIcon, LiterarySettingImage, LiterarySettingsSummary, LiteraryWatermarkOptionPreview, useLiteraryWatermarkPreview,
+} from './LiterarySettingsSummary';
 import { useLiterarySettingSave } from './useLiterarySettingSave';
 import type { LiteraryAgentPreferences } from '@/services/contracts/userPreferences';
 import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
@@ -790,6 +792,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [workspaceId]);
   // ---- 生成设置的就地菜单：风格图 / 水印直接切换，不必打开完整配置页 ----
   const activeRefConfig = referenceImageConfigs.find((c) => c.isActive) ?? null;
+  const selectedRefConfig = articleChoice
+    ? referenceImageConfigs.find((c) => c.id === articleChoice.style.styleId)
+    : activeRefConfig;
   // 顶栏「本文风格 / 水印」有三种状态，文案要分开说：这篇记住的 / 这篇没单独指定、跟随账号默认 /
   // 记住的那套已被删除、正按账号默认出图。最后一种以前也写成「本文自己的设定」，用户带着回退的那套去花额度却不知道。
   type ArticlePref = { name: string; source: string; missing?: boolean };
@@ -864,6 +869,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const watermarkUpdatedAt = watermarkId === watermarkStatus.activeId
     ? watermarkStatus.activeUpdatedAt
     : watermarkOptions?.find(option => option.id === watermarkId)?.updatedAt;
+  const watermarkPreview = useLiteraryWatermarkPreview(watermarkId, watermarkUpdatedAt);
+  const watermarkImage = <LiterarySettingImage className="lit-settings-watermark-preview" src={watermarkPreview} />;
   useEffect(() => {
     if (articleWatermarkId && articleWatermarkId !== 'none' && articleWatermarkId !== watermarkStatus.activeId) {
       void loadWatermarkOptions();
@@ -1649,6 +1656,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             status: 'parsed',
             planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
           })));
+          if (chunk.message) toast.warning('已按原文补齐提示词', chunk.message);
           return;
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
@@ -1716,22 +1724,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
 
         // "立刻插入"：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
+        const markerHtml = base.slice(m.startPos, m.endPos)
+          .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
         const isGenerating = it?.status === 'running';
         if (isGenerating) {
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n<div data-gen-slot="${i}" data-gen-size="${String(it?.planItem?.size || '1024x1024').replace(/[^0-9xX×]/g, '')}"></div>\n\n`,
+            replacement: `<span data-marker-idx="${i}">${markerHtml}</span>\n\n<div data-gen-slot="${i}" data-gen-size="${String(it?.planItem?.size || '1024x1024').replace(/[^0-9xX×]/g, '')}"></div>\n\n`,
           });
           continue;
         }
 
         // 空闲/无运行项 — 包裹 data-marker-idx 用于定位（保留原文供 highlightText 高亮）
-        const originalText = base.slice(m.startPos, m.endPos);
         patches.push({
           start: m.startPos,
           end: m.endPos,
-          replacement: `<span data-marker-idx="${i}">${originalText}</span>`,
+          replacement: `<span data-marker-idx="${i}">${markerHtml}</span>`,
         });
       }
 
@@ -3481,10 +3490,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           <LiteraryInlineMenuGroup>
             <details key={phase === 2 ? 'results' : 'preparation'} open={phase !== 2} className="lit-settings" data-testid="literary-generation-settings">
               <summary className="lit-settings-row lit-settings-disclosure">
-                <span className="lit-settings-label"><SlidersHorizontal size={16} aria-hidden /><span>生成设置</span></span>
-                <span className="lit-settings-value">{positionStrategyLabel}</span>
+                <span className="lit-settings-label lit-settings-disclosure-label">
+                  <SlidersHorizontal size={16} aria-hidden />
+                  <span>生成设置</span>
+                </span>
                 <LiterarySettingsSummary writingModel={effectiveChatModel?.actualModelId} imageModel={effectiveModel?.actualModelId}
-                  watermarkName={watermarkName} watermarkId={watermarkId} watermarkUpdatedAt={watermarkUpdatedAt}
+                  watermarkName={watermarkName} watermarkPreview={watermarkPreview}
                   position={positionStrategy} positionLabel={positionStrategyLabel} />
                 <ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
               </summary>
@@ -3502,7 +3513,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <LiterarySettingsRow
                       icon={<PenLine size={16} />}
                       label="提示词"
-                      value={promptSettingSave.saving ? '正在保存…' : selectedPrompt?.title || '自动推断'}
+                      value={promptSettingSave.saving ? '正在保存…' : (selectedPrompt?.content?.trim() || selectedPrompt?.title || '自动推断')}
                       disabled={promptSettingSave.saving}
                       title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
                       aria-label="提示词风格"
@@ -3520,6 +3531,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     <QuickMenuItem
                       key={p.id}
                       label={p.title || '未命名'}
+                      description={p.content?.trim() && <span className="lit-settings-value--excerpt" title={p.content}>{p.content}</span>}
                       selected={selectedPrompt?.id === p.id}
                       disabled={promptSettingSave.saving}
                       onSelect={() => void setSelectedPrompt(p)}
@@ -3542,6 +3554,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         : <ImageIcon size={16} />}
                       label="参考图"
                       warning={!!articleChoice?.style.missing}
+                      preview={<LiterarySettingImage className="lit-settings-reference-preview" src={selectedRefConfig?.imageUrl} loading="lazy" />}
                       value={articleChoice
                         ? (articleChoice.style.styleId === 'none' ? '无参考图' : articleChoice.style.name)
                         : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无参考图')}
@@ -3573,6 +3586,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         <QuickMenuItem
                           key={c.id}
                           label={c.name || '未命名'}
+                          preview={<LiterarySettingImage className="lit-settings-reference-preview" src={c.imageUrl} loading="lazy" />}
                           selected={articleChoice ? articleChoice.style.styleId === c.id : c.isActive}
                           disabled={referenceImageSaving}
                           onSelect={() => {
@@ -3607,6 +3621,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       label="水印"
                       warning={!!articleChoice?.watermark.missing}
                       value={watermarkName}
+                      preview={watermarkImage}
                       title={articleChoice
                         ? articlePrefTitle('水印', articleChoice.watermark)
                         : `水印：${watermarkName}`}
@@ -3630,6 +3645,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         <QuickMenuItem
                           key={w.id}
                           label={w.name || w.text || '未命名'}
+                          preview={w.id === watermarkId ? watermarkImage : <LiteraryWatermarkOptionPreview id={w.id} updatedAt={w.updatedAt} />}
                           selected={articleChoice ? articleChoice.watermark.watermarkId === w.id : w.appKeys?.includes(LITERARY_APP_KEY)}
                           disabled={watermarkSaving}
                           onSelect={() => void switchWatermark(w)}
@@ -3662,6 +3678,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       icon={<Layers size={16} />}
                       label="插图位置"
                       value={positionStrategyLabel}
+                      preview={<LiteraryPositionIcon position={positionStrategy} />}
                       title="配图位置：控制 AI 在哪些段落插入配图标记"
                       aria-label="配图位置"
                     />
@@ -3691,7 +3708,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <h3 className="lit-settings-heading">模型设置</h3>
                 <LiteraryModelPicker
                   label="写作"
-                  icon={<PenLine size={16} />}
+                  icon={<PenLine size={16} aria-hidden />}
                   model={effectiveChatModel}
                   unavailable={!!chatModelPrefId && !effectiveChatModel}
                   options={enabledChatModels}
@@ -3705,7 +3722,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 />
                 <LiteraryModelPicker
                   label="配图"
-                  icon={<ImageIcon size={16} />}
+                  icon={<ImageIcon size={16} aria-hidden />}
                   model={effectiveModel}
                   unavailable={!!imageModelPrefId && !effectiveModel}
                   options={enabledImageModels}
