@@ -74,6 +74,7 @@ jobs:
           pnpm -C llmgw/web install --frozen-lockfile
           pnpm -C llmgw/web build
           pnpm -C e2e install --frozen-lockfile
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
           pnpm -C e2e exec playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install -y ffmpeg xvfb openbox python3-pil
@@ -113,6 +114,7 @@ jobs:
       - name: Install cloud recording tools
         run: |
           pnpm -C e2e install --frozen-lockfile
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
           pnpm -C e2e exec playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install -y ffmpeg xvfb openbox python3-pil

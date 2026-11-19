@@ -60,6 +60,7 @@ jobs:
           pnpm -C cds/web install --frozen-lockfile
           pnpm -C llmgw/web install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
           pnpm -C e2e exec playwright install --with-deps chromium firefox webkit
       - name: Start a real system audio output for browser acceptance
         run: |
