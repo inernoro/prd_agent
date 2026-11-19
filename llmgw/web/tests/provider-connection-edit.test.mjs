@@ -8,11 +8,15 @@ import React, { act } from 'react';
 
 test('供应方编辑保持可见及权限；调用全貌区分线路缺失与搜索空态', async () => {
   const rootDir = fileURLToPath(new URL('../', import.meta.url));
-  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/platforms' });
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/platforms', pretendToBeVisual: true });
   const originalFetch = globalThis.fetch;
-  const names = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'Event', 'MouseEvent'];
+  const names = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'Event', 'CustomEvent', 'MouseEvent', 'Image', 'requestAnimationFrame', 'cancelAnimationFrame', 'localStorage', 'sessionStorage'];
   const previous = Object.fromEntries(names.map(name => [name, globalThis[name]]));
   for (const name of names) globalThis[name] = dom.window[name];
+  dom.window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+  dom.window.HTMLMediaElement.prototype.load = () => {};
+  dom.window.HTMLMediaElement.prototype.pause = () => {};
+  dom.window.HTMLMediaElement.prototype.play = () => Promise.resolve();
   const { createRoot } = await import('react-dom/client');
   const routerModule = await import('react-router-dom');
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -271,7 +275,10 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     const { QuickstartPage } = await server.ssrLoadModule('/src/pages/QuickstartPage.tsx');
     root = createRoot(document.getElementById('root'));
     await act(async () => root.render(React.createElement(MemoryRouter, {}, React.createElement(QuickstartPage))));
-    assert.equal(document.querySelector('textarea[aria-label="我想做什么"]'), null, '拿密钥默认不经过意图推导');
+    assert.ok(document.querySelector('textarea[aria-label="我想做什么"]'), '默认对话保持显式提交');
+    assert.equal(fixture.calls.some(call => call.paidIntent), false, '进入对话不能自动推导');
+    await click(button('手动接入'));
+    assert.equal(document.querySelector('textarea[aria-label="我想做什么"]'), null, '手动接入不经过意图推导');
     assert.equal(button('创建密钥').disabled, true);assert.ok(document.body.textContent.includes('留空保留已登记用途的预算；新用途不设限额。'));
     await input(document.querySelector('input[placeholder="例如 my-application"]'),'my_application');assert.ok(document.body.textContent.includes('使用字母开头的英文段'));assert.equal(button('创建密钥').disabled,true);await input(document.querySelector('input[placeholder="例如 my-application"]'),'my.application');
     const purpose = document.querySelector('select[aria-label="调用用途"]');
@@ -328,6 +335,7 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
       return new Response(JSON.stringify({gateway:{upstreamCalled:false,requestId:'fixture-safe-record'}}),{status:200,headers:{'Content-Type':'application/json'}});
     };
     root=createRoot(document.getElementById('root'));await act(async()=>root.render(React.createElement(MemoryRouter,{},React.createElement(QuickstartPage))));
+    await click(button('手动接入'));
     await input(document.querySelector('input[placeholder="例如 my-application"]'),'new-app');
     const happyPurpose=document.querySelector('select[aria-label="调用用途"]');await act(async()=>{happyPurpose.value=happyPurpose.options[1].value;happyPurpose.dispatchEvent(new dom.window.Event('change',{bubbles:true}))});
     await input(document.querySelector('[aria-label="月预算（美元）"]'),'20');
@@ -343,7 +351,8 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     fixture.callerResult={success:true,data:fixture.appCallers[0]};
     const priorGovernance=fixture.calls.filter(call=>call.governance).length;await click(button('创建密钥'));assert.equal(fixture.calls.filter(call=>call.governance).length,priorGovernance,'已确认预算后继续不盲重写预算');
     assert.equal(document.querySelector('.lg-qs-key-value').textContent,'gwk_fixture_only_not_a_real_credential');
-    assert.ok(document.body.textContent.includes('未访问上游'));
+    for (let i=0; i<100 && !document.body.textContent.includes('未访问上游'); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve,10)); });
+    assert.ok(document.body.textContent.includes('未访问上游'), document.body.textContent.slice(-4000) + JSON.stringify(safeRequests));
     assert.ok(button('复制密钥'));
     fixture.confirmed=true;
     await click(button('更改'));

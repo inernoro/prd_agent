@@ -427,15 +427,21 @@ export function LogsView() {
     const next = new URLSearchParams(location.search);
     if (value) next.set(key, value); else next.delete(key);
     next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    if (next.get('liveList') === '1') {
+      for (const key of ['from', 'to', 'liveList']) next.delete(key);
+    }
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const subtab: LogsSubTab = query.get('view') === 'physical' ? 'upstream' : query.get('view') === 'sessions' ? 'sessions' : 'generations';
   const setSubtab = (value: LogsSubTab) => updateQuery('view', value === 'upstream' ? 'physical' : value === 'sessions' ? 'sessions' : '');
   const [trendOpen, setTrendOpen] = useState(false);
   const presetKey = ['1d', '7d', '30d'].includes(query.get('range') || '') ? query.get('range')! : '30d';
+  const [refreshToken, setRefreshToken] = useState(0);
   const setPresetKey = (value: string) => {
     const next = new URLSearchParams(location.search);
-    next.set('range', value); next.delete('from'); next.delete('to'); next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    next.set('range', value);
+    for (const key of ['from', 'to', 'liveList', 'transaction', 'anchor', 'openRequest']) next.delete(key);
+    setRefreshToken(Date.now());
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const filterModel = query.get('model') || '';
@@ -556,33 +562,29 @@ export function LogsView() {
     window.localStorage.setItem(TABLE_PREFERENCES_KEY, JSON.stringify(tablePreferences));
   }, [tablePreferences]);
 
-  const openLogDetail = useCallback((id: string, replace = false) => {
-    const query = new URLSearchParams(location.search);
-    query.set('transaction', id); query.set('anchor', id); query.delete('openRequest');
-    navigate({ pathname: location.pathname, search: `?${query.toString()}` }, { replace });
-  }, [location.pathname, location.search, navigate]);
-
-  const closeLogDetail = useCallback(() => {
-    const query = new URLSearchParams(location.search);
-    query.delete('transaction');
-    navigate({ pathname: location.pathname, search: query.size ? `?${query.toString()}` : '' }, { replace: true });
-  }, [location.pathname, location.search, navigate]);
-
   const fixedFrom = query.get('from');
   const fixedTo = query.get('to');
+  const fixedRange = useMemo(() => (
+    fixedFrom && fixedTo && Number.isFinite(Date.parse(fixedFrom)) && Number.isFinite(Date.parse(fixedTo))
+      ? { from: fixedFrom, to: fixedTo }
+      : null
+  ), [fixedFrom, fixedTo]);
+  const openedFromLiveList = query.get('liveList') === '1';
+  const isHistorical = Boolean(fixedRange && !openedFromLiveList);
+  const [wasHistorical, setWasHistorical] = useState(isHistorical);
+  // 离开历史链接时推进窗口。实时列表的详情往返沿用已加载窗口。
+  if (wasHistorical !== isHistorical) {
+    setWasHistorical(isHistorical);
+    if (wasHistorical) setRefreshToken(Date.now());
+  }
+  const [initialRangeAt] = useState(Date.now);
+  const [returnRange] = useState(() => openedFromLiveList && anchorId ? fixedRange : null);
   const range = useMemo(() => {
-    if (fixedFrom && fixedTo && Number.isFinite(Date.parse(fixedFrom)) && Number.isFinite(Date.parse(fixedTo))) return { from: fixedFrom, to: fixedTo };
-    const p = TIME_RANGE_PRESETS.find((x) => x.key === presetKey) ?? TIME_RANGE_PRESETS[2];
-    return rangeFromPreset(p.days);
-  }, [presetKey, fixedFrom, fixedTo]);
-
-  // Freeze the selected window in the URL so Back/refresh refers to the same task.
-  useEffect(() => {
-    if (fixedFrom && fixedTo) return;
-    const next = new URLSearchParams(location.search);
-    next.set('from', range.from); next.set('to', range.to);
-    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
-  }, [fixedFrom, fixedTo, range.from, range.to, location.pathname, location.search, navigate]);
+    if (fixedRange) return fixedRange;
+    if (!refreshToken && anchorId && returnRange) return returnRange;
+    const preset = TIME_RANGE_PRESETS.find((item) => item.key === presetKey) ?? TIME_RANGE_PRESETS[2];
+    return rangeFromPreset(preset.days, refreshToken || initialRangeAt);
+  }, [presetKey, fixedRange, refreshToken, initialRangeAt, anchorId, returnRange]);
 
   const baseParams = useMemo(
     () => ({
@@ -611,6 +613,37 @@ export function LogsView() {
     }),
     [range.from, range.to, subtab, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterOperation, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment, filterPlatformId],
   );
+  const listContext: LogTaskContext = {
+    source: 'logs',
+    ...Object.fromEntries(query),
+    ...range,
+    liveList: !fixedRange || openedFromLiveList ? '1' : undefined,
+  };
+  const openLogDetail = useCallback((id: string, replace = false) => {
+    const query = new URLSearchParams(location.search);
+    query.set('from', range.from); query.set('to', range.to);
+    if (!fixedRange) query.set('liveList', '1');
+    query.set('transaction', id); query.set('anchor', id); query.delete('openRequest');
+    navigate({ pathname: location.pathname, search: `?${query.toString()}` }, { replace });
+  }, [location.pathname, location.search, navigate, range.from, range.to, fixedRange]);
+
+  const closeLogDetail = useCallback(() => {
+    const query = new URLSearchParams(location.search);
+    query.delete('transaction');
+    if (openedFromLiveList) {
+      for (const key of ['from', 'to', 'liveList']) query.delete(key);
+    }
+    navigate({ pathname: location.pathname, search: query.size ? `?${query.toString()}` : '' }, { replace: true });
+  }, [location.pathname, location.search, navigate, openedFromLiveList]);
+
+  const refresh = useCallback(() => {
+    if (fixedRange && !selectedLogId) {
+      const next = new URLSearchParams(location.search);
+      for (const key of ['from', 'to', 'liveList', 'anchor']) next.delete(key);
+      navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+    }
+    setRefreshToken(Date.now());
+  }, [fixedRange, selectedLogId, location.pathname, location.search, navigate]);
 
   useEffect(() => {
     getLogsMeta().then((res) => {
@@ -647,10 +680,6 @@ export function LogsView() {
   const loadedPage = useRef(0);
   const rowsKey = useRef<string | null>(null);
   const loadedSessPage = useRef(0);
-  // 刷新令牌：refresh 时递增，驱动首页重取。不用 setPage(1) 是因为 page 已经不是 state，
-  // 而且当页码本来就是 1 时 setState 同值不会触发 effect，刷新会静默失效。
-  const [refreshToken, setRefreshToken] = useState(0);
-
   // 追加时按 id 去重。
   // 服务端分页只要排序不稳定（并列 StartedAt 跨页边界），前后两页就可能重叠；
   // 累加语义下重复行会把 rows.length 顶高，而 hasMore 判据是 `rows.length < total`,
@@ -800,7 +829,16 @@ export function LogsView() {
   }, [subtab, loadSessions, refreshToken]);
   useEffect(() => {
     void loadInsights();
-  }, [loadInsights]);
+  }, [loadInsights, refreshToken]);
+
+  useEffect(() => {
+    if (selectedLogId || isHistorical) return;
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    return () => document.removeEventListener('visibilitychange', refreshOnReturn);
+  }, [isHistorical, selectedLogId, refresh]);
 
   const requestMatches = useMemo(() => {
     const requestId = filterRequestId.trim();
@@ -827,14 +865,6 @@ export function LogsView() {
     openLogDetail(matched.id, query.get('openRequest') === '1');
   }, [filterRequestId, selectedLogId, query, openLogDetail, requestLookupReady, requestMatches, total, location.key]);
 
-  // 刷新 = 回到第 1 页重新取并**替换**列表。
-  // 之前写的是 loadList(page)：累加语义下，停在第 2 页时刷新会把第 2 页再追加一遍
-  // （实测 60 行刷成 90 行）。刷新是「重新看一眼现在的样子」，不是「再取一次当前页」。
-  const refresh = () => {
-    void loadInsights();
-    setRefreshToken((t) => t + 1);
-  };
-
   // ── 单元格渲染 ──
   const renderGenerationCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
@@ -856,7 +886,7 @@ export function LogsView() {
         const modelName = it.logicalModelPublicId || it.model || DASH;
         return (
           <LogEntityHoverCard
-            href={modelDetailsHref(it, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
+            href={modelDetailsHref(it, { ...listContext, selectedLogId: it.id })}
             label={modelName}
             subtitle={[it.logicalModelPublicId ? '逻辑模型' : '上游模型', proto?.label, tp?.label].filter(Boolean).join(' · ')}
             description={it.logicalModelPublicId && it.model !== it.logicalModelPublicId
@@ -877,7 +907,7 @@ export function LogsView() {
         const exchangeProvider = isExchangeProvider(it);
         return (
           <LogEntityHoverCard
-            href={providerDetailsHref(it, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
+            href={providerDetailsHref(it, { ...listContext, selectedLogId: it.id })}
             label={providerName}
             subtitle={[exchangeProvider ? 'Exchange' : it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
             description={exchangeProvider
@@ -901,7 +931,7 @@ export function LogsView() {
         }
         return (
           <LogEntityHoverCard
-            href={appDetailsHref(code, it.requestType, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
+            href={appDetailsHref(code, it.requestType, { ...listContext, selectedLogId: it.id })}
             label={appDisplayName(it)}
             subtitle={[code, it.sourceSystem || 'App', it.environment].filter(Boolean).join(' · ')}
             description={it.clientCode
@@ -987,7 +1017,7 @@ export function LogsView() {
       case 'model':
         return (
           <LogEntityHoverCard
-            href={modelDetailsHref(it, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
+            href={modelDetailsHref(it, { ...listContext, selectedLogId: it.id })}
             label={it.logicalModelPublicId || it.model || DASH}
             subtitle={[it.logicalModelPublicId ? '逻辑模型' : '上游模型', it.protocol].filter(Boolean).join(' · ')}
             description="进入详情可查看该模型的能力、Provider、路由和最近请求。"
@@ -1005,7 +1035,7 @@ export function LogsView() {
         const exchangeProvider = isExchangeProvider(it);
         return (
           <LogEntityHoverCard
-            href={providerDetailsHref(it, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to, selectedLogId: it.id })}
+            href={providerDetailsHref(it, { ...listContext, selectedLogId: it.id })}
             label={providerName}
             subtitle={[exchangeProvider ? 'Exchange' : it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
             description={exchangeProvider
@@ -1064,7 +1094,7 @@ export function LogsView() {
       case 'app':
         return it.appCallerCode ? (
           <LogEntityHoverCard
-            href={appDetailsHref(it.appCallerCode, undefined, { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to })}
+            href={appDetailsHref(it.appCallerCode, undefined, listContext)}
             label={it.appCallerCode}
             subtitle="会话调用 App"
             description="进入详情可查看调用身份、路由、治理和该 App 的最近请求。"
@@ -1077,7 +1107,7 @@ export function LogsView() {
       case 'primaryModel':
         return it.primaryModel ? (
           <LogEntityHoverCard
-            href={withLogTaskContext('/models/view', new URLSearchParams({ model: it.primaryModel }), { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to })}
+            href={withLogTaskContext('/models/view', new URLSearchParams({ model: it.primaryModel }), listContext)}
             label={it.primaryModel}
             subtitle="会话主要模型"
             description="进入详情可查看该模型的能力、Provider、路由和最近请求。"
@@ -1159,6 +1189,9 @@ export function LogsView() {
     const next = new URLSearchParams(location.search);
     for (const key of LOG_FILTER_KEYS) next.delete(key);
     next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    if (next.get('liveList') === '1') {
+      for (const key of ['from', 'to', 'liveList']) next.delete(key);
+    }
     navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const hasMoreRows = rows.length < total;
@@ -1201,7 +1234,7 @@ export function LogsView() {
       <header className="lg-logs-heading">
         <div>
           <div className="lg-logs-title-line"><h1>请求记录</h1><span className="tabular">{subtab === 'sessions' ? sessTotal : total} 条</span></div>
-          <Link className="lg-secondary-link" to={buildLogTraceHref('', { source: 'logs', ...Object.fromEntries(query), from: range.from, to: range.to })}>按业务操作或请求编号排查</Link>
+          <Link className="lg-secondary-link" to={buildLogTraceHref('', listContext)}>按业务操作或请求编号排查</Link>
           {/* 汇总条：拿不到值的项**整条不渲染**，而不是渲染成「上游调用 —」。
               一排破折号既不承载信息，又和真实数字抢同样的横向位置，
               读起来是「这里坏了」而不是「这里没有」。过滤在 summaryFacts 里做。 */}
@@ -1462,7 +1495,7 @@ export function LogsView() {
       {selectedLogId ? (
         <GenerationDetailsDrawer
           logId={selectedLogId}
-          navigationContext={{ source: 'logs', ...Object.fromEntries(new URLSearchParams(location.search)), from: range.from, to: range.to, selectedLogId }}
+          navigationContext={{ ...listContext, selectedLogId }}
           onClose={closeLogDetail}
           onPrevious={(() => {
             const index = rows.findIndex((item) => item.id === selectedLogId);

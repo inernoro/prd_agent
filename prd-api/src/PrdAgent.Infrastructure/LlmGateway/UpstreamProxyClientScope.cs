@@ -16,6 +16,7 @@ internal sealed class UpstreamProxyClientScope(IHttpClientFactory factory, bool 
     public HttpClient Get(ModelResolutionResult resolution, int timeoutSeconds, bool lineEvents = false,
         UpstreamResponseBudget? responseBudget = null)
     {
+        var timeout = timeoutSeconds <= 0 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(timeoutSeconds);
         HttpClient client;
         if (resolution.UpstreamProxy is not { } proxy)
         {
@@ -23,14 +24,15 @@ internal sealed class UpstreamProxyClientScope(IHttpClientFactory factory, bool 
             {
                 _default = publicOnly ? factory.CreateClient("SafeOutbound")
                     : factory.CreateClient(GatewayOutboundHttpClients.InternalClientName);
-                _default.Timeout = timeoutSeconds <= 0 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(timeoutSeconds);
+                _default.Timeout = timeout;
             }
             client = _default;
         }
         else if (!_clients.TryGetValue(proxy, out client!))
         {
-            client = new HttpClient(UpstreamProxy.CreateHandler(proxy, publicOnly))
-                { Timeout = timeoutSeconds <= 0 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(timeoutSeconds) };
+            // 模型调用的建连和代理握手服从请求期限，避免被探测用的 15 秒连接上限截断。
+            client = new HttpClient(UpstreamProxy.CreateHandler(proxy, publicOnly, connectTimeout: timeout))
+                { Timeout = timeout };
             _clients.Add(proxy, client);
         }
         var proxySnapshot = resolution.UpstreamProxy;

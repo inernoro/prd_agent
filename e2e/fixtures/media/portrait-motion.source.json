@@ -1,0 +1,34 @@
+{
+  "sourceCommit": "8f319546e1bcd4cf13429d66a19384c687b6ae67",
+  "workflowRun": "https://github.com/inernoro/prd_agent/actions/runs/44166931773",
+  "fps": 60,
+  "sourceFrames": 310,
+  "sourceSize": [
+    1672,
+    941
+  ],
+  "encodedSize": [
+    1672,
+    942
+  ],
+  "sha256": "0e8698b234dfac8cd98d46509fef107f663a79248f93d291554356ef3c7afc90",
+  "fileName": "portrait-motion-0e8698b234df.mp4",
+  "authoringMethod": "imagegen-edgedrawing-optical-flow",
+  "eyeKeyframes": [
+    "closed",
+    "quarter",
+    "half",
+    "three-quarter",
+    "open"
+  ],
+  "sourceImages": {
+    "line-etching.png": "f2c4fb77b123824acdf5c0904495c8d71a4de26e3facbf4a1c08e9cff985720f",
+    "surface-reveal.png": "f36ef4856653a152fcd92fd69c5de8b83fb53221a4720b132d884382da17536f",
+    "eye-quarter.png": "3bbdafbf114d4bfa9330d394ae1f5e9664417e3f92592bbecc43eaf8ef687186",
+    "eye-half.png": "5685c126b4cfe9dba5531f497adfeab728d8946cefa6b34b42982aeaca92bb49",
+    "eye-three-quarter.png": "1bc5d182fcd5a289d3d002a0ae4ecd529cbb301b5848546d419b5116dea5d679",
+    "companion-sleep.webp": "6a8da8cc2d5fd2722005dbf83c2f5b3795e58254a8ee962db0d556414d68dabc",
+    "companion.webp": "993c6d49f03e0854ece78e6f7d35b11d2255abfe8048427c4ad14efef732d3dd"
+  },
+  "purpose": "图生图线稿与曲面显影、五姿态眼部素材经云端OpenCV提线及光流插值的预渲染视频；真实页面需另录，不以素材编码帧率证明客户端锁帧。"
+}

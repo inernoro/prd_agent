@@ -75,6 +75,7 @@ jobs:
       - name: Install existing E2E dependencies and browser
         run: |
           pnpm -C e2e install --frozen-lockfile
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
           pnpm -C e2e exec playwright install --with-deps chromium
       - name: Verify regression judge and server timing probe
         run: |

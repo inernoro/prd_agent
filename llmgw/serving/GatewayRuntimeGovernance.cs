@@ -719,7 +719,9 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
 
         if (FixedTimeEquals(providedKey, legacySharedKey))
-            return await AuthorizeLegacyKeyAsync(sourceSystem, appCallerCode, ingressProtocol, requiredScope, ct, headersOnly);
+            return requiredScope == GatewayConsumptionRetries.ControlScope
+                ? new(false, true, 403, "GATEWAY_KEY_SCOPE_DENIED", "补跑需要使用原调用方的接入密钥，请核对密钥后重试。")
+                : await AuthorizeLegacyKeyAsync(sourceSystem, appCallerCode, ingressProtocol, requiredScope, ct, headersOnly);
 
         var hash = Sha256Hex(providedKey);
         var keys = _data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys");
@@ -763,6 +765,11 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
 
         var readOnlyProbe = GatewayLegacyProbeScopes.IsReadOnlyProbe(requiredScope);
         var serviceKeyScope = GatewayLegacyProbeScopes.ResolveServiceKeyScope(requiredScope);
+        var scopeAllowed = serviceKeyScope == GatewayConsumptionRetries.ControlScope
+            ? record.Scopes?.Any(scope => scope?.Trim().ToLowerInvariant() is { } value
+                && (value == "*" || GatewaySuccessorObservationPolicy.IsBusinessInvocationScope(value))) == true
+            : MatchesAny(record.Scopes, serviceKeyScope)
+                || (headersOnly && serviceKeyScope == "invoke" && MatchesAny(record.Scopes, "stream:invoke"));
         if (!GatewayKeyPurposePolicy.AllowsDataPlaneRequest(record, readOnlyProbe))
         {
             await WriteKeyDeniedAuditAsync(record, "service_key.purpose_denied", "purpose-mismatch", new BsonDocument
@@ -788,8 +795,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             && (!(headersOnly && string.IsNullOrEmpty(sourceSystem)) && !Matches(record.SourceSystem, sourceSystem)
                 || !(headersOnly && string.IsNullOrEmpty(effectiveAppCallerCode)) && !MatchesAny(record.AppCallerCodes, effectiveAppCallerCode))
             || !MatchesAny(record.IngressProtocols, ingressProtocol)
-            || !(MatchesAny(record.Scopes, serviceKeyScope)
-                    || headersOnly && serviceKeyScope == "invoke" && MatchesAny(record.Scopes, "stream:invoke")))
+            || !scopeAllowed)
         {
             await _data.Database.GetCollection<MongoDB.Bson.BsonDocument>("llmgw_operation_audits").InsertOneAsync(
                 new MongoDB.Bson.BsonDocument

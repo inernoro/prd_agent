@@ -1,0 +1,276 @@
+"""Cloud-only image-led authoring: generated artwork supplies the actual geometry."""
+import os
+if os.environ.get('CI') != 'true':
+    raise SystemExit('Cloud CI only: do not render on the user computer.')
+from pathlib import Path
+from argparse import ArgumentParser
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
+import hashlib, json, math, subprocess
+import cv2
+import numpy as np
+ROOT = Path(__file__).resolve().parents[1]
+parser = ArgumentParser()
+parser.add_argument('--theme', choices=['night', 'daylight'], default='night')
+daylight = parser.parse_args().theme == 'daylight'
+OUT = ROOT / 'work/entry-portrait'
+OUT.mkdir(parents=True, exist_ok=True)
+cv2.setNumThreads(2)
+FPS, COUNT = 60, 310
+
+def read(path):
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    assert image is not None, f'Cannot read {path}'
+    return image
+
+source_folder = ROOT / '.design/map-cinematic-entry'
+input_folder = OUT / 'sources'
+input_folder.mkdir(exist_ok=True)
+source_manifest = json.loads((source_folder / 'portrait-cdn-sources.json').read_text())
+
+def download(asset):
+    url = urlsplit(asset['url'])
+    assert url.scheme == 'https' and url.netloc == 'cfi.miduo.org', 'Unexpected authoring asset origin'
+    request = Request(asset['url'], headers={'User-Agent': 'Mozilla/5.0'})
+    with urlopen(request, timeout=30) as response:
+        assert response.geturl() == asset['url'], 'Unexpected asset redirect'
+        data = response.read(asset['bytes'] + 1)
+    digest = hashlib.sha256(data).hexdigest()
+    assert len(data) == asset['bytes'] and digest == asset['sha256'], 'Authoring asset readback mismatch'
+    return data
+
+def source(name):
+    asset = source_manifest['daylight' if daylight else 'night'][name]
+    data = download(asset)
+    path = input_folder / name
+    path.write_bytes(data)
+    source_hashes[name] = asset['sha256']
+    return read(path)
+
+source_hashes = {}
+closed = source('closed.png' if daylight else 'companion-sleep.webp')
+opened = source('open.png' if daylight else 'companion.webp')
+H, W = closed.shape[:2]
+EH = H + H % 2
+assert opened.shape == closed.shape
+proof = {'method': 'generated-keyframes-opencv-strokes-optical-flow', 'fps': FPS,
+         'sourceFrames': COUNT, 'sourceSize': [W,H], 'encodedSize': [W,EH],
+         'theme': 'daylight' if daylight else 'night', 'registration': {}, 'sources': source_hashes}
+
+def register(image, name):
+    """Conservative registration against stable hair/bow anchors, excluding the eye."""
+    if image.shape != closed.shape:
+        image = cv2.resize(image, (W,H), interpolation=cv2.INTER_LANCZOS4)
+    sift = cv2.SIFT_create(nfeatures=4000)
+    a, da = sift.detectAndCompute(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), None)
+    b, db = sift.detectAndCompute(cv2.cvtColor(closed, cv2.COLOR_BGR2GRAY), None)
+    pairs = [] if da is None or db is None else cv2.BFMatcher().knnMatch(da,db,k=2)
+    good = [m for pair in pairs if len(pair)==2 for m,n in [pair] if m.distance < .72*n.distance]
+    matrix, count = None, 0
+    if len(good) >= 12:
+        src = np.float32([a[m.queryIdx].pt for m in good]); dst = np.float32([b[m.trainIdx].pt for m in good])
+        stable = (src[:,0] < W*.74) | (src[:,1] < H*.27) | (src[:,1] > H*.69)
+        if np.count_nonzero(stable) >= 12:
+            candidate, inliers = cv2.estimateAffinePartial2D(src[stable],dst[stable],method=cv2.RANSAC,ransacReprojThreshold=3,maxIters=3000)
+            if candidate is not None:
+                scale = math.hypot(candidate[0,0],candidate[1,0]); angle = math.degrees(math.atan2(candidate[1,0],candidate[0,0]))
+                count = int(np.count_nonzero(inliers))
+                if count >= 10 and .97 < scale < 1.03 and abs(angle) < 1.5 and np.max(np.abs(candidate[:,2])) < 30:
+                    matrix = candidate
+    if matrix is not None:
+        border = cv2.BORDER_REFLECT101 if daylight else cv2.BORDER_CONSTANT
+        image = cv2.warpAffine(image,matrix,(W,H),flags=cv2.INTER_CUBIC,borderMode=border)
+    proof['registration'][name] = {'matches':len(good),'inliers':count,'accepted':matrix is not None,
+                                   'matrix':None if matrix is None else matrix.tolist()}
+    cv2.imwrite(str(OUT/f'registered-{name}.jpg'),image)
+    return image
+
+art = {}
+for name in ['line-etching','surface-reveal','eye-quarter','eye-half','eye-three-quarter']:
+    art[name] = register(source(f'{name}.png'),name)
+if daylight:
+    opened = register(opened, 'open')
+
+# Follow actual generated curves, remove isolated noise, and skeletonize.
+# This does not invent substitute hair paths or a regular planar facial grid.
+line = art['line-etching']
+line_value = 255-cv2.cvtColor(line,cv2.COLOR_BGR2GRAY) if daylight else np.max(line,axis=2)
+binary = np.uint8(line_value>(69 if daylight else 34))*255
+n, labels, stats, _ = cv2.connectedComponentsWithStats(binary,8)
+clean = np.zeros_like(binary)
+for label in range(1,n):
+    if stats[label,cv2.CC_STAT_AREA] >= 9: clean[labels==label] = 255
+skeleton = cv2.ximgproc.thinning(clean)
+edge_drawing = cv2.ximgproc.createEdgeDrawing()
+params = cv2.ximgproc_EdgeDrawing_Params()
+params.MinPathLength = 35
+params.GradientThresholdValue = 12
+params.Sigma = 1.0
+edge_drawing.setParams(params)
+edge_drawing.detectEdges(line_value.astype(np.uint8))
+segments = edge_drawing.getSegments()
+rng = np.random.default_rng(20261118)
+strokes = []
+for contour in segments:
+    points = contour.reshape(-1,2)
+    if len(points)<35: continue
+    # Preserve each complete connected gesture. Cutting every N pixels creates
+    # synchronized fragments across adjacent hair strands and looks like bars.
+    p = cv2.approxPolyDP(points.reshape(-1,1,2),.28,False)[:,0,:]
+    if len(p)<3: continue
+    lengths = np.r_[0,np.cumsum(np.linalg.norm(np.diff(p,axis=0),axis=1))]
+    if lengths[-1]<45: continue
+    center = np.mean(p,axis=0)
+    start = .12+.65*center[1]/H+.12*rng.random()
+    if center[0]>W*.76 and .31<center[1]/H<.65: start += .18
+    colors = line[p[:,1],p[:,0]]
+    ink = np.minimum(np.percentile(colors,30,axis=0),[164,135,115]) if daylight else np.maximum(np.percentile(colors,75,axis=0),[160,75,25])
+    strokes.append({'points':p,'lengths':lengths,'start':start,
+                    'duration':.22+min(.58,lengths[-1]/1600),'drawn':0,
+                    'color':tuple(int(v) for v in np.clip(ink,0,255))})
+assert len(strokes)>150, f'Insufficient authored linework: {len(strokes)}'
+proof['strokes'] = {'count':len(strokes),'skeletonPixels':int(np.count_nonzero(skeleton)),
+                    'source':'generated line-etching.png','extractor':'OpenCV EdgeDrawing connected segments','uniformVectorSubstitute':False}
+cv2.imwrite(str(OUT/'line-skeleton.png'),skeleton)
+
+def smooth(a,b,value):
+    x = np.clip((value-a)/(b-a),0,1)
+    return x*x*(3-2*x)
+
+# Derive an eye ROI from real endpoint differences. All other pixels stay original.
+delta = cv2.cvtColor(cv2.absdiff(closed,opened),cv2.COLOR_BGR2GRAY)
+hint = np.zeros((H,W),np.uint8); hint[int(.34*H if daylight else .28*H):int(.64*H if daylight else .66*H),int(.73*W):]=255
+changed = np.uint8((delta>16)&(hint>0))*255
+changed = cv2.morphologyEx(changed,cv2.MORPH_CLOSE,np.ones((13,13),np.uint8))
+parts,_ = cv2.findContours(changed,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+assert parts, 'No eye difference in endpoint artwork'
+x,y,w,h = cv2.boundingRect(max(parts,key=cv2.contourArea))
+x0,y0,x1,y1 = max(0,x-34),max(0,y-34),min(W,x+w+34),min(H,y+h+34)
+assert w>90 and h>30, f'Unexpected eye aperture {(x,y,w,h)}'
+proof['eyeRegion'] = [x0,y0,x1,y1]
+eye_mask = np.zeros((H,W),np.float32); eye_mask[y0+8:y1-8,x0+8:x1-8]=1
+eye_mask = cv2.GaussianBlur(eye_mask,(41,41),0)[y0:y1,x0:x1,None]
+if daylight:
+    # Keep the window, hair and camera immobile across the five independently edited poses.
+    # Only the actual eyelid and its surrounding skin vary between the published posters.
+    posed = opened.copy()
+    posed[y0:y1,x0:x1] = np.uint8(opened[y0:y1,x0:x1]*(1-eye_mask) + closed[y0:y1,x0:x1]*eye_mask)
+    closed = posed
+    for name, image in [('daylight-closed.webp', closed), ('daylight-open.webp', opened)]:
+        assert cv2.imwrite(str(OUT / name),image,[cv2.IMWRITE_WEBP_QUALITY,91])
+eyes = [closed]+[art[n] for n in ['eye-quarter','eye-half','eye-three-quarter']]+[opened]
+crops = [im[y0:y1,x0:x1].astype(np.float32) for im in eyes]
+flows = []
+dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
+for a,b in zip(crops,crops[1:]):
+    ga,gb = [cv2.cvtColor(np.uint8(im),cv2.COLOR_BGR2GRAY) for im in (a,b)]
+    ab,ba = dis.calc(ga,gb,None),dis.calc(gb,ga,None)
+    flows.append((cv2.GaussianBlur(ab,(5,5),0),cv2.GaussianBlur(ba,(5,5),0)))
+gy,gx = np.mgrid[0:y1-y0,0:x1-x0].astype(np.float32)
+
+def full_color(t):
+    if t>=3.80: return opened.astype(np.float32)
+    if t<=2.70: return closed.astype(np.float32)
+    progress = float(smooth(2.70,3.80,t))*4; segment = min(3,int(progress)); u = min(1.,progress-segment)
+    ab,ba = flows[segment]
+    a = cv2.remap(crops[segment],gx-u*ab[:,:,0],gy-u*ab[:,:,1],cv2.INTER_CUBIC,borderMode=cv2.BORDER_REFLECT101)
+    b = cv2.remap(crops[segment+1],gx-(1-u)*ba[:,:,0],gy-(1-u)*ba[:,:,1],cv2.INTER_CUBIC,borderMode=cv2.BORDER_REFLECT101)
+    result = closed.astype(np.float32).copy()
+    result[y0:y1,x0:x1] = result[y0:y1,x0:x1]*(1-eye_mask)+(a*(1-u)+b*u)*eye_mask
+    return result
+
+proof['eyeKeyframes'] = ['closed','quarter','half','three-quarter','open']
+proof['eyeMethod'] = 'registered generated poses with bidirectional dense optical flow; opaque eyelid anatomy'
+for i,crop in enumerate(crops): cv2.imwrite(str(OUT/f'eye-key-{i}.jpg'),np.uint8(crop))
+
+# Smooth spatial material revelation, avoiding a straight screen-wide curtain.
+noise = cv2.resize(rng.random((15,25),dtype=np.float32),(W,H),interpolation=cv2.INTER_CUBIC)
+noise = cv2.GaussianBlur(noise,(61,61),0); noise = (noise-noise.min())/max(1e-6,noise.max()-noise.min())
+xx,yy = np.meshgrid(np.linspace(0,1,W),np.linspace(0,1,H))
+field = (.42*noise+.33*yy+.25*(1-xx)).astype(np.float32)
+blank = (231,240,248) if daylight else (0,0,0)
+stroke_canvas = np.empty((H,W,3),np.uint8); stroke_canvas[:]=blank
+line_float = line.astype(np.float32); surface = art['surface-reveal'].astype(np.float32)
+movie = OUT/'portrait-motion.mp4'
+encoder = subprocess.Popen(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','rawvideo','-pixel_format','bgr24',
+    '-video_size',f'{W}x{EH}','-framerate',str(FPS),'-i','-','-an','-c:v','libx264','-preset','medium','-crf','18',
+    '-pix_fmt','yuv420p','-threads','2','-movflags','+faststart',str(movie)],stdin=subprocess.PIPE)
+samples = []
+try:
+    for frame in range(COUNT):
+        t = frame/FPS
+        for stroke in strokes:
+            p = float(smooth(stroke['start'],stroke['start']+stroke['duration'],t))
+            end = min(len(stroke['points']),int(np.searchsorted(stroke['lengths'],p*stroke['lengths'][-1],side='right')))
+            if end>max(1,stroke['drawn']):
+                a = max(0,stroke['drawn']-1)
+                cv2.polylines(stroke_canvas,[stroke['points'][a:end].reshape(-1,1,2)],False,stroke['color'],1,cv2.LINE_AA)
+                stroke['drawn']=end
+        # Paint the extracted curves themselves; masking the source's highlights
+        # produces striped fragments even when the paths are continuous.
+        vector_ink = stroke_canvas.astype(np.float32)
+        if not daylight: vector_ink = vector_ink*.88+cv2.GaussianBlur(vector_ink,(7,7),1.3)*.42
+        texture = smooth(1.05,1.68,t)
+        drawing = vector_ink*(1-texture)+line_float*texture
+        if daylight:
+            # Keep a subtle registered window and hair silhouette from the first frame.
+            drawing = drawing*.91 + line_float*.09
+        else:
+            drawing += line_float*(.025*smooth(.12,.45,t))*(1-texture)
+        grid = smooth(1.38,1.95,t)*(1-smooth(2.18,2.61,t))
+        drawing = drawing*(1-grid)+surface*grid
+        exposure = smooth(1.94,2.70,t)
+        reveal = smooth(0,.22,exposure-field*.56)
+        if daylight:
+            # Let the sky change as one continuous light field. Mottled spatial
+            # reveal is reserved for the portrait, where it reads as developing ink.
+            artwork_weight = smooth(.36,.61,xx)
+            reveal = np.float32(artwork_weight*reveal + (1-artwork_weight)*smooth(1.88,2.55,t))
+        if t>=2.70: reveal = np.ones((H,W),np.float32)
+        output = drawing*(1-reveal[:,:,None])+full_color(t)*reveal[:,:,None]
+        if not daylight: output *= smooth(.06,.35,t)
+        output = np.uint8(np.clip(output,0,255))
+        if frame>=228: assert np.mean(cv2.absdiff(output,opened))<1., 'Final frame differs from actual full-color endpoint'
+        if EH!=H: output = cv2.copyMakeBorder(output,0,EH-H,0,0,cv2.BORDER_REPLICATE)
+        encoder.stdin.write(output.tobytes())
+        if frame%15==0:
+            cv2.imwrite(str(OUT/f'preview-{frame:03}.jpg'),output,[cv2.IMWRITE_JPEG_QUALITY,94])
+            eye = output[y0:y1,x0:x1]; cv2.imwrite(str(OUT/f'eye-frame-{frame:03}.jpg'),eye)
+            samples.append({'time':round(t,3),'mean':float(np.mean(output)),'eyeMean':float(np.mean(eye)),'grid':float(grid)})
+        if frame%FPS==0: print(f'Rendered asset frame {frame}/{COUNT}',flush=True)
+finally:
+    encoder.stdin.close()
+assert encoder.wait()==0, 'Cloud encoding failed'
+proof['samples']=samples; proof['sha256']=hashlib.sha256(movie.read_bytes()).hexdigest()
+proof['fileName']=f"portrait-motion-{proof['sha256'][:12]}.mp4"
+probe = json.loads(subprocess.check_output(['ffprobe','-v','error','-count_frames','-select_streams','v:0',
+    '-show_entries','stream=width,height,nb_read_frames,r_frame_rate','-of','json',str(movie)]))['streams'][0]
+assert int(probe['nb_read_frames'])==COUNT and probe['r_frame_rate']=='60/1'
+proof['encoded']=probe
+(OUT/'composition-proof.json').write_text(json.dumps(proof,ensure_ascii=False,indent=2)+'\n')
+thumbs=[]
+for frame in range(0,COUNT,15):
+    im = cv2.resize(read(OUT/f'preview-{frame:03}.jpg'),(640,360),interpolation=cv2.INTER_AREA)
+    if daylight: cv2.rectangle(im,(6,5),(91,34),(38,31,24),cv2.FILLED)
+    cv2.putText(im,f'{frame/FPS:.2f}s',(12,26),cv2.FONT_HERSHEY_SIMPLEX,.65,(220,230,240),1,cv2.LINE_AA); thumbs.append(im)
+for start in range(0,len(thumbs),6):
+    sheet=np.zeros((1080,1280,3),np.uint8)
+    for j,im in enumerate(thumbs[start:start+6]): sheet[j//2*360:(j//2+1)*360,j%2*640:(j%2+1)*640]=im
+    cv2.imwrite(str(OUT/f'contact-{start//6:02}.jpg'),sheet)
+# Clearly labelled authored-asset comparisons, never passed off as live UI recording.
+previous = ROOT/'e2e/fixtures/media/portrait-motion-baseline.mp4'
+comparisons = [
+    ('previous-vs-image-led', previous, None, 'Previous authored asset'),
+    ('reference-vs-image-led', ROOT/'e2e/fixtures/media/entry-reference.mp4', '14.75', 'Reference source')]
+if daylight:
+    night = input_folder/'night-motion.mp4'
+    night.write_bytes(download(source_manifest['nightMotion']))
+    comparisons = [('night-vs-daylight-assets',night,None,'Night')]
+for name, source, seek, label in comparisons:
+    args = ['ffmpeg','-hide_banner','-loglevel','error','-y']
+    if seek: args += ['-ss',seek]
+    args += ['-i',str(source),'-i',str(movie),'-filter_complex',
+        f'[0:v]scale=960:540,setsar=1,setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=2,drawtext=text={label}:fontcolor=white:fontsize=18:x=12:y=12[a];[1:v]scale=960:540,setsar=1,setpts=PTS-STARTPTS,drawtext=text=Image led OpenCV authored asset:fontcolor=white:fontsize=18:x=12:y=12[b];[a][b]hstack=inputs=2[v]',
+        '-map','[v]','-t',str(COUNT/FPS),'-an','-c:v','libx264','-preset','fast','-crf','20','-threads','2','-movflags','+faststart',str(OUT/f'{name}.mp4')]
+    subprocess.run(args,check=True)
+print(json.dumps({'file':proof['fileName'],'strokes':len(strokes),'eyeRegion':proof['eyeRegion'],'encoded':probe}),flush=True)

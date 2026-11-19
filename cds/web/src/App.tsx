@@ -28,6 +28,7 @@ const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').t
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
 const PublicStatusPage = lazy(() => import('@/pages/PublicStatusPage').then((m) => ({ default: m.PublicStatusPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
+const ReleaseApprovalPage = lazy(() => import('@/pages/release-center/ReleaseApprovalPage').then(m => ({ default: m.ReleaseApprovalPage })));
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
 const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then((m) => ({ default: m.ReleaseConsolePage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
@@ -290,6 +291,7 @@ export function App(): JSX.Element {
               <Route path="/branch-relations/:branchId" element={<BranchRelationsPage />} />
               <Route path="/dts" element={<DtsPage />} />
               <Route path="/code-reviews" element={<CodeReviewsPage />} />
+              <Route path="/release-center/approval/:authorizationId?" element={<ReleaseApprovalPage />} />
               <Route element={<OwnerConsoleRoute />}>
               <Route path="/branch-topology" element={<BranchTopologyPage />} />
               <Route path="/overview" element={<OverviewPage />} />
