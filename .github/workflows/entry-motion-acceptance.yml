@@ -8,35 +8,49 @@ on:
         default: visual
 permissions:
   contents: read
+env:
+  VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
 jobs:
-  public-media-readback:
+  full-browser-regression:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
+      options: --init --shm-size=1g
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 7c82dd337e57c9f40814dfd2eaac1326e083242b
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify public preview revision, HTML, bundles, and media hashes
+      - name: Prepare bundles with frozen dependencies
         run: |
-          node --input-type=module <<'JS'
-          import { readFile, writeFile } from 'node:fs/promises';
-          import { waitForEntryPreviews } from './e2e/entry-preview-readiness.mjs';
-          const json = async path => JSON.parse(await readFile(path, 'utf8'));
-          const target = await json('e2e/fixtures/entry-preview.json');
-          const gatewayAssets = await json('e2e/fixtures/media/gateway-portrait-cdn.json');
-          const ready = await waitForEntryPreviews({
-            map: target.mapUrl, gateway: target.gatewayUrl, gatewayAssets,
-            expectedCommit: '7c82dd337e57c9f40814dfd2eaac1326e083242b',
-            timeoutMs: 90_000, retryMs: 5_000,
-          });
-          await writeFile('preview-readiness.json', JSON.stringify(ready, null, 2));
-          for (const app of ready.apps) console.log(app.app, app.commit, app.media.length, app.bundle);
-          JS
+          pnpm -C cds/web install --frozen-lockfile
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C cds/web typecheck
+          pnpm -C cds/web build
+          pnpm -C llmgw/web build
+          pnpm -C e2e typecheck
+      - name: Run the existing browser suite on its dedicated runner
+        env:
+          SELECTED_ENTRY_BROWSER: ${{ matrix.browser }}
+        run: |
+          test "$(id -u)" -eq 0
+          test "$HOME" = /github/home
+          chown 0:0 /github/home
+          pnpm -C e2e exec playwright test -c admin-operations.config.ts --project "$SELECTED_ENTRY_BROWSER" --workers=2
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: entry-public-media-readback
-          path: preview-readiness.json
-          if-no-files-found: error
+          name: entry-full-browser-${{ matrix.browser }}
+          path: work/compat/
+          retention-days: 14
