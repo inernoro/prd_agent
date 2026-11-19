@@ -1997,15 +1997,10 @@ check_design_runtime_after_deploy() {
   if wait_for_design_runtime_readiness; then
     return 0
   fi
-  if design_runtime_degraded; then
-    if [ "$force_external" = "1" ]; then
-      echo "WARN: 强制发布放行设计服务的业务就绪检查。" >&2
-      return 0
-    fi
-    if [ "$design_before_degraded" = "1" ] && [ "$design_in_scope" = "0" ]; then
-      echo "WARN: 设计服务的就绪故障在本次发布前已存在，继续发布。" >&2
-      return 0
-    fi
+  # /healthz/ready 验证容器内的浏览器、镜像资源和引擎兼容性，属于运行时检查。
+  if [ "$design_before_degraded" = "1" ] && [ "$design_in_scope" = "0" ] && design_runtime_degraded; then
+    echo "WARN: 设计引擎的就绪故障在本次发布前已存在，继续发布。" >&2
+    return 0
   fi
   return 1
 }
@@ -2014,7 +2009,7 @@ design_in_scope=1
 design_before_degraded=0
 if design_runtime_degraded; then
   design_before_degraded=1
-  echo "WARN: 发布前设计服务业务就绪检查已异常。"
+  echo "WARN: 发布前设计引擎就绪检查已异常。"
 fi
 
 if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then

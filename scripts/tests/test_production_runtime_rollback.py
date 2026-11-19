@@ -90,6 +90,23 @@ test ! -e "$TRAP_LOG"
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(log.read_text().splitlines(), ["outer-exit"])
 
+    def test_force_does_not_pass_a_new_design_engine_failure(self):
+        start = DEPLOY.index("wait_for_design_runtime_readiness() {")
+        end = DEPLOY.index("\ndesign_in_scope=1", start)
+        command = DEPLOY[start:end] + r'''
+wait_for_design_runtime_readiness() { return 1; }
+design_runtime_degraded() { return 0; }
+check_design_runtime_after_deploy
+'''
+        for baseline, affected, expected in (("0", "1", 1), ("1", "1", 1), ("1", "0", 0)):
+            with self.subTest(baseline=baseline, affected=affected):
+                result = subprocess.run(
+                    ["sh", "-euc", command],
+                    env=dict(os.environ, force_external="1", design_before_degraded=baseline, design_in_scope=affected),
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
     def test_failed_rollback_keeps_private_checkpoint(self):
         start = DEPLOY.index("release_exit() {")
         end = DEPLOY.index("\nreuse_static_dist=", start)
