@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PORTRAIT_ASSETS } from '../src/components/entry/portraitMotionAsset.ts';
-import { PORTRAIT_ASSETS as MAP_PORTRAIT_ASSETS } from '../../../prd-admin/src/components/effects/portraitMotionAsset.ts';
+import { createPortraitAssets } from '../src/components/entry/portraitMotionAsset.ts';
+import { createPortraitAssets as createMapPortraitAssets } from '../../../prd-admin/src/components/effects/portraitMotionAsset.ts';
 import { samplePortrait as gateway } from '../src/components/entry/portraitTimeline.ts';
 import { samplePortrait as map } from '../../../prd-admin/src/components/effects/portraitTimeline.ts';
 
@@ -11,6 +11,10 @@ const readJson = path => JSON.parse(readFileSync(new URL(path, import.meta.url),
 test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材同源', () => {
   for (let frame = 0; frame <= 432; frame++) assert.deepEqual(gateway(frame / 60), map(frame / 60));
   const runtime = readJson('../../../e2e/fixtures/media/gateway-portrait-cdn.json');
+  const origin = new URL(runtime.dark.open.url).origin;
+  const assets = createPortraitAssets(origin);
+  const alternateOrigin = 'https://media.example.com';
+  const alternateAssets = createPortraitAssets(` ${alternateOrigin}/ `);
   const sources = readJson('../../../.design/map-cinematic-entry/portrait-cdn-sources.json');
   const night = readJson('../../../e2e/fixtures/media/portrait-motion.source.json');
   assert.equal(night.authoringMethod, 'imagegen-edgedrawing-optical-flow');
@@ -19,9 +23,10 @@ test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材�
   const distinctUrls = new Set();
   for (const theme of ['dark', 'light']) {
     for (const [plate, expected] of Object.entries(runtime[theme])) {
-      const url = new URL(PORTRAIT_ASSETS[theme][plate]);
+      const url = new URL(assets[theme][plate]);
       assert.equal(url.href, expected.url);
-      assert.equal(url.origin, 'https://cfi.miduo.org');
+      assert.equal(url.origin, origin);
+      assert.equal(alternateAssets[theme][plate], `${alternateOrigin}${url.pathname}`);
       assert.ok(url.pathname.includes(expected.sha256.slice(0, 16)), '文件名固定到内容哈希');
       assert.ok(expected.bytes > 0);
       distinctUrls.add(url.href);
@@ -34,7 +39,8 @@ test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材�
   assert.equal(sources.daylightSelectedEdit.durationSeconds, runtime.light.motion.durationSeconds);
   assert.equal(sources.daylightSelectedEdit.openingPosterSha256, runtime.light.opening.sha256);
   assert.equal(sources.daylightSelectedEdit.settledPosterSha256, runtime.light.open.sha256);
-  assert.deepEqual(MAP_PORTRAIT_ASSETS, PORTRAIT_ASSETS.dark);
+  assert.deepEqual(createMapPortraitAssets(origin), assets.dark);
+  assert.deepEqual(createMapPortraitAssets(` ${alternateOrigin}/ `), alternateAssets.dark);
   assert.equal(runtime.dark.motion.sha256, night.sha256);
   assert.equal(runtime.dark.open.sha256, night.sourceImages['companion.webp']);
   assert.equal(runtime.dark.closed.sha256, night.sourceImages['companion-sleep.webp']);

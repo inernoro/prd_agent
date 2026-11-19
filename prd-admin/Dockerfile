@@ -23,6 +23,7 @@ COPY . .
 # Build the app — increase heap to handle the large dependency tree.
 # 4096 而非 2048：GitHub Actions runner（7GB）下 2048 上限会在 vite build 时
 # OOM（exit 134）。CI 预构建（branch-image.yml）依赖此镜像构建成功。
+ARG VITE_ENTRY_MEDIA_CDN_ORIGIN
 RUN NODE_OPTIONS='--max-old-space-size=4096' pnpm run build
 
 # ── Stage 2: serve ────────────────────────────────────────────────────────────

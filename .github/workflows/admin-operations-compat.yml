@@ -79,6 +79,8 @@ jobs:
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
           echo "PULSE_SERVER=$PULSE_SERVER" >> "$GITHUB_ENV"
       - name: Build the actual frontend bundles
+        env:
+          VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
         run: |
           pnpm -C cds/web typecheck
           pnpm -C cds/web build
