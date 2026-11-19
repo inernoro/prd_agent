@@ -860,9 +860,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const watermarkName = articleChoice
     ? articleWatermarkId === 'none' ? '不加水印' : articleChoice.watermark.name
     : watermarkStatus.hasActiveConfig ? watermarkStatus.activeName || '已启用' : '不加水印';
-  const watermarkPreview = !articleWatermarkId || articleWatermarkId === watermarkStatus.activeId
-    ? watermarkStatus.activePreviewUrl
-    : watermarkOptions?.find(option => option.id === articleWatermarkId)?.previewUrl;
+  const watermarkId = articleWatermarkId === 'none' ? undefined : articleWatermarkId ?? watermarkStatus.activeId;
+  const watermarkUpdatedAt = watermarkId === watermarkStatus.activeId
+    ? watermarkStatus.activeUpdatedAt
+    : watermarkOptions?.find(option => option.id === watermarkId)?.updatedAt;
   useEffect(() => {
     if (articleWatermarkId && articleWatermarkId !== 'none' && articleWatermarkId !== watermarkStatus.activeId) {
       void loadWatermarkOptions();
@@ -894,7 +895,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         return;
       }
       setWatermarkStatus(target
-        ? { hasActiveConfig: true, activeId: target.id, activeName: target.name || target.text, activePreviewUrl: target.previewUrl }
+        ? { hasActiveConfig: true, activeId: target.id, activeName: target.name || target.text, activeUpdatedAt: target.updatedAt }
         : { hasActiveConfig: false });
       await loadWatermarkOptions();
     } finally {
@@ -1143,7 +1144,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           hasActiveConfig: true,
           activeId: config.id,
           activeName: config.name || config.text,
-          activePreviewUrl: config.previewUrl,
+          activeUpdatedAt: config.updatedAt,
         });
       } else {
         setWatermarkStatus({ hasActiveConfig: false });
@@ -3483,7 +3484,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <span className="lit-settings-label"><SlidersHorizontal size={16} aria-hidden /><span>生成设置</span></span>
                 <span className="lit-settings-value">{positionStrategyLabel}</span>
                 <LiterarySettingsSummary writingModel={effectiveChatModel?.actualModelId} imageModel={effectiveModel?.actualModelId}
-                  watermarkName={watermarkName} watermarkPreview={watermarkPreview}
+                  watermarkName={watermarkName} watermarkId={watermarkId} watermarkUpdatedAt={watermarkUpdatedAt}
                   position={positionStrategy} positionLabel={positionStrategyLabel} />
                 <ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
               </summary>
