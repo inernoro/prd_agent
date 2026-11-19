@@ -5,6 +5,7 @@ import type { HostedSiteCommentDto } from '@/services/real/webPages';
 import { getUserAvatarUrl } from '@/lib/avatar';
 import { annotationPreviewText } from './annotationPreviewText';
 import { placeAnnotationBubble, placeAnnotationRail } from './annotationBubblePlacement';
+import { clamp as clampRail, connectCard, layoutCards, railMotion, routeWheel } from './annotationRailLayout';
 import '@/styles/hosted-review-margin.css';
 
 type Point = { left: number; top: number };
@@ -41,19 +42,18 @@ function useRailSelectionMotion(layer: { current: HTMLElement | null }, snapshot
     motion.current.frame = requestAnimationFrame(() => {
       const margin = layer.current;
       if (!margin) return;
-      const options = { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)' };
       margin.querySelectorAll<HTMLElement>('[data-placement="right"]').forEach(card => {
         const before = from.tops.get(card.dataset.bubbleId!);
         const after = card.offsetTop;
         if (before === undefined || Math.abs(before - after) < 1 || !card.animate) return;
-        const intersects = (top: number) => top + card.offsetHeight > snapshot.offset && top < snapshot.offset + margin.clientHeight;
-        if (!intersects(before) || !intersects(after)) return;
-        motion.current.animations.push(card.animate([{ transform: `translateY(${before - after}px)` }, { transform: 'none' }], options));
+        const intersects = (top: number) => top + card.offsetHeight > 0 && top < margin.clientHeight;
+        if (!intersects(before) && !intersects(after)) return;
+        motion.current.animations.push(card.animate([{ transform: `translateY(${before - after}px)` }, { transform: 'none' }], railMotion));
       });
       const connector = margin.querySelector<SVGElement>('[data-active-connector]');
       if (motion.current.animations.length && connector?.animate) {
         // The new line attaches to the settled card. Keep it out of the old position.
-        motion.current.animations.push(connector.animate([{ opacity: 0 }, { opacity: 1 }], { delay: 200, duration: 100, fill: 'backwards' }));
+        motion.current.animations.push(connector.animate([{ opacity: 0 }, { opacity: 1 }], { delay: railMotion.duration, duration: 40, fill: 'backwards' }));
       }
     });
   });
@@ -65,12 +65,14 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
   const canvas = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const scrollDocument = annotations.scrollDocument;
+  const getDocumentScroll = annotations.getDocumentScroll;
   const dock = useRef<HTMLElement>(null);
   const autoPositions = useRef(new Map<string, CachedPlacement>());
   const replies = useRef(new Map<string, MarginReply>());
   const [, refreshReplies] = useReducer((revision: number) => revision + 1, 0);
   const [positions, setPositions] = useState<Record<string, Point>>({});
   const [scrollTop, setScrollTop] = useState(0);
+  const [railOffset, setRailOffset] = useState(0);
   const [geometry, setGeometry] = useState<Size & { dockHeight: number; cards: Record<string, Size> }>({ width: 0, height: 0, dockHeight: 0, cards: {} });
   const indexed = useMemo(() => {
     let number = 0;
@@ -115,21 +117,31 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     return () => observer.disconnect();
   }, [visible, key, annotations.activeId, docked]);
 
-  const rail = placeAnnotationRail(wide ? entries.flatMap(({ item }) => {
-    const size = geometry.cards[item.id];
-    return size && !positions[item.id] ? [{ id: item.id, top: item.rect.top, height: size.height }] : [];
-  }) : [], geometry.height, annotations.activeId, dualColumn);
+  const attached = wide ? entries.filter(({ item }) => geometry.cards[item.id] && !positions[item.id]) : [];
+  const rail = placeAnnotationRail(dualColumn ? [] : attached.map(({ item }) => ({
+    id: item.id, top: item.rect.top, height: geometry.cards[item.id].height,
+  })), geometry.height, annotations.activeId);
+  const railLayout = dualColumn ? layoutCards({
+    anchors: attached.map(({ item: { id, rect }, number }) => ({ id, n: number, top: rect.top, bottom: rect.top + rect.height, left: rect.left })),
+    heights: Object.fromEntries(attached.map(({ item: { id } }) => [id, geometry.cards[id].height])),
+    selectedId: annotations.activeId,
+    viewport: { top: 0, bottom: geometry.height },
+    railLeft: marginLeft,
+  }) : null;
+  const alignedCards = new Map(railLayout?.cards.map(card => [card.id, card]));
+  const above = railLayout?.overflow.above ?? 0, below = railLayout?.overflow.below ?? 0;
+  const shift = clampRail(railOffset, -above, below);
+  const canScrollRail = above > 0 || below > 0 || rail.contentHeight > geometry.height;
 
-  // Scrolling on the margin is only needed when this viewport's annotations do not fit.
+  // Legacy embeds use the native scroller. The V4 rail can overflow both edges
+  // without translating the selected card or moving either scrollbar.
   const maxScroll = rail.contentHeight - geometry.height;
-  const offset = Math.min(scrollTop, maxScroll);
   const selectedHeight = annotations.activeId ? geometry.cards[annotations.activeId]?.height : undefined;
-  // Only a new selection, a card resizing, or a window resize can reveal a
-  // card automatically. Anchor geometry arriving from a scroll frame cannot.
+  const offset = Math.min(scrollTop, maxScroll);
   useLayoutEffect(() => {
     const margin = scroller.current;
     const id = annotations.activeId;
-    if (!id || !margin || !selectedHeight) return;
+    if (dualColumn || !id || !margin || !selectedHeight) return;
     const card = Array.from(margin.querySelectorAll<HTMLElement>('[data-bubble-id]')).find(el => el.dataset.bubbleId === id);
     if (!card || card.dataset.placement !== 'right') return;
     if (card.offsetTop >= margin.scrollTop && card.offsetTop + card.offsetHeight <= margin.scrollTop + margin.clientHeight) return;
@@ -137,17 +149,14 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     const last = Math.max(first - Math.max(0, margin.clientHeight - 20 - card.offsetHeight), 0);
     const next = Math.max(last, Math.min(first, margin.scrollTop));
     if (Math.abs(next - margin.scrollTop) < 1) return;
-    if (dualColumn && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches && margin.scrollTo) {
-      margin.scrollTo({ top: next, behavior: 'smooth' });
-    } else {
-      margin.scrollTop = next;
-      setScrollTop(margin.scrollTop);
-    }
+    margin.scrollTop = next;
+    setScrollTop(margin.scrollTop);
   }, [annotations.activeId, dualColumn, geometry.height, selectedHeight]);
+  useLayoutEffect(() => { setRailOffset(0); }, [annotations.activeId, dualColumn, visible]);
 
   useLayoutEffect(() => {
     const margin = scroller.current;
-    if (!visible || !dualColumn || !margin || !scrollDocument) return;
+    if (!visible || !dualColumn || !margin) return;
     const wheel = (event: WheelEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
       // Scroll an open replies list or textarea before scrolling the document.
@@ -156,11 +165,17 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
           && (event.deltaY > 0 ? node.scrollTop < node.scrollHeight - node.clientHeight - 1 : node.scrollTop > 0)) return;
       }
       const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? margin.clientHeight : 1;
-      if (event.cancelable && scrollDocument(event.deltaY * unit)) event.preventDefault();
+      const delta = clampRail(event.deltaY * unit, -margin.clientHeight, margin.clientHeight);
+      const body = getDocumentScroll?.() ?? { top: 0, max: 0 };
+      const next = routeWheel(delta, body, shift, { above, below });
+      if (!event.cancelable) return;
+      event.preventDefault();
+      if (next.bodyDelta) scrollDocument?.(next.bodyDelta);
+      if (next.railTop !== shift) setRailOffset(next.railTop);
     };
     margin.addEventListener('wheel', wheel, { passive: false });
     return () => margin.removeEventListener('wheel', wheel);
-  }, [scrollDocument, dualColumn, visible]);
+  }, [getDocumentScroll, scrollDocument, dualColumn, visible, shift, above, below]);
 
   const candidate = annotations.dualColumn && !annotations.enabled && !annotations.draftAnchor
     && annotations.discussionActions?.canReply ? annotations.selectionCandidate : null;
@@ -207,7 +222,9 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
       placement = { side: 'dock', left: Math.round((geometry.width - size.width) / 2),
         top: geometry.height - geometry.dockHeight + 6 };
     } else if (size && wide) {
-      placement = { side: 'right', left: marginLeft, top: rail.tops.get(item.id) ?? 10 };
+      const aligned = alignedCards.get(item.id);
+      placement = aligned ? { side: 'right', left: aligned.x, top: aligned.top - shift }
+        : { side: 'right', left: marginLeft, top: rail.tops.get(item.id) ?? 10 };
     } else if (size) {
       placement = stable.get(item.id);
       if (!placement) {
@@ -225,7 +242,7 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     return { ...entry, size, placement };
   });
   useRailSelectionMotion(scroller, dualColumn && visible ? {
-    active: annotations.activeId, documentTop: annotations.documentScrollTop ?? null, offset,
+    active: annotations.activeId, documentTop: annotations.documentScrollTop ?? null, offset: shift,
     tops: new Map(placed.flatMap(({ item, placement }) => placement?.side === 'right' ? [[item.id, placement.top]] : [])),
   } : null);
   // Keep the gutter even when every anchor has scrolled out of the iframe.
@@ -253,24 +270,45 @@ export function AnnotationBubble({ annotations, hidden = false }: { annotations:
     </section>}
     <div ref={canvas} className="annotation-bubble-canvas" aria-label="页面批注气泡" data-review-margin={dualColumn ? '' : undefined}
       style={dualColumn && annotations.column?.paper ? { '--review-margin-paper': annotations.column.paper } as CSSProperties : undefined}>
-      <div className="annotation-bubble-scroll" ref={scroller} onScroll={event => setScrollTop(event.currentTarget.scrollTop)}
-        tabIndex={maxScroll > 0 ? 0 : undefined} aria-label={maxScroll > 0 ? '滚动查看更多页边批注' : undefined}>
+      <div className="annotation-bubble-scroll" ref={scroller} onScroll={event => { if (!dualColumn) setScrollTop(event.currentTarget.scrollTop); }}
+        tabIndex={canScrollRail ? 0 : undefined} aria-label={canScrollRail ? '滚动查看更多页边批注' : undefined}
+        onKeyDown={event => {
+          if (!dualColumn || event.target !== event.currentTarget) return;
+          const page = geometry.height * .9;
+          const next = { Home: -above, End: below, PageUp: shift - page, PageDown: shift + page, ArrowUp: shift - 48, ArrowDown: shift + 48 }[event.key];
+          if (next == null) return;
+          event.preventDefault();
+          setRailOffset(clampRail(next, -above, below));
+        }}
+        onFocus={event => {
+          if (!dualColumn || event.target === event.currentTarget || !event.target.matches(':focus-visible')) return;
+          const target = event.target.getBoundingClientRect(), view = event.currentTarget.getBoundingClientRect();
+          const over = Math.min(0, target.top - view.top - 4) || Math.max(0, target.bottom - view.bottom + 4);
+          if (over) setRailOffset(clampRail(shift + over, -above, below));
+        }}>
         <div className="annotation-bubble-space" style={{ minHeight: rail.contentHeight }}>
-          {(maxScroll > 0 || (dualColumn && annotations.documentScrollTop != null)) && <div className="annotation-bubble-scroll-area" style={dualColumn ? { left: marginLeft, right: 'auto', width: 264 } : undefined} />}
+          {(canScrollRail || (dualColumn && annotations.documentScrollTop != null)) && <div className="annotation-bubble-scroll-area" style={dualColumn ? { left: marginLeft, right: 'auto', width: 264 } : undefined} />}
           {wide && <svg className="annotation-bubble-connectors" aria-hidden="true">
             {placed.map(({ item, placement, size }) => {
               if (!placement || !size || (placement.side !== 'moved' && annotations.activeId !== item.id)) return null;
               const { rect } = item;
-              const x = dualColumn && annotations.column ? Math.min(annotations.column.right + 10, marginLeft - 8)
+              const x = dualColumn && annotations.column ? Math.min(annotations.column.right + 10, marginLeft - 2)
                 : Math.min(rect.left + rect.width + 8, geometry.width - marginWidth + 5);
               const start = Math.max(0, rect.top) + offset;
               const end = Math.min(geometry.height, rect.top + rect.height) + offset;
-              const from = (start + end) / 2, to = placement.top + (dualColumn ? 20 : 27);
-              if (dualColumn && (to < offset || to > offset + geometry.height)) return null;
-              const left = placement.left > x;
-              const target = left ? placement.left - 1 : placement.left + size.width + 1;
-              return <g key={item.id} data-active-connector={annotations.activeId === item.id ? '' : undefined} className={placement.side === 'moved' ? 'is-moved' : undefined}>
-                <path d={`M${x - 4},${start}h4V${end}h-4 M${x},${from} C${x + 16},${from} ${target + (left ? -16 : 16)},${to} ${target},${to}`} />
+              const detached = placement.side === 'moved';
+              const from = (start + end) / 2;
+              const link = dualColumn ? connectCard({ pinX: x, pinY: from }, { x: placement.left, top: placement.top,
+                bottom: placement.top + size.height, width: size.width }, detached) : null;
+              const target = link?.x ?? (placement.left > x ? placement.left - 1 : placement.left + size.width + 1);
+              const to = link?.y ?? placement.top + 27;
+              if (dualColumn && (start >= end || to < 0 || to > geometry.height)) return null;
+              const elbow = from + (to - from) / 2;
+              const bend = Math.sign(target - x) * Math.min(16, Math.abs(target - x) / 2);
+              const curve = link?.side === 'top' || link?.side === 'bottom' ? `${x},${elbow} ${target},${elbow}`
+                : `${x + bend},${from} ${target - bend},${to}`;
+              return <g key={item.id} data-active-connector={annotations.activeId === item.id ? '' : undefined} className={detached ? 'is-moved' : undefined}>
+                <path d={`M${x - 4},${start}h4V${end}h-4 M${x},${from} C${curve} ${target},${to}`} />
                 <circle cx={target} cy={to} r={2} />
               </g>;
             })}

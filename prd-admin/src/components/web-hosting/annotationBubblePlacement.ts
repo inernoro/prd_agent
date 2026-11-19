@@ -44,29 +44,9 @@ export function placeAnnotationBubble(anchor: AnnotationRect, size: { width: num
 }
 
 /** Pack the margin in reading order. When it fits, leave whitespace near the original anchors. */
-export function placeAnnotationRail(cards: { id: string; top: number; height: number }[], height: number, activeId: string | null, keepSelectionByAnchor = false) {
+export function placeAnnotationRail(cards: { id: string; top: number; height: number }[], height: number, activeId: string | null) {
   if (!cards.length) return { tops: new Map<string, number>(), contentHeight: height };
   const gap = 8, edge = 10;
-  if (keepSelectionByAnchor) {
-    const selected = cards.findIndex(card => card.id === activeId);
-    const pivot = Math.max(0, selected);
-    const tops = cards.map(card => Math.max(edge, card.top - 9));
-    if (selected >= 0) tops[pivot] = Math.min(tops[pivot], Math.max(edge, height - cards[pivot].height - edge));
-    for (let index = pivot - 1; index >= 0; index--) {
-      tops[index] = Math.min(tops[index], tops[index + 1] - cards[index].height - gap);
-    }
-    for (let index = pivot + 1; index < cards.length; index++) {
-      tops[index] = Math.max(tops[index], tops[index - 1] + cards[index - 1].height + gap);
-    }
-    // The prototype packs backward from the selected card and forward after it.
-    // The iframe overlay has a clip at the toolbar, so translate the layout down
-    // to this edge once. Keep the translation out of the scroller's position.
-    const leadingSpace = Math.max(0, edge - tops[0]);
-    return {
-      tops: new Map(cards.map((card, index) => [card.id, tops[index] + leadingSpace])),
-      contentHeight: Math.max(height, tops.at(-1)! + leadingSpace + cards.at(-1)!.height + edge),
-    };
-  }
   let bottom = edge;
   const stack = cards.map(card => {
     const start = bottom;

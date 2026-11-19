@@ -17,6 +17,7 @@
 }
 
 .annotation-bubble-canvas[data-review-margin]::before { background: var(--review-margin-paper, var(--bg-base)); }
+.annotation-bubble-canvas[data-review-margin] .annotation-bubble-scroll { overflow: clip; }
 /* The iframe already supplies live geometry. Only selection animates the cards. */
 .annotation-bubble-canvas[data-review-margin] :is(.annotation-bubble-scroll, .annotation-bubble-space, .annotation-bubble-connectors, .annotation-bubble-connectors *) {
   transition: none;

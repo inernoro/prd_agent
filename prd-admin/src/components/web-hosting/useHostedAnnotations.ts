@@ -176,6 +176,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const notifyFrame = useCallback(() => {
     connected.current = false; documentScroll.current = null; setDocumentScrollTop(null); setReady(false); initRef.current();
   }, []);
+  const getDocumentScroll = useCallback(() => documentScroll.current, []);
   const scrollDocument = useCallback((delta: number) => {
     const scroll = documentScroll.current, frame = frameRef.current;
     if (!frame?.contentWindow || !scroll || !Number.isFinite(delta) || !delta) return false;
@@ -228,10 +229,10 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   }, [frameRef, siteId, nonce]);
   return { enabled, ready, connectionChecked, displayMode, setDisplayMode, preview, previews, allPreviewsHidden, hasHiddenPreviews: allPreviewsHidden || dismissedPreviewIds.size > 0, hideAllPreviews, showAllPreviews, dismissPreview, openThread, draftAnchor, activeId, missingIds, threads,
     select, clearDraft, focus, notifyFrame, setThreads, setEnabled, setActiveId, dualColumn, anchorLocations, readingId, column, headerTints,
-    bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection, documentScrollTop, scrollDocument };
+    bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection, documentScrollTop, getDocumentScroll, scrollDocument };
 }
 
 type Annotations = ReturnType<typeof useHostedAnnotations>;
 type ReaderExtras = 'dualColumn' | 'anchorLocations' | 'readingId' | 'column' | 'headerTints' | 'bindDiscussionActions' | 'discussionActions'
-  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'scrollDocument';
+  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'getDocumentScroll' | 'scrollDocument';
 export type HostedAnnotations = Omit<Annotations, ReaderExtras> & Partial<Pick<Annotations, ReaderExtras>>;
