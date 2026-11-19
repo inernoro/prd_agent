@@ -73,6 +73,11 @@ public static class McpBuiltinTools
     public const string ScopeMarketplaceRead = "marketplace.skills:read";
     public const string ScopeDocStoreRead = "document-store:read";
     public const string ScopeDocStoreWrite = "document-store:write";
+    private static readonly McpToolParam WebWriteRequestId = new()
+    {
+        Name = "clientRequestId", In = "body",
+        Description = "为本次写入生成一个不超过 256 字符的操作标识，重试时复用。使用 HTTP Idempotency-Key 的客户端可以省略。",
+    };
 
     /// <summary>
     /// 按真实 HTTP 请求（方法 + 路径）反查内置工具。
@@ -668,6 +673,7 @@ public static class McpBuiltinTools
                 new() { Name = "visibility", In = "body", EnumValues = new[] { "owner-only", "logged-in", "public" }, Description = "谁能打开；省略默认 owner-only" },
                 new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "仅在用户明确要求对外分享时传 true；public/logged-in 必填 true" },
                 new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Description = "用户确认所列私有资料对外后，传核查返回的 fingerprint；不可自行代替用户确认" },
+                WebWriteRequestId,
             },
         },
 
@@ -675,12 +681,13 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_get_upload_info",
-            Description = "取得原文件上传地址和十分钟短期凭证。客户端用 multipart 的 file 字段直接上传本地 ZIP、图片、HTML、PDF、Markdown或视频，不要重写文件或转base64。凭证只允许所选上传路径；传 siteId 则更新原站，不新建站。",
+            Description = "取得原文件上传地址和十分钟短期凭证。更新原站前先查 map_web_get_page_settings。更新对外站点须由客户端取得发布授权，用户确认本次对外更新后传 confirmedExposure=true。客户端用 multipart 上传原文件与返回的必填表单字段。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "GET", PathTemplate = "/api/open/web-pages/upload-info",
             Params = new List<McpToolParam>
             {
                 new() { Name = "siteId", In = "query", Type = "string", Required = false, Description = "要替换的原站 ID；新建时不传" },
+                new() { Name = "confirmedExposure", In = "query", Type = "boolean", Description = "用户已确认更新该站点的对外内容时传 true，并照回执附带 multipart 字段" },
             },
         },
         new McpToolDef
@@ -721,7 +728,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_update_page",
-            Description = "修改原站标题、描述、文件夹或标签，不新建站。改文件请调用 map_web_get_upload_info(siteId) 后上传原文件。",
+            Description = "修改原站标题、描述、文件夹或标签。修改对外站点标题或描述需要客户端发布授权和用户确认；只改内部文件夹和标签只需网页写权限。改文件请使用 map_web_get_upload_info。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "PATCH", PathTemplate = "/api/open/web-pages/pages/{siteId}",
             Params = new List<McpToolParam>
@@ -731,6 +738,44 @@ public static class McpBuiltinTools
                 new() { Name = "description", In = "body", Type = "string", Required = false, Description = "新描述" },
                 new() { Name = "folder", In = "body", Type = "string", Required = false, Description = "新文件夹，空串表示未分类" },
                 new() { Name = "tags", In = "body", Type = "array", Required = false, Description = "新标签数组", ItemsType = "string" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "用户已确认更新对外标题或描述时传 true" },
+                WebWriteRequestId,
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_page_settings",
+            Description = "在更新前读取有编辑权的站点的可见性、评论开关和当前客户端权限。externalAccess 包括现有对外分享；canUpdateContent 为 false 时先给用户可选方案。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/pages/{siteId}/settings",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Required = true, Description = "原站 ID" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_organization",
+            Description = "读取本人站点使用的文件夹和标签。在移动站点或修改标签前核对已有名称。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/organization",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "limit", In = "query", Type = "integer", Description = "文件夹及标签各自的上限，1–100，默认 50" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_set_comments_enabled",
+            Description = "打开或关闭站点评论，沿用创建者或编辑者权限。对外站点开启评论需要客户端发布授权和用户确认，关闭只需网页写权限。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "PATCH", PathTemplate = "/api/open/web-pages/pages/{siteId}/comments-enabled",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Required = true, Description = "原站 ID" },
+                new() { Name = "enabled", In = "body", Type = "boolean", Required = true, Description = "是否开启评论" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "用户同意在该对外站点开启评论时传 true" },
+                WebWriteRequestId,
             },
         },
         new McpToolDef
@@ -745,6 +790,7 @@ public static class McpBuiltinTools
                 new() { Name = "visibility", In = "body", Type = "string", Required = true, Description = "private 或 public" },
                 new() { Name = "confirmedExposure", In = "body", Type = "boolean", Required = false, Description = "用户明确要求公开才传 true" },
                 new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Type = "string", Required = false, Description = "用户确认当前私有资料后传核查返回的 fingerprint" },
+                WebWriteRequestId,
             },
         },
         new McpToolDef
@@ -782,6 +828,7 @@ public static class McpBuiltinTools
                 new() { Name = "expiresInDays", In = "body", Type = "integer", Required = false, Description = "0 永久；1-365天，从现在重算" },
                 new() { Name = "confirmedExposure", In = "body", Type = "boolean", Required = false, Description = "用户明确要求对外分享才传 true" },
                 new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Type = "string", Required = false, Description = "用户确认私有资料后传核查指纹" },
+                WebWriteRequestId,
             },
         },
         new McpToolDef
@@ -796,6 +843,7 @@ public static class McpBuiltinTools
                 new() { Name = "extendDays", In = "body", Type = "integer", Required = true, Description = "延长天数，1-365" },
                 new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "延长对外分享前，用户明确要求时传 true" },
                 new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Description = "用户确认当前私有资料后传核查指纹" },
+                WebWriteRequestId,
             },
         },
         new McpToolDef
@@ -808,6 +856,7 @@ public static class McpBuiltinTools
             {
                 new() { Name = "shareId", In = "path", Type = "string", Required = true, Description = "分享 ID" },
                 new() { Name = "reason", In = "body", Type = "string", Required = false, Description = "撤销原因，可选" },
+                WebWriteRequestId,
             },
         },
 
