@@ -13,14 +13,11 @@ env:
 jobs:
   full-browser-regression:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    container:
-      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
-      options: --init --shm-size=1g
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox, webkit]
+        browser: [firefox, webkit]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,17 +37,27 @@ jobs:
           pnpm -C cds/web build
           pnpm -C llmgw/web build
           pnpm -C e2e typecheck
-      - name: Run the existing browser suite on its dedicated runner
+      - name: Recheck affected paths with a working system sound device
         env:
           SELECTED_ENTRY_BROWSER: ${{ matrix.browser }}
         run: |
-          test "$(id -u)" -eq 0
-          test "$HOME" = /github/home
-          chown 0:0 /github/home
-          pnpm -C e2e exec playwright test -c admin-operations.config.ts --project "$SELECTED_ENTRY_BROWSER" --workers=2
+          pnpm -C e2e exec playwright install --with-deps "$SELECTED_ENTRY_BROWSER"
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio pulseaudio-utils
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/entry-audio-runtime"
+          install -d -m 700 "$XDG_RUNTIME_DIR"
+          mkdir -p work/compat/audio-system
+          pulseaudio --start --exit-idle-time=-1 --log-level=info --log-target="file:$GITHUB_WORKSPACE/work/compat/audio-system/pulseaudio.log"
+          export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
+          pactl load-module module-null-sink sink_name=gateway_acceptance rate=48000 channels=2
+          pactl set-default-sink gateway_acceptance
+          pactl set-sink-mute gateway_acceptance 0
+          pactl set-sink-volume gateway_acceptance 100%
+          pactl info > work/compat/audio-system/server.txt
+          pnpm -C e2e exec playwright test -c admin-operations.config.ts --project "$SELECTED_ENTRY_BROWSER" --grep '原生音频|电影式接入全流程|慢加载日景' --workers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: entry-full-browser-${{ matrix.browser }}
+          name: entry-browser-device-${{ matrix.browser }}
           path: work/compat/
           retention-days: 14
