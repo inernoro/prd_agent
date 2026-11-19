@@ -544,6 +544,23 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     }
 
     [Theory]
+    [InlineData("service", "4", 1)]
+    [InlineData("cds-session", null, 1)]
+    [InlineData("cds-session", "2", 2)]
+    [InlineData("cds-session", "99", 8)]
+    [InlineData("cds-session", "0", 1)]
+    public void Dispatch_OnlySessionContainersCanClaimMoreThanOneSlot(string transport, string? limit, int expected)
+    {
+        HostedSiteEditRunWorker.ResolveParallelism(Config(new()
+        {
+            [OpenDesignTransportResolver.TransportKey] = transport,
+            [OpenDesignTransportResolver.BaseUrlKey] = BaseUrl,
+            [OpenDesignTransportResolver.ApiKeyKey] = ApiKey,
+            ["DesignRuntime:OpenDesign:SessionConcurrency"] = limit,
+        })).ShouldBe(expected);
+    }
+
+    [Theory]
     [InlineData("service")]
     [InlineData("grpc")]
     public void Transport_ExplicitServiceOrUnknownValueNeverSilentlyFallsBack(string transport)

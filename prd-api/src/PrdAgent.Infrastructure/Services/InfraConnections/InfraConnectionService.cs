@@ -621,6 +621,11 @@ public class InfraConnectionService : IInfraConnectionService
 
     private string ResolveMapBaseUrl()
     {
+        if (!string.IsNullOrWhiteSpace(_configuration["CDS_PROJECT_ID"])
+            && Uri.TryCreate(_configuration["CDS_PREVIEW_URL"], UriKind.Absolute, out var preview)
+            && preview.Scheme == Uri.UriSchemeHttps && preview.UserInfo.Length == 0)
+            return preview.GetLeftPart(UriPartial.Authority);
+
         var ctx = _httpContextAccessor.HttpContext;
         if (ctx == null) return "(unknown)";
         var req = ctx.Request;

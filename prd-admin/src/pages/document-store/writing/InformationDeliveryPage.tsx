@@ -384,7 +384,7 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
         setSelectedFile(result.data.files[0].path);
     });
     return () => { active = false; };
-  }, [runId, selectedFile, done, reconnect, fileRevision, hasRun]);
+  }, [runId, selectedFile, done, reconnect, fileRevision, hasRun, run?.deliveryWaitingSince]);
 
   const sendCorrection = async () => {
     const text = correction.trim();
@@ -486,9 +486,7 @@ function DeliveryExecution({ runId, storeId }: { runId: string; storeId: string 
       </section>
       <section className={cardClass} aria-label="文件预览">
         {readyMedia.length > 0 && <DeliveryMediaPreview storeId={storeId} runId={runId} media={readyMedia} />}
-        {content ? selectedFile === 'index.html'
-          ? <DeliveryHtml content={content} />
-          : <CoursePreview content={content} />
+        {content ? <InformationDeliveryWorkFile path={selectedFile} content={content} />
           : <p className="flex items-center gap-2 text-sm text-token-secondary"><BookOpen size={16} /> {done ? '选择文件后预览' : '工作区写出首个文件后即可预览'}</p>}
       </section>
     </div>
@@ -714,6 +712,10 @@ function DeliveryMediaPreview({ storeId, runId, media, course }: {
 function DeliveryHtml({ content }: { content: string }) {
   return <iframe title="网页预览" className="min-h-[60vh] w-full rounded-lg border border-token-subtle" sandbox=""
     referrerPolicy="no-referrer" srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">${content}`} />;
+}
+
+export function InformationDeliveryWorkFile({ path, content }: { path: string; content: string }) {
+  return path === 'index.html' ? <DeliveryHtml content={content} /> : <CoursePreview content={content} />;
 }
 
 function DeliverySources({ sources }: { sources: InformationDeliverySource[] }) {

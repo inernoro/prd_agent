@@ -93,7 +93,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             var now = DateTime.UtcNow;
             var filters = Builders<DesignArtifactRun>.Filter;
             var active = filters.Where(item => item.Id == runId && item.DeploymentSlug == DeploymentScope.Current
-                && item.DeliveryTemplateId != null && item.Status == RunStatuses.Running
+                && item.DeliveryTemplateId != null && !item.DeliverySessionContainers && item.Status == RunStatuses.Running
                 && item.LeaseExpiresAt > now && item.LeaseOwnerId == lease && item.CancelRequestedAt == null);
             var current = await _db.DesignArtifactRuns.Find(active).SingleOrDefaultAsync(ct);
             if (current == null) return NotFound(new { error = "delivery_task_inactive" });
@@ -181,6 +181,15 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 : 0;
             List<InformationDeliveryPreviewFile>? deliveryFiles = null;
             string? deliveryLease = null;
+            var delivery = _db == null ? null : await _db.DesignArtifactRuns.Find(item => item.Id == runId
+                    && item.DeploymentSlug == DeploymentScope.Current && item.DeliverySessionContainers)
+                .Project(item => new { item.DeliveryTurnRevision }).FirstOrDefaultAsync(ct);
+            if (delivery != null)
+            {
+                if (revision is < 0 or >= 4096) return BadRequest(new { error = "preview_invalid" });
+                deliveryLease = await _broker.ValidateDeliveryFeedbackAsync(runId, ReadBearerToken(), ct);
+                revision += delivery.DeliveryTurnRevision * 4096;
+            }
             if (document.RootElement.TryGetProperty("deliveryFiles", out var rawDeliveryFiles))
             {
                 deliveryLease = await _broker.ValidateDeliveryFeedbackAsync(runId, ReadBearerToken(), ct);

@@ -125,6 +125,9 @@ internal static class OpenDesignFailureMessage
     /// </summary>
     private static readonly (string[] Codes, string Reason, string NextStep)[] KnownRemoteCodes =
     [
+        (["workspace_transfer_origin_mismatch", "partner_origin_required"],
+            "当前预览入口与 CDS 授权来源不一致",
+            "请管理员在该预览配置专用 CDS 授权，并核对回传地址后重试"),
         (["design_output_quality_rejected", "design_browser_quality_rejected", "design_output_invalid", "design_output_missing",
           "design_output_too_large", "design_output_too_many_files"],
             "生成出来的页面没有通过发布前的校验",

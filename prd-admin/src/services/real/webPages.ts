@@ -200,6 +200,7 @@ export interface DesignArtifactRunSummary {
   deliveryCorrectionRevision?: number;
   deliveryAppliedRevision?: number;
   deliveryCorrectionsClosedAt?: string | null;
+  deliveryWaitingSince?: string | null;
   deliveryCorrections?: { id: string; revision: number; text: string; receivedAt: string }[] | null;
   deliveryResultHash?: string | null;
   deliveryMediaFormats?: InformationDeliveryFormat[] | null;
@@ -1818,10 +1819,14 @@ export function findInformationDeliveryRequest(requestId: string) {
   return apiRequest<{ runId: string } | null>(`/api/design-artifacts/information-delivery/requests/${encodeURIComponent(requestId)}`);
 }
 
-export function readInformationDeliveryFiles(runId: string, path?: string) {
-  const query = path ? `?${new URLSearchParams({ path })}` : '';
+export function readInformationDeliveryFiles(runId: string, path?: string, signal?: AbortSignal, checkpoint = false) {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  if (checkpoint) params.set('checkpoint', 'true');
+  const query = params.size ? `?${params}` : '';
   return apiRequest<{ files: InformationDeliveryFile[]; content: string | null }>(
     `/api/design-artifacts/information-delivery/runs/${encodeURIComponent(runId)}/files${query}`,
+    { signal, timeoutMs: 8000 },
   );
 }
 
@@ -1864,7 +1869,7 @@ export function downloadInformationDeliveryMedia(storeId: string, runId: string,
 export function addInformationDeliveryCorrection(runId: string, input: { id: string; revision: number; text: string }) {
   return apiRequest<DesignArtifactRunSummary>(
     `/api/design-artifacts/information-delivery/runs/${encodeURIComponent(runId)}/corrections`,
-    { method: 'POST', body: input },
+    { method: 'POST', headers: { 'Idempotency-Key': input.id }, body: input },
   );
 }
 
@@ -2020,6 +2025,12 @@ export type OpenDesignRun = Pick<DesignArtifactRunSummary,
   deliveryStoreId?: string | null;
   deliveryOriginStoreId?: string | null;
   failureCode?: string | null;
+  hasDeliveryWorkspace?: boolean;
+  workspaceId?: string | null;
+  deploymentScope?: string | null;
+  deliveryRuntimeSessionId?: string | null;
+  deliveryWaitingSince?: string | null;
+  deliveryCheckpointHash?: string | null;
 };
 
 export interface OpenDesignRunEvent {

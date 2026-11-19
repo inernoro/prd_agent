@@ -341,6 +341,7 @@ public sealed class DesignArtifactsController : ControllerBase
             SourceSurface = sourceSurface,
             DeliveryTemplateId = deliveryTemplate?.Id,
             DeliveryTemplateVersion = deliveryTemplate?.Version,
+            DeliverySessionContainers = isDelivery && OpenDesignTransportResolver.Resolve(_configuration).Transport == OpenDesignTransport.CdsSession,
             DeliveryOriginStoreId = isDelivery ? TrimOptional(request.DeliveryOriginStoreId, 128) : null,
             DeliveryRequestFingerprint = deliveryFingerprint,
             DeliveryMediaFormats = deliveryFormats,
@@ -462,13 +463,17 @@ public sealed class DesignArtifactsController : ControllerBase
             run.ResolvedModel, run.ResolvedPlatform, run.ProducedArtifactSiteId, run.DeliveryOriginStoreId,
             run.DeliveryArchive == null || run.DeliveryArchive.ArtifactId == null || run.DeliveryArchive.ArtifactId == ""
                 ? null : run.DeliveryArchive.StoreId,
-            run.RuntimeFailure == null ? run.LifecycleFailureCode : run.RuntimeFailure.Code);
+            run.RuntimeFailure == null ? run.LifecycleFailureCode : run.RuntimeFailure.Code,
+            run.DeliveryTemplateId != null, run.WorkspaceRef == null ? null : run.WorkspaceRef.WorkspaceId,
+            run.DeploymentSlug, run.DeliveryRuntimeSessionId, run.DeliveryWaitingSince,
+            run.DeliveryCheckpoint == null ? null : run.DeliveryCheckpoint.PackageSha256);
 
     private sealed record OpenDesignRunOverview(
         string RunId, string? Title, string Operation, string SourceSurface, string Status, string Phase, string PhaseCode,
         DateTime CreatedAt, DateTime? LastProgressAt, DateTime? FirstPreviewAt, DateTime? CompletedAt,
         string? ResolvedModel, string? ResolvedPlatform, string? ProducedArtifactSiteId, string? DeliveryOriginStoreId,
-        string? DeliveryStoreId, string? FailureCode);
+        string? DeliveryStoreId, string? FailureCode, bool HasDeliveryWorkspace, string? WorkspaceId, string? DeploymentScope,
+        string? DeliveryRuntimeSessionId, DateTime? DeliveryWaitingSince, string? DeliveryCheckpointHash);
 
     /// <summary>
     /// 从服务端发现当前用户的活动或可重开任务。客户端显式请求时，也可返回最近一条
@@ -693,6 +698,7 @@ public sealed class DesignArtifactsController : ControllerBase
             var admission = HttpContext.RequestServices.GetRequiredService<TaskAdmissionService>();
             var execution = await admission.AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
             restarted.TaskPermitId = execution.PermitId;
+            restarted.DeliverySessionContainers = OpenDesignTransportResolver.Resolve(_configuration).Transport == OpenDesignTransport.CdsSession;
         }
         if (isPresentationQualityRepair)
         {
@@ -789,7 +795,8 @@ public sealed class DesignArtifactsController : ControllerBase
 
     [HttpGet("information-delivery/runs/{runId}/files")]
     public async Task<IActionResult> ReadDeliveryFiles(
-        string runId, [FromQuery] string? path, [FromServices] IDesignArtifactWorkspaceBroker broker, CancellationToken ct)
+        string runId, [FromQuery] string? path, [FromServices] IDesignArtifactWorkspaceBroker broker, CancellationToken ct,
+        [FromQuery] bool checkpoint = false)
     {
         var actor = this.GetRequiredUserId();
         var run = await _db.FindDesignArtifactRunHistoryAsync(
@@ -810,6 +817,19 @@ public sealed class DesignArtifactsController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "本任务的原上传文件已不可读取"));
         }
         Response.Headers.CacheControl = "no-store";
+        if (run.DeliveryCheckpoint != null && (checkpoint
+            || (run.Status != RunStatuses.Done && (run.Status != RunStatuses.Running || run.LatestPreviewHtml == null))))
+        {
+            var draft = await broker.ReadDeliveryCheckpointAsync(run);
+            var checkpointFiles = draft.Files.Where(IsDeliveryReadableFile).ToList();
+            var checkpointFile = checkpointFiles.SingleOrDefault(file => file.Path == path);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                files = checkpointFiles.Select(file => new { file.Path, file.MediaType, draft = true }),
+                content = checkpointFile == null ? null : Encoding.UTF8.GetString(Convert.FromBase64String(checkpointFile.ContentBase64)),
+                checkpointHash = run.DeliveryCheckpoint.PackageSha256,
+            }));
+        }
         if (run.Status != RunStatuses.Done)
         {
             var drafts = run.DeliveryPreviewFiles ?? new List<InformationDeliveryPreviewFile>();
@@ -883,8 +903,9 @@ public sealed class DesignArtifactsController : ControllerBase
             || !Guid.TryParseExact(request.Id, "D", out var id) || id == Guid.Empty)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "纠正内容、编号或版本无效"));
         var user = this.GetRequiredUserId();
-        var scope = Builders<DesignArtifactRun>.Filter.Where(item => item.Id == runId && item.UserId == user
-            && item.DeploymentSlug == DeploymentScope.Current && item.DeliveryTemplateId != null);
+        var filters = Builders<DesignArtifactRun>.Filter;
+        var scope = filters.Where(item => item.Id == runId && item.UserId == user && item.DeliveryTemplateId != null)
+            & (filters.Eq(item => item.DeploymentSlug, DeploymentScope.Current) | ParkedDeliveryInThisBranch());
         var current = await _db.DesignArtifactRuns.Find(scope).SingleOrDefaultAsync(ct);
         if (current == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "信息传递任务不存在"));
@@ -898,23 +919,69 @@ public sealed class DesignArtifactsController : ControllerBase
             return Conflict(ApiResponse<object>.Fail("DELIVERY_CORRECTION_CONFLICT", "已收到其他纠正或达到本轮上限，请刷新任务"));
 
         var correction = new InformationDeliveryCorrection(id.ToString("D"), request.Revision + 1, text, DateTime.UtcNow);
-        var filters = Builders<DesignArtifactRun>.Filter;
         var revision = filters.Eq(item => item.DeliveryCorrectionRevision, request.Revision);
         if (request.Revision == 0) revision |= filters.Exists(item => item.DeliveryCorrectionRevision, false);
-        var active = scope & revision
+        var active = scope & revision & filters.Eq(item => item.DeploymentSlug, current.DeploymentSlug)
             & filters.In(item => item.Status, new[] { RunStatuses.Queued, RunStatuses.Running })
             & filters.Eq(item => item.DeliveryCorrectionsClosedAt, null)
             & filters.Eq(item => item.CancelRequestedAt, null);
-        var updated = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
-            active,
-            Builders<DesignArtifactRun>.Update.Set(item => item.DeliveryCorrectionRevision, correction.Revision)
-                .Push(item => item.DeliveryCorrections, correction),
+        var update = Builders<DesignArtifactRun>.Update.Set(item => item.DeliveryCorrectionRevision, correction.Revision)
+            .Push(item => item.DeliveryCorrections, correction);
+        var resumesWorkspace = current.DeliveryWaitingSince != null;
+        if (current.DeliverySessionContainers)
+        {
+            if (!AdminPermissionMiddleware.HasVerifiedPermission(HttpContext, AdminPermissionCatalog.DocumentStoreWrite))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要知识库写权限才能继续信息传递任务"));
+            try { await CheckDeliverySourcesAsync(current, user, ct); }
+            catch (DesignKnowledgeSnapshotException ex) { return KnowledgeReferenceFailure(ex); }
+            catch (DesignRunInputException)
+            {
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "本任务的原上传文件已不可读取"));
+            }
+            var admission = HttpContext.RequestServices.GetRequiredService<TaskAdmissionService>();
+            var execution = await admission.AdmitAuthenticatedPaidBranchAsync(HttpContext, ct);
+            active &= filters.Eq(item => item.Status, current.Status)
+                & filters.Eq(item => item.DeliveryWaitingSince, current.DeliveryWaitingSince);
+            if (resumesWorkspace)
+            {
+                active &= filters.Eq(item => item.LeaseOwnerId, null) & filters.Ne(item => item.DeliveryCheckpoint, null);
+                update = update.Set(item => item.DeploymentSlug, DeploymentScope.Current)
+                    .Set(item => item.TaskPermitId, execution.PermitId)
+                    .Set(item => item.DeliveryWaitingSince, null)
+                    .Set(item => item.PhaseCode, DesignArtifactPhaseCodes.Queued)
+                    .Set(item => item.Phase, "作者裁定已保存，等待空闲工作区")
+                    .Set(item => item.UpdatedAt, DateTime.UtcNow);
+            }
+            else
+            {
+                update = update.Set(item => item.DeliveryNextPermitId, execution.PermitId);
+            }
+        }
+        var updated = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(active, update,
             new FindOneAndUpdateOptions<DesignArtifactRun> { ReturnDocument = ReturnDocument.After }, ct);
-        if (updated != null) return Ok(ApiResponse<object>.Ok(ToDto(updated)));
+        if (updated != null)
+        {
+            if (resumesWorkspace)
+            {
+                try { await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None); }
+                catch (Exception ex) { _logger?.LogWarning(ex, "已保存作者裁定，等待队列恢复 run={RunId}", runId); }
+            }
+            return Ok(ApiResponse<object>.Ok(ToDto(updated)));
+        }
         var latest = await _db.DesignArtifactRuns.Find(scope).SingleOrDefaultAsync(ct);
         if (latest?.DeliveryCorrections?.Any(item => item.Id == correction.Id && item.Text == text) == true)
             return Ok(ApiResponse<object>.Ok(ToDto(latest)));
         return Conflict(ApiResponse<object>.Fail("DELIVERY_CORRECTION_CONFLICT", "任务已变化，请刷新后重试"));
+    }
+
+    private static FilterDefinition<DesignArtifactRun> ParkedDeliveryInThisBranch()
+    {
+        var filters = Builders<DesignArtifactRun>.Filter;
+        var stableScope = DeploymentScope.CurrentDurable;
+        if (stableScope == null) return filters.Where(item => false);
+        return filters.Regex(item => item.DeploymentSlug, "^" + System.Text.RegularExpressions.Regex.Escape(stableScope + "::revision::"))
+            & filters.Where(item => item.DeliverySessionContainers && item.Status == RunStatuses.Queued
+                && item.DeliveryWaitingSince != null && item.DeliveryCheckpoint != null && item.LeaseOwnerId == null);
     }
 
     [HttpPost("runs/{runId}/cancel")]
@@ -1435,11 +1502,13 @@ public sealed class DesignArtifactsController : ControllerBase
         run.DeliveryCorrectionRevision,
         run.DeliveryAppliedRevision,
         run.DeliveryCorrectionsClosedAt,
+        run.DeliveryWaitingSince,
+        run.DeliveryRuntimeSessionId,
         run.DeliveryCorrections,
         run.DeliveryArchive,
         run.DeliveryMediaFormats,
         run.DeliveryMediaFiles,
-        deliveryResultHash = run.DeliveryTemplateId == null ? null : run.WorkspaceResultSha256,
+        deliveryResultHash = run.DeliveryTemplateId == null || run.Status != RunStatuses.Done ? null : run.WorkspaceResultSha256,
         run.Runtime,
         // 实际执行的模型与平台：刷新或恢复未完成任务时，面板靠它显示「{模型} · {平台}」，
         // 而不是只显示运行时名字（ai-model-visibility §4）。

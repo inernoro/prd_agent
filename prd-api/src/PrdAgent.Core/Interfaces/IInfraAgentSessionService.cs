@@ -563,16 +563,19 @@ public class InfraAgentSessionException : Exception
     /// 与「连不上」——前者要升级 CDS，后者要修连接，给用户的下一步完全不同。
     /// </summary>
     public int? UpstreamStatus { get; }
+    public string? UpstreamCode { get; }
 
     public InfraAgentSessionException(
         string errorCode,
         string message,
         int httpStatus = 400,
-        int? upstreamStatus = null)
+        int? upstreamStatus = null,
+        string? upstreamCode = null)
         : base(message)
     {
         ErrorCode = errorCode;
         HttpStatus = httpStatus;
         UpstreamStatus = upstreamStatus;
+        UpstreamCode = upstreamCode;
     }
 }

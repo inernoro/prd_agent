@@ -2515,7 +2515,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return token;
     }
 
-    internal readonly record struct CdsCreateSessionResponse(JsonElement? Item, string? ErrorMessage, bool? Succeeded = null);
+    internal readonly record struct CdsCreateSessionResponse(JsonElement? Item, string? ErrorMessage, bool? Succeeded = null,
+        string? ErrorCode = null);
     internal readonly record struct CdsSessionStopRequest(HttpMethod Method, string Path);
     internal enum CdsCreateReplayDisposition
     {
@@ -3182,7 +3183,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             if (!uncertainStatus)
                 throw new InfraAgentSessionException(InfraAgentSessionErrorCodes.CdsRequestFailed,
                     BuildCdsRequestFailureMessage((int)response.StatusCode, string.Empty),
-                    StatusCodes.Status502BadGateway);
+                    StatusCodes.Status502BadGateway, (int)response.StatusCode);
             if (recoverAsync == null) throw CreateCdsCreatePendingException();
             createResponse = new CdsCreateSessionResponse(null, null);
         }
@@ -3213,7 +3214,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             createResponse = new CdsCreateSessionResponse(recovered,
                 succeeded ? null : ReadCdsCreateFailureMessage(recovered.Value), succeeded);
         }
-        EnsureCdsCreateResponseHasIdentity(createResponse);
+        EnsureCdsCreateResponseHasIdentity(createResponse, (int)response.StatusCode);
 
         // Once CDS has returned a remote resource identity, persistence is recovery work rather
         // than request work. Complete it under an independent bounded token before surfacing a
@@ -3224,7 +3225,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.CdsRequestFailed,
                 createResponse.ErrorMessage ?? "CDS 创建会话失败，远端资源清理待重试",
-                StatusCodes.Status502BadGateway);
+                StatusCodes.Status502BadGateway, (int)response.StatusCode, createResponse.ErrorCode);
         }
         return createResponse;
     }
@@ -3235,13 +3236,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         await action(recoveryCts.Token);
     }
 
-    private static void EnsureCdsCreateResponseHasIdentity(CdsCreateSessionResponse createResponse)
+    private static void EnsureCdsCreateResponseHasIdentity(CdsCreateSessionResponse createResponse, int upstreamStatus)
     {
         var item = createResponse.Item
             ?? throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.CdsRequestFailed,
                 createResponse.ErrorMessage ?? "CDS 创建会话失败，未返回可追踪的远端会话",
-                StatusCodes.Status502BadGateway);
+                StatusCodes.Status502BadGateway, upstreamStatus, createResponse.ErrorCode);
         if (string.IsNullOrWhiteSpace(GetString(item, "id")))
         {
             throw new InfraAgentSessionException(
@@ -3297,7 +3298,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     GetString(error, "message"),
                     "CDS 创建会话失败");
             }
-            return new CdsCreateSessionResponse(item, errorMessage);
+            var errorCode = success ? null : ReadCdsErrorCode(text);
+            return new CdsCreateSessionResponse(item, errorMessage,
+                ErrorCode: errorCode != null && Regex.IsMatch(errorCode, "^[A-Za-z0-9_.-]{1,80}$") ? errorCode : null);
         }
         catch (JsonException)
         {

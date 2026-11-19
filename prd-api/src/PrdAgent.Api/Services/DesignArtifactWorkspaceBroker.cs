@@ -63,6 +63,7 @@ public interface IDesignArtifactWorkspaceBroker
 
     Task<ParsedDesignWorkspaceResult> ReadResultAsync(string runId, CancellationToken ct);
     Task<ParsedDesignWorkspaceResult> ReadDeliveryResultAsync(DesignArtifactRun authorizedRun);
+    Task<ParsedDesignWorkspaceResult> ReadDeliveryCheckpointAsync(DesignArtifactRun authorizedRun);
 
     Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct);
 
@@ -154,7 +155,17 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         var publicBaseUrl = ResolvePublicBaseUrl(_configuration)
             ?? throw new InvalidOperationException("远程设计入口尚未配置，请先补齐当前 CDS 预览地址后重试");
         var expiresAt = DateTime.UtcNow.Add(TicketTtl);
-        var currentFiles = await ReadCurrentFilesAsync(run, currentHtml, ct);
+        IReadOnlyList<DesignWorkspaceFile>? currentFiles;
+        if (run.DeliveryCheckpoint != null)
+        {
+            var checkpoint = await ReadDeliveryCheckpointAsync(run);
+            currentHtml = checkpoint.IndexHtml;
+            currentFiles = MaterializeCurrentPresentationFiles(checkpoint);
+        }
+        else
+        {
+            currentFiles = await ReadCurrentFilesAsync(run, currentHtml, ct);
+        }
         IReadOnlyList<DesignWorkspaceFile>? originals = null;
         if (run.KnowledgeOriginals != null)
         {
@@ -185,7 +196,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 package.BaseRevision,
                 expiresAt,
                 updatedAt,
-                CancellationToken.None))
+                CancellationToken.None, run.DeliverySessionContainers ? run.DeliveryCorrectionRevision : null))
             throw new DesignArtifactRunLeaseLostException(run.Id);
 
         // 先把精确内容寻址 key 通过租约 CAS 记入 Run，再写对象。
@@ -217,6 +228,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         run.WorkspaceRejectedResultCleanupAttemptedAt = null;
         run.WorkspaceRejectedResultCleanupError = null;
         run.RuntimeModelCallCount = 0;
+        run.DeliveryTurnRevision = run.DeliveryCorrectionRevision;
         run.RuntimeTicketExpiresAt = expiresAt;
         run.UpdatedAt = updatedAt;
 
@@ -463,10 +475,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
 
     public async Task<byte[]> ReadInputPackageAsync(string runId, string token, CancellationToken ct)
     {
-        ValidateTicket(token, runId, "workspace");
+        var ticket = ValidateTicket(token, runId, "workspace");
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
+        if (run.DeliverySessionContainers && ticket.WorkspaceLeaseOwner != run.LeaseOwnerId)
+            throw new UnauthorizedAccessException("本轮工作区的资料授权已失效");
         if (string.IsNullOrWhiteSpace(run.WorkspaceInputAssetKey))
             throw new InvalidOperationException("设计任务输入尚未准备完成，请稍后重试");
         var bytes = await _storage.TryDownloadBytesAsync(run.WorkspaceInputAssetKey, CancellationToken.None)
@@ -511,14 +525,18 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
         if (run.DeliveryTemplateId != null && (ticket.WorkspaceLeaseOwner != run.LeaseOwnerId
-            || run.DeliveryCorrectionsClosedAt == null || run.DeliveryAppliedRevision != run.DeliveryCorrectionRevision))
+            || (!run.DeliverySessionContainers
+                && (run.DeliveryCorrectionsClosedAt == null || run.DeliveryAppliedRevision != run.DeliveryCorrectionRevision))))
             throw new UnauthorizedAccessException("交付工作区未完成当前轮次的作者纠正");
         var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
             packageBytes,
             runId,
             run.WorkspaceBaseRevision ?? string.Empty,
             MaxOutputBytes);
-        if (run.DeliveryTemplateId != null) InformationDeliveryTemplates.EnsureReadyCourse(parsed);
+        if (run.DeliverySessionContainers)
+            InformationDeliveryTemplates.ValidateSessionCourse(parsed, DeliverySessionCorrectionIds(run));
+        else if (run.DeliveryTemplateId != null)
+            InformationDeliveryTemplates.EnsureReadyCourse(parsed);
         var packageSha = Sha256Hex(packageBytes);
         var manifestSha = parsed.Files.Single(file => file.Path == "manifest.json").Sha256;
         if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
@@ -728,18 +746,30 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         return ReadRetainedResultAsync(authorizedRun);
     }
 
-    private async Task<ParsedDesignWorkspaceResult> ReadRetainedResultAsync(DesignArtifactRun run)
+    public Task<ParsedDesignWorkspaceResult> ReadDeliveryCheckpointAsync(DesignArtifactRun authorizedRun)
     {
-        if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+        var checkpoint = authorizedRun.DeliveryCheckpoint;
+        if (!authorizedRun.DeliverySessionContainers || checkpoint == null)
+            throw new InvalidOperationException("任务还没有已保存的工作区草稿");
+        return ReadStoredResultAsync(authorizedRun.Id, checkpoint.AssetKey, checkpoint.PackageSha256, checkpoint.BaseRevision);
+    }
+
+    private Task<ParsedDesignWorkspaceResult> ReadRetainedResultAsync(DesignArtifactRun run) =>
+        ReadStoredResultAsync(run.Id, run.WorkspaceResultAssetKey, run.WorkspaceResultSha256, run.WorkspaceBaseRevision);
+
+    private async Task<ParsedDesignWorkspaceResult> ReadStoredResultAsync(
+        string runId, string? assetKey, string? resultSha, string? baseRevision)
+    {
+        if (string.IsNullOrWhiteSpace(assetKey))
             throw new InvalidOperationException("远程设计任务没有提交可用页面，请重试");
-        var bytes = await _storage.TryDownloadBytesAsync(run.WorkspaceResultAssetKey, CancellationToken.None)
+        var bytes = await _storage.TryDownloadBytesAsync(assetKey, CancellationToken.None)
             ?? throw new InvalidOperationException("远程设计结果暂时无法读取，请稍后重试");
-        if (!FixedEquals(run.WorkspaceResultSha256, Sha256Hex(bytes)))
+        if (!FixedEquals(resultSha, Sha256Hex(bytes)))
             throw new InvalidOperationException("远程设计结果校验失败，请重新发起任务");
         var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
                 bytes,
-                run.Id,
-                run.WorkspaceBaseRevision ?? string.Empty,
+                runId,
+                baseRevision ?? string.Empty,
                 MaxOutputBytes);
         return parsed with
         {
@@ -749,10 +779,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
 
     public async Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct)
     {
-        ValidateTicket(token, runId, "model");
+        var ticket = ValidateTicket(token, runId, "model");
         var current = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(current);
+        if (current.DeliverySessionContainers && ticket.WorkspaceLeaseOwner != current.LeaseOwnerId)
+            throw new UnauthorizedAccessException("本轮工作区的模型授权已失效");
         var now = DateTime.UtcNow;
         // 只按凭证与任务租约准入；计数用于审计，不再承担额外次数预算门禁。
         var filter = BuildActiveWorkspaceFilter(runId, current.LeaseOwnerId, now);
@@ -768,10 +800,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
 
     public async Task<DesignArtifactRun> ValidateModelTicketAsync(string runId, string token, CancellationToken ct)
     {
-        ValidateTicket(token, runId, "model");
+        var ticket = ValidateTicket(token, runId, "model");
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
+        if (run.DeliverySessionContainers && ticket.WorkspaceLeaseOwner != run.LeaseOwnerId)
+            throw new UnauthorizedAccessException("本轮工作区的模型授权已失效");
         return run;
     }
 
@@ -801,16 +835,11 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         string baseRevision,
         DateTime ticketExpiresAt,
         DateTime updatedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? deliveryTurnRevision = null)
     {
         if (string.IsNullOrWhiteSpace(leaseOwner)) return false;
-        var write = await db.DesignArtifactRuns.UpdateOneAsync(
-            item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId
-                    && item.Status == RunStatuses.Running
-                    && item.LeaseOwnerId == leaseOwner
-                    && item.LeaseExpiresAt > updatedAt
-                    && item.WorkspaceInputAssetKey == null),
-            Builders<DesignArtifactRun>.Update
+        var fields = Builders<DesignArtifactRun>.Update
                 .Set(item => item.WorkspaceInputAssetKey, inputAssetKey)
                 .Set(item => item.WorkspaceInputSha256, inputSha256)
                 .Set(item => item.WorkspaceBaseRevision, baseRevision)
@@ -828,7 +857,16 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 .Set(item => item.WorkspaceRejectedResultCleanupError, null)
                 .Set(item => item.RuntimeModelCallCount, 0)
                 .Set(item => item.RuntimeTicketExpiresAt, ticketExpiresAt)
-                .Max(item => item.UpdatedAt, updatedAt),
+                .Max(item => item.UpdatedAt, updatedAt);
+        if (deliveryTurnRevision.HasValue)
+            fields = fields.Set(item => item.DeliveryTurnRevision, deliveryTurnRevision.Value);
+        var write = await db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId
+                    && item.Status == RunStatuses.Running
+                    && item.LeaseOwnerId == leaseOwner
+                    && item.LeaseExpiresAt > updatedAt
+                    && item.WorkspaceInputAssetKey == null),
+            fields,
             cancellationToken: ct);
         return write.ModifiedCount == 1;
     }
@@ -840,7 +878,11 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             purpose,
             expiresAt,
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(), TaskExecutionContext.Current,
-            purpose == "workspace" ? run.LeaseOwnerId : null)));
+            purpose == "workspace" || run.DeliverySessionContainers ? run.LeaseOwnerId : null)));
+
+    internal static string[] DeliverySessionCorrectionIds(DesignArtifactRun run) =>
+        (run.DeliveryCorrections ?? []).Where(item => item.Revision <= run.DeliveryTurnRevision)
+            .OrderBy(item => item.Revision).Select(item => item.Id).ToArray();
 
     public async Task<TaskExecutionIdentity> RestoreExecutionAsync(string runId, string token, CancellationToken ct)
     {
@@ -1140,10 +1182,14 @@ public static class DesignArtifactWorkspaceContract
     {
         var visibleTextOccurrenceConstraints = ExtractVisibleTextOccurrenceConstraints(run.Instruction);
         var uploadedSources = run.UploadedSources ?? new List<DesignUploadedSource>();
+        var corrections = run.DeliverySessionContainers
+            ? (run.DeliveryCorrections ?? []).OrderBy(item => item.Revision).ToArray()
+            : [];
+        var workspaceOperation = run.DeliveryCheckpoint == null ? run.Operation : DesignArtifactOperations.Edit;
         var factualSources = new List<string>();
         // 直接上传的文档和知识库条目一样落在 knowledge/ 下，CDS 按「有没有 knowledge/ 文件」核对这一项。
-        if (run.KnowledgeReferences.Count > 0 || uploadedSources.Count > 0) factualSources.Add("server-knowledge");
-        if (run.Operation == DesignArtifactOperations.Edit && !string.IsNullOrWhiteSpace(currentHtml))
+        if (run.KnowledgeReferences.Count > 0 || uploadedSources.Count > 0 || corrections.Length > 0) factualSources.Add("server-knowledge");
+        if (workspaceOperation == DesignArtifactOperations.Edit && !string.IsNullOrWhiteSpace(currentHtml))
             factualSources.Add("server-current-visible-content");
         var semantic = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -1214,20 +1260,40 @@ public static class DesignArtifactWorkspaceContract
                 currentFiles = currentFiles?.Select(file => new { file.Path, file.Sha256, file.Size, file.MediaType }),
                 originalFiles = originalFiles?.Select(file => new { file.Path, file.Sha256, file.Size, file.MediaType }),
             }, JsonOptions);
+        if (run.DeliverySessionContainers)
+            semantic = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                inputRevision = HashBytes(semantic),
+                run.DeliveryTemplateId,
+                run.DeliveryTemplateVersion,
+                draft = run.DeliveryCheckpoint?.PackageSha256,
+                corrections = corrections.Select(item => new { item.Id, item.Revision, item.Text }),
+            }, JsonOptions);
         var baseRevision = Convert.ToHexString(SHA256.HashData(semantic)).ToLowerInvariant();
         var files = new List<DesignWorkspaceFile>();
+        var workspaceInstruction = run.Instruction;
+        if (run.DeliverySessionContainers)
+        {
+            workspaceInstruction += "\n这轮生成结束前，把网页与课程实际写入 index.html 和 assets/delivery.json。"
+                + "若仍缺作者裁定，留下带来源的 openQuestions 和可读草稿并结束本轮，MAP 会交还执行位。";
+            if (run.DeliveryCheckpoint != null)
+                workspaceInstruction += "\n从 current/ 的已保存草稿继续，在可编辑副本中保留已经核实的内容与依据。";
+            if (corrections.Length > 0)
+                workspaceInstruction += "\n读取 knowledge/author-corrections.md。按编号应用本轮新增裁定，保留原条文并标出裁定位置。"
+                    + "保留草稿中已应用的裁定及其定位，保持原执行含义。课程 JSON 的 appliedCorrections 数组按顺序记录所有已写入的裁定 ID，各只出现一次。";
+        }
         var task = JsonSerializer.SerializeToUtf8Bytes(new
         {
             schemaVersion = DesignArtifactWorkspaceBroker.SchemaVersion,
             runId = run.Id,
             run.ArtifactType,
-            run.Operation,
+            operation = workspaceOperation,
             run.SourceSurface,
             input = new
             {
                 userSupplied = new
                 {
-                    instruction = run.Instruction,
+                    instruction = workspaceInstruction,
                     contentHash = run.UserSuppliedContentHash,
                     authority = DesignArtifactInputAuthorities.UserSupplied,
                 },
@@ -1457,6 +1523,13 @@ public static class DesignArtifactWorkspaceContract
             var item = uploadedSources[index];
             files.Add(ToFile(UploadedSourcePath(index, item), "text/markdown",
                 Encoding.UTF8.GetBytes(DesignRunInputAttachments.ToMarkdown(item))));
+        }
+        if (corrections.Length > 0)
+        {
+            var savedRevision = run.DeliveryCheckpoint?.AppliedRevision ?? 0;
+            var markdown = "# 本任务已收到的作者裁定\n\n" + string.Join("\n\n", corrections.Select(item =>
+                $"## 裁定 {item.Revision} · {(item.Revision <= savedRevision ? "已应用" : "本轮新增")}\n\nID: {item.Id}\n\n{item.Text}"));
+            files.Add(ToFile("knowledge/author-corrections.md", "text/markdown", Encoding.UTF8.GetBytes(markdown)));
         }
         if (referenceFiles != null) files.AddRange(referenceFiles);
         if (originalFiles != null) files.AddRange(originalFiles);

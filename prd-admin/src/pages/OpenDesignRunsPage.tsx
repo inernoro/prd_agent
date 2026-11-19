@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpRight } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/design/Button';
 import { DESIGN_PHASE_LABELS } from '@/components/web-hosting/siteGenerateProgress';
+import { InformationDeliveryWorkFile } from '@/pages/document-store/writing/InformationDeliveryPage';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  getDesignRuntimeCapabilities, listOpenDesignRuns, readOpenDesignRunEvents,
-  type OpenDesignRun, type OpenDesignRunEvent,
+  cancelDesignArtifactRun, getDesignRuntimeCapabilities, listOpenDesignRuns, readInformationDeliveryFiles, readOpenDesignRunEvents,
+  type InformationDeliveryFile, type OpenDesignRun, type OpenDesignRunEvent,
 } from '@/services/real/webPages';
 
 const refreshMs = 4000;
@@ -99,7 +101,7 @@ function OpenDesignRuns() {
                     })}>
                     <span className="flex items-start justify-between gap-3">
                       <span className="min-w-0 break-words text-sm font-medium">{taskName(run)}</span>
-                      <span className="shrink-0 text-xs text-token-secondary">{statusNames[run.status.toLowerCase()] ?? '状态未知'}</span>
+                    <span className="shrink-0 text-xs text-token-secondary">{run.deliveryWaitingSince ? '等待补答' : statusNames[run.status.toLowerCase()] ?? '状态未知'}</span>
                     </span>
                     <span className="mt-1 block text-xs text-token-secondary">{sourceNames[run.sourceSurface] ?? '设计'} · {displayTime(run.createdAt)}</span>
                   </button>
@@ -120,7 +122,12 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
   const [events, setEvents] = useState<OpenDesignRunEvent[]>();
   const [eventsError, setEventsError] = useState(false);
   const cursor = useRef(0);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelPending, setCancelPending] = useState(false);
+  const [cancelStatus, setCancelStatus] = useState('');
   const ongoing = !['done', 'error', 'cancelled'].includes(run.status.toLowerCase());
+  const cancellable = ['queued', 'running'].includes(run.status.toLowerCase());
+  const deploymentSha = run.deploymentScope?.match(/::revision::([a-f0-9]{7,64})$/i)?.[1];
   useEffect(() => {
     const controller = new AbortController();
     let timer: number;
@@ -164,6 +171,9 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
         <div><dt className="text-xs text-token-secondary">实际模型</dt><dd className="break-words">{run.resolvedModel ? [run.resolvedModel, run.resolvedPlatform].filter(Boolean).join(' · ') : '尚未读取'}</dd></div>
         <div><dt className="text-xs text-token-secondary">首次预览</dt><dd>{displayTime(run.firstPreviewAt)}</dd></div>
         <div><dt className="text-xs text-token-secondary">最新进展</dt><dd>{displayTime(run.completedAt || run.lastProgressAt)}</dd></div>
+        {run.workspaceId && <div><dt className="text-xs text-token-secondary">工作区编号</dt><dd className="break-all font-mono text-xs">{run.workspaceId}</dd></div>}
+        {run.deliveryRuntimeSessionId && <div><dt className="text-xs text-token-secondary">CDS 会话</dt><dd className="break-all font-mono text-xs">{run.deliveryRuntimeSessionId}</dd></div>}
+        {deploymentSha && <div><dt className="text-xs text-token-secondary">任务所属版本</dt><dd title={deploymentSha} className="font-mono text-xs">{deploymentSha.slice(0, 12)}</dd></div>}
         {run.failureCode && <div><dt className="text-xs text-token-secondary">失败代码</dt><dd className="break-all">{run.failureCode}</dd></div>}
       </dl>
       <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
@@ -171,7 +181,21 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
         {run.sourceSurface === 'knowledge-base' && originStore && (
           <Link to={`/document-store/${encodeURIComponent(originStore)}/delivery?run=${encodeURIComponent(run.runId)}`} className="underline">打开信息传递任务</Link>
         )}
+        {cancellable && !cancelOpen && !cancelPending && <Button variant="ghost" size="sm" onClick={() => setCancelOpen(true)}>取消任务</Button>}
       </div>
+      {cancellable && cancelOpen && <div className="flex flex-wrap items-center gap-2 text-sm" role="group" aria-label="确认取消任务">
+        <Button variant="secondary" size="sm" disabled={cancelPending} onClick={() => setCancelOpen(false)}>继续生成</Button>
+        <Button variant="ghost" size="sm" disabled={cancelPending} onClick={async () => {
+          setCancelPending(true);
+          const result = await cancelDesignArtifactRun(run.runId);
+          setCancelPending(false);
+          setCancelOpen(false);
+          setCancelStatus(result.success ? '取消请求已提交，等待工作区确认。' : result.error?.message || '暂时无法取消任务');
+        }}>{cancelPending ? '正在取消' : '确认取消'}</Button>
+      </div>}
+      {cancelStatus && <p role="status" className="text-sm text-token-secondary">{cancelStatus}</p>}
+      {run.hasDeliveryWorkspace && <WorkFiles runId={run.runId} ongoing={ongoing}
+        checkpointHash={run.deliveryCheckpointHash} waiting={!!run.deliveryWaitingSince} />}
       <div className="border-t border-token-subtle pt-3">
         <h3 className="text-sm font-semibold">执行记录</h3>
         {eventsError && <p className="mt-2 text-sm text-token-secondary" role="alert">暂时无法读取执行记录</p>}
@@ -186,4 +210,56 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
       </div>
     </section>
   );
+}
+
+function WorkFiles({ runId, ongoing, checkpointHash, waiting }: {
+  runId: string; ongoing: boolean; checkpointHash?: string | null; waiting: boolean;
+}) {
+  const [files, setFiles] = useState<InformationDeliveryFile[]>();
+  const [path, setPath] = useState<string>();
+  const [showCheckpoint, setShowCheckpoint] = useState(false);
+  const [opened, setOpened] = useState<{ path: string; content: string }>();
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: number;
+    const refresh = async () => {
+      const result = await readInformationDeliveryFiles(runId, path, controller.signal, showCheckpoint);
+      if (controller.signal.aborted) return;
+      if (result.success) {
+        setFiles(result.data.files);
+        setOpened(path && result.data.content ? { path, content: result.data.content } : undefined);
+        setError('');
+      } else {
+        setFiles(undefined);
+        setOpened(undefined);
+        setError(result.error?.message || '工作区文件暂不可读');
+      }
+      timer = window.setTimeout(() => void refresh(), ongoing ? refreshMs : 15_000);
+    };
+    void refresh();
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [runId, path, ongoing, showCheckpoint, waiting, checkpointHash]);
+
+  return <section className="space-y-2 border-t border-token-subtle pt-3" aria-label="工作区文件">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="text-sm font-semibold">工作区文件</h3>
+      {checkpointHash && !waiting && <Button variant="ghost" size="sm" aria-pressed={showCheckpoint} onClick={() => {
+        setOpened(undefined);
+        setShowCheckpoint((current) => !current);
+      }}>{showCheckpoint ? '返回当前文件' : '查看已保存草稿'}</Button>}
+    </div>
+    {checkpointHash && (waiting || showCheckpoint) && <p className="break-all text-xs text-token-secondary">
+      草稿版本 <span title={checkpointHash} className="font-mono">{checkpointHash.slice(0, 12)}</span>
+    </p>}
+    {error && <p role="alert" className="text-sm text-token-secondary">{error}</p>}
+    {!error && !files && <p className="text-sm text-token-secondary">正在读取工作区文件</p>}
+    {files?.length === 0 && <p className="text-sm text-token-secondary">{ongoing ? '写出首个文件后可预览。' : '任务没有可读取的文件。'}</p>}
+    {!!files?.length && <div className="flex flex-wrap gap-2">{files.map((file) => <Button key={file.path} variant="secondary" size="sm"
+      aria-pressed={path === file.path} onClick={() => setPath(file.path)}>
+      {file.path === 'index.html' ? '网页预览' : '教程与依据'}{file.draft && ' · 草稿'}
+    </Button>)}</div>}
+    {path && opened?.path === path && <InformationDeliveryWorkFile path={path} content={opened.content} />}
+  </section>;
 }

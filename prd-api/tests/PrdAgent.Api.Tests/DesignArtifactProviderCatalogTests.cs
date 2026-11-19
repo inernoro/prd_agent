@@ -1053,6 +1053,28 @@ public class DesignArtifactProviderCatalogTests
         Assert.Equal(0, reads);
     }
 
+    [Fact]
+    public async Task StartupNeverRetriesOrMislabelsAWorkspaceOriginRejection()
+    {
+        var reads = 0;
+        var creates = 0;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+                BuildSession(),
+                (_, _) => throw new InfraAgentSessionException(
+                    InfraAgentSessionErrorCodes.CdsRequestFailed, "workspace transfer URLs must use the authenticated MAP connection origin",
+                    502, 422, "workspace_transfer_origin_mismatch"),
+                _ => { reads++; return Task.FromResult<InfraAgentRuntimeProviderView?>(BuildProvider()); },
+                _ => { creates++; return Task.FromResult(BuildSession()); },
+                _ => Task.CompletedTask,
+                _ => { },
+                DateTime.UtcNow.AddSeconds(5), CancellationToken.None));
+        Assert.Equal(0, reads);
+        Assert.Equal(0, creates);
+        Assert.Contains("预览入口与 CDS 授权来源不一致", error.Message);
+        Assert.DoesNotContain("正在做能力自检", error.Message);
+    }
+
     private static InfraAgentRuntimeProviderView BuildProvider(
         bool verificationPending = false,
         bool healthy = true) => new(

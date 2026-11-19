@@ -44,6 +44,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     private readonly IRunQueue _queue;
     private readonly IRunEventStore _events;
     private readonly ILogger<HostedSiteEditRunWorker> _logger;
+    private readonly int _parallelism;
     private readonly string _instanceId = $"{Environment.MachineName}:{Guid.NewGuid():N}";
 
     public HostedSiteEditRunWorker(
@@ -51,21 +52,30 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IRunQueue queue,
         IRunEventStore events,
         ILogger<HostedSiteEditRunWorker> logger,
-        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null,
+        IConfiguration? configuration = null)
     {
         _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _events = events;
         _logger = logger;
+        _parallelism = configuration == null ? 1 : ResolveParallelism(configuration);
+    }
+
+    internal static int ResolveParallelism(IConfiguration configuration)
+    {
+        if (OpenDesignTransportResolver.Resolve(configuration).Transport != OpenDesignTransport.CdsSession)
+            return 1;
+        return Math.Clamp(configuration.GetValue<int?>("DesignRuntime:OpenDesign:SessionConcurrency") ?? 1, 1, 8);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var nextRecoveryAt = DateTime.MinValue;
+        var active = new List<Task>(_parallelism);
         while (!stoppingToken.IsCancellationRequested)
         {
-            string? runId = null;
             try
             {
                 if (DateTime.UtcNow >= nextRecoveryAt)
@@ -73,13 +83,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     await ReconcileAsync(stoppingToken);
                     nextRecoveryAt = DateTime.UtcNow + RecoveryInterval;
                 }
-                runId = await _queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.FromSeconds(1), stoppingToken);
+                active.RemoveAll(work => work.IsCompleted);
+                if (active.Count == _parallelism)
+                {
+                    await Task.WhenAny(Task.WhenAny(active), Task.Delay(1000, stoppingToken));
+                    continue;
+                }
+                var runId = await _queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.FromSeconds(1), stoppingToken);
                 if (string.IsNullOrWhiteSpace(runId))
                 {
                     await Task.Delay(250, stoppingToken);
                     continue;
                 }
-                await ProcessAsync(runId, CancellationToken.None);
+                active.Add(ProcessClaimedRunAsync(runId));
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -87,8 +103,21 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "设计产物 Run 执行失败 runId={RunId}", runId);
+                _logger.LogError(ex, "设计产物队列读取或恢复失败");
             }
+        }
+        await Task.WhenAll(active);
+    }
+
+    private async Task ProcessClaimedRunAsync(string runId)
+    {
+        try
+        {
+            await ProcessAsync(runId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "设计产物 Run 执行失败 runId={RunId}", runId);
         }
     }
 
@@ -139,9 +168,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         var revisions = scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>();
         var activityRecorder = scope.ServiceProvider.GetRequiredService<IActivityActionRecorder>();
         var knowledgeSnapshots = scope.ServiceProvider.GetRequiredService<IDesignKnowledgeSnapshotResolver>();
-        var executor = scope.ServiceProvider
-            .GetServices<IDesignArtifactExecutor>()
-            .FirstOrDefault(x => x.Runtime == run.Runtime && x.Supports(run.ArtifactType, run.Operation));
+        var executor = run.DeliverySessionContainers
+            ? scope.ServiceProvider.GetRequiredService<OpenDesignRemoteArtifactExecutor>()
+            : scope.ServiceProvider.GetServices<IDesignArtifactExecutor>()
+                .FirstOrDefault(x => x.Runtime == run.Runtime && x.Supports(run.ArtifactType, run.Operation));
 
         using var executionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var initialLeaseDeadline = run.LeaseExpiresAt ?? DateTime.UtcNow;
@@ -354,6 +384,15 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
 
             executionCts.Token.ThrowIfCancellationRequested();
+            if (run.DeliverySessionContainers)
+            {
+                if (verifiedFiles == null)
+                    throw new InvalidOperationException("CDS 未提交可校验的课程文件");
+                if (!await FinishDeliveryTurnAsync(db, run,
+                        new ParsedDesignWorkspaceResult(output.ToString(), verifiedFiles), publicLifecycle, projection, meta,
+                        executionCts.Token))
+                    return;
+            }
             if (run.DeliveryTemplateId != null && !await db.DesignArtifactRuns.Find(item => item.Id == run.Id
                     && item.LeaseOwnerId == leaseOwner && item.DeliveryCorrectionsClosedAt != null
                     && item.DeliveryAppliedRevision == item.DeliveryCorrectionRevision
@@ -637,6 +676,71 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             try { await cancellationWatchTask; }
             catch (OperationCanceledException) { }
         }
+    }
+
+    private async Task<bool> FinishDeliveryTurnAsync(MongoDbContext db, DesignArtifactRun run,
+        ParsedDesignWorkspaceResult result, IWebPageDesignArtifactLifecycleAdapter lifecycle, RunProjection projection,
+        RunMeta meta, CancellationToken ct)
+    {
+        var pending = InformationDeliveryTemplates.ValidateSessionCourse(result,
+            DesignArtifactWorkspaceBroker.DeliverySessionCorrectionIds(run));
+        var filters = Builders<DesignArtifactRun>.Filter;
+        var changes = Builders<DesignArtifactRun>.Update;
+        for (var attempt = 0; attempt < 9; attempt++)
+        {
+            var now = DateTime.UtcNow;
+            var active = filters.Where(item => item.Id == run.Id && item.DeploymentSlug == DeploymentScope.Current
+                && item.Status == RunStatuses.Running && item.LeaseOwnerId == run.LeaseOwnerId
+                && item.LeaseExpiresAt > now && item.CancelRequestedAt == null && item.WorkspaceResultAssetKey != null);
+            var current = await db.DesignArtifactRuns.Find(active).SingleOrDefaultAsync(ct)
+                ?? throw new DesignArtifactRunLeaseLostException(run.Id);
+            var revision = filters.Eq(item => item.DeliveryCorrectionRevision, current.DeliveryCorrectionRevision);
+            if (current.DeliveryCorrectionRevision == 0) revision |= filters.Exists(item => item.DeliveryCorrectionRevision, false);
+            var hasNewCorrection = current.DeliveryCorrectionRevision > current.DeliveryTurnRevision;
+            if (!pending && !hasNewCorrection)
+            {
+                var closed = await db.DesignArtifactRuns.UpdateOneAsync(active & revision, changes
+                    .Set(item => item.DeliveryCorrectionsClosedAt, now)
+                    .Set(item => item.DeliveryCorrectionRevision, current.DeliveryTurnRevision)
+                    .Set(item => item.DeliveryAppliedRevision, current.DeliveryTurnRevision), cancellationToken: ct);
+                if (closed.MatchedCount != 0) return true;
+                continue;
+            }
+
+            if (hasNewCorrection && string.IsNullOrWhiteSpace(current.DeliveryNextPermitId))
+                throw new InvalidOperationException("作者裁定已保存，但本轮没有有效的续跑执行许可");
+            if (current.WorkspaceResultSha256 == null || current.WorkspaceBaseRevision == null || current.WorkspaceInputSha256 == null)
+                throw new InvalidOperationException("CDS 草稿缺少原文或文件校验记录");
+            var checkpoint = new InformationDeliveryCheckpoint(current.WorkspaceResultAssetKey!, current.WorkspaceResultSha256,
+                current.WorkspaceBaseRevision, current.WorkspaceInputSha256, current.DeliveryTurnRevision, current.DeploymentSlug, now);
+            var phase = hasNewCorrection ? "作者裁定已保存，等待空闲工作区" : "已保存工作区草稿并释放执行位，等待作者补答";
+            var phaseCode = hasNewCorrection ? DesignArtifactPhaseCodes.Queued : DesignArtifactPhaseCodes.WaitingForAuthor;
+            await UpdatePhaseAsync(db, run, run.LeaseOwnerId!, lifecycle, projection, run.Progress, phase, phaseCode);
+            var write = await db.DesignArtifactRuns.UpdateOneAsync(active & revision, changes
+                .Set(item => item.DeliveryCheckpoint, checkpoint)
+                .Set(item => item.DeliveryWaitingSince, hasNewCorrection ? null : now)
+                .Set(item => item.DeliveryAppliedRevision, current.DeliveryTurnRevision)
+                .Set(item => item.DeliveryNextPermitId, null)
+                .Set(item => item.TaskPermitId, current.DeliveryNextPermitId ?? current.TaskPermitId)
+                .Set(item => item.Status, RunStatuses.Queued)
+                .Set(item => item.LeaseOwnerId, null)
+                .Set(item => item.LeaseExpiresAt, null)
+                .Set(item => item.RuntimeTicketExpiresAt, null)
+                .Set(item => item.WorkspaceInputAssetKey, null)
+                .Set(item => item.WorkspaceResultAssetKey, null)
+                .Set(item => item.WorkspaceResultSha256, null)
+                .Set(item => item.WorkspaceManifestSha256, null)
+                .Set(item => item.LatestPreviewHtml, null)
+                .Set(item => item.DeliveryPreviewFiles, null)
+                .Set(item => item.UpdatedAt, now), cancellationToken: ct);
+            if (write.MatchedCount == 0) continue;
+            meta.Status = RunStatuses.Queued;
+            meta.TaskPermitId = current.DeliveryNextPermitId ?? current.TaskPermitId;
+            await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+            if (hasNewCorrection) await _queue.EnqueueAsync(RunKinds.DesignArtifact, run.Id, CancellationToken.None);
+            return false;
+        }
+        throw new DesignArtifactRunLeaseLostException(run.Id);
     }
 
     internal static string BuildQualityEvidence(DesignArtifactRun run, HostedSiteEditableEntry? editable) =>
@@ -1943,7 +2047,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             .FirstOrDefaultAsync(ct);
         if (candidate?.ContractVersion != DesignArtifactContractVersions.Current)
             return await TryClaimAsync(db, runId, leaseOwner, now, leaseDuration, ct);
-        if (candidate.Status != RunStatuses.Queued) return null;
+        if (candidate.Status != RunStatuses.Queued || candidate.DeliveryWaitingSince != null) return null;
         try
         {
             return await lifecycle.StartAsync(
@@ -2356,6 +2460,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
         var queueCandidates = await db.DesignArtifactRuns
             .Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Status == RunStatuses.Queued
+                       && x.DeliveryWaitingSince == null
                        && x.UpdatedAt <= now - QueueRecoveryDelay
                        && (x.RecoveryEnqueuedAt == null || x.RecoveryEnqueuedAt <= now - RecoveryInterval)))
             .Limit(100)
@@ -2365,6 +2470,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var write = await db.DesignArtifactRuns.UpdateOneAsync(
                 x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == candidate.Id
                      && x.Status == RunStatuses.Queued
+                     && x.DeliveryWaitingSince == null
                      && x.RecoveryEnqueuedAt == candidate.RecoveryEnqueuedAt),
                 Builders<DesignArtifactRun>.Update.Set(x => x.RecoveryEnqueuedAt, now),
                 cancellationToken: CancellationToken.None);

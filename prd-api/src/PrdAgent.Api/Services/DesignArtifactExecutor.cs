@@ -3,9 +3,11 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services;
 
@@ -336,19 +338,22 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
     private readonly IDesignArtifactWorkspaceBroker _workspaceBroker;
     private readonly IConfiguration _configuration;
     private readonly ILogger<OpenDesignRemoteArtifactExecutor> _logger;
+    private readonly MongoDbContext? _db;
 
     public OpenDesignRemoteArtifactExecutor(
         IInfraConnectionService connections,
         IInfraAgentSessionService sessions,
         IDesignArtifactWorkspaceBroker workspaceBroker,
         IConfiguration configuration,
-        ILogger<OpenDesignRemoteArtifactExecutor> logger)
+        ILogger<OpenDesignRemoteArtifactExecutor> logger,
+        MongoDbContext? db = null)
     {
         _connections = connections;
         _sessions = sessions;
         _workspaceBroker = workspaceBroker;
         _configuration = configuration;
         _logger = logger;
+        _db = db;
     }
 
     public string Runtime => DesignArtifactRuntimes.OpenDesign;
@@ -431,6 +436,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
         {
             var recovered = await _workspaceBroker.ReadResultAsync(run.Id, CancellationToken.None);
+            if (run.DeliverySessionContainers)
+                await ReleaseDeliverySessionAsync(run, run.DeliveryRuntimeSessionId);
             yield return new DesignArtifactExecutorChunk(
                 "delta",
                 recovered.IndexHtml,
@@ -467,6 +474,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
 
         try
         {
+            if (run.DeliverySessionContainers)
+                await RecordDeliverySessionAsync(run, session.Id);
             var startAttempts = 0;
             session = await StartWithTransientRuntimeRetryAsync(
                 session,
@@ -497,7 +506,13 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                         connection.Id,
                         providerToken))
                     .FirstOrDefault(item => string.Equals(item.Id, Runtime, StringComparison.Ordinal)),
-                replacementToken => _sessions.CreateAsync(run.UserId, createSessionRequest, replacementToken),
+                async replacementToken =>
+                {
+                    var replacement = await _sessions.CreateAsync(run.UserId, createSessionRequest, replacementToken);
+                    if (run.DeliverySessionContainers)
+                        await RecordDeliverySessionAsync(run, replacement.Id);
+                    return replacement;
+                },
                 async failed =>
                 {
                     try
@@ -576,6 +591,13 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             completedTurnObserved = true;
                             completedCdsSessionId = item.CdsSourceSessionId ?? session.CdsSessionId;
                             completedMessageId = OpenDesignEventTranslator.ReadPayloadString(item.PayloadJson, "clientMessageId");
+                            if (run.DeliverySessionContainers)
+                            {
+                                await ReleaseDeliverySessionAsync(run, session.Id);
+                                cleanupScheduled = true;
+                                yield return new DesignArtifactExecutorChunk("delta", package.IndexHtml, package.Files);
+                                yield break;
+                            }
                             // 走到这里产物**已经在手**：ReadResultAsync 读的是 CDS 早已提交完成的结果包。
                             // 清理记账是我们这一侧的账，它失败绝不能把一次已完成、已经花过模型钱的生成丢掉——
                             // 此前这里登记失败就抛，而 yield return 在抛点之后，于是 worker 把 run 判失败、
@@ -666,6 +688,27 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         }
     }
 
+    private async Task RecordDeliverySessionAsync(DesignArtifactRun run, string sessionId)
+    {
+        var now = DateTime.UtcNow;
+        if (_db == null || string.IsNullOrWhiteSpace(run.LeaseOwnerId))
+            throw new InvalidOperationException("无法登记本轮云工作区");
+        var result = await _db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id
+                && item.DeploymentSlug == DeploymentScope.Current && item.LeaseOwnerId == run.LeaseOwnerId
+                && item.LeaseExpiresAt > now && item.Status == RunStatuses.Running && item.CancelRequestedAt == null,
+            Builders<DesignArtifactRun>.Update.Set(item => item.DeliveryRuntimeSessionId, sessionId),
+            cancellationToken: CancellationToken.None);
+        if (result.MatchedCount == 0) throw new DesignArtifactRunLeaseLostException(run.Id);
+        run.DeliveryRuntimeSessionId = sessionId;
+    }
+
+    private async Task ReleaseDeliverySessionAsync(DesignArtifactRun run, string? sessionId)
+    {
+        if (sessionId == null || (await _sessions.StopAsync(run.UserId, sessionId, CancellationToken.None))?.Status
+                                    != InfraAgentSessionStatuses.Stopped)
+            throw new InvalidOperationException("草稿已保存，CDS 尚未确认释放工作区；请稍后重试");
+    }
+
     /// <summary>
     /// 释放本次运行独占的远程会话。会话是 ExecuteAsync 开头按 run 新建的 SessionContainer，
     /// 除本执行器外没有第二个写入方，所以执行器一退出，直接停止永远是正确的处置。
@@ -742,6 +785,9 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                 failure = ex;
             }
 
+            if (failure.UpstreamStatus is >= 400 and < 500 and not (408 or 409 or 429))
+                throw OpenDesignFailureMessage.Failure(OpenDesignFailureStage.StartupFailed, failure.Message, failure.UpstreamCode);
+
             var settled = await WaitForRuntimeSettledAsync(readProvider, deadline, ct, pollDelay);
             if (settled != RuntimeSettleOutcome.Available)
             {
@@ -749,13 +795,13 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                     settled == RuntimeSettleOutcome.StillVerifying
                         ? OpenDesignFailureStage.RuntimeVerifying
                         : OpenDesignFailureStage.StartupFailed,
-                    failure.Message);
+                    failure.Message, failure.UpstreamCode);
             }
             if (attempt >= maxAttempts)
             {
                 throw OpenDesignFailureMessage.Failure(
                     OpenDesignFailureStage.RuntimeVerifying,
-                    failure.Message);
+                    failure.Message, failure.UpstreamCode);
             }
 
             await discard(current);

@@ -124,6 +124,24 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public List<InformationDeliveryPreviewFile>? DeliveryPreviewFiles { get; set; }
 
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfDefault]
+    public bool DeliverySessionContainers { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfDefault]
+    public int DeliveryTurnRevision { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DeliveryNextPermitId { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DateTime? DeliveryWaitingSince { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DeliveryRuntimeSessionId { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public InformationDeliveryCheckpoint? DeliveryCheckpoint { get; set; }
+
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public InformationDeliveryArchive? DeliveryArchive { get; set; }
 
@@ -595,6 +613,7 @@ public static class DesignArtifactPhaseCodes
     public const string CollectingArtifact = "collecting-artifact";
     public const string CommittingArtifact = "committing-artifact";
     public const string SavingResult = "saving-result";
+    public const string WaitingForAuthor = "open-design-delivery-waiting";
     public const string Completed = "completed";
     public const string Interrupted = "interrupted";
     public const string Failed = "failed";
@@ -633,6 +652,10 @@ public sealed class WorkflowDesignSource
 
 public sealed record InformationDeliveryCorrection(
     string Id, int Revision, string Text, DateTime ReceivedAt);
+
+public sealed record InformationDeliveryCheckpoint(
+    string AssetKey, string PackageSha256, string BaseRevision, string InputSha256,
+    int AppliedRevision, string? DeploymentSlug, DateTime SavedAt);
 
 public sealed record InformationDeliveryPreviewFile(string Path, string Content);
 

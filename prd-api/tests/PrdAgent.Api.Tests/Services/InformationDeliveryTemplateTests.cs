@@ -63,6 +63,27 @@ public sealed class InformationDeliveryTemplateTests
             """));
     }
 
+    [Fact]
+    public void SessionDraftCanWaitForTheAuthorAndCannotInventAnAppliedReceipt()
+    {
+        var waiting = Course("""
+            {"chapters":[{"title":"处理边界","narration":"先核对原文","steps":["查看资料 A"],"basis":["资料 A §2"]}],
+             "openQuestions":["等于阈值怎么做？"]}
+            """);
+        Assert.True(InformationDeliveryTemplates.ValidateSessionCourse(waiting, []));
+        Assert.Throws<InvalidOperationException>(() => InformationDeliveryTemplates.ValidateSessionCourse(waiting, ["a"]));
+        var duplicate = Course("""
+            {"chapters":[{"title":"处理边界","narration":"按补答执行","steps":["逐包提交"],"basis":["作者裁定 1"],
+              "practice":{"question":"谁来确认？","answer":"审核人"}}],"openQuestions":[],"appliedCorrections":["a","a"]}
+            """);
+        Assert.Throws<InvalidOperationException>(() => InformationDeliveryTemplates.ValidateSessionCourse(duplicate, ["a"]));
+        var closed = Course("""
+            {"chapters":[{"title":"处理边界","narration":"按补答执行","steps":["逐包提交"],"basis":["作者裁定 1"],
+              "practice":{"question":"谁来确认？","answer":"审核人"}}],"openQuestions":[],"appliedCorrections":["a"]}
+            """);
+        Assert.False(InformationDeliveryTemplates.ValidateSessionCourse(closed, ["a"]));
+    }
+
     private static ParsedDesignWorkspaceResult Course(string json)
     {
         var bytes = Encoding.UTF8.GetBytes(json);

@@ -47,15 +47,49 @@ public static class InformationDeliveryTemplates
 
     public static IReadOnlyList<InformationDeliveryChapter> ReadReadyCourse(ParsedDesignWorkspaceResult result)
     {
+        using var json = ReadCourse(result);
+        var course = json.RootElement;
+        if (ReadQuestions(course).GetArrayLength() != 0)
+            throw new InvalidOperationException("课程仍有待作者裁定的问题");
+        return ReadChapters(course, requirePractice: true);
+    }
+
+    internal static bool ValidateSessionCourse(ParsedDesignWorkspaceResult result, IReadOnlyList<string> correctionIds)
+    {
+        using var json = ReadCourse(result);
+        var course = json.RootElement;
+        var pending = ReadQuestions(course).GetArrayLength() > 0;
+        _ = ReadChapters(course, requirePractice: !pending);
+        if (correctionIds.Count != 0
+            && (!course.TryGetProperty("appliedCorrections", out var applied) || applied.ValueKind != JsonValueKind.Array
+                || applied.GetArrayLength() != correctionIds.Count
+                || !applied.EnumerateArray().Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : null)
+                    .SequenceEqual(correctionIds, StringComparer.Ordinal)))
+            throw new InvalidOperationException("课程文件缺少本轮作者裁定的完整回执");
+        return pending;
+    }
+
+    private static JsonDocument ReadCourse(ParsedDesignWorkspaceResult result)
+    {
         var file = result.Files.SingleOrDefault(item => item.Path == CoursePath);
         if (file == null || file.Size > 24_000)
             throw new InvalidOperationException("课程文件缺失或超出大小限制");
-        using var json = JsonDocument.Parse(Convert.FromBase64String(file.ContentBase64));
-        var course = json.RootElement;
+        return JsonDocument.Parse(Convert.FromBase64String(file.ContentBase64));
+    }
+
+    private static JsonElement ReadQuestions(JsonElement course)
+    {
         if (course.ValueKind != JsonValueKind.Object
             || !course.TryGetProperty("openQuestions", out var questions)
-            || questions.ValueKind != JsonValueKind.Array || questions.GetArrayLength() != 0)
-            throw new InvalidOperationException("课程仍有待作者裁定的问题");
+            || questions.ValueKind != JsonValueKind.Array || questions.GetArrayLength() > 12
+            || questions.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(item.GetString()) || item.GetString()!.Length > 800))
+            throw new InvalidOperationException("课程文件的待裁定问题格式无效");
+        return questions;
+    }
+
+    private static IReadOnlyList<InformationDeliveryChapter> ReadChapters(JsonElement course, bool requirePractice)
+    {
         if (!course.TryGetProperty("chapters", out var chapters) || chapters.ValueKind != JsonValueKind.Array
             || chapters.GetArrayLength() is < 1 or > 12)
             throw new InvalidOperationException("课程需要 1 至 12 个有效章节");
@@ -74,7 +108,7 @@ public static class InformationDeliveryTemplates
                 chapter.GetProperty("title").GetString()!, chapter.GetProperty("narration").GetString()!,
                 chapter.GetProperty("steps").EnumerateArray().Select(item => item.GetString()!).ToArray()));
         }
-        if (!hasPractice)
+        if (requirePractice && !hasPractice)
             throw new InvalidOperationException("课程需要至少一道基于资料的练习");
         return ready;
     }
