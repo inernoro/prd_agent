@@ -95,7 +95,7 @@ describe('release site publishing UI contract', () => {
 
   it('keeps routine branch publishing to environment selection without server configuration', () => {
     const dialog = branchListSource.slice(branchListSource.indexOf('function ReleaseBranchDialog('), branchListSource.indexOf('function ReleaseRunStepList('));
-    expect(dialog).toContain('选择一个环境，自动检查并发布当前分支。');
+    expect(dialog).toContain('选择发布环境，查看检查结果后开始发布。');
     expect(dialog).toContain('发布到 ${target.name}');
     expect(dialog).toContain('接入新环境');
     expect(dialog).not.toContain('执行计划');
@@ -155,10 +155,14 @@ describe('release site publishing UI contract', () => {
     }
   });
 
-  it('automatically checks before release and keeps running status separate from environment selection', () => {
+  it('shows preflight blockers and warnings before the operator submits a release', () => {
     const dialog = branchListSource.slice(branchListSource.indexOf('function ReleaseBranchDialog('), branchListSource.indexOf('function ReleaseRunStepList('));
     expect(dialog.indexOf('/preflight`')).toBeLessThan(dialog.indexOf('/runs`'));
-    expect(dialog).toContain('if (!check.ok)');
+    expect(dialog).toContain('disabled={!preflight.ok}');
+    expect(dialog).toContain("check.blocking ? '阻断' : '警告'");
+    expect(dialog).toContain('expectedCommitSha: preflight.artifact?.commitSha');
+    expect(dialog).toContain('preflight.forceAvailable');
+    expect(dialog).toContain('forceReason: forceReason.trim()');
     expect(dialog).toContain('ctrl.signal.aborted');
     expect(dialog).toContain('inFlight.current || hasRun.current');
     expect(dialog).toContain('target.projectId === projectId');
