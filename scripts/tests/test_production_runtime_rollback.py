@@ -21,7 +21,15 @@ def container(name, image, config_file, running=True):
                 "com.docker.compose.project.config_files": config_file,
             },
             "Env": ["PASSWORD=original$credential"],
+            "Cmd": ["serve", "running"],
+            "Entrypoint": ["/app/start"],
         },
+        "HostConfig": {"PortBindings": {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18080"}]}},
+        "Mounts": [
+            {"Type": "bind", "Source": "/old/bin/ffmpeg", "Destination": "/usr/local/bin/ffmpeg",
+             "Propagation": "rprivate", "RW": False},
+            {"Type": "volume", "Name": "map_storage", "Destination": "/data", "RW": True},
+        ],
     }
 
 
@@ -38,7 +46,9 @@ class RuntimeRollbackTests(unittest.TestCase):
             calls.append(args)
             if "config" in args:
                 return json.dumps({"services": {
-                    name: {"image": "latest", "depends_on": {"mongodb": {}}} for name in before
+                    name: {"image": "latest", "command": ["source-command"], "ports": [],
+                           "volumes": [{"source": "/new/bin/ffmpeg"}], "depends_on": {"mongodb": {}}}
+                    for name in before
                 }})
             if args[:2] == ("rm", "-f"):
                 current.pop("candidate-only")
@@ -54,6 +64,10 @@ class RuntimeRollbackTests(unittest.TestCase):
                 model = json.loads((directory / "compose-0.json").read_text())
                 self.assertEqual(model["services"]["api"]["image"], "sha256:old-api")
                 self.assertEqual(model["services"]["api"]["environment"]["PASSWORD"], "original$$credential")
+                self.assertEqual(model["services"]["api"]["command"], ["serve", "running"])
+                self.assertEqual(model["services"]["api"]["ports"][0]["published"], "18080")
+                self.assertEqual(model["services"]["api"]["volumes"][1]["source"], "/old/bin/ffmpeg")
+                self.assertEqual(model["volumes"]["map_storage"], {"external": True, "name": "map_storage"})
                 self.assertEqual(model["services"]["api"]["labels"]["org.map.release.source-files"], "/old/compose.yml")
                 self.assertNotIn("depends_on", model["services"]["api"])
                 current["api"] = container("api", "sha256:new-api", "/new/compose.yml")
@@ -63,6 +77,19 @@ class RuntimeRollbackTests(unittest.TestCase):
                 self.assertEqual(current, before)
                 self.assertEqual([args[-1] for args in calls if "up" in args], ["api", "gateway"])
                 self.assertIn(("rm", "-f", "candidate-only-sha256:new-worker"), calls)
+
+    def test_verifies_restored_mounts_even_when_image_matches(self):
+        api = container("api", "sha256:old", "/old/compose.yml")
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            with patch.dict(TOOLS["capture"].__globals__, {
+                "docker": lambda *args: '{"services":{"api":{}}}' if "config" in args else "",
+                "inventory": lambda _name: {"api": api},
+            }):
+                TOOLS["capture"]("map", "gateway", directory)
+                api["Mounts"][0]["Source"] = "/wrong/bin/ffmpeg"
+                with self.assertRaisesRegex(RuntimeError, "配置与发布前不符：volumes"):
+                    TOOLS["restore"]("map", "gateway", directory)
 
 
 if __name__ == "__main__":

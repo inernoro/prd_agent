@@ -2,6 +2,7 @@
 """Capture and restore a local Compose release without pulling images or replacing data volumes."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -45,6 +46,79 @@ def escape_interpolation(value):
     return value
 
 
+def running_configuration(row):
+    config, host = row["Config"], row.get("HostConfig") or {}
+    mounts = []
+    for mount in row.get("Mounts", []):
+        kind = mount["Type"]
+        if kind == "tmpfs":
+            continue
+        if kind not in ("bind", "volume"):
+            raise RuntimeError(f"回滚点包含不支持的挂载类型 {kind}")
+        spec = {"type": kind, "target": mount["Destination"], "read_only": not mount["RW"]}
+        if kind == "bind":
+            spec["source"] = mount["Source"]
+            spec["bind"] = {"create_host_path": False}
+            if mount.get("Propagation"):
+                spec["bind"]["propagation"] = mount["Propagation"]
+        else:
+            spec["source"] = mount["Name"]
+            spec["volume"] = {"nocopy": True}
+        mounts.append(spec)
+
+    ports = []
+    for target, bindings in sorted((host.get("PortBindings") or {}).items()):
+        number, protocol = target.split("/", 1)
+        for binding in bindings or []:
+            ip, published = binding.get("HostIp", ""), binding.get("HostPort", "")
+            if not published or published == "0":
+                effective = (row.get("NetworkSettings", {}).get("Ports") or {}).get(target) or []
+                published = next((item["HostPort"] for item in effective if not ip or item["HostIp"] == ip), "")
+            port = {"target": int(number), "protocol": protocol}
+            if ip:
+                port["host_ip"] = ip
+            if published:
+                port["published"] = published
+            ports.append(port)
+
+    restart = host.get("RestartPolicy") or {}
+    restart_name = restart.get("Name") or "no"
+    if restart_name == "on-failure" and restart.get("MaximumRetryCount"):
+        restart_name += f":{restart['MaximumRetryCount']}"
+    logging = host.get("LogConfig") or {}
+    observed_health = config.get("Healthcheck") or {}
+    health_test = observed_health.get("Test") or ["NONE"]
+    health = {"disable": True} if health_test == ["NONE"] else {"test": health_test}
+    if health_test != ["NONE"]:
+        for docker_key, compose_key in (("Interval", "interval"), ("Timeout", "timeout"),
+                                        ("StartPeriod", "start_period"), ("StartInterval", "start_interval")):
+            if observed_health.get(docker_key):
+                health[compose_key] = f"{observed_health[docker_key]}ns"
+        if observed_health.get("Retries"):
+            health["retries"] = observed_health["Retries"]
+    return {
+        "environment": dict(value.split("=", 1) for value in config.get("Env") or []),
+        "command": config.get("Cmd") or [],
+        "entrypoint": config.get("Entrypoint") or [],
+        "user": config.get("User") or "",
+        "working_dir": config.get("WorkingDir") or "",
+        "volumes": sorted(mounts, key=lambda mount: mount["target"]),
+        "ports": sorted(ports, key=lambda port: json.dumps(port, sort_keys=True)),
+        "tmpfs": [f"{target}:{options}" if options else target
+                  for target, options in sorted((host.get("Tmpfs") or {}).items())],
+        "restart": restart_name,
+        "logging": {"driver": logging["Type"], "options": logging.get("Config") or {}} if logging.get("Type") else {},
+        "healthcheck": health,
+    }
+
+
+def configuration_proof(configuration):
+    return {
+        key: hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+        for key, value in configuration.items()
+    }
+
+
 def capture(project, gateway, directory):
     containers = inventory(project)
     groups = {}
@@ -54,6 +128,7 @@ def capture(project, gateway, directory):
     for index, (prefix, names) in enumerate(groups.items()):
         model = json.loads(docker(*prefix, "config", "--format", "json"))
         model["services"] = {name: model["services"][name] for name in names}
+        model["volumes"] = {}
         filename = f"compose-{index}.json"
         for name in names:
             row = containers[name]
@@ -62,12 +137,17 @@ def capture(project, gateway, directory):
             service["image"] = row["Image"]
             service.pop("build", None)
             service.pop("depends_on", None)
-            service["environment"] = dict(value.split("=", 1) for value in row["Config"]["Env"] or [])
+            configuration = running_configuration(row)
+            service.update(configuration)
+            for mount in configuration["volumes"]:
+                if mount["type"] == "volume":
+                    model["volumes"][mount["source"]] = {"external": True, "name": mount["source"]}
             labels = service.setdefault("labels", {})
             labels["org.map.release.source-directory"] = prefix[4]
             labels["org.map.release.source-files"] = ",".join(prefix[6::2])
             snapshot[name] = {"image": row["Image"], "running": row["State"]["Running"],
-                              "id": row["Id"], "compose": filename}
+                              "id": row["Id"], "compose": filename,
+                              "configuration": configuration_proof(configuration)}
         (directory / filename).write_text(json.dumps(escape_interpolation(model)))
     (directory / "containers.json").write_text(json.dumps(snapshot))
 
@@ -81,7 +161,9 @@ def restore(project, gateway, directory):
     changed = {}
     for name in sorted(snapshot, key=lambda item: item == gateway):
         expected = snapshot[name]
-        if name not in current or current[name]["Id"] != expected["id"] or current[name]["State"]["Running"] != expected["running"]:
+        row = current.get(name)
+        if (not row or row["Id"] != expected["id"] or row["State"]["Running"] != expected["running"]
+                or configuration_proof(running_configuration(row)) != expected["configuration"]):
             changed.setdefault((name == gateway, expected["compose"]), []).append(name)
     for (_, filename), names in changed.items():
         prefix = ["compose", "-p", project, "-f", str(directory / filename)]
@@ -94,6 +176,10 @@ def restore(project, gateway, directory):
         row = actual.get(name)
         if not row or row["Image"] != expected["image"] or row["State"]["Running"] != expected["running"]:
             raise RuntimeError(f"回滚核对未通过，服务 {name} 的镜像或运行状态与发布前不符")
+        proof = configuration_proof(running_configuration(row))
+        drift = [key for key, value in expected["configuration"].items() if proof.get(key) != value]
+        if drift:
+            raise RuntimeError(f"回滚核对未通过，服务 {name} 的配置与发布前不符：{', '.join(drift)}")
 
 
 def main():
