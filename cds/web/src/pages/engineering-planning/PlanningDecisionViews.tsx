@@ -494,8 +494,9 @@ export function PlanningTimeline({ data, onSelect, projectLabel, onBranch, onCre
   </div>;
 }
 
-function RecordHeading({ record, projectLabel, badges, action }: {
+function RecordHeading({ record, projectLabel, badges, action, metadata, children }: {
   record: PlanningDecision | PlanningPlan; projectLabel: string; badges: ReactNode; action?: ReactNode;
+  metadata?: ReactNode; children?: ReactNode;
 }) {
   const start = ('startAt' in record && record.startAt) || record.createdAt;
   return <DialogHeader className="ep-dialog-head ep-planning-record-head">
@@ -508,7 +509,9 @@ function RecordHeading({ record, projectLabel, badges, action }: {
         {'dueAt' in record && record.dueAt && <>至 <time dateTime={record.dueAt}>{fullDate(record.dueAt)}</time></>}
       </span>
       {'reviewAt' in record && record.reviewAt && <span><Clock3 aria-hidden />复核 <time dateTime={record.reviewAt}>{fullDate(record.reviewAt)}</time></span>}
+      {metadata}
     </div>
+    {children}
   </DialogHeader>;
 }
 
@@ -519,12 +522,18 @@ export function DecisionHeading({ row, projectLabel }: { row: PlanningDecision; 
 export function PlanHeading({ plan, projectLabel, options }: {
   plan: PlanningPlan; projectLabel: string; options?: Pick<DetailProps, 'board' | 'write' | 'actionsDisabled' | 'onAction'>;
 }) {
-  const { state } = planProgress(plan, onDay(plan.updatedAt));
+  const progress = planProgress(plan, options?.board.today ?? onDay(plan.updatedAt));
   return <RecordHeading record={plan} projectLabel={projectLabel} action={options?.write && <PlanDebtPicker key={plan.id}
     plan={plan} board={options.board} disabled={options.actionsDisabled} onAction={options.onAction} />} badges={
-    <PlanningBadge tone={state === 'done' ? 'success' : state === 'doing' ? 'accent' : 'quiet'}>
-      {planLabel(plan, state)}
-    </PlanningBadge>} />;
+    <PlanningBadge tone={progress.state === 'done' ? 'success' : progress.state === 'doing' ? 'accent' : 'quiet'}>
+      {planLabel(plan, progress.state)}
+    </PlanningBadge>} metadata={<>
+      <span>{progress.done}/{progress.total} 步 · {progress.percent}%</span>
+      {progress.late > 0 && <span className="ep-plan-late-tag">{progress.late} 步逾期</span>}
+    </>}>
+    <div className="ep-plan-detail-meter" role="progressbar" aria-label="落地计划完成进度" aria-valuenow={progress.percent}
+      aria-valuetext={`${progress.done}/${progress.total} 步完成`} data-status={progress.state}><span style={{ width: `${progress.percent}%` }} /></div>
+  </RecordHeading>;
 }
 
 function PlanDebtPicker({ plan, board, disabled, onAction }: { plan: PlanningPlan; board: PlanningBoard; disabled: boolean; onAction: OpenAction }) {
@@ -613,8 +622,8 @@ function PlanDebtPicker({ plan, board, disabled, onAction }: { plan: PlanningPla
   </Dialog>;
 }
 
-function RecordSection({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="ep-surface ep-planning-record-section"><h3>{title}</h3>{children}</section>;
+function RecordSection({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
+  return <section className="ep-surface ep-planning-record-section"><header><h3>{title}</h3>{action}</header>{children}</section>;
 }
 
 function PlanningCliRead({ projectId }: { projectId: string }) {
@@ -663,7 +672,7 @@ export function DecisionDetails({ row, board, write, actionsDisabled, onSelect, 
   const total = branch ? branchTotal(branch) : 0;
   const progress = decisionProgress(row, associated, board.today, branch);
   const successor = row.supersededBy ? board.decisions.find(decision => decision.id === row.supersededBy) : undefined;
-  return <div className="ep-planning-record">
+  return <div className="ep-planning-record ep-decision-record">
     {write && available && <div className="ep-planning-record-actions">
       <DropdownMenu align="start" trigger={<button ref={changeButton} type="button" className="ep-button ep-button--primary" disabled={actionsDisabled}><Flag aria-hidden />记一次变更</button>}>
         {(Object.keys(decisionChangeLabels) as (keyof typeof decisionChangeLabels)[]).filter(action => action !== 'accepted' || row.status === 'proposed')
@@ -760,26 +769,17 @@ export function PlanDetails({ plan, board, write, actionsDisabled, onSelect, onA
   const hitsAvailable = recentHits.every(hit => hit !== undefined);
   const history = board.events.filter(event => event.entity === 'plan' && event.entityId === plan.id);
   return <div className="ep-planning-record">
-    <div className="ep-plan-detail-progress">
-      <div className="ep-planning-record-meta"><span>{progress.done}/{progress.total} 步 · {progress.percent}%</span>
-        {progress.late > 0 && <span className="ep-plan-late-tag">{progress.late} 步逾期</span>}
-        {write && <button type="button" className="ep-button" disabled={actionsDisabled} onClick={event => onAction({ kind: 'step', plan }, event.currentTarget)}>
-          <Plus aria-hidden />添加步骤
-        </button>}
-      </div>
-      <div className="ep-plan-detail-meter" role="progressbar" aria-label="落地计划完成进度" aria-valuenow={progress.percent}
-        aria-valuetext={`${progress.done}/${progress.total} 步完成`} data-status={progress.state}><span style={{ width: `${progress.percent}%` }} /></div>
-    </div>
     <div className="ep-record-columns">
       <div className="ep-record-main">
         <RecordSection title="目标">{plan.summary ? <p className="ep-record-callout"><Target aria-hidden /><span>{plan.summary}</span></p>
           : <p className="ep-record-muted">暂无目标说明</p>}
         </RecordSection>
-        <RecordSection title="步骤">{plan.steps.length ? <ol className="ep-plan-step-cards">{plan.steps.map(step => <PlanStep key={step.id} step={step}
+        <RecordSection title="步骤" action={write && <button type="button" className="ep-button" disabled={actionsDisabled}
+          onClick={event => onAction({ kind: 'step', plan }, event.currentTarget)}><Plus aria-hidden />添加步骤</button>}>
+          {plan.steps.length ? <ol className="ep-plan-step-cards">{plan.steps.map(step => <PlanStep key={step.id} step={step}
           plan={plan} board={board} write={write} actionsDisabled={actionsDisabled} onSelect={onSelect} onAction={onAction} />)}</ol>
           : <p className="ep-record-muted">暂无落地步骤</p>}
         </RecordSection>
-        {history.length > 1 && <RecordSection title="记录"><RecordHistory history={history} /></RecordSection>}
       </div>
       <aside className="ep-record-related">
         <RecordSection title="为什么做">{plan.decisionId ? <RecordLink item={{ kind: 'decision', id: plan.decisionId }}
@@ -791,6 +791,7 @@ export function PlanDetails({ plan, board, write, actionsDisabled, onSelect, onA
           {hitsAvailable && <div><dt>近 30 天被踩</dt><dd>{recentHits.reduce<number>((sum, hit) => sum + (hit ?? 0), 0)}</dd></div>}
           <div><dt>逾期步骤</dt><dd>{progress.late}</dd></div>
         </dl></RecordSection>
+        {history.length > 1 && <RecordSection title="记录"><RecordHistory history={history} /></RecordSection>}
         {plan.source.url && <RecordSection title="计划来源"><Source source={plan.source} /></RecordSection>}
         <PlanningCliRead projectId={board.projectId} />
       </aside>

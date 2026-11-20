@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, Check, ChevronRight, History, Plus, RotateCcw, TrendingDown, TrendingUp } from 'lucide-react';
 import type {
   PlanningAnalyticsActivity, PlanningCounts, PlanningGraphChange, PlanningGraphDebt, PlanningGraphOutcome, PlanningStats,
@@ -55,9 +55,9 @@ function scaleStep(value: number) {
   return [1, 2, 2.5, 5, 10].find(step => order * step >= value)! * order;
 }
 
-function timeTicks(length: number) {
-  if (length <= 8) return Array.from({ length }, (_, index) => index);
-  return Array.from({ length: 8 }, (_, index) => Math.round(index * (length - 1) / 7));
+function timeTicks(length: number, maximum: number) {
+  if (length <= maximum) return Array.from({ length }, (_, index) => index);
+  return Array.from({ length: maximum }, (_, index) => Math.round(index * (length - 1) / (maximum - 1)));
 }
 
 function plotDomain(buckets: Bucket[], initial: number, mode: 'flow' | 'backlog') {
@@ -80,16 +80,27 @@ function plotDomain(buckets: Bucket[], initial: number, mode: 'flow' | 'backlog'
 }
 
 function DebtChart({ buckets, initial, unit, mode }: { buckets: Bucket[]; initial: number; unit: Granularity; mode: 'flow' | 'backlog' }) {
+  const plot = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(940);
   const [hovered, setHovered] = useState<number>();
   const [focused, setFocused] = useState<number>();
+  useLayoutEffect(() => {
+    const container = plot.current;
+    if (!container) return;
+    const measure = () => setWidth(Math.max(220, Math.round(container.getBoundingClientRect().width)));
+    const observer = new ResizeObserver(measure);
+    measure();
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
   const index = hovered ?? focused;
   const selected = index === undefined ? undefined : buckets[index];
   const tooltip = useId();
   const flow = mode === 'flow';
-  const width = 940;
-  const height = flow ? 298 : 178;
-  const left = 43;
-  const right = width - (flow ? 22 : 49);
+  const compact = width < 520;
+  const height = compact ? (flow ? 184 : 124) : (flow ? 298 : 178);
+  const left = compact ? 32 : 43;
+  const right = width - (compact ? (flow ? 19 : 43) : (flow ? 22 : 49));
   const top = 14;
   const bottom = height - 25;
   const band = (right - left) / Math.max(1, buckets.length);
@@ -109,8 +120,7 @@ function DebtChart({ buckets, initial, unit, mode }: { buckets: Bucket[]; initia
     event.currentTarget.ownerSVGElement?.querySelector<SVGRectElement>(`[data-bucket="${next}"]`)?.focus();
   };
 
-  return <div className="ep-a-plot">
-    <div className="ep-a-plot-scroll">
+  return <div className="ep-a-plot" data-compact={compact} ref={plot}>
       <svg viewBox={`0 0 ${width} ${height}`} role="group" aria-label={label} onPointerLeave={() => setHovered(undefined)}>
         {ticks.map(value => <g key={value}>
           <line className="ep-a-gridline" data-zero={value === 0} x1={left} x2={right} y1={y(value)} y2={y(value)} />
@@ -142,7 +152,7 @@ function DebtChart({ buckets, initial, unit, mode }: { buckets: Bucket[]; initia
           <circle className="ep-a-backlog-end" r={4.2} cx={right} cy={y(latest)} />
           <text className="ep-a-last-value" x={right + 9} y={y(latest) + 4}>{latest}</text>
         </>}
-        {timeTicks(buckets.length).map(i => <text key={i} data-axis="time" x={x(i)} y={height - 6} textAnchor="middle">
+        {timeTicks(buckets.length, compact ? 5 : 8).map(i => <text key={i} data-axis="time" x={x(i)} y={height - 6} textAnchor="middle">
           {unit === 'month' ? `${Number(buckets[i].day.slice(5, 7))}月` : shortDate(buckets[i].day)}
         </text>)}
         {buckets.map((bucket, i) => <rect key={bucket.day} className="ep-a-bucket-hit" data-bucket={i} data-day={bucket.day}
@@ -152,7 +162,6 @@ function DebtChart({ buckets, initial, unit, mode }: { buckets: Bucket[]; initia
           onPointerEnter={() => setHovered(i)} onClick={event => event.currentTarget.focus()}
           onFocus={() => setFocused(i)} onBlur={() => setFocused(undefined)} onKeyDown={event => moveFocus(event, i)} />)}
       </svg>
-    </div>
     {selected && index !== undefined && <div className="ep-a-chart-tooltip" id={tooltip} role="tooltip"
       style={index >= buckets.length / 2 ? { right: '2.5%' } : { left: '9%' }}>
       <strong>{reading(selected)}</strong>
@@ -513,7 +522,7 @@ function Sunburst({ root, active, scopeLabel, life, delta, changes, fill, onSele
 function Pyramid({ root, active, changes, fill, onSelect, onZoom, onBack }: GraphDrawingProps) {
   const layout = graphLayout(root);
   const depth = layout.reduce((maximum, entry) => Math.max(maximum, entry.depth), 0);
-  const width = 600;
+  const width = 920;
   const row = 56;
   const stride = row + 28;
   const position = (level: number, fraction: number) => {
@@ -521,7 +530,7 @@ function Pyramid({ root, active, changes, fill, onSelect, onZoom, onBack }: Grap
     return ((width - span) / 2) + span * fraction;
   };
   const y = (level: number) => 4 + stride * level;
-  return <svg className="ep-a-pyramid" viewBox={`0 0 ${width} ${y(depth) + row + 4}`} role="group" aria-label="分类金字塔">
+  return <div className="ep-a-pyramid-scroll"><svg className="ep-a-pyramid" viewBox={`0 0 ${width} ${y(depth) + row + 4}`} role="group" aria-label="分类金字塔">
     {layout.filter(entry => entry.depth).map(({ node, start, end, depth: level }) => {
       const previous = y(level - 1) + row;
       return <path key={graphKey(node.path)} className="ep-a-pyramid-link" d={
@@ -536,7 +545,7 @@ function Pyramid({ root, active, changes, fill, onSelect, onZoom, onBack }: Grap
       const x = (a + b) / 2;
       const change = changes.get(key);
       const action = level === 0 && root.path.length ? onBack : () => onSelect(node.path);
-      const hasName = available >= 35;
+      const hasName = available >= 52;
       return <g className="ep-a-graph-node ep-a-pyramid-node" data-state={nodeState(node.path, active)} key={key}>
         <rect x={a + Math.min(1, available / 4)} y={y(level)} width={Math.max(0.1, available - 2)} height={row}
           rx={Math.min(5, available / 4)} fill={level ? fill(node) : 'hsl(var(--surface-sunken))'} role="button" tabIndex={0}
@@ -544,13 +553,13 @@ function Pyramid({ root, active, changes, fill, onSelect, onZoom, onBack }: Grap
           onClick={action} onDoubleClick={level > 0 && node.children.length ? () => onZoom(node.path) : undefined}
           onKeyDown={event => activation(event, action)}><title>{graphNodeLabel(node, change)}</title></rect>
         <g className="ep-a-segment-label" aria-hidden="true">
-          {hasName && <text x={x} y={y(level) + 22} textAnchor="middle">{contract(node.name, Math.floor(available / 13))}</text>}
-          {(available > 22 || !level) && <text data-graph-total={level ? undefined : node.records.length} x={x}
+          {hasName && <text x={x} y={y(level) + 22} textAnchor="middle">{contract(node.name, Math.floor(available / 19))}</text>}
+          {(available > 34 || !level) && <text data-graph-total={level ? undefined : node.records.length} x={x}
             y={y(level) + (hasName ? 43 : 34)} textAnchor="middle">{node.records.length}{change ? ` ${signed(change)}` : ''}</text>}
         </g>
       </g>;
     })}
-  </svg>;
+  </svg></div>;
 }
 
 function changeMap(rows: PlanningGraphChange[]) {

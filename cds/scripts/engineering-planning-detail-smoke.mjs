@@ -183,6 +183,9 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     let copiedBrief = false;
     let historicCitation = false;
     if (handoff) {
+      const drawerBounds = await drawer.boundingBox();
+      const cardBounds = await drawer.getByRole('region', { name: '接手卡', exact: true }).boundingBox();
+      check(Math.abs(cardBounds.x - drawerBounds.x) <= 2, '接手卡左边未贴齐债务抽屉');
       await button(drawer, '复制给智能体').click();
       await drawer.getByText('已复制接手卡', { exact: true }).waitFor();
       copiedBrief = await page.evaluate(() => navigator.clipboard.readText()) === brief.markdown;
@@ -201,6 +204,10 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     await page.keyboard.press('Enter');
     const verification = page.getByRole('dialog', { name: repayLabel });
     await verification.waitFor();
+    const firstCheck = verification.locator('.ep-repay-check').first();
+    const formBounds = await firstCheck.boundingBox();
+    check(formBounds.height <= 142, `桌面逐项偿还标准过高（${formBounds.height.toFixed(1)} CSS px）`);
+    check(await firstCheck.getByText(`1. ${active.criteria[0].text}`, { exact: true }).isVisible(), '偿还标准未显示核对顺序');
     await verification.getByRole('radiogroup', { name: active.criteria[0].text }).getByText('达标', { exact: true }).click();
     await verification.getByRole('radiogroup', { name: active.criteria[1].text }).getByText('不适用', { exact: true }).click();
     const missingReason = await verification.locator('input[name="note-c2"]').evaluate(input => input.required && input.validity.valueMissing);
@@ -270,6 +277,15 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     check(primary.width >= 44 && primary.height >= 44, `320px 暗色触控下，核验主操作热区仅 ${primary.width.toFixed(1)}×${primary.height.toFixed(1)} CSS px，需至少 44×44`);
     check(close.width >= 44 && close.height >= 44, `320px 暗色触控下，关闭热区仅 ${close.width.toFixed(1)}×${close.height.toFixed(1)} CSS px，需至少 44×44`);
     check(closeGlyph.width / close.width >= 0.55, '触控关闭图标与按钮的宽度占比小于 55%');
+    const readiness = drawer.locator('.ep-brief-readiness summary');
+    const readinessBounds = await readiness.boundingBox();
+    const score = await readiness.locator('strong').boundingBox();
+    const readinessLabel = await readiness.locator('span').count() ? await readiness.locator('span').boundingBox() : null;
+    check(readinessLabel && score.y + score.height <= readinessLabel.y + 2, '触控接手卡未纵向呈现分数与就绪度标签');
+    const copyBounds = await button(drawer, '复制给智能体').boundingBox();
+    const toggleBounds = await button(drawer, '收起接手卡').boundingBox();
+    check([readinessBounds, copyBounds, toggleBounds].every(box => box.width >= 44 && box.height >= 44
+      && Math.abs(box.y - readinessBounds.y) <= 2), '320px 下的接手卡操作应同排且保持触控热区');
     const overflow = button(drawer, '更多操作');
     const destructive = page.getByText('标记失效', { exact: true });
     const destructiveHidden = await overflow.isVisible() && !await destructive.isVisible();
@@ -300,6 +316,13 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
       check(returned, `${width}px 窄屏用键盘从更多操作进入暂缓，Esc 后焦点未返回更多操作`);
       menuFocus.push({ width, returned });
     }
+    await repay.tap();
+    const verification = page.getByRole('dialog', { name: repayLabel });
+    await verification.waitFor();
+    await verification.evaluate(element => Promise.allSettled(element.getAnimations().map(animation => animation.finished)));
+    const repayBounds = await verification.boundingBox();
+    check(repayBounds.y <= 9 && repayBounds.y + repayBounds.height >= page.viewportSize().height - 9,
+      `移动端核对表单没有充分使用可视高度（顶部 ${repayBounds.y.toFixed(1)}px，高 ${repayBounds.height.toFixed(1)}px）`);
     if (failures.length > 0) await page.screenshot({ path: path.join(out, 'failure-planning-debt-detail-dark320.png') });
     return { primary: [primary.width, primary.height], close: [close.width, close.height], closeGlyph: [closeGlyph.width, closeGlyph.height],
       destructiveHidden, destructiveReachable, menuFocus };

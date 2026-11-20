@@ -156,9 +156,11 @@
 .ep-repay-record { font-weight: 560; }
 .ep-repay-section { display: grid; gap: 10px; min-width: 0; }
 .ep-repay-check {
-  display: grid; gap: 7px; border: 1px solid var(--ep-line); border-radius: 8px;
-  min-width: 0; background: var(--ep-panel); padding: 10px 12px;
+  display: grid; gap: 6px; border: 1px solid var(--ep-line); border-radius: 8px;
+  min-width: 0; background: var(--ep-panel); padding: 9px 11px;
 }
+.ep-repay-check .ep-field > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ep-dialog .ep-repay-check select, .ep-dialog .ep-repay-check input[type=text] { min-height: 32px; padding-block: 4px; }
 .ep-repay-check-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
 .ep-repay-check-head strong { font-weight: 650; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
 .ep-verdicts {
@@ -185,6 +187,13 @@
 .ep-open-in-list { margin-left: auto; }
 .ep-escape-help { margin-left: auto; white-space: nowrap; }
 .ep-open-in-list + .ep-escape-help { margin-left: 2px; }
+.ep-dialog--debt-detail { background: var(--ep-base); }
+.ep-dialog--debt-detail .ep-detail { padding-inline: 0; }
+.ep-dialog--debt-detail .ep-detail > :not(.ep-brief, .ep-debt-actions) { margin-inline: .95rem; }
+.ep-dialog.ep-dialog--debt-detail > button:last-child,
+.ep-dialog.ep-dialog--repay > button:last-child { top: 4px; right: 4px; width: 44px; height: 44px; background: transparent; }
+.ep-dialog.ep-dialog--debt-detail > button:last-child svg,
+.ep-dialog.ep-dialog--repay > button:last-child svg { width: 18px; height: 18px; }
 .ep-detail-scroll > .ep-debt-head { padding: 5px 0 0; background: transparent; border-bottom: 0; margin: 0; gap: 10px; }
 .ep-debt-headline { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-width: 0; }
 .ep-debt-headline > .ep-coin { width: 48px; height: 48px; font-size: 24px; border-width: 3px; }
@@ -195,8 +204,10 @@
 .ep-debt-meta > span { min-width: 0; max-width: 100%; }
 .ep-debt-deadline > .ep-deadline { align-items: flex-end; }
 .ep-debt-actions { align-items: stretch; gap: 7px; margin-bottom: 4px; }
-.ep-debt-actions .ep-button { min-height: 34px; font-size: 13px; }
-.ep-debt-actions .ep-debt-hit { border-color: transparent; background: transparent; color: var(--ep-muted); }
+.ep-debt-actions .ep-button { min-height: 33px; font-size: 13px; }
+.ep-debt-actions .ep-button svg { width: 15px; height: 15px; }
+.ep-debt-actions .ep-debt-hit, .ep-debt-actions .ep-debt-more { border-color: transparent; background: transparent; color: var(--ep-muted); }
+.ep-debt-actions .ep-debt-more { min-width: 44px; }
 .ep-paid-banner { display: flex; gap: 12px; border-color: color-mix(in srgb, var(--ep-ok) 35%, var(--ep-line)); background: var(--ep-ok-soft); }
 .ep-paid-banner > svg { width: 23px; height: 23px; color: var(--ep-ok); flex: none; }
 .ep-paid-banner h3 { color: var(--ep-ok); }
@@ -206,6 +217,8 @@
 .ep-history-tabs > button[aria-pressed="true"] { background: var(--ep-soft); border-color: var(--ep-line); color: var(--ep-fg); font-weight: 620; }
 .ep-evidence li > svg { display: inline-block; vertical-align: -.13em; width: 15px; height: 15px; margin-right: 4px; color: var(--ep-accent-ink); }
 @media (max-width: 560px) {
+  .ep-dialog.ep-dialog--repay { --ep-repay-max-height: 100dvh; height: 100dvh; }
+  .ep-dialog--repay .ep-dialog-form { flex: 1; }
   .ep-dialog--repay .ep-dialog-content { padding-inline: 10px; }
   .ep-repay-proof-line { grid-template-columns: 1fr; }
   .ep-verdicts { max-width: 100%; }
@@ -217,7 +230,8 @@
   .ep-debt-deadline > .ep-deadline { align-items: flex-start; }
   .ep-debt-actions .ep-button { min-height: 44px; padding-inline: 5px; }
   .ep-debt-actions .ep-button svg { width: 13px; height: 13px; }
-  .ep-debt-actions .ep-debt-hit { order: 5; }
+  .ep-dialog.ep-dialog--debt-detail > button:last-child svg,
+  .ep-dialog.ep-dialog--repay > button:last-child svg { width: 25px; height: 25px; }
   .ep-detail-strip { padding-left: 11px; }
   .ep-detail-strip .ep-escape-help { display: none; }
   .ep-history-tabs > button { min-height: 35px; }

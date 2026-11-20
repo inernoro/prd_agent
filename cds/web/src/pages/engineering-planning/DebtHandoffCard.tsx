@@ -6,7 +6,9 @@ function citationKey(cite: PlanningBriefCitation) {
   return cite.kind === 'record' ? `${cite.kind}:${cite.id}:${cite.target}` : `${cite.kind}:${cite.id}`;
 }
 
-export function DebtHandoffCard({ brief, onCitation }: { brief: PlanningDebtBrief; onCitation: (cite: PlanningBriefCitation) => void }) {
+export function DebtHandoffCard({ brief, debtId, onCitation }: {
+  brief: PlanningDebtBrief; debtId: string; onCitation: (cite: PlanningBriefCitation) => void;
+}) {
   const [expanded, setExpanded] = useState(true);
   const [copy, setCopy] = useState<'idle' | 'copied' | 'manual'>('idle');
   const contentId = useId();
@@ -31,14 +33,14 @@ export function DebtHandoffCard({ brief, onCitation }: { brief: PlanningDebtBrie
     <p className="ep-caption">从当前记录和历史整理，点击出处可核对原文。</p>
     <div className="ep-brief-tools">
       <details className="ep-brief-readiness">
-        <summary><strong>{brief.readiness.score}/{brief.readiness.max}</strong> 接手就绪度</summary>
+        <summary><strong>{brief.readiness.score}/{brief.readiness.max}</strong><span>接手就绪度</span></summary>
         <ul>{brief.readiness.items.map(item => <li key={item.label}>
           {item.ok ? <Check aria-hidden="true" /> : null}<span>{item.ok ? '已具备' : '缺少'} · {item.label}</span>
         </li>)}</ul>
       </details>
       <button type="button" className="ep-button" onClick={() => { void copyBrief(); }}><Copy aria-hidden="true" />复制给智能体</button>
       <button type="button" className="ep-button ep-brief-toggle" aria-expanded={expanded} aria-controls={contentId}
-        onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '展开'}接手卡</button>
+        aria-label={expanded ? '收起接手卡' : '展开接手卡'} onClick={() => setExpanded(value => !value)}>{expanded ? '收起' : '展开'}</button>
     </div>
     {copy === 'copied' && <p className="ep-caption" role="status">已复制接手卡</p>}
     {copy === 'manual' && <label className="ep-field"><span>请选择并复制接手卡内容</span>
@@ -62,6 +64,7 @@ export function DebtHandoffCard({ brief, onCitation }: { brief: PlanningDebtBrie
           <ol>{brief.next.map(line => <li key={line}>{line}</li>)}</ol></>}
         {brief.gaps.length > 0 && <p className="ep-caption">记录里还缺 {brief.gaps.join('、')}</p>}
       </section>}
+      <p className="ep-brief-cli ep-caption">也可用 <code>cdscli debt brief {debtId}</code> 读取这份接手卡。</p>
     </div>
   </section>;
 }

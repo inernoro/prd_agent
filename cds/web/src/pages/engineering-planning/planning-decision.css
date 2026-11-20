@@ -572,8 +572,10 @@ button.ep-trunk-branch:hover { border-style: solid; border-color: var(--ep-accen
   overflow-wrap: anywhere;
 }
 
-.ep-record-main .ep-planning-record-section > h3 { font-size: 1.21rem; font-weight: 670; }
-.ep-record-related .ep-planning-record-section > h3 { font-size: .94rem; }
+.ep-planning-record-section > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.ep-record-main .ep-planning-record-section > header > h3 { font-size: 1.21rem; font-weight: 670; }
+.ep-decision-record .ep-record-main .ep-planning-record-section > header > h3 { font-size: 22px; line-height: 1.5; }
+.ep-record-related .ep-planning-record-section > header > h3 { font-size: .94rem; }
 .ep-planning-record-section > a, .ep-planning-record-section > button:not(.ep-record-link) { justify-self: start; }
 .ep-planning-record-cli { border-radius: .35rem; padding: .45rem .55rem; background: var(--ep-inset); font: .76rem var(--cds-font-mono), monospace; }
 .ep-record-muted { color: var(--ep-muted); font-size: .8rem; }
@@ -634,8 +636,6 @@ button.ep-trunk-branch:hover { border-style: solid; border-color: var(--ep-accen
 .ep-record-link:hover { border-color: var(--ep-accent); }
 .ep-record-link > span:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .4rem; }
 .ep-record-link strong { font-size: .83rem; font-weight: 640; }
-.ep-plan-detail-progress { display: grid; gap: .45rem; }
-.ep-plan-detail-progress .ep-button { margin-inline-start: auto; }
 .ep-plan-detail-meter { height: 8px; border-radius: 1rem; overflow: hidden; width: min(100%, 520px); background: var(--ep-inset); }
 .ep-plan-detail-meter > span { display: block; height: 100%; background: var(--ep-accent); }
 .ep-plan-detail-meter[data-status=done] > span { background: var(--ep-ok); }

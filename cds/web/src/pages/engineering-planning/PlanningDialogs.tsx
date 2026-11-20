@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { CalendarDays, CheckCircle2, Folder, GitPullRequest, Link2, MessageSquare, MoreHorizontal, Pencil, UserRound } from 'lucide-react';
+import { CalendarDays, Check, CheckCircle2, Flame, Folder, GitPullRequest, Link2, MessageSquare, MoreHorizontal, Pencil, UserRound } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
@@ -39,14 +39,14 @@ function field(form: FormData, name: string) { return String(form.get(name) ?? '
 function optional(form: FormData, name: string) { return field(form, name) || undefined; }
 function lines(value?: string) { return value?.split(/\r?\n/).map(line => line.trim()).filter(Boolean); }
 
-function Field({ name, label, initial, required, multiline, choices, date, max, onValue }: {
+function Field({ name, label, initial, required, multiline, choices, date, max, onValue, placeholder }: {
   name: string; label: string; initial?: string; required?: boolean; multiline?: boolean; choices?: readonly (readonly [string, string])[]; date?: boolean; max?: number;
-  onValue?: (value: string) => void;
+  placeholder?: string; onValue?: (value: string) => void;
 }) {
   return <label className="ep-field"><span>{label}{required && <small className="ep-required" aria-hidden="true">必填</small>}</span>
     {choices ? <select name={name} defaultValue={initial} required={required}>{choices.map(([value, title]) => <option key={value} value={value}>{title}</option>)}</select>
       : multiline ? <textarea name={name} defaultValue={initial} required={required} rows={3} maxLength={max ?? 4000} />
-        : <input name={name} type={date ? 'date' : 'text'} defaultValue={initial} required={required} maxLength={max ?? 2000}
+        : <input name={name} type={date ? 'date' : 'text'} defaultValue={initial} required={required} maxLength={max ?? 2000} placeholder={placeholder}
           onChange={onValue && (event => onValue(event.target.value))} />}
   </label>;
 }
@@ -186,11 +186,14 @@ function decisionInput(form: FormData, previous?: PlanningDecision) {
   return { structure, links, pullRequest: url ? { url, ...(label && path ? { target: { label, path } } : {}) } : undefined };
 }
 
-function RepaymentCheck({ criterion, verdict, onChange }: { criterion: Criterion; verdict?: string; onChange: (verdict: string) => void }) {
+function RepaymentCheck({ criterion, number, verdict, onChange }: {
+  criterion: Criterion; number: number; verdict?: string; onChange: (verdict: string) => void;
+}) {
   const id = criterion.id;
+  const isNotApplicable = verdict === 'na';
   return <fieldset className="ep-repay-check" aria-labelledby={`criterion-title-${id}`}>
     <div className="ep-repay-check-head">
-      <strong id={`criterion-title-${id}`}>{criterion.text}</strong>
+      <strong id={`criterion-title-${id}`}>{number}. {criterion.text}</strong>
       <div className="ep-verdicts" role="radiogroup" aria-label={criterion.text}>
         {([['met', '达标'], ['unmet', '未达标'], ['na', '不适用']] as const).map(([value, label]) =>
           <label key={value} data-verdict={value}>
@@ -199,11 +202,12 @@ function RepaymentCheck({ criterion, verdict, onChange }: { criterion: Criterion
           </label>)}
       </div>
     </div>
-    <Field name={`note-${id}`} label={verdict === 'na' ? '不适用说明' : '实际结果'} required={verdict === 'na'} />
+    <Field name={`note-${id}`} label={isNotApplicable ? '不适用说明' : '实际结果'} required={isNotApplicable}
+      placeholder={isNotApplicable ? '说明为什么不适用（必填）' : '实际结果，例如查询 p95 = 220ms'} />
     <div className="ep-repay-proof-line">
       <Field name={`proof-type-${id}`} label="证据类型" initial="test" choices={Object.entries(evidenceLabels)} />
-      <Field name={`proof-label-${id}`} label="证据说明（可选）" max={500} />
-      <Field name={`proof-url-${id}`} label="证据链接（可选）" />
+      <Field name={`proof-label-${id}`} label="证据说明（可选）" placeholder="证据说明（可选）" max={500} />
+      <Field name={`proof-url-${id}`} label="证据链接（可选）" placeholder="链接（可选）" />
     </div>
   </fieldset>;
 }
@@ -214,7 +218,7 @@ function RepaymentFields({ action, verdicts, onVerdict, onScreenshotReady }: {
 }) {
   return <>
     <section className="ep-repay-section" aria-label="逐项核对偿还标准">
-      {action.debt.criteria.map(criterion => <RepaymentCheck key={criterion.id} criterion={criterion}
+      {action.debt.criteria.map((criterion, index) => <RepaymentCheck key={criterion.id} criterion={criterion} number={index + 1}
         verdict={verdicts[criterion.id]} onChange={value => onVerdict(criterion.id, value)} />)}
       {Object.values(verdicts).includes('unmet') && <p className="ep-error" role="status">还有未达标的核对项。补完修复后再确认偿还。</p>}
     </section>
@@ -510,11 +514,12 @@ export function PlanningActionDialog({ action, board, busy, error, returnFocusTo
     } catch (error) { setValidation(error instanceof Error ? error.message : '请核对表单内容'); }
   }
   const title = actionTitle(action);
-  const description = repayment ? '逐条对照当时写下的标准，写明实际结果和证据。'
+  const description = repayment ? '逐条核对标准并写明实际结果。达标或说明不适用后，用带标记的偿还后截图证明问题已解决。'
     : action.kind === 'debt' || action.kind === 'health' ? action.debt.title : action.kind === 'reject' ? action.proposal.draft.title
     : action.kind === 'decision' ? action.decision.title : action.kind === 'step' ? action.plan.title : '变更保存到当前项目';
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
     <DialogContent className={`ep-dialog ep-dialog--form${repayment ? ' ep-dialog--repay' : ''}`} overlayClassName="ep-dialog-overlay" frame
+      style={repayment ? { maxHeight: 'var(--ep-repay-max-height, 90dvh)' } : undefined}
       onInteractOutside={event => event.preventDefault()} onCloseAutoFocus={event => {
         if (!returnFocusTo?.isConnected || returnFocusTo.matches(':disabled') || !returnFocusTo.getClientRects().length) return;
         event.preventDefault();
@@ -633,7 +638,7 @@ export function PlanningDetailDialog({
     onSelect(next);
   }
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
-    <DialogContent frame className="ep-dialog ep-dialog--detail" overlayClassName="ep-dialog-overlay">
+    <DialogContent frame className={`ep-dialog ep-dialog--detail${item.kind === 'debt' ? ' ep-dialog--debt-detail' : ''}`} overlayClassName="ep-dialog-overlay">
       <div className="ep-detail-strip">
         <PlanningBadge tone={item.kind === 'debt' ? 'accent' : 'info'}>{kindLabels[item.kind]}</PlanningBadge>
         <code title={item.id}>{shortId(item.id)}</code>
@@ -702,11 +707,12 @@ function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }
         {debt.status === 'deferred' && debt.reviewAt && debt.reviewAt <= board.today && <button type="button" className="ep-button"
           disabled={actionsDisabled} onClick={() => edit('review')}><CalendarDays aria-hidden="true" />{debtActions.review}</button>}
         <button type="button" className="ep-button ep-button--primary" disabled={actionsDisabled || !debt.criteria.length}
-          onClick={() => edit('repay')}><CheckCircle2 aria-hidden="true" />{debtActions.repay}</button>
+          onClick={() => edit('repay')}><Check aria-hidden="true" />{debtActions.repay}</button>
         <button type="button" className="ep-button" disabled={actionsDisabled} onClick={() => edit('progress')}><MessageSquare aria-hidden="true" />{debtActions.progress}</button>
         <button type="button" className="ep-button" disabled={actionsDisabled} onClick={() => edit('edit')}><Pencil aria-hidden="true" />{debtActions.edit}</button>
-        <button type="button" className="ep-button ep-debt-hit" disabled={actionsDisabled} onClick={() => edit('hit')}>{debtActions.hit}</button>
-        <DropdownMenu trigger={<button type="button" className="ep-button" ref={more} disabled={actionsDisabled}><MoreHorizontal aria-hidden="true" />更多操作</button>}>
+        <button type="button" className="ep-button ep-debt-hit" disabled={actionsDisabled} onClick={() => edit('hit')}><Flame aria-hidden="true" />{debtActions.hit}</button>
+        <DropdownMenu trigger={<button type="button" className="ep-button ep-debt-more" ref={more} disabled={actionsDisabled}
+          aria-label="更多操作" title="更多操作"><MoreHorizontal aria-hidden="true" /></button>}>
           <DropdownItem onSelect={() => edit('defer', more.current)}>{debtActions.defer}</DropdownItem>
           <DropdownItem onSelect={() => edit('branch', more.current)}>{debtActions.branch}</DropdownItem>
           {!!data.duplicateCandidates?.length && <DropdownItem onSelect={() => edit('merge', more.current)}>{debtActions.merge}</DropdownItem>}
@@ -722,7 +728,7 @@ function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }
       {data.duplicateCandidates.map(row => <button className="ep-text-button" type="button" key={row.id}
         onClick={() => onSelect({ kind: 'debt', id: row.id })}>{shortId(row.id)} · {row.title}</button>)}
     </section>}
-    {data.brief && <DebtHandoffCard key={debt.id} brief={data.brief} onCitation={jumpToCitation} />}
+    {data.brief && <DebtHandoffCard key={debt.id} brief={data.brief} debtId={debt.id} onCitation={jumpToCitation} />}
     {repayment && <section className="ep-surface ep-paid-banner" aria-label="已偿结论">
       <CheckCircle2 aria-hidden="true" /><div><h3>{repayment.mode === 'collateral' ? '连带偿还' : '已偿还'}</h3>
         <p>{repayment.summary}</p><span className="ep-caption">{repayment.by.label} · {dateLabel(repayment.at)}</span>

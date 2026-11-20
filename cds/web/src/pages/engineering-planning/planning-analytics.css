@@ -139,9 +139,9 @@
 .ep-a-charts { display: grid; gap: .78rem; }
 .ep-a-charts .ep-a-heading { margin-bottom: 0; }
 .ep-a-plot { position: relative; min-width: 0; }
-.ep-a-plot-scroll { width: 100%; overflow-x: auto; }
 .ep-a-plot svg { display: block; width: 100%; height: auto; }
 .ep-a-plot text { font-size: 13px; fill: hsl(var(--muted-foreground)); }
+.ep-a-plot[data-compact=true] text { font-size: 11px; }
 .ep-a-plot .ep-a-last-value { fill: hsl(var(--foreground)); font-weight: 700; }
 .ep-a-gridline { stroke: hsl(var(--border)); vector-effect: non-scaling-stroke; }
 .ep-a-gridline[data-zero=true] { stroke: hsl(var(--hairline-strong)); }
@@ -328,7 +328,7 @@
 }
 
 .ep-a-sun, .ep-a-pyramid { display: block; width: 100%; height: auto; }
-.ep-a-pyramid { margin: .85rem auto; }
+.ep-a-pyramid-scroll { min-width: 0; overflow-x: auto; margin-block: .85rem; }
 .ep-a-sun-center circle { fill: hsl(var(--surface-raised)); stroke: hsl(var(--border)); stroke-width: 1.25; }
 .ep-a-sun-center[role=button] { cursor: pointer; }
 .ep-a-sun-center text { font-size: 12px; fill: var(--ep-a-tone, hsl(var(--muted-foreground))); pointer-events: none; }
@@ -343,7 +343,7 @@
   stroke-linejoin: round;
   paint-order: stroke;
 }
-.ep-a-pyramid .ep-a-segment-label text { font-size: 13px; }
+.ep-a-pyramid .ep-a-segment-label text { font-size: 18px; }
 .ep-a-pyramid-link { fill: hsl(var(--hairline)); }
 .ep-a-graph-node { transition: opacity 140ms; }
 .ep-a-graph-node[data-state=muted] { opacity: .48; }
@@ -445,9 +445,8 @@
   .ep-a-panel { padding: .78rem .8rem; }
   .ep-a-kpi { min-height: 6.9rem; padding: .69rem .72rem; }
   .ep-a-graph-display { justify-content: flex-start; }
-  .ep-a-plot svg { min-width: 29rem; }
-  .ep-a-plot svg text { font-size: 19px; }
-  .ep-a-plot-scroll { scrollbar-width: thin; }
+  .ep-a-pyramid { min-width: 680px; }
+  .ep-a-pyramid-scroll { scrollbar-width: thin; }
   .ep-a-visual .ep-a-heading { align-items: flex-start; flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) {
