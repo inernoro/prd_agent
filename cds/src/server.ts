@@ -2040,7 +2040,6 @@ export function createServer(deps: ServerDeps): express.Express {
   const passkeyOrigin = trustedAuthOrigin(configuredPublicBaseUrl);
   // Keep existing HTTPS sessions when the operator has not enabled passkeys.
   const hostSessionCookies = Boolean(passkeyOrigin && deps.authStore?.passkeys && process.env.CDS_PASSKEYS_ENABLED === '1');
-  if (passkeyOrigin && hostSessionCookies) app.use(protectControlBrowser(passkeyOrigin));
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -2225,6 +2224,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     next();
   });
+  if (passkeyOrigin && hostSessionCookies) app.use(protectControlBrowser(passkeyOrigin));
   // SSE 长连接计数（2026-10-08 卡顿复盘，药方第 1 步）：挂在所有路由之前，一处覆盖
   // 全部 text/event-stream 端点；非 SSE 响应只多两个闭包。数据见
   // GET /api/cds-system/diagnostics/main-thread 的 mainThread.sseOpen / sse。

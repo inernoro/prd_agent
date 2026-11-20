@@ -988,7 +988,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     var cdsSettings = services.GetRequiredService<CdsSsoSettings>();
                     var cdsSessions = services.GetRequiredService<CdsSsoSessions>();
                     context.Response.Headers.CacheControl = "no-store";
-                    if (clientType != "admin" || !cdsSettings.IsForHost(context.Request.Host) ||
+                    if (clientType != "admin" || !cdsSettings.IsForRequest(context.Request) ||
                         !await cdsSessions.IsCurrentAsync(sessionKey!, sub, principal?.FindFirst("role")?.Value,
                             context.HttpContext.RequestAborted))
                     {

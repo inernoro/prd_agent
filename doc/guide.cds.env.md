@@ -65,6 +65,8 @@ cd cds
 
 MAP 试点使用已发布的同域预览。设置 `CdsSso__Enabled=true`、`CdsSso__Issuer`、`CdsSso__ClientId` 和 `CdsSso__RedirectUri`。签发方和客户端标识来自 CDS 登记。回调使用 MAP 预览的 HTTPS 地址与 `/api/v1/auth/cds/callback`，项目登录入口登记 `/api/v1/auth/cds/start`。
 
+如果 CDS 代理将 `Host` 改写为服务地址，在 MAP 用 `CdsSso__TrustedProxyIps__0`、`CdsSso__TrustedProxyIps__1` 等登记直连 API 的 CDS 代理 IP。限制 API 上游端口的访问范围，只登记由运维独占的代理地址。MAP 只从这些代理接收由 CDS 覆盖写入的 `X-CDS-Forwarded-Host`，并与配置的回调主机和端口逐一核对。
+
 在 MAP 部署中通过 `CdsSso__Accounts__<CDS用户ID>` 填入经核实的 MAP 本地用户 ID。更改绑定随 MAP 配置生效。停用账号、机器人、破窗账号和未完成首次改密的账号无法通过此入口。MAP 按本地角色授权，并在处理受保护请求前核对 CDS 授权。过期会话的清理索引见 [MongoDB 索引指南](guide.platform.mongodb-indexes.md)。
 
 回退时可以暂停该站点的 CDS 登记，并关闭 MAP 的 CDS 登录开关。随后核对 MAP 的项目登录与本地权限。

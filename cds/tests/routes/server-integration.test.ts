@@ -1292,6 +1292,13 @@ describe('Server route ordering (regression)', () => {
       expect(oldCookie.status).toBe(401);
       const verifiedCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` });
       expect(verifiedCookie.status).toBe(200);
+      const browserSession = { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` };
+      expect((await request(listener, '/_cds/api/me', browserSession)).status).toBe(200);
+      const sibling = await request(listener, '/_cds/api/me', {
+        ...browserSession, Origin: 'https://preview.example.org', 'Sec-Fetch-Site': 'same-site',
+      });
+      expect(sibling.status).toBe(403);
+      expect(JSON.parse(sibling.body).code).toBe('cds_browser_origin_required');
       for (const [method, route] of [
         ['POST', '/api/releases/branches/fixture-missing/runs'],
         ['PUT', '/api/auth/users/fixture-missing/projects'],

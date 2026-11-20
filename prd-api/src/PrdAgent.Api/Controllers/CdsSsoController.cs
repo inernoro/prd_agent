@@ -31,7 +31,7 @@ public sealed class CdsSsoController(
     [HttpGet("start")]
     public async Task<IActionResult> Start(string? returnUrl, bool switchAccount, CancellationToken ct)
     {
-        if (!settings.IsForHost(Request.Host)) return NotFound();
+        if (!settings.IsForRequest(Request)) return NotFound();
         Response.Headers["Referrer-Policy"] = "no-referrer";
         var local = SafeReturnUrl(returnUrl);
         var flow = new CdsSsoFlow(RandomProof(), RandomProof(), RandomProof(), RandomProof(), local);
@@ -52,7 +52,7 @@ public sealed class CdsSsoController(
     [HttpGet("callback")]
     public async Task<IActionResult> Callback(string? state, string? code, string? error, CancellationToken ct)
     {
-        if (!settings.IsForHost(Request.Host)) return NotFound();
+        if (!settings.IsForRequest(Request)) return NotFound();
         Response.Headers["Referrer-Policy"] = "no-referrer";
         var flow = ReadFlow();
         if (flow is null || flow.State != state) return Back("expired", "/");
@@ -91,7 +91,7 @@ public sealed class CdsSsoController(
     [HttpPost("complete")]
     public async Task<IActionResult> Complete(CancellationToken ct)
     {
-        if (!settings.IsForHost(Request.Host)) return NotFound();
+        if (!settings.IsForRequest(Request)) return NotFound();
         if (Request.Headers.Origin.ToString() != settings.RedirectUri!.GetLeftPart(UriPartial.Authority)) return Forbid();
 
         if (!Request.Cookies.TryGetValue(ReadyCookie, out var proof) || proof.Length != 43)

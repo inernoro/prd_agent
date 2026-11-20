@@ -76,7 +76,7 @@ public class MiduoPlanetSsoController : ControllerBase
         return Ok(ApiResponse<SsoOptionsResponse>.Ok(new SsoOptionsResponse
         {
             Items = items,
-            CdsEnabled = cds.IsForHost(Request.Host),
+            CdsEnabled = cds.IsForRequest(Request),
             PasswordLoginDisabled = options.PasswordLoginDisabled
         }));
     }

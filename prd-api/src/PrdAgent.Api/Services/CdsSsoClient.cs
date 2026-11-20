@@ -16,10 +16,24 @@ namespace PrdAgent.Api.Services;
 public sealed record CdsSsoSettings(Uri? Issuer, string ClientId, Uri? RedirectUri)
 {
     private readonly Dictionary<string, string> _accounts = new(StringComparer.Ordinal);
+    private readonly HashSet<IPAddress> _trustedProxyIps = [];
+    internal const string ForwardedHostHeader = "X-CDS-Forwarded-Host";
     public const string AuthPath = "/api/v1/auth/cds";
     public const string CallbackPath = AuthPath + "/callback";
-    public bool IsForHost(HostString host) => RedirectUri is not null
-        && string.Equals(host.Value, RedirectUri.Authority, StringComparison.OrdinalIgnoreCase);
+
+    public bool IsForRequest(HttpRequest request)
+    {
+        if (RedirectUri is null) return false;
+        var host = request.Host.Value;
+        var peer = request.HttpContext.Connection.RemoteIpAddress;
+        if (peer is not null && _trustedProxyIps.Contains(NormalizeProxyIp(peer))
+            && request.Headers.TryGetValue(ForwardedHostHeader, out var forwardedHost))
+        {
+            if (forwardedHost.Count != 1) return false;
+            host = forwardedHost[0];
+        }
+        return string.Equals(host, RedirectUri.Authority, StringComparison.OrdinalIgnoreCase);
+    }
 
     public string Scope => $"{Issuer}|{ClientId}|{RedirectUri}";
     internal string? LocalAccount(string subject) => _accounts.GetValueOrDefault(subject);
@@ -37,6 +51,12 @@ public sealed record CdsSsoSettings(Uri? Issuer, string ClientId, Uri? RedirectU
             throw new InvalidOperationException("CDS SSO needs a trusted HTTPS issuer, a CDS site client ID and the exact MAP callback URL.");
 
         var settings = new CdsSsoSettings(issuer, clientId, redirect);
+        foreach (var entry in config.GetSection("CdsSso:TrustedProxyIps").GetChildren())
+        {
+            if (!IPAddress.TryParse(entry.Value, out var peer))
+                throw new InvalidOperationException("CdsSso:TrustedProxyIps requires individual proxy IP addresses.");
+            settings._trustedProxyIps.Add(NormalizeProxyIp(peer));
+        }
         foreach (var entry in config.GetSection("CdsSso:Accounts").GetChildren())
         {
             var local = entry.Value?.Trim();
@@ -51,6 +71,8 @@ public sealed record CdsSsoSettings(Uri? Issuer, string ClientId, Uri? RedirectU
     internal static bool TryHttps(string? value, out Uri? uri) =>
         Uri.TryCreate(value, UriKind.Absolute, out uri) && uri.Scheme == Uri.UriSchemeHttps
         && uri.Host.Length > 0 && uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0;
+
+    private static IPAddress NormalizeProxyIp(IPAddress peer) => peer.IsIPv4MappedToIPv6 ? peer.MapToIPv4() : peer;
 }
 
 public sealed class CdsSsoClient

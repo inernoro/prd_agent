@@ -25,18 +25,48 @@ public sealed class CdsSsoTests
     [Fact]
     public void LoginIsOptInAndLimitedToTheConfiguredHost()
     {
+        var request = new DefaultHttpContext().Request;
+        request.Host = new HostString("map.shared.test");
         var disabled = CdsSsoSettings.Read(new ConfigurationBuilder().Build());
-        Assert.False(disabled.IsForHost(new HostString("map.shared.test")));
+        Assert.False(disabled.IsForRequest(request));
 
         var enabled = CdsSsoSettings.Read(Configuration(ReturnUri));
-        Assert.True(enabled.IsForHost(new HostString("map.shared.test")));
-        Assert.False(enabled.IsForHost(new HostString("another.preview.test")));
-        Assert.False(enabled.IsForHost(new HostString("map.shared.test:8443")));
+        Assert.True(enabled.IsForRequest(request));
+        request.Host = new HostString("another.preview.test");
+        Assert.False(enabled.IsForRequest(request));
+        request.Host = new HostString("map.shared.test:8443");
+        Assert.False(enabled.IsForRequest(request));
         Assert.Throws<InvalidOperationException>(() => CdsSsoSettings.Read(Configuration("http://map.shared.test/api/v1/auth/cds/callback")));
         Assert.Throws<InvalidOperationException>(() => CdsSsoSettings.Read(Configuration("https://cds.shared.test/api/v1/auth/cds/callback")));
         Assert.Throws<InvalidOperationException>(() => CdsSsoSettings.Read(Configuration(ReturnUri + "?extra=1")));
         Assert.Equal("existing-map-id", enabled.LocalAccount("cds-user-1"));
         Assert.Null(enabled.LocalAccount("another-cds-id"));
+    }
+
+    [Fact]
+    public void ForwardedPublicHostRequiresTheConfiguredProxyAndAnExactAuthority()
+    {
+        var config = Configuration(ReturnUri);
+        var context = new DefaultHttpContext();
+        var request = context.Request;
+        request.Host = new HostString("127.0.0.1:5500");
+        request.Headers[CdsSsoSettings.ForwardedHostHeader] = "map.shared.test";
+        context.Connection.RemoteIpAddress = IPAddress.Loopback;
+        Assert.False(CdsSsoSettings.Read(config).IsForRequest(request));
+
+        config["CdsSso:TrustedProxyIps:0"] = "127.0.0.1";
+        var settings = CdsSsoSettings.Read(config);
+        context.Connection.RemoteIpAddress = IPAddress.Loopback.MapToIPv6();
+        Assert.True(settings.IsForRequest(request));
+        context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+        Assert.False(settings.IsForRequest(request));
+
+        context.Connection.RemoteIpAddress = IPAddress.Loopback;
+        request.Headers[CdsSsoSettings.ForwardedHostHeader] = "other.shared.test";
+        request.Headers["X-Forwarded-Host"] = "map.shared.test";
+        Assert.False(settings.IsForRequest(request));
+        request.Headers[CdsSsoSettings.ForwardedHostHeader] = new[] { "map.shared.test", "other.shared.test" };
+        Assert.False(settings.IsForRequest(request));
     }
 
     [Theory]
@@ -173,6 +203,38 @@ public sealed class CdsSsoTests
         Assert.Equal("missing", fields.GetProperty("id_token").GetProperty("state").GetString());
     }
 
+    [Theory]
+    [InlineData("<html>sample private content</html>", "markup")]
+    [InlineData("{\"status\":\"sample private content\"", "json_object")]
+    public async Task UnparseableResponseRetainsRedactedAuditEvidence(string content, string format)
+    {
+        var config = Configuration(ReturnUri);
+        var writer = new Mock<IMiduoPlanetSsoAuditWriter>();
+        ApiRequestLog? evidence = null;
+        writer.Setup(w => w.BeginAsync(It.IsAny<ApiRequestLog>()))
+            .Callback<ApiRequestLog>(log => evidence = log).ReturnsAsync(true);
+        var handler = new CdsSsoAuditHandler(writer.Object, new HttpContextAccessor(), CdsSsoSettings.Read(config), config)
+        {
+            InnerHandler = new FixtureHandler(_ => new HttpResponseMessage(HttpStatusCode.BadGateway)
+            {
+                Content = new StringContent(content)
+            })
+        };
+        using var client = new HttpClient(handler);
+        await Assert.ThrowsAnyAsync<JsonException>(() => client.GetAsync(Issuer + "/userinfo"));
+
+        Assert.NotNull(evidence);
+        Assert.Equal("invalid_json", evidence.ErrorCode);
+        Assert.Equal(502, evidence.StatusCode);
+        Assert.DoesNotContain("sample private content", evidence.ResponseBody!);
+        using var audit = JsonDocument.Parse(evidence.ResponseBody!);
+        var summary = audit.RootElement.GetProperty("upstreamResponse");
+        Assert.Equal(format, summary.GetProperty("format").GetString());
+        Assert.False(summary.GetProperty("parseSucceeded").GetBoolean());
+        Assert.Matches("^[0-9a-f]{64}$", summary.GetProperty("bodyFingerprint").GetString()!);
+        Assert.Equal("complete_body", summary.GetProperty("fingerprintScope").GetString());
+    }
+
     [Fact]
     public void DelegatedSessionsCannotIssueExternalConsoleTickets()
     {
@@ -187,6 +249,7 @@ public sealed class CdsSsoTests
         ["CdsSso:ClientId"] = ClientId,
         ["CdsSso:RedirectUri"] = redirectUri,
         ["CdsSso:Accounts:cds-user-1"] = "existing-map-id",
+        ["Jwt:Secret"] = "fixture-sso-audit-key-with-sufficient-length",
     }).Build();
 
     private sealed class FixtureHandler(Func<HttpRequestMessage, HttpResponseMessage> reply) : HttpMessageHandler

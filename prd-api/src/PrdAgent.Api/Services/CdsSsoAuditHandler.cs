@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using PrdAgent.Core.Diagnostics;
 using PrdAgent.Core.Models;
@@ -79,10 +80,19 @@ public sealed class CdsSsoAuditHandler(
             }
 
             audit.ResponseBodyTruncated = count > MaxResponseBytes;
-            if (audit.ResponseBodyTruncated) throw new HttpRequestException("CDS OIDC response exceeded its size limit.");
+            var body = capture.AsMemory(0, Math.Min(count, MaxResponseBytes));
+            if (audit.ResponseBodyTruncated)
+            {
+                snapshot = DescribeUnparsed(body, error: null);
+                throw new HttpRequestException("CDS OIDC response exceeded its size limit.");
+            }
 
-            var body = capture.AsMemory(0, count);
-            snapshot = Describe(body, out upstreamError);
+            try { snapshot = Describe(body, out upstreamError); }
+            catch (JsonException error)
+            {
+                snapshot = DescribeUnparsed(body, error);
+                throw;
+            }
             stage = response.IsSuccessStatusCode && upstreamError is null ? "received" : "upstream_denied";
 
             // Give the caller the same response after saving the audit evidence.
@@ -119,6 +129,27 @@ public sealed class CdsSsoAuditHandler(
                 throw AuditUnavailable();
             }
         }
+    }
+
+    private object DescribeUnparsed(ReadOnlyMemory<byte> body, JsonException? error)
+    {
+        var content = Encoding.UTF8.GetString(body.Span);
+        var trimmed = content.AsSpan().TrimStart();
+        var format = trimmed.IsEmpty ? "empty" : trimmed[0] switch
+        {
+            '<' => "markup",
+            '{' => "json_object",
+            '[' => "json_array",
+            _ => "text_or_binary"
+        };
+        var secret = config["Jwt:Secret"]?.Trim();
+        return new
+        {
+            format, parseSucceeded = false, lineNumber = error?.LineNumber, bytePosition = error?.BytePositionInLine,
+            bodyFingerprint = string.IsNullOrEmpty(secret) ? null : MiduoPlanetSsoAudit.Fingerprint("cds-oidc-body:" + content, secret),
+            fingerprintScope = error is null ? "captured_prefix" : "complete_body",
+            omitted = "raw response body"
+        };
     }
 
     private static object Describe(ReadOnlyMemory<byte> body, out string? error)
