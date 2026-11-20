@@ -163,6 +163,7 @@
 - [MAP MCP 连接器 · 设计](./design.platform.map-mcp-connector.md) `design.platform.map-mcp-connector`
 - [AppCaller 模型池选择与池内调度 · 设计](./design.platform.model-pool.md) `design.platform.model-pool`
 - [网络诊断功能 · 设计](./design.platform.network-diagnostics.md) `design.platform.network-diagnostics`
+- [通知中心与故障接力 · 设计](./design.platform.notification.center.md) `design.platform.notification.center`
 - [通知分类与短讯报告 · 设计](./design.platform.notification.templates.md) `design.platform.notification.templates`
 - [桌面端更新与分布式登录/会话审计说明 · 设计](./design.platform.ops-auth.md) `design.platform.ops-auth`
 - [系统级跨节点互传（Peer Sync） · 设计](./design.platform.peer-sync.md) `design.platform.peer-sync`

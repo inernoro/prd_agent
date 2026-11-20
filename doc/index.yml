@@ -135,6 +135,7 @@ docs:
   design.open-platform.open-api: "开放接口（OpenAI 兼容对外网关）技术设计 · 设计"
   design.open-platform: "开放平台功能概要 · 设计"
   design.page-agent.bridge: "Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计"
+  design.platform.notification.center: "通知中心与故障接力 · 设计"
   design.platform.notification.templates: "通知分类与短讯报告 · 设计"
   design.platform.active-tasks: "活动任务清单 · 设计"
   design.platform.account-data-sharing: "账户数据共享 · 设计"
