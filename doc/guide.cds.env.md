@@ -63,6 +63,12 @@ cd cds
 
 网站需要进入自己的旧账号时，可在同一站点配置中填写精确的回调路径，并由管理员核实本地账号后建立绑定。控制面使用 Node 22 LTS 或更新的 LTS 运行 OpenID Connect 提供方。网站使用授权码和 PKCE，按签发方的发现文档核对回调和身份凭证，再用 UserInfo 中的 `cds_local_account` 标识匹配本地账号。启用这种接入的网站在处理受保护请求前应确认 CDS 授权仍有效。
 
+### MAP 接入
+
+MAP 按已绑定的本地用户 ID 登录。首次改密待完成、已停用的用户、机器人和破窗账号不能使用此入口。MAP 每次调用受保护接口时核对本地权限和 CDS 授权。授权到期或被撤销时回到 MAP 登录页，可从 CDS 重新授权。
+
+在独立的 MAP 试点部署配置 `CdsSso__Enabled=true`、`CdsSso__Issuer`、`CdsSso__ClientId` 和 `CdsSso__RedirectUri`。签发方与客户端标识可从该站点的 CDS 配置读取。回调使用 MAP 试点的 HTTPS 地址和 `/api/v1/auth/cds/callback`，应用登录入口填写 `/api/v1/auth/cds/start`。启用后，从分支诊断面板登录或切换账号会继续进入 MAP 的本地会话。MAP 开关关闭时，先从 CDS 移除该试点的应用登录入口，再验证停用后的私有网关仍要求授权。过期会话的清理索引见 [MongoDB 索引指南](guide.platform.mongodb-indexes.md)。
+
 试点出现问题时，可在站点设置中暂停访问。暂停使当前站点会话失效，分支继续要求授权。
 
 ## 项目运行变量

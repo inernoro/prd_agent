@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AuthService } from '../../src/services/auth-service.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
-import { HostedSso, isSsoOriginIsolated, siteReturnPath, type GatewayRequest } from '../../src/services/hosted-sso.js';
+import { HostedSso, isSsoOriginIsolated, siteReturnPath, type GatewayRequest, type HostedSsoConfig } from '../../src/services/hosted-sso.js';
 import type { StateService } from '../../src/services/state.js';
 
 const authority = new URL('https://cds.example.net');
@@ -18,7 +18,7 @@ async function fixture() {
   const session = await auth.createSessionForUser(user.id, { userAgent: null, ipAddress: null });
   const makeBranch = (id: string, origin: URL) => ({ id, projectId: id, branch: 'preview', hostedSso: {
     origin: origin.origin, revision: id + '-policy', deniedUserIds: [] as string[],
-  } });
+  } as HostedSsoConfig });
   const branches = { a: makeBranch('a', originA), b: makeBranch('b', originB) };
   let grants = ['a', 'b'].map(projectId => ({ projectId, principalId: 'human:' + user.id }));
   const state = {
@@ -85,5 +85,20 @@ describe('CDS hosted SSO', () => {
     expect(await sso.check(signedIn)).toMatchObject({ status: 401 });
     await auth.setUserStatus(user.id, 'disabled');
     expect(await sso.accountsForSite(cookies.accounts, sso.site('b')!)).toEqual([]);
+  });
+
+  it('continues through an enrolled application login only for accounts with a local binding', async () => {
+    const { sso, request, cookies, user, branches } = await fixture();
+    branches.a.hostedSso.application = { callbackPath: '/auth/callback', loginPath: '/auth/start', accounts: {} };
+    const start = await sso.check({ ...request, path: '/_cds/sso/start?choose=1&return=%2Fboard%3Fview%3Dcurrent' });
+    if (start.allow) throw new Error('anonymous request unexpectedly approved');
+    const flowToken = cookieValue(start.cookie!);
+    const site = sso.flow(flowToken)!.site;
+    expect(await sso.completeAuthorization(cookies.accounts, site, flowToken, user.id)).toBeUndefined();
+    branches.a.hostedSso.application.accounts[user.id] = 'local-account-id';
+    const callback = (await sso.completeAuthorization(cookies.accounts, site, flowToken, user.id))!;
+    expect(await sso.check({ ...request, path: callback.pathname + callback.search, flowToken })).toMatchObject({
+      status: 303, location: '/auth/start?returnUrl=%2Fboard%3Fview%3Dcurrent',
+    });
   });
 });

@@ -30,7 +30,7 @@ export interface HostedSsoConfig {
   /** Initial and default audience is the existing project membership. */
   deniedUserIds: string[];
   suspended?: true;
-  application?: { callbackPath: string; accounts: Record<string, string> };
+  application?: { callbackPath: string; loginPath?: string; accounts: Record<string, string> };
 }
 
 export interface GatewayRequest {
@@ -277,7 +277,7 @@ export class HostedSso {
 
   async completeAuthorization(accounts: BrowserAccounts, site: Site, flowToken: string, userId: string): Promise<URL | undefined> {
     const token = accounts.sessions.get(userId);
-    if (!token || !await this.authorized(site, token)) return undefined;
+    if (!token || (site.application?.loginPath && !site.application.accounts[userId]) || !await this.authorized(site, token)) return undefined;
     const flow = this.flows.read(flowToken, true);
     if (!flow || flow.branchId !== site.id || flow.revision !== site.revision) return undefined;
     const code = this.codes.issue({ branchId: site.id, revision: site.revision, cdsToken: token, flowToken, returnPath: flow.path }, CODE_TTL);
@@ -338,7 +338,17 @@ export class HostedSso {
       // Session replacement is site-local, including when the user switches accounts.
       const previous = this.siteSessions.read(input.sessionToken);
       if (previous?.branchId === site.id) this.siteSessions.read(input.sessionToken, true);
-      return { allow: false, status: 303, location: consumed.returnPath,
+      let location = consumed.returnPath;
+      const application = site.application;
+      if (application?.loginPath) {
+        const destination = new URL(location, site.origin);
+        if (destination.pathname !== application.loginPath && destination.pathname !== application.callbackPath) {
+          const continuation = new URL(application.loginPath, site.origin);
+          continuation.searchParams.set('returnUrl', destination.pathname + destination.search);
+          location = continuation.pathname + continuation.search;
+        }
+      }
+      return { allow: false, status: 303, location,
         cookies: [authCookie(SITE_SESSION_COOKIE, token, SITE_TTL / 1000), authCookie(SITE_FLOW_COOKIE, '', 0)] };
     }
     const session = this.siteSessions.read(input.sessionToken);

@@ -4,7 +4,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useAuthStore } from '@/stores/authStore';
 import { useEntrySkinStore } from '@/stores/entrySkinStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { initializeTheme } from '@/stores/themeStore';
+import { initializeTheme, useThemeStore } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
 import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
@@ -156,6 +156,9 @@ export default function App() {
   const location = useLocation();
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isLoginRoute = location.pathname.replace(/\/$/, '') === '/login';
+  // During the authorization callback, the login page exchanges the new session itself.
+  const hasWorkspaceSession = isAuthenticated && !isLoginRoute;
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
@@ -209,6 +212,11 @@ export default function App() {
     initializeTheme();
   }, []);
 
+  const loadTheme = useThemeStore((s) => s.loadFromServer);
+  useEffect(() => {
+    if (hasWorkspaceSession) void loadTheme();
+  }, [currentUserId, hasWorkspaceSession, loadTheme]);
+
   // 教程数据预加载:与 TipsDrawer 的条件挂载解耦。TipsDrawer 在 /home/login 等页不挂载,
   // 若只靠它 load(),用户停在登录后默认落地页 /home 时 tips 不会预拉,等导航到第一个有教程的
   // 页面才 mount→异步 fetch→才能强制开讲,造成「人已经在操作了教程才弹」的延迟(Bugbot)。
@@ -216,29 +224,29 @@ export default function App() {
   const loadTips = useDailyTipsStore((s) => s.load);
   const tipsLoaded = useDailyTipsStore((s) => s.loaded);
   useEffect(() => {
-    if (isAuthenticated && !tipsLoaded) void loadTips();
-  }, [isAuthenticated, tipsLoaded, loadTips]);
+    if (hasWorkspaceSession && !tipsLoaded) void loadTips();
+  }, [hasWorkspaceSession, tipsLoaded, loadTips]);
 
   // 首次进入、切换账号或权限指纹使缓存失效时，立即刷新完整权限快照。
   useEffect(() => {
-    if (!isAuthenticated || !currentUserId) {
+    if (!hasWorkspaceSession || !currentUserId) {
       lastSyncedUserIdRef.current = null;
       return;
     }
     if (lastSyncedUserIdRef.current !== currentUserId || !permissionsLoaded) {
       void refreshCurrentAuthz();
     }
-  }, [currentUserId, isAuthenticated, permissionsLoaded, refreshCurrentAuthz]);
+  }, [currentUserId, hasWorkspaceSession, permissionsLoaded, refreshCurrentAuthz]);
 
   // 个人权限变更后当前会话自动生效：重新聚焦立即刷新，持续停留时最多等待 30 秒。
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!hasWorkspaceSession) return;
     return installAuthzAutoRefresh({ refresh: refreshCurrentAuthz });
-  }, [isAuthenticated, refreshCurrentAuthz]);
+  }, [hasWorkspaceSession, refreshCurrentAuthz]);
 
   // 加载菜单目录
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!hasWorkspaceSession) return;
     if (menuCatalogLoaded) return;
     (async () => {
       const res = await getAdminMenuCatalog();
@@ -246,13 +254,13 @@ export default function App() {
         setMenuCatalog(res.data.items);
       }
     })();
-  }, [isAuthenticated, menuCatalogLoaded, setMenuCatalog]);
+  }, [hasWorkspaceSession, menuCatalogLoaded, setMenuCatalog]);
 
   return (
-    <AgentSwitcherProvider>
+    <AgentSwitcherProvider enabled={!isLoginRoute}>
       <ToastContainer />
       <NavigationBridge />
-      <BehaviorTrackerMount />
+      {!isLoginRoute && <BehaviorTrackerMount />}
       {/* 路由切换顶栏进度条：绕过 Suspense transition 语义，立刻给用户视觉反馈 */}
       <NavigationProgressBar />
       <Suspense fallback={<SuspenseVideoLoader />}>

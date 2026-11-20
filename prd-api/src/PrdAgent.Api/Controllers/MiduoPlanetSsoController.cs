@@ -54,8 +54,9 @@ public class MiduoPlanetSsoController : ControllerBase
     }
 
     [HttpGet("options")]
+    [ResponseCache(Location = ResponseCacheLocation.None, NoStore = true)]
     [ProducesResponseType(typeof(ApiResponse<SsoOptionsResponse>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Options()
+    public async Task<IActionResult> Options([FromServices] CdsSsoSettings cds)
     {
         var options = await ReadOptionsAsync(HttpContext.RequestAborted);
         var items = options.Enabled
@@ -75,6 +76,7 @@ public class MiduoPlanetSsoController : ControllerBase
         return Ok(ApiResponse<SsoOptionsResponse>.Ok(new SsoOptionsResponse
         {
             Items = items,
+            CdsEnabled = cds.IsForHost(Request.Host),
             PasswordLoginDisabled = options.PasswordLoginDisabled
         }));
     }
@@ -618,6 +620,7 @@ public class MiduoPlanetSsoController : ControllerBase
 public class SsoOptionsResponse
 {
     public List<SsoLoginOption> Items { get; set; } = new();
+    public bool CdsEnabled { get; set; }
     public bool PasswordLoginDisabled { get; set; }
 }
 

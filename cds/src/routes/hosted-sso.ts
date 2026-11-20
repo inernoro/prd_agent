@@ -49,6 +49,7 @@ async function createOidcProvider(sso: HostedSso, auth: AuthService, store: Coll
   const { default: Provider, interactionPolicy } = await import('oidc-provider');
   const signing = await loadOidcSigningMaterial(store);
   const policy = interactionPolicy.base();
+  policy.add(new interactionPolicy.Prompt({ name: 'select_account', requestable: true }), 0);
   policy.get('login')?.checks.add(new interactionPolicy.Check(
     'cds_site_account', 'Choose the account authorized for this site', ctx => !ctx.oidc.result?.login,
   ));
@@ -69,6 +70,9 @@ async function createOidcProvider(sso: HostedSso, auth: AuthService, store: Coll
     features: { devInteractions: { enabled: false }, userinfo: { enabled: true }, resourceIndicators: { enabled: false } },
     responseTypes: ['code'], scopes: ['openid'], claims: { openid: ['sub', 'cds_local_account'] },
     pkce: { required: () => true },
+    // The provider's browser session changes when another site selects a different account.
+    // Site grants are checked against their own CDS session in findAccount.
+    expiresWithSession: () => false,
     ttl: { AuthorizationCode: 60, IdToken: 120, AccessToken: OIDC_SESSION_MS / 1000, Grant: OIDC_SESSION_MS / 1000,
       Interaction: 300, Session: OIDC_SESSION_MS / 1000 },
     async findAccount(ctx, userId, token) {
@@ -169,7 +173,8 @@ export function createHostedSsoRouter(deps: {
         return;
       }
     }
-    const accounts = await sso.accountsForSite(browser.accounts, site);
+    const accounts = (await sso.accountsForSite(browser.accounts, site))
+      .filter(user => !site.application?.loginPath || Boolean(site.application.accounts[user.id]));
     const target = `${AUTHORIZE}?flow=${encodeURIComponent(flowToken)}`;
     accountPage(res, site, accounts, target, `<input type="hidden" name="flow" value="${escape(flowToken)}">`, Boolean(selected));
   };
@@ -206,7 +211,9 @@ export function createHostedSsoRouter(deps: {
       if (!browser) { res.sendStatus(429); return; }
       if (browser.newCookie) res.append('Set-Cookie', browser.newCookie);
       await sso.rememberCurrent(browser.accounts, req.get('cookie'));
-      const selectExplicitly = typeof detail.params.prompt === 'string' && detail.params.prompt.split(/\s+/).includes('login');
+      const prompts = typeof detail.params.prompt === 'string' ? detail.params.prompt.split(/\s+/) : [];
+      const reauthenticate = prompts.includes('login');
+      const selectExplicitly = reauthenticate || prompts.includes('select_account');
       const selected = req.method === 'POST' ? req.body?.account : selectExplicitly ? undefined : browser.accounts.preferences.get(preferenceKey(site));
       if (typeof selected === 'string' && site.application.accounts[selected]) {
         const cdsToken = browser.accounts.sessions.get(selected);
@@ -214,7 +221,7 @@ export function createHostedSsoRouter(deps: {
         if (cdsToken && verified) {
           const authenticatedAt = Math.floor(Date.parse(verified.session.createdAt) / 1000);
           const maxAge = detail.params.max_age === undefined ? undefined : Number(detail.params.max_age);
-          const freshEnough = maxAge === 0 || selectExplicitly
+          const freshEnough = maxAge === 0 || reauthenticate
             ? authenticatedAt >= (detail.iat ?? 0)
             : maxAge === undefined || Math.floor(Date.now() / 1000) - authenticatedAt <= maxAge;
           if (!freshEnough) {
@@ -230,7 +237,8 @@ export function createHostedSsoRouter(deps: {
           await sso.rememberSelection(browser.accounts, site, selected);
           await auth.recordActivity({ userId: selected, userLogin: verified.user.username || verified.user.githubLogin,
             action: 'hosted-sso.authorize', targetType: 'branch', targetId: site.id, summary: '授权登录站点账号' });
-          await instance.interactionFinished(req, res, { login: { accountId: selected, ts: authenticatedAt, remember: false }, consent: { grantId } }, { mergeWithLastSubmission: false });
+          await instance.interactionFinished(req, res, { login: { accountId: selected, ts: authenticatedAt, remember: false }, consent: { grantId },
+            ...(prompts.includes('select_account') ? { select_account: {} } : {}) }, { mergeWithLastSubmission: false });
           return;
         }
       }
@@ -295,14 +303,17 @@ export function createHostedSsoRouter(deps: {
     const app = req.body?.application;
     if (app) {
       const path = app.callbackPath;
+      const loginPath = app.loginPath;
       const accounts = app.accounts;
       if (!oidcStore || typeof path !== 'string' || path !== siteReturnPath(path) || /[?#]/.test(path)
+        || (loginPath !== undefined && (typeof loginPath !== 'string' || loginPath === '/' || loginPath === path
+          || loginPath !== siteReturnPath(loginPath) || /[?#]/.test(loginPath)))
         || !accounts || typeof accounts !== 'object' || Array.isArray(accounts)
         || Object.entries(accounts).some(([id, val]) => !/^[a-f0-9]{32}$/.test(id) || typeof val !== 'string' || !val.trim() || val.length > 128)) {
         res.status(400).json({ error: '检查应用回调路径及已核实的本地账号绑定后重试。' });
         return;
       }
-      config.application = { callbackPath: path, accounts };
+      config.application = { callbackPath: path, ...(loginPath ? { loginPath } : {}), accounts };
     }
     await sso.updateSite(branch.id, { ...config, ...(suspended ? { suspended: true } : {}) });
     await auth.recordActivity({ userId: verified.user.id, userLogin: verified.user.username || verified.user.githubLogin,

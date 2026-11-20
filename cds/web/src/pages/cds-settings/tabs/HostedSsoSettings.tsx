@@ -7,7 +7,7 @@ interface SitePolicy {
   origin: string;
   deniedUserIds: string[];
   suspended?: boolean;
-  application?: { callbackPath: string; accounts: Record<string, string> };
+  application?: { callbackPath: string; loginPath?: string; accounts: Record<string, string> };
 }
 
 interface SiteOption {
@@ -75,6 +75,7 @@ function SitePolicyForm({ site, users, issuer, onSaved }: { site: SiteOption; us
   const [origin, setOrigin] = useState(site.config?.origin || site.origins[0] || '');
   const [denied, setDenied] = useState<string[]>(site.config?.deniedUserIds ?? []);
   const [callbackPath, setCallbackPath] = useState(site.config?.application?.callbackPath ?? '');
+  const [loginPath, setLoginPath] = useState(site.config?.application?.loginPath ?? '');
   const [accounts, setAccounts] = useState<Record<string, string>>(site.config?.application?.accounts ?? {});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -86,7 +87,8 @@ function SitePolicyForm({ site, users, issuer, onSaved }: { site: SiteOption; us
     try {
       await apiRequest(`${endpoint}/${encodeURIComponent(site.id)}`, { method: 'PUT', body: {
         origin, suspended, deniedUserIds: denied,
-        application: callbackPath ? { callbackPath, accounts: Object.fromEntries(Object.entries(accounts).filter(([, value]) => value.trim())) } : null,
+        application: callbackPath ? { callbackPath, ...(loginPath ? { loginPath } : {}),
+          accounts: Object.fromEntries(Object.entries(accounts).filter(([, value]) => value.trim())) } : null,
       } });
       setMessage(suspended ? '站点访问已暂停。' : '站点登录配置已保存。');
       await onSaved();
@@ -122,6 +124,9 @@ function SitePolicyForm({ site, users, issuer, onSaved }: { site: SiteOption; us
       <label className="block">站内回调路径
         <input value={callbackPath} onChange={event => setCallbackPath(event.target.value)} placeholder="/auth/cds/callback" className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-2" />
       </label>
+      {callbackPath ? <label className="block">应用登录入口（可选）
+        <input value={loginPath} onChange={event => setLoginPath(event.target.value)} placeholder="/api/v1/auth/cds/start" className="mt-1 block min-h-11 w-full rounded-md border border-border bg-background px-2" />
+      </label> : null}
       {callbackPath ? <div className="grid gap-2 sm:grid-cols-2">{users.map(user => <label key={user.id} className="block">
         {user.name} 的已核实站内账号 ID
         <input value={accounts[user.id] || ''} onChange={event => setAccounts(previous => ({ ...previous, [user.id]: event.target.value }))}
