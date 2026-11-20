@@ -11,6 +11,7 @@ using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Security;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Controllers;
@@ -110,6 +111,36 @@ public sealed class CdsSsoTests
         calls.Clear();
         await Assert.ThrowsAsync<InvalidOperationException>(() => ClientFor("https://elsewhere.test/jwks").AuthorizationUrlAsync(flow, false, default));
         Assert.Single(calls);
+    }
+
+    [Fact]
+    public async Task CdsResponsesDoNotRedirectThroughTheSharedEgressHandler()
+    {
+        var config = Configuration(ReturnUri);
+        var writer = new Mock<IMiduoPlanetSsoAuditWriter>();
+        writer.Setup(w => w.BeginAsync(It.IsAny<ApiRequestLog>())).ReturnsAsync(true);
+        var calls = new List<Uri>();
+        var auditHandler = new CdsSsoAuditHandler(writer.Object, new HttpContextAccessor(), CdsSsoSettings.Read(config), config)
+        {
+            InnerHandler = new FixtureHandler(request =>
+            {
+                calls.Add(request.RequestUri!);
+                return new HttpResponseMessage(HttpStatusCode.Found)
+                {
+                    Content = new StringContent("{}"),
+                    Headers = { Location = new Uri("https://other.shared.test/userinfo") }
+                };
+            })
+        };
+        using var client = new HttpClient(new MapModelEgressHandler(nameof(CdsSsoClient), new Uri("https://gateway.shared.test/"))
+        {
+            InnerHandler = auditHandler
+        });
+        var endpoint = new Uri(Issuer + "/userinfo");
+        using var response = await client.GetAsync(endpoint);
+
+        Assert.Equal(HttpStatusCode.Found, response.StatusCode);
+        Assert.Equal(endpoint, Assert.Single(calls));
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using PrdAgent.Core.Diagnostics;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -27,6 +28,8 @@ public sealed class CdsSsoAuditHandler(
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
+        // OIDC endpoints are allowlisted by issuer. The shared egress handler must also stop at the first response.
+        request.Options.Set(MapModelEgressHandler.DisableRedirects, true);
         var context = contexts.HttpContext;
         var requestId = context?.Items["RequestId"]?.ToString() ?? context?.TraceIdentifier ?? Activity.Current?.Id ?? Guid.NewGuid().ToString("N");
         var uri = request.RequestUri!;
