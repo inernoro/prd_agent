@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
 import * as ts from 'typescript';
+import type { ArticleAnchorPrompt } from '@/services/contracts/visualAgent';
 import { describe, expect, it, vi } from 'vitest';
 
 // 从页面源码执行实际回调和状态推导，避免在测试中复制页面逻辑。
@@ -36,6 +37,9 @@ function harness() {
   const scope = {
     workspaceId: 'synthetic-workspace', articleMutationVersionRef: { current: 0 },
     getVisualAgentWorkspaceDetail: getDetail, updateVisualAgentWorkspace: save,
+    articleDraftRef: { current: { content: '', prompts: [] as ArticleAnchorPrompt[] } },
+    pendingArticleSave: { current: Promise.resolve(true) },
+    setArticleAnchorPrompts: vi.fn(),
     setArticleContent: (value: string) => { state.article = value; },
     setArticleWithMarkers: (value: string) => { state.withMarkers = value; },
     setArticleWithImages: (value: string) => { state.withImages = value; },
@@ -50,6 +54,8 @@ function harness() {
     pendingSelectedPromptIdRef: pendingPrompt, loadLiteraryPrompts: prompts,
     toast: { error: vi.fn(), warning: vi.fn() }, setIsDragging: vi.fn(), fileInputRef: { current: { value: 'old' } },
   };
+  Object.assign(scope, { saveArticleDraft: runInNewContext(actual('saveArticleDraft'), scope) });
+  Object.assign(scope, { commitArticleDraft: runInNewContext(actual('commitArticleDraft'), scope) });
   const load = runInNewContext(actual('loadWorkspace'), scope) as () => Promise<void>;
   const fileUpload = runInNewContext(actual('handleFileUpload'), scope) as (event: unknown) => Promise<void>;
   const drop = runInNewContext(actual('handleDrop'), scope) as (event: unknown) => Promise<void>;
@@ -125,5 +131,49 @@ describe('打开存量文章时恢复插图位置', () => {
     const userAnchorCount = runInNewContext(actual('userAnchorCount'), { previewParagraphs, isAnchorParagraph });
 
     expect(runInNewContext(actual('positionStrategy'), { selectedPositionStrategy, userAnchorCount })).toBe(expected);
+  });
+});
+
+describe('文章内的配图提示词', () => {
+  function draftHelpers() {
+    const USER_ANCHOR_LINE_REGEX = runInNewContext(actual('USER_ANCHOR_LINE_REGEX'));
+    const isAnchorParagraph = runInNewContext(actual('isAnchorParagraph'), { USER_ANCHOR_LINE_REGEX });
+    const paragraphRanges = runInNewContext(actual('paragraphRanges'), { isAnchorParagraph });
+    const insertAnchorAt = runInNewContext(actual('insertAnchorAt'));
+    const confirmArticlePrompt = runInNewContext(actual('confirmArticlePrompt'), { isAnchorParagraph, paragraphRanges, insertAnchorAt });
+    const removeParagraphAt = runInNewContext(actual('removeParagraphAt'));
+    return { paragraphRanges, confirmArticlePrompt, removeParagraphAt, insertAnchorAt };
+  }
+
+  it('同样的文字在两处时各自绑定一个锚点，确认第二处不会覆盖第一处', () => {
+    const { confirmArticlePrompt } = draftHelpers();
+    const initial = { content: '第一处同样的句子\r\n\r\n第二处同样的句子', prompts: [] };
+    const first = confirmArticlePrompt(initial, 0, '同样的句子');
+    const second = confirmArticlePrompt(first, 2, '同样的句子');
+    expect(second.content).toBe('第一处同样的句子\r\n\r\n[IMG]\r\n\r\n第二处同样的句子\r\n\r\n[IMG]');
+    expect(second.prompts).toEqual([
+      { sourceOffset: 0, offset: second.content.indexOf('[IMG]'), prompt: '同样的句子' },
+      { sourceOffset: second.content.indexOf('第二处'), offset: second.content.lastIndexOf('[IMG]'), prompt: '同样的句子' },
+    ]);
+  });
+
+  it('复用附近的已有锚点并准确跟随前文新增或移除锚点', () => {
+    const { confirmArticlePrompt, insertAnchorAt, removeParagraphAt, paragraphRanges } = draftHelpers();
+    const initial = { content: '开头。\n\n[IMG]\n\n尾声。', prompts: [] };
+    const assigned = confirmArticlePrompt(initial, 2, '蓝色帷幕\n人物 站在窗边');
+    expect(assigned.content).toBe(initial.content);
+    const prepended = insertAnchorAt(assigned, paragraphRanges(assigned.content)[0], 'above');
+    expect(prepended.prompts[0].offset).toBe(prepended.content.lastIndexOf('[IMG]'));
+    expect(prepended.prompts[0].sourceOffset).toBe(prepended.content.indexOf('尾声。'));
+    const removed = removeParagraphAt(prepended, paragraphRanges(prepended.content)[0]);
+    expect(removed.prompts[0].offset).toBe(removed.content.indexOf('[IMG]'));
+    expect(removed.prompts[0].prompt).toBe('蓝色帷幕\n人物 站在窗边');
+  });
+
+  it('只将明确标注的内容作为候选，保留提示词中的换行和空格', () => {
+    const findLabeledPrompt = runInNewContext(actual('findLabeledPrompt'));
+    expect(findLabeledPrompt('配图提示词：金色沙滩\n远处有  两只船')).toBe('金色沙滩\n远处有  两只船');
+    expect(findLabeledPrompt('他提到了配图提示词：金色沙滩')).toBeUndefined();
+    expect(findLabeledPrompt('插图提示词：')).toBeUndefined();
   });
 });

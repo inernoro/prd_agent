@@ -12,6 +12,7 @@ using MongoDB.Driver;
 using MongoDB.Driver.Core.Servers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -2415,10 +2416,22 @@ public class ImageMasterController : ControllerBase
 
         try
         {
+            var confirmedPrompts = ws.ArticleAnchorPrompts;
+            if (confirmedPrompts.Count > 0 && !string.Equals(ws.ArticleContent, articleContent, StringComparison.Ordinal))
+            {
+                var staleDraft = JsonSerializer.Serialize(new
+                {
+                    type = "error",
+                    message = "这篇文章的配图提示词与正文版本不一致。请刷新并核对锚点后重新生成。"
+                }, JsonOptions);
+                await Response.WriteAsync($"data: {staleDraft}\n\n", ct);
+                return;
+            }
             var userAnchors = isAnchorMode && request?.PositionStrategy is not ("per-h1" or "per-h2")
-                ? new PrdAgent.Core.Services.ArticleIllustrationAnchors(articleContent)
+                ? new ArticleIllustrationAnchors(articleContent, confirmedPrompts)
                 : null;
             var hasUserAnchors = userAnchors is { Count: > 0 };
+            var needsWritingModel = userAnchors is not { Count: > 0 } || userAnchors.ConfirmedPrompts.Count < userAnchors.Count;
 
             if (isAnchorMode && request?.PositionStrategy == "user-anchor" && !hasUserAnchors)
             {
@@ -2450,7 +2463,9 @@ public class ImageMasterController : ControllerBase
             {
                 type = "progress",
                 stage = "preparing",
-                message = hasUserAnchors ? $"已确认 {userAnchors!.Count} 个锚点，正在为每个锚点生成提示词" : "正在准备文章配图标记"
+                message = !needsWritingModel ? $"已确认 {userAnchors!.Count} 条原文提示词，正在保存配图标记"
+                    : hasUserAnchors ? $"已确认 {userAnchors!.Count} 个锚点，正在补齐提示词"
+                    : "正在准备文章配图标记"
             }, JsonOptions);
             await Response.WriteAsync($"data: {preparingData}\n\n", ct);
             await Response.Body.FlushAsync(ct);
@@ -2458,8 +2473,6 @@ public class ImageMasterController : ControllerBase
             var appCallerCode = AppCallerRegistry.LiteraryAgent.Content.Chat;
             // 用户指定的模型作为 expectedModel 提示 Gateway 调度
             var userModelId = (request?.ModelId ?? string.Empty).Trim();
-            var llmClient = _gateway.CreateClient(appCallerCode, "chat", includeThinking: true,
-                expectedModel: string.IsNullOrWhiteSpace(userModelId) ? null : userModelId);
             var requestId = Guid.NewGuid().ToString("N");
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
                 RequestId: requestId,
@@ -2473,8 +2486,6 @@ public class ImageMasterController : ControllerBase
                 RequestType: "chat",
                 AppCallerCode: appCallerCode));
 
-            // 调用主模型 LLM
-            var client = llmClient;
             // Anchor 模式：自动包裹用户提示词，注入输出格式约束（用户旧提示词无需修改）
             var systemPrompt = isAnchorMode
                 ? PrdAgent.Infrastructure.Prompts.Templates.ArticleIllustrationPrompt.WrapForAnchorMode(userInstruction, hasUserAnchors)
@@ -2532,7 +2543,17 @@ public class ImageMasterController : ControllerBase
                 catch (Exception ex) when (ex.InnerException is OperationCanceledException) { clientDisconnected = true; }
             }
 
-            await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
+            async IAsyncEnumerable<LLMStreamChunk> StreamWritingModel()
+            {
+                if (!needsWritingModel) yield break;
+
+                var client = _gateway.CreateClient(appCallerCode, "chat", includeThinking: true,
+                    expectedModel: string.IsNullOrWhiteSpace(userModelId) ? null : userModelId);
+                await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
+                    yield return chunk;
+            }
+
+            await foreach (var chunk in StreamWritingModel())
             {
                 // 思考过程：实时推送给前端展示
                 if (chunk.Type == "thinking" && !string.IsNullOrEmpty(chunk.Content))
@@ -2692,6 +2713,8 @@ public class ImageMasterController : ControllerBase
                     }
                     return;
                 }
+                foreach (var (index, prompt) in userAnchors.ConfirmedPrompts)
+                    extractedMarkers[index].Text = prompt;
             }
             else if (isAnchorMode)
             {
@@ -2787,6 +2810,7 @@ public class ImageMasterController : ControllerBase
                         type = "done",
                         fullText = generatedContent,
                         mode = insertionMode,
+                        confirmedPrompts = userAnchors?.ConfirmedPrompts,
                         markerCount = extractedMarkers.Count,
                         message = fallbackCount > 0 ? $"其中 {fallbackCount} 条提示词根据锚点附近的原文补齐。生成配图前可以先查看或修改。" : null
                     }, JsonOptions);
@@ -3394,6 +3418,7 @@ public class UpdateWorkspaceRequest
     public List<string>? MemberUserIds { get; set; }
     public string? CoverAssetId { get; set; }
     public string? ArticleContent { get; set; }
+    public List<ArticleAnchorPrompt>? ArticleAnchorPrompts { get; set; }
     public string? ScenarioType { get; set; }
     public string? FolderName { get; set; }
     /// <summary>文章配图场景：用户选择的系统提示词 ID（传 "" 空字符串表示清除选择）</summary>

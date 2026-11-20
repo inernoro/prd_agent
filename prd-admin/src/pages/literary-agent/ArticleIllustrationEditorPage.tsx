@@ -89,7 +89,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
-import { useDebounce } from '@/hooks/useDebounce';
+import type { ArticleAnchorPrompt } from '@/services/contracts/visualAgent';
 import { createSubmission, checkSubmission } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader';
@@ -147,21 +147,46 @@ function isAnchorParagraph(text: string): boolean {
   return USER_ANCHOR_LINE_REGEX.test(text);
 }
 
-function insertAnchorAt(content: string, paragraphIndex: number, side: 'above' | 'below'): string {
-  const target = paragraphRanges(content)[paragraphIndex];
-  if (!target) return content;
-  const separator = content.includes('\r\n') ? '\r\n\r\n' : '\n\n';
+type ArticleDraft = { content: string; prompts: ArticleAnchorPrompt[] };
+
+function insertAnchorAt(draft: ArticleDraft, target: ParagraphRange, side: 'above' | 'below', prompt?: string): ArticleDraft {
+  const separator = draft.content.includes('\r\n') ? '\r\n\r\n' : '\n\n';
   const offset = side === 'above' ? target.start : target.end;
   const anchor = side === 'above' ? `[IMG]${separator}` : `${separator}[IMG]`;
-  return content.slice(0, offset) + anchor + content.slice(offset);
+  const shift = (position: number) => position < offset ? position : position + anchor.length;
+  const prompts = draft.prompts.map(item => ({ ...item, offset: shift(item.offset), sourceOffset: shift(item.sourceOffset) }));
+  if (prompt) prompts.push({ offset: offset + (side === 'below' ? separator.length : 0), sourceOffset: shift(target.start), prompt });
+  return { content: draft.content.slice(0, offset) + anchor + draft.content.slice(offset), prompts };
 }
 
-function removeParagraphAt(content: string, paragraphIndex: number): string {
-  const target = paragraphRanges(content)[paragraphIndex];
-  if (!target || !isAnchorParagraph(target.text)) return content;
-  const end = target.end + (content.slice(target.end).match(/^\r?\n/)?.[0].length ?? 0);
-  return content.slice(0, target.start) + content.slice(end);
+function removeParagraphAt(draft: ArticleDraft, target: ParagraphRange): ArticleDraft {
+  const end = target.end + (draft.content.slice(target.end).match(/^(?:\r\n|[\r\n])/)?.[0].length ?? 0);
+  const shift = (position: number) => position < end ? position : position - (end - target.start);
+  const prompts = draft.prompts.filter(item => item.offset !== target.start)
+    .map(item => ({ ...item, offset: shift(item.offset), sourceOffset: shift(item.sourceOffset) }));
+  return { content: draft.content.slice(0, target.start) + draft.content.slice(end), prompts };
 }
+
+function confirmArticlePrompt(draft: ArticleDraft, paragraphIndex: number, prompt: string): ArticleDraft {
+  const paragraphs = paragraphRanges(draft.content);
+  const target = paragraphs[paragraphIndex];
+  if (!target || isAnchorParagraph(target.text) || !prompt.trim()) return draft;
+
+  const existing = draft.prompts.find(item => item.sourceOffset === target.start);
+  if (existing?.prompt === prompt) return draft;
+  if (existing) return { ...draft, prompts: draft.prompts.map(item => item === existing ? { ...item, prompt } : item) };
+
+  const emptyNeighbor = [paragraphs[paragraphIndex + 1], paragraphs[paragraphIndex - 1]].find(block =>
+    block && isAnchorParagraph(block.text) && !draft.prompts.some(item => item.offset === block.start));
+  if (!emptyNeighbor) return insertAnchorAt(draft, target, 'below', prompt);
+  return { ...draft, prompts: [...draft.prompts, { offset: emptyNeighbor.start, sourceOffset: target.start, prompt }] };
+}
+
+function findLabeledPrompt(text: string): string | undefined {
+  return /^\s*(?:配图|插图)提示词[：:]\s*(\S[\s\S]*)$/.exec(text)?.[1].trim();
+}
+
+type PreviewPromptSelection = { paragraphIndex: number; text: string; left: number; top: number };
 
 const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string; hint: string }> = [
   { value: 'auto', label: '自动', hint: '' },
@@ -473,6 +498,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
   const previewParagraphs = useMemo(() => splitParagraphs(articleContent), [articleContent]);
+  const previewRanges = useMemo(() => paragraphRanges(articleContent), [articleContent]);
+  const [articleAnchorPrompts, setArticleAnchorPrompts] = useState<ArticleAnchorPrompt[]>([]);
+  const articleDraftRef = useRef<ArticleDraft>({ content: '', prompts: [] });
+  const [promptSelection, setPromptSelection] = useState<PreviewPromptSelection | null>(null);
+  const confirmedPromptsByOffset = useMemo(() => new Map(articleAnchorPrompts.map(item => [item.offset, item.prompt])), [articleAnchorPrompts]);
+  const confirmedPromptsBySource = useMemo(() => new Map(articleAnchorPrompts.map(item => [item.sourceOffset, item.prompt])), [articleAnchorPrompts]);
   const userAnchorCount = previewParagraphs.filter(isAnchorParagraph).length;
   // 迟到的工作区读取不能覆盖本次读取期间已经成功读入的新文章。
   const articleMutationVersionRef = useRef(0);
@@ -984,9 +1015,30 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 所有提示词（只有用户模板）
   const allPrompts = userPrompts;
 
-  // 自动保存：3秒防抖（仅在允许编辑时启用；当前页面已移除手动编辑入口，保留逻辑以兼容未来扩展）
-  const debouncedArticleContent = useDebounce(articleContent, 3000);
-  const pendingArticleSave = useRef(Promise.resolve());
+  const pendingArticleSave = useRef<Promise<boolean>>(Promise.resolve(true));
+  const saveArticleDraft = useCallback((draft: ArticleDraft) => {
+    const revision = articleMutationVersionRef.current;
+    const saved = pendingArticleSave.current.then(async () => {
+      try {
+        const result = await updateVisualAgentWorkspace({
+          id: workspaceId,
+          articleContent: draft.content,
+          articleAnchorPrompts: draft.prompts,
+          idempotencyKey: `save-article-${workspaceId}-${Date.now()}-${revision}`,
+        });
+        return result.success;
+      } catch {
+        return false;
+      }
+    });
+    pendingArticleSave.current = saved;
+    void saved.then(success => {
+      if (!success && articleMutationVersionRef.current === revision) {
+        toast.error('正文和配图锚点保存失败', '再次生成配图标记时会重试保存。');
+      }
+    });
+    return saved;
+  }, [workspaceId]);
 
   // 加载工作空间数据
   useEffect(() => {
@@ -1270,7 +1322,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           return;
         }
         const content = ws.articleContent || '';
+        const prompts = ws.articleAnchorPrompts ?? [];
+        articleDraftRef.current = { content, prompts };
         setArticleContent(content);
+        setArticleAnchorPrompts(prompts);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
         setArticleWithImages('');
 
@@ -1294,7 +1349,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
         // 如果有生成的内容，提取标记（用于右侧列表）
         if (ws.articleContentWithMarkers) {
-          const extracted = extractMarkers(ws.articleContentWithMarkers);
+          const texts = new Map<number, string>(ws.articleWorkflow?.markers.map(
+            (marker: { index: number; text: string }) => [marker.index, marker.text],
+          ));
+          const extracted = extractMarkers(ws.articleContentWithMarkers).map(marker => ({
+            ...marker,
+            text: texts.get(marker.index) ?? marker.text,
+          }));
           setMarkers(extracted);
         }
 
@@ -1453,20 +1514,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const isBusy = generating || markerStreaming;
 
-  useEffect(() => {
-    if (!debouncedArticleContent || debouncedArticleContent !== articleContent || !workspaceId || phase !== 1 || isBusy) return;
-    pendingArticleSave.current = pendingArticleSave.current.then(async () => {
-      try {
-        await updateVisualAgentWorkspace({
-          id: workspaceId,
-          articleContent: debouncedArticleContent,
-          idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
-        });
-      } catch (error) {
-        console.error('自动保存失败:', error);
-      }
-    });
-  }, [articleContent, debouncedArticleContent, isBusy, phase, workspaceId]);
+  const commitArticleDraft = useCallback((draft: ArticleDraft) => {
+    if (draft === articleDraftRef.current) return Promise.resolve(true);
+    articleMutationVersionRef.current += 1;
+    articleDraftRef.current = draft;
+    setArticleContent(draft.content);
+    setArticleAnchorPrompts(draft.prompts);
+    return saveArticleDraft(draft);
+  }, [saveArticleDraft]);
 
   // 文件上传处理
   const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1477,16 +1532,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
-      articleMutationVersionRef.current += 1;
-      setArticleContent(text);
       setUploadedFileName(fileName);
-
-      // 保存到后端（提交型操作：会触发 version++，清空后续阶段）
-      await updateVisualAgentWorkspace({
-        id: workspaceId,
-        articleContent: text,
-        idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
-      });
+      if (!await commitArticleDraft({ content: text, prompts: [] })) return;
 
       // 上传后直接进入编辑模式并启用预览
       setPhase(1); // Editing
@@ -1498,7 +1545,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [workspaceId]);
+  }, [commitArticleDraft]);
 
   // 点击上传按钮
   const handleUploadClick = useCallback(() => {
@@ -1535,23 +1582,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
-      articleMutationVersionRef.current += 1;
-      setArticleContent(text);
       setUploadedFileName(file.name);
-
-      // 保存到后端
-      await updateVisualAgentWorkspace({
-        id: workspaceId,
-        articleContent: text,
-        idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
-      });
+      if (!await commitArticleDraft({ content: text, prompts: [] })) return;
 
       // 上传后直接进入编辑模式
       setPhase(1); // Editing
     } catch {
       toast.error('文件读取失败');
     }
-  }, [workspaceId]);
+  }, [commitArticleDraft]);
 
   // 进入预览阶段（保留 phase=editing，表示“已上传可生成标记”）
   const handleEnterPreview = useCallback(() => {
@@ -1560,20 +1599,107 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
 
   // Phase 1: 段落级锚点操作（仅 phase=1 编辑阶段使用）
-  const addAnchorAbove = useCallback((pIdx: number) => {
-    articleMutationVersionRef.current += 1;
-    setArticleContent(prev => insertAnchorAt(prev, pIdx, 'above'));
+  const addAnchor = (paragraphIndex: number, side: 'above' | 'below') => {
+    const draft = articleDraftRef.current;
+    const target = paragraphRanges(draft.content)[paragraphIndex];
+    if (!target) return;
+    void commitArticleDraft(insertAnchorAt(draft, target, side));
     setPositionStrategy('user-anchor');
-  }, [setPositionStrategy]);
-  const addAnchorBelow = useCallback((pIdx: number) => {
-    articleMutationVersionRef.current += 1;
-    setArticleContent(prev => insertAnchorAt(prev, pIdx, 'below'));
+  };
+  const removeAnchorParagraph = (paragraphIndex: number) => {
+    const draft = articleDraftRef.current;
+    const target = paragraphRanges(draft.content)[paragraphIndex];
+    if (target && isAnchorParagraph(target.text)) void commitArticleDraft(removeParagraphAt(draft, target));
+  };
+  const applyPreviewPrompt = (paragraphIndex: number, text: string) => {
+    const draft = articleDraftRef.current;
+    const next = confirmArticlePrompt(draft, paragraphIndex, text);
+    if (next !== draft) void commitArticleDraft(next);
     setPositionStrategy('user-anchor');
-  }, [setPositionStrategy]);
-  const removeAnchorParagraph = useCallback((pIdx: number) => {
-    articleMutationVersionRef.current += 1;
-    setArticleContent(prev => removeParagraphAt(prev, pIdx));
-  }, []);
+    window.getSelection()?.removeAllRanges();
+    setPromptSelection(null);
+  };
+
+  useEffect(() => {
+    if (phase !== 1) return;
+    let draggingSelection = false;
+
+    function readSelection() {
+      if (draggingSelection) return;
+      const selection = window.getSelection();
+      const root = articlePreviewRef.current;
+      if (!root || !selection || selection.isCollapsed || !selection.rangeCount) {
+        setPromptSelection(null);
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      const paragraphOf = (node: Node) => (node instanceof Element ? node : node.parentElement)?.closest<HTMLElement>('[data-prompt-paragraph]');
+      const first = paragraphOf(range.startContainer);
+      const last = paragraphOf(range.endContainer);
+      if (!first || !last || !root.contains(first) || !root.contains(last)) {
+        setPromptSelection(null);
+        return;
+      }
+
+      // 选区跨段时只取正文，跳过两段之间的配图占位和操作按钮。
+      const text = (first === last ? selection.toString() : Array
+        .from(root.querySelectorAll('[data-prompt-paragraph]'))
+        .filter(paragraph => range.intersectsNode(paragraph))
+        .map(paragraph => {
+          const part = document.createRange();
+          part.selectNodeContents(paragraph);
+          if (paragraph === first) part.setStart(range.startContainer, range.startOffset);
+          if (paragraph === last) part.setEnd(range.endContainer, range.endOffset);
+          return part.toString();
+        }).join('\n\n')).trim();
+      if (!text) {
+        setPromptSelection(null);
+        return;
+      }
+
+      const rectangles = range.getClientRects();
+      const rect = rectangles[rectangles.length - 1];
+      const bounds = root.getBoundingClientRect();
+      if (!rect || rect.bottom < bounds.top || rect.top > bounds.bottom) {
+        setPromptSelection(null);
+        return;
+      }
+      setPromptSelection({
+        paragraphIndex: Number(last.dataset.promptParagraph),
+        text,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 166)),
+        top: rect.bottom + 42 > window.innerHeight ? rect.top - 36 : rect.bottom + 4,
+      });
+    }
+
+    function beginSelection(event: PointerEvent) {
+      if (event.pointerType !== 'mouse' || event.button !== 0 || !(event.target instanceof Element)) return;
+      const paragraph = event.target.closest('[data-prompt-paragraph]');
+      if (!paragraph || !articlePreviewRef.current?.contains(paragraph)) return;
+      draggingSelection = true;
+      setPromptSelection(null);
+    }
+
+    function finishSelection() {
+      if (!draggingSelection) return;
+      draggingSelection = false;
+      readSelection();
+    }
+
+    document.addEventListener('pointerdown', beginSelection, true);
+    document.addEventListener('pointerup', finishSelection, true);
+    document.addEventListener('pointercancel', finishSelection, true);
+    document.addEventListener('selectionchange', readSelection);
+    document.addEventListener('scroll', readSelection, true);
+    return () => {
+      document.removeEventListener('pointerdown', beginSelection, true);
+      document.removeEventListener('pointerup', finishSelection, true);
+      document.removeEventListener('pointercancel', finishSelection, true);
+      document.removeEventListener('selectionchange', readSelection);
+      document.removeEventListener('scroll', readSelection, true);
+    };
+  }, [phase]);
 
   const handleGenerateMarkers = async () => {
     if (!articleContent.trim()) {
@@ -1581,7 +1707,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
-    if (chatModelPrefId && !effectiveChatModel) {
+    const needsWritingModel = positionStrategy !== 'user-anchor' || userAnchorCount === 0 ||
+      articleAnchorPrompts.length < userAnchorCount;
+    if (needsWritingModel && chatModelPrefId && !effectiveChatModel) {
       toast.warning('写作模型不可用，请在模型设置中重新选择。');
       return;
     }
@@ -1615,7 +1743,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       // 等已发出的草稿保存完成，避免它在新方案落库后清空生成结果。
-      await pendingArticleSave.current;
+      if (!await pendingArticleSave.current && !await saveArticleDraft(articleDraftRef.current)) {
+        throw new Error('正文和配图锚点未保存，请重试。');
+      }
       const stream = generateArticleMarkers({
         id: workspaceId,
         articleContent,
@@ -1646,7 +1776,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         } else if (chunk.type === 'finalizing') {
           setRawMarkerOutput(prev => prev + '\n\n标记生成完成，正在保存…');
         } else if (chunk.type === 'done' && chunk.fullText) {
-          const extracted = extractMarkers(chunk.fullText);
+          const extracted = extractMarkers(chunk.fullText).map(marker => ({
+            ...marker,
+            text: chunk.confirmedPrompts?.[marker.index] ?? marker.text,
+          }));
           setArticleWithMarkers(chunk.fullText);
           setMarkers(extracted);
           setMarkerRunItems(extracted.map(marker => ({
@@ -3032,6 +3165,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       const showGhostAfter = ghostAfter.has(pIdx);
 
                       if (anchored) {
+                        const prompt = confirmedPromptsByOffset.get(previewRanges[pIdx]?.start);
                         // 锚点占位：展示一个与生成后配图同尺寸的 ghost 预览 + 顶栏 pill（含移除）
                         return (
                           <div
@@ -3061,6 +3195,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 移除
                               </button>
                             </div>
+                            {prompt && (
+                              <p className="my-0 px-3 py-2 truncate text-xs" title={prompt} style={{ color: 'var(--text-secondary)' }}>
+                                {prompt}
+                              </p>
+                            )}
                             {/* 与实际生成配图同尺寸的占位（默认 1:1） */}
                             <div
                               className="flex items-center justify-center"
@@ -3083,6 +3222,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         );
                       }
 
+                      const candidate = findLabeledPrompt(text);
+                      const showCandidate = candidate && confirmedPromptsBySource.get(previewRanges[pIdx]?.start) !== candidate;
                       return (
                         <React.Fragment key={`p-${pIdx}`}>
                           <div
@@ -3101,7 +3242,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             {/* 左侧 gutter：悬停显示"+"加锚点 */}
                             <button
                               type="button"
-                              onClick={() => addAnchorAbove(pIdx)}
+                              onClick={() => addAnchor(pIdx, 'above')}
                               className="shrink-0 w-6 flex items-start justify-center pt-2 opacity-0 group-hover:opacity-100 transition-opacity"
                               title="在此段上方插入配图锚点"
                               style={{ cursor: 'pointer' }}
@@ -3128,20 +3269,32 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 background: hasAdjacentAnchor ? 'rgba(52, 211, 153, 0.04)' : 'transparent',
                               }}
                             >
-                              <ReactMarkdown
-                                remarkPlugins={[remarkGfm, remarkBreaks]}
-                                rehypePlugins={[rehypeRaw]}
-                                components={{
-                                  p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
-                                  li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
-                                  blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
-                                  h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
-                                  h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
-                                  h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
-                                }}
+                              <div
+                                data-prompt-paragraph={pIdx}
+                                className={showCandidate ? 'border-l-2 pl-2' : undefined}
+                                style={showCandidate ? { borderColor: 'var(--accent-fg-success)' } : undefined}
                               >
-                                {text}
-                              </ReactMarkdown>
+                                <ReactMarkdown
+                                  remarkPlugins={[remarkGfm, remarkBreaks]}
+                                  rehypePlugins={[rehypeRaw]}
+                                  components={{
+                                    p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
+                                    li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
+                                    blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
+                                    h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
+                                    h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
+                                    h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                                  }}
+                                >
+                                  {text}
+                                </ReactMarkdown>
+                              </div>
+                              {showCandidate && (
+                                <Button size="xs" variant="secondary" className="my-1" onClick={() => applyPreviewPrompt(pIdx, candidate)}>
+                                  <ImageIcon size={12} />
+                                  用作配图提示词
+                                </Button>
+                              )}
                             </div>
                           </div>
                           {/* 策略预览 ghost：per-h1/per-h2 在相应标题段落后显示配图占位（1:1，与生成后尺寸一致） */}
@@ -5294,6 +5447,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
+      {phase === 1 && promptSelection && (
+        <div className="fixed z-[1000] rounded-lg p-1 shadow-lg" style={{ ...glassPanel, top: promptSelection.top, left: promptSelection.left }}>
+          <Button size="xs" variant="secondary" onMouseDown={event => event.preventDefault()}
+            onClick={() => applyPreviewPrompt(promptSelection.paragraphIndex, promptSelection.text)}>
+            <ImageIcon size={12} />
+            用作配图提示词
+          </Button>
+        </div>
+      )}
+
       {/* Phase 1: 段落右键菜单（在此段上方/下方插入配图锚点） */}
       {paragraphCtxMenu.visible && (
         <div
@@ -5310,7 +5473,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             className="w-full text-left px-3 py-1.5 text-[12px] hover-bg-soft transition-colors flex items-center gap-2"
             style={{ color: 'var(--text-primary)' }}
             onClick={() => {
-              addAnchorAbove(paragraphCtxMenu.pIdx);
+              addAnchor(paragraphCtxMenu.pIdx, 'above');
               setParagraphCtxMenu(m => ({ ...m, visible: false }));
             }}
           >
@@ -5322,7 +5485,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             className="w-full text-left px-3 py-1.5 text-[12px] hover-bg-soft transition-colors flex items-center gap-2"
             style={{ color: 'var(--text-primary)' }}
             onClick={() => {
-              addAnchorBelow(paragraphCtxMenu.pIdx);
+              addAnchor(paragraphCtxMenu.pIdx, 'below');
               setParagraphCtxMenu(m => ({ ...m, visible: false }));
             }}
           >

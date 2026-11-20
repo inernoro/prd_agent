@@ -388,6 +388,7 @@ public class LiteraryOpenApiController : ControllerBase
         var changed = marked != null || !string.Equals(merged, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
         var update = Builders<ImageMasterWorkspace>.Update
             .Set(x => x.ArticleContent, merged)
+            .Set(x => x.ArticleAnchorPrompts, new List<ArticleAnchorPrompt>())
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         var carriedOver = new List<int>();

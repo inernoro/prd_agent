@@ -71,6 +71,8 @@ public class ImageMasterWorkspace
     /// <summary>文章配图场景专用：原始文章内容(Markdown)</summary>
     public string? ArticleContent { get; set; }
 
+    public List<ArticleAnchorPrompt> ArticleAnchorPrompts { get; set; } = new();
+
     /// <summary>文章配图场景专用：LLM 生成的带配图标记的文章内容</summary>
     public string? ArticleContentWithMarkers { get; set; }
 

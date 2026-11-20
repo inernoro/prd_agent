@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -236,10 +237,18 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         // 正文真的换了 = 提交型修改：配图方案升一版、旧标记失效（旧图保留进历史）。
         // 页面一直按这个语义调用它（上传文章处的注释写着「会触发 version++，清空后续阶段」），
         // 但这个入口此前只改了正文——旧标记与带标记正文原样挂在新正文上。
-        if (LiteraryIllustrationArchive.IsContentChange(ws, request?.ArticleContent))
+        var confirmedPrompts = request?.ArticleAnchorPrompts;
+        if (confirmedPrompts is not null &&
+            (request?.ArticleContent is not { } draft || !ArticleIllustrationAnchors.HasValidConfirmedPrompts(draft, confirmedPrompts)))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已选提示词找不到对应的配图锚点。请刷新后重新选择。"));
+        }
+        confirmedPrompts = confirmedPrompts?.OrderBy(item => item.Offset).ToList();
+        var promptsChanged = confirmedPrompts is not null && !confirmedPrompts.SequenceEqual(ws.ArticleAnchorPrompts);
+        if (LiteraryIllustrationArchive.IsContentChange(ws, request?.ArticleContent) || promptsChanged)
         {
             var outcome = await LiteraryIllustrationArchive.WriteContentResetAsync(
-                _db, ws, request!.ArticleContent!, update, LiteraryArchiveReason.WebContent, ct);
+                _db, ws, request!.ArticleContent!, update, LiteraryArchiveReason.WebContent, ct, confirmedPrompts);
             if (outcome == LiteraryIllustrationArchive.ContentResetOutcome.WorkspaceGone)
                 return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 在保存过程中被删除了"));
             if (outcome == LiteraryIllustrationArchive.ContentResetOutcome.KeptChanging)
@@ -247,7 +256,6 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         }
         else
         {
-            if (request?.ArticleContent != null) update = update.Set(x => x.ArticleContent, request.ArticleContent);
             await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id, update, cancellationToken: CancellationToken.None);
         }
         var updated = await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(ct);

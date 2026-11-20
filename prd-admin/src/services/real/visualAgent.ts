@@ -299,7 +299,7 @@ export async function* generateArticleMarkersReal(input: {
   insertionMode?: 'legacy' | 'anchor';
   positionStrategy?: 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
   modelId?: string;
-}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string; index?: number; mode?: string; markerCount?: number; size?: string; anchor?: string }> {
+}): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string; index?: number; mode?: string; markerCount?: number; size?: string; anchor?: string; confirmedPrompts?: Record<number, string> }> {
   const headers: Record<string, string> = {
     Accept: 'text/event-stream',
     'Content-Type': 'application/json',

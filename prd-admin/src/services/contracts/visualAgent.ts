@@ -79,6 +79,7 @@ export type VisualAgentWorkspace = {
   updatedAt: string;
   lastOpenedAt?: string | null;
   articleContent?: string | null;
+  articleAnchorPrompts?: ArticleAnchorPrompt[];
   articleContentWithMarkers?: string | null;
   /** 文章配图 workflow（服务端状态机，前端用于恢复进度/禁止跳未来） */
   articleWorkflow?: ArticleIllustrationWorkflow | null;
@@ -111,6 +112,8 @@ export type SaveVisualAgentCanvasContract = (input: { id: string; schemaVersion?
 
 export type ListVisualAgentWorkspacesContract = (input?: { limit?: number; skip?: number }) => Promise<ApiResponse<{ items: VisualAgentWorkspace[]; hasMore?: boolean }>>;
 export type CreateVisualAgentWorkspaceContract = (input: { title?: string; scenarioType?: string; idempotencyKey?: string }) => Promise<ApiResponse<{ workspace: VisualAgentWorkspace }>>;
+export type ArticleAnchorPrompt = { offset: number; sourceOffset: number; prompt: string };
+
 export type UpdateVisualAgentWorkspaceContract = (input: {
   id: string;
   suppressAutoSubmit?: boolean;

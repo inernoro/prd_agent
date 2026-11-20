@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Core.Services;
 
@@ -13,28 +14,45 @@ public sealed class ArticleIllustrationAnchors
     private readonly string _article;
     private readonly Dictionary<string, (Match Range, int Index)> _positions = new(StringComparer.Ordinal);
 
-    public ArticleIllustrationAnchors(string article)
+    public ArticleIllustrationAnchors(string article, IReadOnlyList<ArticleAnchorPrompt>? confirmed = null)
     {
         _article = LoneCarriageReturn.Replace(article, "\n");
+        var byOffset = (confirmed ?? []).ToDictionary(item => item.Offset, item => item.Prompt);
+        var confirmedByIndex = new Dictionary<int, string>();
         var prefix = "[IMG:";
         while (article.Contains(prefix, StringComparison.Ordinal)) prefix = "[" + prefix;
 
         ModelArticle = Placeholder.Replace(_article, match =>
         {
             var id = $"{prefix}{_positions.Count + 1}]";
-            _positions.Add(id, (match, _positions.Count));
-            return id;
+            var index = _positions.Count;
+            _positions.Add(id, (match, index));
+            if (!byOffset.TryGetValue(match.Index, out var prompt)) return id;
+
+            confirmedByIndex.Add(index, prompt);
+            return string.Empty;
         });
+        ConfirmedPrompts = confirmedByIndex;
     }
 
     public string ModelArticle { get; }
     public int Count => _positions.Count;
+    public IReadOnlyDictionary<int, string> ConfirmedPrompts { get; }
+
+    public static bool HasValidConfirmedPrompts(string article, IReadOnlyList<ArticleAnchorPrompt> prompts)
+    {
+        if (prompts.Count == 0) return true;
+        var positions = Placeholder.Matches(LoneCarriageReturn.Replace(article, "\n"))
+            .Select(match => match.Index).ToHashSet();
+        return prompts.All(item => item is not null && item.Prompt is { } prompt && ToSingleLine(prompt).Length > 0 &&
+            item.SourceOffset >= 0 && item.SourceOffset < article.Length && positions.Remove(item.Offset));
+    }
 
     public bool TryAddPrompt(Dictionary<string, AnchorInsertion> prompts, AnchorInsertion prompt)
     {
         if (!_positions.TryGetValue(prompt.AnchorText, out var anchor) || ToSingleLine(prompt.MarkerText).Length == 0)
             return false;
-        if (!prompts.TryAdd(prompt.AnchorText, prompt)) return false;
+        if (ConfirmedPrompts.ContainsKey(anchor.Index) || !prompts.TryAdd(prompt.AnchorText, prompt)) return false;
 
         prompt.Index = anchor.Index;
         return true;
@@ -48,7 +66,9 @@ public sealed class ArticleIllustrationAnchors
         var fallbackCount = 0;
         foreach (var (id, anchor) in _positions.OrderByDescending(entry => entry.Value.Index))
         {
-            var prompt = prompts.TryGetValue(id, out var response) ? ToSingleLine(response.MarkerText) : string.Empty;
+            var prompt = ConfirmedPrompts.TryGetValue(anchor.Index, out var authorPrompt)
+                ? ToSingleLine(authorPrompt).Replace("[插图]", "［插图］", StringComparison.Ordinal)
+                : prompts.TryGetValue(id, out var response) ? ToSingleLine(response.MarkerText) : string.Empty;
             if (prompt.Length == 0)
             {
                 contexts ??= ReadSourceContexts();

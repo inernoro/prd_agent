@@ -1,6 +1,7 @@
 import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
+import type { ArticleAnchorPrompt } from '../contracts/visualAgent';
 import type {
   GetLiteraryAgentConfigContract,
   UpdateLiteraryAgentConfigContract,
@@ -461,6 +462,7 @@ export async function updateLiteraryAgentWorkspaceReal(input: {
   id: string;
   title?: string;
   articleContent?: string;
+  articleAnchorPrompts?: ArticleAnchorPrompt[];
   scenarioType?: string;
   folderName?: string | null;
   memberUserIds?: string[];
@@ -479,6 +481,7 @@ export async function updateLiteraryAgentWorkspaceReal(input: {
       body: {
         title: input.title,
         articleContent: input.articleContent,
+        articleAnchorPrompts: input.articleAnchorPrompts,
         scenarioType: input.scenarioType,
         folderName: input.folderName,
         memberUserIds: input.memberUserIds,

@@ -73,7 +73,7 @@ public static class LiteraryIllustrationArchive
     /// <param name="otherFields">同一次提交里的其它字段（标题、文件夹等），与换稿在同一次写入里落库</param>
     public static async Task<ContentResetOutcome> WriteContentResetAsync(
         MongoDbContext db, ImageMasterWorkspace ws, string newContent,
-        UpdateDefinition<ImageMasterWorkspace> otherFields, string reason, CancellationToken ct)
+        UpdateDefinition<ImageMasterWorkspace> otherFields, string reason, CancellationToken ct, List<ArticleAnchorPrompt>? confirmedPrompts = null)
     {
         var F = Builders<ImageMasterWorkspace>.Filter;
         var current = ws;
@@ -82,7 +82,9 @@ public static class LiteraryIllustrationArchive
             var now = DateTime.UtcNow;
             var assets = await LiteraryIllustrationHistory.LoadAssetsAsync(db, current.Id, ct);
             var update = Builders<ImageMasterWorkspace>.Update.Combine(otherFields,
-                ContentResetUpdate(current, assets, now, reason).Set(x => x.ArticleContent, newContent));
+                ContentResetUpdate(current, assets, now, reason)
+                    .Set(x => x.ArticleContent, newContent)
+                    .Set(x => x.ArticleAnchorPrompts, confirmedPrompts ?? new List<ArticleAnchorPrompt>()));
             var result = await db.ImageMasterWorkspaces.UpdateOneAsync(SameWorkflowAs(current),
                 update, cancellationToken: CancellationToken.None);
             if (result.MatchedCount > 0)

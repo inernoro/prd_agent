@@ -123,6 +123,7 @@ public class WorkspaceCloneService
             ScenarioType = source.ScenarioType,
             SelectedPromptId = null, // 提示词 ID 属于发送方，不继承
             ArticleContent = source.ArticleContent,
+            ArticleAnchorPrompts = source.ArticleAnchorPrompts.ToList(),
             ArticleContentWithMarkers = source.ArticleContentWithMarkers,
             FolderName = source.FolderName,
             StylePrompt = source.StylePrompt,

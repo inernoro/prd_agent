@@ -1,3 +1,4 @@
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Prompts.Templates;
 using Xunit;
@@ -84,6 +85,38 @@ public class ArticleIllustrationAnchorsTests
         var prompts = AnchorInsertionParser.Parse("@AFTER 第二段 跨行 继续.\n[插图]: 第二段配图");
         var result = AnchorInsertionService.Apply(article, prompts);
         Assert.Contains("继续。\n\n[插图]: 第二段配图\n\n第三段。", result.MergedContent);
+    }
+
+    [Fact]
+    public void KeepsConfirmedPromptExactAndLetsModelFillOnlyOtherAnchors()
+    {
+        const string article = "第一段。\r\n[IMG]\r\n\r\n第二段。\r\n[IMG]";
+        const string userPrompt = "水彩  远景\n两株柳树";
+        var confirmed = new[] { new ArticleAnchorPrompt(article.IndexOf("[IMG]", StringComparison.Ordinal), 0, userPrompt) };
+        Assert.True(ArticleIllustrationAnchors.HasValidConfirmedPrompts(article, confirmed));
+        var anchors = new ArticleIllustrationAnchors(article, confirmed);
+
+        Assert.DoesNotContain("[IMG:1]", anchors.ModelArticle);
+        Assert.Contains("[IMG:2]", anchors.ModelArticle);
+        var prompts = ReadPrompts(anchors, "@AFTER [IMG:2]\n[插图]: 第二段配图\n@AFTER [IMG:1]\n[插图]: 模型改写");
+        var (merged, fallbacks) = anchors.Apply(prompts);
+
+        Assert.Single(prompts);
+        Assert.Equal(userPrompt, anchors.ConfirmedPrompts[0]);
+        Assert.Equal(0, fallbacks);
+        Assert.Equal("第一段。\r\n\r\n[插图]: 水彩 远景 两株柳树\r\n\r\n第二段。\r\n\r\n[插图]: 第二段配图", merged);
+        Assert.Equal(2, ArticleMarkerExtractor.Extract(merged).Count);
+    }
+
+    [Fact]
+    public void RejectsStaleDuplicateAndBlankConfirmedPrompts()
+    {
+        const string article = "原文\n[IMG]";
+        var prompt = new ArticleAnchorPrompt(3, 0, "雪山");
+        Assert.True(ArticleIllustrationAnchors.HasValidConfirmedPrompts(article, [prompt]));
+        Assert.False(ArticleIllustrationAnchors.HasValidConfirmedPrompts(article, [prompt, prompt]));
+        Assert.False(ArticleIllustrationAnchors.HasValidConfirmedPrompts(article, [prompt with { Offset = 2 }]));
+        Assert.False(ArticleIllustrationAnchors.HasValidConfirmedPrompts(article, [prompt with { Prompt = "﻿" }]));
     }
 
     private static Dictionary<string, AnchorInsertion> ReadPrompts(ArticleIllustrationAnchors anchors, string output)
