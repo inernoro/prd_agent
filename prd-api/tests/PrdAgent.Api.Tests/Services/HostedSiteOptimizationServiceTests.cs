@@ -44,7 +44,34 @@ public class HostedSiteOptimizationServiceTests
         html.ShouldContain("<h1>报告 #1.json</h1>");
         html.ShouldContain("<pre>&lt;script&gt;example&lt;/script&gt;</pre>");
         html.ShouldContain("仅显示文件开头");
-        html.ShouldNotContain("<script>");
+        html.ShouldNotContain("<script>example</script>");
+        html.ShouldContain("map-hosted-zip-original-download");
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    [InlineData(3, false)]
+    [InlineData(-1, false)]
+    public void ManualHomepage_UsesCentralDirectoryPositionAndChecksEligibility(int index, bool accepted)
+    {
+        var storage = new Mock<IAssetStorage>();
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string siteId, string path) => $"web-hosting/sites/{siteId}/{path}");
+        var service = new HostedSiteService(null!, storage.Object, null!, null!, null!, null!, null!, null!,
+            NullLogger<HostedSiteService>.Instance);
+        using var zip = new MemoryStream();
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            archive.CreateEntry("bundle/");
+            AddTextEntry(archive, "bundle\\data\\清单.json", "{}");
+            AddTextEntry(archive, "bundle/run.sh", "sample");
+        }
+
+        var error = service.ValidateZip("00000000000000000000000000000000", zip, index);
+
+        error.ShouldBe(accepted ? null : "选定的首页不在可发布文件中，请重新选择首页或使用文件目录");
     }
 
     [Theory]

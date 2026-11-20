@@ -17,7 +17,15 @@ test('右侧快捷上传直接提交 ZIP，普通上传仍可搜索并指定首�
     await zip.add(`bundle/checkpoints/result-${index}.json`, new TextReader('{}'));
   }
   const buffer = Buffer.from(await zip.close());
+  // Simulate a legacy ZIP with backslashes in both its local header and its central directory.
+  const pathWithSlash = 'bundle/manifest.json';
+  for (let index = buffer.indexOf(pathWithSlash); index !== -1; index = buffer.indexOf(pathWithSlash, index + pathWithSlash.length)) {
+    buffer.write('bundle\\manifest.json', index);
+  }
   let uploadBody: string | null = null;
+  let resumeRequests = 0;
+  let finishResume!: () => void;
+  const resumeResponse = new Promise<void>(resolve => { finishResume = resolve; });
   const manualSite = { id: 'manual', title: 'scan', entryFile: 'map-file.html', visibility: 'private', files: [] };
   await page.addInitScript(() => {
     localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
@@ -25,6 +33,7 @@ test('右侧快捷上传直接提交 ZIP，普通上传仍可搜索并指定首�
       token: 'zip-qa-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
       menuCatalog: [], menuCatalogLoaded: true,
     }, version: 0 }));
+    sessionStorage.setItem('web-pages:pending-optimization-session', JSON.stringify({ sessionId: 'previous-upload' }));
   });
   await page.route('**/api/**', async route => {
     const request = route.request();
@@ -36,6 +45,12 @@ test('右侧快捷上传直接提交 ZIP，普通上传仍可搜索并指定首�
       data = { id: 'published', title: 'scan', entryFile: 'map-directory.html', visibility: 'private' };
     }
     const optimization = '/api/web-pages/optimization/uploads';
+    if (pathname === `${optimization}/previous-upload`) {
+      resumeRequests++;
+      await resumeResponse;
+      await route.fulfill({ status: 404, json: { success: false, data: null, error: { code: 'NOT_FOUND' } } });
+      return;
+    }
     if (pathname === optimization && request.method() === 'POST')
       data = { sessionId: 'zip-qa', chunkSize: buffer.length, totalChunks: 1 };
     if (pathname === `${optimization}/zip-qa`)
@@ -57,7 +72,16 @@ test('右侧快捷上传直接提交 ZIP，普通上传仍可搜索并指定首�
   await dock.getByRole('button', { name: '收起投放面板' }).click();
   await page.getByRole('button', { name: '上传网页', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '上传站点' });
-  await dialog.locator('input[type="file"]').setInputFiles({ name: 'scan.zip', mimeType: 'application/zip', buffer });
+  const fileInput = dialog.locator('input[type="file"]');
+  try {
+    await expect.poll(() => resumeRequests).toBe(1);
+    await expect(page.getByText('正在恢复上次文件检查', { exact: true })).toBeVisible();
+    await expect(fileInput).toHaveCount(0);
+  } finally {
+    finishResume();
+  }
+  await expect(fileInput).toBeEnabled();
+  await fileInput.setInputFiles({ name: 'scan.zip', mimeType: 'application/zip', buffer });
   const mode = dialog.getByRole('combobox', { name: '打开站点时' });
   await expect(mode).toHaveValue('auto');
   await expect(mode.locator('option')).toHaveText(['系统查找', '文件目录', '手动选择']);
@@ -83,8 +107,11 @@ test('右侧快捷上传直接提交 ZIP，普通上传仍可搜索并指定首�
   const request = page.waitForRequest(req => new URL(req.url()).pathname === '/api/web-pages/optimization/uploads'
     && req.method() === 'POST');
   await submit.click();
-  expect((await request).postDataJSON()).toMatchObject({ entryFile: 'bundle/manifest.json' });
+  const payload = (await request).postDataJSON();
+  expect(payload).toMatchObject({ entryIndex: 1 });
+  expect(payload).not.toHaveProperty('entryFile');
   await expect(page.getByRole('dialog', { name: '上传完成' })).toBeVisible();
+  expect(resumeRequests).toBe(1);
 });
 
 test('合集切换到较早版本成员时不复制上一成员的预览地址', async ({ page }) => {

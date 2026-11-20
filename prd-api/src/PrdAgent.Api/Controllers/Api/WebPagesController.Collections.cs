@@ -116,7 +116,8 @@ public partial class WebPagesController
             .Project(c => new { c.Id, c.Name }).ToListAsync()).Cast<object>().ToList();
         var threads = metadata ? await _db.HostedSiteComments.Find(c => c.SiteId == site.Id && !c.IsDeleted && c.ParentId == null).Project(HostedSiteService.CommentMetadata).ToListAsync() : new();
         threads = threads.Where(c => HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(c), site.ContentVersion, false)).ToList();
-        return new { site.Id, site.Title, site.SiteUrl, site.EntryFile, site.WrappedAssetType, site.ContentShape, summary = site.Description, excerpt = site.DocumentTextExcerpt,
+        return new { site.Id, site.Title, site.SiteUrl, site.EntryFile, site.WrappedAssetType, site.ContentShape, site.ZipHomepageAssetPath,
+            summary = site.Description, excerpt = site.DocumentTextExcerpt,
             headings = site.DocumentHeadings, templateId = site.WritingTemplateId,
             type = CollectionDocumentType(site),
             ownerUserId = publicRead ? null : site.OwnerUserId, author = await ResolveDisplayNameAsync(site.OwnerUserId), site.UpdatedAt,

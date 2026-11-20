@@ -94,6 +94,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 ? Path.GetFileNameWithoutExtension(request.FileName)
                 : request.Title?.Trim(),
             EntryFile = request.EntryFile,
+            EntryIndex = request.EntryIndex,
             Description = request.Description?.Trim(),
             Folder = request.Folder?.Trim(),
             Tags = (request.Tags ?? new List<string>())
@@ -294,7 +295,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         try
         {
             await using var sourceStream = await DownloadChunksAsync(session);
-            var analysis = BuildOptimizedPackage(sourceStream, session.EntryFile).Analysis;
+            var analysis = BuildOptimizedPackage(sourceStream, session.EntryFile != null || session.EntryIndex != null).Analysis;
             if (analysis.Blocked)
                 throw new InvalidOperationException(analysis.Error ?? "ZIP 文件无法通过安全检查，请重新导出后再试");
 
@@ -366,7 +367,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     session.Tags,
                     ct: CancellationToken.None,
                     sourceRef: session.Id,
-                    entryFile: session.EntryFile);
+                    entryFile: session.EntryFile,
+                    entryIndex: session.EntryIndex);
             }
             else
             {
@@ -377,7 +379,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     session.SourceFileName,
                     ct: CancellationToken.None,
                     reuploadRef: session.Id,
-                    zipEntryFile: session.EntryFile);
+                    zipEntryFile: session.EntryFile,
+                    zipEntryIndex: session.EntryIndex);
                 var metadata = await _hostedSites.UpdateAsync(
                     saved.Id,
                     session.OwnerUserId,
@@ -1484,7 +1487,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     internal HostedSiteOptimizationAnalysis Analyze(Stream input) => BuildOptimizedPackage(input).Analysis;
 
-    private OptimizedBuild BuildOptimizedPackage(Stream input, string? requestedEntry = null)
+    private OptimizedBuild BuildOptimizedPackage(Stream input, bool preserveOriginal = false)
     {
         input.Position = 0;
         var analysis = new HostedSiteOptimizationAnalysis { OriginalArchiveBytes = input.Length };
@@ -1528,7 +1531,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 return Blocked(analysis, "ZIP 中存在异常压缩比文件，未进行优化");
 
             // 手选首页与目录模式保留原包，避免精简步骤移除用户要浏览的文件。
-            if (requestedEntry != null)
+            if (preserveOriginal)
                 return new OptimizedBuild { Analysis = analysis };
 
             var byPath = files.ToDictionary(x => x.LogicalPath, StringComparer.Ordinal);

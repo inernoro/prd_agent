@@ -217,10 +217,10 @@ public class HostedSiteReviewVersionAccessTests
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         if (operation == "create-zip")
             sites.Setup(x => x.CreateFromZipAsync("owner", It.IsAny<Stream>(), "page", null, null,
-                It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>(), "upload", null, directory ? string.Empty : entryFile)).ReturnsAsync(published);
+                It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>(), "upload", null, directory ? string.Empty : entryFile, null)).ReturnsAsync(published);
         else if (operation == "replace-zip")
             sites.Setup(x => x.ReuploadAsync("site", "owner", It.IsAny<Stream>(), "page.zip", null,
-                It.IsAny<CancellationToken>(), "upload", null, null)).ReturnsAsync(published);
+                It.IsAny<CancellationToken>(), "upload", null, null, null)).ReturnsAsync(published);
         else
             sites.Setup(x => x.ReuploadAsync("site", "owner", It.IsAny<byte[]>(), "page.html", null,
                 It.IsAny<CancellationToken>(), "upload", null)).ReturnsAsync(published);

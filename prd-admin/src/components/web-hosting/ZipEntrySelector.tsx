@@ -2,12 +2,12 @@ import { useEffect, useId, useState } from 'react';
 import { FileText, Search } from 'lucide-react';
 import { readZipEntryOptions } from './zipEntryOptions';
 
-export type ZipEntryChoice = { mode: 'auto' | 'directory' } | { mode: 'manual'; entryFile: string };
+export type ZipEntryChoice = { mode: 'auto' | 'directory' } | { mode: 'manual'; entryIndex: number | null };
 
-export function getZipEntryFile(choice: ZipEntryChoice): string | undefined {
-  if (choice.mode === 'manual') return choice.entryFile;
-  if (choice.mode === 'directory') return '';
-  return undefined;
+export function getZipEntrySelection(choice: ZipEntryChoice): { entryFile?: string; entryIndex?: number } {
+  if (choice.mode === 'manual' && choice.entryIndex !== null) return { entryIndex: choice.entryIndex };
+  if (choice.mode === 'directory') return { entryFile: '' };
+  return {};
 }
 
 export function ZipEntrySelector({ file, choice, onChange }: {
@@ -37,7 +37,7 @@ export function ZipEntrySelector({ file, choice, onChange }: {
 
   const filter = query.trim().toLowerCase();
   const visibleEntries = filter ? entries?.filter(entry => entry.path.toLowerCase().includes(filter)) : entries;
-  const selectedEntry = manual ? entries?.find(entry => entry.name === choice.entryFile) : undefined;
+  const selectedEntry = manual ? entries?.find(entry => entry.index === choice.entryIndex) : undefined;
   return <div className="flex min-w-0 flex-col gap-3 text-left">
     <label className="flex min-w-0 flex-col gap-1.5">
       <span className="text-[13px] font-semibold text-token-primary">打开站点时</span>
@@ -45,7 +45,7 @@ export function ZipEntrySelector({ file, choice, onChange }: {
         value={choice.mode} onChange={event => {
         const mode = event.currentTarget.value;
         setQuery('');
-        onChange(mode === 'manual' ? { mode, entryFile: '' } : { mode: mode === 'directory' ? 'directory' : 'auto' });
+        onChange(mode === 'manual' ? { mode, entryIndex: null } : { mode: mode === 'directory' ? 'directory' : 'auto' });
       }}>
         <option value="auto">系统查找</option>
         <option value="directory">文件目录</option>
@@ -69,12 +69,12 @@ export function ZipEntrySelector({ file, choice, onChange }: {
         </label>
         <div className="max-h-[224px] overflow-y-auto overscroll-contain rounded-lg border border-token-subtle">
           {visibleEntries?.length ? <ul aria-label="ZIP 文件列表" className="divide-y divide-token-subtle">
-            {visibleEntries.map(({ name, path }) => {
-              const selected = choice.entryFile === name;
-              return <li key={name}>
+            {visibleEntries.map(({ index, path }) => {
+              const selected = choice.entryIndex === index;
+              return <li key={index}>
                 <label className={`flex min-h-10 cursor-pointer items-center gap-2.5 px-3 py-2 ${selected ? 'bg-token-nested' : 'hover-bg-soft'}`}>
                   <input type="radio" name={id} checked={selected} className="h-4 w-4 shrink-0"
-                    style={{ accentColor: 'var(--accent-primary)' }} onChange={() => onChange({ mode: 'manual', entryFile: name })} />
+                    style={{ accentColor: 'var(--accent-primary)' }} onChange={() => onChange({ mode: 'manual', entryIndex: index })} />
                   <FileText size={15} className="shrink-0 text-token-muted" aria-hidden />
                   <span className="min-w-0 text-[13px] font-medium leading-5 text-token-primary [overflow-wrap:anywhere]">{path}</span>
                 </label>

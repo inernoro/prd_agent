@@ -2,7 +2,7 @@
 import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { getZipEntryFile, ZipEntrySelector, type ZipEntryChoice } from './ZipEntrySelector';
+import { getZipEntrySelection, ZipEntrySelector, type ZipEntryChoice } from './ZipEntrySelector';
 import { readZipEntryOptions } from './zipEntryOptions';
 
 vi.mock('./zipEntryOptions', () => ({ readZipEntryOptions: vi.fn() }));
@@ -36,12 +36,12 @@ it('普通上传默认系统查找，只有手动选择才列出文件', async (
     const [choice, setChoice] = useState<ZipEntryChoice>({ mode: 'auto' });
     return <ZipEntrySelector file={file} choice={choice} onChange={next => {
       setChoice(next);
-      update(getZipEntryFile(next));
+      update(getZipEntrySelection(next));
     }} />;
   }
   vi.mocked(readZipEntryOptions).mockResolvedValue([
-    { name: '扫描/report.md', path: 'report.md' },
-    { name: '扫描/data/manifest.json', path: 'data/manifest.json' },
+    { index: 3, path: 'report.md' },
+    { index: 1, path: 'data/manifest.json' },
   ]);
   await act(async () => root.render(<Selector />));
   const mode = container.querySelector('select')!;
@@ -57,9 +57,9 @@ it('普通上传默认系统查找，只有手动选择才列出文件', async (
   expect(rows.some(row => row.checked)).toBe(false);
   await act(async () => rows[1].click());
   expect(rows[1].checked).toBe(true);
-  expect(update).toHaveBeenLastCalledWith('扫描/data/manifest.json');
+  expect(update).toHaveBeenLastCalledWith({ entryIndex: 1 });
 
   await selectValue(mode, 'directory');
   expect(container.querySelector('[role="group"]')).toBeNull();
-  expect(update).toHaveBeenLastCalledWith('');
+  expect(update).toHaveBeenLastCalledWith({ entryFile: '' });
 });

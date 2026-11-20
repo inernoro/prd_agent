@@ -1,11 +1,12 @@
 import { acceptPackageDownloadRequest, downloadHostedPackage, PACKAGE_DOWNLOAD_STATUS, withPackageDownloadBridge } from './packageDownloadBridge';
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { downloadHostedPdf } from '@/services/real/webPages';
+import { downloadHostedPdf, downloadZipHomepageAsset } from '@/services/real/webPages';
+import { ApiDownloadError } from '@/services/real/apiClient';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { saveBlobAsFile } from './sourceDownload';
 import { acceptPdfDownloadRequest, PDF_DOWNLOAD_INIT, PDF_DOWNLOAD_STATUS, withPdfDownloadBridge } from './pdfDownloadBridge';
 
-type PdfDownloadSite = { id: string; siteUrl: string; entryFile: string; pdfFilePaths?: string[] };
+type PdfDownloadSite = { id: string; siteUrl: string; entryFile: string; pdfFilePaths?: string[]; zipHomepageAssetPath?: string | null };
 type Status = { kind: 'idle' | 'pending' | 'handed-off' | 'error'; message: string };
 
 export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { token: string; password?: string }, externalFrameRef?: RefObject<HTMLIFrameElement>) {
@@ -16,10 +17,11 @@ export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { tok
   const siteId = site?.id ?? '';
   const siteUrl = site?.siteUrl ?? '';
   const entryFile = site?.entryFile ?? '';
+  const zipHomepageAssetPath = site?.zipHomepageAssetPath ?? null;
   const pathsKey = JSON.stringify(site?.pdfFilePaths ?? []);
   const context = useMemo(() => ({ siteId, siteUrl, entryFile,
-    pdfFilePaths: JSON.parse(pathsKey) as string[], nonce: crypto.randomUUID() }),
-  [siteId, siteUrl, entryFile, pathsKey]);
+    pdfFilePaths: JSON.parse(pathsKey) as string[], nonce: crypto.randomUUID(), zipHomepageAssetPath }),
+  [siteId, siteUrl, entryFile, pathsKey, zipHomepageAssetPath]);
   const shareToken = share?.token;
   const sharePassword = share?.password;
 
@@ -27,6 +29,10 @@ export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { tok
     if (!context.siteId) return;
     iframeRef.current?.contentWindow?.postMessage({ type: PDF_DOWNLOAD_INIT,
       siteId: context.siteId, nonce: context.nonce, pdfFilePaths: context.pdfFilePaths }, '*');
+    if (context.zipHomepageAssetPath) {
+      iframeRef.current?.contentWindow?.postMessage({ type: 'map-hosted-zip-original-init',
+        siteId: context.siteId, nonce: context.nonce }, '*');
+    }
   }, [context, iframeRef]);
 
   useEffect(() => {
@@ -39,6 +45,26 @@ export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { tok
       const frame = iframeRef.current?.contentWindow;
       if (frame && event.source === frame && event.data?.type === 'map-hosted-pdf-ready') {
         notifyFrame();
+        return;
+      }
+      if (context.zipHomepageAssetPath && frame && event.source === frame && event.data?.type === 'map-hosted-zip-original-download'
+        && event.data.siteId === context.siteId && event.data.nonce === context.nonce) {
+        if (pendingRef.current) return;
+        if (navigator.userActivation?.isActive !== true) {
+          setStatus({ kind: 'error', message: '请亲自点击网页中的「下载原文件」后重试。' });
+          return;
+        }
+        const pending = {};
+        pendingRef.current = pending;
+        setStatus({ kind: 'pending', message: '正在准备原文件，请稍候…' });
+        void downloadZipHomepageAsset(context.siteId, context.zipHomepageAssetPath, context.siteUrl,
+          shareToken ? { token: shareToken, password: sharePassword } : undefined).then(result => {
+          if (!active) return;
+          saveBlobAsFile(result.blob, result.fileName);
+          setStatus({ kind: 'handed-off', message: '原文件已交给浏览器，请查看下载列表。' });
+        }).catch((error: unknown) => {
+          if (active) setStatus({ kind: 'error', message: error instanceof ApiDownloadError ? error.message : '原文件下载未完成，请稍后重试。' });
+        }).finally(() => { if (pendingRef.current === pending) pendingRef.current = null; });
         return;
       }
       if (acceptPackageDownloadRequest(event.data, event.source, frame, context)) {

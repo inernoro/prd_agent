@@ -1,12 +1,12 @@
 import '@/components/workspace/workspace.css';
 import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
 import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
-import { getZipEntryFile, ZipEntrySelector, type ZipEntryChoice } from '@/components/web-hosting/ZipEntrySelector';
+import { getZipEntrySelection, ZipEntrySelector, type ZipEntryChoice } from '@/components/web-hosting/ZipEntrySelector';
 import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
 import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, type RelatedSummary } from '@/services/real/relatedDocuments';
@@ -3329,10 +3329,12 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const [tagInput, setTagInput] = useState('');
   const [folder, setFolder] = useState(item?.folder ?? '');
   const [file, setFile] = useState<File | null>(initialFile ?? null);
+  const [saving, setSaving] = useState(false);
   const zipFile = file?.name.toLowerCase().endsWith('.zip') ? file : null;
   const [zipEntryChoice, setZipEntryChoice] = useState<ZipEntryChoice>({ mode: 'auto' });
-  const missingManualEntry = !!zipFile && zipEntryChoice.mode === 'manual' && !zipEntryChoice.entryFile;
+  const missingManualEntry = !!zipFile && zipEntryChoice.mode === 'manual' && zipEntryChoice.entryIndex === null;
   const chooseFile = (next: File) => {
+    if (saving) return;
     setZipEntryChoice({ mode: 'auto' });
     setFile(next);
   };
@@ -3348,7 +3350,6 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     const stem = file.name.slice(0, file.name.lastIndexOf('.')) || file.name;
     setTitle(stem);
   }, [file, isEdit]);
-  const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -3429,6 +3430,9 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     onSaved(saved, true, true);
   }, [file?.name, isEdit, onSaved]);
 
+  const finishRestoredSite = useRef(finishSavedSite);
+  useLayoutEffect(() => { finishRestoredSite.current = finishSavedSite; }, [finishSavedSite]);
+
   useEffect(() => {
     if (resumeCheckedRef.current || initialFile) return;
     const controller = new AbortController();
@@ -3448,7 +3452,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       if (pending.data.outcome === 'optimization-recommended') {
         setOptimization(pending.data);
       } else if (pending.data.site) {
-        finishSavedSite(pending.data.site);
+        finishRestoredSite.current(pending.data.site);
       }
     };
     setSaving(true);
@@ -3460,7 +3464,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       setSaving(false);
     });
     return () => { active = false; controller.abort(); };
-  }, [finishSavedSite, initialFile, item?.id]);
+  }, [initialFile, item?.id]);
 
   const discardOptimization = async () => {
     const sessionId = optimization?.sessionId;
@@ -3541,7 +3545,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       if (file && isZip) {
         const reviewed = await reviewSiteZip({
           file,
-          entryFile: getZipEntryFile(zipEntryChoice),
+          ...getZipEntrySelection(zipEntryChoice),
           title: title.trim() || undefined,
           description: description.trim() || undefined,
           folder: folder.trim() || undefined,
@@ -3997,8 +4001,8 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   // 虚线走 accent：设计稿这一框是橙虚线，灰虚线读起来像「禁用」
                   border: `1.5px dashed ${dragOver ? 'var(--accent-primary)' : 'rgba(var(--accent-primary-rgb), 0.45)'}`,
                 }}
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onClick={() => { if (!saving) fileInputRef.current?.click(); }}
+                onDragOver={e => { e.preventDefault(); if (!saving) setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
               >
@@ -4021,6 +4025,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   ref={fileInputRef}
                   type="file"
                   accept={WEB_HOSTING_UPLOAD_ACCEPT}
+                  disabled={saving}
                   className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) chooseFile(f); }}
                 />
@@ -4032,13 +4037,14 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   <p className="text-sm text-token-primary">{item.entryFile}</p>
                   <p className="text-xs text-token-muted">{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
                 </div>
-                <Button size="xs" variant="secondary" onClick={() => fileInputRef.current?.click()}>
+                <Button size="xs" variant="secondary" disabled={saving} onClick={() => fileInputRef.current?.click()}>
                   <Upload size={12} className="mr-1" /> 重新上传
                 </Button>
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept={WEB_HOSTING_UPLOAD_ACCEPT}
+                  disabled={saving}
                   className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) chooseFile(f); }}
                 />

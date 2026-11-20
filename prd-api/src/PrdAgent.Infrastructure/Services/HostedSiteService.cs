@@ -103,7 +103,7 @@ public class HostedSiteService : IHostedSiteService
                     .GroupBy(k => LogicalPath(k)!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
                 var retainedEntry = snapshot.PublishedEntryCosKey
                     ?? throw new InvalidOperationException("当前版本入口尚未归档，请稍后重试");
-                var files = site.Files.Select(f => new HostedSiteFile { Path = f.Path, Size = f.Size, MimeType = f.MimeType,
+                var files = site.Files.Select(f => new HostedSiteFile { Path = f.Path, Size = f.Size, MimeType = f.MimeType, IsZipHomepageAsset = f.IsZipHomepageAsset,
                     CosKey = string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)
                         ? retainedEntry : byPath.GetValueOrDefault(f.Path, f.CosKey) }).ToList();
                 if (files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
@@ -499,11 +499,12 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct = default,
         string? uploadId = null,
         string? sourceRef = null,
-        string? entryFile = null)
+        string? entryFile = null,
+        int? entryIndex = null)
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var result = await ExtractAndUploadZip(siteId, zipStream, uploadId, requestedEntry: entryFile);
+        var result = await ExtractAndUploadZip(siteId, zipStream, uploadId, requestedEntry: entryFile, requestedEntryIndex: entryIndex);
         if (result.Error != null)
             throw new InvalidOperationException(result.Error);
 
@@ -883,12 +884,12 @@ public class HostedSiteService : IHostedSiteService
     public Task<HostedSite> ReuploadAsync(
         string siteId, string userId, Stream zipStream, string fileName,
         string? wrappedAssetType = null, CancellationToken ct = default,
-        string? uploadId = null, string? reuploadRef = null, string? zipEntryFile = null)
+        string? uploadId = null, string? reuploadRef = null, string? zipEntryFile = null, int? zipEntryIndex = null)
     {
         if (!string.Equals(Path.GetExtension(fileName), ".zip", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("流式上传仅支持 ZIP 文件");
         return ReuploadCoreAsync(siteId, userId, zipStream, null, fileName,
-            wrappedAssetType, ct, uploadId, reuploadRef, zipEntryFile);
+            wrappedAssetType, ct, uploadId, reuploadRef, zipEntryFile, zipEntryIndex);
     }
 
     private async Task<HostedSite> ReuploadCoreAsync(
@@ -898,7 +899,8 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct = default,
         string? uploadId = null,
         string? reuploadRef = null,
-        string? zipEntryFile = null)
+        string? zipEntryFile = null,
+        int? zipEntryIndex = null)
     {
         // 角色门控：editor / owner / 站点创建者可重传内容；viewer 与非成员一律拒绝
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
@@ -932,7 +934,7 @@ public class HostedSiteService : IHostedSiteService
 
         if (ext == ".zip")
         {
-            newKeys = GetValidatedZipPaths(zipStream, siteId, zipEntryFile)
+            newKeys = GetValidatedZipPaths(zipStream, siteId, zipEntryFile, zipEntryIndex)
                 .Select(path => _storage.BuildSiteKey(siteId, $"{versionRoot}/{path}"))
                 .ToArray();
         }
@@ -952,7 +954,7 @@ public class HostedSiteService : IHostedSiteService
         {
             if (ext == ".zip")
             {
-                var result = await ExtractAndUploadZip(siteId, zipStream, uploadId, versionRoot, zipEntryFile);
+                var result = await ExtractAndUploadZip(siteId, zipStream, uploadId, versionRoot, zipEntryFile, zipEntryIndex);
                 if (result.Error != null)
                     throw new InvalidOperationException(result.Error);
                 siteFiles = result.Files;
@@ -1165,7 +1167,8 @@ public class HostedSiteService : IHostedSiteService
         var removeGeneratedSidecars = HostedSiteContentShapeRules.IsSelfContainedHtml(site) && site.Files.Count > 1;
         var sources = removeGeneratedSidecars ? new List<HostedSiteFile> { entry } : site.Files;
         var updatedFiles = sources.Select(file => new HostedSiteFile { Path = file.Path,
-            CosKey = _storage.BuildSiteKey(siteId, root + "/" + file.Path), Size = file.Size, MimeType = file.MimeType }).ToList();
+            CosKey = _storage.BuildSiteKey(siteId, root + "/" + file.Path), Size = file.Size, MimeType = file.MimeType,
+            IsZipHomepageAsset = file.IsZipHomepageAsset }).ToList();
         var nextEntry = updatedFiles.Single(file => string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
         var nextEntryKey = nextEntry.CosKey;
         var newKeys = updatedFiles.Select(file => file.CosKey).ToArray();
@@ -2506,7 +2509,8 @@ public class HostedSiteService : IHostedSiteService
             }
             var newKey = _storage.BuildSiteKey(newSiteId, f.Path);
             await _storage.UploadToKeyAsync(newKey, bytes, f.MimeType, CancellationToken.None, SiteCacheControl);
-            newFiles.Add(new HostedSiteFile { Path = f.Path, CosKey = newKey, Size = bytes.Length, MimeType = f.MimeType });
+            newFiles.Add(new HostedSiteFile { Path = f.Path, CosKey = newKey, Size = bytes.Length, MimeType = f.MimeType,
+                IsZipHomepageAsset = f.IsZipHomepageAsset });
             totalSize += bytes.Length;
         }
         if (newFiles.Count == 0)
@@ -3348,6 +3352,7 @@ public class HostedSiteService : IHostedSiteService
                 EntryFile = s.EntryFile,
                 ContentShape = HostedSiteContentShapeRules.Resolve(s),
                 RequiresPreviewBridge = s.RequiresPreviewBridge,
+                ZipHomepageAssetPath = s.ZipHomepageAssetPath,
                 TotalSize = s.TotalSize,
                 // 入口那一份自己的大小。前端拿它判「取正文的代理装不装得下」——
                 // 拿 TotalSize 近似只对单文件站成立，多文件站里入口超 2MB 的会漏（Codex 第四轮 P2）。
@@ -4520,6 +4525,7 @@ public class HostedSiteService : IHostedSiteService
                             CosKey = key,
                             Size = bytes.LongLength,
                             MimeType = file.MimeType,
+                            IsZipHomepageAsset = file.IsZipHomepageAsset,
                         });
                     }
                 }
@@ -4665,7 +4671,7 @@ public class HostedSiteService : IHostedSiteService
     /// 结构上保证「校验通过」⇔「上传阶段产出 ≥1 文件且不超限」，杜绝两份逻辑各自漂移。
     /// 返回的 Entry 仅在传入 archive 的生命周期内有效。
     /// </summary>
-    private ZipPlan PlanZipEntries(ZipArchive archive, string siteId, string? requestedEntry = null)
+    private ZipPlan PlanZipEntries(ZipArchive archive, string siteId, string? requestedEntry = null, int? requestedEntryIndex = null)
     {
         var plan = new ZipPlan();
 
@@ -4681,9 +4687,11 @@ public class HostedSiteService : IHostedSiteService
 
         foreach (var entry in archive.Entries)
         {
-            if (string.IsNullOrEmpty(entry.Name)) continue;
-
-            var relativePath = entry.FullName;
+            var relativePath = entry.FullName.Replace('\\', '/');
+            if (relativePath.Length == 0 || relativePath.EndsWith('/') || relativePath.StartsWith('/')
+                || relativePath.StartsWith("../", StringComparison.Ordinal)
+                || (relativePath.Length > 1 && char.IsAsciiLetter(relativePath[0]) && relativePath[1] == ':'))
+                continue;
             if (!string.IsNullOrEmpty(rootPrefix) && relativePath.StartsWith(rootPrefix))
                 relativePath = relativePath[rootPrefix.Length..];
 
@@ -4692,7 +4700,7 @@ public class HostedSiteService : IHostedSiteService
             if (relativePath.StartsWith('.') || relativePath.Contains("/__MACOSX/") || relativePath.StartsWith("__MACOSX/"))
                 continue;
 
-            var fileExt = Path.GetExtension(entry.Name);
+            var fileExt = Path.GetExtension(relativePath);
             if (BlockedExtensions.Contains(fileExt))
                 continue;
 
@@ -4720,16 +4728,27 @@ public class HostedSiteService : IHostedSiteService
             return plan;
         }
 
-        if (requestedEntry == null)
+        if (requestedEntry == null && requestedEntryIndex == null)
         {
             plan.EntryFile = SelectEntryPath(plan.Items.Select(item => (item.RelativePath, item.Mime)).ToList()) ?? string.Empty;
         }
-        else if (requestedEntry.Length > 0)
+        else if (requestedEntryIndex != null || requestedEntry is { Length: > 0 })
         {
-            var chosen = plan.Items.FirstOrDefault(item => item.Entry.FullName == requestedEntry);
+            var chosenEntry = requestedEntryIndex is int index && index >= 0 && index < archive.Entries.Count
+                ? archive.Entries[index] : null;
+            // 浏览器和 .NET 对 ZIP 文件名的解码可能不同，按中央目录位置定位手动选择。
+            var chosen = plan.Items.FirstOrDefault(item => requestedEntryIndex != null
+                ? ReferenceEquals(item.Entry, chosenEntry)
+                : item.Entry.FullName == requestedEntry);
             if (chosen.Entry == null)
             {
                 plan.Error = "选定的首页不在可发布文件中，请重新选择首页或使用文件目录";
+                return plan;
+            }
+            if (plan.Items.Any(item => !ReferenceEquals(item.Entry, chosen.Entry)
+                && string.Equals(item.RelativePath, chosen.RelativePath, StringComparison.Ordinal)))
+            {
+                plan.Error = "ZIP 中有多个文件使用同一首页路径，请整理压缩包后重试";
                 return plan;
             }
             if (chosen.Mime == "text/html")
@@ -4784,7 +4803,8 @@ public class HostedSiteService : IHostedSiteService
         Stream zipStream,
         string? uploadId = null,
         string? versionRoot = null,
-        string? requestedEntry = null)
+        string? requestedEntry = null,
+        int? requestedEntryIndex = null)
     {
         var isSlideDeck = false;
 
@@ -4793,7 +4813,7 @@ public class HostedSiteService : IHostedSiteService
             zipStream.Position = 0;
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
 
-            var plan = PlanZipEntries(archive, siteId, requestedEntry);
+            var plan = PlanZipEntries(archive, siteId, requestedEntry, requestedEntryIndex);
             if (plan.Error != null)
                 return new ZipExtractResult { Error = plan.Error };
 
@@ -4861,7 +4881,8 @@ public class HostedSiteService : IHostedSiteService
                 var key = _storage.BuildSiteKey(siteId, storagePath);
                 await _storage.UploadToKeyAsync(key, bytes,
                     mime == "text/html" ? "text/html; charset=utf-8" : mime, CancellationToken.None, SiteCacheControl);
-                files.Add(new HostedSiteFile { Path = path, CosKey = key, Size = bytes.Length, MimeType = mime });
+                files.Add(new HostedSiteFile { Path = path, CosKey = key, Size = bytes.Length, MimeType = mime,
+                    IsZipHomepageAsset = path == plan.AssetEntry?.Path });
                 totalSize += bytes.Length;
             }
         }
@@ -4899,7 +4920,20 @@ public class HostedSiteService : IHostedSiteService
             <style>:root{color-scheme:light dark}body{max-width:56rem;margin:2rem auto;padding:0 1rem;font:1rem/1.65 system-ui,sans-serif}
             h1,pre{overflow-wrap:anywhere}pre{white-space:pre-wrap;padding:1rem;border:1px solid color-mix(in srgb,currentColor 24%,transparent);border-radius:.5rem}
             img,video,audio{display:block;max-width:100%}</style></head><body><main><h1>{{title}}</h1>
-            <p>{{pdfLink}}<a href="{{url}}" download>下载原文件</a></p>{{previewNote}}{{preview}}</main></body></html>
+            <p>{{pdfLink}}<a href="{{url}}" download id="map-zip-original">下载原文件</a></p>{{previewNote}}{{preview}}</main>
+            <script>(function () {
+              if (window.parent === window) return;
+              let context;
+              window.addEventListener('message', function (event) {
+                if (event.source === window.parent && event.data?.type === 'map-hosted-zip-original-init') context = event.data;
+              });
+              document.getElementById('map-zip-original').addEventListener('click', function (event) {
+                if (!event.isTrusted || event.defaultPrevented || event.button !== 0 || !context) return;
+                event.preventDefault();
+                window.parent.postMessage({type:'map-hosted-zip-original-download', siteId:context.siteId, nonce:context.nonce}, '*');
+              });
+              window.parent.postMessage({type:'map-hosted-pdf-ready'}, '*');
+            })();</script></body></html>
             """;
     }
 
@@ -4952,13 +4986,13 @@ public class HostedSiteService : IHostedSiteService
     /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。与 ExtractAndUploadZip 共用
     /// PlanZipEntries，条件结构上一致。用于重传替换：先校验后写入，失败时零副作用。
     /// </summary>
-    internal string? ValidateZip(string siteId, Stream zipStream)
+    internal string? ValidateZip(string siteId, Stream zipStream, int? requestedEntryIndex = null)
     {
         try
         {
             zipStream.Position = 0;
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
-            return PlanZipEntries(archive, siteId).Error;
+            return PlanZipEntries(archive, siteId, requestedEntryIndex: requestedEntryIndex).Error;
         }
         catch (InvalidDataException)
         {
@@ -4968,13 +5002,13 @@ public class HostedSiteService : IHostedSiteService
 
     // PlanZipEntries 现在要 siteId 才能算出每个条目的对象键（主干把站点隔离并进了这一层）。
     // 这里只取相对路径，但仍须把 siteId 透传下去，不能用空串糊过去——那会让键前缀失去站点作用域。
-    private string[] GetValidatedZipPaths(Stream zipStream, string siteId, string? requestedEntry)
+    private string[] GetValidatedZipPaths(Stream zipStream, string siteId, string? requestedEntry, int? requestedEntryIndex)
     {
         try
         {
             zipStream.Position = 0;
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
-            var plan = PlanZipEntries(archive, siteId, requestedEntry);
+            var plan = PlanZipEntries(archive, siteId, requestedEntry, requestedEntryIndex);
             if (plan.Error != null)
                 throw new InvalidOperationException(plan.Error);
             return plan.Paths.ToArray();
@@ -4990,10 +5024,11 @@ public class HostedSiteService : IHostedSiteService
         string? commonPrefix = null;
         foreach (var entry in archive.Entries)
         {
-            if (string.IsNullOrEmpty(entry.Name)) continue;
-            var slashIdx = entry.FullName.IndexOf('/');
+            var path = entry.FullName.Replace('\\', '/');
+            if (path.Length == 0 || path.EndsWith('/')) continue;
+            var slashIdx = path.IndexOf('/');
             if (slashIdx < 0) return null;
-            var prefix = entry.FullName[..(slashIdx + 1)];
+            var prefix = path[..(slashIdx + 1)];
             if (commonPrefix == null) commonPrefix = prefix;
             else if (commonPrefix != prefix) return null;
         }

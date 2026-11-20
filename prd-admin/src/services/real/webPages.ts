@@ -59,6 +59,7 @@ export interface HostedSite {
   pdfAssetUrl: string | undefined;
   /** 后端依据当前文件清单派生的 PDF 下载白名单。 */
   pdfFilePaths?: string[];
+  zipHomepageAssetPath?: string | null;
   files: HostedSiteFile[];
   /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
   contentShape?: 'self-contained-html' | 'multi-file';
@@ -634,6 +635,7 @@ export async function uploadSite(input: {
 export async function reviewSiteZip(input: {
   file: File;
   entryFile?: string;
+  entryIndex?: number;
   title?: string;
   description?: string;
   folder?: string;
@@ -657,6 +659,7 @@ export async function reviewSiteZip(input: {
         fileName: input.file.name,
         fileSize: input.file.size,
         entryFile: input.entryFile,
+        entryIndex: input.entryIndex,
         title: input.title,
         description: input.description,
         folder: input.folder,
@@ -1328,6 +1331,7 @@ export interface SharedSiteInfo {
   entrySize: number;
   /** 服务端登记的可下载 PDF 路径；不包含对象存储物理键。 */
   pdfFilePaths?: string[];
+  zipHomepageAssetPath?: string | null;
   fileCount: number;
   coverImageUrl?: string;
   // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
@@ -1646,6 +1650,18 @@ export function downloadHostedPdf(siteId: string, filePath: string,
   }
   const path = share ? api.webPages.sharePdf(share.token) : api.webPages.pdf(siteId);
   return apiDownload(`${path}?${query}`, filePath.split('/').pop() || 'document.pdf', false, !!share);
+}
+
+export function downloadZipHomepageAsset(siteId: string, filePath: string, siteUrl: string,
+  share?: { token: string; password?: string }): Promise<ApiDownloadedFile> {
+  const version = new URL(siteUrl, window.location.href).searchParams.get('v') ?? '';
+  const query = new URLSearchParams({ filePath, version });
+  if (share) {
+    query.set('siteId', siteId);
+    if (share.password) query.set('password', share.password);
+  }
+  const path = share ? api.webPages.shareZipHomepageAsset(share.token) : api.webPages.zipHomepageAsset(siteId);
+  return apiDownload(`${path}?${query}`, filePath.split('/').pop() || '原文件', false, !!share);
 }
 
 /** 经分享链接发表评论（需登录） */
