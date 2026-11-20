@@ -47,6 +47,13 @@ public interface IDesignKnowledgeSnapshotResolver
 
     Task<IReadOnlyList<DesignWorkspaceFile>> ReadWorkspaceOriginalsAsync(
         string userId, IReadOnlyList<DesignKnowledgeSnapshot> snapshots, DesignKnowledgeOriginalSnapshot originals, CancellationToken ct);
+
+    Task<List<DesignKnowledgeArchiveAuthority>> CaptureArchiveAuthorityAsync(
+        string userId, IReadOnlyList<DesignKnowledgeSnapshot> snapshots, DesignKnowledgeOriginalSnapshot? originals, CancellationToken ct);
+
+    Task RequireArchiveReadAccessAsync(
+        string userId, IReadOnlyList<DesignKnowledgeSnapshot> snapshots, DesignKnowledgeOriginalSnapshot? originals,
+        IReadOnlyList<DesignKnowledgeArchiveAuthority>? authority, DateTime confirmedAt, CancellationToken ct);
 }
 
 /// <summary>
@@ -129,6 +136,65 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
         foreach (var binding in originals.References)
             await ReadMatchingOriginalAsync(userId, binding, ct);
         return files;
+    }
+
+    public async Task<List<DesignKnowledgeArchiveAuthority>> CaptureArchiveAuthorityAsync(
+        string userId, IReadOnlyList<DesignKnowledgeSnapshot> snapshots, DesignKnowledgeOriginalSnapshot? originals, CancellationToken ct)
+    {
+        var authority = new List<DesignKnowledgeArchiveAuthority>();
+        var identities = snapshots.Select(x => new DesignKnowledgeReferenceIdentity(x.EntryId, x.StoreId ?? string.Empty, x.ContentHash)).ToList();
+        await ResolveInternalAsync(userId, identities, requireExpectedHash: true, ct, archiveAuthority: authority);
+        if (originals?.References.Any(item => item.File != null) == true)
+            await ReadWorkspaceOriginalsAsync(userId, snapshots, originals, ct);
+        return authority;
+    }
+
+    public async Task RequireArchiveReadAccessAsync(
+        string userId, IReadOnlyList<DesignKnowledgeSnapshot> snapshots, DesignKnowledgeOriginalSnapshot? originals,
+        IReadOnlyList<DesignKnowledgeArchiveAuthority>? authority, DateTime confirmedAt, CancellationToken ct)
+    {
+        if (snapshots.Count == 0) return;
+        if (snapshots.Count > MaxReferenceCount || (originals != null && (originals.Version != 1 || originals.References.Count != snapshots.Count)))
+            throw NotFound();
+
+        var teamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        IReadOnlyList<string>? permissions = null;
+        async Task<IReadOnlyList<string>> GetPermissions() =>
+            permissions ??= await _permissions.GetEffectivePermissionsAsync(userId, false, ct);
+        long totalOriginalBytes = 0;
+        for (var index = 0; index < snapshots.Count; index++)
+        {
+            var snapshot = snapshots[index];
+            if (snapshot.Content == null || !string.Equals(Sha256(snapshot.Content), snapshot.ContentHash, StringComparison.Ordinal))
+                throw NotFound();
+            var reference = new DesignKnowledgeReferenceIdentity(snapshot.EntryId, snapshot.StoreId ?? string.Empty);
+            var (entry, store) = await RequireReadableReferenceAsync(reference, userId, teamIds, ct, GetPermissions);
+            var bound = authority?.Contains(new(entry.Id, store.Id, snapshot.ContentHash)) == true;
+            if (!bound && authority == null)
+                bound = await _db.DocumentEntryVersions.Find(version => version.EntryId == entry.Id && version.StoreId == store.Id
+                    && version.ContentHash == snapshot.ContentHash && version.CreatedAt <= confirmedAt).AnyAsync(ct);
+            if (!bound)
+            {
+                // A shared alias still needs a readable leaf. A replacement must not authorize the old body.
+                var (current, _, _, _) = await ReadAuthorizedContentAsync(entry, store, userId, teamIds, ct, GetPermissions,
+                    requireLinkedSource: authority != null);
+                if (current == null || !string.Equals(Sha256(current), snapshot.ContentHash, StringComparison.Ordinal))
+                    throw NotFound();
+            }
+
+            if (originals == null) continue;
+            var original = originals.References[index];
+            if (original.EntryId != entry.Id || original.StoreId != store.Id) throw NotFound();
+            if (original.File == null) continue;
+            var attachment = await ReadMatchingOriginalAsync(userId, original, ct);
+            if (attachment == null) throw NotFound();
+            var bytes = await ReadOriginalBytesAsync(attachment, ct);
+            totalOriginalBytes += bytes.LongLength;
+            if (totalOriginalBytes > DesignArtifactWorkspaceBroker.MaxInputBytes || Sha256Bytes(bytes) != original.File.Sha256)
+                throw OriginalChanged();
+            await ReadMatchingOriginalAsync(userId, original, ct);
+            await RequireReadableReferenceAsync(reference, userId, await _teams.GetMyTeamIdsAsync(userId, ct), ct, GetPermissions);
+        }
     }
 
     private async Task<Attachment?> ReadMatchingOriginalAsync(string userId, DesignKnowledgeOriginalBinding snapshot, CancellationToken ct)
@@ -215,7 +281,8 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
         IReadOnlyList<DesignKnowledgeReferenceIdentity> references,
         bool requireExpectedHash,
         CancellationToken ct,
-        DesignKnowledgeOriginalSnapshot? originals = null)
+        DesignKnowledgeOriginalSnapshot? originals = null,
+        List<DesignKnowledgeArchiveAuthority>? archiveAuthority = null)
     {
         if (references.Count > MaxReferenceCount)
             throw Invalid("首版一次最多引用 3 篇知识");
@@ -242,19 +309,9 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
 
         foreach (var reference in normalized)
         {
-            var entry = await _db.DocumentEntries
-                .Find(candidate => candidate.Id == reference.EntryId
-                                   && candidate.StoreId == reference.StoreId
-                                   && !candidate.IsFolder)
-                .FirstOrDefaultAsync(ct);
-            var store = entry == null
-                ? null
-                : await _db.DocumentStores.Find(candidate => candidate.Id == reference.StoreId).FirstOrDefaultAsync(ct);
-            if (entry == null || store == null || !await CanReadAsync(store, userId, myTeamIds, ct, async () =>
-                permissions ??= await _permissions.GetEffectivePermissionsAsync(userId, false, ct)))
-                throw NotFound();
-
-            var (content, sourceTitle, sourceAttachment) = await ReadAuthorizedContentAsync(
+            var (entry, store) = await RequireReadableReferenceAsync(reference, userId, myTeamIds, ct,
+                async () => permissions ??= await _permissions.GetEffectivePermissionsAsync(userId, false, ct));
+            var (content, sourceTitle, sourceAttachment, directBinding) = await ReadAuthorizedContentAsync(
                 entry,
                 store,
                 userId,
@@ -279,6 +336,7 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
                     ContentChangedCode,
                     "引用内容已变化，请刷新来源后重试");
             }
+            if (directBinding) archiveAuthority?.Add(new(entry.Id, store.Id, contentHash));
 
             DesignKnowledgeOriginalFile? original = null;
             // 录音条目：附件是音频、正文是写回同一条目的转录稿。音频不是正文的原件，
@@ -309,6 +367,19 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
         return snapshots;
     }
 
+    private async Task<(DocumentEntry Entry, DocumentStore Store)> RequireReadableReferenceAsync(
+        DesignKnowledgeReferenceIdentity reference, string userId, IReadOnlyCollection<string> teamIds,
+        CancellationToken ct, Func<Task<IReadOnlyList<string>>> getPermissions)
+    {
+        if (string.IsNullOrWhiteSpace(reference.EntryId) || string.IsNullOrWhiteSpace(reference.StoreId)) throw NotFound();
+        var entry = await _db.DocumentEntries.Find(candidate => candidate.Id == reference.EntryId
+            && candidate.StoreId == reference.StoreId && !candidate.IsFolder).FirstOrDefaultAsync(ct);
+        if (entry == null) throw NotFound();
+        var store = await _db.DocumentStores.Find(candidate => candidate.Id == reference.StoreId).FirstOrDefaultAsync(ct);
+        if (store == null || !await CanReadAsync(store, userId, teamIds, ct, getPermissions)) throw NotFound();
+        return (entry, store);
+    }
+
     private static string? NormalizeHash(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
 
@@ -325,13 +396,14 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
         }
     }
 
-    private async Task<(string? Content, string? Title, Attachment? Original)> ReadAuthorizedContentAsync(
+    private async Task<(string? Content, string? Title, Attachment? Original, bool DirectBinding)> ReadAuthorizedContentAsync(
         DocumentEntry entry,
         DocumentStore entryStore,
         string userId,
         IReadOnlyCollection<string> myTeamIds,
         CancellationToken ct,
-        Func<Task<IReadOnlyList<string>>> getPermissions)
+        Func<Task<IReadOnlyList<string>>> getPermissions,
+        bool requireLinkedSource = false)
     {
         ParsedPrd? document = null;
         if (!string.IsNullOrWhiteSpace(entry.DocumentId))
@@ -352,9 +424,10 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
         }
 
         if (document == null && attachment == null)
-            return (null, null, null);
+            return (null, null, null, false);
 
-        if (!await HasServerBoundLeafAsync(entry, document, attachment, ct)
+        var directBinding = !requireLinkedSource && await HasServerBoundLeafAsync(entry, document, attachment, ct);
+        if (!directBinding
             && !await HasReadableSourceEntryAsync(
                 entry,
                 entryStore,
@@ -367,11 +440,11 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
             throw NotFound();
 
         if (!string.IsNullOrEmpty(document?.RawContent))
-            return (document.RawContent, document.Title, attachment);
+            return (document.RawContent, document.Title, attachment, directBinding);
         if (!string.IsNullOrEmpty(attachment?.ExtractedText))
-            return (attachment.ExtractedText, attachment.FileName, attachment);
+            return (attachment.ExtractedText, attachment.FileName, attachment, directBinding);
 
-        return (null, null, attachment);
+        return (null, null, attachment, directBinding);
     }
 
     /// <summary>

@@ -414,6 +414,149 @@ public sealed class DesignKnowledgeOriginalWorkspaceTests
         await f.AssertUnpreparedAsync(run);
     }
 
+    [Theory]
+    [InlineData("revised", false)]
+    [InlineData("", false)]
+    [InlineData("longer", true)]
+    public async Task PublishedDelivery_UsesFrozenSourceAfterEdit_AndStillRequiresSourceAccess(string updatedContent, bool newArchive)
+    {
+        await using var f = await Fixture.CreateAsync();
+        const string original = "执行人逐包提交，审核人逐包核对确认。";
+        var source = new ParsedPrd { Id = Guid.NewGuid().ToString("N"), RawContent = original, Title = "归档规则" };
+        var entry = new DocumentEntry { StoreId = f.Store.Id, DocumentId = source.Id, Title = source.Title, CreatedBy = "owner" };
+        await f.Db.Documents.InsertOneAsync(source);
+        await f.Db.DocumentEntries.InsertOneAsync(entry);
+        var versions = new DocumentVersionService(f.Db);
+        await versions.SnapshotAsync(entry.Id, f.Store.Id, original, DocumentVersionSource.Edit, "owner", null);
+        await f.Db.DocumentStores.UpdateOneAsync(x => x.Id == f.Store.Id,
+            Builders<DocumentStore>.Update.Set(x => x.SharedTeamIds, new List<string> { "source-team" }));
+        f.Teams.Setup(x => x.GetMyTeamIdsAsync("reader", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { "source-team", "publication-team" });
+        var frozen = await f.Resolver.ResolveWorkspaceForRunAsync("owner", [new(entry.Id, f.Store.Id, Hash(Encoding.UTF8.GetBytes(original)))], default);
+        var publication = new DocumentStore { Name = "Published course", OwnerId = "owner", SharedTeamIds = ["publication-team"] };
+        var archiveEntry = new DocumentEntry { StoreId = publication.Id, Title = "Confirmed course", CreatedBy = "owner" };
+        await f.Db.DocumentStores.InsertOneAsync(publication);
+        await f.Db.DocumentEntries.InsertOneAsync(archiveEntry);
+
+        var run = await f.NewRunAsync(frozen.KnowledgeReferences, frozen.Originals);
+        run.DeliveryTemplateId = "team-tutorial";
+        run.DeliveryCorrectionRevision = 1;
+        run.DeliveryAppliedRevision = 1;
+        run.DeliveryCorrections = [new("author-1", 1, "审核人逐包确认", DateTime.UtcNow)];
+        run.DeliveryCorrectionsClosedAt = DateTime.UtcNow;
+        run.Status = RunStatuses.Done;
+        run.WorkspaceResultSha256 = Hash(Encoding.UTF8.GetBytes("confirmed-package"));
+        if (!newArchive)
+            run.DeliveryArchive = new InformationDeliveryArchive
+            {
+                StoreId = publication.Id, ArtifactId = archiveEntry.Id, Target = "knowledge-base", ResultHash = run.WorkspaceResultSha256,
+                ConfirmedAt = DateTime.UtcNow
+            };
+        var protection = new EphemeralDataProtectionProvider();
+        var audio = Encoding.UTF8.GetBytes("signed audio fixture");
+        var protectedAudio = protection.CreateProtector("information-delivery-media", run.Id, run.WorkspaceResultSha256).Protect(audio);
+        f.Storage.Setup(x => x.TryDownloadBytesAsync("archived-source-test-audio", It.IsAny<CancellationToken>())).ReturnsAsync(protectedAudio);
+        run.DeliveryMediaFiles = [new() { Format = "audio", ObjectKey = "archived-source-test-audio", Sha256 = Hash(audio) }];
+        await f.Db.DesignArtifactRuns.ReplaceOneAsync(x => x.Id == run.Id, run);
+
+        const string html = "<h1>审核人逐包确认</h1>";
+        var course = Encoding.UTF8.GetBytes("""
+            {"chapters":[{"title":"审核","narration":"核对后确认","steps":["逐包确认"],"basis":["作者裁定 1"],
+              "practice":{"question":"谁来确认？","answer":"审核人"}}],"openQuestions":[]}
+            """);
+        var package = new ParsedDesignWorkspaceResult(html,
+            [new(InformationDeliveryTemplates.CoursePath, Convert.ToBase64String(course), Hash(course), course.Length, "application/json")]);
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(x => x.ReadDeliveryResultAsync(It.Is<DesignArtifactRun>(r => r.Id == run.Id && r.WorkspaceResultSha256 == run.WorkspaceResultSha256)))
+            .ReturnsAsync(package);
+        if (newArchive)
+        {
+            var author = f.DocumentController("owner");
+            Assert.IsType<OkObjectResult>(await author.ArchiveInformationDelivery(publication.Id, run.Id,
+                new("knowledge-base", run.WorkspaceResultSha256, true, false), broker.Object, f.Resolver, Mock.Of<IHostedSiteService>(), default));
+            var saved = await f.Db.DesignArtifactRuns.Find(x => x.Id == run.Id).SingleAsync();
+            Assert.Equal(new DesignKnowledgeArchiveAuthority(entry.Id, f.Store.Id, frozen.KnowledgeReferences[0].ContentHash),
+                Assert.Single(saved.DeliveryArchiveSourceAuthority!));
+            // The normal version history is bounded, so archived authority must not depend on its retention.
+            await f.Db.DocumentEntryVersions.DeleteManyAsync(version => version.EntryId == entry.Id);
+            updatedContent = new string('文', DesignKnowledgeSnapshotResolver.MaxTotalContentCharacters + 1);
+        }
+        var reader = f.DocumentController("reader");
+
+        async Task<JsonElement> ReadAsync()
+        {
+            var result = Assert.IsType<OkObjectResult>(await reader.ReadInformationDeliveryArchive(
+                publication.Id, run.Id, broker.Object, f.Resolver, default));
+            return JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("data");
+        }
+
+        var before = await ReadAsync();
+        var edit = new ParsedPrd { Id = Guid.NewGuid().ToString("N"), RawContent = updatedContent, Title = source.Title };
+        await f.Db.Documents.InsertOneAsync(edit);
+        await f.Db.DocumentEntries.UpdateOneAsync(x => x.Id == entry.Id, Builders<DocumentEntry>.Update.Set(x => x.DocumentId, edit.Id));
+        await versions.SnapshotAsync(entry.Id, f.Store.Id, updatedContent, DocumentVersionSource.Edit, "owner", null);
+        var after = await ReadAsync();
+        Assert.Equal(before.GetRawText(), after.GetRawText());
+        Assert.Equal(run.WorkspaceResultSha256, after.GetProperty("resultHash").GetString());
+        Assert.Equal(html, after.GetProperty("html").GetString());
+        var originalSource = Assert.Single(after.GetProperty("sources").EnumerateArray());
+        Assert.Equal(original, originalSource.GetProperty("content").GetString());
+        Assert.Equal(frozen.KnowledgeReferences[0].ContentHash, originalSource.GetProperty("contentHash").GetString());
+        var played = Assert.IsType<FileContentResult>(await reader.ReadInformationDeliveryMedia(
+            publication.Id, run.Id, "audio", f.Resolver, protection, default));
+        Assert.Equal(audio, played.FileContents);
+        if (newArchive)
+        {
+            var author = f.DocumentController("owner");
+            Assert.IsType<OkObjectResult>(await author.ArchiveInformationDelivery(publication.Id, run.Id,
+                new("knowledge-base", run.WorkspaceResultSha256, true, false), broker.Object, f.Resolver, Mock.Of<IHostedSiteService>(), default));
+            Assert.Equal(before.GetRawText(), (await ReadAsync()).GetRawText());
+        }
+
+        await f.Db.DocumentStores.UpdateOneAsync(x => x.Id == f.Store.Id,
+            Builders<DocumentStore>.Update.Set(x => x.SharedTeamIds, new List<string>()));
+        Assert.IsType<NotFoundObjectResult>(await reader.ReadInformationDeliveryArchive(publication.Id, run.Id, broker.Object, f.Resolver, default));
+        Assert.IsType<NotFoundObjectResult>(await reader.ReadInformationDeliveryMedia(
+            publication.Id, run.Id, "audio", f.Resolver, protection, default));
+        await f.Db.DocumentStores.UpdateOneAsync(x => x.Id == f.Store.Id,
+            Builders<DocumentStore>.Update.Set(x => x.SharedTeamIds, new List<string> { "source-team" }));
+        await f.Db.DocumentEntries.UpdateOneAsync(x => x.Id == entry.Id, Builders<DocumentEntry>.Update.Set(x => x.StoreId, publication.Id));
+        Assert.IsType<NotFoundObjectResult>(await reader.ReadInformationDeliveryArchive(publication.Id, run.Id, broker.Object, f.Resolver, default));
+    }
+
+    [Fact]
+    public async Task PublishedAlias_CannotUseAVersionAddedLaterToReplaceRevokedSourceAccess()
+    {
+        await using var f = await Fixture.CreateAsync();
+        const string content = "根来源中的完整操作规则";
+        var document = new ParsedPrd { Id = Guid.NewGuid().ToString("N"), RawContent = content, Title = "根来源" };
+        var original = new DocumentEntry { StoreId = f.Store.Id, DocumentId = document.Id, Title = document.Title, CreatedBy = "owner" };
+        var aliasStore = new DocumentStore { Name = "Alias store", OwnerId = "reader" };
+        var alias = new DocumentEntry { StoreId = aliasStore.Id, DocumentId = document.Id, Title = "引用入口", CreatedBy = "reader" };
+        await f.Db.Documents.InsertOneAsync(document);
+        await f.Db.DocumentStores.InsertOneAsync(aliasStore);
+        await f.Db.DocumentEntries.InsertManyAsync([original, alias]);
+        var versions = new DocumentVersionService(f.Db);
+        await versions.SnapshotAsync(original.Id, f.Store.Id, content, DocumentVersionSource.Edit, "owner", null);
+        await f.Db.DocumentStores.UpdateOneAsync(x => x.Id == f.Store.Id, Builders<DocumentStore>.Update.Set(x => x.IsPublic, true));
+
+        var frozen = await f.Resolver.ResolveWorkspaceForRunAsync("reader",
+            [new(alias.Id, aliasStore.Id, Hash(Encoding.UTF8.GetBytes(content)))], default);
+        var authority = await f.Resolver.CaptureArchiveAuthorityAsync("reader", frozen.KnowledgeReferences, frozen.Originals, default);
+        Assert.Empty(authority);
+        var confirmedAt = DateTime.UtcNow;
+        await f.Resolver.RequireArchiveReadAccessAsync("reader", frozen.KnowledgeReferences, frozen.Originals, authority, confirmedAt, default);
+
+        await f.Db.DocumentStores.UpdateOneAsync(x => x.Id == f.Store.Id, Builders<DocumentStore>.Update.Set(x => x.IsPublic, false));
+        await f.Db.DocumentEntryVersions.InsertOneAsync(new DocumentEntryVersion
+        {
+            EntryId = alias.Id, StoreId = aliasStore.Id, Content = content, ContentHash = frozen.KnowledgeReferences[0].ContentHash,
+            CreatedAt = confirmedAt.AddMinutes(1), CreatedBy = "reader"
+        });
+        await Assert.ThrowsAsync<DesignKnowledgeSnapshotException>(() => f.Resolver.RequireArchiveReadAccessAsync(
+            "reader", frozen.KnowledgeReferences, frozen.Originals, authority, confirmedAt, default));
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _database = "knowledge_original_" + Guid.NewGuid().ToString("N");

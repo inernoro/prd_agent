@@ -127,7 +127,9 @@ public partial class DocumentStoreController
         if (run == null || file == null || store == null || store.IsPublic
             || (actor != run.UserId && !await CanReadDeliveryPublicationAsync(run, storeId, ct))
             || (actor != run.UserId && run.UploadedSources?.Count > 0 && run.DeliveryArchive?.CanShareUploads != true)
-            || !await CanReadDeliveryKnowledgeAsync(run, actor, sources, ct, requireFrozenRevision: actor != run.UserId))
+            || !(run.DeliveryArchive == null
+                ? await CanReadDeliveryKnowledgeAsync(run, actor, sources, ct)
+                : await CanReadPublishedDeliverySourcesAsync(run, actor, sources, ct)))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "讲解媒体不存在或不可访问"));
         try
         {

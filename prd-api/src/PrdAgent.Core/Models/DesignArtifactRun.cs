@@ -148,6 +148,10 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public InformationDeliveryArchive? DeliveryArchive { get; set; }
 
+    /// <summary>作者确认时经服务器验证的原条目、库和正文版本。借用其他条目权限的引用不保存此证明。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<DesignKnowledgeArchiveAuthority>? DeliveryArchiveSourceAuthority { get; set; }
+
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public List<string>? DeliveryMediaFormats { get; set; }
 
@@ -671,6 +675,8 @@ public sealed class InformationDeliveryArchive
     public string? ArtifactId { get; set; }
     public DateTime ConfirmedAt { get; set; }
 }
+
+public sealed record DesignKnowledgeArchiveAuthority(string EntryId, string StoreId, string ContentHash);
 
 public sealed record InformationDeliveryChapterTime(string Title, double Start, double Duration);
 

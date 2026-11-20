@@ -51,7 +51,25 @@ public partial class DocumentStoreController
             return Conflict(ApiResponse<object>.Fail("DELIVERY_DRAFT_CHANGED", "请重新读取已就绪的成品，并确认当前版本"));
         if (run.DeliveryMediaFormats?.Any(format => run.DeliveryMediaFiles?.Any(file => file.Format == format) != true) == true)
             return Conflict(ApiResponse<object>.Fail("DELIVERY_MEDIA_NOT_READY", "请等已选的音频和视频生成完毕再归档"));
-        if (!await CanReadDeliveryKnowledgeAsync(run, actor, sources, ct, requireFrozenRevision: true))
+        var archive = run.DeliveryArchive;
+        List<DesignKnowledgeArchiveAuthority>? sourceAuthority = null;
+        if (archive == null || run.DeliveryArchiveSourceAuthority == null)
+        {
+            try
+            {
+                sourceAuthority = run.KnowledgeReferences.Count == 0 ? [] : await sources.CaptureArchiveAuthorityAsync(
+                    actor, run.KnowledgeReferences, run.KnowledgeOriginals, ct);
+            }
+            catch (DesignKnowledgeSnapshotException) when (archive != null)
+            {
+                // An idempotent author request can still use an archive with verified historical authority.
+            }
+            catch (DesignKnowledgeSnapshotException)
+            {
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "来源已不可访问"));
+            }
+        }
+        if (archive != null && !await CanReadPublishedDeliverySourcesAsync(run, actor, sources, ct))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "来源已不可访问"));
         try
         {
@@ -66,7 +84,6 @@ public partial class DocumentStoreController
 
         var package = await broker.ReadDeliveryResultAsync(run);
         InformationDeliveryTemplates.EnsureReadyCourse(package);
-        var archive = run.DeliveryArchive;
         var scope = Builders<DesignArtifactRun>.Filter.Where(item => item.Id == run.Id
             && item.UserId == actor && item.DeploymentSlug == run.DeploymentSlug
             && item.Status == RunStatuses.Done && item.WorkspaceResultSha256 == request.ResultHash);
@@ -82,7 +99,8 @@ public partial class DocumentStoreController
             };
             run = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
                 scope & Builders<DesignArtifactRun>.Filter.Eq(item => item.DeliveryArchive, null),
-                Builders<DesignArtifactRun>.Update.Set(item => item.DeliveryArchive, reservation),
+                Builders<DesignArtifactRun>.Update.Set(item => item.DeliveryArchive, reservation)
+                    .Set(item => item.DeliveryArchiveSourceAuthority, sourceAuthority),
                 new FindOneAndUpdateOptions<DesignArtifactRun> { ReturnDocument = ReturnDocument.After }, ct)
                 ?? await _db.DesignArtifactRuns.Find(scope).FirstOrDefaultAsync(ct);
             archive = run?.DeliveryArchive;
@@ -90,6 +108,17 @@ public partial class DocumentStoreController
         if (run == null || archive == null || archive.Target != request.Target || archive.StoreId != store.Id
             || archive.ResultHash != request.ResultHash || archive.CanShareUploads != request.CanShareUploads)
             return Conflict(ApiResponse<object>.Fail("DELIVERY_DESTINATION_CONFLICT", "此版本已确认另一种交付方式，请打开已归档成品"));
+
+        if (sourceAuthority != null && run.DeliveryArchiveSourceAuthority == null)
+        {
+            // An author repeating the exact confirmation can attest an unchanged source for a legacy archive.
+            await _db.DesignArtifactRuns.UpdateOneAsync(scope & Builders<DesignArtifactRun>.Filter.Where(item =>
+                item.DeliveryArchiveSourceAuthority == null && item.DeliveryArchive != null
+                && item.DeliveryArchive.StoreId == store.Id && item.DeliveryArchive.Target == request.Target
+                && item.DeliveryArchive.ResultHash == request.ResultHash && item.DeliveryArchive.CanShareUploads == request.CanShareUploads),
+                Builders<DesignArtifactRun>.Update.Set(item => item.DeliveryArchiveSourceAuthority, sourceAuthority),
+                cancellationToken: ct);
+        }
 
         var readerPath = DeliveryReaderPath(store.Id, runId);
         if (archive.ArtifactId != null)
@@ -137,7 +166,7 @@ public partial class DocumentStoreController
         var archive = run?.DeliveryArchive;
         if (store == null || store.IsPublic || run == null || archive == null || run.WorkspaceResultSha256 != archive.ResultHash
             || (actor != run.UserId && run.UploadedSources?.Count > 0 && !archive.CanShareUploads)
-            || !await CanReadDeliveryKnowledgeAsync(run, actor, sources, ct, requireFrozenRevision: actor != run.UserId))
+            || !await CanReadPublishedDeliverySourcesAsync(run, actor, sources, ct))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "成品不存在或你没有读取来源的权限"));
         try
         {
@@ -210,19 +239,30 @@ public partial class DocumentStoreController
         $"/document-store/{Uri.EscapeDataString(storeId)}/delivery/{Uri.EscapeDataString(runId)}/read";
 
     private static async Task<bool> CanReadDeliveryKnowledgeAsync(
-        DesignArtifactRun run, string actor, IDesignKnowledgeSnapshotResolver resolver, CancellationToken ct,
-        bool requireFrozenRevision = false)
+        DesignArtifactRun run, string actor, IDesignKnowledgeSnapshotResolver resolver, CancellationToken ct)
     {
         try
         {
             if (run.KnowledgeReferences.Count == 0) return true;
             var references = run.KnowledgeReferences.Select(source =>
-                new DesignKnowledgeReferenceIdentity(source.EntryId, source.StoreId ?? string.Empty,
-                    requireFrozenRevision ? source.ContentHash : null)).ToArray();
-            if (requireFrozenRevision && run.KnowledgeOriginals?.References.Any(source => source.File != null) == true)
-                await resolver.ReadWorkspaceOriginalsAsync(actor, run.KnowledgeReferences, run.KnowledgeOriginals, ct);
-            else if (requireFrozenRevision) await resolver.ResolveForRunAsync(actor, references, ct);
-            else await resolver.ResolveAsync(actor, references, ct);
+                new DesignKnowledgeReferenceIdentity(source.EntryId, source.StoreId ?? string.Empty)).ToArray();
+            await resolver.ResolveAsync(actor, references, ct);
+            return true;
+        }
+        catch (DesignKnowledgeSnapshotException)
+        {
+            return false;
+        }
+    }
+
+    private static async Task<bool> CanReadPublishedDeliverySourcesAsync(
+        DesignArtifactRun run, string actor, IDesignKnowledgeSnapshotResolver resolver, CancellationToken ct)
+    {
+        try
+        {
+            if (run.KnowledgeReferences.Count == 0) return true;
+            await resolver.RequireArchiveReadAccessAsync(actor, run.KnowledgeReferences, run.KnowledgeOriginals,
+                run.DeliveryArchiveSourceAuthority, run.DeliveryArchive!.ConfirmedAt, ct);
             return true;
         }
         catch (DesignKnowledgeSnapshotException)
