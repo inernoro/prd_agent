@@ -6,6 +6,7 @@ import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSe
 import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
+import { readZipEntryOptions } from '@/components/web-hosting/zipEntryOptions';
 import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
 import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, type RelatedSummary } from '@/services/real/relatedDocuments';
@@ -802,6 +803,13 @@ export default function WebPagesPage() {
 
   const handleConfirmReplace = useCallback(async () => {
     if (!replaceTarget || replacing) return;
+    if (replaceTarget.file.name.toLowerCase().endsWith('.zip')) {
+      setPendingExternalFile(replaceTarget.file);
+      setEditItem(replaceTarget.site);
+      setShowUploadDialog(true);
+      setReplaceTarget(null);
+      return;
+    }
     setReplacing(true);
     try {
       const res = await reuploadSite(replaceTarget.site.id, replaceTarget.file);
@@ -2302,7 +2310,7 @@ export default function WebPagesPage() {
                 <Button size="sm" variant="ghost" disabled={replacing} onClick={() => setReplaceTarget(null)}>取消</Button>
                 <Button size="sm" variant="primary" disabled={replacing} onClick={handleConfirmReplace}>
                   {replacing ? <MapSpinner size={14} className="mr-1" /> : <Replace size={14} className="mr-1" />}
-                  确认替换
+                  {replaceTarget.file.name.toLowerCase().endsWith('.zip') ? '选择首页' : '确认替换'}
                 </Button>
               </div>
             </div>
@@ -3064,7 +3072,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
 type MoreAction = {
   label: string;
   icon: React.ReactNode;
-  onClick: () => void;
+  onClick: (anchor: HTMLElement) => void;
   danger?: boolean;
   color?: string;
 } | null;
@@ -3109,7 +3117,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
               style={{ color: action.color ?? (action.danger ? '#fecaca' : 'var(--text-secondary)') }}
               onClick={() => {
                 setOpen(false);
-                action.onClick();
+                if (anchorRef.current) action.onClick(anchorRef.current);
               }}
             >
               <span className="inline-flex w-4 shrink-0 items-center justify-center">{action.icon}</span>
@@ -3148,6 +3156,8 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
   onAiEdit?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
+  const [relatedMenuAnchor, setRelatedMenuAnchor] = useState<HTMLElement | null>(null);
+  const closeRelatedMenu = useCallback(() => setRelatedMenuAnchor(null), []);
   const canDrag = canDragSiteCard(c);
   const isPublic = site.visibility === 'public';
   const { onPointerDown } = useDockDrag({
@@ -3220,6 +3230,7 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
           </span>
           <SiteNewBadge activity={activity} />
           <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
+            menuAnchor={relatedMenuAnchor} onMenuClose={closeRelatedMenu}
             onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
           {site.sourceType !== 'upload' && (
             <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
@@ -3273,6 +3284,7 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
         )}
         <MoreActionsButton
           actions={[
+            !relatedSummary?.count ? { label: '关联与合集', icon: <FolderOpen size={13} />, onClick: setRelatedMenuAnchor } : null,
             c.canEdit && onAiEdit ? { label: '帮我修改', icon: <WandSparkles size={13} />, onClick: onAiEdit } : null,
             { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
             c.canSetVisibility
@@ -3317,6 +3329,29 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const [tagInput, setTagInput] = useState('');
   const [folder, setFolder] = useState(item?.folder ?? '');
   const [file, setFile] = useState<File | null>(initialFile ?? null);
+  const zipFile = file?.name.toLowerCase().endsWith('.zip') ? file : null;
+  const zipSizeError = zipFile ? getWebHostingUploadError(zipFile) : null;
+  const [zipInspection, setZipInspection] = useState<{
+    file: File;
+    options: Awaited<ReturnType<typeof readZipEntryOptions>> | null;
+  }>();
+  const [selectedZipEntry, setSelectedZipEntry] = useState<string>();
+  const zipOptions = zipInspection?.file === zipFile ? zipInspection?.options : undefined;
+  const inspectingZip = !!zipFile && !zipSizeError && zipOptions === undefined;
+  const zipEntryChoice = selectedZipEntry ?? (zipOptions && !zipOptions.automatic ? 'directory' : 'auto');
+  useEffect(() => {
+    if (!zipFile || zipSizeError) return;
+    let current = true;
+    void readZipEntryOptions(zipFile).then(
+      options => { if (current) setZipInspection({ file: zipFile, options }); },
+      () => { if (current) setZipInspection({ file: zipFile, options: null }); },
+    );
+    return () => { current = false; };
+  }, [zipFile, zipSizeError]);
+  const chooseFile = (next: File) => {
+    setSelectedZipEntry(undefined);
+    setFile(next);
+  };
   // 用户是否亲自编辑过标题；编辑过则不再自动同步文件名
   const titleEditedRef = useRef(false);
   // 新增上传场景下，文件类型为 .md/.markdown 时把"文件名（去扩展名）"作为默认标题
@@ -3385,7 +3420,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    if (f) chooseFile(f);
   };
 
   const finishSavedSite = useCallback((saved: HostedSite) => {
@@ -3412,7 +3447,6 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
 
   useEffect(() => {
     if (resumeCheckedRef.current || initialFile) return;
-    resumeCheckedRef.current = true;
     const controller = new AbortController();
     let active = true;
     const resume = async () => {
@@ -3436,7 +3470,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     setSaving(true);
     setOptimizationStage('正在恢复上次文件检查');
     startedAtRef.current = Date.now();
-    void resume().finally(() => { if (active) setSaving(false); });
+    void resume().finally(() => {
+      if (!active) return;
+      resumeCheckedRef.current = true;
+      setSaving(false);
+    });
     return () => { active = false; controller.abort(); };
   }, [finishSavedSite, initialFile, item?.id]);
 
@@ -3500,6 +3538,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       toast.error('文件过大或为空', sizeError);
       return;
     }
+    if (inspectingZip) return;
     // 打完字直接点「开始上传」是常态，没回车的那一个也算数，别静默丢掉
     const pendingTag = tagInput.trim();
     const effectiveTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
@@ -3518,6 +3557,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       if (file && isZip) {
         const reviewed = await reviewSiteZip({
           file,
+          entryFile: zipEntryChoice === 'auto' ? undefined : zipEntryChoice === 'directory' ? '' : zipEntryChoice.slice(5),
           title: title.trim() || undefined,
           description: description.trim() || undefined,
           folder: folder.trim() || undefined,
@@ -3987,7 +4027,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 ) : (
                   <div className="text-center leading-relaxed">
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
-                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
+                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，可选首页）</p>
                     <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
                     <p className="text-xs text-token-muted">图片：.png / .jpg / .jpeg / .gif / .webp / .svg / .avif / .ico / .bmp</p>
                     <p className="text-xs text-token-muted">ZIP 包与解压总量上限 5000 MB；单个文件上限 500 MB</p>
@@ -3998,7 +4038,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   type="file"
                   accept={WEB_HOSTING_UPLOAD_ACCEPT}
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) chooseFile(f); }}
                 />
               </div>
             ) : (
@@ -4016,9 +4056,37 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   type="file"
                   accept={WEB_HOSTING_UPLOAD_ACCEPT}
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) chooseFile(f); }}
                 />
               </div>
+            )}
+
+            {zipFile && !zipSizeError && (
+              <label className="flex min-w-0 flex-col gap-1">
+                <span className="text-xs font-medium text-token-secondary">打开站点时</span>
+                <select
+                  className="w-full min-w-0 truncate rounded-lg px-3 py-2 text-sm"
+                  style={inputStyle}
+                  disabled={inspectingZip}
+                  value={inspectingZip ? 'reading' : zipEntryChoice}
+                  onChange={e => setSelectedZipEntry(e.target.value)}
+                >
+                  {inspectingZip && <option value="reading">正在读取 ZIP 文件列表…</option>}
+                  {(zipOptions?.automatic || zipOptions === null) && (
+                    <option value="auto">{zipOptions?.automatic ? `自动识别 · ${zipOptions.automatic}` : '自动识别'}</option>
+                  )}
+                  <option value="directory">文件目录</option>
+                  {zipOptions?.candidates.map(({ name, path }) => (
+                    <option key={name} value={`file:${name}`}>设为首页 · {path}</option>
+                  ))}
+                </select>
+                {zipOptions && !zipOptions.automatic && (
+                  <span className="text-xs text-token-muted">包内没有 HTML，默认打开文件目录。</span>
+                )}
+                {zipOptions === null && (
+                  <span className="text-xs text-token-muted">暂时无法列出包内文件。可以继续上传，由服务端检查。</span>
+                )}
+              </label>
             )}
 
             <label className="flex flex-col gap-1">
@@ -4123,7 +4191,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>封面：默认取站点首屏渲染</span>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={onClose}>取消</Button>
-              <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
+              <Button onClick={handleSave} disabled={saving || (!isEdit && !file) || inspectingZip}>
                 {saving ? '处理中...' : isEdit ? '保存' : '开始上传'}
               </Button>
             </div>

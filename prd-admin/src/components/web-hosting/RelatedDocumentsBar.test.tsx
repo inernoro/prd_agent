@@ -41,6 +41,9 @@ const clickText = async (text: string) => {
   await act(async () => button!.click());
 };
 const open = async () => { await act(async () => container.querySelector<HTMLButtonElement>('.related-trigger')!.click()); };
+const openFromMenu = async () => {
+  await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation menuAnchor={container} />));
+};
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.clearAllMocks();
@@ -55,6 +58,17 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
+  it('零关联不显示卡片徽标，仍可从更多设置管理关联', async () => {
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, version: 0, items: [data.items[0]] }, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation summary={{ count: 0, isMain: false, titles: [] }} />));
+    expect(container.querySelector('.related-trigger')).toBeNull();
+    expect(getCollectionContexts).not.toHaveBeenCalled();
+    await openFromMenu();
+    expect(container.querySelector('.related-trigger')).toBeNull();
+    expect(document.querySelector('.related-popover')?.textContent).toContain('暂无关联文档');
+    await clickText('管理关联');
+    expect(document.querySelector('[aria-label="管理关联文档"]')).not.toBeNull();
+  });
   it('没有外部关联时顶部入口完全隐藏，管理仍可从完整关联栏进入', async () => {
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, version: 0, mainSiteId: null, items: [data.items[0]] }, error: null });
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
@@ -93,7 +107,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [data.items[0]] }, error: null });
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getCollectionContextLinks).mockResolvedValue({ success: true, data: { items: [context.primaryLink!], total: 3, page: 1, pageSize: 20 }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('[data-collection-layout="single"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', 'collection:one');
@@ -126,7 +140,7 @@ describe('顶部关联文档', () => {
     const contexts = [makeContext('one', 2), makeContext('two', 1), makeContext('unshared', 0)];
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: contexts, total: 3, totalContexts: 3, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getCollectionContextDocuments).mockImplementation(async (_site, contextId) => ({ success: true, data: { ...data, canManage: false, items: [{ id: contextId, title: contextId, href: '/web-pages?openSite=' + contextId }] }, error: null }));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('[data-collection-layout="split"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="所属合集"] a')).toBeNull();
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
@@ -143,7 +157,7 @@ describe('顶部关联文档', () => {
   it('手动关联和合集同时存在时都能独立读取，手动关系仍保留管理入口', async () => {
     const context = makeContext('one', 1);
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', 'collection:one');
     await clickText('关联文档');
     expect(document.querySelector('.related-document-card')?.textContent).toContain('技术设计');
@@ -157,7 +171,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     let resolve!: (value: Awaited<ReturnType<typeof getRelatedDocuments>>) => void;
     vi.mocked(getRelatedDocuments).mockReturnValueOnce(new Promise(done => { resolve = done; }));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', context.id);
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
@@ -170,7 +184,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     if (failure === '响应失败') vi.mocked(getRelatedDocuments).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '关联服务暂不可用' } });
     else vi.mocked(getRelatedDocuments).mockRejectedValueOnce(new Error('network'));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('.collection-context-select')?.textContent).toContain('暂时无法读取');
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
@@ -187,7 +201,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getRelatedDocuments).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '关联暂不可用' } })
       .mockResolvedValue({ success: true, data: { ...data, items: [data.items[0]] }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('.collection-context-select')?.textContent).toContain('暂时无法读取');
     await clickText('关联文档');
     expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
@@ -200,7 +214,7 @@ describe('顶部关联文档', () => {
     const inactive = { ...context.primaryLink!, id: 'revoked', shareUrl: '/s/wp/revoked', isActive: false, statusLabel: '已撤销' };
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getCollectionContextLinks).mockResolvedValue({ success: true, data: { items: [context.primaryLink!, inactive], total: 2, page: 1, pageSize: 20 }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     await clickText('查看全部 2 条链接');
     await act(async () => document.querySelectorAll<HTMLButtonElement>('.collection-context-link-option')[1].click());
     const footer = document.querySelector<HTMLElement>('[aria-label="合集链接操作"]')!;
@@ -215,7 +229,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: contexts, total: 2, totalContexts: 2, page: 1, pageSize: 20 }, error: null });
     let resolve!: (value: Awaited<ReturnType<typeof getCollectionContextLinks>>) => void;
     vi.mocked(getCollectionContextLinks).mockReturnValue(new Promise(done => { resolve = done; }));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     await clickText('查看全部 2 条链接');
     await clickText('合集 two');
     await act(async () => resolve({ success: true, data: { items: [contexts[0].primaryLink!], total: 1, page: 1, pageSize: 20 }, error: null }));
@@ -227,7 +241,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { clipboard: { writeText } }); vi.stubGlobal('isSecureContext', true);
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     const button = document.querySelector<HTMLButtonElement>('.collection-context-link-actions button')!;
     const link = document.querySelector('.collection-context-link-actions a');
     await act(async () => {
@@ -247,7 +261,7 @@ describe('顶部关联文档', () => {
   });
   it('合集搜索覆盖服务器全部记录，翻页稳定，筛成一项仍保留选择栏', async () => {
     vi.mocked(getCollectionContexts).mockImplementation(async (_site, page = 1, keyword = '') => ({ success: true, data: { items: keyword ? [makeContext('matched', 1)] : Array.from({ length: 20 }, (_, i) => makeContext(String((page - 1) * 20 + i), 1)), total: keyword ? 1 : 45, totalContexts: 45, page, pageSize: 20 }, error: null }));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     const nav = document.querySelector('[aria-label="合集分页"]')!;
     await act(async () => [...nav.querySelectorAll('button')].find(button => button.textContent === '下一页')!.click());
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
@@ -263,7 +277,7 @@ describe('顶部关联文档', () => {
   });
   it('读取失败显示重试，不误判成没有合集，也不读取无关文档', async () => {
     vi.mocked(getCollectionContexts).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '合集暂时无法读取' } });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('合集暂时无法读取');
     expect(getRelatedDocuments).not.toHaveBeenCalled();
     await clickText('重试');

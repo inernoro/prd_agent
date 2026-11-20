@@ -63,7 +63,8 @@ public interface IHostedSiteService
         string? wrappedAssetType = null,
         CancellationToken ct = default,
         string? uploadId = null,
-        string? sourceRef = null);
+        string? sourceRef = null,
+        string? entryFile = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
     /// <param name="maxStoredBytes">
@@ -113,7 +114,8 @@ public interface IHostedSiteService
         string? wrappedAssetType = null,
         CancellationToken ct = default,
         string? uploadId = null,
-        string? reuploadRef = null);
+        string? reuploadRef = null,
+        string? zipEntryFile = null);
 
     /// <summary>
     /// 读取可微调的入口 HTML。会执行站点编辑权限与形态校验，且限制正文最多 2MB。

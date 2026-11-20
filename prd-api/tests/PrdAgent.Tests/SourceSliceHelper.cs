@@ -62,7 +62,7 @@ internal static class SourceSlice
             if (buffered) Assert.Contains("new MemoryStream(fileBytes, writable: false)", compact);
             var expectedReturn = buffered
                 ? "return await ReuploadCoreAsync(siteId, userId, stream, fileBytes, fileName, wrappedAssetType, ct, uploadId, reuploadRef);"
-                : "return ReuploadCoreAsync(siteId, userId, zipStream, null, fileName, wrappedAssetType, ct, uploadId, reuploadRef);";
+                : "return ReuploadCoreAsync(siteId, userId, zipStream, null, fileName, wrappedAssetType, ct, uploadId, reuploadRef, zipEntryFile);";
             Assert.Contains(expectedReturn, compact);
             Assert.Single(System.Text.RegularExpressions.Regex.Matches(compact, @"\breturn\b"));
             return Member(source, "private async Task<HostedSite> ReuploadCoreAsync(");

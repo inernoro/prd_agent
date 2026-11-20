@@ -630,6 +630,7 @@ export async function uploadSite(input: {
  */
 export async function reviewSiteZip(input: {
   file: File;
+  entryFile?: string;
   title?: string;
   description?: string;
   folder?: string;
@@ -652,6 +653,7 @@ export async function reviewSiteZip(input: {
       body: {
         fileName: input.file.name,
         fileSize: input.file.size,
+        entryFile: input.entryFile,
         title: input.title,
         description: input.description,
         folder: input.folder,

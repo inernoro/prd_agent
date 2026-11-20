@@ -15,9 +15,10 @@ import { RelatedDocumentContent, RelatedReaderList } from './RelatedDocumentCont
 import { CollectionContextPanel } from './CollectionContextPanel';
 import './RelatedDocumentsBar.css';
 
-export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, siteTitle, reviewReader = false }: {
+export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, siteTitle, reviewReader = false, menuAnchor, onMenuClose }: {
   siteId: string; collectionNavigation?: boolean; siteTitle?: string; variant?: 'bar' | 'toolbar' | 'badge';
   summary?: RelatedSummary; source?: RelatedDocumentSource; onNavigate?: (item: RelatedDocument) => void; reviewReader?: boolean;
+  menuAnchor?: HTMLElement | null; onMenuClose?: () => void;
 }) {
   const authToken = useAuthStore(state => state.token);
   const theme = useResolvedThemeMode();
@@ -25,7 +26,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const [data, setData] = useState<RelatedDocuments | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
+  const [badgeOpen, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [tagTarget, setTagTarget] = useState<RelatedDocument | null>(null);
   const [manage, setManage] = useState(false);
@@ -40,12 +41,14 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const token = source?.token;
   const password = source?.password;
   const collectionsEnabled = collectionNavigation && !token;
+  const open = badgeOpen || !!menuAnchor;
+  const hasBadge = !!summary?.count;
   const active = !collectionsEnabled && (variant !== 'badge' || open);
-  const close = useCallback(() => { setOpen(false); setPinned(false); }, []);
+  const close = useCallback(() => { setOpen(false); setPinned(false); onMenuClose?.(); }, [onMenuClose]);
   const measureAvailableHeight = useCallback(() => {
-    const bounds = anchor.current?.getBoundingClientRect();
+    const bounds = (menuAnchor ?? anchor.current)?.getBoundingClientRect();
     return Math.min(360, bounds ? Math.floor(Math.max(bounds.top - 14, window.innerHeight - bounds.bottom - 14)) : window.innerHeight - 40);
-  }, []);
+  }, [menuAnchor]);
   useLayoutEffect(() => {
     if (!open) return;
     const update = () => setMaxHeight(measureAvailableHeight());
@@ -56,11 +59,11 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     if (!open) return;
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
-    event.preventDefault(); event.stopPropagation(); close(); anchor.current?.focus({ preventScroll: true });
+      event.preventDefault(); event.stopPropagation(); close(); (menuAnchor ?? anchor.current)?.focus({ preventScroll: true });
     };
     window.addEventListener('keydown', onEscape, true);
     return () => window.removeEventListener('keydown', onEscape, true);
-  }, [open, close]);
+  }, [open, close, menuAnchor]);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
     const result = await getRelatedDocuments(siteId, { token, password });
@@ -70,7 +73,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     else { setData(null); setError(result.error?.message || '关联文档加载失败'); }
   }, [siteId, token, password]);
   const invalidate = useCallback(() => { generation.current++; }, []);
-  useLayoutEffect(() => { setData(null); setLoading(true); close(); }, [siteId, token, password, authToken, close]);
+  useLayoutEffect(() => { setData(null); setLoading(true); setOpen(false); setPinned(false); }, [siteId, token, password, authToken]);
   useEffect(() => {
     if (active) void refresh();
     return () => { invalidate(); clearTimeout(closeTimer.current); };
@@ -84,7 +87,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     return () => { window.removeEventListener('focus', revalidate); window.removeEventListener('hosted-comments-changed', revalidate); document.removeEventListener('visibilitychange', revalidate); };
   }, [refresh, active]);
   const keepOpen = () => clearTimeout(closeTimer.current);
-  const leave = () => { keepOpen(); if (!pinned) closeTimer.current = setTimeout(close, 240); };
+  const leave = () => { keepOpen(); if (!pinned && !menuAnchor) closeTimer.current = setTimeout(close, 240); };
   const openPanel = (pin: boolean) => {
     keepOpen(); if (!pin && pinned) return;
     if (pin && pinned && open) { close(); return; }
@@ -93,7 +96,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   };
   const openManager = (next = data) => { setData(next); close(); setManage(true); };
   const openPermissions = (next = data) => { setData(next); close(); setPermissions(true); };
-  if (variant === 'badge' && !summary?.count && !collectionsEnabled && !open) return null;
+  if (variant === 'badge' && !hasBadge && !menuAnchor && !manage && !permissions && !tagTarget) return null;
   const compact = variant !== 'bar';
   const relatedItems = data?.items.filter(item => item.id !== siteId) ?? [];
   const relatedCount = relatedItems.length;
@@ -103,7 +106,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const badgeTitle = collectionsEnabled ? `查看${siteTitle ? '「' + siteTitle + '」的' : ''}关联文档与所属合集`
     : summary ? `${summary.isMain ? '主文档 · ' : ''}关联 ${summary.count} 份文档：${summary.titles.join('、')}` : undefined;
   return <div className={`related-documents-bar related-variant-${variant}`} aria-label="关联文档导航" data-no-drag>
-    <button ref={anchor} type="button" className="related-trigger" title={warn ? '关联文档权限不一致，展开查看' : badgeTitle}
+    {(variant !== 'badge' || hasBadge) && <button ref={anchor} type="button" className="related-trigger" title={warn ? '关联文档权限不一致，展开查看' : badgeTitle}
       aria-description={warn ? '关联文档权限不一致，展开可查看差异' : undefined} style={warn ? { color: 'var(--accent-fg-warning)' } : undefined}
       aria-label={variant === 'badge' ? badgeTitle : '关联文档'} aria-expanded={open} aria-controls={menuId} aria-haspopup="dialog"
       onPointerEnter={event => { if (variant !== 'toolbar' && event.pointerType === 'mouse') openPanel(false); }} onPointerLeave={leave} onClick={() => openPanel(true)}
@@ -115,12 +118,12 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       {variant === 'badge' ? <>{!!summary?.count && <span className="related-count">{summary.count}</span>}<span className="related-badge-name">{summary?.isMain ? '主文档' : summary?.mainTitle || summary?.titles[0] || '关联'}</span></>
         : loading ? <MapSpinner size={12} /> : <span className="related-count">{data ? relatedCount : '—'}</span>}
       {warn && <ShieldAlert size={12} data-permission-warning aria-hidden />}<ChevronDown size={13} className={open ? 'related-chevron-open' : ''} />
-    </button>
+    </button>}
     {!compact && main && <span className="related-main-label"><Star size={12} />主文档<span title={main.title}>{main.title}</span></span>}
     {!compact && data?.canManage && data.version > 0 && <button type="button" className={`related-permission-hint ${data.hasPermissionDifferences ? 'is-warning' : ''}`} onClick={() => openPermissions()}>
       {data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}<span>{data.hasPermissionDifferences ? '权限不一致' : '权限与分享'}</span>
     </button>}
-    <AnchoredMenu open={open} onClose={close} anchorRef={anchor}
+    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} anchorEl={menuAnchor}
       align={reviewReader && mobile ? 'viewport-right' : compact ? 'right' : 'left'}
       offsetX={reviewReader && !mobile ? -28 : 0} gap={reviewReader && mobile ? 0 : 6} minWidth={280}
       className={`related-popover ${reviewReader ? 'related-reader-popover' : token ? 'surface-tone-dark' : ''}`} theme={reviewReader ? theme : undefined}

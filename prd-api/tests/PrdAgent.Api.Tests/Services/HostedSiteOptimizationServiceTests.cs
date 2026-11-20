@@ -11,6 +11,30 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class HostedSiteOptimizationServiceTests
 {
+    [Fact]
+    public void Analyze_ArchiveWithoutHtml_CanBePublishedAsDirectory()
+    {
+        using var zip = new MemoryStream();
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddTextEntry(archive, "bundle/report.md", "# Report");
+            AddTextEntry(archive, "bundle/data/results.json", "{}");
+        }
+
+        var analysis = CreateService().Analyze(zip);
+        analysis.Blocked.ShouldBeFalse();
+        analysis.Recommended.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DirectoryPage_UsesRelativeLinksAndEscapesNames()
+    {
+        var html = HostedSiteService.RenderZipDirectory(["data/报告 #1.json", "<report>.md"]);
+        html.ShouldContain("href=\"./data/%E6%8A%A5%E5%91%8A%20%231.json\"");
+        html.ShouldContain("href=\"./%3Creport%3E.md\">&lt;report&gt;.md</a>");
+        html.ShouldContain("<h2>data/</h2>");
+    }
+
     [Theory]
     [InlineData(600L * 1024 * 1024, false, true)]
     [InlineData(5000L * 1024 * 1024, false, true)]

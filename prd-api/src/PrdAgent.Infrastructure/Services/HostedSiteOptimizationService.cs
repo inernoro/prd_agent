@@ -90,7 +90,10 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             ChunkSize = UploadChunkSize,
             TotalChunks = checked((int)((request.FileSize + UploadChunkSize - 1) / UploadChunkSize)),
             Status = HostedSiteOptimizationStatuses.Uploading,
-            Title = request.Title?.Trim(),
+            Title = string.IsNullOrWhiteSpace(request.Title) && string.IsNullOrWhiteSpace(request.TargetSiteId)
+                ? Path.GetFileNameWithoutExtension(request.FileName)
+                : request.Title?.Trim(),
+            EntryFile = request.EntryFile,
             Description = request.Description?.Trim(),
             Folder = request.Folder?.Trim(),
             Tags = (request.Tags ?? new List<string>())
@@ -291,7 +294,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         try
         {
             await using var sourceStream = await DownloadChunksAsync(session);
-            var analysis = BuildOptimizedPackage(sourceStream).Analysis;
+            var analysis = BuildOptimizedPackage(sourceStream, session.EntryFile).Analysis;
             if (analysis.Blocked)
                 throw new InvalidOperationException(analysis.Error ?? "ZIP 文件无法通过安全检查，请重新导出后再试");
 
@@ -362,7 +365,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     session.Folder,
                     session.Tags,
                     ct: CancellationToken.None,
-                    sourceRef: session.Id);
+                    sourceRef: session.Id,
+                    entryFile: session.EntryFile);
             }
             else
             {
@@ -372,7 +376,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     sourceStream,
                     session.SourceFileName,
                     ct: CancellationToken.None,
-                    reuploadRef: session.Id);
+                    reuploadRef: session.Id,
+                    zipEntryFile: session.EntryFile);
                 var metadata = await _hostedSites.UpdateAsync(
                     saved.Id,
                     session.OwnerUserId,
@@ -1479,7 +1484,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     internal HostedSiteOptimizationAnalysis Analyze(Stream input) => BuildOptimizedPackage(input).Analysis;
 
-    private OptimizedBuild BuildOptimizedPackage(Stream input)
+    private OptimizedBuild BuildOptimizedPackage(Stream input, string? requestedEntry = null)
     {
         input.Position = 0;
         var analysis = new HostedSiteOptimizationAnalysis { OriginalArchiveBytes = input.Length };
@@ -1522,10 +1527,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                                && x.Entry.Length / Math.Max(1d, x.Entry.CompressedLength) > 1000d))
                 return Blocked(analysis, "ZIP 中存在异常压缩比文件，未进行优化");
 
+            // 手选首页与目录模式保留原包，避免精简步骤移除用户要浏览的文件。
+            if (requestedEntry != null)
+                return new OptimizedBuild { Analysis = analysis };
+
             var byPath = files.ToDictionary(x => x.LogicalPath, StringComparer.Ordinal);
             var entryFile = SelectEntry(byPath.Keys);
             if (entryFile == null)
-                return Blocked(analysis, "ZIP 缺少 HTML 入口文件，无法生成可预览站点");
+                return new OptimizedBuild { Analysis = analysis };
 
             // Files that are guaranteed to be removed must not consume the runtime scan budget.
             // Large exported prototypes commonly carry a complete node_modules tree; counting it
