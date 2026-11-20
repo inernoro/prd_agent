@@ -620,7 +620,7 @@ export function buildWidgetScript(
       fetch('/_cds/api/hosted-sso/panel/status',{credentials:'omit',cache:'no-store'}).then(function(response){
         return response.ok?response.json():null;
       }).then(function(status){
-        if(!status||typeof status.enabled!=='boolean')return;
+        if(!status||typeof status.enabled!=='boolean'||status.enabled===siteSignInEnabled)return;
         siteSignInEnabled=status.enabled;
         if(expanded)render();
       }).catch(function(){});
