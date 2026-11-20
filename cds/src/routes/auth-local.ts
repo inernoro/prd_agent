@@ -45,6 +45,7 @@ export interface AuthLocalRouterDeps {
   stateService?: StateService;
   /** Set to true for HTTPS environments; cookies get the Secure flag. */
   cookieSecure: boolean;
+  hostSessionCookies?: boolean;
   /**
    * Whether the auth store is durable (mongo). The public first-run bootstrap
    * endpoint is only safe on a persistent store: a volatile (memory) store is
@@ -71,8 +72,8 @@ interface AuthedRequest extends Request {
   cdsUser?: CdsUser;
 }
 
-function sessionToken(req: Request, secure: boolean): string | null {
-  return readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, secure)) ?? null;
+function sessionToken(req: Request, hostSessionCookies: boolean): string | null {
+  return readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies)) ?? null;
 }
 
 function clientIp(req: Request): string | null {
@@ -105,7 +106,7 @@ function localErrStatus(err: LocalAuthError): number {
 
 export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   const router = Router();
-  const { authService, cookieSecure, bootstrapAllowed, legacyLogin } = deps;
+  const { authService, cookieSecure, hostSessionCookies = false, bootstrapAllowed, legacyLogin } = deps;
   const reservedUsernames = new Set(
     (deps.reservedUsernames ?? []).map((username) => String(username).trim().toLowerCase()),
   );
@@ -145,9 +146,9 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         ip: clientIp(req),
       });
       res.setHeader('Set-Cookie', [
-        buildSessionCookie(session.token, session.expiresAt, cookieSecure),
-        buildLegacyLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+        buildSessionCookie(session.token, session.expiresAt, cookieSecure, hostSessionCookies),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
@@ -178,8 +179,8 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       if (legacy) {
         res.setHeader('Set-Cookie', [
           legacy.setCookie,
-          buildLogoutCookie(cookieSecure),
-          buildSsoLogoutCookie(cookieSecure),
+          buildLogoutCookie(cookieSecure, hostSessionCookies),
+          buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
         ]);
         res.json({ user: legacy.user });
         return;
@@ -201,9 +202,9 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         ip: clientIp(req),
       });
       res.setHeader('Set-Cookie', [
-        buildSessionCookie(session.token, session.expiresAt, cookieSecure),
-        buildLegacyLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+        buildSessionCookie(session.token, session.expiresAt, cookieSecure, hostSessionCookies),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
@@ -220,12 +221,12 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   // In GitHub mode the OAuth router registers the same path first; in basic
   // mode this handler owns it. Both clear the shared persisted-session cookie.
   router.post('/auth/logout', async (req: Request, res: Response) => {
-    const token = sessionToken(req, cookieSecure);
+    const token = sessionToken(req, hostSessionCookies);
     if (token) await authService.logout(token);
     res.setHeader('Set-Cookie', [
-      buildLogoutCookie(cookieSecure),
-      buildLegacyLogoutCookie(cookieSecure),
-      buildSsoLogoutCookie(cookieSecure),
+      buildLogoutCookie(cookieSecure, hostSessionCookies),
+      buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+      buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
     ]);
     res.json({ ok: true });
   });

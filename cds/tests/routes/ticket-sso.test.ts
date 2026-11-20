@@ -17,10 +17,6 @@ type TestResponse = {
   headers: http.IncomingHttpHeaders;
 };
 
-function flowCookie(response: TestResponse): string {
-  return response.headers['set-cookie']!.find(cookie => cookie.startsWith('__Host-cds-ticket-flow='))!.split(';')[0];
-}
-
 async function start(app: express.Express): Promise<http.Server> {
   const server = http.createServer(app);
   await new Promise<void>((resolve, reject) => {
@@ -175,7 +171,10 @@ describe('ticket SSO routes', () => {
     expect(saveConfig).not.toHaveBeenCalled();
   });
 
-  it('uses the configured default redirect when login starts without a redirect', async () => {
+  it.each([
+    { hostSessionCookies: false, prefix: '' },
+    { hostSessionCookies: true, prefix: '__Host-' },
+  ])('preserves the default Ticket SSO redirect with host session cookies set to $hostSessionCookies', async ({ hostSessionCookies, prefix }) => {
     const config = normalizeTicketSsoConfig({
       enabled: true,
       authorizationUrl: 'https://map.example/api/console-sso/authorize',
@@ -190,6 +189,7 @@ describe('ticket SSO routes', () => {
       resolveConfig: () => config,
       publicBaseUrl: 'https://cds.example',
       cookieSecure: true,
+      hostSessionCookies,
       stateStore: new TicketSsoStateStore(),
       sessionStore: new TicketSsoSessionStore(),
       fetchImpl: vi.fn(async () => new Response(JSON.stringify({
@@ -210,21 +210,29 @@ describe('ticket SSO routes', () => {
     expect(startResponse.status).toBe(302);
     const state = new URL(String(startResponse.headers.location)).searchParams.get('state');
     expect(state).toBeTruthy();
+    const flow = startResponse.headers['set-cookie']?.find(cookie => cookie.startsWith('__Host-cds-ticket-flow='));
+    if (hostSessionCookies) {
+      expect(flow).toContain('; Secure');
+      const unbound = await call(server, 'POST', '/api/auth/sso/exchange', { code: 'a'.repeat(43), state });
+      expect(unbound.status).toBe(400);
+      expect(unbound.body.code).toBe('sso_state_invalid');
+    } else {
+      expect(flow).toBeUndefined();
+    }
 
-    const unbound = await call(server, 'POST', '/api/auth/sso/exchange', { code: 'a'.repeat(43), state });
-    expect(unbound.status).toBe(400);
-    expect(unbound.body.code).toBe('sso_state_invalid');
     const exchange = await call(server, 'POST', '/api/auth/sso/exchange', {
       code: 'a'.repeat(43),
       state,
-    }, { Cookie: flowCookie(startResponse) });
+    }, {
+      Cookie: flow?.split(';')[0] ?? 'cds_gh_session=github-token; cds_token=basic-token',
+    });
 
     expect(exchange.status).toBe(200);
     expect(exchange.body.redirect).toBe('/reports?project=cds-self');
     expect(exchange.headers['set-cookie']).toEqual(expect.arrayContaining([
-      expect.stringMatching(/^__Host-cds_sso_session=/),
-      expect.stringMatching(/^__Host-cds_gh_session=.*Max-Age=0/),
-      expect.stringMatching(/^__Host-cds_token=.*Max-Age=0/),
+      expect.stringMatching(new RegExp(`^${prefix}cds_sso_session=.*; Secure`)),
+      expect.stringMatching(new RegExp(`^${prefix}cds_gh_session=.*Max-Age=0`)),
+      expect.stringMatching(new RegExp(`^${prefix}cds_token=.*Max-Age=0`)),
     ]));
   });
 
@@ -318,7 +326,7 @@ describe('ticket SSO routes', () => {
     const exchange = await call(server, 'POST', '/api/auth/sso/exchange', {
       code: 'a'.repeat(43),
       state,
-    }, { Cookie: flowCookie(startResponse) });
+    });
 
     expect(exchange.status).toBe(504);
     expect(exchange.body.code).toBe('sso_provider_timeout');
@@ -351,7 +359,7 @@ describe('ticket SSO routes', () => {
     const exchange = await call(server, 'POST', '/api/auth/sso/exchange', {
       code: 'a'.repeat(43),
       state,
-    }, { Cookie: flowCookie(startResponse) });
+    });
 
     expect(exchange.status).toBe(502);
     expect(exchange.body.code).toBe('sso_provider_unavailable');
@@ -391,7 +399,7 @@ describe('ticket SSO routes', () => {
     const unavailable = await call(server, 'POST', '/api/auth/sso/exchange', {
       code: 'a'.repeat(43),
       state: firstState,
-    }, { Cookie: flowCookie(firstStart) });
+    });
     expect(unavailable.status).toBe(502);
     expect(unavailable.body.code).toBe('sso_provider_unavailable');
 
@@ -400,7 +408,7 @@ describe('ticket SSO routes', () => {
     const rejected = await call(server, 'POST', '/api/auth/sso/exchange', {
       code: 'b'.repeat(43),
       state: secondState,
-    }, { Cookie: flowCookie(secondStart) });
+    });
     expect(rejected.status).toBe(401);
     expect(rejected.body.code).toBe('sso_exchange_failed');
   });
@@ -452,7 +460,7 @@ describe('ticket SSO routes', () => {
     server = await start(app);
 
     const response = await call(server, 'POST', '/api/auth/sso/logout', undefined, {
-      Cookie: `__Host-cds_sso_session=${ssoSession.token}; __Host-cds_gh_session=github-token; __Host-cds_token=basic-token`,
+      Cookie: `cds_sso_session=${ssoSession.token}; cds_gh_session=github-token; cds_token=basic-token`,
     });
 
     expect(response.status).toBe(200);
@@ -462,9 +470,9 @@ describe('ticket SSO routes', () => {
     const cleared = response.headers['set-cookie'] as string[];
     expect(cleared).toHaveLength(3);
     expect(cleared).toEqual(expect.arrayContaining([
-      expect.stringMatching(/^__Host-cds_sso_session=.*Max-Age=0/),
-      expect.stringMatching(/^__Host-cds_gh_session=.*Max-Age=0/),
-      expect.stringMatching(/^__Host-cds_token=.*Max-Age=0/),
+      expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+      expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+      expect.stringMatching(/^cds_token=.*Max-Age=0/),
     ]));
   });
 
@@ -483,7 +491,7 @@ describe('ticket SSO routes', () => {
     server = await start(app);
 
     const response = await call(server, 'POST', '/api/auth/sso/logout', undefined, {
-      Cookie: '__Host-cds_gh_session=github-token; __Host-cds_token=basic-token',
+      Cookie: 'cds_gh_session=github-token; cds_token=basic-token',
     });
 
     expect(response.status).toBe(503);

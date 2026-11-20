@@ -10,10 +10,11 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, KeyRound, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, ShieldCheck, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, Database, Expand, FileText, Gauge, KeyRound, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Plus, RefreshCw, Rocket, Scaling, Search, SearchCode, Settings, ShieldCheck, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
+import { Button } from '@/components/ui/button';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
@@ -210,7 +211,6 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/reports')) return 'reports';
   if (pathname.startsWith('/code-reviews')) return 'code-reviews';
   if (pathname.startsWith('/status')) return 'status';
-  if (pathname.startsWith('/overview')) return 'overview';
   return 'projects';
 }
 
@@ -244,28 +244,22 @@ export function ConsoleLayout(): JSX.Element {
  * (artifact-is-experience: the wait state is the product's own silhouette).
  */
 function ConsoleRouteFallback(): JSX.Element {
-  const { pathname, search } = useLocation();
+  const { pathname, search, hash } = useLocation();
   const scene = loadingSceneForPath(pathname);
   const monitoringHome = pathname === '/status' && readStatusLocation(new URLSearchParams(search)).view === 'home';
   const workspace = monitoringHome ? 'bleed' : scene?.workspace;
   const canManageProjects = useCanShowProjectActions();
-  const projectList = pathname === '/project-list';
+  const canManageSettings = useCanManageConsole();
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
-  const listPage = projectList || branchList;
+  const ownerPageTopBar = scene?.route === '/release-center' || scene?.route === '/task-schedule' || scene?.route === '/reports' || scene?.route === '/status';
   return (
     <>
-      {monitoringHome ? <TopBar
-        left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '监控中心' }]} />}
-        center={<MonitorViewNav />}
-      /> : listPage ? <TopBar
+      {/* 顶栏始终保留可操作的导航；页面数据未到达不影响手机端打开侧栏。 */}
+      {ownerPageTopBar ? <OwnerPageLoadingTopBar route={scene.route} search={search} canManageSettings={canManageSettings} />
+        : pathname === '/project-list' ? <ProjectListTopBar canManageProjects={canManageProjects} /> : <TopBar
         left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
         center={branchList ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : undefined}
-      /> : <header className="cds-topbar" aria-hidden>
-        <span className="cds-topbar-brand">
-          <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
-        </span>
-        <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
-      </header>}
+      />}
       <main className="cds-main">
         {/*
           骨架按路由形状选，且与页面自己等数据时画的是同一个组件（PageSkeletons）：
@@ -275,12 +269,68 @@ function ConsoleRouteFallback(): JSX.Element {
         <div className={cn('cds-workspace cds-workspace--fluid', scene?.kind === 'code-reviews' && 'cr-ui', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
           {monitoringHome ? <div className="monitor-page-shell flex min-h-0 flex-1 flex-col">
             {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome, search })}
-          </div> : pageSkeletonForPath(pathname, { canManageProjects, search })}
+          </div> : pageSkeletonForPath(pathname, { canManageProjects, canManageSettings, search, hash })}
           <ListLoadingFeedback />
         </div>
       </main>
     </>
   );
+}
+
+function OwnerPageLoadingTopBar({ route, search, canManageSettings }: { route: string; search: string; canManageSettings: boolean }): JSX.Element {
+  const params = new URLSearchParams(search);
+  const monitor = route === '/status';
+  const monitorHome = monitor && readStatusLocation(params).view === 'home';
+  const release = route === '/release-center';
+  const reports = route === '/reports';
+  const reportActions = reports && (params.has('report') || !['templates', 'tasks', 'matrix'].includes(params.get('view') || ''));
+  const label = monitor ? '监控中心' : reports ? '验收中心' : '任务调度';
+  const refresh = <Button disabled variant="outline" size="sm"><RefreshCw />刷新</Button>;
+  return <TopBar
+    left={release ? <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+      <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布工作台', href: '/release-console' }, { label: '环境管理' }]} />
+      <span className="cds-ident text-[0.7188rem] text-muted-foreground">release center · 环境生命周期</span>
+      <span className="cds-loading-skeleton-panel h-7 w-[12.75rem] max-w-full rounded-full" aria-hidden="true" />
+    </span> : <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label }]} />}
+    center={monitor ? <MonitorViewNav /> : undefined}
+    actionsPending
+    right={<>
+      {monitorHome ? <span className="cds-loading-skeleton-panel h-8 w-40 rounded-md" aria-hidden="true" /> : null}
+      <PaletteHint />
+      {!reports || reportActions ? refresh : null}
+      {monitorHome && canManageSettings ? <Button disabled variant="outline" size="sm">通知设置</Button> : null}
+      {monitor ? <Button disabled size="sm"><Plus />{monitorHome ? '接入我的服务' : '添加监控'}</Button> : null}
+      {reportActions ? <Button disabled size="sm"><Plus />新建报告</Button> : null}
+      {release ? <><Button disabled variant="outline" size="sm"><Plus />新建环境</Button><Button disabled variant="outline" size="sm"><Rocket />发布工作台</Button></> : null}
+    </>}
+  />;
+}
+
+/** The project page keeps the same breadcrumb and action slots across chunk and data loading. */
+export function ProjectListTopBar({ canManageProjects, refreshWhileLoading, children }: {
+  canManageProjects: boolean;
+  refreshWhileLoading?: ReactNode;
+  children?: ReactNode;
+}): JSX.Element {
+  const loading = children === undefined;
+  const placeholder = 'cds-loading-skeleton-panel disabled:opacity-100';
+  return <TopBar
+    left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />}
+    actionsPending={loading && !refreshWhileLoading}
+    right={<>
+      <PaletteHint />
+      {children ?? <>
+        {canManageProjects ? <>
+          <Button disabled aria-hidden variant="ghost" size="sm" className={placeholder}><Gauge className="invisible" /><span className="invisible">运维</span></Button>
+          <Button disabled aria-hidden variant="ghost" size="sm" className={placeholder}><Activity className="invisible" /><span className="invisible">资源占用</span></Button>
+        </> : null}
+        {refreshWhileLoading ?? <Button disabled aria-hidden variant="ghost" size="icon" className={placeholder}><RefreshCw className="invisible" /></Button>}
+        {canManageProjects
+          ? <Button disabled aria-hidden variant="outline" size="sm" className={placeholder}><Plus className="invisible" /><span className="invisible">项目工具</span></Button>
+          : <Button disabled aria-hidden variant="outline" size="sm" className={placeholder}><Database className="invisible" /><span className="invisible">数据同步</span></Button>}
+      </>}
+    </>}
+  />;
 }
 
 /*
@@ -573,18 +623,6 @@ function RailNav({
           <span className="cds-rail-short">项目</span>
         </Link>
         {canManageSettings ? <>
-        {/* 概览（plan.cds.service-relations 第四批）：全部项目的关系与体检，一眼看出配置错在哪、引用断在哪 */}
-        <Link
-          to="/overview"
-          className="cds-rail-item"
-          data-active={active === 'overview' ? 'true' : 'false'}
-          aria-label="概览"
-          title="概览：全部项目的关系与体检"
-          onClick={onNavigate}
-        >
-          <Waypoints />
-          <span>Overview</span>
-        </Link>
         {/*
          * 发布中心先展示线上版本、责任与主干差异；执行发布从中心进入发布控制台。
          * 两页共用一个高亮项，见 activeNavKeyFor。
@@ -1042,6 +1080,7 @@ export interface TopBarProps {
   centerWide?: boolean;
   /** Action buttons or stats, right-aligned. */
   right?: ReactNode;
+  actionsPending?: boolean;
 }
 
 /*
@@ -1051,7 +1090,7 @@ export interface TopBarProps {
  *            user can act without the page rendering a separate "hero" card.
  *   right  = action buttons.
  */
-export function TopBar({ left, center, right, centerWide = false }: TopBarProps): JSX.Element {
+export function TopBar({ left, center, right, centerWide = false, actionsPending = false }: TopBarProps): JSX.Element {
   const { openNav } = useContext(MobileNavContext);
   const [actionsOpen, setActionsOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -1130,9 +1169,10 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
             ref={kebabRef}
             type="button"
             className="cds-icon-button"
-            onClick={toggleSheet}
+            onClick={actionsPending ? undefined : toggleSheet}
             aria-label="更多操作"
             aria-expanded={actionsOpen}
+            aria-disabled={actionsPending || undefined}
           >
             <MoreVertical />
           </button>

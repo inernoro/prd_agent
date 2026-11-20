@@ -170,7 +170,7 @@ export function createPasskeyRouter({ origin, auth, store, enabled }: PasskeyRou
     await auth.logoutAllForUser(verified.user.id);
     await auth.recordActivity({ userId: verified.user.id, userLogin: verified.user.username || verified.user.githubLogin,
       action: 'hosted-sso.logout', summary: '退出当前 CDS 账号的所有站点' });
-    res.append('Set-Cookie', [buildLogoutCookie(true), buildLegacyLogoutCookie(true), buildSsoLogoutCookie(true)]);
+    res.append('Set-Cookie', [buildLogoutCookie(true, true), buildLegacyLogoutCookie(true, true), buildSsoLogoutCookie(true, true)]);
     res.json({ success: true });
   }));
 
@@ -200,7 +200,7 @@ export function createPasskeyRouter({ origin, auth, store, enabled }: PasskeyRou
       userAgent: req.get('user-agent') || null, ipAddress: req.ip || null, passkeyAuthenticated: true,
     });
     await auth.recordActivity({ userId: user.id, userLogin: user.username || user.githubLogin, action: 'passkey.login', summary: '使用通行密钥登录' });
-    res.append('Set-Cookie', [buildSessionCookie(session.token, session.expiresAt, true), buildLegacyLogoutCookie(true), buildSsoLogoutCookie(true)]);
+    res.append('Set-Cookie', [buildSessionCookie(session.token, session.expiresAt, true, true), buildLegacyLogoutCookie(true, true), buildSsoLogoutCookie(true, true)]);
     res.json({ success: true });
   }));
 

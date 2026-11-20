@@ -1,4 +1,5 @@
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { useSettingsSessionOwner, useSettingsSessionState } from '../useSettingsSessionState';
 import { useEffect, useRef, useState } from 'react';
 import { Bot, KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
@@ -12,7 +13,7 @@ import {
   type TicketSsoConfig,
 } from '@/lib/api';
 import { requestAgentAccess } from '@/lib/agent-onboarding';
-import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
+import { CodePill, ErrorBlock, Section } from '../components';
 import type { AuthStatusResponse, LoadState } from '../types';
 import { HostedSsoSettings } from './HostedSsoSettings';
 
@@ -157,7 +158,7 @@ export function AuthTab(): JSX.Element {
     }
   };
 
-  if (state.status === 'loading') return <LoadingBlock />;
+  if (state.status === 'loading') return <SettingsContentSkeleton auth />;
   if (state.status === 'error') return <div className="space-y-3"><ErrorBlock message={state.message} /><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={() => setStatusAttempt(value => value + 1)}>重试读取认证状态</Button></div>;
 
   const auth = state.data;

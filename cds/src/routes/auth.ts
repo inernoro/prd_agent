@@ -28,16 +28,18 @@ export interface AuthRouterDeps {
   publicBaseUrl: string;
   /** Set to true for HTTPS environments; cookies get the Secure flag. */
   cookieSecure: boolean;
+  /** Opt-in origin-bound browser sessions for the CDS passkey authority. */
+  hostSessionCookies?: boolean;
 }
 
 /**
  * Session cookie with the same expiry as the server-side session. Exported so the
  * auth gate can re-issue it when a session slides forward (see github-auth.ts).
  */
-export function buildSessionCookie(token: string, expiresAt: string, secure: boolean): string {
+export function buildSessionCookie(token: string, expiresAt: string, secure: boolean, hostSessionCookies = false): string {
   const maxAgeSec = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
   const parts = [
-    `${sessionCookieName(GH_SESSION_COOKIE, secure)}=${encodeURIComponent(token)}`,
+    `${sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies)}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -48,9 +50,9 @@ export function buildSessionCookie(token: string, expiresAt: string, secure: boo
   return parts.join('; ');
 }
 
-export function buildLogoutCookie(secure: boolean): string {
+export function buildLogoutCookie(secure: boolean, hostSessionCookies = false): string {
   const parts = [
-    `${sessionCookieName(GH_SESSION_COOKIE, secure)}=`,
+    `${sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies)}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -62,9 +64,9 @@ export function buildLogoutCookie(secure: boolean): string {
 }
 
 /** Clear the original environment-account cookie when another identity wins. */
-export function buildLegacyLogoutCookie(secure: boolean): string {
+export function buildLegacyLogoutCookie(secure: boolean, hostSessionCookies = false): string {
   return [
-    `${sessionCookieName(LEGACY_SESSION_COOKIE, secure)}=`,
+    `${sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -75,9 +77,9 @@ export function buildLegacyLogoutCookie(secure: boolean): string {
 }
 
 /** Clear the ticket-SSO cookie when another human identity provider wins. */
-export function buildSsoLogoutCookie(secure: boolean): string {
+export function buildSsoLogoutCookie(secure: boolean, hostSessionCookies = false): string {
   return [
-    `${sessionCookieName(SSO_SESSION_COOKIE, secure)}=`,
+    `${sessionCookieName(SSO_SESSION_COOKIE, hostSessionCookies)}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -89,8 +91,8 @@ export function buildSsoLogoutCookie(secure: boolean): string {
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
   const router = Router();
-  const { authService, publicBaseUrl, cookieSecure } = deps;
-  const sessionName = sessionCookieName(GH_SESSION_COOKIE, cookieSecure);
+  const { authService, publicBaseUrl, cookieSecure, hostSessionCookies = false } = deps;
+  const sessionName = sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies);
   const flowCookie = '__Host-cds-github-flow';
   const flowOptions = { path: '/', httpOnly: true, secure: true, sameSite: 'lax' as const };
 
@@ -102,7 +104,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   router.get('/auth/github/login', (req: Request, res: Response) => {
     const postLogin = typeof req.query.redirect === 'string' ? req.query.redirect : '/project-list';
     const { authorizeUrl, state } = authService.startLogin(redirectUri, postLogin);
-    if (cookieSecure) res.cookie(flowCookie, state, { ...flowOptions, maxAge: 10 * 60_000 });
+    if (hostSessionCookies) res.cookie(flowCookie, state, { ...flowOptions, maxAge: 10 * 60_000 });
     res.redirect(302, authorizeUrl);
   });
 
@@ -113,11 +115,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       res.status(400).send(renderErrorPage('缺少 code 或 state 参数', '/login'));
       return;
     }
-    if (cookieSecure && readBrowserCookie(req.headers.cookie, flowCookie) !== state) {
+    if (hostSessionCookies && readBrowserCookie(req.headers.cookie, flowCookie) !== state) {
       res.status(400).send(renderErrorPage('登录链接无效或已过期，请重新发起登录。', '/login'));
       return;
     }
-    if (cookieSecure) res.clearCookie(flowCookie, flowOptions);
+    if (hostSessionCookies) res.clearCookie(flowCookie, flowOptions);
 
     try {
       const result = await authService.handleCallback({
@@ -133,9 +135,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       });
 
       res.append('Set-Cookie', [
-        buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure),
-        buildLegacyLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+        buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure, hostSessionCookies),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.redirect(302, result.redirect || '/project-list');
     } catch (err) {
@@ -173,9 +175,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
     }
     res.setHeader('Set-Cookie', [
-      buildLogoutCookie(cookieSecure),
-      buildLegacyLogoutCookie(cookieSecure),
-      buildSsoLogoutCookie(cookieSecure),
+      buildLogoutCookie(cookieSecure, hostSessionCookies),
+      buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+      buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
     ]);
     res.json({ ok: true });
   });
@@ -224,7 +226,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     // 漏掉的话：服务端过期时间被推后（后续中间件看到「还很新鲜」就不再续期），
     // 而浏览器那份 cookie 仍在原时间点死掉 —— 用户照样掉登录。
     if (result.renewed && token) {
-      res.setHeader('Set-Cookie', buildSessionCookie(token, session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', buildSessionCookie(token, session.expiresAt, cookieSecure, hostSessionCookies));
     }
     res.json({
       user: {

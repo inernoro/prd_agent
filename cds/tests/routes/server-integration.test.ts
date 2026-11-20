@@ -591,7 +591,7 @@ describe('Server route ordering (regression)', () => {
         },
       });
 
-      const me = await request(server, '/api/me', { Cookie: '__Host-cds_token=invalid' });
+      const me = await request(server, '/api/me', { Cookie: 'cds_token=invalid' });
       expect(me.status).toBe(401);
 
       const login = await new Promise<HttpResponse>((resolve, reject) => {
@@ -632,8 +632,8 @@ describe('Server route ordering (regression)', () => {
       const cookie = rawCookie.split(';')[0];
       expect(rawCookie).toContain('; Secure');
       expect(loginSetCookies).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^__Host-cds_gh_session=.*Max-Age=0/),
-        expect.stringMatching(/^__Host-cds_sso_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
       const authedMe = await request(server, '/api/me', { Cookie: cookie });
@@ -645,13 +645,14 @@ describe('Server route ordering (regression)', () => {
         isSystemOwner: true,
       });
 
-      const humanToken = cookie.slice('__Host-cds_token='.length);
+      expect(cookie).toMatch(/^cds_token=/);
+      const humanToken = cookie.slice('cds_token='.length);
       const machineToken = crypto.createHash('sha256').update('cds:operator:secret').digest('hex');
       expect(humanToken).not.toBe(machineToken);
       const headerAuthedApi = await request(server, '/api/branches', { 'X-CDS-Token': machineToken });
       expect(headerAuthedApi.status).toBe(200);
       const replayedMachineCookie = await request(server, '/api/me', {
-        Cookie: `__Host-cds_token=${machineToken}`,
+        Cookie: `cds_token=${machineToken}`,
       });
       expect(replayedMachineCookie.status).toBe(401);
       const replayedHumanHeader = await request(server, '/api/branches', {
@@ -670,10 +671,10 @@ describe('Server route ordering (regression)', () => {
         ? compatibleLogin.headers['set-cookie']
         : [String(compatibleLogin.headers['set-cookie'] || '')];
       const compatibleCookie = compatibleSetCookies[0].split(';')[0];
-      expect(compatibleCookie).toMatch(/^__Host-cds_token=/);
+      expect(compatibleCookie).toMatch(/^cds_token=/);
       expect(compatibleSetCookies).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^__Host-cds_gh_session=.*Max-Age=0/),
-        expect.stringMatching(/^__Host-cds_sso_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
       const duplicateLegacyUser = await requestJson(server, 'POST', '/api/auth/users', {
@@ -706,10 +707,10 @@ describe('Server route ordering (regression)', () => {
         ? memberLogin.headers['set-cookie']
         : [String(memberLogin.headers['set-cookie'] || '')];
       const memberCookie = memberSetCookies[0].split(';')[0];
-      expect(memberCookie).toMatch(/^__Host-cds_gh_session=/);
+      expect(memberCookie).toMatch(/^cds_gh_session=/);
       expect(memberSetCookies).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^__Host-cds_token=.*Max-Age=0/),
-        expect.stringMatching(/^__Host-cds_sso_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
       expect(JSON.parse((await request(server, '/api/auth/status', { Cookie: memberCookie })).body).approvalCapabilities)
@@ -1209,11 +1210,12 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
-  it('invalidates the persisted GitHub session when the unified SSO logout route is used', async () => {
+  it('preserves and invalidates the existing HTTPS GitHub session when passkeys are disabled', async () => {
     try {
       process.env.CDS_AUTH_MODE = 'github';
       process.env.CDS_GITHUB_CLIENT_ID = 'test-client';
       process.env.CDS_GITHUB_CLIENT_SECRET = 'test-secret';
+      process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
       const authStore = new MemoryAuthStore();
       const user = await authStore.upsertUser({
         githubId: 42,
@@ -1232,6 +1234,13 @@ describe('Server route ordering (regression)', () => {
       const app = buildRealServerWithEvents([], undefined, authStore);
       server = await startServer(app);
 
+      const existing = await request(server, '/api/me', { Cookie: `cds_gh_session=${session.token}` });
+      expect(existing.status).toBe(200);
+      expect(JSON.parse(existing.body).user.id).toBe(user.id);
+      const siteStatus = await request(server, '/api/hosted-sso/panel/status');
+      expect(siteStatus.status).toBe(200);
+      expect(JSON.parse(siteStatus.body)).toEqual({ enabled: false });
+
       const response = await requestJson(server, 'POST', '/api/auth/sso/logout', {}, {
         Cookie: `cds_gh_session=${session.token}; cds_token=legacy-basic-token`,
       });
@@ -1240,14 +1249,15 @@ describe('Server route ordering (regression)', () => {
       expect(await authStore.findSessionByToken(session.token)).toBeNull();
       const cleared = response.headers['set-cookie'] as string[];
       expect(cleared).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0.*; Secure/),
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0.*; Secure/),
+        expect.stringMatching(/^cds_token=.*Max-Age=0.*; Secure/),
       ]));
     } finally {
       delete process.env.CDS_AUTH_MODE;
       delete process.env.CDS_GITHUB_CLIENT_ID;
       delete process.env.CDS_GITHUB_CLIENT_SECRET;
+      delete process.env.CDS_PUBLIC_BASE_URL;
     }
   });
 
@@ -1277,6 +1287,11 @@ describe('Server route ordering (regression)', () => {
       const fresh = await authStore.createSession(verified);
       const listener = await startServer(buildRealServerWithEvents([], undefined, authStore));
       server = listener;
+      const authorityHeaders = { Host: new URL(authority).host, Origin: authority };
+      const oldCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `cds_gh_session=${fresh.token}` });
+      expect(oldCookie.status).toBe(401);
+      const verifiedCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` });
+      expect(verifiedCookie.status).toBe(200);
       for (const [method, route] of [
         ['POST', '/api/releases/branches/fixture-missing/runs'],
         ['PUT', '/api/auth/users/fixture-missing/projects'],

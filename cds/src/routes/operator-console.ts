@@ -22,7 +22,7 @@ export function createOperatorConsoleRouter(deps: {
   stateService: StateService;
   shell: IShellExecutor;
   repoRoot: string;
-  cookieSecure?: boolean;
+  hostSessionCookies?: boolean;
   serverEventLogStore?: ServerEventLogSink | null;
 }): Router {
   // 初始化审批服务(单例)
@@ -63,7 +63,7 @@ export function createOperatorConsoleRouter(deps: {
     const bearer = String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
     const aiKey = String(req.headers['x-ai-access-key'] || req.headers['ai-access-key'] || '').trim();
     const sessionId = (req as { cdsSession?: { id?: string } }).cdsSession?.id || '';
-    const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, deps.cookieSecure === true));
+    const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, deps.hostSessionCookies));
     const raw = sessionId || bearer || aiKey || cookieToken || String(req.socket?.remoteAddress || 'anon');
     return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
   };

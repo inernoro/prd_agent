@@ -14,7 +14,7 @@ const origin = new URL('https://cds.example.net');
 const siteAddress = 'https://preview.example.net';
 
 describe('hosted SSO administration', () => {
-  it('registers only a published same-domain origin after verified owner step-up and can pause authorization', async () => {
+  it('requires a supported runtime, a published same-domain origin and verified owner step-up', async () => {
     const auth = new AuthService({ store: new MemoryAuthStore(), github: null, config: {} });
     const owner = await auth.createLocalUser({ username: 'site-owner', password: 'isolated-owner-password', isSystemOwner: true });
     const meta = { userAgent: null, ipAddress: null };
@@ -53,14 +53,20 @@ describe('hosted SSO administration', () => {
     try {
       const sites = '/api/hosted-sso/sites';
       const payload = { origin: siteAddress, deniedUserIds: [], application: { loginPath: '/auth/start', callbackPath: '/auth/callback' } };
+      const panel = '/api/hosted-sso/panel';
+      const projectProxy = { 'X-CDS-Internal': '1', 'X-CDS-Source-Host': 'preview.example.net' };
       expect((await request(sites + '/site-a', ordinary.token, payload)).status).toBe(403);
+      if (Number(process.versions.node.split('.')[0]) < 22) {
+        expect((await request(sites + '/site-a', verified.token, payload)).status).toBe(400);
+        expect(branch.hostedSso).toBeUndefined();
+        expect(JSON.parse((await request(panel + '/status', '', undefined, projectProxy)).body)).toEqual({ enabled: false });
+        return;
+      }
       expect((await request(sites + '/site-a', verified.token, { ...payload, origin: 'https://unpublished.example.net' })).status).toBe(409);
       expect((await request(sites + '/site-a', verified.token, payload)).status).toBe(200);
       expect(sso.site(branch.id)?.origin.origin).toBe(siteAddress);
       const read = JSON.parse((await request(sites, verified.token)).body) as { sites: unknown[] };
       expect(read.sites).toMatchObject([{ id: 'site-a', origins: [siteAddress], config: { origin: siteAddress } }]);
-      const projectProxy = { 'X-CDS-Internal': '1', 'X-CDS-Source-Host': 'preview.example.net' };
-      const panel = '/api/hosted-sso/panel';
       expect(JSON.parse((await request(panel + '/status', '', undefined, projectProxy)).body)).toEqual({ enabled: true });
       expect(JSON.parse((await request(panel + '/status', '')).body)).toEqual({ enabled: false });
       expect((await request(panel + '/start?returnUrl=/work&switchAccount=true', '', undefined, projectProxy)).status).toBe(303);

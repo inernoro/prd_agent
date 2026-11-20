@@ -113,12 +113,13 @@ export function createGithubAuthMiddleware(deps: {
   resolveAgentKey?: (req: Request) => unknown;
   /** HTTPS deployment flag; mirrors the value the auth routers use for Set-Cookie. */
   cookieSecure?: boolean;
+  hostSessionCookies?: boolean;
   /** 由前置专用能力门禁验证；不授予用户/机器身份或通用内部权限。 */
   isPendingReplay?: (req: Request) => boolean;
   /** 与其他认证模式共用的接入白名单；路由仍核对原凭据或一次性轮询票据。 */
   isPublicRequest?: (req: Request) => boolean;
 }) {
-  const { authService, resolveAgentKey, isPendingReplay, cookieSecure = false } = deps;
+  const { authService, resolveAgentKey, isPendingReplay, cookieSecure = false, hostSessionCookies = false } = deps;
 
   return async function githubAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Always let public paths through — otherwise the login page can't
@@ -177,7 +178,7 @@ export function createGithubAuthMiddleware(deps: {
       return;
     }
 
-    const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, cookieSecure));
+    const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
     const result = await authService.validateSession(token ?? null);
 
     if (!result) {
@@ -203,7 +204,7 @@ export function createGithubAuthMiddleware(deps: {
     // browser copy has to move with it — otherwise the cookie dies first and the
     // user is bounced to /login while a perfectly valid session is still on file.
     if (result.renewed && token) {
-      res.setHeader('Set-Cookie', buildSessionCookie(token, result.session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', buildSessionCookie(token, result.session.expiresAt, cookieSecure, hostSessionCookies));
     }
 
     // Attach the authenticated user onto the request for downstream handlers.

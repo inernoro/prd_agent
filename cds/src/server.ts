@@ -1257,7 +1257,6 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /branches/:id/service-graph': '分支服务关系图与体检',
     'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
     'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
-    'GET /overview/topology': '全局概览：各项目关系与体检',
     'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
@@ -2039,7 +2038,9 @@ export function createServer(deps: ServerDeps): express.Express {
   app.disable('x-powered-by');
   const configuredPublicBaseUrl = process.env.CDS_PUBLIC_BASE_URL?.trim();
   const passkeyOrigin = trustedAuthOrigin(configuredPublicBaseUrl);
-  if (passkeyOrigin && process.env.CDS_PASSKEYS_ENABLED === '1') app.use(protectControlBrowser(passkeyOrigin));
+  // Keep existing HTTPS sessions when the operator has not enabled passkeys.
+  const hostSessionCookies = Boolean(passkeyOrigin && deps.authStore?.passkeys && process.env.CDS_PASSKEYS_ENABLED === '1');
+  if (passkeyOrigin && hostSessionCookies) app.use(protectControlBrowser(passkeyOrigin));
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -2766,7 +2767,8 @@ export function createServer(deps: ServerDeps): express.Express {
   const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
-  const cookieSecure = publicBaseUrl.startsWith('https://');
+  const cookieSecure = publicBaseUrl.startsWith('https://') || hostSessionCookies;
+  const browserCookieOptions = { cookieSecure, hostSessionCookies };
   // 登录有效期策略（全系统 7 天，用后自动延长）——GitHub / 本地密码会话与 ticket SSO 会话
   // 必须共用同一份，否则 SSO 这条真实登录路径会悄悄短命，用户在同一个 CDS 里体验不一致。
   const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
@@ -2809,23 +2811,20 @@ export function createServer(deps: ServerDeps): express.Express {
   // A member cannot issue or accept a separate set of credentials.
   app.use((req, res, next) => { void clusterIdentity.middleware(req, res, next).catch(next); });
 
-  const passkeysEnabled = (req: express.Request) => Boolean(
-    process.env.CDS_PASSKEYS_ENABLED === '1' && authStore?.passkeys && passkeyOrigin
-    && req.get('host')?.toLowerCase() === passkeyOrigin.host && clusterIdentity.getConfig()?.role !== 'member',
-  );
-  if (passkeyOrigin && authService && authStore?.passkeys) {
+  const acceptingPasskeys = () => hostSessionCookies && Boolean(authService) && clusterIdentity.getConfig()?.role !== 'member';
+  const passkeysEnabled = (req: express.Request) => acceptingPasskeys() && req.get('host')?.toLowerCase() === passkeyOrigin?.host;
+  if (hostSessionCookies && passkeyOrigin && authService && authStore?.passkeys) {
     app.use('/api', createPasskeyRouter({
       origin: passkeyOrigin, auth: authService, store: authStore.passkeys,
-      enabled: () => process.env.CDS_PASSKEYS_ENABLED === '1' && clusterIdentity.getConfig()?.role !== 'member',
+      enabled: acceptingPasskeys,
     }));
-    const accepting = () => process.env.CDS_PASSKEYS_ENABLED === '1' && clusterIdentity.getConfig()?.role !== 'member';
     const sso = new HostedSso(passkeyOrigin, deps.stateService, authService,
       () => deps.getPublishedRoutes?.() ?? [], authStore.oidcArtifacts);
     app.use('/api', createHostedSsoRouter({
-      sso, auth: authService, state: deps.stateService, accepting, oidcStore: authStore.oidcArtifacts,
+      sso, auth: authService, state: deps.stateService, accepting: acceptingPasskeys, oidcStore: authStore.oidcArtifacts,
     }));
     app.use((req, res, next) => {
-      if (!accepting() || !requiresSensitivePasskey(req.method, req.path)) { next(); return; }
+      if (!acceptingPasskeys() || !requiresSensitivePasskey(req.method, req.path)) { next(); return; }
       const token = readAuthCookie(req.get('cookie'), sessionCookieName(GH_SESSION_COOKIE, true));
       void authService.validateSession(token, { renew: false }).then(verified => {
         if (verified && !isRecentAuthentication(verified.session, true)) {
@@ -2834,6 +2833,10 @@ export function createServer(deps: ServerDeps): express.Express {
         }
         next();
       }).catch(next);
+    });
+  } else {
+    app.get('/api/hosted-sso/panel/status', (_req, res) => {
+      res.set('Cache-Control', 'no-store').json({ enabled: false });
     });
   }
 
@@ -2846,7 +2849,7 @@ export function createServer(deps: ServerDeps): express.Express {
     createTicketSsoPublicRouter({
       resolveConfig: resolveSsoConfig,
       publicBaseUrl,
-      cookieSecure,
+      ...browserCookieOptions,
       stateStore: ticketSsoStateStore,
       sessionStore: ticketSsoSessionStore,
       logoutGithubSession: async (token) => {
@@ -2857,18 +2860,18 @@ export function createServer(deps: ServerDeps): express.Express {
   );
   app.use((req, res, next) => {
     if (clusterIdentity.getConfig()?.role === 'member') { next(); return; }
-    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore, cookieSecure);
+    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore, hostSessionCookies);
     const identity = ssoSession?.identity ?? null;
     if (identity && ssoSession) {
       const now = new Date().toISOString();
       const expiresAt = ssoSession.expiresAt.toISOString();
       // 滑动续期后必须重发 cookie，否则服务端窗口推后了、浏览器那份仍在原时间点死掉。
       if (ssoSession.renewed) {
-        const ssoToken = readBrowserCookie(req.headers.cookie, sessionCookieName(TICKET_SSO_COOKIE, cookieSecure));
+        const ssoToken = readBrowserCookie(req.headers.cookie, sessionCookieName(TICKET_SSO_COOKIE, hostSessionCookies));
         if (ssoToken) {
           res.setHeader(
             'Set-Cookie',
-            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure),
+            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure, hostSessionCookies),
           );
         }
       }
@@ -2938,16 +2941,16 @@ export function createServer(deps: ServerDeps): express.Express {
       let session: ClusterIdentityContext['session'];
       let basicHuman = false;
       if (!user && authService) {
-        const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, cookieSecure));
+        const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
         const current = await authService.validateSession(token ?? null);
         if (current) {
           user = current.user; session = { createdAt: current.session.createdAt, expiresAt: current.session.expiresAt };
-          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure));
+          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure, hostSessionCookies));
         }
       }
-      if (!user && authEnabled && verifyHumanSessionToken(readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, cookieSecure)), cdsUser!, cdsPass!, sessionTtlMs)) {
+      if (!user && authEnabled && verifyHumanSessionToken(readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)), cdsUser!, cdsPass!, sessionTtlMs)) {
         user = legacyAuthUser(cdsUser!, 'basic'); basicHuman = true;
-        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure));
+        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure, hostSessionCookies));
       }
       if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
       const legacyMachine = !user && authEnabled && tokenMatches(req.headers['x-cds-token'] as string | undefined, validToken);
@@ -3087,7 +3090,7 @@ export function createServer(deps: ServerDeps): express.Express {
       createAuthRouter({
         authService,
         publicBaseUrl,
-        cookieSecure,
+        ...browserCookieOptions,
       }),
     );
 
@@ -3107,7 +3110,7 @@ export function createServer(deps: ServerDeps): express.Express {
       isPendingReplay: req => !!trustedClusterIdentity(req) || pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
       isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
-      cookieSecure,
+      ...browserCookieOptions,
     }));
 
     // Local username + password routes. Public endpoints (login / bootstrap)
@@ -3118,7 +3121,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
     // （PR #865 Codex P1）。
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
-    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, cookieSecure, bootstrapAllowed }));
+    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, ...browserCookieOptions, bootstrapAllowed }));
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -3131,9 +3134,9 @@ export function createServer(deps: ServerDeps): express.Express {
       if (username === cdsUser && password === cdsPass) {
         const humanSessionToken = issueHumanSessionToken(cdsUser!, cdsPass!);
         res.setHeader('Set-Cookie', [
-          basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure),
-          buildLogoutCookie(cookieSecure),
-          buildSsoLogoutCookie(cookieSecure),
+          basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure, hostSessionCookies),
+          buildLogoutCookie(cookieSecure, hostSessionCookies),
+          buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
         ]);
         res.json({ success: true });
       } else {
@@ -3143,9 +3146,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     app.post('/api/logout', (_req, res) => {
       res.setHeader('Set-Cookie', [
-        buildLegacyLogoutCookie(cookieSecure),
-        buildLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.json({ success: true });
     });
@@ -3664,7 +3667,7 @@ export function createServer(deps: ServerDeps): express.Express {
       // Persisted local-account session. In basic mode this is checked before
       // the legacy environment credential so both account systems can coexist
       // without weakening machine-key separation.
-      const persistedToken = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, cookieSecure));
+      const persistedToken = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
       let persistedSession = null;
       try {
         persistedSession = authService
@@ -3678,7 +3681,7 @@ export function createServer(deps: ServerDeps): express.Express {
         if (persistedSession.renewed && persistedToken) {
           res.setHeader(
             'Set-Cookie',
-            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure),
+            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure, hostSessionCookies),
           );
         }
         (req as any).cdsUser = persistedSession.user;
@@ -3687,7 +3690,7 @@ export function createServer(deps: ServerDeps): express.Express {
       }
 
       // Check original environment-account auth.
-      const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, cookieSecure));
+      const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies));
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const humanCookieValid = authEnabled
         && verifyHumanSessionToken(cookieToken, cdsUser!, cdsPass!, sessionTtlMs);
@@ -3699,7 +3702,7 @@ export function createServer(deps: ServerDeps): express.Express {
         // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
         if (humanCookieValid) {
           const renewedToken = issueHumanSessionToken(cdsUser!, cdsPass!);
-          res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure));
+          res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure, hostSessionCookies));
           (req as any)._cdsCookieAuth = true;
           (req as any)._cdsBasicHumanAuth = true;
           (req as any).cdsUser = legacyAuthUser(cdsUser!, 'basic');
@@ -3765,7 +3768,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use('/api', createAuthLocalRouter({
       authService,
       stateService: deps.stateService,
-      cookieSecure,
+      ...browserCookieOptions,
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
       legacyLogin: ({ username, password }) => {
@@ -3776,6 +3779,7 @@ export function createServer(deps: ServerDeps): express.Express {
             issueHumanSessionToken(cdsUser!, cdsPass!),
             sessionTtlMs,
             cookieSecure,
+            hostSessionCookies,
           ),
         };
       },
@@ -3811,7 +3815,7 @@ export function createServer(deps: ServerDeps): express.Express {
           return true;
         }
         if (authMode === 'basic') {
-          const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, cookieSecure));
+          const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies));
           const headerToken = typeof req.headers['x-cds-token'] === 'string'
             ? req.headers['x-cds-token']
             : '';
@@ -5532,7 +5536,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     shell: deps.shell,
     repoRoot: deps.config.repoRoot,
-    cookieSecure,
+    hostSessionCookies,
     serverEventLogStore: deps.serverEventLogStore,
   }));
 
@@ -5975,7 +5979,7 @@ export function installSpaFallback(
  * basic 模式的会话 cookie（`cds_token`）。走统一的登录有效期策略，并在每次带 cookie 的
  * 已鉴权请求上重发，实现「只要在用就不会掉登录」——该模式没有服务端会话记录，只能这样滑动。
  */
-function basicSessionCookie(token: string, ttlMs: number, secure: boolean): string {
+function basicSessionCookie(token: string, ttlMs: number, secure: boolean, hostSessionCookies: boolean): string {
   const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
-  return `${sessionCookieName(LEGACY_SESSION_COOKIE, secure)}=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
+  return `${sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)}=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
 }
