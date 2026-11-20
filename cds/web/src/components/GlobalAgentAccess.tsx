@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { SkillDownloadDialog, type AgentProjectOption } from '@/components/SkillDownloadDialog';
+import type { AgentConnectDraft } from '@/components/AgentConnectPanel';
 import {
+  AGENT_ACCESS_QUERY,
+  AGENT_ADD_REPOSITORY_QUERY,
+  AGENT_REPOSITORY_QUERY,
   OPEN_AGENT_ACCESS_EVENT,
   resolveAgentPageContext,
   type AgentPageContextId,
@@ -17,6 +21,7 @@ type AgentProjectsResponse = {
     name?: string;
     aliasName?: string | null;
     slug?: string;
+    githubRepoFullName?: string;
     branchCount?: number;
     runningBranchCount?: number;
     runningServiceCount?: number;
@@ -40,12 +45,14 @@ const STANDALONE_PATHS = new Set(['/', '/login', '/auth/sso', '/preview-preparin
  */
 export function GlobalAgentAccess(): JSX.Element {
   const routerLocation = useLocation();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [requestedContextId, setRequestedContextId] = useState<AgentPageContextId | undefined>(undefined);
   const [projects, setProjects] = useState<AgentProjectOption[] | null>(null);
   const [canManageProjects, setCanManageProjects] = useState(false);
   const [projectsError, setProjectsError] = useState('');
   const [projectsRequest, setProjectsRequest] = useState(0);
+  const connectDraft = useRef<AgentConnectDraft>();
   const currentLocation = typeof window === 'undefined'
     ? routerLocation
     : {
@@ -54,11 +61,14 @@ export function GlobalAgentAccess(): JSX.Element {
         hash: window.location.hash,
       };
   const context = resolveAgentPageContext(currentLocation, requestedContextId);
+  const params = new URLSearchParams(routerLocation.search);
+  const initialProjectIds = [...new Set(params.getAll(AGENT_REPOSITORY_QUERY))];
   const showFloatingEntry = STANDALONE_PATHS.has(currentLocation.pathname);
 
   useEffect(() => {
     const openAgentAccess = (event: Event): void => {
       const detail = (event as CustomEvent<{ contextId?: AgentPageContextId }>).detail;
+      connectDraft.current = undefined;
       setRequestedContextId(detail?.contextId);
       setOpen(true);
     };
@@ -81,6 +91,7 @@ export function GlobalAgentAccess(): JSX.Element {
           id: project.id,
           name: project.aliasName || project.name || project.slug || project.id,
           slug: project.slug || project.id,
+          githubRepoFullName: project.githubRepoFullName,
           branchCount: project.branchCount,
           runningBranchCount: project.runningBranchCount,
           runningServiceCount: project.runningServiceCount,
@@ -100,13 +111,28 @@ export function GlobalAgentAccess(): JSX.Element {
   }, [open, projectsRequest]);
 
   useEffect(() => {
+    const routeParams = new URLSearchParams(routerLocation.search);
+    if (!routeParams.has(AGENT_ACCESS_QUERY) && !routeParams.has(AGENT_ADD_REPOSITORY_QUERY)) connectDraft.current = undefined;
     setRequestedContextId(undefined);
-    setOpen(false);
+    setOpen(routeParams.get(AGENT_ACCESS_QUERY) === '1');
   }, [routerLocation.pathname, routerLocation.search, routerLocation.hash]);
 
   const handleOpenChange = (nextOpen: boolean): void => {
     setOpen(nextOpen);
     if (!nextOpen) setRequestedContextId(undefined);
+    if (!nextOpen) connectDraft.current = undefined;
+    if (!nextOpen && params.has(AGENT_ACCESS_QUERY)) {
+      params.delete(AGENT_ACCESS_QUERY);
+      params.delete(AGENT_REPOSITORY_QUERY);
+      navigate({ pathname: routerLocation.pathname, search: params.toString(), hash: routerLocation.hash }, { replace: true });
+    }
+  };
+
+  const addRepository = (projectIds: string[], draft: AgentConnectDraft): void => {
+    connectDraft.current = draft;
+    const next = new URLSearchParams({ [AGENT_ADD_REPOSITORY_QUERY]: '1' });
+    projectIds.forEach((id) => next.append(AGENT_REPOSITORY_QUERY, id));
+    navigate(`/project-list?${next}`);
   };
 
   return (
@@ -138,6 +164,9 @@ export function GlobalAgentAccess(): JSX.Element {
         canManageProjectKeys={canManageProjects}
         onReloadProjects={() => setProjectsRequest((value) => value + 1)}
         context={context}
+        initialProjectIds={initialProjectIds}
+        initialDraft={connectDraft.current}
+        onAddRepository={addRepository}
       />
     </>
   );

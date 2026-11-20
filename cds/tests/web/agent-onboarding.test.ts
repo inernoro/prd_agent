@@ -11,6 +11,7 @@ import {
   CDS_AGENT_CAPABILITY_DEFINITIONS,
   CDS_AGENT_SKILL_DEFINITIONS,
   buildCdsAgentPrompt,
+  buildQuickAgentPrompt,
   chooseAgentProjectId,
   createAgentMissionContext,
   getAgentMissionCategoriesForScope,
@@ -24,6 +25,30 @@ import {
 } from '../../web/src/lib/agent-onboarding.js';
 
 describe('CDS Agent 接入口令', () => {
+  it('未选仓库时先查询并等待确认，权限不足不能被当成新项目', () => {
+    const prompt = buildQuickAgentPrompt({
+      origin: 'https://cds.example', scope: 'existing', projects: [],
+      name: '本地接入', skills: ['findmapskills'], followFuture: false,
+    });
+    expect(prompt).toContain('匹配到多个项目时，列出可见候选让我选择');
+    expect(prompt).toContain('不要把权限不足当成仓库不存在');
+    expect(prompt).toContain('https://cds.example/project-list?agentAccess=1');
+    expect(prompt).toContain('/api/skills/findmapskills/download');
+  });
+
+  it('多选仓库逐个绑定接入目标，新仓库交给智能体确认和创建', () => {
+    const input = { origin: 'https://cds.example', name: '开发', skills: [], followFuture: true };
+    const prompt = buildQuickAgentPrompt({
+      ...input, scope: 'existing', projects: [{ id: 'project-a' }, { id: 'project-b' }],
+    });
+    expect(prompt).toContain('target=existing&project=project-a');
+    expect(prompt).toContain('target=existing&project=project-b');
+    expect(prompt).toContain('先确认它已授予当前账号');
+    const create = buildQuickAgentPrompt({ ...input, scope: 'new', projects: [] });
+    expect(create).toContain('先与我确认新 GitHub 仓库的名称、归属和可见性');
+    expect(create).toContain('target=new');
+    expect(create).not.toContain('project=project-');
+  });
   it('主备目录请求完成前不误报未配置', () => {
     const html = renderToStaticMarkup(createElement(InstanceSwitcher));
     expect(html).not.toContain('请在仓库根目录 cds-instances.json 登记主备地址。');

@@ -7,7 +7,8 @@ import {
   defaultMissionForMap,
   type AgentAccessMapSelection,
 } from '@/components/AgentAccessMap';
-import { AgentStarterTab } from '@/components/AgentStarterTab';
+import { AgentStarterTab, normalizeSkills } from '@/components/AgentStarterTab';
+import { AgentConnectPanel, type AgentConnectDraft } from '@/components/AgentConnectPanel';
 import { Button } from '@/components/ui/button';
 import { MotionLink } from '@/components/layout/RouteMotion';
 import { AGENT_ROLE_PROFILES } from '@/lib/agent-starter';
@@ -40,6 +41,7 @@ export interface AgentProjectOption {
   id: string;
   name: string;
   slug: string;
+  githubRepoFullName?: string;
   branchCount?: number;
   runningBranchCount?: number;
   runningServiceCount?: number;
@@ -56,13 +58,17 @@ interface Props {
   canManageProjectKeys?: boolean;
   onReloadProjects?: () => void;
   context?: AgentPageContext;
+  initialProjectIds?: string[];
+  initialDraft?: AgentConnectDraft;
+  onAddRepository?: (projectIds: string[], draft: AgentConnectDraft) => void;
 }
 
-type TabKey = 'starter' | 'init' | 'connect' | 'key' | 'manual' | 'marketplace';
+type TabKey = 'starter' | 'init' | 'connect' | 'mission' | 'key' | 'manual' | 'marketplace';
 
 // 接入默认只复制短口令；角色方法论与项目初始化仍可独立选择。
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: boolean }> = [
-  { key: 'connect', label: '自动接入', icon: Bot, recommended: true },
+  { key: 'connect', label: '接入配置', icon: Bot },
+  { key: 'mission', label: '按任务接入', icon: Bot },
   { key: 'key', label: '密钥接入', icon: KeyRound },
   { key: 'starter', label: '上手助手', icon: GraduationCap },
   { key: 'init', label: '快速初始化', icon: Rocket },
@@ -70,8 +76,12 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: 
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
 ];
 
-export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoading = false, projectsError = '', canManageProjectKeys = false, onReloadProjects, context }: Props): JSX.Element {
+export function SkillDownloadDialog({
+  open, onOpenChange, projects, projectsLoading = false, projectsError = '', canManageProjectKeys = false,
+  onReloadProjects, context, initialProjectIds = [], initialDraft, onAddRepository,
+}: Props): JSX.Element {
   const [active, setActive] = useState<TabKey>('connect');
+  const [toolsOpen, setToolsOpen] = useState(false);
   const sourceContext = context || createAgentMissionContext('projects');
   const [mapSelection, setMapSelection] = useState<AgentAccessMapSelection>(
     () => initialAgentConnectSelection(projects, sourceContext),
@@ -81,7 +91,13 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
   const explicitSelection = useRef(false);
 
   useEffect(() => {
-    if (!open) { initializedContext.current = null; explicitSelection.current = false; return; }
+    if (!open) {
+      initializedContext.current = null;
+      explicitSelection.current = false;
+      setActive('connect');
+      setToolsOpen(false);
+      return;
+    }
     const key = `${sourceContext.id}:${sourceContext.pagePath}`;
     if (initializedContext.current !== key) {
       initializedContext.current = key;
@@ -148,16 +164,16 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="max-w-none"
-        style={{ width: 'min(67.5rem, calc(100vw - 2rem))' }}
+        style={{ width: active === 'connect' ? 'min(48rem, calc(100vw - 2rem))' : 'min(67.5rem, calc(100vw - 2rem))' }}
       >
         <DialogHeader>
-          <DialogTitle>接入 Agent</DialogTitle>
+          <DialogTitle>接入你的智能体</DialogTitle>
           <DialogDescription>
             支持通过短口令接入，也支持在云环境中注入固定项目密钥。
           </DialogDescription>
         </DialogHeader>
 
-        {active === 'connect' ? <AgentAccessMap
+        {active === 'mission' ? <AgentAccessMap
           projects={projects}
           selection={mapSelection}
           context={selectedContext}
@@ -168,7 +184,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
 
         {/* 目标选择在「上手助手」上同样要给：口令里嵌的是新建项目还是已有项目，
             决定了 Agent 走不走一次性创建授权，用户必须看得见、改得动。 */}
-        {active === 'connect' || active === 'starter' ? <div className="grid gap-2 sm:grid-cols-2">
+        {active === 'mission' || active === 'starter' ? <div className="grid gap-2 sm:grid-cols-2">
           <button
             type="button"
             onClick={chooseExistingTarget}
@@ -196,7 +212,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
           </button>
         </div> : null}
 
-        {(active === 'connect' || active === 'starter') && targetKind === 'existing' ? (
+        {(active === 'mission' || active === 'starter') && targetKind === 'existing' ? (
           <label className="space-y-1 text-sm">
             <span className="text-xs font-medium text-foreground">选择项目</span>
             <select
@@ -214,7 +230,9 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
           </label>
         ) : null}
 
-        <nav className="grid grid-cols-2 gap-1 border-b border-[hsl(var(--hairline))] sm:grid-cols-6">
+        <nav hidden={active === 'connect' && !toolsOpen} className={active === 'connect' && !toolsOpen
+          ? 'hidden'
+          : 'grid grid-cols-2 gap-1 border-b border-[hsl(var(--hairline))] sm:grid-cols-4 lg:grid-cols-7'}>
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const selected = active === tab.key;
@@ -275,7 +293,18 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
           </div>
           {active === 'init' ? <ProjectInitTab /> : null}
           {active === 'key' ? <CloudKeyTab projects={projects} requestedProjectId={effectiveProjectId} loading={projectsLoading} error={projectsError} canManage={canManageProjectKeys} onRetry={onReloadProjects} onOpenKeys={() => onOpenChange(false)} /> : null}
-          {active === 'connect' ? setupError
+          <div hidden={active !== 'connect'} className={active === 'connect' ? 'space-y-3' : 'hidden'}>
+            <AgentConnectPanel key={initialProjectIds.join(':')} projects={projects} loading={projectsLoading} error={projectsError}
+              canManageProjects={canManageProjectKeys} initialProjectIds={initialProjectIds}
+              initialDraft={initialDraft}
+              origin={cdsOrigin} loadSkills={loadQuickSkills} onAddRepository={onAddRepository}
+              onReloadProjects={onReloadProjects} onClose={() => onOpenChange(false)} />
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+              {!toolsOpen ? <Button size="sm" variant="ghost" onClick={() => setActive('starter')}><GraduationCap />上手助手</Button> : null}
+              <Button size="sm" variant="ghost" aria-expanded={toolsOpen} onClick={() => setToolsOpen(!toolsOpen)}>更多接入工具</Button>
+            </div>
+          </div>
+          {active === 'mission' ? setupError
             ? <ProjectScopeError message={setupError} onRetry={onReloadProjects} />
             : <ConnectTab prompt={prompt} loading={projectsLoading} onCopied={() => { explicitSelection.current = true; }} /> : null}
           {active === 'manual' ? <ManualTab /> : null}
@@ -284,6 +313,14 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
       </DialogContent>
     </Dialog>
   );
+}
+
+async function loadQuickSkills(signal: AbortSignal) {
+  const res = await fetch('/api/skills/bundles', { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return normalizeSkills(await res.json())
+    .filter((skill) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(skill.key))
+    .map((skill) => ({ key: skill.key, title: skill.name, recommendedRoles: skill.recommendedRoles }));
 }
 
 function CloudKeyTab({ projects, requestedProjectId, loading, error, canManage, onRetry, onOpenKeys }: {

@@ -68,7 +68,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
-import { requestAgentAccess } from '@/lib/agent-onboarding';
+import { AGENT_ACCESS_QUERY, AGENT_ADD_REPOSITORY_QUERY, AGENT_REPOSITORY_QUERY, requestAgentAccess } from '@/lib/agent-onboarding';
+import { GitHubDeviceFlowPanel } from '@/pages/cds-settings/tabs/GitHubAppTab';
+import { bootstrapRepository } from '../../../src/services/bootstrap-target';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -481,6 +483,17 @@ export function ProjectListPage(): JSX.Element {
   // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
   const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  const addingAgentRepository = searchParams.get(AGENT_ADD_REPOSITORY_QUERY) === '1';
+  const finishAgentRepository = (projectIds: string[]): void => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete(AGENT_ADD_REPOSITORY_QUERY);
+      next.set(AGENT_ACCESS_QUERY, '1');
+      const selected = new Set(next.getAll(AGENT_REPOSITORY_QUERY));
+      projectIds.filter((id) => !selected.has(id)).forEach((id) => next.append(AGENT_REPOSITORY_QUERY, id));
+      return next;
+    }, { replace: true });
+  };
   const agentKeyProjectId = searchParams.get('agentKeys');
   const openAgentKeys = (id: string | null) => {
     setSearchParams((previous) => {
@@ -961,19 +974,41 @@ export function ProjectListPage(): JSX.Element {
         </footer> : null}
 
         {canManageProjects ? <CreateProjectDialog
-          open={createOpen}
+          open={createOpen || addingAgentRepository}
           onOpenChange={(next) => {
             setCreateOpen(next);
             if (!next) setCreateAutoPickRepo(false);
+            if (!next && addingAgentRepository) finishAgentRepository([]);
           }}
-          autoOpenPicker={createAutoPickRepo}
+          autoOpenPicker={createAutoPickRepo || addingAgentRepository}
+          closeOnCreated={!addingAgentRepository}
+          onPickExistingRepo={addingAgentRepository ? (repo) => {
+            const identity = bootstrapRepository(repo.cloneUrl);
+            const matching = identity ? projects.filter((project) =>
+              bootstrapRepository(project.gitRepoUrl || (project.githubRepoFullName ? `github.com/${project.githubRepoFullName}` : '')) === identity) : [];
+            if (!matching.length) return false;
+            setToast(matching.length === 1 ? `已选中 ${displayName(matching[0])}` : '同一 GitHub 仓库对应多个 CDS 项目，请在列表中选择。');
+            finishAgentRepository(matching.length === 1 ? [matching[0].id] : []);
+            return true;
+          } : undefined}
           onCreated={async (project, repoAlreadyLinked) => {
             setToast(`已创建 ${displayName(project)}`);
             // 有冲突就先别开始 clone —— 让用户先回答「是要共用还是填错了」。
             // clone 会顺手做自动配置，而私有仓库这时还没拿到共享的 GitHub App
             // 绑定，拉取本来就可能失败（2026-09-02 Codex P1）。
-            if (project.cloneStatus === 'pending' && !repoAlreadyLinked) setCloneTarget(project);
+            if (!addingAgentRepository) {
+              if (project.cloneStatus === 'pending' && !repoAlreadyLinked) setCloneTarget(project);
+            }
             await refresh(false);
+            if (addingAgentRepository) {
+              if (!repoAlreadyLinked) finishAgentRepository([project.id]);
+              else setSearchParams((previous) => {
+                const next = new URLSearchParams(previous);
+                next.delete(AGENT_ADD_REPOSITORY_QUERY);
+                next.delete(AGENT_REPOSITORY_QUERY);
+                return next;
+              }, { replace: true });
+            }
           }}
           onRepoAlreadyLinked={(project, info) => setRepoSharePrompt({
             project,
@@ -2614,12 +2649,16 @@ function CreateProjectDialog({
   onCreated,
   onRepoAlreadyLinked,
   autoOpenPicker = false,
+  closeOnCreated = true,
+  onPickExistingRepo,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (project: ProjectSummary, repoAlreadyLinked?: RepoAlreadyLinked) => Promise<void>;
   onRepoAlreadyLinked?: (project: ProjectSummary, info: RepoAlreadyLinked) => void;
   autoOpenPicker?: boolean;
+  closeOnCreated?: boolean;
+  onPickExistingRepo?: (repo: GithubRepo) => boolean;
 }): JSX.Element {
   const [name, setName] = useState('');
   const [gitRepoUrl, setGitRepoUrl] = useState('');
@@ -2825,7 +2864,7 @@ function CreateProjectDialog({
       setAutoDetectOnClone(true);
       setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
-      onOpenChange(false);
+      if (closeOnCreated) onOpenChange(false);
       // 冲突信息与项目一起交出去：父组件要据此决定「现在就开始 clone」还是
       // 「等用户拿定主意再开始」——先开 clone 再问，用户还没回答，仓库已经在
       // 拉了（2026-09-02 Codex P1）。
@@ -3234,6 +3273,10 @@ function CreateProjectDialog({
         open={repoPickerOpen}
         onOpenChange={setRepoPickerOpen}
         onPick={(repo) => {
+          if (onPickExistingRepo?.(repo)) {
+            setRepoPickerOpen(false);
+            return;
+          }
           setGitRepoUrl(repo.cloneUrl);
           setGitDefaultBranch(repo.defaultBranch || '');
           if (!name.trim()) setName(repo.name);
@@ -3487,6 +3530,7 @@ function GithubRepoPickerDialog({
   >({ status: 'idle' });
   const [query, setQuery] = useState('');
   const [loadingMore, setLoadingMore] = useState(false);
+  const [githubNotice, setGithubNotice] = useState('');
 
   const loadPage = useCallback(async (page: number) => {
     if (page === 1) setState({ status: 'loading' });
@@ -3520,6 +3564,7 @@ function GithubRepoPickerDialog({
   useEffect(() => {
     if (open) {
       setQuery('');
+      setGithubNotice('');
       void loadPage(1);
     } else {
       setState({ status: 'idle' });
@@ -3551,7 +3596,13 @@ function GithubRepoPickerDialog({
         {state.status === 'error' ? (
           <div className="space-y-3 cds-surface-raised cds-hairline px-4 py-4">
             <ErrorBlock message={state.message} />
-            {state.action === 'connect' || state.action === 'configure' ? (
+            {state.action === 'connect' ? (
+              <>
+                <GitHubDeviceFlowPanel onToast={setGithubNotice} onConnected={() => void loadPage(1)} />
+                {githubNotice ? <p className="text-sm text-muted-foreground" role="status">{githubNotice}</p> : null}
+                <Button type="button" variant="outline" onClick={() => void loadPage(1)}>刷新仓库列表</Button>
+              </>
+            ) : state.action === 'configure' ? (
               <Button asChild variant="outline">
                 <Link to="/cds-settings#github">
                   <ExternalLink />

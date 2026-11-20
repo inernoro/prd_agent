@@ -122,7 +122,7 @@ const roleIcons: Record<AgentRoleId, typeof BriefcaseBusiness> = {
   qa: FlaskConical,
 }
 
-function normalizeSkills(payload: unknown): StarterSkill[] {
+export function normalizeSkills(payload: unknown): StarterSkill[] {
   const value = payload as any
   const bundles = value?.data?.bundles ?? value?.bundles ?? value?.data ?? value
   if (!Array.isArray(bundles)) return []

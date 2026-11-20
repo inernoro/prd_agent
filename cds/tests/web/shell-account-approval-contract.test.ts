@@ -124,11 +124,13 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentMapSource).toContain('当前页面任务');
   });
 
-  it('按项目、分类和横排任务卡选择 Agent 上下文', () => {
+  it('先展示简化接入面板，并保留按任务入口和上手助手', () => {
+    expect(agentDialogSource).toContain('<AgentConnectPanel');
     expect(agentDialogSource).toContain('<AgentAccessMap');
-    // 小屏两列，sm 以上让六种入口完整横排。
+    expect(agentDialogSource).toContain("active === 'mission' ? <AgentAccessMap");
+    expect(agentDialogSource).toContain('更多接入工具');
     expect(agentDialogSource).toContain('grid grid-cols-2 gap-1');
-    expect(agentDialogSource).toContain('sm:grid-cols-6');
+    expect(agentDialogSource).toContain('lg:grid-cols-7');
     expect(agentDialogSource).toContain("{ key: 'key', label: '密钥接入'");
     expect(agentDialogSource).toContain('min-w-0 items-center justify-center');
     expect(agentDialogSource).toContain('resolveAgentMissionContextForTarget(');

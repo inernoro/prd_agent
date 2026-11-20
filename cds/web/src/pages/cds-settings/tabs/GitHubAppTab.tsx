@@ -209,7 +209,10 @@ function GitHubAppStatus({
   );
 }
 
-function GitHubDeviceFlowPanel({ onToast }: { onToast: (message: string) => void }): JSX.Element {
+export function GitHubDeviceFlowPanel({ onToast, onConnected }: {
+  onToast: (message: string) => void;
+  onConnected?: () => void;
+}): JSX.Element {
   const [state, setState] = useState<LoadState<GitHubOAuthStatusResponse>>({ status: 'loading' });
   const [flow, setFlow] = useState<DeviceFlowState>({ status: 'idle' });
   const [disconnectOpen, setDisconnectOpen] = useState(false);
@@ -258,7 +261,8 @@ function GitHubDeviceFlowPanel({ onToast }: { onToast: (message: string) => void
           if (body.status === 'ready') {
             setFlow({ status: 'idle' });
             onToast(`已连接 GitHub @${body.login || ''}`.trim());
-            void loadStatus();
+            if (onConnected) onConnected();
+            else void loadStatus();
             return;
           }
           if (body.status === 'pending') {
@@ -300,6 +304,7 @@ function GitHubDeviceFlowPanel({ onToast }: { onToast: (message: string) => void
     setFlow({ status: 'starting' });
     try {
       const init = await apiRequest<DeviceStartResponse>('/api/github/oauth/device-start', { method: 'POST' });
+      if (abortRef.current) return;
       setFlow({ status: 'waiting', init, note: '等待 GitHub 授权。' });
       window.open(init.verificationUri, '_blank', 'noopener');
       schedulePoll(init.deviceCode, (init.interval || 5) * 1000);

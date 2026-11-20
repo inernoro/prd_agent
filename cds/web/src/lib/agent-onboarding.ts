@@ -64,6 +64,9 @@ interface BuildPromptOptions {
 }
 
 export const OPEN_AGENT_ACCESS_EVENT = 'cds:open-agent-access';
+export const AGENT_ACCESS_QUERY = 'agentAccess';
+export const AGENT_REPOSITORY_QUERY = 'agentRepository';
+export const AGENT_ADD_REPOSITORY_QUERY = 'agentAddRepository';
 
 export const PROJECT_SKILL_PATHS = [
   { agent: 'Codex / 通用 Agent Skills', path: '.agents/skills' },
@@ -217,6 +220,54 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     `请读取 ${setupUrl}，按说明接入当前仓库。`,
     `任务：${context?.title || '连接 CDS'}。${context?.goal || '确认当前目标可用。'}`,
     '只加载当前任务所需资料；复用现有授权，缺权限时走 CDS 页面批准。接入自检通过后再执行任务，不输出密钥。',
+  ].join('\n');
+}
+
+export type QuickAgentScope = 'new' | 'existing' | 'admin';
+
+export function buildQuickAgentPrompt(input: {
+  origin: string;
+  scope: QuickAgentScope;
+  projects: AgentProjectIdentity[];
+  name: string;
+  skills: string[];
+  followFuture: boolean;
+}): string {
+  const { origin, scope, projects, name, skills, followFuture } = input;
+  const setup = (target: CdsConnectTarget) => buildAgentSetupUrl(origin, target, getAgentSetupSkillKeys(target));
+  const panel = new URL('/project-list', origin);
+  panel.searchParams.set(AGENT_ACCESS_QUERY, '1');
+  let instructions: string[];
+  if (scope === 'new') {
+    instructions = [
+      '先与我确认新 GitHub 仓库的名称、归属和可见性，再用我授权的 GitHub 账号创建。权限不足时，请我在 GitHub 授权。',
+      `创建后读取 ${setup({ kind: 'new' })}，以该仓库为唯一目标申请一次性创建授权，批准后在 CDS 添加项目。`,
+    ];
+  } else if (scope === 'admin') {
+    instructions = [
+      `阅读 ${setup({ kind: 'system' })} 了解当前站点支持的管理方式。`,
+      '先检查现有管理员身份。要求浏览器登录的操作交给已获授权的用户确认并完成，不尝试用项目密钥管理用户或扩大权限。',
+    ];
+  } else if (projects.length) {
+    instructions = [
+      '只接入下面选中的项目。每个项目在自己的仓库工作区中单独接入并验证，复用已有授权。',
+      ...projects.map(project => `- ${project.name || project.id} ${setup({ kind: 'existing', projectId: project.id })}`),
+    ];
+  } else {
+    instructions = [
+      `如本机尚未安装 CDS 技能，先使用 ${new URL('/api/skills/cds-pack/download', origin)} 安装 CDS 基础技能。`,
+      `读取当前工作区的 Git origin，提取 GitHub 仓库地址，在 ${origin} 使用已有授权查询可见项目。没有 origin 时先向我索取仓库地址。`,
+      '匹配到已有项目时，先问我是否接入。匹配到多个项目时，列出可见候选让我选择。确认该仓库尚未接入时，先问我是否创建对应的 CDS 项目，然后走一次性创建流程，不重复创建 GitHub 仓库。',
+      `无法查询时请我打开 ${panel} 核对仓库和权限。不要把权限不足当成仓库不存在。`,
+      `我确认新增项目后，读取 ${setup({ kind: 'new' })} 开始创建流程。`,
+    ];
+  }
+  return [
+    `请协助配置 CDS 接入「${name}」。`,
+    ...instructions,
+    ...(followFuture ? ['未来要操作新增仓库时，先确认它已授予当前账号，再对该项目完成单独接入和自检。'] : []),
+    ...skills.map(key => `搭配技能 ${key}：${new URL(`/api/skills/${encodeURIComponent(key)}/download`, origin)}`),
+    '接入自检通过后再执行任务。只回复目标、当前结果和下一步；需要审批时指出具体入口，不输出密钥。',
   ].join('\n');
 }
 

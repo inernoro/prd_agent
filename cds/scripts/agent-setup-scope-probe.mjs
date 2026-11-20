@@ -61,7 +61,12 @@ try {
       }
       const dialog = page.getByRole('dialog');
       await dialog.waitFor();
+      await openMissionTool(dialog);
       return dialog;
+    };
+    const openMissionTool = async dialog => {
+      await dialog.getByRole('button', { name: '更多接入工具', exact: true }).click();
+      await dialog.getByRole('button', { name: '按任务接入', exact: true }).click();
     };
     const open = async url => {
       await page.goto(server.url + url, { waitUntil: 'domcontentloaded' });
@@ -158,6 +163,7 @@ try {
     await page.goto(server.url + '/', { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: '接入 Agent', exact: true }).click();
     dialog = page.getByRole('dialog');
+    await openMissionTool(dialog);
     url = await copyPrompt(dialog);
     assert.equal(url.searchParams.get('target'), 'new');
     console.log(`PASS ${width}: signed-out discovery still allows first project approval flow`);
