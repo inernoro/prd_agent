@@ -86,6 +86,14 @@ export const PROJECT_TAB_LABELS: Record<string, string> = {
   danger: '删除项目',
 };
 
+export function resolveProjectSettingsTab(search = '', hash = ''): string {
+  const hashTab = hash.replace(/^#/, '');
+  if (Object.hasOwn(PROJECT_TAB_LABELS, hashTab)) return hashTab;
+  const queryTab = new URLSearchParams(search).get('tab') || '';
+  if (queryTab === 'build' || queryTab === 'routing') return 'compose';
+  return Object.hasOwn(PROJECT_TAB_LABELS, queryTab) ? queryTab : 'general';
+}
+
 /*
  * 系统级设置（/cds-settings#<tab>）。tab 取值见
  * CdsSettingsPage.tsx 的 TabValue。

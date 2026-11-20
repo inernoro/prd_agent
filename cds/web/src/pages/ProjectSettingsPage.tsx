@@ -60,6 +60,7 @@ import { CommentTemplateTab } from '@/pages/project-settings/CommentTemplateTab'
 import { BackupTab } from '@/pages/project-settings/BackupTab';
 import { DbIsolationTab } from '@/pages/project-settings/DbIsolationTab';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
+import { resolveProjectSettingsTab } from '@/lib/settingsSearchIndex';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 import { RepoSharingBanner, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
 import { ProjectIdentityHistory } from '@/components/project/ProjectIdentityHistory';
@@ -372,8 +373,6 @@ const tabGroups: TabGroup[] = [
   },
 ];
 
-const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
-
 const inputClass =
   'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
 const monoInputClass = `${inputClass} font-mono`;
@@ -398,12 +397,7 @@ function displayName(project: ProjectSummary): string {
 }
 
 function getInitialTab(): TabValue {
-  const hash = window.location.hash.replace(/^#/, '');
-  if (tabs.some((tab) => tab.value === hash)) return hash as TabValue;
-
-  const queryTab = new URLSearchParams(window.location.search).get('tab') || '';
-  if (queryTab === 'build' || queryTab === 'routing') return 'compose';
-  return tabs.some((tab) => tab.value === queryTab) ? (queryTab as TabValue) : 'general';
+  return resolveProjectSettingsTab(window.location.search, window.location.hash) as TabValue;
 }
 
 function formatDate(value?: string | null): string {
@@ -679,7 +673,7 @@ export function ProjectSettingsPage(): JSX.Element {
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
         {(refreshError || tabRefreshError) && state.status === 'ok' ? <p role="alert" className="px-6 py-3 text-sm text-destructive">刷新失败：{refreshError || tabRefreshError}；当前显示上次读取的内容。</p> : null}
         {state.status === 'loading' ? (
-          <SettingsPageSkeleton label="加载项目设置" />
+          <SettingsPageSkeleton label="加载项目设置" project projectTab={activeTab} />
         ) : null}
         {state.status === 'error' ? (
           <div className="space-y-4 p-6">

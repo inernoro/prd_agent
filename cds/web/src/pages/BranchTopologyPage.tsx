@@ -1,4 +1,7 @@
-import { TopologyPageSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
+import {
+  TOPOLOGY_BAND_CLASS, TOPOLOGY_BODY_GRID_CLASS, TOPOLOGY_CONTROLS_CLASS,
+  TOPOLOGY_CONTROL_HEIGHT, TOPOLOGY_FILTER_GRID_CLASS, TOPOLOGY_NODE_GRID_CLASS, TopologyPageSkeleton,
+} from '@/components/skeletons/WorkspaceSkeletons';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
@@ -770,7 +773,7 @@ export function BranchTopologyPage(): JSX.Element {
       <Workspace fluid>
         {state.status === 'loading' ? <TopologyPageSkeleton /> : <>
         {state.status === 'ok' && refreshError ? <div role="alert" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-warn"><p className="min-w-0 flex-1">拓扑读取失败：{refreshError}；当前显示上次成功读取的快照。</p><Button variant="outline" style={{ minHeight: 44 }} disabled={refreshing} onClick={() => void refresh()}>重试读取</Button></div> : null}
-        {state.status === 'ok' ? <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
+        {state.status === 'ok' ? <div className={TOPOLOGY_CONTROLS_CLASS}>
           <div className="space-y-2 px-4 py-3" aria-label="拓扑概况">
             {refreshError ? <p className="text-sm text-muted-foreground">上次拓扑快照</p> : null}
             <dl className="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm">
@@ -791,7 +794,7 @@ export function BranchTopologyPage(): JSX.Element {
           {state.status === 'ok' ? (
             <div className="border-t border-border px-4 py-3">
               <div className="space-y-3">
-                <div className="grid gap-3 lg:grid-cols-[13.75rem_minmax(16.25rem,1fr)_minmax(16.25rem,26.25rem)] lg:items-center">
+                <div className={TOPOLOGY_FILTER_GRID_CLASS}>
                   <label className="relative block">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <input
@@ -799,14 +802,14 @@ export function BranchTopologyPage(): JSX.Element {
                       onChange={(event) => setBranchFilter(event.target.value)}
                       className="h-11 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
                       placeholder="搜索分支"
-                      style={{ height: 44 }}
+                      style={{ height: TOPOLOGY_CONTROL_HEIGHT }}
                     />
                   </label>
                   <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[3.25rem_minmax(0,1fr)] sm:items-center">
                     <span>分支</span>
                     <select
                       className="h-11 min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      style={{ height: 44 }}
+                      style={{ height: TOPOLOGY_CONTROL_HEIGHT }}
                       value={selectedBranchId}
                       onChange={(event) => setSelectedBranchId(event.target.value)}
                     >
@@ -819,7 +822,7 @@ export function BranchTopologyPage(): JSX.Element {
                     </select>
                   </label>
                   <details className="group min-w-0">
-                    <summary style={{ minHeight: 44 }} className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />按分支名打开预览</summary>
+                    <summary style={{ minHeight: TOPOLOGY_CONTROL_HEIGHT }} className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />按分支名打开预览</summary>
                   <form
                     className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
                     onSubmit={(event) => {
@@ -872,7 +875,7 @@ export function BranchTopologyPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className={`grid gap-4 ${state.profiles.length || state.infra.length ? 'xl:grid-cols-[minmax(0,1fr)_21.25rem]' : ''}`}>
+          <div className={`grid gap-4 ${state.profiles.length || state.infra.length ? TOPOLOGY_BODY_GRID_CLASS : ''}`}>
             <section ref={serviceWorkspace} tabIndex={-1} aria-label="服务与基础设施" className={`cds-surface-raised cds-hairline p-4 ${state.profiles.length || state.infra.length ? 'min-h-[38.75rem]' : ''}`}>
               {state.profiles.length === 0 && state.infra.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-sm text-muted-foreground">
@@ -896,7 +899,7 @@ export function BranchTopologyPage(): JSX.Element {
                     description={activeBranch ? `当前分支：${activeBranch.branch}` : '共享视图：聚合所有已跟踪分支'}
                     icon={<Cloud className="h-4 w-4" />}
                   >
-                    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                    <div className={TOPOLOGY_NODE_GRID_CLASS}>
                       {state.profiles.map((profile) => (
                         <ProfileNode
                           key={profile.id}
@@ -930,7 +933,7 @@ export function BranchTopologyPage(): JSX.Element {
                         </Button>
                       </div>
                     ) : (
-                      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                      <div className={TOPOLOGY_NODE_GRID_CLASS}>
                         {state.infra.map((service) => (
                           <InfraNode
                             key={service.id}
@@ -1015,7 +1018,7 @@ function TopologyBand({
   children: JSX.Element;
 }): JSX.Element {
   return (
-    <section className="rounded-md border border-border bg-background/40 p-4">
+    <section className={TOPOLOGY_BAND_CLASS}>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
           {icon}

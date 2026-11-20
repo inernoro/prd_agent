@@ -3,18 +3,21 @@ import { useSearchParams } from 'react-router-dom';
 import { RefreshCw, ArrowRight, Loader2 } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
-import { DtsBodySkeleton, DtsHeading } from '@/components/skeletons/DtsSkeleton';
+import {
+  DTS_ENVIRONMENT_GRID_CLASS, DTS_LAYOUT_CLASS, DTS_PANEL_CLASS as panelClass,
+  DTS_PROJECT_LABEL_CLASS, DtsBodySkeleton, DtsEmptySelection, DtsHeading,
+  DtsProjectSelectorSkeleton,
+} from '@/components/skeletons/DtsSkeleton';
 import { apiRequest } from '@/lib/api';
 import { dtsApi, loadDts, type Plan, type Run, type DtsMode } from '@/lib/dts';
 
 const inputClass = 'w-full rounded-md border border-input bg-background p-2 text-sm';
-const panelClass = 'rounded-lg border border-input bg-background p-5 space-y-4';
 const active = (r: Run) => !['completed', 'failed', 'cancelled', 'paused'].includes(r.status);
 const labels: Record<Run['status'], string> = { preparing: '复核差异', submitting: '提交中', running: '传输中', verifying: '核对数据', pausing: '暂停中', paused: '已暂停', cancelling: '取消中', cancelled: '已取消', completed: '已完成', failed: '未通过', uncertain: '待确认' };
 export function DtsPage(): JSX.Element {
   const [params, setParams] = useSearchParams();
   const projectId = params.get('project') || '';
-  const [projects, setProjects] = useState<{ id: string; name: string; aliasName?: string }[]>([]);
+  const [projects, setProjects] = useState<{ id: string; name: string; aliasName?: string }[]>();
   const [error, setError] = useState('');
   useEffect(() => {
     const c = new AbortController();
@@ -22,10 +25,12 @@ export function DtsPage(): JSX.Element {
     return () => c.abort();
   }, []);
   return <AppShell active="project-list" topbar={<TopBar left={<Crumb items={[{ label: '项目', href: '/project-list' }, { label: '数据同步' }]} />} />}>
-    <Workspace fluid><div className="mx-auto max-w-5xl space-y-6 py-6">
-      <DtsHeading selector={<label className="min-w-56 text-sm">所属项目<select aria-label="所属项目" className={inputClass} value={projectId} onChange={e => setParams(e.target.value ? { project: e.target.value } : {})}><option value="">选择项目</option>{projects.map(p => <option key={p.id} value={p.id}>{p.aliasName || p.name}</option>)}</select></label>} />
+    <Workspace fluid><div className={DTS_LAYOUT_CLASS}>
+      <DtsHeading selector={projects || error
+        ? <label className={DTS_PROJECT_LABEL_CLASS}>所属项目<select aria-label="所属项目" className={inputClass} value={projectId} onChange={e => setParams(e.target.value ? { project: e.target.value } : {})}><option value="">选择项目</option>{projects?.map(p => <option key={p.id} value={p.id}>{p.aliasName || p.name}</option>)}</select></label>
+        : <DtsProjectSelectorSkeleton />} />
       {error && <p role="alert">{error}</p>}
-      {projectId ? <ProjectDts key={projectId} projectId={projectId} /> : <p className={panelClass}>请选择项目，查看已批准的数据连接和同步任务。</p>}
+      {projectId ? <ProjectDts key={projectId} projectId={projectId} /> : <DtsEmptySelection />}
     </div></Workspace>
   </AppShell>;
 }
@@ -74,7 +79,7 @@ function ProjectDts({ projectId }: { projectId: string }): JSX.Element {
     {error && <p className="rounded-md border border-destructive p-3 text-sm" role="alert">{error}</p>}{notice && <p role="status" className="text-sm">{notice}</p>}
     {!data.capabilities.configured && <p className={panelClass}>尚未连接传输服务。管理员可在下方配置服务，并登记需要同步的环境。</p>}
     <section className={panelClass} aria-label="比较数据"><div className="flex items-center justify-between"><h2 className="font-semibold">选择同步范围</h2><Button variant="ghost" size="sm" disabled={busy} onClick={() => setRevision(v => v + 1)}><RefreshCw />刷新</Button></div>
-      <div className="grid items-end gap-4 md:grid-cols-[1fr_auto_1fr]">{(['source', 'target'] as const).map((side, i) => <div key={side} className="contents">{i === 1 && <ArrowRight className="hidden md:block" />}<label className="space-y-2 text-sm">{side === 'source' ? '源环境（正式）' : '目标环境（备用）'}<select className={inputClass} aria-label={side === 'source' ? '源环境' : '目标环境'} disabled={busy} value={side === 'source' ? source : target} onChange={e => { clearPlan(); (side === 'source' ? setSource : setTarget)(e.target.value); if (side === 'source') { setTarget(''); if (!['mongo','mysql','postgres'].includes(choices.find(c => c.id === e.target.value)?.kind || '')) setMode('append-only'); } }}><option value="">选择已批准的连接</option>{choices.map(c => <option key={c.id} value={c.id} disabled={side === 'target' && (!c.allowWrite || c.kind !== sourceKind)}>{c.name} · {c.database}/{c.collection}</option>)}</select></label></div>)}</div>
+      <div className={DTS_ENVIRONMENT_GRID_CLASS}>{(['source', 'target'] as const).map((side, i) => <div key={side} className="contents">{i === 1 && <ArrowRight className="hidden md:block" />}<label className="space-y-2 text-sm">{side === 'source' ? '源环境（正式）' : '目标环境（备用）'}<select className={inputClass} aria-label={side === 'source' ? '源环境' : '目标环境'} disabled={busy} value={side === 'source' ? source : target} onChange={e => { clearPlan(); (side === 'source' ? setSource : setTarget)(e.target.value); if (side === 'source') { setTarget(''); if (!['mongo','mysql','postgres'].includes(choices.find(c => c.id === e.target.value)?.kind || '')) setMode('append-only'); } }}><option value="">选择已批准的连接</option>{choices.map(c => <option key={c.id} value={c.id} disabled={side === 'target' && (!c.allowWrite || c.kind !== sourceKind)}>{c.name} · {c.database}/{c.collection}</option>)}</select></label></div>)}</div>
       <label className="block text-sm">同步方式<select className={inputClass} value={mode} disabled={busy} onChange={e => { clearPlan(); setMode(e.target.value as DtsMode); }}><option value="append-only">只追加缺失项</option><option value="account-authority" disabled={!accountModeAllowed}>账号资料以正式环境为准</option></select></label>
       <p className="text-sm text-muted-foreground">{sourceKind && data.capabilities.connectors.find(c => c.kind === sourceKind)?.message}</p><p className="text-sm text-muted-foreground">{mode === 'append-only' ? '已有记录和备用环境专属数据会保留。' : '仅校准管理员批准的资料字段；身份授权由集群统一管理。'}</p>
       <Button disabled={busy || !source || !target || source === target || !data.capabilities.configured || !data.capabilities.executeAllowed} onClick={() => void compare()}>{busy && <Loader2 className="animate-spin" />}比较差异</Button>

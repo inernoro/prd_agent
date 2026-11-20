@@ -18,6 +18,7 @@ const WEB = path.resolve(process.cwd(), '../cds/web/src');
 const read = (rel: string): string => fs.readFileSync(path.join(WEB, rel), 'utf8');
 
 const page = read('pages/ReleaseCenterPage.tsx');
+const navigation = read('components/skeletons/ReleaseCenterSkeleton.tsx');
 const matrix = read('pages/release-center/FleetMatrix.tsx');
 const config = read('pages/release-center/EnvConfigSection.tsx');
 const health = read('pages/release-center/HealthSection.tsx');
@@ -32,8 +33,9 @@ describe('稿子 §0 全局外壳', () => {
   });
 
   it('分区导航五格，且带计数角标', () => {
+    expect(page).toContain('<ReleaseCenterNavigation section={section} badgeFor={sectionBadge} onSelect={setSection}');
     for (const label of ['全环境矩阵', '环境与配置', '自动发布规则', '健康监测', '证据归档']) {
-      expect(page, `缺分区 ${label}`).toContain(`label: '${label}'`);
+      expect(navigation, `缺分区 ${label}`).toContain(`label: '${label}'`);
     }
     expect(page).toContain('sectionBadge');
     expect(page).toContain('未监测');
