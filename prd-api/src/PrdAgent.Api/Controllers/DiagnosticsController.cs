@@ -90,13 +90,6 @@ public class DiagnosticsController : ControllerBase
             return Ok(ApiResponse<NetworkDiagnosticsResult>.Ok(result));
         }
 
-        var gateway = new Uri(_config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091", UriKind.Absolute);
-        using var guardedTransport = new MapModelEgressHandler("NetworkDiagnostics", gateway)
-        {
-            InnerHandler = _connector.CreateHandler(target),
-        };
-        using var httpClient = new HttpClient(guardedTransport, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(5) };
-
         // 1. DNS 解析测试
         result.Tests.Add(new DiagnosticTest
         {
@@ -112,20 +105,46 @@ public class DiagnosticsController : ControllerBase
             result.Tests.Add(await TestSsl(target, ct));
         }
 
+        var gatewayIsValid = Uri.TryCreate(_config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091",
+            UriKind.Absolute, out var gateway)
+            && (gateway.Scheme == Uri.UriSchemeHttp || gateway.Scheme == Uri.UriSchemeHttps)
+            && !string.IsNullOrEmpty(gateway.Host);
+        using var guardedTransport = gatewayIsValid
+            ? new MapModelEgressHandler("NetworkDiagnostics", gateway!)
+            {
+                InnerHandler = _connector.CreateHandler(target),
+            }
+            : null;
+        using var httpClient = guardedTransport is null
+            ? null
+            : new HttpClient(guardedTransport, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(5) };
+
         // 3. API 端点测试
-        result.Tests.Add(await TestApiEndpoint(httpClient, target.Uri, ct));
+        result.Tests.Add(httpClient is null
+            ? HttpConfigurationFailure("API")
+            : await TestApiEndpoint(httpClient, target.Uri, ct));
 
         // 4. Ping 测试（TCP 连接延迟）
         result.Tests.Add(await TestPing(target, ct));
 
         // 5. 聊天功能测试（简化版，只测试端点可达性）
-        result.Tests.Add(await TestChatEndpoint(httpClient, target.Uri, ct));
+        result.Tests.Add(httpClient is null
+            ? HttpConfigurationFailure("Chat")
+            : await TestChatEndpoint(httpClient, target.Uri, ct));
 
         // 6. Agent 功能测试（简化版）
         result.Tests.Add(TestAgentEndpoint(clientUrl));
 
         return Ok(ApiResponse<NetworkDiagnosticsResult>.Ok(result));
     }
+
+    private static DiagnosticTest HttpConfigurationFailure(string name) => new()
+    {
+        Name = name,
+        Status = "failed",
+        Message = "网关 HTTP 诊断地址配置无效",
+        Duration = 0
+    };
 
     private async Task<DiagnosticTest> TestSsl(SafeDiagnosticTarget target, CancellationToken ct)
     {

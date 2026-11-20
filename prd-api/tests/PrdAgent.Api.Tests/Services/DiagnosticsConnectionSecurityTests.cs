@@ -25,6 +25,54 @@ public class DiagnosticsConnectionSecurityTests(ITestOutputHelper output)
     private static readonly Uri Target = new("http://diagnostics.invalid:8443");
 
     [Theory]
+    [InlineData("not-an-absolute-url", false)]
+    [InlineData("file:///tmp/diagnostics", false)]
+    [InlineData("http://gateway.invalid:8091", true)]
+    [InlineData(null, true)]
+    public async Task GatewayConfiguration_OnlyAffectsHttpChecks(string? gatewayBase, bool httpAvailable)
+    {
+        var attempts = new ConcurrentBag<IPEndPoint>();
+        var connector = new SafeOutboundDiagnosticConnector(new SafeOutboundUrlValidator(),
+            (_, _) => Task.FromResult(new[] { Public }),
+            (endpoint, _) =>
+            {
+                attempts.Add(endpoint);
+                return ValueTask.FromResult<Stream>(new InMemoryHttpResponseStream());
+            });
+
+        var result = await RunController(connector, gatewayBase: gatewayBase);
+
+        Assert.Equal(new[] { "DNS", "API", "Ping", "Chat", "Agent" }, result.Tests.Select(test => test.Name));
+        foreach (var test in result.Tests)
+        {
+            if (!httpAvailable && test.Name is "API" or "Chat")
+            {
+                Assert.Equal("failed", test.Status);
+                Assert.Equal("网关 HTTP 诊断地址配置无效", test.Message);
+            }
+            else
+            {
+                Assert.Equal("success", test.Status);
+            }
+        }
+
+        Assert.Equal(httpAvailable ? 3 : 1, attempts.Count);
+        Assert.All(attempts, endpoint => Assert.Equal(new IPEndPoint(Public, Target.Port), endpoint));
+    }
+
+    private sealed class InMemoryHttpResponseStream()
+        : MemoryStream("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray(), writable: false)
+    {
+        public override bool CanWrite => true;
+        public override void Write(byte[] buffer, int offset, int count) { }
+        public override void Write(ReadOnlySpan<byte> buffer) { }
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.CompletedTask;
+    }
+
+    [Theory]
     [InlineData("127.0.0.1")]
     [InlineData("169.254.169.254")]
     [InlineData("169.254.1.1")]
