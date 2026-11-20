@@ -1,5 +1,7 @@
 import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
-import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import {
+  BRANCH_RELATIONS_CANVAS_CLASS, BRANCH_RELATIONS_LAYOUT_CLASS, BranchRelationsSkeleton,
+} from '@/components/skeletons/WorkspaceSkeletons';
 /*
  * BranchRelationsPage — 全屏关系图（plan.cds.service-relations 第四批）。独立路由，可分享。
  * 与总览关系卡、展开视图、cdscli topology 读同一份 service-graph 数据。
@@ -51,7 +53,7 @@ export function BranchRelationsPage(): JSX.Element {
     if (relationReturnKind(token, actor, branchId, location.key, window.history.state?.idx)) navigate(-1);
     else navigate(branchId ? `/branch-panel/${encodeURIComponent(branchId)}` : '/branch-list');
   };
-  const returnLabel = returnKind === 'branches' ? '返回分支总览' : returnKind === 'overview' ? '返回项目关系总览' : '返回分支详情';
+  const returnLabel = returnKind === 'branches' ? '返回分支总览' : '返回分支详情';
   const { state, reload, refreshing, refreshError } = useRelationPayload(branchId);
   const [onlyProblems, setOnlyProblems] = useState(false);
   const data = state.status === 'ok' ? state.data : null;
@@ -83,13 +85,13 @@ export function BranchRelationsPage(): JSX.Element {
         {copyState === 'error' ? <div role="alert" className="mb-3 space-y-2 text-sm text-warn"><p>自动复制未完成。可再次复制链接，或选中以下完整地址手动复制。</p><input ref={manualAddress} aria-label="关系图完整地址" readOnly value={canonical} onFocus={event => event.currentTarget.select()} className="w-full rounded-md border border-input bg-background px-3 text-foreground" style={{ minHeight: '3.25rem' }} /></div> : null}
         {copyState === 'copied' ? <div role="status" className="fixed z-50 rounded-md border border-border bg-card px-4 py-3 text-sm shadow-lg" style={bottomRightToastStyle}>链接已复制</div> : null}
         {refreshError && data ? <p role="alert" className="py-3 text-sm text-destructive">刷新失败：{refreshError}；当前显示上次读取的内容。</p> : null}
-        {state.status === 'loading' ? <ContentLoading label="读取服务关系" variant="panel" /> : null}
+        {state.status === 'loading' ? <BranchRelationsSkeleton /> : null}
         {state.status === 'error' ? <div className="p-6 text-xs text-destructive">读取失败：{state.message}</div> : null}
         {data ? (
-          <div className="flex h-full min-h-0 flex-col gap-3">
+          <div className={BRANCH_RELATIONS_LAYOUT_CLASS}>
             <div className="text-xs text-foreground-muted">{relationHeadline(data)}</div>
             {/* 与展开视图同一个主体：问题带在上、关系图在下，不再是右侧窄栏 */}
-            <div className="cds-hairline flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-[hsl(var(--surface-base))]">
+            <div className={BRANCH_RELATIONS_CANVAS_CLASS}>
               <RelationWorkspace data={data} onlyProblems={onlyProblems} />
             </div>
           </div>

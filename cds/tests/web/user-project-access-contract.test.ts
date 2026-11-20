@@ -54,13 +54,14 @@ describe('human project access UI wiring', () => {
     expect(member).toContain('href="/project-list"');
     expect(member).toContain('href="/cds-settings#activity"');
     expect(member).toContain('个人操作痕迹');
-    for (const ownerRoute of ['/overview', '/release-center', '/release-console', '/task-schedule', '/reports', '/status']) {
+    for (const ownerRoute of ['/release-center', '/release-console', '/task-schedule', '/reports', '/status']) {
       expect(member).not.toContain(`href="${ownerRoute}"`);
     }
     expect(member).not.toContain('CDS 系统设置');
     const owner = render(true);
     expect(owner).toContain('CDS 系统设置');
     expect(owner).toContain('href="/release-center"');
+    expect(owner).not.toContain('href="/overview"');
   });
   it('fails closed before auth resolves and keeps legacy owner/disabled mode compatibility', () => {
     expect(canManageSystemSettings(null)).toBe(false);

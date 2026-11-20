@@ -113,7 +113,11 @@ try {
   };
   holdData();
   await page.goto(base + '/project-list');
+  await page.getByRole('status', { name: '页面加载中', exact: true }).waitFor();
+  const projectCrumb = page.getByRole('navigation', { name: '面包屑', exact: true }).getByText('项目', { exact: true });
+  await projectCrumb.waitFor();
   await page.waitForSelector('[aria-label="加载项目列表"]');
+  await page.locator('main.cds-page-enter [aria-label="加载项目列表"] .cds-project-actions').first().waitFor();
   const projectBefore = await geometry('[aria-busy="true"] .cds-card-grid article');
   await filledPulse();
   await page.screenshot({ path: out + '/projects-skeleton.png' });
@@ -153,6 +157,10 @@ try {
     await page.goto(base + route);
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await page.waitForSelector(pending);
+    if (route === '/project-list') {
+      assert(await projectCrumb.isVisible());
+      assert(await page.getByRole('button', { name: '更多操作', exact: true }).isVisible());
+    }
     const before = await geometry(pending);
     await filledPulse();
     await page.screenshot({ path: out + '/' + label.replaceAll(' ', '-') + '-skeleton.png' });

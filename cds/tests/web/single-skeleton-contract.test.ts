@@ -27,6 +27,9 @@ import { SettingsPageSkeleton } from '../../web/src/components/skeletons/Setting
 import { branchNoticeVisible, ResourceTcpConnectionStatus, ServiceLogsPanel } from '../../web/src/components/BranchDetailDrawer.js';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '../../web/src/pages/cds-settings/components.js';
 import { MonitorCenterSkeleton } from '../../web/src/pages/status/primitives.js';
+import { MonitorHomeSkeleton } from '../../web/src/components/skeletons/MonitorHomeSkeleton.js';
+import { ReportsSkeleton } from '../../web/src/components/skeletons/ReportsSkeleton.js';
+import { TaskScheduleSkeleton } from '../../web/src/components/skeletons/TaskScheduleSkeleton.js';
 import { CommonLoadingSkeleton } from '../../web/src/pages/cds-settings/tabs/LoadingPagesTab.js';
 import { MetricsSkeleton, OverviewPanel } from '../../web/src/components/branch/OverviewPanel.js';
 
@@ -147,7 +150,7 @@ describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () =
 describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件', () => {
   it('外壳的 Suspense fallback 按路由取 pageSkeletonForPath，不再自画固定方块', () => {
     const shell = stripComments(read('components/layout/AppShell.tsx'));
-    expect(shell).toContain('pageSkeletonForPath(pathname, { canManageProjects, search })');
+    expect(shell).toMatch(/pageSkeletonForPath\(pathname, \{[^}]*canManageProjects[^}]*search/);
     expect(shell).toContain("from '@/components/skeletons/PageSkeletons'");
     const fallback = shell.slice(shell.indexOf('function ConsoleRouteFallback'), shell.indexOf('function ConsoleRouteFallback') + 1200);
     expect(fallback).not.toContain('cds-loading-skeleton-panel h-40');
@@ -191,7 +194,7 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
   it('设置页签的代码等待保留设置卡片结构', () => {
     const settings = stripComments(read('pages/CdsSettingsPage.tsx'));
     const fallback = settings.slice(settings.indexOf('function SettingsTabFallback'), settings.indexOf('function SettingsTabFallback') + 400);
-    expect(fallback).toContain('<SettingsContentSkeleton');
+    expect(fallback).toContain('<SystemSettingsContentSkeleton tab={tab}');
     expect(fallback).not.toContain('<LoadingBlock');
     expect(fallback).not.toContain('CdsLogoLoader');
   });
@@ -202,13 +205,14 @@ describe('统一骨架：路由、数据和预览共用组件', () => {
   const markup = (node: ReturnType<typeof createElement>) => renderToStaticMarkup(node);
 
   it('监控、分支详情、通用局部页的路由等待与数据等待轮廓一致', () => {
-    expect(markup(pageSkeletonForPath('/status'))).toBe(markup(createElement(MonitorCenterSkeleton)));
+    expect(markup(pageSkeletonForPath('/status'))).toBe(markup(createElement(MonitorHomeSkeleton)));
+    expect(markup(pageSkeletonForPath('/status', { search: '?view=all' }))).toBe(markup(createElement(MonitorCenterSkeleton)));
     expect(markup(pageSkeletonForPath('/branch-panel/fixture'))).toBe(markup(createElement(BranchDetailLoadingSkeleton)));
     expect(markup(pageSkeletonForPath('/cds-settings'))).toBe(markup(createElement(SettingsPageSkeleton)));
-    expect(markup(pageSkeletonForPath('/task-schedule'))).toBe(markup(createElement(LoadingBlock)));
+    expect(markup(pageSkeletonForPath('/task-schedule'))).toBe(markup(createElement(TaskScheduleSkeleton)));
     expect(markup(pageSkeletonForPath('/reports'))).toBe(markup(createElement('div', { className: ACCEPTANCE_LAYOUT_CLASS },
       createElement(AcceptanceNavigation, { view: 'reports' }),
-      createElement(LoadingBlock, { label: '正在加载验收报告' }),
+      createElement(ReportsSkeleton),
     )));
   });
 
@@ -278,6 +282,10 @@ describe('项目页从骨架到正文保持相同布局', () => {
     for (const group of ['cds-project-status-filters', 'cds-project-inventory-tools', 'cds-project-inventory-search', 'cds-project-view-switch']) expect(html).toContain(group);
     expect((html.match(/<button[^>]*disabled/g) || []).length).toBe(8);
     expect((html.match(/<select[^>]*disabled/g) || []).length).toBe(2);
+    expect(html).toContain('aria-pressed="true">全部项目');
+    for (const slot of ['cds-project-monogram', 'cds-project-state', 'cds-project-online', 'cds-project-branch', 'cds-project-inventory-footer']) {
+      expect(html).toContain(slot);
+    }
     expect(html).not.toContain('h-8 w-72');
   });
 
@@ -299,12 +307,14 @@ describe('项目加载骨架遵从已知管理能力', () => {
       const html = renderToStaticMarkup(node);
       expect(html).not.toContain('导入仓库');
       expect(html).not.toContain('新建项目');
+      expect(html).not.toContain('cds-project-actions');
       expect(html).toContain('cds-project-status-filters');
     }
     for (const node of [createElement(ProjectListSkeleton, { canManageProjects: true }), pageSkeletonForPath('/project-list', { canManageProjects: true })]) {
       const html = renderToStaticMarkup(node);
       expect(html).toContain('导入仓库');
       expect(html).toContain('新建项目');
+      expect((html.match(/class="cds-project-actions"/g) || []).length).toBe(6);
     }
   });
 });

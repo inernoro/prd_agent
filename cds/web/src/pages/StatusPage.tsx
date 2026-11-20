@@ -66,6 +66,7 @@ import { OwnerBoard } from './status/OwnerBoard';
 import { TargetDetail, type TargetActions } from './status/TargetDetail';
 import { TargetList } from './status/TargetList';
 import { MonitorCenterErrorCard, MonitorCenterSkeleton, SegmentedControl } from './status/primitives';
+import { MonitorHomeSkeleton } from '@/components/skeletons/MonitorHomeSkeleton';
 
 const SEGMENTS = 48;
 const POLL_INTERVAL_MS = 30_000;
@@ -434,7 +435,7 @@ export function StatusPage(): JSX.Element {
           ) : null}
 
           {phase === 'loading' ? (
-            <MonitorCenterSkeleton />
+            boardView === 'home' ? <MonitorHomeSkeleton /> : <MonitorCenterSkeleton />
           ) : phase === 'error' || !summary || !headline ? (
             <MonitorCenterErrorCard message={error || '未知错误'} onRetry={() => void load()} retrying={refreshing} pollSeconds={POLL_INTERVAL_MS / 1000} />
           ) : (
