@@ -104,6 +104,30 @@ async function receivesFocus(page, locator) {
   }
 }
 
+async function placeholderContrast(input) {
+  return input.evaluate(element => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const pen = canvas.getContext('2d', { willReadFrequently: true });
+    const rgba = color => {
+      pen.clearRect(0, 0, 1, 1);
+      pen.fillStyle = color;
+      pen.fillRect(0, 0, 1, 1);
+      return [...pen.getImageData(0, 0, 1, 1).data];
+    };
+    const placeholder = getComputedStyle(element, '::placeholder');
+    const foreground = rgba(placeholder.color);
+    const background = rgba(getComputedStyle(element).backgroundColor);
+    const opacity = Number(placeholder.opacity) * foreground[3] / 255;
+    const composite = foreground.slice(0, 3).map((value, index) => value * opacity + background[index] * (1 - opacity));
+    const luminance = color => color.slice(0, 3).map(value => value / 255)
+      .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+      .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    const levels = [luminance(composite), luminance(background)];
+    return (Math.max(...levels) + 0.05) / (Math.min(...levels) + 0.05);
+  });
+}
+
 async function criterionShowsOwnResult(drawer, index, verdict, note) {
   const title = paid.criteria[index].text;
   const otherTitle = paid.criteria[1 - index].text;
@@ -208,6 +232,8 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     const formBounds = await firstCheck.boundingBox();
     check(formBounds.height <= 142, `桌面逐项偿还标准过高（${formBounds.height.toFixed(1)} CSS px）`);
     check(await firstCheck.getByText(`1. ${active.criteria[0].text}`, { exact: true }).isVisible(), '偿还标准未显示核对顺序');
+    const contrast = await placeholderContrast(verification.getByLabel('实际结果', { exact: true }).first());
+    check(contrast >= 4.5, `浅色偿还输入提示对比度为 ${contrast.toFixed(2)}，应至少 4.5`);
     await verification.getByRole('radiogroup', { name: active.criteria[0].text }).getByText('达标', { exact: true }).click();
     await verification.getByRole('radiogroup', { name: active.criteria[1].text }).getByText('不适用', { exact: true }).click();
     const missingReason = await verification.locator('input[name="note-c2"]').evaluate(input => input.required && input.validity.valueMissing);
@@ -260,7 +286,7 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     check(resultsVisible, '已偿债务缺少已存的逐项判定及核验说明');
     if (failures.length > 0) await page.screenshot({ path: path.join(out, 'failure-planning-debt-detail-desktop.png') });
     return { handoff, copiedBrief, historicCitation, returnedToAction, returnedToDebt, draftPreserved, browserBackClearedEditor, resultsVisible,
-      notApplicableReasonRequired: missingReason && metReasonOptional };
+      notApplicableReasonRequired: missingReason && metReasonOptional, placeholderContrast: contrast };
   });
 
   const mobile = await runWithDebtList(browser, base, true, async page => {
@@ -323,9 +349,11 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     const repayBounds = await verification.boundingBox();
     check(repayBounds.y <= 9 && repayBounds.y + repayBounds.height >= page.viewportSize().height - 9,
       `移动端核对表单没有充分使用可视高度（顶部 ${repayBounds.y.toFixed(1)}px，高 ${repayBounds.height.toFixed(1)}px）`);
+    const contrast = await placeholderContrast(verification.getByLabel('实际结果', { exact: true }).first());
+    check(contrast >= 4.5, `深色偿还输入提示对比度为 ${contrast.toFixed(2)}，应至少 4.5`);
     if (failures.length > 0) await page.screenshot({ path: path.join(out, 'failure-planning-debt-detail-dark320.png') });
     return { primary: [primary.width, primary.height], close: [close.width, close.height], closeGlyph: [closeGlyph.width, closeGlyph.height],
-      destructiveHidden, destructiveReachable, menuFocus };
+      destructiveHidden, destructiveReachable, menuFocus, placeholderContrast: contrast };
   });
   const longMobile = await verifyLongMobileDebt(browser, base, out, check);
   assert.equal(failures.length, 0, `工程规划债务详情对抗检查失败\n${failures.join('\n')}`);

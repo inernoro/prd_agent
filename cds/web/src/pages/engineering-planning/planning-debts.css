@@ -161,6 +161,7 @@
 }
 .ep-repay-check .ep-field > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .ep-dialog .ep-repay-check select, .ep-dialog .ep-repay-check input[type=text] { min-height: 32px; padding-block: 4px; }
+.ep-repay-check input::placeholder { color: var(--ep-muted); opacity: 1; }
 .ep-repay-check-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
 .ep-repay-check-head strong { font-weight: 650; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
 .ep-verdicts {
