@@ -173,6 +173,19 @@
   -webkit-backdrop-filter: blur(18px) saturate(135%);
 }
 
+.share-dock__panel.share-dock__panel--configuring {
+  max-height: inherit;
+  overflow-y: auto;
+  transition-property: opacity, box-shadow;
+  background: linear-gradient(var(--panel-solid), var(--panel-solid)), var(--bg-base);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.share-dock__panel--configuring .share-dock__header {
+  background: transparent;
+}
+
 .share-dock__collapsed {
   border-right: 0;
   box-shadow: var(--shadow-card);

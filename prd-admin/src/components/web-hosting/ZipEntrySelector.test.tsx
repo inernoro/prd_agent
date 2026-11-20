@@ -44,17 +44,17 @@ it('快捷上传默认系统查找，只有手动选择才列出文件并要求�
   expect(readZipEntryOptions).not.toHaveBeenCalled();
 
   await selectValue(mode, 'manual');
-  const list = container.querySelectorAll('select')[1];
-  expect([...list.options].some(option => option.text === 'manifest.json' && option.disabled)).toBe(true);
+  const list = container.querySelector('[role="group"]');
+  expect(list?.querySelector('[aria-label="其他文件"]')?.textContent).toContain('manifest.json');
   const submit = [...container.querySelectorAll('button')].find(button => button.textContent === '开始上传')!;
   expect(submit.disabled).toBe(true);
-  await selectValue(list, '扫描/report.md');
+  await act(async () => list?.querySelector<HTMLInputElement>('input[type="radio"]')?.click());
   expect(submit.disabled).toBe(false);
   await act(async () => submit.click());
   expect(upload).toHaveBeenCalledWith('扫描/report.md');
 
   await selectValue(mode, 'directory');
-  expect(container.querySelectorAll('select')).toHaveLength(1);
+  expect(container.querySelector('[role="group"]')).toBeNull();
   await act(async () => submit.click());
   expect(upload).toHaveBeenLastCalledWith('');
 });

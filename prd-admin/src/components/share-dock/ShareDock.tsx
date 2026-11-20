@@ -94,7 +94,10 @@ export interface ShareDockProps {
 
 const DOCK_W_DEFAULT = 192;
 const DOCK_W_COMPACT = 236; // 配合 dropzone + 横排槽位时稍宽，方形上传区适中不夸张
+const DOCK_W_CONFIGURING = 360;
 const DOCK_MARGIN = 16;
+const DOCK_CONFIG_MARGIN = 8;
+const DOCK_CONFIG_HEIGHT = 560;
 
 /**
  * 通用投放面板（ShareDock）。
@@ -363,16 +366,24 @@ export function ShareDock({
     );
   }
 
+  const configTop = `clamp(${DOCK_CONFIG_MARGIN}px, ${pos.top}px, calc(100dvh - ${DOCK_CONFIG_HEIGHT}px))`;
+
   return (
     <div
       ref={dockRef}
       data-tour-id="share-dock-panel"
       className="fixed z-40 select-none"
-      style={{ left: pos.left, top: pos.top, width: dockW }}
+      style={fileOptions ? {
+        width: `min(${DOCK_W_CONFIGURING}px, calc(100vw - ${2 * DOCK_CONFIG_MARGIN}px))`,
+        left: `clamp(${DOCK_CONFIG_MARGIN}px, ${pos.left + dockW - DOCK_W_CONFIGURING}px, calc(100vw - ${DOCK_W_CONFIGURING + DOCK_CONFIG_MARGIN}px))`,
+        top: configTop,
+        maxHeight: `calc(100dvh - ${configTop} - ${DOCK_CONFIG_MARGIN}px)`,
+      } : { left: pos.left, top: pos.top, width: dockW }}
     >
       <div
         className={[
           'share-dock__panel w-full overflow-hidden rounded-2xl transition-all duration-200',
+          fileOptions ? 'share-dock__panel--configuring' : '',
           dragging ? 'share-dock__panel--active scale-[1.03]' : '',
           movingDock ? 'opacity-85' : '',
         ].join(' ')}
@@ -381,7 +392,8 @@ export function ShareDock({
         <div
           onPointerDown={onHandlePointerDown}
           className={[
-            'share-dock__header flex items-center justify-between gap-1 px-2 py-2 text-[11px]',
+            'share-dock__header flex items-center justify-between gap-1',
+            fileOptions ? 'px-4 py-2.5 text-[13px]' : 'px-2 py-2 text-[11px]',
             movingDock ? 'cursor-grabbing' : 'cursor-grab',
           ].join(' ')}
         >
@@ -390,7 +402,7 @@ export function ShareDock({
             <span className="truncate font-medium tracking-wide">{title}</span>
           </span>
           <div className="flex items-center gap-1">
-            {badgeCount > 0 && (
+            {!fileOptions && badgeCount > 0 && (
               <span className="share-dock__badge inline-flex min-w-[20px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold">
                 {badgeCount}
               </span>
@@ -409,7 +421,7 @@ export function ShareDock({
 
         {/* 文件 dropzone：1:1 方形大区域，支持「拖入 / 点击」两种上传，
             上传成功后内联展示分享码，用户一步拿到分享链接 */}
-        {dropzone && (
+        {fileOptions ? <div data-no-drag>{fileOptions}</div> : dropzone && (
           <div className="mx-2 mt-2 flex justify-center">
             {/* 点击上传用的隐藏 input */}
             <input
@@ -428,21 +440,21 @@ export function ShareDock({
             <div
               data-no-drag
               data-tour-id="webpages-dropzone"
-              role={uploadState === 'idle' && !fileOptions ? 'button' : undefined}
-              tabIndex={uploadState === 'idle' && !fileOptions ? 0 : undefined}
-              aria-label={uploadState === 'idle' && !fileOptions ? '点击或拖文件到此上传' : undefined}
+              role={uploadState === 'idle' ? 'button' : undefined}
+              tabIndex={uploadState === 'idle' ? 0 : undefined}
+              aria-label={uploadState === 'idle' ? '点击或拖文件到此上传' : undefined}
               className={[
                 'share-dock__dropzone flex w-full flex-col items-center justify-center gap-1.5 rounded-xl p-2.5 text-center transition-all',
-                uploadState === 'idle' && !fileOptions ? 'cursor-pointer' : 'cursor-default',
+                uploadState === 'idle' ? 'cursor-pointer' : 'cursor-default',
               ].join(' ')}
-              data-state={fileOptions ? 'configuring' : uploadState}
+              data-state={uploadState}
               data-file-over={fileOver ? 'true' : 'false'}
               // 1:1 方形并在面板内水平居中：maxWidth 限定方形尺寸（外层 flex justify-center 负责居中）；
               // 内容多时（done 态）可自然超过正方形高度
-              style={{ width: '100%', maxWidth: fileOptions ? undefined : 188, aspectRatio: fileOptions ? undefined : '1 / 1' }}
-              onClick={() => { if (uploadState === 'idle' && !fileOptions) fileInputRef.current?.click(); }}
+              style={{ width: '100%', maxWidth: 188, aspectRatio: '1 / 1' }}
+              onClick={() => { if (uploadState === 'idle') fileInputRef.current?.click(); }}
               onKeyDown={(e) => {
-                if (uploadState === 'idle' && !fileOptions && (e.key === 'Enter' || e.key === ' ')) {
+                if (uploadState === 'idle' && (e.key === 'Enter' || e.key === ' ')) {
                   e.preventDefault();
                   fileInputRef.current?.click();
                 }
@@ -475,7 +487,7 @@ export function ShareDock({
                 if (files.length) handleDropzoneFiles(files);
               }}
             >
-              {fileOptions || (uploadState === 'uploading' ? (
+              {uploadState === 'uploading' ? (
                 <>
                   <MapSpinner size={28} />
                   <div className="text-[12px] font-medium">正在上传…</div>
@@ -575,13 +587,13 @@ export function ShareDock({
                     </div>
                   )}
                 </>
-              ))}
+              )}
             </div>
           </div>
         )}
 
         {/* 槽位区 */}
-        <div
+        {!fileOptions && <div
           className={[
             horizontalSlots ? 'grid grid-cols-3 gap-1.5 p-2' : 'flex flex-col gap-2 p-2',
             dragging ? 'dock-active' : '',
@@ -627,10 +639,10 @@ export function ShareDock({
               </div>
             );
           })}
-        </div>
+        </div>}
 
         {/* 底部链接 */}
-        {footerText && (
+        {!fileOptions && footerText && (
           <div className="share-dock__footer px-3 py-2 text-[10.5px]">
             {footerHref ? (
               <a

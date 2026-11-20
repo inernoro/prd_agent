@@ -10,6 +10,11 @@ test('右侧快捷上传在提交前选择 ZIP 首页，上传后保留分享方
   const zip = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false });
   await zip.add('bundle/report.md', new TextReader('# Report'));
   await zip.add('bundle/manifest.json', new TextReader('{}'));
+  const longPath = `bundle/checkpoints/${'a'.repeat(112)}.json`;
+  await zip.add(longPath, new TextReader('{}'));
+  for (let index = 0; index < 8; index++) {
+    await zip.add(`bundle/checkpoints/result-${index}.json`, new TextReader('{}'));
+  }
   const buffer = Buffer.from(await zip.close());
   let uploadBody: string | null = null;
   await page.addInitScript(() => {
@@ -40,12 +45,22 @@ test('右侧快捷上传在提交前选择 ZIP 首页，上传后保留分享方
   const mode = dock.getByRole('combobox', { name: '打开站点时' });
   await expect(mode).toHaveValue('auto');
   await expect(mode.locator('option')).toHaveText(['系统查找', '文件目录', '手动选择']);
-  const files = dock.getByRole('listbox', { name: '首页文件' });
+  const files = dock.getByRole('group', { name: '首页文件' });
+  await expect(files).toHaveCount(0);
+  await mode.selectOption('directory');
   await expect(files).toHaveCount(0);
   await mode.selectOption('manual');
-  await expect(files.getByRole('option', { name: 'manifest.json' })).toHaveAttribute('disabled', '');
+  const resources = files.getByRole('list', { name: '其他文件' });
+  await expect(resources).toContainText('manifest.json');
+  await page.setViewportSize({ width: 1024, height: 500 });
+  await expect.poll(async () => {
+    const bounds = await dock.boundingBox();
+    return !!bounds && bounds.y >= 0 && bounds.y + bounds.height <= 500;
+  }).toBe(true);
+  expect(await resources.getByText(longPath.replace('bundle/', ''), { exact: true }).evaluate(node =>
+    node.clientHeight > 18 && node.scrollWidth === node.clientWidth)).toBe(true);
   await expect(dock.getByRole('button', { name: '开始上传' })).toBeDisabled();
-  await files.selectOption({ label: 'report.md' });
+  await files.getByRole('radio', { name: 'report.md' }).check();
   expect(uploadBody).toBeNull();
   await dock.getByRole('button', { name: '开始上传' }).click();
   await expect(dock.getByRole('button', { name: '无密码分享' })).toBeVisible();
