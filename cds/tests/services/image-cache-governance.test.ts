@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IMAGE_CACHE_PROGRAM } from '../../src/services/image-cache-program.js';
 import { ImageCacheGovernance, collectImageCacheReferences } from '../../src/services/image-cache-governance.js';
@@ -35,17 +36,73 @@ elif a[:2]==['image','rm']:
  p.write_text(json.dumps(v));print('deleted')
 else:sys.exit(2)
 `, { mode: 0o700 });
-  const request = (input: any) => JSON.parse(execFileSync('python3', ['-c', IMAGE_CACHE_PROGRAM], { input: JSON.stringify({ action: 'preview', catalog: path.join(root, 'catalog'), instanceId: 'master-a', budgetBytes: 1024 ** 3, nowMs: now, ...input }), env: { ...process.env, PATH: root + ':' + process.env.PATH }, encoding: 'utf8', timeout: 30_000 }));
+  const request = (input: any, dockerHost?: string) => JSON.parse(execFileSync('python3', ['-c', IMAGE_CACHE_PROGRAM], { input: JSON.stringify({ action: 'preview', catalog: path.join(root, 'catalog'), instanceId: 'master-a', budgetBytes: 1024 ** 3, nowMs: now, ...input }), env: { ...process.env, PATH: root + ':' + process.env.PATH, ...(dockerHost ? { DOCKER_HOST: dockerHost } : {}) }, encoding: 'utf8', timeout: 30_000 }));
   const image = (aliases = ['registry.example/test:old']) => ({ Id: id, Created: '2026-10-01T00:00:00Z', RepoTags: aliases, RepoDigests: [digest], Size: 1024, Os: 'linux', Architecture: 'amd64', Config: { Labels: {} } });
   const born = () => { request({ action: 'publish', references: [] });const pin = request({ action: 'prepare', image: 'registry.example/test:old', peakBytes: 1024 });values.images = [image()];save();request({ action: 'confirm', token: pin.token });request({ action: 'publish', references: [], nowMs: now + 600001 }); };
   const reconcile = () => request({ action: 'reconcile', targetIdentities: [id], registryProofs: { [digest]: { manifest: { config: { digest: id } }, verifiedAt: Date.now() } } });
   return { root, request, image, born, reconcile, save, values, calls };
 }
 describe('image ID governance native protocol with a simulated Docker CLI', () => {
+  it('uses the same daemon’s bulk inventory, preserving existing size units and stopped references', async () => {
+    const f = fixture();
+    const socket = path.join(f.root, 'engine.sock');
+    const server = spawn('python3', ['-c', `
+import socketserver,http.server,json
+class Handler(http.server.BaseHTTPRequestHandler):
+ def log_message(self,*args):pass
+ def do_GET(self):
+  value={
+   '/info':{'ID':'owned-daemon','DockerRootDir':${JSON.stringify(f.root)}},
+   '/images/json?all=1&digests=1&manifests=1':[{'Id':${JSON.stringify(id)},'Created':1790812800,'Size':65536,'RepoDigests':[${JSON.stringify(digest)}],
+    'Manifests':[{'Kind':'image','Available':True,'Size':{'Content':1024,'Total':65536}}]}],
+   '/containers/json?all=1':[{'Id':'stopped','ImageID':${JSON.stringify(id)},'Names':['/stopped'],'State':'exited'}],
+  }[self.path]
+  content=json.dumps(value).encode()
+  self.send_response(200);self.send_header('Content-Length',str(len(content)));self.end_headers();self.wfile.write(content)
+with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
+ print('ready',flush=True);server.serve_forever()
+`], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const exited = once(server, 'exit');
+    try {
+      await once(server.stdout!, 'data');
+      const report = f.request({}, 'unix://' + socket);
+      expect(report.imageBytesEstimate).toBe(1024);
+      expect(report.held[0]).toMatchObject({ identity: id, reason: 'running-or-stopped-container-reference' });
+      expect(fs.readFileSync(f.calls, 'utf8')).not.toContain('inspect');
+    } finally { server.kill(); await exited; }
+  });
   it('retires all known aliases once by physical identity with exact registry config proof', () => {
     const f = fixture();f.born();expect(f.request({}).candidates).toHaveLength(1);
     expect(f.reconcile().removed).toEqual([id]);expect(JSON.parse(fs.readFileSync(path.join(f.root, 'docker.json'), 'utf8')).images).toEqual([]);
     expect(f.request({}).candidates).toEqual([]);
+  });
+  it.each([false, true])('accepts the Docker 29 descriptor for a manifest or index (index=%s) and rejects drift', (index) => {
+    const f = fixture();
+    const mediaType = 'application/vnd.oci.image.manifest.v1+json';
+    const indexType = 'application/vnd.oci.image.index.v1+json';
+    const reference = 'registry.example/test@' + id;
+    const child = 'sha256:' + 'd'.repeat(64);
+    const config = 'sha256:' + 'c'.repeat(64);
+    const manifest = { schemaVersion: 2, mediaType, config: { digest: config }, layers: [{ digest: child }] };
+    const indexManifest = { schemaVersion: 2, mediaType: indexType, manifests: [{ digest: child, platform: { os: 'linux', architecture: 'amd64' } }] };
+    const image = { ...f.image(), RepoDigests: [reference], Descriptor: { digest: id, mediaType: index ? indexType : mediaType } };
+    f.values.images = [image];
+    f.save();
+    const adoption = {
+      action: 'adopt', identity: id, created: image.Created, aliases: image.RepoTags, digests: image.RepoDigests,
+      projectId: 'project', ownershipEvidence: 'immutable artifact', attestedBy: 'owner', dataDisposition: 'reproducible-artifact',
+      registryProofs: {
+        [reference]: { manifest: index ? indexManifest : manifest, verifiedAt: Date.now() },
+        ['registry.example/test@' + child]: { manifest, verifiedAt: Date.now() },
+      },
+    };
+    image.Descriptor.digest = config;
+    f.save();
+    expect(() => f.request(adoption)).toThrow(/registry-rehydration-identity-unconfirmed/);
+    image.Descriptor.digest = id;
+    f.save();
+    expect(f.request(adoption).registered).toBe(true);
+    expect(f.request({ action: 'reconcile', targetIdentities: [id], registryProofs: adoption.registryProofs }).removed).toEqual([id]);
   });
   it('never adopts a pre-existing foreign image through a new pull/tag', () => {
     const f = fixture();f.values.images = [f.image()];f.save();f.request({ action: 'publish', references: [] });

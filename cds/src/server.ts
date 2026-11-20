@@ -76,6 +76,7 @@ import { HostCapacitySamplingService } from './services/host-capacity-sampling.j
 import { createHostCapacitySamplingRouter } from './routes/host-capacity-sampling.js';
 import { HostCapacityObservationService } from './services/host-capacity-observation.js';
 import { createHostCapacityObservationRouter } from './routes/host-capacity-observation.js';
+import { backupDirCandidates } from './services/infra-backup-schedule.js';
 import { isSealingEnabled } from './infra/secret-seal.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
@@ -2150,7 +2151,11 @@ export function createServer(deps: ServerDeps): express.Express {
     roots: { 'cds-worktrees': deps.config.worktreeBase,
       ...(deps.config.reposBase ? { 'cds-repositories': deps.config.reposBase } : {}),
       'cds-build-cache': deps.stateService.getCacheBase(),
-      'cds-skill-cache': path.join(deps.config.repoRoot, '.cds', 'skill-cache') },
+      'cds-skill-cache': path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+      'containerd-image-content': path.join(process.env.CDS_CONTAINERD_DATA_ROOT || '/var/lib/containerd', 'io.containerd.content.v1.content'),
+      ...Object.fromEntries(backupDirCandidates({ slug: deps.stateService.projectSlug, repoRoot: deps.config.repoRoot })
+        .map((directory, index) => [`cds-backups-${index + 1}`, directory])),
+    },
     observation: hostCapacityObservation,
     persist: enabled => deps.stateService.updateHostCapacitySamplingEnabled(enabled),
   });

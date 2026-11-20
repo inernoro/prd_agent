@@ -35,7 +35,7 @@ import { confirmMaintenanceBoot } from './services/self-maintenance-retention.js
 import { ContainerLogStreamHub } from './services/container-log-stream-hub.js';
 import { ObservationStreamExecutor } from './services/observation-stream-executor.js';
 import { StateService } from './services/state.js';
-import { DeploymentRunService } from './services/deployment-run.js';
+import { DEPLOYMENT_RUN_TERMINAL_STATUSES, DeploymentRunService } from './services/deployment-run.js';
 import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
@@ -2122,7 +2122,6 @@ async function initStateService(): Promise<void> {
 
 await initStateService();
 config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
-const backupRetentionService = new BackupRetentionService({ shell, state: stateService, repoRoot: config.repoRoot, instanceId: config.storageInstanceId });
 const acceptanceResourceRoot = path.resolve(process.env.CDS_RESOURCE_ROOT || '/var/lib/cds-resource-lifecycle');
 const ownedResourceLifecycle = new OwnedResourceLifecycle({ shell, instanceId: config.storageInstanceId,
   journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'tasks'),
@@ -2180,6 +2179,11 @@ const offHostAuditConfig = offHostAuditConfigFromEnv();
 const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
   ? new OffHostAuditLogSink({ primary: localServerEventLogStore, ...offHostAuditConfig })
   : localServerEventLogStore;
+const backupRetentionService = new BackupRetentionService({
+  shell, state: stateService, repoRoot: config.repoRoot, instanceId: config.storageInstanceId,
+  audit: activeServerEventLogStore,
+  historicalCopies: process.env.CDS_RETIRE_OFFSITE_BACKUP_COPIES === '1' ? r2BackupConfigFromEnv() : null,
+});
 // 总保险丝：后台小事失败不许弄死整台 CDS（2026-08-18 事故，见 process-fuse.ts）。
 // 装在事件汇建好之后、任何后台任务启动之前——晚一步就兜不住启动期的失败，
 // 而今天崩的恰恰就是启动期。
@@ -2204,9 +2208,14 @@ const reconcileBackups = async () => {
     activeServerEventLogStore?.record({ category: 'system', severity: 'error', source: 'backup-retention', action: 'backup.retention.failed', message: '备份保留对账未完成，未确认的对象已保留。' });
   }
 };
-const backupRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileBackups(), 60 * 60_000) : null;
-const backupRetentionStartup = backupRetentionTimer ? setTimeout(() => void reconcileBackups(), 60_000) : null;
-backupRetentionTimer?.unref(); backupRetentionStartup?.unref();
+// Start the hourly rhythm away from the producer's aligned interval.
+let backupRetentionTimer: NodeJS.Timeout | null = null;
+const backupRetentionStartup = config.mode !== 'executor' && !isPreviewInstance() ? setTimeout(() => {
+  void reconcileBackups();
+  backupRetentionTimer = setInterval(() => void reconcileBackups(), 60 * 60_000);
+  backupRetentionTimer.unref();
+}, 3 * 60_000) : null;
+backupRetentionStartup?.unref();
 // Independent host keeper: a crashed producer is not responsible for its own retirement.
 const reconcileAcceptanceResources = async () => {
   try {
@@ -4816,16 +4825,31 @@ janitorService.setRemoveFn(async id => {
           state: stateService,
           eventLog: activeServerEventLogStore,
           instanceId: computeCdsInstanceId(config.repoRoot),
+          mayRetireApp: isPreviewInstance() ? undefined : (app) => {
+            const deletion = stateService.findRemovedBranchByIdentifier(app.branchId);
+            if (deletion?.branchId !== app.branchId || deletion.projectId !== app.projectId
+              || !(Date.parse(app.createdAt) < Date.parse(deletion.removedAt)) || stateService.getBranch(app.branchId)) return false;
+            if (stateService.getAllBranches().some(branch => Object.values(branch.services || {}).some(service => service.containerName === app.name)
+              || Object.values(branch.replicaSets || {}).some(set => set.members.some(member => member.containerName === app.name)))) return false;
+            if (stateService.getDeploymentRuns({ branchId: app.branchId }).some(run => !DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status))
+              || stateService.getDeploymentIntents().some(intent => intent.request.branchId === app.branchId)
+              || stateService.getReleaseBatches().some(batch => batch.branchId === app.branchId)) return false;
+            const references = new Set(app.imageReferences);
+            return !stateService.getDeploymentVersions().some(version =>
+              Object.values(version.profiles || {}).some(profile => !!profile.artifactImage && references.has(profile.artifactImage)));
+          },
         }).then((result) => {
           if (result.skippedReason) {
             console.log(`[orphan-reaper] 本轮跳过: ${result.skippedReason}`);
             return;
           }
           const stopped = result.actions.filter((a) => a.action === 'stopped');
+          const retired = result.actions.filter((a) => a.action === 'retired');
           const failed = result.actions.filter((a) => a.action === 'stop-failed');
-          if (stopped.length || failed.length) {
+          if (stopped.length || retired.length || failed.length) {
             console.warn(
               `[orphan-reaper] 孤儿容器处置: 已停止 ${stopped.length} 个` +
+              (retired.length ? `, 已退役 ${retired.length} 个` : '') +
               (failed.length ? `, 失败 ${failed.length} 个` : '') +
               ` (共发现 ${result.actions.length} 个孤儿)`,
             );

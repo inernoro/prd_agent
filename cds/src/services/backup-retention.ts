@@ -3,10 +3,13 @@ import { randomBytes } from 'node:crypto';
 import type { IShellExecutor } from '../types.js';
 import type { StateService } from './state.js';
 import { BACKUP_RETENTION_PROGRAM } from './backup-retention-program.js';
-import { backupDirCandidates, DEFAULT_KEEP_COUNT, DEFAULT_KEEP_DAYS } from './infra-backup-schedule.js';
+import { backupDirCandidates, backupKey, DEFAULT_KEEP_COUNT, DEFAULT_KEEP_DAYS } from './infra-backup-schedule.js';
 import { reclaimLock, type ReclaimSkip } from './reclaim-lock.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import { resumedReclaimExecution, recordReclaimExecution } from './reclaim-execution-journal.js';
+import { inspectR2BackupObject, type R2BackupConfig } from './infra-backup-r2.js';
+import { createExternalResponseAudit } from './standby-response-audit.js';
+import type { ServerEventLogSink } from './server-event-log-store.js';
 
 export interface BackupRetentionReport {
   dryRun: boolean;
@@ -28,7 +31,8 @@ export class BackupRetentionOperationError extends Error {
 }
 export class BackupRetentionService {
   private execution: { id: string; status: 'running' | 'completed' | 'failed'; startedAt: string; directory?: string; stopRequested?: boolean; report?: BackupRetentionReport; error?: string } | null = null;
-  constructor(private readonly options: { shell: IShellExecutor; state: StateService; repoRoot: string; instanceId: string }) {
+  constructor(private readonly options: { shell: IShellExecutor; state: StateService; repoRoot: string; instanceId: string;
+    historicalCopies?: R2BackupConfig | null; audit?: ServerEventLogSink | null }) {
     this.execution = resumedReclaimExecution(options.state.resourceRetirementJournal?.(options.instanceId, 'backups'));
   }
   private persist() { recordReclaimExecution(this.options.state.resourceRetirementJournal?.(this.options.instanceId, 'backups'), this.execution); }
@@ -59,6 +63,40 @@ export class BackupRetentionService {
   }
   private directories(): string[] {
     return backupDirCandidates({ slug: this.options.state.projectSlug, repoRoot: this.options.repoRoot });
+  }
+  private async historicalCopyProofs(directory: string, activeServices: Array<{ projectId: string; serviceId: string; backupKey: string }>) {
+    const config = this.options.historicalCopies;
+    if (!config) return {};
+    const preview = await this.run(directory, { action: 'preview', activeServices, discoverOffsiteCopies: true });
+    const proofs: Record<string, { bytes: number; sha256: string; signature: string[]; verifiedAt: number; auditId: string }> = {};
+    for (const row of (preview.historicalCandidates || []).slice(0, 2)) {
+      const file = path.basename(row.path);
+      if (path.dirname(row.path) !== directory || !/^[a-zA-Z0-9._-]+-auto-\d{8}T\d{6}Z\.(?:archive|sql)\.gz$/.test(file)) continue;
+      const expectedBytes = Number(row.signature[2]);
+      const audit = createExternalResponseAudit(this.options.audit, { projectId: row.projectId, remoteProjectId: 'r2', policy: 'historical-backup-local-copy', dryRun: false },
+        { source: 'backup-retention-r2', action: 'backup.retention.offsite.response', message: '历史备份离机副本核对' });
+      try {
+        audit.assertAvailable();
+        const remote = await inspectR2BackupObject({ config, fileName: file, fetchImpl: async (url, init) => {
+          const started = Date.now();
+          let response: Response | undefined;
+          try { response = await fetch(url, init); } finally {
+            const size = Number(response?.headers.get('content-length'));
+            const hash = response?.headers.get('x-amz-meta-sha256')?.toLowerCase() || '';
+            const verified = response?.ok === true && Number.isSafeInteger(size) && size === expectedBytes && /^[a-f0-9]{64}$/.test(hash);
+            await audit.record({ peerId: 'r2', url: String(url), method: 'HEAD', startedAt: new Date(started).toISOString(), durationMs: Date.now() - started,
+              timeoutMs: 8000, responseReceived: !!response, httpStatus: response?.status ?? null, contentType: response?.headers.get('content-type') ?? null,
+              upstreamRequestId: response?.headers.get('x-amz-request-id') ?? null, parseState: response ? 'json' : 'no-response',
+              json: response ? { size, digest: hash ? 'sha256:' + hash : null } : undefined,
+              localDecision: verified ? 'success' : 'offsite-copy-unconfirmed', secrets: [config.secretAccessKey, config.accessKeyId] });
+          }
+          return response!;
+        } });
+        if (remote.bytes === expectedBytes) proofs[row.path] = { bytes: remote.bytes, sha256: remote.sha256,
+          signature: row.signature, verifiedAt: Date.now(), auditId: audit.operationId };
+      } catch { /* Retain every local copy whose remote identity or durable proof was not confirmed. */ }
+    }
+    return proofs;
   }
   private async run(directory: string, input: Record<string, unknown>): Promise<any> {
     const action = typeof input.action === 'string' && /^[a-z-]{1,40}$/.test(input.action) ? input.action : 'unknown';
@@ -152,10 +190,13 @@ export class BackupRetentionService {
         }
         if (executionId && this.execution) this.execution.directory = directory;
         try {
+          const activeServices = this.options.state.getInfraServices().map(service => ({ projectId: service.projectId,
+            serviceId: service.id, backupKey: backupKey(service.projectId, service.id) }));
+          const offsiteProofs = !dryRun && remaining ? await this.historicalCopyProofs(directory, activeServices).catch(() => ({})) : {};
           const result = await this.run(directory, {
             action: dryRun ? 'preview' : 'reconcile', maxRemovals: remaining,
-            ...(executionId ? { executionId } : {}),
-            activeServices: this.options.state.getInfraServices().map(service => ({ projectId: service.projectId, serviceId: service.id })),
+            ...(executionId ? { executionId } : {}), activeServices,
+            discoverOffsiteCopies: !!this.options.historicalCopies, offsiteProofs,
           });
           report.directories.push({ directory, ...result });
           if (result.scanStatus !== 'complete') report.scanStatus = 'partial';

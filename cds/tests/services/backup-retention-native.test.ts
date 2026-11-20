@@ -1,4 +1,6 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,6 +31,37 @@ function fixture() {
 }
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 describe('independent native backup retention', () => {
+  it('waits for short metadata contention before starting an actual backup lease', async () => {
+    const f = fixture();
+    f.backup('setup.gz', 0, 'active-db');
+    const owner = spawn('python3', ['-c',
+      'import sys,fcntl,time; f=open(sys.argv[1]); fcntl.flock(f,fcntl.LOCK_EX); print("locked",flush=True); time.sleep(.4)',
+      path.join(f.directory, '.cds-retention/lock')]);
+    const released = once(owner, 'exit');
+    await once(owner.stdout!, 'data');
+    const lease = { projectId: 'owned-project', serviceId: 'active-db', token: 'restore-fixture', kind: 'restore' };
+    expect(f.request({ action: 'lease', ...lease })).toEqual({ leased: true });
+    await released;
+    expect(f.request({ action: 'release', ...lease })).toEqual({ released: true });
+  });
+  it('retires an unregistered older local copy only with an exact, fresh, audited R2 proof', () => {
+    const f = fixture();
+    const recent = Array.from({ length: DEFAULT_KEEP_COUNT }, (_, index) => f.backup(`retained-${index}.gz`, index / 10, 'active-db'));
+    const old = path.join(f.directory, 'owned-project--active-db-auto-20261110T000000Z.archive.gz');
+    const content = gzipSync('legacy production-format fixture');
+    fs.writeFileSync(old, content);
+    fs.utimesSync(old, new Date(now - 3 * DAY), new Date(now - 3 * DAY));
+    const request = { activeServices: [{ projectId: 'owned-project', serviceId: 'active-db', backupKey: 'owned-project--active-db' }], discoverOffsiteCopies: true };
+    const plan = f.request({ ...request, action: 'preview' });
+    expect(plan.historicalCandidates).toEqual([expect.objectContaining({ path: old })]);
+    const evidence = { bytes: content.byteLength, sha256: createHash('sha256').update(content).digest('hex'),
+      signature: plan.historicalCandidates[0].signature, verifiedAt: Date.now(), auditId: 'a1b2c3d4-a1b2-c3d4-a1b2-c3d4a1b2c3d4' };
+    expect(f.request({ ...request, action: 'reconcile' }).removed).toEqual([]);
+    expect(f.request({ ...request, action: 'reconcile', offsiteProofs: { [old]: { ...evidence, verifiedAt: now - 400_000 } } }).removed).toEqual([]);
+    expect(f.request({ ...request, action: 'reconcile', offsiteProofs: { [old]: evidence } }).removed).toEqual([old]);
+    expect(fs.existsSync(old)).toBe(false);
+    expect(recent.every(file => fs.existsSync(file))).toBe(true);
+  });
   it('keeps the producer allowance bounded across repeated exports without counting manual or incomplete copies', () => {
     const f = fixture();const automatic: string[] = [];
     for (let index = 0; index < DEFAULT_KEEP_COUNT + 2; index++) automatic.push(f.backup(`automatic-${index}.gz`, index / 10, 'active-db'));
