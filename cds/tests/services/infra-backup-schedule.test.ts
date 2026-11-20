@@ -1516,7 +1516,9 @@ describe('执行层真的保留了本地副本', () => {
     expect(upload).toBeGreaterThan(0);
     expect(promote).toBeGreaterThan(upload);
     expect(registration).toBeGreaterThan(promote);
-    expect(SRC).toContain('setInterval(() => void reconcileBackups(), 60 * 60_000)');
+    const timer = SRC.match(/const stopBackupRetention = [^\n]+startReclaimSchedule\(\{([\s\S]*?)\n\}\) : null;/)?.[1];
+    expect(timer).toContain('intervalMs: 60 * 60_000');
+    expect(timer).toContain('await backupRetentionService.inspect(false)');
     expect(SRC).not.toContain('selectExpiredBackups(existing');
   });
 });

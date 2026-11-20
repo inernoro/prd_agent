@@ -92,6 +92,7 @@ import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
 import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
 import { BackupRetentionOperationError } from './services/backup-retention.js';
+import { startReclaimSchedule } from './services/reclaim-lock.js';
 import { runBackupTargetWithLease } from './services/infra-backup-target.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
@@ -2200,31 +2201,30 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
 // Independent of backup creation/success; restart resumes the same durable catalog.
-const reconcileBackups = async () => {
-  try {
+const scheduleHostRetention = config.mode !== 'executor' && !isPreviewInstance();
+const stopBackupRetention = scheduleHostRetention ? startReclaimSchedule({
+  intervalMs: 60 * 60_000, firstDelayMs: 3 * 60_000,
+  run: async () => {
     const report = await backupRetentionService.inspect(false);
     activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'backup-retention', action: 'backup.retention.reconciled', message: '全局备份保留对账（最多15天，冲突与未知保持保护）', details: { report } });
-  } catch (error) {
+    return report;
+  },
+  onError: () => {
     activeServerEventLogStore?.record({ category: 'system', severity: 'error', source: 'backup-retention', action: 'backup.retention.failed', message: '备份保留对账未完成，未确认的对象已保留。' });
-  }
-};
-// Start the hourly rhythm away from the producer's aligned interval.
-let backupRetentionTimer: NodeJS.Timeout | null = null;
-const backupRetentionStartup = config.mode !== 'executor' && !isPreviewInstance() ? setTimeout(() => {
-  void reconcileBackups();
-  backupRetentionTimer = setInterval(() => void reconcileBackups(), 60 * 60_000);
-  backupRetentionTimer.unref();
-}, 3 * 60_000) : null;
-backupRetentionStartup?.unref();
+  },
+}) : null;
 // Independent host keeper: a crashed producer is not responsible for its own retirement.
-const reconcileAcceptanceResources = async () => {
-  try {
+const stopAcceptanceRetention = scheduleHostRetention ? startReclaimSchedule({
+  intervalMs: 60_000,
+  run: async () => {
     const report = await ownedResourceLifecycle.inspect(false);
     activeServerEventLogStore?.record({ category: 'system', severity: report.scanStatus === 'complete' ? 'info' : 'warn', source: 'acceptance-retention', action: 'acceptance.retention.reconciled', message: '验收资源租约与退役对账', details: { report } });
-  } catch { activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'acceptance-retention', action: 'acceptance.retention.failed', message: '验收资源身份或引用未确认，未确认对象已保留。' }); }
-};
-const acceptanceRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileAcceptanceResources(), 60_000) : null;
-acceptanceRetentionTimer?.unref();
+    return report;
+  },
+  onError: () => {
+    activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'acceptance-retention', action: 'acceptance.retention.failed', message: '验收资源身份或引用未确认，未确认对象已保留。' });
+  },
+}) : null;
 const rotationRecoveryCleanup = startRotationRecoveryArtifactCleanup({
   recoveryDir: path.join(path.dirname(stateService.getCacheBase()), 'credential-rotation-recovery'),
   onError: (error) => console.warn(`[credential-rotation] recovery artifact cleanup failed: ${error.message}`),
@@ -3623,14 +3623,19 @@ const imageCacheGovernance = new ImageCacheGovernance({ shell, catalog: path.joi
     7, Date.now(), (profile, branch) => resolveEffectiveProfile(profile, branch).dockerImage) });
 if (configuredImageCacheBudgetGiB > 0) configureImageCacheGovernance(imageCacheGovernance);
 // The hourly general Janitor cannot drain a two-image batch at deployment speed.
-// Share its global reclaim lock and native cross-process catalog lock; never queue ticks.
-const imageCacheRetentionTimer = configuredImageCacheBudgetGiB > 0 && config.mode !== 'executor' && !isPreviewInstance()
-  ? setInterval(() => {
-    void imageCacheGovernance.inspect(false).then(report => {
+// Share its global reclaim lock and native cross-process catalog lock.
+const stopImageCacheRetention = configuredImageCacheBudgetGiB > 0 && scheduleHostRetention
+  ? startReclaimSchedule({
+    intervalMs: 60_000,
+    run: async () => {
+      const report = await imageCacheGovernance.inspect(false);
       activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'image-cache-retention', action: 'image.cache.reconciled', message: '宿主镜像总量与引用对账', details: { report } });
-    }, () => activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'image-cache-retention', action: 'image.cache.failed', message: '镜像引用、registry 或审计未确认，相关镜像保持保护。' }));
-  }, 60_000) : null;
-imageCacheRetentionTimer?.unref();
+      return report;
+    },
+    onError: () => {
+      activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'image-cache-retention', action: 'image.cache.failed', message: '镜像引用、registry 或审计未确认，相关镜像保持保护。' });
+    },
+  }) : null;
 const janitorService = new JanitorService(
   stateService,
   // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
@@ -4925,10 +4930,9 @@ async function shutdown(signal: string): Promise<void> {
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   if (infraExposureAudit) clearInterval(infraExposureAudit);
   if (infraAutoBackup) clearInterval(infraAutoBackup);
-  if (backupRetentionTimer) clearInterval(backupRetentionTimer);
-  if (backupRetentionStartup) clearTimeout(backupRetentionStartup);
-  if (acceptanceRetentionTimer) clearInterval(acceptanceRetentionTimer);
-  if (imageCacheRetentionTimer) clearInterval(imageCacheRetentionTimer);
+  stopBackupRetention?.();
+  stopAcceptanceRetention?.();
+  stopImageCacheRetention?.();
   clearInterval(deploymentMemoryReconciler);
   clearInterval(rotationRecoveryCleanup);
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
