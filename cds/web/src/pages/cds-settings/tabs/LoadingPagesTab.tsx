@@ -408,7 +408,7 @@ export function CommonLoadingSkeleton({ scenarioId, label = '加载中' }: { sce
     case 'topology-page': return <TopologyPageSkeleton />;
     case 'agent-requests': return <AgentRequestsSkeleton />;
     case 'system-settings': return <SettingsPageSkeleton />;
-    case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" />;
+    case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" project />;
     case 'release-console': return <ReleaseConsoleSkeleton />;
     case 'content-rows': return <ContentLoading label="读取列表与配置" />;
     case 'content-table': return <ContentLoading label="读取表格与结果" variant="table" />;

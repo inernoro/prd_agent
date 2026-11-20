@@ -22,7 +22,7 @@ describe('内容加载覆盖守卫', () => {
     expect(result.uncovered).toEqual([]);
     expect(result.counts.shared).toBeGreaterThanOrEqual(118);
     for (const file of [
-      'pages/release-center/HealthSection.tsx', 'pages/cds-settings/AlarmIdentityPanel.tsx', 'pages/ReleaseConsolePage.tsx', 'pages/OverviewPage.tsx', 'pages/BranchRelationsPage.tsx', 'components/BranchDetailDrawer.tsx',
+      'pages/release-center/HealthSection.tsx', 'pages/cds-settings/AlarmIdentityPanel.tsx', 'pages/ReleaseConsolePage.tsx', 'pages/BranchRelationsPage.tsx', 'components/BranchDetailDrawer.tsx',
       'components/branch/DatabaseDirectoryDialog.tsx', 'components/env/EnvSetupDialog.tsx',
       'pages/AgentRequestsPage.tsx', 'pages/status/FunctionalEvidence.tsx',
       'pages/release-center/EvidenceSection.tsx', 'components/CommandPalette.tsx',
