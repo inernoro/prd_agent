@@ -147,6 +147,27 @@ public sealed class LlmGatewayIncidentPolicyTests
             .ShouldHaveSingleItem()).ShouldBe("warning");
     }
 
+    [Theory]
+    [InlineData(429, "warning")]
+    [InlineData(502, "error")]
+    public void CatchUpSweep_RecognizesEarlierBurstEvenWhenTheLatestFailureIsOutsideItsWindow(int code, string expectedLevel)
+    {
+        var start = new DateTime(2026, 11, 19, 7, 30, 0, DateTimeKind.Utc);
+        var first = Log("burst-a", "failed", code, start);
+        var repeat = Log("burst-a", "failed", code, start.AddSeconds(30));
+        var second = Log("burst-b", "failed", code, start.AddMinutes(1));
+        var third = Log("burst-c", "failed", code, start.AddMinutes(2));
+        var latest = Log("later", "failed", code, start.AddMinutes(9));
+
+        var below = LlmGatewayIncidentPolicy.BuildTimelineSignals([latest, second, repeat, first]).ShouldHaveSingleItem();
+        GatewayNotificationPolicy.FailureLevel(below).ShouldBe("info");
+
+        var signal = LlmGatewayIncidentPolicy.BuildTimelineSignals([latest, third, first, repeat, second]).ShouldHaveSingleItem();
+        signal.RequestId.ShouldBe(latest.RequestId);
+        signal.ObservedAt.ShouldBe(latest.StartedAt);
+        GatewayNotificationPolicy.FailureLevel(signal).ShouldBe(expectedLevel);
+    }
+
     [Fact]
     public void FailedWithoutStatusOrUpstreamEvidence_ShouldNotBecomeIncident()
     {

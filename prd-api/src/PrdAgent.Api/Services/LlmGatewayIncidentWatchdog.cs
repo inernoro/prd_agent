@@ -565,6 +565,7 @@ internal static class LlmGatewayIncidentPolicy
     {
         var latest = run[^1];
         var log = latest.Log;
+        var failures = run.Where(x => x.Failure).ToArray();
         return new LlmGatewayIncidentSignal(
             latest.Entry ? latest.RouteFingerprint : $"{latest.RouteFingerprint}:{category}",
             latest.Failure, log.RequestId,
@@ -576,20 +577,41 @@ internal static class LlmGatewayIncidentPolicy
             // correct that same observation once while preserving chronological ordering,
             // and older workers cannot overwrite it with the unsuffixed version. Apply it
             // to successes too, so pending outcomes can still be genuinely confirmed.
-            run.Count(x => x.Failure), latest.Version + ":facts-0004", latest.Entry, latest.At)
+            failures.Length, latest.Version + ":facts-0004", latest.Entry, latest.At)
         {
             RouteFingerprint = latest.RouteFingerprint,
             FailureCategory = latest.Entry && log.Error == GatewayRouteFailure.ProviderQuotaExceeded ? GatewayNotificationPolicy.Quota : category,
             RequestOutcome = latest.Outcome,
             AttemptedRouteCount = latest.AttemptedRoutes,
             Environment = GatewayNotificationPolicy.EnvironmentLabel(log.Environment),
-            DistinctRecentFailedRequests = run.Where(x => x.Failure && latest.At - x.At <= GatewayNotificationPolicy.RepetitionWindow)
-                .Select(x => x.Log.RequestId).Distinct(StringComparer.Ordinal).Count(),
+            PeakDistinctFailedRequests = CountPeakDistinctFailures(failures),
             // Counts use raw observation versions: upgrading the interpretation is not
             // another failure occurrence, nor does it start a new delivery episode.
-            FailureObservations = run.Where(x => x.Failure)
+            FailureObservations = failures
                 .Select(x => new LlmGatewayFailureObservation(x.Version, x.At, x.Log.RequestId, x.Log.LogicalRequestId, x.Outcome)).ToList(),
         };
+    }
+
+    private static int CountPeakDistinctFailures(IReadOnlyList<Observation> failures)
+    {
+        // A sweep can first see a qualifying burst and a later isolated failure together.
+        // Find the peak window within this uninterrupted run while keeping the newest observation.
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var peak = 0;
+        var start = 0;
+        foreach (var failure in failures)
+        {
+            while (failure.At - failures[start].At > GatewayNotificationPolicy.RepetitionWindow)
+            {
+                var expired = failures[start++].Log.RequestId;
+                if (--counts[expired] == 0) counts.Remove(expired);
+            }
+
+            var request = failure.Log.RequestId;
+            counts[request] = counts.GetValueOrDefault(request) + 1;
+            peak = Math.Max(peak, counts.Count);
+        }
+        return peak;
     }
 
     private static IEnumerable<Observation> Observe(LlmRequestLog log)
@@ -773,7 +795,7 @@ internal sealed record LlmGatewayIncidentSignal(
     public string FailureCategory { get; init; } = "availability";
     public string RequestOutcome { get; init; } = "unknown";
     public int AttemptedRouteCount { get; init; }
-    public int DistinctRecentFailedRequests { get; init; }
+    public int PeakDistinctFailedRequests { get; init; }
     public string? Environment { get; init; }
     public IReadOnlyList<LlmGatewayFailureObservation> FailureObservations { get; init; } = [];
 }

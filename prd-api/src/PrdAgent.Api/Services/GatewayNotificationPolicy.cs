@@ -16,7 +16,7 @@ internal static class GatewayNotificationPolicy
             || signal.FailureObservations.Any(item => item.Outcome is "request_failed" or "all_failed");
         if (signal.FailureCategory is Quota or "access")
             return requestFailed ? "error" : "warning";
-        if (signal.DistinctRecentFailedRequests < 3)
+        if (signal.PeakDistinctFailedRequests < 3)
             return "info";
         return requestFailed && signal.FailureCategory != RateLimit ? "error" : "warning";
     }
