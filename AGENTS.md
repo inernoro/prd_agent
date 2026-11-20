@@ -187,8 +187,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 - 修改用户可见错误时，读 [.Codex/rules/user-readable-errors.md](.Codex/rules/user-readable-errors.md)：说明结果与恢复动作，原始诊断仅留在脱敏日志或管理员详情中。
 - 改发布脚本、nginx、compose 或发布 workflow 前，必读 [.Codex/rules/production-release-safety.md](.Codex/rules/production-release-safety.md)，再读其指向的生产安全合同。公网 HTML 与入口资源可用才算发布完成。
 - 仓库技能位于 `.claude/skills/` 和 `.agents/skills/`；宿主可能额外生成链接，缺链接时直接读取仓库内实际的 `SKILL.md`，不依赖另一台设备的安装状态。按 `name/description` 选择，不按固定数量或旧清单判断；个人技能由当前宿主发现，不复制个人路径与无关偏好。发现技能目录缺少 SKILL.md 时按缺陷报告，不把它当作不存在。
-- 用户发出「骨架扫描」或「骨架更新」时，直接执行 [cds-skeleton-review](.claude/skills/cds-skeleton-review/SKILL.md) 对应模式。扫描取证并汇报，更新复现差异后修复、复拍并汇报。两种模式均可附日期、Git 范围或路由。
-- CDS 接入 / 鉴权 / CLI 用 [cds](.claude/skills/cds/SKILL.md)；项目扫描用 [cds-project-scan](.claude/skills/cds-project-scan/SKILL.md)；部署与日志排障用 [cds-deploy-pipeline](.claude/skills/cds-deploy-pipeline/SKILL.md)；正式发布用 [cds-release](.claude/skills/cds-release/SKILL.md)。技能可读不等于远端权限或依赖已可用。
+- CDS 接入 / 鉴权 / CLI 用 [cds](.claude/skills/cds/SKILL.md)；项目扫描用 [cds-project-scan](.claude/skills/cds-project-scan/SKILL.md)；部署与日志排障用 [cds-deploy-pipeline](.claude/skills/cds-deploy-pipeline/SKILL.md)；正式发布用 [cds-release](.claude/skills/cds-release/SKILL.md)。收到「骨架扫描」或「骨架更新」直接执行 [cds-skeleton-review](.claude/skills/cds-skeleton-review/SKILL.md) 的对应模式。技能可读不等于远端权限或依赖已可用。
 - API 排查用 [api-debug](.claude/skills/api-debug/SKILL.md)，核心旅程回归用 [stable-smoke](.claude/skills/stable-smoke/SKILL.md)，真实页面取证归档用 [create-visual-test-to-kb](.claude/skills/create-visual-test-to-kb/SKILL.md)，写文档用 [doc-writer](.claude/skills/doc-writer/SKILL.md)。
 - 需求、方案、风险、追踪、审查按任务选 `skill-validation/plan-first/risk-matrix/flow-trace/human-verify/scope-check`；无需为每个小改串行执行整套技能。新增规则优先补在适用目录或现有专项文件，根文件只保留必要约束与入口。
 
