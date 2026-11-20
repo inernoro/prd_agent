@@ -33,7 +33,9 @@ describe('ProxyService', () => {
     ['', '/api/hosted-site-preview-files/owned/index.html', false],
   ] as const)('真实 HTTP 主代理按导航目的 %s 和路径 %s 决定是否注入挂件', async (destination, requestPath, inject) => {
     const original = '<html><body><h1>Owned HTML</h1></body></html>';
-    const upstream = http.createServer((_req, res) => {
+    let forwardedHost: string | string[] | undefined;
+    const upstream = http.createServer((req, res) => {
+      forwardedHost = req.headers['x-cds-forwarded-host'];
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(original);
     });
@@ -45,8 +47,11 @@ describe('ProxyService', () => {
     try {
       await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
       const address = server.address() as { port: number };
-      const response = await fetch(`http://127.0.0.1:${address.port}${requestPath}`, { headers: { 'sec-fetch-dest': destination } });
+      const response = await fetch(`http://127.0.0.1:${address.port}${requestPath}`, {
+        headers: { 'sec-fetch-dest': destination, 'x-cds-forwarded-host': 'client.example.test' },
+      });
       expect(response.status).toBe(200);
+      expect(forwardedHost).toBe(`127.0.0.1:${address.port}`);
       const body = await response.text();
       if (inject) expect(body).toContain('data-cds-widget');
       else expect(body).toBe(original);

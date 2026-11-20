@@ -306,6 +306,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
 import {
+  completeCdsLoginReal,
   getSsoOptionsReal,
   loginReal,
   loginWithMiduoPlanetTokenReal,
@@ -874,6 +875,7 @@ function withAuth<TArgs extends unknown[], TResult>(
 
 export const login: LoginContract = loginReal;
 export const getSsoOptions: GetSsoOptionsContract = getSsoOptionsReal;
+export const completeCdsLogin = completeCdsLoginReal;
 export const loginWithMiduoPlanetToken: MiduoPlanetLoginContract = loginWithMiduoPlanetTokenReal;
 export const loginWithSyntheticTicket: SyntheticLoginContract = loginWithSyntheticTicketReal;
 export const resetPassword: ResetPasswordContract = resetPasswordReal;

@@ -48,6 +48,9 @@ export const getSsoOptionsReal: GetSsoOptionsContract = async (): Promise<ApiRes
   });
 };
 
+export const completeCdsLoginReal = (): Promise<ApiResponse<LoginResponse>> =>
+  apiRequest<LoginResponse>(api.auth.cdsComplete(), { method: 'POST', auth: false });
+
 export const loginWithMiduoPlanetTokenReal: MiduoPlanetLoginContract = async (token): Promise<ApiResponse<LoginResponse>> => {
   const res = await apiRequest<BackendLoginResponse>(api.auth.miduoPlanetLogin(), {
     method: 'POST',

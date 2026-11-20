@@ -15,6 +15,7 @@ import {
 import { requestAgentAccess } from '@/lib/agent-onboarding';
 import { CodePill, ErrorBlock, Section } from '../components';
 import type { AuthStatusResponse, LoadState } from '../types';
+import { HostedSsoSettings } from './HostedSsoSettings';
 
 function loginHref(mode?: string): string {
   const path = mode === 'github' ? '/api/auth/github/login' : '/login';
@@ -304,6 +305,7 @@ export function AuthTab(): JSX.Element {
             <p className="mt-4 text-sm text-muted-foreground">{ssoReadError ? '尚未取得 SSO 配置，不能判断是否启用。' : '等待配置读取结果。'}</p>
           )}
         </div>
+        {auth.hostedSiteSso ? <HostedSsoSettings /> : null}
         <details className="border-t border-border pt-3"><summary className="cursor-pointer text-sm font-medium">账号密码与 GitHub OAuth 配置参考</summary><div className="mt-3">
           <div className="flex items-start gap-3 text-sm leading-6 text-muted-foreground">
             <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />

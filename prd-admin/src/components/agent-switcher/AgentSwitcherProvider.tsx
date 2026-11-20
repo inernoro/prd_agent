@@ -12,12 +12,14 @@ import { AgentSwitcher } from './AgentSwitcher';
 
 interface AgentSwitcherProviderProps {
   children: ReactNode;
+  enabled?: boolean;
 }
 
-export function AgentSwitcherProvider({ children }: AgentSwitcherProviderProps) {
+export function AgentSwitcherProvider({ children, enabled = true }: AgentSwitcherProviderProps) {
   const { toggle, isOpen } = useAgentSwitcherStore();
 
   useEffect(() => {
+    if (!enabled) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       // Cmd/Ctrl + K 切换浮层
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -31,23 +33,23 @@ export function AgentSwitcherProvider({ children }: AgentSwitcherProviderProps) 
     // 使用 capture 确保优先级
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [toggle]);
+  }, [enabled, toggle]);
 
   // 打开时禁止页面滚动
   useEffect(() => {
-    if (isOpen) {
+    if (enabled && isOpen) {
       const originalOverflow = document.body.style.overflow;
       document.body.style.overflow = 'hidden';
       return () => {
         document.body.style.overflow = originalOverflow;
       };
     }
-  }, [isOpen]);
+  }, [enabled, isOpen]);
 
   return (
     <>
       {children}
-      <AgentSwitcher />
+      {enabled && <AgentSwitcher />}
     </>
   );
 }

@@ -884,6 +884,18 @@ var jwtSigningKey = new SymmetricSecurityKey(jwtSecretBytes);
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "prdagent";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "prdagent";
 
+builder.Services.AddSingleton(CdsSsoSettings.Read(builder.Configuration));
+builder.Services.AddSingleton<CdsSsoClient>();
+builder.Services.AddSingleton<CdsSsoSessions>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddTransient<CdsSsoAuditHandler>();
+builder.Services.AddHttpClient(nameof(CdsSsoClient), client =>
+{
+    client.Timeout = CdsSsoAuditHandler.RequestTimeout;
+    client.MaxResponseContentBufferSize = CdsSsoAuditHandler.MaxResponseBytes;
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+    .AddHttpMessageHandler<CdsSsoAuditHandler>();
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -966,6 +978,24 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                             context.HttpContext,
                             PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionRevoked);
                         context.Fail("Token revoked");
+                        return;
+                    }
+
+                    var sessionKey = principal?.FindFirst("sessionKey")?.Value;
+                    if (!CdsSsoSessions.IsDelegated(sessionKey)) return;
+
+                    var services = context.HttpContext.RequestServices;
+                    var cdsSettings = services.GetRequiredService<CdsSsoSettings>();
+                    var cdsSessions = services.GetRequiredService<CdsSsoSessions>();
+                    context.Response.Headers.CacheControl = "no-store";
+                    if (clientType != "admin" || !cdsSettings.IsForRequest(context.Request) ||
+                        !await cdsSessions.IsCurrentAsync(sessionKey!, sub, principal?.FindFirst("role")?.Value,
+                            context.HttpContext.RequestAborted))
+                    {
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                            context.HttpContext,
+                            PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionRevoked);
+                        context.Fail("CDS authorization revoked");
                     }
                 }
                 catch (Exception ex)

@@ -978,6 +978,8 @@ export interface BranchPin {
 }
 
 export interface BranchEntry {
+  /** CDS login required at this branch's registered HTTPS site. */
+  hostedSso?: import('./services/hosted-sso.js').HostedSsoConfig;
   /** 逻辑归档仍保留服务、工作区与数据；到期前可恢复。 */
   archive?: { archivedAt: string; retireAt: string; reason: string; actor: string } | null;
   /** 整组未就绪的连续观察起点，完全就绪后清空。 */

@@ -5,7 +5,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
 import { takeReturnFragment } from '@/app/returnFragment';
 import { useAuthStore } from '@/stores/authStore';
-import { getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
+import { completeCdsLogin, getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
+import { api } from '@/services/api';
 import type { SsoLoginOption } from '@/services/contracts/auth';
 import { ConsciousnessHud, ConsciousnessScene, IdentityScanner, markConsciousnessArrival, type IdentityPhase } from '@/components/effects/ConsciousnessScene';
 import { enterWorkspace, prepareEntryScene, profileEntryMotion } from '@/components/effects/entryMotion';
@@ -24,6 +25,12 @@ const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => 
 ];
 
 const MIDUO_SSO_STATE_KEY = 'prd-miduo-sso-state';
+const CDS_SSO_ERRORS = new Map([
+  ['cancelled', '已取消 CDS 登录，可以重新选择账号。'],
+  ['denied', '当前 CDS 账号无法登录 MAP，请选择已绑定且有权访问的账号。'],
+  ['expired', 'CDS 登录链接已失效，请重新登录。'],
+  ['unavailable', '暂时无法连接 CDS 登录服务，请稍后重试。'],
+]);
 
 function normalizeAbsoluteHttpUrl(value: string | null | undefined, trimTrailingSlash = false) {
   const raw = (value || '').trim();
@@ -63,6 +70,9 @@ export default function LoginPage() {
   const logout = useAuthStore((s) => s.logout);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [searchParams] = useSearchParams();
+  const cdsSsoResult = searchParams.get('cdsSso');
+  const cdsLoginRequest = useRef<ReturnType<typeof completeCdsLogin> | null>(null);
+  const [cdsEnabled, setCdsEnabled] = useState(false);
   /**
    * returnUrl 有两种形态，用错地方会把授权码泄出去：
    *
@@ -78,7 +88,9 @@ export default function LoginPage() {
    * 还原也不能放在 render 里：`takeReturnFragment` 是「取走并删除」，而 StrictMode
    * 会故意重复执行 render 与 useMemo，第一次就把它消费掉，留下的那次拿到空值。
    */
-  const returnUrlWithRef = searchParams.get('returnUrl') || '/';
+  const requestedReturn = searchParams.get('returnUrl');
+  const returnUrlWithRef = requestedReturn?.startsWith('/') && !/^\/[/\\]|[\r\n\t]/.test(requestedReturn)
+    ? requestedReturn : '/';
 
   // 解析结果要缓存：takeReturnFragment 是「取走并删除」，而登录成功后有两条路都会
   // 走到跳转——setAuth 翻了 isAuthed 触发的那个 effect，和密码登录自己的那次
@@ -147,7 +159,7 @@ export default function LoginPage() {
   const canResetSubmit = useMemo(() => Boolean(newPassword.trim() && confirmPassword.trim()), [newPassword, confirmPassword]);
 
   useEffect(() => {
-    if (isAuthed && !completingLogin.current) navigate(resolveReturnUrl(), { replace: true });
+    if (isAuthed && !cdsSsoResult && !completingLogin.current) navigate(resolveReturnUrl(), { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthed, navigate]);
 
@@ -157,11 +169,13 @@ export default function LoginPage() {
       .then((res) => {
         if (!alive) return;
         setSsoOptions(res.success ? res.data.items : []);
+        setCdsEnabled(res.success && res.data.cdsEnabled === true);
         setPasswordLoginDisabled(res.success ? res.data.passwordLoginDisabled : false);
       })
       .catch(() => {
         if (alive) {
           setSsoOptions([]);
+          setCdsEnabled(false);
           setPasswordLoginDisabled(false);
         }
       });
@@ -169,6 +183,46 @@ export default function LoginPage() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!cdsSsoResult) return;
+    const stripCdsResult = () => {
+      const next = new URLSearchParams(searchParams);
+      next.delete('cdsSso');
+      navigate(`/login${next.size ? `?${next}` : ''}`, { replace: true });
+    };
+
+    if (cdsSsoResult !== 'complete') {
+      setError(CDS_SSO_ERRORS.get(cdsSsoResult) || 'CDS 登录失败，请重新登录。');
+      stripCdsResult();
+      return;
+    }
+
+    let alive = true;
+    setSsoLoading(true);
+    setError(null);
+    // React may restart this effect. Reuse the same request to redeem the one-time handoff.
+    cdsLoginRequest.current ??= completeCdsLogin();
+    cdsLoginRequest.current.then(async (res) => {
+      if (!alive) return;
+      if (!res.success) {
+        setError(res.error?.message || 'CDS 登录失败，请重新登录。');
+        stripCdsResult();
+        return;
+      }
+      await completeLogin(res.data.user, res.data.accessToken, res.data.refreshToken, res.data.sessionKey);
+    }).catch(() => {
+      if (!alive) return;
+      setError('暂时无法完成 CDS 登录，请稍后重试。');
+      stripCdsResult();
+    }).finally(() => {
+      if (alive) setSsoLoading(false);
+    });
+
+    return () => { alive = false; };
+    // The callback is processed once. Session and UI changes during login must not redeem it again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cdsSsoResult]);
 
   useEffect(() => {
     const provider = searchParams.get('ssoProvider');
@@ -391,6 +445,7 @@ export default function LoginPage() {
               canSubmit={canSubmit}
               rememberUsername={rememberUsername}
               ssoOptions={ssoOptions}
+              cdsEnabled={cdsEnabled}
               ssoLoading={ssoLoading}
               passwordLoginDisabled={passwordLoginDisabled}
               // 给 SSO 的必须是带 fragRef 的那份：它会被拼进外部地址。
@@ -581,6 +636,7 @@ interface LoginCardProps {
   canSubmit: boolean;
   rememberUsername: boolean;
   ssoOptions: SsoLoginOption[];
+  cdsEnabled: boolean;
   ssoLoading: boolean;
   passwordLoginDisabled: boolean;
   returnUrl: string;
@@ -599,6 +655,7 @@ function LoginCard({
   canSubmit,
   rememberUsername,
   ssoOptions,
+  cdsEnabled,
   ssoLoading,
   passwordLoginDisabled,
   returnUrl,
@@ -610,6 +667,8 @@ function LoginCard({
 }: LoginCardProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
+  const hasSso = cdsEnabled || ssoOptions.length > 0;
+  const cdsHref = `${api.auth.cdsStart()}?${new URLSearchParams({ returnUrl })}`;
   const buildSsoHref = (option: SsoLoginOption) => {
     if (!option.baseUrl || !option.appCode || !option.redirectUri) return '#';
     const baseUrl = normalizeAbsoluteHttpUrl(option.baseUrl, true);
@@ -751,7 +810,7 @@ function LoginCard({
           </Reveal>
         )}
 
-        {ssoOptions.length > 0 && (
+        {hasSso && (
           <Reveal delay={400}>
             <div className="grid gap-2">
               <div
@@ -762,6 +821,22 @@ function LoginCard({
                 <span>SSO</span>
                 <span className="h-px flex-1 bg-token-nested" />
               </div>
+              {cdsEnabled && (
+                <>
+                  <a
+                    href={ssoLoading ? undefined : cdsHref}
+                    aria-disabled={ssoLoading}
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-token-subtle bg-token-nested px-4 text-[13.5px] font-medium text-token-secondary transition-all hover-bg-soft/[0.07] aria-disabled:pointer-events-none aria-disabled:opacity-45"
+                    style={{ fontFamily: 'var(--font-display)' }}
+                  >
+                    <Lock className="h-4 w-4" /> 使用 CDS 登录
+                  </a>
+                  <a href={ssoLoading ? undefined : `${cdsHref}&switchAccount=true`} aria-disabled={ssoLoading}
+                    className="self-center text-xs text-token-secondary underline underline-offset-4 aria-disabled:pointer-events-none aria-disabled:opacity-45">
+                    切换 CDS 账号
+                  </a>
+                </>
+              )}
               {ssoOptions.map((option) => {
                 const disabled = !option.baseUrl || !option.appCode || !option.redirectUri || !normalizeAbsoluteHttpUrl(option.baseUrl, true) || ssoLoading;
                 return (
@@ -783,14 +858,14 @@ function LoginCard({
           </Reveal>
         )}
 
-        {passwordLoginDisabled && ssoOptions.length === 0 && (
+        {passwordLoginDisabled && !hasSso && (
           <Reveal delay={420}>
             <ErrorBar>暂时没有可用的登录方式，请联系管理员恢复登录服务。</ErrorBar>
           </Reveal>
         )}
 
         {!passwordLoginDisabled && (
-          <Reveal delay={ssoOptions.length > 0 ? 480 : 440}>
+          <Reveal delay={hasSso ? 480 : 440}>
             <div
               className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-token-secondary"
               style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
