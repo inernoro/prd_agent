@@ -100,7 +100,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const compact = variant !== 'bar';
   const relatedItems = data?.items.filter(item => item.id !== siteId) ?? [];
   const relatedCount = relatedItems.length;
-  if (variant === 'toolbar' && !collectionsEnabled && !error && (loading || relatedCount === 0)) return null;
+  if (variant === 'toolbar' && !collectionsEnabled && (loading || relatedCount === 0)) return null;
   const main = data?.items.find(item => item.isMain);
   const warn = variant === 'toolbar' && data?.canManage && data.hasPermissionDifferences;
   const badgeTitle = collectionsEnabled ? `查看${siteTitle ? '「' + siteTitle + '」的' : ''}关联文档与所属合集`
@@ -176,14 +176,15 @@ function RelatedDocumentsManager({ siteId, data, onClose, onSaved }: {
       if (result.success) onSaved(result.data); else setError(result.error?.message || '保存失败');
     } catch { setError('保存失败，请重试'); } finally { setSaving(false); }
   };
-  const available = candidates.filter(item => !draft.some(selected => selected.id === item.id) && item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const relatedCount = draft.filter(item => item.id !== siteId).length;
+  const available = candidates.filter(item => item.id !== siteId && !draft.some(selected => selected.id === item.id) && item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   return <Dialog open onOpenChange={open => { if (!open && !saving) onClose(); }} title="管理关联文档" maxWidth={680} zIndex={1000}
     description="选择同组文件并指定一份主文档。关联关系不会改变任何文件的权限。"
-    content={<div className="related-manager"><div className="related-section-label">已关联 {draft.length} / 90<span>星标设为主文档</span></div>
+    content={<div className="related-manager"><div className="related-section-label">已关联 {relatedCount} / 89<span>星标设为主文档</span></div>
       <div className="related-selected-list" style={{ maxHeight: '30dvh', overflowY: 'auto', minHeight: 0 }}>
         {draft.map((item, index) => <div className="related-selected-row" key={item.id}>
           <button type="button" className={main === item.id ? 'is-main' : ''} aria-label={`设为主文档：${item.title}`} aria-pressed={main === item.id} disabled={saving} onClick={() => setMain(item.id)}><Star size={15} /></button>
-          <span title={item.title}>{item.title}</span>{item.id === siteId && <small>当前</small>}
+          <span title={item.title}>{item.title}</span>{item.id === siteId && <small>当前文档</small>}
           <button type="button" aria-label={`上移：${item.title}`} disabled={saving || index === 0} onClick={() => move(index, -1)}><ArrowUp size={13} /></button>
           <button type="button" aria-label={`下移：${item.title}`} disabled={saving || index + 1 === draft.length} onClick={() => move(index, 1)}><ArrowDown size={13} /></button>
           <button type="button" aria-label={`移出关联：${item.title}`} title={item.id === siteId ? '当前文档需保留；可从其他成员页移出' : '只移出关联，不删除文件'} disabled={saving || item.id === siteId}

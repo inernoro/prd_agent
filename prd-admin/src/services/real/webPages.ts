@@ -557,6 +557,7 @@ export function buildApiUrl(path: string) {
 
 export async function uploadSite(input: {
   file: File;
+  entryFile?: string;
   title?: string;
   description?: string;
   folder?: string;
@@ -583,6 +584,8 @@ export async function uploadSite(input: {
 
   const fd = new FormData();
   fd.append('file', input.file);
+  if (input.entryFile === '') fd.append('openAsDirectory', 'true');
+  else if (input.entryFile !== undefined) fd.append('entryFile', input.entryFile);
   if (input.title) fd.append('title', input.title);
   if (input.description) fd.append('description', input.description);
   if (input.folder) fd.append('folder', input.folder);

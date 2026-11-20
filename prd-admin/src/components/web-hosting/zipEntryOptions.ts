@@ -7,18 +7,13 @@ export async function readZipEntryOptions(file: File) {
     const first = entries[0]?.filename;
     const prefix = first?.includes('/') ? first.slice(0, first.indexOf('/') + 1) : '';
     const root = prefix && entries.every(entry => entry.filename.startsWith(prefix)) ? prefix : '';
-    const candidates = entries.flatMap(entry => {
-      if (!entry.uncompressedSize || entry.encrypted) return [];
+    return entries.flatMap(entry => {
       const path = entry.filename.slice(root.length);
       if (path.startsWith('.') || path.startsWith('/') || path.includes('..')
         || path.startsWith('__MACOSX/') || path.includes('/__MACOSX/')) return [];
-      return /\.(html?|md|markdown)$/i.test(path) ? [{ name: entry.filename, path }] : [];
-    });
-    const html = candidates.filter(entry => /\.html?$/i.test(entry.path));
-    const automatic = html.find(entry => /^index\.html$/i.test(entry.path))
-      ?? html.find(entry => /^index\.htm$/i.test(entry.path))
-      ?? html[0];
-    return { candidates, automatic: automatic?.path };
+      const selectable = entry.uncompressedSize > 0 && !entry.encrypted && /\.(html?|md|markdown)$/i.test(path);
+      return [{ name: entry.filename, path, selectable }];
+    }).sort((a, b) => Number(b.selectable) - Number(a.selectable));
   } finally {
     await reader.close();
   }

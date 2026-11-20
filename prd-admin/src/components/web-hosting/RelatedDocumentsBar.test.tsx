@@ -67,7 +67,18 @@ describe('顶部关联文档', () => {
     expect(container.querySelector('.related-trigger')).toBeNull();
     expect(document.querySelector('.related-popover')?.textContent).toContain('暂无关联文档');
     await clickText('管理关联');
-    expect(document.querySelector('[aria-label="管理关联文档"]')).not.toBeNull();
+    const manager = document.querySelector('[aria-label="管理关联文档"]');
+    expect(manager?.textContent).toContain('已关联 0 / 89');
+    expect(manager?.textContent).toContain('当前文档');
+    expect(manager?.querySelector('.related-candidate')?.textContent).not.toContain(data.items[0].title);
+  });
+  it('读取失败时阅读器不显示只有链条的入口，重新读取成功才显示实际关联', async () => {
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: false, data: null as never, error: { code: 'FAILED', message: '关联暂不可用' } });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
+    expect(container.querySelector('.related-trigger')).toBeNull();
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data, error: null });
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(container.querySelector('.related-count')?.textContent).toBe('1');
   });
   it('没有外部关联时顶部入口完全隐藏，管理仍可从完整关联栏进入', async () => {
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, version: 0, mainSiteId: null, items: [data.items[0]] }, error: null });

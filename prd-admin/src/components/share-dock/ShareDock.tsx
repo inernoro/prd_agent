@@ -57,6 +57,7 @@ export interface ShareDockDropzone {
    * - 返回 Promise<ShareDockUploadOutcome>：dock 走「上传中 → 二选一分享 → 展示分享码」流程
    * - 返回 void：维持旧行为（仅把文件交给外部处理，如打开弹窗） */
   onFiles: (files: File[]) => Promise<ShareDockUploadOutcome | void> | void;
+  renderFileOptions?: (files: File[], upload: (result: Promise<ShareDockUploadOutcome | void>) => void, cancel: () => void) => React.ReactNode;
 }
 
 export interface ShareDockProps {
@@ -159,6 +160,7 @@ export function ShareDock({
   // dropzone 上传状态机：idle（待上传）→ uploading（上传中）→ choosing（二选一分享）
   //                      → sharing（创建分享中）→ done（展示分享码）
   const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'choosing' | 'sharing' | 'done'>('idle');
+  const [fileOptions, setFileOptions] = useState<React.ReactNode>(null);
   const [uploadResult, setUploadResult] = useState<ShareDockUploadResult | null>(null);
   const [resultCopied, setResultCopied] = useState(false);
   // 上传成功后待用户二选一的分享创建器（choosing 态使用）
@@ -175,16 +177,14 @@ export function ShareDock({
 
   // 统一处理「拖入 / 点击选择」拿到的文件：
   // onFiles 返回 Promise 时走「上传 → 二选一分享」，返回 void 时维持旧行为
-  const handleDropzoneFiles = useCallback(
-    (files: File[]) => {
-      if (!dropzone || files.length === 0) return;
-      const ret = dropzone.onFiles(files);
-      if (ret && typeof (ret as Promise<unknown>).then === 'function') {
+  const trackUpload = useCallback(
+    (ret: Promise<ShareDockUploadOutcome | void> | void) => {
+      if (ret) {
         setUploadState('uploading');
         setUploadResult(null);
         setPendingShare(null);
         setShareError(null);
-        (ret as Promise<ShareDockUploadOutcome | void>)
+        ret
           .then((outcome) => {
             if (outcome && outcome.createShare) {
               // 上传成功 → 进入二选一，由用户点选分享方式后才真正创建分享
@@ -203,8 +203,18 @@ export function ShareDock({
       }
       // void：外部自行处理（如打开弹窗），dock 维持 idle
     },
-    [dropzone, copyToClipboard],
+    [copyToClipboard],
   );
+
+  const handleDropzoneFiles = (files: File[]) => {
+    if (!dropzone || !files.length) return;
+    const options = dropzone.renderFileOptions?.(files, result => {
+      setFileOptions(null);
+      trackUpload(result);
+    }, () => setFileOptions(null));
+    if (options) setFileOptions(options);
+    else trackUpload(dropzone.onFiles(files));
+  };
 
   // 用户在二选一里点了「无密码 / 有密码」→ 创建分享，成功后展示链接 + 自动复制
   const chooseShare = useCallback(async (mode: 'none' | 'password') => {
@@ -418,21 +428,21 @@ export function ShareDock({
             <div
               data-no-drag
               data-tour-id="webpages-dropzone"
-              role={uploadState === 'idle' ? 'button' : undefined}
-              tabIndex={uploadState === 'idle' ? 0 : undefined}
-              aria-label={uploadState === 'idle' ? '点击或拖文件到此上传' : undefined}
+              role={uploadState === 'idle' && !fileOptions ? 'button' : undefined}
+              tabIndex={uploadState === 'idle' && !fileOptions ? 0 : undefined}
+              aria-label={uploadState === 'idle' && !fileOptions ? '点击或拖文件到此上传' : undefined}
               className={[
                 'share-dock__dropzone flex w-full flex-col items-center justify-center gap-1.5 rounded-xl p-2.5 text-center transition-all',
-                uploadState === 'idle' ? 'cursor-pointer' : 'cursor-default',
+                uploadState === 'idle' && !fileOptions ? 'cursor-pointer' : 'cursor-default',
               ].join(' ')}
-              data-state={uploadState}
+              data-state={fileOptions ? 'configuring' : uploadState}
               data-file-over={fileOver ? 'true' : 'false'}
               // 1:1 方形并在面板内水平居中：maxWidth 限定方形尺寸（外层 flex justify-center 负责居中）；
               // 内容多时（done 态）可自然超过正方形高度
-              style={{ width: '100%', maxWidth: 188, aspectRatio: '1 / 1' }}
-              onClick={() => { if (uploadState === 'idle') fileInputRef.current?.click(); }}
+              style={{ width: '100%', maxWidth: fileOptions ? undefined : 188, aspectRatio: fileOptions ? undefined : '1 / 1' }}
+              onClick={() => { if (uploadState === 'idle' && !fileOptions) fileInputRef.current?.click(); }}
               onKeyDown={(e) => {
-                if (uploadState === 'idle' && (e.key === 'Enter' || e.key === ' ')) {
+                if (uploadState === 'idle' && !fileOptions && (e.key === 'Enter' || e.key === ' ')) {
                   e.preventDefault();
                   fileInputRef.current?.click();
                 }
@@ -465,7 +475,7 @@ export function ShareDock({
                 if (files.length) handleDropzoneFiles(files);
               }}
             >
-              {uploadState === 'uploading' ? (
+              {fileOptions || (uploadState === 'uploading' ? (
                 <>
                   <MapSpinner size={28} />
                   <div className="text-[12px] font-medium">正在上传…</div>
@@ -565,7 +575,7 @@ export function ShareDock({
                     </div>
                   )}
                 </>
-              )}
+              ))}
             </div>
           </div>
         )}
