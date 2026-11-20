@@ -8,7 +8,7 @@
  *   4) auth with project-key rejects another project's routes with 403
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -17,7 +17,9 @@ import os from 'node:os';
 import { createProjectsRouter, assertProjectAccess } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
-import type { Project } from '../../src/types.js';
+import { WorktreeService } from '../../src/services/worktree.js';
+import { createServer } from '../../src/server.js';
+import type { CdsConfig, Project } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
@@ -162,6 +164,61 @@ describe('Agent Keys (project-scoped)', () => {
     expect(listRes2.body.keys).toHaveLength(1);
     expect(listRes2.body.keys[0].status).toBe('revoked');
     expect(listRes2.body.keys[0].revokedAt).toBeTruthy();
+  });
+
+  it('manages the credential lifecycle and tracks completed requests through the real auth middleware', async () => {
+    vi.stubEnv('CDS_AUTH_MODE', 'basic');
+    vi.stubEnv('CDS_USERNAME', 'fixture-admin');
+    vi.stubEnv('CDS_PASSWORD', 'fixture-password');
+    vi.stubEnv('CDS_AI_ACCESS_KEY', 'fixture-cds-bootstrap');
+    vi.stubEnv('CDS_SSO_ENABLED', '');
+    const config: CdsConfig = {
+      repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees'), masterPort: 9900, workerPort: 5500,
+      dockerNetwork: 'fixture-network', portStart: 10001, sharedEnv: {},
+      jwt: { secret: 'fixture-jwt-secret', issuer: 'fixture' }, mode: 'standalone', executorPort: 9901,
+    };
+    const app = createServer({ stateService, shell, config,
+      worktreeService: new WorktreeService(shell, tmpDir), containerService: {} as any,
+      bridgeService: {} as any,
+      proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress() {} } as any,
+    });
+    const live = app.listen(0, '127.0.0.1');
+    try {
+      await new Promise<void>((resolve, reject) => { live.on('listening', resolve); live.on('error', reject); });
+      const operator = { 'X-AI-Access-Key': 'fixture-cds-bootstrap' };
+      const base = '/api/projects/default/agent-keys';
+      const signed = await request(live, 'POST', base, { label: 'Cloud worker' }, operator);
+      expect(signed.status).toBe(201);
+      const key = { Authorization: `Bearer ${signed.body.plaintext}` };
+      const keyUrl = `${base}/${signed.body.keyId}`;
+      expect((await request(live, 'DELETE', `${keyUrl}/record`, undefined, operator)).status).toBe(409);
+      expect((await request(live, 'PATCH', keyUrl, { label: '  ' }, operator)).status).toBe(400);
+      expect((await request(live, 'PATCH', keyUrl, { label: 'Renamed worker', archived: true }, operator)).status).toBe(200);
+      expect((await request(live, 'GET', base, undefined, operator)).body.keys[0]).toMatchObject({
+        label: 'Renamed worker', archivedAt: expect.any(String), requestCount: 0,
+      });
+      for (let hit = 0; hit < 22; hit += 1) {
+        expect((await request(live, 'GET', '/api/projects/default?private=fixture-private-value', undefined, key)).status).toBe(200);
+      }
+      expect((await request(live, 'GET', `/api/projects/alt-proj-id/agent-keys/${signed.body.keyId}`, undefined, key)).status).toBe(403);
+      const details = (await request(live, 'GET', keyUrl, undefined, operator)).body;
+      expect(details.key.requestCount).toBe(23);
+      expect(details.requests).toHaveLength(20);
+      expect(details.requests[0].status).toBe(403);
+      expect(details.requests[1]).toMatchObject({ method: 'GET', route: '/projects/:id', status: 200, durationMs: expect.any(Number) });
+      expect(JSON.stringify(details)).not.toContain('fixture-private-value');
+      expect(JSON.stringify(details)).not.toContain(signed.body.plaintext);
+      expect(details.key.hash).toBeUndefined();
+      expect((await request(live, 'PATCH', keyUrl, { archived: false }, operator)).status).toBe(200);
+      expect((await request(live, 'GET', base, undefined, operator)).body.keys[0].archivedAt).toBeUndefined();
+      expect((await request(live, 'DELETE', keyUrl, undefined, operator)).status).toBe(200);
+      expect((await request(live, 'GET', '/api/projects/default', undefined, key)).status).toBe(401);
+      expect((await request(live, 'DELETE', `${keyUrl}/record`, undefined, operator)).status).toBe(200);
+      expect((await request(live, 'GET', base, undefined, operator)).body.keys).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve) => live.close(() => resolve()));
+      vi.unstubAllEnvs();
+    }
   });
 
   it('project-key authenticates requests against its own project', async () => {

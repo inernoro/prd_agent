@@ -4595,6 +4595,10 @@ export interface AgentKey {
   createdBy?: string;
   /** ISO timestamp updated (best-effort) each time the key authenticates. */
   lastUsedAt?: string;
+  /** Archive affects the management view only. */
+  archivedAt?: string;
+  /** Completed API requests recorded since tracking was enabled, with a bounded recent history. */
+  usage?: { count: number; recent: AgentKeyRequest[] };
   /** ISO timestamp set by DELETE — revoked keys stay in state for audit. */
   revokedAt?: string;
   /**
@@ -4618,6 +4622,15 @@ export interface AgentKey {
    * 有了自愈补发，丢了不麻烦了，所以没理由再让它长生。
    */
   expiresAt?: string;
+}
+
+export interface AgentKeyRequest {
+  at: string;
+  method: string;
+  route?: string;
+  status: number;
+  durationMs: number;
+  principalId?: string;
 }
 
 /**

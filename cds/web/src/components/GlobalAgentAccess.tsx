@@ -11,6 +11,7 @@ import {
 import { ApiError, apiRequest, isChildPreviewCdsInstance } from '@/lib/api';
 
 type AgentProjectsResponse = {
+  canManageProjects?: boolean;
   projects?: Array<{
     id: string;
     name?: string;
@@ -42,6 +43,7 @@ export function GlobalAgentAccess(): JSX.Element {
   const [open, setOpen] = useState(false);
   const [requestedContextId, setRequestedContextId] = useState<AgentPageContextId | undefined>(undefined);
   const [projects, setProjects] = useState<AgentProjectOption[] | null>(null);
+  const [canManageProjects, setCanManageProjects] = useState(false);
   const [projectsError, setProjectsError] = useState('');
   const [projectsRequest, setProjectsRequest] = useState(0);
   const currentLocation = typeof window === 'undefined'
@@ -68,11 +70,13 @@ export function GlobalAgentAccess(): JSX.Element {
     if (!open) return undefined;
     const ctrl = new AbortController();
     setProjects(null);
+    setCanManageProjects(false);
     setProjectsError('');
     apiRequest<AgentProjectsResponse>('/api/projects', { signal: ctrl.signal })
       .then((data) => {
         if (ctrl.signal.aborted) return;
         if (!Array.isArray(data.projects)) throw new Error('Invalid projects response');
+        setCanManageProjects(data.canManageProjects !== false);
         setProjects(data.projects.map((project) => ({
           id: project.id,
           name: project.aliasName || project.name || project.slug || project.id,
@@ -131,6 +135,7 @@ export function GlobalAgentAccess(): JSX.Element {
         projects={projects || []}
         projectsLoading={projects === null}
         projectsError={projectsError}
+        canManageProjectKeys={canManageProjects}
         onReloadProjects={() => setProjectsRequest((value) => value + 1)}
         context={context}
       />

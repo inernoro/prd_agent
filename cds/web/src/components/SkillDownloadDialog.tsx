@@ -1,6 +1,6 @@
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Check, Copy, Download, ExternalLink, GraduationCap, Loader2, Package, Rocket, ShieldCheck } from 'lucide-react';
+import { Bot, Check, Copy, Download, ExternalLink, GraduationCap, KeyRound, Loader2, Package, Rocket, ShieldCheck } from 'lucide-react';
 
 import {
   AgentAccessMap,
@@ -9,6 +9,7 @@ import {
 } from '@/components/AgentAccessMap';
 import { AgentStarterTab } from '@/components/AgentStarterTab';
 import { Button } from '@/components/ui/button';
+import { MotionLink } from '@/components/layout/RouteMotion';
 import { AGENT_ROLE_PROFILES } from '@/lib/agent-starter';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -52,22 +53,24 @@ interface Props {
   projects: AgentProjectOption[];
   projectsLoading?: boolean;
   projectsError?: string;
+  canManageProjectKeys?: boolean;
   onReloadProjects?: () => void;
   context?: AgentPageContext;
 }
 
-type TabKey = 'starter' | 'init' | 'connect' | 'manual' | 'marketplace';
+type TabKey = 'starter' | 'init' | 'connect' | 'key' | 'manual' | 'marketplace';
 
 // 接入默认只复制短口令；角色方法论与项目初始化仍可独立选择。
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: boolean }> = [
   { key: 'connect', label: '自动接入', icon: Bot, recommended: true },
+  { key: 'key', label: '密钥接入', icon: KeyRound },
   { key: 'starter', label: '上手助手', icon: GraduationCap },
   { key: 'init', label: '快速初始化', icon: Rocket },
   { key: 'manual', label: '手动安装', icon: Package },
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
 ];
 
-export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoading = false, projectsError = '', onReloadProjects, context }: Props): JSX.Element {
+export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoading = false, projectsError = '', canManageProjectKeys = false, onReloadProjects, context }: Props): JSX.Element {
   const [active, setActive] = useState<TabKey>('connect');
   const sourceContext = context || createAgentMissionContext('projects');
   const [mapSelection, setMapSelection] = useState<AgentAccessMapSelection>(
@@ -150,8 +153,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
         <DialogHeader>
           <DialogTitle>接入 Agent</DialogTitle>
           <DialogDescription>
-            选择项目和任务，复制短口令。Agent 会按需读取说明，并实际验证接入。
-            已有项目权限会静默复用，只有缺少权限或明确提权时才需要批准。
+            支持通过短口令接入，也支持在云环境中注入固定项目密钥。
           </DialogDescription>
         </DialogHeader>
 
@@ -212,7 +214,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
           </label>
         ) : null}
 
-        <nav className="grid grid-cols-2 gap-1 border-b border-[hsl(var(--hairline))] sm:grid-cols-5">
+        <nav className="grid grid-cols-2 gap-1 border-b border-[hsl(var(--hairline))] sm:grid-cols-6">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const selected = active === tab.key;
@@ -272,6 +274,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
             />}
           </div>
           {active === 'init' ? <ProjectInitTab /> : null}
+          {active === 'key' ? <CloudKeyTab projects={projects} requestedProjectId={effectiveProjectId} loading={projectsLoading} error={projectsError} canManage={canManageProjectKeys} onRetry={onReloadProjects} onOpenKeys={() => onOpenChange(false)} /> : null}
           {active === 'connect' ? setupError
             ? <ProjectScopeError message={setupError} onRetry={onReloadProjects} />
             : <ConnectTab prompt={prompt} loading={projectsLoading} onCopied={() => { explicitSelection.current = true; }} /> : null}
@@ -280,6 +283,32 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CloudKeyTab({ projects, requestedProjectId, loading, error, canManage, onRetry, onOpenKeys }: {
+  projects: AgentProjectOption[]; requestedProjectId: string; loading: boolean; error: string; canManage: boolean;
+  onRetry?: () => void; onOpenKeys: () => void;
+}): JSX.Element {
+  const [chosenId, setChosenId] = useState('');
+  const projectId = projects.find((project) => project.id === (chosenId || requestedProjectId))?.id || projects[0]?.id;
+  if (error) return <ProjectScopeError message={error} onRetry={onRetry} />;
+  if (loading) return <ContentLoading label="读取可签发密钥的项目" variant="inline" />;
+  if (!canManage) return <p className="text-sm text-muted-foreground">请使用有项目密钥管理权限的账号签发密钥。</p>;
+  if (!projectId) return <p className="text-sm text-muted-foreground">已有项目才能签发项目密钥。</p>;
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">选择项目并签发密钥，将签发页面中的三个环境变量保存到云环境。</p>
+      <label className="block space-y-1 text-sm">
+        <span>项目</span>
+        <select value={projectId} onChange={(event) => setChosenId(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3">
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+      </label>
+      <Button asChild>
+        <MotionLink to={`/project-list?agentKeys=${encodeURIComponent(projectId)}`} onClick={onOpenKeys}><KeyRound />打开项目密钥管理</MotionLink>
+      </Button>
+    </div>
   );
 }
 

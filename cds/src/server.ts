@@ -222,6 +222,11 @@ function readCookie(cookieHeader: string | undefined, name: string): string | un
   return match ? decodeURIComponent(match[1]) : undefined;
 }
 
+const authenticatedProjectKey = Symbol('authenticatedProjectKey');
+type ProjectKeyRequest = express.Request & {
+  [authenticatedProjectKey]?: { projectId: string; keyId: string };
+};
+
 /**
  * 单项目作用域的 cdsg_ 全局 Key —— 同时 stamp req.cdsProjectKey（2026-07-09 Codex P1）。
  *
@@ -1525,7 +1530,10 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/(.+)\/scope-options\/apply$/, '采纳构建范围建议'],
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
-    [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
+    [/^GET \/projects\/[^/]+\/agent-keys\/[^/]+$/, '查看项目 Agent Key 请求记录'],
+    [/^PATCH \/projects\/[^/]+\/agent-keys\/[^/]+$/, '更新项目 Agent Key'],
+    [/^DELETE \/projects\/[^/]+\/agent-keys\/[^/]+\/record$/, '永久删除已吊销项目 Agent Key'],
+    [/^DELETE \/projects\/[^/]+\/agent-keys\/[^/]+$/, '吊销项目 Agent Key'],
     // 项目级 Agent 会话
     [/^GET \/projects\/[^/]+\/agent-requests$/, '列出 Agent 请求'],
     [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/stream$/, '订阅 Agent 会话事件流'],
@@ -1833,6 +1841,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
       const match = stateService.findAgentKeyForAuth(headerKey);
       if (match) {
         stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
+        (req as ProjectKeyRequest)[authenticatedProjectKey] = match;
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
         return {
@@ -2484,6 +2493,25 @@ export function createServer(deps: ServerDeps): express.Express {
       uptimeSeconds: Math.round(os.uptime()),
       timestamp: new Date().toISOString(),
     });
+  });
+
+  // Capture project-key usage after auth and routing have populated the request.
+  app.use('/api', (req, res, next) => {
+    const startedAt = Date.now();
+    res.once('finish', () => {
+      const projectKey = (req as ProjectKeyRequest)[authenticatedProjectKey];
+      if (!projectKey) return;
+      const route: unknown = req.route?.path;
+      const finishedAt = Date.now();
+      deps.stateService.recordAgentKeyRequest(projectKey.projectId, projectKey.keyId, {
+        at: new Date(finishedAt).toISOString(),
+        method: req.method,
+        route: !res.locals.cdsSuppressRequestDetails && typeof route === 'string' && route.startsWith('/') ? route : undefined,
+        status: res.statusCode,
+        durationMs: finishedAt - startedAt,
+      });
+    });
+    next();
   });
 
   // Assign a request id before auth so 401/403/400 responses are also
@@ -3936,6 +3964,9 @@ export function createServer(deps: ServerDeps): express.Express {
       const match = deps.stateService.findAgentKeyForAuth(h);
       if (match) {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
+        if (authMode === 'disabled' && !(req as express.Request & { cdsUser?: CdsUser }).cdsUser) {
+          (req as ProjectKeyRequest)[authenticatedProjectKey] = match;
+        }
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
       }

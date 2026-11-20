@@ -4551,12 +4551,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    // Capture signer identity from the github-auth middleware when present.
-    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
+    const user = (req as unknown as { cdsUser?: { username?: string; githubLogin?: string; login?: string } }).cdsUser;
 
     let minted: { keyId: string; plaintext: string; preview: string };
     try {
-      minted = mintProjectAgentKey(stateService, project, label, ghUser?.login);
+      minted = mintProjectAgentKey(stateService, project, label, user?.username || user?.githubLogin || user?.login);
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -4565,8 +4564,24 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(201).json(minted);
+    res.set('Cache-Control', 'no-store').status(201).json(minted);
   });
+
+  function agentKeySummary(key: AgentKey) {
+    return {
+      id: key.id,
+      label: key.label,
+      scope: key.scope,
+      createdAt: key.createdAt,
+      createdBy: key.createdBy,
+      lastUsedAt: key.lastUsedAt,
+      archivedAt: key.archivedAt,
+      expiresAt: key.expiresAt,
+      revokedAt: key.revokedAt,
+      status: key.revokedAt ? 'revoked' : 'active',
+      requestCount: key.usage?.count ?? 0,
+    };
+  }
 
   router.get('/projects/:id/agent-keys', (req, res) => {
     const project = stateService.getProject(req.params.id);
@@ -4577,19 +4592,64 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const entries = stateService.getAgentKeys(project.id);
-    res.json({
-      keys: entries.map((e) => ({
-        id: e.id,
-        label: e.label,
-        scope: e.scope,
-        createdAt: e.createdAt,
-        createdBy: e.createdBy,
-        lastUsedAt: e.lastUsedAt,
-        revokedAt: e.revokedAt,
-        status: e.revokedAt ? 'revoked' : 'active',
-      })),
+    res.json({ keys: stateService.getAgentKeys(project.id).map(agentKeySummary) });
+  });
+
+  router.get('/projects/:id/agent-keys/:keyId', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    const key = project && stateService.getAgentKeys(project.id).find((entry) => entry.id === req.params.keyId);
+    if (!project || !key) {
+      res.status(404).json({ error: 'key_not_found', message: '找不到项目密钥。' });
+      return;
+    }
+    const principal = key.principalId ? stateService.getPrincipal(key.principalId) : undefined;
+    const approval = stateService.listAccessRequests().find((item) => item.projectId === project.id && item.issuedKeyId === key.id);
+    res.set('Cache-Control', 'no-store').json({
+      key: agentKeySummary(key),
+      principal: key.principalId ? { id: key.principalId, name: principal?.name, kind: principal?.kind } : undefined,
+      approval: approval ? {
+        id: approval.id, agentName: approval.agentName, purpose: approval.purpose,
+        requestedAt: approval.createdAt, decidedBy: approval.decidedBy, decidedAt: approval.decidedAt,
+      } : undefined,
+      requests: key.usage?.recent ?? [],
     });
+  });
+
+  router.patch('/projects/:id/agent-keys/:keyId', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    const { label, archived } = (req.body || {}) as { label?: unknown; archived?: unknown };
+    if ((label === undefined && archived === undefined)
+      || (label !== undefined && (typeof label !== 'string' || !label.trim() || label.trim().length > 100))
+      || (archived !== undefined && typeof archived !== 'boolean')) {
+      res.status(400).json({ error: 'invalid_key_metadata', message: '请提供 1 至 100 字的名称或有效的归档状态。' });
+      return;
+    }
+    if (!project || !stateService.updateAgentKeyMetadata(project.id, req.params.keyId, {
+      label: typeof label === 'string' ? label.trim() : undefined, archived: typeof archived === 'boolean' ? archived : undefined,
+    })) {
+      res.status(404).json({ error: 'key_not_found', message: '找不到项目密钥。' });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  router.delete('/projects/:id/agent-keys/:keyId/record', (req, res) => {
+    const machineKey = assertNotMachineAgentKey(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown });
+    if (machineKey) {
+      res.status(machineKey.status).json({ error: 'agent_key_cannot_delete_record', message: '项目密钥和全局 Agent Key 无权永久删除密钥记录。' });
+      return;
+    }
+    const project = stateService.getProject(req.params.id);
+    const result = project ? stateService.deleteRevokedAgentKey(project.id, req.params.keyId) : 'not_found';
+    if (result === 'not_found') {
+      res.status(404).json({ error: 'key_not_found', message: '找不到项目密钥。' });
+      return;
+    }
+    if (result === 'active') {
+      res.status(409).json({ error: 'key_not_revoked', message: '请先吊销密钥，再永久删除记录。' });
+      return;
+    }
+    res.json({ ok: true });
   });
 
   router.delete('/projects/:id/agent-keys/:keyId', (req, res) => {

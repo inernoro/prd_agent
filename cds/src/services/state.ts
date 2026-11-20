@@ -28,6 +28,7 @@ import type {
   CdsPeer,
   Project,
   AgentKey,
+  AgentKeyRequest,
   GlobalAgentKey,
   AgentKeyAccess,
   Principal,
@@ -3883,6 +3884,49 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   getAgentKeys(projectId: string): AgentKey[] {
     const project = (this.state.projects || []).find((p) => p.id === projectId);
     return project?.agentKeys || [];
+  }
+
+  updateAgentKeyMetadata(projectId: string, keyId: string, updates: { label?: string; archived?: boolean }): boolean {
+    const keys = this.getAgentKeys(projectId);
+    const index = keys.findIndex((key) => key.id === keyId);
+    const entry = keys[index];
+    if (!entry) return false;
+    const updated = { ...entry, label: updates.label ?? entry.label };
+    if (updates.archived === true) updated.archivedAt ??= new Date().toISOString();
+    if (updates.archived === false) delete updated.archivedAt;
+    keys[index] = updated;
+    try {
+      this.save([{ kind: 'projects', id: projectId }]);
+    } catch (error) {
+      keys[index] = entry;
+      throw error;
+    }
+    return true;
+  }
+
+  deleteRevokedAgentKey(projectId: string, keyId: string): 'deleted' | 'not_found' | 'active' {
+    const keys = this.getAgentKeys(projectId);
+    const index = keys.findIndex((key) => key.id === keyId);
+    if (index < 0) return 'not_found';
+    if (!keys[index].revokedAt) return 'active';
+    const [deleted] = keys.splice(index, 1);
+    try {
+      this.save([{ kind: 'projects', id: projectId }]);
+    } catch (error) {
+      keys.splice(index, 0, deleted);
+      throw error;
+    }
+    return 'deleted';
+  }
+
+  recordAgentKeyRequest(projectId: string, keyId: string, request: Omit<AgentKeyRequest, 'principalId'>): void {
+    const entry = this.getAgentKeys(projectId).find((key) => key.id === keyId);
+    if (!entry) return;
+    const usage = entry.usage ??= { count: 0, recent: [] };
+    usage.count += 1;
+    usage.recent.unshift({ ...request, principalId: entry.principalId });
+    if (usage.recent.length > 20) usage.recent.length = 20;
+    try { this.save([{ kind: 'projects', id: projectId }]); } catch { /* best effort */ }
   }
 
   /**

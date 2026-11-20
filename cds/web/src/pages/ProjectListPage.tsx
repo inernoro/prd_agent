@@ -1,4 +1,6 @@
 import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { useSearchParams } from 'react-router-dom';
+import { ProjectAgentKeysDialog } from '@/components/project/ProjectAgentKeysDialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -478,7 +480,16 @@ export function ProjectListPage(): JSX.Element {
   const [cloneTarget, setCloneTarget] = useState<ProjectSummary | null>(null);
   // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
   const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
-  const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const agentKeyProjectId = searchParams.get('agentKeys');
+  const openAgentKeys = (id: string | null) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      if (id) next.set('agentKeys', id);
+      else next.delete('agentKeys');
+      return next;
+    }, { replace: true });
+  };
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
   const [monitoringOpen, setMonitoringOpen] = useState(false);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
@@ -706,6 +717,7 @@ export function ProjectListPage(): JSX.Element {
 
   const projects = state.status === 'ok' ? state.projects : [];
   const canManageProjects = state.status === 'ok' && state.canManageProjects;
+  const agentKeyProject = agentKeyProjectId && projects.find((project) => project.id === agentKeyProjectId || project.slug === agentKeyProjectId);
   const showProjectCreator = state.status === 'ok' ? state.canManageProjects : canShowProjectActions;
   const legacy = state.status === 'ok' ? state.legacy : null;
   const pendingImportCount = pendingImports.pendingCount || 0;
@@ -724,7 +736,7 @@ export function ProjectListPage(): JSX.Element {
         onCopyName={() => void copyProjectName(project)}
         environments={environmentStatus === 'ready' ? projectEnvironmentNames(project.id, environmentTargets) : undefined}
         onClone={() => setCloneTarget(project)}
-        onAgentKeys={() => setAgentKeyProject(project)}
+        onAgentKeys={() => openAgentKeys(project.id)}
         onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
         onDelete={() => setDeleteTarget(project)}
         onTogglePause={() => (project.paused ? void applyPause(project, false) : setPauseTarget(project))}
@@ -1074,13 +1086,12 @@ export function ProjectListPage(): JSX.Element {
             navigate(`/branches/${encodeURIComponent(projectId)}`);
           }}
         />
-        <AgentKeyManagerDialog
-          project={agentKeyProject}
-          onOpenChange={(open) => {
-            if (!open) setAgentKeyProject(null);
-          }}
+        {agentKeyProject && canManageProjects ? <ProjectAgentKeysDialog
+          key={agentKeyProject.id}
+          project={{ id: agentKeyProject.id, name: displayName(agentKeyProject) }}
+          onClose={() => openAgentKeys(null)}
           onToast={setToast}
-        />
+        /> : null}
         <GlobalAgentKeyManagerDialog
           open={globalAgentKeyOpen}
           onOpenChange={setGlobalAgentKeyOpen}
@@ -2284,130 +2295,6 @@ function CloneProgressDialog({
   );
 }
 
-function AgentKeyManagerDialog({
-  project,
-  onOpenChange,
-  onToast,
-}: {
-  project: ProjectSummary | null;
-  onOpenChange: (open: boolean) => void;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [state, setState] = useState<
-    | { status: 'idle' }
-    | { status: 'loading' }
-    | { status: 'error'; message: string }
-    | { status: 'ok'; keys: AgentKeySummary[] }
-  >({ status: 'idle' });
-  const [signOpen, setSignOpen] = useState(false);
-  const [revokeTarget, setRevokeTarget] = useState<AgentKeySummary | null>(null);
-
-  const loadKeys = useCallback(async () => {
-    if (!project) return;
-    setState({ status: 'loading' });
-    try {
-      const data = await apiRequest<AgentKeysResponse>(`/api/projects/${encodeURIComponent(project.id)}/agent-keys`);
-      setState({ status: 'ok', keys: data.keys || [] });
-    } catch (err) {
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-    }
-  }, [project]);
-
-  useEffect(() => {
-    if (project) void loadKeys();
-    else setState({ status: 'idle' });
-  }, [loadKeys, project]);
-
-  return (
-    <>
-      <Dialog open={Boolean(project)} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Agent Key 管理</DialogTitle>
-            <DialogDescription>
-              {project ? `${displayName(project)} · 项目级 key 只能操作当前项目。` : ''}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => setSignOpen(true)}>
-              <KeyRound />
-              签发新 Key
-            </Button>
-            <Button type="button" variant="outline" onClick={() => void loadKeys()}>
-              <RefreshCw />
-              刷新
-            </Button>
-          </div>
-
-          {state.status === 'loading' ? <LoadingBlock label="加载 Agent Keys" /> : null}
-          {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
-          {state.status === 'ok' && state.keys.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              还没有项目级 Agent Key。
-            </div>
-          ) : null}
-          {state.status === 'ok' && state.keys.length > 0 ? (
-            <div className="space-y-2">
-              {state.keys.map((key) => (
-                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{key.label || key.id}</span>
-                        <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
-                        <CodePill>{key.scope || 'rw'}</CodePill>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        <span>签发：{formatDate(key.createdAt)}</span>
-                        <span>最近使用：{formatDate(key.lastUsedAt)}</span>
-                        {key.createdBy ? <span>签发人：{key.createdBy}</span> : null}
-                      </div>
-                    </div>
-                    {!key.revokedAt ? (
-                      <Button type="button" variant="outline" size="sm" onClick={() => setRevokeTarget(key)}>
-                        <Trash2 />
-                        吊销
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AgentKeySignDialog
-        project={project}
-        open={signOpen}
-        onOpenChange={setSignOpen}
-        onSigned={async () => {
-          await loadKeys();
-        }}
-        onToast={onToast}
-      />
-      <AgentKeyRevokeDialog
-        project={project}
-        target={revokeTarget}
-        onOpenChange={(open) => {
-          if (!open) setRevokeTarget(null);
-        }}
-        onRevoked={async () => {
-          setRevokeTarget(null);
-          await loadKeys();
-        }}
-        onToast={onToast}
-      />
-    </>
-  );
-}
 function GlobalAgentKeyManagerDialog({
   open,
   onOpenChange,
@@ -2693,180 +2580,6 @@ function GlobalAgentKeyRevokeDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>吊销全局 Agent Key</DialogTitle>
-          <DialogDescription>
-            吊销后该 key 会立即失效，无法恢复。目标：{target?.label || target?.id || ''}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button type="button" variant="destructive" onClick={() => void revoke()} disabled={revoking}>
-            {revoking ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            确认吊销
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function AgentKeySignDialog({
-  project,
-  open,
-  onOpenChange,
-  onSigned,
-  onToast,
-}: {
-  project: ProjectSummary | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSigned: () => Promise<void>;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [label, setLabel] = useState('');
-  const [signing, setSigning] = useState(false);
-  const [error, setError] = useState('');
-  const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      setLabel('');
-      setError('');
-      setSigned(null);
-      setSigning(false);
-    }
-  }, [open]);
-
-  async function sign(): Promise<void> {
-    if (!project) return;
-    setSigning(true);
-    setError('');
-    try {
-      const data = await apiRequest<AgentKeySignResponse>(
-        `/api/projects/${encodeURIComponent(project.id)}/agent-keys`,
-        {
-          method: 'POST',
-          body: { label: label.trim() || undefined },
-        },
-      );
-      setSigned(data);
-      await onSigned();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setSigning(false);
-    }
-  }
-
-  const codeText =
-    project && signed
-      ? [`CDS_HOST=${window.location.origin}`, `CDS_PROJECT_ID=${project.id}`, `CDS_PROJECT_KEY=${signed.plaintext}`].join('\n')
-      : '';
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{signed ? 'Agent Key 已签发' : '签发项目级 Agent Key'}</DialogTitle>
-          <DialogDescription>
-            {signed
-              ? '明文只显示一次。关闭后 CDS 只保留 sha256 摘要，无法再次查看。'
-              : '这会创建一把新的项目级访问密钥，持有者可操作当前项目。'}
-          </DialogDescription>
-        </DialogHeader>
-
-        {signed ? (
-          <div className="space-y-4">
-            <pre className="cds-surface-raised cds-hairline whitespace-pre-wrap break-all p-3 font-mono text-xs leading-6">
-              {codeText}
-            </pre>
-            <Button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard.writeText(codeText).then(() => onToast('Agent Key 已复制'));
-              }}
-            >
-              <Copy />
-              复制全部
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">标签</span>
-              <input
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={label}
-                onChange={(event) => setLabel(event.target.value)}
-                maxLength={100}
-                placeholder="例如 Codex 本地调试"
-              />
-            </label>
-            <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
-              签发后请只交给需要操作此项目的 Agent。用完可在管理列表吊销。
-            </div>
-            {error ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
-          </div>
-        )}
-
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            {signed ? '关闭' : '取消'}
-          </Button>
-          {!signed ? (
-            <Button type="button" onClick={() => void sign()} disabled={signing}>
-              {signing ? <Loader2 className="animate-spin" /> : <KeyRound />}
-              确认签发
-            </Button>
-          ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function AgentKeyRevokeDialog({
-  project,
-  target,
-  onOpenChange,
-  onRevoked,
-  onToast,
-}: {
-  project: ProjectSummary | null;
-  target: AgentKeySummary | null;
-  onOpenChange: (open: boolean) => void;
-  onRevoked: () => Promise<void>;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [revoking, setRevoking] = useState(false);
-
-  async function revoke(): Promise<void> {
-    if (!project || !target) return;
-    setRevoking(true);
-    try {
-      await apiRequest(
-        `/api/projects/${encodeURIComponent(project.id)}/agent-keys/${encodeURIComponent(target.id)}`,
-        { method: 'DELETE' },
-      );
-      onToast('Agent Key 已吊销');
-      await onRevoked();
-    } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setRevoking(false);
-    }
-  }
-
-  return (
-    <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>吊销 Agent Key</DialogTitle>
           <DialogDescription>
             吊销后该 key 会立即失效，无法恢复。目标：{target?.label || target?.id || ''}
           </DialogDescription>
