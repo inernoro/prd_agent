@@ -2,6 +2,7 @@ import { projectBranchPreviewSlugs } from './preview-entrypoints.js';
 import http from 'node:http';
 import { runningCommitSha } from './running-version.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
+import { captureGatewayRequest, isHostedSsoPath, isHostedSsoRequest, markHostedSsoRequest, respondToGateway, unavailable, watchSiteConnection, type HostedSso } from './hosted-sso.js';
 import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
@@ -130,11 +131,34 @@ export class ProxyService {
   private proxyLogSeq = 0;
   private onProxyLog: ((evt: ProxyLogEvent) => void) | null = null;
   private httpLogStore: HttpLogSink | null = null;
+  private hostedSso?: { service: HostedSso; accepting: () => boolean };
 
   constructor(
     private readonly stateService: StateService,
     private readonly config?: CdsConfig,
   ) {}
+
+  setHostedSso(service: HostedSso, accepting: () => boolean): void {
+    this.hostedSso = { service, accepting };
+  }
+
+  private guardHostedSite(branch: BranchEntry | undefined, req: http.IncomingMessage, res: http.ServerResponse, proceed: () => void): void {
+    if (!branch?.hostedSso && !isHostedSsoPath(req.url)) { proceed(); return; }
+    const sso = this.hostedSso;
+    if (!sso?.accepting() || !branch) {
+      if (!branch?.hostedSso && req.url === '/_cds/sso/status') {
+        respondToGateway(res, { allow: false, status: 200, response: { enabled: false } });
+      } else {
+        respondToGateway(res, branch?.hostedSso ? unavailable : { allow: false, status: 404 });
+      }
+      return;
+    }
+    void sso.service.check(captureGatewayRequest(req, branch.id)).then(decision => {
+      if (!decision.allow) { respondToGateway(res, decision); return; }
+      if (decision.protected) markHostedSsoRequest(req);
+      proceed();
+    }).catch(() => { if (!res.headersSent) respondToGateway(res, unavailable); else res.destroy(); });
+  }
 
   /**
    * Attach the warm-pool scheduler. When set, every successful route to a
@@ -460,16 +484,16 @@ export class ProxyService {
     const url = req.url || '/';
     const handleStart = Date.now();
 
-    if (url.startsWith('/_cds/waiting-status')) {
-      this.serveWaitingStatus(req, res);
-      return;
-    }
-
     // ── /_cds/api/* — passthrough to CDS Dashboard API (master port) ──
     // Allows widgets embedded in proxied apps to call CDS API without CORS issues.
     if (url.startsWith('/_cds/')) {
       const previewSlug = this.extractPreviewBranch(host);
-      const sourceEntry = previewSlug ? this.resolveBranchEntry(previewSlug) : undefined;
+      const sourceEntry = previewSlug ? this.resolvePreviewServiceSubdomain(previewSlug)?.entry ?? this.resolveBranchEntry(previewSlug) : undefined;
+      this.guardHostedSite(sourceEntry, req, res, () => {
+      if (url.startsWith('/_cds/waiting-status')) {
+        this.serveWaitingStatus(req, res);
+        return;
+      }
       // Rewrite path: /_cds/api/branches → /api/branches
       req.url = url.slice(5); // strip "/_cds" prefix
       // Add internal header to bypass auth on master — this request comes
@@ -486,6 +510,7 @@ export class ProxyService {
       if (sourceEntry?.id) req.headers['x-cds-source-branch-id'] = sourceEntry.id;
       const masterPort = this.config?.masterPort || 9900;
       this.proxyRequest(req, res, `http://127.0.0.1:${masterPort}`);
+      });
       return;
     }
 
@@ -632,7 +657,10 @@ export class ProxyService {
     // (entries stored as `${projectSlug}-${slug}`) match the bare-slug
     // request without falling through to auto-build on every reload.
     const branch = forcedEntry ?? this.resolveBranchEntry(branchSlug);
+    this.guardHostedSite(branch, req, res, () => this.routeResolvedBranch(branch, branchSlug, branchRef, req, res, forcedProfileId));
+  }
 
+  private routeResolvedBranch(branch: BranchEntry | undefined, branchSlug: string, branchRef: string, req: http.IncomingMessage, res: http.ServerResponse, forcedProfileId?: string): void {
     // Loading states — serve friendly waiting page instead of 502/503 so
     // users never see a raw Cloudflare gateway error during build/restart.
     // See `.claude/rules/cds-auto-deploy.md` + doc/design.cds.resilience.md.
@@ -2569,6 +2597,10 @@ ${shouldAutoRefresh ? `;(function(){
       if (branchCtx && this.isStaticAssetRequest(clientReq.url || '/')) {
         headers['cache-control'] = 'no-cache, must-revalidate';
       }
+      if (isHostedSsoRequest(clientReq)) {
+        headers['cache-control'] = 'private, no-store';
+        if (headers['set-cookie']) headers['set-cookie'] = headers['set-cookie'].filter(cookie => !/^__Host-cds-site-/.test(cookie));
+      }
 
       // ── Widget injection: only for HTML 200 responses with branch context ──
       const contentType = proxyRes.headers['content-type'] || '';
@@ -2780,12 +2812,29 @@ ${shouldAutoRefresh ? `;(function(){
 
     // Same canonical-id fallback as routeToBranch: subdomain hits on
     // non-legacy projects must resolve to `${projectSlug}-${slug}` entries.
-    const branch = this.resolveBranchEntry(branchSlug);
+    const branch = (previewSlug && this.resolvePreviewServiceSubdomain(previewSlug)?.entry) || this.resolveBranchEntry(branchSlug);
     if (!branch) {
       socket.destroy();
       return;
     }
+    if (isHostedSsoPath(req.url)) { socket.destroy(); return; }
+    if (branch.hostedSso) {
+      const sso = this.hostedSso;
+      if (!sso?.accepting()) { socket.destroy(); return; }
+      const input = { ...captureGatewayRequest(req, branch.id), method: 'WS', navigation: false };
+      void sso.service.check(input).then(decision => {
+        if (!decision.allow || !decision.protected) { socket.destroy(); return; }
+        markHostedSsoRequest(req);
+        watchSiteConnection(socket, () => sso.accepting() ? sso.service.check(input) : Promise.resolve(unavailable));
+        this.upgradeResolvedBranch(req, socket, head, branch);
+      }).catch(() => socket.destroy());
+      return;
+    }
+    this.upgradeResolvedBranch(req, socket, head, branch);
+  }
 
+  private upgradeResolvedBranch(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer, branch: BranchEntry): void {
+    if (!this.resolveUpstream) { socket.destroy(); return; }
     const profileId = this.detectProfileFromRequest(req, branch);
     if (branch.status !== 'running' && !(profileId && branch.services[profileId]?.servingRuntime
       && servingRuntime(branch.services[profileId]) && ['building', 'starting', 'restarting', 'error'].includes(branch.status))) {

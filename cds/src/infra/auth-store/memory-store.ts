@@ -30,9 +30,14 @@ import type {
 // 下能跑，但真实运行（尤其 CDS_AUTH_BACKEND=memory）会抛 "require is not
 // defined"，导致 bootstrap/login/users/activity 全部 500。改为顶层 import。
 import { randomUUID, randomBytes } from 'node:crypto';
+import type { CdsPasskeyStore } from '../../domain/passkey.js';
+import type { Collection } from 'mongodb';
+import type { OidcArtifact } from './oidc-store.js';
 
 /** The stable contract every AuthStore implementation must satisfy. */
 export interface AuthStore {
+  readonly passkeys?: CdsPasskeyStore;
+  readonly oidcArtifacts?: Collection<OidcArtifact>;
   // — Users —
   upsertUser(input: UpsertUserInput, now?: Date): Promise<CdsUser>;
   findUserByGithubId(githubId: number): Promise<CdsUser | null>;
@@ -60,6 +65,7 @@ export interface AuthStore {
   createSession(input: {
     userId: string;
     ttlMs: number;
+    passkeyAuthenticated?: true;
     userAgent: string | null;
     ipAddress: string | null;
   }, now?: Date): Promise<CdsSession>;
@@ -309,6 +315,7 @@ export class MemoryAuthStore implements AuthStore {
   async createSession(input: {
     userId: string;
     ttlMs: number;
+    passkeyAuthenticated?: true;
     userAgent: string | null;
     ipAddress: string | null;
   }, now = new Date()): Promise<CdsSession> {
@@ -317,6 +324,7 @@ export class MemoryAuthStore implements AuthStore {
       token,
       userId: input.userId,
       createdAt: now.toISOString(),
+      ...(input.passkeyAuthenticated ? { passkeyAuthenticated: true } : {}),
       expiresAt: new Date(now.getTime() + input.ttlMs).toISOString(),
       lastSeenAt: now.toISOString(),
       orgsCheckedAt: now.toISOString(),

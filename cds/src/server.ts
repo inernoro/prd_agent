@@ -127,6 +127,10 @@ import {
   GH_SESSION_COOKIE,
 } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
+import { createPasskeyRouter, isRecentAuthentication, readAuthCookie, trustedAuthOrigin } from './routes/passkeys.js';
+import { createHostedSsoRouter } from './routes/hosted-sso.js';
+import { HostedSso, isGatewaySecret } from './services/hosted-sso.js';
+import { siteProtectionMarkers } from './services/hosted-sso-protection.js';
 import { toPublicUser, type CdsUser } from './domain/auth.js';
 import {
   TICKET_SSO_COOKIE,
@@ -693,6 +697,7 @@ function isDatabasePassCredentialRequest(req: express.Request): boolean {
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
   if (/^\/api\/cluster\/identity\//i.test(raw)) return raw.split('?')[0];
+  if (isHostedIdentityTraffic(raw)) return raw.split('?')[0];
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
@@ -701,9 +706,26 @@ function requestPathForLogs(req: express.Request, res: express.Response): string
     ?? '/api/cds-system/sealed-storage';
 }
 
+function isHostedIdentityTraffic(path: string): boolean {
+  return /^\/(?:_cds\/)?api\/(?:hosted-sso|oidc|auth\/passkeys)(?:\/|\?|$)/i.test(path)
+    || /^\/login\?.*\bchoose_account=1(?:&|$)/i.test(path);
+}
+
+function requiresSensitivePasskey(method: string, rawPath: string): boolean {
+  const path = rawPath.replace(/\/+$/, '').toLowerCase();
+  if (method === 'GET' || method === 'HEAD') {
+    return /^\/api\/branches\/[^/]+\/(effective-env\/reveal|resources\/[^/]+\/(connection-string|database-passes\/[^/]+\/credentials))$/.test(path);
+  }
+  if (method === 'PUT') return /^\/api\/auth\/users\/[^/]+\/projects$/.test(path);
+  if (method === 'PATCH') return /^\/api\/auth\/users\/[^/]+$/.test(path);
+  return method === 'POST' && /^\/api\/releases\/(branches\/[^/]+\/runs|runs\/[^/]+\/(retry|rollback)|batches\/[^/]+\/(start|targets\/[^/]+\/(retry|rollback)))$/.test(path);
+}
+
 function requestHeadersForLogs(req: express.Request, res: express.Response): Record<string, string> {
   if ((res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return {};
-  return redactHeaders(req.headers) ?? {};
+  const headers = redactHeaders(req.headers) ?? {};
+  if (headers.referer && /\/api\/(?:hosted-sso|oidc)|choose_account=1/i.test(headers.referer)) headers.referer = headers.referer.split('?')[0];
+  return headers;
 }
 
 function legacyAuthUser(username: string, authMode: 'disabled' | 'basic'): CdsUser {
@@ -1194,6 +1216,16 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /auth/sso/logout': '退出 SSO 登录',
     'GET /auth/sso/config': '读取 SSO 配置',
     'PUT /auth/sso/config': '保存 SSO 配置',
+    'GET /auth/passkeys/status': '查询通行密钥',
+    'POST /auth/passkeys/register/options': '发起密钥绑定',
+    'POST /auth/passkeys/register/verify': '验证密钥绑定',
+    'POST /auth/passkeys/login/options': '发起免密登录',
+    'POST /auth/passkeys/login/verify': '验证免密登录',
+    'POST /auth/passkeys/logout-everywhere': '退出所有站点',
+    'GET /hosted-sso/authorize': '选择站点账号',
+    'POST /hosted-sso/authorize': '授权站点登录',
+    'POST /hosted-sso/gateway': '验证站点访问',
+    'GET /hosted-sso/sites': '列出站点授权',
     'GET /instance-mode': '获取实例模式',
     'POST /auth/login': '本地账号登录',
     'GET /auth/bootstrap-status': '查询首启引导状态',
@@ -1502,6 +1534,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/[^/]+\/infra\/[^/]+\/credential-rotation$/, '执行共享凭据轮换'],
     [/^GET \/projects\/[^/]+\/backup-health$/, '查看周期备份'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
+    [/^PUT \/hosted-sso\/sites\/[^/]+$/, '保存站点授权'],
+    [/^(GET|POST) \/hosted-sso\/interaction\/[^/]+$/, '验证应用登录'],
     [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
     [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
@@ -2587,7 +2621,8 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)
+    const hostedIdentityTraffic = isHostedIdentityTraffic(req.originalUrl || req.url);
+    const suppressPreviewBody = hostedIdentityTraffic || isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)
       || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
@@ -2635,6 +2670,7 @@ export function createServer(deps: ServerDeps): express.Express {
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
       if (responseHeaders?.location?.includes('/api/cluster/identity/callback?')) responseHeaders.location = responseHeaders.location.split('?')[0];
+      if (hostedIdentityTraffic && responseHeaders?.location) responseHeaders.location = responseHeaders.location.split('?')[0];
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
@@ -2774,6 +2810,43 @@ export function createServer(deps: ServerDeps): express.Express {
   // Central identity management runs before every local authentication provider.
   // A member cannot issue or accept a separate set of credentials.
   app.use((req, res, next) => { void clusterIdentity.middleware(req, res, next).catch(next); });
+
+  const passkeyOrigin = trustedAuthOrigin(configuredPublicBaseUrl);
+  const hostedGatewaySecret = process.env.CDS_HOSTED_SSO_GATEWAY_KEY;
+  const passkeysEnabled = (req: express.Request) => Boolean(
+    process.env.CDS_PASSKEYS_ENABLED === '1' && authStore?.passkeys && passkeyOrigin
+    && req.get('host')?.toLowerCase() === passkeyOrigin.host && clusterIdentity.getConfig()?.role !== 'member',
+  );
+  if (passkeyOrigin && authService && authStore?.passkeys) {
+    app.use('/api', createPasskeyRouter({
+      origin: passkeyOrigin, auth: authService, store: authStore.passkeys,
+      enabled: () => process.env.CDS_PASSKEYS_ENABLED === '1' && clusterIdentity.getConfig()?.role !== 'member',
+    }));
+    if (isGatewaySecret(hostedGatewaySecret)) {
+      const routesFile = process.env.CDS_FORWARDER_ROUTES_JSON || path.join(deps.config.repoRoot, 'cds', '.cds', 'forwarder-routes.json');
+      const protection = siteProtectionMarkers(routesFile);
+      for (const branch of deps.stateService.getAllBranches()) if (branch.hostedSso) protection.mark(branch.id);
+      const sso = new HostedSso(passkeyOrigin, deps.stateService, authService, protection.mark, authStore.oidcArtifacts);
+      const accepting = () => process.env.CDS_PASSKEYS_ENABLED === '1' && clusterIdentity.getConfig()?.role !== 'member';
+      deps.proxyService.setHostedSso?.(sso, accepting);
+      app.use('/api', createHostedSsoRouter({
+        sso, auth: authService, state: deps.stateService, gatewaySecret: hostedGatewaySecret, accepting,
+        routes: () => deps.getPublishedRoutes?.() ?? [],
+        oidcStore: authStore.oidcArtifacts,
+      }));
+      app.use((req, res, next) => {
+        if (!accepting() || !requiresSensitivePasskey(req.method, req.path)) { next(); return; }
+        const token = readAuthCookie(req.get('cookie'), GH_SESSION_COOKIE);
+        void authService.validateSession(token, { renew: false }).then(verified => {
+          if (verified && !isRecentAuthentication(verified.session, true)) {
+            res.status(403).json({ error: '该操作需要重新验证。请在 CDS 用户菜单用通行密钥重新验证后再重试。', code: 'passkey_verification_required' });
+            return;
+          }
+          next();
+        }).catch(next);
+      });
+    }
+  }
 
   // Provider-neutral ticket SSO. Public routes are mounted before either
   // legacy-basic or GitHub gates so an anonymous browser can start/exchange
@@ -2924,7 +2997,7 @@ export function createServer(deps: ServerDeps): express.Express {
     void clusterIdentity.authenticate(req, res).then(handled => { if (!handled) next(); }).catch(next);
   });
 
-  app.get('/api/auth/public-status', (_req, res) => {
+  app.get('/api/auth/public-status', (req, res) => {
     const sso = publicTicketSsoConfig(resolveSsoConfig());
     const publicMode = authMode === 'disabled' && sso.enabled ? 'sso' : authMode;
     res.json({
@@ -2934,6 +3007,7 @@ export function createServer(deps: ServerDeps): express.Express {
         github: authMode === 'github',
         local: authMode === 'basic' || authMode === 'github',
         sso: sso.enabled,
+        ...(passkeysEnabled(req) ? { passkey: true } : {}),
       },
       capabilities: {
         userManagement: localUserManagementEnabled,
@@ -3912,6 +3986,8 @@ export function createServer(deps: ServerDeps): express.Express {
               ? '/api/auth/logout'
             : null,
       postLogoutRedirect: ssoIdentity ? '/login' : null,
+      ...(passkeysEnabled(req) && sessionUser?.id && !ssoIdentity && sessionUser.authProvider !== 'legacy'
+        ? { canUsePasskeys: true, ...(sessionUser.isSystemOwner && isGatewaySecret(hostedGatewaySecret) ? { hostedSiteSso: true } : {}) } : {}),
       user,
     });
   });

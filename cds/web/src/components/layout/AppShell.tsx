@@ -10,7 +10,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, KeyRound, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, ShieldCheck, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -22,7 +22,7 @@ import {
   requestAgentAccess,
   resolveAgentPageContext,
 } from '@/lib/agent-onboarding';
-import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsInstance, type PreviewMirrorSummary } from '@/lib/api';
+import { apiRequest, apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsInstance, type PreviewMirrorSummary } from '@/lib/api';
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
@@ -30,6 +30,7 @@ import { readStatusLocation } from '@/lib/statusHome';
 import { MonitorViewNav } from './MonitorViewNav';
 import '@/pages/status/monitor-frame.css';
 import { canReadApproval } from '@/hooks/approvalPolling';
+import { registerPasskey, signInWithPasskey } from '@/lib/passkeys';
 
 /*
  * AppShell — single source of layout truth.
@@ -792,6 +793,9 @@ function UserAccountMenu({
   const { mode, setTheme } = useTheme();
   const { scale, setScale } = useUiScale();
   const [open, setOpen] = useState(false);
+  const { status } = useContext(ConsoleAuthContext);
+  const [passkeyAction, setPasskeyAction] = useState<'register' | 'verify' | 'logout-everywhere' | null>(null);
+  const [passkeyResult, setPasskeyResult] = useState('');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const displayName = userDisplayName(user);
   const accountLabel = user?.githubLogin || user?.username || (authMode === 'disabled' ? '本地模式' : '已登录');
@@ -802,6 +806,28 @@ function UserAccountMenu({
   ];
 
   const toggle = (): void => setOpen(value => !value);
+
+  async function managePasskey(action: 'register' | 'verify' | 'logout-everywhere') {
+    setPasskeyAction(action);
+    setPasskeyResult('');
+    try {
+      if (action === 'logout-everywhere') {
+        await apiRequest('/api/auth/passkeys/logout-everywhere', { method: 'POST' });
+        window.location.assign('/login');
+        return;
+      }
+      if (action === 'register') await registerPasskey();
+      else await signInWithPasskey(true);
+      setPasskeyResult(action === 'register' ? '通行密钥已绑定。' : '身份已重新验证。');
+    } catch {
+      setPasskeyResult(action === 'register'
+        ? '未能绑定通行密钥。请重新登录或验证已有密钥，再重试。'
+        : action === 'verify' ? '未能验证身份。请选择当前账号的通行密钥重试。' : '未能退出所有站点，请稍后重试。');
+    } finally {
+      setPasskeyAction(null);
+    }
+  }
+
   const menu = <AnchoredPopover open={open} anchorRef={triggerRef} widthRem={17} side="right" onDismiss={() => setOpen(false)} autoFocus="first"
       className="cds-account-menu" role="menu" aria-label="用户设置">
       <div className="cds-account-menu-identity">
@@ -825,6 +851,24 @@ function UserAccountMenu({
         <Settings />
         <span>{canManageSettings ? '用户与认证' : '个人操作痕迹'}</span>
       </Link>
+      {status?.canUsePasskeys && typeof window !== 'undefined' && window.PublicKeyCredential ? <>
+        <button type="button" className="cds-account-menu-item" role="menuitem" disabled={passkeyAction !== null}
+          onClick={() => { void managePasskey('register'); }}>
+          <KeyRound />
+          <span>{passkeyAction === 'register' ? '正在绑定' : '绑定通行密钥'}</span>
+        </button>
+        <button type="button" className="cds-account-menu-item" role="menuitem" disabled={passkeyAction !== null}
+          onClick={() => { void managePasskey('verify'); }}>
+          <ShieldCheck />
+          <span>{passkeyAction === 'verify' ? '正在验证' : '用通行密钥重新验证'}</span>
+        </button>
+        <button type="button" className="cds-account-menu-item" role="menuitem" disabled={passkeyAction !== null}
+          onClick={() => { void managePasskey('logout-everywhere'); }}>
+          <LogOut />
+          <span>{passkeyAction === 'logout-everywhere' ? '正在退出各站点' : '退出当前账号的所有站点'}</span>
+        </button>
+        {passkeyResult ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{passkeyResult}</p> : null}
+      </> : null}
       <div className="cds-account-theme" aria-label="主题">
         <div className="mb-2 text-xs font-medium text-muted-foreground">界面主题</div>
         <div className="grid grid-cols-3 gap-1">

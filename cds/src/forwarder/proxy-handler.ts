@@ -21,6 +21,7 @@
 import http from 'node:http';
 import { ControlPlaneStreams, type WidgetStreamRecoveryOptions } from './control-plane-stream.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from '../services/hosted-site-preview-log-policy.js';
+import { isHostedSsoRequest } from '../services/hosted-sso.js';
 import zlib from 'node:zlib';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
@@ -565,6 +566,12 @@ export class ProxyHandler {
           if (route.branchId && this.isStaticAssetRequest(req.url || '/')) {
             respHeaders['cache-control'] = 'no-cache, must-revalidate';
           }
+          if (isHostedSsoRequest(req)) {
+            respHeaders['cache-control'] = 'private, no-store';
+            const setCookies = respHeaders['set-cookie'];
+            if (setCookies) respHeaders['set-cookie'] = (Array.isArray(setCookies) ? setCookies : [setCookies]).filter(cookie => !/^__Host-cds-site-/.test(cookie));
+          }
+
           // 复制集粘性 cookie 合并（Codex P1，2026-07-26）：forwarder-main 在代理前用
           // res.setHeader 种 cds_rs，但 writeHead 的同名头会覆盖 setHeader——上游响应
           // 自己也带 Set-Cookie（登录/会话端点必带）时，浏览器只收到应用 cookie、

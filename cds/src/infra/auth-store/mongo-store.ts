@@ -45,11 +45,29 @@ import type {
 } from '../../domain/auth.js';
 import { ACTIVITY_RING_CAPACITY, localPlaceholderGithubId } from './memory-store.js';
 import type { IAuthMongoHandle } from './mongo-handle.js';
+import type { CdsPasskeyStore } from '../../domain/passkey.js';
+import type { Collection } from 'mongodb';
+import type { OidcArtifact } from './oidc-store.js';
 
 export { IAuthMongoHandle };
 
 export class MongoAuthStore implements AuthStore {
-  constructor(private readonly handle: IAuthMongoHandle) {}
+  readonly passkeys?: CdsPasskeyStore;
+  get oidcArtifacts(): Collection<OidcArtifact> | undefined { return this.handle.oidcCollection?.(); }
+
+  constructor(private readonly handle: IAuthMongoHandle) {
+    const keys = handle.passkeysCollection?.bind(handle);
+    if (!keys) return;
+    this.passkeys = {
+      find: id => keys().findOne({ _id: id }),
+      list: userId => keys().find({ userId }).toArray(),
+      insert: async key => { await keys().insertOne({ _id: key.id, ...key }); },
+      advanceCounter: async (id, previous, next) => {
+        const result = await keys().updateOne({ _id: id, counter: previous }, { $set: { counter: next } });
+        return result.matchedCount === 1;
+      },
+    };
+  }
 
   /**
    * 本地账号创建串行锁。createLocalUser 是"findOne 查重 + insertOne"两步，并发下
@@ -118,14 +136,8 @@ export class MongoAuthStore implements AuthStore {
   }
 
   async touchUserLastLogin(id: string, now = new Date()): Promise<void> {
-    const users = this.handle.usersCollection();
-    const user = await users.findOne({ id });
-    if (!user) return;
-    await users.replaceOne({ id }, {
-      ...user,
-      lastLoginAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    });
+    const at = now.toISOString();
+    await this.handle.usersCollection().updateOne({ id }, { $set: { lastLoginAt: at, updatedAt: at } });
   }
 
   async countUsers(): Promise<number> {
@@ -266,6 +278,7 @@ export class MongoAuthStore implements AuthStore {
     input: {
       userId: string;
       ttlMs: number;
+      passkeyAuthenticated?: true;
       userAgent: string | null;
       ipAddress: string | null;
     },
@@ -276,6 +289,7 @@ export class MongoAuthStore implements AuthStore {
       token,
       userId: input.userId,
       createdAt: now.toISOString(),
+      ...(input.passkeyAuthenticated ? { passkeyAuthenticated: true } : {}),
       expiresAt: new Date(now.getTime() + input.ttlMs).toISOString(),
       lastSeenAt: now.toISOString(),
       orgsCheckedAt: now.toISOString(),

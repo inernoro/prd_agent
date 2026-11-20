@@ -245,7 +245,11 @@ describe('CDS Agent 接入口令', () => {
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
     // 新增分支归档清理：有项目边界、需要明确确认，不直接暴露为MCP自动操作。
     // 短期监控提议协议单独登记，不作为可直调的系统写能力。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(73);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(75);
+    for (const id of ['passkeys', 'hosted-sso']) {
+      expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === id))
+        .toMatchObject({ access: 'human-only', risk: 'protocol', mcpExposure: 'not-exposed' });
+    }
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'release-governance')).toMatchObject({ access: 'project', risk: 'destructive', cliFamily: 'release-target' });
     const capacityObservation = CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'host-capacity-observation');
     expect(capacityObservation).toMatchObject({ routeSource: 'host-capacity-observation.ts', scope: 'system', access: 'human-only', risk: 'read-only', agentUse: 'guided', mcpExposure: 'not-exposed' });

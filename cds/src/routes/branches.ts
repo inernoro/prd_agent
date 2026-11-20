@@ -16799,6 +16799,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    if (entry.hostedSso) {
+      res.status(403).json({ error: '此分支要求 CDS 登录，请使用受保护的 HTTPS 预览地址。', code: 'hosted_sso_required' });
+      return;
+    }
     if (entry.status !== 'running') {
       res.status(400).json({ error: '分支未运行' });
       return;
@@ -16818,6 +16822,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Create a lightweight HTTP proxy that routes by path-prefix
     const server = http.createServer((proxyReq, proxyRes) => {
+      if (stateService.getBranch(id)?.hostedSso) { proxyRes.writeHead(403).end(); return; }
       const url = proxyReq.url || '/';
 
       // Detect which profile handles this path (reuse same logic as main proxy)
@@ -16881,6 +16886,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // WebSocket upgrade support (for Vite HMR)
     server.on('upgrade', (proxyReq, socket, head) => {
+      if (stateService.getBranch(id)?.hostedSso) { socket.destroy(); return; }
       const url = proxyReq.url || '/';
       const profileIds = Object.keys(entry.services);
       let targetProfileId: string | undefined;
