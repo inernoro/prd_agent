@@ -46,6 +46,29 @@ public static class WeeklyReportSubmissionRules
         return ResolveLegacyTeamDeadline(monday, teamSchedule);
     }
 
+    /// <summary>
+    /// 新建周报时默认归属的 ISO 周：最近一个尚未截止的周。
+    /// 统一截止规则下，上一周的截止是本周一 24:00（UTC+8），因此周一默认上一周、周二至周日默认本周。
+    /// 「本周」按 UTC+8 的日期判定（否则周一 00:00-08:00 会被 UTC 算成上周日）。
+    /// 生效周之前的上一周按 sunday-23:59 口径，必然已截止，自然落回本周。
+    /// </summary>
+    public static (int WeekYear, int WeekNumber) ResolveDefaultSubmissionWeek(DateTime utcNow)
+    {
+        var utc = utcNow.Kind == DateTimeKind.Utc ? utcNow : DateTime.SpecifyKind(utcNow, DateTimeKind.Utc);
+        var local = TimeZoneInfo.ConvertTimeFromUtc(utc, ChinaTimeZone);
+        var currentYear = System.Globalization.ISOWeek.GetYear(local);
+        var currentWeek = System.Globalization.ISOWeek.GetWeekOfYear(local);
+
+        // 上一周 = 本周一往前 7 天所在的 ISO 周（自动处理跨年与 53 周年）
+        var currentMonday = System.Globalization.ISOWeek.ToDateTime(currentYear, currentWeek, DayOfWeek.Monday);
+        var previousMonday = currentMonday.AddDays(-7);
+        var previousYear = System.Globalization.ISOWeek.GetYear(previousMonday);
+        var previousWeek = System.Globalization.ISOWeek.GetWeekOfYear(previousMonday);
+
+        var previousDeadline = ResolveWeekDeadline(previousYear, previousWeek, null);
+        return utc <= previousDeadline ? (previousYear, previousWeek) : (currentYear, currentWeek);
+    }
+
     private static DateTime ResolveLegacyTeamDeadline(DateTime monday, string? schedule)
     {
         int dayOffset = 6;
