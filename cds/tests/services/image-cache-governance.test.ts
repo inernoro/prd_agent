@@ -6,6 +6,8 @@ import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IMAGE_CACHE_PROGRAM } from '../../src/services/image-cache-program.js';
 import { ImageCacheGovernance, collectImageCacheReferences } from '../../src/services/image-cache-governance.js';
+import { captureDeploymentIntent, readDeploymentIntent } from '../../src/services/deployment-intent.js';
+import type { DeploymentRun } from '../../src/types.js';
 import { resumedReclaimExecution, recordReclaimExecution } from '../../src/services/reclaim-execution-journal.js';
 import { StateService } from '../../src/services/state.js';
 
@@ -25,7 +27,9 @@ if a[0]=='info':print(json.dumps({'ID':'owned-daemon','DockerRootDir':${JSON.str
 elif a[:2]==['image','ls']:sys.stdout.write(chr(10).join(r['Id'] for r in v['images']))
 elif a[:2]==['ps','-aq']:sys.stdout.write(chr(10).join(r['Id'] for r in v['containers']))
 elif a[:2]==['image','inspect']:
- rows=[r for r in v['images'] if any(q in [r['Id'],*r['RepoTags'],*r['RepoDigests']] for q in a[2:])];print(json.dumps(rows))
+ rows=[r for r in v['images'] if any(q in [r['Id'],*r['RepoTags'],*r['RepoDigests']] for q in a[2:])]
+ if not rows and len(a)==3:print('Error response from daemon: No such image: '+a[2],file=sys.stderr);sys.exit(1)
+ print(json.dumps(rows))
 elif a[0]=='inspect':print(json.dumps([r for r in v['containers'] if r['Id'] in a[1:]]))
 elif a[:2]==['image','rm']:
  q=a[-1];r=next(r for r in v['images'] if q in [r['Id'],*r['RepoTags']])
@@ -123,6 +127,21 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     expect(f.request({ action: 'confirm', token: pin.token }).confirmed).toBe(true);
     expect(f.request({ action: 'prepare', image: pinned.replace('/test:', '/other:'), requirePresent: true })).toEqual({ absent: true });
   });
+  it('pins and confirms an already local immutable image without a host inventory scan', () => {
+    const f = fixture();
+    f.values.images = [f.image()];
+    f.save();
+    const pinned = digest.replace('@', ':old@');
+    const pin = f.request({ action: 'prepare', image: pinned, budgetBytes: 1, requirePresent: true });
+    expect(pin.alreadyPresent).toBe(true);
+    expect(f.request({ action: 'confirm', token: pin.token }).confirmed).toBe(true);
+    const calls = fs.readFileSync(f.calls, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(calls.filter(args => args[0] === 'image')).toEqual([
+      ['image', 'inspect', digest],
+      ['image', 'inspect', digest],
+    ]);
+    expect(f.request({}).held[0].reason).toBe('current-rollback-or-inflight-reference');
+  });
   it('protects stopped containers, pending pulls, other masters, and newly added aliases', () => {
     const f = fixture();f.born();f.values.containers = [{ Id: 'stopped', Image: id, State: { Running: false } }];f.save();
     expect(f.request({}).held[0].reason).toBe('running-or-stopped-container-reference');
@@ -180,6 +199,32 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
   });
 });
 describe('image cache orchestration and durable status', () => {
+  it.each([
+    { versionId: 'fixed-version' },
+    { hasOneShotOptions: true },
+  ])('protects an in-flight one-shot deployment without making it replayable (%j)', (oneShot) => {
+    const commitSha = 'a'.repeat(40);
+    const run = { id: 'run', branchId: 'branch', projectId: 'project', operationId: 'operation', operationGeneration: 4,
+      configHash: 'config', commitSha, versionId: oneShot.versionId } as DeploymentRun;
+    const intent = captureDeploymentIntent(run, {
+      request: { kind: 'deploy', branchId: run.branchId, projectId: run.projectId, configHash: run.configHash,
+        commitSha, commitPinned: true, trigger: 'manual', ...oneShot },
+      input: { profiles: [{ id: 'web', dockerImage: digest }] as any, configuredEnv: {}, configHash: run.configHash,
+        targetCommitSha: commitSha, ciTargetSha: undefined, profileOverrides: undefined },
+    });
+    const state = {
+      getDeploymentIntents: () => [intent], getDeploymentRun: () => run,
+      getBranch: () => ({ id: run.branchId }), getDeploymentVersions: () => [], getReleaseBatches: () => [],
+    };
+    expect(() => readDeploymentIntent(run, intent)).toThrow('Deployment intent target mismatch');
+    expect(collectImageCacheReferences(state as any)).toContain(digest);
+    expect(() => readDeploymentIntent(run, { ...intent, inputDigest: 'invalid' }, 'image-protection'))
+      .toThrow('Deployment intent content mismatch');
+    if (oneShot.versionId) {
+      expect(() => readDeploymentIntent({ ...run, versionId: 'wrong-version' }, intent, 'image-protection'))
+        .toThrow('Deployment intent target mismatch');
+    }
+  });
   it('does not call a registry or delete when durable audit is unavailable', async () => {
     const shell = { exec: vi.fn() };
     const service = new ImageCacheGovernance({ shell: shell as any, catalog: '/unused', instanceId: 'owned', budgetBytes: 1, protectedReferences: () => [] });

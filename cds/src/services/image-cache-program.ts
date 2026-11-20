@@ -143,6 +143,22 @@ def reference_key(reference):
  if not isinstance(reference,str) or '@sha256:' not in reference:return reference
  name,digest=reference.rsplit('@',1)
  return repository(name)+'@'+digest
+def inspect_image(reference):
+ reference=reference_key(reference)
+ if not isinstance(reference,str) or not reference or reference.startswith('-'):raise ValueError('image-reference-invalid')
+ check()
+ try:p=subprocess.run(['docker','image','inspect',reference],capture_output=True,text=True,timeout=max(.1,min(8,deadline-time.monotonic())))
+ except (subprocess.TimeoutExpired,OSError):raise ValueError('docker-image-inspect-unconfirmed')
+ if p.returncode:
+  if p.stderr.strip().endswith('No such image: '+reference):return None
+  raise ValueError('docker-image-inspect-unconfirmed')
+ rows=json.loads(p.stdout)
+ if not isinstance(rows,list) or len(rows)!=1 or not isinstance(rows[0],dict):raise ValueError('docker-image-inspect-unconfirmed')
+ row=rows[0]
+ if not isinstance(row.get('Id'),str) or not row['Id'].startswith('sha256:') or created_second(row.get('Created')) is None:
+  raise ValueError('docker-image-inspect-identity-unconfirmed')
+ if reference not in [reference_key(value) for value in refs(row)]:raise ValueError('docker-image-inspect-identity-unconfirmed')
+ return row
 def containers():
  if local_socket:
   rows=docker_summary('/containers/json?all=1')
@@ -164,11 +180,21 @@ if action=='publish':
  for token,pull in list(state['pulls'].items()):
   if pull['instanceId']==instance and pull.get('confirmed') and now-pull['createdAt']>600000:del state['pulls'][token]
  save();print(json.dumps({'published':True}));sys.exit(0)
-rows=images();by_ref={reference_key(value):row for row in rows for value in refs(row)}
+def reserve_pull(image,present,peak):
+ if sum(not p.get('confirmed') for p in state['pulls'].values())>=32:raise ValueError('unsettled-image-pull-budget-reached')
+ token=secrets.token_hex(16)
+ state['pulls'][token]={'image':image,'instanceId':instance,'createdAt':now,'beforeId':present['Id'] if present else None,'reserveBytes':peak}
+ save();print(json.dumps({'token':token,'alreadyPresent':bool(present)}));sys.exit(0)
 if action=='prepare':
+ image=req['image'];force_new=req.get('forceNew')
+ if req.get('requirePresent') or not force_new and '@sha256:' in image:
+  # A present immutable reference cannot create a new image. Pin its exact identity without scanning unrelated images.
+  present=inspect_image(image)
+  if not present and req.get('requirePresent'):print(json.dumps({'absent':True}));sys.exit(0)
+  if present and not force_new:reserve_pull(image,present,0)
+ rows=images();by_ref={reference_key(value):row for row in rows for value in refs(row)}
  image=req['image'];present=by_ref.get(reference_key(image));budget=req.get('budgetBytes',0)
  if req.get('requirePresent') and not present:print(json.dumps({'absent':True}));sys.exit(0)
- if sum(not p.get('confirmed') for p in state['pulls'].values())>=32:raise ValueError('unsettled-image-pull-budget-reached')
  foreign=set(state.get('seenForeignIds',[]))&{r['Id'] for r in rows}
  starting={reference_key(p['image']) for p in state['pulls'].values() if not p.get('beforeId')}
  for row in rows:
@@ -177,12 +203,11 @@ if action=='prepare':
  reserved=sum(p.get('reserveBytes',0) for p in state['pulls'].values() if not p.get('confirmed'))
  peak=req.get('peakBytes',4*1024**3) if not present or req.get('forceNew') else 0
  if peak and budget and sum(r['Size'] for r in rows)+reserved+peak>budget:raise ValueError('host-image-cache-budget-exceeded')
- token=secrets.token_hex(16);state['pulls'][token]={'image':image,'instanceId':instance,'createdAt':now,'beforeId':present['Id'] if present else None,'reserveBytes':peak};save()
- print(json.dumps({'token':token,'alreadyPresent':bool(present)}));sys.exit(0)
+ reserve_pull(image,present,peak)
 if action=='confirm':
  pull=state['pulls'].get(req['token'])
  if not pull or pull['instanceId']!=instance:raise ValueError('pull-owner-unconfirmed')
- row=by_ref.get(reference_key(pull['image']))
+ row=inspect_image(pull['image'])
  if not row:raise ValueError('pulled-identity-unconfirmed')
  if row['Id']!=pull['beforeId'] and row['Id'] not in state.get('seenForeignIds',[]):
   previous=state['images'].get(row['Id'])
@@ -196,10 +221,11 @@ if action=='confirm':
 if action=='abort':
  pull=state['pulls'].get(req['token'])
  if not pull or pull['instanceId']!=instance:raise ValueError('pull-owner-unconfirmed')
- row=by_ref.get(reference_key(pull['image']))
+ row=inspect_image(pull['image'])
  if row and (row['Id']!=pull.get('beforeId') or not req.get('completedNativeOperation')):raise ValueError('failed-pull-created-an-image-needs-confirmation')
  del state['pulls'][req['token']];save();print(json.dumps({'settled':True}));sys.exit(0)
 if action not in ['preview','reconcile','adopt']:raise ValueError('cache-action-unsupported')
+rows=images();by_ref={reference_key(value):row for row in rows for value in refs(row)}
 refs_now=containers();in_use={r['Image'] for r in refs_now};protected={reference_key(ref) for ref in req.get('references',[])}
 reference_sources={}
 for master,pins in state['masters'].items():
