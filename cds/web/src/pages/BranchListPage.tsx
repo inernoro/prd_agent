@@ -1679,8 +1679,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const canManageConsole = useCanManageConsole();
   const { status: authStatus, pending: authPending } = useContext(ConsoleAuthContext);
   const relationActor = authPending ? null : consoleAccountIdentity(authStatus);
-  const relationRestore = useMemo(() => relationRestoreForVisit('branches', relationActor, location.key, window.history.state?.idx, projectId), [relationActor, location.key, projectId]);
-  const restoredRelationTask = relationRestore?.task.kind === 'branches' ? relationRestore.task : null;
+  const relationRestore = useMemo(() => relationRestoreForVisit(relationActor, location.key, window.history.state?.idx, projectId), [relationActor, location.key, projectId]);
+  const restoredRelationTask = relationRestore?.task ?? null;
   const account = authStatus?.enabled === false ? 'local' : authStatus?.user?.githubLogin || authStatus?.user?.username;
   const viewPreferencesKey = account ? branchViewsStorageKey(`${authStatus?.mode ?? 'local'}:${account}`, projectId) : null;
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -1752,7 +1752,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const [pendingRelationExpanded, setPendingRelationExpanded] = useState(() => restoredRelationTask?.relationExpanded || false);
   const appliedRelationRestore = useRef<string | null>(null);
   useEffect(() => {
-    if (!relationRestore || relationRestore.task.kind !== 'branches' || appliedRelationRestore.current === relationRestore.token) return;
+    if (!relationRestore || appliedRelationRestore.current === relationRestore.token) return;
     appliedRelationRestore.current = relationRestore.token;
     const task = relationRestore.task;
     setSelectedBranchIds([...task.selectedBranchIds]); setShowArchived(task.showArchived); setActiveTagFilter(task.activeTagFilter);

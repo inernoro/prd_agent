@@ -5,9 +5,9 @@ const enter = (token: unknown, actor = 'actor-a', branch = 'branch-a', key = 're
 describe('关系返回的来源与任务边界', () => {
   it('来源未真正离开前不恢复；进入后恢复同访问的筛选/展开而非新的默认页', () => {
     const token = rememberRelationReturn(task(), 'actor-a', 'source-visit', 4)!;
-    expect(relationRestoreForVisit('branches', 'actor-a', 'source-visit', 4, 'project-a')).toBeNull();
+    expect(relationRestoreForVisit('actor-a', 'source-visit', 4, 'project-a')).toBeNull();
     expect(enter(token)).toBe('branches');
-    const restore = relationRestoreForVisit('branches', 'actor-a', 'source-visit', 4, 'project-a');
+    const restore = relationRestoreForVisit('actor-a', 'source-visit', 4, 'project-a');
     expect(restore?.task).toEqual(task());
     expect(relationReturnKind(token, 'actor-a', 'branch-a', 'relation-visit', 5)).toBe('branches');
   });
@@ -23,16 +23,16 @@ describe('关系返回的来源与任务边界', () => {
   });
   it('来源记录按项目/访问key隔离，不恢复另一个当前任务', () => {
     const token = rememberRelationReturn(task(), 'actor-a', 'isolated-source', 4)!; enter(token);
-    expect(relationRestoreForVisit('branches', 'actor-b', 'isolated-source', 4, 'project-a')).toBeNull();
-    expect(relationRestoreForVisit('branches', 'actor-a', 'other-source', 4, 'project-a')).toBeNull();
-    expect(relationRestoreForVisit('branches', 'actor-a', 'isolated-source', 4, 'project-b')).toBeNull();
-    expect(relationRestoreForVisit('branches', 'actor-a', 'isolated-source', 3, 'project-a')).toBeNull();
+    expect(relationRestoreForVisit('actor-b', 'isolated-source', 4, 'project-a')).toBeNull();
+    expect(relationRestoreForVisit('actor-a', 'other-source', 4, 'project-a')).toBeNull();
+    expect(relationRestoreForVisit('actor-a', 'isolated-source', 4, 'project-b')).toBeNull();
+    expect(relationRestoreForVisit('actor-a', 'isolated-source', 3, 'project-a')).toBeNull();
   });
   it('恢复一次即消费，Forward再回关系页不能复活旧Drawer或旧筛选', () => {
     const token = rememberRelationReturn(task(), 'actor-a', 'once-source', 4)!; enter(token);
-    const restore = relationRestoreForVisit('branches', 'actor-a', 'once-source', 4, 'project-a')!;
+    const restore = relationRestoreForVisit('actor-a', 'once-source', 4, 'project-a')!;
     consumeRelationRestore(restore.token);
-    expect(relationRestoreForVisit('branches', 'actor-a', 'once-source', 4, 'project-a')).toBeNull();
+    expect(relationRestoreForVisit('actor-a', 'once-source', 4, 'project-a')).toBeNull();
     expect(enter(token)).toBeNull();
     expect(relationReturnKind(token, 'actor-a', 'branch-a', 'relation-visit', 5)).toBeNull();
   });
@@ -44,15 +44,9 @@ describe('关系返回的来源与任务边界', () => {
   });
   it('复制界面选择不会改变来源记录的选择数组', () => {
     const selected = task(); const token = rememberRelationReturn(selected, 'actor-a', 'clone-source', 4)!; enter(token);
-    const restore = relationRestoreForVisit('branches', 'actor-a', 'clone-source', 4, 'project-a')!;
-    if (restore.task.kind === 'branches') restore.task.selectedBranchIds.push('new-selection');
-    expect(relationRestoreForVisit('branches', 'actor-a', 'clone-source', 4, 'project-a')?.task).toEqual(selected);
-  });
-  it('Overview保留自身问题筛选，不套分支来源恢复', () => {
-    const token = rememberRelationReturn({ kind: 'overview', branchId: 'branch-a', projectId: 'project-a', onlyProblems: true }, 'actor-a', 'overview-source', 4)!;
-    expect(enter(token)).toBe('overview');
-    expect(relationRestoreForVisit('overview', 'actor-a', 'overview-source', 4)?.task).toMatchObject({ onlyProblems: true });
-    expect(relationRestoreForVisit('branches', 'actor-a', 'overview-source', 4, 'project-a')).toBeNull();
+    const restore = relationRestoreForVisit('actor-a', 'clone-source', 4, 'project-a')!;
+    restore.task.selectedBranchIds.push('new-selection');
+    expect(relationRestoreForVisit('actor-a', 'clone-source', 4, 'project-a')?.task).toEqual(selected);
   });
   it('不可确认的来源身份或index不注册回退承诺', () => {
     expect(rememberRelationReturn(task(), null, 'source', 4)).toBeUndefined();

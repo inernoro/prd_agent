@@ -1,5 +1,5 @@
 import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
-import { ReleaseCenterSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
+import { RELEASE_CENTER_BODY_CLASS, RELEASE_CENTER_SECTIONS_CLASS, ReleaseCenterNavigation, ReleaseCenterSkeleton } from '@/components/skeletons/ReleaseCenterSkeleton';
 /**
  * 站点发布中心 v2 —— 环境是骨架，不是一堆等权重的配置方框。
  *
@@ -100,14 +100,6 @@ type LoadState =
  * 是横着比所有环境的矩阵（治理视角），后四段才落到单个环境上。
  */
 type CenterSection = ReleaseCenterSection;
-
-const SECTIONS: Array<{ id: CenterSection; label: string }> = [
-  { id: 'fleet', label: '全环境矩阵' },
-  { id: 'config', label: '环境与配置' },
-  { id: 'rules', label: '自动发布规则' },
-  { id: 'health', label: '健康监测' },
-  { id: 'evidence', label: '证据归档' },
-];
 
 /**
  * 宽屏判定走**实测宽度**而不是媒体查询：设计稿的阈值是 1264px，来源是
@@ -689,7 +681,7 @@ export function ReleaseCenterPage(): JSX.Element {
                     </option>
                   ))}
                 </select>
-              ) : null}
+              ) : !projectsLoaded ? <span className="cds-loading-skeleton-panel h-7 w-[12.75rem] max-w-full rounded-full" aria-hidden="true" /> : null}
             </span>
           )}
           right={(
@@ -720,32 +712,12 @@ export function ReleaseCenterPage(): JSX.Element {
     >
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
         <div ref={rootRef} className="flex h-full min-h-0 flex-col">
-          {!projectsLoaded || projectAvailable && state.status === 'loading' ? <ReleaseCenterSkeleton /> : <>
+          {!projectsLoaded || projectAvailable && state.status === 'loading' ? <ReleaseCenterSkeleton section={section} /> : <>
           {/* 分区导航。设计稿是 sticky；这一页在 CDS 里是固定外壳 + 内容区内滚，
               导航天然常驻，效果相同而且不会在滚动时抖。 */}
-          <nav className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[hsl(var(--hairline))] px-6 py-2.5">
-            {SECTIONS.map((item) => {
-              const badge = sectionBadge(item.id);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-pressed={section === item.id}
-                  onClick={() => setSection(item.id)}
-                  className={`flex h-8 items-center gap-1.5 rounded-lg px-3 text-[0.7812rem] transition-colors duration-150 ${
-                    section === item.id
-                      ? 'bg-primary/[0.12] font-semibold text-primary'
-                      : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'
-                  }`}
-                >
-                  {item.label}
-                  {badge ? <span className="cds-ident text-[0.6562rem] opacity-70">{badge}</span> : null}
-                </button>
-              );
-            })}
-          </nav>
+          <ReleaseCenterNavigation section={section} badgeFor={sectionBadge} onSelect={setSection} />
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5">
+          <div className={RELEASE_CENTER_BODY_CLASS}>
             {toast ? (
               <div className="mb-4 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-2.5 text-sm">
                 {toast}
@@ -760,7 +732,7 @@ export function ReleaseCenterPage(): JSX.Element {
             </div> : null}
 
             {projectAvailable && state.status === 'ok' ? (
-              <div className="flex flex-col gap-[1.125rem]">
+              <div className={RELEASE_CENTER_SECTIONS_CLASS}>
                 {/* 主页面已在版本追溯里显示健康快照，管理分区保留监控摘要。 */}
                 {section !== 'fleet' && rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
                   <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-3">

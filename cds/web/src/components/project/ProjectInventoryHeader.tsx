@@ -4,6 +4,10 @@ import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/pages/ProjectListPage';
 
 export type ProjectStatusFilter = 'all' | 'running' | 'paused' | 'ready';
+export const PROJECT_STATUS_FILTERS: ReadonlyArray<{ value: ProjectStatusFilter; label: string }> = [
+  { value: 'all', label: '全部项目' }, { value: 'running', label: '运行中' },
+  { value: 'paused', label: '已暂停' }, { value: 'ready', label: '已就绪' },
+];
 export type ProjectEnvironmentStatus = 'loading' | 'ready' | 'error' | 'unavailable';
 export interface ProjectInventorySelection {
   query: string;
@@ -112,10 +116,6 @@ export function ProjectInventoryHeader({ projects, selection, onChange, targets,
     window.addEventListener('keydown', focusSearch);
     return () => window.removeEventListener('keydown', focusSearch);
   }, []);
-  const filters: Array<{ value: ProjectStatusFilter; label: string }> = [
-    { value: 'all', label: '全部项目' }, { value: 'running', label: '运行中' },
-    { value: 'paused', label: '已暂停' }, { value: 'ready', label: '已就绪' },
-  ];
   const visibleIds = new Set(projects.map(project => project.id));
   const environments = [...new Set(targets.filter(target => visibleIds.has(target.projectId) && target.isEnabled !== false && target.environment)
     .map(target => target.environment!))].sort();
@@ -125,7 +125,7 @@ export function ProjectInventoryHeader({ projects, selection, onChange, targets,
         <Button variant="outline" size="sm" onClick={onImport} aria-expanded={importOpen} aria-controls="project-repository-import"><FolderGit2 />导入仓库</Button>
         <Button size="sm" onClick={onCreate}><Plus />新建项目</Button>
       </>}
-      filters={filters.map(filter => <button key={filter.value} type="button" aria-pressed={selection.status === filter.value}
+      filters={PROJECT_STATUS_FILTERS.map(filter => <button key={filter.value} type="button" aria-pressed={selection.status === filter.value}
         onClick={() => onChange({ ...selection, status: filter.value })}>
         {filter.label}<span>{filter.value === 'all' ? projects.length : projects.filter(project => projectInventoryStatus(project) === filter.value).length}</span>
       </button>)}

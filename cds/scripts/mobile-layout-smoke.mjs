@@ -242,6 +242,46 @@ const TASK_SCHEDULE_VIEWPORTS = [
   { label: '1920x1080', width: 1920, height: 1080 },
 ];
 
+async function checkMobileNavigationWhileChunkLoads(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  let releaseChunk;
+  const chunkReady = new Promise(resolve => { releaseChunk = resolve; });
+  try {
+    await installFixtures(context);
+    const page = await context.newPage();
+    await page.route('**/TaskSchedulePage.tsx', async route => {
+      await chunkReady;
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/task-schedule`, { waitUntil: 'commit' });
+    await page.getByRole('status', { name: '页面加载中' }).waitFor();
+    await page.locator('.cds-rail a[href="/task-schedule"]').waitFor({ state: 'attached' });
+
+    const open = page.getByRole('button', { name: '打开导航菜单' });
+    const close = page.getByRole('button', { name: '关闭导航' });
+    const active = page.getByRole('navigation', { name: '主导航' }).locator('a[data-active="true"]');
+    await page.evaluate(async () => { await document.fonts.ready; });
+    const loadingButton = await open.boundingBox();
+    assertOk(loadingButton, 'console-nav: 页面骨架必须保留手机导航按钮');
+    await open.click();
+    await active.waitFor();
+    assertOk(await active.getAttribute('href') === '/task-schedule', 'console-nav: 等待时抽屉高亮项与当前路由不符');
+
+    releaseChunk();
+    await page.getByText('今日调度轴').waitFor();
+    assertOk(await active.isVisible(), 'console-nav: 页面加载完成时重置了已打开的导航');
+    await close.click();
+    await page.evaluate(async () => { await document.fonts.ready; });
+    const readyButton = await open.boundingBox();
+    assertOk(readyButton && Object.keys(loadingButton).every(key => Math.abs(readyButton[key] - loadingButton[key]) <= 1),
+      'console-nav: 页面加载后手机导航按钮发生位移', { loadingButton, readyButton });
+    console.log('PASS console-nav: 页面骨架期间手机导航可打开，菜单高亮和按钮位置与正文一致');
+  } finally {
+    releaseChunk();
+    await context.close();
+  }
+}
+
 async function checkTaskScheduleAction(browser, viewport) {
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
@@ -770,6 +810,7 @@ async function main() {
         await runViewport(browser, project, viewport);
       }
     }
+    if (OFFLINE) await checkMobileNavigationWhileChunkLoads(browser);
     for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
       await checkTaskScheduleAction(browser, viewport);
     }

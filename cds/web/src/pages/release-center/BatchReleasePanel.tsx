@@ -310,7 +310,7 @@ export function BatchReleasePanel({ projectId, targets, currentRows = [], onOpen
     : selected?.status === 'blocked' ? '查看未通过的目标，处理后重新检查。'
       : selected?.status === 'ready' ? '所有目标已通过预检，核对顺序后确认发布。'
         : stage === 2 ? '先完成发布前检查。' : stage === 3 ? '发布正在执行，可以查看各目标进度。' : '查看各目标结果和执行记录。';
-  return <section id="release-batches" aria-label="批次发布" className="mx-auto min-w-0 max-w-[90rem] space-y-6">
+  return <section id="release-batches" aria-label="批次发布" className={RELEASE_BATCH_SECTION_CLASS}>
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0"><h1 className="text-2xl font-bold">{historyOpen ? '历史批次 · ' : ''}{heading}</h1>
         <p className="mt-2 text-sm text-muted-foreground"><strong className="text-foreground">下一步：</strong>{nextStep}</p></div>
@@ -320,13 +320,13 @@ export function BatchReleasePanel({ projectId, targets, currentRows = [], onOpen
         {!creating ? <Button variant="outline" size="sm" disabled={busy} onClick={() => newRelease()}><Plus />新建发布</Button> : null}
       </div>
     </header>
-    <ol aria-label="发布步骤" className="grid grid-cols-2 gap-3 md:grid-cols-4">{['选择版本与目标', '发布前确认', '执行发布', '查看结果'].map((label, index) => <li key={label} aria-current={stage === index + 1 ? 'step' : undefined}
+    <ol aria-label="发布步骤" className={RELEASE_BATCH_STEPS_CLASS}>{['选择版本与目标', '发布前确认', '执行发布', '查看结果'].map((label, index) => <li key={label} aria-current={stage === index + 1 ? 'step' : undefined}
       className={`flex min-w-0 items-center gap-2 rounded-md border p-3 text-sm ${stage === index + 1 ? 'border-primary/40 bg-primary/10 font-semibold text-primary' : 'border-[hsl(var(--hairline))] text-muted-foreground'}`}>
       <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-current text-xs" aria-hidden="true">{index + 1}</span><span>{label}</span></li>)}</ol>
     {error ? <div role="alert" className="rounded-md border border-destructive/30 bg-bad-soft p-4 text-sm text-bad">{error}</div> : null}
     {operationLabel ? <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground"><ContentLoading variant="inline" label={operationLabel} />{operationLabel}，请稍候</div> : null}
     {loading && !batches.length ? <ContentLoading label="读取批次与已验收版本" variant="rows" /> : null}
-    <footer className="cds-surface-raised cds-hairline flex flex-wrap items-center justify-between gap-4 rounded-lg border p-4 md:p-5">
+    <footer className={RELEASE_BATCH_ACTIONS_CLASS}>
       <p className="text-sm text-muted-foreground">{creating ? '尚未开始发布' : selected ? `${historyOpen ? '历史记录 · ' : ''}${statusView(selected.status).label} · 更新于 ${formatDateTime(selected.updatedAt)}` : '尚无批次发布'}</p>
       <div className="flex flex-wrap items-center gap-3">
         {creating ? <Button disabled={!selectedRelease || targetIds.length < 2 || Boolean(pending) || targetIds.some(isTargetUnconfirmed)} onClick={() => {
@@ -346,7 +346,7 @@ export function BatchReleasePanel({ projectId, targets, currentRows = [], onOpen
       <p className="mb-3 text-sm text-muted-foreground">这里展示历史执行记录，不会重新发起部署。实际版本以各记录的现场核对时间为准。</p>
       {batches.length ? <label className="flex flex-col gap-2 text-sm">批次记录<select aria-label="批次记录" disabled={pollingPending} value={selectedId} className={`${selectClass} w-full`} onChange={(event) => showHistory(event.target.value)}>{batches.map((batch) => <option value={batch.id} key={batch.id}>{formatDateTime(batch.createdAt)} · {batch.commitSha.slice(0, 12)} · {batch.targets.length} 个目标 · {statusView(batch.status).label}</option>)}</select></label> : <p className="text-sm text-muted-foreground">尚无历史批次，可点击「新建发布」开始。</p>}
     </div> : null}
-    {creating || selected ? <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.8fr)_minmax(19rem,1fr)]">
+    {creating || selected ? <div className={RELEASE_BATCH_DETAIL_CLASS}>
       <div className="min-w-0 space-y-4">
         {creating ? <div className="cds-surface-raised cds-hairline space-y-6 rounded-xl border p-5 md:p-6">
           <label className="flex min-w-0 flex-col gap-3 text-base font-semibold">已验收版本
@@ -472,3 +472,4 @@ export function BatchReleaseResult({ batch, runs, busy, rollbackTargetId, onRetr
     })}</ol>
   </div>;
 }
+import { RELEASE_BATCH_ACTIONS_CLASS, RELEASE_BATCH_DETAIL_CLASS, RELEASE_BATCH_SECTION_CLASS, RELEASE_BATCH_STEPS_CLASS } from '@/components/skeletons/ReleaseConsoleSkeleton';
