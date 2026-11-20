@@ -109,6 +109,20 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     const pin = f.request({ action: 'prepare', image: 'registry.example/test:old' });f.request({ action: 'confirm', token: pin.token });f.request({ action: 'publish', references: [], nowMs: now + 600001 });
     expect(f.request({}).held[0].reason).toBe('legacy-image-ownership-needs-review');
   });
+  it('matches tagged immutable rollback references to the Docker repository digest', () => {
+    const f = fixture();
+    f.born();
+    const pinned = digest.replace('@', ':old@');
+    f.request({ action: 'publish', references: [pinned] });
+    expect(f.request({}).held[0]).toMatchObject({
+      identity: id, reason: 'current-rollback-or-inflight-reference',
+      referenceSources: [{ reference: pinned }],
+    });
+    const pin = f.request({ action: 'prepare', image: pinned, requirePresent: true });
+    expect(pin.alreadyPresent).toBe(true);
+    expect(f.request({ action: 'confirm', token: pin.token }).confirmed).toBe(true);
+    expect(f.request({ action: 'prepare', image: pinned.replace('/test:', '/other:'), requirePresent: true })).toEqual({ absent: true });
+  });
   it('protects stopped containers, pending pulls, other masters, and newly added aliases', () => {
     const f = fixture();f.born();f.values.containers = [{ Id: 'stopped', Image: id, State: { Running: false } }];f.save();
     expect(f.request({}).held[0].reason).toBe('running-or-stopped-container-reference');

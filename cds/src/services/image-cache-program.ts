@@ -58,7 +58,7 @@ class DockerUnixConnection(http.client.HTTPConnection):
 
 def local_docker_json(socket_path,endpoint):
  check()
- conn=DockerUnixConnection('localhost',timeout=max(.1,min(12,deadline-time.monotonic())))
+ conn=DockerUnixConnection('localhost',timeout=max(.1,min(20,deadline-time.monotonic())))
  conn.unix_path=socket_path
  try:
   conn.request('GET',endpoint)
@@ -138,6 +138,11 @@ def refs(row):return [row['Id'],*(row.get('RepoTags') or []),*(row.get('RepoDige
 def repository(reference):
  value=reference.split('@',1)[0]
  return value[:value.rfind(':')] if value.rfind(':')>value.rfind('/') else value
+def reference_key(reference):
+ # Docker resolves name:tag@digest by the digest; its inventory lists name@digest.
+ if not isinstance(reference,str) or '@sha256:' not in reference:return reference
+ name,digest=reference.rsplit('@',1)
+ return repository(name)+'@'+digest
 def containers():
  if local_socket:
   rows=docker_summary('/containers/json?all=1')
@@ -159,14 +164,15 @@ if action=='publish':
  for token,pull in list(state['pulls'].items()):
   if pull['instanceId']==instance and pull.get('confirmed') and now-pull['createdAt']>600000:del state['pulls'][token]
  save();print(json.dumps({'published':True}));sys.exit(0)
-rows=images();by_ref={value:row for row in rows for value in refs(row)}
+rows=images();by_ref={reference_key(value):row for row in rows for value in refs(row)}
 if action=='prepare':
- image=req['image'];present=by_ref.get(image);budget=req.get('budgetBytes',0)
+ image=req['image'];present=by_ref.get(reference_key(image));budget=req.get('budgetBytes',0)
  if req.get('requirePresent') and not present:print(json.dumps({'absent':True}));sys.exit(0)
  if sum(not p.get('confirmed') for p in state['pulls'].values())>=32:raise ValueError('unsettled-image-pull-budget-reached')
  foreign=set(state.get('seenForeignIds',[]))&{r['Id'] for r in rows}
+ starting={reference_key(p['image']) for p in state['pulls'].values() if not p.get('beforeId')}
  for row in rows:
-  if row['Id'] not in state['images'] and not any(not p.get('beforeId') and p['image'] in refs(row) for p in state['pulls'].values()):foreign.add(row['Id'])
+  if row['Id'] not in state['images'] and not any(reference_key(value) in starting for value in refs(row)):foreign.add(row['Id'])
  state['seenForeignIds']=sorted(foreign)
  reserved=sum(p.get('reserveBytes',0) for p in state['pulls'].values() if not p.get('confirmed'))
  peak=req.get('peakBytes',4*1024**3) if not present or req.get('forceNew') else 0
@@ -176,7 +182,7 @@ if action=='prepare':
 if action=='confirm':
  pull=state['pulls'].get(req['token'])
  if not pull or pull['instanceId']!=instance:raise ValueError('pull-owner-unconfirmed')
- row=by_ref.get(pull['image'])
+ row=by_ref.get(reference_key(pull['image']))
  if not row:raise ValueError('pulled-identity-unconfirmed')
  if row['Id']!=pull['beforeId'] and row['Id'] not in state.get('seenForeignIds',[]):
   previous=state['images'].get(row['Id'])
@@ -190,25 +196,34 @@ if action=='confirm':
 if action=='abort':
  pull=state['pulls'].get(req['token'])
  if not pull or pull['instanceId']!=instance:raise ValueError('pull-owner-unconfirmed')
- row=by_ref.get(pull['image'])
+ row=by_ref.get(reference_key(pull['image']))
  if row and (row['Id']!=pull.get('beforeId') or not req.get('completedNativeOperation')):raise ValueError('failed-pull-created-an-image-needs-confirmation')
  del state['pulls'][req['token']];save();print(json.dumps({'settled':True}));sys.exit(0)
 if action not in ['preview','reconcile','adopt']:raise ValueError('cache-action-unsupported')
-refs_now=containers();in_use={r['Image'] for r in refs_now};protected={ref for master in state['masters'].values() for ref in master['references']}
-protected.update(p['image'] for p in state['pulls'].values());protected.update(p.get('identity','') for p in state['pulls'].values())
-protected.update(req.get('references',[]))
+refs_now=containers();in_use={r['Image'] for r in refs_now};protected={reference_key(ref) for ref in req.get('references',[])}
+reference_sources={}
+for master,pins in state['masters'].items():
+ for ref in pins['references']:
+  reference_sources.setdefault(reference_key(ref),[]).append({'kind':'master-ledger-current-rollback-or-inflight','instanceId':master,'reference':ref})
+for pull in state['pulls'].values():
+ ref=reference_key(pull['image']);keys={ref,pull.get('identity') or ref}
+ for key in keys:
+  reference_sources.setdefault(key,[]).append({'kind':'pending-artifact','instanceId':pull['instanceId'],'reference':pull['image']})
+protected.update(reference_sources)
 foreign_masters={((r.get('Config') or {}).get('Labels') or {}).get('cds.instance') for r in refs_now}-set(state['masters'])-{None,'',instance}
 out={'scanStatus':'complete','daemonId':state['daemonId'],'platform':{'os':info.get('OSType'),'architecture':{'x86_64':'amd64','aarch64':'arm64'}.get(info.get('Architecture'),info.get('Architecture'))},'budgetBytes':req.get('budgetBytes',0),'imageBytesEstimate':sum(r['Size'] for r in rows),'protectedBytesEstimate':0,'candidates':[],'held':[],'removed':[],'failed':[],'pending':[],'unknown':[],'measurement':'unique-image-logical-size-is-a-conservative-budget-not-released-bytes'}
 out['pullReservations']=[{'identity':'pull:'+hashlib.sha256(token.encode()).hexdigest()[:16],'image':pull['image'],'instanceId':pull['instanceId'],'createdAt':pull['createdAt'],'confirmed':bool(pull.get('confirmed')),'reservedBytesEstimate':pull.get('reserveBytes',0),'reason':'awaiting-current-and-inflight-reference-publication' if pull.get('confirmed') else 'native-pull-result-unconfirmed'} for token,pull in state['pulls'].items()]
 out['unknown'].extend({'identity':pull['identity'],'reason':pull['reason']} for pull in out['pullReservations'] if not pull['confirmed'])
 for row in rows:
  identity=row['Id'];receipt=state['images'].get(identity);reason=None
+ keys=list(dict.fromkeys(reference_key(value) for value in refs(row)))
  sources=[{'kind':'running-container' if (v.get('State') or {}).get('Running') else 'stopped-container','identity':v['Id'],'name':v.get('Name')} for v in refs_now if v.get('Image')==identity]
- sources.extend({'kind':'master-ledger-current-rollback-or-inflight','instanceId':master,'reference':reference} for master,pins in state['masters'].items() for reference in pins['references'] if reference in refs(row))
- sources.extend({'kind':'pending-artifact','instanceId':pull['instanceId'],'reference':pull['image']} for pull in state['pulls'].values() if pull['image'] in refs(row) or pull.get('identity')==identity)
+ for key in keys:
+  for source in reference_sources.get(key,[]):
+   if source not in sources:sources.append(source)
  ownership={'instanceId':receipt.get('instanceId'),'projectId':receipt.get('ownerProject'),'source':'explicit-owner-adoption' if receipt.get('adoptedAt') else 'platform-native-birth'} if receipt else None
  if identity in in_use:reason='running-or-stopped-container-reference'
- elif any(value in protected for value in refs(row)):reason='current-rollback-or-inflight-reference'
+ elif any(value in protected for value in keys):reason='current-rollback-or-inflight-reference'
  elif ((row.get('Config') or {}).get('Labels') or {}).get('cds.protected')=='true':reason='explicit-protection'
  elif foreign_masters:reason='other-master-has-not-published-rollback-pins'
  elif not receipt:reason='legacy-image-ownership-needs-review'
