@@ -28,6 +28,13 @@ describe('hosted site preview logging boundary', () => {
     expect(isHostedSitePreviewRequest(value)).toBe(false);
     expect(redactHostedSitePreviewLog(value)).toBe(value);
   });
+  it('keeps project OIDC callback paths while removing authorization results from logs', () => {
+    const callback = '/api/v1/auth/cds/callback';
+    expect(redactHostedSitePreviewLog(callback + '?code=fixture-code&state=fixture-proof')).toBe(callback);
+    expect(redactHostedSitePreviewLog(`upstream https://map.test${callback}?error=access_denied&%73tate=fixture-proof`))
+      .toBe(`upstream https://map.test${callback}`);
+    expect(redactHostedSitePreviewLog(callback + '?code=display')).toBe(callback + '?code=display');
+  });
   // 受保护的那一段可以排在任意外部前缀之后：API 支持子路径部署，到代理这里就是
   // /platform/api/hosted-site-preview-files/bootstrap/<票据>。本文件本来就在特判 /_cds，
   // 说明「/api 之前可以有前缀」是认的，只是此前只认那一个写死的值——于是这条安全加固

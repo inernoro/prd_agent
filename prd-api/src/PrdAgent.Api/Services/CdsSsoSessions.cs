@@ -64,9 +64,9 @@ public sealed class CdsSsoSessions(CdsSsoSettings settings, CdsSsoClient client,
 
     internal async Task<bool> IsAuthorizedAsync(CdsSsoDelegation delegation, CancellationToken ct)
     {
-        if (delegation.ExpiresAt <= DateTime.UtcNow) return false;
+        if (delegation.ExpiresAt <= DateTime.UtcNow || settings.LocalAccount(delegation.Subject) != delegation.LocalAccount) return false;
         var identity = await client.GetIdentityAsync(delegation.AccessToken, ct);
-        return identity?.Subject == delegation.Subject && identity.LocalAccount == delegation.LocalAccount;
+        return identity?.Subject == delegation.Subject;
     }
 
     internal async Task<User?> FindLoginUserAsync(string localAccount, CancellationToken ct)

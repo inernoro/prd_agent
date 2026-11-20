@@ -606,10 +606,6 @@ export class ForwarderRoutePublisher {
     for (const key of [...this.warnedAliasCollisions]) {
       if (!seenAliasCollisions.has(key)) this.warnedAliasCollisions.delete(key);
     }
-    const protectedIds = new Set(branches.filter(branch => branch.hostedSso).map(branch => branch.id));
-    for (const record of records) {
-      if (record.branchId && protectedIds.has(record.branchId)) record.hostedSso = true;
-    }
     return records;
   }
 

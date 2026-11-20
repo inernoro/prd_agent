@@ -1,16 +1,13 @@
 import { Router, urlencoded, type Request, type Response } from 'express';
-import { GH_SESSION_COOKIE } from './auth.js';
+import { GH_SESSION_COOKIE, sessionCookieName } from './auth.js';
 import { isRecentAuthentication, readAuthCookie, trustedAuthOrigin } from './passkeys.js';
-import { GATEWAY_CHECK_PATH, isSsoOriginIsolated, preferenceKey, requiresGatewaySecret, siteReturnPath, unavailable, type GatewayRequest, type HostedSso, type Site } from '../services/hosted-sso.js';
+import { isApplicationPath, preferenceKey, siteReturnPath, type HostedSso, type Site } from '../services/hosted-sso.js';
 import type { AuthService } from '../services/auth-service.js';
 import type { StateService } from '../services/state.js';
-import type { RouteRecord } from '../forwarder/types.js';
 import type { CdsUser } from '../domain/auth.js';
 import type { Collection } from 'mongodb';
 import type Provider from 'oidc-provider';
 import { loadOidcSigningMaterial, mongoOidcAdapter, type OidcArtifact } from '../infra/auth-store/oidc-store.js';
-
-const AUTHORIZE = '/api/hosted-sso/authorize';
 
 function escape(value: string): string {
   return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
@@ -32,12 +29,12 @@ function page(res: Response, title: string, content: string, status = 200, retur
     </style><main><h1>${escape(title)}</h1>${content}</main></html>`);
 }
 
-function accountPage(res: Response, site: Site, accounts: CdsUser[], target: string, hidden: string, retry: boolean): void {
+function accountPage(res: Response, site: Site, accounts: CdsUser[], target: string, retry: boolean): void {
   const login = `/login?choose_account=1&redirect=${encodeURIComponent(target)}`;
   const choices = accounts.map(user => `<button name="account" value="${escape(user.id)}">${escape(user.name)}<small>${escape(user.username || user.githubLogin)}</small></button>`).join('');
   const message = retry ? '<p>选定账号的会话已过期或访问权限已变更。请重新验证该账号，也可以选择其他有权访问的账号。</p>' : '';
   page(res, '选择 CDS 账号', `<p>登录到 <strong>${escape(site.origin.host)}</strong></p>${message}
-    <form method="post" action="${escape(target)}">${hidden}${choices}<button name="cancel" value="1">取消登录</button></form>
+    <form method="post" action="${escape(target)}">${choices}<button name="cancel" value="1">取消登录</button></form>
     <a href="${escape(login)}">使用其他 CDS 账号</a>`, 200, site.origin);
 }
 
@@ -65,10 +62,15 @@ async function createOidcProvider(sso: HostedSso, auth: AuthService, store: Coll
       };
     }),
     jwks: { keys: [signing.jwk] },
-    cookies: { keys: [signing.cookieKey], long: { secure: true, sameSite: 'lax' }, short: { secure: true, sameSite: 'lax' } },
+    cookies: {
+      keys: [signing.cookieKey],
+      names: { session: '__Host-cds-oidc-session', interaction: '__Secure-cds-oidc-interaction', resume: '__Secure-cds-oidc-resume' },
+      long: { path: '/', secure: true, sameSite: 'lax' },
+      short: { secure: true, sameSite: 'lax' },
+    },
     interactions: { policy, url: (_ctx, interaction) => `${INTERACTION_PATH}${interaction.uid}` },
     features: { devInteractions: { enabled: false }, userinfo: { enabled: true }, resourceIndicators: { enabled: false } },
-    responseTypes: ['code'], scopes: ['openid'], claims: { openid: ['sub', 'cds_local_account'] },
+    responseTypes: ['code'], scopes: ['openid'], claims: { openid: ['sub'] },
     pkce: { required: () => true },
     // The provider's browser session changes when another site selects a different account.
     // Site grants are checked against their own CDS session in findAccount.
@@ -76,7 +78,6 @@ async function createOidcProvider(sso: HostedSso, auth: AuthService, store: Coll
     ttl: { AuthorizationCode: 60, IdToken: 120, AccessToken: OIDC_SESSION_MS / 1000, Grant: OIDC_SESSION_MS / 1000,
       Interaction: 300, Session: OIDC_SESSION_MS / 1000 },
     async findAccount(ctx, userId, token) {
-      let localAccount: string | undefined;
       if (token) {
         const grant = token.grantId ? await store.findOne({ _id: `Binding:${token.grantId}`, expiresAt: { $gt: new Date() } }) : null;
         const binding = grant?.authorization;
@@ -84,13 +85,11 @@ async function createOidcProvider(sso: HostedSso, auth: AuthService, store: Coll
         if (!binding || !site?.application || site.revision !== binding.revision || ctx.oidc.client?.clientId !== `${CLIENT_PREFIX}${site.id}`) return undefined;
         const verified = await sso.authorized(site, binding.cdsToken);
         if (verified?.user.id !== userId) return undefined;
-        localAccount = site.application.accounts[userId];
-        if (!localAccount) return undefined;
       } else {
         const user = await auth.findUserById(userId);
         if (user?.status !== 'active') return undefined;
       }
-      return { accountId: userId, claims: () => ({ sub: userId, ...(localAccount ? { cds_local_account: localAccount } : {}) }) };
+      return { accountId: userId, claims: () => ({ sub: userId }) };
     },
   });
   provider.proxy = true;
@@ -105,81 +104,47 @@ export function createHostedSsoRouter(deps: {
   sso: HostedSso;
   auth: AuthService;
   state: StateService;
-  gatewaySecret: string;
   accepting: () => boolean;
-  routes: () => RouteRecord[];
   oidcStore?: Collection<OidcArtifact>;
 }): Router {
-  const { sso, auth, state, routes } = deps;
-  // The OIDC implementation supports Node 22 LTS and newer. Gateway login
-  // and existing CDS authentication remain available on Node 20 deployments.
+  const { sso, auth, state } = deps;
   const oidcStore = Number(process.versions.node.split('.')[0]) >= 22 ? deps.oidcStore : undefined;
   const router = Router();
-  const primaryHost = (req: Request): boolean => deps.accepting() && req.get('host')?.toLowerCase() === sso.authority.host;
-  const validate = (req: Request) => auth.validateSession(readAuthCookie(req.get('cookie'), GH_SESSION_COOKIE), { renew: false });
+  const primaryHost = (req: Request): boolean => deps.accepting() && req.get('x-cds-internal') !== '1'
+    && req.get('host')?.toLowerCase() === sso.authority.host;
+  const validate = (req: Request) => auth.validateSession(readAuthCookie(req.get('cookie'), sessionCookieName(GH_SESSION_COOKIE, true)), { renew: false });
 
   router.use(['/hosted-sso', '/oidc'], (_req, res, next) => {
-    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'same-origin' });
     res.locals.cdsSuppressRequestBodyLog = true;
     next();
   });
 
-  router.post(GATEWAY_CHECK_PATH.slice('/api'.length), (req, res, next) => {
-    const input: GatewayRequest = req.body;
-    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '')
-      || !requiresGatewaySecret(req.get('authorization'), deps.gatewaySecret)) {
-      res.sendStatus(404);
-      return;
-    }
-    if (!deps.accepting()) { res.json(unavailable); return; }
-    if (typeof input?.branchId !== 'string' || typeof input.host !== 'string'
-      || typeof input.path !== 'string' || input.path.length > 8192 || typeof input.method !== 'string') {
-      res.sendStatus(400);
-      return;
-    }
-    void sso.check(input).then(decision => res.json(decision)).catch(next);
+  // Only the preview proxy supplies this source host. The response is a public capability
+  // flag or a same-site link, and never carries a browser session or a CDS identity.
+  function panelSite(req: Request): Site | undefined {
+    if (!oidcStore || !deps.accepting() || req.get('x-cds-internal') !== '1'
+      || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '')) return;
+    return sso.siteForHost(req.get('x-cds-source-host')?.toLowerCase() ?? '');
+  }
+
+  router.get('/hosted-sso/panel/status', (req, res) => {
+    res.json({ enabled: Boolean(panelSite(req)) });
   });
 
-  const authorize = async (req: Request, res: Response): Promise<void> => {
-    if (!primaryHost(req) || (req.method === 'POST' && req.get('origin') !== sso.authority.origin)) {
-      res.sendStatus(403);
+  router.get('/hosted-sso/panel/start', (req, res) => {
+    const site = panelSite(req);
+    if (!site) {
+      res.status(404).json({ error: '项目尚未开启 CDS 登录，请使用项目提供的登录方式。' });
       return;
     }
-    const flowToken = req.method === 'POST' ? req.body?.flow : req.query.flow;
-    const context = typeof flowToken === 'string' ? sso.flow(flowToken) : undefined;
-    if (!context || typeof flowToken !== 'string') {
-      page(res, '站点登录链接已失效', '<p>请返回原站点，重新选择「使用 CDS 登录」。</p>', 400);
-      return;
-    }
-    const { flow, site } = context;
-    if (req.method === 'POST' && req.body?.cancel === '1') {
-      sso.cancelLogin(flowToken);
-      res.redirect(303, new URL('/_cds/sso/cancelled', site.origin).toString());
-      return;
-    }
-    const browser = await sso.browser(req.get('cookie'));
-    if (!browser) { page(res, '暂时无法登录', '<p>请求过多，请稍后重试。</p>', 429); return; }
-    if (browser.newCookie) res.append('Set-Cookie', browser.newCookie);
-    await sso.rememberCurrent(browser.accounts, req.get('cookie'));
-    const preferred = browser.accounts.preferences.get(preferenceKey(site));
-    const selected = req.method === 'POST' ? req.body?.account : flow.choose ? undefined : preferred;
-    if (typeof selected === 'string') {
-      const callback = await sso.completeAuthorization(browser.accounts, site, flowToken, selected);
-      if (callback) {
-        const identity = await sso.authorized(site, browser.accounts.sessions.get(selected) ?? null);
-        if (identity) await auth.recordActivity({ userId: identity.user.id, userLogin: identity.user.username || identity.user.githubLogin,
-          action: 'hosted-sso.authorize', targetType: 'branch', targetId: site.id, summary: '授权登录托管站点' });
-        res.redirect(303, callback.toString());
-        return;
-      }
-    }
-    const accounts = (await sso.accountsForSite(browser.accounts, site))
-      .filter(user => !site.application?.loginPath || Boolean(site.application.accounts[user.id]));
-    const target = `${AUTHORIZE}?flow=${encodeURIComponent(flowToken)}`;
-    accountPage(res, site, accounts, target, `<input type="hidden" name="flow" value="${escape(flowToken)}">`, Boolean(selected));
-  };
-  router.get('/hosted-sso/authorize', (req, res, next) => { void authorize(req, res).catch(next); });
-  router.post('/hosted-sso/authorize', urlencoded({ extended: false, limit: '8kb', inflate: false }), (req, res, next) => { void authorize(req, res).catch(next); });
+    const login = new URL(site.application.loginPath, site.origin);
+    const back = siteReturnPath(typeof req.query.returnUrl === 'string' ? req.query.returnUrl : '/');
+    const path = back.split('?')[0];
+    login.searchParams.set('returnUrl', path === site.application.loginPath || path === site.application.callbackPath ? '/' : back);
+    if (req.query.switchAccount === 'true') login.searchParams.set('switchAccount', 'true');
+    res.redirect(303, login.pathname + login.search);
+  });
 
   if (oidcStore) {
     const store = oidcStore;
@@ -215,7 +180,7 @@ export function createHostedSsoRouter(deps: {
       const reauthenticate = prompts.includes('login');
       const selectExplicitly = reauthenticate || prompts.includes('select_account');
       const selected = req.method === 'POST' ? req.body?.account : selectExplicitly ? undefined : browser.accounts.preferences.get(preferenceKey(site));
-      if (typeof selected === 'string' && site.application.accounts[selected]) {
+      if (typeof selected === 'string') {
         const cdsToken = browser.accounts.sessions.get(selected);
         const verified = cdsToken && await sso.authorized(site, cdsToken);
         if (cdsToken && verified) {
@@ -226,7 +191,7 @@ export function createHostedSsoRouter(deps: {
             : maxAge === undefined || Math.floor(Date.now() / 1000) - authenticatedAt <= maxAge;
           if (!freshEnough) {
             const path = `${INTERACTION_PATH}${encodeURIComponent(detail.uid)}`;
-            accountPage(res, site, [], path, '', true);
+            accountPage(res, site, [], path, true);
             return;
           }
           const grant = new instance.Grant({ accountId: selected, clientId: `${CLIENT_PREFIX}${site.id}` });
@@ -242,35 +207,21 @@ export function createHostedSsoRouter(deps: {
           return;
         }
       }
-      const accounts = (await sso.accountsForSite(browser.accounts, site)).filter(user => Boolean(site.application!.accounts[user.id]));
-      accountPage(res, site, accounts, `${INTERACTION_PATH}${encodeURIComponent(detail.uid)}`, '', Boolean(selected));
+      const accounts = await sso.accountsForSite(browser.accounts, site);
+      accountPage(res, site, accounts, `${INTERACTION_PATH}${encodeURIComponent(detail.uid)}`, Boolean(selected));
     };
     router.get('/hosted-sso/interaction/:id', (req, res, next) => { void interaction(req, res).catch(next); });
     router.post('/hosted-sso/interaction/:id', urlencoded({ extended: false, limit: '8kb', inflate: false }), (req, res, next) => { void interaction(req, res).catch(next); });
   }
 
-  function publishedOrigins(branchId: string): string[] {
-    const published = routes().filter(route => route.weight > 0);
-    const origins = new Set<string>();
-    for (const route of published) {
-      if (route.branchId !== branchId || !/^[a-z0-9.-]+$/i.test(route.host)) continue;
-      if (published.some(other => other.host.toLowerCase() === route.host.toLowerCase() && other.branchId !== branchId)) continue;
-      const origin = trustedAuthOrigin(`https://${route.host}`);
-      if (origin && isSsoOriginIsolated(sso.authority, origin)) origins.add(origin.origin);
-    }
-    return [...origins];
-  }
-
   router.get('/hosted-sso/sites', (req, res, next) => { void (async () => {
     const verified = primaryHost(req) ? await validate(req) : null;
     if (!verified?.user.isSystemOwner) { res.sendStatus(403); return; }
-    const allRoutes = routes();
-    const routedBranches = new Set(allRoutes.map(route => route.branchId));
     const users = (await auth.listUsers()).map(user => ({ id: user.id, name: user.name, username: user.username ?? user.githubLogin }));
-    res.json({ sites: state.getAllBranches().filter(branch => branch.hostedSso || routedBranches.has(branch.id)).map(branch => ({
-      id: branch.id, name: branch.branch, projectId: branch.projectId, origins: publishedOrigins(branch.id), config: branch.hostedSso ?? null,
+    res.json({ sites: state.getAllBranches().filter(branch => branch.hostedSso || sso.originsForBranch(branch.id).length > 0).map(branch => ({
+      id: branch.id, name: branch.branch, projectId: branch.projectId, origins: sso.originsForBranch(branch.id), config: branch.hostedSso ?? null,
       clientId: `${CLIENT_PREFIX}${branch.id}`,
-    })), users, statistics: sso.statistics(), issuer: oidcStore ? new URL('/api/oidc', sso.authority).toString() : null });
+    })), users, issuer: oidcStore ? new URL('/api/oidc', sso.authority).toString() : null });
   })().catch(next); });
 
   router.put('/hosted-sso/sites/:branchId', (req, res, next) => { void (async () => {
@@ -281,43 +232,30 @@ export function createHostedSsoRouter(deps: {
     }
     const branch = state.getBranch(req.params.branchId);
     if (!branch) { res.status(404).json({ error: '找不到对应分支，请刷新站点列表。' }); return; }
-    if (branch.previewPort && req.body?.suspended !== true) {
-      res.status(409).json({ error: '此分支仍有直连预览端口，请关闭直连预览后启用 CDS 登录。' });
-      return;
-    }
     const origin = trustedAuthOrigin(req.body?.origin);
     const denied = req.body?.deniedUserIds;
     const suspended = req.body?.suspended === true;
-    if (!origin || (!publishedOrigins(branch.id).includes(origin.origin) && !(suspended && branch.hostedSso?.origin === origin.origin))
-      || !Array.isArray(denied) || denied.some(id => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id))) {
-      res.status(400).json({ error: '请选择当前分支已发布的预览入口和有效的账号。' });
+    if (!oidcStore || !origin || !Array.isArray(denied)
+      || denied.some(id => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id))) {
+      res.status(400).json({ error: '请选择当前项目的托管入口和有效账号。' });
+      return;
+    }
+    const app = req.body?.application;
+    if ((!suspended || app) && (!isApplicationPath(app?.callbackPath) || !isApplicationPath(app?.loginPath) || app.callbackPath === app.loginPath)) {
+      res.status(400).json({ error: '请填写项目实现的站内登录路径和回调路径。' });
       return;
     }
     let config;
     try {
-      config = sso.configure(branch.id, origin, [...new Set<string>(denied)]);
+      config = sso.configure(branch.id, origin, [...new Set<string>(denied)],
+        app ? { callbackPath: app.callbackPath, loginPath: app.loginPath } : undefined, suspended);
     } catch {
-      res.status(409).json({ error: '此站点需要独立于 CDS 登录页的注册域，且需支持项目成员授权。' });
+      res.status(409).json({ error: '请选择与 CDS 同注册域、正在发布且支持项目成员授权的 HTTPS 入口。' });
       return;
     }
-    const app = req.body?.application;
-    if (app) {
-      const path = app.callbackPath;
-      const loginPath = app.loginPath;
-      const accounts = app.accounts;
-      if (!oidcStore || typeof path !== 'string' || path !== siteReturnPath(path) || /[?#]/.test(path)
-        || (loginPath !== undefined && (typeof loginPath !== 'string' || loginPath === '/' || loginPath === path
-          || loginPath !== siteReturnPath(loginPath) || /[?#]/.test(loginPath)))
-        || !accounts || typeof accounts !== 'object' || Array.isArray(accounts)
-        || Object.entries(accounts).some(([id, val]) => !/^[a-f0-9]{32}$/.test(id) || typeof val !== 'string' || !val.trim() || val.length > 128)) {
-        res.status(400).json({ error: '检查应用回调路径及已核实的本地账号绑定后重试。' });
-        return;
-      }
-      config.application = { callbackPath: path, ...(loginPath ? { loginPath } : {}), accounts };
-    }
-    await sso.updateSite(branch.id, { ...config, ...(suspended ? { suspended: true } : {}) });
+    await sso.updateSite(branch.id, config);
     await auth.recordActivity({ userId: verified.user.id, userLogin: verified.user.username || verified.user.githubLogin,
-      action: 'hosted-sso.configure', targetType: 'branch', targetId: branch.id, summary: suspended ? '暂停托管站点访问' : '更新托管站点登录授权' });
+      action: 'hosted-sso.configure', targetType: 'branch', targetId: branch.id, summary: suspended ? '暂停站点 CDS 登录' : '更新托管站点登录授权' });
     res.json({ success: true });
   })().catch(next); });
 

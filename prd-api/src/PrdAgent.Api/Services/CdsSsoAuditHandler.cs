@@ -17,7 +17,7 @@ public sealed class CdsSsoAuditHandler(
     private static readonly string[] ProtocolFields =
     [
         "issuer", "authorization_endpoint", "token_endpoint", "userinfo_endpoint", "jwks_uri", "keys",
-        "access_token", "id_token", "expires_in", "token_type", "scope", "sub", "cds_local_account", "error", "error_description"
+        "access_token", "id_token", "expires_in", "token_type", "scope", "sub", "error", "error_description"
     ];
     private static readonly HashSet<string> ErrorCodes = new(StringComparer.Ordinal)
     {

@@ -8,21 +8,17 @@ import {
 import type { CdsSession, CdsUser } from '../domain/auth.js';
 import type { CdsPasskeyStore } from '../domain/passkey.js';
 import type { AuthService } from '../services/auth-service.js';
+import { readBrowserCookie } from '../services/browser-session-cookies.js';
 import { ExpiringTokens } from '../services/expiring-tokens.js';
-import { buildLegacyLogoutCookie, buildLogoutCookie, buildSessionCookie, buildSsoLogoutCookie, GH_SESSION_COOKIE } from './auth.js';
+import { buildLegacyLogoutCookie, buildLogoutCookie, buildSessionCookie, buildSsoLogoutCookie, GH_SESSION_COOKIE, sessionCookieName } from './auth.js';
 
 const CHALLENGE_COOKIE = '__Host-cds-passkey';
 const CHALLENGE_TTL_MS = 2 * 60_000;
 export const PASSKEY_FRESH_MS = 5 * 60_000;
 
 export function readAuthCookie(header: string | undefined, name: string): string | null {
-  for (const cookie of header?.split(';') ?? []) {
-    const item = cookie.trim();
-    if (!item.startsWith(`${name}=`)) continue;
-    const value = item.slice(name.length + 1);
-    return /^[A-Za-z0-9_-]+$/.test(value) ? value : null;
-  }
-  return null;
+  const value = readBrowserCookie(header, name);
+  return value && /^[A-Za-z0-9_-]+$/.test(value) ? value : null;
 }
 
 export function authCookie(name: string, value: string, maxAge: number): string {
@@ -59,7 +55,7 @@ export function createPasskeyRouter({ origin, auth, store, enabled }: PasskeyRou
   const router = Router();
   const challenges = new ExpiringTokens<Challenge>(4096);
   const scope = (req: Request): boolean => enabled() && req.get('host')?.toLowerCase() === origin.host;
-  const currentSession = (req: Request) => auth.validateSession(readAuthCookie(req.get('cookie'), GH_SESSION_COOKIE), { renew: false });
+  const currentSession = (req: Request) => auth.validateSession(readAuthCookie(req.get('cookie'), sessionCookieName(GH_SESSION_COOKIE, true)), { renew: false });
   const action = (handler: (req: Request, res: Response) => Promise<unknown>): RequestHandler => (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     res.locals.cdsSuppressRequestBodyLog = true;

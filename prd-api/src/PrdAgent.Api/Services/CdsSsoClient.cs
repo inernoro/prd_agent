@@ -15,12 +15,14 @@ namespace PrdAgent.Api.Services;
 
 public sealed record CdsSsoSettings(Uri? Issuer, string ClientId, Uri? RedirectUri)
 {
+    private readonly Dictionary<string, string> _accounts = new(StringComparer.Ordinal);
     public const string AuthPath = "/api/v1/auth/cds";
     public const string CallbackPath = AuthPath + "/callback";
     public bool IsForHost(HostString host) => RedirectUri is not null
         && string.Equals(host.Value, RedirectUri.Authority, StringComparison.OrdinalIgnoreCase);
 
     public string Scope => $"{Issuer}|{ClientId}|{RedirectUri}";
+    internal string? LocalAccount(string subject) => _accounts.GetValueOrDefault(subject);
 
     public static CdsSsoSettings Read(IConfiguration config)
     {
@@ -34,7 +36,16 @@ public sealed record CdsSsoSettings(Uri? Issuer, string ClientId, Uri? RedirectU
             || clientId.Length is < 10 or > 256 || clientId.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
             throw new InvalidOperationException("CDS SSO needs a trusted HTTPS issuer, a CDS site client ID and the exact MAP callback URL.");
 
-        return new(issuer, clientId, redirect);
+        var settings = new CdsSsoSettings(issuer, clientId, redirect);
+        foreach (var entry in config.GetSection("CdsSso:Accounts").GetChildren())
+        {
+            var local = entry.Value?.Trim();
+            if (entry.Key.Length is < 1 or > 128 || entry.Key.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '_' && c != '-')
+                || string.IsNullOrEmpty(local) || local.Length > 128 || local.Any(char.IsControl))
+                throw new InvalidOperationException("Invalid MAP account binding in CdsSso:Accounts.");
+            settings._accounts.Add(entry.Key, local);
+        }
+        return settings;
     }
 
     internal static bool TryHttps(string? value, out Uri? uri) =>
@@ -114,10 +125,10 @@ public sealed class CdsSsoClient
 
         if (subject is null) return null;
         var identity = await GetIdentityAsync(tokens.AccessToken, ct);
-        if (identity?.Subject != subject || string.IsNullOrWhiteSpace(identity.LocalAccount) || identity.LocalAccount.Length > 128)
-            return null;
+        var localAccount = _settings.LocalAccount(subject);
+        if (identity?.Subject != subject || localAccount is null) return null;
 
-        return new(subject, identity.LocalAccount, tokens.AccessToken,
+        return new(subject, localAccount, tokens.AccessToken,
             startedAt.AddSeconds(Math.Min(tokens.ExpiresIn, MaxLifetime.TotalSeconds)));
     }
 
@@ -202,7 +213,5 @@ public sealed class CdsSsoClient
 }
 
 internal sealed record CdsSsoFlow(string State, string Nonce, string Verifier, string SessionProof, string ReturnUrl);
-internal sealed record CdsSsoIdentity(
-    [property: JsonPropertyName("sub")] string? Subject,
-    [property: JsonPropertyName("cds_local_account")] string? LocalAccount);
+internal sealed record CdsSsoIdentity([property: JsonPropertyName("sub")] string? Subject);
 internal sealed record CdsSsoDelegation(string Subject, string LocalAccount, string AccessToken, DateTime ExpiresAt);

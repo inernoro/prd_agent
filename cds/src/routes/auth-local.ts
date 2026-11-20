@@ -37,6 +37,8 @@ export interface LegacyLocalLoginResult {
   setCookie: string;
 }
 
+import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
+
 export interface AuthLocalRouterDeps {
   authService: AuthService;
   /** Production servers synchronize linked machine credentials with account status. */
@@ -69,14 +71,8 @@ interface AuthedRequest extends Request {
   cdsUser?: CdsUser;
 }
 
-function sessionToken(req: Request): string | null {
-  const match = (req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${GH_SESSION_COOKIE}=([^;]*)`));
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
+function sessionToken(req: Request, secure: boolean): string | null {
+  return readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, secure)) ?? null;
 }
 
 function clientIp(req: Request): string | null {
@@ -224,7 +220,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   // In GitHub mode the OAuth router registers the same path first; in basic
   // mode this handler owns it. Both clear the shared persisted-session cookie.
   router.post('/auth/logout', async (req: Request, res: Response) => {
-    const token = sessionToken(req);
+    const token = sessionToken(req, cookieSecure);
     if (token) await authService.logout(token);
     res.setHeader('Set-Cookie', [
       buildLogoutCookie(cookieSecure),

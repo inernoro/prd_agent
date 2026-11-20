@@ -16,7 +16,7 @@ export type ClusterIdentityConfig = {
   | { role: 'member'; authorityNodeId: string; authorityUrl: string; nodeToken: string; projects: Record<string, string> });
 
 const credentialHeaders = ['cookie', 'x-ai-access-key', 'ai-access-key', 'authorization', 'x-cds-ai-token', 'x-cds-token'];
-const cookieNames = ['cds_token', 'cds_gh_session', 'cds_sso_session'];
+import { CDS_BROWSER_COOKIE_NAMES as cookieNames } from './browser-session-cookies.js';
 const MAX_REPLY_BYTES = 2 * 1024 * 1024;
 const TIMEOUT_MS = 15_000;
 class ClusterIdentityValidationError extends Error {

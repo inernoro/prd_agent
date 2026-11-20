@@ -213,7 +213,7 @@ export function buildWidgetScript(
 
   // ── State ──
   var expanded=false;
-  var siteSignIn={enabled:false,name:null};
+  var siteSignInEnabled=false;
   // 手机上整条徽章压在业务内容上（2026-09-14 稳定冒烟：移动首页底部被分支状态条遮挡）。
   // 窄屏进入 4 秒后收成 36px 的圆形小钮，只在用户点它时展开；桌面端不受影响。
   var compact=false;
@@ -617,11 +617,11 @@ export function buildWidgetScript(
   function setPanelExpanded(value){
     if(value&&!expanded){
       panelOrigin={x:pos.x,y:pos.y};
-      fetch('/_cds/sso/status',{credentials:'same-origin',cache:'no-store'}).then(function(response){
+      fetch('/_cds/api/hosted-sso/panel/status',{credentials:'omit',cache:'no-store'}).then(function(response){
         return response.ok?response.json():null;
       }).then(function(status){
         if(!status||typeof status.enabled!=='boolean')return;
-        siteSignIn={enabled:status.enabled,name:typeof status.name==='string'?status.name:null};
+        siteSignInEnabled=status.enabled;
         if(expanded)render();
       }).catch(function(){});
     }
@@ -798,8 +798,8 @@ export function buildWidgetScript(
     if(expanded){
       h+='<div class="cds-panel" id="cds-widget-panel" role="region" aria-label="CDS 分支诊断">';
       h+='<div class="cds-panel-header"><span class="cds-panel-title">CDS 分支诊断</span><button class="cds-panel-close" data-action="close-panel" title="关闭 CDS 诊断面板" aria-label="关闭 CDS 诊断面板">'+ICON_X+'</button></div>';
-      if(siteSignIn.enabled){
-        h+='<div class="cds-status-row"><span data-cds-site-account></span><button type="button" data-action="site-sign-in">'+(siteSignIn.name?'切换账号':'使用 CDS 登录')+'</button></div>';
+      if(siteSignInEnabled){
+        h+='<div class="cds-status-row"><button type="button" data-action="site-sign-in">使用 CDS 登录</button><button type="button" data-action="site-switch">切换 CDS 账号</button></div>';
       }
       if(!profiles.length && !branchStatus){
         h+='<div style="color:#8b949e;font-size:11px;padding:4px 0"><span class="cds-spinner"></span> 加载中...</div>';
@@ -946,8 +946,6 @@ export function buildWidgetScript(
     h+='</div>';
 
     root.innerHTML=h;
-    var siteAccountNode=root.querySelector('[data-cds-site-account]');
-    if(siteAccountNode)siteAccountNode.textContent=siteSignIn.name?'当前账号：'+siteSignIn.name:'CDS 账号';
     setWidgetPosition(pos.x,pos.y);
 
     // Attach drag to badge bar
@@ -1015,9 +1013,9 @@ export function buildWidgetScript(
     var btn=e.target.closest('button');
     if(!btn)return;
     var action=btn.getAttribute('data-action');
-    if(action==='site-sign-in'){
-      var returnPath=location.pathname+location.search+location.hash;
-      location.assign('/_cds/sso/start?return='+encodeURIComponent(returnPath)+(siteSignIn.name?'&choose=1':''));
+    if(action==='site-sign-in'||action==='site-switch'){
+      var returnPath=location.pathname+location.search;
+      location.assign('/_cds/api/hosted-sso/panel/start?returnUrl='+encodeURIComponent(returnPath)+(action==='site-switch'?'&switchAccount=true':''));
       return;
     }
     if(action==='dismiss'){

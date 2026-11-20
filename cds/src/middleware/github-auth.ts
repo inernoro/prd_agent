@@ -17,6 +17,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { AuthService } from '../services/auth-service.js';
 import { GH_SESSION_COOKIE, buildSessionCookie } from '../routes/auth.js';
+import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
 import { isPublicAgentSetupRoute } from '../shared/agent-setup.js';
 
 /** Paths that bypass the auth gate entirely. */
@@ -83,12 +84,6 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   '/favicon.svg',
   /^\/_next\//,
 ];
-
-function parseCookie(cookieHeader: string | undefined, name: string): string | undefined {
-  if (!cookieHeader) return undefined;
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : undefined;
-}
 
 function isPublicPath(path: string): boolean {
   return PUBLIC_PATHS.some((rule) => (typeof rule === 'string' ? rule === path : rule.test(path)));
@@ -182,7 +177,7 @@ export function createGithubAuthMiddleware(deps: {
       return;
     }
 
-    const token = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
+    const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, cookieSecure));
     const result = await authService.validateSession(token ?? null);
 
     if (!result) {

@@ -55,21 +55,19 @@ cd cds
 
 ### 托管站点免密登录
 
-在 CDS 账号已使用 MongoDB 持久化的控制面设置 `CDS_PASSKEYS_ENABLED=1`。`CDS_PUBLIC_BASE_URL` 指定用户打开 CDS 登录页时使用的 HTTPS 源地址。为控制面和同机 Forwarder 配置同一个随机 `CDS_HOSTED_SSO_GATEWAY_KEY`，保存在各自的 CDS 服务配置中。
+在使用 MongoDB 持久化账号的 CDS 控制面设置 `CDS_PASSKEYS_ENABLED=1`，并用 `CDS_PUBLIC_BASE_URL` 指定登录页的 HTTPS 源地址。OpenID Connect 签发服务使用 Node 22 LTS 或更新的 LTS。项目必须由 CDS 实际发布，项目入口和 CDS 登录页使用同一注册域下的独立 HTTPS 主机。
 
-用户先登录 CDS，在头像菜单选择「绑定通行密钥」。系统所有者验证通行密钥后，进入「CDS 系统设置 → 登录与认证 → CDS 托管站点登录」，选择已发布的预览入口并启用。预览入口与 CDS 登录域使用各自独立的注册域。分支已有直连端口时，先关闭直连。整站访问沿用项目授权，可在站点配置中限制单个 CDS 账号。
+项目实现自己的登录入口与回调后，由 CDS 系统所有者在「CDS 系统设置 → 登录与认证 → CDS 托管站点登录」登记已发布入口及两个路径。保存前用通行密钥重新验证。CDS 核对托管路由和项目授权，返回标准的用户标识 `sub`。项目负责验证签发方、受众、签名、有效期、nonce、授权码和 PKCE，并把已核实的标识绑定到自己的账号，判定访问权限和建立本地会话。
 
-用户第一次进入站点时在 CDS 选择账号。已登录的用户可以从分支诊断面板查看当前账号或切换。退出当前 CDS 账号的所有站点后，使用该账号建立的站点会话失效。
-
-网站需要进入自己的旧账号时，可在同一站点配置中填写精确的回调路径，并由管理员核实本地账号后建立绑定。控制面使用 Node 22 LTS 或更新的 LTS 运行 OpenID Connect 提供方。网站使用授权码和 PKCE，按签发方的发现文档核对回调和身份凭证，再用 UserInfo 中的 `cds_local_account` 标识匹配本地账号。启用这种接入的网站在处理受保护请求前应确认 CDS 授权仍有效。
+分支诊断面板可打开项目登录入口并发起 CDS 换号。用户在 CDS 选择账号，CDS 按项目记住选择。控制面的浏览器会话 Cookie 只发给 CDS 登录主机，HTTPS 升级后原会话可能需要重新登录一次。停用登记、移除实际托管路由或结束 CDS 会话时，CDS 撤销对应授权，接入项目通过 UserInfo 核对授权状态。项目自己的页面和接口始终由项目决定是否需要登录。
 
 ### MAP 接入
 
-MAP 按已绑定的本地用户 ID 登录。首次改密待完成、已停用的用户、机器人和破窗账号不能使用此入口。MAP 每次调用受保护接口时核对本地权限和 CDS 授权。授权到期或被撤销时回到 MAP 登录页，可从 CDS 重新授权。
+MAP 试点使用已发布的同域预览。设置 `CdsSso__Enabled=true`、`CdsSso__Issuer`、`CdsSso__ClientId` 和 `CdsSso__RedirectUri`。签发方和客户端标识来自 CDS 登记。回调使用 MAP 预览的 HTTPS 地址与 `/api/v1/auth/cds/callback`，项目登录入口登记 `/api/v1/auth/cds/start`。
 
-在独立的 MAP 试点部署配置 `CdsSso__Enabled=true`、`CdsSso__Issuer`、`CdsSso__ClientId` 和 `CdsSso__RedirectUri`。签发方与客户端标识可从该站点的 CDS 配置读取。回调使用 MAP 试点的 HTTPS 地址和 `/api/v1/auth/cds/callback`，应用登录入口填写 `/api/v1/auth/cds/start`。启用后，从分支诊断面板登录或切换账号会继续进入 MAP 的本地会话。MAP 开关关闭时，先从 CDS 移除该试点的应用登录入口，再验证停用后的私有网关仍要求授权。过期会话的清理索引见 [MongoDB 索引指南](guide.platform.mongodb-indexes.md)。
+在 MAP 部署中通过 `CdsSso__Accounts__<CDS用户ID>` 填入经核实的 MAP 本地用户 ID。更改绑定随 MAP 配置生效。停用账号、机器人、破窗账号和未完成首次改密的账号无法通过此入口。MAP 按本地角色授权，并在处理受保护请求前核对 CDS 授权。过期会话的清理索引见 [MongoDB 索引指南](guide.platform.mongodb-indexes.md)。
 
-试点出现问题时，可在站点设置中暂停访问。暂停使当前站点会话失效，分支继续要求授权。
+回退时可以暂停该站点的 CDS 登记，并关闭 MAP 的 CDS 登录开关。随后核对 MAP 的项目登录与本地权限。
 
 ## 项目运行变量
 

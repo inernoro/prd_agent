@@ -42,8 +42,6 @@ import {
   type HttpActiveRequestFilter,
 } from './services/http-log-store.js';
 import { installProcessFuse } from './services/process-fuse.js';
-import { captureGatewayRequest, GATEWAY_CHECK_PATH, isGatewaySecret, isHostedSsoPath, markHostedSsoRequest, respondToGateway, unavailable, watchSiteConnection, type GatewayDecision, type GatewayRequest } from './services/hosted-sso.js';
-import { siteProtectionMarkers } from './services/hosted-sso-protection.js';
 
 // 数据面同样要总保险丝：forwarder 挂了所有预览域名直接 502，而它承载的恰恰是
 // 「cds-master 重启时业务零抖动」这个承诺。2026-08-18 那次事故里它和 master 一起
@@ -74,31 +72,6 @@ const MASTER_PASSTHROUGH_PORT = Number.parseInt(
   process.env.CDS_MASTER_PASSTHROUGH_PORT ?? process.env.CDS_MASTER_PORT ?? '9900',
   10,
 );
-const hostedSsoSecret = process.env.CDS_HOSTED_SSO_GATEWAY_KEY;
-const protectionMarkers = siteProtectionMarkers(ROUTES_JSON);
-
-async function checkHostedSite(input: GatewayRequest, previouslyProtected: boolean): Promise<GatewayDecision> {
-  if (!isGatewaySecret(hostedSsoSecret)) return previouslyProtected ? unavailable : { allow: true };
-  try {
-    const res = await fetch(`http://127.0.0.1:${MASTER_PASSTHROUGH_PORT}${GATEWAY_CHECK_PATH}`, {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(2500),
-      headers: { Authorization: `Bearer ${hostedSsoSecret}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    if (!res.ok) return unavailable;
-    const result = await res.json() as GatewayDecision;
-    if (result.allow === true && previouslyProtected && !result.protected) return unavailable;
-    return result;
-  } catch {
-    return unavailable;
-  }
-}
-
-function hostedRoute(host: string, route: RouteRecord | null, requestPath: string | undefined): RouteRecord | null {
-  if (route?.branchId || !requestPath?.startsWith('/_cds/')) return route;
-  const candidates = routes.filter(record => record.branchId && record.host === host);
-  return candidates.find(record => record.hostedSso) ?? candidates[0] ?? route;
-}
 // Unknown host fallback:转给 master worker port(默认 5500)让它显示丰富等候页/错误页。
 // 设 0 关闭 fallback,走 forwarder 内置 plain 503。
 const FALLBACK_HOST = process.env.CDS_UNKNOWN_HOST_FALLBACK_HOST ?? '127.0.0.1';
@@ -382,7 +355,7 @@ function extractReplicaSticky(req: http.IncomingMessage): {
 
 const server = http.createServer((req, res) => {
   if (handleDiagnostic(req, res)) return;
-  const host = (req.headers.host ?? '').toLowerCase().split(':')[0];
+  const host = (req.headers.host ?? '').split(':')[0];
   const sticky = extractReplicaSticky(req);
   const route = resolveRoute(routes, host, req.url ?? '/', {
     sticky: sticky.explicit,
@@ -398,24 +371,11 @@ const server = http.createServer((req, res) => {
     res.setHeader('X-CDS-Replica', route.replicaMemberId);
     res.setHeader('X-CDS-Replica-Group', route.replicaGroup);
   }
-  const siteRoute = hostedRoute(host, route, req.url);
-  const protectedSite = Boolean(siteRoute?.branchId && (siteRoute.hostedSso || protectionMarkers.has(siteRoute.branchId)));
-  if (siteRoute?.branchId && (protectedSite || (isHostedSsoPath(req.url) && isGatewaySecret(hostedSsoSecret)))) {
-    void checkHostedSite(captureGatewayRequest(req, siteRoute.branchId), protectedSite).then(decision => {
-      if (!decision.allow) { respondToGateway(res, decision); return; }
-      if (decision.protected) markHostedSsoRequest(req);
-      void proxy.handle(req, res, route);
-    });
-  } else if (isHostedSsoPath(req.url)) {
-    respondToGateway(res, req.url === '/_cds/sso/status'
-      ? { allow: false, status: 200, response: { enabled: false } } : { allow: false, status: 404 });
-  } else {
-    void proxy.handle(req, res, route);
-  }
+  void proxy.handle(req, res, route);
 });
 
 server.on('upgrade', (req, socket, head) => {
-  const host = (req.headers.host ?? '').toLowerCase().split(':')[0];
+  const host = (req.headers.host ?? '').split(':')[0];
   const sticky = extractReplicaSticky(req);
   const route = resolveRoute(routes, host, req.url ?? '/', {
     sticky: sticky.explicit,
@@ -426,23 +386,7 @@ server.on('upgrade', (req, socket, head) => {
   // WS-first 亲和（Codex 第二十一轮 P2）：首次接触就是 WebSocket 升级的客户端
   // 也要拿到组作用域 cookie，否则每次重连重新掷签、可在不兼容版本间横跳
   const wsStickyCookies = collectReplicaStickyCookies(routes, route, sticky);
-  if (isHostedSsoPath(req.url)) { socket.destroy(); return; }
-  const siteRoute = hostedRoute(host, route, req.url);
-  const upgrade = () => { void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route, wsStickyCookies); };
-  if (siteRoute?.branchId && (siteRoute.hostedSso || protectionMarkers.has(siteRoute.branchId))) {
-    const input = { ...captureGatewayRequest(req, siteRoute.branchId), method: 'WS', navigation: false };
-    const check = () => checkHostedSite(input, true);
-    void check().then(decision => {
-      if (!decision.allow) { socket.destroy(); return; }
-      if (decision.protected) {
-        markHostedSsoRequest(req);
-        watchSiteConnection(socket, check);
-      }
-      upgrade();
-    }).catch(() => socket.destroy());
-  } else {
-    upgrade();
-  }
+  void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route, wsStickyCookies);
 });
 
 function shutdown(signal: string): void {

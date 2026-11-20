@@ -12,6 +12,7 @@ const AUTH_ENV_KEYS = [
   'CDS_PUBLIC_BASE_URL',
   'CDS_GITHUB_CLIENT_ID',
   'CDS_GITHUB_CLIENT_SECRET',
+  'CDS_PASSKEYS_ENABLED',
   'CDS_SSO_ENABLED',
   'CDS_SSO_AUTHORIZATION_URL',
   'CDS_SSO_TOKEN_URL',
@@ -590,7 +591,7 @@ describe('Server route ordering (regression)', () => {
         },
       });
 
-      const me = await request(server, '/api/me', { Cookie: 'cds_token=invalid' });
+      const me = await request(server, '/api/me', { Cookie: '__Host-cds_token=invalid' });
       expect(me.status).toBe(401);
 
       const login = await new Promise<HttpResponse>((resolve, reject) => {
@@ -631,8 +632,8 @@ describe('Server route ordering (regression)', () => {
       const cookie = rawCookie.split(';')[0];
       expect(rawCookie).toContain('; Secure');
       expect(loginSetCookies).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+        expect.stringMatching(/^__Host-cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^__Host-cds_sso_session=.*Max-Age=0/),
       ]));
 
       const authedMe = await request(server, '/api/me', { Cookie: cookie });
@@ -644,13 +645,13 @@ describe('Server route ordering (regression)', () => {
         isSystemOwner: true,
       });
 
-      const humanToken = cookie.slice('cds_token='.length);
+      const humanToken = cookie.slice('__Host-cds_token='.length);
       const machineToken = crypto.createHash('sha256').update('cds:operator:secret').digest('hex');
       expect(humanToken).not.toBe(machineToken);
       const headerAuthedApi = await request(server, '/api/branches', { 'X-CDS-Token': machineToken });
       expect(headerAuthedApi.status).toBe(200);
       const replayedMachineCookie = await request(server, '/api/me', {
-        Cookie: `cds_token=${machineToken}`,
+        Cookie: `__Host-cds_token=${machineToken}`,
       });
       expect(replayedMachineCookie.status).toBe(401);
       const replayedHumanHeader = await request(server, '/api/branches', {
@@ -669,10 +670,10 @@ describe('Server route ordering (regression)', () => {
         ? compatibleLogin.headers['set-cookie']
         : [String(compatibleLogin.headers['set-cookie'] || '')];
       const compatibleCookie = compatibleSetCookies[0].split(';')[0];
-      expect(compatibleCookie).toMatch(/^cds_token=/);
+      expect(compatibleCookie).toMatch(/^__Host-cds_token=/);
       expect(compatibleSetCookies).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+        expect.stringMatching(/^__Host-cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^__Host-cds_sso_session=.*Max-Age=0/),
       ]));
 
       const duplicateLegacyUser = await requestJson(server, 'POST', '/api/auth/users', {
@@ -705,10 +706,10 @@ describe('Server route ordering (regression)', () => {
         ? memberLogin.headers['set-cookie']
         : [String(memberLogin.headers['set-cookie'] || '')];
       const memberCookie = memberSetCookies[0].split(';')[0];
-      expect(memberCookie).toMatch(/^cds_gh_session=/);
+      expect(memberCookie).toMatch(/^__Host-cds_gh_session=/);
       expect(memberSetCookies).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^cds_token=.*Max-Age=0/),
-        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+        expect.stringMatching(/^__Host-cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^__Host-cds_sso_session=.*Max-Age=0/),
       ]));
 
       expect(JSON.parse((await request(server, '/api/auth/status', { Cookie: memberCookie })).body).approvalCapabilities)
@@ -1247,6 +1248,57 @@ describe('Server route ordering (regression)', () => {
       delete process.env.CDS_AUTH_MODE;
       delete process.env.CDS_GITHUB_CLIENT_ID;
       delete process.env.CDS_GITHUB_CLIENT_SECRET;
+    }
+  });
+
+  it('requires recent Passkey verification for release, project grants and secret reads on the CDS authority', async () => {
+    const authority = 'https://cds.example.org';
+    vi.stubEnv('CDS_AUTH_MODE', 'github');
+    vi.stubEnv('CDS_GITHUB_CLIENT_ID', 'test-client');
+    vi.stubEnv('CDS_GITHUB_CLIENT_SECRET', 'test-secret');
+    vi.stubEnv('CDS_PUBLIC_BASE_URL', authority);
+    vi.stubEnv('CDS_PASSKEYS_ENABLED', '1');
+    try {
+      const authStore = Object.assign(new MemoryAuthStore(), {
+        passkeys: {
+          find: async () => null,
+          list: async () => [],
+          insert: async () => {},
+          advanceCounter: async () => false,
+        },
+      });
+      const user = await authStore.upsertUser({
+        githubId: 42, githubLogin: 'verification-user', email: null, name: 'Verification User', avatarUrl: null, orgs: [],
+      });
+      const session = { userId: user.id, ttlMs: 3600_000, userAgent: 'integration-test', ipAddress: '127.0.0.1' };
+      const password = await authStore.createSession(session);
+      const verified = { ...session, passkeyAuthenticated: true as const };
+      const stale = await authStore.createSession(verified, new Date(Date.now() - 360_000));
+      const fresh = await authStore.createSession(verified);
+      const listener = await startServer(buildRealServerWithEvents([], undefined, authStore));
+      server = listener;
+      for (const [method, route] of [
+        ['POST', '/api/releases/branches/fixture-missing/runs'],
+        ['PUT', '/api/auth/users/fixture-missing/projects'],
+        ['GET', '/api/branches/fixture-missing/effective-env/reveal'],
+      ] as const) {
+        for (const { token } of [password, stale, fresh]) {
+          const headers = {
+            Host: new URL(authority).host,
+            Origin: authority,
+            Cookie: `__Host-cds_gh_session=${token}`,
+          };
+          const response = method === 'GET' ? await request(listener, route, headers) : await requestJson(listener, method, route, {}, headers);
+          if (token === fresh.token) {
+            expect(response.body).not.toContain('passkey_verification_required');
+          } else {
+            expect(response.status).toBe(403);
+            expect(JSON.parse(response.body).code).toBe('passkey_verification_required');
+          }
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 

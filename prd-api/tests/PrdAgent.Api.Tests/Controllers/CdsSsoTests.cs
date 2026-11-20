@@ -17,23 +17,25 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public sealed class CdsSsoTests
 {
-    private const string Issuer = "https://cds.identity.test/api/oidc";
+    private const string Issuer = "https://cds.shared.test/api/oidc";
     private const string ClientId = "cds-site:map-preview";
-    private const string ReturnUri = "https://map.preview.test/api/v1/auth/cds/callback";
+    private const string ReturnUri = "https://map.shared.test/api/v1/auth/cds/callback";
 
     [Fact]
     public void LoginIsOptInAndLimitedToTheConfiguredHost()
     {
         var disabled = CdsSsoSettings.Read(new ConfigurationBuilder().Build());
-        Assert.False(disabled.IsForHost(new HostString("map.preview.test")));
+        Assert.False(disabled.IsForHost(new HostString("map.shared.test")));
 
         var enabled = CdsSsoSettings.Read(Configuration(ReturnUri));
-        Assert.True(enabled.IsForHost(new HostString("map.preview.test")));
+        Assert.True(enabled.IsForHost(new HostString("map.shared.test")));
         Assert.False(enabled.IsForHost(new HostString("another.preview.test")));
-        Assert.False(enabled.IsForHost(new HostString("map.preview.test:8443")));
-        Assert.Throws<InvalidOperationException>(() => CdsSsoSettings.Read(Configuration("http://map.preview.test/api/v1/auth/cds/callback")));
-        Assert.Throws<InvalidOperationException>(() => CdsSsoSettings.Read(Configuration("https://cds.identity.test/api/v1/auth/cds/callback")));
+        Assert.False(enabled.IsForHost(new HostString("map.shared.test:8443")));
+        Assert.Throws<InvalidOperationException>(() => CdsSsoSettings.Read(Configuration("http://map.shared.test/api/v1/auth/cds/callback")));
+        Assert.Throws<InvalidOperationException>(() => CdsSsoSettings.Read(Configuration("https://cds.shared.test/api/v1/auth/cds/callback")));
         Assert.Throws<InvalidOperationException>(() => CdsSsoSettings.Read(Configuration(ReturnUri + "?extra=1")));
+        Assert.Equal("existing-map-id", enabled.LocalAccount("cds-user-1"));
+        Assert.Null(enabled.LocalAccount("another-cds-id"));
     }
 
     [Theory]
@@ -137,7 +139,7 @@ public sealed class CdsSsoTests
         using var audit = JsonDocument.Parse(evidence.ResponseBody!);
         var fields = audit.RootElement.GetProperty("upstreamResponse").GetProperty("fields");
         Assert.Equal("null", fields.GetProperty("sub").GetProperty("state").GetString());
-        Assert.Equal("missing", fields.GetProperty("cds_local_account").GetProperty("state").GetString());
+        Assert.Equal("missing", fields.GetProperty("id_token").GetProperty("state").GetString());
     }
 
     [Fact]
@@ -153,6 +155,7 @@ public sealed class CdsSsoTests
         ["CdsSso:Issuer"] = Issuer,
         ["CdsSso:ClientId"] = ClientId,
         ["CdsSso:RedirectUri"] = redirectUri,
+        ["CdsSso:Accounts:cds-user-1"] = "existing-map-id",
     }).Build();
 
     private sealed class FixtureHandler(Func<HttpRequestMessage, HttpResponseMessage> reply) : HttpMessageHandler

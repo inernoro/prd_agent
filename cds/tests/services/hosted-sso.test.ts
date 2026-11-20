@@ -1,104 +1,82 @@
 import { describe, expect, it } from 'vitest';
 import { AuthService } from '../../src/services/auth-service.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
-import { HostedSso, isSsoOriginIsolated, siteReturnPath, type GatewayRequest, type HostedSsoConfig } from '../../src/services/hosted-sso.js';
+import { HostedSso, isCommonSite, isApplicationPath, siteReturnPath, type HostedSsoConfig } from '../../src/services/hosted-sso.js';
 import type { StateService } from '../../src/services/state.js';
 
-const authority = new URL('https://cds.example.net');
-const originA = new URL('https://a.previews.example.org');
-const originB = new URL('https://b.previews.example.org');
-
-function cookieValue(header: string): string {
-  return header.split(';')[0].split('=')[1];
-}
+const authority = new URL('https://cds.shared.test');
+const origin = new URL('https://map.shared.test');
+const application = { loginPath: '/auth/start', callbackPath: '/auth/callback' };
 
 async function fixture() {
   const auth = new AuthService({ store: new MemoryAuthStore(), github: null, config: {} });
   const user = await auth.createLocalUser({ username: 'work-test', password: 'isolated-test-password' });
   const session = await auth.createSessionForUser(user.id, { userAgent: null, ipAddress: null });
-  const makeBranch = (id: string, origin: URL) => ({ id, projectId: id, branch: 'preview', hostedSso: {
-    origin: origin.origin, revision: id + '-policy', deniedUserIds: [] as string[],
-  } as HostedSsoConfig });
-  const branches = { a: makeBranch('a', originA), b: makeBranch('b', originB) };
-  let grants = ['a', 'b'].map(projectId => ({ projectId, principalId: 'human:' + user.id }));
+  const branch = { id: 'map', projectId: 'map', branch: 'main', hostedSso: undefined as HostedSsoConfig | undefined };
+  const routes = [{ _id: 'route-map', host: origin.host, branchId: branch.id, upstreamPort: 9000, weight: 100 }];
+  const grants = [{ principalId: 'human:' + user.id, projectId: branch.projectId }];
   const state = {
-    getBranch: (id: keyof typeof branches) => branches[id],
+    getBranch: (id: string) => id === branch.id ? branch : undefined,
     getProject: (id: string) => ({ id, kind: 'git' }),
     getProjectGrants: () => grants,
     getHumanAccessRecoveries: () => ({}),
     getPrincipal: () => undefined,
   } as unknown as StateService;
-  const sso = new HostedSso(authority, state, auth);
-  const cookies = (await sso.browser(undefined))!;
-  await sso.rememberCurrent(cookies.accounts, 'cds_gh_session=' + session.token);
-  const request: GatewayRequest = { branchId: 'a', host: originA.host, method: 'GET', path: '/deep?view=list',
-    navigation: true, sessionToken: null, flowToken: null };
-  return { sso, auth, user, request, cookies, branches, revokeProject: (id: string) => {
-    grants = grants.filter(grant => grant.projectId !== id);
-  } };
+  return { auth, user, session, routes, grants, branch, sso: new HostedSso(authority, state, auth, () => routes) };
 }
 
 describe('CDS hosted SSO', () => {
-  it('isolates authorization from sibling registrable domains and validates the return path', () => {
-    expect(isSsoOriginIsolated(authority, originA)).toBe(true);
-    expect(isSsoOriginIsolated(authority, new URL('https://preview.example.net'))).toBe(false);
-    expect(siteReturnPath('/reports/summary?filter=current#today')).toBe('/reports/summary?filter=current#today');
-    expect(siteReturnPath('//unregistered.example')).toBe('/');
-    expect(siteReturnPath('/_cds/sso/callback')).toBe('/');
-    expect(siteReturnPath('/%5C/unregistered.example')).toBe('/');
+  it('requires a separate origin on the same registrable domain and local paths', () => {
+    expect(isCommonSite(authority, origin)).toBe(true);
+    expect(isCommonSite(authority, authority)).toBe(false);
+    expect(isCommonSite(authority, new URL('https://map.external.test'))).toBe(false);
+    expect(isCommonSite(authority, new URL('https://map.shared.test.external.test'))).toBe(false);
+    expect(isCommonSite(authority, new URL('http://map.shared.test'))).toBe(false);
+    expect(siteReturnPath('/reports/summary?filter=current#sensitive')).toBe('/reports/summary?filter=current');
+    expect(siteReturnPath('//external.test')).toBe('/');
+    expect(siteReturnPath('/_cds/api/auth')).toBe('/');
+    expect(siteReturnPath('/%5C/external.test')).toBe('/');
+    expect(isApplicationPath('/auth/start')).toBe(true);
+    expect(isApplicationPath('/auth/start?x=y')).toBe(false);
+    expect(isApplicationPath('/auth/start#fragment')).toBe(false);
   });
 
-  it('binds the callback to its original site and browser flow and consumes it once', async () => {
-    const { sso, request, cookies, user } = await fixture();
-    const redirect = await sso.check(request);
-    if (redirect.allow) throw new Error('anonymous request unexpectedly approved');
-    expect(redirect.location).toMatch(/^https:\/\/cds\.example\.net\/api\/hosted-sso\/authorize\?/);
-    const flowToken = cookieValue(redirect.cookie!);
-    const site = sso.flow(flowToken)!.site;
-    const callback = (await sso.completeAuthorization(cookies.accounts, site, flowToken, user.id))!;
-    const input = { ...request, path: callback.pathname + callback.search, flowToken };
-    expect(await sso.check({ ...input, flowToken: null })).toMatchObject({ allow: false, status: 403 });
-    expect(await sso.check({ ...input, branchId: 'b', host: originB.host })).toMatchObject({ allow: false, status: 403 });
-    const candidates = await Promise.all([sso.check(input), sso.check(input)]);
-    expect(candidates.map(decision => decision.allow ? 200 : decision.status).sort()).toEqual([303, 403]);
-    expect(candidates.find(decision => !decision.allow && decision.status === 303)).toMatchObject({ location: '/deep?view=list' });
+  it('admits just the exact live route of a participating branch', async () => {
+    const { sso, branch, routes } = await fixture();
+    expect(() => sso.configure(branch.id, new URL('https://unpublished.shared.test'), [], application)).toThrow('unpublished_origin');
+    expect(() => sso.configure(branch.id, new URL('https://map.external.test'), [], application)).toThrow('wrong_origin');
+    branch.hostedSso = sso.configure(branch.id, origin, [], application);
+    expect(sso.siteForHost(origin.host)?.application).toEqual(application);
+    routes.push({ ...routes[0], _id: 'route-b', branchId: 'unrelated-branch' });
+    expect(sso.site(branch.id)).toBeUndefined();
+    routes.splice(1);
+    expect(sso.site(branch.id)?.origin.href).toBe(origin.href);
+    routes[0].weight = 0;
+    expect(sso.site(branch.id)).toBeUndefined();
   });
 
-  it('validates membership, account state and origin on every private request', async () => {
-    const { sso, request, cookies, user, branches, revokeProject, auth } = await fixture();
-    const start = await sso.check(request);
-    if (start.allow) throw new Error('anonymous request unexpectedly approved');
-    const flowToken = cookieValue(start.cookie!);
-    const callback = (await sso.completeAuthorization(cookies.accounts, sso.flow(flowToken)!.site, flowToken, user.id))!;
-    const response = await sso.check({ ...request, path: callback.pathname + callback.search, flowToken });
-    if (response.allow) throw new Error('callback unexpectedly forwarded');
-    const sessionToken = cookieValue(response.cookies![0]);
-    const signedIn = { ...request, sessionToken };
-    expect(await sso.check(signedIn)).toEqual({ allow: true, protected: true });
-    expect(await sso.check({ ...signedIn, method: 'POST', origin: originB.origin })).toMatchObject({ status: 403 });
-    expect(await sso.check({ ...signedIn, host: 'alias.example.org' })).toMatchObject({ status: 403 });
-    expect(await sso.check({ ...signedIn, branchId: 'b', host: originB.host })).toMatchObject({ status: 401 });
-    branches.a.hostedSso.deniedUserIds.push(user.id);
-    expect(await sso.check(signedIn)).toMatchObject({ status: 401 });
-    branches.a.hostedSso.deniedUserIds.length = 0;
-    revokeProject('a');
-    expect(await sso.check(signedIn)).toMatchObject({ status: 401 });
-    await auth.setUserStatus(user.id, 'disabled');
-    expect(await sso.accountsForSite(cookies.accounts, sso.site('b')!)).toEqual([]);
+  it('rechecks route, project, account and session when validating a previously issued grant', async () => {
+    const { sso, auth, session, user, branch, routes, grants } = await fixture();
+    branch.hostedSso = sso.configure(branch.id, origin, [], application);
+    const site = sso.site(branch.id)!;
+    expect(await sso.authorized(site, session.token)).toMatchObject({ user: { id: user.id } });
+    routes[0].weight = 0;
+    expect(await sso.authorized(site, session.token)).toBeNull();
+    routes[0].weight = 100;
+    const removed = grants.pop()!;
+    expect(await sso.authorized(site, session.token)).toBeNull();
+    grants.push(removed);
+    branch.hostedSso.deniedUserIds.push(user.id);
+    expect(await sso.authorized(site, session.token)).toBeNull();
+    branch.hostedSso.deniedUserIds.length = 0;
+    await auth.logoutAllForUser(user.id);
+    expect(await sso.authorized(site, session.token)).toBeNull();
   });
 
-  it('continues through an enrolled application login only for accounts with a local binding', async () => {
-    const { sso, request, cookies, user, branches } = await fixture();
-    branches.a.hostedSso.application = { callbackPath: '/auth/callback', loginPath: '/auth/start', accounts: {} };
-    const start = await sso.check({ ...request, path: '/_cds/sso/start?choose=1&return=%2Fboard%3Fview%3Dcurrent' });
-    if (start.allow) throw new Error('anonymous request unexpectedly approved');
-    const flowToken = cookieValue(start.cookie!);
-    const site = sso.flow(flowToken)!.site;
-    expect(await sso.completeAuthorization(cookies.accounts, site, flowToken, user.id)).toBeUndefined();
-    branches.a.hostedSso.application.accounts[user.id] = 'local-account-id';
-    const callback = (await sso.completeAuthorization(cookies.accounts, site, flowToken, user.id))!;
-    expect(await sso.check({ ...request, path: callback.pathname + callback.search, flowToken })).toMatchObject({
-      status: 303, location: '/auth/start?returnUrl=%2Fboard%3Fview%3Dcurrent',
-    });
+  it('accepts only the host-prefixed CDS sign-in cookie for site selection', async () => {
+    const { sso, session, user } = await fixture();
+    const browser = (await sso.browser(undefined))!;
+    expect(await sso.rememberCurrent(browser.accounts, 'cds_gh_session=' + session.token)).toBeUndefined();
+    expect(await sso.rememberCurrent(browser.accounts, '__Host-cds_gh_session=' + session.token)).toBe(user.id);
   });
 });

@@ -16,10 +16,13 @@ import { operatorApprovalService } from '../services/operator-approval.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
 import { assertProjectAccess } from './projects.js';
 
+import { LEGACY_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
+
 export function createOperatorConsoleRouter(deps: {
   stateService: StateService;
   shell: IShellExecutor;
   repoRoot: string;
+  cookieSecure?: boolean;
   serverEventLogStore?: ServerEventLogSink | null;
 }): Router {
   // 初始化审批服务(单例)
@@ -60,7 +63,7 @@ export function createOperatorConsoleRouter(deps: {
     const bearer = String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
     const aiKey = String(req.headers['x-ai-access-key'] || req.headers['ai-access-key'] || '').trim();
     const sessionId = (req as { cdsSession?: { id?: string } }).cdsSession?.id || '';
-    const cookieToken = (req.headers.cookie || '').match(/cds_token=([^;]+)/)?.[1] || '';
+    const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, deps.cookieSecure === true));
     const raw = sessionId || bearer || aiKey || cookieToken || String(req.socket?.remoteAddress || 'anon');
     return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
   };

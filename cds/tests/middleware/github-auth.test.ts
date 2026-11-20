@@ -103,7 +103,7 @@ describe('github auth middleware — agent key coexistence', () => {
       })),
     } as any;
     const mw = createGithubAuthMiddleware({ authService, cookieSecure: true });
-    const req = apiReq({ cookie: 'cds_gh_session=valid' });
+    const req = apiReq({ cookie: '__Host-cds_gh_session=valid' });
     const res = mockRes();
     const next = vi.fn();
 
@@ -111,7 +111,7 @@ describe('github auth middleware — agent key coexistence', () => {
 
     expect(next).toHaveBeenCalledOnce();
     const cookie = res.headers['Set-Cookie'];
-    expect(cookie).toContain('cds_gh_session=valid');
+    expect(cookie).toContain('__Host-cds_gh_session=valid');
     expect(cookie).toContain('Secure');
     expect(cookie).toContain(`Expires=${new Date(expiresAt).toUTCString()}`);
   });
