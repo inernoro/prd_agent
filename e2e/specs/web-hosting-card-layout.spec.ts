@@ -116,6 +116,8 @@ for (const width of [390, 1440]) {
           if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity, traffic,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
           else if (path === '/api/web-pages/related-documents/summaries') data = { items: Object.fromEntries(sites.map((site, i) => [site.id, { count: i === 3 ? 0 : 3, mainTitle: i === 3 ? undefined : titles[0], isMain: i === 0, titles: i === 3 ? [] : titles.filter(title => title !== site.title) }])) };
+          else if (path === '/api/web-pages/layout-3/collection-contexts') data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
+          else if (path === '/api/web-pages/layout-3/related-documents') data = { items: [sites[3]], canManage: true, version: 0 };
           else if (path === '/api/web-pages/tags') data = { tags: tagNames.map((tag, index) => ({ tag, count: tagCounts[index] })) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
           else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
@@ -128,17 +130,23 @@ for (const width of [390, 1440]) {
         const cards = page.locator('[data-tour-id="webpages-card"]');
         await expect(cards).toHaveCount(4);
         await expect(page.getByLabel('已编辑 987654321 次', { exact: true })).toBeAttached();
-        await expect(cards.locator('.related-variant-badge')).toHaveCount(4);
+        await expect(cards.locator('.related-trigger')).toHaveCount(3);
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         await page.evaluate(() => document.fonts.ready);
-        const zeroRelated = cards.nth(3).locator('.related-trigger');
-        await expect(zeroRelated).toBeVisible();
-        await expect(zeroRelated.locator('.related-count')).toHaveCount(0);
-        await expect(zeroRelated.locator('svg.lucide-link2')).toBeVisible();
-        await cards.nth(3).hover();
-        await expect(zeroRelated).toBeVisible();
+        const unlinkedCard = cards.nth(3);
+        await expect(unlinkedCard.locator('.related-trigger')).toHaveCount(0);
+        await unlinkedCard.hover();
+        await expect(unlinkedCard.locator('.related-trigger')).toHaveCount(0);
+        await unlinkedCard.getByRole('button', { name: '更多设置', exact: true }).filter({ visible: true }).last().click();
+        await page.getByRole('menuitem', { name: '关联与合集', exact: true }).click();
+        const relations = page.getByRole('dialog', { name: '关联文档', exact: true });
+        await expect(relations.getByText('暂无关联文档。')).toBeVisible();
+        await relations.getByRole('button', { name: '管理关联', exact: true }).click();
+        const manager = page.getByRole('dialog', { name: '管理关联文档', exact: true });
+        await expect(manager).toBeVisible();
+        await manager.getByRole('button', { name: '取消', exact: true }).click();
         await page.mouse.move(0, 0);
-        await expect(zeroRelated).toBeVisible();
+        await expect(unlinkedCard.locator('.related-trigger')).toHaveCount(0);
         const metrics = await cards.evaluateAll(elements => elements.map(card => {
           const bounds = card.getBoundingClientRect();
           const stats = card.querySelector<HTMLElement>('[data-site-card-stats]')!;
