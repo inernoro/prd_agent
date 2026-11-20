@@ -20,9 +20,10 @@ namespace PrdAgent.Api.Controllers.Stub;
 ///   OpenAICompatUrl 规则会拼到：/api/v1/stub/v1/{capabilityPath}
 /// - 支持：
 ///   - POST /v1/chat/completions（stream=true -> SSE）
-///   - POST /v1/images/generations（返回随机颜色图片 URL）
-///   - POST /v1/images/edits（multipart：返回"参考图 + 水印" URL）
-///   - GET  /assets/{id}.png（返回图片 bytes）
+///   - POST /v1/images/generations（随机颜色 PNG）
+///   - POST /v1/images/edits（multipart：参考图 + 水印 PNG）
+///   - GET  /assets/{id}.png（认证后返回图片 bytes）
+///   - 两个图片 POST 支持 response_format=b64_json，默认返回需要认证的 URL
 /// </summary>
 [ApiController]
 [TypeFilter(typeof(PrdAgent.Api.Filters.DevelopmentStubFilter))]
@@ -505,6 +506,16 @@ public class StubOpenAIController : ControllerBase
         }
     }
 
+    private object FormatImage(byte[] png, string? responseFormat)
+    {
+        if (string.Equals(responseFormat, "b64_json", StringComparison.OrdinalIgnoreCase))
+        {
+            return new { b64_json = Convert.ToBase64String(png) };
+        }
+
+        return new { url = BuildAssetUrl(PutImage(png)) };
+    }
+
     [HttpPost("v1/images/generations")]
     public IActionResult ImageGenerations([FromBody] StubImageGenRequest request)
     {
@@ -518,9 +529,7 @@ public class StubOpenAIController : ControllerBase
             var color = RandomColor();
             var wm = BuildCenterWatermarkText(request?.Prompt, n <= 1 ? null : i + 1, n <= 1 ? null : n);
             var bytes = RenderSolidPng(w, h, color, watermarkText: wm);
-            var id = PutImage(bytes);
-            var url = BuildAssetUrl(id);
-            data.Add(new { url });
+            data.Add(FormatImage(bytes, request?.ResponseFormat));
         }
 
         var payload = new
@@ -556,6 +565,7 @@ public class StubOpenAIController : ControllerBase
         var n = int.TryParse(nRaw, out var nn) ? nn : 1;
         n = Math.Clamp(n, 1, 4);
         var prompt = form["prompt"].ToString();
+        var responseFormat = form["response_format"].ToString();
         var watermarkBase = BuildCenterWatermarkText(prompt, null, null);
         var data = new List<object>(n);
         for (var i = 0; i < n; i++)
@@ -563,9 +573,7 @@ public class StubOpenAIController : ControllerBase
             HttpContext.RequestAborted.ThrowIfCancellationRequested();
             var watermark = n <= 1 ? watermarkBase : $"{watermarkBase} | #{i + 1}";
             var outBytes = TryRenderWatermarkedFromInput(inputBytes, w, h, watermark);
-            var id = PutImage(outBytes);
-            var url = BuildAssetUrl(id);
-            data.Add(new { url });
+            data.Add(FormatImage(outBytes, responseFormat));
         }
 
         var payload = new
@@ -1156,6 +1164,7 @@ public sealed class StubImageGenRequest
     public string? Prompt { get; set; }
     public int? N { get; set; }
     public string? Size { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("response_format")]
     public string? ResponseFormat { get; set; }
     public bool? InitImageProvided { get; set; }
     public bool? InitImageUsed { get; set; }

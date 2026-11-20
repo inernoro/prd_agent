@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -25,6 +27,8 @@ using PrdAgent.Api.Filters;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
 
 // Real loopback HTTP + JWT validation + production authentication/filter/controller code.
@@ -34,6 +38,72 @@ public sealed class DevelopmentSecurityHttpTests
 {
     private const string SigningKey = "isolated-test-signing-key-32-bytes-minimum";
     private const string StubKey = "isolated-stub-key-32-bytes-minimum";
+
+    [Fact]
+    public async Task AuthorizedDevelopmentStub_GenerationAndEditUseRequestedInlinePng()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            EnvironmentName = "Development",
+            ContentRootPath = AppContext.BaseDirectory
+        });
+        builder.WebHost.UseTestServer();
+        builder.Configuration.Sources.Clear();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DevelopmentStub:Enabled"] = "true",
+            ["DevelopmentStub:ApiKey"] = StubKey
+        });
+        builder.Services.AddAuthorization();
+        builder.Services.AddSingleton(Mock.Of<IWatermarkFontAssetSource>());
+        builder.Services.AddSingleton(Mock.Of<IAssetStorage>());
+        builder.Services.AddSingleton<WatermarkFontRegistry>();
+        builder.Services.AddControllers(options =>
+        {
+            options.Conventions.Add(new SelectedControllers());
+            options.Conventions.Add(new DevelopmentStubConvention(true));
+        }).AddApplicationPart(typeof(StubOpenAIController).Assembly);
+        await using var app = builder.Build();
+        app.MapControllers();
+        await app.StartAsync();
+
+        const string images = "/api/v1/stub/v1/images";
+        using var client = app.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", StubKey);
+        using var generated = await client.PostAsJsonAsync($"{images}/generations",
+            new { size = "64x64", prompt = "Fixture", response_format = "b64_json" });
+        var source = await ReadInlinePng(generated);
+
+        using var form = new MultipartFormDataContent();
+        form.Add(new ByteArrayContent(source), "image", "fixture.png");
+        form.Add(new StringContent("64x64"), "size");
+        form.Add(new StringContent("Edit fixture"), "prompt");
+        form.Add(new StringContent("b64_json"), "response_format");
+        using var edited = await client.PostAsync($"{images}/edits", form);
+        await ReadInlinePng(edited);
+
+        using var defaultFormat = await client.PostAsJsonAsync($"{images}/generations",
+            new { size = "64x64", prompt = "Fixture" });
+        defaultFormat.EnsureSuccessStatusCode();
+        using var json = JsonDocument.Parse(await defaultFormat.Content.ReadAsByteArrayAsync());
+        var assetPath = new Uri(json.RootElement.GetProperty("data")[0].GetProperty("url").GetString()!).PathAndQuery;
+        using var authorizedAsset = await client.GetAsync(assetPath);
+        Assert.Equal(HttpStatusCode.OK, authorizedAsset.StatusCode);
+        using var anonymousClient = app.GetTestClient();
+        using var anonymousAsset = await anonymousClient.GetAsync(assetPath);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousAsset.StatusCode);
+    }
+
+    private static async Task<byte[]> ReadInlinePng(HttpResponseMessage response)
+    {
+        response.EnsureSuccessStatusCode();
+        using var json = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
+        var image = json.RootElement.GetProperty("data")[0];
+        Assert.False(image.TryGetProperty("url", out _));
+        var bytes = image.GetProperty("b64_json").GetBytesFromBase64();
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, bytes.Take(8));
+        return bytes;
+    }
 
     [Theory]
     [InlineData("Production", true)]
