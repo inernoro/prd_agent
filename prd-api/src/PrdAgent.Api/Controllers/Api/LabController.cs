@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Security;
 
@@ -65,6 +66,12 @@ public class LabController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<AdminImpersonateResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Impersonate([FromBody] AdminImpersonateRequest request)
     {
+        if (CdsSsoSessions.IsDelegated(User.FindFirst("sessionKey")?.Value))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前 CDS 登录无法使用实验室身份切换。请用 MAP 本地账号登录后重试。"));
+        }
+
         if (string.IsNullOrWhiteSpace(request.UserId))
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "userId 不能为空"));

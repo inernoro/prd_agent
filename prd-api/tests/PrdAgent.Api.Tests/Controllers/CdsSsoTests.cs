@@ -4,12 +4,16 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 using Moq;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Security;
 using Xunit;
@@ -240,6 +244,26 @@ public sealed class CdsSsoTests
     {
         var session = new ClaimsPrincipal(new ClaimsIdentity([new Claim("clientType", "admin"), new Claim("sessionKey", "cds-fixture-session")]));
         Assert.False(FederatedConsoleSessionPolicy.IsEligibleBrowserSession(session));
+    }
+
+    [Fact]
+    public async Task LabCannotIssueAnIndependentSessionForACdsLogin()
+    {
+        var session = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "fixture-user"), new Claim("sessionKey", "cds-fixture-session")], "jwt"));
+        var jwt = new Mock<IJwtService>(MockBehavior.Strict);
+        var sessions = new Mock<IAuthSessionService>(MockBehavior.Strict);
+        var lab = new LabController(null!, Configuration(ReturnUri), NullLogger<LabController>.Instance,
+            null!, null!, null!, null!, null!, null!, jwt.Object, sessions.Object)
+        {
+            ControllerContext = new() { HttpContext = new DefaultHttpContext { User = session } }
+        };
+
+        var result = Assert.IsType<ObjectResult>(await lab.Impersonate(new AdminImpersonateRequest { UserId = "fixture-user" }));
+
+        Assert.Equal(StatusCodes.Status403Forbidden, result.StatusCode);
+        jwt.VerifyNoOtherCalls();
+        sessions.VerifyNoOtherCalls();
     }
 
     private static IConfiguration Configuration(string redirectUri) => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
