@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { QuickZipUploadOptions } from './ZipEntrySelector';
+import { getZipEntryFile, ZipEntrySelector, type ZipEntryChoice } from './ZipEntrySelector';
 import { readZipEntryOptions } from './zipEntryOptions';
 
 vi.mock('./zipEntryOptions', () => ({ readZipEntryOptions: vi.fn() }));
@@ -30,13 +30,20 @@ async function selectValue(select: HTMLSelectElement, value: string) {
   });
 }
 
-it('快捷上传默认系统查找，只有手动选择才列出文件并要求选择首页', async () => {
-  const upload = vi.fn();
+it('普通上传默认系统查找，只有手动选择才列出文件', async () => {
+  const update = vi.fn();
+  function Selector() {
+    const [choice, setChoice] = useState<ZipEntryChoice>({ mode: 'auto' });
+    return <ZipEntrySelector file={file} choice={choice} onChange={next => {
+      setChoice(next);
+      update(getZipEntryFile(next));
+    }} />;
+  }
   vi.mocked(readZipEntryOptions).mockResolvedValue([
     { name: '扫描/report.md', path: 'report.md' },
     { name: '扫描/data/manifest.json', path: 'data/manifest.json' },
   ]);
-  await act(async () => root.render(<QuickZipUploadOptions file={file} onUpload={upload} onCancel={vi.fn()} />));
+  await act(async () => root.render(<Selector />));
   const mode = container.querySelector('select')!;
   expect(mode.value).toBe('auto');
   expect([...mode.options].map(option => option.text)).toEqual(['系统查找', '文件目录', '手动选择']);
@@ -47,15 +54,12 @@ it('快捷上传默认系统查找，只有手动选择才列出文件并要求�
   const list = container.querySelector('[role="group"]');
   const rows = [...list!.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
   expect(rows.map(row => row.labels?.[0]?.textContent)).toEqual(['report.md', 'data/manifest.json']);
-  const submit = [...container.querySelectorAll('button')].find(button => button.textContent === '开始上传')!;
-  expect(submit.disabled).toBe(true);
+  expect(rows.some(row => row.checked)).toBe(false);
   await act(async () => rows[1].click());
-  expect(submit.disabled).toBe(false);
-  await act(async () => submit.click());
-  expect(upload).toHaveBeenCalledWith('扫描/data/manifest.json');
+  expect(rows[1].checked).toBe(true);
+  expect(update).toHaveBeenLastCalledWith('扫描/data/manifest.json');
 
   await selectValue(mode, 'directory');
   expect(container.querySelector('[role="group"]')).toBeNull();
-  await act(async () => submit.click());
-  expect(upload).toHaveBeenLastCalledWith('');
+  expect(update).toHaveBeenLastCalledWith('');
 });

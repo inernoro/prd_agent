@@ -1,8 +1,6 @@
 import { useEffect, useId, useState } from 'react';
-import { FileArchive, FileText, Search } from 'lucide-react';
-import { Button } from '@/components/design/Button';
+import { FileText, Search } from 'lucide-react';
 import { readZipEntryOptions } from './zipEntryOptions';
-import { fmtSize } from './siteFormat';
 
 export type ZipEntryChoice = { mode: 'auto' | 'directory' } | { mode: 'manual'; entryFile: string };
 
@@ -12,11 +10,10 @@ export function getZipEntryFile(choice: ZipEntryChoice): string | undefined {
   return undefined;
 }
 
-export function ZipEntrySelector({ file, choice, onChange, autoFocus }: {
+export function ZipEntrySelector({ file, choice, onChange }: {
   file: File;
   choice: ZipEntryChoice;
   onChange: (choice: ZipEntryChoice) => void;
-  autoFocus?: boolean;
 }) {
   const id = useId();
   const manual = choice.mode === 'manual';
@@ -44,7 +41,7 @@ export function ZipEntrySelector({ file, choice, onChange, autoFocus }: {
   return <div className="flex min-w-0 flex-col gap-3 text-left">
     <label className="flex min-w-0 flex-col gap-1.5">
       <span className="text-[13px] font-semibold text-token-primary">打开站点时</span>
-      <select autoFocus={autoFocus} className="h-10 w-full rounded-lg border border-token-subtle bg-token-nested px-3 text-sm text-token-primary"
+      <select className="h-10 w-full rounded-lg border border-token-subtle bg-token-nested px-3 text-sm text-token-primary"
         value={choice.mode} onChange={event => {
         const mode = event.currentTarget.value;
         setQuery('');
@@ -87,30 +84,5 @@ export function ZipEntrySelector({ file, choice, onChange, autoFocus }: {
         </div>
         {selectedEntry && <p className="text-xs text-token-muted [overflow-wrap:anywhere]">已选 {selectedEntry.path}</p>}
       </div>)}
-  </div>;
-}
-
-export function QuickZipUploadOptions({ file, onUpload, onCancel }: {
-  file: File;
-  onUpload: (entryFile?: string) => void;
-  onCancel: () => void;
-}) {
-  const [choice, setChoice] = useState<ZipEntryChoice>({ mode: 'auto' });
-  return <div className="min-w-0">
-    <div className="flex flex-col gap-4 px-4 py-4">
-      <div className="flex min-w-0 items-center gap-3 rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5">
-        <FileArchive size={21} className="shrink-0 text-token-secondary" aria-hidden />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-token-primary [overflow-wrap:anywhere]">{file.name}</p>
-          <p className="text-xs text-token-muted">{fmtSize(file.size)}</p>
-        </div>
-      </div>
-      <ZipEntrySelector file={file} choice={choice} onChange={setChoice} autoFocus />
-    </div>
-    <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3">
-      <Button size="sm" variant="ghost" className="!h-9" onClick={onCancel}>取消</Button>
-      <Button size="sm" variant="primary" className="!h-9" disabled={choice.mode === 'manual' && !choice.entryFile}
-        onClick={() => onUpload(getZipEntryFile(choice))}>开始上传</Button>
-    </div>
   </div>;
 }

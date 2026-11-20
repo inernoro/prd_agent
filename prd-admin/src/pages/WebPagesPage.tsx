@@ -6,7 +6,7 @@ import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSe
 import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
-import { getZipEntryFile, QuickZipUploadOptions, ZipEntrySelector, type ZipEntryChoice } from '@/components/web-hosting/ZipEntrySelector';
+import { getZipEntryFile, ZipEntrySelector, type ZipEntryChoice } from '@/components/web-hosting/ZipEntrySelector';
 import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
 import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, type RelatedSummary } from '@/services/real/relatedDocuments';
@@ -1540,7 +1540,7 @@ export default function WebPagesPage() {
             </>
   );
 
-  const handleQuickUpload = async (file: File, entryFile?: string): Promise<ShareDockUploadOutcome | void> => {
+  const handleQuickUpload = async (file: File): Promise<ShareDockUploadOutcome | void> => {
     // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
     // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
     const targetSpace = currentSpace;
@@ -1554,7 +1554,7 @@ export default function WebPagesPage() {
       toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
       return;
     }
-    const up = await uploadSite({ file, entryFile });
+    const up = await uploadSite({ file });
     if (!up.success || !up.data) {
       toast.error('上传失败', up.error?.message || '请稍后重试');
       return;
@@ -1643,14 +1643,6 @@ export default function WebPagesPage() {
           dropzone={{
           hint: '拖文件到此上传',
           accept: [...WEB_HOSTING_UPLOAD_EXTENSIONS],
-          renderFileOptions: ([file], upload, cancel) => file?.name.toLowerCase().endsWith('.zip') && !getWebHostingUploadError(file)
-            ? <QuickZipUploadOptions
-                key={`${file.name}:${file.lastModified}:${file.size}`}
-                file={file}
-                onUpload={entryFile => upload(handleQuickUpload(file, entryFile))}
-                onCancel={cancel}
-              />
-            : null,
           onFiles: ([file]) => { if (file) return handleQuickUpload(file); },
         }}
           slots={[

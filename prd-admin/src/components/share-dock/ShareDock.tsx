@@ -57,7 +57,6 @@ export interface ShareDockDropzone {
    * - 返回 Promise<ShareDockUploadOutcome>：dock 走「上传中 → 二选一分享 → 展示分享码」流程
    * - 返回 void：维持旧行为（仅把文件交给外部处理，如打开弹窗） */
   onFiles: (files: File[]) => Promise<ShareDockUploadOutcome | void> | void;
-  renderFileOptions?: (files: File[], upload: (result: Promise<ShareDockUploadOutcome | void>) => void, cancel: () => void) => React.ReactNode;
 }
 
 export interface ShareDockProps {
@@ -94,10 +93,7 @@ export interface ShareDockProps {
 
 const DOCK_W_DEFAULT = 192;
 const DOCK_W_COMPACT = 236; // 配合 dropzone + 横排槽位时稍宽，方形上传区适中不夸张
-const DOCK_W_CONFIGURING = 360;
 const DOCK_MARGIN = 16;
-const DOCK_CONFIG_MARGIN = 8;
-const DOCK_CONFIG_HEIGHT = 620;
 
 /**
  * 通用投放面板（ShareDock）。
@@ -163,7 +159,6 @@ export function ShareDock({
   // dropzone 上传状态机：idle（待上传）→ uploading（上传中）→ choosing（二选一分享）
   //                      → sharing（创建分享中）→ done（展示分享码）
   const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'choosing' | 'sharing' | 'done'>('idle');
-  const [fileOptions, setFileOptions] = useState<React.ReactNode>(null);
   const [uploadResult, setUploadResult] = useState<ShareDockUploadResult | null>(null);
   const [resultCopied, setResultCopied] = useState(false);
   // 上传成功后待用户二选一的分享创建器（choosing 态使用）
@@ -180,14 +175,16 @@ export function ShareDock({
 
   // 统一处理「拖入 / 点击选择」拿到的文件：
   // onFiles 返回 Promise 时走「上传 → 二选一分享」，返回 void 时维持旧行为
-  const trackUpload = useCallback(
-    (ret: Promise<ShareDockUploadOutcome | void> | void) => {
-      if (ret) {
+  const handleDropzoneFiles = useCallback(
+    (files: File[]) => {
+      if (!dropzone || files.length === 0) return;
+      const ret = dropzone.onFiles(files);
+      if (ret && typeof (ret as Promise<unknown>).then === 'function') {
         setUploadState('uploading');
         setUploadResult(null);
         setPendingShare(null);
         setShareError(null);
-        ret
+        (ret as Promise<ShareDockUploadOutcome | void>)
           .then((outcome) => {
             if (outcome && outcome.createShare) {
               // 上传成功 → 进入二选一，由用户点选分享方式后才真正创建分享
@@ -206,18 +203,8 @@ export function ShareDock({
       }
       // void：外部自行处理（如打开弹窗），dock 维持 idle
     },
-    [copyToClipboard],
+    [dropzone, copyToClipboard],
   );
-
-  const handleDropzoneFiles = (files: File[]) => {
-    if (!dropzone || !files.length) return;
-    const options = dropzone.renderFileOptions?.(files, result => {
-      setFileOptions(null);
-      trackUpload(result);
-    }, () => setFileOptions(null));
-    if (options) setFileOptions(options);
-    else trackUpload(dropzone.onFiles(files));
-  };
 
   // 用户在二选一里点了「无密码 / 有密码」→ 创建分享，成功后展示链接 + 自动复制
   const chooseShare = useCallback(async (mode: 'none' | 'password') => {
@@ -366,24 +353,16 @@ export function ShareDock({
     );
   }
 
-  const configTop = `clamp(${DOCK_CONFIG_MARGIN}px, ${pos.top}px, calc(100dvh - ${DOCK_CONFIG_HEIGHT}px))`;
-
   return (
     <div
       ref={dockRef}
       data-tour-id="share-dock-panel"
       className="fixed z-40 select-none"
-      style={fileOptions ? {
-        width: `min(${DOCK_W_CONFIGURING}px, calc(100vw - ${2 * DOCK_CONFIG_MARGIN}px))`,
-        left: `clamp(${DOCK_CONFIG_MARGIN}px, ${pos.left + dockW - DOCK_W_CONFIGURING}px, calc(100vw - ${DOCK_W_CONFIGURING + DOCK_CONFIG_MARGIN}px))`,
-        top: configTop,
-        maxHeight: `calc(100dvh - ${configTop} - ${DOCK_CONFIG_MARGIN}px)`,
-      } : { left: pos.left, top: pos.top, width: dockW }}
+      style={{ left: pos.left, top: pos.top, width: dockW }}
     >
       <div
         className={[
           'share-dock__panel w-full overflow-hidden rounded-2xl transition-all duration-200',
-          fileOptions ? 'share-dock__panel--configuring' : '',
           dragging ? 'share-dock__panel--active scale-[1.03]' : '',
           movingDock ? 'opacity-85' : '',
         ].join(' ')}
@@ -392,8 +371,7 @@ export function ShareDock({
         <div
           onPointerDown={onHandlePointerDown}
           className={[
-            'share-dock__header flex items-center justify-between gap-1',
-            fileOptions ? 'px-4 py-2.5 text-[13px]' : 'px-2 py-2 text-[11px]',
+            'share-dock__header flex items-center justify-between gap-1 px-2 py-2 text-[11px]',
             movingDock ? 'cursor-grabbing' : 'cursor-grab',
           ].join(' ')}
         >
@@ -402,7 +380,7 @@ export function ShareDock({
             <span className="truncate font-medium tracking-wide">{title}</span>
           </span>
           <div className="flex items-center gap-1">
-            {!fileOptions && badgeCount > 0 && (
+            {badgeCount > 0 && (
               <span className="share-dock__badge inline-flex min-w-[20px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold">
                 {badgeCount}
               </span>
@@ -421,7 +399,7 @@ export function ShareDock({
 
         {/* 文件 dropzone：1:1 方形大区域，支持「拖入 / 点击」两种上传，
             上传成功后内联展示分享码，用户一步拿到分享链接 */}
-        {fileOptions ? <div data-no-drag>{fileOptions}</div> : dropzone && (
+        {dropzone && (
           <div className="mx-2 mt-2 flex justify-center">
             {/* 点击上传用的隐藏 input */}
             <input
@@ -593,7 +571,7 @@ export function ShareDock({
         )}
 
         {/* 槽位区 */}
-        {!fileOptions && <div
+        <div
           className={[
             horizontalSlots ? 'grid grid-cols-3 gap-1.5 p-2' : 'flex flex-col gap-2 p-2',
             dragging ? 'dock-active' : '',
@@ -639,10 +617,10 @@ export function ShareDock({
               </div>
             );
           })}
-        </div>}
+        </div>
 
         {/* 底部链接 */}
-        {!fileOptions && footerText && (
+        {footerText && (
           <div className="share-dock__footer px-3 py-2 text-[10.5px]">
             {footerHref ? (
               <a
