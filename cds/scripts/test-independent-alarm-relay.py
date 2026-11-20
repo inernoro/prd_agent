@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 import json
+from unittest.mock import patch
 s = importlib.util.spec_from_file_location('relay', Path(__file__).with_name('independent-alarm-relay.py'))
 m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
 
@@ -47,5 +48,27 @@ class RelayTests(unittest.TestCase):
         self.assertEqual(len(calls),1)
         state['inbox']={'migration':item};m.process(state,40,lambda:None,lambda c,msg:calls.append(msg) or True)
         self.assertEqual(len(calls),1)
+
+    def test_production_items_stay_outside_the_legacy_inbox_across_poll_and_recovery(self):
+        production = self.item('release')
+        production['event'].update(kind='production-change', eventId='run:release.started')
+        ordinary = self.item('ordinary')
+        state = self.state([ordinary])
+        packet = {'challenge': 'proof', 'enabled': True, 'channels': state['channels'], 'items': [production]}
+        config = {'cdsBase': 'http://127.0.0.1', 'headers': {}, 'relayPrivateKey': 'fixture'}
+        with patch.object(m.urllib.request, 'urlopen') as request, patch.object(m, 'decrypt', return_value=packet):
+            request.return_value.__enter__.return_value.read.return_value = b'{}'
+            m.poll(config, state, 1)
+            m.poll(config, state, 2)
+        self.assertEqual(list(state['inbox']), ['ordinary'])
+        self.assertEqual(state['productionInbox']['release']['receivedAt'], 1)
+
+        # A previously persisted mixed queue is repaired before any further delivery.
+        state['inbox']['release'] = production
+        snapshots = []
+        m.process(state, 3, lambda: snapshots.append(json.loads(json.dumps(state))))
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(list(snapshots[0]['inbox']), ['ordinary'])
+        self.assertEqual(snapshots[0]['productionInbox']['release']['receivedAt'], 1)
 
 if __name__=='__main__':unittest.main()

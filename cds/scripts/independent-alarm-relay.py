@@ -26,6 +26,22 @@ def decrypt(envelope, private_key):
     return json.loads(AESGCM(aes).decrypt(base64.b64decode(envelope['iv']), base64.b64decode(envelope['ciphertext']) + base64.b64decode(envelope['tag']), None))
 
 
+def inbox_name(item):
+    # 旧接收端会把 inbox 中的任何事件当成监控告警，回滚时不能让它重新认领正式变更。
+    return 'productionInbox' if item['event']['kind'] == 'production-change' else 'inbox'
+
+
+def migrate_production_inbox(state):
+    inbox = state.get('inbox', {})
+    moved = False
+    for identifier, item in list(inbox.items()):
+        if inbox_name(item) == 'productionInbox':
+            state.setdefault('productionInbox', {}).setdefault(identifier, item)
+            del inbox[identifier]
+            moved = True
+    return moved
+
+
 def poll(config, state, now):
     body = {'proof': state.get('proof'), 'acks': state.get('acks', [])[:100], 'productionChanges': True}
     request = urllib.request.Request(config['cdsBase'] + '/api/cds-system/alarm-relay/poll',
@@ -35,11 +51,12 @@ def poll(config, state, now):
     state['acks'] = state.get('acks', [])[len(body['acks']):]
     state.update(proof=packet['challenge'], enabled=packet['enabled'], channels=packet['channels'], syncedAt=now)
     state['processStartedAt'] = packet.get('processStartedAt')
+    migrate_production_inbox(state)
     for item in packet['items']:
         if item['id'] in state.setdefault('receipts', {}):
             state.setdefault('acks', []).append(state['receipts'][item['id']])
         else:
-            state.setdefault('inbox', {}).setdefault(item['id'], {**item, 'receivedAt': now})
+            state.setdefault(inbox_name(item), {}).setdefault(item['id'], {**item, 'receivedAt': now})
 
 
 def send(channel, message):
@@ -62,8 +79,11 @@ def send(channel, message):
 
 
 def process(state, now, persist, sender=send, platform_incident=None, dispatcher=None):
+    if migrate_production_inbox(state):
+        persist()
     channels = {c['id']: c for c in state.get('channels', []) if c.get('enabled')}
-    for item in list(state.get('inbox', {}).values()):
+    items = list(state.get('productionInbox', {}).values()) + list(state.get('inbox', {}).values())
+    for item in items:
         event = item['event']; channel = channels.get(item['channelId'])
         if not channel: continue
         if event['kind'] == 'production-change':
@@ -126,5 +146,5 @@ def complete(state, item, ok, merged, persist):
     receipt = {'id': item['id'], 'ok': ok, 'merged': merged}
     state.setdefault('receipts', {})[item['id']] = receipt
     state.setdefault('acks', []).append(receipt)
-    del state['inbox'][item['id']]
+    del state[inbox_name(item)][item['id']]
     persist()
