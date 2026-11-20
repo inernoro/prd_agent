@@ -469,6 +469,7 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         var nextSessionStatusCheckAt = DateTime.MinValue;
         var cleanupScheduled = false;
         var completedTurnObserved = false;
+        var runtimeExecutionRecorded = false;
         string? completedCdsSessionId = null;
         string? completedMessageId = null;
 
@@ -543,6 +544,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                     "phase",
                     $"执行节点刚结束上一个任务、正在自检，已自动换新会话重试 {startAttempts} 次，现已就绪");
             }
+            if (run.DeliverySessionContainers)
+                runtimeExecutionRecorded = await TryCaptureDeliveryRuntimeExecutionAsync(run, session, ct);
             session = await _sessions.SendMessageAsync(
                 run.UserId,
                 session.Id,
@@ -571,6 +574,11 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                         continue;
                     }
                     afterSeq = Math.Max(afterSeq, item.Seq);
+                    if (run.DeliverySessionContainers && !runtimeExecutionRecorded
+                        && ReadCdsRuntimeImageDigest(item, session.CdsSessionId) is { } imageDigest)
+                    {
+                        runtimeExecutionRecorded = await TryRecordDeliveryRuntimeExecutionAsync(run, session, imageDigest, ct);
+                    }
                     switch (item.Type)
                     {
                         case InfraAgentEventTypes.Status:
@@ -700,6 +708,63 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
             cancellationToken: CancellationToken.None);
         if (result.MatchedCount == 0) throw new DesignArtifactRunLeaseLostException(run.Id);
         run.DeliveryRuntimeSessionId = sessionId;
+    }
+
+    internal static string? ReadCdsRuntimeImageDigest(InfraAgentEventView item, string? cdsSessionId)
+    {
+        if (string.IsNullOrEmpty(cdsSessionId) || item.CdsSourceSessionId != cdsSessionId
+            || item.Type != InfraAgentEventTypes.Status
+            || OpenDesignEventTranslator.ReadPayloadString(item.PayloadJson, "reason") != "container_starting")
+            return null;
+
+        var image = OpenDesignEventTranslator.ReadPayloadString(item.PayloadJson, "image");
+        var separator = image?.LastIndexOf("@sha256:", StringComparison.Ordinal) ?? -1;
+        if (image == null || separator <= 0) return null;
+        var digest = image[(separator + 1)..];
+        return digest.Length == 71 && digest[7..].All(Uri.IsHexDigit) ? digest.ToLowerInvariant() : null;
+    }
+
+    private async Task<bool> TryCaptureDeliveryRuntimeExecutionAsync(DesignArtifactRun run, InfraAgentSessionView session, CancellationToken ct)
+    {
+        if (session.CdsSessionId == null) return false;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            // 创建阶段的回执尚无消息 ID，须在发送后续生成请求之前读回。
+            var events = await _sessions.ListEventsAsync(run.UserId, session.Id, 0, EventBatchSize, deadline.Token);
+            var imageDigest = events.Select(item => ReadCdsRuntimeImageDigest(item, session.CdsSessionId))
+                .FirstOrDefault(digest => digest != null);
+            return imageDigest != null && await TryRecordDeliveryRuntimeExecutionAsync(run, session, imageDigest, deadline.Token);
+        }
+        catch (Exception error) when (!ct.IsCancellationRequested
+            && (error is OperationCanceledException or MongoException or InfraAgentSessionException))
+        {
+            _logger.LogWarning(error, "未能读取 OpenDesign 工作区启动回执 run={RunId} session={SessionId}", run.Id, session.Id);
+            return false;
+        }
+    }
+
+    private async Task<bool> TryRecordDeliveryRuntimeExecutionAsync(DesignArtifactRun run, InfraAgentSessionView session, string imageDigest, CancellationToken ct)
+    {
+        if (_db == null || session.CdsSessionId == null) return false;
+        var now = DateTime.UtcNow;
+        var execution = new InformationDeliveryRuntimeExecution(session.CdsSessionId, imageDigest, run.DeploymentSlug);
+        try
+        {
+            var result = await _db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id
+                    && item.DeploymentSlug == DeploymentScope.Current && item.LeaseOwnerId == run.LeaseOwnerId
+                    && item.LeaseExpiresAt > now && item.Status == RunStatuses.Running && item.CancelRequestedAt == null
+                    && item.DeliveryRuntimeSessionId == session.Id,
+                Builders<DesignArtifactRun>.Update.AddToSet(item => item.DeliveryRuntimeExecutions, execution),
+                cancellationToken: ct);
+            return result.IsAcknowledged && result.MatchedCount == 1;
+        }
+        catch (MongoException error)
+        {
+            _logger.LogWarning(error, "未能记录 OpenDesign 执行版本 run={RunId} session={SessionId}", run.Id, session.Id);
+            return false;
+        }
     }
 
     private async Task ReleaseDeliverySessionAsync(DesignArtifactRun run, string? sessionId)

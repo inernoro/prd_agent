@@ -3,11 +3,11 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { getDesignRuntimeCapabilities, listOpenDesignRuns, readOpenDesignRunEvents, type OpenDesignRun } from '@/services/real/webPages';
+import { getDesignRuntimeCapabilities, listOpenDesignRuns, readInformationDeliveryFiles, readOpenDesignRunEvents, type OpenDesignRun } from '@/services/real/webPages';
 import OpenDesignRunsPage from './OpenDesignRunsPage';
 
 vi.mock('@/services/real/webPages', () => ({
-  getDesignRuntimeCapabilities: vi.fn(), listOpenDesignRuns: vi.fn(), readOpenDesignRunEvents: vi.fn(),
+  getDesignRuntimeCapabilities: vi.fn(), listOpenDesignRuns: vi.fn(), readOpenDesignRunEvents: vi.fn(), readInformationDeliveryFiles: vi.fn(),
 }));
 
 const date = '2026-11-20T01:50:00+08:00';
@@ -26,6 +26,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   vi.mocked(getDesignRuntimeCapabilities).mockResolvedValue({ success: true, data: { defaultRuntime: 'open-design', runtimes: [] }, error: null });
+  vi.mocked(readInformationDeliveryFiles).mockResolvedValue({ success: false, error: { code: 'NOT_FOUND', message: '无文件' }, data: null });
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -59,6 +60,33 @@ it('当前列表没有指定任务时不请求该任务的事件', async () => {
   await act(async () => root.render(<MemoryRouter initialEntries={['/web-pages/opendesign?run=other']}><OpenDesignRunsPage /></MemoryRouter>));
   expect(container.textContent).toContain('当前账号或环境无法访问这条任务');
   expect(readOpenDesignRunEvents).not.toHaveBeenCalled();
+});
+
+it('回放已完成的任务时，显示各轮执行的实际镜像和当时的 MAP 版本', async () => {
+  const firstCommit = '1'.repeat(40);
+  const currentCommit = '2'.repeat(40);
+  const firstDigest = 'sha256:' + 'a'.repeat(64);
+  const secondDigest = 'sha256:' + 'b'.repeat(64);
+  const finished = {
+    ...run, status: 'Done', hasDeliveryWorkspace: true,
+    deploymentScope: `prd-agent::feature::revision::${currentCommit}`,
+    deliveryRuntimeExecutions: [
+      { cdsSessionId: 'cds-first', imageDigest: firstDigest, deploymentScope: `prd-agent::feature::revision::${firstCommit}` },
+      { cdsSessionId: 'cds-second', imageDigest: secondDigest, deploymentScope: `prd-agent::feature::revision::${currentCommit}` },
+    ],
+  };
+  vi.mocked(listOpenDesignRuns).mockResolvedValue({ success: true, data: { items: [finished] }, error: null });
+  vi.mocked(readOpenDesignRunEvents).mockResolvedValue({ success: true, data: { items: [], nextSeq: 0, lastAvailableSeq: 0 }, error: null });
+
+  await act(async () => root.render(<MemoryRouter initialEntries={['/web-pages/opendesign?run=run-a']}><OpenDesignRunsPage /></MemoryRouter>));
+  const versions = container.querySelector('[aria-label="工作区执行版本"]');
+  const executions = versions?.querySelectorAll('li');
+  expect(executions).toHaveLength(2);
+  expect(executions?.[0]?.textContent).toContain(firstDigest);
+  expect(executions?.[0]?.textContent).toContain('cds-first');
+  expect(executions?.[0]?.querySelector(`[title="${firstCommit}"]`)).not.toBeNull();
+  expect(executions?.[1]?.textContent).toContain(secondDigest);
+  expect(executions?.[1]?.querySelector(`[title="${currentCommit}"]`)).not.toBeNull();
 });
 
 it('从网页托管打开旧任务时能回到原作者入口，分页心跳保留早期阶段', async () => {

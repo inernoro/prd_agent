@@ -1,4 +1,6 @@
+using System.Text.Json;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using Xunit;
 
@@ -12,6 +14,25 @@ namespace PrdAgent.Api.Tests;
 /// </summary>
 public sealed class OpenDesignStageProgressTests
 {
+    [Theory]
+    [InlineData("status", "cds-a", "cds-a", "container_starting", true, true)]
+    [InlineData("status", "cds-old", "cds-a", "container_starting", true, false)]
+    [InlineData("status", null, "cds-a", "container_starting", true, false)]
+    [InlineData("status", "cds-a", null, "container_starting", true, false)]
+    [InlineData("status", "cds-a", "cds-a", "open_design_running", true, false)]
+    [InlineData("text_delta", "cds-a", "cds-a", "container_starting", true, false)]
+    [InlineData("status", "cds-a", "cds-a", "container_starting", false, false)]
+    public void 工作区镜像摘要来自同一轮CDS会话的容器启动回执(string type, string? source, string? current,
+        string reason, bool pinned, bool matches)
+    {
+        const string repository = "ghcr.io/inernoro/prd_agent/opendesign-runtime";
+        var digest = "sha256:" + new string('a', 64);
+        var payload = JsonSerializer.Serialize(new { reason, image = pinned ? $"{repository}@{digest}" : $"{repository}:latest" });
+        var evt = new InfraAgentEventView("event", "map-session", 1, "run", type, payload, DateTime.UtcNow, source);
+
+        Assert.Equal(matches ? digest : null, OpenDesignRemoteArtifactExecutor.ReadCdsRuntimeImageDigest(evt, current));
+    }
+
     private static List<OpenDesignProgressUpdate> Replay(
         OpenDesignStageProgress tracker,
         IEnumerable<(string Reason, int? Elapsed, int? Attempt)> events)

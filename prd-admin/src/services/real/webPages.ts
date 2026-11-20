@@ -2030,6 +2030,11 @@ export type OpenDesignRun = Pick<DesignArtifactRunSummary,
   workspaceId?: string | null;
   deploymentScope?: string | null;
   deliveryRuntimeSessionId?: string | null;
+  deliveryRuntimeExecutions?: {
+    cdsSessionId: string;
+    imageDigest: string;
+    deploymentScope?: string | null;
+  }[] | null;
   deliveryWaitingSince?: string | null;
   deliveryCheckpointHash?: string | null;
   error?: string | null;

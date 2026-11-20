@@ -128,7 +128,9 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
   const status = run.status.toLowerCase();
   const ongoing = !['done', 'error', 'cancelled'].includes(status);
   const cancellable = ['queued', 'running'].includes(status);
-  const statusText = ongoing ? phaseText(run.phase, run.phaseCode) || statusNames[status] : statusNames[status];
+  const statusText = (ongoing || status === 'done')
+    ? phaseText(run.phase, run.phaseCode) || statusNames[status]
+    : statusNames[status];
   const deploymentSha = run.deploymentScope?.match(/::revision::([a-f0-9]{7,64})$/i)?.[1];
   useEffect(() => {
     const controller = new AbortController();
@@ -175,8 +177,8 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
         <div><dt className="text-xs text-token-secondary">首次预览</dt><dd>{displayTime(run.firstPreviewAt)}</dd></div>
         <div><dt className="text-xs text-token-secondary">最新进展</dt><dd>{displayTime(run.completedAt || run.lastProgressAt)}</dd></div>
         {run.workspaceId && <div><dt className="text-xs text-token-secondary">工作区编号</dt><dd className="break-all font-mono text-xs">{run.workspaceId}</dd></div>}
-        {run.deliveryRuntimeSessionId && <div><dt className="text-xs text-token-secondary">CDS 会话</dt><dd className="break-all font-mono text-xs">{run.deliveryRuntimeSessionId}</dd></div>}
-        {deploymentSha && <div><dt className="text-xs text-token-secondary">任务所属版本</dt><dd title={deploymentSha} className="font-mono text-xs">{deploymentSha.slice(0, 12)}</dd></div>}
+        {run.deliveryRuntimeSessionId && <div><dt className="text-xs text-token-secondary">MAP 会话</dt><dd className="break-all font-mono text-xs">{run.deliveryRuntimeSessionId}</dd></div>}
+        {deploymentSha && <div><dt className="text-xs text-token-secondary">任务记录版本</dt><dd title={deploymentSha} className="font-mono text-xs">{deploymentSha.slice(0, 12)}</dd></div>}
         {run.failureCode && <div><dt className="text-xs text-token-secondary">失败代码</dt><dd className="break-all">{run.failureCode}</dd></div>}
       </dl>
       <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
@@ -199,6 +201,24 @@ function RunDetails({ run, storeId }: { run: OpenDesignRun; storeId: string | nu
       {cancelStatus && <p role="status" className="text-sm text-token-secondary">{cancelStatus}</p>}
       {run.hasDeliveryWorkspace && <WorkFiles runId={run.runId} ongoing={ongoing}
         checkpointHash={run.deliveryCheckpointHash} waiting={!!run.deliveryWaitingSince} />}
+      {run.deliveryRuntimeExecutions && run.deliveryRuntimeExecutions.length > 0 && (
+        <section aria-label="工作区执行版本" className="space-y-2 border-t border-token-subtle pt-3">
+          <h3 className="text-sm font-semibold">工作区执行版本</h3>
+          <ul className="space-y-2 text-xs">
+            {run.deliveryRuntimeExecutions.map((execution) => {
+              const commit = execution.deploymentScope?.match(/::revision::([a-f0-9]{7,64})$/i)?.[1];
+              return (
+                <li key={execution.cdsSessionId} className="space-y-1">
+                  <div className="break-all text-token-secondary">CDS 会话 {execution.cdsSessionId}
+                    {commit && <span title={commit}> · MAP {commit.slice(0, 12)}</span>}
+                  </div>
+                  <div className="break-all font-mono">{execution.imageDigest}</div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
       <div className="border-t border-token-subtle pt-3">
         <h3 className="text-sm font-semibold">执行记录</h3>
         {eventsError && <p className="mt-2 text-sm text-token-secondary" role="alert">暂时无法读取执行记录</p>}

@@ -140,6 +140,9 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     public string? DeliveryRuntimeSessionId { get; set; }
 
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<InformationDeliveryRuntimeExecution>? DeliveryRuntimeExecutions { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DateTime? DeliverySavedResultRecoveryAttemptedAt { get; set; }
 
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
@@ -659,6 +662,9 @@ public sealed class WorkflowDesignSource
 
 public sealed record InformationDeliveryCorrection(
     string Id, int Revision, string Text, DateTime ReceivedAt);
+
+public sealed record InformationDeliveryRuntimeExecution(
+    string CdsSessionId, string ImageDigest, string? DeploymentScope);
 
 public sealed record InformationDeliveryCheckpoint(
     string AssetKey, string PackageSha256, string BaseRevision, string InputSha256,

@@ -4,8 +4,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Tests.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using Xunit;
@@ -483,6 +485,74 @@ public class DesignArtifactProviderCatalogTests
         workspaceBroker.VerifyNoOtherCalls();
         connections.VerifyNoOtherCalls();
         sessions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task DeliveryExecutorCapturesTheReadyCdsSessionBeforeSendingTheModelRequest()
+    {
+        await using var mongo = await RunMongoFixture.CreateAsync("delivery_runtime_image");
+        var connection = BuildConnection();
+        var session = BuildSession() with { Id = "map-new", CdsSessionId = "cds-new", Status = InfraAgentSessionStatuses.Idle };
+        const string user = "user-1";
+        var oldExecution = new InformationDeliveryRuntimeExecution("cds-old", "sha256:" + new string('a', 64), "project::old");
+        var newExecution = new InformationDeliveryRuntimeExecution(session.CdsSessionId!, "sha256:" + new string('b', 64), DeploymentScope.Current);
+        var run = new DesignArtifactRun
+        {
+            Id = "delivery-run", UserId = user, Runtime = DesignArtifactRuntimes.OpenDesign,
+            Operation = DesignArtifactOperations.Generate, ArtifactType = DesignArtifactTypes.WebPage,
+            RuntimeConnectionId = connection.Id, Status = RunStatuses.Running,
+            DeploymentSlug = DeploymentScope.Current, DeliverySessionContainers = true,
+            LeaseOwnerId = "active-lease", LeaseExpiresAt = DateTime.UtcNow.AddMinutes(2),
+            DeliveryRuntimeExecutions = [oldExecution],
+        };
+        await mongo.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var connections = new Mock<IInfraConnectionService>();
+        connections.Setup(service => service.ListAsync(It.IsAny<CancellationToken>())).ReturnsAsync([connection]);
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>();
+        broker.Setup(service => service.PrepareAsync(run, null, CancellationToken.None)).ReturnsAsync(
+            new PreparedDesignArtifactWorkspace("https://map.test/input", "input-sha", "https://map.test/result", "transfer",
+                "grant", "https://map.test/llm/v1", "model-token", "model", "base", 4096, 8192, ["index.html"]));
+        broker.Setup(service => service.ReadResultAsync(run.Id, CancellationToken.None))
+            .ReturnsAsync(new ParsedDesignWorkspaceResult("<!doctype html>", []));
+        var sessions = new Mock<IInfraAgentSessionService>();
+        sessions.Setup(service => service.CreateAsync(user, It.IsAny<CreateInfraAgentSessionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session with { TraceId = run.Id, Status = InfraAgentSessionStatuses.Creating });
+        sessions.Setup(service => service.StartAsync(user, session.Id, It.IsAny<StartInfraAgentSessionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        var modelSent = false;
+        string Payload(string digest) => JsonSerializer.Serialize(new { reason = "container_starting", image = "registry.test/opendesign@" + digest });
+        sessions.Setup(service => service.ListEventsAsync(user, session.Id, 0, It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                Assert.False(modelSent);
+                return
+                [
+                    new("old-launch", session.Id, 1, run.Id, InfraAgentEventTypes.Status, Payload(oldExecution.ImageDigest), DateTime.UtcNow, oldExecution.CdsSessionId),
+                    new("new-launch", session.Id, 2, run.Id, InfraAgentEventTypes.Status, Payload(newExecution.ImageDigest), DateTime.UtcNow, newExecution.CdsSessionId),
+                ];
+            });
+        sessions.Setup(service => service.SendMessageAsync(user, session.Id, It.IsAny<SendInfraAgentMessageRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                var stored = await mongo.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+                Assert.Equal(new[] { oldExecution, newExecution }, stored.DeliveryRuntimeExecutions);
+                modelSent = true;
+                return session;
+            });
+        sessions.Setup(service => service.ListPersistedEventsAsync(user, session.Id, 0, It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new InfraAgentEventView("done", session.Id, 3, run.Id, InfraAgentEventTypes.Done, "{}", DateTime.UtcNow, session.CdsSessionId)]);
+        sessions.Setup(service => service.StopAsync(user, session.Id, CancellationToken.None))
+            .ReturnsAsync(session with { Status = InfraAgentSessionStatuses.Stopped });
+        var executor = new OpenDesignRemoteArtifactExecutor(connections.Object, sessions.Object, broker.Object,
+            BuildConfiguration(), NullLogger<OpenDesignRemoteArtifactExecutor>.Instance, mongo.Db);
+
+        var chunks = new List<DesignArtifactExecutorChunk>();
+        await foreach (var chunk in executor.ExecuteAsync(run, null, CancellationToken.None)) chunks.Add(chunk);
+
+        Assert.True(modelSent);
+        Assert.Equal("delta", Assert.Single(chunks).Type);
+        sessions.Verify(service => service.ListEventsAsync(user, session.Id, 0, It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]
