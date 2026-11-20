@@ -6842,12 +6842,13 @@ const BranchCard = memo(function BranchCard({
                   className="h-8 min-w-0 flex-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/55 focus:ring-2 focus:ring-primary/20"
                   placeholder="输入标签名称"
                 />
-                <button
+                <Button
                   type="submit"
-                  className="inline-flex h-8 shrink-0 items-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                  size="sm"
+                  className="shrink-0 font-semibold"
                 >
                   添加
-                </button>
+                </Button>
               </div>
               {tagDraftError ? <div className="mt-1.5 text-[0.6875rem] text-destructive">{tagDraftError}</div> : null}
             </form></AnchoredPopover>
@@ -6870,9 +6871,11 @@ const BranchCard = memo(function BranchCard({
                 >
                   取消
                 </button>
-                <button
+                <Button
                   type="button"
-                  className="inline-flex h-8 items-center rounded-md bg-destructive px-3 text-xs font-semibold text-destructive-foreground transition-colors hover:bg-destructive/90"
+                  variant="destructive"
+                  size="sm"
+                  className="font-semibold"
                   onClick={() => {
                     const target = tagDeleteTarget;
                     setTagDeleteTarget(null);
@@ -6880,7 +6883,7 @@ const BranchCard = memo(function BranchCard({
                   }}
                 >
                   删除
-                </button>
+                </Button>
               </div>
             </AnchoredPopover>
           ) : null}

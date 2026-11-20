@@ -69,7 +69,8 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --card-foreground: 240 6% 90%;
 
     --primary: 24 100% 60%;
-    --primary-foreground: 0 0% 100%;
+    --primary-hover: 24 100% 55%;
+    --primary-foreground: 222 24% 8%;
 
     --secondary: 240 4% 16%;
     --secondary-foreground: 240 6% 90%;
@@ -80,8 +81,9 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --accent: 240 4% 18%;
     --accent-foreground: 240 6% 95%;
 
-    --destructive: 0 70% 55%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 0 70% 59%;
+    --destructive-hover: 0 70% 64%;
+    --destructive-foreground: 0 50% 5%;
 
     --border: 240 4% 18%;
     --input: 240 4% 16%;
@@ -154,11 +156,9 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --warn-ink: 43 96% 56%;
     --ok-ink: 158 64% 52%;
 
-    /* 文字/图标落在 ok·warn·bad·info **实色填充**上时用的墨色。
-       暗色主题这四档是亮色（52%~74% 亮度），白字压不住，必须用深墨；
-       白天那四档是深色（30%~44%），反过来必须用白。写死 text-white 的
-       黄底按钮「看不清」就是漏了这一层。 */
+    /* 实色状态底上的字色。bad 单独配对，因为它在白天主题中底色较深。 */
     --status-ink: 222 24% 8%;
+    --bad-foreground: var(--status-ink);
 
     /* 系列色（图表专用，2026-09-01）。语义四色 ok/warn/bad/info 是**保留**的状态色，
        不参与系列配色，否则「第 4 个服务」会跟「警告」撞成同一个红。
@@ -195,7 +195,8 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --card-foreground: 24 20% 15%;
 
     --primary: 24 90% 50%;
-    --primary-foreground: 0 0% 100%;
+    --primary-hover: 24 90% 47%;
+    --primary-foreground: 222 24% 8%;
 
     --secondary: 30 20% 90%;
     --secondary-foreground: 24 20% 15%;
@@ -207,11 +208,12 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --accent-foreground: 24 20% 15%;
 
     --destructive: 0 65% 50%;
+    --destructive-hover: 0 65% 45%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 30 15% 82%;
     --input: 30 15% 88%;
-    --ring: 24 90% 50%;
+    --ring: var(--primary-ink);
 
     --radius: 0.625rem;
 
@@ -271,7 +273,8 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --warn-ink: 32 95% 32%;
     --ok-ink: 161 94% 22%;
 
-    --status-ink: 0 0% 100%;
+    --status-ink: 0 0% 3%;
+    --bad-foreground: 0 0% 100%;
 
     /* 系列色（图表专用，2026-09-01）。语义四色 ok/warn/bad/info 是**保留**的状态色，
        不参与系列配色，否则「第 4 个服务」会跟「警告」撞成同一个红。
@@ -6030,7 +6033,7 @@ html select:not([multiple]):not([size]):not(.appearance-none):dir(rtl) {
 
 .cds-agent-territory-option[data-selected='true'] .cds-agent-territory-option-index {
   background: hsl(var(--map-accent));
-  color: white;
+  color: hsl(var(--primary-foreground));
 }
 
 .cds-agent-territory-option > svg:last-child {
