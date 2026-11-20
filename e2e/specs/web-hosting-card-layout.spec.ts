@@ -5,11 +5,12 @@ import { createRequire } from 'node:module';
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
 
-test('右侧快捷上传在提交前选择 ZIP 首页，上传后保留分享方式', async ({ page }) => {
+test('右侧快捷上传搜索任意 ZIP 文件并设为首页，上传后保留分享方式', async ({ page }) => {
   const { ZipWriter, TextReader, Uint8ArrayWriter } = createRequire(new URL('../../prd-admin/package.json', import.meta.url))('@zip.js/zip.js');
   const zip = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false });
   await zip.add('bundle/report.md', new TextReader('# Report'));
   await zip.add('bundle/manifest.json', new TextReader('{}'));
+  await zip.add('bundle/run.sh', new TextReader('echo sample'));
   const longPath = `bundle/checkpoints/${'a'.repeat(112)}.json`;
   await zip.add(longPath, new TextReader('{}'));
   for (let index = 0; index < 8; index++) {
@@ -31,7 +32,7 @@ test('右侧快捷上传在提交前选择 ZIP 首页，上传后保留分享方
     if (pathname === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
     if (pathname === '/api/web-pages/upload' && request.method() === 'POST') {
       uploadBody = request.postData();
-      data = { id: 'published', title: 'scan', entryFile: 'report-map.html', visibility: 'private' };
+      data = { id: 'published', title: 'scan', entryFile: 'map-file.html', visibility: 'private' };
     }
     await route.fulfill({ json: { success: true, data, error: null } });
   });
@@ -45,27 +46,33 @@ test('右侧快捷上传在提交前选择 ZIP 首页，上传后保留分享方
   const mode = dock.getByRole('combobox', { name: '打开站点时' });
   await expect(mode).toHaveValue('auto');
   await expect(mode.locator('option')).toHaveText(['系统查找', '文件目录', '手动选择']);
-  const files = dock.getByRole('group', { name: '首页文件' });
+  const files = dock.getByRole('group', { name: '选择首页文件' });
   await expect(files).toHaveCount(0);
   await mode.selectOption('directory');
   await expect(files).toHaveCount(0);
   await mode.selectOption('manual');
-  const resources = files.getByRole('list', { name: '其他文件' });
-  await expect(resources).toContainText('manifest.json');
+  const list = files.getByRole('list', { name: 'ZIP 文件列表' });
+  await expect(list.getByRole('radio')).toHaveCount(11);
+  await expect(list.getByRole('radio', { name: 'run.sh' })).toHaveCount(0);
   await page.setViewportSize({ width: 1024, height: 500 });
   await expect.poll(async () => {
     const bounds = await dock.boundingBox();
     return !!bounds && bounds.y >= 0 && bounds.y + bounds.height <= 500;
   }).toBe(true);
-  expect(await resources.getByText(longPath.replace('bundle/', ''), { exact: true }).evaluate(node =>
+  expect(await list.getByText(longPath.replace('bundle/', ''), { exact: true }).evaluate(node =>
     node.clientHeight > 18 && node.scrollWidth === node.clientWidth)).toBe(true);
   await expect(dock.getByRole('button', { name: '开始上传' })).toBeDisabled();
-  await files.getByRole('radio', { name: 'report.md' }).check();
+  const search = files.getByRole('searchbox', { name: '搜索文件名或路径' });
+  await search.fill('manifest');
+  await expect(list.getByRole('radio')).toHaveCount(1);
+  await list.getByRole('radio', { name: 'manifest.json' }).check();
+  await search.fill('report');
+  await expect(files.getByText('已选 manifest.json')).toBeVisible();
   expect(uploadBody).toBeNull();
   await dock.getByRole('button', { name: '开始上传' }).click();
   await expect(dock.getByRole('button', { name: '无密码分享' })).toBeVisible();
   expect(uploadBody).toContain('name="entryFile"');
-  expect(uploadBody).toContain('bundle/report.md');
+  expect(uploadBody).toContain('bundle/manifest.json');
 });
 
 test('合集切换到较早版本成员时不复制上一成员的预览地址', async ({ page }) => {

@@ -97,7 +97,7 @@ const DOCK_W_COMPACT = 236; // 配合 dropzone + 横排槽位时稍宽，方形�
 const DOCK_W_CONFIGURING = 360;
 const DOCK_MARGIN = 16;
 const DOCK_CONFIG_MARGIN = 8;
-const DOCK_CONFIG_HEIGHT = 560;
+const DOCK_CONFIG_HEIGHT = 620;
 
 /**
  * 通用投放面板（ShareDock）。

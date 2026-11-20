@@ -33,8 +33,8 @@ async function selectValue(select: HTMLSelectElement, value: string) {
 it('快捷上传默认系统查找，只有手动选择才列出文件并要求选择首页', async () => {
   const upload = vi.fn();
   vi.mocked(readZipEntryOptions).mockResolvedValue([
-    { name: '扫描/report.md', path: 'report.md', selectable: true },
-    { name: '扫描/manifest.json', path: 'manifest.json', selectable: false },
+    { name: '扫描/report.md', path: 'report.md' },
+    { name: '扫描/data/manifest.json', path: 'data/manifest.json' },
   ]);
   await act(async () => root.render(<QuickZipUploadOptions file={file} onUpload={upload} onCancel={vi.fn()} />));
   const mode = container.querySelector('select')!;
@@ -45,13 +45,14 @@ it('快捷上传默认系统查找，只有手动选择才列出文件并要求�
 
   await selectValue(mode, 'manual');
   const list = container.querySelector('[role="group"]');
-  expect(list?.querySelector('[aria-label="其他文件"]')?.textContent).toContain('manifest.json');
+  const rows = [...list!.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
+  expect(rows.map(row => row.labels?.[0]?.textContent)).toEqual(['report.md', 'data/manifest.json']);
   const submit = [...container.querySelectorAll('button')].find(button => button.textContent === '开始上传')!;
   expect(submit.disabled).toBe(true);
-  await act(async () => list?.querySelector<HTMLInputElement>('input[type="radio"]')?.click());
+  await act(async () => rows[1].click());
   expect(submit.disabled).toBe(false);
   await act(async () => submit.click());
-  expect(upload).toHaveBeenCalledWith('扫描/report.md');
+  expect(upload).toHaveBeenCalledWith('扫描/data/manifest.json');
 
   await selectValue(mode, 'directory');
   expect(container.querySelector('[role="group"]')).toBeNull();

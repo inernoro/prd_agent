@@ -4637,6 +4637,7 @@ public class HostedSiteService : IHostedSiteService
         public string EntryFile = string.Empty;
         public string? GeneratedEntry;
         public string? MarkdownSource;
+        public (string Path, string Mime)? AssetEntry;
 
         public IEnumerable<string> Paths => Items.Select(item => item.RelativePath)
             .Concat(GeneratedEntry == null ? Array.Empty<string>() : new[] { GeneratedEntry });
@@ -4736,17 +4737,14 @@ public class HostedSiteService : IHostedSiteService
             else if (Path.GetExtension(chosen.RelativePath).ToLowerInvariant() is ".md" or ".markdown")
                 plan.MarkdownSource = chosen.RelativePath;
             else
-            {
-                plan.Error = "请选择 HTML 或 Markdown 文件作为首页，或使用文件目录";
-                return plan;
-            }
+                plan.AssetEntry = (chosen.RelativePath, chosen.Mime);
         }
 
         if (plan.EntryFile.Length == 0)
         {
-            var stem = plan.MarkdownSource == null
-                ? "map-directory"
-                : plan.MarkdownSource[..plan.MarkdownSource.LastIndexOf('.')] + "-map";
+            var stem = plan.MarkdownSource != null
+                ? plan.MarkdownSource[..plan.MarkdownSource.LastIndexOf('.')] + "-map"
+                : plan.AssetEntry != null ? "map-file" : "map-directory";
             var usedPaths = plan.Items.Select(item => item.RelativePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var name = stem + ".html";
             for (var suffix = 2; usedPaths.Contains(name); suffix++)
@@ -4806,6 +4804,8 @@ public class HostedSiteService : IHostedSiteService
             var doneCount = 0;
             var plannedEntry = plan.EntryFile;
             string? markdown = null;
+            string? assetPreview = null;
+            var truncatedAssetPreview = false;
 
             foreach (var (entry, relativePath, mimeType) in plan.Items)
             {
@@ -4824,6 +4824,13 @@ public class HostedSiteService : IHostedSiteService
 
                 if (relativePath == plan.MarkdownSource)
                     markdown = Encoding.UTF8.GetString(entryBytes);
+                if (relativePath == plan.AssetEntry?.Path && IsZipTextAsset(mimeType))
+                {
+                    const int previewByteLimit = 64 * 1024;
+                    truncatedAssetPreview = entryBytes.Length > previewByteLimit;
+                    assetPreview = Encoding.UTF8.GetString(entryBytes.AsSpan(0, Math.Min(entryBytes.Length, previewByteLimit)))
+                        .TrimStart('\uFEFF');
+                }
                 if (mimeType == "text/html")
                 {
                     entryBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(entryBytes, relativePath));
@@ -4838,9 +4845,11 @@ public class HostedSiteService : IHostedSiteService
 
             if (plan.GeneratedEntry != null)
             {
-                var html = markdown == null
-                    ? RenderZipDirectory(files.Select(file => file.Path))
-                    : WebFolderService.RenderMarkdownToHtml(markdown.TrimStart('\uFEFF'), Path.GetFileNameWithoutExtension(plan.MarkdownSource!));
+                var html = plan.AssetEntry is { } asset
+                    ? RenderZipAssetEntry(asset.Path, asset.Mime, assetPreview, truncatedAssetPreview)
+                    : markdown == null
+                        ? RenderZipDirectory(files.Select(file => file.Path))
+                        : WebFolderService.RenderMarkdownToHtml(markdown.TrimStart('\uFEFF'), Path.GetFileNameWithoutExtension(plan.MarkdownSource!));
                 await UploadFile(plannedEntry, RewritePublishedEntryHtml(Encoding.UTF8.GetBytes(html), plannedEntry, bridgeOnly: true), "text/html");
             }
 
@@ -4862,6 +4871,38 @@ public class HostedSiteService : IHostedSiteService
         }
     }
 
+    private static bool IsZipTextAsset(string mimeType)
+        => mimeType.StartsWith("text/", StringComparison.Ordinal)
+           || mimeType is "application/json" or "application/xml" or "application/javascript";
+
+    private static string EncodeZipAssetUrl(string path)
+        => "./" + WebUtility.HtmlEncode(string.Join('/', path.Split('/').Select(Uri.EscapeDataString)));
+
+    internal static string RenderZipAssetEntry(string path, string mimeType, string? textPreview, bool truncated = false)
+    {
+        var title = WebUtility.HtmlEncode(Path.GetFileName(path));
+        var url = EncodeZipAssetUrl(path);
+        var preview = mimeType.Split('/')[0] switch
+        {
+            "image" => $"""<img src="{url}" alt="{title}">""",
+            "video" => $"""<video src="{url}" controls preload="metadata"></video>""",
+            "audio" => $"""<audio src="{url}" controls preload="metadata"></audio>""",
+            _ => textPreview == null ? string.Empty : $"<pre>{WebUtility.HtmlEncode(textPreview)}</pre>",
+        };
+        var pdfLink = mimeType == "application/pdf"
+            ? $"""<a href="{url}" target="_blank" rel="noopener noreferrer">打开 PDF</a> """
+            : string.Empty;
+        var previewNote = truncated ? "<p>仅显示文件开头，下载原文件可查看完整内容。</p>" : string.Empty;
+        return $$"""
+            <!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1"><title>{{title}}</title>
+            <style>:root{color-scheme:light dark}body{max-width:56rem;margin:2rem auto;padding:0 1rem;font:1rem/1.65 system-ui,sans-serif}
+            h1,pre{overflow-wrap:anywhere}pre{white-space:pre-wrap;padding:1rem;border:1px solid color-mix(in srgb,currentColor 24%,transparent);border-radius:.5rem}
+            img,video,audio{display:block;max-width:100%}</style></head><body><main><h1>{{title}}</h1>
+            <p>{{pdfLink}}<a href="{{url}}" download>下载原文件</a></p>{{previewNote}}{{preview}}</main></body></html>
+            """;
+    }
+
     internal static string RenderZipDirectory(IEnumerable<string> paths)
     {
         var html = new StringBuilder("""
@@ -4880,8 +4921,7 @@ public class HostedSiteService : IHostedSiteService
             html.Append("<ul>");
             foreach (var path in folder)
             {
-                var url = string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
-                html.Append("""<li><a href="./""").Append(WebUtility.HtmlEncode(url)).Append("\">")
+                html.Append("<li><a href=\"").Append(EncodeZipAssetUrl(path)).Append("\">")
                     .Append(WebUtility.HtmlEncode(path[folder.Key.Length..])).Append("</a></li>");
             }
             html.Append("</ul>");

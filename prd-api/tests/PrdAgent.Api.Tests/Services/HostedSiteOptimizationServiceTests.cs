@@ -35,6 +35,18 @@ public class HostedSiteOptimizationServiceTests
         html.ShouldContain("<h2>data/</h2>");
     }
 
+    [Fact]
+    public void SelectedZipFile_UsesRelativeDownloadAndDisplaysTextAsText()
+    {
+        var html = HostedSiteService.RenderZipAssetEntry("data/报告 #1.json", "application/json", "<script>example</script>", truncated: true);
+
+        html.ShouldContain("href=\"./data/%E6%8A%A5%E5%91%8A%20%231.json\" download");
+        html.ShouldContain("<h1>报告 #1.json</h1>");
+        html.ShouldContain("<pre>&lt;script&gt;example&lt;/script&gt;</pre>");
+        html.ShouldContain("仅显示文件开头");
+        html.ShouldNotContain("<script>");
+    }
+
     [Theory]
     [InlineData(600L * 1024 * 1024, false, true)]
     [InlineData(5000L * 1024 * 1024, false, true)]
