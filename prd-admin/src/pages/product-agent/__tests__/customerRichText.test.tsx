@@ -42,3 +42,42 @@ it('reads legacy follow-ups safely, retains edited draft on failure and saves sa
     expect(api.createCustomerFollowUp).toHaveBeenCalledTimes(2);
   } finally { await act(async () => root.unmount()); host.remove(); }
 });
+
+it('validates submitted follow-up text and keeps a draft with no retained text', async () => {
+  vi.clearAllMocks();
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  api.listCustomers.mockResolvedValue({ success: true, data: { items: [{ id: 'synthetic', name: '合成客户', tags: [] }] } });
+  api.listCustomerFollowUps.mockResolvedValue({ success: true, data: { items: [] } });
+  api.createCustomerFollowUp.mockResolvedValue({ success: true });
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  const button = (text: string) => [...host.querySelectorAll('button')].find(b => b.textContent?.trim() === text)!;
+  try {
+    await act(async () => root.render(<CustomerModule isAdmin={false} />));
+    await act(async () => (host.querySelector('tbody tr') as HTMLElement).click());
+    await act(async () => button('动态跟进').click());
+    const editor = host.querySelector('textarea')!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    const type = async (html: string) => act(async () => {
+      setValue.call(editor, html);
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const draft = '<office-note>附带的文档备注</office-note><p>&nbsp;</p>';
+    await type(draft);
+    await act(async () => button('添加跟进').click());
+    expect(api.createCustomerFollowUp).not.toHaveBeenCalled();
+    expect(api.error).toHaveBeenCalledWith('请填写跟进内容');
+    expect(editor.value).toBe(draft);
+
+    const html = '<p><em>完成客户跟进</em></p>';
+    await type(html);
+    await act(async () => button('添加跟进').click());
+    expect(api.createCustomerFollowUp.mock.calls).toEqual([['synthetic', { content: html }]]);
+    expect(editor.value).toBe('');
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+  }
+});

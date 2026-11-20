@@ -67,3 +67,41 @@ for (const [label, History, Submit] of [['product', ProductHistory, ProductSubmi
     });
   });
 }
+
+it.each([['product', ProductSubmit], ['review', ReviewSubmit]] as const)(
+  '%s validates submitted length and keeps a short draft before accepting normal paste',
+  async (_label, Submit) => {
+    api.createAppeal.mockResolvedValue({ success: true });
+    const onSuccess = vi.fn();
+    const onClose = vi.fn();
+    const submission = { id: 'synthetic', title: '合成申诉', completedAt: new Date().toISOString() } as ReviewSubmission;
+    await act(async () => root.render(<Submit submission={submission} onSuccess={onSuccess} onClose={onClose} />));
+    const editor = host.querySelector('[contenteditable]') as HTMLDivElement;
+    const submit = [...host.querySelectorAll('button')].find(button => button.textContent === '提交申诉')!;
+    editor.innerHTML = '<p>123456789</p><office-note>附带的文档备注</office-note>';
+    const draft = editor.innerHTML;
+    await act(async () => editor.dispatchEvent(new Event('input', { bubbles: true })));
+    await act(async () => submit.click());
+    expect(api.createAppeal).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('请至少填写 10 个字的申诉理由');
+    expect(editor.innerHTML).toBe(draft);
+
+    const html = '<p><strong>123456789</strong><em>0</em></p>';
+    const insert = vi.fn((_command: string, _ui: boolean, value: string) => { editor.innerHTML = value; return true; });
+    const previous = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: insert });
+    try {
+      const paste = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, 'clipboardData', { value: { items: [], getData: () => html } });
+      await act(async () => editor.dispatchEvent(paste));
+      await act(async () => submit.click());
+      expect(api.createAppeal.mock.calls).toEqual([['synthetic', { reasonHtml: html, imageAttachmentIds: [] }]]);
+      expect(onSuccess).toHaveBeenCalledOnce();
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally {
+      if (previous) Object.defineProperty(document, 'execCommand', previous);
+      else Reflect.deleteProperty(document, 'execCommand');
+    }
+  },
+);

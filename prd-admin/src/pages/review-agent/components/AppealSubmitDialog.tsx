@@ -1,4 +1,4 @@
-import { sanitizeHtml, cleanPastedHtml } from '@/lib/sanitizeHtml';
+import { sanitizeHtml, sanitizeHtmlForSubmission, cleanPastedHtml } from '@/lib/sanitizeHtml';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { createAppeal, uploadAppealImage } from '@/services/real/reviewAgent';
@@ -46,7 +46,7 @@ export function AppealSubmitDialog({
   const expired = remainingMs <= 0;
 
   const syncPlainLen = useCallback(() => {
-    if (editorRef.current) setPlainLen((editorRef.current.textContent || '').trim().length);
+    setPlainLen(sanitizeHtmlForSubmission(editorRef.current?.innerHTML).text.length);
   }, []);
 
   const handleInput = () => syncPlainLen();
@@ -92,10 +92,10 @@ export function AppealSubmitDialog({
 
   const handleSubmit = async () => {
     if (expired) { setError('已超过申诉窗口'); return; }
-    if (plainLen < 10) { setError('请至少填写 10 个字的申诉理由'); return; }
+    const { html: reasonHtml, text } = sanitizeHtmlForSubmission(editorRef.current?.innerHTML);
+    if (text.length < 10) { setError('请至少填写 10 个字的申诉理由'); return; }
     setSubmitting(true);
     setError(null);
-    const reasonHtml = sanitizeHtml(editorRef.current?.innerHTML);
     const res = await createAppeal(submission.id, { reasonHtml, imageAttachmentIds });
     setSubmitting(false);
     if (!res.success) {

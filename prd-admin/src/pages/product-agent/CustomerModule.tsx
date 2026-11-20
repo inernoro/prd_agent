@@ -1,4 +1,4 @@
-import { sanitizeHtml } from '@/lib/sanitizeHtml';
+import { sanitizeHtml, sanitizeHtmlForSubmission } from '@/lib/sanitizeHtml';
 /**
  * 产品管理 — 客户模块。
  *
@@ -400,10 +400,10 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
   useEffect(() => { void reload(); }, [reload]);
 
   const add = async () => {
-    const trimmed = content.replace(/<[^>]*>/g, '').trim();
-    if (!trimmed) { toast.error('请填写跟进内容'); return; }
+    const { html, text } = sanitizeHtmlForSubmission(content);
+    if (!text) { toast.error('请填写跟进内容'); return; }
     setSaving(true);
-    const res = await createCustomerFollowUp(customerId, { content: sanitizeHtml(content) });
+    const res = await createCustomerFollowUp(customerId, { content: html });
     setSaving(false);
     if (res.success) { setContent(''); void reload(); }
     else toast.error('保存失败', res.error?.message);

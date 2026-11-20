@@ -18,8 +18,8 @@ function safeUrl(value: string, image: boolean): boolean {
   return !scheme || ['http', 'https', ...(image ? ['blob'] : ['mailto', 'tel'])].includes(scheme);
 }
 
-export function sanitizeHtml(dirty: string | null | undefined): string {
-  if (!dirty || typeof window === 'undefined' || typeof window.DOMParser === 'undefined') return '';
+function sanitizeHtmlBody(dirty: string | null | undefined): HTMLElement | null {
+  if (!dirty || typeof window === 'undefined' || typeof window.DOMParser === 'undefined') return null;
   const doc = new DOMParser().parseFromString(dirty, 'text/html');
   doc.querySelectorAll('*').forEach((el) => {
     if (el === doc.documentElement || el === doc.head || el === doc.body) return;
@@ -45,7 +45,16 @@ export function sanitizeHtml(dirty: string | null | undefined): string {
     }
     if (el.localName === 'a' && el.getAttribute('target') === '_blank') el.setAttribute('rel', 'noopener noreferrer');
   });
-  return doc.body.innerHTML;
+  return doc.body;
+}
+
+export function sanitizeHtml(dirty: string | null | undefined): string {
+  return sanitizeHtmlBody(dirty)?.innerHTML ?? '';
+}
+
+export function sanitizeHtmlForSubmission(dirty: string | null | undefined) {
+  const body = sanitizeHtmlBody(dirty);
+  return { html: body?.innerHTML ?? '', text: (body?.textContent ?? '').trim() };
 }
 
 /**
