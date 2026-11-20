@@ -15,7 +15,7 @@ import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
 import { useDataTheme } from '../hooks/useDataTheme';
 import { useStatusChipConfig } from '../hooks/useStatusChipConfig';
-import { formatWeekDateRange, formatWeekLabelWithRange } from '../utils/weekRange';
+import { formatWeekDateRange, formatWeekLabelWithRange, getPreviousIsoWeek, resolveDefaultSubmissionWeek } from '../utils/weekRange';
 
 // ────── helpers ──────
 
@@ -31,13 +31,6 @@ function getISOWeek(date: Date): WeekRef {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNumber = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
   return { weekYear: d.getUTCFullYear(), weekNumber };
-}
-
-function getPreviousWeek(week: WeekRef): WeekRef {
-  if (week.weekNumber <= 1) {
-    return { weekYear: week.weekYear - 1, weekNumber: 52 };
-  }
-  return { weekYear: week.weekYear, weekNumber: week.weekNumber - 1 };
 }
 
 function getWeekKey(week: WeekRef): string {
@@ -91,7 +84,7 @@ export function ReportMainView() {
   const isMobile = useIsMobile();
 
   const now = useMemo(() => getISOWeek(new Date()), []);
-  const prevWeek = useMemo(() => getPreviousWeek(now), [now]);
+  const prevWeek = useMemo(() => getPreviousIsoWeek(now), [now]);
   const [weekFilterMode, setWeekFilterMode] = useState<'all' | 'specific'>(hasRequestedWeek ? 'specific' : 'all');
   const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(hasRequestedWeek ? { weekYear: requestedYear, weekNumber: requestedWeek } : now));
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
@@ -120,9 +113,11 @@ export function ReportMainView() {
 
   const hasTeam = teams.length > 0;
   const hasTemplate = templates.length > 0;
+  // 未手动选周时，新建默认归属最近一个尚未截止的周（周一默认上周，与「下周一 24:00 截止」对齐）
+  const defaultSubmissionWeek = useMemo(() => resolveDefaultSubmissionWeek(new Date()), []);
   const createWeek = useMemo(
-    () => (weekFilterMode === 'specific' ? parseWeekKey(selectedWeekKey) : now),
-    [weekFilterMode, selectedWeekKey, now]
+    () => (weekFilterMode === 'specific' ? parseWeekKey(selectedWeekKey) : defaultSubmissionWeek),
+    [weekFilterMode, selectedWeekKey, defaultSubmissionWeek]
   );
 
   const weekOptions = useMemo(() => {
