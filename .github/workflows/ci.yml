@@ -432,6 +432,8 @@ jobs:
         run: |
           set -e
           for t in scripts/tests/test_*.py; do
+            # This fixture owns a pinned PyYAML dependency in its dedicated job.
+            if [ "$t" = "scripts/tests/test_workflow_release_security.py" ]; then continue; fi
             echo "--- $t"
             python3 "$t"
           done
@@ -1058,9 +1060,18 @@ jobs:
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [changes, repository-layout, server-build, admin-build, desktop-check, cds-build, design-runtime-test, docs-readability, acceptance-report-gate, llmgw-provider]
+    needs: [changes, repository-layout, server-build, admin-build, desktop-check, cds-build, design-runtime-test, docs-readability, acceptance-report-gate, llmgw-provider, workflow-release-security]
     if: always()
     steps:
+      - name: Require workflow release security fixtures
+        env:
+          FIXTURE_RESULT: ${{ needs.workflow-release-security.result }}
+        run: |
+          # The fixture runs on every event that triggers this workflow.
+          if [ "$FIXTURE_RESULT" != "success" ]; then
+            echo "Workflow release security fixtures did not succeed: $FIXTURE_RESULT"
+            exit 1
+          fi
       - name: Check CI status
         run: |
           echo "Changes detected:"

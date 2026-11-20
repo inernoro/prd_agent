@@ -94,6 +94,22 @@ class ReleaseInputTests(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, valid)
                 self.assertFalse((Path(tmp)/'PWNED').exists())
 
+    def test_ci_summary_requires_release_fixtures(self):
+        jobs = workflow('ci.yml')['jobs']
+        fixtures = jobs['workflow-release-security']
+        summary = jobs['ci-status']
+        self.assertNotIn('if', fixtures)
+        self.assertNotIn('needs', fixtures)
+        self.assertIn('workflow-release-security', summary['needs'])
+        self.assertEqual(summary['if'], 'always()')
+        gate = step('ci.yml', 'Require workflow release security fixtures')
+        self.assertEqual(gate['env']['FIXTURE_RESULT'], '${{ needs.workflow-release-security.result }}')
+        with tempfile.TemporaryDirectory() as tmp:
+            for result in ('success', 'failure', 'cancelled', 'skipped', ''):
+                with self.subTest(result=result):
+                    checked = self.run_bash(gate['run'], {'FIXTURE_RESULT': result}, tmp)
+                    self.assertEqual(checked.returncode, 0 if result == 'success' else 1)
+
     def test_privileged_actions_are_recorded_full_commits(self):
         pins = json.loads((ROOT/'.github/action-pins.json').read_text())['actions']
         approved = {ref.split('@')[0]+'@'+value['sha'] for ref,value in pins.items()}
