@@ -223,6 +223,72 @@ describe('engineering planning HTTP contracts', () => {
     expect(detail.body.events[0].actor).toMatchObject({ kind: 'agent', id: 'test-agent-legacy' });
   });
 
+  it('applies an ADR revision to its existing decision only when a human approves', async () => {
+    const existingLink = { type: 'issue', title: '导出需求', url: 'https://example.com/issues/1' };
+    const revisedLink = { type: 'adr', title: '导出 ADR 修订', url: 'https://example.com/repo/adr/export.md' };
+    const created = await call('/commands', {
+      type: 'decision.create', requestId: 'revision-fixture-create', title: '把导出同步执行', owner: '导出组', links: [existingLink],
+      source: { type: 'manual', ref: 'revision-fixture-original' },
+    });
+    expect(created.status).toBe(201);
+    const decisionId = created.body.result.id;
+    const decisionChange = { decisionId, expectedVersion: 1, change: 'amended' };
+    const proposed = await call('/commands', {
+      type: 'proposal.submit', requestId: 'revision-fixture-propose', kind: 'decision', decisionChange, skill: 'cds-plan',
+      draft: { title: '把导出迁移到异步队列', summary: '长任务已经会超过请求超时。', links: [revisedLink],
+        pullRequest: { url: 'https://github.com/fixture/repo/pull/33' } },
+      source: { type: 'adr', ref: 'docs/adr/export.md@fixture-b', url: revisedLink.url },
+    }, { actor: 'agent' });
+    expect(proposed.status).toBe(201);
+    expect(proposed.body.result).toMatchObject({ decisionChange, status: 'pending' });
+    const before = await call('');
+    expect(before.body.decisions).toMatchObject([{ id: decisionId, title: '把导出同步执行', links: [existingLink], version: 1 }]);
+
+    const approve = { type: 'proposal.accept', requestId: 'revision-fixture-confirm', proposalId: proposed.body.result.id };
+    expect((await call('/commands', approve, { actor: 'agent-with-approve' })).status).toBe(403);
+    const confirmed = await call('/commands', approve);
+    expect(confirmed.status).toBe(201);
+    expect(confirmed.body.result).toMatchObject({ status: 'accepted', result: { kind: 'decision', id: decisionId } });
+    const after = await call('');
+    expect(after.body.decisions).toMatchObject([{ id: decisionId, title: '把导出迁移到异步队列', owner: '导出组',
+      status: 'proposed', version: 2, links: [revisedLink, existingLink], pullRequest: { url: 'https://github.com/fixture/repo/pull/33' } }]);
+    expect(after.body.events).toEqual(expect.arrayContaining([expect.objectContaining({
+      entity: 'decision', entityId: decisionId, type: 'amended', actor: expect.objectContaining({ id: 'test-owner' }),
+      proposal: expect.objectContaining({ id: proposed.body.result.id, skill: 'cds-plan' }),
+    })]));
+  });
+
+  it('keeps adoption pending, rejects foreign or stale decision versions, and applies a current proposal after review', async () => {
+    const draft = { title: '使用异步导出' };
+    const created = await call('/commands', { type: 'decision.create', requestId: 'adoption-fixture-create', ...draft,
+      source: { type: 'manual', ref: 'adoption-fixture-original' } });
+    const foreign = await call('/commands', { type: 'decision.create', requestId: 'adoption-fixture-foreign', ...draft,
+      source: { type: 'manual', ref: 'adoption-fixture-foreign' } }, { project: projectB });
+    const decisionId = created.body.result.id;
+    const proposal = (requestId: string, target: string, expectedVersion: number) => call('/commands', {
+      type: 'proposal.submit', requestId, kind: 'decision', draft,
+      decisionChange: { decisionId: target, expectedVersion, change: 'accepted' },
+      source: { type: 'adr', ref: `docs/adr/export.md@${requestId}` },
+    }, { actor: 'agent' });
+    expect((await proposal('adoption-fixture-foreign-target', foreign.body.result.id, 1)).status).toBe(404);
+    expect((await proposal('adoption-fixture-wrong-version', decisionId, 8)).status).toBe(409);
+    const first = await proposal('adoption-fixture-propose', decisionId, 1);
+    expect(first.status).toBe(201);
+    expect((await call('')).body.decisions).toMatchObject([{ id: decisionId, status: 'proposed', version: 1 }]);
+
+    const updated = await call('/commands', { type: 'decision.change', requestId: 'adoption-fixture-amend', decisionId,
+      expectedVersion: 1, change: 'amended', reason: '补了新的材料' });
+    expect(updated.status).toBe(201);
+    const approval = (requestId: string, proposalId: string) => call('/commands', { type: 'proposal.accept', requestId, proposalId });
+    expect((await approval('adoption-fixture-stale', first.body.result.id)).status).toBe(409);
+    expect((await call('')).body.decisions).toMatchObject([{ id: decisionId, status: 'proposed', version: 2 }]);
+
+    const current = await proposal('adoption-fixture-current', decisionId, 2);
+    expect(current.status).toBe(201);
+    expect((await approval('adoption-fixture-adopt', current.body.result.id)).status).toBe(201);
+    expect((await call('')).body.decisions).toMatchObject([{ id: decisionId, status: 'accepted', version: 3 }]);
+  });
+
   it('deduplicates concurrent retries and source keys within the originating project', async () => {
     const command = createCommand('test-idempotency-0001');
     const results = await Promise.all([
@@ -263,6 +329,65 @@ describe('engineering planning HTTP contracts', () => {
     const detail = await call(`/debts/${debt.id}`);
     expect(detail.body.debt.version).toBe(debt.version + 1);
     expect(detail.body.events).toHaveLength(2);
+  });
+
+  it('only accepts a due debt review and preserves the repayment plan when work starts', async () => {
+    now = new Date('2026-11-21T01:00:00Z');
+    const debt = await write({ ...createCommand('test-due-review-debt-0001'), dueAt: '2026-12-29' });
+    const deferred = await write({ type: 'debt.defer', requestId: 'test-due-review-defer-0001', debtId: debt.id,
+      expectedVersion: debt.version, reviewAt: '2026-11-22', reason: '等合成窗口' });
+    const review = { type: 'debt.review', debtId: debt.id, expectedVersion: deferred.version,
+      next: 'start', reason: '今天开始执行合成修复', requestId: 'test-run-review-0001' };
+    expect((await call('/commands', review)).status).toBe(409);
+    now = new Date('2026-11-21T16:00:00Z');
+    expect(await write(review)).toMatchObject({ status: 'in_progress', dueAt: '2026-12-29' });
+    expect((await call(`/debts/${debt.id}`)).body.events[0]).toMatchObject({ type: 'reviewed', note: review.reason,
+      dates: { reviewAt: ['2026-11-22', null] } });
+  });
+
+  it('checks similar debts within one project and records an explicit distinction atomically', async () => {
+    const first = await createDebt();
+    const path = `/duplicates?title=${encodeURIComponent(first.title)}`;
+    expect((await call(path)).body.items).toMatchObject([{ id: first.id, similarity: 1 }]);
+    expect((await call(path, undefined, { project: projectB })).body.items).toEqual([]);
+    const command = { ...createCommand('test-duplicate-confirm-0001', 'fixture-a-separate-finding'), module: '导出',
+      title: `${first.title}!` };
+    expect(await call('/commands', command)).toMatchObject({ status: 409, body: { error: 'possible_duplicate', candidates: [{ id: first.id }] } });
+    expect((await call('/debts?view=all')).body.total).toBe(1);
+    const created = await write({ ...command, distinction: { debtIds: [first.id], reason: '合成环境中是另一个接口，单独记录。' } });
+    expect((await call(`/debts/${created.id}`)).body.events[0].note).toContain('另一个接口');
+    expect((await call('/debts?view=dup')).body.total).toBe(0);
+    expect((await call(`/debts?module=${encodeURIComponent('导出')}`)).body.items).toMatchObject([{ id: created.id }]);
+  });
+
+  it('previews a batch without writes and resolves the resulting batch within its project', async () => {
+    const row = { title: '回读独立合成入口', source: { type: 'import', ref: 'test-import-row' }, module: '导入' };
+    const preview = await call('/import-preview', { items: [row, row, { title: '没有来源的记录' }] });
+    expect(preview).toMatchObject({ status: 200, body: { items: [{ index: 0, status: 'ready' }, { index: 1, status: 'repeated' }, { index: 2, status: 'invalid' }] } });
+    expect((await call('/debts?view=all')).body.total).toBe(0);
+    const result = await write({ type: 'debt.import', requestId: 'test-specific-batch-0001', items: [row] });
+    expect(result.batchId).toMatch(/^BATCH-/);
+    expect((await call(`/debts?view=all&batch=${result.batchId}`)).body.items).toMatchObject([{ id: result.items[0].id, importBatchId: result.batchId }]);
+    expect((await call(`/debts?view=all&batch=${result.batchId}`, undefined, { project: projectB })).body.total).toBe(0);
+    expect((await call('/import-preview', { items: [row] })).body.items).toMatchObject([{ index: 0, status: 'existing', debtId: result.items[0].id }]);
+  });
+
+  it('creates initial plan steps atomically and records the earlier repayment target', async () => {
+    const debt = await write({ ...createCommand('test-initial-plan-debt-0001'), dueAt: '2026-12-20' });
+    const plan = { type: 'plan.create', requestId: 'test-initial-steps-0001', title: '完成合成债务', startAt: '2026-12-01', dueAt: '2026-12-19',
+      source: { type: 'manual', ref: 'fixture-initial-plan' }, initialSteps: [
+        { kind: 'task', title: '取样', owner: '合成负责人' },
+        { kind: 'debt', title: '归还示例债', relatedId: debt.id, dueAt: '2026-12-10' },
+      ] };
+    expect((await call('/commands', { ...plan, initialSteps: [...plan.initialSteps, { kind: 'debt', title: '不存在', relatedId: 'missing' }] })).status).toBe(404);
+    expect((await call('')).body.plans).toEqual([]);
+    expect((await call(`/debts/${debt.id}`)).body.debt.dueAt).toBe('2026-12-20');
+    const saved = await write(plan);
+    expect(saved.steps).toMatchObject([{ kind: 'task', owner: '合成负责人' }, { kind: 'debt', relatedId: debt.id }]);
+    expect((await call(`/debts/${debt.id}`)).body).toMatchObject({ debt: { dueAt: '2026-12-10' }, events: [
+      { type: 'planned', dates: { dueAt: ['2026-12-20', '2026-12-10'] }, relatedPlanId: saved.id },
+      { type: 'created' },
+    ] });
   });
 
   it('reads a grounded handoff from the current debt and its own history', async () => {
@@ -381,6 +506,119 @@ describe('engineering planning HTTP contracts', () => {
       expect.objectContaining({ kind: 'fact', text: expect.stringContaining(repay.summary) }),
       expect.objectContaining({ kind: 'fact', text: expect.stringContaining('Fixture run 22 reproduced the duplicate request') }),
     ]));
+  });
+
+  it('filters and sorts the complete debt list before pagination and reads the scoped ledger', async () => {
+    now = new Date('2026-11-19T02:00:00Z');
+    const branch = await write({
+      type: 'decision.create', requestId: 'test-list-decision-0001',
+      title: '合成规划筛选', source: { type: 'adr', ref: 'fixture-list-decision' },
+    });
+    const later = await write({
+      ...createCommand('test-list-debt-0001', 'fixture-list-newer-date'), decisionId: branch.id,
+      title: '合成筛选同一查询问题甲', owner: '合成负责人', priority: 'high', dueAt: '2026-12-20', tags: ['性能/查询'],
+    });
+    const earlier = await write({
+      ...createCommand('test-list-debt-0002', 'fixture-list-earlier-date'), decisionId: branch.id,
+      title: '合成筛选同一查询问题乙', owner: '合成负责人', priority: 'high', dueAt: '2026-11-06', tags: ['性能/查询'],
+    });
+    await write({
+      ...createCommand('test-list-debt-0003', 'fixture-list-other-tag'), decisionId: branch.id,
+      title: '合成另一种筛选', owner: '其他合成人', priority: 'low', tags: ['性能/缓存'],
+    });
+    await write({ ...createCommand('test-list-debt-0004', 'fixture-list-unassigned'), title: '未归属' });
+    const query = `?branch=${branch.id}&tag=${encodeURIComponent('性能/查询')}&priority=high&sort=deadline&view=dup&limit=1`;
+    const first = await call('/debts' + query);
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({
+      total: 2, items: [{ id: earlier.id }], counts: { unpaid: 2, overdue: 1, dup: 2, all: 2 },
+      ledger: { unpaid: 3, repaid: 0, extinct: 0 },
+      filterOptions: { owners: ['其他合成人', '合成负责人'], tags: expect.arrayContaining(['性能/查询', '性能/缓存']) },
+    });
+    const second = await call('/debts' + query + '&cursor=' + first.body.nextCursor);
+    expect(second.body.items.map((row: { id: string }) => row.id)).toEqual([later.id]);
+    expect((await call('/debts' + query.replace('priority=high', 'priority=low') + '&cursor=' + first.body.nextCursor)).status).toBe(400);
+    expect((await call('/debts?priority=invalid')).status).toBe(400);
+    expect((await call('', undefined, { actor: 'reader' })).body.debtBranches).toMatchObject({
+      [branch.id]: { unpaid: 3, created: 3 }, none: { unpaid: 1, created: 1 },
+    });
+  });
+
+  it('keeps decision alternatives and actual plan dates and reads linked progress evidence', async () => {
+    const decision = {
+      type: 'decision.create', requestId: 'test-structure-decision-0001', title: '保留合成回退窗口',
+      decisionKind: 'debt', options: [
+        { title: '先加缓存', benefits: '保护待发布页面', drawbacks: '需记偿还计划' },
+        { title: '先建索引', drawbacks: '下一发布窗口执行' },
+      ], chosenOption: '先加缓存', consequences: '先保留现有兼容路径', source: { type: 'adr', ref: 'fixture-structure-adr' },
+    };
+    expect((await call('/commands', { ...decision, options: [{ title: '可选项' }], chosenOption: '无此选项' })).status).toBe(400);
+    const saved = await write(decision);
+    const plan = { type: 'plan.create', requestId: 'test-structure-plan-0001', title: '回退准备',
+      decisionId: saved.id, source: { type: 'manual', ref: 'fixture-structure-plan' }, startAt: '2026-12-01', dueAt: '2026-12-12' };
+    expect((await call('/commands', { ...plan, startAt: '2026-12-13' })).status).toBe(400);
+    await write(plan);
+    const debt = await createDebt();
+    const notes = [{ type: 'test', label: '合成验收回执', url: 'https://example.test/check' }];
+    await write({ type: 'debt.progress', requestId: 'test-structure-progress-0001', debtId: debt.id,
+      expectedVersion: debt.version, note: '合成检查完成', evidence: notes });
+    const board = (await call('')).body;
+    expect(board.decisions).toContainEqual(expect.objectContaining({ id: saved.id,
+      decisionKind: 'debt', chosenOption: '先加缓存', consequences: decision.consequences, options: expect.arrayContaining([decision.options[0]]) }));
+    expect(board.plans).toContainEqual(expect.objectContaining({ startAt: plan.startAt, dueAt: plan.dueAt }));
+    expect((await call(`/debts/${debt.id}`)).body.events[0].evidence).toEqual(notes);
+  });
+
+  it('validates outstanding criteria and keeps evidence against its exact criterion', async () => {
+    const debt = await createDebt();
+    const result = { criterionId: debt.criteria[0].id, verdict: 'met', note: '一条请求',
+      evidence: [{ type: 'test', label: '合成运行', url: 'https://example.test/results/only-one' }] };
+    const request = { type: 'debt.repay', requestId: 'test-criterion-evidence-0001', debtId: debt.id,
+      expectedVersion: debt.version, summary: '移除重复请求', evidence: [] };
+    expect((await call('/commands', { ...request, results: [{ ...result, verdict: 'unmet' }] })).status).toBe(400);
+    expect((await call('/commands', { ...request, results: [{ ...result,
+      evidence: [{ ...result.evidence[0], url: 'javascript:alert(1)' }],
+    }] })).status).toBe(400);
+    const repaid = await write({ ...request, results: [result] });
+    expect(repaid.repayment.results).toEqual([result]);
+    const detail = await call(`/debts/${debt.id}`);
+    expect(detail.body.events[0].repayment.results).toEqual([result]);
+    expect(detail.body.brief.readiness.items.at(-1).ok).toBe(true);
+  });
+
+  it('writes marked proof and compatible collateral debts together and serves images only to project readers', async () => {
+    const main = await createDebt();
+    const secondary = await write({ ...createCommand('test-proof-related-0001', 'fixture-proof-related'), title: '另一笔相同验收标准' });
+    const onePixelPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRVEAAAAASUVORK5CYII=';
+    const after = { stage: 'after', dataUrl: `data:image/png;base64,${onePixelPng}`, label: '合成请求截图',
+      mark: { x: 0.1, y: 0.2, width: 0.5, height: 0.5 } };
+    const request = { type: 'debt.repay', requestId: 'test-proof-with-related-0001', debtId: main.id,
+      expectedVersion: main.version, summary: '合成请求已经修复', results: [{ criterionId: main.criteria[0].id, verdict: 'met' }] };
+    expect((await call('/commands', { ...request, repaymentProofs: [{ ...after, mark: undefined }] })).status).toBe(400);
+    expect((await call('/commands', { ...request, repaymentProofs: [] })).status).toBe(400);
+    expect((await call('/commands', { ...request, repaymentProofs: [after],
+      collateral: [{ debtId: secondary.id, expectedVersion: secondary.version + 1 }],
+    })).status).toBe(409);
+    expect((await call(`/debts/${main.id}`)).body.debt.status).toBe('open');
+    const saved = await write({ ...request, repaymentProofs: [after], collateral: [{ debtId: secondary.id, expectedVersion: secondary.version }] });
+    expect(saved.repayment.evidence[0]).toMatchObject({ type: 'screenshot', label: after.label,
+      image: { stage: 'after', mark: after.mark } });
+    expect(JSON.stringify(saved)).not.toContain(onePixelPng);
+    const attached = await call(`/debts/${secondary.id}`);
+    expect(attached.body.debt.repayment).toMatchObject({ mode: 'collateral', collateralOf: main.id,
+      results: [{ criterionId: secondary.criteria[0].id, verdict: 'met' }] });
+    expect((await call('/debts?view=collateral')).body.items).toHaveLength(1);
+    const image = saved.repayment.evidence[0].image.id;
+    await stop();
+    await start();
+    const protectedPath = (project: string) => `${endpoint}/api/projects/${project}/planning/evidence/${image}`;
+    const bytes = await fetch(protectedPath(projectA), { headers: { 'x-fixture-actor': 'reader' } });
+    expect(bytes.status).toBe(200);
+    expect(bytes.headers.get('content-type')).toBe('image/png');
+    expect(bytes.headers.get('cache-control')).toBe('private, no-store');
+    expect(Buffer.from(await bytes.arrayBuffer()).toString('base64')).toBe(onePixelPng);
+    expect((await fetch(protectedPath(projectA))).status).toBe(404);
+    expect((await fetch(protectedPath(projectB), { headers: { 'x-fixture-actor': 'owner' } })).status).toBe(404);
   });
 
   it('keeps explicit planning direction and approach states on the debt and in the handoff', async () => {
@@ -504,7 +742,7 @@ describe('engineering planning HTTP contracts', () => {
   it('cancels an extinct debt step and only completes a debt step with verified repayment', async () => {
     now = new Date('2026-03-02T01:00:00Z');
     const expiredDebt = await write(createCommand('test-planned-extinct-0001', 'synthetic-expired-source'));
-    const resolvedDebt = await write(createCommand('test-planned-repay-0001', 'synthetic-repaid-source'));
+    const resolvedDebt = await write({ ...createCommand('test-planned-repay-0001', 'synthetic-repaid-source'), title: 'Keep traceability for the remaining route' });
     const plan = await write({
       type: 'plan.create', requestId: 'test-plan-0001',
       title: 'Retire the two fixture flows', source: { type: 'manual', ref: 'synthetic-plan-source' },

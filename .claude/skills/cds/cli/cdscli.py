@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.24.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.25.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3711,6 +3711,84 @@ def _acceptance_lease(task_id: str) -> str:
         die("没有可用的领取票据，请先领取任务", code=1)
 
 
+def _planning_proposal_payload(args: argparse.Namespace, project: str) -> dict[str, Any]:
+    trigger = {"ci": "test", "adr-file": "adr"}.get(args.trigger, args.trigger)
+    source = {"type": trigger, "ref": args.ref}
+    if args.url is not None:
+        source["url"] = args.url
+    if args.excerpt is not None:
+        source["excerpt"] = args.excerpt
+
+    draft = {"title": args.title}
+    if args.summary is not None:
+        draft["summary"] = args.summary
+    decision_change = None
+    if args.change is not None:
+        if args.kind != "decision" or not args.decision or not args.expected_version or args.expected_version < 1:
+            die("修订或采纳提案需要指定原决策编号及当前版本")
+        decision_change = {"decisionId": args.decision, "expectedVersion": args.expected_version, "change": args.change}
+    elif args.expected_version is not None or (args.kind == "decision" and args.decision is not None):
+        die("请选择修订或采纳，并指定原决策编号及当前版本")
+    elif args.decision is not None:
+        draft["decisionId"] = args.decision
+    for key, value in (("whyDebt", args.why_debt), ("priority", args.priority), ("criteria", args.criterion),
+                       ("tags", args.tag), ("module", args.module)):
+        if value is None:
+            continue
+        if args.kind != "debt":
+            die("模块、优先级、欠债理由、偿还标准和标签用于债务提案")
+        draft[key] = value
+    if args.kind == "decision" and trigger == "adr" and args.url:
+        draft["links"] = [{"type": "adr", "url": args.url, "title": args.ref[:120]}]
+    if args.target_label and not args.target:
+        die("请指定预览目的地的路径")
+    if args.target and not args.pr_url:
+        die("请提供对应的拉取请求链接")
+    if args.pr_url:
+        if args.kind != "decision":
+            die("请在债务或计划提案的触发来源中附上拉取请求链接")
+        draft["pullRequest"] = {"url": args.pr_url}
+        if args.target:
+            draft["pullRequest"]["target"] = {"label": args.target_label or args.target, "path": args.target}
+
+    body = {"type": "proposal.submit", "kind": args.kind, "draft": draft, "source": source}
+    if decision_change is not None:
+        body["decisionChange"] = decision_change
+    skill = args.skill if args.skill is not None else _safe_identity_env("CDS_SKILL_NAME", "CODEX_SKILL_NAME", max_length=80)
+    if skill:
+        body["skill"] = skill
+    if args.confidence is not None:
+        if not 0 <= args.confidence <= 1:
+            die("请填写 0 到 1 之间的把握度")
+        body["confidence"] = args.confidence
+    material = json.dumps([project, body], sort_keys=True, ensure_ascii=False).encode()
+    body["requestId"] = args.request_id or "proposal:" + hashlib.sha256(material).hexdigest()
+    return body
+
+
+def _planning_duplicate_candidates(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list) or len(items) > 6:
+        die("CDS 返回的疑似重复债务列表无效，请重新查询")
+    candidates = []
+    for item in items:
+        if not isinstance(item, dict):
+            die("CDS 返回的疑似重复债务格式无效，请重新查询")
+        candidate_id = item.get("id")
+        score = item.get("similarity")
+        if (not isinstance(candidate_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.:@/+\-]{1,160}", candidate_id)
+                or not isinstance(item.get("title"), str) or item.get("status") not in ("open", "deferred", "in_progress", "repaid", "dropped")
+                or type(score) not in (int, float) or not 0 <= score <= 1):
+            die("CDS 返回的疑似重复债务格式无效，请重新查询")
+        candidate = {key: item[key] for key in ("id", "title", "status", "similarity")}
+        for key in ("owner", "summary"):
+            if isinstance(item.get(key), str):
+                candidate[key] = item[key]
+        if type(item.get("version")) is int:
+            candidate["version"] = item["version"]
+        candidates.append(candidate)
+    return candidates
+
+
 def cmd_planning(args: argparse.Namespace) -> None:
     bound = os.environ.get("CDS_PROJECT_ID", "").strip()
     project = (args.project or bound).strip()
@@ -3741,17 +3819,32 @@ def cmd_planning(args: argparse.Namespace) -> None:
         except (http.client.HTTPException, OSError):
             status, result = 0, None
         if not 200 <= status < 300:
+            retry = None
+            retry_note = ""
+            if (status == 0 or status >= 500) and body and getattr(args, "allow_duplicate", False):
+                ids = body.get("distinction", {}).get("debtIds", [])
+                retry = {"retry": {"requestId": body["requestId"], "duplicateIds": ids}}
+                if _HUMAN:
+                    retry_note = f" 原候选为 {'、'.join(ids)}，重试时逐个填写 --duplicate-id。" if ids else " 请按普通登记用原请求编号重试。"
             if status == 0:
-                die("CDS 未返回可确认的结果，请检查连接后用原请求编号和内容重试" if body
-                    else "工程规划读取失败，请检查连接后重试")
+                die("CDS 未返回可确认的结果，请检查连接后用原请求编号和内容重试" + retry_note if body
+                    else "工程规划读取失败，请检查连接后重试", extra=retry)
+            if status == 409 and isinstance(result, dict) and result.get("error") == "possible_duplicate":
+                candidates = _planning_duplicate_candidates(result.get("candidates"))
+                die("请通过 debt duplicates 核对疑似重复，确认是两个问题时填写区别", code=2,
+                    extra={"errorCode": "possible_duplicate", "candidates": candidates})
             messages = {
                 400: "工程规划参数不符合要求", 401: "项目凭据无效或已过期",
                 403: "当前授权不允许此操作", 404: "项目或记录不存在，或当前账户无法访问",
                 409: "版本或请求编号冲突，请先查询现有记录",
                 413: "提交内容过大，请分批提交", 503: "工程规划暂不可用，请稍后重试",
             }
-            die(f"HTTP {status}: {messages.get(status, '工程规划请求失败')}", code=2 if status < 500 else 3)
+            die(f"HTTP {status}: {messages.get(status, '工程规划请求失败')}{retry_note}", code=2 if status < 500 else 3, extra=retry)
         return scope(result)
+
+    def duplicate_candidates(title: str) -> list[dict[str, Any]]:
+        result = request("GET", "/duplicates?" + urllib.parse.urlencode({"title": title}))
+        return _planning_duplicate_candidates(result.get("items"))
 
     def submit(body: Any) -> None:
         if not isinstance(body, dict) or not isinstance(body.get("type"), str) or not isinstance(body.get("requestId"), str):
@@ -3781,22 +3874,67 @@ def cmd_planning(args: argparse.Namespace) -> None:
         ok(request("GET", "/capabilities"))
     if args.cmd == "planning" and action == "show":
         board = request("GET", "")
-        for field in ("proposals", "decisions", "plans", "events"):
+        for field in ("proposals", "decisions", "plans", "events", "pullRequests"):
             scoped_rows(board, field)
         ok(board)
+    if args.cmd == "proposal" and action == "create":
+        submit(_planning_proposal_payload(args, project))
+    if args.cmd == "proposal":
+        board = request("GET", "")
+        scoped_rows(board, "proposals")
+        rows = [row for row in board.get("proposals", []) if args.status == "all" or row.get("status") == args.status]
+        ok({"projectId": project, "items": rows})
+    if args.cmd == "decision":
+        board = request("GET", "")
+        for field in ("decisions", "events", "pullRequests"):
+            scoped_rows(board, field)
+        decision = next((row for row in board.get("decisions", []) if row.get("id") == args.id), None)
+        if decision is None:
+            die("此项目没有该决策，请核对编号")
+        scoped_rows(decision, "pullRequests")
+        events = [row for row in board.get("events", []) if row.get("entity") == "decision" and row.get("entityId") == args.id]
+        ok({"projectId": project, "decision": decision, "events": events})
+    if args.cmd == "pr":
+        board = request("GET", "")
+        scoped_rows(board, "pullRequests")
+        rows = board.get("pullRequests", [])
+        if action == "list":
+            if args.decision:
+                rows = [row for row in rows if args.decision in row.get("decisionIds", [])]
+            ok({"projectId": project, "items": rows})
+        matches = [row for row in rows if row.get("number") == args.number]
+        if len(matches) != 1:
+            die("无法唯一定位该拉取请求，请从当前项目的拉取请求列表核对编号")
+        ok(matches[0])
+    if action == "duplicates":
+        ok({"projectId": project, "items": duplicate_candidates(args.title)})
+    if action == "checkup":
+        ok(request("GET", "/checkup"))
     if action == "create":
+        reason = args.reason.strip() if args.reason else ""
+        if args.allow_duplicate and not reason:
+            die("请用 --reason 写明与疑似重复债务的区别")
+        if not args.allow_duplicate and (args.reason is not None or args.duplicate_id):
+            die("确认要单独记债时，请同时使用 --allow-duplicate 与 --reason")
         source = {"type": args.source_type, "ref": args.source_ref}
         if args.source_url:
             source["url"] = args.source_url
         body = {"type": "debt.create", "requestId": args.request_id, "title": args.title, "source": source}
         for key, value in (("summary", args.summary), ("whyDebt", args.why_debt), ("criteria", args.criterion),
-                           ("priority", args.priority), ("decisionId", args.decision)):
+                           ("priority", args.priority), ("decisionId", args.decision), ("module", args.module)):
             if value is not None:
                 body[key] = value
+        if args.allow_duplicate:
+            ids = args.duplicate_id or [row["id"] for row in duplicate_candidates(args.title)]
+            ids = sorted(set(ids))
+            if len(ids) > 6:
+                die("请选择最多六笔疑似重复债务")
+            if ids:
+                body["distinction"] = {"debtIds": ids, "reason": reason}
         submit(body)
     if action == "list":
         query = urllib.parse.urlencode({k: v for k, v in {
-            "q": args.q, "cursor": args.cursor, "view": args.view, "branch": args.branch, "limit": args.limit,
+            "q": args.q, "cursor": args.cursor, "view": args.view, "branch": args.branch, "limit": args.limit, "module": args.module,
         }.items() if v is not None})
         result = request("GET", "/debts" + ("?" + query if query else ""))
         scoped_rows(result, "items")
@@ -3822,7 +3960,8 @@ def cmd_planning(args: argparse.Namespace) -> None:
 def _register_planning_parser(sub: Any) -> None:
     planning = sub.add_parser("planning", help="工程规划：推进、权限与结构化提交").add_subparsers(dest="planning_action", required=True)
     debt = sub.add_parser("debt", help="工程债务：查询、登记、接手与演进").add_subparsers(dest="planning_action", required=True)
-    for routes, actions in ((planning, ("show", "capabilities", "submit", "stats")), (debt, ("list", "show", "brief", "create", "stats"))):
+    for routes, actions in ((planning, ("show", "capabilities", "submit", "stats")),
+                            (debt, ("list", "show", "brief", "duplicates", "checkup", "create", "stats"))):
         for action in actions:
             parser = routes.add_parser(action)
             parser.set_defaults(func=cmd_planning)
@@ -3833,6 +3972,8 @@ def _register_planning_parser(sub: Any) -> None:
                 parser.add_argument("id")
             if action == "show" and routes is debt:
                 parser.add_argument("--history", action="store_true", help="详情默认包含变更历史")
+            if action == "duplicates":
+                parser.add_argument("--title", required=True)
             if action == "create":
                 parser.add_argument("--request-id", required=True)
                 parser.add_argument("--title", required=True)
@@ -3844,16 +3985,61 @@ def _register_planning_parser(sub: Any) -> None:
                 parser.add_argument("--criterion", action="append")
                 parser.add_argument("--priority", choices=("high", "mid", "low"))
                 parser.add_argument("--decision")
+                parser.add_argument("--module")
+                parser.add_argument("--allow-duplicate", action="store_true", help="确认与已有债务存在区别并单独记录")
+                parser.add_argument("--reason", help="此次记录与疑似重复候选的区别")
+                parser.add_argument("--duplicate-id", action="append", help="指定已核对的候选编号，可重复传参")
             if action == "list":
                 parser.add_argument("--q")
                 parser.add_argument("--view")
                 parser.add_argument("--cursor")
                 parser.add_argument("--limit", type=int)
+                parser.add_argument("--module")
             if action in ("list", "stats"):
                 parser.add_argument("--branch")
             if action == "stats":
                 parser.add_argument("--from", dest="from_date")
                 parser.add_argument("--to", dest="to_date")
+
+    proposal = sub.add_parser("proposal", help="待确认提案：提交草稿与查询").add_subparsers(dest="planning_action", required=True)
+    decision = sub.add_parser("decision", help="查询工程决策").add_subparsers(dest="planning_action", required=True)
+    pulls = sub.add_parser("pr", help="查询与工程规划关联的拉取请求").add_subparsers(dest="planning_action", required=True)
+    for routes, actions in ((proposal, ("create", "list")), (decision, ("show",)), (pulls, ("list", "show"))):
+        for action in actions:
+            parser = routes.add_parser(action)
+            parser.set_defaults(func=cmd_planning)
+            parser.add_argument("--project", help="CDS 项目 ID，默认当前仓库绑定项目")
+            if routes is decision:
+                parser.add_argument("id")
+            elif routes is pulls:
+                if action == "list":
+                    parser.add_argument("--decision", help="只显示关联到该决策的拉取请求")
+                else:
+                    parser.add_argument("number", type=int)
+            elif action == "list":
+                parser.add_argument("--status", choices=("pending", "accepted", "rejected", "all"), default="pending")
+            else:
+                parser.add_argument("--kind", required=True, choices=("debt", "decision", "plan"))
+                parser.add_argument("--title", required=True)
+                parser.add_argument("--summary")
+                parser.add_argument("--trigger", required=True, choices=("code", "review", "ci", "adr-file", "manual", "test", "adr", "incident"))
+                parser.add_argument("--ref", required=True, help="能单独定位此次发现的稳定来源")
+                parser.add_argument("--url")
+                parser.add_argument("--excerpt")
+                parser.add_argument("--decision")
+                parser.add_argument("--change", choices=("amended", "accepted"), help="提议修订或采纳已有决策")
+                parser.add_argument("--expected-version", type=int, help="从 decision show 读取的当前决策版本")
+                parser.add_argument("--module", help="债务所属模块")
+                parser.add_argument("--why-debt")
+                parser.add_argument("--priority", choices=("high", "mid", "low"))
+                parser.add_argument("--criterion", action="append")
+                parser.add_argument("--tag", action="append")
+                parser.add_argument("--skill")
+                parser.add_argument("--confidence", type=float, help="0 到 1 之间的把握度")
+                parser.add_argument("--pr-url", help="决策提案关联的拉取请求链接")
+                parser.add_argument("--target", help="预览目的地路径，可包含 query")
+                parser.add_argument("--target-label", help="预览目的地名称")
+                parser.add_argument("--request-id", help="重试沿用原请求编号，未指定时从项目和内容生成")
 
 
 def cmd_dts(args: argparse.Namespace) -> None:

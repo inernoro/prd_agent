@@ -135,7 +135,7 @@ try {
       }
       if (!before && scene.kind === 'engineering-planning') {
         await page.getByRole('heading', { name: '待你确认', exact: true }).waitFor();
-        await page.getByText('当前范围 0 笔未还', { exact: true }).waitFor();
+        await page.getByRole('button', { name: /债务分支\s*未还 0 笔/ }).waitFor();
         result.debtMutationRefresh = await verifyEngineeringPlanningRefresh(browser, base, out);
         result.debtDetail = await verifyEngineeringPlanningDetail(browser, base, out);
       }

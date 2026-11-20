@@ -59,6 +59,9 @@ import { createEngineeringPlanningRouter, normalizedPlanningPath } from './route
 import { resolveEngineeringPlanningAccess } from './services/engineering-planning-access.js';
 import { EngineeringPlanningService, FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './services/engineering-planning.js';
 import type { EngineeringPlanningStore } from './services/engineering-planning-store.js';
+import { startPlanningSweep } from './services/engineering-planning-sweep.js';
+import { createPlanningGithubObserver, createPlanningPreviewResolver } from './services/engineering-planning-pull-requests.js';
+import { createPlanningFileAnchorProbe } from './services/engineering-planning-file-anchors.js';
 import { dtsManagedFreeBytes } from './services/dts-capacity.js';
 import { createDtsRouter } from './routes/dts.js';
 import { DtsService } from './services/dts.js';
@@ -1332,7 +1335,11 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/planning\/capabilities$/, '查看规划权限'],
     [/^GET \/projects\/[^/]+\/planning\/debts$/, '查询债务'],
     [/^GET \/projects\/[^/]+\/planning\/debts\/[^/]+$/, '查看债务详情'],
+    [/^GET \/projects\/[^/]+\/planning\/duplicates$/, '查询疑似重复债务'],
+    [/^POST \/projects\/[^/]+\/planning\/import-preview$/, '预览债务台账导入'],
     [/^GET \/projects\/[^/]+\/planning\/stats$/, '查看债务演进'],
+    [/^GET \/projects\/[^/]+\/planning\/checkup$/, '查看巡检通知'],
+    [/^POST \/projects\/[^/]+\/planning\/checkup\/read$/, '标记巡检已读'],
     [/^POST \/projects\/[^/]+\/planning\/commands$/, '提交规划变更'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
@@ -5282,12 +5289,30 @@ export function createServer(deps: ServerDeps): express.Express {
   const planningStore: EngineeringPlanningStore = deps.engineeringPlanningStore ?? (planningMongoUri
     ? new MongoEngineeringPlanningStore(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db')
     : new FileEngineeringPlanningStore(path.join(path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'engineering-planning')));
-  const planning = new EngineeringPlanningService(planningStore);
+  const planning = new EngineeringPlanningService(planningStore, undefined, {
+    repositoryFor: (projectId) => deps.stateService.getProject(projectId)?.githubRepoFullName,
+    previewFor: createPlanningPreviewResolver(deps.stateService, deps.config),
+    defaultBranchFor: (projectId) => deps.stateService.getDefaultBranchFor(projectId),
+    fileAnchorProbe: createPlanningFileAnchorProbe(projectId => {
+      const project = deps.stateService.getProject(projectId);
+      return project && !project.mirror ? deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot) : undefined;
+    }),
+  });
   app.use('/api', createEngineeringPlanningRouter({
     service: planning,
     resolveAccess: (req, projectId) => resolveEngineeringPlanningAccess(req, deps.stateService, projectId),
   }));
-  const closePlanning = async () => { await planningStore.close?.(); };
+  const stopPlanningSweep = startPlanningSweep({
+    projects: () => clusterIdentity.getConfig()?.role === 'member' ? []
+      : deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id),
+    sweep: async (projectId, through) => {
+      await planning.sweepRecordedRemovals(projectId, through);
+      await planning.scanGithubFileAnchors(projectId);
+      await planning.sweepDuplicatePairs(projectId, through);
+    },
+    onError: () => console.warn('[engineering-planning] 功能消失巡检暂不可用，将重试'),
+  });
+  const closePlanning = async () => { await stopPlanningSweep(); await planningStore.close?.(); };
   app.once('close', () => { void closePlanning(); });
   deps.registerResourceShutdown?.(closePlanning);
 
@@ -5513,6 +5538,7 @@ export function createServer(deps: ServerDeps): express.Express {
     config: deps.config,
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
+    observePlanningGithubEvent: createPlanningGithubObserver(deps.stateService, planning),
     // 自动发布规则：push 命中分支时由发布侧判据决定叫醒哪些规则。
     runPushRules: (ctx) => scheduledJobService.runPushRules(ctx),
   }));

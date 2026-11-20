@@ -166,7 +166,7 @@ const EXACT = {
   '/api/projects': { projects: [project] },
   [`/api/projects/${PROJECT_ID}/planning`]: {
     projectId: PROJECT_ID, protocolVersion: 1, permissions: ['read'], today: '2026-11-20',
-    decisions: [], plans: [], proposals: [], events: [], pendingReviewCount: 0,
+    decisions: [], plans: [], proposals: [], events: [], pendingReviewCount: 0, debtBranches: {}, relatedDebts: {},
   },
   [`/api/projects/${PROJECT_ID}/planning/stats`]: {
     projectId: PROJECT_ID, from: '2026-10-22', to: '2026-11-20', backlogStart: 0, backlogEnd: 0,

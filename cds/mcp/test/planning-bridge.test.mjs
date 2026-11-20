@@ -59,6 +59,9 @@ async function fixture(t) {
       case `${basePath}/debts`:
         send(200, { projectId, items: [debt], nextCursor: null });
         break;
+      case `${basePath}/duplicates`:
+        send(200, { projectId: state.responseProject, items: [{ id: debt.id, title: debt.title, status: 'open', similarity: 1 }] });
+        break;
       case `${basePath}/debts/D-0001`:
         send(200, { projectId, debt, events: [] });
         break;
@@ -115,6 +118,55 @@ test('discovers read and proposal tools from current permissions and refreshes o
   await assert.rejects(bridge.call(recordTool, directDebt));
   assert.equal(state.requests.filter(call => call.method === 'POST').length, 1);
   assert.deepEqual(await names(), [readTool]);
+});
+
+test('submits real skill context and ADR links through the existing proposal tool', async t => {
+  const { state, bridge } = await fixture(t);
+  const input = {
+    requestId: 'adr-file:export:fixture', kind: 'decision', skill: 'cds-plan', confidence: 0.9,
+    decisionChange: { decisionId: 'ADR-1', expectedVersion: 2, change: 'amended' },
+    source: { type: 'adr', ref: 'docs/adr/export.md@fixture', url: 'https://example.com/adr.md', excerpt: '采用导出任务。' },
+    draft: { title: '采用导出任务', links: [{ type: 'adr', title: '导出 ADR', url: 'https://example.com/adr.md' }],
+      decisionKind: 'forward', options: [{ title: '异步导出', benefits: '避免长请求' }], chosenOption: '异步导出', consequences: '增加任务队列',
+      pullRequest: { url: 'https://github.com/org/repo/pull/42', target: { label: '报表', path: '/reports' } } },
+  };
+  await bridge.call(proposeTool, input);
+  assert.deepEqual(state.requests.at(-1).body, { type: 'proposal.submit', ...input });
+  await assert.rejects(bridge.call(proposeTool, { ...input, confidence: 1.1 }));
+  await assert.rejects(bridge.call(proposeTool, { ...input, suggest: { dupOf: 'other-debt' } }));
+  await assert.rejects(bridge.call(proposeTool, { ...input, decisionChange: { ...input.decisionChange, change: 'deprecated' } }));
+  assert.equal(state.requests.filter(call => call.method === 'POST').length, 1);
+});
+
+test('forwards debt modules and a proposed delivery plan start date', async t => {
+  const { state, bridge } = await fixture(t);
+  const module = '导出与报表';
+  await bridge.call(readTool, { view: 'debts', module });
+  assert.equal(state.requests.at(-1).url.searchParams.get('module'), module);
+  await bridge.call(recordTool, { ...directDebt, module });
+  assert.equal(state.requests.at(-1).body.module, module);
+  const input = { requestId: 'fixture-debt-module', kind: 'debt', source, draft: { title: directDebt.title, module } };
+  await bridge.call(proposeTool, input);
+  assert.equal(state.requests.at(-1).body.draft.module, module);
+  const delivery = { requestId: 'fixture-plan-start', kind: 'plan', source,
+    draft: { title: '分阶段交付导出', startAt: '2026-11-24', dueAt: '2026-12-12' } };
+  await bridge.call(proposeTool, delivery);
+  assert.deepEqual(state.requests.at(-1).body.draft, delivery.draft);
+});
+
+test('reads duplicate candidates and submits only the caller’s explicit distinction', async t => {
+  const { state, bridge } = await fixture(t);
+  const check = await bridge.call(readTool, { view: 'duplicates', title: directDebt.title });
+  assert.equal(check.items[0].id, 'D-0001');
+  assert.equal(state.requests.at(-1).url.pathname, `${basePath}/duplicates`);
+  assert.equal(state.requests.at(-1).url.searchParams.get('title'), directDebt.title);
+  const distinction = { debtIds: ['D-0001'], reason: '独立接口使用不同队列' };
+  await assert.rejects(bridge.call(recordTool, { ...directDebt, distinction: { ...distinction, reason: '' } }));
+  assert.ok(state.requests.every(request => request.method === 'GET'));
+  await bridge.call(recordTool, { ...directDebt, distinction });
+  assert.deepEqual(state.requests.at(-1).body.distinction, distinction);
+  state.responseProject = 'other-project';
+  await assert.rejects(bridge.call(readTool, { view: 'duplicates', title: directDebt.title }));
 });
 
 test('rejects unexpected protocol versions, caller overrides, and blank submissions before any write', async t => {

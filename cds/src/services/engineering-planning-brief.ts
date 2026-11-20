@@ -47,7 +47,8 @@ export function buildDebtBrief(debt: PlanningDebt, events: PlanningEvent[],
     { label: '记录期望方向', ok: Boolean(debt.direction?.target), next: '补充希望达成的结果和候选方案。' },
     { label: '有偿还标准', ok: debt.criteria.length > 0, next: '补充可以逐条核对的偿还标准。' },
     active ? { label: '近 30 天有再次遇到记录', ok: Boolean(confirmedRecently), next: '亲自确认问题是否仍存在，按实记录。' }
-      : { label: '有可追溯的关闭依据', ok: Boolean(debt.repayment?.evidence.length || debt.outcome?.reason), next: '核对关闭依据。' },
+      : { label: '有可追溯的关闭依据', ok: Boolean(debt.repayment?.evidence.length
+        || debt.repayment?.results.some(result => result.evidence?.length) || debt.outcome?.reason), next: '核对关闭依据。' },
   ];
   const missing = items.filter(item => !item.ok);
 

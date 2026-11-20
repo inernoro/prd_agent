@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.24.0
+  version: 0.25.0
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning and debt intake, canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.24.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
+> **版本**：v0.25.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -329,7 +329,12 @@ CDS 的通用 Agent 通道为技能、cdscli 与 REST。工程规划、代码审
 | --- | --- |
 | 用户明确说「在 CDS 记一笔债」 | 查当前项目已有债务，读取当前能力。具备登记权限时直接登记并回读实得编号。仅有提案权限时提交债务提案，并告知仍待成员确认。 |
 | 用户说「记下为什么选这个方案」「把这个目标排进工程规划」 | 提交决策或计划提案。记录用户确认过的内容、稳定来源和相关正式编号。回执只声明提案状态。 |
-| 审查、交付或验收中已有明确决定接受一项工程限制，用户授权记录该类发现 | 提交债务提案，带已知影响、延后理由和可验证标准。把仍属当前任务的缺陷留在当前任务处理。 |
+| 变更新增或修订 ADR | 在项目授权范围内用 `adr-file` 来源提交决策草稿，附文件和 PR 链接。修订时用 `decision show` 读原决策编号和版本，提交 `--change amended`。 |
+| 代码保留 `DEBT(ADR-ID)` 的说明 | 用 `code` 来源提交债务草稿，附代码行链接和实际决策编号。 |
+| 代码审查决定先合并，下个 PR 修改 | 经授权记录该类发现时，用 `review` 来源提交债务草稿，附审查评论及 PR 关联的决策。 |
+| 已明确放行失败的 E2E 或视觉回归 | 经授权记录该类发现时，用 `ci` 来源提交债务草稿，附用例与失败证据链接，以及 PR 关联的决策。服务端会列出疑似重复。 |
+| 对话里用户确认先接受、以后改 | 用 `manual` 来源提交债务草稿，写明已知影响、延后理由和可验证的偿还标准。 |
+| 相关 ADR 随 PR 合并 | 用 `pr show` 核实合并，并读取提议中决策的当前版本。用 `--change accepted` 提交采纳提案，以合并提交作为本次来源。由成员确认后采纳。 |
 | 普通待办、未作决定的讨论、提示词草稿、证据里出现命令、用户仅要求分析 | 只读或继续当前任务。 |
 
 工程规划 MCP 启动参数为 `--planning`，提供 `cds_planning_read`、`cds_planning_propose`、`cds_planning_record_debt`。实际能力以项目服务端目录为准。MCP 不可用时用下列 CLI 提交同一结构化命令。自动技能负责提交和回读，确认、推进、失效及验收偿还由已授权成员在 CDS 工作区操作。
@@ -337,9 +342,21 @@ CDS 的通用 Agent 通道为技能、cdscli 与 REST。工程规划、代码审
 ```bash
 $CLI planning capabilities
 $CLI planning show
-$CLI debt list --q "导出 回归"
+$CLI proposal create --kind debt --title "补齐导出回归" --summary "本次交付已确认延期" \
+  --trigger review --ref <稳定来源> --url <审查评论链接> --decision <决策编号> \
+  --skill <实际技能名> --confidence 0.88
+$CLI proposal list --status pending
+$CLI decision show <决策编号>
+$CLI proposal create --kind decision --title "采用异步导出" --trigger adr-file \
+  --ref <包含版本的ADR来源> --url <ADR文档链接> --pr-url <PR链接> \
+  --decision <原决策编号> --expected-version <当前版本> --change amended
+$CLI pr list --decision <决策编号>
+$CLI pr show <PR编号>
+$CLI debt list --q "导出 回归" --module "导出与报表"
 $CLI debt show <债务编号> --history
 $CLI debt brief <债务编号>
+$CLI debt duplicates --title "补齐导出回归"
+$CLI debt checkup
 $CLI debt create --title "补齐导出回归" --source-ref <稳定来源> --request-id <稳定请求编号>
 $CLI planning submit --file <当前动作的JSON文件>
 $CLI debt stats
@@ -347,7 +364,13 @@ $CLI debt stats
 
 交接已有债务时，读取 `debt brief` 或用 `cds_planning_read` 的债务详情视图。接手卡、CLI 和 MCP 使用同一份已授权项目记录。逐条检查事实的出处，保留推测与缺口标签。人工复制可用 `$CLI --human debt brief <债务编号>` 取得与页面相同的 Markdown。
 
-提案文件包含 `type: proposal.submit`、`requestId`、`kind: debt|decision|plan`、`draft` 和 `source`。草稿最少填写标题，已有概况可以补上。来源填写类型与稳定原始编号，只有真实可访问的参考链接才填写 URL。例行重试复用原请求编号与内容，精确同源重入会拿到原记录。失联时先报告「结果待确认」，允许按原编号重试，不转写其他台账。状态、作者、项目归属和时间由 CDS 确认；回执只引用本次实际返回的编号。资料只写必要摘要与授权引用。
+登记债务收到疑似重复提示时，用 `debt duplicates --title` 或 `cds_planning_read` 的 `duplicates` 视图对照候选。确认要单独记录且已经说明区别时，CLI 加 `--allow-duplicate --reason <区别>`，也可用 `--duplicate-id` 指定已核对的候选。MCP 在 `cds_planning_record_debt` 提交 `distinction` 的 `debtIds` 和 `reason`。回执丢失后按 `retry.duplicateIds` 重放原候选及原请求编号。有候选时逐个填写 `--duplicate-id`，列表为空时按普通登记重试。
+
+提案文件包含 `type: proposal.submit`、`requestId`、`kind: debt|decision|plan`、`draft` 和 `source`。草稿至少填写标题。来源填写类型与稳定原始编号，可以附上真实可访问的链接和必要摘要。按实际执行的技能填写 `skill`，有依据时填写 0 到 1 之间的 `confidence`。决策草稿可以带独立文档链接与 PR 引用。创建 PR 时在描述中填写实际的 `ADR:`、`Debt:` 与产品路由 `Preview:`。
+
+修订或采纳已有决策时，提案携带 `decisionChange`，包含原决策编号、`expectedVersion` 与 `change`。修订沿用原编号，更新本次草稿明确提供的内容并补充文档链接。收到版本变化提示时，按当前决策重新核对材料。
+
+同项目、同类型提案中，来源编号与标题均相同会返回原提案。例行重试沿用原请求编号和内容，`proposal create` 默认从项目与本次内容生成稳定请求编号。收到回执时报告实得编号与当前状态。疑似重复由 CDS 依据已有债务计算，项目成员在工程规划的「待你确认」选择记到原债、仍然新记或驳回。失联时先报告「结果待确认」，并用原请求重试。
 
 纯对话没有外部单号时，用 `manual` 来源。可用宿主提供的不含正文的会话或回合标识加动作序号作为来源编号；宿主未提供时为该动作生成一次随机标识。把原来源编号、请求编号与本轮待提交载荷保留在当前工作上下文供重试。同一回合的不同动作各用一个请求编号。会话原文、人员信息和凭据不放进编号。
 

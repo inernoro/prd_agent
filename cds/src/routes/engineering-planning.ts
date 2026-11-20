@@ -1,5 +1,5 @@
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
-import type { PlanningActor } from '../shared/engineering-planning.js';
+import type { PlanningActor, PlanningCheckupRead } from '../shared/engineering-planning.js';
 import type { EngineeringPlanningService } from '../services/engineering-planning.js';
 import { PlanningError, planningId, rejectPlanning } from '../services/engineering-planning-input.js';
 
@@ -7,9 +7,19 @@ const route = '/projects/:projectId/planning';
 
 export function normalizedPlanningPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0].replace(/^\/_cds\/api\//i, '/api/').replace(/\/+$/, '');
-  const match = path.match(/^\/api\/projects\/[^/]+\/planning(?:\/(capabilities|commands|debts|stats)(\/[^/]+)?)?$/i);
+  const match = path.match(/^\/api\/projects\/[^/]+\/planning(?:\/(capabilities|commands|debts|stats|evidence|duplicates|import-preview|checkup)(\/[^/]+)?)?$/i);
   if (!match) return undefined;
+  if (match[1]?.toLowerCase() === 'checkup' && match[2]?.toLowerCase() === '/read') return '/api/projects/:projectId/planning/checkup/read';
   return '/api/projects/:projectId/planning' + (match[1] ? '/' + match[1].toLowerCase() : '') + (match[2] ? '/:resourceId' : '');
+}
+
+function parseCheckupRead(input: unknown): PlanningCheckupRead {
+  if (input && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).length === 1) {
+    const value = input as Record<string, unknown>;
+    if (value.all === true) return { all: true };
+    if (value.id !== undefined) return { id: planningId(value.id, 'id') };
+  }
+  return rejectPlanning(400, 'invalid', '请选择一条通知或标记全部已读');
 }
 
 export function createEngineeringPlanningRouter(deps: {
@@ -19,7 +29,7 @@ export function createEngineeringPlanningRouter(deps: {
   const router = express.Router();
   function failure(error: unknown, res: Response) {
     if (error instanceof PlanningError) {
-      res.status(error.status).json({ error: error.code, message: error.message });
+      res.status(error.status).json({ error: error.code, message: error.message, ...(error.candidates ? { candidates: error.candidates } : {}) });
       return;
     }
     res.status(503).json({ error: 'planning_unavailable', message: '工程规划暂时无法读取或保存，请稍后用原请求编号重试' });
@@ -40,7 +50,22 @@ export function createEngineeringPlanningRouter(deps: {
   router.get(`${route}/debts`, handler(async (req, res, projectId) => res.json(await deps.service.debts(projectId, req.query))));
   router.get(`${route}/debts/:debtId`, handler(async (req, res, projectId) =>
     res.json(await deps.service.debt(projectId, planningId(req.params.debtId, 'debtId')))));
+  router.get(`${route}/duplicates`, handler(async (req, res, projectId) =>
+    res.json(await deps.service.duplicates(projectId, req.query.title))));
   router.get(`${route}/stats`, handler(async (req, res, projectId) => res.json(await deps.service.stats(projectId, req.query))));
+  router.get(`${route}/checkup`, handler(async (_req, res, projectId, actor) =>
+    res.json(await deps.service.checkup(projectId, actor))));
+  router.post(`${route}/checkup/read`, express.json({ limit: '4kb' }), handler(async (req, res, projectId, actor) =>
+    res.json(await deps.service.markCheckupRead(projectId, actor, parseCheckupRead(req.body)))));
+  router.post(`${route}/import-preview`, express.json({ limit: '3mb' }), handler(async (req, res, projectId, actor) =>
+    res.json(await deps.service.previewImport(projectId, actor, req.body))));
+  router.get(`${route}/evidence/:imageId`, handler(async (req, res, projectId) => {
+    const image = await deps.service.evidenceAsset(projectId, planningId(req.params.imageId, 'imageId'));
+    res.setHeader('Content-Type', image.mime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.send(image.bytes);
+  }));
   router.post(`${route}/commands`, express.json({ limit: '3mb' }), handler(async (req, res, projectId, actor) => {
     const receipt = await deps.service.command(projectId, actor, req.body);
     res.status(receipt.reused ? 200 : 201).json(receipt);

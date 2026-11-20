@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
-import { ArrowDownRight, ArrowRight, CalendarDays, Check, CircleDot, Clock3, GitBranch, Layers3, ListFilter, Search } from 'lucide-react';
-import type {
-  PlanningBoard, PlanningDebt, PlanningDebtList, PlanningDecision, PlanningPlan, PlanningProposal, PlanningStats,
+import { Check, ChevronDown, ChevronRight, Clock3, Flame, Ghost, Search, Signal, X } from 'lucide-react';
+import {
+  planningClosureDays, type DebtPriority, type PlanningDebt, type PlanningDebtList, type PlanningDebtView, type PlanningStats,
 } from '../../../../src/shared/engineering-planning';
-import { closedDebt, dateLabel, debtLabels, decisionLabels, events, kindLabels, priorityLabels, shortId, sourceLabels, stepLabels } from './planning-ui';
+import { DebtHealthBadge } from './DebtHealth';
+import { closedDebt, dateLabel, debtLabels, priorityLabels, shortId, sourceLabels } from './planning-ui';
+import ledgerMotif from './debt-ledger-motif.svg';
 
 export type PlanningSelection = { kind: 'debt' | 'decision' | 'plan'; id: string };
 export const inactiveLabels = { cancelled: '已取消', superseded: '已替代', extinct: '随功能消失', merged: '已合并' };
@@ -12,160 +14,174 @@ export const debtState = (row: PlanningDebt) => row.outcome ? inactiveLabels[row
 export function PlanningEmpty({ children }: { children: ReactNode }) {
   return <div className="ep-empty">{children}</div>;
 }
+
 export function PlanningBadge({ tone = 'quiet', children }: { tone?: 'quiet' | 'warning' | 'success' | 'accent' | 'info'; children: ReactNode }) {
   return <span className="ep-badge" data-tone={tone}>{children}</span>;
 }
 
-function DecisionCard({ decision, plans, onSelect, reason }: {
-  decision: PlanningDecision; plans: PlanningPlan[]; onSelect: (item: PlanningSelection) => void; reason?: string;
-}) {
-  const decisionsPlans = plans.filter(plan => plan.decisionId === decision.id);
-  return <article className="ep-card">
-    <div className="ep-card-info"><span className="ep-id" title={decision.id}>{shortId(decision.id)}</span><PlanningBadge>{decisionLabels[decision.status]}</PlanningBadge></div>
-    <button type="button" className="ep-text-button ep-card-title" onClick={() => onSelect({ kind: 'decision', id: decision.id })}>{decision.title}</button>
-    {reason ? <p className="ep-reason">{reason}</p> : decision.summary ? <p className="ep-clamp">{decision.summary}</p> : null}
-    <footer>{decisionsPlans.length ? <span><Layers3 />{decisionsPlans.length} 个落地计划</span> : null}{decision.owner ? <span>{decision.owner}</span> : null}</footer>
-  </article>;
+export function DebtCoin({ debt }: { debt: PlanningDebt }) {
+  if (!closedDebt(debt.status) && debt.anchor?.status === 'missing') {
+    return <span className="ep-coin" data-status="pending-extinct" aria-hidden="true"><Ghost /></span>;
+  }
+  return <span className="ep-coin" data-status={debt.status} aria-hidden="true">
+    {debt.status === 'repaid' ? <Check /> : debt.outcome?.kind === 'extinct' ? '消' : closedDebt(debt.status) ? '结' : '欠'}
+    {debt.status === 'deferred' && <Clock3 />}
+  </span>;
 }
 
-export function PlanningBoardView({ data, busy, onSelect, onConfirm, onReject }: {
-  data: PlanningBoard; busy: boolean; onSelect: (item: PlanningSelection) => void;
-  onConfirm: (item: PlanningProposal) => void; onReject: (item: PlanningProposal) => void;
-}) {
-  const pending = data.proposals.filter(item => item.status === 'pending');
-  const review = data.decisions.filter(item => item.status === 'accepted' && item.reviewAt && item.reviewAt <= data.today
-    && (!item.reviewedAt || item.reviewedAt.slice(0, 10) < item.reviewAt));
-  const active = data.decisions.filter(item => item.status === 'proposed' || item.status === 'accepted');
-  const done = data.decisions.filter(item => item.status === 'superseded' || item.status === 'deprecated');
-  const stalled = active.flatMap(decision => {
-    const late = data.plans.filter(plan => plan.decisionId === decision.id).flatMap(plan =>
-      plan.steps.filter(step => step.dueAt && step.dueAt < data.today && step.status !== 'done' && step.status !== 'cancelled'));
-    const idle = (Date.parse(data.today) - Date.parse(decision.updatedAt.slice(0, 10))) / 86_400_000;
-    if (late.length) return [{ decision, reason: `${late.length} 个落地步骤逾期` }];
-    if (decision.status === 'proposed' && idle >= 14) return [{ decision, reason: `提议 ${Math.floor(idle)} 天未形成结论` }];
-    return [];
-  });
-  const advancing = active.filter(row => !stalled.some(item => item.decision.id === row.id) && !review.includes(row));
-  const approval = data.permissions.includes('approve');
-  return <div className="ep-board" aria-label="推进看板">
-    <section className="ep-lane" data-lane="pending" aria-label="待你确认">
-      <header><CircleDot /><h2>待你确认</h2><span>{pending.length + review.length}</span></header>
-      <div className="ep-lane-items">
-        {pending.map(proposal => <article className="ep-card" key={proposal.id}>
-          <div className="ep-card-info"><span className="ep-id" title={proposal.id}>{shortId(proposal.id)}</span><PlanningBadge tone="accent">{kindLabels[proposal.kind]}提案</PlanningBadge></div>
-          <h3>{proposal.draft.title}</h3>
-          {proposal.draft.summary && <p className="ep-clamp">{proposal.draft.summary}</p>}
-          <p className="ep-source">{proposal.author.label} · {sourceLabels[proposal.source.type]} · {proposal.source.ref}</p>
-          {proposal.source.url && <a className="ep-link" href={proposal.source.url} target="_blank" rel="noreferrer">打开来源 <ArrowDownRight /></a>}
-          {approval && <div className="ep-row"><button type="button" className="ep-button ep-button--primary" disabled={busy} onClick={() => onConfirm(proposal)}>确认提案</button>
-            <button type="button" className="ep-button" disabled={busy} onClick={() => onReject(proposal)}>驳回</button></div>}
-        </article>)}
-        {review.map(decision => <DecisionCard key={decision.id} decision={decision} plans={data.plans} onSelect={onSelect} reason="已到复核时间" />)}
-        {!pending.length && !review.length && <PlanningEmpty>暂无待确认提案</PlanningEmpty>}
-      </div>
-    </section>
-    <section className="ep-lane" data-lane="stuck" aria-label="卡住了">
-      <header><Clock3 /><h2>卡住了</h2><span>{stalled.length}</span></header>
-      <div className="ep-lane-items">
-        {stalled.map(({ decision, reason }) => <DecisionCard key={decision.id} decision={decision} plans={data.plans} onSelect={onSelect} reason={reason} />)}
-        {!stalled.length && <PlanningEmpty>暂无卡住的决策</PlanningEmpty>}
-      </div>
-    </section>
-    <section className="ep-lane" data-lane="moving" aria-label="推进中">
-      <header><GitBranch /><h2>推进中</h2><span>{advancing.length}</span></header>
-      <div className="ep-lane-items">
-        {advancing.map(decision => <DecisionCard key={decision.id} decision={decision} plans={data.plans} onSelect={onSelect} />)}
-        {!advancing.length && <PlanningEmpty>暂无正在推进的决策</PlanningEmpty>}
-      </div>
-    </section>
-    <section className="ep-lane" data-lane="done" aria-label="已完结">
-      <header><Check /><h2>已完结</h2><span>{done.length}</span></header>
-      <div className="ep-lane-items">
-        {done.map(decision => <DecisionCard key={decision.id} decision={decision} plans={data.plans} onSelect={onSelect} />)}
-        {!done.length && <PlanningEmpty>暂无已完结决策</PlanningEmpty>}
-      </div>
-    </section>
-  </div>;
+export function DebtPriorityBadge({ priority }: { priority: DebtPriority }) {
+  return <span className="ep-priority" data-priority={priority}><Signal aria-hidden="true" />{priorityLabels[priority]}</span>;
 }
 
-export function PlanningTimeline({ data, onSelect }: { data: PlanningBoard; onSelect: (item: PlanningSelection) => void }) {
-  return <div className="ep-timeline">
-    <section className="ep-surface">
-      <header className="ep-section-header"><div><h2>接下来 · 落地路线</h2></div><CalendarDays /></header>
-      <div className="ep-plan-grid">
-        {data.plans.map(plan => {
-          const done = plan.steps.filter(step => step.status === 'done').length;
-          const progress = plan.steps.length ? Math.round(done * 100 / plan.steps.length) : 0;
-          return <article className="ep-card" key={plan.id}>
-            <div className="ep-card-info"><span className="ep-id" title={plan.id}>{shortId(plan.id)}</span>{plan.dueAt && <PlanningBadge>{plan.dueAt}</PlanningBadge>}</div>
-            <button type="button" className="ep-text-button ep-card-title" onClick={() => onSelect({ kind: 'plan', id: plan.id })}>{plan.title}</button>
-            <div className="ep-meter"><span style={{ width: `${progress}%` }} /></div>
-            <p>{done} / {plan.steps.length} 步完成</p>
-            {plan.steps.length > 0 && <ol className="ep-steps-mini">{plan.steps.slice(0, 4).map(step => <li key={step.id}>{step.title}<span>{stepLabels[step.status]}</span></li>)}</ol>}
-          </article>;
+export const debtFilters: readonly [PlanningDebtView, string][] = [
+  ['unpaid', '未还'], ['review_due', '到期回看'], ['dup', '疑似重复'], ['pending_extinct', '疑似消灭'], ['overdue', '计划逾期'],
+  ['in_progress', '处理中'], ['reopened', '重开过'], ['repaid', '已偿还'], ['all', '全部'],
+];
+const extraViews: readonly [PlanningDebtView, string][] = [
+  ['extinct', '随功能消失'], ['merged', '合并'], ['void', '取消或替代'],
+  ['collateral', '连带偿还'], ['direct_repaid', '主动偿还'], ['deferred', '已暂缓'],
+];
+const sorts = [
+  ['deadline', '默认排序'], ['updated', '最近更新'], ['oldest', '最早登记'], ['interest', '被踩次数'], ['priority', '优先级'],
+];
+const week = 86_400_000;
+
+export function DebtDeadline({ debt, today, large, at = Date.now() }: { debt: PlanningDebt; today: string; large?: boolean; at?: number }) {
+  const review = debt.status === 'deferred';
+  const date = review ? debt.reviewAt : debt.dueAt;
+  if (closedDebt(debt.status)) return <span className="ep-deadline ep-deadline--muted">{large ? debtState(debt) : '—'}</span>;
+  if (debt.anchor?.status === 'missing') {
+    const cutoff = debt.anchor.closeAt;
+    const remaining = planningClosureDays(cutoff, at);
+    return <span className={large ? 'ep-deadline ep-deadline--large' : 'ep-deadline'}>
+      <span className="ep-due-chip" data-tone="review">{remaining > 0 ? <>缓冲期还剩 <strong>{remaining}</strong> 天</> : '已到期待巡检'}</span>
+      <time dateTime={cutoff}>{dateLabel(cutoff)}</time>
+    </span>;
+  }
+  if (!date) return <span className="ep-deadline ep-deadline--muted">{debt.trigger ? '等待触发' : large ? '偿还日期待定' : '—'}</span>;
+  const days = Math.round((Date.parse(date) - Date.parse(today)) / week);
+  const tone = review ? 'review' : days < 0 ? 'bad' : days <= 7 ? 'soon' : 'calm';
+  const label = review ? (days <= 0 ? '回看逾期' : '回看还剩') : days < 0 ? '逾期' : '还剩';
+  const [, month, day] = date.split('-').map(Number);
+  return <span className={`ep-deadline${large ? ' ep-deadline--large' : ''}`}>
+    <span className="ep-due-chip" data-tone={tone}>{days === 0 ? (review ? '今日回看' : '今天到期') : <>{label} <strong>{Math.abs(days)}</strong> 天</>}</span>
+    <time dateTime={date}>{review ? '回看' : '预计'} {month}月{day}日</time>
+  </span>;
+}
+
+export function DebtLedger({ data, stats, label }: { data?: PlanningDebtList; stats?: PlanningStats; label: string }) {
+  const ledger = data?.ledger ?? { unpaid: stats?.backlogEnd ?? 0, repaid: data?.counts?.repaid ?? 0, extinct: data?.counts?.extinct ?? 0, verified: undefined };
+  const total = ledger.repaid + ledger.extinct + ledger.unpaid;
+  const segments = [[ledger.repaid, 'paid'], [ledger.extinct, 'gone'], [ledger.unpaid, 'owed']] as const;
+  let start = 0;
+  return <div className="ep-ledger" aria-label="债务账本">
+    <div className="ep-ledger-mark" aria-hidden="true">
+      <img src={ledgerMotif} alt="" />
+      <svg viewBox="0 0 112 112" focusable="false">
+        <circle className="ep-ledger-track" cx="56" cy="56" r="42" />
+        {total > 0 && segments.map(([count, tone]) => {
+          const length = count / total * 100;
+          const offset = start;
+          start += length;
+          return count > 0 ? <circle key={tone} data-tone={tone} cx="56" cy="56" r="42" pathLength="100"
+            strokeDasharray={`${Math.max(.4, length - (length === 100 ? 0 : .9))} 100`}
+            strokeDashoffset={-offset} transform="rotate(-90 56 56)" /> : null;
         })}
+      </svg>
+    </div>
+    <div className="ep-ledger-body">
+      <h2 className="sr-only">债务清单</h2>
+      <div className="ep-ledger-metrics">
+        <span data-tone="owed">欠 <strong>{ledger.unpaid.toLocaleString()}</strong><small>笔</small></span>
+        <span data-tone="paid">已还 <strong>{ledger.repaid.toLocaleString()}</strong><small>笔</small></span>
+        <span data-tone="gone">随功能消灭 <strong>{ledger.extinct.toLocaleString()}</strong><small>笔</small></span>
       </div>
-      {!data.plans.length && <PlanningEmpty>暂无落地计划</PlanningEmpty>}
-    </section>
-    <div className="ep-today"><span>今天 · {data.today}</span></div>
-    <section className="ep-surface">
-      <header className="ep-section-header"><h2>决策记录</h2><GitBranch /></header>
-      <ol className="ep-events">
-        {data.events.filter(event => event.entity === 'decision' || event.entity === 'plan').map(event => {
-          const list = event.entity === 'decision' ? data.decisions : data.plans;
-          const record = list.find(row => row.id === event.entityId);
-          return <li key={event.id}>
-            <time dateTime={event.at}>{dateLabel(event.at)}</time>
-            <div><PlanningBadge>{events[event.type]}</PlanningBadge> {record && <button type="button" className="ep-text-button" onClick={() => onSelect({ kind: event.entity === 'decision' ? 'decision' : 'plan', id: record.id })}>{record.title}</button>}
-              {event.note && <p>{event.note}</p>}<span className="ep-caption">{event.actor.label}</span></div>
-          </li>;
-        })}
-      </ol>
-      {!data.events.some(event => event.entity === 'decision' || event.entity === 'plan') && <PlanningEmpty>暂无决策记录</PlanningEmpty>}
-    </section>
+      <p>{label}{stats && <> · 近 30 天新增 {stats.created}、还掉 {stats.repaid}、消灭 {stats.extinct}</>}
+        {ledger.verified !== undefined && <> · 已认证 {ledger.verified} 笔</>}</p>
+    </div>
   </div>;
 }
 
-export const debtFilters = [
-  ['unpaid', '未还'], ['review_due', '到期回看'], ['overdue', '计划逾期'],
-  ['in_progress', '处理中'], ['repaid', '已偿还'], ['all', '全部'],
-] as const;
+type DebtFilterFields = { priority: string; owner: string; source: string; tag: string; sort: string; status: string };
 
-export function DebtSearch({ search, status, onSearch, onStatus }: {
-  search: string; status: string; onSearch: (text: string) => void; onStatus: (value: string) => void;
+export function DebtSearch({ search, data, filters, onSearch, onFilter }: {
+  search: string; data?: PlanningDebtList; filters: DebtFilterFields;
+  onSearch: (text: string) => void; onFilter: (next: Partial<DebtFilterFields>) => void;
 }) {
-  return <div className="ep-filter">
-    <label className="ep-search"><Search /><span className="sr-only">搜索债务</span>
-      <input type="search" placeholder="搜索债务标题、编号或来源" value={search} onChange={event => onSearch(event.target.value)} maxLength={200} /></label>
-    <label className="ep-input-with-icon"><ListFilter /><span className="sr-only">债务状态</span>
-      <select value={status} onChange={event => onStatus(event.target.value)}>{debtFilters.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+  const selectedPriorities = filters.priority.split(',').filter(Boolean);
+  const extraCount = [filters.owner, filters.source, filters.tag].filter(Boolean).length;
+  const categories = [...new Set((data?.filterOptions?.tags ?? []).flatMap(tag => [tag.split('/')[0], tag]))].sort();
+  const options = [...debtFilters, ...extraViews.filter(([value]) => value === filters.status)];
+  return <div className="ep-debt-controls">
+    <div className="ep-filter ep-list-filters">
+      <label className="ep-search"><Search aria-hidden="true" /><span className="sr-only">搜索债务</span>
+        <input type="search" placeholder="搜索编号、标题、来源、根因、负责人" value={search} onChange={event => onSearch(event.target.value)} maxLength={200} /></label>
+      <div className="ep-priority-pills" role="group" aria-label="优先级">{(['high', 'mid', 'low'] as const).map(priority => {
+        const pressed = selectedPriorities.includes(priority);
+        return <button type="button" key={priority} aria-pressed={pressed} aria-label={`${priorityLabels[priority]}优先级`}
+          onClick={() => onFilter({ priority: (pressed ? selectedPriorities.filter(value => value !== priority) : [...selectedPriorities, priority]).join(',') })}>
+          <DebtPriorityBadge priority={priority} />
+        </button>;
+      })}</div>
+      <details className="ep-list-filter-menu">
+        <summary className="ep-button">筛选{extraCount > 0 && <span className="ep-filter-count">{extraCount}</span>}<ChevronDown aria-hidden="true" /></summary>
+        <div className="ep-list-filter-pop">
+          <label className="ep-field"><span>负责人</span><select value={filters.owner} onChange={event => onFilter({ owner: event.target.value })}>
+            <option value="">全部</option>{(data?.filterOptions?.owners ?? []).map(owner => <option key={owner}>{owner}</option>)}
+          </select></label>
+          <label className="ep-field"><span>标签</span><select value={filters.tag} onChange={event => onFilter({ tag: event.target.value })}>
+            <option value="">全部</option>{[...(filters.tag && !categories.includes(filters.tag) ? [filters.tag] : []), ...categories].map(tag => <option key={tag}>{tag}</option>)}
+          </select></label>
+          <label className="ep-field"><span>来源</span><select value={filters.source} onChange={event => onFilter({ source: event.target.value })}>
+            <option value="">全部</option>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select></label>
+          {extraCount > 0 && <button type="button" className="ep-button" onClick={() => onFilter({ owner: '', source: '', tag: '' })}>清空筛选</button>}
+        </div>
+      </details>
+      {filters.tag && <button type="button" className="ep-button ep-clear-tag" onClick={() => onFilter({ tag: '' })}>
+        {filters.tag}<X aria-label="清除标签筛选" />
+      </button>}
+    </div>
+    <div className="ep-debt-list-bar">
+      <div className="ep-debt-segments" role="group" aria-label="债务状态">
+        {options.filter(([value]) => !['dup', 'pending_extinct'].includes(value) || !!data?.counts?.[value] || filters.status === value).map(([value, label]) =>
+          <button type="button" key={value} data-view={value} aria-label={label} aria-pressed={filters.status === value} onClick={() => onFilter({ status: value })}>
+            {label}{data?.counts?.[value] !== undefined && <span>{data.counts[value]}</span>}
+          </button>)}
+      </div>
+      <div className="ep-debt-list-order">
+        <span>共 {data?.total ?? data?.items.length ?? 0} 笔</span>
+        <label><span className="sr-only">排序方式</span><select value={filters.sort} onChange={event => onFilter({ sort: event.target.value })}>
+          {sorts.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select></label>
+      </div>
+    </div>
   </div>;
 }
-
-const deadline = (debt: PlanningDebt, today: string) => {
-  const value = debt.status === 'deferred' ? debt.reviewAt : debt.dueAt;
-  if (!value || closedDebt(debt.status)) return debt.trigger && !closedDebt(debt.status) ? '等待触发' : '—';
-  const days = (Date.parse(value) - Date.parse(today)) / 86_400_000;
-  if (debt.status === 'deferred') return days <= 0 ? '到期回看' : `${days} 天后回看`;
-  return days < 0 ? `逾期 ${-days} 天` : days === 0 ? '今天到期' : `还剩 ${days} 天`;
-};
 
 export function DebtList({ data, previous, onPrevious, onNext, onSelect }: {
   data: PlanningDebtList; previous: boolean; onPrevious: () => void; onNext: (cursor: string) => void;
   onSelect: (item: PlanningSelection) => void;
 }) {
+  const at = data.asOf ? Date.parse(data.asOf) : Date.now();
   return <section className="ep-surface ep-debt-surface" aria-label="债务清单">
     {!data.items.length ? <PlanningEmpty>没有符合条件的债务</PlanningEmpty> : <>
-      <div className="ep-debt-header" aria-hidden><span>债务</span><span>优先级</span><span>期限</span><span>状态</span></div>
+      <div className="ep-debt-header" aria-hidden="true"><span /><span>债务</span><span>期限</span><span>状态</span><span>优先级</span><span>负责人</span><span /></div>
       <ul className="ep-debts">{data.items.map(debt => <li key={debt.id}>
-        <div className="ep-debt-title">
-          <span className="ep-coin" data-status={debt.status} aria-hidden>{debt.status === 'repaid' ? <Check /> : closedDebt(debt.status) ? '结' : '欠'}</span>
-          <div><button className="ep-text-button ep-card-title" type="button" onClick={() => onSelect({ kind: 'debt', id: debt.id })}>{debt.title}</button>
-            <span className="ep-caption"><span className="ep-id" title={debt.id}>{shortId(debt.id)}</span> · {sourceLabels[debt.source.type]}{debt.owner ? ` · ${debt.owner}` : ''}{debt.hitCount ? ` · 被踩 ${debt.hitCount} 次` : ''}</span></div>
-        </div>
-        <span><PlanningBadge tone={debt.priority === 'high' ? 'warning' : debt.priority === 'mid' ? 'accent' : 'quiet'}>{priorityLabels[debt.priority]}</PlanningBadge></span>
-        <span className="ep-deadline">{deadline(debt, data.today)}</span>
-        <span><PlanningBadge tone={debt.status === 'repaid' ? 'success' : debt.status === 'deferred' ? 'warning' : 'quiet'}>{debtState(debt)}</PlanningBadge></span>
+        <button className="ep-debt-line" type="button" aria-label={debt.title} onClick={() => onSelect({ kind: 'debt', id: debt.id })}>
+          <DebtCoin debt={debt} />
+          <span className="ep-debt-title">
+            <strong>{debt.title}<DebtHealthBadge debt={debt} at={at} />
+              {debt.hitCount > 0 && <span className="ep-hit-count"><Flame aria-hidden="true" />{debt.hitCount}</span>}</strong>
+            <small><span className="ep-id" title={debt.id}>{shortId(debt.id)}</span> · {sourceLabels[debt.source.type]} · {debt.source.ref}
+              {debt.tags?.slice(0, 2).map(tag => <span className="ep-row-tag" key={tag}>{tag}</span>)}</small>
+          </span>
+          <DebtDeadline debt={debt} today={data.today} at={at} />
+          <span className="ep-row-state" data-status={debt.status}><i />{debtState(debt)}</span>
+          <DebtPriorityBadge priority={debt.priority} />
+          <span className="ep-row-owner">{debt.owner || '待认领'}</span>
+          <ChevronRight className="ep-row-open" aria-hidden="true" />
+        </button>
       </li>)}</ul>
       {(previous || data.nextCursor) && <footer className="ep-pagination">
         <button type="button" className="ep-button" disabled={!previous} onClick={onPrevious}>上一页</button>
@@ -173,62 +189,4 @@ export function DebtList({ data, previous, onPrevious, onNext, onSelect }: {
       </footer>}
     </>}
   </section>;
-}
-
-export function PlanningGraph({ data, onCategory }: { data: PlanningStats; onCategory: (name: string) => void }) {
-  const maximum = Math.max(1, ...data.categories.map(row => row.unpaid + row.repaid + row.dropped));
-  return <section className="ep-surface ep-graph" aria-label="债务图谱">
-    <header className="ep-section-header"><div><h2>债务分类图谱</h2><p>按当前标签组归类，多标签债务可出现在多个分类。</p></div><Layers3 /></header>
-    {data.categories.length ? <><div className="ep-chart-key"><span data-tone="accent">未还</span><span data-tone="success">已偿还</span><span>已失效</span></div>
-      <div className="ep-category-rows">{data.categories.map(row => <button type="button" className="ep-category" key={row.name} onClick={() => onCategory(row.name)}>
-        <span>{row.name}</span><span className="ep-category-meter" role="img" aria-label={`未还 ${row.unpaid}，偿还 ${row.repaid}，失效 ${row.dropped}`}>
-          <i data-tone="accent" style={{ width: `${row.unpaid * 100 / maximum}%` }} />
-          <i data-tone="success" style={{ width: `${row.repaid * 100 / maximum}%` }} />
-          <i style={{ width: `${row.dropped * 100 / maximum}%` }} />
-        </span><span>{row.unpaid + row.repaid + row.dropped}</span><ArrowRight /></button>)}</div></> : <PlanningEmpty>暂无债务分类</PlanningEmpty>}
-  </section>;
-}
-
-export function PlanningEvolution({ data, screen }: { data: PlanningStats; screen: boolean }) {
-  const maximum = Math.max(1, data.backlogStart, ...data.buckets.map(row => row.backlog));
-  const points = [data.backlogStart, ...data.buckets.map(row => row.backlog)];
-  const line = points.map((value, index) => `${20 + index * 680 / (points.length - 1)},${155 - value / maximum * 125}`).join(' ');
-  const peak = Math.max(1, ...data.buckets.map(row => Math.max(
-    row.created + row.imported + row.reopened + row.transferredIn, row.repaid + row.dropped + row.extinct + row.merged + row.transferredOut,
-  )));
-  const metrics = [
-    ['期末未还', data.backlogEnd, `期初 ${data.backlogStart}`],
-    ['期间新增', data.created, `导入存量 ${data.imported}`],
-    ['期间偿还', data.repaid, `重开 ${data.reopened}`],
-    ['其他流出', data.dropped + data.extinct + data.merged, `失效 ${data.dropped} · 消失 ${data.extinct} · 合并 ${data.merged}`],
-  ] as const;
-  return <div className={`ep-evolution${screen ? ' ep-evolution--screen' : ''}`} aria-label="债务演进">
-    <div className="ep-metrics">{metrics.map(([label, value, sub]) => <article className="ep-card" key={label}><h2>{label}</h2><strong>{value}</strong><p>{sub}</p></article>)}</div>
-    <div className="ep-chart-grid">
-      <section className="ep-surface">
-        <header className="ep-section-header"><div><h2>未还存量</h2><p>{data.from} 至 {data.to} · 上海时间</p></div></header>
-        <svg className="ep-trend" viewBox="0 0 720 175" preserveAspectRatio="none" role="img" aria-label={`未还存量从 ${data.backlogStart} 变为 ${data.backlogEnd} 笔`}>
-          <path d="M20 30H700 M20 92.5H700 M20 155H700" className="ep-grid-lines" />
-          <polygon points={`20,155 ${line} 700,155`} className="ep-trend-fill" />
-          <polyline points={line} className="ep-trend-line" />
-        </svg>
-      </section>
-      <section className="ep-surface">
-        <header className="ep-section-header"><div><h2>流入与流出</h2><p>{data.transferredIn || data.transferredOut ? `转入 ${data.transferredIn} · 转出 ${data.transferredOut}` : '按日记录 · 笔数'}</p></div></header>
-        <div className="ep-chart-key"><span data-tone="accent">流入</span><span data-tone="success">偿还</span><span>其他流出</span></div>
-        <div className="ep-bar-chart" role="img" aria-label={`新增 ${data.created}，导入 ${data.imported}，重开 ${data.reopened}，已偿还 ${data.repaid}`}>
-          {data.buckets.map(row => {
-            const other = row.dropped + row.extinct + row.merged + row.transferredOut;
-            const out = row.repaid + other;
-            return <span className="ep-day-bar" key={row.day} title={`${row.day}：新增 ${row.created}、重开 ${row.reopened}、偿还 ${row.repaid}`}>
-              <span className="ep-in-bar" style={{ height: `${(row.created + row.imported + row.reopened + row.transferredIn) / peak * 50}%` }} />
-              <span className="ep-out-bar" style={{ height: `${out / peak * 50}%` }}>
-                <i style={{ flex: row.repaid }} /><i style={{ flex: other }} />
-              </span>
-            </span>;
-          })}
-        </div>
-      </section>
-    </div>
-  </div>;
 }

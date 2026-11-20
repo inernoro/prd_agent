@@ -201,11 +201,12 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     await page.keyboard.press('Enter');
     const verification = page.getByRole('dialog', { name: repayLabel });
     await verification.waitFor();
-    await verification.getByRole('combobox', { name: active.criteria[0].text }).selectOption('met');
-    await verification.getByRole('combobox', { name: active.criteria[1].text }).selectOption('na');
+    await verification.getByRole('radiogroup', { name: active.criteria[0].text }).getByText('达标', { exact: true }).click();
+    await verification.getByRole('radiogroup', { name: active.criteria[1].text }).getByText('不适用', { exact: true }).click();
     const missingReason = await verification.locator('input[name="note-c2"]').evaluate(input => input.required && input.validity.valueMissing);
     const metReasonOptional = await verification.locator('input[name="note-c1"]').evaluate(input => !input.required);
     check(missingReason && metReasonOptional, '偿还说明需只在对应标准选择不适用时必填');
+    check(await button(verification, '确认偿还').isDisabled(), '逐项已核对但缺少标注后的截图时，确认偿还应保持禁用');
     await page.keyboard.press('Escape');
     await verification.waitFor({ state: 'hidden' });
     await repay.waitFor();
@@ -243,7 +244,7 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     if (!browserBackClearedEditor) await page.keyboard.press('Escape');
     await progress.waitFor({ state: 'hidden' });
 
-    await page.getByRole('combobox', { name: '债务状态' }).selectOption('repaid');
+    await button(page.getByRole('group', { name: '债务状态' }), '已偿还').click();
     await button(page, paid.title).click();
     const paidDrawer = dialog(page, paid.title);
     await paidDrawer.getByText('整笔偿还的合成测试记录', { exact: true }).first().waitFor();

@@ -25,6 +25,8 @@ export const sourceLabels: Record<PlanningSource['type'], string> = {
 export const events: Record<PlanningEventKind, string> = {
   created: '登记', imported: '导入', updated: '补充记录', deferred: '暂缓', started: '开始处理', progress: '记录进展',
   repaid: '偿还', reopened: '重开', dropped: '失效', extinct: '随功能消失', merged: '接纳合并', merged_into: '并入其他债务',
+  verified: '认证债务', anchor_bound: '绑定功能', anchor_kept: '保留债务', extinct_pending: '疑似随功能消失', not_duplicate: '确认不同问题',
+  dup_flagged: '巡检发现疑似重复', planned: '排入计划',
   hit: '又踩到一次', branch_moved: '改挂决策', proposed: '提出', accepted: '确认', rejected: '驳回',
   amended: '补充说明', reviewed: '复核', superseded: '取代', deprecated: '废弃', step_added: '添加步骤', step_changed: '更新步骤',
 };
