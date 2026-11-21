@@ -187,6 +187,11 @@ public class PmAgentController : ControllerBase
         if (project == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
 
+        // 整个项目配置请求仅允许 owner/leader，先拒绝再构造任何写入。
+        if (!PmProjectMembership.CanManage(project, userId))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可更新项目"));
+
+        var filter = PmProjectMembership.WriteFilter(projectId, userId);
         var update = Builders<PmProject>.Update.Set(p => p.UpdatedAt, DateTime.UtcNow);
         if (request.Title != null) update = update.Set(p => p.Title, request.Title.Trim());
         if (request.Description != null) update = update.Set(p => p.Description, request.Description.Trim());
@@ -201,7 +206,12 @@ public class PmAgentController : ControllerBase
         if (request.DeliverableTypes != null)
             update = update.Set(p => p.DeliverableTypes,
                 request.DeliverableTypes.Select(t => (t ?? string.Empty).Trim()).Where(t => t.Length is > 0 and <= 20).Distinct().Take(30).ToList());
-        if (request.MemberIds != null) update = update.Set(p => p.MemberIds, request.MemberIds);
+        if (request.MemberIds != null)
+        {
+            var (members, observers) = await PmProjectMembership.MembersAsync(_db, project, request.MemberIds);
+            filter = PmProjectMembership.SnapshotFilter(project, userId);
+            update = update.Set(p => p.MemberIds, members).Set(p => p.ObserverIds, observers);
+        }
         if (request.Lifecycle != null && PmProjectLifecycle.All.Contains(request.Lifecycle))
         {
             update = update.Set(p => p.Lifecycle, request.Lifecycle);
@@ -209,7 +219,9 @@ public class PmAgentController : ControllerBase
                 update = update.Set(p => p.ClosedAt, DateTime.UtcNow);
         }
 
-        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId, update);
+        var result = await _db.PmProjects.UpdateOneAsync(filter, update);
+        if (result.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("PM_PROJECT_CHANGED", "项目或成员已变更，请刷新后重试"));
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
 
@@ -260,18 +272,14 @@ public class PmAgentController : ControllerBase
         var project = await FindAccessibleProjectAsync(projectId, userId);
         if (project == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
-        if (project.OwnerId != userId && project.LeaderId != userId)
+        if (!PmProjectMembership.CanManage(project, userId))
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理成员"));
 
-        // 项目经理不可被移除，始终保留在成员中
-        var ids = (request.MemberIds ?? new()).Append(project.LeaderId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
-        var valid = await _db.Users.Find(u => ids.Contains(u.UserId)).Project(u => u.UserId).ToListAsync();
-        var members = ids.Where(valid.Contains).ToList();
-        // 互斥：新成员从观察者列表中剔除
-        var observers = project.ObserverIds.Where(x => !members.Contains(x)).Distinct().ToList();
-
-        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
+        var (members, observers) = await PmProjectMembership.MembersAsync(_db, project, request.MemberIds ?? new());
+        var result = await _db.PmProjects.UpdateOneAsync(PmProjectMembership.SnapshotFilter(project, userId),
             Builders<PmProject>.Update.Set(p => p.MemberIds, members).Set(p => p.ObserverIds, observers).Set(p => p.UpdatedAt, DateTime.UtcNow));
+        if (result.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("PM_PROJECT_CHANGED", "项目或成员已变更，请刷新后重试"));
 
         var resolved = await ResolveMembersAsync(members);
         return Ok(ApiResponse<object>.Ok(new { members = resolved, memberIds = members }));
@@ -285,17 +293,19 @@ public class PmAgentController : ControllerBase
         var project = await FindAccessibleProjectAsync(projectId, userId);
         if (project == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
-        if (project.OwnerId != userId && project.LeaderId != userId)
+        if (!PmProjectMembership.CanManage(project, userId))
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理观察者"));
 
         // 成员（含 Leader）不能同时是观察者：互斥剔除
         var excluded = project.MemberIds.Append(project.LeaderId).Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet();
         var ids = (request.ObserverIds ?? new()).Where(x => !string.IsNullOrWhiteSpace(x) && !excluded.Contains(x)).Distinct().ToList();
-        var valid = await _db.Users.Find(u => ids.Contains(u.UserId)).Project(u => u.UserId).ToListAsync();
-        var observers = ids.Where(valid.Contains).ToList();
+        var observers = await PmProjectMembership.ValidUsersAsync(_db, ids);
 
-        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
+        var result = await _db.PmProjects.UpdateOneAsync(PmProjectMembership.SnapshotFilter(project, userId),
             Builders<PmProject>.Update.Set(p => p.ObserverIds, observers).Set(p => p.UpdatedAt, DateTime.UtcNow));
+
+        if (result.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("PM_PROJECT_CHANGED", "项目或成员已变更，请刷新后重试"));
 
         var resolved = await ResolveMembersAsync(observers);
         return Ok(ApiResponse<object>.Ok(new { observers = resolved, observerIds = observers }));
