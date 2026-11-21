@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4450,15 +4450,21 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         if not 200 <= status < 300:
             message = result.get("message") if isinstance(result, dict) else None
             retry = {"retry": {"requestId": retry_id}} if retry_id and (status == 0 or status >= 500) else None
-            die(message or "CDS 暂未确认本次操作，请检查连接并保留原请求编号", code=2 if 400 <= status < 500 else 3, extra=retry)
+            message = message or "CDS 暂未确认本次操作，请检查连接并保留原请求编号"
+            if retry and _HUMAN:
+                message = f"{message}\n本次请求编号 {retry_id}"
+            die(message, code=2 if 400 <= status < 500 else 3, extra=retry)
         if not isinstance(result, dict) or result.get("projectId") != project:
             die("CDS 返回的设计记录不属于当前项目")
         return result
 
     def send(command: dict, *, use_flag: bool = True) -> dict:
-        material = json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()
-        request_id = (getattr(args, "request_id", None) if use_flag else None) or (
-            secrets.token_hex(18) if command["type"] == "acceptance.start" else hashlib.sha256(material).hexdigest())
+        if use_flag:
+            request_id = getattr(args, "request_id", None) or secrets.token_hex(18)
+        else:
+            # A capture is derived from the acceptance run, and retries can reuse its original receipt.
+            material = json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()
+            request_id = hashlib.sha256(material).hexdigest()
         return request("POST", "/commands", {**command, "requestId": request_id}, retry_id=request_id)
 
     def read_input(filename: str) -> Any:

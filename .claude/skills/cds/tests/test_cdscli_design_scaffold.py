@@ -1,8 +1,12 @@
-"""A scaffold uses framework rules in both Markdown formats."""
+"""Exercise the design CLI entry points with an isolated workspace."""
 
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
+from zipfile import ZipFile
+
+import pytest
 
 from test_cdscli_instances import cli, run, save, workspace  # noqa: F401
 
@@ -96,3 +100,141 @@ def test_design_diff_detects_a_local_capture_change_and_keeps_missing_captures_u
     code, output = run('design', 'diff', 'DSN-fixture', '1', '2')
     assert code == 0, output
     assert json.loads(output)['data']['prototypeChanged'] is None
+
+
+@pytest.fixture
+def design_route(workspace, monkeypatch):
+    root, _ = workspace
+    save('https://cds.example', 'fixture', 'cdsp_fixture')
+    entry = {'projectId': 'fixture', 'id': 'DSN-fixture', 'versions': [{'version': 1}], 'frozen': 1, 'pullRequest': 7,
+             'reviewers': [], 'runs': [{'id': 'RUN-fixture', 'version': 1, 'commit': 'a' * 40, 'cells': []}]}
+    state = SimpleNamespace(root=root, writes=[], receipts={}, drop_response=False)
+
+    def request(method, path, body=None, **_kwargs):
+        if method == 'GET':
+            assert path == '/api/projects/fixture/design'
+            return 200, {'projectId': 'fixture', 'designs': [entry], 'frameworks': []}, {}
+        assert method == 'POST' and path == '/api/projects/fixture/design/commands'
+        assert body['designId'] == entry['id'] and body['requestId']
+        state.writes.append(body)
+        previous = state.receipts.get(body['requestId'])
+        if previous:
+            former, receipt = previous
+            if body != former:
+                return 409, {'message': '同一请求编号已经用于不同的内容'}, {}
+            return 200, {**receipt, 'reused': True}, {}
+        result = {'type': body['type'], 'designId': entry['id']}
+        if body['type'] == 'design.review':
+            entry['reviewers'] = [{'id': actor, 'label': actor} for actor in body['reviewerIds']]
+            result['version'] = 1
+        elif body['type'] == 'acceptance.record':
+            assert body['runId'] == entry['runs'][0]['id'] and body['commit'] == entry['runs'][0]['commit']
+            entry['runs'][0]['cells'] = body['cells']
+            result['runId'] = body['runId']
+        else:
+            assert body['type'] == 'acceptance.start'
+            result['runId'] = entry['runs'][0]['id']
+        receipt = {'projectId': 'fixture', 'reused': False, 'result': result}
+        state.receipts[body['requestId']] = (body, receipt)
+        if state.drop_response:
+            state.drop_response = False
+            return 0, {'error': 'timeout'}, {}
+        return 201, receipt, {}
+
+    monkeypatch.setattr(cli, '_request', request)
+    return state
+
+
+def design_data(*args):
+    code, output = run('design', *args)
+    assert code == 0, output
+    return json.loads(output)['data']
+
+
+def test_design_request_review_applies_all_three_independent_requests(design_route):
+    receipts = [design_data('request-review', 'DSN-fixture', '--reviewer', reviewer)
+                for reviewer in ('reviewer-a', 'reviewer-b', 'reviewer-a')]
+    final = design_data('list')['items'][0]['reviewers']
+    ids = {body['requestId'] for body in design_route.writes}
+    assert (len(ids), [receipt['reused'] for receipt in receipts], [reviewer['id'] for reviewer in final]) == (
+        3, [False, False, False], ['reviewer-a'])
+
+
+def test_design_record_applies_all_three_independent_requests(design_route):
+    evidence = design_route.root / 'cells.json'
+    receipts = []
+    for observation in ('证据 A', '证据 B', '证据 A'):
+        evidence.write_text(json.dumps([{'itemId': 'R-01', 'slot': 'desktop-light', 'status': 'unverified',
+                                         'actual': observation}]), encoding='utf-8')
+        receipts.append(design_data('record', 'DSN-fixture', '--run', 'RUN-fixture', '--commit', 'a' * 40, '--file', str(evidence)))
+    final = design_data('result', 'DSN-fixture', '--run', 'RUN-fixture')['run']['cells']
+    ids = {body['requestId'] for body in design_route.writes}
+    assert (len(ids), [receipt['reused'] for receipt in receipts], final[0]['actual']) == (3, [False, False, False], '证据 A')
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+def test_design_timeout_provides_the_request_id_for_exact_replay(design_route, explicit, capsys):
+    args = ('request-review', 'DSN-fixture', '--reviewer', 'reviewer-a')
+    initial = (*args, '--request-id', 'review-manual-fixture') if explicit else args
+    design_route.drop_response = True
+    code, output = run('design', *initial)
+    assert code == 3, output
+    request_id = json.loads(output)['retry']['requestId']
+    assert request_id == design_route.writes[0]['requestId']
+    if explicit:
+        assert request_id == 'review-manual-fixture'
+    repeated = design_data(*args, '--request-id', request_id)
+    assert repeated['reused'] is True
+    assert design_route.writes[0] == design_route.writes[1]
+    assert len(design_route.receipts) == 1
+    if not explicit:
+        design_route.drop_response = True
+        code, output = run('--human', 'design', *args)
+        assert code == 3, output
+        human_request_id = design_route.writes[-1]['requestId']
+        assert human_request_id != request_id
+        assert f'本次请求编号 {human_request_id}' in capsys.readouterr().err
+
+
+def test_design_accept_uses_stable_derived_ids_for_automatic_capture(design_route, monkeypatch):
+    row = {'itemId': 'R-01', 'slot': 'desktop-light', 'status': 'unverified', 'actual': '抓图完成'}
+
+    def capture(_project, _version, _run, _identity, record):
+        record(row)
+        record(row)
+        return {'captured': 1, 'measured': 0}
+
+    monkeypatch.setattr(cli, '_design_acceptance_browser', capture)
+    assert design_data('accept', 'DSN-fixture', '--request-id', 'start-fixture')['automation']['captured'] == 1
+    started, first, repeated = design_route.writes
+    assert started['type'] == 'acceptance.start' and started['requestId'] == 'start-fixture'
+    assert first['type'] == 'acceptance.record' and first['cells'] == [row]
+    assert first['requestId'] != started['requestId']
+    assert repeated == first
+    assert len(design_route.receipts) == 2
+
+
+def test_design_publish_keeps_idempotency_for_the_same_immutable_package(workspace, monkeypatch):
+    root, _ = workspace
+    save('https://cds.example', 'fixture', 'cdsp_fixture')
+    package = root / 'fixture.zip'
+    with ZipFile(package, 'w') as bundle:
+        bundle.writestr('design.json', json.dumps({'project': 'fixture', 'title': 'Fixture'}))
+        bundle.writestr('dist/index.html', '<main>Fixture</main>')
+    writes = []
+
+    def request(method, path, body=None, **_kwargs):
+        url = urlsplit(path)
+        assert method == 'POST' and url.path == '/api/projects/fixture/design/packages'
+        assert body == package.read_bytes()
+        params = parse_qs(url.query)
+        request_id = params['requestId'][0]
+        assert params['sourceCommit'] == ['a' * 40]
+        reused = request_id in writes
+        writes.append(request_id)
+        return 200 if reused else 201, {'projectId': 'fixture', 'reused': reused, 'result': {'version': 1}}, {}
+
+    monkeypatch.setattr(cli, '_request', request)
+    args = ('publish', '--zip', str(package), '--source-commit', 'a' * 40)
+    assert [design_data(*args)['reused'] for _ in range(2)] == [False, True]
+    assert writes[0] == writes[1]
