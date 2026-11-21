@@ -1,0 +1,16 @@
+[Unit]
+Description=CDS supplemental backup of object stores and empty Kafka topics
+After=network-online.target docker.service cds-master.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=768M
+TimeoutStartSec=15min
+StateDirectory=cds-supplemental-backup
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 /usr/local/lib/cds-supplemental-backup/backup.py --config /etc/cds-supplemental-backup.json

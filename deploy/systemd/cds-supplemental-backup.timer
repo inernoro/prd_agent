@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily supplemental CDS backup
+
+[Timer]
+OnCalendar=*-*-* 03:45:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=90
+
+[Install]
+WantedBy=timers.target
