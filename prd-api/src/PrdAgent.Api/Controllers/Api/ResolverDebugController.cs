@@ -17,10 +17,11 @@ namespace PrdAgent.Api.Controllers.Api;
 ///   POST /api/debug/resolver/test
 ///   GET  /api/debug/resolver/inspect?appCallerCode=xxx&modelType=xxx
 ///
-/// ⚠ 本接口仅供调试，正式上线前应改为管理员专属权限（目前用 [AllowAnonymous]
-/// 以便跨浏览器快速 curl；上线前收紧）。
+/// 仅允许具有模型读取权限的管理员访问；日志不记录调用参数。
 /// </summary>
 [ApiController]
+[Microsoft.AspNetCore.Authorization.Authorize]
+[TypeFilter(typeof(PrdAgent.Api.Filters.ResolverDiagnosticsFilter))]
 [Route("api/debug/resolver")]
 public class ResolverDebugController : ControllerBase
 {
@@ -54,10 +55,6 @@ public class ResolverDebugController : ControllerBase
         if (string.IsNullOrWhiteSpace(code))
             return BadRequest(new { error = "appCallerCode 不能为空" });
 
-        _logger.LogInformation(
-            "[ResolverDebug] Test 请求: code={Code} type={Type} expected='{Expected}'",
-            code, type, expected ?? "(null)");
-
         // 1. 读 AppCaller
         var appCaller = await _db.LLMAppCallers
             .Find(a => a.AppCode == code)
@@ -85,9 +82,9 @@ public class ResolverDebugController : ControllerBase
         {
             actual = await _resolver.ResolveAsync(code, type, expected, ct: ct);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            actualError = ex.Message;
+            actualError = "resolver_failed";
         }
 
         return Ok(new
@@ -97,14 +94,14 @@ public class ResolverDebugController : ControllerBase
             bound = requirement != null,
             candidatePools = groups.Select(g => new
             {
-                id = g.Id,
+                id = RedactId(g.Id),
                 name = g.Name,
                 code = g.Code,
                 priority = g.Priority,
                 models = g.Models?.Select(m => new
                 {
                     modelId = m.ModelId,
-                    platformId = m.PlatformId,
+                    platformId = RedactId(m.PlatformId),
                     health = m.HealthStatus.ToString(),
                     priority = m.Priority
                 }).ToArray()
@@ -116,12 +113,11 @@ public class ResolverDebugController : ControllerBase
                 resolutionType = actual.ResolutionType,
                 expectedModel = actual.ExpectedModel,
                 actualModel = actual.ActualModel,
-                actualPlatformId = actual.ActualPlatformId,
+                actualPlatformId = RedactId(actual.ActualPlatformId),
                 actualPlatformName = actual.ActualPlatformName,
-                modelGroupId = actual.ModelGroupId,
+                modelGroupId = RedactId(actual.ModelGroupId),
                 modelGroupName = actual.ModelGroupName,
-                apiUrl = actual.ApiUrl,
-                errorMessage = actual.ErrorMessage
+                errorMessage = actual.Success ? null : "resolver_failed"
             },
             liveResolverError = actualError,
         });
@@ -162,10 +158,10 @@ public class ResolverDebugController : ControllerBase
             appCallerCode = code,
             found = true,
             modelType,
-            modelGroupIds = req?.ModelGroupIds ?? new List<string>(),
+            modelGroupIds = (req?.ModelGroupIds ?? new List<string>()).Select(RedactId),
             pools = groups.Select(g => new
             {
-                id = g.Id,
+                id = RedactId(g.Id),
                 name = g.Name,
                 code = g.Code,
                 priority = g.Priority,
@@ -174,7 +170,7 @@ public class ResolverDebugController : ControllerBase
                 models = g.Models?.Select(m => new
                 {
                     modelId = m.ModelId,
-                    platformId = m.PlatformId,
+                    platformId = RedactId(m.PlatformId),
                     health = m.HealthStatus.ToString(),
                     healthInt = (int)m.HealthStatus,
                     priority = m.Priority
@@ -182,6 +178,9 @@ public class ResolverDebugController : ControllerBase
             })
         });
     }
+
+    private static string? RedactId(string? value) => string.IsNullOrEmpty(value) ? null :
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)))[..16];
 
     private static void SimulateMatch(List<ModelGroup> groups, string? expected, List<object> steps)
     {

@@ -246,6 +246,7 @@
 - [CDS Web 迁移运行手册 · 指南](./guide.cds.web-migration-runbook.md) `guide.cds.web-migration-runbook`
 - [缺陷管理 Agent 使用 · 指南](./guide.defect-agent.md) `guide.defect-agent`
 - [基础设施 Sandbox Agent · 指南](./guide.infra-sandbox-agent.md) `guide.infra-sandbox-agent`
+- [开发身份与诊断边界交接](./guide.development-security-handoff.md) `guide.development-security-handoff`
 - [ADR 文档原则：为未来的人留下架构选择的理由 · 指南](./guide.doc.pri.adr.md) `guide.doc.pri.adr`
 - [债务文档原则：让已知欠账有边界、有偿还条件 · 指南](./guide.doc.pri.debt.md) `guide.doc.pri.debt`
 - [设计文档原则：解释当前方案如何成立 · 指南](./guide.doc.pri.design.md) `guide.doc.pri.design`
