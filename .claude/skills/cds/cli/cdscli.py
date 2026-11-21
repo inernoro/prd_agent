@@ -4478,6 +4478,12 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("无法读取文件，请提供有效的 JSON")
 
     action = args.design_action
+    if action == "intake":
+        intake = request("GET", "/intake")
+        if intake.get("protocolVersion") != 1:
+            die("CDS 设计接入协议版本不符，请检查当前安装的技能与 CDS 版本")
+        ok(intake)
+
     if action == "publish":
         if args.zip:
             try:
@@ -4505,6 +4511,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             resolves[comment] = note
         query = {key: value for key, value in {
             "designId": args.id, "sourceCommit": commit, "sourcePath": source_path, "note": args.note,
+            "intent": args.intent, "designKey": args.design_key, "expectedVersion": args.expected_version,
             "resolves": json.dumps(resolves, sort_keys=True, ensure_ascii=False) if resolves else None,
             "review": "true" if args.review else None,
             "reviewerIds": json.dumps(sorted(set(args.reviewer))) if args.reviewer else None,
@@ -4667,14 +4674,14 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
 def _register_design_parser(sub: Any) -> None:
     design = sub.add_parser("design", help="设计稿件、版本、评论与做法验收").add_subparsers(dest="design_action", required=True)
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("intake", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
             parser.set_defaults(func=cmd_design_workspace)
             parser.add_argument("--project", help="默认使用当前仓库绑定的项目")
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
-            if action not in ("list", "publish", "reviewers", "scaffold"):
+            if action not in ("intake", "list", "publish", "reviewers", "scaffold"):
                 parser.add_argument("id")
             if action in ("publish", "request-review", "accept", "record", "freeze", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
@@ -4686,6 +4693,9 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--source-commit")
                 parser.add_argument("--source-path", help="用于核对的 Git 仓库相对目录，仓库根用 .")
                 parser.add_argument("--note")
+                parser.add_argument("--intent", choices=("create", "revise"), help="新稿或同稿续版")
+                parser.add_argument("--design-key", help="稳定的 module/draft 接入标识")
+                parser.add_argument("--expected-version", type=int, help="通过设计接入读取的最新版本")
                 parser.add_argument("--resolves", action="append", default=[])
                 parser.add_argument("--review", action="store_true")
             if action in ("publish", "request-review"):

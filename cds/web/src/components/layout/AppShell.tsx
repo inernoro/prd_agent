@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Activity, Check, CircleAlert, Clock, Contrast, Database, Expand, FileText, Gauge, KeyRound, Layers, LayoutGrid,
   LogOut, Menu, Monitor, Moon, MoreVertical, Plus, RefreshCw, Rocket, Scaling, Search, SearchCode, Settings, ShieldCheck,
-  Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, Waypoints, X } from 'lucide-react';
+  Shrink, SlidersHorizontal, SquareTerminal, Sun, Target, Upload, UserRound, Waypoints, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -721,7 +721,7 @@ function RailNav({
         </Link>
         <Link to="/engineering-planning" className="cds-rail-item" onClick={onNavigate}
           data-active={active === 'engineering-planning' ? 'true' : 'false'} aria-label="工程规划" title="工程规划">
-          <Waypoints />
+          <Target />
           <span className="cds-rail-full">工程规划</span>
           <span className="cds-rail-short">规划</span>
         </Link>

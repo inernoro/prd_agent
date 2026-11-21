@@ -80,6 +80,8 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     const overviewItem = ownerItems.slice(0, ownerItems.indexOf('</Link>'));
     expect(overviewItem).toContain('<Waypoints />');
     expect(overviewItem).toContain('<span>Overview</span>');
+    const planningItem = mainItems.slice(mainItems.indexOf('<Link to="/engineering-planning"'), mainItems.indexOf('<Link to="/design"'));
+    expect(planningItem).toContain('<Target />');
     const ownerRoutes = appSource.slice(appSource.indexOf('<Route element={<OwnerConsoleRoute />}>'));
     expect(ownerRoutes.slice(0, ownerRoutes.indexOf('</Route>'))).toContain('path="/overview"');
   });
