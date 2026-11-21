@@ -76,8 +76,8 @@
 .ep-badge[data-tone=success] { color: var(--ep-ok); background: color-mix(in srgb, var(--ep-ok) 8%, var(--ep-panel)); }
 .ep-badge[data-tone=warning] { color: var(--ep-warn); background: color-mix(in srgb, var(--ep-warn) 10%, var(--ep-panel)); }
 .ep-badge[data-tone=info] { color: color-mix(in srgb, var(--ep-info) 82%, var(--ep-fg)); background: color-mix(in srgb, var(--ep-info) 10%, var(--ep-panel)); }
-.ep-advancement-card .ep-badge { display: inline-flex; align-items: center; gap: .3rem; background: transparent; }
-.ep-advancement-card .ep-badge::before { content: ''; width: .38rem; height: .38rem; border-radius: 50%; background: currentColor; flex: none; }
+:is(.ep-advancement-card, .ep-trunk-card) .ep-badge { display: inline-flex; align-items: center; gap: .3rem; background: transparent; }
+:is(.ep-advancement-card, .ep-trunk-card) .ep-badge::before { content: ''; width: .38rem; height: .38rem; border-radius: 50%; background: currentColor; flex: none; }
 .ep-empty { color: var(--ep-muted); text-align: center; padding: 1.15rem .65rem; border: 1px dashed var(--ep-line); border-radius: .45rem; }
 .ep-text-button { border: 0; background: transparent; padding: 0; text-align: left; color: var(--ep-fg); cursor: pointer; overflow-wrap: anywhere; font-weight: 560; }
 .ep-text-button:hover, .ep-link:hover { color: var(--ep-accent-ink); text-decoration: underline; text-underline-offset: .2em; }

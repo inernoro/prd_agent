@@ -44,8 +44,8 @@
 .ep-clear-tag { font-size: 12px; color: var(--ep-accent-ink); background: color-mix(in srgb, var(--ep-accent) 10%, var(--ep-panel)); }
 .ep-debt-list-bar { display: flex; align-items: center; gap: 7px 12px; justify-content: space-between; min-width: 0; }
 .ep-debt-segments {
-  display: flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; overflow: auto;
-  padding: 2px; border-radius: 7px; background: var(--ep-soft); scrollbar-width: thin;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-width: 0; max-width: 100%;
+  padding: 2px; border-radius: 7px; background: var(--ep-soft);
 }
 .ep-debt-segments > button {
   display: flex; align-items: center; gap: 5px; padding: 4px 7px; min-height: 28px; border: 1px solid transparent;

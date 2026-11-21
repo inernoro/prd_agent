@@ -48,7 +48,7 @@
   color: var(--lane-color);
 }
 
-.ep-advancement-lane > header h2 { font-size: 13.5px; }
+.ep-advancement-lane > header h2 { font-size: 15px; }
 .ep-advancement-lane > header svg { flex: 0 0 auto; width: 16px; height: 16px; }
 .ep-advancement-lane > header b { margin-inline-start: auto; font-size: 18px; line-height: 28px; font-variant-numeric: tabular-nums; }
 .ep-advancement-lane .ep-advancement-hint { margin: -4px 4px 0; color: var(--ep-muted); font-size: 12.5px; line-height: 19.6px; }
