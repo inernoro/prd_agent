@@ -182,7 +182,6 @@ export function OwnerConsoleRoute(): JSX.Element {
 }
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
-const preloadOverviewPage = (): void => { void import('@/pages/OverviewPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
 const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
@@ -641,12 +640,9 @@ function RailNav({
           aria-label="概览"
           title="概览：全部项目的关系与体检"
           onClick={onNavigate}
-          onMouseEnter={preloadOverviewPage}
-          onFocus={preloadOverviewPage}
         >
           <Waypoints />
-          <span className="cds-rail-full">概览</span>
-          <span className="cds-rail-short">概览</span>
+          <span>Overview</span>
         </Link>
         {/*
          * 发布中心先展示线上版本、责任与主干差异；执行发布从中心进入发布控制台。

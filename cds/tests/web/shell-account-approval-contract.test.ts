@@ -77,6 +77,9 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     ]);
     const ownerItems = mainItems.slice(mainItems.indexOf('{canManageSettings ? <>'), mainItems.indexOf('</> : null}'));
     expect(ownerItems).toContain('to="/overview"');
+    const overviewItem = ownerItems.slice(0, ownerItems.indexOf('</Link>'));
+    expect(overviewItem).toContain('<Waypoints />');
+    expect(overviewItem).toContain('<span>Overview</span>');
     const ownerRoutes = appSource.slice(appSource.indexOf('<Route element={<OwnerConsoleRoute />}>'));
     expect(ownerRoutes.slice(0, ownerRoutes.indexOf('</Route>'))).toContain('path="/overview"');
   });
