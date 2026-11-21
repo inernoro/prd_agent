@@ -4595,6 +4595,8 @@ export interface AgentKey {
   scope: 'rw';
   /** Optional restriction to this project's planning reads or proposal intake. */
   planningAccess?: 'read' | 'propose';
+  /** Optional restriction to this project's private design reads or Git-verified publishing. */
+  designAccess?: 'read' | 'publish';
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** Verified account that issued the key, when present. */

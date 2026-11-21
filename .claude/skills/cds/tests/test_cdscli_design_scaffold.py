@@ -62,3 +62,37 @@ def test_design_accept_root_measurement_does_not_approve_a_container_rule(monkey
     version['acceptance'] = [{**full, 'rule': '375 宽下文档没有横向溢出'}]
     cli._design_acceptance_browser('fixture', version, run, {}, rows.append)
     assert rows[-1]['status'] == 'passed'
+
+
+def test_design_diff_detects_a_local_capture_change_and_keeps_missing_captures_unverified(workspace, monkeypatch):
+    save('https://cds.example', 'fixture', 'cdsp_fixture')
+    screens = [{'id': 'source', 'themes': ['light', 'dark']}, {'id': 'unchanged', 'themes': ['light']},
+               {'id': 'missing', 'themes': ['light']}]
+    before = {'version': 1, 'sourceCommit': 'a' * 40, 'sha256': '1' * 64, 'prototypeSha256': '6' * 64, 'screens': screens, 'resolves': {},
+              'renders': {'source': {'light': {'id': 'capture-1', 'sha256': '2' * 64}},
+                           'unchanged': {'light': {'id': 'capture-2', 'sha256': '3' * 64}}}}
+    after = {**before, 'version': 2, 'sourceCommit': 'b' * 40, 'sha256': '4' * 64, 'prototypeSha256': '7' * 64,
+             'renders': {'source': {'light': {'id': 'capture-3', 'sha256': '5' * 64}},
+                         'unchanged': {'light': {'id': 'capture-4', 'sha256': '3' * 64}}}}
+    monkeypatch.setattr(cli, '_request', lambda *_args, **_kwargs: (
+        200, {'projectId': 'fixture', 'designs': [{'projectId': 'fixture', 'id': 'DSN-fixture', 'versions': [before, after]}],
+              'frameworks': []}, {}))
+    code, output = run('design', 'diff', 'DSN-fixture', '1', '2')
+    assert code == 0, output
+    result = json.loads(output)['data']
+    assert result['prototypeChanged'] is True
+    assert result['left']['sourceCommit'] == before['sourceCommit'] and result['right']['sourceCommit'] == after['sourceCommit']
+    changes = {row['id']: row for row in result['screens']}
+    assert changes['source']['status'] == 'same'
+    assert changes['source']['visual'] == {'light': 'changed', 'dark': 'unverified'}
+    assert changes['unchanged']['visual'] == {'light': 'same'}
+    assert changes['missing']['visual'] == {'light': 'unverified'}
+    after['prototypeSha256'] = before['prototypeSha256']
+    code, output = run('design', 'diff', 'DSN-fixture', '1', '2')
+    assert code == 0, output
+    result = json.loads(output)['data']
+    assert result['prototypeChanged'] is False and result['packageChanged'] is True
+    del before['prototypeSha256']
+    code, output = run('design', 'diff', 'DSN-fixture', '1', '2')
+    assert code == 0, output
+    assert json.loads(output)['data']['prototypeChanged'] is None

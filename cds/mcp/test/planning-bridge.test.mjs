@@ -149,9 +149,10 @@ test('forwards debt modules and a proposed delivery plan start date', async t =>
   await bridge.call(proposeTool, input);
   assert.equal(state.requests.at(-1).body.draft.module, module);
   const delivery = { requestId: 'fixture-plan-start', kind: 'plan', source,
-    draft: { title: '分阶段交付导出', startAt: '2026-11-24', dueAt: '2026-12-12' } };
+    draft: { title: '分阶段交付导出', startAt: '2026-11-24', dueAt: '2026-12-12', debtIds: ['D-0001', 'D-0002'] } };
   await bridge.call(proposeTool, delivery);
   assert.deepEqual(state.requests.at(-1).body.draft, delivery.draft);
+  await assert.rejects(bridge.call(proposeTool, { ...delivery, draft: { ...delivery.draft, debtIds: ['D-0001', 'D-0001'] } }));
 });
 
 test('reads duplicate candidates and submits only the caller’s explicit distinction', async t => {

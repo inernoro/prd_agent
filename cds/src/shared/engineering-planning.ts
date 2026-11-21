@@ -189,7 +189,7 @@ export type PlanningPlan = RecordBase & PlanDraft & { source: PlanningSource; st
 export type ProposalDecisionChange = { decisionId: string; expectedVersion: number; change: 'amended' | 'accepted' };
 export type ProposalDraft = { kind: 'debt'; draft: DebtDraft }
   | { kind: 'decision'; draft: DecisionDraft; decisionChange?: ProposalDecisionChange }
-  | { kind: 'plan'; draft: PlanDraft };
+  | { kind: 'plan'; draft: PlanDraft & { debtIds?: string[] } };
 export type PlanningProposalSource = PlanningSource & { excerpt?: string };
 type ProposalMetadata = { skill?: string; confidence?: number };
 export type PlanningRecordKind = ProposalDraft['kind'];

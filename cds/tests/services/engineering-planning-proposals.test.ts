@@ -85,6 +85,55 @@ describe('engineering planning proposal review', () => {
     expect((await planning.debts(project)).items).toEqual([]);
   });
 
+  it('creates a plan and its selected debt links only after one member approval', async () => {
+    const debtId = recordId(await create('fixture-plan-debt'));
+    const foreignId = recordId(await create('fixture-other-debt', otherProject));
+    const submit = { type: 'proposal.submit', kind: 'plan', requestId: 'fixture-plan', source,
+      draft: { title: '本轮偿还计划', debtIds: [debtId] } };
+    await expect(planning.command(project, author, { ...submit, draft: { ...submit.draft, debtIds: [foreignId] } }))
+      .rejects.toMatchObject({ status: 404 });
+    await expect(planning.command(project, author, { ...submit, draft: { ...submit.draft, debtIds: [debtId, debtId] } }))
+      .rejects.toMatchObject({ status: 400 });
+    const pending = await planning.command(project, author, submit);
+    expect(pending.result).toMatchObject({ status: 'pending', draft: { debtIds: [debtId] } });
+    const pendingBoard = await planning.board(project, reviewer);
+    expect(pendingBoard.plans).toEqual([]);
+    expect(pendingBoard.relatedDebts?.[debtId]).toMatchObject({ title, status: 'open' });
+    const approval = { type: 'proposal.accept', proposalId: recordId(pending), requestId: 'fixture-plan-confirm' };
+    await expect(planning.command(project, { ...author, permissions: reviewer.permissions }, approval)).rejects.toMatchObject({ status: 403 });
+    const accepted = await planning.command(project, reviewer, approval);
+    expect((await open().command(project, reviewer, approval)).reused).toBe(true);
+
+    const plans = (await open().board(project, reviewer)).plans;
+    expect(accepted.result).toMatchObject({ status: 'accepted', result: { kind: 'plan', id: plans[0].id } });
+    expect(plans).toHaveLength(1);
+    expect(plans[0]).not.toHaveProperty('debtIds');
+    expect(plans[0].steps).toMatchObject([{ kind: 'debt', title, relatedId: debtId, status: 'todo' }]);
+    const debt = await planning.debt(project, debtId);
+    expect(debt.debt).toMatchObject({ status: 'open', version: 1, source });
+    expect(debt.events.filter(event => event.type === 'planned')).toMatchObject([{ relatedPlanId: plans[0].id }]);
+  });
+
+  it('leaves the proposal and both debts unchanged when a selected debt closes before approval', async () => {
+    const first = recordId(await create('fixture-other-during-approval'));
+    const second = recordId(await planning.command(project, reviewer, {
+      type: 'debt.create', requestId: 'fixture-debt-to-close', title: '定时任务跨时区漏发', source: { ...source, ref: 'fixture:other-source' },
+    }));
+    const submission = { type: 'proposal.submit', kind: 'plan', requestId: 'fixture-plan-stale', source,
+      draft: { title: '待确认的偿还计划', debtIds: [first, second] } };
+    const proposal = await planning.command(project, author, submission);
+    await planning.command(project, reviewer, { type: 'debt.drop', requestId: 'fixture-close-debt', debtId: second,
+      expectedVersion: 1, kind: 'cancelled', reason: '这笔历史记录已关闭' });
+    await expect(planning.command(project, reviewer, { type: 'proposal.accept', requestId: 'fixture-stale-confirm', proposalId: recordId(proposal) }))
+      .rejects.toMatchObject({ status: 409, code: 'plan_debt_closed' });
+    await expect(planning.command(project, author, { ...submission, requestId: 'fixture-fresh-plan',
+      draft: { ...submission.draft, title: '更新后的待确认计划' } })).rejects.toMatchObject({ status: 409, code: 'plan_debt_closed' });
+    const board = await planning.board(project, reviewer);
+    expect(board.plans).toEqual([]);
+    expect(board.proposals).toMatchObject([{ id: recordId(proposal), status: 'pending' }]);
+    expect((await planning.debt(project, first)).events.some(event => event.type === 'planned')).toBe(false);
+  });
+
   it('matches only current project debts and rechecks the displayed target before recording a hit', async () => {
     const foreign = await create('fixture-foreign', otherProject, similarTitle);
     const submitted = await propose('fixture-wrong-project');

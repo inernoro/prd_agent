@@ -222,8 +222,8 @@ function DecisionCard({ decision, plans, progress, today, onSelect, review }: {
   </li>;
 }
 
-function ProposalCard({ proposal, decision, approve, busy, onSelect, onConfirm, onReject }: {
-  proposal: PlanningProposal; decision?: PlanningDecision; approve: boolean; busy: boolean;
+function ProposalCard({ proposal, decision, relatedDebts, approve, busy, onSelect, onConfirm, onReject }: {
+  proposal: PlanningProposal; decision?: PlanningDecision; relatedDebts: PlanningBoard['relatedDebts']; approve: boolean; busy: boolean;
   onSelect: SelectRecord; onConfirm: ConfirmProposal; onReject: (item: PlanningProposal) => void;
 }) {
   const Actor = proposal.author.kind === 'agent' ? Bot : UserRound;
@@ -234,6 +234,8 @@ function ProposalCard({ proposal, decision, approve, busy, onSelect, onConfirm, 
   const outdated = Boolean(change && decision && change.expectedVersion !== decision.version);
   const suggestion = proposal.kind === 'debt' ? proposal.suggest : undefined;
   const excerpt = proposal.source.excerpt;
+  const plannedDebts = proposal.kind === 'plan' ? proposal.draft.debtIds ?? [] : [];
+  const unavailableDebt = plannedDebts.some(id => !relatedDebts?.[id] || closedDebt(relatedDebts[id].status));
   return <li className="ep-advancement-card ep-advancement-proposal" data-card="proposal">
     <div className="ep-decision-tags"><PlanningBadge tone={proposal.kind === 'debt' || decisionKind === 'debt' ? 'accent' : 'info'}>{changeLabel || `${type}提案`}</PlanningBadge></div>
     <p className="ep-advancement-meta"><Actor aria-hidden />{proposal.skill && `${proposal.skill} · `}{proposal.author.label} · <time dateTime={proposal.createdAt}>{monthDay(proposal.createdAt)}</time></p>
@@ -247,13 +249,24 @@ function ProposalCard({ proposal, decision, approve, busy, onSelect, onConfirm, 
     {change && decision && outdated && <p className="ep-proposal-match"><TriangleAlert aria-hidden />提案基于 v{change.expectedVersion}，当前决策为 v{decision.version}</p>}
     {suggestion && <p className="ep-proposal-match"><Copy aria-hidden /><span>可能与 <button type="button" className="ep-text-button"
       onClick={() => onSelect({ kind: 'debt', id: suggestion.dupOf })}>{shortId(suggestion.dupOf)} {suggestion.dupTitle}</button> 是同一个问题</span></p>}
+    {!!plannedDebts.length && <details open={plannedDebts.length <= 3}>
+      <summary className="ep-advancement-summary">拟排入 {plannedDebts.length} 笔债务</summary>
+      <ul>{plannedDebts.map(id => {
+        const debt = relatedDebts?.[id];
+        return <li key={id} className="ep-advancement-meta">
+          {debt ? <button type="button" className="ep-text-button" onClick={() => onSelect({ kind: 'debt', id })}>{shortId(id)} {debt.title}</button> : shortId(id)}
+          <span>{debt ? debtLabels[debt.status] : '记录不可用'}</span>
+        </li>;
+      })}</ul>
+    </details>}
+    {unavailableDebt && <p className="ep-proposal-match"><TriangleAlert aria-hidden />拟排入的债务已关闭或不可用，请核对后重新提出。</p>}
     {approve ? <div className="ep-advancement-actions">
       {suggestion ? <>
         <button type="button" className="ep-button ep-button--primary" disabled={busy} onClick={() => onConfirm(proposal, 'hit')}>
           记为 {shortId(suggestion.dupOf)} 又踩到一次
         </button>
         <button type="button" className="ep-button" disabled={busy} onClick={() => onConfirm(proposal, 'new')}>仍然新记一笔</button>
-      </> : <button type="button" className="ep-button ep-button--primary" disabled={busy || outdated} onClick={() => onConfirm(proposal)}>
+      </> : <button type="button" className="ep-button ep-button--primary" disabled={busy || outdated || unavailableDebt} onClick={() => onConfirm(proposal)}>
         {change?.change === 'amended' ? '确认修订' : changeLabel || proposalApprovals[proposal.kind]}
       </button>}
       <button type="button" className="ep-button ep-planning-quiet" disabled={busy} onClick={() => onReject(proposal)}>驳回</button>
@@ -272,7 +285,7 @@ export function PlanningBoardView({ data, busy, onSelect, onConfirm, onReject }:
     <Lane kind="pending" count={pending.length + review.length}>
       {pending.map(proposal => {
         const decisionId = proposal.kind === 'decision' ? proposal.decisionChange?.decisionId : proposal.draft.decisionId;
-        return <ProposalCard key={proposal.id} proposal={proposal} approve={approve} busy={busy} onSelect={onSelect}
+        return <ProposalCard key={proposal.id} proposal={proposal} relatedDebts={data.relatedDebts} approve={approve} busy={busy} onSelect={onSelect}
           decision={decisionId ? decisions.get(decisionId) : undefined} onConfirm={onConfirm} onReject={onReject} />;
       })}
       {review.map(row => <DecisionCard key={row.decision.id} {...row} today={data.today} onSelect={onSelect} review />)}

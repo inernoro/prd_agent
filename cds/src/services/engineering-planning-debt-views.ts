@@ -71,6 +71,9 @@ export function projectDebtNavigation(state: PlanningState, today: string) {
   }
   const related = new Set(planned);
   for (const decision of state.decisions.values()) for (const id of decision.resolves ?? []) related.add(id);
+  for (const proposal of state.proposals.values()) {
+    if (proposal.kind === 'plan' && proposal.status === 'pending') for (const id of proposal.draft.debtIds ?? []) related.add(id);
+  }
   const recentHits = new Map<string, number>();
   for (const event of state.events) {
     if (event.entity !== 'debt' || !['created', 'repaid', 'dropped', 'extinct', 'merged_into', 'hit'].includes(event.type)) continue;

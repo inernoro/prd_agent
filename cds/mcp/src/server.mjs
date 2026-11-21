@@ -3,6 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createDtsBridge } from './dts-bridge.mjs';
+import { createDesignBridge } from './design-bridge.mjs';
 import { createPlanningBridge } from './planning-bridge.mjs';
 import { createBridge, readProjectCredentials } from './bridge.mjs';
 
@@ -10,9 +11,12 @@ async function main() {
   const credentials = await readProjectCredentials();
   const dts = process.argv.includes('--dts');
   const planning = process.argv.includes('--planning');
-  if (dts && planning) throw new Error('请为数据同步和工程规划分别配置 MCP 服务');
-  const bridge = planning ? createPlanningBridge(credentials) : dts ? createDtsBridge(credentials) : createBridge(credentials);
-  const server = new Server({ name: planning ? 'cds-planning' : dts ? 'cds-dts' : 'cds-code-review', version: '1.0.0' }, { capabilities: { tools: {} } });
+  const design = process.argv.includes('--design');
+  if ([dts, planning, design].filter(Boolean).length > 1) throw new Error('请为不同的 CDS 能力分别配置 MCP 服务');
+  const [name, create] = design ? ['cds-design', createDesignBridge] : planning ? ['cds-planning', createPlanningBridge]
+    : dts ? ['cds-dts', createDtsBridge] : ['cds-code-review', createBridge];
+  const bridge = create(credentials);
+  const server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await bridge.listTools() }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {

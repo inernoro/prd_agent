@@ -119,3 +119,16 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 ```
 
 先在项目中运行 `cdscli connect`。工具按项目返回的能力显示，可读取工程规划、提交待确认提案，或在用户明确授权后直接登记债务。MCP 的回执是当前操作依据，提案确认由有权限的成员在 CDS 中完成。写入没有回执时复用原请求编号和内容。
+
+计划提案可在 `draft.debtIds` 提交已核对的本项目未偿债务编号。成员确认后同时创建计划和关联步骤。
+
+## 私有设计
+
+将启动参数设为 `--design` 并从已绑定的 CDS 项目工作区启动。请由系统所有者为智能体签发项目内 `designAccess: "read"` 或 `designAccess: "publish"` 的专用凭据。把已授权的主机、项目和凭据注入当前执行环境，用 `cdscli init --yes` 建立本地绑定。
+
+| 工具 | 输入 | 行为 |
+|---|---|---|
+| `cds_design_read` | `view` 取 `designs`、`frameworks`、`design` 或 `framework`。读取单项时填写 `id`，可选 `version` | 列出稿件和框架，或读取选定版本。 |
+| `cds_design_publish` | `zipPath`、`sourceCommit`、`sourcePath`、`requestId`。更新时填写原 `designId`，可选 `note` | 由 CDS 核对该项目 Git 提交和文件后，发布私有版本。同一稿件沿用同一发布者。 |
+
+项目内 ZIP 须从已同步的 Git 提交导出，最大 4 MiB。源目录包含稿件清单、思路和原型。发布后用项目内同稿编号读取新旧版本。对比实拍可用 `cdscli design diff` 或 CDS 设计页。

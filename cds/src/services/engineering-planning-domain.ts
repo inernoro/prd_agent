@@ -214,7 +214,13 @@ export class PlanningMutation {
   private newPlan(draft: PlanDraft, source: PlanningSource, attribution?: EventDetail, initialSteps: PlanningStepDraft[] = []) {
     const found = [...this.state.plans.values()].find(row => sourceMatches(row.source, source)
       && (!attribution?.proposal || proposalTitleKey(row.title) === proposalTitleKey(draft.title)));
-    if (found) { this.reused = true; return found; }
+    if (found) {
+      if (attribution?.proposal && initialSteps.some(step => !found.steps.some(item => item.kind === step.kind && item.relatedId === step.relatedId))) {
+        closed('同一来源已有计划，请在原计划中核对需要加入的债务');
+      }
+      this.reused = true;
+      return found;
+    }
     this.related(draft);
     const row: PlanningPlan = { ...this.base('PLN'), ...draft, source, steps: [] };
     this.event('plan', row.id, 'created', attribution);
@@ -254,6 +260,7 @@ export class PlanningMutation {
     if (found) { this.reused = true; return this.withProposalSuggestion(found); }
     this.related(command.draft);
     if (command.kind === 'decision' && command.decisionChange) this.decisionForChange(command.decisionChange);
+    if (command.kind === 'plan') for (const debtId of command.draft.debtIds ?? []) this.planDebt(debtId);
     const { type: _, requestId: _request, ...payload } = command;
     const row = this.withProposalSuggestion({ ...this.base('PRO'), ...payload, author: this.actor, status: 'pending' });
     this.changes.proposals.push(row);
@@ -294,7 +301,15 @@ export class PlanningMutation {
             ? this.changeDecision({ ...original.decisionChange, reason: detail.note }, { revision: original.draft, attribution })
             : this.newDecision(original.draft, original.source, detail);
           break;
-        case 'plan': record = this.newPlan(original.draft, original.source, detail); break;
+        case 'plan': {
+          const { debtIds, ...draft } = original.draft;
+          const steps = debtIds?.map((debtId): PlanningStepDraft => {
+            const debt = this.planDebt(debtId);
+            return { kind: 'debt', title: debt.title, relatedId: debt.id };
+          });
+          record = this.newPlan(draft, original.source, detail, steps);
+          break;
+        }
       }
     }
     this.reused = false;
@@ -581,15 +596,20 @@ export class PlanningMutation {
     return row;
   }
 
+  private planDebt(debtId: string) {
+    const debt = this.state.debts.get(debtId);
+    if (!debt) missing();
+    if (!unpaid(debt)) rejectPlanning(409, 'plan_debt_closed', '请选择当前项目仍未偿还的债务，刷新后重新核对计划。');
+    return debt;
+  }
+
   private addPlanStep(plan: PlanningPlan, draft: PlanningStepDraft): PlanningStep {
     if (plan.steps.length >= 100) rejectPlanning(400, 'invalid', '此计划最多可有 100 个步骤');
     const { kind, title, relatedId, dueAt, owner } = draft;
     if (relatedId) {
       if (plan.steps.some(step => step.kind === kind && step.relatedId === relatedId)) closed('这项记录已经排进该计划');
       if (kind === 'debt') {
-        const debt = this.state.debts.get(relatedId);
-        if (!debt) missing();
-        if (!unpaid(debt)) closed('请把未还的债务排进计划');
+        const debt = this.planDebt(relatedId);
         const earlier = dueAt && (!debt.dueAt || dueAt < debt.dueAt) ? dueAt : undefined;
         const detail = { note: `排入落地计划「${plan.title}」`, relatedPlanId: plan.id };
         if (earlier) this.saveDebt(debt, { dueAt: earlier }, 'planned', { ...detail, dates: { dueAt: [debt.dueAt ?? null, earlier] } });

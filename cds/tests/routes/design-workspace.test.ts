@@ -21,6 +21,7 @@ const html = '<!doctype html><html><head><meta charset="utf-8"></head><body><h1>
 const permissions = ['read', 'propose', 'write', 'approve'] as const;
 const people = new Map<string, DesignActor>([
   ['designer', { kind: 'agent', id: 'designer', label: 'Fixture designer', permissions }],
+  ['git-designer', { kind: 'agent', id: 'git-designer', label: 'Fixture restricted designer', permissions, gitPublishOnly: true }],
   ['author', { kind: 'human', id: 'author', label: 'Fixture reviewer', permissions }],
   ['other', { kind: 'human', id: 'other', label: 'Other member', permissions }],
   ['steward', { kind: 'human', id: 'steward', label: 'Fixture steward', permissions, steward: true }],
@@ -350,6 +351,22 @@ describe('private CDS design workspace', () => {
     expect((await publish('outside-source', draft(), { ...source, sourceCommit: 'f'.repeat(40) })).status).toBe(201);
     const { designs } = await (await get()).json();
     expect(designs.map((entry: any) => entry.versions[0].sourceVerification).sort()).toEqual(['declared', 'git']);
+  });
+
+  it('requires a visible Git source when the caller or an explicitly scoped key requires it', async () => {
+    const sourcePath = 'design/fixture';
+    const publishAs = (requestId: string, query: Record<string, string>, as: string) => fetch(
+      `${base}${projectId}/design/packages?${new URLSearchParams({ requestId, sourceCommit, ...query })}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/zip', 'x-fixture-user': as }, body: new Uint8Array(draft()),
+      });
+    expect((await publishAs('declared-restricted', {}, 'git-designer')).status).toBe(409);
+    expect((await publishAs('outside-source', { sourcePath, sourceCommit: 'f'.repeat(40) }, 'git-designer')).status).toBe(409);
+    expect((await publishAs('require-git', { requireGit: 'true' }, 'designer')).status).toBe(409);
+    expect((await publishAs('confirmed-git', { sourcePath }, 'git-designer')).status).toBe(201);
+    const { designs } = await (await get()).json();
+    expect(designs).toHaveLength(1);
+    expect(designs[0].versions[0].sourceVerification).toBe('git');
+    expect(designs[0].versions[0].prototypeSha256).toBe(createHash('sha256').update(html).digest('hex'));
   });
 
   it('prepares a Git-verified frozen design for human confirmation without releasing a link', async () => {

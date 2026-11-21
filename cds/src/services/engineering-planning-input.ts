@@ -359,7 +359,14 @@ function proposal(kind: unknown, draft: unknown, decisionChange: unknown): Propo
     case 'debt': return { kind: 'debt', draft: debtDraft(object(draft, 'draft', debtFields)) };
     case 'decision': return { kind: 'decision', draft: decisionDraft(object(draft, 'draft', decisionFields)),
       ...(decisionChange === undefined ? {} : { decisionChange: proposalDecisionChange(decisionChange) }) };
-    case 'plan': return { kind: 'plan', draft: planDraft(object(draft, 'draft', planFields)) };
+    case 'plan': {
+      const data = object(draft, 'draft', [...planFields, 'debtIds']);
+      const plan = planDraft(data);
+      if (data.debtIds === undefined) return { kind: 'plan', draft: plan };
+      const debtIds = collection(data.debtIds, 'debtIds', row => planningId(row, '债务编号'), 100, 1);
+      if (new Set(debtIds).size !== debtIds.length) invalid('debtIds', '债务编号重复');
+      return { kind: 'plan', draft: { ...plan, debtIds } };
+    }
   }
 }
 

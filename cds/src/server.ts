@@ -1825,14 +1825,22 @@ function presentedAiAccessKey(req: express.Request): string | undefined {
       })();
 }
 
-function planningKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
-  if (!key.planningAccess) return true;
-  const path = normalizedPlanningPath(req.path);
-  if (!path) return false;
+function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
+  if (!key.planningAccess && !key.designAccess) return true;
+  if (key.planningAccess && key.designAccess) return false;
   const segment = req.path.replace(/^\/_cds\/api\//i, '/api/').split('/')[3];
   try { if (decodeURIComponent(segment) !== key.projectId) return false; }
   catch { return false; }
-  return req.method === 'GET' || req.method === 'HEAD'
+  const read = req.method === 'GET' || req.method === 'HEAD';
+  if (key.designAccess) {
+    const route = '/api/projects/:projectId/design';
+    const path = normalizedDesignPath(req.path);
+    return read && (path === route || path === `${route}/artifacts/:artifactId`)
+      || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
+  }
+  const path = normalizedPlanningPath(req.path);
+  if (!path) return false;
+  return read
     || (key.planningAccess === 'propose' && req.method === 'POST' && path === '/api/projects/:projectId/planning/commands');
 }
 
@@ -1907,7 +1915,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if (stateService && headerKey.startsWith('cdsp_')) {
       const match = stateService.findAgentKeyForAuth(headerKey);
       if (match) {
-        if (!planningKeyAllowsRequest(req, match)) return null;
+        if (!projectKeyAllowsRequest(req, match)) return null;
         stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -2286,8 +2294,10 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use((req, res, next) => {
     const key = presentedAiAccessKey(req);
     const match = key?.startsWith('cdsp_') ? deps.stateService.findAgentKeyForAuth(key) : null;
-    if (match && !planningKeyAllowsRequest(req, match)) {
-      res.status(403).set('Cache-Control', 'private, no-store').json({ error: 'planning_key_scope', message: '此凭据仅限授权项目的工程规划操作' });
+    if (match && !projectKeyAllowsRequest(req, match)) {
+      res.status(403).set('Cache-Control', 'private, no-store').json(match.designAccess
+        ? { error: 'design_key_scope', message: '此凭据仅限授权项目的设计操作' }
+        : { error: 'planning_key_scope', message: '此凭据仅限授权项目的工程规划操作' });
       return;
     }
     next();
@@ -4108,7 +4118,7 @@ export function createServer(deps: ServerDeps): express.Express {
     const h = trustedClusterIdentity(req) ? undefined : presentedAiAccessKey(req);
     if (h && h.startsWith('cdsp_') && !(req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       const match = deps.stateService.findAgentKeyForAuth(h);
-      if (match && planningKeyAllowsRequest(req, match)) {
+      if (match && projectKeyAllowsRequest(req, match)) {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -5540,7 +5550,7 @@ export function createServer(deps: ServerDeps): express.Express {
     reviewCandidates: async projectId => (await projectMemberDirectory(projectId))
       .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin })),
     resolveAccess: (req, projectId) => {
-      const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId);
+      const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId, 'design');
       return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req) } : null;
     },
   }));

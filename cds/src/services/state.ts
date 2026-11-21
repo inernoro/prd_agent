@@ -3912,7 +3912,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * Returns null on any failure (malformed prefix, no
    * matching hash, key revoked).
    */
-  findAgentKeyForAuth(plaintextKey: string): { projectId: string; keyId: string; planningAccess?: AgentKey['planningAccess'] } | null {
+  findAgentKeyForAuth(plaintextKey: string): ({ projectId: string; keyId: string } & Pick<AgentKey, 'planningAccess' | 'designAccess'>) | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsp_')) return null;
     // Strict shape: cdsp_<slugHead>_<suffix>
     const parts = plaintextKey.split('_');
@@ -3945,7 +3945,9 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           const entryBuf = Buffer.from(entry.hash, 'hex');
           if (entryBuf.length !== hashBuf.length) continue;
           if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
-            return { projectId: project.id, keyId: entry.id, ...(entry.planningAccess ? { planningAccess: entry.planningAccess } : {}) };
+            return { projectId: project.id, keyId: entry.id,
+              ...(entry.planningAccess ? { planningAccess: entry.planningAccess } : {}),
+              ...(entry.designAccess ? { designAccess: entry.designAccess } : {}) };
           }
         } catch {
           /* malformed hash in state, skip */

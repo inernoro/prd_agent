@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.4"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3892,6 +3892,8 @@ def cmd_planning(args: argparse.Namespace) -> None:
                 candidates = _planning_duplicate_candidates(result.get("candidates"))
                 die("请通过 debt duplicates 核对疑似重复，确认是两个问题时填写区别", code=2,
                     extra={"errorCode": "possible_duplicate", "candidates": candidates})
+            if status == 409 and isinstance(result, dict) and result.get("error") == "plan_debt_closed":
+                die("请重新读取债务并选择仍未偿还的记录", code=2, extra={"errorCode": "plan_debt_closed"})
             messages = {
                 400: "工程规划参数不符合要求", 401: "项目凭据无效或已过期",
                 403: "当前授权不允许此操作", 404: "项目或记录不存在，或当前账户无法访问",
@@ -4574,11 +4576,26 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("请提供稿件存在的两个版本")
         lrows = {item["id"]: item for item in before["screens"]}
         rrows = {item["id"]: item for item in after["screens"]}
-        changes = [{"id": key, "status": ("added" if key not in lrows else "removed" if key not in rrows
-                                       else "same" if lrows[key] == rrows[key] else "changed")}
-                   for key in sorted(lrows.keys() | rrows.keys())]
+        changes = []
+        for key in sorted(lrows.keys() | rrows.keys()):
+            old_screen, new_screen = lrows.get(key), rrows.get(key)
+            status = "added" if old_screen is None else "removed" if new_screen is None else "same" if old_screen == new_screen else "changed"
+            old_renders = before.get("renders", {}).get(key, {})
+            new_renders = after.get("renders", {}).get(key, {})
+            themes = set((old_screen or {}).get("themes", [])) | set((new_screen or {}).get("themes", []))
+            visual = {}
+            for theme in sorted(themes):
+                old_sha = old_renders.get(theme, {}).get("sha256")
+                new_sha = new_renders.get(theme, {}).get("sha256")
+                visual[theme] = "unverified" if not old_sha or not new_sha else "same" if old_sha == new_sha else "changed"
+            changes.append({"id": key, "status": status, "visual": visual})
         ok({"projectId": project, "screens": changes,
-            "structure": [field for field in ("spec", "acceptance", "checks") if before.get(field) != after.get(field)],
+            "left": {"version": before["version"], "sourceCommit": before["sourceCommit"], "sha256": before["sha256"]},
+            "right": {"version": after["version"], "sourceCommit": after["sourceCommit"], "sha256": after["sha256"]},
+            "packageChanged": before["sha256"] != after["sha256"],
+            "prototypeChanged": (before["prototypeSha256"] != after["prototypeSha256"]
+                                 if before.get("prototypeSha256") and after.get("prototypeSha256") else None),
+            "structure": [field for field in ("spec", "rationale", "acceptance", "checks", "framework", "frameworkVersion") if before.get(field) != after.get(field)],
             "resolves": after["resolves"]})
 
     if action == "result":

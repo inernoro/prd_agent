@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.3
+  version: 0.26.4
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design review, canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.3 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
+> **版本**：v0.26.4 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -339,6 +339,8 @@ CDS 的通用 Agent 通道为技能、cdscli 与 REST。工程规划、代码审
 
 工程规划 MCP 启动参数为 `--planning`，提供 `cds_planning_read`、`cds_planning_propose`、`cds_planning_record_debt`。实际能力以项目服务端目录为准。MCP 不可用时用下列 CLI 提交同一结构化命令。自动技能负责提交和回读，确认、推进、失效及验收偿还由已授权成员在 CDS 工作区操作。
 
+用户要求把已有债务排进一份计划时，先用 `cds_planning_read` 的 `debt` 视图核对该项目的债务和当前状态。`cds_planning_propose` 的 `kind: "plan"` 支持在 `draft.debtIds` 填入确认要安排的未偿债务编号。成员可从推进页打开原债务，确认一次即可生成计划及偿还步骤。CLI 可使用 `planning submit --file` 提交同一结构。确认前有记录关闭时，先重新读取并核对有效范围。
+
 ```bash
 $CLI planning capabilities
 $CLI planning show
@@ -394,7 +396,11 @@ $CLI debt stats
 
 在项目内讨论出稿时读当前框架，评审时用对方指定的稿件版本。明确收到发布请求后，从已提交的目录发布。归档目录至少包含 `design.json`、`思路.md` 和清单声明的单文件 HTML 路径。默认原型入口是 `dist/index.html`。稿件附件沿用项目权限。
 
-脚手架把框架版本、规则类别和自检待办写进稿件。从 `--dir` 发布时带上仓库相对目录，CDS 可在该项目的代码仓库中核对时验证提交和文件。其他仓库的归档保留发布声明。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。两版有同尺寸截图时，可看实际像素差异。
+外部设计智能体使用 `cds/mcp/src/server.mjs --design`，从目标项目工作区启动。CDS 系统所有者可在 `POST /api/projects/:projectId/agent-keys` 签发 `designAccess` 为 `read` 或 `publish` 的项目凭据。用执行环境注入已授权的 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY`，以 `cdscli init --yes` 写入该工作区绑定。凭据用 `cds_design_read` 读取私有框架和稿件。具备发布权限时，用 `cds_design_publish` 提交工作区内的 ZIP、已同步至项目 Git 的 `sourceCommit` 和 `sourcePath`。续发提供原 `designId`，沿用同一已授权发布者。首次发布保存回执，超时沿用原 `requestId` 重试。定稿、签收和固定版本分享由获授权成员处理。
+
+脚手架把框架版本、规则类别和自检待办写进稿件。从 `--dir` 发布时带上仓库相对目录，CDS 可在该项目的代码仓库中核对时验证提交和文件。常规项目凭据可记录其他仓库的发布声明。仅设计发布凭据及设计 MCP 要求项目 Git 实际核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
+
+新版到达后，用 `design diff <稿件编号> <旧版> <新版>` 固定两个版本及提交。输出包括画面清单、框架和规则变化、包及 HTML 摘要变化，并按画面及主题比对已有实拍。缺实拍的主题显示 `unverified`。同尺寸实拍可在设计「对比」查看像素差异。先复现变化区域，再调整受影响的页面。
 
 发布后在稿件的「规范」或 `design list` 的版本回读 `frameworkCheck`，其中记录固定框架版本、稿件提交和系统测量。R-07 测量 375px 视口下的整页宽度。框架同时限定横向滚动容器时，还会检查内部容器并记录异常尺寸。表格、图表和代码块依照稿件的实际结构识别。容器用途不明或缺少实测时保持未验证，作者在 `checks/result.json` 中的自检仍可单独回读。发布端须通过 `CDS_DESIGN_BROWSER_EXECUTABLE` 使用可运行 Chromium 沙箱的隔离执行环境。
 

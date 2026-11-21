@@ -15,7 +15,7 @@ import {
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revision-store.js';
 
-export type DesignActor = PlanningActor & { steward?: boolean };
+export type DesignActor = PlanningActor & { steward?: boolean; gitPublishOnly?: boolean };
 type Receipt = {
   projectId: string; reused: boolean;
   result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
@@ -263,10 +263,12 @@ export class DesignWorkspaceService {
   async publish(projectId: string, actor: DesignActor, query: Record<string, unknown>, bytes: Buffer) {
     requireProjectRead(actor);
     write(actor);
-    const params = designRecord(query, '发布参数', ['requestId', 'designId', 'sourceCommit', 'sourcePath', 'note', 'resolves', 'review', 'reviewerIds']);
+    const params = designRecord(query, '发布参数', ['requestId', 'designId', 'sourceCommit', 'sourcePath', 'note', 'resolves', 'review', 'reviewerIds', 'requireGit']);
     const requestId = designId(params.requestId, '请求编号');
     const sourceCommit = designCommit(params.sourceCommit);
     const sourcePath = params.sourcePath === undefined ? undefined : designSourcePath(params.sourcePath);
+    if (params.requireGit !== undefined && params.requireGit !== 'true') invalidDesign('Git 来源校验须使用 requireGit=true');
+    const requireGit = Boolean(actor.gitPublishOnly || params.requireGit === 'true');
     const note = optionalText(params.note, '发布说明', 1000);
     const loaded = await readDesignPackage(bytes);
     if (loaded.project !== projectId) invalidDesign('稿件包项目与当前 CDS 项目不符');
@@ -288,7 +290,8 @@ export class DesignWorkspaceService {
     }
     const prototypeId = randomUUID();
     const frameworkChecks = new Map<number, DesignFrameworkCheck>();
-    return this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: loaded.sha256, resolves, review: params.review, reviewerIds },
+    return this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: loaded.sha256, resolves,
+      review: params.review, reviewerIds, ...(requireGit ? { requireGit } : {}) },
       async ({ state, now }) => {
         const id = selectedId ?? `DSN-${randomUUID().slice(0, 8).toUpperCase()}`;
         const existing = state.designs.get(id);
@@ -307,6 +310,7 @@ export class DesignWorkspaceService {
         }
         const { title, sha256, rationale, screens, acceptance, spec, checks, framework, group, tags, decisionIds } = loaded;
         const source = sourcePath && await this.deps.sourcePackage?.(projectId, sourceCommit, sourcePath);
+        if (requireGit && !source) rejectPlanning(409, 'design_git_source_required', '项目 Git 尚无法核验此稿件的提交和目录，请同步已提交的稿件再发布。');
         if (source && (await readDesignPackage(source)).filesSha256 !== loaded.filesSha256) conflict('上传内容与项目 Git 中的提交和目录不一致');
         let frameworkCheck: DesignFrameworkCheck | undefined;
         if (framework && frameworkRevision) {
@@ -323,6 +327,7 @@ export class DesignWorkspaceService {
           assets.push({ id, mime: 'image/png', base64: capture.content.toString('base64') });
         }
         const version: DesignVersion = { version: (previous?.version ?? 0) + 1, title, sourceCommit, sha256, prototypeId,
+          prototypeSha256: designDigest(loaded.prototype),
           sourcePath, sourceVerification: source ? 'git' : 'declared',
           createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
           ...(frameworkCheck ? { frameworkCheck } : {}),

@@ -6,7 +6,8 @@ import { canHumanAccessProject } from './human-project-access.js';
 import { isAuthenticatedHuman } from './human-auth.js';
 import { dtsCredentialAllowed } from './dts-access.js';
 
-export function resolveEngineeringPlanningAccess(req: Request, state: StateService, projectId: string): PlanningActor | null {
+export function resolveEngineeringPlanningAccess(req: Request, state: StateService, projectId: string,
+  workspace: 'planning' | 'design' = 'planning'): (PlanningActor & { gitPublishOnly?: true }) | null {
   const project = state.getProject(projectId);
   if (!project || project.id !== projectId || project.mirror) return null;
   const request = req as Request & {
@@ -21,10 +22,14 @@ export function resolveEngineeringPlanningAccess(req: Request, state: StateServi
     if (key.projectId !== projectId || !dtsCredentialAllowed(state, { kind: 'project-key', id: key.keyId }, projectId)) return null;
     const credential = state.getAgentKeys(projectId).find(item => item.id === key.keyId);
     if (!credential) return null;
+    if ((credential.designAccess && workspace !== 'design') || (credential.planningAccess && workspace !== 'planning')) return null;
+    const identity = { kind: 'agent' as const, id: credential.principalId ?? `project-key:${credential.id}`, label: credential.label };
+    if (credential.designAccess) {
+      return credential.designAccess === 'publish' ? { ...identity, permissions: ['read', 'write'], gitPublishOnly: true }
+        : { ...identity, permissions: ['read'] };
+    }
     return {
-      kind: 'agent',
-      id: credential.principalId ?? `project-key:${credential.id}`,
-      label: credential.label,
+      ...identity,
       permissions: credential.planningAccess === 'read' ? ['read'] : credential.planningAccess === 'propose'
         ? ['read', 'propose'] : ['read', 'propose', 'write'],
     };

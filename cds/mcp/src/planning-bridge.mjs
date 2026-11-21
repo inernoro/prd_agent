@@ -66,6 +66,7 @@ const schemas = {
     }).strict() }).strict(),
     z.object({ ...proposalSubmit, kind: z.literal('plan'), draft: z.object({
       ...titleAndSummary, decisionId: id.optional(), owner: text(120).optional(), startAt: day.optional(), dueAt: day.optional(),
+      debtIds: z.array(id).min(1).max(100).refine(ids => new Set(ids).size === ids.length).optional(),
     }).strict() }).strict(),
   ]),
   cds_planning_record_debt: z.object({ ...submit, ...debt, distinction: distinction.optional() }).strict(),
@@ -74,7 +75,7 @@ const schemas = {
 const permissions = { cds_planning_read: 'read', cds_planning_propose: 'propose', cds_planning_record_debt: 'write' };
 const descriptions = {
   cds_planning_read: '读当前 CDS 项目的推进、债务、证据与历史或演进。decisions 按日常说法及适用对象检索，changes 读配置变更事实，duplicates 按标题查找疑似重复。项目随已授权凭据确定。',
-  cds_planning_propose: '根据用户要求或已确认的工程取舍提交债务、决策和计划草稿，可附上技能、把握度及触发来源。由项目成员确认入账。',
+  cds_planning_propose: '根据用户要求或已确认的工程取舍提交债务、决策和计划草稿，可附上技能、把握度及触发来源。计划可附当前项目的未偿债务编号。项目成员确认后才入账。',
   cds_planning_record_debt: '用户明确要求登记这笔债务时使用。用户确认另记且给出区别时，提交已核对的候选编号和说明。返回正式债务编号。重试沿用原 requestId 与内容。',
 };
 export const PLANNING_TOOLS = Object.entries(schemas).map(([name, schema]) => ({

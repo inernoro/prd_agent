@@ -30,7 +30,7 @@ export type DesignFrameworkCheck = {
 
 export type DesignVersion = {
   version: number; title: string; sourceCommit: string; sha256: string; prototypeId: string; createdAt: string;
-  sourcePath?: string; sourceVerification?: 'git' | 'declared';
+  sourcePath?: string; sourceVerification?: 'git' | 'declared'; prototypeSha256?: string;
   publisher: { id: string; label: string }; note?: string; screens: DesignScreen[]; acceptance: DesignRule[];
   rationale: string; spec: DesignMaterial; checks?: Record<string, unknown>; framework?: string; frameworkVersion?: number;
   frameworkCheck?: DesignFrameworkCheck;

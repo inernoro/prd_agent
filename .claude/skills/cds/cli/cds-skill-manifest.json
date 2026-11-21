@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.26.3",
+  "version": "0.26.4",
   "skills": [
     "cds",
     "cds-project-scan",
@@ -9,7 +9,7 @@
     "preview-url"
   ],
   "files": {
-    "cds/SKILL.md": "dcde7be5e9e20de29099c594aded909d4e23f7e544e93661f089bb64c01795b8",
+    "cds/SKILL.md": "f103d8863f4432f59add833ec85ac9565898d062f07db8f7befbc6d0e475ec50",
     "cds/cli/acceptance/.gitignore": "5875f28fb25c8a9449faa5ebb5100a488f79ea807932fb21fb52ce48fcab1db0",
     "cds/cli/acceptance/build_report_html.py": "332ef0716bfc531f3c815acc783695121fb1a6fe25c5001312b4cd34ff7ce9af",
     "cds/cli/acceptance/cds-harness.mjs": "be6a9af00cb5ae704a6f08f295795d3921d9f860447bf9b5dc207faf2e9cef75",
@@ -17,7 +17,7 @@
     "cds/cli/acceptance/design-browser.mjs": "1d2e474d5d4a6f93e34f78b52bae070b174a5cbb793871bf4be6e475dc997c97",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "b4fc92d8948e56a8006a6480bfe2d016b13d93d68b7f53186ada5df4b1d701df",
+    "cds/cli/cdscli.py": "eecf0ddf82b4770f8e1c0f7b98a7c6cbc63114d33f97148b328f298f64ecc400",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "003ae9a82cd1a9536cbd27c1842166513e4f629d046ff0a513bdef5b238ac46a",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -35,7 +35,7 @@
     "cds/tests/test_cdscli_deploy_trigger_failure_reason.py": "e0723fdd5f734d6de38b4a6886a5450d94320ba4a40a4bb7ddb91bbd7a5898e3",
     "cds/tests/test_cdscli_deployment_run.py": "f4a4522456d3aeb60b36c30d259c34b1ee09de3f0afb5bc65c5bf15a468e34f1",
     "cds/tests/test_cdscli_deployment_version.py": "9acc9773bba8fe93d1b57781c1b8e6a142820e284d4629e6168ee7ecf20883bf",
-    "cds/tests/test_cdscli_design_scaffold.py": "d7501612924a4cdb3fd4bdaf1bc9a3f70ad0a3fe20f25b4afc98f8bb4405a989",
+    "cds/tests/test_cdscli_design_scaffold.py": "9e71c9f1f5367f2ff6c3e1f0681ba5f1749412dfc7f0b8d331cd409282d3aff6",
     "cds/tests/test_cdscli_disk.py": "9eaa6fd1dc4669f26ba325533fc0497afde5bdda335d35aa6e6f872405f5a42a",
     "cds/tests/test_cdscli_dts.py": "83bd88247122e23194a4bcfaf1780de6fca0937a5d898f9a2818fb6ecf8906db",
     "cds/tests/test_cdscli_env.py": "1556d0403f60d6f6695f33f96b52db324ce62fe18d4e8fd20ad8c4906c8bfa99",
@@ -71,5 +71,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-21T17:42:46.672664+00:00"
+  "generatedAt": "2026-11-21T17:57:50.671465+00:00"
 }
