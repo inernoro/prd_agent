@@ -52,7 +52,7 @@
     "route": "/overview",
     "name": "全局关系概览",
     "page": "pages/OverviewPage.tsx",
-    "kind": "relations",
+    "kind": "overview",
     "workspace": "fill"
   },
   {

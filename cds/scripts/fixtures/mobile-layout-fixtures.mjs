@@ -164,6 +164,23 @@ const EXACT = {
   '/api/notices': { notices: [] },
   '/api/notices/read-all': { ok: true, changed: 0 },
   '/api/projects': { projects: [project] },
+  '/api/overview/topology': {
+    generatedAt: '2026-11-20T00:00:00Z',
+    summary: { errors: 0, warnings: 0, infos: 0 },
+    projects: [{
+      projectId: PROJECT_ID,
+      slug: project.slug,
+      name: project.name,
+      branch: null,
+      branchCount: 0,
+      counts: { services: 0, sites: 0, apis: 0, webs: 0, workers: 0 },
+      lint: { errors: 0, warnings: 0, infos: 0 },
+      headline: '暂无待处理问题',
+      findings: [],
+      edges: [],
+      inboundEdges: 0,
+    }],
+  },
   [`/api/projects/${PROJECT_ID}/planning`]: {
     projectId: PROJECT_ID, protocolVersion: 1, permissions: ['read'], today: '2026-11-20',
     decisions: [], plans: [], proposals: [], events: [], pendingReviewCount: 0, debtBranches: {}, relatedDebts: {},
