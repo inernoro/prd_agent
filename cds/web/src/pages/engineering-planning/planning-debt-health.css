@@ -1,0 +1,54 @@
+.ep-health {
+  display: grid;
+  gap: .65rem;
+  min-width: 0;
+  padding: .85rem .95rem;
+  background: hsl(var(--surface-raised));
+  border: 1px solid hsl(var(--border));
+  border-radius: .58rem;
+}
+.ep-health-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .45rem .8rem;
+}
+.ep-health-row p { margin-top: .17rem; color: hsl(var(--muted-foreground)); }
+.ep-health-details { display: grid; gap: .3rem; min-width: 0; }
+.ep-health-meta { color: hsl(var(--muted-foreground)); font-size: .86rem; }
+.ep-health-actions { display: flex; flex-wrap: wrap; gap: .45rem; }
+.ep-health-badge {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: baseline;
+  margin-inline-start: .36rem;
+  gap: .22rem;
+  border-radius: .3rem;
+  padding: .12rem .36rem;
+  background: hsl(var(--surface-sunken));
+  color: hsl(var(--muted-foreground));
+  font-size: .78rem;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.ep-health-badge svg, .ep-health-evidence svg { width: .85rem; height: .85rem; flex: 0 0 auto; }
+.ep-health-badge[data-health=verified] { background: hsl(var(--info-soft)); color: hsl(var(--info)); }
+.ep-health-badge[data-health=missing] { background: hsl(var(--warn-soft)); color: hsl(var(--warn-ink)); }
+.ep-coin[data-status="pending-extinct"] { border-style: dashed; border-color: hsl(var(--warn)); color: hsl(var(--warn-ink)); background: hsl(var(--warn-soft)); }
+.ep-health-removal {
+  display: grid;
+  gap: .43rem;
+  min-width: 0;
+  padding: .65rem .75rem;
+  border: 1px solid hsl(var(--warn) / .3);
+  border-radius: .48rem;
+  background: hsl(var(--warn-soft));
+}
+.ep-health-removal h4 { margin: 0; color: hsl(var(--warn-ink)); font-size: .93rem; font-weight: 660; }
+.ep-health-evidence { list-style: none; margin: 0; padding: 0; color: hsl(var(--foreground)); }
+.ep-health-evidence a { display: inline-flex; align-items: center; gap: .28rem; text-decoration: underline; text-underline-offset: .16em; }
+.ep-health-form { display: grid; gap: .65rem; min-width: 0; padding: .85rem .95rem 0; }
+.ep-health-form textarea { min-height: 4rem; }
+.ep-health-form .ep-dialog-footer { margin: .22rem -.95rem 0; }
+.ep-health-toggle { display: flex; align-items: center; gap: .36rem; }

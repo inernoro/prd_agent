@@ -28,8 +28,13 @@ cdscli — CDS 管理 CLI (MVP)
 """
 from __future__ import annotations
 import argparse
+import base64
 import contextlib
 import hashlib
+import getpass
+import http.cookiejar
+import html
+import io
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
 import math
@@ -46,11 +51,12 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.23.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3709,6 +3715,1016 @@ def _acceptance_lease(task_id: str) -> str:
         return token
     except (OSError, ValueError, AttributeError):
         die("没有可用的领取票据，请先领取任务", code=1)
+
+
+def _planning_proposal_payload(args: argparse.Namespace, project: str) -> dict[str, Any]:
+    trigger = {"ci": "test", "adr-file": "adr"}.get(args.trigger, args.trigger)
+    source = {"type": trigger, "ref": args.ref}
+    if args.url is not None:
+        source["url"] = args.url
+    if args.excerpt is not None:
+        source["excerpt"] = args.excerpt
+
+    draft = {"title": args.title}
+    if args.summary is not None:
+        draft["summary"] = args.summary
+    decision_change = None
+    if args.change is not None:
+        if args.kind != "decision" or not args.decision or not args.expected_version or args.expected_version < 1:
+            die("修订或采纳提案需要指定原决策编号及当前版本")
+        decision_change = {"decisionId": args.decision, "expectedVersion": args.expected_version, "change": args.change}
+    elif args.expected_version is not None or (args.kind == "decision" and args.decision is not None):
+        die("请选择修订或采纳，并指定原决策编号及当前版本")
+    elif args.decision is not None:
+        draft["decisionId"] = args.decision
+    for key, value in (("whyDebt", args.why_debt), ("priority", args.priority), ("criteria", args.criterion),
+                       ("tags", args.tag), ("module", args.module)):
+        if value is None:
+            continue
+        if args.kind != "debt":
+            die("模块、优先级、欠债理由、偿还标准和标签用于债务提案")
+        draft[key] = value
+    if args.kind == "decision" and trigger == "adr" and args.url:
+        draft["links"] = [{"type": "adr", "url": args.url, "title": args.ref[:120]}]
+    if args.alias or args.applies_to or args.evidence_level:
+        if args.kind != "decision":
+            die("日常说法、适用对象和证据等级用于决策提案")
+        if args.alias:
+            draft["aliases"] = args.alias
+        if args.applies_to:
+            draft["appliesTo"] = [{"kind": kind, "ref": name} for kind, name in args.applies_to]
+        if args.evidence_level:
+            if not args.url:
+                die("请用 --url 提供决策原始依据")
+            if args.evidence_level == "inferred" and not args.evidence_basis:
+                die("推断的决策需要说明推断依据")
+            draft["provenance"] = {key: value for key, value in {
+                "level": args.evidence_level, "url": args.url, "occurredOn": args.occurred_on,
+                "decidedBy": args.decided_by, "basis": args.evidence_basis,
+            }.items() if value is not None}
+    elif args.occurred_on or args.decided_by or args.evidence_basis:
+        die("请提供 --evidence-level 以填写原始依据")
+    if args.target_label and not args.target:
+        die("请指定预览目的地的路径")
+    if args.target and not args.pr_url:
+        die("请提供对应的拉取请求链接")
+    if args.pr_url:
+        if args.kind != "decision":
+            die("请在债务或计划提案的触发来源中附上拉取请求链接")
+        draft["pullRequest"] = {"url": args.pr_url}
+        if args.target:
+            draft["pullRequest"]["target"] = {"label": args.target_label or args.target, "path": args.target}
+
+    body = {"type": "proposal.submit", "kind": args.kind, "draft": draft, "source": source}
+    if decision_change is not None:
+        body["decisionChange"] = decision_change
+    skill = args.skill if args.skill is not None else _safe_identity_env("CDS_SKILL_NAME", "CODEX_SKILL_NAME", max_length=80)
+    if skill:
+        body["skill"] = skill
+    if args.confidence is not None:
+        if not 0 <= args.confidence <= 1:
+            die("请填写 0 到 1 之间的把握度")
+        body["confidence"] = args.confidence
+    material = json.dumps([project, body], sort_keys=True, ensure_ascii=False).encode()
+    body["requestId"] = args.request_id or "proposal:" + hashlib.sha256(material).hexdigest()
+    return body
+
+
+def _planning_duplicate_candidates(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list) or len(items) > 6:
+        die("CDS 返回的疑似重复债务列表无效，请重新查询")
+    candidates = []
+    for item in items:
+        if not isinstance(item, dict):
+            die("CDS 返回的疑似重复债务格式无效，请重新查询")
+        candidate_id = item.get("id")
+        score = item.get("similarity")
+        if (not isinstance(candidate_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.:@/+\-]{1,160}", candidate_id)
+                or not isinstance(item.get("title"), str) or item.get("status") not in ("open", "deferred", "in_progress", "repaid", "dropped")
+                or type(score) not in (int, float) or not 0 <= score <= 1):
+            die("CDS 返回的疑似重复债务格式无效，请重新查询")
+        candidate = {key: item[key] for key in ("id", "title", "status", "similarity")}
+        for key in ("owner", "summary"):
+            if isinstance(item.get(key), str):
+                candidate[key] = item[key]
+        if type(item.get("version")) is int:
+            candidate["version"] = item["version"]
+        candidates.append(candidate)
+    return candidates
+
+
+def _read_planning_file(filename: str) -> Any:
+    try:
+        with open(filename, "rb") as stream:
+            content = stream.read(3 * 1024 * 1024 + 1)
+        if len(content) > 3 * 1024 * 1024:
+            die("提交文件过大，请分批提交")
+        return json.loads(content)
+    except (OSError, ValueError):
+        die("无法读取命令文件，请提供有效 JSON")
+
+
+def _repayment_screenshot(stage: str, source: str, rectangle: str) -> dict:
+    filename, separator, label = source.partition("=")
+    suffix = Path(filename).suffix.lower()
+    mime = {".png": "image/png", ".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".webp": "image/webp"}.get(suffix)
+    if not separator or not label.strip() or not mime:
+        die("请用 图片文件=证据说明 提供 PNG、JPEG 或 WebP 截图")
+    try:
+        position = [float(value) for value in rectangle.split(",")]
+        if len(position) != 4 or not all(0 <= value <= 1 for value in position):
+            raise ValueError("invalid rectangle")
+    except ValueError:
+        die("--mark 请填写 0 到 1 之间的 x,y,width,height")
+    try:
+        with open(filename, "rb") as stream:
+            pixels = stream.read(600 * 1024 + 1)
+    except OSError:
+        die("无法读取截图文件")
+    if not pixels or len(pixels) > 600 * 1024:
+        die("截图须为 600 KiB 以内的有效图片")
+    return {"stage": stage, "label": label.strip(), "dataUrl": f"data:{mime};base64," + base64.b64encode(pixels).decode("ascii"),
+            "mark": dict(zip(("x", "y", "width", "height"), position))}
+
+
+def cmd_planning(args: argparse.Namespace) -> None:
+    bound = os.environ.get("CDS_PROJECT_ID", "").strip()
+    project = (args.project or bound).strip()
+    if not project:
+        die("工程规划需要项目，请先 cdscli connect 或指定 --project")
+    if os.environ.get("CDS_PROJECT_KEY", "").strip() and bound and project != bound:
+        die("项目凭据只能访问已绑定项目的工程规划")
+    path = "/api/projects/" + urllib.parse.quote(project, safe="") + "/planning"
+    human_identity = _human_session_headers(args.as_user) if getattr(args, "as_user", None) else {}
+
+    def scope(resource: Any) -> dict[str, Any]:
+        if not isinstance(resource, dict) or resource.get("projectId") != project:
+            die("CDS 返回的工程规划记录与当前项目不符")
+        return resource
+
+    def scoped_rows(value: dict[str, Any], field: str) -> None:
+        if field not in value:
+            return
+        rows = value[field]
+        if not isinstance(rows, list):
+            die("CDS 工程规划列表格式无效")
+        for row in rows:
+            scope(row)
+
+    def request(method: str, endpoint: str, body: Any = None) -> dict[str, Any]:
+        try:
+            status, result, _ = _request(method, path + endpoint, body=body, timeout=45, extra_headers=human_identity,
+                                         fatal_network_errors=False, follow_redirects=False)
+        except (http.client.HTTPException, OSError):
+            status, result = 0, None
+        if not 200 <= status < 300:
+            retry = None
+            retry_note = ""
+            if (status == 0 or status >= 500) and body and getattr(args, "allow_duplicate", False):
+                ids = body.get("distinction", {}).get("debtIds", [])
+                retry = {"retry": {"requestId": body["requestId"], "duplicateIds": ids}}
+                if _HUMAN:
+                    retry_note = f" 原候选为 {'、'.join(ids)}，重试时逐个填写 --duplicate-id。" if ids else " 请按普通登记用原请求编号重试。"
+            if status == 0:
+                die("CDS 未返回可确认的结果，请检查连接后用原请求编号和内容重试" + retry_note if body
+                    else "工程规划读取失败，请检查连接后重试", extra=retry)
+            if status == 409 and isinstance(result, dict) and result.get("error") == "possible_duplicate":
+                candidates = _planning_duplicate_candidates(result.get("candidates"))
+                die("请通过 debt duplicates 核对疑似重复，确认是两个问题时填写区别", code=2,
+                    extra={"errorCode": "possible_duplicate", "candidates": candidates})
+            if status == 409 and isinstance(result, dict) and result.get("error") == "plan_debt_closed":
+                die("请重新读取债务并选择仍未偿还的记录", code=2, extra={"errorCode": "plan_debt_closed"})
+            messages = {
+                400: "工程规划参数不符合要求", 401: "项目凭据无效或已过期",
+                403: "当前授权不允许此操作", 404: "项目或记录不存在，或当前账户无法访问",
+                409: "版本或请求编号冲突，请先查询现有记录",
+                413: "提交内容过大，请分批提交", 503: "工程规划暂不可用，请稍后重试",
+            }
+            die(f"HTTP {status}: {messages.get(status, '工程规划请求失败')}{retry_note}", code=2 if status < 500 else 3, extra=retry)
+        return scope(result)
+
+    def duplicate_candidates(title: str) -> list[dict[str, Any]]:
+        result = request("GET", "/duplicates?" + urllib.parse.urlencode({"title": title}))
+        return _planning_duplicate_candidates(result.get("items"))
+
+    def submit(body: Any) -> None:
+        if not isinstance(body, dict) or not isinstance(body.get("type"), str) or not isinstance(body.get("requestId"), str):
+            die("请用 JSON 对象提交命令类型 type 和请求编号 requestId")
+        if any(field in body for field in ("projectId", "host", "actor", "permissions", "projectKey")):
+            die("项目和操作者由已授权的 CDS 凭据确定，请移除覆盖字段")
+        receipt = request("POST", "/commands", body)
+        result = scope(receipt.get("result"))
+        if body["type"] == "debt.sweep":
+            at = result.get("at")
+            valid = isinstance(at, str) and bool(at.strip())
+            for field in ("pending", "closed"):
+                ids = result.get(field)
+                valid = valid and isinstance(ids, list) and all(isinstance(debt_id, str) and debt_id.strip() for debt_id in ids)
+        else:
+            valid = isinstance(result.get("id"), str) or isinstance(result.get("items"), list)
+        if not isinstance(receipt.get("reused"), bool) or not valid:
+            die("CDS 返回的工程规划回执不完整")
+        ok(receipt)
+
+    action = args.planning_action
+    if args.cmd == "change":
+        filters = {"archive": "1"} if args.archive else {}
+        if args.branch:
+            filters["branchId"] = args.branch
+        response = request("GET", "/changes?" + urllib.parse.urlencode(filters))
+        scoped_rows(response, "facts")
+        rows = response.get("facts", [])
+        if action == "show":
+            found = next((row for row in rows if row.get("eventId") == args.id), None)
+            if not found:
+                die("当前项目没有这条变更记录，请先查看列表")
+            ok({"projectId": project, "fact": found})
+        ok({"projectId": project, "items": [row for row in rows if not args.key or row.get("key") == args.key]})
+    if args.cmd == "preview":
+        query = '?' + urllib.parse.urlencode({"path": args.path}) if args.path else ''
+        response = request("GET", f"/preview/{args.number}{query}")
+        if action == "link" and not response.get("url"):
+            die("当前拉取请求没有可访问的预览入口")
+        ok(response)
+    if args.cmd == "debt" and action == "progress":
+        submit({"type": "debt.progress", "debtId": args.id, "expectedVersion": args.expected_version,
+                "requestId": args.request_id, "note": args.note})
+    if args.cmd == "debt" and action == "repay":
+        if args.dry_run:
+            debt = scope(request("GET", "/debts/" + urllib.parse.quote(args.id, safe="")).get("debt"))
+            if debt.get("id") != args.id:
+                die("CDS 返回的债务与请求编号不符")
+            ok({"projectId": project, "debtId": args.id, "version": debt["version"], "status": debt["status"],
+                "criteria": debt.get("criteria", []), "requiredProof": "标注完毕的还后截图"})
+        if not human_identity:
+            die("请用 --as-user 由有权项目成员确认偿还")
+        if args.file:
+            if any((args.summary, args.criterion, args.evidence, args.screenshot, args.before_screenshot, args.mark, args.pr)):
+                die("请单独使用 --file，或使用偿还参数")
+            body = _read_planning_file(args.file)
+            if not isinstance(body, dict) or body.get("type", "debt.repay") != "debt.repay" or body.get("debtId", args.id) != args.id:
+                die("命令文件须对应当前债务的偿还记录")
+        else:
+            if not args.summary or not args.criterion or not args.screenshot or len(args.mark) != (2 if args.before_screenshot else 1):
+                die("请填写结论、核对项、还后截图和对应 --mark。可用 --dry-run 查看当前标准")
+            results = []
+            for item in args.criterion:
+                criterion, equals, result = item.partition("=")
+                verdict, _, note = result.partition(":")
+                if not equals or not criterion or verdict not in ("met", "na"):
+                    die("核对项使用 --criterion 标准编号=met:结果 或 标准编号=na:原因")
+                results.append({"criterionId": criterion, "verdict": verdict, **({"note": note} if note else {})})
+            evidence = []
+            for item in args.evidence:
+                kind, colon, detail = item.partition(":")
+                label, equals, url = detail.partition("=")
+                if not colon or not label or (equals and not url):
+                    die("证据使用 --evidence 类型:说明 或 --evidence 类型:说明=链接")
+                evidence.append({"type": kind, "label": label, **({"url": url} if equals else {})})
+            if args.pr:
+                board = request("GET", "")
+                scoped_rows(board, "pullRequests")
+                urls = {row["number"]: row.get("url") for row in board.get("pullRequests", [])}
+                for number in sorted(set(args.pr)):
+                    if not urls.get(number):
+                        die("请提供此项目已观察到的 PR 编号，或将原链接作为证据")
+                    evidence.append({"type": "change", "label": f"PR #{number}", "url": urls[number]})
+            proofs = [_repayment_screenshot("after", args.screenshot, args.mark[0])]
+            if args.before_screenshot:
+                proofs.insert(0, _repayment_screenshot("before", args.before_screenshot, args.mark[1]))
+            body = {"summary": args.summary, "results": results, "evidence": evidence, "repaymentProofs": proofs}
+        expected = body.get("expectedVersion", args.expected_version)
+        if type(expected) is not int or expected < 1 or (args.expected_version is not None and args.expected_version != expected):
+            die("先读取当前偿还标准，再用 --if-version 或在文件中提供对应版本")
+        body.update(type="debt.repay", debtId=args.id, expectedVersion=expected)
+        if args.request_id and body.get("requestId", args.request_id) != args.request_id:
+            die("命令文件与 --request-id 不一致")
+        if not body.get("requestId"):
+            body["requestId"] = args.request_id or hashlib.sha256(json.dumps([project, body], sort_keys=True).encode()).hexdigest()
+        submit(body)
+    if args.cmd == "planning" and action in ("submit", "reconcile"):
+        body = _read_planning_file(args.file)
+        if action == "reconcile":
+            prepared = request("POST", "/import-preview", body)
+            ok(prepared)
+        submit(body)
+    if action == "snapshot":
+        rows, cursor = [], None
+        cursors = set()
+        while True:
+            filters = {"view": "all", "limit": 100}
+            if args.module:
+                filters["module"] = args.module
+            if cursor:
+                filters["cursor"] = cursor
+            current = request("GET", "/debts?" + urllib.parse.urlencode(filters))
+            scoped_rows(current, "items")
+            rows.extend(current.get("items", []))
+            cursor = current.get("nextCursor")
+            if not cursor:
+                break
+            if not isinstance(cursor, str) or cursor in cursors:
+                die("CDS 记录分页不一致")
+            cursors.add(cursor)
+        headers = ["# 工程债务快照", "", "由 CDS 生成。修改请到工程规划。", "",
+                   f"项目 {project}", f"范围 {args.module or '全部模块'}", f"共 {len(rows)} 笔", ""]
+        for heading, values in (("未还", [row for row in rows if row["status"] not in ("repaid", "dropped")]),
+                                ("已关闭", [row for row in rows if row["status"] in ("repaid", "dropped")])):
+            headers.extend([f"## {heading} · {len(values)}", ""])
+            headers.extend(f"- {row['id']} · {row['status']} · " + " ".join(row["title"].split()) for row in values)
+            headers.append("")
+        ok("\n".join(headers) if _HUMAN else {"projectId": project, "items": rows, "markdown": "\n".join(headers)})
+    if action == "capabilities":
+        ok(request("GET", "/capabilities"))
+    if args.cmd == "planning" and action == "show":
+        board = request("GET", "")
+        for field in ("proposals", "decisions", "plans", "events", "pullRequests"):
+            scoped_rows(board, field)
+        ok(board)
+    if args.cmd == "proposal" and action == "create":
+        submit(_planning_proposal_payload(args, project))
+    if args.cmd == "proposal":
+        board = request("GET", "")
+        scoped_rows(board, "proposals")
+        rows = [row for row in board.get("proposals", []) if args.status == "all" or row.get("status") == args.status]
+        ok({"projectId": project, "items": rows})
+    if args.cmd == "decision":
+        if action == "search":
+            if (args.subject_kind is None) != (args.subject_ref is None):
+                die("请同时提供 --subject-kind 和 --subject-ref")
+            query = urllib.parse.urlencode({key: value for key, value in {
+                "q": args.q, "subjectKind": args.subject_kind, "subjectRef": args.subject_ref,
+            }.items() if value is not None})
+            result = request("GET", "/decisions" + ("?" + query if query else ""))
+            scoped_rows(result, "items")
+            ok(result)
+        board = request("GET", "")
+        for field in ("decisions", "events", "pullRequests"):
+            scoped_rows(board, field)
+        decision = next((row for row in board.get("decisions", []) if row.get("id") == args.id), None)
+        if decision is None:
+            die("此项目没有该决策，请核对编号")
+        scoped_rows(decision, "pullRequests")
+        events = [row for row in board.get("events", []) if row.get("entity") == "decision" and row.get("entityId") == args.id]
+        ok({"projectId": project, "decision": decision, "events": events})
+    if args.cmd == "pr":
+        board = request("GET", "")
+        scoped_rows(board, "pullRequests")
+        rows = board.get("pullRequests", [])
+        if action == "list":
+            if args.decision:
+                rows = [row for row in rows if args.decision in row.get("decisionIds", [])]
+            ok({"projectId": project, "items": rows})
+        matches = [row for row in rows if row.get("number") == args.number]
+        if len(matches) != 1:
+            die("无法唯一定位该拉取请求，请从当前项目的拉取请求列表核对编号")
+        ok(matches[0])
+    if action == "duplicates":
+        ok({"projectId": project, "items": duplicate_candidates(args.title)})
+    if action == "checkup":
+        ok(request("GET", "/checkup"))
+    if action == "create":
+        reason = args.reason.strip() if args.reason else ""
+        if args.allow_duplicate and not reason:
+            die("请用 --reason 写明与疑似重复债务的区别")
+        if not args.allow_duplicate and (args.reason is not None or args.duplicate_id):
+            die("确认要单独记债时，请同时使用 --allow-duplicate 与 --reason")
+        source = {"type": args.source_type, "ref": args.source_ref}
+        if args.source_url:
+            source["url"] = args.source_url
+        body = {"type": "debt.create", "requestId": args.request_id, "title": args.title, "source": source}
+        for key, value in (("summary", args.summary), ("whyDebt", args.why_debt), ("criteria", args.criterion),
+                           ("priority", args.priority), ("decisionId", args.decision), ("module", args.module)):
+            if value is not None:
+                body[key] = value
+        if args.allow_duplicate:
+            ids = args.duplicate_id or [row["id"] for row in duplicate_candidates(args.title)]
+            ids = sorted(set(ids))
+            if len(ids) > 6:
+                die("请选择最多六笔疑似重复债务")
+            if ids:
+                body["distinction"] = {"debtIds": ids, "reason": reason}
+        submit(body)
+    if action == "list":
+        query = urllib.parse.urlencode({k: v for k, v in {
+            "q": args.q, "cursor": args.cursor, "view": args.view, "branch": args.branch, "limit": args.limit, "module": args.module,
+        }.items() if v is not None})
+        result = request("GET", "/debts" + ("?" + query if query else ""))
+        scoped_rows(result, "items")
+        ok(result)
+    if action in ("show", "brief"):
+        result = request("GET", "/debts/" + urllib.parse.quote(args.id, safe=""))
+        if scope(result.get("debt")).get("id") != args.id:
+            die("CDS 返回的债务与请求编号不符")
+        scoped_rows(result, "events")
+        if action == "brief":
+            brief = result.get("brief")
+            if not isinstance(brief, dict) or not isinstance(brief.get("markdown"), str) or not brief["markdown"].strip():
+                die("当前 CDS 未提供接手卡，请更新服务后再试")
+            ok(brief["markdown"] if _HUMAN else brief)
+        ok(result)
+    if action == "stats":
+        query = urllib.parse.urlencode({k: v for k, v in {"from": args.from_date, "to": args.to_date, "branch": args.branch}.items()
+                                       if v is not None})
+        ok(request("GET", "/stats" + ("?" + query if query else "")))
+    die("不支持的工程规划操作")
+
+
+def _register_planning_parser(sub: Any) -> None:
+    planning = sub.add_parser("planning", help="工程规划：推进、权限与结构化提交").add_subparsers(dest="planning_action", required=True)
+    debt = sub.add_parser("debt", help="工程债务：查询、登记、接手与演进").add_subparsers(dest="planning_action", required=True)
+    for routes, actions in ((planning, ("show", "capabilities", "submit", "stats", "reconcile", "snapshot")),
+                            (debt, ("list", "show", "brief", "duplicates", "checkup", "create", "progress", "repay", "stats"))):
+        for action in actions:
+            parser = routes.add_parser(action)
+            parser.set_defaults(func=cmd_planning)
+            parser.add_argument("--project", help="CDS 项目 ID，默认当前仓库绑定项目")
+            if action in ("submit", "reconcile"):
+                parser.add_argument("--file", required=True, help="命令或导入待核对条目的 JSON")
+                parser.add_argument("--as-user", required=action == "reconcile", help="由 CDS 成员在交互终端登录后执行")
+            if action == "snapshot":
+                parser.add_argument("--module")
+            if action in ("show", "brief") and routes is debt:
+                parser.add_argument("id")
+            if action == "show" and routes is debt:
+                parser.add_argument("--history", action="store_true", help="详情默认包含变更历史")
+            if action == "progress":
+                parser.add_argument("id")
+                parser.add_argument("--expected-version", "--if-version", dest="expected_version", required=True, type=int)
+                parser.add_argument("--request-id", required=True)
+                parser.add_argument("--note", required=True)
+                parser.add_argument("--as-user", required=True, help="由有权限的成员登录后记录进展")
+            if action == "repay":
+                parser.add_argument("id")
+                parser.add_argument("--dry-run", action="store_true", help="只读查看当前债务版本、标准和证据要求")
+                parser.add_argument("--as-user", help="由有权限的项目成员确认偿还")
+                parser.add_argument("--file", help="含偿还结果、截图和版本的 JSON 文件")
+                parser.add_argument("--if-version", dest="expected_version", type=int)
+                parser.add_argument("--request-id")
+                parser.add_argument("--summary")
+                parser.add_argument("--criterion", action="append", default=[])
+                parser.add_argument("--evidence", action="append", default=[])
+                parser.add_argument("--screenshot", help="还后图片路径=证据说明")
+                parser.add_argument("--before-screenshot", help="还前图片路径=证据说明")
+                parser.add_argument("--mark", action="append", default=[], help="x,y,width,height。先标还后图，再标还前图")
+                parser.add_argument("--pr", action="append", type=int, default=[])
+            if action == "duplicates":
+                parser.add_argument("--title", required=True)
+            if action == "create":
+                parser.add_argument("--request-id", required=True)
+                parser.add_argument("--title", required=True)
+                parser.add_argument("--source-type", choices=("manual", "review", "test", "incident", "code", "adr"), default="manual")
+                parser.add_argument("--source-ref", required=True)
+                parser.add_argument("--source-url")
+                parser.add_argument("--summary")
+                parser.add_argument("--why-debt")
+                parser.add_argument("--criterion", action="append")
+                parser.add_argument("--priority", choices=("high", "mid", "low"))
+                parser.add_argument("--decision")
+                parser.add_argument("--module")
+                parser.add_argument("--allow-duplicate", action="store_true", help="确认与已有债务存在区别并单独记录")
+                parser.add_argument("--reason", help="此次记录与疑似重复候选的区别")
+                parser.add_argument("--duplicate-id", action="append", help="指定已核对的候选编号，可重复传参")
+            if action == "list":
+                parser.add_argument("--q")
+                parser.add_argument("--view")
+                parser.add_argument("--cursor")
+                parser.add_argument("--limit", type=int)
+                parser.add_argument("--module")
+            if action in ("list", "stats"):
+                parser.add_argument("--branch")
+            if action == "stats":
+                parser.add_argument("--from", dest="from_date")
+                parser.add_argument("--to", dest="to_date")
+
+    changes = sub.add_parser("change", help="查询配置变更证据").add_subparsers(dest="planning_action", required=True)
+    preview = sub.add_parser("preview", help="查询拉取请求的预览访问").add_subparsers(dest="planning_action", required=True)
+    for action in ("list", "show"):
+        parser = changes.add_parser(action)
+        parser.set_defaults(func=cmd_planning)
+        parser.add_argument("--project")
+        parser.add_argument("--branch")
+        parser.add_argument("--archive", action="store_true")
+        if action == "show":
+            parser.add_argument("id")
+        else:
+            parser.add_argument("--key")
+    for action in ("access", "link"):
+        parser = preview.add_parser(action)
+        parser.set_defaults(func=cmd_planning)
+        parser.add_argument("number", type=int)
+        parser.add_argument("--project")
+        parser.add_argument("--path")
+        parser.add_argument("--as-user", help="由当前成员登录后查询一键登录入口")
+
+    proposal = sub.add_parser("proposal", help="待确认提案：提交草稿与查询").add_subparsers(dest="planning_action", required=True)
+    decision = sub.add_parser("decision", help="查询工程决策").add_subparsers(dest="planning_action", required=True)
+    pulls = sub.add_parser("pr", help="查询与工程规划关联的拉取请求").add_subparsers(dest="planning_action", required=True)
+    subject_kinds = ("feature", "config", "preview", "module")
+    for routes, actions in ((proposal, ("create", "list")), (decision, ("search", "show")), (pulls, ("list", "show"))):
+        for action in actions:
+            parser = routes.add_parser(action)
+            parser.set_defaults(func=cmd_planning)
+            parser.add_argument("--project", help="CDS 项目 ID，默认当前仓库绑定项目")
+            if routes is decision:
+                if action == "search":
+                    parser.add_argument("--q")
+                    parser.add_argument("--subject-kind", choices=subject_kinds)
+                    parser.add_argument("--subject-ref")
+                else:
+                    parser.add_argument("id")
+            elif routes is pulls:
+                if action == "list":
+                    parser.add_argument("--decision", help="只显示关联到该决策的拉取请求")
+                else:
+                    parser.add_argument("number", type=int)
+            elif action == "list":
+                parser.add_argument("--status", choices=("pending", "accepted", "rejected", "all"), default="pending")
+            else:
+                parser.add_argument("--kind", required=True, choices=("debt", "decision", "plan"))
+                parser.add_argument("--title", required=True)
+                parser.add_argument("--summary")
+                parser.add_argument("--trigger", required=True, choices=("code", "review", "ci", "adr-file", "manual", "test", "adr", "incident"))
+                parser.add_argument("--ref", required=True, help="能单独定位此次发现的稳定来源")
+                parser.add_argument("--url")
+                parser.add_argument("--excerpt")
+                parser.add_argument("--decision")
+                parser.add_argument("--change", choices=("amended", "accepted"), help="提议修订或采纳已有决策")
+                parser.add_argument("--expected-version", type=int, help="从 decision show 读取的当前决策版本")
+                parser.add_argument("--module", help="债务所属模块")
+                parser.add_argument("--why-debt")
+                parser.add_argument("--priority", choices=("high", "mid", "low"))
+                parser.add_argument("--criterion", action="append")
+                parser.add_argument("--tag", action="append")
+                parser.add_argument("--skill")
+                parser.add_argument("--confidence", type=float, help="0 到 1 之间的把握度")
+                parser.add_argument("--pr-url", help="决策提案关联的拉取请求链接")
+                parser.add_argument("--target", help="预览目的地路径，可包含 query")
+                parser.add_argument("--target-label", help="预览目的地名称")
+                parser.add_argument("--request-id", help="重试沿用原请求编号，未指定时从项目和内容生成")
+                parser.add_argument("--alias", action="append", help="决策的日常说法，可多次指定")
+                parser.add_argument("--applies-to", nargs=2, action="append", metavar=("类型", "名称"),
+                                    help="决策适用对象，类型为 feature、config、preview 或 module")
+                parser.add_argument("--evidence-level", choices=("original", "backfilled", "inferred"))
+                parser.add_argument("--occurred-on", help="原始依据日期")
+                parser.add_argument("--decided-by", help="原决策者")
+                parser.add_argument("--evidence-basis", help="使用推断等级时说明依据")
+
+
+
+def _design_git_package(directory: Path) -> tuple[str, str, bytes]:
+    directory = directory.resolve()
+    if not directory.is_dir() or not (directory / "design.json").is_file():
+        die("稿件目录须包含 design.json")
+
+    def git(*arguments: str) -> bytes:
+        return subprocess.run(["git", "-C", str(directory), *arguments], check=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20).stdout
+
+    try:
+        commit = git("rev-parse", "HEAD").decode().strip()
+        if git("status", "--porcelain", "--untracked-files=all", "--", "."):
+            die("请先提交稿件目录的更改，以便将发布绑定到准确的提交")
+        prefix = os.fsdecode(git("rev-parse", "--show-prefix")).rstrip("\r\n").rstrip("/")
+        root = os.fsdecode(git("rev-parse", "--show-toplevel")).rstrip("\r\n")
+        tree = f"{commit}:{prefix}" if prefix else commit
+        archive = subprocess.run(["git", "-C", root, "archive", "--format=zip", tree],
+                                 check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20).stdout
+        limit = 4 * 1024 * 1024
+        if len(archive) > limit:
+            die("稿件 ZIP 超过 4 MiB，请检查稿件目录范围")
+        # The same committed tree must retain the same input fingerprint on retries.
+        output = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(archive)) as source, zipfile.ZipFile(output, "w") as target:
+            for item in sorted(source.infolist(), key=lambda entry: entry.filename):
+                entry = zipfile.ZipInfo(item.filename)
+                entry.create_system = item.create_system
+                entry.external_attr = item.external_attr
+                target.writestr(entry, source.read(item), compress_type=zipfile.ZIP_DEFLATED)
+        return commit, prefix or '.', output.getvalue()
+    except (OSError, subprocess.SubprocessError, ValueError, zipfile.BadZipFile):
+        die("无法读取已提交的稿件，请核对目录和 Git 提交")
+
+
+def _human_session_headers(username: str) -> dict[str, str]:
+    if not sys.stdin.isatty():
+        die("--as-user 需要交互终端，由操作者本人输入密码")
+    password = getpass.getpass("CDS 密码 ")
+    cookie_jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar), _NoRedirectHandler())
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "X-CdsCli-Version": VERSION}
+    content = json.dumps({"username": username, "password": password}).encode()
+    for endpoint in ("/api/auth/login", "/api/login"):
+        try:
+            request = urllib.request.Request(_cds_base() + endpoint, method="POST", headers=headers, data=content)
+            with opener.open(request, timeout=20) as response:
+                if response.status != 200:
+                    break
+            probe = urllib.request.Request(_cds_base() + "/api/auth/status")
+            cookie_jar.add_cookie_header(probe)
+            cookie = probe.get_header("Cookie")
+            if not cookie:
+                die("未收到同源 CDS 会话，请核对站点与账号登录方式")
+            return {"Cookie": cookie, "X-AI-Access-Key": ""}
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                break
+        except (OSError, urllib.error.URLError):
+            die("暂时无法登录 CDS，请检查当前绑定的站点")
+    die("未能建立 CDS 人类会话，请核对账号或在浏览器中确认")
+
+
+def _design_framework_checks(markdown: str) -> list[dict]:
+    rows = {}
+    for line in markdown.splitlines():
+        table = re.fullmatch(r"\s*\|\s*(R[-_]\d+)\s*\|\s*(.+?)\s*(?<!\\)\|\s*(.+?)\s*\|\s*", line)
+        if table:
+            rule_id, rule, method = table.groups()
+            how = "measure" if method.startswith("自动") else "human"
+            expected = re.sub(r"^(自动|人工)\s*[：:]?\s*", "", method).strip()
+            rows[rule_id] = {"id": rule_id, "rule": rule.replace(r"\|", "|"), "how": how,
+                             **({"expected": expected} if expected else {})}
+            if rule_id == "R-07" and how == "measure" and "横向溢出" in rule and "375" in rule:
+                rows[rule_id].update(probe={"type": "horizontal-overflow"}, slots=["phone-light", "phone-dark"])
+            continue
+        heading = re.fullmatch(r"#{2,4}\s+(R[-_]\d+)\s*[·—:：]?\s*(.+)", line)
+        if heading:
+            rule_id, rule = heading.groups()
+            rows.setdefault(rule_id, {"id": rule_id, "rule": rule, "how": "human"})
+    return list(rows.values())
+
+
+def _design_acceptance_browser(project: str, version: dict, run: dict, identity_headers: dict, record: Any) -> dict:
+    rules = {rule["id"]: rule for rule in version["acceptance"]}
+    queued = {}
+    for cell in run["cells"]:
+        if cell["status"] != "unverified" or cell.get("imageId"):
+            continue
+        rule = rules[cell["itemId"]]
+        if rule["how"] == "measure" and not rule.get("probe"):
+            continue
+        viewport, theme = cell["slot"].split("-")
+        targets = {(screen["impl"], screen.get("readySelector")) for screen in version["screens"]
+                   if screen.get("impl") and theme in screen["themes"]
+                   and (screen["id"] == rule["screenId"] if rule.get("screenId") else screen["viewport"] == viewport)}
+        if len(targets) == 1:
+            route, selector = next(iter(targets))
+            queued.setdefault((route, viewport, theme, selector), []).append((cell, rule))
+    if not queued:
+        return {"measured": 0, "captured": 0, "message": "没有可运行的验收格。请核对实现地址、测量条件与已保留证据。"}
+
+    shots = []
+    for (route, viewport, theme, selector), cells in queued.items():
+        width, height = (375, 812) if viewport == "phone" else (1280, 800)
+        url = f"/api/projects/{urllib.parse.quote(project, safe='')}/planning/preview/{run['pullRequest']}?" + urllib.parse.urlencode({"path": route})
+        status, target, _ = _request("GET", url, extra_headers=identity_headers, follow_redirects=False, fatal_network_errors=False)
+        if status != 200 or not isinstance(target, dict) or target.get("projectId") != project or target.get("commit") != run["commit"] or not target.get("url"):
+            return {"measured": 0, "captured": 0, "message": "预览入口与冻结提交未能核对，请读取本次运行后重试。"}
+        shots.append({"entry": target["url"], "target": urllib.parse.urljoin(run["previewUrl"], route),
+                      "viewport": {"width": width, "height": height}, "theme": theme, "readySelector": selector,
+                      "measure": any(rule["how"] == "measure" for _, rule in cells)})
+
+    helper = Path(__file__).resolve().parent / "acceptance" / "design-browser.mjs"
+    measured = captured = 0
+    with tempfile.TemporaryDirectory(prefix="cds-design-") as directory:
+        payload = {"directory": directory, "portal": _cds_base(), "cookie": identity_headers.get("Cookie"), "shots": shots}
+        try:
+            process = subprocess.run(["node", str(helper)], input=json.dumps(payload), text=True, check=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=180)
+            output = json.loads(process.stdout)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return {"measured": 0, "captured": 0, "message": "浏览器自动取证未完成，已保留待核对的验收运行。"}
+        if not isinstance(output.get("rows"), list) or len(output["rows"]) != len(shots):
+            return {"measured": 0, "captured": 0, "message": output.get("error", "浏览器未返回完整证据")}
+        for index, ((route, _, theme, _), cells) in enumerate(queued.items()):
+            result = output["rows"][index]
+            image = None
+            if result.get("captured"):
+                try:
+                    with (Path(directory) / f"screen-{index}.png").open("rb") as screenshot:
+                        content = screenshot.read(1536 * 1024 + 1)
+                except OSError:
+                    content = b""
+                if content and len(content) <= 1536 * 1024:
+                    image = "data:image/png;base64," + base64.b64encode(content).decode("ascii")
+                else:
+                    result = {"reason": "浏览器截图缺失或超过当前验收格的大小限制"}
+            for cell, rule in cells:
+                row = {"itemId": cell["itemId"], "slot": cell["slot"], "status": "missing", "actual": result.get("reason", "浏览器没有生成截图")}
+                if image:
+                    geometry = result["geometry"]
+                    row.update(image=image, measured={"width": geometry["width"], "height": geometry["height"], "theme": theme, "path": route})
+                    probe = rule.get("probe", {})
+                    if probe.get("type") == "horizontal-overflow":
+                        overflow = max(0, geometry["contentWidth"] - geometry["width"])
+                        tolerance = probe.get("tolerance", 0)
+                        row.update(status="passed" if overflow <= tolerance else "failed",
+                                   actual=f"页面宽 {geometry['contentWidth']}px，视口宽 {geometry['width']}px，溢出 {overflow}px，允许 {tolerance}px。")
+                        if (row["status"] == "passed" and rule["id"] == "R-07"
+                                and "只有表格、图表、代码块" in rule["rule"] and "横向滚动" in rule["rule"]):
+                            row["status"] = "unverified"
+                            row["actual"] += "已保留实拍，需核对横向滚动容器是否属于表格、图表或代码块。"
+                        measured += 1
+                    else:
+                        row.update(status="unverified", actual="已取得目标提交的真实截图，等待人工核对。")
+                        captured += 1
+                record(row)
+    return {"measured": measured, "captured": captured}
+
+
+def cmd_design_workspace(args: argparse.Namespace) -> None:
+    bound = os.environ.get("CDS_PROJECT_ID", "").strip()
+    project = (args.project or bound).strip()
+    if not project or (not args.as_user and os.environ.get("CDS_PROJECT_KEY", "").strip() and bound and project != bound):
+        die("请使用当前绑定的 CDS 项目或有权限的成员账号")
+    base = "/api/projects/" + urllib.parse.quote(project, safe="") + "/design"
+    identity_headers = _human_session_headers(args.as_user) if args.as_user else {}
+    human_action = args.design_action in ("freeze", "sign", "import") or (args.design_action == "extract" and args.apply)
+    if human_action and not identity_headers:
+        die("请在 CDS 确认，或使用 --as-user 由有权成员在终端登录")
+
+    def request(method: str, endpoint: str = "", body: Any = None, headers: dict[str, str] | None = None,
+                retry_id: str | None = None) -> dict:
+        status, result, _ = _request(method, base + endpoint, body, timeout=60,
+                                     extra_headers={**identity_headers, **(headers or {})}, follow_redirects=False, fatal_network_errors=False)
+        if not 200 <= status < 300:
+            message = result.get("message") if isinstance(result, dict) else None
+            retry = {"retry": {"requestId": retry_id}} if retry_id and (status == 0 or status >= 500) else None
+            message = message or "CDS 暂未确认本次操作，请检查连接并保留原请求编号"
+            if retry and _HUMAN:
+                message = f"{message}\n本次请求编号 {retry_id}"
+            die(message, code=2 if 400 <= status < 500 else 3, extra=retry)
+        if not isinstance(result, dict) or result.get("projectId") != project:
+            die("CDS 返回的设计记录不属于当前项目")
+        return result
+
+    def send(command: dict, *, use_flag: bool = True) -> dict:
+        if use_flag:
+            request_id = getattr(args, "request_id", None) or secrets.token_hex(18)
+        else:
+            # A capture is derived from the acceptance run, and retries can reuse its original receipt.
+            material = json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()
+            request_id = hashlib.sha256(material).hexdigest()
+        return request("POST", "/commands", {**command, "requestId": request_id}, retry_id=request_id)
+
+    def read_input(filename: str) -> Any:
+        try:
+            with open(filename, "rb") as stream:
+                content = stream.read(8 * 1024 * 1024 + 1)
+            if len(content) > 8 * 1024 * 1024:
+                die("JSON 超过 8 MiB，请分批提交")
+            return json.loads(content)
+        except (OSError, ValueError):
+            die("无法读取文件，请提供有效的 JSON")
+
+    action = args.design_action
+    if action == "publish":
+        if args.zip:
+            try:
+                with open(args.zip, "rb") as stream:
+                    content = stream.read(4 * 1024 * 1024 + 1)
+            except OSError:
+                die("无法读取所选稿件 ZIP")
+            commit = args.source_commit
+            source_path = args.source_path
+            if not commit:
+                die("从 ZIP 发布时请提供稿件的完整 --source-commit")
+        else:
+            commit, source_path, content = _design_git_package(Path(args.dir))
+            if args.source_commit and args.source_commit != commit:
+                die("目录中的 Git 提交与 --source-commit 不符")
+            if args.source_path and args.source_path != source_path:
+                die("仓库中的稿件目录与 --source-path 不符")
+        if len(content) > 4 * 1024 * 1024:
+            die("稿件 ZIP 超过 4 MiB")
+        resolves = {}
+        for pair in args.resolves:
+            comment, separator, note = pair.partition("=")
+            if not separator or not comment or not note or comment in resolves:
+                die("处理声明格式为 --resolves 评论编号=说明，编号不可重复")
+            resolves[comment] = note
+        query = {key: value for key, value in {
+            "designId": args.id, "sourceCommit": commit, "sourcePath": source_path, "note": args.note,
+            "resolves": json.dumps(resolves, sort_keys=True, ensure_ascii=False) if resolves else None,
+            "review": "true" if args.review else None,
+            "reviewerIds": json.dumps(sorted(set(args.reviewer))) if args.reviewer else None,
+        }.items() if value is not None}
+        signature = json.dumps([project, query, hashlib.sha256(content).hexdigest()], sort_keys=True).encode()
+        query["requestId"] = args.request_id or hashlib.sha256(signature).hexdigest()
+        ok(request("POST", "/packages?" + urllib.parse.urlencode(query), content, {"Content-Type": "application/zip"}, query["requestId"]))
+
+    if action == "reviewers":
+        ok(request("GET", "/reviewers"))
+
+    workspace = request("GET")
+    designs = workspace["designs"]
+    frameworks = workspace["frameworks"]
+    if any(item.get("projectId") != project for item in designs + frameworks):
+        die("CDS 返回了项目外的设计记录")
+
+    if args.cmd == "framework":
+        if action == "list":
+            ok({"projectId": project, "items": frameworks})
+        if action == "import":
+            document = read_input(args.file)
+            if not isinstance(document, dict) or not set(document) <= {"tokens", "rules", "components", "skeleton"}:
+                die("框架材料需包含令牌、规则、组件或骨架")
+            ok(send({"type": "framework.import", "frameworkId": args.id, "title": args.title,
+                     "expectedVersion": args.expected_version, "sourceCommit": args.source_commit,
+                     **({"sourcePath": args.source_path} if args.source_path else {}), "material": document}))
+        entry = next((item for item in frameworks if item["id"] == args.id), None)
+        if not entry:
+            die("当前项目没有该框架")
+        ok(entry)
+
+    if action == "list":
+        ok({"projectId": project, "items": designs})
+    if action == "scaffold":
+        framework = next((item for item in frameworks if item["id"] == args.framework), None)
+        if not framework or not framework["versions"]:
+            die("当前项目没有该框架版本")
+        latest = framework["versions"][-1]
+        material = latest["material"]
+        directory = Path(args.dir).resolve()
+        if directory.exists():
+            die("请为脚手架指定一个新目录")
+        rules = _design_framework_checks(material.get("rules") or "")
+        if len(rules) > 60:
+            die("框架规则超过单份稿件的 60 条上限")
+        directory.mkdir(parents=True)
+        spec = directory / "spec"
+        spec.mkdir()
+        (directory / "dist").mkdir()
+        (directory / "checks").mkdir()
+        screen = {"id": "home", "name": args.title, "route": "#home", "viewport": "desktop", "themes": ["light", "dark"], "impl": None}
+        manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": latest["version"],
+                    "screens": [screen], "acceptance": rules}
+        (directory / "design.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+        checks = {"total": len(rules), "passed": 0, "items": [{**rule, "status": "unverified"} for rule in rules]}
+        (directory / "checks" / "result.json").write_text(json.dumps(checks, indent=2, ensure_ascii=False) + "\n")
+        (directory / "思路.md").write_text("## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n")
+        for field, name in (("rules", "rules.md"), ("components", "components.md"), ("skeleton", "skeleton.html")):
+            if material.get(field):
+                (spec / name).write_text(material[field])
+        if material.get("tokens"):
+            (spec / "tokens.json").write_text(json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n")
+        template = material.get("skeleton") or (
+            '<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<style>:root{color-scheme:light dark}body{margin:32px;font:15px system-ui}h1{font-size:20px}</style>'
+            '<main id="home"><h1>{{title}}</h1></main></html>'
+        )
+        (directory / "dist" / "index.html").write_text(template.replace("{{title}}", html.escape(args.title)))
+        ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": latest["version"]})
+
+    design = next((item for item in designs if item["id"] == args.id), None)
+    if not design:
+        die("当前项目没有该稿件")
+    versions = {item["version"]: item for item in design["versions"]}
+    if action == "comments":
+        ok({"projectId": project, "items": [item for item in design["comments"] if not args.open or not item["closed"]]})
+    if action == "diff":
+        before, after = versions.get(args.left), versions.get(args.right)
+        if not before or not after:
+            die("请提供稿件存在的两个版本")
+        lrows = {item["id"]: item for item in before["screens"]}
+        rrows = {item["id"]: item for item in after["screens"]}
+        changes = []
+        for key in sorted(lrows.keys() | rrows.keys()):
+            old_screen, new_screen = lrows.get(key), rrows.get(key)
+            status = "added" if old_screen is None else "removed" if new_screen is None else "same" if old_screen == new_screen else "changed"
+            old_renders = before.get("renders", {}).get(key, {})
+            new_renders = after.get("renders", {}).get(key, {})
+            themes = set((old_screen or {}).get("themes", [])) | set((new_screen or {}).get("themes", []))
+            visual = {}
+            for theme in sorted(themes):
+                old_sha = old_renders.get(theme, {}).get("sha256")
+                new_sha = new_renders.get(theme, {}).get("sha256")
+                visual[theme] = "unverified" if not old_sha or not new_sha else "same" if old_sha == new_sha else "changed"
+            changes.append({"id": key, "status": status, "visual": visual})
+        ok({"projectId": project, "screens": changes,
+            "left": {"version": before["version"], "sourceCommit": before["sourceCommit"], "sha256": before["sha256"]},
+            "right": {"version": after["version"], "sourceCommit": after["sourceCommit"], "sha256": after["sha256"]},
+            "packageChanged": before["sha256"] != after["sha256"],
+            "prototypeChanged": (before["prototypeSha256"] != after["prototypeSha256"]
+                                 if before.get("prototypeSha256") and after.get("prototypeSha256") else None),
+            "structure": [field for field in ("spec", "rationale", "acceptance", "checks", "framework", "frameworkVersion") if before.get(field) != after.get(field)],
+            "resolves": after["resolves"]})
+
+    if action == "result":
+        run = next((run for run in design["runs"] if run["id"] == args.run), None) if args.run else (
+            design["runs"][-1] if design["runs"] else None)
+        if not run:
+            die("此稿件没有对应验收运行")
+        ok({"projectId": project, "run": run})
+
+    command = {"designId": args.id}
+    if action == "freeze":
+        command.update(type="design.freeze", version=args.version)
+    elif action == "request-review":
+        command.update(type="design.review", reviewerIds=sorted(set(args.reviewer)))
+    elif action == "sign":
+        command.update(type="acceptance.sign", runId=args.run)
+    elif action == "accept":
+        command.update(type="acceptance.start", version=args.version or design.get("frozen"),
+                       pullRequest=args.pr or design.get("pullRequest"))
+        if args.commit:
+            command["commit"] = args.commit
+        started = send(command)
+        if args.start_only:
+            ok(started)
+        current = next(item for item in request("GET")["designs"] if item["id"] == args.id)
+        run = next(item for item in current["runs"] if item["id"] == started["result"]["runId"])
+        if run.get("signed"):
+            ok(started)
+        automation = _design_acceptance_browser(project, versions[run["version"]], run, identity_headers,
+            lambda row: send({"type": "acceptance.record", "designId": args.id, "runId": run["id"], "commit": run["commit"], "cells": [row]}, use_flag=False))
+        ok({**started, "automation": automation})
+    elif action == "record":
+        cells = read_input(args.file)
+        command.update(type="acceptance.record", runId=args.run, commit=args.commit, cells=cells)
+    elif action == "extract":
+        framework = next((item for item in frameworks if item["id"] == args.into), None)
+        former = framework["versions"][-1]["material"] if framework and framework["versions"] else {}
+        version = versions.get(args.version or design.get("frozen"))
+        if not version:
+            die("请选择要提取的定稿版本")
+        proposed = [key for key, value in version["spec"].items() if former.get(key) != value]
+        if not args.apply:
+            ok({"projectId": project, "candidates": proposed, "existing": [key for key in version["spec"] if key not in proposed]})
+        if not args.source_commit:
+            die("确认提取时请提供写入框架材料的完整 Git 提交")
+        command.update(type="framework.extract", frameworkId=args.into, version=version["version"], keys=args.apply,
+                       sourceCommit=args.source_commit, expectedVersion=framework["versions"][-1]["version"] if framework else 0)
+        if args.source_path:
+            command["sourcePath"] = args.source_path
+        if args.title:
+            command["title"] = args.title
+    else:
+        die("不支持的设计操作")
+    ok(send(command))
+
+
+def _register_design_parser(sub: Any) -> None:
+    design = sub.add_parser("design", help="设计稿件、版本、评论与做法验收").add_subparsers(dest="design_action", required=True)
+    framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
+    for routes, actions in ((design, ("publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
+                            (framework, ("show", "list", "import"))):
+        for action in actions:
+            parser = routes.add_parser(action)
+            parser.set_defaults(func=cmd_design_workspace)
+            parser.add_argument("--project", help="默认使用当前仓库绑定的项目")
+            parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
+            if action not in ("list", "publish", "reviewers", "scaffold"):
+                parser.add_argument("id")
+            if action in ("publish", "request-review", "accept", "record", "freeze", "sign", "extract", "import"):
+                parser.add_argument("--request-id")
+            if action == "publish":
+                parser.add_argument("id", nargs="?")
+                source = parser.add_mutually_exclusive_group(required=True)
+                source.add_argument("--dir")
+                source.add_argument("--zip")
+                parser.add_argument("--source-commit")
+                parser.add_argument("--source-path", help="用于核对的 Git 仓库相对目录，仓库根用 .")
+                parser.add_argument("--note")
+                parser.add_argument("--resolves", action="append", default=[])
+                parser.add_argument("--review", action="store_true")
+            if action in ("publish", "request-review"):
+                parser.add_argument("--reviewer", action="append", required=action == "request-review",
+                                    help="成员 ID，先用 design reviewers 查询，可重复指定")
+            if action == "comments":
+                parser.add_argument("--open", action="store_true")
+            if action == "diff":
+                parser.add_argument("left", type=int)
+                parser.add_argument("right", type=int)
+            if action in ("accept", "extract"):
+                parser.add_argument("--version", type=int)
+            if action == "accept":
+                parser.add_argument("--pr", type=int)
+                parser.add_argument("--commit")
+                parser.add_argument("--start-only", action="store_true", help="只创建验收运行，后续由人工补充证据")
+            if action in ("record", "result", "sign"):
+                parser.add_argument("--run", required=action != "result")
+            if action == "record":
+                parser.add_argument("--file", required=True)
+                parser.add_argument("--commit", required=True)
+            if action == "freeze":
+                parser.add_argument("version", type=int)
+            if action == "scaffold":
+                parser.add_argument("--framework", required=True)
+                parser.add_argument("--dir", required=True)
+                parser.add_argument("--title", required=True)
+            if action == "extract":
+                parser.add_argument("--into", required=True)
+                parser.add_argument("--apply", choices=("tokens", "rules", "components", "skeleton"), action="append")
+                parser.add_argument("--source-commit")
+                parser.add_argument("--source-path")
+                parser.add_argument("--title")
+            if action == "import":
+                parser.add_argument("--file", required=True)
+                parser.add_argument("--title", required=True)
+                parser.add_argument("--source-commit", required=True)
+                parser.add_argument("--source-path")
+                parser.add_argument("--expected-version", type=int, default=0)
 
 
 def cmd_dts(args: argparse.Namespace) -> None:
@@ -11439,6 +12455,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     _register_acceptance_parser(sub)
     _register_dts_parser(sub)
+    _register_planning_parser(sub)
+    _register_design_parser(sub)
 
     # 验收报告(CDS 自托管 HTML/Markdown,登录态门控,可按项目/文件夹归类)
     rep = sub.add_parser("report", help="验收报告:列出/查看/创建/删除/直达深链").add_subparsers(dest="sub", required=True)

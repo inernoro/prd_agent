@@ -37,7 +37,8 @@ import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
 import { isMonitorOnboardingAgentRoute } from './shared/monitor-onboarding.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
-import { isHumanSystemOwner } from './services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from './services/human-auth.js';
+import { humanPrincipalId, isHumanProjectGrantUpdatePending, supportsHumanProjectGrant } from './services/human-project-access.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
 import { ClusterIdentityService, clusterProjectRepository } from './services/cluster-identity.js';
@@ -55,6 +56,27 @@ import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
+import { createEngineeringPlanningRouter, normalizedPlanningPath } from './routes/engineering-planning.js';
+import { resolveEngineeringPlanningAccess } from './services/engineering-planning-access.js';
+import { environmentAuditFacts } from './services/environment-audit.js';
+import { createPlanningPreviewAccessRouter, createPreviewTokenRouter, normalizedPreviewAccessPath, previewAccessPerson } from './routes/planning-preview-access.js';
+import { PlanningPreviewAccess, previewPolicyReturnUrl, previewReturnPath, resolvePreviewClientSettings, type PreviewAccessCommit, type PreviewAccessClient } from './services/planning-preview-access.js';
+import { planningDecisionHref, planningPreviewDecisionSubject } from './shared/engineering-planning-links.js';
+import type { PlanningPullRequestPreview } from './shared/engineering-planning.js';
+import { hasActiveGrant } from './services/identity.js';
+
+import { rejectPlanning } from './services/engineering-planning-input.js';
+import { createDesignWorkspaceRouter, normalizedDesignPath } from './routes/design-workspace.js';
+import { DesignWorkspaceService, type DesignWorkspaceCommit } from './services/design-workspace.js';
+import { createDesignFrameworkBrowser } from './services/design-framework-browser.js';
+import { designShareHandoffConfig } from './services/design-share-handoff.js';
+import { readDesignSourceZip } from './services/design-package.js';
+import { FileProjectRevisionStore, MongoProjectRevisionStore, type ProjectRevisionStore } from './services/project-revision-store.js';
+import { EngineeringPlanningService, FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './services/engineering-planning.js';
+import type { EngineeringPlanningStore } from './services/engineering-planning-store.js';
+import { startPlanningSweep } from './services/engineering-planning-sweep.js';
+import { createPlanningGithubObserver, createPlanningPreviewResolver } from './services/engineering-planning-pull-requests.js';
+import { createPlanningFileAnchorProbe } from './services/engineering-planning-file-anchors.js';
 import { dtsManagedFreeBytes } from './services/dts-capacity.js';
 import { createDtsRouter } from './routes/dts.js';
 import { DtsService } from './services/dts.js';
@@ -599,6 +621,7 @@ export interface ServerDeps {
   storageModeContext?: StorageModeContext;
   /** P4 Part 18 (D.3): path to the json state file, used for rollback. */
   stateFile?: string;
+  engineeringPlanningStore?: EngineeringPlanningStore;
   /**
    * FU-02: Optional pre-initialised AuthStore backend. When provided (by
    * index.ts after calling initAuthStore()), it is used instead of the
@@ -691,8 +714,18 @@ function isDatabasePassCredentialRequest(req: express.Request): boolean {
   return [req.url,req.originalUrl].some(value=>normalizedDatabasePassCredentialPath(value)!==null);
 }
 
+function normalizedPrivateWorkspacePath(value: unknown) {
+  const path = String(value ?? '').split('?')[0].replace(/^\/_cds\/api\//i, '/api/');
+  const environment = /^\/api\/env(?:\/(?:[^/]+))?\/?$/i.test(path) ? '/api/env' : undefined;
+  const profile = /^\/api\/build-profiles(?:\/[^/]+)?\/?$/i.test(path) ? '/api/build-profiles'
+    : /^\/api\/branches\/[^/]+\/profile-overrides(?:\/[^/]+)?\/?$/i.test(path) ? '/api/branches/:branchId/profile-overrides' : undefined;
+  return normalizedPlanningPath(value) ?? normalizedDesignPath(value) ?? normalizedPreviewAccessPath(value) ?? environment ?? profile;
+}
+
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
+  const planning = normalizedPrivateWorkspacePath(raw);
+  if (planning) return planning;
   if (/^\/api\/cluster\/identity\//i.test(raw)) return raw.split('?')[0];
   if (isHostedIdentityTraffic(raw)) return raw.split('?')[0];
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
@@ -1335,6 +1368,23 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/projects\/[^/]+\/design$/, '查看设计工作区'],
+    [/^GET \/projects\/[^/]+\/design\/reviewers$/, '查看可选评审人'],
+    [/^GET \/projects\/[^/]+\/design\/artifacts\/[^/]+$/, '读取设计附件'],
+    [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
+    [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
+    [/^POST \/projects\/[^/]+\/design\/shares\/[^/]+\/handoff$/, '交接稿件分享'],
+    [/^GET \/projects\/[^/]+\/planning\/changes$/, '读取配置变更'],
+    [/^GET \/projects\/[^/]+\/planning\/preview\/[^/]+$/, '核对预览访问'],
+    [/^GET \/auth\/preview\/access$/, '查看分支预览访问状态'],
+    [/^GET \/auth\/preview\/requests$/, '查看分支预览访问申请'],
+    [/^GET \/auth\/preview\/notices$/, '查看预览访问通知'],
+    [/^GET \/auth\/design\/notices$/, '查看设计评审通知'],
+    [/^GET \/auth\/preview\/approvers\/[^/]+$/, '读取预览审批人'],
+    [/^PUT \/auth\/preview\/approvers\/[^/]+$/, '设置预览审批人'],
+    [/^POST \/auth\/preview\/access$/, '申请分支预览访问'],
+    [/^POST \/auth\/preview\/token$/, '兑换分支预览票据'],
+    [/^POST \/auth\/users\/[^/]+\/projects\/[^/]+$/, '批准项目访问'],
     [/^GET \/acceptance\/templates\/[^/]+$/, '读取清单版本'],
     [/^GET \/acceptance\/tasks\/[^/]+$/, '查看验收任务'],
     [/^POST \/acceptance\/tasks\/[^/]+\/claim$/, '领取验收任务'],
@@ -1348,6 +1398,17 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/janitor\/tasks\/data-cases\/[^/]+\/confirm$/, '登记数据处置'],
     [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
+    [/^GET \/projects\/[^/]+\/planning$/, '查看工程规划'],
+    [/^GET \/projects\/[^/]+\/planning\/capabilities$/, '查看规划权限'],
+    [/^GET \/projects\/[^/]+\/planning\/decisions$/, '检索决策'],
+    [/^GET \/projects\/[^/]+\/planning\/debts$/, '查询债务'],
+    [/^GET \/projects\/[^/]+\/planning\/debts\/[^/]+$/, '查看债务详情'],
+    [/^GET \/projects\/[^/]+\/planning\/duplicates$/, '查询疑似重复债务'],
+    [/^POST \/projects\/[^/]+\/planning\/import-preview$/, '预览债务台账导入'],
+    [/^GET \/projects\/[^/]+\/planning\/stats$/, '查看债务演进'],
+    [/^GET \/projects\/[^/]+\/planning\/checkup$/, '查看巡检通知'],
+    [/^POST \/projects\/[^/]+\/planning\/checkup\/read$/, '标记巡检已读'],
+    [/^POST \/projects\/[^/]+\/planning\/commands$/, '提交规划变更'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
@@ -1777,10 +1838,7 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   return false;
 }
 
-/** Check if a request is from an approved AI session */
-function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
-  const cluster = trustedClusterIdentity(req);
-  if (cluster) return cluster.aiSession ?? null;
+function presentedAiAccessKey(req: express.Request): string | undefined {
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
   // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
   // 字段名维持 AI_ACCESS_KEY 不动（用户可见，改名会破坏现有表单存档）。
@@ -1788,13 +1846,39 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
   // CDS-CLI-005 兼容：除了规范 header `x-ai-access-key`，还接受用户常误用的
   // `ai-access-key`（无 x- 前缀）和 `Authorization: Bearer <key>`。Express
   // 会把 header 名规范化为小写，所以这里只需要小写比较。
-  const headerKey = (req.headers['x-ai-access-key'] as string | undefined)
+  return (req.headers['x-ai-access-key'] as string | undefined)
     || (req.headers['ai-access-key'] as string | undefined)
     || (() => {
         const auth = req.headers['authorization'] as string | undefined;
         if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
         return undefined;
       })();
+}
+
+function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
+  if (!key.planningAccess && !key.designAccess) return true;
+  if (key.planningAccess && key.designAccess) return false;
+  const segment = req.path.replace(/^\/_cds\/api\//i, '/api/').split('/')[3];
+  try { if (decodeURIComponent(segment) !== key.projectId) return false; }
+  catch { return false; }
+  const read = req.method === 'GET' || req.method === 'HEAD';
+  if (key.designAccess) {
+    const route = '/api/projects/:projectId/design';
+    const path = normalizedDesignPath(req.path);
+    return read && (path === route || path === `${route}/artifacts/:artifactId`)
+      || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
+  }
+  const path = normalizedPlanningPath(req.path);
+  if (!path) return false;
+  return read
+    || (key.planningAccess === 'propose' && req.method === 'POST' && path === '/api/projects/:projectId/planning/commands');
+}
+
+/** Check if a request is from an approved AI session */
+function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+  const cluster = trustedClusterIdentity(req);
+  if (cluster) return cluster.aiSession ?? null;
+  const headerKey = presentedAiAccessKey(req);
   if (headerKey) {
     const processKey = process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY;
     const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
@@ -1861,6 +1945,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if (stateService && headerKey.startsWith('cdsp_')) {
       const match = stateService.findAgentKeyForAuth(headerKey);
       if (match) {
+        if (!projectKeyAllowsRequest(req, match)) return null;
         stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -2233,10 +2318,22 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)) {
+    if (/^\/(?:login|preview-access|auth\/sso)\/?$/i.test(req.path)) res.setHeader('Referrer-Policy', 'no-referrer');
+    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
+    }
+    next();
+  });
+  app.use((req, res, next) => {
+    const key = presentedAiAccessKey(req);
+    const match = key?.startsWith('cdsp_') ? deps.stateService.findAgentKeyForAuth(key) : null;
+    if (match && !projectKeyAllowsRequest(req, match)) {
+      res.status(403).set('Cache-Control', 'private, no-store').json(match.designAccess
+        ? { error: 'design_key_scope', message: '此凭据仅限授权项目的设计操作' }
+        : { error: 'planning_key_scope', message: '此凭据仅限授权项目的工程规划操作' });
+      return;
     }
     next();
   });
@@ -2264,6 +2361,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use((req, res, next) => {
     if (isSealedStorageRequest(req)) return next();
+    if (normalizedPlanningPath(req.path) || normalizedDesignPath(req.path)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
     if (req.path === '/api/code-reviews' || req.path.startsWith('/api/code-reviews/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
@@ -2276,7 +2374,16 @@ export function createServer(deps: ServerDeps): express.Express {
     //     错误文案读起来像模型出错，实际是转发层把自己的解析上限套在了别人的请求上。
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
     if (req.path === '/api/acceptance' || req.path.startsWith('/api/acceptance/')) return next();
-    return globalJsonParser(req, res, next);
+    if (!res.locals.cdsSuppressRequestDetails) return globalJsonParser(req, res, next);
+    return globalJsonParser(req, res, (error?: { status?: number }) => {
+      if (!error) return next();
+      const status = error.status === 413 || error.status === 415 ? error.status : 400;
+      if (!res.headersSent && !res.destroyed) {
+        res.status(status).set('Cache-Control', 'private, no-store').json({
+          error: 'invalid_request_body', message: status === 413 ? '请求超过体积限制' : '请提交有效的 JSON 请求',
+        });
+      }
+    });
   });
 
   const pendingReplayGate = internalPendingReplayAuth.middleware({
@@ -2622,7 +2729,8 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer.unref?.();
     };
     const hostedIdentityTraffic = isHostedIdentityTraffic(req.originalUrl || req.url);
-    const suppressPreviewBody = hostedIdentityTraffic || isDatabasePassCredentialRequest(req) || /^\/api\/cluster\/identity\//i.test(req.path)
+    const suppressPreviewBody = hostedIdentityTraffic || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
+      || /^\/api\/cluster\/identity\//i.test(req.path)
       || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
@@ -2669,6 +2777,7 @@ export function createServer(deps: ServerDeps): express.Express {
         suppressRequestBodyLog || suppressPreviewBody,
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
+      if (responseHeaders && normalizedPreviewAccessPath(req.originalUrl || req.path)) delete responseHeaders.location;
       if (responseHeaders?.location?.includes('/api/cluster/identity/callback?')) responseHeaders.location = responseHeaders.location.split('?')[0];
       if (hostedIdentityTraffic && responseHeaders?.location) responseHeaders.location = responseHeaders.location.split('?')[0];
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
@@ -2803,6 +2912,66 @@ export function createServer(deps: ServerDeps): express.Express {
       })
     : null;
   if (authService) app.locals.cdsAuthService = authService;
+  const planningMongoUri = process.env.CDS_STORAGE_MODE === 'json' ? undefined : process.env.CDS_MONGO_URI;
+  const workspaceStateDirectory = path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json'));
+  const previewAccessStore: ProjectRevisionStore<PreviewAccessCommit> = planningMongoUri
+    ? new MongoProjectRevisionStore(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db', 'cds_preview_access_requests')
+    : new FileProjectRevisionStore(path.join(workspaceStateDirectory, 'preview-access'));
+  let lookupPlanningPreview: (projectId: string, number: number) => Promise<PlanningPullRequestPreview | undefined>
+    = async () => undefined;
+  let lookupPreviewDecision: (client: PreviewAccessClient) => Promise<string | undefined> = async () => undefined;
+  const activeProjectMember = (user: CdsUser, projectId: string): boolean => {
+    const state = deps.stateService;
+    const principal = humanPrincipalId(user.id);
+    return user.status === 'active' && !user.isSystemOwner && !isHumanProjectGrantUpdatePending(state, principal)
+      && state.getPrincipal(principal)?.status === 'active' && hasActiveGrant(state.getProjectGrants(), principal, projectId);
+  };
+  const projectMemberDirectory = async (projectId: string) => {
+    const members = await authService?.listUsers() ?? [];
+    return members.filter(user => activeProjectMember(user, projectId));
+  };
+  const previewAccess = new PlanningPreviewAccess({
+    store: previewAccessStore,
+    approver: async (projectId, userId) => {
+      const user = await authService?.findUserById(userId);
+      if (!user || !activeProjectMember(user, projectId)) return undefined;
+      const username = user.username || user.githubLogin;
+      return { id: user.id, username, name: user.name || username, owner: false };
+    },
+    resolve: async (clientId) => {
+      if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return undefined;
+      const state = deps.stateService;
+      const candidates = state.getAllBranches().filter(branch => !branch.deleting && !branch.archive && !branch.mirror
+        && branch.githubPrNumber && state.getCustomEnvScope(branch.id).CDS_PREVIEW_SSO_CLIENT_ID === clientId);
+      if (candidates.length !== 1) return undefined;
+      const branch = candidates[0], project = state.getProject(branch.projectId || 'default');
+      if (!project || project.mirror || branch.branch === state.getDefaultBranchFor(project.id)) return undefined;
+      const pullRequest = branch.githubPrNumber!;
+      const preview = await lookupPlanningPreview(project.id, pullRequest);
+      if (!preview?.url || !preview.path || !preview.commit || preview.status !== 'ready' || preview.branchId !== branch.id) return undefined;
+      const url = new URL(preview.url);
+      // A host-wide preview session must not spill into another service on a shared host.
+      if (url.pathname !== '/' || url.search || url.hash || (url.protocol !== 'https:'
+        && !['localhost','127.0.0.1'].includes(url.hostname))) return undefined;
+      const settings = resolvePreviewClientSettings(state.getCustomEnvScope(branch.id), url, publicBaseUrl);
+      if (!settings) return undefined;
+      return { ...settings, projectId: project.id, branchId: branch.id, commit: preview.commit,
+        projectName: project.aliasName || project.name, branchName: branch.branch, pullRequest, origin: url.origin, path: preview.path };
+    },
+    allowed: async (person, projectId) => {
+      const state = deps.stateService;
+      const project = state.getProject(projectId);
+      if (!project || project.id !== projectId || project.mirror) return false;
+      if (person.owner && authMode === 'basic' && cdsUser && person.id === `basic:${cdsUser}`) return true;
+      const user = await authService?.findUserById(person.id);
+      if (!user || user.status !== 'active') return false;
+      if (user.isSystemOwner) return true;
+      const principal = humanPrincipalId(user.id);
+      return !isHumanProjectGrantUpdatePending(state, principal) && state.getPrincipal(principal)?.status === 'active'
+        && hasActiveGrant(state.getProjectGrants(), principal, projectId);
+    },
+  });
+  if (!isPreviewInstance()) app.use(createPreviewTokenRouter(previewAccess));
   const ticketSsoStateStore = new TicketSsoStateStore();
   const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
@@ -2990,8 +3159,15 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   app.get('/api/auth/public-status', (req, res) => {
-    const sso = publicTicketSsoConfig(resolveSsoConfig());
+    const ssoConfig = resolveSsoConfig();
+    const sso = publicTicketSsoConfig(ssoConfig);
     const publicMode = authMode === 'disabled' && sso.enabled ? 'sso' : authMode;
+    const preview = isPreviewInstance() || sso.providerId === 'cds-preview' ? {
+      project: shortText(process.env.CDS_PREVIEW_PUBLIC_PROJECT, 120),
+      branch: shortText(process.env.CDS_PREVIEW_PUBLIC_BRANCH, 120),
+      pullRequest: /^[1-9]\d{0,9}$/.test(process.env.CDS_PREVIEW_PUBLIC_PR ?? '') ? Number(process.env.CDS_PREVIEW_PUBLIC_PR) : undefined,
+      policyUrl: sso.enabled ? previewPolicyReturnUrl(ssoConfig) : undefined,
+    } : undefined;
     res.json({
       mode: publicMode,
       enabled: authMode !== 'disabled' || sso.enabled,
@@ -3007,6 +3183,7 @@ export function createServer(deps: ServerDeps): express.Express {
         durableUsers: Boolean(authStore && !(authStore instanceof MemoryAuthStore)),
       },
       sso,
+      preview,
     });
   });
 
@@ -3869,8 +4046,22 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.get('/api/cluster/identity/login', (req, res) => clusterIdentity.login(req, res));
 
+  if (!isPreviewInstance()) app.use(createPlanningPreviewAccessRouter(previewAccess,
+    () => deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id), client => lookupPreviewDecision(client),
+    authService && clusterIdentity.getConfig()?.role !== 'member' ? {
+      projects: () => deps.stateService.getProjects().filter(project => !project.mirror && supportsHumanProjectGrant(project))
+        .map(project => ({ id: project.id, name: project.aliasName || project.name })),
+      members: async projectId => (await projectMemberDirectory(projectId))
+        .map(user => ({ id: user.id, name: user.name || user.username || user.githubLogin })),
+    } : undefined));
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
-  if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
+  if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService,
+    canApprovePreviewRequest: async (req, requestId, projectId, subject) => {
+      if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return false;
+      const person = previewAccessPerson(req);
+      return !!person && previewAccess.canApprove(projectId, requestId, subject, person);
+    },
+  }));
 
   if (authMode !== 'github') {
     app.get('/api/me', (req, res) => {
@@ -3966,6 +4157,8 @@ export function createServer(deps: ServerDeps): express.Express {
         operator: isHumanSystemOwner(req),
         accessRequests: authMode === 'disabled' || isHumanSystemOwner(req),
       },
+      previewAccessNotices: !isPreviewInstance() && Boolean(previewAccessPerson(req)),
+      designReviewNotices: !isPreviewInstance() && Boolean(authService && previewAccessPerson(req)),
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,
@@ -3993,17 +4186,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // disabled. Cheap no-op when the header is absent or the key is
   // malformed.
   app.use((req, _res, next) => {
-    // CDS-CLI-005：同时支持 `X-AI-Access-Key` / `ai-access-key` / Bearer。
-    const h = trustedClusterIdentity(req) ? undefined : (req.headers['x-ai-access-key'] as string | undefined)
-      || (req.headers['ai-access-key'] as string | undefined)
-      || (() => {
-          const auth = req.headers['authorization'] as string | undefined;
-          if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
-          return undefined;
-        })();
+    const h = trustedClusterIdentity(req) ? undefined : presentedAiAccessKey(req);
     if (h && h.startsWith('cdsp_') && !(req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       const match = deps.stateService.findAgentKeyForAuth(h);
-      if (match) {
+      if (match && projectKeyAllowsRequest(req, match)) {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -4773,16 +4959,17 @@ export function createServer(deps: ServerDeps): express.Express {
     (req as any).cdsRequestId = requestId;
     (res.locals as { cdsRequestId?: string }).cdsRequestId = requestId;
     res.setHeader('X-CDS-Request-Id', requestId);
-    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const privatePlanningPath = normalizedPrivateWorkspacePath(req.originalUrl || `/api${req.path}`);
+    const suppressPreviewDetails = Boolean(privatePlanningPath) || isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
     const { branchId, projectId, profileId } = suppressPreviewDetails ? {} : extractApiMutationContext(req, deps);
     const suppressRequestDetails = Boolean(
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
     );
-    const actor = suppressRequestDetails ? 'human-admin' : resolveActorFromRequest(req);
+    const actor = privatePlanningPath ? undefined : suppressRequestDetails ? 'human-admin' : resolveActorFromRequest(req);
     res.on('finish', () => {
       const status = res.statusCode || 200;
       const severity: ServerEventSeverity = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
-      const fullPath = redactHostedSitePreviewLog(`/api${req.path}`);
+      const fullPath = privatePlanningPath ?? redactHostedSitePreviewLog(`/api${req.path}`);
       deps.serverEventLogStore?.record({
         category: 'system',
         severity,
@@ -4837,7 +5024,8 @@ export function createServer(deps: ServerDeps): express.Express {
     res.setHeader('X-CDS-Request-Id', requestId);
 
     // Capture request body for detail view (truncate to 500 chars)
-    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const suppressPreviewDetails = Boolean(normalizedPrivateWorkspacePath(req.originalUrl || `/api${req.path}`))
+      || isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
     const suppressRequestDetails = Boolean(
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
     );
@@ -5332,6 +5520,138 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
 
+  const planningStore: EngineeringPlanningStore = deps.engineeringPlanningStore ?? (planningMongoUri
+    ? new MongoEngineeringPlanningStore(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db')
+    : new FileEngineeringPlanningStore(path.join(path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'engineering-planning')));
+  let designWorkspace: DesignWorkspaceService;
+  const planning = new EngineeringPlanningService(planningStore, undefined, {
+    repositoryFor: (projectId) => deps.stateService.getProject(projectId)?.githubRepoFullName,
+    previewFor: createPlanningPreviewResolver(deps.stateService, deps.config),
+    defaultBranchFor: (projectId) => deps.stateService.getDefaultBranchFor(projectId),
+    fileAnchorProbe: createPlanningFileAnchorProbe(projectId => {
+      const project = deps.stateService.getProject(projectId);
+      return project && !project.mirror ? deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot) : undefined;
+    }),
+  }, projectId => designWorkspace.planningLinks(projectId));
+  lookupPlanningPreview = (projectId, number) => planning.pullRequestPreview(projectId, number);
+  const previewPolicyDecision = async (projectId: string) => {
+    const { items } = await planning.decisions(projectId, planningPreviewDecisionSubject);
+    return items.find(item => item.status === 'accepted');
+  };
+  lookupPreviewDecision = async client => {
+    const decision = await previewPolicyDecision(client.projectId);
+    return decision ? planningDecisionHref(client.projectId, decision.id) : undefined;
+  };
+  app.use('/api', createEngineeringPlanningRouter({
+    service: planning,
+    resolveAccess: (req, projectId) => resolveEngineeringPlanningAccess(req, deps.stateService, projectId),
+    resolvePreviewEntry: async (projectId, number, requestedPath, actor) => {
+      const preview = await planning.pullRequestPreview(projectId, number);
+      if (!preview || preview.status !== 'ready' || !preview.url || !preview.branchId) return { projectId, state: preview?.status ?? 'unavailable' };
+      const root = new URL(preview.url);
+      const path = previewReturnPath(requestedPath ?? preview.path ?? root.pathname, root.pathname);
+      if (!path) rejectPlanning(400, 'invalid', '预览入口不在该分支地址范围内');
+      const env = deps.stateService.getCustomEnvScope(preview.branchId);
+      const client = await previewAccess.client(env.CDS_PREVIEW_SSO_CLIENT_ID);
+      if (client && client.projectId === projectId && client.pullRequest === number && actor.kind === 'human') {
+        const start = new URL('/api/auth/sso/start', client.origin);
+        start.searchParams.set('redirect', path);
+        return { projectId, branchId: preview.branchId, state: 'ready', url: start.href, commit: preview.commit };
+      }
+      return { projectId, branchId: preview.branchId, state: 'native-login', url: new URL(path, root).href, commit: preview.commit };
+    },
+    resolveChanges: async (projectId, branchId, includeArchive) => {
+      if (branchId) {
+        const branch = deps.stateService.getBranch(branchId);
+        if (!branch || branch.mirror || (branch.projectId || 'default') !== projectId) {
+          rejectPlanning(404, 'not_found', '没有可访问的分支变更记录');
+        }
+      }
+      const runs = deps.stateService.getDeploymentRuns({ projectId, branchId, status: 'running' });
+      for (const run of runs.slice().sort((a, b) => (a.finishedAt ?? '').localeCompare(b.finishedAt ?? ''))) {
+        deps.stateService.recordEnvironmentAuditEffect(run);
+      }
+      const policyKeys = branchId ? (await previewPolicyDecision(projectId))?.appliesTo
+        ?.filter(item => item.kind === 'config').map(item => item.ref) : undefined;
+      const facts = environmentAuditFacts(deps.stateService, projectId, branchId, includeArchive, policyKeys ? new Set(policyKeys) : undefined);
+      return { projectId, branchId, facts };
+    },
+  }));
+  const designStore: ProjectRevisionStore<DesignWorkspaceCommit> = planningMongoUri
+    ? new MongoProjectRevisionStore<DesignWorkspaceCommit>(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db', 'cds_design_workspace_commits')
+    : new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(
+      path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'design-workspace'));
+  designWorkspace = new DesignWorkspaceService(designStore, {
+    frameworkProbe: createDesignFrameworkBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
+    reviewer: async (projectId, id) => {
+      const user = await authService?.findUserById(id);
+      return user && activeProjectMember(user, projectId) ? { id, label: user.name || user.username || user.githubLogin } : undefined;
+    },
+    sourcePackage: (projectId, commit, sourcePath) => {
+      const project = deps.stateService.getProject(projectId);
+      return project && !project.mirror ? readDesignSourceZip(deps.stateService.getProjectRepoRoot(project.id, deps.config.repoRoot), commit, sourcePath)
+        : Promise.resolve(undefined);
+    },
+    resolvePreview: async (projectId, pullRequest, commit) => {
+      const preview = await planning.pullRequestPreview(projectId, pullRequest);
+      return preview?.status === 'ready' && preview.url && preview.commit && (!commit || preview.commit === commit)
+        ? { commit: preview.commit, url: preview.url } : undefined;
+    },
+    findDebt: async (projectId, debtId, sourceRef) => await planning.designAcceptanceDebt(projectId, debtId, sourceRef) === debtId,
+    resolveDebtProposal: (projectId, proposalId, sourceRef) => planning.designAcceptanceDebt(projectId, proposalId, sourceRef),
+    createDebt: async ({ projectId, actor, sourceRef, title, actual, version, pullRequest, commit, expected, high }) => {
+      const [designId, runId] = sourceRef.split('/');
+      const url = new URL('/design', publicBaseUrl);
+      url.search = new URLSearchParams({ project: projectId, design: designId, version: String(version), tab: 'accept', run: runId }).toString();
+      const source = { type: 'test', ref: sourceRef, url: url.href };
+      const draft = { title, summary: `稿件 V${version} · PR #${pullRequest} · 提交 ${commit}\n${actual}`,
+        priority: high ? 'high' : 'mid', criteria: [expected.slice(0, 400)] };
+      const requestId = 'design-debt-' + crypto.createHash('sha256').update(sourceRef).digest('hex');
+      const command = actor.kind === 'human' ? { type: 'debt.create', requestId, source, ...draft }
+        : { type: 'proposal.submit', kind: 'debt', requestId, source, draft };
+      const receipt = await planning.command(projectId, actor, command, { designSourceRef: sourceRef });
+      const result = receipt.result as { id: string };
+      return { id: result.id, pending: (await planning.designAcceptanceDebt(projectId, result.id, sourceRef)) !== result.id };
+    },
+  });
+  const designShareHandoff = isPreviewInstance() ? undefined : designShareHandoffConfig(publicBaseUrl, process.env);
+  app.use('/api', createDesignWorkspaceRouter({
+    service: designWorkspace,
+    mapShareHandoff: () => designShareHandoff,
+    reviewCandidates: async projectId => (await projectMemberDirectory(projectId))
+      .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin })),
+    resolveAccess: (req, projectId) => {
+      const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId, 'design');
+      return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req) } : null;
+    },
+  }));
+  app.get('/api/auth/design/notices', async (req, res) => {
+    res.set({ 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' });
+    res.locals.cdsSkipHttpLog = true;
+    if (isPreviewInstance() || !previewAccessPerson(req)) return res.status(403).json({ message: '请登录 CDS 查看自己的设计评审通知' });
+    try {
+      const projects = deps.stateService.getProjects();
+      const notices = (await Promise.all(projects.map(project => {
+        const actor = resolveEngineeringPlanningAccess(req, deps.stateService, project.id);
+        return actor ? designWorkspace.reviewNotices(project.id, actor) : [];
+      }))).flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50);
+      res.json({ notices });
+    } catch { res.status(503).json({ message: '暂时无法读取设计评审通知' }); }
+  });
+  const stopPlanningSweep = startPlanningSweep({
+    projects: () => clusterIdentity.getConfig()?.role === 'member' ? []
+      : deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id),
+    sweep: async (projectId, through) => {
+      await planning.sweepRecordedRemovals(projectId, through);
+      await planning.scanGithubFileAnchors(projectId);
+      await planning.sweepDuplicatePairs(projectId, through);
+    },
+    onError: () => console.warn('[engineering-planning] 功能消失巡检暂不可用，将重试'),
+  });
+  const closePlanning = async () => { await stopPlanningSweep(); await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]); };
+  app.once('close', () => { void closePlanning(); });
+  deps.registerResourceShutdown?.(closePlanning);
+
   const dtsActor = (req: express.Request): DtsActor => {
     const r = req as express.Request & { cdsProjectKey?: { projectId: string; keyId: string }; _aiSession?: { id: string; token: string };
       cdsPrincipal?: { credentialId: string }; _cdsBasicHumanAuth?: boolean; cdsUser?: { id?: string; username?: string } };
@@ -5555,6 +5875,7 @@ export function createServer(deps: ServerDeps): express.Express {
     config: deps.config,
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
+    observePlanningGithubEvent: createPlanningGithubObserver(deps.stateService, planning),
     // 自动发布规则：push 命中分支时由发布侧判据决定叫醒哪些规则。
     runPushRules: (ctx) => scheduledJobService.runPushRules(ctx),
   }));

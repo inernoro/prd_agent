@@ -80,6 +80,7 @@ const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPa
 const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
+const CdsDesignSharePage = lazy(() => import('@/pages/CdsDesignSharePage'));
 const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
@@ -1029,6 +1030,8 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   },
   { path: '/web-pages/new-document', placement: 'fullscreen', permission: 'web-pages.read',
     element: fullscreenGuarded('web-pages.read', <HostedTemplatePage />) },
+  { path: '/web-pages/cds-share', placement: 'fullscreen', permission: 'web-pages.write',
+    element: fullscreenGuarded('web-pages.write', <CdsDesignSharePage />) },
   { path: '/web-pages/collections', placement: 'fullscreen', permission: 'web-pages.read',
     element: fullscreenGuarded('web-pages.read', <HostedCollectionsPage />) },
   { path: '/web-pages/collections/:collectionId', placement: 'fullscreen', permission: 'web-pages.read',

@@ -285,6 +285,10 @@ public interface IHostedSiteService
         HostedCollectionSnapshot snapshot, string? title, string? description, string? password,
         int expiresInDays, string visibility, CancellationToken ct = default);
 
+    Task<WebPageShareLink> CreateFixedRevisionShareAsync(string userId, string displayName,
+        string siteId, HostedSiteFixedRevision revision, string? title, string? description,
+        string? password, TimeSpan validity, string visibility, CancellationToken ct = default);
+
     /// <summary>
     /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方这次**有没有真的写下什么**。
     /// 只有「复用了既有链接且一个字段都没动」才为 true —— 复用路径会刷新有效期并追一条续期审计，
@@ -457,6 +461,9 @@ public interface IHostedSiteService
     /// </summary>
     Task<ShareSiteResolveResult> ResolveCollectionShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
 
+    Task<ShareSiteResolveResult> ResolveFixedRevisionShareAsync(string token, string revisionId,
+        string? password, string? viewerUserId, string? proof, CancellationToken ct = default);
+
     Task<ShareSiteResolveResult> ResolveShareSiteAsync(
         string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default);
 }
@@ -566,6 +573,7 @@ public class TagCountResult
 
 public class ShareViewResult
 {
+    public string? RevisionId { get; set; }
     public string? DocumentCollectionId { get; set; }
     public string? CollectionId { get; set; }
     public string? MainSiteId { get; set; }

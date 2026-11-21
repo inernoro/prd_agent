@@ -357,9 +357,19 @@ public sealed record HostedSiteVerifiedFile(
 /// 网页分享链接 — 基于 Token 的分享机制（密码保护 + 过期时间）
 /// </summary>
 [BsonIgnoreExtraElements]
+public sealed record HostedSiteFixedRevision(string RevisionId, string PackageFingerprint, Dictionary<string, string> FileHashes)
+{
+    [JsonIgnore]
+    public CdsFixedShareApproval? CdsApproval { get; init; }
+}
+
+public sealed record CdsFixedShareApproval(string Id, string Issuer, string ProjectId, string DesignId, string PreparationId,
+    int Version, string SourceCommit, string PackageSha256, int ExpiresInHours);
+
 public class WebPageShareLink
 {
     public HostedCollectionSnapshot? CollectionSnapshot { get; set; }
+    public HostedSiteFixedRevision? FixedRevision { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>命名合集及本次明确授权的成员快照；空值保留历史独立分享语义。</summary>

@@ -186,6 +186,7 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   for (const key of Object.keys(env)) {
     if (!SECRET_ENV_KEY_PATTERN.test(key)
       && !SECRET_GROUP_COMPANION_KEYS.has(key)
+      && !key.startsWith('CDS_DESIGN_MAP_HANDOFF_')
       && !key.startsWith('CDS_SSO_')) continue;
     delete env[key];
     scrubbed.push(key);

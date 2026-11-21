@@ -265,6 +265,54 @@ describe('ticket SSO routes', () => {
     expect(location.searchParams.get('redirect_uri')).toBe('https://cds.example/auth/sso');
   });
 
+  it('keeps two preview return paths independently bound under host-only sessions', async () => {
+    const config = normalizeTicketSsoConfig({
+      enabled: true, providerId: 'cds-preview', authorizationUrl: 'https://parent.example/preview/authorize',
+      tokenUrl: 'https://parent.example/api/auth/preview/token', clientId: 'fixture', clientSecret: 'fixture-secret',
+    });
+    const requests: unknown[] = [];
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => config, publicBaseUrl: 'https://preview.example', cookieSecure: true, hostSessionCookies: true,
+      stateStore: new TicketSsoStateStore(), sessionStore: new TicketSsoSessionStore(),
+      fetchImpl: vi.fn(async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ success: true, data: { subject: 'fixture-user', username: 'member', displayName: 'Fixture member' } }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }) as typeof fetch,
+    }));
+    server = await start(app);
+    const destinations = ['/engineering-planning?view=board#proposal', '/design?version=2#spec'];
+    const flows = await Promise.all(destinations.map(async destination => {
+      const response = await call(server!, 'GET', '/api/auth/sso/start?' + new URLSearchParams({ redirect: destination }));
+      expect(response.status).toBe(302);
+      expect(response.headers['referrer-policy']).toBe('no-referrer');
+      const target = new URL(String(response.headers.location));
+      expect(target.searchParams.get('return_to')).toBe(destination);
+      const cookies = response.headers['set-cookie'];
+      expect(cookies).toEqual([expect.stringMatching(/^__Host-cds_preview_flow_.*; Secure/)]);
+      return { state: target.searchParams.get('state'), cookie: cookies![0].split(';')[0] };
+    }));
+    expect(flows[0].cookie.split('=')[0]).not.toBe(flows[1].cookie.split('=')[0]);
+    const exchange = (index: number, cookie: string) => call(server!, 'POST', '/api/auth/sso/exchange', {
+      state: flows[index].state, code: 'a'.repeat(43),
+    }, { Cookie: cookie });
+    expect((await exchange(0, flows[1].cookie)).status).toBe(400);
+    expect(requests).toHaveLength(0);
+    for (const index of [1, 0]) {
+      const result = await exchange(index, flows[index].cookie);
+      expect(result.status).toBe(200);
+      expect(result.body.redirect).toBe(destinations[index]);
+      expect(result.headers['set-cookie']).toEqual(expect.arrayContaining([
+        expect.stringContaining(`${flows[index].cookie.split('=')[0]}=;`),
+        expect.stringMatching(/^__Host-cds_sso_session=.*; Secure/),
+      ]));
+    }
+    expect(requests).toMatchObject([{ state: flows[1].state }, { state: flows[0].state }]);
+  });
+
   it('rejects excess SSO starts without invalidating an existing authorization state', async () => {
     const config = normalizeTicketSsoConfig({
       enabled: true,

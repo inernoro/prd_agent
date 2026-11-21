@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using Microsoft.Extensions.Logging;
@@ -2693,6 +2694,12 @@ public class HostedSiteService : IHostedSiteService
         => (await CreateShareCoreAsync(userId, displayName, null, snapshot.SiteIds, "collection", title, description,
             password, expiresInDays, ct, "share", true, visibility, false, null, snapshot)).Link;
 
+    public async Task<WebPageShareLink> CreateFixedRevisionShareAsync(string userId, string displayName,
+        string siteId, HostedSiteFixedRevision revision, string? title, string? description,
+        string? password, TimeSpan validity, string visibility, CancellationToken ct = default)
+        => (await CreateShareCoreAsync(userId, displayName, siteId, null, "single", title, description,
+            password, 0, ct, "share", true, visibility, fixedRevision: revision, fixedValidity: validity)).Link;
+
     private async Task<(WebPageShareLink Link, bool ReusedWithoutChange)> CreateShareCoreAsync(
         string userId, string displayName,
         string? siteId, List<string>? siteIds, string shareType,
@@ -2703,7 +2710,8 @@ public class HostedSiteService : IHostedSiteService
         bool forceNew = false,
         string visibility = "owner-only",
         bool allocateShortLink = false,
-        List<string>? askSuggestedQuestions = null, HostedCollectionSnapshot? collectionSnapshot = null)
+        List<string>? askSuggestedQuestions = null, HostedCollectionSnapshot? collectionSnapshot = null,
+        HostedSiteFixedRevision? fixedRevision = null, TimeSpan? fixedValidity = null)
     {
         // 开场问题保持三态：null（调用方没提这茬）不动存量值，非 null（含空数组）按用户本次所选落库。
         //
@@ -2736,7 +2744,7 @@ public class HostedSiteService : IHostedSiteService
         // 所有目标站点都必须有 CreateShare 权限，否则整笔拒绝（与原「全部可访问才放行」一致）。
         if (!await CanCreateShareAsync(allIds, userId, ct))
             throw new UnauthorizedAccessException(NoSharePermissionMessage);
-        if (normalizedVisibility != "owner-only")
+        if (normalizedVisibility != "owner-only" && fixedRevision == null)
             foreach (var target in allIds) await PrepareReviewHistoryAssetsAsync(target, userId, ct);
 
         // 复用优先（服务端唯一判定，不依赖前端列表/分页，杜绝"链接数 > 分页上限后去重失效"）：
@@ -2751,9 +2759,16 @@ public class HostedSiteService : IHostedSiteService
         var wantAccess = string.IsNullOrWhiteSpace(password) ? "public" : "password";
         var wantPassword = string.IsNullOrWhiteSpace(password) ? null : password.Trim();
         var nowUtc = DateTime.UtcNow;
-        var newExpiresAt = expiresInDays > 0 ? nowUtc.AddDays(expiresInDays) : (DateTime?)null;
+        var newExpiresAt = fixedValidity is { } validity ? nowUtc.Add(validity)
+            : expiresInDays > 0 ? nowUtc.AddDays(expiresInDays) : (DateTime?)null;
         // visit 链恒 public；其余按调用方传入的 visibility（已在方法开头 normalize）
         var effVisibility = effPurpose == "visit" ? "public" : normalizedVisibility;
+        var cdsApproval = fixedRevision?.CdsApproval;
+        if (cdsApproval != null)
+        {
+            var recorded = await _db.WebPageShareLinks.Find(row => row.Id == cdsApproval.Id).FirstOrDefaultAsync(ct);
+            if (recorded != null) return (VerifyCdsShareReplay(recorded), true);
+        }
 
         // forceNew=true（PR 2026-05-28 起，用户在分享面板显式点新建）：跳过复用直接新建。
         // visit 便捷链恒走复用路径（避免每次进入页面都创建一条便捷链污染列表）。
@@ -2762,6 +2777,7 @@ public class HostedSiteService : IHostedSiteService
         {
             var fb = Builders<WebPageShareLink>.Filter;
             var reuseFilter = fb.Eq(x => x.CreatedBy, userId)
+                & fb.Eq(x => x.FixedRevision, null)
                 & fb.Eq(x => x.IsRevoked, false)
                 & fb.Eq(x => x.AccessLevel, wantAccess)
                 // Visibility 必须进 reuse key（PR #685 Bugbot High / Codex P2）：
@@ -2922,6 +2938,7 @@ public class HostedSiteService : IHostedSiteService
         var share = new WebPageShareLink
         {
             CollectionSnapshot = collectionSnapshot,
+            FixedRevision = fixedRevision,
             SiteId = shareType != "collection" ? siteId : null,
             SiteIds = allIds,
             ShareType = shareType ?? "single",
@@ -2929,7 +2946,7 @@ public class HostedSiteService : IHostedSiteService
             Title = shareTitle,
             Description = effDescription,
             AccessLevel = wantAccess,
-            Password = wantPassword,
+            Password = fixedRevision == null ? wantPassword : null,
             PasswordHash = pwdHash?.Hash,
             PasswordSalt = pwdHash?.Salt,
             ExpiresAt = newExpiresAt,
@@ -2952,7 +2969,17 @@ public class HostedSiteService : IHostedSiteService
             },
         };
 
-        await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
+        if (cdsApproval != null) share.Id = cdsApproval.Id;
+        try
+        {
+            await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (cdsApproval != null && ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var recorded = await _db.WebPageShareLinks.Find(row => row.Id == cdsApproval.Id).FirstOrDefaultAsync(ct);
+            if (recorded == null) throw;
+            return (VerifyCdsShareReplay(recorded), true);
+        }
 
         // 数字短链 /s/{seq} 改为「按需懒分配」（2026-06-11）：用户意图里没有短链就不强制
         // 生成，否则 short_links 集合被每条分享污染、管理员页面冒出几百条用户从没要过的短链。
@@ -2969,6 +2996,18 @@ public class HostedSiteService : IHostedSiteService
             userId, share.Id, share.ShareType, share.ShortSeq);
 
         return (share, false);
+
+        WebPageShareLink VerifyCdsShareReplay(WebPageShareLink recorded)
+        {
+            if (recorded.CreatedBy != userId || recorded.SiteId != siteId || recorded.IsRevoked || recorded.ExpiresAt <= DateTime.UtcNow
+                || recorded.AccessLevel != wantAccess || recorded.Visibility != effVisibility || recorded.FixedRevision?.CdsApproval != cdsApproval
+                || recorded.FixedRevision?.RevisionId != fixedRevision?.RevisionId
+                || recorded.FixedRevision?.PackageFingerprint != fixedRevision?.PackageFingerprint
+                || (wantPassword != null && (recorded.PasswordHash == null || recorded.PasswordSalt == null
+                    || !_sharePwd.Verify(wantPassword, recorded.PasswordHash, recorded.PasswordSalt))))
+                throw new InvalidOperationException("这条 CDS 确认已变更或链接已失效");
+            return recorded;
+        }
     }
 
     /// <summary>
@@ -3301,6 +3340,9 @@ public class HostedSiteService : IHostedSiteService
         var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
         if (gate is { } g)
             return new ShareViewResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter, ErrorCode = g.HttpStatus == 429 ? "rate_limited" : "wrong_password" };
+        if (share.FixedRevision is { } fixedRevision)
+            return new ShareViewResult { RevisionId = fixedRevision.RevisionId, Title = share.Title,
+                Description = share.Description, CreatedAt = share.CreatedAt, CreatedByName = share.CreatedByName };
 
         // 更新浏览量
         await _db.WebPageShareLinks.UpdateOneAsync(
@@ -3789,6 +3831,8 @@ public class HostedSiteService : IHostedSiteService
             return new RenewShareResult { Error = "分享不存在或无权操作" };
         if (share.IsRevoked)
             return new RenewShareResult { Error = "链接已撤销，无法续期" };
+        if (share.FixedRevision != null)
+            return new RenewShareResult { Error = "固定版本的期限需重新确认，请创建新的分享" };
 
         var now = DateTime.UtcNow;
         if (!ShareRenewPolicy.CanRenew(share.IsRevoked, share.ExpiresAt, now))
@@ -3856,6 +3900,8 @@ public class HostedSiteService : IHostedSiteService
             .FirstOrDefaultAsync(ct);
         if (share == null)
             return new UpdateShareSettingsResult { Error = "分享不存在或无权操作" };
+        if (share.FixedRevision != null)
+            return new UpdateShareSettingsResult { Error = "固定版本的受众与期限需重新确认，请创建新的分享" };
         if (share.IsRevoked)
             return new UpdateShareSettingsResult { Error = "链接已撤销，无法修改，请重新分享" };
 
@@ -4413,7 +4459,7 @@ public class HostedSiteService : IHostedSiteService
     {
         // 1. 验证分享链接
         var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
-        if (share == null || share.IsRevoked)
+        if (share == null || share.IsRevoked || share.FixedRevision != null)
             return new SaveSharedSiteResult { Error = "分享链接不存在或已失效", HttpStatus = 404 };
 
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
@@ -5981,8 +6027,25 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<ShareSiteResolveResult> ResolveShareSiteAsync(
         string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default)
+        => await ResolveShareSiteCoreAsync(token, siteId, password, viewerUserId, ct);
+
+    public async Task<ShareSiteResolveResult> ResolveFixedRevisionShareAsync(string token, string revisionId,
+        string? password, string? viewerUserId, string? proof, CancellationToken ct = default)
+        => await ResolveShareSiteCoreAsync(token, null, password, viewerUserId, ct, revisionId, proof);
+
+    public static string FixedRevisionAccessProof(WebPageShareLink share)
+        => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            share.Id, share.SiteId, RevisionId = share.FixedRevision?.RevisionId,
+            PackageFingerprint = share.FixedRevision?.PackageFingerprint,
+            share.AccessLevel, share.Visibility, Password = share.PasswordHash ?? share.Password, share.PasswordSalt,
+        })));
+
+    private async Task<ShareSiteResolveResult> ResolveShareSiteCoreAsync(
+        string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct,
+        string? revisionId = null, string? proof = null)
     {
-        var (sites, share, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
+        var (sites, share, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct, revisionId, proof);
         if (err is { } e)
             return new ShareSiteResolveResult
             {
@@ -6012,11 +6075,12 @@ public class HostedSiteService : IHostedSiteService
     /// 密码仅校验不动滑动窗口（防爆破由 view 端点承担）。通过后内联解析分享目标站点。
     /// </summary>
     private async Task<(List<HostedSite> Sites, WebPageShareLink? Share, (string Error, int HttpStatus, string ErrorCode, int? RetryAfter)? Err)>
-        ResolveShareForCommentAsync(string token, string? password, string? viewerUserId, CancellationToken ct)
+        ResolveShareForCommentAsync(string token, string? password, string? viewerUserId, CancellationToken ct,
+            string? revisionId = null, string? proof = null)
     {
         var empty = new List<HostedSite>();
         var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
-        if (share == null || share.IsRevoked)
+        if (share == null || share.IsRevoked || share.FixedRevision?.RevisionId != revisionId)
             return (empty, null, ("分享链接不存在", 404, "not_found", null));
 
         // 过期判定必须走 ShouldRejectExpiredShare，与 ViewShareAsync 同一把尺子。
@@ -6037,11 +6101,21 @@ public class HostedSiteService : IHostedSiteService
 
         // 密码门控：复用 ViewShareAsync 同款 EnforceShareAccessAsync —— 它内置滑动窗口速率限制
         // （10 次/分钟）+ 持久化 RecentAttempts + 恒时比对。直接手写比对会绕过防爆破（Codex P1）。
-        var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
-        if (gate is { } g)
+        if (proof != null)
         {
-            var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";
-            return (empty, null, (g.Error, g.HttpStatus, code, g.RetryAfter));
+            if (share.FixedRevision == null || !CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.ASCII.GetBytes(FixedRevisionAccessProof(share)),
+                System.Text.Encoding.ASCII.GetBytes(proof)))
+                return (empty, null, ("分享链接已更新，请重新进入", 404, "not_found", null));
+        }
+        else
+        {
+            var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
+            if (gate is { } g)
+            {
+                var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";
+                return (empty, null, (g.Error, g.HttpStatus, code, g.RetryAfter));
+            }
         }
 
         var siteIds = new List<string>(share.SiteIds ?? new List<string>());

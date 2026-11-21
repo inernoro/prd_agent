@@ -657,6 +657,7 @@ export interface CdsUserActivity {
 }
 
 export interface CdsAuthPublicStatus {
+  preview?: { project?: string; branch?: string; pullRequest?: number; policyUrl?: string };
   mode: 'disabled' | 'basic' | 'github' | 'sso';
   enabled: boolean;
   loginMethods: {

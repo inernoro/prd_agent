@@ -13,7 +13,7 @@
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check src/server.mjs && node --check src/bridge.mjs && node --check src/dts-bridge.mjs"
+    "check": "node --check src/server.mjs && node --check src/bridge.mjs && node --check src/dts-bridge.mjs && node --check src/planning-bridge.mjs && node --check src/design-bridge.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

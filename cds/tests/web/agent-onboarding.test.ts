@@ -13,6 +13,7 @@ import {
   buildCdsAgentPrompt,
   chooseAgentProjectId,
   createAgentMissionContext,
+  getAgentCapabilitiesForMission,
   getAgentMissionCategoriesForScope,
   getAgentMissionsForCategory,
   getAgentMissionScope,
@@ -69,6 +70,7 @@ describe('CDS Agent 接入口令', () => {
     for (const context of [
       resolveAgentPageContext({ pathname: '/branches/unavailable' }),
       resolveAgentPageContext({ pathname: '/release-center', search: '?project=unavailable' }),
+      resolveAgentPageContext({ pathname: '/engineering-planning', search: '?project=unavailable' }),
     ]) {
       expect(chooseAgentProjectId(projects, context)).toBe('');
       expect(initialAgentConnectSelection(projects, context)).toEqual({ kind: 'project', projectId: 'unavailable' });
@@ -164,6 +166,33 @@ describe('CDS Agent 接入口令', () => {
     expect(getAgentMissionScope('branches')).toBe('project');
   });
 
+  it('从工程规划当前项目和债务视图生成最小范围的 Agent 接入口令', () => {
+    const context = resolveAgentPageContext({
+      pathname: '/engineering-planning',
+      search: '?project=proj-b&view=debts',
+    });
+    expect(context).toMatchObject({
+      id: 'engineering-planning',
+      scope: 'project',
+      pagePath: '/engineering-planning?project=proj-b&view=debts',
+    });
+    expect(createAgentMissionContext('engineering-planning', 'project/a').pagePath)
+      .toBe('/engineering-planning?project=project%2Fa');
+    const projects = [{ id: 'proj-a' }, { id: 'proj-b' }];
+    const selection = initialAgentConnectSelection(projects, context);
+    const target = resolveAgentConnectTarget({
+      tab: 'connect',
+      selection,
+      effectiveProjectId: chooseAgentProjectId(projects, context),
+    });
+    expect(target).toEqual({ kind: 'existing', projectId: 'proj-b' });
+    const prompt = buildCdsAgentPrompt({ cdsOrigin: 'https://cds.example', target, context });
+    const setupUrl = new URL(prompt.match(/https:\/\/[^，]+/)![0]);
+    expect(setupUrl.searchParams.get('mission')).toBe('engineering-planning');
+    expect(setupUrl.searchParams.get('project')).toBe('proj-b');
+    expect(setupUrl.searchParams.get('skills')).toBe('cds');
+  });
+
   it('把全部 Agent 任务集中到七类注册表并覆盖常见 CDS 操作', () => {
     expect(AGENT_MISSION_CATEGORY_DEFINITIONS.map((category) => category.id)).toEqual([
       'access',
@@ -180,10 +209,14 @@ describe('CDS Agent 接入口令', () => {
     expect(AGENT_MISSION_DEFINITIONS).toHaveProperty('startup-diagnostics');
     expect(AGENT_MISSION_DEFINITIONS).toHaveProperty('api-diagnostics');
     expect(AGENT_MISSION_DEFINITIONS).toHaveProperty('agent-access');
+    expect(getAgentMissionsForCategory('project', 'code').map(mission => mission.id))
+      .toContain('engineering-planning');
+    expect(getAgentMissionsForCategory('system', 'code').map(mission => mission.id))
+      .not.toContain('engineering-planning');
     for (const definition of Object.values(AGENT_MISSION_DEFINITIONS)) {
-      expect(definition.steps.length).toBeGreaterThanOrEqual(3);
-      expect(definition.checks.length).toBeGreaterThanOrEqual(3);
-      expect(definition.completion.length).toBeGreaterThanOrEqual(3);
+      expect(definition.steps.length, definition.id).toBeGreaterThanOrEqual(3);
+      expect(definition.checks.length, definition.id).toBeGreaterThanOrEqual(3);
+      expect(definition.completion.length, definition.id).toBeGreaterThanOrEqual(3);
     }
   });
 
@@ -245,7 +278,19 @@ describe('CDS Agent 接入口令', () => {
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
     // 新增分支归档清理：有项目边界、需要明确确认，不直接暴露为MCP自动操作。
     // 短期监控提议协议单独登记，不作为可直调的系统写能力。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(75);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(78);
+    expect(getAgentCapabilitiesForMission('engineering-planning')).toMatchObject([{
+      id: 'engineering-planning',
+      routeSource: 'engineering-planning.ts',
+      scope: 'project',
+      access: 'project',
+      risk: 'write',
+      agentUse: 'guided',
+      mcpExposure: 'available',
+      preferredSkill: 'cds',
+      cliFamily: 'planning / debt',
+      mcpTools: ['cds_planning_read', 'cds_planning_propose', 'cds_planning_record_debt'],
+    }]);
     for (const id of ['passkeys', 'hosted-sso']) {
       expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === id))
         .toMatchObject({ access: 'human-only', risk: 'protocol', mcpExposure: 'not-exposed' });

@@ -1334,6 +1334,84 @@ describe('human project grants through the production server', () => {
     expect((await call('GET', '/api/projects', member)).status).toBe(401);
   });
 
+  it('authorizes a design agent only for the selected project and does not issue broader keys', async () => {
+    const keys = '/api/projects/project-a/agent-keys';
+    const design = '/api/projects/project-a/design';
+    expect((await call('POST', keys, owner, { designAccess: 'write-all' })).status).toBe(400);
+    expect((await call('POST', keys, owner, { designAccess: 'publish', planningAccess: 'propose' })).status).toBe(400);
+    await grant(['project-a']);
+    expect((await call('POST', keys, member, { designAccess: 'publish' })).status).toBe(403);
+    const reader = await call('POST', keys, owner, { label: 'Fixture design reader', designAccess: 'read' });
+    const publisher = await call('POST', keys, owner, { label: 'Fixture design publisher', designAccess: 'publish' });
+    expect([reader.status, publisher.status]).toEqual([201, 201]);
+    expect((await credentialCall('GET', design, reader.body.plaintext)).body.permissions).toMatchObject({ write: false, review: false, sign: false });
+    const key = publisher.body.plaintext;
+    expect((await credentialCall('GET', design, key)).body.permissions).toMatchObject({ write: true, review: false, sign: false });
+    expect((await credentialCall('POST', design + '/packages', reader.body.plaintext, {})).status).toBe(403);
+    expect((await credentialCall('POST', design + '/commands', key, {})).status).toBe(403);
+    expect((await credentialCall('POST', keys, key, { label: 'Must not mint another key' })).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-a/planning/capabilities', key)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-b/design', key)).status).toBe(403);
+    expect((await call('GET', keys, owner)).body.keys).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: reader.body.keyId, designAccess: 'read' }),
+      expect.objectContaining({ id: publisher.body.keyId, designAccess: 'publish' }),
+    ]));
+    expect((await call('DELETE', keys + '/' + publisher.body.keyId, owner)).status).toBe(200);
+    expect((await credentialCall('GET', design, key)).status).not.toBe(200);
+  });
+
+  it('limits read-only engineering planning keys to reading the assigned project', async () => {
+    const keys = '/api/projects/project-a/agent-keys';
+    const scope = '/api/projects/project-a/planning';
+    const issued = await call('POST', keys, owner, { label: 'Fixture planning reader', planningAccess: 'read' });
+    expect(issued.status).toBe(201);
+    const key = issued.body.plaintext;
+    const capability = await credentialCall('GET', scope + '/capabilities', key);
+    expect(capability.status).toBe(200);
+    expect(capability.body.permissions).toEqual(['read']);
+    const command = {
+      type: 'debt.create', requestId: 'fixture-reader-debt-1', title: 'A planning reader cannot record debt',
+      source: { type: 'manual', ref: 'fixture-read-role-1' },
+    };
+    expect((await credentialCall('POST', scope + '/commands', key, command)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-b/planning/debts', key)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-a/design', key)).status).toBe(403);
+    expect((await credentialCall('POST', keys, key, { label: 'Must not mint a wider key' })).status).toBe(403);
+    expect((await call('GET', scope + '/debts')).body.items).toEqual([]);
+  });
+
+  it('lets a planning proposer open a proposal without recording or confirming debt', async () => {
+    const keys = '/api/projects/project-a/agent-keys';
+    const scope = '/api/projects/project-a/planning';
+    expect((await call('POST', keys, owner, { label: 'Invalid scope', planningAccess: 'any' })).status).toBe(400);
+    const issued = await call('POST', keys, owner, { label: 'Fixture planning proposer', planningAccess: 'propose' });
+    expect(issued.status).toBe(201);
+    const key = issued.body.plaintext;
+    const capability = await credentialCall('GET', scope + '/capabilities', key);
+    expect(capability.status).toBe(200);
+    expect(capability.body.permissions).toEqual(['read', 'propose']);
+    const source = { type: 'manual', ref: 'fixture-planning-proposer-1' };
+    const draft = { title: 'An approved person must confirm this proposal' };
+    const submitted = await credentialCall('POST', scope + '/commands', key, {
+      type: 'proposal.submit', requestId: 'fixture-proposer-draft-1', kind: 'debt', source, draft,
+    });
+    expect(submitted.status).toBe(201);
+    expect(submitted.body.result.status).toBe('pending');
+    expect((await credentialCall('POST', scope + '/commands', key, {
+      type: 'debt.create', requestId: 'fixture-proposer-debt-1', source, ...draft,
+    })).status).toBe(403);
+    expect((await credentialCall('POST', scope + '/commands', key, {
+      type: 'proposal.accept', requestId: 'fixture-proposer-confirm-1', proposalId: submitted.body.result.id,
+    })).status).toBe(403);
+    expect((await credentialCall('POST', keys, key, { label: 'Must not mint a wider key' })).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-b/planning/capabilities', key)).status).toBe(403);
+    expect((await call('GET', scope + '/debts')).body.items).toEqual([]);
+    const ordinary = await call('POST', keys, owner, { label: 'Legacy key' });
+    expect(ordinary.status).toBe(201);
+    expect((await credentialCall('GET', scope + '/capabilities', ordinary.body.plaintext)).body.permissions)
+      .toEqual(['read', 'propose', 'write']);
+  });
+
   it('filters stream snapshot and live events, rechecking grants after subscription', async () => {
     await grant(['project-a']);
     const abort = new AbortController();

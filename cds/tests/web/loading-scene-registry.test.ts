@@ -24,7 +24,7 @@ describe('加载场景登记由真实路由约束', () => {
   });
   it('所有控制台路由有明确登记，不能静默退回六方块', () => {
     const routes = [...fs.readFileSync(path.join(src, 'App.tsx'), 'utf8').matchAll(/<Route path="([^"]+)"/g)].map(m => m[1]);
-    const standalone = new Set(['/', '/login', '/auth/sso', '/preview-preparing', '/hello', '/s/:token', '*']);
+    const standalone = new Set(['/', '/login', '/auth/sso', '/preview-preparing', '/preview-access', '/hello', '/s/:token', '*']);
     expect(scenes.filter(s=>s.scope!=='standalone').map(s => s.route).sort()).toEqual(routes.filter(route => !standalone.has(route)).sort());
     expect(new Set(scenes.map(s => s.route)).size).toBe(scenes.length);
     for (const scene of scenes.filter(s=>s.scope!=='standalone')) {
@@ -87,6 +87,7 @@ describe('加载场景登记由真实路由约束', () => {
     expect(pageSkeletonForPath('/login').type).toBe(AuthPageSkeleton);
     expect(render(createElement(MemoryRouter,null,pageSkeletonForPath('/login')))).toContain('data-auth-form-skeleton');
     expect(render(pageSkeletonForPath('/s/fixture-token'))).toBe(render(createElement(PublicStatusSkeleton)));
+    expect(render(pageSkeletonForPath('/preview-access'))).toContain('aria-label="正在核对预览访问权限"');
     const login = fs.readFileSync(path.join(src,'pages/LoginPage.tsx'),'utf8');
     expect(login).not.toMatch(/function AuthFormSkeleton/);
     expect(login).toContain('!loginMethodsReady || !bootstrapReady');

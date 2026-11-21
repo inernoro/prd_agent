@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type { CdsSsoConfig } from '../types.js';
 import {
@@ -51,6 +52,11 @@ function externalCallbackUrl(req: Request, configuredBaseUrl?: string): string {
   candidate.search = '';
   candidate.hash = '';
   return candidate.toString().replace(/\/$/, '');
+}
+
+function previewFlowCookie(state: unknown, hostSessionCookies: boolean): string | undefined {
+  if (typeof state !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(state)) return undefined;
+  return sessionCookieName('cds_preview_flow_' + state.slice(0, 16), hostSessionCookies);
 }
 
 export function buildTicketSsoSessionCookie(token: string, expiresAt: Date, secure: boolean, hostSessionCookies = false): string {
@@ -116,9 +122,13 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       res.redirect(302, '/login?sso_error=invalid_callback');
       return;
     }
+    const preview = config.providerId === 'cds-preview';
     let issued: ReturnType<TicketSsoStateStore['issue']>;
     try {
-      issued = deps.stateStore.issue(req.query.redirect, callbackUrl);
+      const binding = preview ? randomBytes(32).toString('base64url') : undefined;
+      issued = deps.stateStore.issue(req.query.redirect, callbackUrl, binding);
+      const name = binding && previewFlowCookie(issued.state, hostSessionCookies);
+      if (binding && name) res.cookie(name, binding, { ...flowOptions, secure: cookieSecure || callbackUrl.startsWith('https:'), maxAge: 5 * 60_000 });
     } catch (error) {
       if (error instanceof TicketSsoStateCapacityError) {
         res.status(429).json({
@@ -129,8 +139,9 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       }
       throw error;
     }
-    if (hostSessionCookies) res.cookie(flowCookie, issued.state, { ...flowOptions, maxAge: 5 * 60_000 });
-    res.redirect(302, buildTicketSsoAuthorizationUrl(config, callbackUrl, issued.state));
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    if (hostSessionCookies && !preview) res.cookie(flowCookie, issued.state, { ...flowOptions, maxAge: 5 * 60_000 });
+    res.redirect(302, buildTicketSsoAuthorizationUrl(config, callbackUrl, issued.state, issued.redirect));
   });
 
   router.post('/auth/sso/exchange', async (req, res) => {
@@ -139,16 +150,23 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       res.status(503).json({ error: 'SSO 尚未配置完成', code: 'sso_not_configured' });
       return;
     }
-    if (hostSessionCookies && (!req.body?.state || readBrowserCookie(req.headers.cookie, flowCookie) !== req.body.state)) {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    const preview = config.providerId === 'cds-preview';
+    const stateId = req.body?.state;
+    if (hostSessionCookies && !preview && (!stateId || readBrowserCookie(req.headers.cookie, flowCookie) !== stateId)) {
       res.status(400).json({ error: 'SSO 登录链接无效或已过期，请重新发起登录。', code: 'sso_state_invalid' });
       return;
     }
-    if (hostSessionCookies) res.clearCookie(flowCookie, flowOptions);
-    const state = deps.stateStore.consume(req.body?.state);
+    if (hostSessionCookies && !preview) res.clearCookie(flowCookie, flowOptions);
+    const previewCookie = preview ? previewFlowCookie(stateId, hostSessionCookies) : undefined;
+    const binding = previewCookie ? readBrowserCookie(req.headers.cookie, previewCookie) : undefined;
+    const state = deps.stateStore.consume(stateId, binding);
     if (!state) {
       res.status(400).json({ error: 'SSO 登录状态无效或已过期', code: 'sso_state_invalid' });
       return;
     }
+    const secure = cookieSecure || state.callbackUrl.startsWith('https://');
+    if (previewCookie) res.clearCookie(previewCookie, { ...flowOptions, secure });
     try {
       const identity = await exchangeTicketSsoCode(
         config,
@@ -156,9 +174,9 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
         state.callbackUrl,
         deps.fetchImpl,
         deps.tokenExchangeTimeoutMs,
+        stateId,
       );
       const session = deps.sessionStore.create(identity);
-      const secure = cookieSecure || state.callbackUrl.startsWith('https://');
       res.append('Set-Cookie', [
         buildTicketSsoSessionCookie(session.token, session.expiresAt, secure, hostSessionCookies),
         buildLogoutCookie(secure, hostSessionCookies),

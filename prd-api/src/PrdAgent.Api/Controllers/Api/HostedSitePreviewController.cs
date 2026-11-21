@@ -133,15 +133,17 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
     private readonly IHostedSiteRevisionService _revisions;
     private readonly HostedSitePreviewAccessService _access;
     private readonly HostedSitePreviewEmbedOptions _embed;
+    private readonly IHostedSiteService? _sites;
 
     public HostedSitePreviewFilesController(
         IHostedSiteRevisionService revisions,
         HostedSitePreviewAccessService access,
-        HostedSitePreviewEmbedOptions? embed = null)
+        HostedSitePreviewEmbedOptions? embed = null, IHostedSiteService? sites = null)
     {
         _revisions = revisions;
         _access = access;
         _embed = embed ?? HostedSitePreviewEmbedOptions.SelfOnly;
+        _sites = sites;
     }
 
     /// <summary>同源永远允许；配置里声明过的来源额外放行。</summary>
@@ -207,20 +209,44 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
             return Missing();
         try
         {
-            var file = await _revisions.GetVerifiedFileAsync(
-                payload.SiteId,
-                payload.RevisionId,
-                normalizedPath,
-                payload.UserId,
-                CancellationToken.None);
-            if (file == null || !HostedSitePreviewAccessService.HasValidContentHash(file)) return Missing();
-            ApplyResponseHeaders(file.MimeType);
-            return File(file.Content, file.MimeType, enableRangeProcessing: false);
+            var file = await _revisions.GetVerifiedFileAsync(payload.SiteId, payload.RevisionId, normalizedPath,
+                payload.UserId, HttpContext.RequestAborted);
+            return VerifiedFile(file);
         }
         catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
         {
             return Missing();
         }
+    }
+
+    [AllowAnonymous]
+    [HttpGet("shared/{ticket}/{**path}")]
+    public async Task<IActionResult> ReadShared(string ticket, string? path)
+    {
+        if (_sites == null || !_access.TryReadFixedShare(ticket, out var payload) || payload.FixedShare is not { } share
+            || !DesignArtifactPublicPath.TryNormalize(path, out var normalizedPath)
+            || !DesignArtifactPublicPath.IsWebPageWorkspaceOutput(normalizedPath, includeInternalManifest: false))
+            return Missing();
+        try
+        {
+            var ct = HttpContext.RequestAborted;
+            var authorized = await _sites.ResolveFixedRevisionShareAsync(share.Token, payload.RevisionId,
+                null, string.IsNullOrEmpty(payload.UserId) ? null : payload.UserId, share.AccessProof, ct);
+            if (authorized.Site?.Id != payload.SiteId || authorized.Share?.FixedRevision?.PackageFingerprint != payload.PackageFingerprint)
+                return Missing();
+            return VerifiedFile(await _revisions.GetFixedShareFileAsync(authorized, normalizedPath, ct));
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+        {
+            return Missing();
+        }
+    }
+
+    private IActionResult VerifiedFile(HostedSiteRevisionFile? file)
+    {
+        if (file == null || !HostedSitePreviewAccessService.HasValidContentHash(file)) return Missing();
+        ApplyResponseHeaders(file.MimeType);
+        return File(file.Content, file.MimeType, enableRangeProcessing: false);
     }
 
     private void ApplyResponseHeaders(string mimeType)
@@ -249,9 +275,11 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
         return string.Equals(Request.Headers["Sec-Fetch-Site"], "cross-site", StringComparison.Ordinal);
     }
 
-    private NotFoundObjectResult Missing() => NotFound(ApiResponse<object>.Fail(
-        ErrorCodes.NOT_FOUND,
-        "预览已失效，请返回作品页面重新打开"));
+    private NotFoundObjectResult Missing()
+    {
+        if (ControllerContext.HttpContext is { } context) ApplyNoStoreHeaders(context.Response);
+        return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "预览已失效，请返回作品页面重新打开"));
+    }
 
     private static string CookieNameFor(string accessId) => CookieNamePrefix + accessId;
 }

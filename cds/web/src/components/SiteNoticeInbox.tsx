@@ -24,6 +24,7 @@ import { useAnchoredPosition } from '@/components/ui/anchored-popover';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, Database, ExternalLink, Rocket, Settings, ShieldAlert, TerminalSquare, Trash2, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -32,6 +33,7 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { shouldDismissOnEscape, shouldDismissOnPointerDown } from '@/lib/outside-dismiss';
 import { useOverlayDock } from '@/lib/useOverlayDock';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
+import type { DesignReviewNotice } from '../../../src/shared/design-workspace';
 
 type NoticeLevel = 'info' | 'warning' | 'danger';
 
@@ -75,6 +77,9 @@ interface NoticesResponse {
   outbound: { configured: boolean; reason?: string };
 }
 
+type PreviewAccessNotices = { pending: number; approved: Array<{ id: string; project: string }> };
+const emptyPreviewAccess: PreviewAccessNotices = { pending: 0, approved: [] };
+
 function levelClass(level: NoticeLevel = 'info'): string {
   // 语义色走 token，暗/亮双主题各自成立（禁暗色字面量 fallback）。
   if (level === 'danger') return 'border-[hsl(var(--destructive))]/35 bg-[hsl(var(--destructive))]/10 text-[hsl(var(--destructive))]';
@@ -115,15 +120,22 @@ export function NoticeRecordTimes({ createdAt, updatedAt }: Pick<SiteNotice, 'cr
   </div>;
 }
 
-export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPendingCount = 0, onOpenOperatorRequests }: {
+export function SiteNoticeInbox({
+  canReadAccessRequests = false, operatorPendingCount = 0, onOpenOperatorRequests, includeOperations = true, previewAccessIdentity, designReviewIdentity,
+}: {
   canReadAccessRequests?: boolean;
   operatorPendingCount?: number;
   onOpenOperatorRequests?: () => void;
+  includeOperations?: boolean;
+  previewAccessIdentity?: string;
+  designReviewIdentity?: string;
 } = {}): JSX.Element {
   const host = useOverlayDock('#cds-information-center-host');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [notices, setNotices] = useState<SiteNotice[]>([]);
+  const [previewSnapshot, setPreviewSnapshot] = useState<{ identity: string; data: PreviewAccessNotices }>();
+  const [designSnapshot, setDesignSnapshot] = useState<{ identity: string; notices: DesignReviewNotice[] }>();
   const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
   const [open, setOpen] = useState(false);
   const [expandedNoticeIds, setExpandedNoticeIds] = useState<Set<string>>(() => new Set());
@@ -183,6 +195,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
   }, [open]);
 
   const refresh = useCallback(async (): Promise<void> => {
+    if (!includeOperations) return;
     try {
       const res = await apiRequest<NoticesResponse>('/api/notices');
       setNotices(Array.isArray(res?.notices) ? res.notices : []);
@@ -190,9 +203,43 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
     } catch {
       // 铃铛取不到账本不该炸掉整个 shell：保持上一次的展示，等下一次事件/打开时再拉。
     }
-  }, []);
+  }, [includeOperations]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!previewAccessIdentity && !designReviewIdentity) return;
+    const lifetime = new AbortController();
+    let refreshing = false;
+    const refreshPrivate = async () => {
+      if (refreshing || document.hidden) return;
+      refreshing = true;
+      const options = { signal: lifetime.signal };
+      try {
+        const [preview, design] = await Promise.allSettled([
+          previewAccessIdentity ? apiRequest<PreviewAccessNotices>('/api/auth/preview/notices', options) : undefined,
+          designReviewIdentity ? apiRequest<{ notices: DesignReviewNotice[] }>('/api/auth/design/notices', options) : undefined,
+        ]);
+        if (lifetime.signal.aborted) return;
+        const data = preview.status === 'fulfilled' ? preview.value : undefined;
+        const reviews = design.status === 'fulfilled' ? design.value?.notices : undefined;
+        setPreviewSnapshot(previewAccessIdentity && Array.isArray(data?.approved) && Number.isSafeInteger(data.pending) && data.pending >= 0
+          ? { identity: previewAccessIdentity, data } : undefined);
+        setDesignSnapshot(designReviewIdentity && Array.isArray(reviews) ? { identity: designReviewIdentity, notices: reviews } : undefined);
+      } finally { refreshing = false; }
+    };
+    void refreshPrivate();
+    const timer = window.setInterval(() => void refreshPrivate(), 10000);
+    const show = () => { void refreshPrivate(); };
+    document.addEventListener('visibilitychange', show);
+    window.addEventListener('focus', show);
+    return () => {
+      lifetime.abort();
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', show);
+      window.removeEventListener('focus', show);
+    };
+  }, [previewAccessIdentity, designReviewIdentity, open]);
 
   // 服务端记了新通知 → 实时增量刷新（不轮询）。
   useEffect(() => {
@@ -204,6 +251,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
   // 乐观插入让铃铛立刻亮，同时 POST 到服务端账本落库（失败就靠下一次 refresh 纠正）。
   const pendingRef = useRef<Set<string>>(new Set());
   useEffect(() => {
+    if (!includeOperations) return;
     const onUpsert = (event: Event): void => {
       const detail = (event as CustomEvent<SiteNoticePayload>).detail;
       if (!detail?.id || !detail.title) return;
@@ -252,15 +300,20 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
     };
     window.addEventListener('cds:notice:upsert', onUpsert);
     return () => window.removeEventListener('cds:notice:upsert', onUpsert);
-  }, []);
+  }, [includeOperations]);
 
-  const activeNotices = useMemo(() => notices.filter((item) => !item.dismissedAt), [notices]);
+  const activeNotices = useMemo(() => includeOperations ? notices.filter((item) => !item.dismissedAt) : [], [includeOperations, notices]);
+  const previewAccess = previewSnapshot && previewSnapshot.identity === previewAccessIdentity ? previewSnapshot.data : emptyPreviewAccess;
+  const designReviews = designSnapshot?.identity === designReviewIdentity ? designSnapshot?.notices ?? [] : [];
   const unreadCount = activeNotices.filter((item) => !item.readAt).length;
   const informationCount = unreadCount
     + sourceCounts.access
     + sourceCounts.commit
     + sourceCounts.import
     + sourceCounts.update
+    + previewAccess.pending
+    + previewAccess.approved.length
+    + designReviews.length
     + operatorPendingCount;
 
   const dismissNotice = useCallback((id: string): void => {
@@ -279,7 +332,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
   // 每个项目 id 每次会话只探一次。
   const checkedProjectIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!open) return;
+    if (!open || !includeOperations) return;
     const idsToCheck = [...new Set(
       notices
         .filter((item) => !item.dismissedAt && item.projectId)
@@ -310,7 +363,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
       }
     });
     return () => { cancelled = true; };
-  }, [open, notices, dismissNotice]);
+  }, [open, includeOperations, notices, dismissNotice]);
 
   const markAllRead = (): void => {
     const now = new Date().toISOString();
@@ -320,7 +373,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
       .catch(() => { setNotices(before); });
   };
 
-  if (!host) return <></>;
+  if (!host || (!includeOperations && previewAccess.pending + previewAccess.approved.length + designReviews.length === 0)) return <></>;
 
   return createPortal((
     <>
@@ -336,7 +389,7 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
             const nextOpen = !open;
             if (nextOpen) {
               void refresh();
-              markAllRead();
+              if (includeOperations) markAllRead();
             }
             setOpen(nextOpen);
           }}
@@ -363,14 +416,14 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
             <div className="min-w-0">
               <div className="text-sm font-semibold">信息中心</div>
-              <div className="mt-0.5 truncate text-[0.6875rem] text-muted-foreground">系统动态、授权审批与服务端站内信</div>
+              {includeOperations && <div className="mt-0.5 truncate text-[0.6875rem] text-muted-foreground">系统动态、授权审批与服务端站内信</div>}
             </div>
             <button type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/30 hover:text-foreground" onClick={() => setOpen(false)} aria-label="关闭信息中心">
               <X className="h-4 w-4" />
             </button>
           </div>
 
-          {!outbound.configured ? (
+          {includeOperations && !outbound.configured ? (
             <div className="border-b border-[hsl(var(--hairline))] bg-warn-soft px-3 py-2 text-[0.6875rem] leading-4 text-warn">
               {outbound.reason || '未配置外发凭据，通知仅记录在 CDS 本地'}
             </div>
@@ -382,9 +435,37 @@ export function SiteNoticeInbox({ canReadAccessRequests = false, operatorPending
               <span className="shrink-0 text-primary">查看请求</span>
             </button> : null}
             {canReadAccessRequests ? <AccessRequestInbox /> : null}
-            <PendingImportInbox onCountChange={handleImportCount} />
-            <GlobalUpdateBadge onCountChange={handleUpdateCount} />
-            <CommitInbox onCountChange={handleCommitCount} />
+            {includeOperations && <>
+              <PendingImportInbox onCountChange={handleImportCount} />
+              <GlobalUpdateBadge onCountChange={handleUpdateCount} />
+              <CommitInbox onCountChange={handleCommitCount} />
+            </>}
+            {previewAccess.pending > 0 && (
+              <Link to="/preview-access" onClick={() => setOpen(false)}
+                className="block rounded-md border border-warn/35 bg-warn-soft p-3 text-sm">
+                <strong className="block font-medium">分支预览访问申请</strong>
+                <span className="text-xs text-muted-foreground">{previewAccess.pending} 项待审批</span>
+              </Link>
+            )}
+            {includeOperations && previewAccessIdentity && previewAccess.pending === 0 && <Link to="/preview-access"
+              onClick={() => setOpen(false)} className="block rounded-md border p-3 text-sm">预览审批设置</Link>}
+            {previewAccess.approved.map(item => (
+              <Link key={item.id} to={`/preview-access?request=${encodeURIComponent(item.id)}`} onClick={() => setOpen(false)}
+                className="flex items-start justify-between gap-3 rounded-md border p-3 text-sm">
+                <span className="min-w-0"><strong className="block font-medium">预览访问已批准</strong>
+                  <span className="break-words text-xs text-muted-foreground">{item.project}</span></span>
+                <span className="shrink-0 text-primary">返回原预览</span>
+              </Link>
+            ))}
+            {designReviews.map(item => (
+              <Link key={`${item.projectId}/${item.id}`} to={`/design?${new URLSearchParams({ project: item.projectId,
+                design: item.designId, version: String(item.version) })}`} onClick={() => setOpen(false)}
+                className="flex items-start justify-between gap-3 rounded-md border p-3 text-sm">
+                <span className="min-w-0"><strong className="block font-medium">{item.title} · V{item.version}</strong>
+                  <span className="break-words text-xs text-muted-foreground">设计评审{item.occurrences > 1 ? ` · 合并 ${item.occurrences} 次更新` : ''}</span></span>
+                <span className="shrink-0 text-primary">查看稿件</span>
+              </Link>
+            ))}
 
             {activeNotices.length === 0 && informationCount === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无提醒</div>

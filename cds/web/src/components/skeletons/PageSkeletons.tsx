@@ -1,5 +1,6 @@
 import { DtsSkeleton } from './DtsSkeleton';
 import { CodeReviewsSkeleton } from './CodeReviewsSkeleton';
+import { ContentLoading } from './ContentLoading';
 import { useState } from 'react';
 import { readProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
 import { FolderGit2, LayoutGrid, List, Plus, Search } from 'lucide-react';
@@ -210,6 +211,16 @@ export function ConsoleGenericSkeleton(): JSX.Element {
   );
 }
 
+export function EngineeringPlanningSkeleton(): JSX.Element {
+  return <div className="space-y-4" role="status" aria-label="加载工程规划" aria-busy="true">
+    <div className="cds-loading-skeleton-line h-7 w-32" aria-hidden="true" />
+    <div className="flex gap-3" aria-hidden="true"><div className="cds-loading-skeleton-panel h-12 w-36" /><div className="cds-loading-skeleton-panel h-12 w-32" /></div>
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-hidden="true">
+      {Array.from({ length: 4 }, (_, index) => <ContentLoading key={index} variant="panel" label="加载推进看板" />)}
+    </div>
+  </div>;
+}
+
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
 export function pageSkeletonForPath(pathname: string, capabilities: { canManageProjects?: boolean; canManageSettings?: boolean; monitoringHome?: boolean; search?: string; hash?: string } = {}): JSX.Element {
   const scene = loadingSceneForPath(pathname);
@@ -254,6 +265,11 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
     case 'release-console': return <ReleaseConsoleSkeleton batch={isBatchReleaseMode(new URLSearchParams(capabilities.search))} />;
     case 'rows': return <LoadingBlock />;
     case 'code-reviews': return <CodeReviewsSkeleton detail={new URLSearchParams(capabilities.search).has('task')} />;
+    case 'engineering-planning': return <EngineeringPlanningSkeleton />;
+    case 'design': return <ContentLoading variant="table" label="正在读取设计工作区" />;
+    case 'preview-access': return <main className="grid min-h-screen place-items-center bg-background p-4">
+      <ContentLoading label="正在核对预览访问权限" variant="panel" className="max-w-md" />
+    </main>;
     default: return <ConsoleGenericSkeleton />;
   }
 }

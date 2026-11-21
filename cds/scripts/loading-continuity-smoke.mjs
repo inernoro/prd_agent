@@ -9,6 +9,8 @@ import { verifySettingsRefresh } from './project-settings-refresh-smoke.mjs';
 import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
 import { verifyCodeReviewDocument } from './code-review-document-smoke.mjs';
 import { verifyMonitorWorkspaceNavigation, verifyMonitorOnboardingSessionCleanup } from './monitor-workspace-navigation-smoke.mjs';
+import { verifyEngineeringPlanningRefresh } from './engineering-planning-refresh-smoke.mjs';
+import { verifyEngineeringPlanningDetail } from './engineering-planning-detail-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +31,8 @@ const selectors = {
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
   'release-approval': '[data-release-approval-skeleton]', 'project-monitor': '[data-project-status-skeleton]',
   'code-reviews': '[data-code-reviews-skeleton]',
+  'engineering-planning': '[aria-label="加载工程规划"]',
+  design: '[aria-label="正在读取设计工作区"]',
   dts: '[aria-label="正在加载数据同步"]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
@@ -110,7 +114,11 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'release-approval', 'project-monitor', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews', 'dts'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        if (['settings', 'project-settings', 'release-console', 'release-approval', 'project-monitor', 'projects',
+          'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail',
+          'code-reviews', 'engineering-planning', 'design', 'dts'].includes(scene.kind)) {
+          assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        }
       }
       if (!before) {
         await page.emulateMedia({reducedMotion:'reduce'});
@@ -129,6 +137,15 @@ try {
       result.dataReplacedSkeleton = true;
       if (!before && scene.kind === 'release-center') {
         await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();
+      }
+      if (!before && scene.kind === 'engineering-planning') {
+        await page.getByRole('heading', { name: '待你确认', exact: true }).waitFor();
+        await page.getByRole('button', { name: /债务分支\s*未还 0 笔/ }).waitFor();
+        result.debtMutationRefresh = await verifyEngineeringPlanningRefresh(browser, base, out);
+        result.debtDetail = await verifyEngineeringPlanningDetail(browser, base, out);
+      }
+      if (!before && scene.kind === 'design') {
+        await page.getByText(/此项目还没有稿件/).waitFor();
       }
       if (!before && scene.kind === 'release-console') {
         await page.getByRole('region', { name: '批次发布', exact: true }).waitFor();
