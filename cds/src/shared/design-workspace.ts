@@ -6,6 +6,7 @@ export type DesignTheme = 'light' | 'dark';
 export const designViewports = { desktop: { width: 1280, height: 800 }, phone: { width: 375, height: 812 } } as const;
 export type DesignScreen = {
   id: string; name: string; route: string; viewport: 'desktop' | 'phone'; themes: DesignTheme[]; impl: string | null;
+  readySelector?: string;
 };
 export type DesignRule = {
   id: string; rule: string; how: 'measure' | 'screenshot' | 'human'; priority: 'high' | 'normal';
@@ -38,9 +39,15 @@ export type DesignRun = {
   signed?: { by: string; at: string; verdict: 'passed' | 'conditional' };
   issues: Record<string, { id: string; pending: boolean }>;
 };
+export type DesignReviewer = { id: string; label: string };
+export type DesignReviewNotice = {
+  id: string; projectId: string; designId: string; version: number; title: string;
+  createdAt: string; updatedAt: string; occurrences: number;
+};
 export type DesignEntry = {
   id: string; projectId: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
   comments: DesignComment[]; runs: DesignRun[]; reviewRequested?: boolean;
+  reviewers?: DesignReviewer[];
   freezes?: Array<{ version: number; by: string; at: string }>;
 };
 export type FrameworkRevision = {

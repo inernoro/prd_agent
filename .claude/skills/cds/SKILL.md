@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.0
+  version: 0.26.1
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design review, canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
+> **版本**：v0.26.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -368,7 +368,7 @@ $CLI debt stats
 
 登记债务收到疑似重复提示时，用 `debt duplicates --title` 或 `cds_planning_read` 的 `duplicates` 视图对照候选。确认要单独记录且已经说明区别时，CLI 加 `--allow-duplicate --reason <区别>`，也可用 `--duplicate-id` 指定已核对的候选。MCP 在 `cds_planning_record_debt` 提交 `distinction` 的 `debtIds` 和 `reason`。回执丢失后按 `retry.duplicateIds` 重放原候选及原请求编号。有候选时逐个填写 `--duplicate-id`，列表为空时按普通登记重试。
 
-提案文件包含 `type: proposal.submit`、`requestId`、`kind: debt|decision|plan`、`draft` 和 `source`。草稿至少填写标题。来源填写类型与稳定原始编号，可以附上真实可访问的链接和必要摘要。按实际执行的技能填写 `skill`，有依据时填写 0 到 1 之间的 `confidence`。决策草稿可以带独立文档链接与 PR 引用。创建 PR 时在描述中填写实际的 `ADR:`、`Debt:` 与产品路由 `Preview:`。
+提案文件包含 `type: proposal.submit`、`requestId`、`kind: debt|decision|plan`、`draft` 和 `source`。草稿至少填写标题。来源记录类型与稳定编号，有授权可读的原始链接时附链接和必要摘要。纯对话沿用操作回合的稳定编号和最小摘要。按实际执行的技能填写 `skill`。自动触发时，核对原始依据后填写 `confidence`，表达这条线索适合提交为提案的把握度。证据与待处理取舍都明确时可用 0.90，证据可查但影响或验收仍有重要待核对项时可用 0.70。来源还不能核对时，保留待查项，等能核对后再提交。决策草稿可以带独立文档链接与 PR 引用。创建 PR 时在描述中填写实际的 `ADR:`、`Debt:` 与产品路由 `Preview:`。
 
 修订或采纳已有决策时，提案携带 `decisionChange`，包含原决策编号、`expectedVersion` 与 `change`。修订沿用原编号，更新本次草稿明确提供的内容并补充文档链接。收到版本变化提示时，按当前决策重新核对材料。
 
@@ -382,6 +382,10 @@ $CLI debt stats
 
 用 `change list [--branch <分支>] [--key <配置键>]` 和 `change show <变更编号>` 核对配置留痕。MCP 使用 `changes` 视图读取当前项目的变更事实。用 `preview access <PR 编号>` 或 `preview link <PR 编号>` 查询已部署的入口。一键登录入口查询可使用 `--as-user`。记录债务进展由有写权限的成员执行 `debt progress <债务编号> --if-version <版本> --request-id <原请求编号> --note <进展> --as-user <用户名>`。
 
+系统所有者可为技能或 MCP 签发仅限工程规划的项目凭据。只读凭据用于检索和核对，提案凭据可提交待确认记录。使用这类凭据时，把已授权的 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY` 注入当前进程，可用 `init --yes` 绑定当前仓库。随后用 `planning capabilities` 核对项目与能力。识别到自然对话或工具事件里的待办线索时，沿用相同来源和请求编号，重复对话先回读已有提案。采纳与偿还由有权成员明确确认。
+
+偿还前用 `debt repay <债务编号> --dry-run` 读取当前版本和核对项。成员可用 `--as-user <用户名> --file <偿还记录.json>` 确认，也可在同一命令中提供 `--if-version`、`--summary`、逐项 `--criterion 标准编号=met:结果`、`--screenshot 图片路径=证据说明` 和 `--mark x,y,width,height`。JSON 记录使用 `expectedVersion`、`summary`、`results` 和 `repaymentProofs`。可同时附 `--pr`，请求失败时沿用原编号与证据。`debt stats` 以原发现日期计入已知日期的历史导入，与大屏采用同一口径。
+
 ## 设计稿件与框架
 
 在项目内讨论出稿时读当前框架，评审时用对方指定的稿件版本。明确收到发布请求后，从已提交的目录发布。归档目录至少包含 `design.json`、`思路.md` 和清单声明的单文件 HTML 路径。默认原型入口是 `dist/index.html`。稿件附件沿用项目权限。
@@ -392,7 +396,9 @@ $CLI debt stats
 $CLI framework list
 $CLI framework show <框架编号>
 $CLI design scaffold --framework <框架编号> --dir design/<目录> --title "稿件标题"
-$CLI design publish --dir design/<目录> --note "本版修改" --review
+$CLI design reviewers
+$CLI design publish --dir design/<目录> --note "本版修改" --reviewer <成员ID>
+$CLI design request-review <稿件编号> --reviewer <成员ID>
 $CLI design publish <稿件编号> --dir design/<目录> --resolves "<评论编号>=如何处理"
 $CLI design list
 $CLI design comments <稿件编号> --open
@@ -403,9 +409,9 @@ $CLI design result <稿件编号> --run <运行编号>
 $CLI design extract <稿件编号> --into <框架编号>
 ```
 
-看稿时用真实的 Git 提交和版本。新版声明处理评论后，由评论人或项目管理者核对。定稿和签收由有权的项目成员操作，CLI 用 `--as-user <用户名>` 从终端进行交互式登录。做法验收每格记录 `itemId`、`slot`、实测说明和对应视口的真实 PNG，回填时固定运行和部署提交。四列为 `desktop-light`、`desktop-dark`、`phone-light`、`phone-dark`。缺少实现路径、对应提交或证据时记录具体原因。没有对应截图的结果保持待补证据。重试先读取回执，结果不确定时使用同一个 `--request-id`。只允许对已绑定项目操作。
+看稿时用真实的 Git 提交和版本。作者可根据用户指定的成员发起评审，新版默认沿用已有评审人，站内信息中心会合并同一稿件一小时内的发版。新版声明处理评论后，由评论人或项目管理者核对。已指定评审人的稿件由名单中的成员定稿，签收由有写权限的成员完成。CLI 用 `--as-user <用户名>` 从终端进行交互式登录。做法验收每格记录 `itemId`、`slot`、实测说明和对应视口的真实 PNG，回填时固定运行和部署提交。四列为 `desktop-light`、`desktop-dark`、`phone-light`、`phone-dark`。缺少实现路径、对应提交或证据时记录具体原因。没有对应截图的结果保持待补证据。重试先读取回执，结果不确定时使用同一个 `--request-id`。只允许对已绑定项目操作。
 
-`design accept` 在已安装 Playwright 与 Chromium 的执行环境中尝试打开每个声明的实现地址。`probe: { "type": "horizontal-overflow", "tolerance": 0 }` 读真实页面宽度，人工项只拍照，结论由成员核对。需要手动完成取证时可用 `--start-only` 创建运行。预览使用 CDS 一键登录时通过 `--as-user` 取得当前成员会话。
+`design accept` 在已安装 Playwright 与 Chromium 的执行环境中打开验收项对应的实现地址。有多个候选画面时，用 `screenId` 定位实际需要验收的一屏。动态页面的自动测量等待清单声明的 `readySelector` 可见，默认读取 `[data-cds-design-ready]`。`probe: { "type": "horizontal-overflow", "tolerance": 0 }` 读加载完成后的页面宽度，人工项取得截图后由成员核对。需要手动完成取证时可用 `--start-only` 创建运行。预览使用 CDS 一键登录时通过 `--as-user` 取得当前成员会话。
 
 预览一键登录复用该预览自己的票据 SSO 配置。项目所有者按分支配置独立客户端身份，`CDS_PREVIEW_SSO_PROVIDER_ID=cds-preview`，授权端点为父 CDS 的 `/preview/authorize`，兑换端点为 `/api/auth/preview/token`。给该分支配置独立 HTTPS 预览入口，通过 CDS 工程规划里的 PR 预览查访问状态。专用客户端凭据和测试账号保存在其原配置处。父 CDS 的登录凭据不进入预览。
 

@@ -168,4 +168,33 @@ describe('engineering planning private checkup notices', () => {
     ]);
     expect((await request(`/debts/${previous.id}`)).body.events.some((event: { type: string }) => event.type === 'dup_flagged')).toBe(false);
   });
+
+  it('only reports same-feature pairs at the lower similarity threshold after removing the feature name', async () => {
+    const feature = '回归队列权限校验编排';
+    const titles = ['队列重试时阻塞最近一笔导出请求', '队列重试时阻塞最近一笔导入任务'];
+    const original = await create('same-feature-left', titles[0], true);
+    const match = await create('same-feature-right', titles[1], true, 'bob');
+    const misleading = await create('feature-name-first', `${feature} 权限验收被锁`, true);
+    const unrelated = await create('feature-name-second', `${feature} 权限验收超时`, true, 'bob');
+    expect((await request('/debts?view=dup')).body.items).toEqual([]);
+    await service.sweepDuplicatePairs(project);
+
+    now = new Date(now.getTime() + DAY);
+    for (const [row, user] of [[original, 'alice'], [match, 'bob'], [misleading, 'alice'], [unrelated, 'bob']] as const) {
+      await write({ type: 'debt.anchor', requestId: `feature-${row.id}`, debtId: row.id, expectedVersion: row.version,
+        anchor: { type: 'feature', ref: feature }, reason: '共同绑定合成验收功能' }, user);
+    }
+    const duplicateList = (await request('/debts?view=dup')).body.items.map((row: { id: string }) => row.id);
+    expect(duplicateList.sort()).toEqual([original.id, match.id].sort());
+    expect((await request(`/debts/${original.id}`)).body.duplicateCandidates).toMatchObject([{ id: match.id }]);
+    expect((await request(`/debts/${misleading.id}`)).body.duplicateCandidates).toEqual([]);
+
+    await Promise.all([service.sweepDuplicatePairs(project), reopen().sweepDuplicatePairs(project)]);
+    for (const [row, recipient, peer] of [[original, 'alice', match.id], [match, 'bob', original.id]] as const) {
+      const notices = (await request('/checkup', undefined, recipient)).body.notices;
+      expect(notices).toMatchObject([{ kind: 'dup', debtIds: [original.id, match.id] }]);
+      expect((await request(`/debts/${row.id}`)).body.events.filter((event: { type: string }) => event.type === 'dup_flagged'))
+        .toMatchObject([{ relatedDebtId: peer, via: 'system' }]);
+    }
+  });
 });

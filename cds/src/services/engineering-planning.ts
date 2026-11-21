@@ -533,8 +533,7 @@ export class EngineeringPlanningService {
     for (const event of state.events) {
       const change = eventDelta(event, branch);
       if (!change) continue;
-      const discoveredAt = (mode === 'evolution' || mode === 'projection') && event.type === 'imported'
-        ? state.debts.get(event.entityId)?.discoveredAt : undefined;
+      const discoveredAt = event.type === 'imported' ? state.debts.get(event.entityId)?.discoveredAt : undefined;
       const date = discoveredAt ?? planningToday(new Date(event.at));
       if (date < from) { backlogStart += change.delta; continue; }
       if (date > to) continue;

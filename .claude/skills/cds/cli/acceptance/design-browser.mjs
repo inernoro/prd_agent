@@ -46,6 +46,16 @@ async function capture(browser, portal, cookie, shot, filename) {
     if (!response || response.status() >= 400) return { reason: '预览入口未返回可访问的页面' };
     try { await page.waitForURL(target.href, { waitUntil: 'domcontentloaded', timeout: 8000 }); }
     catch { return { reason: '预览未返回到验收地址，请核对预览授权和实现地址' }; }
+    try {
+      await page.waitForLoadState('load', { timeout: 8000 });
+      const scripted = shot.measure && await page.evaluate(() => [...document.scripts].some(script =>
+        /^(?:module|(?:application|text)\/(?:java|ecma)script)?$/i.test(script.type)));
+      const selector = shot.readySelector || (scripted ? '[data-cds-design-ready]' : undefined);
+      if (selector) await page.locator(`css=${selector}`).first().waitFor({ state: 'visible', timeout: 8000 });
+      await page.waitForFunction(() => document.body && document.fonts.status === 'loaded'
+        && ![...document.querySelectorAll('[data-content-loading], [aria-busy="true"]')].some(element =>
+          element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden'), undefined, { timeout: 8000 });
+    } catch { return { reason: '验收画面尚未就绪，请核对加载状态和画面就绪标记' }; }
     const actualTheme = await page.evaluate(() => document.documentElement.dataset.theme);
     if ((actualTheme === 'dark' || actualTheme === 'light') && actualTheme !== shot.theme) return { reason: '预览没有切换到验收主题' };
     const geometry = await page.evaluate(() => ({ width: document.documentElement.clientWidth, height: document.documentElement.clientHeight,

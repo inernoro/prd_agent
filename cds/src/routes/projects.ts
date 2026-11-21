@@ -339,6 +339,7 @@ function mintProjectAgentKey(
   project: Project,
   label: string,
   createdBy?: string,
+  planningAccess?: AgentKey['planningAccess'],
 ): { keyId: string; plaintext: string; preview: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
   const suffix = randomBytes(32).toString('base64url');
@@ -350,6 +351,7 @@ function mintProjectAgentKey(
     label,
     hash,
     scope: 'rw',
+    ...(planningAccess ? { planningAccess } : {}),
     createdAt: new Date().toISOString(),
     createdBy: createdBy || undefined,
   };
@@ -4541,7 +4543,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const body = (req.body || {}) as { label?: string };
+    const body = (req.body || {}) as { label?: string; planningAccess?: unknown };
+    if (body.planningAccess !== undefined && body.planningAccess !== 'read' && body.planningAccess !== 'propose') {
+      return res.status(400).json({ error: 'invalid_planning_access', message: '请选择工程规划只读或提案权限' });
+    }
+    if (body.planningAccess && !isHumanSystemOwner(req)) {
+      return res.status(403).json({ error: 'owner_required', message: '仅 CDS 系统所有者可签发工程规划凭据' });
+    }
     const now = new Date();
     // Label: auto-generate from timestamp when the user didn't supply one.
     const defaultLabel =
@@ -4555,7 +4563,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     let minted: { keyId: string; plaintext: string; preview: string };
     try {
-      minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username);
+      minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, body.planningAccess);
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -4582,6 +4590,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         id: e.id,
         label: e.label,
         scope: e.scope,
+        planningAccess: e.planningAccess,
         createdAt: e.createdAt,
         createdBy: e.createdBy,
         lastUsedAt: e.lastUsedAt,

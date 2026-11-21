@@ -20,7 +20,7 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       error: 'human_project_forbidden',
       message: '你没有此项目或系统操作的权限，请联系系统所有者分配项目授权。',
     });
-    if ((method === 'GET' && ['/api/me', '/api/auth/status', '/api/auth/activity'].includes(path))
+    if ((method === 'GET' && ['/api/me', '/api/auth/status', '/api/auth/activity', '/api/auth/design/notices'].includes(path))
       || (method === 'POST' && ['/api/auth/logout', '/api/logout', '/api/auth/change-password', '/api/auth/sso/logout'].includes(path))) {
       next(); return;
     }
@@ -43,6 +43,10 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (!project || !canHumanAccessProject(req, state, project.id)) return false;
       return true;
     };
+    if (kind === 'auth' && id === 'users' && segments.length === 5 && segments[3] === 'projects'
+      && method === 'POST' && typeof req.body?.previewRequestId === 'string' && checkProject(segments[4])) {
+      next(); return;
+    }
     const guardStream = (projectId: string): void => {
       const write = res.write.bind(res);
       res.write = ((chunk: unknown, encoding?: unknown, callback?: unknown) => {
@@ -102,6 +106,7 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (action?.toLowerCase() === 'design') {
         const tail = segments.slice(3);
         const read = (method === 'GET' || method === 'HEAD') && (tail.length === 0
+          || (tail.length === 1 && /^reviewers$/i.test(tail[0]))
           || (tail.length === 2 && /^artifacts$/i.test(tail[0])));
         const write = method === 'POST' && tail.length === 1 && /^(commands|packages)$/i.test(tail[0]);
         if ((read || write) && checkProject(id)) { next(); return; }

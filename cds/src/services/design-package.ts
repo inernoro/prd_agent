@@ -158,7 +158,8 @@ function screen(value: unknown): DesignScreen {
   }), item => item, '主题');
   if (!themes.length) invalidDesign('每个画面至少须有一个主题');
   return { id: designId(input.id, '画面编号'), name, route, viewport, themes,
-    impl: input.impl == null ? null : localDesignPath(input.impl) };
+    impl: input.impl == null ? null : localDesignPath(input.impl),
+    ...(input.readySelector === undefined ? {} : { readySelector: planningText(input.readySelector, '画面就绪选择器', 300) }) };
 }
 
 function rule(value: unknown, screens: DesignScreen[]): DesignRule {

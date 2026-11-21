@@ -4,6 +4,7 @@ import type { ApprovalCapabilities } from '@/hooks/approvalPolling';
 export type ShellAuthStatus = {
   approvalCapabilities?: ApprovalCapabilities;
   previewAccessNotices?: boolean;
+  designReviewNotices?: boolean;
   enabled?: boolean;
   mode?: string;
   activeProvider?: string | null;

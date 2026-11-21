@@ -41,7 +41,7 @@ body:has(.pv-access) .cds-agent-access-floating { display: none; }
 .pv-card form { display: grid; gap: 9px; }
 .pv-native form { margin-top: 10px; }
 .pv-card form label { display: grid; gap: 4px; }
-.pv-card input, .pv-card textarea { border: 1px solid var(--pv-line); border-radius: 6px; min-height: 36px; padding: 5px 8px;
+.pv-card input, .pv-card select, .pv-card textarea { border: 1px solid var(--pv-line); border-radius: 6px; min-height: 36px; padding: 5px 8px;
   background: var(--pv-card); color: var(--pv-ink); }
 .pv-card textarea { min-height: 65px; }
 .pv-error { color: var(--pv-error); }

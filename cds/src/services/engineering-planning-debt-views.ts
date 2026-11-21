@@ -3,7 +3,7 @@ import {
   type PlanningDebtView, type PlanningRelatedDebt,
 } from '../shared/engineering-planning.js';
 import { planningToday, unpaid, type PlanningState } from './engineering-planning-domain.js';
-import { debtTitleBigrams, debtTitlesAreSimilar, explicitlyDistinct } from './engineering-planning-proposal-matching.js';
+import { checkupDuplicatePairs } from './engineering-planning-checkup.js';
 
 export function matchesDebtView(view: PlanningDebtView, debt: PlanningDebt, today: string, duplicates: Set<string>) {
   switch (view) {
@@ -27,28 +27,10 @@ const duplicateSnapshots = new WeakMap<PlanningState, Set<string>>();
 export function duplicateDebtIds(state: PlanningState): Set<string> {
   const existing = duplicateSnapshots.get(state);
   if (existing) return existing;
-  type Candidate = { debt: PlanningDebt; grams: Set<string> };
-  const candidatesByGram = new Map<string, Candidate[]>();
   const duplicates = new Set<string>();
-  for (const debt of state.debts.values()) {
-    if (!unpaid(debt)) continue;
-    const grams = debtTitleBigrams(debt.title);
-    const seen = new Set<Candidate>();
-    const candidate = { debt, grams };
-    for (const gram of grams) {
-      const entries = candidatesByGram.get(gram) ?? [];
-      for (const entry of entries) {
-        if (seen.has(entry) || (duplicates.has(debt.id) && duplicates.has(entry.debt.id))) continue;
-        seen.add(entry);
-        if (Math.min(grams.size, entry.grams.size) / Math.max(grams.size, entry.grams.size) < .8) continue;
-        if (!explicitlyDistinct(debt, entry.debt) && debtTitlesAreSimilar(grams, entry.grams)) {
-          duplicates.add(debt.id);
-          duplicates.add(entry.debt.id);
-        }
-      }
-      if (entries.length) entries.push(candidate);
-      else candidatesByGram.set(gram, [candidate]);
-    }
+  for (const [left, right] of checkupDuplicatePairs(state.debts.values())) {
+    duplicates.add(left.id);
+    duplicates.add(right.id);
   }
   duplicateSnapshots.set(state, duplicates);
   return duplicates;

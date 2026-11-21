@@ -359,10 +359,10 @@ function actionFields(action: PlanningAction, board: PlanningBoard, duplicateChe
         case 'merge':
         case 'not-duplicate': return <DuplicateResolutionFields action={action} />;
         case 'drop': return <>
-          <Field name="outcome" label="失效原因类别" choices={[[ 'cancelled', '取消' ], ['superseded', '替代'], ['extinct', '随功能消失']]} />
+          <Field name="outcome" label="失效原因类别" choices={[[ 'cancelled', '取消' ], ['superseded', '替代']]} />
           <Field name="reason" label="失效依据" required multiline />
           <Field name="targetId" label="承接债务编号（替代时必填）" />
-          <Field name="evidenceLabel" label="验证说明（功能消失时必填）" max={500} />
+          <Field name="evidenceLabel" label="验证说明（可选）" max={500} />
         </>;
       }
       break;
@@ -491,7 +491,7 @@ function actionCommand(action: PlanningAction, form: FormData, board: PlanningBo
         }
         case 'drop': {
           const label = optional(form, 'evidenceLabel');
-          return { type: 'debt.drop', ...common, kind: field(form, 'outcome') as 'cancelled' | 'superseded' | 'extinct', reason,
+          return { type: 'debt.drop', ...common, kind: field(form, 'outcome') as 'cancelled' | 'superseded', reason,
             targetId: optional(form, 'targetId'), evidence: label ? [{ type: 'doc', label }] : undefined };
         }
       }

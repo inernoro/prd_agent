@@ -5,7 +5,7 @@ import { AppShell, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
-import type { DesignComment, DesignEntry, DesignMaterial, DesignVersion, DesignWorkspace } from '../../../src/shared/design-workspace';
+import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignVersion, DesignWorkspace } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
@@ -30,6 +30,7 @@ export function DesignWorkspacePage() {
   const [issue, setIssue] = useState('');
   const [notice, setNotice] = useState('');
   const [upload, setUpload] = useState(false);
+  const [assignReviewers, setAssignReviewers] = useState<string>();
   const [extract, setExtract] = useState(false);
   const [review, setReview] = useState<ReviewTarget>();
   const [large, setLarge] = useState<LargeTarget>();
@@ -37,7 +38,7 @@ export function DesignWorkspacePage() {
   const pending = useRef<{ key: string; id: string }>();
   const [search, setSearch] = useState('');
   const [groupBy, setGroupBy] = useState<'phase' | 'area' | 'date'>('phase');
-  const [mode, setMode] = useState<'cards' | 'list'>('cards');
+  const mode = params.get('mode') === 'list' ? 'list' : 'cards';
   const [filter, setFilter] = useState<Filter>(allFilter);
 
   const projects = usePlanningRead<{ projects: PlanningProject[] }>('/api/projects', 0);
@@ -50,10 +51,13 @@ export function DesignWorkspacePage() {
   const workspace = source.data?.projectId === project ? source.data : !source.error && prior?.projectId === project ? prior : undefined;
   const permissions = workspace?.permissions;
   const entry = workspace?.designs.find(row => row.id === params.get('design'));
+  const assignment = workspace?.designs.find(row => row.id === assignReviewers);
   const framework = workspace?.frameworks.find(row => row.id === params.get('framework'));
   const frameworkVersion = framework?.versions.find(row => row.version === Number(params.get('version')));
   const frameworkList = params.get('view') === 'frameworks';
   const version = entry?.versions.find(row => row.version === Number(params.get('version'))) ?? (entry ? latestDesign(entry) : undefined);
+  const canFreeze = permissions?.review && (!entry?.reviewers || entry.reviewers.some(reviewer => reviewer.id === permissions.actorId));
+  const canAssign = permissions?.write && entry && (permissions.steward || latestDesign(entry).publisher.id === permissions.actorId);
   const pinnedFramework = workspace?.frameworks.find(row => row.id === version?.framework)?.versions.find(row => row.version === version?.frameworkVersion);
   const tab = tabs.find(([value]) => value === params.get('tab'))?.[0] ?? 'preview';
   const selectedFrameworkTab = params.get('tab') as FrameworkTab;
@@ -143,6 +147,8 @@ export function DesignWorkspacePage() {
           <details className="ep-new dw-info"><summary className="ep-button ep-icon-button" aria-label="稿件信息"><Info /></summary>
             <div><strong>{entry.id}</strong><p>V{version.version} · {version.publisher.label} · {designDate(version.createdAt)}</p>
               <p>Git <code>{version.sourceCommit.slice(0, 12)}</code> · {version.sourceVerification === 'git' ? '已核验' : '发布声明'}</p>
+              <p>评审人 · {entry.reviewers?.map(reviewer => reviewer.label).join('、') || '待指定'}</p>
+              {canAssign && <button className="ep-button" type="button" onClick={() => setAssignReviewers(entry.id)}>设置评审人</button>}
               {version.framework && <Link className="ep-link" to={`/design?${new URLSearchParams({ project, framework: version.framework,
                 ...(version.frameworkVersion ? { version: String(version.frameworkVersion) } : {}) })}`}>
                 {version.framework}{version.frameworkVersion ? ` · v${version.frameworkVersion}` : ''}</Link>}
@@ -156,7 +162,7 @@ export function DesignWorkspacePage() {
             </select>
             <button className="ep-button" type="button" onClick={() => openLarge(entry, version)}><Maximize />大屏</button>
             {permissions?.review && entry.frozen === version.version && <button className="ep-button" type="button" onClick={() => setExtract(true)}><Layers />提取到框架</button>}
-            {permissions?.review && entry.frozen !== version.version && version.version === latestDesign(entry).version
+            {canFreeze && entry.frozen !== version.version && version.version === latestDesign(entry).version
               && <button className="ep-button" type="button" disabled={busy} onClick={() => void command('design.freeze', { designId: entry.id, version: version.version })}>定稿</button>}
           </div>
         </header>
@@ -184,7 +190,8 @@ export function DesignWorkspacePage() {
             {permissions?.write && <button className="ep-button ep-button--primary" type="button" onClick={() => setUpload(true)}><Upload />发布稿件</button>}
           </div>
         </header>
-        <DesignLibrary workspace={workspace} search={search} groupBy={groupBy} onGroupBy={setGroupBy} mode={mode} onMode={setMode}
+        <DesignLibrary workspace={workspace} search={search} groupBy={groupBy} onGroupBy={setGroupBy} mode={mode}
+          onMode={value => onChange({ mode: value === 'list' ? 'list' : '' })}
           filter={filter} setFilter={setFilter} frameworkList={frameworkList} onShowFrameworks={() => onChange({ view: 'frameworks' })}
           onShowDesigns={() => onChange({ view: '' })} onSelect={selectEntry} onFramework={selectFramework}
           onReview={openReview} onLarge={openLarge} />
@@ -192,6 +199,8 @@ export function DesignWorkspacePage() {
     </Workspace>
     {upload && <DesignUpload project={project} entries={workspace?.designs ?? []} close={() => setUpload(false)}
       onPublished={id => { setUpload(false); refresh(value => value + 1); selectEntry(id); }} />}
+    {assignment && <DesignReviewerDialog key={`${project}/${assignment.id}`} project={project} entry={assignment} command={command}
+      busy={busy} close={() => setAssignReviewers(undefined)} />}
     {largeEntry && largeVersion && <Dialog open onOpenChange={open => { if (!open) closeLarge(); }}>
       <DialogContent className="dw-stage ep-dialog" frame onCloseAutoFocus={event => { event.preventDefault(); replayFocus(); }}>
         <header><DialogTitle>{largeVersion.title} · V{largeVersion.version}</DialogTitle><button className="ep-button" type="button" onClick={closeLarge}><X />退出大屏</button></header>
@@ -400,10 +409,12 @@ function DesignUpload({ project, entries, close, onPublished }: {
   const [entry, setEntry] = useState('');
   const [note, setNote] = useState('');
   const [requestReview, setRequestReview] = useState(true);
+  const [reviewerIds, setReviewerIds] = useState<string[]>();
   const [resolves, setResolves] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const previous = useRef<{ fingerprint: string; id: string }>();
+  const existing = entries.find(row => row.id === entry);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!file || !validSha.test(commit.trim()) || busy) return;
@@ -415,6 +426,7 @@ function DesignUpload({ project, entries, close, onPublished }: {
       if (entry) query.set('designId', entry);
       if (note.trim()) query.set('note', note.trim());
       if (requestReview) query.set('review', 'true');
+      if (requestReview && reviewerIds) query.set('reviewerIds', JSON.stringify(reviewerIds));
       if (Object.keys(resolves).length) query.set('resolves', JSON.stringify(Object.fromEntries(Object.entries(resolves).filter(([, value]) => value.trim()))));
       const fingerprint = query.toString() + '/' + file.name + '/' + file.size + '/' + file.lastModified;
       const requestId = previous.current?.fingerprint === fingerprint ? previous.current.id : crypto.randomUUID();
@@ -432,7 +444,7 @@ function DesignUpload({ project, entries, close, onPublished }: {
   return <Dialog open onOpenChange={open => { if (!open && !busy) close(); }}><DialogContent className="dw-modal dw-surface">
     <DialogTitle>发布设计稿件</DialogTitle><DialogDescription>上传含 design.json、思路和独立 HTML 原型的稿件包。</DialogDescription>
     <form onSubmit={submit}>
-      <label>发布到<select value={entry} onChange={event => { setEntry(event.target.value); setResolves({}); }}>
+      <label>发布到<select value={entry} onChange={event => { setEntry(event.target.value); setResolves({}); setReviewerIds(undefined); }}>
         <option value="">新稿件</option>{entries.map(row => <option key={row.id} value={row.id}>{latestDesign(row).title}</option>)}
       </select></label>
       <label>稿件 ZIP<input type="file" accept=".zip,application/zip" required onChange={event => setFile(event.target.files?.item(0) ?? undefined)} /></label>
@@ -440,12 +452,48 @@ function DesignUpload({ project, entries, close, onPublished }: {
       <label>仓库内稿件目录（可选）<input value={sourcePath} maxLength={400} placeholder="例如 design/members" onChange={event => setSourcePath(event.target.value)} /></label>
       <label>发布说明<textarea value={note} onChange={event => setNote(event.target.value)} maxLength={1000}/></label>
       <label className="dw-row"><input type="checkbox" checked={requestReview} onChange={event => setRequestReview(event.target.checked)} />请求评审</label>
-      {entries.find(row => row.id === entry)?.comments.filter(row => !row.closed).map(row => <label key={row.id}>
+      {requestReview && <DesignReviewerPicker project={project} selected={reviewerIds ?? existing?.reviewers?.map(reviewer => reviewer.id) ?? []}
+        onChange={setReviewerIds} busy={busy} />}
+      {existing?.comments.filter(row => !row.closed).map(row => <label key={row.id}>
         {row.body}<input value={resolves[row.id] ?? ''} placeholder="填写本版处理说明" onChange={event => setResolves({ ...resolves, [row.id]: event.target.value })} />
       </label>)}
       {error && <p role="alert" className="ep-error">{error}</p>}
       <footer><button type="button" className="ep-button" onClick={close} disabled={busy}>取消</button>
         <button type="submit" className="ep-button ep-button--primary" disabled={busy || !file || !validSha.test(commit.trim())}>发布稿件</button></footer>
+    </form>
+  </DialogContent></Dialog>;
+}
+
+function DesignReviewerPicker({ project, selected, onChange, busy }: {
+  project: string; selected: string[]; onChange: (ids: string[]) => void; busy: boolean;
+}) {
+  const members = usePlanningRead<{ projectId: string; reviewers: DesignReviewer[] }>(designPath(project) + '/reviewers', 0);
+  const reviewers = members.data?.projectId === project ? members.data.reviewers : [];
+  return <fieldset className="dw-reviewer-picker" disabled={busy}>
+    <legend>评审人</legend>
+    {members.loading ? <ContentLoading label="正在读取项目成员" /> : members.error ? <p role="alert">{members.error}</p>
+      : reviewers.length ? <div>{reviewers.map(member => <label className="dw-row" key={member.id}>
+        <input type="checkbox" checked={selected.includes(member.id)} disabled={selected.length >= 20 && !selected.includes(member.id)}
+          onChange={event => onChange(event.target.checked ? [...selected, member.id] : selected.filter(id => id !== member.id))} />
+        {member.label}
+      </label>)}</div> : <p>当前项目没有可选成员。</p>}
+  </fieldset>;
+}
+
+function DesignReviewerDialog({ project, entry, command, busy, close }: {
+  project: string; entry: DesignEntry; command: DesignCommand; busy: boolean; close: () => void;
+}) {
+  const [selected, setSelected] = useState(entry.reviewers?.map(reviewer => reviewer.id) ?? []);
+  return <Dialog open onOpenChange={open => { if (!open && !busy) close(); }}><DialogContent className="dw-modal dw-surface">
+    <DialogTitle>设置稿件评审人</DialogTitle>
+    <DialogDescription>{latestDesign(entry).title} · V{latestDesign(entry).version}</DialogDescription>
+    <form onSubmit={async event => {
+      event.preventDefault();
+      if (await command('design.review', { designId: entry.id, reviewerIds: selected })) close();
+    }}>
+      <DesignReviewerPicker project={project} selected={selected} onChange={setSelected} busy={busy} />
+      <footer><button type="button" className="ep-button" onClick={close} disabled={busy}>取消</button>
+        <button type="submit" className="ep-button ep-button--primary" disabled={busy}>保存评审人</button></footer>
     </form>
   </DialogContent></Dialog>;
 }

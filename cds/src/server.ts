@@ -38,7 +38,7 @@ import { isMonitorOnboardingAgentRoute } from './shared/monitor-onboarding.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { isAuthenticatedHuman, isHumanSystemOwner } from './services/human-auth.js';
-import { humanPrincipalId, isHumanProjectGrantUpdatePending } from './services/human-project-access.js';
+import { humanPrincipalId, isHumanProjectGrantUpdatePending, supportsHumanProjectGrant } from './services/human-project-access.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
 import { ClusterIdentityService, clusterProjectRepository } from './services/cluster-identity.js';
@@ -59,7 +59,7 @@ import { createCodeReviewsRouter } from './routes/code-reviews.js';
 import { createEngineeringPlanningRouter, normalizedPlanningPath } from './routes/engineering-planning.js';
 import { resolveEngineeringPlanningAccess } from './services/engineering-planning-access.js';
 import { environmentAuditFacts } from './services/environment-audit.js';
-import { createPlanningPreviewAccessRouter, createPreviewTokenRouter, normalizedPreviewAccessPath } from './routes/planning-preview-access.js';
+import { createPlanningPreviewAccessRouter, createPreviewTokenRouter, normalizedPreviewAccessPath, previewAccessPerson } from './routes/planning-preview-access.js';
 import { PlanningPreviewAccess, previewPolicyReturnUrl, previewReturnPath, resolvePreviewClientSettings, type PreviewAccessCommit, type PreviewAccessClient } from './services/planning-preview-access.js';
 import { planningDecisionHref, planningPreviewDecisionSubject } from './shared/engineering-planning-links.js';
 import type { PlanningPullRequestPreview } from './shared/engineering-planning.js';
@@ -1340,6 +1340,7 @@ export function resolveApiLabel(method: string, path: string): string {
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
     [/^GET \/projects\/[^/]+\/design$/, '查看设计工作区'],
+    [/^GET \/projects\/[^/]+\/design\/reviewers$/, '查看可选评审人'],
     [/^GET \/projects\/[^/]+\/design\/artifacts\/[^/]+$/, '读取设计附件'],
     [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
     [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
@@ -1347,6 +1348,10 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/planning\/preview\/[^/]+$/, '核对预览访问'],
     [/^GET \/auth\/preview\/access$/, '查看分支预览访问状态'],
     [/^GET \/auth\/preview\/requests$/, '查看分支预览访问申请'],
+    [/^GET \/auth\/preview\/notices$/, '查看预览访问通知'],
+    [/^GET \/auth\/design\/notices$/, '查看设计评审通知'],
+    [/^GET \/auth\/preview\/approvers\/[^/]+$/, '读取预览审批人'],
+    [/^PUT \/auth\/preview\/approvers\/[^/]+$/, '设置预览审批人'],
     [/^POST \/auth\/preview\/access$/, '申请分支预览访问'],
     [/^POST \/auth\/preview\/token$/, '兑换分支预览票据'],
     [/^POST \/auth\/users\/[^/]+\/projects\/[^/]+$/, '批准项目访问'],
@@ -1801,10 +1806,7 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   return false;
 }
 
-/** Check if a request is from an approved AI session */
-function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
-  const cluster = trustedClusterIdentity(req);
-  if (cluster) return cluster.aiSession ?? null;
+function presentedAiAccessKey(req: express.Request): string | undefined {
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
   // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
   // 字段名维持 AI_ACCESS_KEY 不动（用户可见，改名会破坏现有表单存档）。
@@ -1812,13 +1814,31 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
   // CDS-CLI-005 兼容：除了规范 header `x-ai-access-key`，还接受用户常误用的
   // `ai-access-key`（无 x- 前缀）和 `Authorization: Bearer <key>`。Express
   // 会把 header 名规范化为小写，所以这里只需要小写比较。
-  const headerKey = (req.headers['x-ai-access-key'] as string | undefined)
+  return (req.headers['x-ai-access-key'] as string | undefined)
     || (req.headers['ai-access-key'] as string | undefined)
     || (() => {
         const auth = req.headers['authorization'] as string | undefined;
         if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
         return undefined;
       })();
+}
+
+function planningKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
+  if (!key.planningAccess) return true;
+  const path = normalizedPlanningPath(req.path);
+  if (!path) return false;
+  const segment = req.path.replace(/^\/_cds\/api\//i, '/api/').split('/')[3];
+  try { if (decodeURIComponent(segment) !== key.projectId) return false; }
+  catch { return false; }
+  return req.method === 'GET' || req.method === 'HEAD'
+    || (key.planningAccess === 'propose' && req.method === 'POST' && path === '/api/projects/:projectId/planning/commands');
+}
+
+/** Check if a request is from an approved AI session */
+function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+  const cluster = trustedClusterIdentity(req);
+  if (cluster) return cluster.aiSession ?? null;
+  const headerKey = presentedAiAccessKey(req);
   if (headerKey) {
     const processKey = process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY;
     const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
@@ -1885,6 +1905,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if (stateService && headerKey.startsWith('cdsp_')) {
       const match = stateService.findAgentKeyForAuth(headerKey);
       if (match) {
+        if (!planningKeyAllowsRequest(req, match)) return null;
         stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -2252,10 +2273,20 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
+    if (/^\/(?:login|preview-access|auth\/sso)\/?$/i.test(req.path)) res.setHeader('Referrer-Policy', 'no-referrer');
     if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
+    }
+    next();
+  });
+  app.use((req, res, next) => {
+    const key = presentedAiAccessKey(req);
+    const match = key?.startsWith('cdsp_') ? deps.stateService.findAgentKeyForAuth(key) : null;
+    if (match && !planningKeyAllowsRequest(req, match)) {
+      res.status(403).set('Cache-Control', 'private, no-store').json({ error: 'planning_key_scope', message: '此凭据仅限授权项目的工程规划操作' });
+      return;
     }
     next();
   });
@@ -2296,7 +2327,16 @@ export function createServer(deps: ServerDeps): express.Express {
     //     错误文案读起来像模型出错，实际是转发层把自己的解析上限套在了别人的请求上。
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
     if (req.path === '/api/acceptance' || req.path.startsWith('/api/acceptance/')) return next();
-    return globalJsonParser(req, res, next);
+    if (!res.locals.cdsSuppressRequestDetails) return globalJsonParser(req, res, next);
+    return globalJsonParser(req, res, (error?: { status?: number }) => {
+      if (!error) return next();
+      const status = error.status === 413 || error.status === 415 ? error.status : 400;
+      if (!res.headersSent && !res.destroyed) {
+        res.status(status).set('Cache-Control', 'private, no-store').json({
+          error: 'invalid_request_body', message: status === 413 ? '请求超过体积限制' : '请提交有效的 JSON 请求',
+        });
+      }
+    });
   });
 
   const pendingReplayGate = internalPendingReplayAuth.middleware({
@@ -2830,8 +2870,24 @@ export function createServer(deps: ServerDeps): express.Express {
   let lookupPlanningPreview: (projectId: string, number: number) => Promise<PlanningPullRequestPreview | undefined>
     = async () => undefined;
   let lookupPreviewDecision: (client: PreviewAccessClient) => Promise<string | undefined> = async () => undefined;
+  const activeProjectMember = (user: CdsUser, projectId: string): boolean => {
+    const state = deps.stateService;
+    const principal = humanPrincipalId(user.id);
+    return user.status === 'active' && !user.isSystemOwner && !isHumanProjectGrantUpdatePending(state, principal)
+      && state.getPrincipal(principal)?.status === 'active' && hasActiveGrant(state.getProjectGrants(), principal, projectId);
+  };
+  const projectMemberDirectory = async (projectId: string) => {
+    const members = await authService?.listUsers() ?? [];
+    return members.filter(user => activeProjectMember(user, projectId));
+  };
   const previewAccess = new PlanningPreviewAccess({
     store: previewAccessStore,
+    approver: async (projectId, userId) => {
+      const user = await authService?.findUserById(userId);
+      if (!user || !activeProjectMember(user, projectId)) return undefined;
+      const username = user.username || user.githubLogin;
+      return { id: user.id, username, name: user.name || username, owner: false };
+    },
     resolve: async (clientId) => {
       if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return undefined;
       const state = deps.stateService;
@@ -3910,9 +3966,21 @@ export function createServer(deps: ServerDeps): express.Express {
   app.get('/api/cluster/identity/login', (req, res) => clusterIdentity.login(req, res));
 
   if (!isPreviewInstance()) app.use(createPlanningPreviewAccessRouter(previewAccess,
-    () => deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id), client => lookupPreviewDecision(client)));
+    () => deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id), client => lookupPreviewDecision(client),
+    authService && clusterIdentity.getConfig()?.role !== 'member' ? {
+      projects: () => deps.stateService.getProjects().filter(project => !project.mirror && supportsHumanProjectGrant(project))
+        .map(project => ({ id: project.id, name: project.aliasName || project.name })),
+      members: async projectId => (await projectMemberDirectory(projectId))
+        .map(user => ({ id: user.id, name: user.name || user.username || user.githubLogin })),
+    } : undefined));
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
-  if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
+  if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService,
+    canApprovePreviewRequest: async (req, requestId, projectId, subject) => {
+      if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return false;
+      const person = previewAccessPerson(req);
+      return !!person && previewAccess.canApprove(projectId, requestId, subject, person);
+    },
+  }));
 
   if (authMode !== 'github') {
     app.get('/api/me', (req, res) => {
@@ -4008,7 +4076,8 @@ export function createServer(deps: ServerDeps): express.Express {
         operator: isHumanSystemOwner(req),
         accessRequests: authMode === 'disabled' || isHumanSystemOwner(req),
       },
-      previewAccessNotices: !isPreviewInstance() && isAuthenticatedHuman(req),
+      previewAccessNotices: !isPreviewInstance() && Boolean(previewAccessPerson(req)),
+      designReviewNotices: !isPreviewInstance() && Boolean(authService && previewAccessPerson(req)),
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,
@@ -4034,17 +4103,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // disabled. Cheap no-op when the header is absent or the key is
   // malformed.
   app.use((req, _res, next) => {
-    // CDS-CLI-005：同时支持 `X-AI-Access-Key` / `ai-access-key` / Bearer。
-    const h = trustedClusterIdentity(req) ? undefined : (req.headers['x-ai-access-key'] as string | undefined)
-      || (req.headers['ai-access-key'] as string | undefined)
-      || (() => {
-          const auth = req.headers['authorization'] as string | undefined;
-          if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
-          return undefined;
-        })();
+    const h = trustedClusterIdentity(req) ? undefined : presentedAiAccessKey(req);
     if (h && h.startsWith('cdsp_') && !(req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       const match = deps.stateService.findAgentKeyForAuth(h);
-      if (match) {
+      if (match && planningKeyAllowsRequest(req, match)) {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -5389,9 +5451,12 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   }, projectId => designWorkspace.planningLinks(projectId));
   lookupPlanningPreview = (projectId, number) => planning.pullRequestPreview(projectId, number);
+  const previewPolicyDecision = async (projectId: string) => {
+    const { items } = await planning.decisions(projectId, planningPreviewDecisionSubject);
+    return items.find(item => item.status === 'accepted');
+  };
   lookupPreviewDecision = async client => {
-    const { items } = await planning.decisions(client.projectId, planningPreviewDecisionSubject);
-    const decision = items.find(item => item.status === 'accepted');
+    const decision = await previewPolicyDecision(client.projectId);
     return decision ? planningDecisionHref(client.projectId, decision.id) : undefined;
   };
   app.use('/api', createEngineeringPlanningRouter({
@@ -5423,7 +5488,9 @@ export function createServer(deps: ServerDeps): express.Express {
       for (const run of runs.slice().sort((a, b) => (a.finishedAt ?? '').localeCompare(b.finishedAt ?? ''))) {
         deps.stateService.recordEnvironmentAuditEffect(run);
       }
-      const facts = environmentAuditFacts(deps.stateService, projectId, branchId, includeArchive);
+      const policyKeys = branchId ? (await previewPolicyDecision(projectId))?.appliesTo
+        ?.filter(item => item.kind === 'config').map(item => item.ref) : undefined;
+      const facts = environmentAuditFacts(deps.stateService, projectId, branchId, includeArchive, policyKeys ? new Set(policyKeys) : undefined);
       return { projectId, branchId, facts };
     },
   }));
@@ -5432,6 +5499,10 @@ export function createServer(deps: ServerDeps): express.Express {
     : new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(
       path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'design-workspace'));
   designWorkspace = new DesignWorkspaceService(designStore, {
+    reviewer: async (projectId, id) => {
+      const user = await authService?.findUserById(id);
+      return user && activeProjectMember(user, projectId) ? { id, label: user.name || user.username || user.githubLogin } : undefined;
+    },
     sourcePackage: (projectId, commit, sourcePath) => {
       const project = deps.stateService.getProject(projectId);
       return project && !project.mirror ? readDesignSourceZip(deps.stateService.getProjectRepoRoot(project.id, deps.config.repoRoot), commit, sourcePath)
@@ -5461,11 +5532,26 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use('/api', createDesignWorkspaceRouter({
     service: designWorkspace,
+    reviewCandidates: async projectId => (await projectMemberDirectory(projectId))
+      .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin })),
     resolveAccess: (req, projectId) => {
       const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId);
       return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req) } : null;
     },
   }));
+  app.get('/api/auth/design/notices', async (req, res) => {
+    res.set({ 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' });
+    res.locals.cdsSkipHttpLog = true;
+    if (isPreviewInstance() || !previewAccessPerson(req)) return res.status(403).json({ message: '请登录 CDS 查看自己的设计评审通知' });
+    try {
+      const projects = deps.stateService.getProjects();
+      const notices = (await Promise.all(projects.map(project => {
+        const actor = resolveEngineeringPlanningAccess(req, deps.stateService, project.id);
+        return actor ? designWorkspace.reviewNotices(project.id, actor) : [];
+      }))).flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50);
+      res.json({ notices });
+    } catch { res.status(503).json({ message: '暂时无法读取设计评审通知' }); }
+  });
   const stopPlanningSweep = startPlanningSweep({
     projects: () => clusterIdentity.getConfig()?.role === 'member' ? []
       : deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id),

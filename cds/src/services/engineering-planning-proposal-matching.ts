@@ -1,6 +1,7 @@
 import type { PlanningDebt, PlanningDuplicateCandidate, PlanningProposal } from '../shared/engineering-planning.js';
 
 const titleSimilarityThreshold = 0.8;
+const sameAnchorSimilarityThreshold = 0.62;
 
 export function proposalTitleKey(title: string): string {
   return title.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' ');
@@ -23,6 +24,18 @@ export function debtTitlesAreSimilar(left: ReadonlySet<string>, right: ReadonlyS
   return titleSimilarity(left, right) >= titleSimilarityThreshold;
 }
 
+export function debtAnchorKey(debt: PlanningDebt): string | undefined {
+  return debt.anchor && JSON.stringify([debt.anchor.type, debt.anchor.ref]);
+}
+
+export function debtsSimilarWithoutAnchor(left: PlanningDebt, right: PlanningDebt): boolean {
+  const anchor = left.anchor;
+  if (!anchor || anchor.type !== right.anchor?.type || anchor.ref !== right.anchor.ref) return false;
+  const ref = proposalTitleKey(anchor.ref);
+  const remaining = (debt: PlanningDebt) => debtTitleBigrams(proposalTitleKey(debt.title).split(ref).join(''));
+  return titleSimilarity(remaining(left), remaining(right)) >= sameAnchorSimilarityThreshold;
+}
+
 export function explicitlyDistinct(left: PlanningDebt, right: PlanningDebt): boolean {
   return Boolean(left.notDuplicateWith?.includes(right.id) || right.notDuplicateWith?.includes(left.id));
 }
@@ -37,7 +50,8 @@ export function findSimilarDebts(debts: Iterable<PlanningDebt>, title: string, o
     if (debt.status === 'dropped' || (!options.includeRepaid && debt.status === 'repaid')
       || (options.base && (options.base.id === debt.id || explicitlyDistinct(options.base, debt)))) continue;
     const similarity = key === proposalTitleKey(debt.title) ? 1 : titleSimilarity(grams, debtTitleBigrams(debt.title));
-    if (similarity >= (options.threshold ?? titleSimilarityThreshold)) {
+    if (similarity >= (options.threshold ?? titleSimilarityThreshold)
+      || (options.threshold === undefined && options.base && debtsSimilarWithoutAnchor(options.base, debt))) {
       const { id, title, status, summary, owner, version } = debt;
       rows.push({ id, title, status, summary, owner, version, similarity });
     }

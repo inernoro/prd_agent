@@ -53,23 +53,26 @@ export function appendEnvironmentAudit(state: StateService, req: Request, scope:
   state.appendEnvChangeLog(projectId, { op, keys, actor, source: 'api', facts });
 }
 
-export function environmentAuditFacts(state: StateService, projectId: string, branchId?: string, includeArchive = false): EnvAuditFact[] {
+export function environmentAuditFacts(state: StateService, projectId: string, branchId?: string, includeArchive = false,
+  relatedLegacyKeys?: ReadonlySet<string>): EnvAuditFact[] {
   const visible = includeArchive ? undefined : new Set(state.getEnvChangeLog(projectId, false, 2000));
   let completed: ReturnType<StateService['getDeploymentRuns']> | undefined;
   return state.getEnvChangeLog(projectId, true).flatMap((entry, index): EnvAuditFact[] => {
     if (visible && !visible.has(entry)) return [];
     if (entry.facts) return entry.facts.filter(fact => !branchId || branchId === fact.branchId);
-    if (branchId) return [];
+    if (branchId && !entry.keys.some(key => relatedLegacyKeys?.has(key))) return [];
     completed ??= state.getDeploymentRuns({ projectId, status: 'running' }).filter(run => run.finishedAt)
       .sort((a, b) => a.finishedAt!.localeCompare(b.finishedAt!));
     const candidate = completed.find(run => run.finishedAt! > entry.ts);
+    if (branchId && candidate?.branchId !== branchId) return [];
     const effect: EnvAuditFact['effect'] = candidate ? { state: 'inferred', runId: candidate.id, at: candidate.finishedAt,
       reason: '记录之后该项目最早的一次成功部署，旧留痕没有绑定生效证据' } : { state: 'unknown', reason: '历史留痕没有绑定部署运行' };
-    return entry.keys.filter(validKey).map(key => ({
+    return entry.keys.filter(key => validKey(key) && (!branchId || relatedLegacyKeys?.has(key))).map(key => ({
       eventId: createHash('sha256').update(JSON.stringify([projectId, entry.ts, index, key])).digest('hex').slice(0, 24),
       projectId, key, ts: entry.ts, actor: entry.actor,
       actorReason: !entry.actor ? '历史留痕没有记录操作者' : ['智能体', 'agent', 'ai'].includes(entry.actor) ? '历史留痕没有记录具体智能体身份' : undefined,
-      signerReason: '历史留痕没有记录签发人', disposition: 'unknown', branchReason: '历史留痕缺少分支信息',
+      signerReason: '历史留痕没有记录签发人', disposition: 'unknown',
+      branchReason: branchId ? '历史留痕缺少分支信息，按本分支后续部署提供线索' : '历史留痕缺少分支信息',
       dispositionReason: '历史留痕没有比较写入前后的值', sessionReason: '历史留痕没有记录会话',
       effect,
     }));

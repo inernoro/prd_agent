@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
-  DesignCell, DesignComment, DesignEntry, DesignFramework, DesignMaterial, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
+  DesignCell, DesignComment, DesignEntry, DesignFramework, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
 import { designSlots } from '../shared/design-workspace.js';
@@ -21,7 +21,8 @@ type RequestReceipt = { key: string; fingerprint: string; result: Receipt['resul
 export type DesignWorkspaceCommit = {
   projectId: string; revision: number; request: RequestReceipt; assets?: ProjectRevisionAsset[];
   design?: { id: string; version?: DesignVersion; comment?: DesignComment; run?: DesignRun;
-    frozen?: number; freeze?: NonNullable<DesignEntry['freezes']>[number]; pullRequest?: number; reviewRequested?: boolean };
+    frozen?: number; freeze?: NonNullable<DesignEntry['freezes']>[number]; pullRequest?: number; reviewRequested?: boolean;
+    reviewers?: DesignReviewer[]; notifyReviewersAt?: string };
   framework?: DesignFramework;
 };
 type Changes = Pick<DesignWorkspaceCommit, 'assets' | 'design' | 'framework'>;
@@ -29,6 +30,7 @@ type Preview = { commit: string; url: string };
 type WorkspaceState = {
   revision: number; designs: Map<string, DesignEntry>; frameworks: Map<string, DesignFramework>;
   requests: Map<string, RequestReceipt>; assets: Map<string, number>;
+  reviewNotices: Map<string, DesignReviewNotice[]>;
 };
 type Context = { projectId: string; actor: DesignActor; state: WorkspaceState; now: string };
 type Update = { result: Receipt['result']; changes: Changes };
@@ -37,6 +39,8 @@ const missing = (message: string): never => rejectPlanning(404, 'design_not_foun
 const conflict = (message: string): never => rejectPlanning(409, 'design_conflict', message);
 const forbidden = (message: string): never => rejectPlanning(403, 'design_forbidden', message);
 const identity = ({ id, label }: DesignActor) => ({ id, label });
+const reviewNoticeWindow = 60 * 60_000;
+const reviewNoticeLimit = 50;
 const write = (actor: DesignActor) => {
   if (!actor.permissions.includes('write')) forbidden('当前身份无权写入稿件');
 };
@@ -68,7 +72,7 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
   if (commit.design) {
     const update = commit.design;
     const previous = state.designs.get(update.id);
-    const design = previous ? { ...previous, versions: [...previous.versions], comments: [...previous.comments], runs: [...previous.runs] }
+    const design: DesignEntry = previous ? { ...previous, versions: [...previous.versions], comments: [...previous.comments], runs: [...previous.runs] }
       : { id: update.id, projectId: commit.projectId, versions: [], comments: [], runs: [] };
     state.designs.set(update.id, design);
     if (update.version) design.versions.push(update.version);
@@ -78,6 +82,22 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
     if (update.freeze) design.freezes = [...(design.freezes ?? []), update.freeze];
     if (update.pullRequest !== undefined) design.pullRequest = update.pullRequest;
     if (update.reviewRequested !== undefined) design.reviewRequested = update.reviewRequested;
+    if (update.reviewers !== undefined) design.reviewers = update.reviewers;
+    if (update.notifyReviewersAt) {
+      const at = update.notifyReviewersAt;
+      const version = design.versions.at(-1)!;
+      for (const reviewer of design.reviewers ?? []) {
+        const rows = [...(state.reviewNotices.get(reviewer.id) ?? [])];
+        const index = rows.findIndex(row => row.designId === design.id);
+        const mostRecent = rows[index];
+        const merge = mostRecent && Date.parse(at) - Date.parse(mostRecent.createdAt) < reviewNoticeWindow;
+        if (merge) rows.splice(index, 1);
+        rows.unshift({ id: merge ? mostRecent.id : `${design.id}@${commit.revision}`, projectId: commit.projectId,
+          designId: design.id, version: version.version, title: version.title, createdAt: merge ? mostRecent.createdAt : at,
+          updatedAt: merge && mostRecent.updatedAt > at ? mostRecent.updatedAt : at, occurrences: merge ? mostRecent.occurrences + 1 : 1 });
+        state.reviewNotices.set(reviewer.id, rows.slice(0, reviewNoticeLimit));
+      }
+    }
   }
 }
 
@@ -96,7 +116,13 @@ function screenPath(version: DesignVersion, itemId: string, slot: DesignSlot) {
   const [viewport, theme] = slot.split('-') as ['desktop' | 'phone', 'light' | 'dark'];
   const screens = rule.screenId ? version.screens.filter(screen => screen.id === rule.screenId)
     : version.screens.filter(screen => screen.viewport === viewport);
-  return screens.find(screen => screen.themes.includes(theme) && screen.impl)?.impl ?? null;
+  const targets = new Map<string, string>();
+  for (const screen of screens) {
+    if (screen.impl && screen.themes.includes(theme)) {
+      targets.set(JSON.stringify([screen.impl, screen.readySelector ?? null]), screen.impl);
+    }
+  }
+  return targets.size === 1 ? targets.values().next().value ?? null : null;
 }
 
 function ratio(value: unknown): number {
@@ -133,6 +159,7 @@ export class DesignWorkspaceService {
   private readonly latest = new Map<string, WorkspaceState>();
 
   constructor(private readonly store: ProjectRevisionStore<DesignWorkspaceCommit>, private readonly deps: {
+    reviewer?: (projectId: string, actorId: string) => Promise<DesignReviewer | undefined>;
     sourcePackage?: (projectId: string, commit: string, sourcePath: string) => Promise<Buffer | undefined>;
     resolvePreview?: (projectId: string, pullRequest: number, commit?: string) => Promise<Preview | undefined>;
     findDebt?: (projectId: string, debtId: string, sourceRef: string) => Promise<boolean>;
@@ -148,7 +175,7 @@ export class DesignWorkspaceService {
     const commits = await this.store.read(projectId, base?.revision ?? 0);
     if (base && !commits.length) return base;
     const state: WorkspaceState = { revision: base?.revision ?? 0, requests: new Map(base?.requests),
-      designs: new Map(base?.designs), frameworks: new Map(base?.frameworks), assets: new Map(base?.assets) };
+      designs: new Map(base?.designs), frameworks: new Map(base?.frameworks), assets: new Map(base?.assets), reviewNotices: new Map(base?.reviewNotices) };
     for (const commit of commits) {
       if (commit.projectId !== projectId || commit.revision !== state.revision + 1) throw new Error('Design revision history is inconsistent');
       apply(state, commit);
@@ -190,6 +217,23 @@ export class DesignWorkspaceService {
         steward: actor.steward === true, actorId: actor.id } };
   }
 
+  async reviewNotices(projectId: string, actor: DesignActor): Promise<DesignReviewNotice[]> {
+    if (actor.kind !== 'human' || !actor.permissions.includes('read') || !actor.permissions.includes('approve')
+      || !await this.deps.reviewer?.(projectId, actor.id)) return [];
+    const state = await this.load(projectId);
+    return (state.reviewNotices.get(actor.id) ?? []).filter(notice =>
+      state.designs.get(notice.designId)?.reviewers?.some(reviewer => reviewer.id === actor.id));
+  }
+
+  private async reviewers(projectId: string, value: unknown): Promise<DesignReviewer[]> {
+    if (!Array.isArray(value) || value.length > 20) return invalidDesign('请选择最多 20 位项目成员作为评审人');
+    const ids = [...new Set(value.map(id => designId(id, '评审账号')))].sort();
+    return Promise.all(ids.map(async id => {
+      const person = await this.deps.reviewer?.(projectId, id);
+      return person?.id === id ? person : invalidDesign('评审人必须是当前项目的有效人类成员');
+    }));
+  }
+
   async planningLinks(projectId: string): Promise<PlanningDesignLink[]> {
     const state = await this.load(projectId);
     return [...state.designs.values()].map(entry => {
@@ -212,7 +256,7 @@ export class DesignWorkspaceService {
   async publish(projectId: string, actor: DesignActor, query: Record<string, unknown>, bytes: Buffer) {
     requireProjectRead(actor);
     write(actor);
-    const params = designRecord(query, '发布参数', ['requestId', 'designId', 'sourceCommit', 'sourcePath', 'note', 'resolves', 'review']);
+    const params = designRecord(query, '发布参数', ['requestId', 'designId', 'sourceCommit', 'sourcePath', 'note', 'resolves', 'review', 'reviewerIds']);
     const requestId = designId(params.requestId, '请求编号');
     const sourceCommit = designCommit(params.sourceCommit);
     const sourcePath = params.sourcePath === undefined ? undefined : designSourcePath(params.sourcePath);
@@ -230,8 +274,13 @@ export class DesignWorkspaceService {
         [designId(id, '评论编号'), planningText(explanation, '处理说明', 1000)]));
     }
     if (params.review !== undefined && params.review !== 'true') invalidDesign('请求评审须使用 review=true');
+    let reviewerIds: unknown;
+    if (params.reviewerIds !== undefined) {
+      try { reviewerIds = JSON.parse(planningText(params.reviewerIds, '评审账号', 3500)); }
+      catch { return invalidDesign('评审账号须是 JSON 数组'); }
+    }
     const prototypeId = randomUUID();
-    return this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: loaded.sha256, resolves, review: params.review },
+    return this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: loaded.sha256, resolves, review: params.review, reviewerIds },
       async ({ state, now }) => {
         const id = selectedId ?? `DSN-${randomUUID().slice(0, 8).toUpperCase()}`;
         const existing = state.designs.get(id);
@@ -239,6 +288,7 @@ export class DesignWorkspaceService {
         if (params.designId !== undefined && !existing) missing('需要更新的稿件不存在');
         if (previous) authored(actor, previous.publisher);
         if (existing?.versions.some(version => version.sourceCommit === sourceCommit)) conflict('该稿件已经发布过此提交');
+        const reviewers = reviewerIds === undefined ? existing?.reviewers : await this.reviewers(projectId, reviewerIds);
         const revisions = loaded.framework ? state.frameworks.get(loaded.framework)?.versions : undefined;
         const frameworkVersion = loaded.frameworkVersion ?? (previous?.framework === loaded.framework ? previous?.frameworkVersion : undefined)
           ?? revisions?.at(-1)?.version;
@@ -262,7 +312,9 @@ export class DesignWorkspaceService {
           createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
           ...(loaded.renders.length ? { renders } : {}) };
         return { result: { type: 'package', designId: id, version: version.version },
-          changes: { design: { id, version, reviewRequested: params.review === 'true' || Boolean(existing?.frozen) }, assets } };
+          changes: { design: { id, version, reviewers,
+            reviewRequested: Boolean(reviewers?.length) || params.review === 'true' || Boolean(existing?.frozen),
+            ...(reviewers?.length ? { notifyReviewersAt: now } : {}) }, assets } };
       });
   }
 
@@ -277,9 +329,20 @@ export class DesignWorkspaceService {
       if (type.startsWith('comment.')) return this.comment(type, input, context, entry);
       if (type.startsWith('acceptance.')) return this.acceptance(type, input, context, entry);
       const result = { type, designId: id };
+      if (type === 'design.review') {
+        designRecord(input, '稿件评审请求', ['type', 'requestId', 'designId', 'reviewerIds']);
+        authored(actor, entry.versions.at(-1)!.publisher);
+        const reviewers = await this.reviewers(projectId, input.reviewerIds);
+        const currentVersion = entry.versions.at(-1)!.version;
+        return { result: { ...result, version: currentVersion }, changes: { design: { id, reviewers, reviewRequested: reviewers.length > 0,
+          ...(reviewers.length ? { notifyReviewersAt: context.now } : {}) } } };
+      }
       if (type === 'design.freeze') {
         designRecord(input, '定稿请求', ['type', 'requestId', 'designId', 'version']);
         review(actor);
+        if (entry.reviewers && (!entry.reviewers.some(reviewer => reviewer.id === actor.id) || !await this.deps.reviewer?.(projectId, actor.id))) {
+          forbidden('请由此稿件的指定评审人定稿');
+        }
         const version = versionOf(entry, input.version).version;
         if (entry.versions.at(-1)!.version !== version) conflict('请切到最新稿件版本后定稿');
         if (entry.frozen === version) return { result: { ...result, version }, changes: {} };
@@ -353,7 +416,7 @@ export class DesignWorkspaceService {
       const cells = version.acceptance.flatMap(item => item.slots.map((slot): DesignCell => {
         const hasRoute = screenPath(version, item.id, slot);
         return { itemId: item.id, slot, status: hasRoute ? 'unverified' : 'missing',
-          actual: hasRoute ? '尚未执行' : '画面清单没有声明匹配的实现地址' };
+          actual: hasRoute ? '尚未执行' : '画面清单没有声明唯一匹配的实现地址' };
       }));
       run = { id: `RUN-${randomUUID()}`, version: version.version, pullRequest, commit: preview.commit,
         previewUrl: preview.url, createdAt: now, cells, verdict: 'needs_evidence', issues: {} };

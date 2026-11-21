@@ -1,8 +1,12 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PlanningPreviewAccess, previewPolicyReturnUrl, previewReturnPath,
-  type PreviewAccessClient, type PreviewAccessCommit,
+  type PreviewAccessClient, type PreviewAccessCommit, type PreviewAccessPerson,
 } from '../../src/services/planning-preview-access.js';
+import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
 
 describe('branch preview access', () => {
   it('binds paths to the intended route namespace', () => {
@@ -91,5 +95,123 @@ describe('branch preview access', () => {
     const revoked = { ...input, code: await issue() };
     allow = false;
     expect(await service.consume(revoked)).toBeUndefined();
+  });
+});
+
+describe('preview project approvers', () => {
+  const projectA = 'fixture-approval-a';
+  const projectB = 'fixture-approval-b';
+  const projects = [projectA, projectB];
+  const human = (id: string, name: string): PreviewAccessPerson => ({ id, username: id, name, owner: false });
+  const delegateA = human('delegate-a', 'Fixture Approver A');
+  const delegateB = human('delegate-b', 'Fixture Approver B');
+  const applicantA = human('applicant-a', 'Fixture Applicant A');
+  const applicantB = human('applicant-b', 'Fixture Applicant B');
+  const member = human('member-without-role', 'Fixture Project Member');
+  const stranger = human('stranger', 'Fixture Stranger');
+  const people = new Map([delegateA, delegateB, applicantA, applicantB, member, stranger].map(person => [person.id, person]));
+  const preview = (projectId: string, suffix: string): PreviewAccessClient => ({
+    id: `fixture-approval-preview-${suffix}`, secret: 'a'.repeat(32), callback: `https://${suffix}.fixture.test/auth/sso`,
+    commit: 'b'.repeat(40), projectId, branchId: `fixture-approval-branch-${suffix}`, projectName: `Fixture ${suffix}`,
+    branchName: `review-${suffix}`, pullRequest: 7, origin: `https://${suffix}.fixture.test`, path: '/members/',
+  });
+  const clientA = preview(projectA, 'a');
+  const clientB = preview(projectB, 'b');
+  const returnPath = '/members/?view=private-fixture#team';
+
+  async function runWithLedger(run: (fixture: {
+    create: () => PlanningPreviewAccess;
+    activeClients: Map<string, PreviewAccessClient>;
+    members: Map<string, Set<string>>;
+    inactive: Set<string>;
+  }) => Promise<void>) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'cds-preview-approver-ledger-'));
+    const members = new Map([[projectA, new Set([delegateA.id, member.id])], [projectB, new Set([delegateB.id])]]);
+    const activeClients = new Map([clientA, clientB].map(client => [client.id, client]));
+    const inactive = new Set<string>();
+    const eligible = (projectId: string, userId: string) => !inactive.has(userId) && !!members.get(projectId)?.has(userId);
+    const create = () => new PlanningPreviewAccess({
+      store: new FileProjectRevisionStore<PreviewAccessCommit>(dir),
+      resolve: async clientId => activeClients.get(clientId),
+      allowed: async (person, projectId) => person.owner || eligible(projectId, person.id),
+      approver: async (projectId: string, userId: string) => eligible(projectId, userId) ? people.get(userId) : undefined,
+    });
+    try { await run({ create, activeClients, members, inactive }); }
+    finally { await rm(dir, { recursive: true, force: true }); }
+  }
+
+  it('persists project assignments across restart, keeps existing requests, and supports clearing', async () => {
+    await runWithLedger(async ({ create }) => {
+      const service = create();
+      expect(service.setApprover).toBeTypeOf('function');
+      const row = (await service.request(clientA, applicantA, '', returnPath))!;
+      await service.setApprover(projectA, delegateA.id);
+      await service.setApprover(projectB, delegateB.id);
+      await service.setApprover(projectA, stranger.id).catch(() => undefined);
+      const restarted = create();
+      expect(await restarted.approver(projectA)).toMatchObject({ id: delegateA.id, name: delegateA.name });
+      expect(await restarted.approver(projectB)).toMatchObject({ id: delegateB.id, name: delegateB.name });
+      expect((await restarted.findRequest(projects, row.id, applicantA))?.returnPath).toBe(returnPath);
+      expect(await restarted.findRequest(projects, row.id, delegateA)).toBeUndefined();
+      await restarted.setApprover(projectA, null);
+      expect(await create().approver(projectA)).toBeFalsy();
+      expect(await create().approver(projectB)).toMatchObject({ id: delegateB.id });
+    });
+  });
+
+  it('scopes tickets and the pending count to assigned projects while an approver keeps their own notifications', async () => {
+    await runWithLedger(async ({ create, members }) => {
+      const service = create();
+      expect(service.visibleRequests).toBeTypeOf('function');
+      await service.setApprover(projectA, delegateA.id);
+      await service.setApprover(projectB, delegateB.id);
+      const a = (await service.request(clientA, applicantA, '', returnPath))!;
+      const b = (await service.request(clientB, applicantB, '', returnPath))!;
+      const own = (await service.request(clientB, delegateA, '', returnPath))!;
+      members.get(projectB)!.add(delegateA.id);
+
+      expect((await service.visibleRequests(projects, delegateA)).map(row => row.id)).toEqual([a.id]);
+      expect((await service.visibleRequests(projects, member)) ?? []).toEqual([]);
+      expect((await service.visibleRequests(projects, stranger)) ?? []).toEqual([]);
+      expect(await service.notices(projects, delegateA)).toEqual({ pending: 1, approved: [{ id: own.id, project: clientB.projectName }] });
+      expect(await service.notices(projects, delegateB)).toEqual({ pending: 1, approved: [] });
+      expect(await service.notices(projects, applicantB)).toEqual({ pending: 0, approved: [] });
+      expect(await service.canApprove(projectB, b.id, applicantB.id, delegateA)).toBe(false);
+    });
+  });
+
+  it('requires the current active project approver and the matching active client, request and recipient', async () => {
+    await runWithLedger(async ({ create, activeClients, members, inactive }) => {
+      const service = create();
+      expect(service.canApprove).toBeTypeOf('function');
+      await service.setApprover(projectA, delegateA.id);
+      const a = (await service.request(clientA, applicantA, '', returnPath))!;
+      const b = (await service.request(clientB, applicantB, '', returnPath))!;
+
+      expect(await service.canApprove(projectA, a.id, applicantA.id, delegateA)).toBe(true);
+      expect(await service.canApprove(projectA, a.id, applicantA.id, member)).toBe(false);
+      expect(await service.canApprove(projectA, a.id, applicantA.id, stranger)).toBe(false);
+      expect(await service.canApprove(projectA, b.id, applicantB.id, delegateA)).toBe(false);
+      expect(await service.canApprove(projectA, a.id, applicantB.id, delegateA)).toBe(false);
+      expect(await service.canApprove(projectB, a.id, applicantA.id, delegateA)).toBe(false);
+
+      activeClients.delete(clientA.id);
+      expect(await service.canApprove(projectA, a.id, applicantA.id, delegateA)).toBe(false);
+      expect((await service.notices(projects, delegateA)).pending).toBe(0);
+      expect(await service.visibleRequests(projects, delegateA)).toEqual([]);
+      expect(await service.requests(projectA)).toEqual([a]);
+      activeClients.set(clientA.id, { ...clientA, branchId: 'fixture-stale-callback-branch' });
+      expect(await service.canApprove(projectA, a.id, applicantA.id, delegateA)).toBe(false);
+      expect(await service.visibleRequests(projects, delegateA)).toEqual([]);
+      activeClients.set(clientA.id, clientA);
+
+      members.get(projectA)!.delete(delegateA.id);
+      expect(await service.approver(projectA)).toBeFalsy();
+      expect(await service.canApprove(projectA, a.id, applicantA.id, delegateA)).toBe(false);
+      expect((await service.visibleRequests(projects, delegateA)) ?? []).toEqual([]);
+      members.get(projectA)!.add(delegateA.id);
+      inactive.add(delegateA.id);
+      expect(await service.canApprove(projectA, a.id, applicantA.id, delegateA)).toBe(false);
+    });
   });
 });

@@ -8,15 +8,17 @@ export function normalizedPreviewAccessPath(value: unknown): string | undefined 
   const path = String(value ?? '').split('?')[0].replace(/^\/_cds\/api\//i, '/api/').replace(/\/+$/, '');
   if (/^\/preview\/authorize$|^\/preview-access$/i.test(path)) return path.toLowerCase();
   if (/^\/api\/auth\/(?:preview\/(?:token|access|requests|notices)|sso\/(?:start|exchange))$/i.test(path)) return path.toLowerCase();
+  if (/^\/api\/auth\/preview\/approvers\/[^/]+$/i.test(path)) return '/api/auth/preview/approvers/:projectId';
+  if (/^\/api\/auth\/users\/[^/]+\/projects\/[^/]+$/i.test(path)) return '/api/auth/users/:id/projects/:projectId';
   if (/^\/api\/projects\/[^/]+\/planning\/preview\/[^/]+$/i.test(path)) return '/api/projects/:projectId/planning/preview/:number';
   return undefined;
 }
 
-function human(req: Request): PreviewAccessPerson | undefined {
-  const request = req as Request & { cdsUser?: CdsUser; cdsProjectKey?: unknown; cdsAccess?: unknown; _aiSession?: unknown };
+export function previewAccessPerson(req: Request): PreviewAccessPerson | undefined {
+  const request = req as Request & { cdsUser?: CdsUser; cdsProjectKey?: unknown; cdsPrincipal?: unknown; cdsAccess?: unknown; _aiSession?: unknown };
   const user = request.cdsUser;
   if (!user || !isAuthenticatedHuman(req) || user.id === 'anonymous' || user.status !== 'active'
-    || request.cdsProjectKey || request.cdsAccess || request._aiSession) return undefined;
+    || user.authProvider === 'sso' || request.cdsProjectKey || request.cdsPrincipal || request.cdsAccess || request._aiSession) return undefined;
   return { id: user.id, username: user.username || user.githubLogin, name: user.name || user.username || user.githubLogin, owner: isHumanSystemOwner(req) };
 }
 
@@ -37,11 +39,12 @@ export function createPreviewTokenRouter(service: PlanningPreviewAccess): Router
 
 export function createPlanningPreviewAccessRouter(
   service: PlanningPreviewAccess, projectIds: () => string[], decisionLink: (client: PreviewAccessClient) => Promise<string | undefined>,
+  directory?: { projects: () => Array<{ id: string; name: string }>; members: (projectId: string) => Promise<Array<{ id: string; name: string }>> },
 ): Router {
   const router = express.Router();
   router.get('/preview/authorize', async (req, res) => {
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
-    const person = human(req);
+    const person = previewAccessPerson(req);
     if (!person) return res.redirect(303, '/login?redirect=' + encodeURIComponent(req.originalUrl));
     try {
       const client = await service.client(req.query.client_id);
@@ -55,7 +58,7 @@ export function createPlanningPreviewAccessRouter(
   });
   router.get('/api/auth/preview/access', async (req, res) => {
     res.set({ 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' });
-    const person = human(req);
+    const person = previewAccessPerson(req);
     if (!person) return res.status(401).json({ message: '请先登录 CDS' });
     try {
       const request = req.query.request === undefined ? undefined : await service.findRequest(projectIds(), req.query.request, person);
@@ -73,15 +76,17 @@ export function createPlanningPreviewAccessRouter(
       const startUrl = new URL('/api/auth/sso/start', client.origin);
       startUrl.searchParams.set('redirect', path);
       const decisionUrl = allowed ? await decisionLink(client).catch(() => undefined) : undefined;
+      const approver = allowed ? undefined : (await service.approver(client.projectId))?.name ?? 'CDS 系统所有者';
       res.json({ project: client.projectName, branch: client.branchName, pullRequest: client.pullRequest,
         state: allowed ? 'ready' : pending ? 'requested' : 'forbidden',
+        ...(approver ? { approver } : {}),
         ...(pending ? { requestedAt: pending.createdAt } : {}),
         ...(allowed ? { startUrl: startUrl.href, decisionUrl } : {}) });
     } catch { res.status(503).json({ message: '暂时无法读取预览访问权限' }); }
   });
   router.post('/api/auth/preview/access', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
-    const person = human(req);
+    const person = previewAccessPerson(req);
     if (!person) return res.status(401).json({ message: '请先登录 CDS' });
     if (req.headers['sec-fetch-site'] === 'cross-site' || !req.is('application/json')) return res.status(403).json({ message: '请在 CDS 页面发起申请' });
     try {
@@ -99,7 +104,7 @@ export function createPlanningPreviewAccessRouter(
   });
   router.get('/api/auth/preview/notices', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
-    const person = human(req);
+    const person = previewAccessPerson(req);
     if (!person) return res.status(401).json({ message: '请先登录 CDS' });
     try {
       const notices = await service.notices(projectIds(), person);
@@ -110,14 +115,42 @@ export function createPlanningPreviewAccessRouter(
   });
   router.get('/api/auth/preview/requests', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
-    if (!isHumanSystemOwner(req)) return res.status(403).json({ message: '请由 CDS 系统所有者处理访问申请' });
+    const person = previewAccessPerson(req);
+    if (!person) return res.status(403).json({ message: '请用有审批权限的 CDS 账号登录' });
     try {
-      const lists = await Promise.all(projectIds().map(project => service.requests(project)));
-      const requests = await Promise.all(lists.flat().map(async ({ returnPath: _returnPath, ...row }) => ({ ...row,
+      const rows = await service.visibleRequests(projectIds(), person);
+      if (!rows) return res.status(403).json({ message: '请由项目审批人处理访问申请' });
+      const requests = await Promise.all(rows.map(async ({ returnPath: _returnPath, ...row }) => ({ ...row,
         state: await service.allowed({ id: row.subject, username: row.name, name: row.name, owner: false }, row.projectId) ? 'ready' : 'requested',
       })));
-      res.json({ requests });
+      res.json({ requests, ...(person.owner && directory ? { projects: directory.projects() } : {}) });
     } catch { res.status(503).json({ message: '暂时无法读取预览访问申请' }); }
+  });
+  router.get('/api/auth/preview/approvers/:projectId', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!directory || !previewAccessPerson(req)?.owner) return res.status(403).json({ message: '请由 CDS 系统所有者配置预览审批人' });
+    const { projectId } = req.params;
+    if (!directory.projects().some(project => project.id === projectId)) return res.status(404).json({ message: '没有可配置的预览项目' });
+    try {
+      const [approver, members] = await Promise.all([service.approver(projectId), directory.members(projectId)]);
+      res.json({ userId: approver?.id ?? null, members });
+    } catch { res.status(503).json({ message: '暂时无法读取项目审批人' }); }
+  });
+  router.put('/api/auth/preview/approvers/:projectId', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!directory || !previewAccessPerson(req)?.owner || req.headers['sec-fetch-site'] === 'cross-site' || !req.is('application/json')) {
+      return res.status(403).json({ message: '请由 CDS 系统所有者在 CDS 页面配置预览审批人' });
+    }
+    const { projectId } = req.params;
+    if (!directory.projects().some(project => project.id === projectId)) return res.status(404).json({ message: '没有可配置的预览项目' });
+    const userId: unknown = req.body?.userId;
+    if (userId !== null && (typeof userId !== 'string' || !userId || userId.length > 160)) {
+      return res.status(400).json({ message: '请选择有此项目权限的账号' });
+    }
+    try {
+      if (!await service.setApprover(projectId, userId)) return res.status(400).json({ message: '请选择有此项目权限的活跃账号' });
+      res.json({ userId });
+    } catch { res.status(503).json({ message: '暂时无法保存项目审批人' }); }
   });
   return router;
 }

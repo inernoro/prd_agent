@@ -25,7 +25,8 @@ export function resolveEngineeringPlanningAccess(req: Request, state: StateServi
       kind: 'agent',
       id: credential.principalId ?? `project-key:${credential.id}`,
       label: credential.label,
-      permissions: ['read', 'propose', 'write'],
+      permissions: credential.planningAccess === 'read' ? ['read'] : credential.planningAccess === 'propose'
+        ? ['read', 'propose'] : ['read', 'propose', 'write'],
     };
   }
   if (request.cdsAccess || request.cdsPrincipal || request._aiSession || !isAuthenticatedHuman(req)

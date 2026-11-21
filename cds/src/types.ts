@@ -4593,6 +4593,8 @@ export interface AgentKey {
   hash: string;
   /** Permission scope. Always 'rw' — a placeholder for future tiers. */
   scope: 'rw';
+  /** Optional restriction to this project's planning reads or proposal intake. */
+  planningAccess?: 'read' | 'propose';
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** Verified account that issued the key, when present. */

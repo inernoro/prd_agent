@@ -111,10 +111,14 @@ function DecisionEvidenceLink({ row, projectId, onClick }: { row: PlanningDecisi
 export function PreviewDecision({ projectId, open, reload }: ReadProps) {
   const query = new URLSearchParams(planningPreviewDecisionSubject);
   const result = usePlanningRead<PlanningDecisionSearch>(open ? `${planningPath(projectId)}/decisions?${query}` : null, reload);
+  const decision = result.data?.items.find(item => item.status === 'accepted');
+  if (decision) return <div className="ep-preview-why">
+    <Link className="ep-link" to={planningDecisionHref(projectId, decision.id)}>为什么要单独登录？</Link>
+    <p>预览使用独立会话。通过 CDS 项目授权核对后，可用一次性票据进入预览。</p>
+  </div>;
   return <details className="ep-preview-why">
     <summary>为什么要单独登录？</summary>
     <p>预览使用独立会话。通过 CDS 项目授权核对后，可用一次性票据进入预览。</p>
-    {result.data?.items.map(row => <DecisionEvidenceLink key={row.id} row={row} projectId={projectId} />)}
   </details>;
 }
 

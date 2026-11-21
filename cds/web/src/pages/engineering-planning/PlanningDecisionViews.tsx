@@ -214,7 +214,7 @@ function DecisionCard({ decision, plans, progress, today, onSelect, review }: {
     </div>
     <button type="button" className="ep-text-button ep-advancement-title" onClick={() => onSelect({ kind: 'decision', id: decision.id })}>{decision.title}</button>
     {review && decision.reviewAt ? <p className="ep-advancement-meta"><CalendarDays aria-hidden />
-      <time dateTime={decision.reviewAt}>{monthDay(decision.reviewAt)}</time> 已到复核时间</p> : <Reasons reasons={progress.reasons.slice(0, 3)} />}
+      <time dateTime={decision.reviewAt}>{monthDay(decision.reviewAt)}</time> 已到复核时间</p> : <Reasons reasons={progress.reasons} />}
     {plans.length > 0 && <p className="ep-advancement-meta"><ListChecks aria-hidden />{plans.length} 个落地计划</p>}
     {!review && pulls.length > 0 && <div className="ep-advancement-pull-requests">{pulls.map(pull => <PlanningPullRequestBadge key={pull.url} pullRequest={pull} />)}</div>}
     {!review && !decision.pullRequests?.length && decision.pullRequest && <PlanningPullRequestLink reference={decision.pullRequest} />}

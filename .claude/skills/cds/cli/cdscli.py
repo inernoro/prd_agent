@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3813,6 +3813,40 @@ def _planning_duplicate_candidates(items: Any) -> list[dict[str, Any]]:
     return candidates
 
 
+def _read_planning_file(filename: str) -> Any:
+    try:
+        with open(filename, "rb") as stream:
+            content = stream.read(3 * 1024 * 1024 + 1)
+        if len(content) > 3 * 1024 * 1024:
+            die("提交文件过大，请分批提交")
+        return json.loads(content)
+    except (OSError, ValueError):
+        die("无法读取命令文件，请提供有效 JSON")
+
+
+def _repayment_screenshot(stage: str, source: str, rectangle: str) -> dict:
+    filename, separator, label = source.partition("=")
+    suffix = Path(filename).suffix.lower()
+    mime = {".png": "image/png", ".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".webp": "image/webp"}.get(suffix)
+    if not separator or not label.strip() or not mime:
+        die("请用 图片文件=证据说明 提供 PNG、JPEG 或 WebP 截图")
+    try:
+        position = [float(value) for value in rectangle.split(",")]
+        if len(position) != 4 or not all(0 <= value <= 1 for value in position):
+            raise ValueError("invalid rectangle")
+    except ValueError:
+        die("--mark 请填写 0 到 1 之间的 x,y,width,height")
+    try:
+        with open(filename, "rb") as stream:
+            pixels = stream.read(600 * 1024 + 1)
+    except OSError:
+        die("无法读取截图文件")
+    if not pixels or len(pixels) > 600 * 1024:
+        die("截图须为 600 KiB 以内的有效图片")
+    return {"stage": stage, "label": label.strip(), "dataUrl": f"data:{mime};base64," + base64.b64encode(pixels).decode("ascii"),
+            "mark": dict(zip(("x", "y", "width", "height"), position))}
+
+
 def cmd_planning(args: argparse.Namespace) -> None:
     bound = os.environ.get("CDS_PROJECT_ID", "").strip()
     project = (args.project or bound).strip()
@@ -3907,15 +3941,61 @@ def cmd_planning(args: argparse.Namespace) -> None:
     if args.cmd == "debt" and action == "progress":
         submit({"type": "debt.progress", "debtId": args.id, "expectedVersion": args.expected_version,
                 "requestId": args.request_id, "note": args.note})
+    if args.cmd == "debt" and action == "repay":
+        if args.dry_run:
+            debt = scope(request("GET", "/debts/" + urllib.parse.quote(args.id, safe="")).get("debt"))
+            if debt.get("id") != args.id:
+                die("CDS 返回的债务与请求编号不符")
+            ok({"projectId": project, "debtId": args.id, "version": debt["version"], "status": debt["status"],
+                "criteria": debt.get("criteria", []), "requiredProof": "标注完毕的还后截图"})
+        if not human_identity:
+            die("请用 --as-user 由有权项目成员确认偿还")
+        if args.file:
+            if any((args.summary, args.criterion, args.evidence, args.screenshot, args.before_screenshot, args.mark, args.pr)):
+                die("请单独使用 --file，或使用偿还参数")
+            body = _read_planning_file(args.file)
+            if not isinstance(body, dict) or body.get("type", "debt.repay") != "debt.repay" or body.get("debtId", args.id) != args.id:
+                die("命令文件须对应当前债务的偿还记录")
+        else:
+            if not args.summary or not args.criterion or not args.screenshot or len(args.mark) != (2 if args.before_screenshot else 1):
+                die("请填写结论、核对项、还后截图和对应 --mark。可用 --dry-run 查看当前标准")
+            results = []
+            for item in args.criterion:
+                criterion, equals, result = item.partition("=")
+                verdict, _, note = result.partition(":")
+                if not equals or not criterion or verdict not in ("met", "na"):
+                    die("核对项使用 --criterion 标准编号=met:结果 或 标准编号=na:原因")
+                results.append({"criterionId": criterion, "verdict": verdict, **({"note": note} if note else {})})
+            evidence = []
+            for item in args.evidence:
+                kind, colon, detail = item.partition(":")
+                label, equals, url = detail.partition("=")
+                if not colon or not label or (equals and not url):
+                    die("证据使用 --evidence 类型:说明 或 --evidence 类型:说明=链接")
+                evidence.append({"type": kind, "label": label, **({"url": url} if equals else {})})
+            if args.pr:
+                board = request("GET", "")
+                scoped_rows(board, "pullRequests")
+                urls = {row["number"]: row.get("url") for row in board.get("pullRequests", [])}
+                for number in sorted(set(args.pr)):
+                    if not urls.get(number):
+                        die("请提供此项目已观察到的 PR 编号，或将原链接作为证据")
+                    evidence.append({"type": "change", "label": f"PR #{number}", "url": urls[number]})
+            proofs = [_repayment_screenshot("after", args.screenshot, args.mark[0])]
+            if args.before_screenshot:
+                proofs.insert(0, _repayment_screenshot("before", args.before_screenshot, args.mark[1]))
+            body = {"summary": args.summary, "results": results, "evidence": evidence, "repaymentProofs": proofs}
+        expected = body.get("expectedVersion", args.expected_version)
+        if type(expected) is not int or expected < 1 or (args.expected_version is not None and args.expected_version != expected):
+            die("先读取当前偿还标准，再用 --if-version 或在文件中提供对应版本")
+        body.update(type="debt.repay", debtId=args.id, expectedVersion=expected)
+        if args.request_id and body.get("requestId", args.request_id) != args.request_id:
+            die("命令文件与 --request-id 不一致")
+        if not body.get("requestId"):
+            body["requestId"] = args.request_id or hashlib.sha256(json.dumps([project, body], sort_keys=True).encode()).hexdigest()
+        submit(body)
     if args.cmd == "planning" and action in ("submit", "reconcile"):
-        try:
-            with open(args.file, "rb") as stream:
-                content = stream.read(3 * 1024 * 1024 + 1)
-            if len(content) > 3 * 1024 * 1024:
-                die("提交文件过大，请分批提交")
-            body = json.loads(content)
-        except (OSError, ValueError):
-            die("无法读取命令文件，请提供有效 JSON")
+        body = _read_planning_file(args.file)
         if action == "reconcile":
             prepared = request("POST", "/import-preview", body)
             ok(prepared)
@@ -4046,7 +4126,7 @@ def _register_planning_parser(sub: Any) -> None:
     planning = sub.add_parser("planning", help="工程规划：推进、权限与结构化提交").add_subparsers(dest="planning_action", required=True)
     debt = sub.add_parser("debt", help="工程债务：查询、登记、接手与演进").add_subparsers(dest="planning_action", required=True)
     for routes, actions in ((planning, ("show", "capabilities", "submit", "stats", "reconcile", "snapshot")),
-                            (debt, ("list", "show", "brief", "duplicates", "checkup", "create", "progress", "stats"))):
+                            (debt, ("list", "show", "brief", "duplicates", "checkup", "create", "progress", "repay", "stats"))):
         for action in actions:
             parser = routes.add_parser(action)
             parser.set_defaults(func=cmd_planning)
@@ -4067,6 +4147,20 @@ def _register_planning_parser(sub: Any) -> None:
                 parser.add_argument("--request-id", required=True)
                 parser.add_argument("--note", required=True)
                 parser.add_argument("--as-user", required=True, help="由有权限的成员登录后记录进展")
+            if action == "repay":
+                parser.add_argument("id")
+                parser.add_argument("--dry-run", action="store_true", help="只读查看当前债务版本、标准和证据要求")
+                parser.add_argument("--as-user", help="由有权限的项目成员确认偿还")
+                parser.add_argument("--file", help="含偿还结果、截图和版本的 JSON 文件")
+                parser.add_argument("--if-version", dest="expected_version", type=int)
+                parser.add_argument("--request-id")
+                parser.add_argument("--summary")
+                parser.add_argument("--criterion", action="append", default=[])
+                parser.add_argument("--evidence", action="append", default=[])
+                parser.add_argument("--screenshot", help="还后图片路径=证据说明")
+                parser.add_argument("--before-screenshot", help="还前图片路径=证据说明")
+                parser.add_argument("--mark", action="append", default=[], help="x,y,width,height。先标还后图，再标还前图")
+                parser.add_argument("--pr", action="append", type=int, default=[])
             if action == "duplicates":
                 parser.add_argument("--title", required=True)
             if action == "create":
@@ -4263,22 +4357,25 @@ def _design_acceptance_browser(project: str, version: dict, run: dict, identity_
         if rule["how"] == "measure" and not rule.get("probe"):
             continue
         viewport, theme = cell["slot"].split("-")
-        route = next((screen["impl"] for screen in version["screens"] if screen.get("impl") and theme in screen["themes"]
-                      and (screen["id"] == rule["screenId"] if rule.get("screenId") else screen["viewport"] == viewport)), None)
-        if route:
-            queued.setdefault((route, viewport, theme), []).append((cell, rule))
+        targets = {(screen["impl"], screen.get("readySelector")) for screen in version["screens"]
+                   if screen.get("impl") and theme in screen["themes"]
+                   and (screen["id"] == rule["screenId"] if rule.get("screenId") else screen["viewport"] == viewport)}
+        if len(targets) == 1:
+            route, selector = next(iter(targets))
+            queued.setdefault((route, viewport, theme, selector), []).append((cell, rule))
     if not queued:
         return {"measured": 0, "captured": 0, "message": "没有可运行的验收格。请核对实现地址、测量条件与已保留证据。"}
 
     shots = []
-    for route, viewport, theme in queued:
+    for (route, viewport, theme, selector), cells in queued.items():
         width, height = (375, 812) if viewport == "phone" else (1280, 800)
         url = f"/api/projects/{urllib.parse.quote(project, safe='')}/planning/preview/{run['pullRequest']}?" + urllib.parse.urlencode({"path": route})
         status, target, _ = _request("GET", url, extra_headers=identity_headers, follow_redirects=False, fatal_network_errors=False)
         if status != 200 or not isinstance(target, dict) or target.get("projectId") != project or target.get("commit") != run["commit"] or not target.get("url"):
             return {"measured": 0, "captured": 0, "message": "预览入口与冻结提交未能核对，请读取本次运行后重试。"}
         shots.append({"entry": target["url"], "target": urllib.parse.urljoin(run["previewUrl"], route),
-                      "viewport": {"width": width, "height": height}, "theme": theme})
+                      "viewport": {"width": width, "height": height}, "theme": theme, "readySelector": selector,
+                      "measure": any(rule["how"] == "measure" for _, rule in cells)})
 
     helper = Path(__file__).resolve().parent / "acceptance" / "design-browser.mjs"
     measured = captured = 0
@@ -4292,7 +4389,7 @@ def _design_acceptance_browser(project: str, version: dict, run: dict, identity_
             return {"measured": 0, "captured": 0, "message": "浏览器自动取证未完成，已保留待核对的验收运行。"}
         if not isinstance(output.get("rows"), list) or len(output["rows"]) != len(shots):
             return {"measured": 0, "captured": 0, "message": output.get("error", "浏览器未返回完整证据")}
-        for index, ((route, _, theme), cells) in enumerate(queued.items()):
+        for index, ((route, _, theme, _), cells) in enumerate(queued.items()):
             result = output["rows"][index]
             image = None
             if result.get("captured"):
@@ -4393,10 +4490,14 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             "designId": args.id, "sourceCommit": commit, "sourcePath": source_path, "note": args.note,
             "resolves": json.dumps(resolves, sort_keys=True, ensure_ascii=False) if resolves else None,
             "review": "true" if args.review else None,
+            "reviewerIds": json.dumps(sorted(set(args.reviewer))) if args.reviewer else None,
         }.items() if value is not None}
         signature = json.dumps([project, query, hashlib.sha256(content).hexdigest()], sort_keys=True).encode()
         query["requestId"] = args.request_id or hashlib.sha256(signature).hexdigest()
         ok(request("POST", "/packages?" + urllib.parse.urlencode(query), content, {"Content-Type": "application/zip"}, query["requestId"]))
+
+    if action == "reviewers":
+        ok(request("GET", "/reviewers"))
 
     workspace = request("GET")
     designs = workspace["designs"]
@@ -4487,6 +4588,8 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
     command = {"designId": args.id}
     if action == "freeze":
         command.update(type="design.freeze", version=args.version)
+    elif action == "request-review":
+        command.update(type="design.review", reviewerIds=sorted(set(args.reviewer)))
     elif action == "sign":
         command.update(type="acceptance.sign", runId=args.run)
     elif action == "accept":
@@ -4532,16 +4635,16 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
 def _register_design_parser(sub: Any) -> None:
     design = sub.add_parser("design", help="设计稿件、版本、评论与做法验收").add_subparsers(dest="design_action", required=True)
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("publish", "list", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
             parser.set_defaults(func=cmd_design_workspace)
             parser.add_argument("--project", help="默认使用当前仓库绑定的项目")
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
-            if action not in ("list", "publish", "scaffold"):
+            if action not in ("list", "publish", "reviewers", "scaffold"):
                 parser.add_argument("id")
-            if action in ("publish", "accept", "record", "freeze", "sign", "extract", "import"):
+            if action in ("publish", "request-review", "accept", "record", "freeze", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
             if action == "publish":
                 parser.add_argument("id", nargs="?")
@@ -4553,6 +4656,9 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--note")
                 parser.add_argument("--resolves", action="append", default=[])
                 parser.add_argument("--review", action="store_true")
+            if action in ("publish", "request-review"):
+                parser.add_argument("--reviewer", action="append", required=action == "request-review",
+                                    help="成员 ID，先用 design reviewers 查询，可重复指定")
             if action == "comments":
                 parser.add_argument("--open", action="store_true")
             if action == "diff":

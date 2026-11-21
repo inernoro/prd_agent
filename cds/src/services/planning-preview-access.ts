@@ -11,10 +11,12 @@ export type PreviewAccessRequest = {
   id: string; projectId: string; branchId: string; clientId: string; subject: string; name: string;
   createdAt: string; note: string; returnPath?: string;
 };
-export type PreviewAccessCommit = { projectId: string; revision: number; request: PreviewAccessRequest };
+export type PreviewAccessCommit = { projectId: string; revision: number }
+  & ({ request: PreviewAccessRequest; approverId?: never } | { request?: never; approverId: string | null });
 type Ticket = { person: PreviewAccessPerson; client: PreviewAccessClient; state: string; expires: number };
 const codePattern = /^[\w-]{32,128}$/;
 const clientIdPattern = /^[A-Za-z0-9_-]{8,160}$/;
+const requestIdPattern = /^[A-Za-z0-9_-]{24}$/;
 const hash = (value: string) => createHash('sha256').update(value).digest();
 const ttl = 5 * 60_000;
 
@@ -46,6 +48,7 @@ export class PlanningPreviewAccess {
   constructor(private readonly deps: {
     resolve: (clientId: string) => Promise<PreviewAccessClient | undefined>;
     allowed: (person: PreviewAccessPerson, projectId: string) => Promise<boolean>;
+    approver?: (projectId: string, userId: string) => Promise<PreviewAccessPerson | undefined>;
     store: ProjectRevisionStore<PreviewAccessCommit>;
     now?: () => number;
   }) {}
@@ -89,42 +92,88 @@ export class PlanningPreviewAccess {
   }
 
   async requests(projectId: string) {
-    return (await this.deps.store.read(projectId, 0)).map(row => row.request);
+    return (await this.deps.store.read(projectId, 0)).flatMap(row => row.request ? [row.request] : []);
+  }
+
+  private async currentApprover(projectId: string, rows: PreviewAccessCommit[]) {
+    const id = rows.slice().reverse().find(row => row.approverId !== undefined)?.approverId;
+    return id ? this.deps.approver?.(projectId, id) : undefined;
+  }
+
+  async approver(projectId: string) {
+    return this.currentApprover(projectId, await this.deps.store.read(projectId, 0));
+  }
+
+  async setApprover(projectId: string, userId: string | null) {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const rows = await this.deps.store.read(projectId, 0);
+      const person = userId ? await this.deps.approver?.(projectId, userId) : undefined;
+      if (userId !== null && !person) return false;
+      const previous = rows.slice().reverse().find(row => row.approverId !== undefined)?.approverId ?? null;
+      if (previous === userId || await this.deps.store.append({ projectId, revision: (rows.at(-1)?.revision ?? 0) + 1, approverId: userId })) return true;
+    }
+    throw new Error('preview access approver contention');
+  }
+
+  private async currentClient(row: PreviewAccessRequest, cache?: Map<string, Promise<PreviewAccessClient | undefined>>) {
+    const pending = cache?.get(row.clientId) ?? this.client(row.clientId);
+    cache?.set(row.clientId, pending);
+    const client = await pending;
+    return client && client.projectId === row.projectId && client.branchId === row.branchId ? client : undefined;
+  }
+
+  async visibleRequests(projectIds: string[], person: PreviewAccessPerson) {
+    const projects = await Promise.all(projectIds.map(async projectId => {
+      const rows = await this.deps.store.read(projectId, 0);
+      return person.owner || (await this.currentApprover(projectId, rows))?.id === person.id
+        ? rows.flatMap(row => row.request ? [row.request] : []) : undefined;
+    }));
+    if (!projects.some(rows => rows !== undefined) && !person.owner) return undefined;
+    const clients = new Map<string, Promise<PreviewAccessClient | undefined>>();
+    return (await Promise.all(projects.flatMap(rows => rows ?? []).map(async row => await this.currentClient(row, clients) ? [row] : []))).flat();
+  }
+
+  async canApprove(projectId: string, id: unknown, subject: string, person: PreviewAccessPerson) {
+    if (typeof id !== 'string' || !requestIdPattern.test(id) || subject === person.id) return false;
+    const rows = await this.deps.store.read(projectId, 0);
+    const row = rows.find(commit => commit.request?.id === id && commit.request?.subject === subject)?.request;
+    if (!row || !await this.currentClient(row)) return false;
+    return person.owner ? this.allowed(person, projectId) : (await this.approver(projectId))?.id === person.id;
   }
 
   async findRequest(projectIds: string[], id: unknown, person: PreviewAccessPerson) {
-    if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{24}$/.test(id)) return undefined;
+    if (typeof id !== 'string' || !requestIdPattern.test(id)) return undefined;
     const lists = await Promise.all(projectIds.map(projectId => this.requests(projectId)));
     return lists.flat().find(row => row.id === id && row.subject === person.id);
   }
 
   async notices(projectIds: string[], person: PreviewAccessPerson) {
-    const lists = await Promise.all(projectIds.map(projectId => this.requests(projectId)));
-    const rows = lists.flat().filter(row => person.owner || row.subject === person.id)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const projects = await Promise.all(projectIds.map(async projectId => {
+      const rows = await this.deps.store.read(projectId, 0);
+      const approver = person.owner || (await this.currentApprover(projectId, rows))?.id === person.id;
+      return rows.flatMap(({ request }) => request && (approver || request.subject === person.id) ? [{ request, approver }] : []);
+    }));
     const clients = new Map<string, Promise<PreviewAccessClient | undefined>>();
-    const statuses = await Promise.all(rows.map(async row => {
+    const statuses = await Promise.all(projects.flat().map(async ({ request: row, approver }) => {
       const applicant = { id: row.subject, username: row.name, name: row.name, owner: false };
       const allowed = await this.allowed(applicant, row.projectId);
-      if (allowed === person.owner) return undefined;
-      let resolved = clients.get(row.clientId);
-      if (!resolved) {
-        resolved = this.client(row.clientId);
-        clients.set(row.clientId, resolved);
-      }
-      const client = await resolved;
-      if (!client || client.projectId !== row.projectId || client.branchId !== row.branchId) return undefined;
-      return { id: row.id, project: client.projectName };
+      const pending = approver && !allowed && row.subject !== person.id;
+      if (!pending && !(allowed && row.subject === person.id)) return undefined;
+      const client = await this.currentClient(row, clients);
+      if (!client) return undefined;
+      return { id: row.id, project: client.projectName, pending, createdAt: row.createdAt };
     }));
     const available = statuses.flatMap(row => row ? [row] : []);
-    return person.owner ? { pending: available.length, approved: [] } : { pending: 0, approved: available.slice(0, 50) };
+    return { pending: available.filter(row => row.pending).length,
+      approved: available.filter(row => !row.pending).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50)
+        .map(({ id, project }) => ({ id, project })) };
   }
 
   async request(client: PreviewAccessClient, person: PreviewAccessPerson, note: string, path = client.path) {
     if (await this.deps.allowed(person, client.projectId)) return undefined;
     for (let attempt = 0; attempt < 8; attempt++) {
       const rows = await this.deps.store.read(client.projectId, 0);
-      const prior = rows.map(row => row.request).find(row => row.clientId === client.id && row.subject === person.id);
+      const prior = rows.find(row => row.request?.clientId === client.id && row.request?.subject === person.id)?.request;
       if (prior) return prior;
       const request: PreviewAccessRequest = { id: randomBytes(18).toString('base64url'), projectId: client.projectId, branchId: client.branchId,
         clientId: client.id, subject: person.id, name: person.name, createdAt: new Date(this.now()).toISOString(), note,

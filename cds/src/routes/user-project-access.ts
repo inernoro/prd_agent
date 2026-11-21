@@ -9,18 +9,28 @@ import { humanPrincipalId, supportsHumanProjectGrant, beginHumanProjectGrantUpda
   boundedHumanAccessFlush as boundedFlush, reconcileHumanAccessRestore as reconcileGrantRestore,
   type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 
-export function createUserProjectAccessRouter(deps: { stateService: StateService; authService: AuthService }): Router {
+export function createUserProjectAccessRouter(deps: {
+  stateService: StateService; authService: AuthService;
+  canApprovePreviewRequest?: (req: Request, requestId: string, projectId: string, subject: string) => Promise<boolean>;
+}): Router {
   const router = Router();
   const { stateService: state, authService: auth } = deps;
   const handle = async (req: Request, res: Response): Promise<void> => {
-    if (!isHumanSystemOwner(req)) {
+    const previewRequest: unknown = req.method === 'POST' ? req.body?.previewRequestId : undefined;
+    if (previewRequest === undefined && !isHumanSystemOwner(req)) {
       res.status(403).json({ error: '仅系统所有者可管理用户项目授权。' }); return;
     }
+    const previewApproved = () => typeof previewRequest === 'string' && req.is('application/json')
+      && req.headers['sec-fetch-site'] !== 'cross-site'
+      && deps.canApprovePreviewRequest?.(req, previewRequest, req.params.projectId, req.params.id);
     let finishUpdate: FinishHumanAccessUpdate | undefined;
     let durable = false;
     let cleanupPending = false;
     let recoveryUncertain = false;
     try {
+      if (previewRequest !== undefined && !await previewApproved()) {
+        res.status(403).json({ error: '没有可由你处理的预览访问申请。' }); return;
+      }
       const user = await auth.findUserById(req.params.id);
       if (!user) { res.status(404).json({ error: '用户不存在，请刷新用户列表。' }); return; }
       const principalId = humanPrincipalId(user.id);
@@ -49,6 +59,9 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
         // status again under the same gate used by account/credential changes.
         const lockedUser = await auth.findUserById(user.id);
         if (!lockedUser) { res.status(404).json({ error: '用户不存在，请刷新用户列表。' }); return; }
+        if (previewRequest !== undefined && (lockedUser.status !== 'active' || !await previewApproved())) {
+          res.status(403).json({ error: '申请人或审批权限已变化，请刷新申请。' }); return;
+        }
         const priorPrincipal = state.getPrincipal(principalId);
         const priorGrantIds = new Set(state.getProjectGrants().filter(g => g.principalId === principalId).map(g => g.id));
         const priorCredentialIds = new Set(state.getUserCredentials().filter(c => c.principalId === principalId).map(c => c.id));
@@ -126,6 +139,9 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
         }
       }
       const active = new Set(current().map(g => g.projectId));
+      if (previewRequest !== undefined) {
+        res.set('Cache-Control', 'private, no-store').json({ projectId: req.params.projectId, state: 'ready' }); return;
+      }
       res.json({ userId: user.id, allProjects: user.isSystemOwner, projects: state.getProjects().filter(supportsHumanProjectGrant).map(p => ({
         id: p.id, name: p.aliasName || p.name, repository: p.gitRepoUrl,
         previouslyAuthorized: state.getProjectGrants().some(g => g.principalId === humanPrincipalId(user.id) && g.projectId === p.id),

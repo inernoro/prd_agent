@@ -33,6 +33,7 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { shouldDismissOnEscape, shouldDismissOnPointerDown } from '@/lib/outside-dismiss';
 import { useOverlayDock } from '@/lib/useOverlayDock';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
+import type { DesignReviewNotice } from '../../../src/shared/design-workspace';
 
 type NoticeLevel = 'info' | 'warning' | 'danger';
 
@@ -120,19 +121,21 @@ export function NoticeRecordTimes({ createdAt, updatedAt }: Pick<SiteNotice, 'cr
 }
 
 export function SiteNoticeInbox({
-  canReadAccessRequests = false, operatorPendingCount = 0, onOpenOperatorRequests, includeOperations = true, previewAccessIdentity,
+  canReadAccessRequests = false, operatorPendingCount = 0, onOpenOperatorRequests, includeOperations = true, previewAccessIdentity, designReviewIdentity,
 }: {
   canReadAccessRequests?: boolean;
   operatorPendingCount?: number;
   onOpenOperatorRequests?: () => void;
   includeOperations?: boolean;
   previewAccessIdentity?: string;
+  designReviewIdentity?: string;
 } = {}): JSX.Element {
   const host = useOverlayDock('#cds-information-center-host');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [notices, setNotices] = useState<SiteNotice[]>([]);
   const [previewSnapshot, setPreviewSnapshot] = useState<{ identity: string; data: PreviewAccessNotices }>();
+  const [designSnapshot, setDesignSnapshot] = useState<{ identity: string; notices: DesignReviewNotice[] }>();
   const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
   const [open, setOpen] = useState(false);
   const [expandedNoticeIds, setExpandedNoticeIds] = useState<Set<string>>(() => new Set());
@@ -205,27 +208,29 @@ export function SiteNoticeInbox({
   useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
-    if (!previewAccessIdentity) return;
+    if (!previewAccessIdentity && !designReviewIdentity) return;
     const lifetime = new AbortController();
     let refreshing = false;
-    const refreshPreview = async () => {
+    const refreshPrivate = async () => {
       if (refreshing || document.hidden) return;
       refreshing = true;
+      const options = { signal: lifetime.signal };
       try {
-        const data = await apiRequest<PreviewAccessNotices>('/api/auth/preview/notices', { signal: lifetime.signal });
+        const [preview, design] = await Promise.allSettled([
+          previewAccessIdentity ? apiRequest<PreviewAccessNotices>('/api/auth/preview/notices', options) : undefined,
+          designReviewIdentity ? apiRequest<{ notices: DesignReviewNotice[] }>('/api/auth/design/notices', options) : undefined,
+        ]);
         if (lifetime.signal.aborted) return;
-        if (!Array.isArray(data?.approved) || !Number.isSafeInteger(data.pending) || data.pending < 0) {
-          setPreviewSnapshot(undefined);
-          return;
-        }
-        setPreviewSnapshot({ identity: previewAccessIdentity, data });
-      } catch {
-        if (!lifetime.signal.aborted) setPreviewSnapshot(undefined);
+        const data = preview.status === 'fulfilled' ? preview.value : undefined;
+        const reviews = design.status === 'fulfilled' ? design.value?.notices : undefined;
+        setPreviewSnapshot(previewAccessIdentity && Array.isArray(data?.approved) && Number.isSafeInteger(data.pending) && data.pending >= 0
+          ? { identity: previewAccessIdentity, data } : undefined);
+        setDesignSnapshot(designReviewIdentity && Array.isArray(reviews) ? { identity: designReviewIdentity, notices: reviews } : undefined);
       } finally { refreshing = false; }
     };
-    void refreshPreview();
-    const timer = window.setInterval(() => void refreshPreview(), 10000);
-    const show = () => { void refreshPreview(); };
+    void refreshPrivate();
+    const timer = window.setInterval(() => void refreshPrivate(), 10000);
+    const show = () => { void refreshPrivate(); };
     document.addEventListener('visibilitychange', show);
     window.addEventListener('focus', show);
     return () => {
@@ -234,7 +239,7 @@ export function SiteNoticeInbox({
       document.removeEventListener('visibilitychange', show);
       window.removeEventListener('focus', show);
     };
-  }, [previewAccessIdentity, open]);
+  }, [previewAccessIdentity, designReviewIdentity, open]);
 
   // 服务端记了新通知 → 实时增量刷新（不轮询）。
   useEffect(() => {
@@ -299,6 +304,7 @@ export function SiteNoticeInbox({
 
   const activeNotices = useMemo(() => includeOperations ? notices.filter((item) => !item.dismissedAt) : [], [includeOperations, notices]);
   const previewAccess = previewSnapshot && previewSnapshot.identity === previewAccessIdentity ? previewSnapshot.data : emptyPreviewAccess;
+  const designReviews = designSnapshot?.identity === designReviewIdentity ? designSnapshot?.notices ?? [] : [];
   const unreadCount = activeNotices.filter((item) => !item.readAt).length;
   const informationCount = unreadCount
     + sourceCounts.access
@@ -307,6 +313,7 @@ export function SiteNoticeInbox({
     + sourceCounts.update
     + previewAccess.pending
     + previewAccess.approved.length
+    + designReviews.length
     + operatorPendingCount;
 
   const dismissNotice = useCallback((id: string): void => {
@@ -366,7 +373,7 @@ export function SiteNoticeInbox({
       .catch(() => { setNotices(before); });
   };
 
-  if (!host || (!includeOperations && previewAccess.approved.length === 0)) return <></>;
+  if (!host || (!includeOperations && previewAccess.pending + previewAccess.approved.length + designReviews.length === 0)) return <></>;
 
   return createPortal((
     <>
@@ -440,12 +447,23 @@ export function SiteNoticeInbox({
                 <span className="text-xs text-muted-foreground">{previewAccess.pending} 项待审批</span>
               </Link>
             )}
+            {includeOperations && previewAccessIdentity && previewAccess.pending === 0 && <Link to="/preview-access"
+              onClick={() => setOpen(false)} className="block rounded-md border p-3 text-sm">预览审批设置</Link>}
             {previewAccess.approved.map(item => (
               <Link key={item.id} to={`/preview-access?request=${encodeURIComponent(item.id)}`} onClick={() => setOpen(false)}
                 className="flex items-start justify-between gap-3 rounded-md border p-3 text-sm">
                 <span className="min-w-0"><strong className="block font-medium">预览访问已批准</strong>
                   <span className="break-words text-xs text-muted-foreground">{item.project}</span></span>
                 <span className="shrink-0 text-primary">返回原预览</span>
+              </Link>
+            ))}
+            {designReviews.map(item => (
+              <Link key={`${item.projectId}/${item.id}`} to={`/design?${new URLSearchParams({ project: item.projectId,
+                design: item.designId, version: String(item.version) })}`} onClick={() => setOpen(false)}
+                className="flex items-start justify-between gap-3 rounded-md border p-3 text-sm">
+                <span className="min-w-0"><strong className="block font-medium">{item.title} · V{item.version}</strong>
+                  <span className="break-words text-xs text-muted-foreground">设计评审{item.occurrences > 1 ? ` · 合并 ${item.occurrences} 次更新` : ''}</span></span>
+                <span className="shrink-0 text-primary">查看稿件</span>
               </Link>
             ))}
 

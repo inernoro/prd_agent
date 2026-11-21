@@ -2,11 +2,14 @@ import express, { type NextFunction, type Request, type Response, type Router } 
 import { designId, designPackageLimit } from '../services/design-package.js';
 import type { DesignActor, DesignWorkspaceService } from '../services/design-workspace.js';
 import { PlanningError, planningId, rejectPlanning } from '../services/engineering-planning-input.js';
+import type { DesignReviewer } from '../shared/design-workspace.js';
 
 const route = '/projects/:projectId/design';
-const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|artifacts\/[^/]+))?\/?$/i;
+const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|reviewers|artifacts\/[^/]+))?\/?$/i;
 export function normalizedDesignPath(value: unknown): string | undefined {
-  const match = String(value ?? '').split('?')[0].match(normalize);
+  const path = String(value ?? '').split('?')[0];
+  if (/^(?:\/_cds)?\/api\/auth\/design\/notices\/?$/i.test(path)) return '/api/auth/design/notices';
+  const match = path.match(normalize);
   if (!match) return undefined;
   return '/api/projects/:projectId/design' + (match[1] ? '/' + match[1].toLowerCase().replace(/^artifacts\/.+$/, 'artifacts/:artifactId') : '');
 }
@@ -81,6 +84,7 @@ const prototypeBridge = `<script>
 export function createDesignWorkspaceRouter(deps: {
   service: DesignWorkspaceService;
   resolveAccess: (req: Request, projectId: string) => DesignActor | null | Promise<DesignActor | null>;
+  reviewCandidates?: (projectId: string) => Promise<DesignReviewer[]>;
 }): Router {
   const router = express.Router();
   function failure(error: unknown, res: Response) {
@@ -109,6 +113,9 @@ export function createDesignWorkspaceRouter(deps: {
   }
 
   router.get(route, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.workspace(projectId, actor))));
+  router.get(`${route}/reviewers`, authorized, handle(async (_req, res, projectId) => {
+    res.json({ projectId, reviewers: await deps.reviewCandidates?.(projectId) ?? [] });
+  }));
   router.post(`${route}/packages`, authorized, express.raw({ type: 'application/zip', limit: designPackageLimit, inflate: false }),
     handle(async (req, res, projectId, actor) => {
       const info = await deps.service.publish(projectId, actor, req.query, req.body);

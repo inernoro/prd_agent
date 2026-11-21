@@ -189,6 +189,8 @@
 .dw-modal form, .dw-review, .dw-float form { display: grid; gap: 9px; }
 .dw-modal label, .dw-review label, .dw-float label { display: grid; gap: 5px; font-size: 13px; }
 .dw-modal label.dw-row, .dw-review label.dw-row { display: flex; }
+.dw-reviewer-picker { min-width: 0; padding: 6px 9px; border: 1px solid var(--dw-line); border-radius: 7px; }
+.dw-reviewer-picker > div { display: grid; gap: 6px; max-height: 9rem; overflow: auto; }
 .dw-modal textarea, .dw-review textarea, .dw-float textarea { display: block; width: 100%; min-height: 64px; border: 1px solid var(--dw-line);
   border-radius: 6px; padding: 5px 8px; color: var(--dw-ink); background: var(--dw-pane); }
 .dw-modal footer, .dw-review footer { display: flex; justify-content: end; gap: 8px; flex-wrap: wrap; }

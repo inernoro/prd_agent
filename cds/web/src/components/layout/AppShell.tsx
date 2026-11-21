@@ -340,8 +340,9 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   // 立即生效、无探针竞态），仍用 /api/instance-mode 探针确认；探针失败按「非预览
   // 实例」处理，不打扰生产。
   const [previewInstance, setPreviewInstance] = useState(isChildPreviewCdsInstance());
-  const previewAccessIdentity = !previewInstance && authStatus?.previewAccessNotices
-    ? authStatus.user?.id || authStatus.user?.username || authStatus.user?.githubLogin || undefined : undefined;
+  const notificationIdentity = authStatus?.user?.id || authStatus?.user?.username || authStatus?.user?.githubLogin || undefined;
+  const previewAccessIdentity = !previewInstance && authStatus?.previewAccessNotices ? notificationIdentity : undefined;
+  const designReviewIdentity = !previewInstance && authStatus?.designReviewNotices ? notificationIdentity : undefined;
   const [mirrorSummary, setMirrorSummary] = useState<PreviewMirrorSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -495,9 +496,9 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {canPollOperatorApprovals ? <OperatorApprovalModal onCountChange={setOperatorPendingCount} openRequest={operatorOpenRequest} /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      {canManageSettings || previewAccessIdentity ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}
+      {canManageSettings || previewAccessIdentity || designReviewIdentity ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}
         onOpenOperatorRequests={() => setOperatorOpenRequest(value => value + 1)}
-        includeOperations={canManageSettings} previewAccessIdentity={previewAccessIdentity} /> : null}
+        includeOperations={canManageSettings} previewAccessIdentity={previewAccessIdentity} designReviewIdentity={designReviewIdentity} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>

@@ -425,8 +425,8 @@ export class PlanningMutation {
         if (!old.criteria.length || command.results.length !== old.criteria.length || !old.criteria.every(row => verified.has(row.id))) {
           rejectPlanning(400, 'criteria_unmet', '请逐项核对当前偿还标准，并附上验证证据');
         }
-        if (!command.evidence.length && !command.repaymentProofs?.length && !command.results.some(row => row.evidence?.length)) {
-          rejectPlanning(400, 'evidence_required', '请为核对项或整笔偿还补上证据');
+        if (!command.repaymentProofs?.length) {
+          rejectPlanning(400, 'evidence_required', '请上传一张标注完毕的还后截图');
         }
         const seen = new Set([old.id]);
         const collateral = (command.collateral ?? []).map(item => {
@@ -437,7 +437,7 @@ export class PlanningMutation {
           seen.add(related.id);
           return related;
         });
-        const proofEvidence = (command.repaymentProofs ?? []).map((proof): PlanningEvidence => {
+        const proofEvidence = command.repaymentProofs.map((proof): PlanningEvidence => {
           const assetId = id('proof');
           const comma = proof.dataUrl.indexOf(',');
           (this.changes.assets ??= []).push({
@@ -460,6 +460,10 @@ export class PlanningMutation {
           { note: command.summary, evidence, repayment });
       }
       case 'debt.drop': {
+        if (command.kind === 'extinct') {
+          if (old.anchor?.status !== 'missing') closed('请先登记功能位置已消失，再确认关闭');
+          return this.settleRemoval(old, old.anchor, command.reason);
+        }
         if (command.targetId) {
           const target = this.state.debts.get(command.targetId);
           if (!target) missing();
@@ -467,7 +471,7 @@ export class PlanningMutation {
         }
         const outcome = { kind: command.kind, reason: command.reason, targetId: command.targetId, evidence: command.evidence };
         return this.saveDebt(old, { status: 'dropped', outcome, reviewAt: undefined, deferReason: undefined },
-          command.kind === 'extinct' ? 'extinct' : 'dropped', { note: command.reason, evidence: command.evidence });
+          'dropped', { note: command.reason, evidence: command.evidence });
       }
       case 'debt.merge': {
         const from = atVersion(this.state.debts.get(command.fromId), command.fromVersion);

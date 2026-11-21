@@ -21,6 +21,9 @@ const projectB = 'test-planning-b';
 const source = { type: 'review', ref: 'synthetic-review-comment-09' };
 const approvePermissions: Permission[] = ['read', 'propose', 'write', 'approve'];
 const reviewAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const onePixelPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRVEAAAAASUVORK5CYII=';
+const afterProof = { stage: 'after', dataUrl: `data:image/png;base64,${onePixelPng}`, label: '合成请求截图',
+  mark: { x: 0.1, y: 0.2, width: 0.5, height: 0.5 } };
 
 describe('engineering planning HTTP contracts', () => {
   let directory: string;
@@ -539,7 +542,9 @@ describe('engineering planning HTTP contracts', () => {
     };
     expect((await call('/commands', { ...repay, evidence: [] })).status).toBe(400);
     const evidence = { type: 'test', label: 'Synthetic export run 21 verified one request' };
-    const repaid = await call('/commands', { ...repay, evidence: [evidence] });
+    expect((await call('/commands', { ...repay, evidence: [evidence] })).status).toBe(400);
+    expect((await call(`/debts/${debt.id}`)).body.debt).toMatchObject({ status: 'in_progress', version: progressed.body.result.version });
+    const repaid = await call('/commands', { ...repay, evidence: [evidence], repaymentProofs: [afterProof] });
     expect([200, 201]).toContain(repaid.status);
     expect(repaid.body.result.status).toBe('repaid');
     const paidDetail = await call(`/debts/${debt.id}`);
@@ -553,6 +558,8 @@ describe('engineering planning HTTP contracts', () => {
     const detail = await call(`/debts/${debt.id}`);
     expect(detail.body.events).toHaveLength(5);
     expect(JSON.stringify(detail.body.events)).toContain(evidence.label);
+    expect(detail.body.events.find((event: { type: string }) => event.type === 'repaid').repayment.evidence)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ type: 'screenshot', image: expect.objectContaining({ stage: 'after' }) })]));
     expect(detail.body.debt).not.toHaveProperty('repayment');
     const attempts: BriefSection | undefined = detail.body.brief.sections.find((section: BriefSection) => section.id === 'attempts');
     expect(attempts?.lines).toEqual(expect.arrayContaining([
@@ -627,7 +634,7 @@ describe('engineering planning HTTP contracts', () => {
     const result = { criterionId: debt.criteria[0].id, verdict: 'met', note: '一条请求',
       evidence: [{ type: 'test', label: '合成运行', url: 'https://example.test/results/only-one' }] };
     const request = { type: 'debt.repay', requestId: 'test-criterion-evidence-0001', debtId: debt.id,
-      expectedVersion: debt.version, summary: '移除重复请求', evidence: [] };
+      expectedVersion: debt.version, summary: '移除重复请求', evidence: [], repaymentProofs: [afterProof] };
     expect((await call('/commands', { ...request, results: [{ ...result, verdict: 'unmet' }] })).status).toBe(400);
     expect((await call('/commands', { ...request, results: [{ ...result,
       evidence: [{ ...result.evidence[0], url: 'javascript:alert(1)' }],
@@ -642,20 +649,18 @@ describe('engineering planning HTTP contracts', () => {
   it('writes marked proof and compatible collateral debts together and serves images only to project readers', async () => {
     const main = await createDebt();
     const secondary = await write({ ...createCommand('test-proof-related-0001', 'fixture-proof-related'), title: '另一笔相同验收标准' });
-    const onePixelPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRVEAAAAASUVORK5CYII=';
-    const after = { stage: 'after', dataUrl: `data:image/png;base64,${onePixelPng}`, label: '合成请求截图',
-      mark: { x: 0.1, y: 0.2, width: 0.5, height: 0.5 } };
     const request = { type: 'debt.repay', requestId: 'test-proof-with-related-0001', debtId: main.id,
       expectedVersion: main.version, summary: '合成请求已经修复', results: [{ criterionId: main.criteria[0].id, verdict: 'met' }] };
-    expect((await call('/commands', { ...request, repaymentProofs: [{ ...after, mark: undefined }] })).status).toBe(400);
+    expect((await call('/commands', { ...request, repaymentProofs: [{ ...afterProof, mark: undefined }] })).status).toBe(400);
+    expect((await call('/commands', { ...request, repaymentProofs: [{ ...afterProof, stage: 'before' }] })).status).toBe(400);
     expect((await call('/commands', { ...request, repaymentProofs: [] })).status).toBe(400);
-    expect((await call('/commands', { ...request, repaymentProofs: [after],
+    expect((await call('/commands', { ...request, repaymentProofs: [afterProof],
       collateral: [{ debtId: secondary.id, expectedVersion: secondary.version + 1 }],
     })).status).toBe(409);
     expect((await call(`/debts/${main.id}`)).body.debt.status).toBe('open');
-    const saved = await write({ ...request, repaymentProofs: [after], collateral: [{ debtId: secondary.id, expectedVersion: secondary.version }] });
-    expect(saved.repayment.evidence[0]).toMatchObject({ type: 'screenshot', label: after.label,
-      image: { stage: 'after', mark: after.mark } });
+    const saved = await write({ ...request, repaymentProofs: [afterProof], collateral: [{ debtId: secondary.id, expectedVersion: secondary.version }] });
+    expect(saved.repayment.evidence[0]).toMatchObject({ type: 'screenshot', label: afterProof.label,
+      image: { stage: 'after', mark: afterProof.mark } });
     expect(JSON.stringify(saved)).not.toContain(onePixelPng);
     const attached = await call(`/debts/${secondary.id}`);
     expect(attached.body.debt.repayment).toMatchObject({ mode: 'collateral', collateralOf: main.id,
@@ -846,16 +851,26 @@ describe('engineering planning HTTP contracts', () => {
     });
     expect(attemptManualCompletion.status).toBe(409);
 
-    await write({
-      type: 'debt.drop', requestId: 'test-planned-extinct-0002', debtId: expiredDebt.id, expectedVersion: expiredDebt.version,
+    const unbound = await call('/commands', {
+      type: 'debt.drop', requestId: 'test-planned-extinct-unbound', debtId: expiredDebt.id, expectedVersion: expiredDebt.version,
       kind: 'extinct', reason: 'The original fixture flow no longer exists',
       evidence: [{ type: 'change', label: 'Synthetic change removed the fixture flow' }],
     });
+    expect([400, 409]).toContain(unbound.status);
+    expect((await call(`/debts/${expiredDebt.id}`)).body.debt).toMatchObject({ status: 'open', version: expiredDebt.version });
+    const anchor = await write({ type: 'debt.anchor', requestId: 'test-planned-extinct-anchor', debtId: expiredDebt.id,
+      expectedVersion: expiredDebt.version, anchor: { type: 'route', ref: '/fixture/retired' }, reason: 'This debt follows the retired route' });
+    const missing = await write({ type: 'debt.anchor-missing', requestId: 'test-planned-extinct-missing', debtId: expiredDebt.id,
+      expectedVersion: anchor.version, note: 'Synthetic change removed the fixture flow',
+      evidence: [{ type: 'change', label: 'Verified removal', url: 'https://example.test/change/1' }] });
+    await write({ type: 'debt.anchor-confirm', requestId: 'test-planned-extinct-confirm', debtId: expiredDebt.id,
+      expectedVersion: missing.version, note: 'The original fixture flow no longer exists' });
     await write({
       type: 'debt.repay', requestId: 'test-planned-repay-0002', debtId: resolvedDebt.id, expectedVersion: resolvedDebt.version,
       summary: 'Verified the fixture flow without redundant requests',
       results: [{ criterionId: resolvedDebt.criteria[0].id, verdict: 'met', note: 'Checked one request' }],
       evidence: [{ type: 'test', label: 'Synthetic export run confirmed one request' }],
+      repaymentProofs: [afterProof],
     });
     const board = await call('');
     expect(board.body.plans).toMatchObject([{
@@ -896,13 +911,16 @@ describe('engineering planning HTTP contracts', () => {
     expect(details.debt).toEqual(edited);
     expect(details.events.map((event: { type: string }) => event.type)).toEqual(['updated', 'imported']);
     expect((await call('/debts')).body.items).toHaveLength(2);
-    const originalDate = await call('/stats?from=2026-02-11&to=2026-02-11');
-    expect(originalDate.body).toMatchObject({ backlogStart: 0, backlogEnd: 0, created: 0, imported: 0 });
-    const importDate = await call('/stats?from=2026-03-02&to=2026-03-02');
-    expect(importDate.body).toMatchObject({
-      backlogStart: 0, backlogEnd: 2, created: 0, imported: 2,
-      buckets: [{ day: '2026-03-02', backlog: 2, created: 0, imported: 2 }],
-    });
+    for (const mode of ['', '&analytics=evolution', '&analytics=projection']) {
+      const originalDate = await call('/stats?from=2026-02-11&to=2026-02-11' + mode);
+      expect(originalDate.body).toMatchObject({ backlogStart: 0, backlogEnd: 1, created: 0, imported: 1 });
+      const importDate = await call('/stats?from=2026-03-02&to=2026-03-02' + mode);
+      expect(importDate.body).toMatchObject({
+        backlogStart: 1, backlogEnd: 2, created: 0, imported: 1,
+        buckets: [{ day: '2026-03-02', backlog: 2, created: 0, imported: 1 }],
+      });
+    }
+    expect(details.events.at(-1).at).toBe('2026-03-02T01:00:00.000Z');
   });
 
   it('rejects a batch with an invalid row before persisting any debt or receipt', async () => {
