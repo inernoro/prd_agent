@@ -795,7 +795,7 @@ test('登录页不依赖已删除的 login-card；账号表单和仅SSO均可核
   const page = {
     url: () => 'https://fixture.test/login', locator: () => ({}),
     getByRole: (role, options) => {
-      assert.equal(role, 'heading'); assert.deepEqual(options, { name: '欢迎回来', exact: true });
+      assert.equal(role, 'heading'); assert.deepEqual(options, { name: /^(欢迎回来|连接你的工作空间)$/ });
       return { and: () => ({ waitFor: async () => {}, count: async () => 1, locator: (selector) => { assert.match(selector, /ancestor::div/); return target; } }) };
     },
     getByTestId: () => { throw Error('旧 login-card 不再是部署合同'); },
@@ -809,13 +809,38 @@ test('真实LoginCard的SSO使用href井号与点击桥接，按显式可用属�
   const visibleNode = (textContent) => ({ textContent, title: textContent, getBoundingClientRect: () => ({ width: 100, height: 30 }) });
   const element = {
     textContent: 'MAP Admin 欢迎回来 米多星球登录',
-    querySelectorAll: (selector) => selector === 'h1' ? [visibleNode('欢迎回来')]
+    querySelectorAll: (selector) => selector === 'h1, h2' ? [visibleNode('欢迎回来')]
       : selector === 'a[href][aria-disabled="false"]' ? [visibleNode('米多星球登录')] : [],
   };
   const target = { waitFor: async () => {}, count: async () => 1, evaluate: async (probe) => probe(element) };
   const page = {
     url: () => 'https://fixture.test/login', locator: () => ({}),
     getByRole: () => ({ and: () => ({ waitFor: async () => {}, count: async () => 1, locator: () => target }) }),
+  };
+  try {
+    globalThis.getComputedStyle = () => ({ visibility: 'visible', display: 'block' });
+    assert.deepEqual((await getMapLoginTarget(page)).authenticationMethods, ['sso']);
+  } finally {
+    if (originalStyle === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = originalStyle;
+  }
+});
+
+test('REG-stsmk-login-current-sso-001 当前电影风登录页保持唯一身份标题、MAP语义与可用SSO入口', async () => {
+  const originalStyle = globalThis.getComputedStyle;
+  const visibleNode = (textContent) => ({ textContent, title: textContent, getBoundingClientRect: () => ({ width: 100, height: 30 }) });
+  const element = {
+    textContent: '身份资料确认 连接你的工作空间 SSO 米多星球',
+    closest: selector => selector === 'main[aria-label="登录 MAP"]' ? {} : null,
+    querySelectorAll: selector => selector === 'h1, h2' ? [visibleNode('连接你的工作空间')]
+      : selector === 'a[href][aria-disabled="false"]' ? [visibleNode('米多星球')] : [],
+  };
+  const target = { waitFor: async () => {}, count: async () => 1, evaluate: async probe => probe(element) };
+  const page = {
+    url: () => 'https://fixture.test/login', locator: () => ({}),
+    getByRole: (role, options) => {
+      assert.equal(role, 'heading'); assert.deepEqual(options, { name: /^(欢迎回来|连接你的工作空间)$/ });
+      return { and: () => ({ waitFor: async () => {}, count: async () => 1, locator: () => target }) };
+    },
   };
   try {
     globalThis.getComputedStyle = () => ({ visibility: 'visible', display: 'block' });

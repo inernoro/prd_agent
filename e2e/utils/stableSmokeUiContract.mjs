@@ -162,7 +162,7 @@ async function uniqueVisible(locator, description, timeout) {
 
 /** Structural login evidence only: this does not assert a successful login or issue a credential. */
 export function validateMapLoginSnapshot(snapshot) {
-  contract(snapshot?.headingCount === 1 && snapshot?.hasBrand === true, '登录页须展示唯一的欢迎标题与 MAP 品牌');
+  contract(snapshot?.headingCount === 1 && snapshot?.hasBrand === true, '登录页须展示唯一的身份标题与 MAP 品牌');
   const hasPasswordForm = snapshot.usernameCount + snapshot.passwordCount + snapshot.submitCount > 0;
   const completePasswordForm = snapshot.usernameCount === 1 && snapshot.passwordCount === 1 && snapshot.submitCount === 1;
   contract(!hasPasswordForm || completePasswordForm, '账号、密码与进入控制台须组成同一个完整表单');
@@ -172,10 +172,9 @@ export function validateMapLoginSnapshot(snapshot) {
 
 export async function getMapLoginTarget(page, { timeout = 20_000 } = {}) {
   contract(new URL(page.url()).pathname === '/login', '须在真实登录页检查登录入口');
-  const heading = page.getByRole('heading', { name: '欢迎回来', exact: true }).and(page.locator(':visible'));
-  await uniqueVisible(heading, '登录欢迎标题', timeout);
-  // Both deployed and current LoginPage render GlassCard without a test id. The nearest
-  // ancestor containing authentication controls is the card, not a screenshot-wide body fallback.
+  const heading = page.getByRole('heading', { name: /^(欢迎回来|连接你的工作空间)$/ }).and(page.locator(':visible'));
+  await uniqueVisible(heading, '登录身份标题', timeout);
+  // Keep the target scoped to the nearest authentication panel, not a screenshot-wide body fallback.
   const target = heading.locator('xpath=ancestor::div[.//input[@autocomplete="username"] or .//a][1]');
   await uniqueVisible(target, '登录卡片', timeout);
   const snapshot = await target.evaluate((element) => {
@@ -186,8 +185,8 @@ export async function getMapLoginTarget(page, { timeout = 20_000 } = {}) {
     };
     const nodes = (selector) => [...element.querySelectorAll(selector)].filter(visible);
     return {
-      headingCount: nodes('h1').filter((node) => node.textContent.trim() === '欢迎回来').length,
-      hasBrand: element.textContent.includes('MAP Admin'),
+      headingCount: nodes('h1, h2').filter((node) => ['欢迎回来', '连接你的工作空间'].includes(node.textContent.trim())).length,
+      hasBrand: element.textContent.includes('MAP Admin') || element.closest('main[aria-label="登录 MAP"]') !== null,
       usernameCount: nodes('input[autocomplete="username"]').length,
       passwordCount: nodes('input[autocomplete="current-password"]').length,
       submitCount: nodes('button').filter((node) => node.textContent.trim() === '进入控制台').length,
