@@ -66,6 +66,8 @@ describe('手机合集控件必须通向可用内容', () => {
     const frame = container.querySelector('iframe');
     expect(frame?.getAttribute('srcdoc')).toBe('<h1>真实文档</h1>');
     expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    expect(container.querySelector('[data-tool="related"]')?.textContent).toBe('所属合集');
+    expect(container.querySelector('[data-tool="related"] .lucide-link-2')).toBeNull();
     await click('.hc-mobile-doc-header [aria-label="返回目录"]'); expect(back).toHaveBeenCalledOnce();
   });
   it('组合副本仅去重与外层标题严格匹配的首h1，保留原输入及后续标题且不执行parent脚本', async () => {

@@ -63,7 +63,9 @@ public interface IHostedSiteService
         string? wrappedAssetType = null,
         CancellationToken ct = default,
         string? uploadId = null,
-        string? sourceRef = null);
+        string? sourceRef = null,
+        string? entryFile = null,
+        int? entryIndex = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
     /// <param name="maxStoredBytes">
@@ -113,7 +115,9 @@ public interface IHostedSiteService
         string? wrappedAssetType = null,
         CancellationToken ct = default,
         string? uploadId = null,
-        string? reuploadRef = null);
+        string? reuploadRef = null,
+        string? zipEntryFile = null,
+        int? zipEntryIndex = null);
 
     /// <summary>
     /// 读取可微调的入口 HTML。会执行站点编辑权限与形态校验，且限制正文最多 2MB。
@@ -784,6 +788,7 @@ public class SharedSiteInfo
     /// <summary>与站内预览相同的文件结构判据；多文件网站需要真实文档 URL。</summary>
     public string ContentShape { get; set; } = string.Empty;
     public bool RequiresPreviewBridge { get; set; }
+    public string? ZipHomepageAssetPath { get; set; }
     public long TotalSize { get; set; }
 
     /// <summary>

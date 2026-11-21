@@ -1,11 +1,12 @@
 import '@/components/workspace/workspace.css';
 import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
 import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
+import { getZipEntrySelection, ZipEntrySelector, type ZipEntryChoice } from '@/components/web-hosting/ZipEntrySelector';
 import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
 import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, type RelatedSummary } from '@/services/real/relatedDocuments';
@@ -106,7 +107,7 @@ import AskConfigDrawer from '@/components/web-hosting/ask/AskConfigDrawer';
 import { createPortal } from 'react-dom';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
-import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail } from '@/components/share-dock';
+import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail, type ShareDockUploadOutcome } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
 import SiteWorkbench, { type WorkbenchTarget } from '@/components/web-hosting/workbench/SiteWorkbench';
@@ -208,9 +209,6 @@ function fmtSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 从分享列表（后端已过滤掉 visit 便捷链 + 已撤销）构建「已分享站点」集合。
- * 仅把"单站点分享"（siteId 或 siteIds 仅含一个）计入，使卡片标记与「只撤单站点」的取消语义一致；
- * 多站点合集分享不标记单卡。 */
 /**
  * 按站点聚合分享侧的成果数据 —— 卡片分享操作的有效链接数。
  *
@@ -235,10 +233,16 @@ function buildSiteShareStats(items: ShareLinkItem[], now: number = Date.now()): 
   return map;
 }
 
+function activeSingleShareSiteId(link: ShareLinkItem, now: number): string | undefined {
+  if (link.shareType !== 'single' || !isLinkActive(link, now)) return undefined;
+  return link.siteId ?? (link.siteIds?.length === 1 ? link.siteIds[0] : undefined);
+}
+
 function buildSharedSiteIds(items: ShareLinkItem[]): Set<string> {
   const set = new Set<string>();
+  const now = Date.now();
   for (const it of items) {
-    const sid = it.siteId ?? (it.siteIds?.length === 1 ? it.siteIds[0] : undefined);
+    const sid = activeSingleShareSiteId(it, now);
     if (sid) set.add(sid);
   }
   return set;
@@ -778,15 +782,13 @@ export default function WebPagesPage() {
 
   // 取消分享：撤销所有"仅指向该站点"的分享链接（单站点分享），多站点合集分享不动。
   const cancelShareForSite = useCallback(async (id: string) => {
-    const res = await listSiteShares();
+    const res = await listSiteShares(false, id);
     if (!res.success) {
       toast.error('取消分享失败', res.error?.message || '请稍后重试');
       return;
     }
-    const targets = res.data.items.filter((it) => {
-      const sid = it.siteId ?? (it.siteIds?.length === 1 ? it.siteIds[0] : undefined);
-      return sid === id;
-    });
+    const now = Date.now();
+    const targets = res.data.items.filter(link => activeSingleShareSiteId(link, now) === id);
     if (targets.length === 0) { await loadShares(); return; }
     let ok = 0;
     for (const t of targets) {
@@ -802,6 +804,13 @@ export default function WebPagesPage() {
 
   const handleConfirmReplace = useCallback(async () => {
     if (!replaceTarget || replacing) return;
+    if (replaceTarget.file.name.toLowerCase().endsWith('.zip')) {
+      setPendingExternalFile(replaceTarget.file);
+      setEditItem(replaceTarget.site);
+      setShowUploadDialog(true);
+      setReplaceTarget(null);
+      return;
+    }
     setReplacing(true);
     try {
       const res = await reuploadSite(replaceTarget.site.id, replaceTarget.file);
@@ -1531,6 +1540,76 @@ export default function WebPagesPage() {
             </>
   );
 
+  const handleQuickUpload = async (file: File): Promise<ShareDockUploadOutcome | void> => {
+    // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
+    // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
+    const targetSpace = currentSpace;
+    // 同步快照当前选中的分组：正停留在某专题/分类视图里拖拽上传 → 新网页直接归入该分组
+    const targetGroupId = targetSpace.kind === 'team' ? activeRealGroupId : null;
+    // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
+    // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
+    // 仅在「角色已确切加载（非 null）」时硬拦截：刚切进团队空间 role 尚未就绪（null）时放行，
+    // 由后端 403 + 「归属团队失败」兜底，避免误拦正在加载的编辑者（false 无权限 toast）。
+    if (targetSpace.kind === 'team' && myWebHostingRole !== null && !canEditInWebHosting(myWebHostingRole)) {
+      toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
+      return;
+    }
+    const up = await uploadSite({ file });
+    if (!up.success || !up.data) {
+      toast.error('上传失败', up.error?.message || '请稍后重试');
+      return;
+    }
+    const site = up.data;
+    // 跟随发起时空间投送：在团队空间内拖拽上传的网页必须归属该团队，
+    // 否则会落到上传者的个人空间（与弹窗上传路径保持一致）
+    if (targetSpace.kind === 'team') {
+      const assigned = await setSiteTeams(site.id, [targetSpace.teamId]);
+      // 归属失败（网络 / 无权限 / 404）时必须告知用户：站点已上传但仍在个人空间，
+      // 不能静默报“上传成功”，否则用户以为投到团队了却找不到
+      if (!assigned.success) {
+        load();
+        loadMeta();
+        toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
+        return;
+      }
+      // 正在某专题/分类视图内上传 → 顺手归入该分组（失败不阻断，仅提示）
+      if (targetGroupId) {
+        const grouped = await setSiteGroup(site.id, targetGroupId);
+        if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
+      }
+    }
+    markSiteAsFresh(site.id);
+    load();
+    loadMeta();
+    return {
+      title: '上传成功',
+      createShare: async (mode) => {
+        const pwd = mode === 'password' ? genPassword() : undefined;
+        // 快速分享的两个选项（无密码 / 有密码）都应产出「永久 + 对大家可见」的链接，
+        // 区别仅在密码。这里必须显式传 visibility:'public'——否则后端兜底成 owner-only（仅我可见），
+        // 快速分享就会错误地显示「仅我可见」。expiresInDays:0 = 永久。
+        const gated = await runWithPrivateSourceGate({
+          inspect: () => getSitesPrivateSources([site.id]),
+          run: (fingerprint) => createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public', confirmedPrivateSourceFingerprint: fingerprint }),
+          actionLabel: '生成分享',
+        });
+        if (gated.status !== 'done') throw new Error('已取消分享：本页引用的私有资料没有对外发出');
+        const share = gated.res;
+        if (share.success && share.data) {
+          loadShares();
+          return {
+            title: '已生成分享',
+            shareUrl: `${window.location.origin}${share.data.shareUrl}`,
+            password: share.data.password,
+          };
+        }
+        const msg = share.error?.message || '分享码生成失败';
+        toast.error('分享码生成失败', `${msg}，可在卡片上手动分享`);
+        throw new Error(msg);
+      },
+    };
+  };
+
   return (
     <div
       data-tour-id="webpages-root"
@@ -1564,78 +1643,7 @@ export default function WebPagesPage() {
           dropzone={{
           hint: '拖文件到此上传',
           accept: [...WEB_HOSTING_UPLOAD_EXTENSIONS],
-          // 两阶段：先只上传，再由用户在 dock 内二选一（无密码 / 有密码）创建分享并自动复制链接
-          onFiles: async (files) => {
-            const f = files[0];
-            if (!f) return;
-            // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
-            // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
-            const targetSpace = currentSpace;
-            // 同步快照当前选中的分组：正停留在某专题/分类视图里拖拽上传 → 新网页直接归入该分组
-            const targetGroupId = targetSpace.kind === 'team' ? activeRealGroupId : null;
-            // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
-            // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
-            // 仅在「角色已确切加载（非 null）」时硬拦截：刚切进团队空间 role 尚未就绪（null）时放行，
-            // 由后端 403 + 「归属团队失败」兜底，避免误拦正在加载的编辑者（false 无权限 toast）。
-            if (targetSpace.kind === 'team' && myWebHostingRole !== null && !canEditInWebHosting(myWebHostingRole)) {
-              toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
-              return;
-            }
-            const up = await uploadSite({ file: f });
-            if (!up.success || !up.data) {
-              toast.error('上传失败', up.error?.message || '请稍后重试');
-              return;
-            }
-            const site = up.data;
-            // 跟随发起时空间投送：在团队空间内拖拽上传的网页必须归属该团队，
-            // 否则会落到上传者的个人空间（与弹窗上传路径保持一致）
-            if (targetSpace.kind === 'team') {
-              const assigned = await setSiteTeams(site.id, [targetSpace.teamId]);
-              // 归属失败（网络 / 无权限 / 404）时必须告知用户：站点已上传但仍在个人空间，
-              // 不能静默报“上传成功”，否则用户以为投到团队了却找不到
-              if (!assigned.success) {
-                load();
-                loadMeta();
-                toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
-                return;
-              }
-              // 正在某专题/分类视图内上传 → 顺手归入该分组（失败不阻断，仅提示）
-              if (targetGroupId) {
-                const grouped = await setSiteGroup(site.id, targetGroupId);
-                if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
-              }
-            }
-            markSiteAsFresh(site.id);
-            load();
-            loadMeta();
-            return {
-              title: '上传成功',
-              createShare: async (mode) => {
-                const pwd = mode === 'password' ? genPassword() : undefined;
-                // 快速分享的两个选项（无密码 / 有密码）都应产出「永久 + 对大家可见」的链接，
-                // 区别仅在密码。这里必须显式传 visibility:'public'——否则后端兜底成 owner-only（仅我可见），
-                // 快速分享就会错误地显示「仅我可见」。expiresInDays:0 = 永久。
-                const gated = await runWithPrivateSourceGate({
-                  inspect: () => getSitesPrivateSources([site.id]),
-                  run: (fingerprint) => createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public', confirmedPrivateSourceFingerprint: fingerprint }),
-                  actionLabel: '生成分享',
-                });
-                if (gated.status !== 'done') throw new Error('已取消分享：本页引用的私有资料没有对外发出');
-                const share = gated.res;
-                if (share.success && share.data) {
-                  loadShares();
-                  return {
-                    title: '已生成分享',
-                    shareUrl: `${window.location.origin}${share.data.shareUrl}`,
-                    password: share.data.password,
-                  };
-                }
-                const msg = share.error?.message || '分享码生成失败';
-                toast.error('分享码生成失败', `${msg}，可在卡片上手动分享`);
-                throw new Error(msg);
-              },
-            };
-          },
+          onFiles: ([file]) => { if (file) return handleQuickUpload(file); },
         }}
           slots={[
           {
@@ -2302,7 +2310,7 @@ export default function WebPagesPage() {
                 <Button size="sm" variant="ghost" disabled={replacing} onClick={() => setReplaceTarget(null)}>取消</Button>
                 <Button size="sm" variant="primary" disabled={replacing} onClick={handleConfirmReplace}>
                   {replacing ? <MapSpinner size={14} className="mr-1" /> : <Replace size={14} className="mr-1" />}
-                  确认替换
+                  {replaceTarget.file.name.toLowerCase().endsWith('.zip') ? '选择首页' : '确认替换'}
                 </Button>
               </div>
             </div>
@@ -3064,7 +3072,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
 type MoreAction = {
   label: string;
   icon: React.ReactNode;
-  onClick: () => void;
+  onClick: (anchor: HTMLElement) => void;
   danger?: boolean;
   color?: string;
 } | null;
@@ -3109,7 +3117,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
               style={{ color: action.color ?? (action.danger ? '#fecaca' : 'var(--text-secondary)') }}
               onClick={() => {
                 setOpen(false);
-                action.onClick();
+                if (anchorRef.current) action.onClick(anchorRef.current);
               }}
             >
               <span className="inline-flex w-4 shrink-0 items-center justify-center">{action.icon}</span>
@@ -3148,6 +3156,8 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
   onAiEdit?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
+  const [relatedMenuAnchor, setRelatedMenuAnchor] = useState<HTMLElement | null>(null);
+  const closeRelatedMenu = useCallback(() => setRelatedMenuAnchor(null), []);
   const canDrag = canDragSiteCard(c);
   const isPublic = site.visibility === 'public';
   const { onPointerDown } = useDockDrag({
@@ -3220,6 +3230,7 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
           </span>
           <SiteNewBadge activity={activity} />
           <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
+            menuAnchor={relatedMenuAnchor} onMenuClose={closeRelatedMenu}
             onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
           {site.sourceType !== 'upload' && (
             <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
@@ -3273,6 +3284,7 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
         )}
         <MoreActionsButton
           actions={[
+            !relatedSummary?.count ? { label: '关联与合集', icon: <FolderOpen size={13} />, onClick: setRelatedMenuAnchor } : null,
             c.canEdit && onAiEdit ? { label: '帮我修改', icon: <WandSparkles size={13} />, onClick: onAiEdit } : null,
             { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
             c.canSetVisibility
@@ -3317,6 +3329,15 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const [tagInput, setTagInput] = useState('');
   const [folder, setFolder] = useState(item?.folder ?? '');
   const [file, setFile] = useState<File | null>(initialFile ?? null);
+  const [saving, setSaving] = useState(false);
+  const zipFile = file?.name.toLowerCase().endsWith('.zip') ? file : null;
+  const [zipEntryChoice, setZipEntryChoice] = useState<ZipEntryChoice>({ mode: 'auto' });
+  const missingManualEntry = !!zipFile && zipEntryChoice.mode === 'manual' && zipEntryChoice.entryIndex === null;
+  const chooseFile = (next: File) => {
+    if (saving) return;
+    setZipEntryChoice({ mode: 'auto' });
+    setFile(next);
+  };
   // 用户是否亲自编辑过标题；编辑过则不再自动同步文件名
   const titleEditedRef = useRef(false);
   // 新增上传场景下，文件类型为 .md/.markdown 时把"文件名（去扩展名）"作为默认标题
@@ -3329,7 +3350,6 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     const stem = file.name.slice(0, file.name.lastIndexOf('.')) || file.name;
     setTitle(stem);
   }, [file, isEdit]);
-  const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -3385,7 +3405,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    if (f) chooseFile(f);
   };
 
   const finishSavedSite = useCallback((saved: HostedSite) => {
@@ -3410,9 +3430,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     onSaved(saved, true, true);
   }, [file?.name, isEdit, onSaved]);
 
+  const finishRestoredSite = useRef(finishSavedSite);
+  useLayoutEffect(() => { finishRestoredSite.current = finishSavedSite; }, [finishSavedSite]);
+
   useEffect(() => {
     if (resumeCheckedRef.current || initialFile) return;
-    resumeCheckedRef.current = true;
     const controller = new AbortController();
     let active = true;
     const resume = async () => {
@@ -3430,15 +3452,19 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       if (pending.data.outcome === 'optimization-recommended') {
         setOptimization(pending.data);
       } else if (pending.data.site) {
-        finishSavedSite(pending.data.site);
+        finishRestoredSite.current(pending.data.site);
       }
     };
     setSaving(true);
     setOptimizationStage('正在恢复上次文件检查');
     startedAtRef.current = Date.now();
-    void resume().finally(() => { if (active) setSaving(false); });
+    void resume().finally(() => {
+      if (!active) return;
+      resumeCheckedRef.current = true;
+      setSaving(false);
+    });
     return () => { active = false; controller.abort(); };
-  }, [finishSavedSite, initialFile, item?.id]);
+  }, [initialFile, item?.id]);
 
   const discardOptimization = async () => {
     const sessionId = optimization?.sessionId;
@@ -3500,6 +3526,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       toast.error('文件过大或为空', sizeError);
       return;
     }
+    if (missingManualEntry) return;
     // 打完字直接点「开始上传」是常态，没回车的那一个也算数，别静默丢掉
     const pendingTag = tagInput.trim();
     const effectiveTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
@@ -3518,6 +3545,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       if (file && isZip) {
         const reviewed = await reviewSiteZip({
           file,
+          ...getZipEntrySelection(zipEntryChoice),
           title: title.trim() || undefined,
           description: description.trim() || undefined,
           folder: folder.trim() || undefined,
@@ -3973,8 +4001,8 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   // 虚线走 accent：设计稿这一框是橙虚线，灰虚线读起来像「禁用」
                   border: `1.5px dashed ${dragOver ? 'var(--accent-primary)' : 'rgba(var(--accent-primary-rgb), 0.45)'}`,
                 }}
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onClick={() => { if (!saving) fileInputRef.current?.click(); }}
+                onDragOver={e => { e.preventDefault(); if (!saving) setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
               >
@@ -3987,7 +4015,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 ) : (
                   <div className="text-center leading-relaxed">
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
-                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
+                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，可选首页）</p>
                     <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
                     <p className="text-xs text-token-muted">图片：.png / .jpg / .jpeg / .gif / .webp / .svg / .avif / .ico / .bmp</p>
                     <p className="text-xs text-token-muted">ZIP 包与解压总量上限 5000 MB；单个文件上限 500 MB</p>
@@ -3997,8 +4025,9 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   ref={fileInputRef}
                   type="file"
                   accept={WEB_HOSTING_UPLOAD_ACCEPT}
+                  disabled={saving}
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) chooseFile(f); }}
                 />
               </div>
             ) : (
@@ -4008,17 +4037,22 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   <p className="text-sm text-token-primary">{item.entryFile}</p>
                   <p className="text-xs text-token-muted">{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
                 </div>
-                <Button size="xs" variant="secondary" onClick={() => fileInputRef.current?.click()}>
+                <Button size="xs" variant="secondary" disabled={saving} onClick={() => fileInputRef.current?.click()}>
                   <Upload size={12} className="mr-1" /> 重新上传
                 </Button>
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept={WEB_HOSTING_UPLOAD_ACCEPT}
+                  disabled={saving}
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) chooseFile(f); }}
                 />
               </div>
+            )}
+
+            {zipFile && !getWebHostingUploadError(zipFile) && (
+              <ZipEntrySelector file={zipFile} choice={zipEntryChoice} onChange={setZipEntryChoice} />
             )}
 
             <label className="flex flex-col gap-1">
@@ -4123,7 +4157,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>封面：默认取站点首屏渲染</span>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={onClose}>取消</Button>
-              <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
+              <Button onClick={handleSave} disabled={saving || (!isEdit && !file) || missingManualEntry}>
                 {saving ? '处理中...' : isEdit ? '保存' : '开始上传'}
               </Button>
             </div>

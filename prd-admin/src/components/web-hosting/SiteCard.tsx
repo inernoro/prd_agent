@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
 import {
   BookOpen,
   Check,
@@ -216,6 +216,8 @@ export function SiteCard({
   const isLarge = size === 'large';
   const [fileDragOver, setFileDragOver] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [relatedMenuAnchor, setRelatedMenuAnchor] = useState<HTMLElement | null>(null);
+  const closeRelatedMenu = useCallback(() => setRelatedMenuAnchor(null), []);
   const detailsButton = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   // 拖卡片到 ShareDock 投放槽（把站点投给别的功能用）；与「拖文件进卡片替换内容」是两个方向，互不干扰
@@ -273,6 +275,9 @@ export function SiteCard({
     onAskConfig,
     onAiEdit,
   });
+  if (relatedNavigation === undefined && !relatedSummary?.count) {
+    menuActions.push({ label: '关联与合集', icon: <FolderInput size={13} />, onClick: setRelatedMenuAnchor });
+  }
 
   const statusItems = [
     ...(shared ? [{ label: '已分享', icon: <Share2 size={12} /> }] : []),
@@ -365,6 +370,7 @@ export function SiteCard({
           <div data-site-card-badges className="absolute left-2 top-2 z-20 inline-flex items-center gap-1" onClick={event => event.stopPropagation()}>
             {relatedNavigation === undefined ? <div className="flex">
               <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
+                menuAnchor={relatedMenuAnchor} onMenuClose={closeRelatedMenu}
                 onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
             </div> : relatedNavigation}
             {statusItems.length > 0 && <span data-site-shared-badge={shared ? '' : undefined} className="inline-flex items-center">

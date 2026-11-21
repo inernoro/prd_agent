@@ -324,7 +324,9 @@ public partial class WebPagesController : ControllerBase
         [FromForm] string? description,
         [FromForm] string? folder,
         [FromForm] string? tags,
-        [FromForm] string? uploadId)
+        [FromForm] string? uploadId,
+        [FromForm] string? entryFile = null,
+        [FromForm] bool openAsDirectory = false)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
@@ -341,8 +343,9 @@ public partial class WebPagesController : ControllerBase
                 using var zipStream = file.OpenReadStream();
                 var zipTags = string.IsNullOrWhiteSpace(tags) ? new List<string>()
                     : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-                var zipSite = await _siteService.CreateFromZipAsync(
-                    userId, zipStream, title, description, folder, zipTags, uploadId: uploadId);
+                var zipTitle = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title;
+                var zipSite = await _siteService.CreateFromZipAsync(userId, zipStream, zipTitle, description, folder, zipTags,
+                    uploadId: uploadId, entryFile: openAsDirectory ? string.Empty : entryFile);
                 return Ok(ApiResponse<object>.Ok(zipSite));
             }
             catch (InvalidOperationException ex)

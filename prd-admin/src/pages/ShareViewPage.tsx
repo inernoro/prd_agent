@@ -321,6 +321,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
         coverImageUrl: updated.coverImageUrl,
         pdfAssetUrl: updated.pdfAssetUrl,
         pdfFilePaths: updated.pdfFilePaths,
+        zipHomepageAssetPath: updated.zipHomepageAssetPath,
         wrappedAssetType: updated.wrappedAssetType,
       } : item),
     } : current);

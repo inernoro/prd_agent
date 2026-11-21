@@ -32,7 +32,7 @@ export function acceptPdfDownloadRequest(data: unknown, source: MessageEventSour
 export function pdfDownloadUrlMap(context: PdfDownloadContext): Record<string, string> {
   if (!context.siteUrl || context.pdfFilePaths.length === 0) return {};
   const parents = context.entryFile.split('/').length - 1;
-  const root = new URL(parents ? '../'.repeat(parents) : '.', context.siteUrl);
+  const root = new URL(parents ? '../'.repeat(parents) : '.', new URL(context.siteUrl, globalThis.location?.href));
   return Object.fromEntries(context.pdfFilePaths.map(path => [new URL(path, root).href, path]));
 }
 

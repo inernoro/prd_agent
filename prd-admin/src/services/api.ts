@@ -1275,6 +1275,8 @@ export const api = {
     /** 单文件离线 HTML（站内资源内嵌）。站内入口：要求对该网页有编辑权 */
     pdf: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/download/pdf`,
     sharePdf: (token: string) => `/api/web-pages/shares/view/${encodeURIComponent(token)}/download/pdf`,
+    zipHomepageAsset: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/download/zip-homepage`,
+    shareZipHomepageAsset: (token: string) => `/api/web-pages/shares/view/${encodeURIComponent(token)}/download/zip-homepage`,
     offlineHtml: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/export/offline-html`,
     /** 单文件离线 HTML，经分享链接（登录 + 分享门禁：撤销 / 过期 / 可见性 / 密码） */
     shareOfflineHtml: (token: string, query: string) =>

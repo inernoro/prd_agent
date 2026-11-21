@@ -7,6 +7,7 @@ export interface HostedCollection {
 }
 export interface HostedCollectionItem {
   siteUrl?: string; entryFile?: string; wrappedAssetType?: string; contentShape?: 'self-contained-html' | 'multi-file';
+  zipHomepageAssetPath?: string | null;
   id: string; title: string; summary?: string; excerpt?: string; headings?: string[];
   characterCount?: number; commentCount?: number; annotationCount?: number; discussionCount?: number; versionNumber?: number;
   templateId?: string; type?: string; ownerUserId?: string; author?: string; updatedAt?: string;

@@ -77,10 +77,10 @@ public class UploadProgressWiringTests
         var svc = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs");
 
         Assert.Contains("private static string? SelectEntryPath(", svc);
-        // 解包前定的入口与解包后定的最终入口，都走这一条
-        Assert.Equal(2, Regex.Matches(svc, @"SelectEntryPath\(").Count - 1); // 1 处定义 + 2 处调用
-        Assert.Contains("var plannedEntry = SelectEntryPath(", svc);
-        Assert.Contains("var entryFile = SelectEntryPath(", svc);
+        Assert.Equal(2, Regex.Matches(svc, @"SelectEntryPath\(").Count); // 定义和计划阶段调用
+        Assert.Contains("plan.EntryFile = SelectEntryPath(", svc);
+        Assert.Contains("var plannedEntry = plan.EntryFile;", svc);
+        Assert.Contains("EntryFile = plannedEntry", svc);
         // 检测必须对着那个入口跑
         Assert.Contains("string.Equals(relativePath, plannedEntry, System.StringComparison.OrdinalIgnoreCase)"
             .Replace("System.", ""), svc);

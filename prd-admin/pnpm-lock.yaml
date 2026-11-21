@@ -62,6 +62,9 @@ importers:
       '@xyflow/react':
         specifier: ^12.10.0
         version: 12.10.0(@types/react@18.3.27)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@zip.js/zip.js':
+        specifier: ^2.25.0
+        version: 2.25.0
       ag-psd:
         specifier: ^31.0.2
         version: 31.0.2
@@ -1860,6 +1863,10 @@ packages:
 
   '@zeit/schemas@2.36.0':
     resolution: {integrity: sha512-7kjMwcChYEzMKjeex9ZFXkt1AyNov9R5HZtjBKVsmVpw7pa7ZtlCGvCBC2vnnXctaYN+aRI61HjIqeetZW5ROg==}
+
+  '@zip.js/zip.js@2.25.0':
+    resolution: {integrity: sha512-oNRqUuU1XFu6G5d7Z0jufJ9dS9WteO0xiU/PNxsUrb4itZCsSbn191jpJzU00Gmc6S680X3DPZeF5EV4zAEMAg==}
+    engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -5790,6 +5797,8 @@ snapshots:
       d3-zoom: 3.0.0
 
   '@zeit/schemas@2.36.0': {}
+
+  '@zip.js/zip.js@2.25.0': {}
 
   acorn-jsx@5.3.2(acorn@8.15.0):
     dependencies:
