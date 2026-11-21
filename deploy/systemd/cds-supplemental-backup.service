@@ -1,5 +1,5 @@
 [Unit]
-Description=CDS supplemental backup of object stores and empty Kafka topics
+Description=CDS supplemental backup of object stores and message brokers
 After=network-online.target docker.service cds-master.service
 Wants=network-online.target
 Requires=docker.service

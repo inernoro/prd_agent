@@ -1,7 +1,10 @@
 """Exercise the conditions that must prevent an incomplete backup from passing."""
 
 import importlib.util
+import io
 from pathlib import Path
+import tarfile
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -56,6 +59,20 @@ class ObjectBackupTests(unittest.TestCase):
 
         with self.assertRaisesRegex(BACKUP.BackupError, "version history"):
             BACKUP.inventory(Source())
+
+
+class RabbitBackupTests(unittest.TestCase):
+    def test_repeatable_archive_contains_payload_and_recovery_metadata(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace) / "mnesia"
+            root.mkdir()
+            (root / "store").write_bytes(b"fixture")
+            (root.parent / ".erlang.cookie").write_bytes(b"never archive this")
+            archive = BACKUP.stable_rabbit_tree(root, {"node": "rabbit@isolated"})
+            self.assertEqual(archive, BACKUP.stable_rabbit_tree(root, {"node": "rabbit@isolated"}))
+            with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as reader:
+                self.assertEqual(reader.getnames(), ["mnesia", "mnesia/store", "backup.json"])
+                self.assertEqual(reader.extractfile("mnesia/store").read(), b"fixture")
 
 
 if __name__ == "__main__":

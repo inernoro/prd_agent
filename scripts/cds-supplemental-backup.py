@@ -7,13 +7,17 @@ import datetime as dt
 import gzip
 import hashlib
 import hmac
+import io
 import ipaddress
+from itertools import islice
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -300,6 +304,142 @@ def kafka_backup(target):
     return {"kind": "kafka-empty-topics", "topics": before}
 
 
+def rabbit_cli(container, executable, *arguments, timeout=45):
+    return run("docker", "exec", container, executable, "--quiet", *arguments, timeout=timeout)
+
+
+def rabbit_queues(container):
+    vhosts = json.loads(rabbit_cli(container, "rabbitmqctl", "list_vhosts", "name", "--formatter", "json"))
+    fields = ("durable", "type", "messages_ready", "messages_unacknowledged", "messages_persistent")
+    queues = {}
+    for vhost in vhosts:
+        rows = json.loads(rabbit_cli(container, "rabbitmqctl", "list_queues", "-p", vhost["name"],
+                                      "name", *fields, "--formatter", "json"))
+        for row in rows:
+            queues[vhost["name"], row["name"]] = tuple(row[field] for field in fields)
+    return queues
+
+
+def stable_rabbit_tree(data_directory, metadata):
+    archive = io.BytesIO()
+    files = list(islice(data_directory.rglob("*"), MAX_OBJECTS))
+    if len(files) >= MAX_OBJECTS:
+        raise BackupError("RabbitMQ data directory exceeds the verified file count")
+    size = 0
+    with gzip.GzipFile(fileobj=archive, mode="wb", mtime=0) as output:
+        with tarfile.open(fileobj=output, mode="w|") as tar:
+            for source in [data_directory, *sorted(files)]:
+                record = source.lstat()
+                if source.is_symlink() or not (source.is_dir() or source.is_file()):
+                    raise BackupError("Unexpected RabbitMQ data directory entry")
+                size += record.st_size
+                if size > MAX_BYTES:
+                    raise BackupError("RabbitMQ data directory exceeds the verified byte budget")
+                name = "mnesia" if source == data_directory else "mnesia/" + source.relative_to(data_directory).as_posix()
+                member = tar.gettarinfo(str(source), name)
+                member.mtime = 0
+                if member.isdir():
+                    tar.addfile(member)
+                    continue
+                content = source.read_bytes()
+                if len(content) != record.st_size or source.lstat().st_mtime_ns != record.st_mtime_ns:
+                    raise BackupError("RabbitMQ data changed while being read")
+                tar.addfile(member, io.BytesIO(content))
+            body = encode(metadata)
+            record = tarfile.TarInfo("backup.json")
+            record.mode = 0o600
+            record.size = len(body)
+            tar.addfile(record, io.BytesIO(body))
+    return archive.getvalue()
+
+
+def verify_rabbit_archive(archive, root_owner, cookie_owner, host, image, queues):
+    with tempfile.TemporaryDirectory(prefix="cds-rabbitmq-backup-drill-") as workspace:
+        target = Path(workspace)
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
+            members = [member for member in tar.getmembers()
+                       if member.name == "mnesia" or member.name.startswith("mnesia/")]
+            tar.extractall(target, members=members, filter="data")
+            for member in members:
+                os.chown(target / member.name, member.uid, member.gid)
+        os.chown(target, *root_owner)
+        cookie = target / ".erlang.cookie"
+        cookie.write_text(os.urandom(24).hex())
+        os.chown(cookie, *cookie_owner)
+        cookie.chmod(0o400)
+        name = "cds-rabbitmq-backup-drill-" + os.urandom(6).hex()
+        try:
+            sandbox = run("docker", "run", "--detach", "--pull", "never", "--network", "none",
+                          "--hostname", host, "--name", name, "--label", "cds.backup.drill=" + name,
+                          "--memory", "768m", "--cpus", "1", "--pids-limit", "256",
+                          "--env", "RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=+S 2:2 +A 4",
+                          "--env", "RABBITMQ_CTL_ERL_ARGS=+S 1:1",
+                          "--mount", f"type=bind,source={target},target=/var/lib/rabbitmq", image, timeout=65).strip()
+            if (not re.fullmatch(r"[0-9a-f]{64}", sandbox)
+                    or run("docker", "inspect", "--format", "{{.HostConfig.NetworkMode}}", sandbox).strip() != "none"):
+                raise BackupError("Isolated RabbitMQ container identity was not returned")
+            for _ in range(10):
+                try:
+                    rabbit_cli(sandbox, "rabbitmq-diagnostics", "check_running", timeout=22)
+                    break
+                except (BackupError, subprocess.TimeoutExpired):
+                    if run("docker", "inspect", "--format", "{{.State.Running}}", sandbox).strip() != "true":
+                        raise BackupError("Isolated RabbitMQ exited during recovery") from None
+                    time.sleep(2)
+            else:
+                raise BackupError("Isolated RabbitMQ did not become ready")
+            if rabbit_queues(sandbox) != queues:
+                raise BackupError("Isolated RabbitMQ queue counts differ from the captured source")
+        finally:
+            lookup = subprocess.run(
+                ("docker", "inspect", "--format", '{{.Id}} {{index .Config.Labels "cds.backup.drill"}}', name),
+                capture_output=True, text=True, timeout=TIMEOUT,
+            )
+            match = re.fullmatch(r"([0-9a-f]{64}) " + re.escape(name), lookup.stdout.strip())
+            if match:
+                run("docker", "rm", "--force", "--volumes", match[1])
+
+
+def rabbit_backup(target):
+    container = inspect(target)
+    hostname = container["Config"]["Hostname"]
+    env = dict(line.split("=", 1) for line in container["Config"]["Env"] if "=" in line)
+    if (not re.fullmatch(r"[a-zA-Z0-9.-]{1,70}", hostname)
+            or env.get("RABBITMQ_NODENAME", "rabbit@" + hostname) != "rabbit@" + hostname):
+        raise BackupError("RabbitMQ node name cannot be reproduced in the isolated restore")
+    cluster = json.loads(rabbit_cli(target["container"], "rabbitmqctl", "cluster_status", "--formatter", "json"))
+    if cluster.get("disk_nodes") != ["rabbit@" + hostname] or cluster.get("ram_nodes"):
+        raise BackupError("RabbitMQ multi-node data needs a replica-aware recovery method")
+    mounts = [Path(mount["Source"]) for mount in container["Mounts"]
+              if mount["Type"] == "volume" and mount["Destination"] == "/var/lib/rabbitmq"]
+    if len(mounts) != 1:
+        raise BackupError("RabbitMQ data volume identity is unconfirmed")
+    root = mounts[0]
+    data_directory = root / "mnesia"
+    if not data_directory.is_dir() or data_directory.is_symlink():
+        raise BackupError("RabbitMQ data directory is missing")
+    permissions = root.stat()
+    cookie = root / ".erlang.cookie"
+    if not cookie.is_file() or cookie.is_symlink():
+        raise BackupError("RabbitMQ recovery file ownership is unconfirmed")
+    cookie_permissions = cookie.stat()
+    queues = rabbit_queues(target["container"])
+    if not queues or any(not durable or kind != "classic" or unack or ready != persistent
+                         for durable, kind, ready, unack, persistent in queues.values()):
+        raise BackupError("RabbitMQ has active or unsupported queue state, so no new recovery point was accepted")
+    metadata = {"formatVersion": 1, "kind": "rabbitmq-isolated-verified", "node": "rabbit@" + hostname,
+                "imageId": container["Image"], "queueCount": len(queues),
+                "persistentMessages": sum(queue[4] for queue in queues.values())}
+    archive = stable_rabbit_tree(data_directory, metadata)
+    if (queues != rabbit_queues(target["container"]) or archive != stable_rabbit_tree(data_directory, metadata)
+            or container["Id"] != inspect(target)["Id"]):
+        raise BackupError("RabbitMQ activity changed during the read-only capture")
+    disk_budget()
+    verify_rabbit_archive(archive, (permissions.st_uid, permissions.st_gid),
+                          (cookie_permissions.st_uid, cookie_permissions.st_gid), hostname, container["Image"], queues)
+    return archive, {"queues": metadata["queueCount"], "persistentMessages": metadata["persistentMessages"]}
+
+
 def disk_budget():
     disk = os.statvfs("/")
     if (disk.f_bavail - disk.f_blocks * 0.15) * disk.f_frsize < 128 * 1024 * 1024:
@@ -330,26 +470,32 @@ def main():
         for target in config["targets"]:
             service = target["service"]
             project = target["project"]
-            if target["kind"] not in {"minio", "rustfs", "kafka"} or not all(
+            if target["kind"] not in {"minio", "rustfs", "kafka", "rabbitmq"} or not all(
                     re.fullmatch(r"[a-z0-9][a-z0-9-]{0,100}", value) for value in (project, service)):
                 raise BackupError("Invalid backup target configuration")
             try:
                 disk_budget()
-                manifest = kafka_backup(target) if target["kind"] == "kafka" else object_backup(target, audit)
-                manifest["formatVersion"] = 1
-                canonical = encode(manifest)
-                archive = gzip.compress(canonical, mtime=0)
+                if target["kind"] == "rabbitmq":
+                    archive, verified = rabbit_backup(target)
+                    extension = "tar.gz"
+                else:
+                    manifest = kafka_backup(target) if target["kind"] == "kafka" else object_backup(target, audit)
+                    manifest["formatVersion"] = 1
+                    archive = gzip.compress(encode(manifest), mtime=0)
+                    verified = {}
+                    extension = "json.gz"
                 checksum = sha(archive)
-                path = f"/{env[b'R2_BUCKET'].decode()}/{prefix}/coverage/{project}/{service}/{checksum}.json.gz"
+                path = f"/{env[b'R2_BUCKET'].decode()}/{prefix}/coverage/{project}/{service}/{checksum}.{extension}"
                 status, _, _ = remote.request("PUT", path, "store:" + service, data=archive,
                                               headers={"content-type": "application/gzip",
                                                        "x-amz-meta-sha256": checksum, "if-none-match": "*"})
                 if not (200 <= status < 300 or status == 412):
                     raise BackupError(f"R2 archive upload returned HTTP {status}")
                 status, _, readback = remote.request("GET", path, "verify:" + service, limit=len(archive))
-                if status != 200 or sha(readback) != checksum or gzip.decompress(readback) != canonical:
+                if status != 200 or len(readback) != len(archive) or sha(readback) != checksum:
                     raise BackupError("R2 archive readback did not match the captured data")
-                outcomes[service] = {"ok": True, "object": path, "bytes": len(archive), "sha256": checksum}
+                outcomes[service] = {"ok": True, "object": path, "bytes": len(archive), "sha256": checksum,
+                                     "verifiedRecovery": verified}
             except (BackupError, ET.ParseError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
                 detail = str(error) if isinstance(error, BackupError) else type(error).__name__
                 outcomes[service] = {"ok": False, "error": detail}
