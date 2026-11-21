@@ -2,6 +2,7 @@ import { projectBranchPreviewSlugs } from './preview-entrypoints.js';
 import http from 'node:http';
 import { runningCommitSha } from './running-version.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
+import { setCdsForwardedHost } from './forwarded-host.js';
 import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
@@ -2495,16 +2496,18 @@ ${shouldAutoRefresh ? `;(function(){
       });
     };
     const url = new URL(upstream);
+    const upstreamHeaders = {
+      ...clientReq.headers,
+      'x-cds-request-id': requestId,
+      host: `${url.hostname}:${url.port}`,
+    };
+    setCdsForwardedHost(upstreamHeaders, branchCtx ? clientReq.headers.host : undefined);
     const options: http.RequestOptions = {
       hostname: url.hostname,
       port: url.port,
       path: clientReq.url,
       method: clientReq.method,
-      headers: {
-        ...clientReq.headers,
-        'x-cds-request-id': requestId,
-        host: `${url.hostname}:${url.port}`,
-      },
+      headers: upstreamHeaders,
     };
 
     // NOTE: Do NOT strip accept-encoding here. We handle decompression on the
@@ -2799,15 +2802,14 @@ ${shouldAutoRefresh ? `;(function(){
 
     // Proxy WebSocket upgrade
     const url = new URL(upstream);
+    const upstreamHeaders = { ...req.headers, host: `${url.hostname}:${url.port}` };
+    setCdsForwardedHost(upstreamHeaders, req.headers.host);
     const options: http.RequestOptions = {
       hostname: url.hostname,
       port: url.port,
       path: req.url,
       method: 'GET',
-      headers: {
-        ...req.headers,
-        host: `${url.hostname}:${url.port}`,
-      },
+      headers: upstreamHeaders,
     };
 
     const proxyReq = http.request(options);

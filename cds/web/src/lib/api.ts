@@ -663,6 +663,7 @@ export interface CdsAuthPublicStatus {
     github: boolean;
     local: boolean;
     sso: boolean;
+    passkey?: boolean;
   };
   capabilities: {
     userManagement: boolean;

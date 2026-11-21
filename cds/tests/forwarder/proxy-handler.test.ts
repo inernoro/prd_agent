@@ -311,19 +311,24 @@ describe('ProxyHandler — HTTP 透传', () => {
     // upstream hostname:port 是 master ProxyService 的既定做法(proxy.ts:912)。
     let seenHost = '';
     let seenForwardedHost = '';
+    let seenCdsForwardedHost: string | undefined;
     const u = await startUpstream((req, res) => {
       seenHost = String(req.headers['host'] ?? '');
       seenForwardedHost = String(req.headers['x-forwarded-host'] ?? '');
+      seenCdsForwardedHost = String(req.headers['x-cds-forwarded-host'] ?? '');
       res.writeHead(200);
       res.end();
     });
     upstreams.push(u);
-    const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100, branchId: 'demo' };
     const f = await startForwarder(() => route);
     forwarders.push(f);
-    await clientReq(f.port, { host: 'demo.miduo.org' });
+    await clientReq(f.port, {
+      host: 'demo.miduo.org', headers: { 'x-cds-forwarded-host': 'client.example.test' },
+    });
     expect(seenHost).toBe(`127.0.0.1:${u.port}`);
     expect(seenForwardedHost).toBe('demo.miduo.org');
+    expect(seenCdsForwardedHost).toBe('demo.miduo.org');
   });
 
   it('[C-3.3] cookie 含 cds_branch 时,响应 cache-control=no-store + Vary=Cookie(对齐 master)', async () => {

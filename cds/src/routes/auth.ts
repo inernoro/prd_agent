@@ -19,11 +19,8 @@
 
 import { Router, type Request, type Response } from 'express';
 import { AuthService, AuthServiceError } from '../services/auth-service.js';
-
-/** Cookie name used for the GitHub session token. Keeps `cds_token` free for legacy auth. */
-export const GH_SESSION_COOKIE = 'cds_gh_session';
-export const LEGACY_SESSION_COOKIE = 'cds_token';
-export const SSO_SESSION_COOKIE = 'cds_sso_session';
+import { GH_SESSION_COOKIE, LEGACY_SESSION_COOKIE, SSO_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
+export { GH_SESSION_COOKIE, LEGACY_SESSION_COOKIE, SSO_SESSION_COOKIE, sessionCookieName } from '../services/browser-session-cookies.js';
 
 export interface AuthRouterDeps {
   authService: AuthService;
@@ -31,22 +28,18 @@ export interface AuthRouterDeps {
   publicBaseUrl: string;
   /** Set to true for HTTPS environments; cookies get the Secure flag. */
   cookieSecure: boolean;
-}
-
-function parseCookie(cookieHeader: string | undefined, name: string): string | undefined {
-  if (!cookieHeader) return undefined;
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : undefined;
+  /** Opt-in origin-bound browser sessions for the CDS passkey authority. */
+  hostSessionCookies?: boolean;
 }
 
 /**
  * Session cookie with the same expiry as the server-side session. Exported so the
  * auth gate can re-issue it when a session slides forward (see github-auth.ts).
  */
-export function buildSessionCookie(token: string, expiresAt: string, secure: boolean): string {
+export function buildSessionCookie(token: string, expiresAt: string, secure: boolean, hostSessionCookies = false): string {
   const maxAgeSec = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
   const parts = [
-    `${GH_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    `${sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies)}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -57,9 +50,9 @@ export function buildSessionCookie(token: string, expiresAt: string, secure: boo
   return parts.join('; ');
 }
 
-export function buildLogoutCookie(secure: boolean): string {
+export function buildLogoutCookie(secure: boolean, hostSessionCookies = false): string {
   const parts = [
-    `${GH_SESSION_COOKIE}=`,
+    `${sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies)}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -71,9 +64,9 @@ export function buildLogoutCookie(secure: boolean): string {
 }
 
 /** Clear the original environment-account cookie when another identity wins. */
-export function buildLegacyLogoutCookie(secure: boolean): string {
+export function buildLegacyLogoutCookie(secure: boolean, hostSessionCookies = false): string {
   return [
-    `${LEGACY_SESSION_COOKIE}=`,
+    `${sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -84,9 +77,9 @@ export function buildLegacyLogoutCookie(secure: boolean): string {
 }
 
 /** Clear the ticket-SSO cookie when another human identity provider wins. */
-export function buildSsoLogoutCookie(secure: boolean): string {
+export function buildSsoLogoutCookie(secure: boolean, hostSessionCookies = false): string {
   return [
-    `${SSO_SESSION_COOKIE}=`,
+    `${sessionCookieName(SSO_SESSION_COOKIE, hostSessionCookies)}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -98,7 +91,10 @@ export function buildSsoLogoutCookie(secure: boolean): string {
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
   const router = Router();
-  const { authService, publicBaseUrl, cookieSecure } = deps;
+  const { authService, publicBaseUrl, cookieSecure, hostSessionCookies = false } = deps;
+  const sessionName = sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies);
+  const flowCookie = '__Host-cds-github-flow';
+  const flowOptions = { path: '/', httpOnly: true, secure: true, sameSite: 'lax' as const };
 
   // The GitHub OAuth App must have this exact URL registered as a
   // callback URL. Kept as a constant here so admins know what to enter
@@ -107,7 +103,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
 
   router.get('/auth/github/login', (req: Request, res: Response) => {
     const postLogin = typeof req.query.redirect === 'string' ? req.query.redirect : '/project-list';
-    const { authorizeUrl } = authService.startLogin(redirectUri, postLogin);
+    const { authorizeUrl, state } = authService.startLogin(redirectUri, postLogin);
+    if (hostSessionCookies) res.cookie(flowCookie, state, { ...flowOptions, maxAge: 10 * 60_000 });
     res.redirect(302, authorizeUrl);
   });
 
@@ -118,6 +115,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       res.status(400).send(renderErrorPage('缺少 code 或 state 参数', '/login'));
       return;
     }
+    if (hostSessionCookies && readBrowserCookie(req.headers.cookie, flowCookie) !== state) {
+      res.status(400).send(renderErrorPage('登录链接无效或已过期，请重新发起登录。', '/login'));
+      return;
+    }
+    if (hostSessionCookies) res.clearCookie(flowCookie, flowOptions);
 
     try {
       const result = await authService.handleCallback({
@@ -132,10 +134,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           null,
       });
 
-      res.setHeader('Set-Cookie', [
-        buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure),
-        buildLegacyLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+      res.append('Set-Cookie', [
+        buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure, hostSessionCookies),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.redirect(302, result.redirect || '/project-list');
     } catch (err) {
@@ -151,7 +153,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   });
 
   router.post('/auth/logout', async (req: Request, res: Response) => {
-    const token = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
+    const token = readBrowserCookie(req.headers.cookie, sessionName);
     if (token) {
       // Resolve the user before destroying the session so we can attribute the
       // logout activity record.
@@ -173,9 +175,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
     }
     res.setHeader('Set-Cookie', [
-      buildLogoutCookie(cookieSecure),
-      buildLegacyLogoutCookie(cookieSecure),
-      buildSsoLogoutCookie(cookieSecure),
+      buildLogoutCookie(cookieSecure, hostSessionCookies),
+      buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+      buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
     ]);
     res.json({ ok: true });
   });
@@ -213,7 +215,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       });
       return;
     }
-    const token = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
+    const token = readBrowserCookie(req.headers.cookie, sessionName);
     const result = await authService.validateSession(token ?? null);
     if (!result) {
       res.status(401).json({ error: 'unauthenticated' });
@@ -224,7 +226,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     // 漏掉的话：服务端过期时间被推后（后续中间件看到「还很新鲜」就不再续期），
     // 而浏览器那份 cookie 仍在原时间点死掉 —— 用户照样掉登录。
     if (result.renewed && token) {
-      res.setHeader('Set-Cookie', buildSessionCookie(token, session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', buildSessionCookie(token, session.expiresAt, cookieSecure, hostSessionCookies));
     }
     res.json({
       user: {

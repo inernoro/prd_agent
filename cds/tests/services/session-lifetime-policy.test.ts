@@ -24,7 +24,7 @@ describe('session lifetime policy (single source)', () => {
     // GitHub / 本地密码会话
     expect(serverSource).toContain('config: { allowedOrgs, sessionTtlMs }');
     // basic 模式 cds_token
-    expect(serverSource).toContain('basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure)');
+    expect(serverSource).toContain('basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure, hostSessionCookies)');
   });
 
   it('never hardcodes a login window next to the cookie writers', () => {
@@ -38,7 +38,7 @@ describe('session lifetime policy (single source)', () => {
     const gateIndex = serverSource.indexOf('if (humanCookieValid || machineHeaderValid) {');
     expect(gateIndex).toBeGreaterThan(0);
     const gateBlock = serverSource.slice(gateIndex, gateIndex + 800);
-    expect(gateBlock).toContain('basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure)');
+    expect(gateBlock).toContain('basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure, hostSessionCookies)');
     // 只对 cookie 认证续期：x-cds-token 走机器凭据，不涉及浏览器 cookie。
     expect(gateBlock).toContain('if (humanCookieValid)');
   });

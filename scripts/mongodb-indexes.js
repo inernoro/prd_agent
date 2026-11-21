@@ -192,6 +192,12 @@ db.console_sso_tickets.createIndex(
   { name: "ttl_console_sso_tickets_expires_at", expireAfterSeconds: 0 }
 )
 
+// collection: cds_sso_sessions
+db.cds_sso_sessions.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "ttl_cds_sso_sessions_expires_at", expireAfterSeconds: 0 }
+)
+
 // collection: direct_video_job_ownerships
 // 旧记录在维护窗口补齐七天到期时间；新写入由模型直接设置 ExpiresAt。
 const directVideoOwnershipRetentionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)

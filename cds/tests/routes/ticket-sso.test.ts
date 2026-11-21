@@ -171,7 +171,10 @@ describe('ticket SSO routes', () => {
     expect(saveConfig).not.toHaveBeenCalled();
   });
 
-  it('uses the configured default redirect when login starts without a redirect', async () => {
+  it.each([
+    { hostSessionCookies: false, prefix: '' },
+    { hostSessionCookies: true, prefix: '__Host-' },
+  ])('preserves the default Ticket SSO redirect with host session cookies set to $hostSessionCookies', async ({ hostSessionCookies, prefix }) => {
     const config = normalizeTicketSsoConfig({
       enabled: true,
       authorizationUrl: 'https://map.example/api/console-sso/authorize',
@@ -186,6 +189,7 @@ describe('ticket SSO routes', () => {
       resolveConfig: () => config,
       publicBaseUrl: 'https://cds.example',
       cookieSecure: true,
+      hostSessionCookies,
       stateStore: new TicketSsoStateStore(),
       sessionStore: new TicketSsoSessionStore(),
       fetchImpl: vi.fn(async () => new Response(JSON.stringify({
@@ -206,20 +210,29 @@ describe('ticket SSO routes', () => {
     expect(startResponse.status).toBe(302);
     const state = new URL(String(startResponse.headers.location)).searchParams.get('state');
     expect(state).toBeTruthy();
+    const flow = startResponse.headers['set-cookie']?.find(cookie => cookie.startsWith('__Host-cds-ticket-flow='));
+    if (hostSessionCookies) {
+      expect(flow).toContain('; Secure');
+      const unbound = await call(server, 'POST', '/api/auth/sso/exchange', { code: 'a'.repeat(43), state });
+      expect(unbound.status).toBe(400);
+      expect(unbound.body.code).toBe('sso_state_invalid');
+    } else {
+      expect(flow).toBeUndefined();
+    }
 
     const exchange = await call(server, 'POST', '/api/auth/sso/exchange', {
       code: 'a'.repeat(43),
       state,
     }, {
-      Cookie: 'cds_gh_session=github-token; cds_token=basic-token',
+      Cookie: flow?.split(';')[0] ?? 'cds_gh_session=github-token; cds_token=basic-token',
     });
 
     expect(exchange.status).toBe(200);
     expect(exchange.body.redirect).toBe('/reports?project=cds-self');
     expect(exchange.headers['set-cookie']).toEqual(expect.arrayContaining([
-      expect.stringMatching(/^cds_sso_session=/),
-      expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
-      expect.stringMatching(/^cds_token=.*Max-Age=0/),
+      expect.stringMatching(new RegExp(`^${prefix}cds_sso_session=.*; Secure`)),
+      expect.stringMatching(new RegExp(`^${prefix}cds_gh_session=.*Max-Age=0`)),
+      expect.stringMatching(new RegExp(`^${prefix}cds_token=.*Max-Age=0`)),
     ]));
   });
 

@@ -53,6 +53,24 @@ cd cds
 - 修改后按配置类型重启 CDS；
 - 生产环境的密码和签名密钥必须使用安全随机值。
 
+### 托管站点免密登录
+
+托管站点免密登录默认关闭，现有 HTTPS 会话沿用原有 Cookie。启用时，在使用 MongoDB 持久化账号的 CDS 控制面设置 `CDS_PASSKEYS_ENABLED=1`，并用 `CDS_PUBLIC_BASE_URL` 指定登录页的 HTTPS 源地址。OpenID Connect 签发服务使用 Node 22 LTS 或更新的 LTS。项目必须由 CDS 实际发布，项目入口和 CDS 登录页使用同一注册域下的独立 HTTPS 主机。
+
+项目实现自己的登录入口与回调后，由 CDS 系统所有者在「CDS 系统设置 → 登录与认证 → CDS 托管站点登录」登记已发布入口及两个路径。保存前用通行密钥重新验证。CDS 核对托管路由和项目授权，返回标准的用户标识 `sub`。项目负责验证签发方、受众、签名、有效期、nonce、授权码和 PKCE，并把已核实的标识绑定到自己的账号，判定访问权限和建立本地会话。
+
+分支诊断面板可打开项目登录入口并发起 CDS 换号。用户在 CDS 选择账号，CDS 按项目记住选择。启用通行密钥后，会话切换到 CDS 登录主机专属的 Cookie，使用旧会话的用户需要重新登录一次。停用登记、移除实际托管路由或结束 CDS 会话时，CDS 撤销对应授权，接入项目通过 UserInfo 核对授权状态。项目自己的页面和接口始终由项目决定是否需要登录。
+
+### MAP 接入
+
+MAP 试点使用已发布的同域预览。设置 `CdsSso__Enabled=true`、`CdsSso__Issuer`、`CdsSso__ClientId` 和 `CdsSso__RedirectUri`。签发方和客户端标识来自 CDS 登记。回调使用 MAP 预览的 HTTPS 地址与 `/api/v1/auth/cds/callback`，项目登录入口登记 `/api/v1/auth/cds/start`。
+
+如果 CDS 代理将 `Host` 改写为服务地址，在 MAP 用 `CdsSso__TrustedProxyIps__0`、`CdsSso__TrustedProxyIps__1` 等登记直连 API 的 CDS 代理 IP。限制 API 上游端口的访问范围，只登记由运维独占的代理地址。MAP 只从这些代理接收由 CDS 覆盖写入的 `X-CDS-Forwarded-Host`，并与配置的回调主机和端口逐一核对。
+
+在 MAP 部署中通过 `CdsSso__Accounts__<CDS用户ID>` 填入经核实的 MAP 本地用户 ID。更改绑定随 MAP 配置生效。停用账号、机器人、破窗账号和未完成首次改密的账号无法通过此入口。MAP 按本地角色授权，并在处理受保护请求前核对 CDS 授权。实验室身份切换和跨系统控制台票据使用 MAP 自有登录。过期会话的清理索引见 [MongoDB 索引指南](guide.platform.mongodb-indexes.md)。
+
+回退时可以暂停该站点的 CDS 登记，并关闭 MAP 的 CDS 登录开关。随后核对 MAP 的项目登录与本地权限。
+
 ## 项目运行变量
 
 项目运行变量属于某个 CDS 项目，并在部署时注入该项目的业务容器。
