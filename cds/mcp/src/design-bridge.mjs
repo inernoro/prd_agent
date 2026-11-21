@@ -20,8 +20,8 @@ const schemas = {
   }).strict(),
 };
 const descriptions = {
-  [readTool]: '读取当前 CDS 项目的私有稿件或框架。先以 designs 或 frameworks 发现编号，再用 design 或 framework 读取固定版本。',
-  [publishTool]: '经授权发布当前项目中已提交的私有设计稿。ZIP 路径须位于工作区内，服务按项目 Git 核对提交、目录和字节。更新稿件沿用 designId；重试沿用 requestId 和相同内容。',
+  [readTool]: '先用 designs 和 frameworks 确认当前项目的稿件与框架，再用 design 和 framework 读取指定版本。原稿或基线无法唯一确定时，在制作前向委托方一次澄清。',
+  [publishTool]: '先回读原稿及基线，再发布当前项目的私有设计稿。原稿、目标或改动意图不明时先澄清。续版沿用 designId 和原发布身份，确认首发时省略 designId。ZIP 位于工作区内并与项目 Git 一致。重试沿用 requestId 和相同内容。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
   name, description: descriptions[name], inputSchema: { ...z.toJSONSchema(schema), type: 'object' },
@@ -51,7 +51,11 @@ export function createDesignBridge(credentials, options = {}) {
     async call(name, input = {}) {
       if (!Object.hasOwn(schemas, name)) throw new Error('未知 CDS 设计工具');
       const parsed = schemas[name].safeParse(input);
-      if (!parsed.success) throw new Error('设计参数无效，请检查工具契约');
+      if (!parsed.success) {
+        const fields = [...new Set(parsed.error.issues.map(issue => issue.path.join('.')).filter(Boolean))];
+        const detail = fields.length ? `请核对 ${fields.join('、')}。` : '请核对工具参数。';
+        throw new Error(`设计参数无效。${detail}项目、稿件或版本仍不明确时，先向委托方澄清。`);
+      }
       const data = await workspace();
       if (name === readTool) {
         const args = parsed.data;
@@ -62,11 +66,17 @@ export function createDesignBridge(credentials, options = {}) {
         }
         const item = items.find(row => row.id === args.id);
         const selected = args.version === undefined ? item?.versions.at(-1) : item?.versions.find(row => row.version === args.version);
-        if (!item || !selected) throw new Error('当前项目没有这个稿件或框架版本');
+        if (!item || !selected) {
+          const listView = args.view === 'design' ? 'designs' : 'frameworks';
+          throw new Error(`请先通过 ${listView} 查询当前项目，再核对编号和版本。无法唯一确定时，先确认本轮基线。`);
+        }
         return { projectId, id: item.id, version: selected };
       }
       if (!data.permissions.write) throw new Error('当前凭据没有稿件发布权限');
       const { zipPath, ...fields } = parsed.data;
+      if (fields.designId !== undefined && !data.designs.some(item => item.id === fields.designId)) {
+        throw new Error('请先通过 designs 查询当前项目。找不到要续发的原稿时，先确认稿件和基线再发布。');
+      }
       const { bytes } = await localFile(credentials, zipPath, ['.zip'], fileLimit);
       const query = new URLSearchParams({ ...fields, requireGit: 'true' });
       let receipt;

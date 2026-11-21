@@ -226,19 +226,23 @@ async function auditInteractiveReports() {
         }
       }
       const standard = await frame.locator('meta[name="map-acceptance-template"][content="interactive-html-v2"]').count();
-      const evidence = standard ? await auditEvidenceCards(frame) : { expected: 0, checked: 0, errors: [] };
-      reports.push({ ...staticAudit, clicked, clickErrors: [...clickErrors, ...evidence.errors], evidence });
+      const evidence = standard ? await auditEvidenceCards(frame) : undefined;
+      reports.push({ ...staticAudit, clicked, clickErrors: [...clickErrors, ...(evidence?.errors ?? [])], evidence });
     } catch (error) {
       reports.push({ linkCount: 0, clicked: 0, broken: [], clickErrors: [String(error)] });
     }
   }
   const broken = reports.flatMap((report) => report.broken || []);
   const clickErrors = reports.flatMap((report) => report.clickErrors || []);
+  const evidenceExpected = reports.reduce((sum, report) => sum + (report.evidence?.expected ?? 0), 0);
+  if (reports.some(report => report.evidence) && evidenceExpected < minImg) {
+    clickErrors.push(`标准报告正文证据图 ${evidenceExpected} 张，需至少 ${minImg} 张`);
+  }
   return {
     reportCount: reports.length,
     linkCount: reports.reduce((sum, report) => sum + (report.linkCount || 0), 0),
     clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
-    evidenceExpected: reports.reduce((sum, report) => sum + (report.evidence?.expected || 0), 0),
+    evidenceExpected,
     evidenceChecked: reports.reduce((sum, report) => sum + (report.evidence?.checked || 0), 0),
     broken,
     clickErrors,

@@ -26,7 +26,7 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
     }
     const value = request.method === 'POST' ? { projectId, reused: writes.length > 1,
       result: { type: 'package', designId: 'DSN-fixture', version: 2 } }
-      : { projectId: responseProject, permissions: { write }, designs: [], frameworks: [{ projectId, id: 'FW-fixture', versions }] };
+      : { projectId: responseProject, permissions: { write }, designs: [{ projectId, id: 'DSN-fixture', versions }], frameworks: [{ projectId, id: 'FW-fixture', versions }] };
     response.writeHead(request.method === 'POST' && writes.length === 1 ? 201 : 200, { 'content-type': 'application/json' });
     response.end(JSON.stringify(value));
   });
@@ -49,7 +49,10 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
 
   write = true;
   assert.deepEqual((await bridge.listTools()).map(row => row.name), [read, publish]);
-  await assert.rejects(bridge.call(publish, { ...draft, sourceCommit: 'main' }));
+  await assert.rejects(bridge.call(read, { view: 'framework', id: 'FW-fixture', version: 99 }), /frameworks.*版本/);
+  await assert.rejects(bridge.call(publish, { ...draft, sourceCommit: 'main' }), /sourceCommit/);
+  await assert.rejects(bridge.call(publish, { ...draft, designId: 'DSN-unknown', zipPath: 'missing.zip' }), /designs.*原稿.*基线/);
+  assert.equal(writes.length, 0);
   await assert.rejects(bridge.call(publish, { ...draft, projectId: 'other' }));
   assert.equal((await bridge.call(publish, draft)).reused, false);
   assert.equal((await bridge.call(publish, draft)).reused, true);

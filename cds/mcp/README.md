@@ -131,4 +131,8 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 | `cds_design_read` | `view` 取 `designs`、`frameworks`、`design` 或 `framework`。读取单项时填写 `id`，可选 `version` | 列出稿件和框架，或读取选定版本。 |
 | `cds_design_publish` | `zipPath`、`sourceCommit`、`sourcePath`、`requestId`。更新时填写原 `designId`，可选 `note` | 由 CDS 核对该项目 Git 提交和文件后，发布私有版本。同一稿件沿用同一发布者。 |
 
-项目内 ZIP 须从已同步的 Git 提交导出，最大 4 MiB。源目录包含稿件清单、思路和原型。发布后用项目内同稿编号读取新旧版本。对比实拍可用 `cdscli design diff` 或 CDS 设计页。
+交接先读 `designs`、`frameworks`，再读指定的原稿和框架版本。确认目标项目、原稿、基线、获授权的 Git 分支和改动范围。MCP 能读到的先查清，剩余问题在动笔前一次澄清。找不到原稿时先确认首版基线。
+
+ZIP 从已同步的项目 Git 提交导出，放在工作区内的普通目录，避开 `.cds` 和 `.git`，最大 4 MiB。源目录包含 `design.json`、`思路.md` 和声明的单文件 HTML。`design.json.project` 为绑定项目 ID，首发省略稿件 `id`。续版沿用原 `designId` 和发布身份。备注记录基线、改动画面和待确认项。
+
+发布后按回执回读固定的 `designId` 和 `version`，核对 Git 来源、提交和包摘要。接收方通过 MCP 查询新旧版本，按画面和主题对比并复拍。实拍差异可用 `cdscli design diff` 或 CDS 设计页查看。
