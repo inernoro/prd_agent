@@ -85,10 +85,12 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
     if (update.frozen !== undefined) design.frozen = update.frozen;
     if (update.freeze) design.freezes = [...(design.freezes ?? []), update.freeze];
     if (update.pullRequest !== undefined) design.pullRequest = update.pullRequest;
-    if (update.reviewRequested !== undefined) design.reviewRequested = update.reviewRequested;
+    if (update.reviewRequested !== undefined) {
+      design.reviewRequested = update.reviewRequested && design.frozen !== design.versions.at(-1)?.version;
+    }
     if (update.reviewers !== undefined) design.reviewers = update.reviewers;
     if (update.sharePreparation) design.sharePreparations = [...(design.sharePreparations ?? []), update.sharePreparation];
-    if (update.notifyReviewersAt) {
+    if (update.notifyReviewersAt && design.reviewRequested) {
       const at = update.notifyReviewersAt;
       const version = design.versions.at(-1)!;
       for (const reviewer of design.reviewers ?? []) {
@@ -385,8 +387,9 @@ export class DesignWorkspaceService {
         authored(actor, entry.versions.at(-1)!.publisher);
         const reviewers = await this.reviewers(projectId, input.reviewerIds);
         const currentVersion = entry.versions.at(-1)!.version;
-        return { result: { ...result, version: currentVersion }, changes: { design: { id, reviewers, reviewRequested: reviewers.length > 0,
-          ...(reviewers.length ? { notifyReviewersAt: context.now } : {}) } } };
+        const reviewRequested = entry.frozen !== currentVersion && reviewers.length > 0;
+        return { result: { ...result, version: currentVersion }, changes: { design: { id, reviewers, reviewRequested,
+          ...(reviewRequested ? { notifyReviewersAt: context.now } : {}) } } };
       }
       if (type === 'design.freeze') {
         designRecord(input, '定稿请求', ['type', 'requestId', 'designId', 'version']);
@@ -422,15 +425,13 @@ export class DesignWorkspaceService {
     const audience = input.audience;
     if (audience !== 'public' && audience !== 'password') return invalidDesign('请选择分享受众');
     const expiresInHours = number(input.expiresInHours, '分享有效小时数', 365 * 24);
-    const existing = entry.sharePreparations?.find(row =>
-      row.version === version.version && row.audience === audience && row.expiresInHours === expiresInHours);
-    const prepared: DesignSharePreparation = existing ?? {
+    const prepared: DesignSharePreparation = {
       id: `SHARE-${randomUUID()}`, version: version.version, sourceCommit: version.sourceCommit, packageSha256: version.sha256,
       audience, expiresInHours, state: 'awaiting_human_confirmation', preparedAt: now, preparedBy: identity(actor),
     };
     return { result: { type: 'share.prepare', designId: entry.id, id: prepared.id, version: prepared.version,
       sourceCommit: prepared.sourceCommit, state: prepared.state },
-      changes: existing ? {} : { design: { id: entry.id, sharePreparation: prepared } } };
+      changes: { design: { id: entry.id, sharePreparation: prepared } } };
   }
 
   async shareHandoff(projectId: string, actor: DesignActor, preparationId: string, body: unknown,

@@ -4,6 +4,10 @@ import { apiRequest } from '@/lib/api';
 import type { DesignEntry, DesignShareHandoffReceipt, DesignSharePreparation, DesignVersion } from '../../../../src/shared/design-workspace';
 import { designPath, type DesignCommand } from './design-ui';
 
+const preparationTime = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+});
+
 export function DesignShareDialog({ entry, version, busy, command, close }: {
   entry: DesignEntry; version: DesignVersion; busy: boolean; command: DesignCommand; close: () => void;
 }) {
@@ -13,7 +17,7 @@ export function DesignShareDialog({ entry, version, busy, command, close }: {
   const [status, setStatus] = useState('');
   const stop = useRef<() => void>();
   useEffect(() => () => stop.current?.(), []);
-  const pending = (entry.sharePreparations ?? []).filter(row => row.version === version.version);
+  const pending = (entry.sharePreparations ?? []).filter(row => row.version === version.version).reverse();
 
   async function proceed(preparation: DesignSharePreparation) {
     setStatus('');
@@ -75,7 +79,8 @@ export function DesignShareDialog({ entry, version, busy, command, close }: {
       </form>
       {!!pending.length && <section className="ep-dialog-content" aria-label="分享待确认记录">
         {pending.map(row => <div className="ep-row" key={row.id}>
-          <span>{row.audience === 'public' ? '获得链接的人' : '凭密码访问'} · {row.expiresInHours} 小时</span>
+          <span>{row.audience === 'public' ? '获得链接的人' : '凭密码访问'} · {row.expiresInHours} 小时
+            {' · '}<time dateTime={row.preparedAt}>{preparationTime.format(new Date(row.preparedAt))}</time></span>
           <button type="button" className="ep-button" disabled={opening} onClick={() => void proceed(row)}>前往 MAP 确认</button>
         </div>)}
         {status && <p role="status" className="ep-caption">{status}</p>}

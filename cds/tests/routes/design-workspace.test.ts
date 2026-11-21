@@ -178,7 +178,12 @@ describe('private CDS design workspace', () => {
 
     expect((await command('design.freeze', { designId, version: 1 }, 'other')).status).toBe(201);
     expect((await command('design.review', { designId, reviewerIds: ['author'] }, 'designer')).status).toBe(201);
+    const frozen = (await (await get()).json()).designs[0];
+    expect(frozen).toMatchObject({ frozen: 1, reviewRequested: false, reviewers: [{ id: 'author' }] });
+    expect(frozen.freezes).toHaveLength(1);
+    expect(await service.reviewNotices(projectId, people.get('author')!)).toEqual([]);
     expect((await publish('set-on-update', draft(), { designId, sourceCommit: 'c'.repeat(40), reviewerIds: JSON.stringify(['author']) })).status).toBe(201);
+    expect((await service.reviewNotices(projectId, people.get('author')!))[0]).toMatchObject({ version: 2 });
     const request = { designId, reviewerIds: ['other'] };
     expect((await command('design.review', request, 'other')).status).toBe(403);
     expect((await command('design.review', request, 'designer', 'out-of-project', otherProjectId)).status).toBe(404);
@@ -412,9 +417,16 @@ describe('private CDS design workspace', () => {
     const { result } = await prepared.json();
     expect(result).toMatchObject({ version: 1, sourceCommit, state: 'awaiting_human_confirmation' });
     expect(result).not.toHaveProperty('shareUrl');
-    const repeated = await command('share.prepare', fields, 'author', 'distinct-retry-id');
-    expect((await repeated.json()).result.id).toBe(result.id);
-    expect((await (await get()).json()).designs[0].sharePreparations).toMatchObject([{ id: result.id, packageSha256: fields.packageSha256 }]);
+    const repeated = await command('share.prepare', fields, 'author', 'share-request');
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({ reused: true, result });
+    const replacement = await command('share.prepare', fields, 'author', 'replacement-share-request');
+    expect(replacement.status).toBe(201);
+    const { result: next } = await replacement.json();
+    expect(next.id).not.toBe(result.id);
+    expect((await (await get()).json()).designs[0].sharePreparations).toMatchObject([
+      { id: result.id, packageSha256: fields.packageSha256 }, { id: next.id, packageSha256: fields.packageSha256 },
+    ]);
   });
 
   it('hands off only the privately pinned preparation to the configured MAP reviewer', async () => {
