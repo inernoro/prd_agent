@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type {
-  DesignCell, DesignComment, DesignEntry, DesignFramework, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
+  DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
 import { designSlots } from '../shared/design-workspace.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
+import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import {
   designCommit, designDigest, designId, designPngDimensions, designRecord, designSourcePath, invalidDesign, localDesignPath,
   readDesignFrameworkSource, readDesignPackage,
@@ -161,6 +162,7 @@ export class DesignWorkspaceService {
   constructor(private readonly store: ProjectRevisionStore<DesignWorkspaceCommit>, private readonly deps: {
     reviewer?: (projectId: string, actorId: string) => Promise<DesignReviewer | undefined>;
     sourcePackage?: (projectId: string, commit: string, sourcePath: string) => Promise<Buffer | undefined>;
+    frameworkProbe?: DesignFrameworkProbe;
     resolvePreview?: (projectId: string, pullRequest: number, commit?: string) => Promise<Preview | undefined>;
     findDebt?: (projectId: string, debtId: string, sourceRef: string) => Promise<boolean>;
     resolveDebtProposal?: (projectId: string, proposalId: string, sourceRef: string) => Promise<string | undefined>;
@@ -214,6 +216,7 @@ export class DesignWorkspaceService {
     const designs = [...state.designs.values()].sort((a, b) => b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt));
     return { projectId, designs: structuredClone(designs), frameworks: structuredClone([...state.frameworks.values()]),
       permissions: { write: actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
+        sign: actor.kind === 'human' && actor.permissions.includes('write'),
         steward: actor.steward === true, actorId: actor.id } };
   }
 
@@ -280,6 +283,7 @@ export class DesignWorkspaceService {
       catch { return invalidDesign('评审账号须是 JSON 数组'); }
     }
     const prototypeId = randomUUID();
+    const frameworkChecks = new Map<number, DesignFrameworkCheck>();
     return this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: loaded.sha256, resolves, review: params.review, reviewerIds },
       async ({ state, now }) => {
         const id = selectedId ?? `DSN-${randomUUID().slice(0, 8).toUpperCase()}`;
@@ -292,13 +296,20 @@ export class DesignWorkspaceService {
         const revisions = loaded.framework ? state.frameworks.get(loaded.framework)?.versions : undefined;
         const frameworkVersion = loaded.frameworkVersion ?? (previous?.framework === loaded.framework ? previous?.frameworkVersion : undefined)
           ?? revisions?.at(-1)?.version;
-        if (loaded.framework && !revisions?.some(revision => revision.version === frameworkVersion)) invalidDesign('稿件引用的框架版本不在当前项目');
+        const frameworkRevision = revisions?.find(revision => revision.version === frameworkVersion);
+        if (loaded.framework && !frameworkRevision) invalidDesign('稿件引用的框架版本不在当前项目');
         if (Object.keys(resolves).some(commentId => !existing?.comments.some(comment => comment.id === commentId && !comment.closed))) {
           invalidDesign('只能声明处理此稿件仍开放的评论');
         }
         const { title, sha256, rationale, screens, acceptance, spec, checks, framework, group, tags, decisionIds } = loaded;
         const source = sourcePath && await this.deps.sourcePackage?.(projectId, sourceCommit, sourcePath);
         if (source && (await readDesignPackage(source)).filesSha256 !== loaded.filesSha256) conflict('上传内容与项目 Git 中的提交和目录不一致');
+        let frameworkCheck: DesignFrameworkCheck | undefined;
+        if (framework && frameworkRevision) {
+          frameworkCheck = frameworkChecks.get(frameworkRevision.version) ?? await checkDesignFramework(framework,
+            frameworkRevision, sourceCommit, loaded.prototype, screens, this.deps.frameworkProbe);
+          frameworkChecks.set(frameworkRevision.version, frameworkCheck);
+        }
         const assets: ProjectRevisionAsset[] = [{ id: prototypeId, mime: 'text/html; charset=utf-8', base64: loaded.prototype.toString('base64') }];
         const renders: NonNullable<DesignVersion['renders']> = {};
         for (const capture of loaded.renders) {
@@ -310,6 +321,7 @@ export class DesignWorkspaceService {
         const version: DesignVersion = { version: (previous?.version ?? 0) + 1, title, sourceCommit, sha256, prototypeId,
           sourcePath, sourceVerification: source ? 'git' : 'declared',
           createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
+          ...(frameworkCheck ? { frameworkCheck } : {}),
           ...(loaded.renders.length ? { renders } : {}) };
         return { result: { type: 'package', designId: id, version: version.version },
           changes: { design: { id, version, reviewers,

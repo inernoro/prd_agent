@@ -14,12 +14,23 @@ export type DesignRule = {
   probe?: { type: 'horizontal-overflow'; tolerance?: number };
 };
 export type DesignMaterial = { tokens?: Record<string, unknown>; rules?: string; components?: string; skeleton?: string };
+export type DesignFrameworkMeasurement = {
+  screenId: string; slot: 'phone-light' | 'phone-dark'; width: number; contentWidth: number;
+};
+export type DesignFrameworkCheck = {
+  framework: string; frameworkVersion: number; sourceCommit: string;
+  items: Array<{
+    ruleId: string; name: string; status: 'passed' | 'failed' | 'unverified'; actual: string;
+    measurements?: DesignFrameworkMeasurement[];
+  }>;
+};
 
 export type DesignVersion = {
   version: number; title: string; sourceCommit: string; sha256: string; prototypeId: string; createdAt: string;
   sourcePath?: string; sourceVerification?: 'git' | 'declared';
   publisher: { id: string; label: string }; note?: string; screens: DesignScreen[]; acceptance: DesignRule[];
   rationale: string; spec: DesignMaterial; checks?: Record<string, unknown>; framework?: string; frameworkVersion?: number;
+  frameworkCheck?: DesignFrameworkCheck;
   group?: string; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
 };
@@ -58,5 +69,5 @@ export type FrameworkRevision = {
 export type DesignFramework = { id: string; projectId: string; versions: FrameworkRevision[] };
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
-  permissions: { write: boolean; review: boolean; steward: boolean; actorId: string };
+  permissions: { write: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
 };

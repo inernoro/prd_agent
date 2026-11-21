@@ -10,7 +10,7 @@ import { type PlanningProject, usePlanningRead } from './engineering-planning/pl
 import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
 import { DesignFrameworkView, DesignMaterialView, FrameworkOverview, ReadableNotes, type FrameworkTab } from './design-workspace/DesignFramework';
-import { designCheckRows, designDate, designPath, designStatus, latestDesign, materialNames, openReviews, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
+import { cellNames, designCheckRows, designDate, designFailureGroups, designPath, designStatus, latestDesign, materialNames, openReviews, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
 import { compareDesignMaterial } from './design-workspace/design-structure';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
@@ -171,7 +171,8 @@ export function DesignWorkspacePage() {
         : <>
           <div className="dw-tabrow">{summaryTabLinks}</div>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
-            canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)} command={command} />}
+            canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
+            canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} />}
           {tab === 'rationale' && <div className="dw-surface dw-markdown"><ReadableNotes source={version.rationale} /></div>}
           {tab === 'spec' && <DesignSpec version={version} baseline={pinnedFramework?.material} />}
           {tab === 'log' && <DesignHistory entry={entry}
@@ -304,7 +305,7 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
           const reviews = openReviews(entry);
           const open = reviews[0];
           const failures = entry.runs.at(-1)?.cells.filter(cell => cell.status === 'failed').length ?? 0;
-          const failedRules = designCheckRows(version).filter(row => row.status === '不通过');
+          const failedRules = designFailureGroups(version);
           return <article className="dw-design-card" key={entry.id} data-state={designStatus(entry)}>
             <div className="dw-thumb">{<DesignFrame projectId={workspace.projectId} version={version} screen={version.screens[0]} theme="light" zoom={null} />}
               {open ? <button className="dw-thumb-action" type="button" onClick={() => onReview(entry, open.comment, open.version)}>核对评论 {reviews.length > 1 ? `+${reviews.length - 1}` : ''}</button>
@@ -319,10 +320,12 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
                 {mode === 'list' && version.tags.length > 0 && <small className="dw-list-group">{version.tags.map(tag => `#${tag}`).join(' ')}</small>}
                 <span className="dw-card-count">{entry.comments.length > 0 && <><MessageSquare />{entry.comments.length}</>}
                   {failures > 0 && <strong>{failures} 不通过</strong>}{mode === 'list' && <span>{statusNames[designStatus(entry)]}</span>}</span></div>
-              {!!failedRules.length && <Link className="ep-text-button dw-card-rule-findings" aria-label={`自检不通过 · ${failedRules.map(row => `${row.id} ${row.name}`).join('、')}`}
+              {!!failedRules.length && <Link className="ep-text-button dw-card-rule-findings"
                 to={`/design?${new URLSearchParams({ project: workspace.projectId, design: entry.id, version: String(version.version), tab: 'spec' })}`}>
-                <strong>自检不通过</strong>
-                <ul>{failedRules.map((row, index) => <li key={`${row.id}-${index}`}><code>{row.id}</code> {row.name}</li>)}</ul>
+                {failedRules.map(group => <div key={group.label}>
+                  <strong>{group.label}</strong>
+                  <ul>{group.rules.map((row, index) => <li key={`${row.id}-${index}`}><code>{row.id}</code> {row.name}</li>)}</ul>
+                </div>)}
               </Link>}
             </footer>
           </article>;
@@ -334,7 +337,7 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
 
 const recordTime = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 type DesignHistoryRow = {
-  key: string; at: string; title: string; details: string; note?: string; failedRules?: string; action: () => void; label: string; state: string;
+  key: string; at: string; title: string; details: string; note?: string; failedRules?: string[]; action: () => void; label: string; state: string;
 };
 
 function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVersion: (version: number) => void; onRun: (version: number, run: string) => void }) {
@@ -342,7 +345,8 @@ function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVers
     ...entry.versions.map(version => {
       const resolved = Object.keys(version.resolves);
       const checks = version.checks;
-      const failedRules = designCheckRows(version).filter(row => row.status === '不通过').map(row => `${row.id} ${row.name}`).join('、');
+      const failedRules = designFailureGroups(version).map(group =>
+        `${group.label} · ${group.rules.map(row => `${row.id} ${row.name}`).join('、')}`);
       return { key: `v${version.version}`, at: version.createdAt, title: `V${version.version} · ${version.note || '发布稿件'}`,
         details: `${version.publisher.label} · ${version.sourceCommit.slice(0, 8)}`,
         note: [resolved.length ? `声明处理 ${resolved.length} 条评论` : '', typeof checks?.total === 'number' && typeof checks.passed === 'number'
@@ -367,7 +371,7 @@ function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVers
     {rows.map(row => <li key={row.key} data-result={row.state}>
       <div><div className="dw-history-summary"><strong>{row.title}</strong><time dateTime={row.at}>{recordTime.format(new Date(row.at))}</time></div>
         <small>{row.details}</small>{row.note && <p>{row.note}</p>}
-        {row.failedRules && <p>自检不通过 · {row.failedRules}</p>}</div>
+        {row.failedRules?.map(failure => <p key={failure}>{failure}</p>)}</div>
       <button type="button" className="ep-text-button" onClick={row.action}>{row.label}</button>
     </li>)}
   </ol></section>;
@@ -377,8 +381,16 @@ function DesignSpec({ version, baseline }: { version: DesignVersion; baseline?: 
   const [tab, select] = useState<keyof typeof materialNames>('rules');
   const changes = compareDesignMaterial(baseline ?? {}, version.spec).filter(row => row.kind !== '移除');
   const unresolved = designCheckRows(version).filter(row => row.status !== '通过');
+  const frameworkCheck = version.frameworkCheck;
   return <>
     <div className="dw-spec-cards">
+      {!!frameworkCheck?.items.length && <section className="dw-surface dw-markdown"><h3>发布规则检查</h3>
+        <small>{frameworkCheck.framework} · v{frameworkCheck.frameworkVersion}</small>
+        <ul>{frameworkCheck.items.map(row => <li key={row.ruleId}>
+          <strong>{cellNames[row.status]}</strong> · <code>{row.ruleId}</code> {row.name}
+          <small>{row.actual}</small>
+        </li>)}</ul>
+      </section>}
       {version.checks && <section className="dw-surface dw-markdown"><h3>规则检查与自检</h3>
         {typeof version.checks.passed === 'number' && typeof version.checks.total === 'number' && <p>已报告通过 {version.checks.passed} / {version.checks.total}</p>}
         {!!unresolved.length && <ul>{unresolved.map(row => <li key={row.id}><strong>{row.status}</strong> · <code>{row.id}</code> {row.name}</li>)}</ul>}

@@ -23,6 +23,15 @@ export function designCheckRows(version: DesignVersion) {
   });
 }
 
+export function designFailureGroups(version: DesignVersion) {
+  return [
+    { label: '框架规则不通过', rules: (version.frameworkCheck?.items ?? []).filter(row => row.status === 'failed')
+      .map(row => ({ id: row.ruleId, name: row.name })) },
+    { label: version.frameworkCheck ? '作者自检不通过' : '自检不通过',
+      rules: designCheckRows(version).filter(row => row.status === '不通过') },
+  ].filter(group => group.rules.length);
+}
+
 export function designStatus(entry: DesignEntry): keyof typeof statusNames {
   if (entry.reviewRequested) return 'review';
   if (entry.runs.at(-1)?.signed) return 'signed';

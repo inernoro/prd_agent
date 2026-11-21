@@ -394,6 +394,8 @@ $CLI debt stats
 
 脚手架把框架版本、规则类别和自检待办写进稿件。从 `--dir` 发布时带上仓库相对目录，CDS 可在该项目的代码仓库中核对时验证提交和文件。其他仓库的归档保留发布声明。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。两版有同尺寸截图时，可看实际像素差异。
 
+发布后在稿件的「规范」或 `design list` 的版本回读 `frameworkCheck`，其中记录固定框架版本、稿件提交和系统测量。目前已接入 R-07 的手机横向溢出检测。发布端须通过 `CDS_DESIGN_BROWSER_EXECUTABLE` 使用可运行 Chromium 沙箱的隔离执行环境。缺少实测的规则保持未验证，作者在 `checks/result.json` 中的自检仍可单独回读。
+
 ```bash
 $CLI framework list
 $CLI framework show <框架编号>

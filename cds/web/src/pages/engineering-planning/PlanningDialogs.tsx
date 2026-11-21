@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { CalendarDays, Check, CheckCircle2, Flame, Folder, GitPullRequest, Link2, MessageSquare, MoreHorizontal, Pencil, UserRound } from 'lucide-react';
+import { CalendarDays, Check, CheckCircle2, Flame, Folder, GitPullRequest, Link2, MessageSquare, MoreHorizontal, Pause, Pencil, Play, UserRound } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
@@ -20,7 +20,7 @@ export type PlanningAction =
   | { kind: 'create'; record: PlanningRecordKind; decisionId?: string }
   | { kind: 'import' }
   | { kind: 'reject'; proposal: PlanningProposal }
-  | { kind: 'debt'; action: 'edit' | 'branch' | 'defer' | 'review' | 'progress' | 'repay' | 'reopen' | 'drop' | 'hit' | 'merge' | 'not-duplicate';
+  | { kind: 'debt'; action: 'edit' | 'branch' | 'defer' | 'review' | 'start' | 'progress' | 'repay' | 'reopen' | 'drop' | 'hit' | 'merge' | 'not-duplicate';
       debt: PlanningDebt; collateralCandidates?: PlanningDebtDetail['collateralCandidates']; duplicateCandidates?: PlanningDebtDetail['duplicateCandidates'] }
   | { kind: 'health'; mode: DebtHealthMode; debt: PlanningDebt }
   | { kind: 'decision'; action: 'accepted' | 'amended' | 'reviewed' | 'superseded' | 'deprecated'; decision: PlanningDecision }
@@ -28,7 +28,7 @@ export type PlanningAction =
       initialKind?: PlanningStep['kind']; initialRelatedId?: string; initialTitle?: string }
   | { kind: 'schedule'; debt: PlanningDebt };
 
-const debtActions = { edit: '补齐内容', branch: '调整决策归属', defer: '暂缓', review: '到期回看', progress: '记录进展', repay: '核对偿还标准', reopen: '重开债务', drop: '标记失效', hit: '我也踩到了',
+const debtActions = { edit: '补齐内容', branch: '调整决策归属', defer: '暂缓', review: '到期回看', start: '开始处理', progress: '记录进展', repay: '核对偿还标准', reopen: '重开债务', drop: '标记失效', hit: '我也踩到了',
   merge: '对比并合并', 'not-duplicate': '标记为不同问题' };
 const decisionActions = { accepted: '采纳决策', amended: '补充决策说明', reviewed: '完成复核', superseded: '取代决策', deprecated: '废弃决策' };
 const evidenceLabels: Record<PlanningEvidence['type'], string> = {
@@ -347,6 +347,7 @@ function actionFields(action: PlanningAction, board: PlanningBoard, duplicateChe
         case 'defer': return <><Field name="reviewAt" label="下次回看日期" required date initial={row.reviewAt && row.reviewAt > board.today ? row.reviewAt : undefined} />
           <Field name="reason" label="暂缓原因" required multiline /></>;
         case 'review': return <DebtReviewFields />;
+        case 'start': return <Field name="note" label="说明（可选）" placeholder="例如：排进本迭代" multiline />;
         case 'progress': return <><Field name="note" label="进展说明" required multiline />
           <div className="ep-form-pair">
             <Field name="progressEvidence" label="验证依据（选填）" max={500} />
@@ -445,6 +446,7 @@ function actionCommand(action: PlanningAction, form: FormData, board: PlanningBo
         case 'branch': return { type: 'debt.branch', ...common, decisionId: optional(form, 'decisionId') ?? null, reason };
         case 'defer': return { type: 'debt.defer', ...common, reason, reviewAt: field(form, 'reviewAt') };
         case 'review': return { type: 'debt.review', ...common, next: field(form, 'next') as 'start' | 'defer' | 'drop', reason, reviewAt: optional(form, 'reviewAt') };
+        case 'start': return { type: 'debt.start', ...common, note: optional(form, 'note') ?? debtActions.start };
         case 'progress': {
           const label = optional(form, 'progressEvidence'), url = optional(form, 'progressEvidenceUrl');
           return { type: 'debt.progress', ...common, note: field(form, 'note'),
@@ -580,7 +582,8 @@ export function PlanningActionDialog({ action, board, busy, error, returnFocusTo
           <button type="button" className="ep-button" disabled={busy} onClick={onClose}>取消</button>
           <button type="submit" className="ep-button ep-button--primary" disabled={busy || !ready}>
             {busy ? '正在保存…' : action.kind === 'debt' && action.action === 'repay' ? '确认偿还'
-                : action.kind === 'reject' ? '确认驳回' : '保存'}
+                : action.kind === 'debt' && action.action === 'start' ? debtActions.start
+                  : action.kind === 'reject' ? '确认驳回' : '保存'}
           </button>
         </div>
       </form>}
@@ -700,6 +703,8 @@ function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }
   const [pendingCitation, setPendingCitation] = useState<string>();
   const debt = data.debt;
   const active = !closedDebt(debt.status);
+  const inProgress = debt.status === 'in_progress';
+  const pending = debt.status === 'open';
   const assigned = board.decisions.find(row => row.id === debt.decisionId);
   const origin = board.decisions.find(row => row.id === debt.originDecisionId);
   const repayment = debt.repayment;
@@ -731,14 +736,26 @@ function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }
       {active ? <>
         {debt.status === 'deferred' && debt.reviewAt && debt.reviewAt <= board.today && <button type="button" className="ep-button"
           disabled={actionsDisabled} onClick={() => edit('review')}><CalendarDays aria-hidden="true" />{debtActions.review}</button>}
-        <button type="button" className="ep-button ep-button--primary" disabled={actionsDisabled || !debt.criteria.length}
-          onClick={() => edit('repay')}><Check aria-hidden="true" />{debtActions.repay}</button>
-        <button type="button" className="ep-button" disabled={actionsDisabled} onClick={() => edit('progress')}><MessageSquare aria-hidden="true" />{debtActions.progress}</button>
+        {pending && <>
+          <button type="button" className="ep-button ep-button--primary" disabled={actionsDisabled}
+            onClick={() => edit('start')}><Play aria-hidden="true" />{debtActions.start}</button>
+          <button type="button" className="ep-button" disabled={actionsDisabled}
+            onClick={() => edit('defer')}><Pause aria-hidden="true" />{debtActions.defer}</button>
+        </>}
+        {inProgress && <>
+          <button type="button" className="ep-button ep-button--primary" disabled={actionsDisabled || !debt.criteria.length}
+            onClick={() => edit('repay')}><Check aria-hidden="true" />{debtActions.repay}</button>
+          <button type="button" className="ep-button" disabled={actionsDisabled}
+            onClick={() => edit('progress')}><MessageSquare aria-hidden="true" />{debtActions.progress}</button>
+        </>}
         <button type="button" className="ep-button" disabled={actionsDisabled} onClick={() => edit('edit')}><Pencil aria-hidden="true" />{debtActions.edit}</button>
         <button type="button" className="ep-button ep-debt-hit" disabled={actionsDisabled} onClick={() => edit('hit')}><Flame aria-hidden="true" />{debtActions.hit}</button>
         <DropdownMenu trigger={<button type="button" className="ep-button ep-debt-more" ref={more} disabled={actionsDisabled}
           aria-label="更多操作" title="更多操作"><MoreHorizontal aria-hidden="true" /></button>}>
-          <DropdownItem onSelect={() => edit('defer', more.current)}>{debtActions.defer}</DropdownItem>
+          {!pending && <DropdownItem onSelect={() => edit('defer', more.current)}>{debtActions.defer}</DropdownItem>}
+          {debt.status === 'deferred' && <DropdownItem onSelect={() => edit('start', more.current)}>{debtActions.start}</DropdownItem>}
+          {!inProgress && <DropdownItem onSelect={() => edit('progress', more.current)}>{debtActions.progress}</DropdownItem>}
+          {!inProgress && !!debt.criteria.length && <DropdownItem onSelect={() => edit('repay', more.current)}>{debtActions.repay}</DropdownItem>}
           <DropdownItem onSelect={() => edit('branch', more.current)}>{debtActions.branch}</DropdownItem>
           {!!data.duplicateCandidates?.length && <DropdownItem onSelect={() => edit('merge', more.current)}>{debtActions.merge}</DropdownItem>}
           {!!data.duplicateCandidates?.length && <DropdownItem onSelect={() => edit('not-duplicate', more.current)}>{debtActions['not-duplicate']}</DropdownItem>}

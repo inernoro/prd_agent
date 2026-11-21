@@ -48,7 +48,10 @@
 .dw-tabrow, .dw-library-bar { min-height: 42px; border-bottom: 1px solid var(--dw-line); }
 .dw-tabrow { display: flex; align-items: stretch; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
 .dw-tabrow > .dw-tools { padding-block: 4px; justify-content: end; }
-.dw-tablinks { display: flex; align-items: stretch; gap: 20px; min-width: 0; max-width: 100%; overflow: auto hidden; }
+.dw-tablinks {
+  display: flex; align-items: stretch; align-self: flex-start; gap: 20px; min-width: 0; max-width: 100%;
+  block-size: 41px; overflow: auto hidden;
+}
 .dw-tab { min-height: 40px; border-bottom: 2px solid transparent; padding: 7px 0 5px; font-size: 14px; color: var(--dw-muted); white-space: nowrap; }
 .dw-tab[aria-current=true] { color: var(--dw-ink); border-color: var(--dw-accent); font-weight: 650; }
 .dw-tab small { margin-left: 4px; }
@@ -293,7 +296,7 @@
   .dw-head > .dw-tools { width: 100%; }
   .dw-search { flex: 1; }
   .dw-workspace .dw-search input { width: 100%; }
-  .dw-tablinks { gap: 14px; }
+  .dw-tablinks { gap: 14px; block-size: 44px; }
   .dw-tabrow { justify-content: start; }
   .dw-tabrow > .dw-tools { justify-content: start; }
   .dw-library { grid-template-columns: minmax(0, 1fr); gap: 12px; }

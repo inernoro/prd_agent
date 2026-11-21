@@ -1,19 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, FileCheck2, RefreshCw, ScrollText } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { designSlots, type DesignCell, type DesignEntry, type DesignRun, type DesignVersion } from '../../../../src/shared/design-workspace';
 import { cellNames, designArtifact, designDate, ruleModes, slotNames, verdictNames, type DesignCommand } from './design-ui';
+import { planningPath, usePlanningRead } from '../engineering-planning/planning-ui';
 
-export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, command }: {
-  entry: DesignEntry; version: DesignVersion; busy: boolean; canWrite: boolean; canReview: boolean; command: DesignCommand;
+export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, canSign, command }: {
+  entry: DesignEntry; version: DesignVersion; busy: boolean; canWrite: boolean; canReview: boolean; canSign: boolean; command: DesignCommand;
 }) {
   const [params] = useSearchParams();
   const [runId, setRunId] = useState(params.get('run') ?? '');
   const [pr, setPr] = useState(String(entry.pullRequest ?? ''));
   const [selected, setSelected] = useState<DesignCell>();
+  const [previewRevision, refreshPreview] = useState(0);
   const runs = entry.runs.filter(row => row.version === version.version);
   const run = runs.find(row => row.id === runId) ?? runs.at(-1);
+  const previewPath = run ? `${planningPath(entry.projectId)}/preview/${run.pullRequest}` : null;
+  const preview = usePlanningRead<{ projectId: string; commit?: string }>(previewPath, previewRevision);
+  useEffect(() => {
+    if (!previewPath) return;
+    const refresh = () => { if (document.visibilityState === 'visible') refreshPreview(value => value + 1); };
+    window.addEventListener('focus', refresh);
+    const timer = window.setInterval(refresh, 30_000);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.clearInterval(timer);
+    };
+  }, [previewPath]);
   const items = version.acceptance;
   const failures = items.filter(item => run?.cells.some(cell => cell.itemId === item.id && cell.status === 'failed'));
   const pending = run?.cells.filter(cell => (cell.status === 'missing' || cell.status === 'unverified') && !cell.debtId) ?? [];
@@ -24,19 +38,32 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     ['已记债', new Set(run?.cells.flatMap(cell => cell.debtId ? [cell.debtId] : [])).size],
   ] as const;
   const state = run?.verdict ?? 'needs_evidence';
+  const activeCommit = preview.data?.projectId === entry.projectId ? preview.data.commit : undefined;
+  const stale = !!run && !!activeCommit && activeCommit !== run.commit;
+  const evidenceWritable = canWrite && !!run && activeCommit === run.commit && !preview.loading;
   const signable = run && !run.signed && entry.frozen === version.version && run.id === entry.runs.at(-1)?.id
+    && activeCommit === run.commit && !preview.loading
     && (state === 'passed' || state === 'conditional') && version.version === entry.versions.at(-1)?.version;
   const send = (action: string, fields: Record<string, unknown>) => command(action, { designId: entry.id, ...fields });
   const start = async () => {
-    if (await send('acceptance.start', { version: version.version, pullRequest: Number(pr) })) setRunId('');
+    if (await send('acceptance.start', { version: version.version, pullRequest: Number(pr) })) {
+      setRunId('');
+      refreshPreview(value => value + 1);
+    }
+  };
+  const sign = async () => {
+    if (run && !(await send('acceptance.sign', { runId: run.id }))) refreshPreview(value => value + 1);
   };
   return <section className="dw-acceptance">
     <div className="dw-baseline">基准 V{entry.frozen ?? '未定稿'}{run && <> · PR #{run.pullRequest} · 提交 <code>{run.commit.slice(0, 8)}</code></>}</div>
     <section className="dw-surface dw-verdict">
       <div>
-        <strong className="dw-status" data-state={state}>{run ? verdictNames[state] : '等待运行'}</strong>
-        <h2>{run ? `PR #${run.pullRequest} ${signable ? '可以' : run.signed ? '已按' : '暂不能按'} V${version.version} 签收` : '尚无真实页面验收证据'}</h2>
-        <p>{run?.signed ? `签收于 ${designDate(run.signed.at)} · 提交 ${run.commit.slice(0, 8)}`
+        <strong className="dw-status" data-state={stale ? 'needs_evidence' : state}>{stale ? '针对旧提交' : run ? verdictNames[state] : '等待运行'}</strong>
+        <h2>{run ? `PR #${run.pullRequest} ${stale ? '预览已更新' : `${signable ? '可以' : run.signed ? '已按' : '暂不能按'} V${version.version} 签收`}` : '尚无真实页面验收证据'}</h2>
+        <p>{stale ? `当前预览为 ${activeCommit?.slice(0, 8)}。请对当前提交重新运行，本次验收保留在记录里。`
+          : run?.signed ? `签收于 ${designDate(run.signed.at)} · 提交 ${run.commit.slice(0, 8)}`
+          : run && preview.loading ? '正在核对当前预览提交。'
+          : run && !activeCommit ? '暂时无法核对当前预览提交，请确认预览已部署。'
           : failures.length ? `有 ${failures.length} 项发现问题。修复后重跑，或把普通问题记成债务。`
           : pending.length ? `还有 ${pending.length} 个场景需要证据。`
           : entry.frozen !== version.version ? '定稿后，可用关联的 PR 预览开始验收。' : '请选择当前项目已部署的 PR。'}</p>
@@ -52,7 +79,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
             <input aria-label="关联 PR 编号" placeholder="PR 编号" type="number" min={1} required value={pr} onChange={event => setPr(event.target.value)} />
             <button className="ep-button" disabled={busy || entry.frozen !== version.version || !items.length}><RefreshCw />{run ? '重新运行' : '运行验收'}</button>
           </form>}
-          {canReview && <button className="ep-button" type="button" disabled={busy || !signable} onClick={() => run && void send('acceptance.sign', { runId: run.id })}>
+          {canSign && <button className="ep-button" type="button" disabled={busy || !signable} onClick={() => void sign()}>
             <Check />签收</button>}
         </div>
       </div>
@@ -86,7 +113,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
         const item = items.find(item => item.id === cell.itemId)!;
         return <div className="dw-pending-row" key={`${cell.itemId}-${cell.slot}`}><span className="dw-status" data-state="needs_evidence">{cellNames[cell.status]}</span>
           <div><strong>{item.rule}</strong><small>{slotNames[cell.slot]} · {cell.actual}</small></div>
-          {canWrite && <button type="button" className="ep-button" onClick={() => setSelected(cell)}>{item.how === 'human' ? '人工核对' : '补充证据'}</button>}
+          {evidenceWritable && <button type="button" className="ep-button" onClick={() => setSelected(cell)}>{item.how === 'human' ? '人工核对' : '补充证据'}</button>}
         </div>;
       })}</div>
     </section>}
@@ -103,7 +130,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
       </div>
     </section>
     {run && selected && <DesignEvidenceDialog entry={entry} run={run} cell={selected} version={version} command={command}
-      canWrite={canWrite} canReview={canReview} busy={busy} close={() => setSelected(undefined)} />}
+      canWrite={evidenceWritable} canReview={canReview} busy={busy} close={() => setSelected(undefined)} />}
   </section>;
 }
 

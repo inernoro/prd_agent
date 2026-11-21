@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
+import type { DesignFrameworkMeasurement } from '../../src/shared/design-workspace.js';
 import { buildZip, crc32 } from '../../src/utils/zip.js';
 
 const projectId = 'fixture-design-a';
@@ -74,10 +75,12 @@ describe('private CDS design workspace', () => {
   let clock: string;
   let service: DesignWorkspaceService;
   let revokedReviewers: Set<string>;
+  let frameworkMeasurements: DesignFrameworkMeasurement[];
 
   function openWorkspace() {
     const dependencies = {
       now: () => new Date(clock),
+      frameworkProbe: async () => frameworkMeasurements,
       resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && pr === 7 && (!commit || commit === activeCommit)
         ? { commit: activeCommit, url: 'https://preview.fixture.test/' } : undefined,
       sourcePackage: async (project: string, sha: string, sourcePath: string) => project === projectId && sha === sourceCommit && sourcePath === 'design/fixture' ? draft() : undefined,
@@ -96,6 +99,7 @@ describe('private CDS design workspace', () => {
     activeCommit = previewCommit;
     clock = '2026-11-21T09:05:00.000Z';
     revokedReviewers = new Set();
+    frameworkMeasurements = [];
     service = openWorkspace();
     const server = express();
     server.use('/api', createDesignWorkspaceRouter({ service, resolveAccess: (req, project) => projectActor(project, req.get('x-fixture-user') ?? '') }));
@@ -273,6 +277,31 @@ describe('private CDS design workspace', () => {
     expect((await publish('known-framework', draft('Fixture design', { framework: frameworkId, frameworkVersion: 1 }))).status).toBe(201);
     const { designs } = await (await get()).json();
     expect(designs[0].versions[0]).toMatchObject({ framework: frameworkId, frameworkVersion: 1 });
+  });
+
+  it('stores measured framework rules separately from author self checks and partial coverage', async () => {
+    const frameworkId = 'FW-overflow';
+    const rules = '| R-07 | 375px 手机没有横向溢出 | 自动：实测 |\n## R-01 核对页头';
+    const imported = await command('framework.import', { frameworkId, title: 'Fixture framework',
+      sourceCommit: 'c'.repeat(40), expectedVersion: 0, material: { rules } });
+    expect(imported.status).toBe(201);
+    const authorChecks = { items: [{ id: 'R-07', status: 'passed' }] };
+    const packageBytes = draft('Fixture mobile draft', { framework: frameworkId, frameworkVersion: 1, acceptance: [],
+      screens: [{ id: 'mobile-members', name: 'Members', route: '#members', viewport: 'phone', themes: ['light', 'dark'] }] },
+    [{ name: 'bundle/checks/result.json', data: Buffer.from(JSON.stringify(authorChecks)) }]);
+    frameworkMeasurements = [{ screenId: 'mobile-members', slot: 'phone-light', width: 375, contentWidth: 520 }];
+    const published = await publish('measured-rules', packageBytes);
+    expect(published.status).toBe(201);
+    const { designId } = (await published.json()).result;
+    frameworkMeasurements = [{ screenId: 'mobile-members', slot: 'phone-light', width: 375, contentWidth: 375 }];
+    expect((await publish('partial-rules', packageBytes, { designId, sourceCommit: 'd'.repeat(40) })).status).toBe(201);
+    const { designs } = await (await get()).json();
+    expect(designs[0].versions[0]).toMatchObject({
+      checks: authorChecks,
+      frameworkCheck: { framework: frameworkId, frameworkVersion: 1, sourceCommit,
+        items: [{ ruleId: 'R-07', status: 'failed', measurements: [{ contentWidth: 520 }] }, { ruleId: 'R-01', status: 'unverified' }] },
+    });
+    expect(designs[0].versions[1].frameworkCheck.items[0]).toMatchObject({ ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('1 / 2') });
   });
 
   it('acknowledges the source only after matching the archive against the project Git tree', async () => {
