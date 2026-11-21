@@ -1,3 +1,4 @@
+import { sanitizeHtml, sanitizeHtmlForSubmission } from '@/lib/sanitizeHtml';
 /**
  * 产品管理 — 客户模块。
  *
@@ -399,10 +400,10 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
   useEffect(() => { void reload(); }, [reload]);
 
   const add = async () => {
-    const trimmed = content.replace(/<[^>]*>/g, '').trim();
-    if (!trimmed) { toast.error('请填写跟进内容'); return; }
+    const { html, text } = sanitizeHtmlForSubmission(content);
+    if (!text) { toast.error('请填写跟进内容'); return; }
     setSaving(true);
-    const res = await createCustomerFollowUp(customerId, { content });
+    const res = await createCustomerFollowUp(customerId, { content: html });
     setSaving(false);
     if (res.success) { setContent(''); void reload(); }
     else toast.error('保存失败', res.error?.message);
@@ -440,7 +441,7 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
                 <span className="flex items-center gap-1"><Clock size={11} /> {fmtTime(f.createdAt)}</span>
                 <button onClick={() => remove(f)} className="ml-auto text-token-muted hover:text-red-300" title="删除"><Trash2 size={12} /></button>
               </div>
-              <div className="prose-sm text-sm leading-relaxed text-token-primary [&_*]:!text-token-primary" dangerouslySetInnerHTML={{ __html: f.content }} />
+              <div className="prose-sm text-sm leading-relaxed text-token-primary [&_*]:!text-token-primary" dangerouslySetInnerHTML={{ __html: sanitizeHtml(f.content) }} />
             </div>
           ))}
         </div>
