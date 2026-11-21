@@ -102,7 +102,7 @@ function App() {
       periodicTimer = window.setInterval(check, PERIODIC_INTERVAL);
     }, INITIAL_DELAY);
 
-    let periodicTimer: ReturnType<typeof setInterval> | undefined;
+    let periodicTimer: number | undefined;
 
     return () => {
       window.clearTimeout(initialTimer);

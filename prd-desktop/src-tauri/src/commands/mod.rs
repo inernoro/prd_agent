@@ -14,3 +14,5 @@ pub mod preview_ask_history;
 pub mod session;
 pub mod skill;
 pub mod updater;
+
+pub mod file_selection;

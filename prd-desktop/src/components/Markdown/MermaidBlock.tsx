@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 type MermaidModule = typeof import('mermaid');
@@ -75,6 +76,7 @@ export default function MermaidBlock({ chart }: { chart: string }) {
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: 'strict',
+          htmlLabels: false,
           theme: isDark ? 'dark' : 'default',
           themeVariables: {
             background: 'transparent',
@@ -85,7 +87,7 @@ export default function MermaidBlock({ chart }: { chart: string }) {
         const { svg: renderedSvg } = await mermaid.render(uniqueId, cleaned);
 
         if (cancelled || id !== renderId.current) return;
-        setSvg(renderedSvg);
+        setSvg(DOMPurify.sanitize(renderedSvg, { USE_PROFILES: { svg: true, svgFilters: true }, FORBID_TAGS: ['foreignObject', 'a'] }));
       } catch (e: any) {
         if (cancelled || id !== renderId.current) return;
         setError(e?.message || 'Mermaid 渲染失败');

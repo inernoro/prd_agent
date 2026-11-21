@@ -11,72 +11,8 @@ import CitationChip from '../Chat/CitationChip';
 import AsyncIconButton from '../ui/AsyncIconButton';
 import { copyImageFromUrl, copyText, tableElementToMarkdown } from '../../lib/clipboard';
 
-/**
- * Rehype plugin: strip inline color/background styles from raw HTML elements.
- *
- * PRD documents often contain raw HTML from document converters (Word→HTML)
- * with hardcoded dark-on-light color styles, e.g. `<font style="color:#333">`.
- * These inline styles override CSS class-based dark mode colors.
- * This plugin runs AFTER rehype-raw, removing color-related inline styles
- * so that elements inherit their colors from the prose/dark-mode CSS.
- */
-function walkHast(node: any) {
-  if (node.type === 'element') {
-    const props = node.properties;
-    if (props) {
-      // Strip <font color="..."> HTML attribute
-      if (node.tagName === 'font' && props.color != null) {
-        delete props.color;
-      }
-      // Strip color/background-color from inline style
-      const style = props.style;
-      if (typeof style === 'string' && style.length > 0) {
-        const cleaned = style
-          .replace(/\b(?:color|background-color)\s*:\s*[^;]+;?/gi, '')
-          .trim();
-        if (cleaned) {
-          props.style = cleaned;
-        } else {
-          delete props.style;
-        }
-      }
-    }
-  }
-  if (Array.isArray(node.children)) {
-    for (const child of node.children) walkHast(child);
-  }
-}
-
-function rehypeStripInlineColors() {
-  return (tree: any) => { walkHast(tree); };
-}
-
-/**
- * react-markdown 默认 urlTransform 只放行 http(s)/mailto/xmpp/irc 等协议，
- * 会把 Word → Markdown 转换常见的 `data:image/...;base64` 图片 src 直接置空，
- * 表现为列表里只剩一个孤零零的项目符号（• 后面什么也没有）。
- * 这里放行 data:image/ 与 blob:，其余协议仍按默认安全白名单处理。
- */
-function safePrdUrlTransform(url: string): string {
-  const raw = String(url || '').trim();
-  if (!raw) return raw;
-  if (/^data:image\//i.test(raw)) return raw;
-  if (/^blob:/i.test(raw)) return raw;
-  const colon = raw.indexOf(':');
-  const question = raw.indexOf('?');
-  const hash = raw.indexOf('#');
-  const slash = raw.indexOf('/');
-  if (
-    colon < 0 ||
-    (slash > -1 && colon > slash) ||
-    (question > -1 && colon > question) ||
-    (hash > -1 && colon > hash) ||
-    /^(https?|ircs?|mailto|xmpp)$/i.test(raw.slice(0, colon))
-  ) {
-    return raw;
-  }
-  return '';
-}
+import { markdownSchema, safePrdUrlTransform } from './markdownSecurity';
+import rehypeSanitize from 'rehype-sanitize';
 
 // Citation tokens 缓存（使用 WeakMap 避免内存泄漏）
 const citationTokensCache = new WeakMap<DocCitation[], Array<Set<string>>>();
@@ -327,7 +263,7 @@ export default function MarkdownRenderer({ content, className, style, onInternal
     <div className={className} style={style}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeRaw, rehypeStripInlineColors]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSchema]]}
         urlTransform={safePrdUrlTransform}
         components={{
           ...headingComponents,

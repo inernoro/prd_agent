@@ -1,3 +1,4 @@
+import { selectUploadFiles } from '../lib/fileSelection';
 import { useCallback, useState } from 'react';
 import { invoke } from '../lib/tauri';
 import { useSessionStore } from '../stores/sessionStore';
@@ -60,14 +61,13 @@ export function useDocumentActions(): UseDocumentActionsResult {
     if (!sessionId) return false;
     let done = false;
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const selected = await open({ multiple: false, title: '选择替换后的文件' });
-      if (!selected || Array.isArray(selected)) return false;
+      const [selected] = await selectUploadFiles('document', false, sessionId);
+      if (!selected) return false;
       setBusy(true);
       setError('');
       const up = await invoke<ApiResponse<UploadSessionResponse>>('upload_file_to_session', {
         sessionId,
-        filePath: selected,
+        selectionId: selected.selectionId,
         documentType: documentType || null,
       });
       if (!up.success || !up.data) {

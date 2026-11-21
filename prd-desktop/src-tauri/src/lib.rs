@@ -48,6 +48,7 @@ pub fn run() {
         )
         .setup(|app| {
             app.manage(StreamCancelState::default());
+            app.manage(commands::file_selection::FileSelections::default());
             // 初始化配置（从文件加载 API URL）
             commands::config::init_config(app.handle());
 
@@ -278,6 +279,7 @@ pub fn run() {
             commands::defect::verify_fail_defect,
             commands::devtools::open_devtools,
             commands::attachment::upload_attachment,
+            commands::file_selection::select_upload_files,
             commands::skill::get_skills,
             commands::skill::execute_skill,
             commands::skill::create_skill,
