@@ -7,7 +7,7 @@ description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped aut
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.6 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
+> **版本**：v0.26.7 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
