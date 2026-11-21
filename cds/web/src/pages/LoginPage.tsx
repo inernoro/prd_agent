@@ -32,6 +32,7 @@ import {
   isChildPreviewCdsInstance,
 } from '@/lib/api';
 import { parseTicketSsoCallback } from '@/lib/ticket-sso-callback';
+import { signInWithPasskey } from '@/lib/passkeys';
 
 import { PreviewAccessFrame, PreviewLabel, WhyPreviewLogin, type PreviewLoginContext } from './PreviewAccessPage';
 
@@ -39,7 +40,7 @@ export function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
-  if (!raw.startsWith('/') || raw.startsWith('//')) return '/project-list';
+  if (!raw.startsWith('/') || raw.startsWith('//') || /[\\\x00-\x1f]|%5c/i.test(raw)) return '/project-list';
   // 绝不把目标指回登录路由本身 —— 否则已登录用户从 /login 跳 /login 是 no-op,
   // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
   const path = raw.split(/[?#]/)[0];
@@ -66,6 +67,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
   const [loginMethodsReady, setLoginMethodsReady] = useState(false);
   const [localLoginEnabled, setLocalLoginEnabled] = useState(false);
   const [githubLoginEnabled, setGithubLoginEnabled] = useState(false);
+  const [passkeyEnabled, setPasskeyEnabled] = useState(false);
   const [ssoLogin, setSsoLogin] = useState<{ enabled: boolean; label: string }>({
     enabled: false,
     label: '使用 SSO 登录',
@@ -81,6 +83,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
         if (!alive) return;
         setLocalLoginEnabled(s.loginMethods.local);
         setGithubLoginEnabled(s.loginMethods.github);
+        setPasskeyEnabled(s.loginMethods.passkey === true && Boolean(window.PublicKeyCredential));
         setSsoLogin({
           enabled: s.loginMethods.sso === true && s.sso?.enabled === true,
           label: s.sso?.label || '使用 SSO 登录',
@@ -103,7 +106,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
   }, []);
 
   const showLocalLogin = needsBootstrap || localLoginEnabled;
-  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled;
+  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled || passkeyEnabled;
 
   function goToTarget() {
     // Server endpoints (including the cluster login handoff) must reach Express.
@@ -112,6 +115,20 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
       window.location.assign(target);
     } else {
       navigate(target, { replace: true, viewTransition: true });
+    }
+  }
+
+  async function signInPasskey() {
+    setError('');
+    setBusy(true);
+    try {
+      await signInWithPasskey();
+      goToTarget();
+    } catch {
+      setError('通行密钥登录未完成，请重试或使用其他登录方式。');
+      setShake(true);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -284,6 +301,13 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
             </div>
           ) : null}
           <div className="grid gap-2">
+            {passkeyEnabled ? (
+              <Button type="button" variant="outline" className="cds-auth-github" disabled={busy}
+                onClick={() => { void signInPasskey(); }}>
+                <ShieldCheck />
+                使用通行密钥登录
+              </Button>
+            ) : null}
             {ssoLogin.enabled ? (
               <Button asChild type="button" variant="outline" className="cds-auth-github">
                 <a href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}>
@@ -333,6 +357,10 @@ export function LoginPage(): JSX.Element {
   // (默认 /project-list,或 ?redirect= 指定的合法内部路径)。
   useEffect(() => {
     let alive = true;
+    if (new URLSearchParams(window.location.search).get('choose_account') === '1') {
+      setAuthPhase('anon');
+      return;
+    }
     fetchSessionAuthed().then((ok) => {
       if (!alive) return;
       if (!ok) {

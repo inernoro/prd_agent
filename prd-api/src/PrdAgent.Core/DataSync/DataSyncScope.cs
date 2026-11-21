@@ -401,6 +401,7 @@ public static class DataSyncScope
         ["chat_agent_messages"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["chat_agent_sessions"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["console_sso_tickets"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
+        ["cds_sso_sessions"] = "CDS 委托登录凭据，绑定本部署的站点、签发方和本地会话",
         ["defect_automation_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["design_artifact_runs"] = "运行时会话与审计投影：绑定当前实例的租约、工作区和执行器事实，跨实例复制会制造不可恢复的在途任务",
         ["design_artifact_runs_v2"] = "部署范围内的设计任务：绑定项目、分支、revision 与执行租约，不能跨实例复制",

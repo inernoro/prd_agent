@@ -2,6 +2,9 @@ using Moq;
 using System.IO.Compression;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Shouldly;
@@ -11,6 +14,134 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class HostedSiteOptimizationServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Integration")]
+    public async Task QueuedUpload_PreservesWorkerCompatibilityAndResumesWithTheSelectedEntry(bool legacy)
+    {
+        await using var mongo = await RunMongoFixture.CreateAsync("hosting_upload_queue");
+        using var zip = new MemoryStream();
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddTextEntry(archive, "report.md", "# Report");
+            AddTextEntry(archive, "data/manifest.json", "{}");
+        }
+        var bytes = zip.ToArray();
+        var storage = new Mock<IAssetStorage>();
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string id, string path) => $"web-hosting/sites/{id}/{path}");
+        var hostedSites = new Mock<IHostedSiteService>();
+        const string owner = "upload-owner";
+        var site = new HostedSite { EntryFile = legacy ? "map-directory.html" : "map-file.html" };
+        int? entryIndex = legacy ? null : 1;
+        var service = new HostedSiteOptimizationService(mongo.Db, storage.Object, hostedSites.Object,
+            NullLogger<HostedSiteOptimizationService>.Instance);
+        var upload = await service.CreateUploadAsync(owner, new CreateHostedSiteOptimizationUploadRequest
+        {
+            FileName = "reports.zip", FileSize = bytes.Length, EntryIndex = entryIndex,
+        });
+        hostedSites.Setup(x => x.CreateFromZipAsync(owner, It.IsAny<Stream>(), "reports", null, null,
+                It.IsAny<List<string>>(), null, CancellationToken.None, null, upload.Id, null, entryIndex))
+            .ReturnsAsync(site);
+        hostedSites.Setup(x => x.GetByIdAsync(site.Id, owner, CancellationToken.None)).ReturnsAsync(site);
+
+        await service.UploadChunkAsync(upload.Id, owner, 0, bytes);
+        await service.QueueUploadAsync(upload.Id, owner);
+        await service.QueueUploadAsync(upload.Id, owner);
+        (await service.GetUploadStatusAsync(upload.Id, owner)).Status.ShouldBe("queued");
+
+        var sessions = mongo.Db.HostedSiteOptimizationSessions;
+        var now = DateTime.UtcNow;
+        var analyzingStatus = legacy ? "analyzing" : HostedSiteOptimizationStatuses.ZipEntryAnalyzing;
+        var legacyClaim = Builders<HostedSiteOptimizationSession>.Filter.Where(x =>
+            x.Status == "queued" || (x.Status == "analyzing" && (x.LeaseExpiresAt == null || x.LeaseExpiresAt < now)));
+        (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(0L);
+        await sessions.UpdateOneAsync(x => x.Id == upload.Id, Builders<HostedSiteOptimizationSession>.Update
+            .Set(x => x.Status, analyzingStatus)
+            .Set(x => x.LeaseOwner, "expired-worker")
+            .Set(x => x.LeaseExpiresAt, now.AddMinutes(-5)));
+        (await service.GetUploadStatusAsync(upload.Id, owner)).Status.ShouldBe("analyzing");
+        (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(legacy ? 1L : 0L);
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), CancellationToken.None))
+            .Returns(async () =>
+            {
+                var active = await sessions.Find(x => x.Id == upload.Id).SingleAsync();
+                active.Status.ShouldBe(analyzingStatus);
+                active.LeaseOwner.ShouldNotBe("expired-worker");
+                (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(0L);
+                return bytes;
+            });
+
+        (await service.ProcessNextQueuedAsync()).ShouldBeTrue();
+        var result = await service.GetUploadStatusAsync(upload.Id, owner);
+        result.Status.ShouldBe("saved");
+        result.Review?.Site?.EntryFile.ShouldBe(site.EntryFile);
+    }
+
+    [Fact]
+    public void Analyze_ArchiveWithoutHtml_CanBePublishedAsDirectory()
+    {
+        using var zip = new MemoryStream();
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddTextEntry(archive, "bundle/report.md", "# Report");
+            AddTextEntry(archive, "bundle/data/results.json", "{}");
+        }
+
+        var analysis = CreateService().Analyze(zip);
+        analysis.Blocked.ShouldBeFalse();
+        analysis.Recommended.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DirectoryPage_UsesRelativeLinksAndEscapesNames()
+    {
+        var html = HostedSiteService.RenderZipDirectory(["data/报告 #1.json", "<report>.md"]);
+        html.ShouldContain("href=\"./data/%E6%8A%A5%E5%91%8A%20%231.json\"");
+        html.ShouldContain("href=\"./%3Creport%3E.md\">&lt;report&gt;.md</a>");
+        html.ShouldContain("<h2>data/</h2>");
+    }
+
+    [Fact]
+    public void SelectedZipFile_UsesRelativeDownloadAndDisplaysTextAsText()
+    {
+        var html = HostedSiteService.RenderZipAssetEntry("data/报告 #1.json", "application/json", "<script>example</script>", truncated: true);
+
+        html.ShouldContain("href=\"./data/%E6%8A%A5%E5%91%8A%20%231.json\" download");
+        html.ShouldContain("<h1>报告 #1.json</h1>");
+        html.ShouldContain("<pre>&lt;script&gt;example&lt;/script&gt;</pre>");
+        html.ShouldContain("仅显示文件开头");
+        html.ShouldNotContain("<script>example</script>");
+        html.ShouldContain("map-hosted-zip-original-download");
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    [InlineData(3, false)]
+    [InlineData(-1, false)]
+    public void ManualHomepage_UsesCentralDirectoryPositionAndChecksEligibility(int index, bool accepted)
+    {
+        var storage = new Mock<IAssetStorage>();
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string siteId, string path) => $"web-hosting/sites/{siteId}/{path}");
+        var service = new HostedSiteService(null!, storage.Object, null!, null!, null!, null!, null!, null!,
+            NullLogger<HostedSiteService>.Instance);
+        using var zip = new MemoryStream();
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            archive.CreateEntry("bundle/");
+            AddTextEntry(archive, "bundle\\data\\清单.json", "{}");
+            AddTextEntry(archive, "bundle/run.sh", "sample");
+        }
+
+        var error = service.ValidateZip("00000000000000000000000000000000", zip, index);
+
+        error.ShouldBe(accepted ? null : "选定的首页不在可发布文件中，请重新选择首页或使用文件目录");
+    }
+
     [Theory]
     [InlineData(600L * 1024 * 1024, false, true)]
     [InlineData(5000L * 1024 * 1024, false, true)]

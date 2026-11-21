@@ -254,13 +254,13 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     res.json({ branchId: branch.id, profileId, key, value: nextValue, token: value, resolved, scope: 'branch-override', restartHint: '切换写入该服务的分支覆盖，重新部署该服务后生效（原地重启不会刷新容器环境变量）' });
   });
 
-  /** 分支服务图 + 体检 + 引用（service-graph 接口与全局概览共用同一份计算）。 */
+  /** 分支服务图 + 体检 + 引用。 */
   function buildBranchGraphPayload(branch: NonNullable<ReturnType<StateService['getBranch']>>, canSeeProject: (projectId: string) => boolean) {
     // env 用生效合并结果（与 replica-sets 的服务图同一口径），只暴露键名
     const projectEnv = deps.stateService.getCustomEnv(branch.projectId);
     const branchEnv = deps.stateService.getCustomEnvScope(branch.id);
     // 先按分支解析 profileOverrides（前缀 / 子域 / 入口 / 部署模式），再合并 env：转发器与 master 兜底
-    // 路由用的都是 resolveEffectiveProfile 之后的 profile，图、体检、概览、cdscli topology 必须看同一份
+    // 路由用的都是 resolveEffectiveProfile 之后的 profile，图、体检、cdscli topology 必须看同一份
     const profiles = deps.stateService.getEffectiveProfilesForBranch(branch)
       .map((p) => resolveEffectiveProfile(p, branch))
       .map((p) => ({ ...p, env: { ...projectEnv, ...branchEnv, ...(p.env || {}) } }));
@@ -287,67 +287,6 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     const denied = deps.assertProjectAccess(req, branch.projectId);
     if (denied) { res.status(denied.status).json(denied.body); return; }
     res.json(buildBranchGraphPayload(branch, (pid) => canSeeProject(req, pid)));
-  });
-
-  /**
-   * 全局概览（plan.cds.service-relations 第四批）：每个项目取代表分支（默认分支，没有就取最近
-   * 部署的那条），给出体检结论、服务构成、跨项目引用边。只返回调用方有权限的项目。
-   */
-  router.get('/overview/topology', (req, res) => {
-    const projects = (deps.stateService.getState().projects ?? []).filter((p) => canSeeProject(req, p.id));
-    const branches = deps.stateService.getAllBranches();
-    const out = projects.map((project) => {
-      const p = project as typeof project & { gitDefaultBranch?: string | null; defaultBranch?: string | null };
-      const mine = branches.filter((b) => b.projectId === project.id);
-      const wanted = (p.gitDefaultBranch || p.defaultBranch || 'main').trim();
-      const rep = mine.find((b) => b.id === wanted) ?? mine.find((b) => b.branch === wanted)
-        ?? [...mine].sort((a, b) => String((b as { lastDeployAt?: string }).lastDeployAt ?? b.createdAt ?? '').localeCompare(String((a as { lastDeployAt?: string }).lastDeployAt ?? a.createdAt ?? '')))[0];
-      if (!rep) {
-        return { projectId: project.id, slug: project.slug, name: project.name, branch: null, branchCount: 0, counts: { services: 0, sites: 0, apis: 0, webs: 0, workers: 0 }, lint: { errors: 0, warnings: 0, infos: 0 }, headline: '还没有分支', findings: [], edges: [] };
-      }
-      const payload = buildBranchGraphPayload(rep, (pid) => canSeeProject(req, pid));
-      const services = payload.graph.nodes.filter((n) => n.kind === 'service');
-      const edges: Array<{ toProjectId: string; toBranchId?: string; toBranchName?: string; kind: 'cds-ref' | 'url'; status: string; fromService: string; key: string }> = [];
-      for (const r of payload.references) {
-        if (r.kind === 'cds-ref') {
-          for (const x of r.resolved ?? []) {
-            if (x.target.projectId && x.target.projectId !== project.id) {
-              edges.push({ toProjectId: x.target.projectId, toBranchId: x.target.branchId, toBranchName: x.target.branchName, kind: 'cds-ref', status: x.status, fromService: r.profileId, key: r.key });
-            }
-          }
-        } else if (r.kind === 'url' && r.matchedBranch && r.matchedBranch.projectId !== project.id) {
-          edges.push({ toProjectId: r.matchedBranch.projectId, toBranchId: r.matchedBranch.branchId, toBranchName: r.matchedBranch.branchName, kind: 'url', status: r.matchedBranch.status, fromService: r.profileId, key: r.key });
-        }
-      }
-      const top = payload.lint.findings[0];
-      return {
-        projectId: project.id, slug: project.slug, name: project.name,
-        branch: { id: rep.id, name: rep.branch, status: String(rep.status) },
-        branchCount: mine.length,
-        counts: {
-          services: services.length,
-          sites: payload.graph.sites.length,
-          apis: services.filter((n) => n.role === 'api').length,
-          webs: services.filter((n) => n.role === 'web').length,
-          workers: services.filter((n) => n.role === 'worker').length,
-        },
-        lint: payload.lint.summary,
-        headline: top ? top.message : '无问题',
-        findings: payload.lint.findings.slice(0, 8),
-        edges,
-      };
-    });
-    const inbound = new Map<string, number>();
-    for (const p of out) for (const e of p.edges) inbound.set(e.toProjectId, (inbound.get(e.toProjectId) ?? 0) + 1);
-    res.json({
-      generatedAt: new Date().toISOString(),
-      summary: {
-        errors: out.reduce((n, p) => n + p.lint.errors, 0),
-        warnings: out.reduce((n, p) => n + p.lint.warnings, 0),
-        infos: out.reduce((n, p) => n + p.lint.infos, 0),
-      },
-      projects: out.map((p) => ({ ...p, inboundEdges: inbound.get(p.projectId) ?? 0 })),
-    });
   });
 
   /**

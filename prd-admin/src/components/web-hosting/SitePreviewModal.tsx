@@ -1,10 +1,12 @@
+import { ReviewHistoryHint, ReviewReaderTabs, ReviewUnavailableNotice, reviewReaderTint, useReviewReaderWidth, type ReviewHistoryHintValue } from './ReviewReaderChrome';
+import { ReviewSidebarResizeHandle, useReviewSidebarWidth } from './ReviewSidebarResizeHandle';
 import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { useHostedSiteWindow } from './useHostedSiteWindow';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useId } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, FileWarning, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
+import { X, ExternalLink, FileWarning, BookOpen, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
@@ -12,9 +14,12 @@ import CommentsSection from './CommentsSection';
 import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationModeBar } from './AnnotationModeBar';
 import { useHostedReview } from './useHostedReview';
-import { ReviewToolbarControls } from './ReviewToolbarControls';
+import { ReviewBubbleToggle, ReviewToolbarControls } from './ReviewToolbarControls';
+import { ReviewVersionBar } from './ReviewVersionBar';
 import { AnnotationBubble } from './AnnotationBubble';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { ShareMoreMenu } from './SharePageControls';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
@@ -62,16 +67,23 @@ export default function SitePreviewModal({
   onEditInWorkbench,
   onSiteVersionChanged,
 }: Props) {
-  const isMobile = useIsMobile();
+  const viewportMobile = useIsMobile();
+  const theme = useResolvedThemeMode();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const readerWidth = useReviewReaderWidth(dialogRef);
+  const isMobile = readerWidth < 768;
+  const sideBySide = readerWidth >= 1024;
+  const documentPanelId = useId(), discussionPanelId = useId();
   const siteWindow = useHostedSiteWindow();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const review = useHostedReview(iframeRef, originalSite,
     originalSite.wrappedAssetType ? null : { mode: 'site', siteId: originalSite.id },
-    () => setRightPanel('comments'), onSiteVersionChanged);
+    () => setRightPanel('comments'), onSiteVersionChanged, { dualColumn: true, pinOpensDiscussion: isMobile });
   const pdfDownload = useHostedPdfDownload(review.historical ? null : { ...originalSite, ...review.liveSite }, undefined, iframeRef);
   const site = { ...originalSite, ...review.site };
   const annotations = review.annotations;
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const commentCount = annotations.threads.filter(thread => !thread.parentId).length;
+  const [historyHint, setHistoryHint] = useState<ReviewHistoryHintValue | null>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   const [loading, setLoading] = useState(true);
@@ -80,8 +92,10 @@ export default function SitePreviewModal({
   /** 加载偏慢：只挂一条角标提示，不遮挡已经绘制出来的内容 */
   const [slow, setSlow] = useState(false);
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
-  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>('none');
+  const [panelOverride, setRightPanel] = useState<'none' | 'comments' | 'ask' | null>(null);
+  const rightPanel = panelOverride ?? (sideBySide ? 'comments' : 'none');
   const showComments = rightPanel === 'comments';
+  const reviewSidebar = useReviewSidebarWidth(readerWidth);
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
     const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
     setRightPanel(want ? 'comments' : 'none');
@@ -131,20 +145,23 @@ export default function SitePreviewModal({
    * （与 ShareViewPage 的取舍一致）。这里必须是latch，不能写成 `srcDoc && !超时` 这种会翻回去的表达式。
    */
   const [renderMode, setRenderMode] = useState<'waiting' | 'srcdoc' | 'direct'>('waiting');
+  const currentPreviewFetchable = shouldFetchPreviewHtml({ ...originalSite, ...review.liveSite });
   useEffect(() => {
-    if (review.historical || renderMode !== 'waiting') return;
+    if (review.historical) return;
+    // 迟到的元数据可能令内联正文失效。只退出失效路径，已加载的直链不重置或重载。
+    if (!currentPreviewFetchable && renderMode === 'srcdoc') { setRenderMode('direct'); return; }
+    if (renderMode !== 'waiting') return;
     if (srcDoc) { setRenderMode('srcdoc'); return; }
     if (!htmlLoading) setRenderMode('direct');
-  }, [renderMode, srcDoc, htmlLoading, review.historical]);
-  const useSrcDoc = review.historical ? !!srcDoc : renderMode === 'srcdoc';
+  }, [renderMode, srcDoc, htmlLoading, review.historical, currentPreviewFetchable]);
+  const useSrcDoc = review.historical ? !!srcDoc : renderMode === 'srcdoc' && currentPreviewFetchable;
+  const previewFrameKey = `${review.historical ? review.selected?.id : 'live'}:${useSrcDoc ? 'srcdoc' : 'direct'}`;
+  const previewFrameSrc = historicalLoading || useSrcDoc || (review.historical && !site.siteUrl) ? undefined : previewSource.src;
+  const previewFrameSrcDoc = !historicalLoading && useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined;
 
-  // 发布新版本后 siteUrl 的版本指纹会变化。预览组件不卸载，因此必须显式重开
-  // srcDoc/direct 的一次性判定，否则 iframe 会继续停在发布前的旧内容。
+  // 地址和历史选择只负责重新选源，加载状态由下方实际 iframe 输入统一管理。
   useEffect(() => {
     setRenderMode('waiting');
-    setLoading(true);
-    setErrored(false);
-    setSlow(false);
     if (review.historical) return;
     const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
     return () => window.clearTimeout(timer);
@@ -218,15 +235,18 @@ export default function SitePreviewModal({
   // 用户看到的就是「无法预览」。判据必须换成真正能证明失败的信号：iframe onError。
   // 超时只降级为一条非阻断的角标提示，绝不遮挡内容。
   // 参见 .claude/rules/predicate-and-wiring-discipline.md 形状 1（判据比它该管的范围窄）。
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // 在浏览器可能触发 load 前重置；同 key/src/srcDoc 的元数据更新不会重新遮住正文。
+    setLoading(true);
+    setErrored(false);
+    setSlow(false);
     const timer = setTimeout(() => setSlow(true), SLOW_HINT_MS);
     return () => clearTimeout(timer);
-  }, [site.siteUrl, review.loading]);
+  }, [previewFrameKey, previewFrameSrc, previewFrameSrcDoc]);
 
   const handleOpenExternal = () => {
-    // 当前版复用“访问”的 /s/wp 阅读入口；历史版仍打开所选版本的原地址。
-    if (review.historical && previewSource.src) window.open(previewSource.src, '_blank', 'noopener,noreferrer');
-    else void siteWindow.open(originalSite.id);
+    // 历史快照也走鉴权阅读页，内联快照没有可外开的原始 URL。
+    void siteWindow.open(originalSite.id, review.historical ? review.selected?.id : undefined);
   };
 
   const handleToggleCommentsEnabled = async () => {
@@ -244,8 +264,8 @@ export default function SitePreviewModal({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-1 sm:p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm sm:p-4"
+      onClick={event => { if (event.target === event.currentTarget) onClose(); }}
     >
       <div
         ref={dialogRef}
@@ -253,96 +273,63 @@ export default function SitePreviewModal({
         aria-modal="true"
         aria-labelledby="site-preview-dialog-title"
         tabIndex={-1}
-        className="relative flex flex-col rounded-xl border border-token-subtle bg-token-card text-token-primary shadow-2xl"
-        style={{ width: '90vw', height: '90vh', maxWidth: '1400px', background: 'var(--bg-elevated)' }}
+        className="review-workbench review-b-surface relative flex flex-col shadow-2xl sm:rounded-xl sm:border sm:border-token-subtle"
+        data-theme={theme}
+        data-review-layout={isMobile ? 'mobile' : 'desktop'}
+        style={{ width: viewportMobile ? '100vw' : '90vw', height: viewportMobile ? '100dvh' : '90dvh', maxWidth: '1400px' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-2">
-          <div className="flex min-w-0 w-full flex-1 items-center gap-2 sm:w-auto">
-            <div className="min-w-0 flex-1">
-            <h3 id="site-preview-dialog-title" className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
-            <p className="hidden text-xs text-token-muted truncate sm:block">{site.siteUrl}</p>
+        <div className="hosted-preview-toolbar review-reader-toolbar border-b border-token-subtle" style={reviewReaderTint(annotations.headerTints)}>
+          <div className="review-reader-title">
+            <span className="review-reader-icon" aria-hidden="true"><BookOpen size={16} /></span>
+            <div className="review-reader-identity">
+              <h3 id="site-preview-dialog-title" className="review-reader-identity-line"><span>{site.title}</span></h3>
+              {site.description && <span className="review-reader-source">{site.description}</span>}
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex min-h-11 sm:min-h-7 min-w-11 sm:min-w-7 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:hidden"
-              title="关闭"
-              aria-label="关闭"
-            >
-              <X className="h-4 w-4" />
-            </button>
           </div>
-          <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
-            <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar"
+          {!originalSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={canToggleComments} readerToolbar readerStage={iframeRef} />}
+          <div className="review-reader-actions">
+            {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
+            <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar" reviewReader
               onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
-            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} onBubbleMode={() => { if (isMobile) setShowComments(false); }} />
-            {askEnabled && !review.historical && (
-              <button
-                type="button"
-                onClick={() => {
-                  setAskEverOpened(true);
-                  setRightPanel((p) => (p === 'ask' ? 'none' : 'ask'));
-                }}
-                className={`flex min-h-11 sm:min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                  rightPanel === 'ask' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
-                }`}
-              >
-                <MessageCircleQuestion className="w-3.5 h-3.5" />
-                提问
+            {!isMobile && <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)}
+              expanded={showComments} count={commentCount} showVersions={false} showBubbleToggle={!originalSite.wrappedAssetType} readerLayout />}
+            <ShareMoreMenu adaptive>
+              {isMobile && historyHint && !review.historical && <ReviewHistoryHint menu value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
+              {askEnabled && !review.historical && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => {
+                setAskEverOpened(true);
+                setRightPanel(rightPanel === 'ask' ? 'none' : 'ask');
+              }}><MessageCircleQuestion size={16} />提问</button>}
+              {canToggleComments && !site.wrappedAssetType && onEditInWorkbench &&
+                <button type="button" role="menuitem" className="share-topbar-btn" onClick={onEditInWorkbench}
+                  disabled={review.historical || review.loading} title="在工作台起草新版本">
+                  <WandSparkles size={16} />帮我修改
+                </button>}
+              {canToggleComments && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => setShowAskConfig(true)}>
+                <Settings2 size={16} />提问设置
+              </button>}
+              <button type="button" role="menuitem" className="share-topbar-btn" onClick={handleOpenExternal}
+                disabled={siteWindow.opening || review.loading}>
+                <ExternalLink size={16} />{siteWindow.opening ? '正在打开…' : '新窗口打开'}
               </button>
-            )}
-            {canToggleComments && !site.wrappedAssetType && onEditInWorkbench && (
-              <button
-                type="button"
-                onClick={onEditInWorkbench}
-                disabled={review.historical || review.loading}
-                title={review.historical ? '历史版本只读；请切回当前发布版修改' : '在工作台里说想改哪里，先出草稿再发布；历史版本也在那里'}
-                className="flex min-h-11 sm:min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              >
-                <WandSparkles className="w-3.5 h-3.5" />
-                帮我修改
-              </button>
-            )}
-            {canToggleComments && (
-              <button
-                type="button"
-                onClick={() => setShowAskConfig(true)}
-                className="inline-flex min-h-11 sm:min-h-7 min-w-11 sm:min-w-7 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                title="提问设置"
-                aria-label="提问设置"
-              >
-                <Settings2 className="w-4 h-4" />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleOpenExternal}
-              disabled={siteWindow.opening || !previewSource.src}
-              title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'}
-              className="flex min-h-11 sm:min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              {siteWindow.opening ? '正在打开…' : '新窗口打开'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="hidden min-h-11 sm:min-h-7 min-w-11 sm:min-w-7 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:inline-flex"
-              title="关闭"
-              aria-label="关闭"
-            >
-              <X className="w-4 h-4" />
+            </ShareMoreMenu>
+            <button type="button" onClick={onClose} className="share-topbar-btn share-topbar-icon" title="关闭" aria-label="关闭">
+              <X size={16} />
             </button>
           </div>
+          {isMobile && <ReviewReaderTabs discussion={showComments} count={commentCount}
+            documentId={documentPanelId} discussionId={discussionPanelId} onChange={setShowComments}
+            trailing={!originalSite.wrappedAssetType && <ReviewBubbleToggle annotations={annotations} readerLayout />} />}
         </div>
-
 
         {/* 主体：iframe + 可选评论面板 */}
         <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
-          <div className="flex-1 min-w-0 min-h-0 relative bg-token-nested" style={{ flex: isMobile && showComments ? '0 0 30%' : undefined }}>
+          <div id={documentPanelId} role={isMobile ? 'tabpanel' : undefined} aria-labelledby={isMobile ? `${documentPanelId}-tab` : undefined}
+            aria-hidden={isMobile && rightPanel !== 'none' ? true : undefined}
+            className="review-document-stage flex-1 min-w-0 min-h-0 relative" style={{ background: 'var(--review-b-paper)' }}>
+            {!review.loading && (site.wrappedAssetType === 'pdf' || (annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {(historicalLoading || (loading && !slow)) && (
@@ -380,9 +367,9 @@ export default function SitePreviewModal({
             <iframe
               ref={iframeRef}
               // waiting 与 direct 都已加载同一个原地址，结束等待不能重建文档、清空用户输入。
-              key={`${review.historical ? review.selected?.id : 'live'}:${useSrcDoc ? 'srcdoc' : 'direct'}`}
-              src={historicalLoading || useSrcDoc || (review.historical && !site.siteUrl) ? undefined : previewSource.src}
-              srcDoc={!historicalLoading && useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined}
+              key={previewFrameKey}
+              src={previewFrameSrc}
+              srcDoc={previewFrameSrcDoc}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {
@@ -406,22 +393,18 @@ export default function SitePreviewModal({
                 : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(previewSource.src)} allow-modals`}
               title={site.title}
             />
-            <AnnotationBubble annotations={annotations} hidden={isMobile && showComments} />
+            <AnnotationBubble annotations={annotations} hidden={showComments || isMobile} />
           </div>
 
           {/* 评论面板 */}
           {(
             <aside
-              style={{ display: showComments ? 'flex' : 'none', background: 'var(--bg-elevated)', ...(isMobile ? { top: 'auto', height: '70%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
-              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:static sm:inset-auto sm:z-auto sm:w-[360px] sm:shrink-0 sm:border-l sm:border-token-subtle"
+              id={discussionPanelId} role={isMobile ? 'tabpanel' : undefined} aria-labelledby={isMobile ? `${discussionPanelId}-tab` : undefined}
+              style={{ display: showComments ? 'flex' : 'none', position: sideBySide ? 'relative' : 'absolute',
+                width: isMobile ? '100%' : reviewSidebar.width, ...(sideBySide ? {} : { top: 0, bottom: 0, right: 0, zIndex: 3 }) }}
+              className="review-sidebar min-h-0 flex-col shrink-0"
             >
-              <div className="review-sidebar-heading">
-                <span className="text-token-primary">批注与讨论</span>
-                {canToggleComments && <button type="button" role="switch" aria-label="允许访客评论" aria-checked={commentsEnabled}
-                  onClick={handleToggleCommentsEnabled} disabled={togglingComments} className="review-permission-switch" title="允许访客评论与批注">
-                  <span>允许评论</span><i aria-hidden="true" /></button>}
-                <button type="button" onClick={() => setRightPanel('none')} aria-label="收起批注面板" className="p-1 text-token-muted hover:text-token-primary"><X size={16} /></button>
-              </div>
+              {!isMobile && <ReviewSidebarResizeHandle {...reviewSidebar} />}
               <div
                 className="flex-1 min-h-0 overflow-hidden"
                 style={{ overscrollBehavior: 'contain' }}
@@ -429,12 +412,21 @@ export default function SitePreviewModal({
                 {/* key 随开关变化，强制刷新评论区的 commentsEnabled 态；
                     onStateLoaded 用服务端权威值回填开关，消除"开关 ON 但面板显示已关闭"的 stale 偏差（Cursor medium） */}
                 <CommentsSection
+                  splitLayout
+                  readerLayout
+                  visible={showComments}
                   key={`${site.id}:${commentsEnabled}`}
                   mode="site"
                   siteId={site.id}
                   annotations={annotations}
                   review={originalSite.wrappedAssetType ? undefined : review}
                   onPickElement={() => setRightPanel('none')}
+                  onHistoryHint={setHistoryHint}
+                  onClose={!isMobile ? () => setRightPanel('none') : undefined}
+                  onLocateAnchor={isMobile ? focus => { setRightPanel('none'); requestAnimationFrame(focus); } : undefined}
+                  headerActions={canToggleComments && <button type="button" role="switch" aria-label="允许访客评论" aria-checked={commentsEnabled}
+                    onClick={handleToggleCommentsEnabled} disabled={togglingComments} className="review-permission-switch" title="允许访客评论与批注">
+                    <span>允许评论</span><i aria-hidden="true" /></button>}
                   onStateLoaded={(serverEnabled) => {
                     if (serverEnabled !== commentsEnabled) {
                       setCommentsEnabled(serverEnabled);

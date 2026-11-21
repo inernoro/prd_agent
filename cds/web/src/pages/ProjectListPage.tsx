@@ -51,7 +51,7 @@ import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { useNowTick } from '@/hooks/useNowTick';
 import { readProjectInventoryPreferences, writeProjectInventoryPreferences, type ProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanShowProjectActions } from '@/components/layout/AppShell';
+import { AppShell, ProjectListTopBar, Workspace, useCanShowProjectActions } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
@@ -777,15 +777,22 @@ export function ProjectListPage(): JSX.Element {
   }
 
   // 页面标题、操作与筛选属于完整项目页；全局顶栏继续承载通用运维入口。
+  const refreshAction = <Button
+    variant="ghost"
+    size="icon"
+    onClick={() => { void refresh(false); setEnvironmentRefresh(value => value + 1); }}
+    aria-label="刷新项目列表"
+    title="刷新"
+  >
+    <RefreshCw />
+    <span className="md:hidden">刷新</span>
+  </Button>;
   return (
     <AppShell
       active="projects"
       topbar={
-        <TopBar
-          left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />}
-          right={
-            <>
-              <PaletteHint />
+        <ProjectListTopBar canManageProjects={showProjectCreator} refreshWhileLoading={refreshAction}>
+          {state.status === 'loading' ? undefined : <>
               {canManageProjects ? <>
               <Button
                 variant="ghost"
@@ -817,16 +824,7 @@ export function ProjectListPage(): JSX.Element {
                 </Button>
               ) : null}
               </> : null}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => { void refresh(false); setEnvironmentRefresh(value => value + 1); }}
-                aria-label="刷新项目列表"
-                title="刷新"
-              >
-                <RefreshCw />
-                <span className="md:hidden">刷新</span>
-              </Button>
+              {refreshAction}
               {state.status === 'ok' && !canManageProjects ? <Button variant="outline" size="sm" onClick={() => navigate('/dts')}><Database />数据同步</Button> : null}
               {canManageProjects ? <DropdownMenu
                 trigger={
@@ -870,9 +868,8 @@ export function ProjectListPage(): JSX.Element {
                   Agent 申请记录
                 </DropdownItem>
               </DropdownMenu> : null}
-            </>
-          }
-        />
+          </>}
+        </ProjectListTopBar>
       }
     >
       <Workspace fluid className="cds-project-inventory-workspace">

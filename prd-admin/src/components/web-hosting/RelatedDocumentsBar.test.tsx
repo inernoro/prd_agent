@@ -41,6 +41,9 @@ const clickText = async (text: string) => {
   await act(async () => button!.click());
 };
 const open = async () => { await act(async () => container.querySelector<HTMLButtonElement>('.related-trigger')!.click()); };
+const openFromMenu = async () => {
+  await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation menuAnchor={container} />));
+};
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.clearAllMocks();
@@ -55,6 +58,47 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
+  it('零关联不显示卡片徽标，仍可从更多设置管理关联', async () => {
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, version: 0, items: [data.items[0]] }, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation summary={{ count: 0, isMain: false, titles: [] }} />));
+    expect(container.querySelector('.related-trigger')).toBeNull();
+    expect(getCollectionContexts).not.toHaveBeenCalled();
+    await openFromMenu();
+    expect(container.querySelector('.related-trigger')).toBeNull();
+    expect(document.querySelector('.related-popover')?.textContent).toContain('暂无关联文档');
+    await clickText('管理关联');
+    const manager = document.querySelector('[aria-label="管理关联文档"]');
+    expect(manager?.textContent).toContain('已关联 0 / 89');
+    expect(manager?.textContent).toContain('当前文档');
+    expect(manager?.querySelector('.related-candidate')?.textContent).not.toContain(data.items[0].title);
+  });
+  it('读取失败时阅读器不显示只有链条的入口，重新读取成功才显示实际关联', async () => {
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: false, data: null as never, error: { code: 'FAILED', message: '关联暂不可用' } });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
+    expect(container.querySelector('.related-trigger')).toBeNull();
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data, error: null });
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(container.querySelector('.related-count')?.textContent).toBe('1');
+  });
+  it('没有外部关联时顶部入口完全隐藏，管理仍可从完整关联栏进入', async () => {
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, version: 0, mainSiteId: null, items: [data.items[0]] }, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
+    expect(container.querySelector('[aria-label="关联文档导航"]')).toBeNull();
+    expect(document.querySelector('.related-popover')).toBeNull();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="bar" />));
+    await open();
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(0);
+    expect(document.querySelector('.related-popover')?.textContent).toContain('暂无关联文档');
+    await clickText('管理关联');
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
+  });
+  it('关联数量和列表只包含其他文档', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
+    expect(container.querySelector('.related-count')?.textContent).toBe('1');
+    await open();
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('技术设计');
+  });
   it('卡片只保留一个悬浮入口，没有合集时直接显示文档', async () => {
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation siteTitle="总体方案" summary={{ count: 1, isMain: true, titles: ['技术设计'] }} />));
     expect(getCollectionContexts).not.toHaveBeenCalled();
@@ -65,7 +109,7 @@ describe('顶部关联文档', () => {
     expect(document.querySelectorAll('.related-popover')).toHaveLength(1);
     expect(container.querySelectorAll('button')).toHaveLength(1);
     expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
     expect(document.querySelector('[aria-label="文档关系类型"]')).toBeNull();
     expect(saveRelatedDocuments).not.toHaveBeenCalled();
   });
@@ -74,7 +118,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [data.items[0]] }, error: null });
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getCollectionContextLinks).mockResolvedValue({ success: true, data: { items: [context.primaryLink!], total: 3, page: 1, pageSize: 20 }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('[data-collection-layout="single"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', 'collection:one');
@@ -107,7 +151,7 @@ describe('顶部关联文档', () => {
     const contexts = [makeContext('one', 2), makeContext('two', 1), makeContext('unshared', 0)];
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: contexts, total: 3, totalContexts: 3, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getCollectionContextDocuments).mockImplementation(async (_site, contextId) => ({ success: true, data: { ...data, canManage: false, items: [{ id: contextId, title: contextId, href: '/web-pages?openSite=' + contextId }] }, error: null }));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('[data-collection-layout="split"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="所属合集"] a')).toBeNull();
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
@@ -124,10 +168,10 @@ describe('顶部关联文档', () => {
   it('手动关联和合集同时存在时都能独立读取，手动关系仍保留管理入口', async () => {
     const context = makeContext('one', 1);
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', 'collection:one');
     await clickText('关联文档');
-    expect(document.querySelector('.related-document-card')?.textContent).toContain('总体方案');
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('技术设计');
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe('');
     await clickText('管理关联');
     expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
@@ -138,7 +182,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     let resolve!: (value: Awaited<ReturnType<typeof getRelatedDocuments>>) => void;
     vi.mocked(getRelatedDocuments).mockReturnValueOnce(new Promise(done => { resolve = done; }));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', context.id);
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
@@ -151,13 +195,13 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     if (failure === '响应失败') vi.mocked(getRelatedDocuments).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '关联服务暂不可用' } });
     else vi.mocked(getRelatedDocuments).mockRejectedValueOnce(new Error('network'));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('.collection-context-select')?.textContent).toContain('暂时无法读取');
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
     expect([...document.querySelectorAll('button')].some(button => button.textContent === '管理关联')).toBe(false);
     await clickText('关联文档');
-    expect(document.querySelector('.related-document-card')?.textContent).toContain('总体方案');
+    expect(document.querySelector('.related-document-card')?.textContent).toContain('技术设计');
     expect(document.querySelector('[aria-label="关联文档"].collection-context-select')?.textContent).not.toContain('暂时无法读取');
     await clickText('管理关联');
     expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('管理关联文档');
@@ -168,7 +212,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getRelatedDocuments).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '关联暂不可用' } })
       .mockResolvedValue({ success: true, data: { ...data, items: [data.items[0]] }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('.collection-context-select')?.textContent).toContain('暂时无法读取');
     await clickText('关联文档');
     expect(document.querySelector('[aria-label="所属合集"]')).toBeNull();
@@ -181,7 +225,7 @@ describe('顶部关联文档', () => {
     const inactive = { ...context.primaryLink!, id: 'revoked', shareUrl: '/s/wp/revoked', isActive: false, statusLabel: '已撤销' };
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getCollectionContextLinks).mockResolvedValue({ success: true, data: { items: [context.primaryLink!, inactive], total: 2, page: 1, pageSize: 20 }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     await clickText('查看全部 2 条链接');
     await act(async () => document.querySelectorAll<HTMLButtonElement>('.collection-context-link-option')[1].click());
     const footer = document.querySelector<HTMLElement>('[aria-label="合集链接操作"]')!;
@@ -196,7 +240,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: contexts, total: 2, totalContexts: 2, page: 1, pageSize: 20 }, error: null });
     let resolve!: (value: Awaited<ReturnType<typeof getCollectionContextLinks>>) => void;
     vi.mocked(getCollectionContextLinks).mockReturnValue(new Promise(done => { resolve = done; }));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     await clickText('查看全部 2 条链接');
     await clickText('合集 two');
     await act(async () => resolve({ success: true, data: { items: [contexts[0].primaryLink!], total: 1, page: 1, pageSize: 20 }, error: null }));
@@ -208,7 +252,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null });
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { clipboard: { writeText } }); vi.stubGlobal('isSecureContext', true);
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     const button = document.querySelector<HTMLButtonElement>('.collection-context-link-actions button')!;
     const link = document.querySelector('.collection-context-link-actions a');
     await act(async () => {
@@ -228,7 +272,7 @@ describe('顶部关联文档', () => {
   });
   it('合集搜索覆盖服务器全部记录，翻页稳定，筛成一项仍保留选择栏', async () => {
     vi.mocked(getCollectionContexts).mockImplementation(async (_site, page = 1, keyword = '') => ({ success: true, data: { items: keyword ? [makeContext('matched', 1)] : Array.from({ length: 20 }, (_, i) => makeContext(String((page - 1) * 20 + i), 1)), total: keyword ? 1 : 45, totalContexts: 45, page, pageSize: 20 }, error: null }));
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     const nav = document.querySelector('[aria-label="合集分页"]')!;
     await act(async () => [...nav.querySelectorAll('button')].find(button => button.textContent === '下一页')!.click());
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
@@ -244,11 +288,11 @@ describe('顶部关联文档', () => {
   });
   it('读取失败显示重试，不误判成没有合集，也不读取无关文档', async () => {
     vi.mocked(getCollectionContexts).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '合集暂时无法读取' } });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation />)); await open();
+    await openFromMenu();
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('合集暂时无法读取');
     expect(getRelatedDocuments).not.toHaveBeenCalled();
     await clickText('重试');
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
   });
 
   it('Escape 先关闭关联浮层并归还焦点，再按一次才交给父阅读器', async () => {
@@ -274,7 +318,7 @@ describe('顶部关联文档', () => {
     expect(container.querySelector('.related-trigger')?.getAttribute('title')).toContain('技术设计');
     await open();
     expect(getRelatedDocuments).toHaveBeenCalledTimes(1);
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
   });
   it('紧凑浮层删除重复说明，保留主文档角标、权限操作和外开入口', async () => {
     const navigate = vi.fn();
@@ -285,7 +329,7 @@ describe('顶部关联文档', () => {
     expect(container.querySelector('.related-trigger')?.getAttribute('title')).toContain('权限不一致');
     await open();
     expect(document.querySelector('.related-context-row')).toBeNull();
-    expect(document.querySelector('.related-main-badge')?.textContent).toContain('主文档');
+    expect(document.querySelector('.related-main-badge')).toBeNull();
     expect(document.querySelector('[aria-label="权限不一致"]')).not.toBeNull();
     expect(document.querySelector('.related-panel-heading')?.textContent).not.toContain('份可见文档');
     expect(document.body.textContent).not.toContain('每份文档独立授权');
@@ -313,7 +357,7 @@ describe('顶部关联文档', () => {
   it('真实页面预览接入，并支持列表与卡片视图切换和记忆', async () => {
     const previewItem = { ...data.items[1], preview: { id: 'b', siteUrl: 'https://assets.test/b.html', entryFile: 'index.html', useShareAccess: false } };
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [previewItem] }, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="b" />)); await open();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" />)); await open();
     expect(document.querySelector('[data-page-preview="https://assets.test/b.html"]')).not.toBeNull();
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="列表视图"]')!.click());
     expect(document.querySelector('.related-document-grid')?.classList.contains('is-list')).toBe(true);
@@ -336,7 +380,7 @@ describe('顶部关联文档', () => {
   it('文档标签通过现有文档接口保存，并在评论变化后重新读取关联列表', async () => {
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [{ ...data.items[0], canEditTags: true, tags: ['原标签'] }] }, error: null });
     vi.mocked(updateSite).mockResolvedValue({ success: true, data: {} as never, error: null });
-    await act(async () => root.render(<RelatedDocumentsBar siteId="a" />)); await open();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="b" />)); await open();
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="编辑标签：总体方案"]')!.click());
     await clickText('保存标签');
     expect(updateSite).toHaveBeenCalledWith('a', { tags: ['原标签'] });
@@ -349,8 +393,8 @@ describe('顶部关联文档', () => {
     const navigate = vi.fn();
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" onNavigate={navigate} />));
     await open();
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
-    expect(document.querySelector('[aria-current="page"]')?.textContent).toContain('总体方案');
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
+    expect(document.querySelector('[aria-current="page"]')).toBeNull();
     await act(async () => [...document.querySelectorAll<HTMLButtonElement>('button.related-document-card')].find(item => item.textContent?.includes('技术设计'))!.click());
     expect(navigate).toHaveBeenCalledWith(data.items[1]);
     expect(document.querySelector('.related-popover')).toBeNull();
@@ -360,7 +404,7 @@ describe('顶部关联文档', () => {
     await act(async () => root.render(<RelatedDocumentsBar siteId="b" source={{ token: 'limited-share', password: 'password' }} />));
     await open();
     expect(getRelatedDocuments).toHaveBeenCalledWith('b', { token: 'limited-share', password: 'password' });
-    expect(container.querySelector('.related-count')?.textContent).toBe('1');
+    expect(container.querySelector('.related-count')?.textContent).toBe('0');
     expect(document.body.textContent).not.toContain('总体方案');
     expect(document.body.textContent).not.toContain('管理关联');
     expect(document.body.textContent).not.toContain('权限不一致');
@@ -411,7 +455,7 @@ describe('顶部关联文档', () => {
     await open();
     expect(document.querySelectorAll('.related-document-card')).toHaveLength(9);
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="下一页"]')!.click());
-    expect(document.querySelectorAll('.related-document-card')).toHaveLength(3);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
     expect([...document.querySelectorAll('button.related-document-card')].some(item => item.textContent?.includes('文档 11'))).toBe(true);
     expect(document.querySelector('a[href*="openSite="]')).toBeNull();
   });

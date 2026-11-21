@@ -6,6 +6,7 @@ export type ShellAuthStatus = {
   previewAccessNotices?: boolean;
   designReviewNotices?: boolean;
   enabled?: boolean;
+  canUsePasskeys?: boolean;
   mode?: string;
   activeProvider?: string | null;
   logoutEndpoint?: string | null;

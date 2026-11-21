@@ -169,6 +169,8 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['instance-catalog', '主备 CDS 实例目录', 'instance-catalog.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'instance', '只读公共地址；已登记集群成员沿用统一授权，切换不迁移数据库或接管流量'],
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
+  ['passkeys', '通行密钥登录', 'passkeys.ts', 'system', 'human-only', 'protocol', 'guided', 'cds', '', '由用户在 CDS 登录域完成绑定和身份验证'],
+  ['hosted-sso', '托管站点登录与授权', 'hosted-sso.ts', 'system', 'human-only', 'protocol', 'guided', 'cds', '', '所有者在 CDS 登录域登记已发布的同注册域站点，项目自行实现登录与回调。面板只从本机代理读取接入状态和站内登录入口'],
   ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
   ['auth-session', '会话与 GitHub 登录', 'auth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', 'OAuth 回调和浏览器会话不是普通 Agent 工具'],
   ['branches', '分支、构建、资源与数据工作台', 'branches.ts', 'project', 'project', 'write', 'direct', 'cds-deploy-pipeline', 'branch', '写查询、恢复、清空和删除资源必须单独升级为破坏性审批'],

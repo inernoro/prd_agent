@@ -52,8 +52,8 @@ public sealed class McpWebHostingCompletionTests
             [new() { Path = "index.html" }, new() { Path = "details.html" }, new() { Path = "assets/p.png" }] };
         byte[]? received = null;
         sites.Setup(x => x.CreateFromZipAsync("u", It.IsAny<Stream>(), "Demo", null, null, null, null,
-                It.IsAny<CancellationToken>(), It.IsAny<string?>(), null))
-            .Returns((string _, Stream stream, string? _, string? _, string? _, List<string>? _, string? _, CancellationToken ct, string? _, string? _) =>
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), null, null, null))
+            .Returns((string _, Stream stream, string? _, string? _, string? _, List<string>? _, string? _, CancellationToken ct, string? _, string? _, string? _, int? _) =>
             {
                 ct.ShouldBe(CancellationToken.None);
                 using var copy = new MemoryStream(); stream.CopyTo(copy); received = copy.ToArray();
@@ -78,7 +78,7 @@ public sealed class McpWebHostingCompletionTests
         sites.Setup(x => x.GetByIdAsync("existing", "u", It.IsAny<CancellationToken>())).ReturnsAsync(site);
         sites.Setup(x => x.CanEditSiteAsync(site, "u", It.IsAny<CancellationToken>())).ReturnsAsync(true);
         sites.Setup(x => x.ReuploadAsync("existing", "u", It.IsAny<Stream>(), "new.zip", null,
-            It.IsAny<CancellationToken>(), null, null)).ReturnsAsync(site);
+            It.IsAny<CancellationToken>(), null, null, null, null)).ReturnsAsync(site);
         var bytes = Zip(("index.html", "updated"));
         using var input = new MemoryStream(bytes);
         var response = await Controller(sites.Object).ReuploadFile("existing", new FormFile(input, 0, input.Length, "file", "new.zip"),

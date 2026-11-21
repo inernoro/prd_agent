@@ -49,13 +49,6 @@
     "workspace": "fluid"
   },
   {
-    "route": "/overview",
-    "name": "全局关系概览",
-    "page": "pages/OverviewPage.tsx",
-    "kind": "relations",
-    "workspace": "fill"
-  },
-  {
     "route": "/release-center",
     "name": "发布中心",
     "page": "pages/ReleaseCenterPage.tsx",
@@ -66,7 +59,7 @@
     "route": "/release-center/approval/:authorizationId?",
     "name": "发布审批列表",
     "page": "pages/release-center/ReleaseApprovalPage.tsx",
-    "kind": "rows",
+    "kind": "release-approval",
     "workspace": "fluid"
   },
   {
@@ -115,7 +108,7 @@
     "route": "/status/:projectId",
     "name": "项目检查与通知",
     "page": "pages/ProjectStatusPage.tsx",
-    "kind": "monitor",
+    "kind": "project-monitor",
     "workspace": "fill"
   },
   {
@@ -123,7 +116,7 @@
     "name": "任务调度",
     "page": "pages/TaskSchedulePage.tsx",
     "kind": "rows",
-    "workspace": "fluid"
+    "workspace": "fill"
   },
   {
     "route": "/settings/:projectId",

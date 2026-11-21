@@ -1,4 +1,4 @@
-import { ReleaseConsoleSkeleton, RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_RIGHT_CLASS } from '@/components/skeletons/ReleaseConsoleSkeleton';
+import { isBatchReleaseMode, ReleaseConsoleSkeleton, RELEASE_CONSOLE_BATCH_SCROLL_CLASS, RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_NAV_CLASS, RELEASE_CONSOLE_RIGHT_CLASS, RELEASE_CONSOLE_RUN_GRID_CLASS } from '@/components/skeletons/ReleaseConsoleSkeleton';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /**
@@ -214,8 +214,9 @@ export function isConfirmedReleaseRejection(error: unknown, requestId: string): 
 
 export function ReleaseConsolePage(): JSX.Element {
   const { status, pending, retry } = useContext(ConsoleAuthContext);
+  const [params] = useSearchParams();
   const account = releaseAccountIdentity(status);
-  if (pending) return <AppShell><Workspace><ContentLoading label="确认发布操作身份" /></Workspace></AppShell>;
+  if (pending) return <AppShell active="release-center" wide><Workspace fluid className="cds-workspace--fill cds-workspace--bleed"><ReleaseConsoleSkeleton batch={isBatchReleaseMode(params)} /></Workspace></AppShell>;
   if (!account) return <AppShell><Workspace><div role="alert" className="space-y-3 py-4"><p>尚未确认发布操作身份，未读取保留的请求，也未开放发布命令。</p><Button variant="outline" onClick={retry}>重新确认身份</Button></div></Workspace></AppShell>;
   return <ReleaseConsoleWorkspace key={account} account={account} />;
 }
@@ -234,7 +235,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
   const [projectId, setProjectId] = useState(() => initialReleaseCenterProject(params, window.localStorage));
   const [unavailableProject, setUnavailableProject] = useState(false);
   const projectAvailable = projectsLoaded && Boolean(resolveReleaseProject(projectId, projects));
-  const batchMode = params.get('mode') === 'batch' || (!params.get('mode') && !params.has('target') && !params.has('intent'));
+  const batchMode = isBatchReleaseMode(params);
   const [batchLog, setBatchLog] = useState<ReleaseRun | null>(null);
   const [search, setSearch] = useState('');
   const [center, setCenter] = useState<CenterResponse | null>(null);
@@ -802,7 +803,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
           整块面板**，靠一条 1px 边框分隔，不是浮在底色上、四周留缝的圆角卡。
           这一条是这一页与参考稿观感差最远的地方，先把它对上。 */}
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed flex flex-col">
-        <nav aria-label="发布方式" className="flex shrink-0 flex-wrap gap-2 border-b border-[hsl(var(--hairline))] px-6 py-3">
+        <nav aria-label="发布方式" className={RELEASE_CONSOLE_NAV_CLASS}>
           {[{ mode: 'batch', label: '批次发布' }, { mode: 'single', label: '逐目标发布' }].map((item) => <Link key={item.mode}
             to={workspaceHref(item.mode)}
             aria-disabled={commandPending || undefined}
@@ -833,7 +834,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
             列宽照参考稿 288/380，但参考稿是在宽画布上量的（它自己写死 min-width:1228
             并让页面横滚，本仓库不允许——见 cds/.claude/rules/mobile-layout-fallback.md）。
             所以：xl 收成 240/300，wide(1440) 回到 264/340，2xl 才是参考值 288/380。 */}
-        {initialLoading ? <ReleaseConsoleSkeleton navigation={false} /> : !projectAvailable ? <div role="alert" className="m-6 rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{unavailableProject ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : error || '当前实例还没有可用项目，请先创建项目。'}</div> : batchMode ? <div className="h-full min-w-0 overflow-y-auto p-4 md:p-6">
+        {initialLoading ? <ReleaseConsoleSkeleton navigation={false} batch={batchMode} /> : !projectAvailable ? <div role="alert" className="m-6 rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{unavailableProject ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : error || '当前实例还没有可用项目，请先创建项目。'}</div> : batchMode ? <div className={RELEASE_CONSOLE_BATCH_SCROLL_CLASS}>
           {error ? <div role="alert" className="mb-4 rounded-md border border-bad/30 bg-bad-soft p-4 text-sm text-bad">{error}<Button variant="outline" size="sm" onClick={refreshProjectData} disabled={!projectsLoaded}>重试读取项目</Button></div> : null}
           {center ? <BatchReleasePanel key={projectId} projectId={projectId} targets={center.rows.map((item) => item.target)} currentRows={center.rows} onOpenLogs={setBatchLog} isTargetUnconfirmed={target => recovery.hasUnconfirmed(projectId, target)} /> : !error ? <ContentLoading label="读取当前项目发布目标" /> : null}
         </div> : <div
@@ -1270,7 +1271,7 @@ function ReleaseConsoleWorkspace({ account }: { account: string }): JSX.Element 
             {/* 参考稿的流水线列是 300px，同样只在宽画布上成立：中栏 560 的时候
                 300 会把实时输出压到 246px，日志头那一排按钮直接被卡片切掉。 */}
             {!targetUnconfirmed || shown ? (
-            <div className="grid min-h-0 flex-1 gap-3.5 xl:grid-cols-[14.5rem_minmax(0,1fr)] 2xl:grid-cols-[18.75rem_minmax(0,1fr)]">
+            <div className={RELEASE_CONSOLE_RUN_GRID_CLASS}>
               {/* 与右侧日志等高（参考稿 grid 两列 stretch）。之前用 self-start 让它按内容收高，
                   结果卡片底边下面空出一大块底色 —— 悬空的短卡读起来是「洞」，不是「省地方」。 */}
               <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[0.875rem] border">

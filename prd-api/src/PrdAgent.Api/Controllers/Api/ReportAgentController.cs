@@ -1475,8 +1475,11 @@ public class ReportAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
 
         // 计算周信息
-        var now = DateTime.UtcNow;
-        var (weekYear, weekNumber, periodStart, periodEnd) = GetWeekInfo(now);
+        // 默认归属最近一个尚未截止的周（周一默认上周，与「下周一 24:00 截止」对齐）
+        var (weekYear, weekNumber) = WeeklyReportSubmissionRules.ResolveDefaultSubmissionWeek(DateTime.UtcNow);
+        var defaultMonday = ISOWeek.ToDateTime(weekYear, weekNumber, DayOfWeek.Monday);
+        var periodStart = defaultMonday;
+        var periodEnd = defaultMonday.AddDays(6);
 
         // 支持自定义周（如补填上周）
         if (req.WeekYear.HasValue && req.WeekNumber.HasValue)
@@ -1601,9 +1604,8 @@ public class ReportAgentController : ControllerBase
         if (template == null)
             return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
 
-        // 计算周信息（支持自定义补填）
-        var now = DateTime.UtcNow;
-        var (weekYear, weekNumber, _, _) = GetWeekInfo(now);
+        // 计算周信息（默认最近一个尚未截止的周，支持自定义补填）
+        var (weekYear, weekNumber) = WeeklyReportSubmissionRules.ResolveDefaultSubmissionWeek(DateTime.UtcNow);
         if (req.WeekYear.HasValue && req.WeekNumber.HasValue)
         {
             weekYear = req.WeekYear.Value;

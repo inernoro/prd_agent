@@ -45,7 +45,7 @@ public partial class WebPagesController
                 MainSiteId = collectionShare.MainSiteId ?? string.Empty, OwnerUserId = collectionShare.CreatedBy });
         var ids = group?.SiteIds ?? new List<string> { current.Id };
         var visible = new List<HostedSite>();
-        foreach (var id in ids)
+        foreach (var id in ids.Distinct(StringComparer.Ordinal))
         {
             // 原分享明确授权的成员可见；其他成员必须通过独立账号权限。
             var item = id == current.Id ? current
@@ -60,6 +60,8 @@ public partial class WebPagesController
             canManage = existing.All(x => x.OwnerUserId == userId);
         }
         var manualSites = visible.ToList();
+        var mainSiteId = (contextGroup != null || collectionShare != null || manualSites.Count > 1)
+            && manualSites.Any(x => x.Id == group?.MainSiteId) ? group?.MainSiteId : null;
         var mentions = await RelatedCommentMentionsAsync(current, visible, userId, sharedIds);
         // 手动成员沿用作者保存的顺序；评论自动发现的文档由上一步附加在末尾。
         var ordered = visible;
@@ -67,7 +69,7 @@ public partial class WebPagesController
         {
             contextLabel = collectionShare != null || contextGroup != null ? "合集成员" : "关联文档",
             version = canManage ? group?.Version ?? 0 : 0,
-            mainSiteId = visible.Any(x => x.Id == group?.MainSiteId) ? group!.MainSiteId : null,
+            mainSiteId,
             canManage,
             hasPermissionDifferences = canManage && manualSites.Any(x => !HostedDocumentPermissionPolicy.SamePageAccess(current, x)),
             items = ordered.Select(x => new
@@ -79,7 +81,7 @@ public partial class WebPagesController
                 preview = new { x.Id, x.SiteUrl, x.EntryFile, x.WrappedAssetType,
                     contentShape = HostedSiteContentShapeRules.Resolve(x), x.RequiresPreviewBridge,
                     useShareAccess = shareToken != null && sharedIds.Contains(x.Id) },
-                isMain = x.Id == group?.MainSiteId,
+                isMain = x.Id == mainSiteId,
                 // 不创建公开便捷链，不向其它页面传播当前分享凭证。
                 href = shareToken != null && sharedIds.Contains(x.Id)
                     ? $"/s/wp/{Uri.EscapeDataString(shareToken)}?siteId={Uri.EscapeDataString(x.Id)}"
@@ -92,7 +94,7 @@ public partial class WebPagesController
     public async Task<IActionResult> RelatedCandidates(string siteId, [FromQuery] string? keyword)
     {
         if (await OwnedRelatedSiteAsync(siteId) == null) return RelatedNotFound();
-        var owned = await _db.HostedSites.Find(x => x.OwnerUserId == GetUserId())
+        var owned = await _db.HostedSites.Find(x => x.OwnerUserId == GetUserId() && x.Id != siteId)
             .SortByDescending(x => x.UpdatedAt).Limit(1000).ToListAsync();
         var groups = await _db.HostedDocumentGroups.Find(x => x.OwnerUserId == GetUserId()).ToListAsync();
         var current = groups.FirstOrDefault(x => x.SiteIds.Contains(siteId));

@@ -75,6 +75,8 @@ public class MongoDbContext
         _database.GetCollection<ProductPermissionConfiguration>("product_permission_configurations");
     public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
         _database.GetCollection<BsonDocument>("console_sso_tickets");
+    public IMongoCollection<CdsSsoSession> CdsSsoSessions =>
+        _database.GetCollection<CdsSsoSession>("cds_sso_sessions");
     /// <summary>本站作为「源站」签发的一次性数据导出授权（含导出令牌散列）</summary>
     public IMongoCollection<BsonDocument> DataSyncGrants =>
         _database.GetCollection<BsonDocument>("data_sync_grants");
@@ -769,6 +771,10 @@ public class MongoDbContext
         // EndedAt 普通索引（仅用于查询，不自动删除数据）
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt)));
+
+        CdsSsoSessions.Indexes.CreateOne(new CreateIndexModel<CdsSsoSession>(
+            Builders<CdsSsoSession>.IndexKeys.Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions { Name = "ttl_cds_sso_sessions_expires_at", ExpireAfter = TimeSpan.Zero }));
 
         // ApiRequestLogs 索引（系统请求日志）
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
@@ -1776,6 +1782,14 @@ public class MongoDbContext
         HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
             Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.ReferencedSiteIds).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_comments_references" }));
+
+        HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
+            Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.AiReplyDeployment).Ascending(x => x.AiReplyDueAt),
+            new CreateIndexOptions<HostedSiteComment>
+            {
+                Name = "idx_hosted_comment_ai_reply_due",
+                PartialFilterExpression = Builders<HostedSiteComment>.Filter.Type(x => x.AiReplyDueAt, MongoDB.Bson.BsonType.DateTime),
+            }));
 
         // ========== Hosted Sites 网页托管索引 ==========
 

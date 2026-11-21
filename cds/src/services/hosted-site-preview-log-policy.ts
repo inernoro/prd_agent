@@ -49,9 +49,17 @@ export function isHostedSitePreviewRequest(value: string): boolean {
 }
 
 export function redactHostedSitePreviewLog(value: string): string {
-  const wholePath = previewLogPath(value);
+  const redact = (candidate: string): string | null => {
+    const preview = previewLogPath(candidate);
+    if (preview !== null) return preview;
+    if (/\s/.test(candidate) || !candidate.includes('?')) return null;
+    const [pathname, search] = candidate.split(/\?(.*)/s, 2);
+    const parameters = new URLSearchParams(search.split('#', 1)[0]);
+    return parameters.has('state') && (parameters.has('code') || parameters.has('error')) ? pathname : null;
+  };
+  const wholePath = redact(value);
   if (wholePath !== null) return wholePath;
-  return value.replace(/https?:\/\/[^\s"'<>]+|(?:\/|%2f)[^\s"'<>]*/gi, (candidate) => previewLogPath(candidate) ?? candidate);
+  return value.replace(/https?:\/\/[^\s"'<>]+|(?:\/|%2f)[^\s"'<>]*/gi, (candidate) => redact(candidate) ?? candidate);
 }
 
 export function omitHostedSitePreviewBody<T extends { bodyPreview?: string; bodyBytes?: number }>(payload: T, sensitive: boolean): T {

@@ -68,6 +68,7 @@ function functionBody(source: string, signature: string): string {
 }
 
 const page = read('pages/ReleaseCenterPage.tsx');
+const navigation = read('components/skeletons/ReleaseCenterSkeleton.tsx');
 const sidebar = read('pages/release-center/EnvironmentSidebar.tsx');
 const overview = read('pages/release-center/OverviewTab.tsx');
 const timeline = read('pages/release-center/ReleaseTimeline.tsx');
@@ -289,8 +290,9 @@ describe('发布中心 v2 · 布局纪律', () => {
  */
 describe('发布中心 · 分区外壳', () => {
   it('五个分区齐全，且第一屏是矩阵不是单目标详情', () => {
+    expect(page).toContain('<ReleaseCenterNavigation section={section} badgeFor={sectionBadge} onSelect={setSection}');
     for (const label of ['全环境矩阵', '环境与配置', '自动发布规则', '健康监测', '证据归档']) {
-      expect(page, `缺分区 ${label}`).toContain(`label: '${label}'`);
+      expect(navigation, `缺分区 ${label}`).toContain(`label: '${label}'`);
     }
     // 初值来自 URL（`?section=`），缺省/非法值由 releaseCenterSection 退回 fleet，
     // 所以第一屏仍然是矩阵而不是单目标详情。

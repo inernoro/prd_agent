@@ -51,7 +51,7 @@ export default function ShareAssistantLauncher({ children, hidden = false, isMob
   return <ShareAssistantContext.Provider value={context}>
     {children}
     {typeof document !== 'undefined' && createPortal(<div ref={root} className="share-assistant" style={{
-      position: 'fixed', right: isMobile ? 14 : 18, bottom: 'calc(18px + env(safe-area-inset-bottom, 0px))',
+      position: 'fixed', right: isMobile ? 14 : 18, bottom: 'calc(18px + var(--share-assistant-clearance, 0px) + env(safe-area-inset-bottom, 0px))',
       zIndex: 60, display: visible ? 'flex' : 'none',
     }} onKeyDown={(event) => {
       if (event.key === 'Escape' && expanded) { event.stopPropagation(); setExpanded(false); trigger.current?.focus(); }

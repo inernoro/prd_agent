@@ -133,12 +133,16 @@ export const LiterarySettingsRow = React.forwardRef<HTMLButtonElement, React.But
   icon: React.ReactNode;
   label: string;
   value: string;
+  preview?: React.ReactNode;
   warning?: boolean;
-}>(function LiterarySettingsRow({ icon, label, value, warning, ...rest }, ref) {
+}>(function LiterarySettingsRow({ icon, label, value, preview, warning, ...rest }, ref) {
   return (
     <button ref={ref} type="button" className="lit-settings-row" data-warning={warning || undefined} {...rest}>
       <span className="lit-settings-label">{icon}<span>{label}</span></span>
-      <span className="lit-settings-value" title={value}>{value}</span>
+      <span className="lit-settings-row-value">
+        {preview}
+        <span className="lit-settings-value" title={value}>{value}</span>
+      </span>
       <ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
     </button>
   );

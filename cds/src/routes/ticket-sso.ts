@@ -17,12 +17,15 @@ import {
   publicTicketSsoConfig,
 } from '../services/ticket-sso.js';
 
+import { LEGACY_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
+
 export const TICKET_SSO_COOKIE = SSO_SESSION_COOKIE;
 
 export interface TicketSsoRouterDeps {
   resolveConfig: () => CdsSsoConfig;
   publicBaseUrl?: string;
   cookieSecure: boolean;
+  hostSessionCookies?: boolean;
   stateStore: TicketSsoStateStore;
   sessionStore: TicketSsoSessionStore;
   fetchImpl?: typeof fetch;
@@ -51,19 +54,14 @@ function externalCallbackUrl(req: Request, configuredBaseUrl?: string): string {
   return candidate.toString().replace(/\/$/, '');
 }
 
-function parseCookie(cookieHeader: string | undefined, name: string): string | undefined {
-  if (!cookieHeader) return undefined;
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : undefined;
+function previewFlowCookie(state: unknown, hostSessionCookies: boolean): string | undefined {
+  if (typeof state !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(state)) return undefined;
+  return sessionCookieName('cds_preview_flow_' + state.slice(0, 16), hostSessionCookies);
 }
 
-function previewFlowCookie(state: unknown): string | undefined {
-  return typeof state === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(state) ? 'cds_preview_flow_' + state.slice(0, 16) : undefined;
-}
-
-function sessionCookie(token: string, expiresAt: Date, secure: boolean): string {
+export function buildTicketSsoSessionCookie(token: string, expiresAt: Date, secure: boolean, hostSessionCookies = false): string {
   const parts = [
-    `${TICKET_SSO_COOKIE}=${encodeURIComponent(token)}`,
+    `${sessionCookieName(TICKET_SSO_COOKIE, hostSessionCookies)}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -74,9 +72,9 @@ function sessionCookie(token: string, expiresAt: Date, secure: boolean): string 
   return parts.join('; ');
 }
 
-function logoutCookie(name: string, secure: boolean): string {
+function logoutCookie(name: string, secure: boolean, hostSessionCookies: boolean): string {
   const parts = [
-    `${name}=`,
+    `${sessionCookieName(name, hostSessionCookies)}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -87,8 +85,8 @@ function logoutCookie(name: string, secure: boolean): string {
   return parts.join('; ');
 }
 
-export function ticketSsoIdentity(req: Request, store: TicketSsoSessionStore) {
-  return store.get(parseCookie(req.headers.cookie, TICKET_SSO_COOKIE));
+export function ticketSsoIdentity(req: Request, store: TicketSsoSessionStore, hostSessionCookies = false) {
+  return store.get(readBrowserCookie(req.headers.cookie, sessionCookieName(TICKET_SSO_COOKIE, hostSessionCookies)));
 }
 
 /**
@@ -96,17 +94,15 @@ export function ticketSsoIdentity(req: Request, store: TicketSsoSessionStore) {
  * the caller can re-issue the cookie via {@link buildTicketSsoSessionCookie} — the
  * server-side window and the browser copy must move together.
  */
-export function ticketSsoSession(req: Request, store: TicketSsoSessionStore) {
-  return store.touch(parseCookie(req.headers.cookie, TICKET_SSO_COOKIE));
-}
-
-/** Session cookie for the ticket SSO session; exported so renewal can re-issue it. */
-export function buildTicketSsoSessionCookie(token: string, expiresAt: Date, secure: boolean): string {
-  return sessionCookie(token, expiresAt, secure);
+export function ticketSsoSession(req: Request, store: TicketSsoSessionStore, hostSessionCookies = false) {
+  return store.touch(readBrowserCookie(req.headers.cookie, sessionCookieName(TICKET_SSO_COOKIE, hostSessionCookies)));
 }
 
 export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
   const router = Router();
+  const { cookieSecure, hostSessionCookies = false } = deps;
+  const flowCookie = '__Host-cds-ticket-flow';
+  const flowOptions = { path: '/', secure: true, httpOnly: true, sameSite: 'lax' as const };
 
   router.get('/auth/sso/public-config', (_req, res) => {
     res.json(publicTicketSsoConfig(deps.resolveConfig()));
@@ -126,11 +122,13 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       res.redirect(302, '/login?sso_error=invalid_callback');
       return;
     }
+    const preview = config.providerId === 'cds-preview';
     let issued: ReturnType<TicketSsoStateStore['issue']>;
     try {
-      const binding = config.providerId === 'cds-preview' ? randomBytes(32).toString('base64url') : undefined;
+      const binding = preview ? randomBytes(32).toString('base64url') : undefined;
       issued = deps.stateStore.issue(req.query.redirect, callbackUrl, binding);
-      if (binding) res.append('Set-Cookie', `${previewFlowCookie(issued.state)}=${binding}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300${callbackUrl.startsWith('https:') ? '; Secure' : ''}`);
+      const name = binding && previewFlowCookie(issued.state, hostSessionCookies);
+      if (binding && name) res.cookie(name, binding, { ...flowOptions, secure: cookieSecure || callbackUrl.startsWith('https:'), maxAge: 5 * 60_000 });
     } catch (error) {
       if (error instanceof TicketSsoStateCapacityError) {
         res.status(429).json({
@@ -142,6 +140,7 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       throw error;
     }
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    if (hostSessionCookies && !preview) res.cookie(flowCookie, issued.state, { ...flowOptions, maxAge: 5 * 60_000 });
     res.redirect(302, buildTicketSsoAuthorizationUrl(config, callbackUrl, issued.state, issued.redirect));
   });
 
@@ -152,13 +151,22 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       return;
     }
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
-    const flowCookie = config.providerId === 'cds-preview' ? previewFlowCookie(req.body?.state) : undefined;
-    const binding = flowCookie ? parseCookie(req.headers.cookie, flowCookie) : undefined;
-    const state = deps.stateStore.consume(req.body?.state, binding);
+    const preview = config.providerId === 'cds-preview';
+    const stateId = req.body?.state;
+    if (hostSessionCookies && !preview && (!stateId || readBrowserCookie(req.headers.cookie, flowCookie) !== stateId)) {
+      res.status(400).json({ error: 'SSO 登录链接无效或已过期，请重新发起登录。', code: 'sso_state_invalid' });
+      return;
+    }
+    if (hostSessionCookies && !preview) res.clearCookie(flowCookie, flowOptions);
+    const previewCookie = preview ? previewFlowCookie(stateId, hostSessionCookies) : undefined;
+    const binding = previewCookie ? readBrowserCookie(req.headers.cookie, previewCookie) : undefined;
+    const state = deps.stateStore.consume(stateId, binding);
     if (!state) {
       res.status(400).json({ error: 'SSO 登录状态无效或已过期', code: 'sso_state_invalid' });
       return;
     }
+    const secure = cookieSecure || state.callbackUrl.startsWith('https://');
+    if (previewCookie) res.clearCookie(previewCookie, { ...flowOptions, secure });
     try {
       const identity = await exchangeTicketSsoCode(
         config,
@@ -166,18 +174,13 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
         state.callbackUrl,
         deps.fetchImpl,
         deps.tokenExchangeTimeoutMs,
-        req.body?.state,
+        stateId,
       );
       const session = deps.sessionStore.create(identity);
-      res.setHeader('Set-Cookie', [
-        sessionCookie(
-          session.token,
-          session.expiresAt,
-          deps.cookieSecure || state.callbackUrl.startsWith('https://'),
-        ),
-        buildLogoutCookie(deps.cookieSecure || state.callbackUrl.startsWith('https://')),
-        buildLegacyLogoutCookie(deps.cookieSecure || state.callbackUrl.startsWith('https://')),
-        ...(flowCookie ? [logoutCookie(flowCookie, state.callbackUrl.startsWith('https://'))] : []),
+      res.append('Set-Cookie', [
+        buildTicketSsoSessionCookie(session.token, session.expiresAt, secure, hostSessionCookies),
+        buildLogoutCookie(secure, hostSessionCookies),
+        buildLegacyLogoutCookie(secure, hostSessionCookies),
       ]);
       res.json({
         success: true,
@@ -211,13 +214,13 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
   });
 
   router.post('/auth/sso/logout', async (req, res) => {
-    const ssoToken = parseCookie(req.headers.cookie, TICKET_SSO_COOKIE);
-    const githubToken = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
+    const ssoToken = readBrowserCookie(req.headers.cookie, sessionCookieName(TICKET_SSO_COOKIE, hostSessionCookies));
+    const githubToken = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
     deps.sessionStore.delete(ssoToken);
     const clearCookies = [
-      logoutCookie(TICKET_SSO_COOKIE, deps.cookieSecure),
-      logoutCookie(GH_SESSION_COOKIE, deps.cookieSecure),
-      logoutCookie('cds_token', deps.cookieSecure),
+      logoutCookie(TICKET_SSO_COOKIE, cookieSecure, hostSessionCookies),
+      logoutCookie(GH_SESSION_COOKIE, cookieSecure, hostSessionCookies),
+      logoutCookie(LEGACY_SESSION_COOKIE, cookieSecure, hostSessionCookies),
     ];
     try {
       if (githubToken && deps.logoutGithubSession) {

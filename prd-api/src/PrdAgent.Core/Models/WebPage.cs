@@ -73,6 +73,9 @@ public class HostedSite
     public bool RequiresPreviewBridge => HostedSitePdfFiles.Paths(this).Count > 0
         || Files?.Any(file => string.Equals(file.Path, "downloads/tutorial-package.json", StringComparison.OrdinalIgnoreCase)) == true;
 
+    [BsonIgnore]
+    public string? ZipHomepageAssetPath => Files?.FirstOrDefault(file => file.IsZipHomepageAsset)?.Path;
+
     /// <summary>
     /// 内容指针切换后待删除的旧对象 key。与 Files 在同一个站点文档中原子更新，
     /// 后台清理器按站点 ID 唯一领取并幂等重试。
@@ -193,6 +196,8 @@ public class HostedSite
     /// </summary>
     public bool? AskEnabled { get; set; }
 
+    public bool AiReplyEnabled { get; set; }
+
     /// <summary>提问面板的欢迎语；空则前端用站点标题兜底</summary>
     public string? AskWelcome { get; set; }
 
@@ -288,6 +293,9 @@ public class HostedSiteFile
 
     /// <summary>MIME 类型</summary>
     public string MimeType { get; set; } = string.Empty;
+
+    [BsonIgnoreIfDefault]
+    public bool IsZipHomepageAsset { get; set; }
 
     /// <summary>
     /// 当前部署下的安全公开地址。只由服务层依据 CosKey 与 ContentVersion 派生，

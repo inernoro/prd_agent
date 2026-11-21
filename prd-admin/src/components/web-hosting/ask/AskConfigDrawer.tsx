@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CircleHelp, Gauge, MessageCircle, MessageSquare, Plus, RotateCw, Trash2, Users, X } from 'lucide-react';
+import { Bot, CircleHelp, Gauge, MessageCircle, MessageSquare, Plus, RotateCw, Trash2, Users, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { getSiteAskConfig, regenerateSiteAskQuestions, updateSiteAskConfig, type SiteAskConfig } from '@/services/real/webPages';
 import { SiteSettingsRow, SiteSettingsToggleRow } from '../SiteSettingsRows';
@@ -28,6 +28,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
+  const [aiReplyEnabled, setAiReplyEnabled] = useState(false);
+  const [aiReplyDirty, setAiReplyDirty] = useState(false);
   const [enabled, setEnabled] = useState(false);
   /** 用户是否真的拨动过开关；没动就不落站点覆盖，继续继承个人全局设置。 */
   const [enabledDirty, setEnabledDirty] = useState(false);
@@ -66,6 +68,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
       if (res.success && res.data) {
         setConfigReady(true);
         setEnabled(res.data.enabled);
+        setAiReplyEnabled(res.data.aiReplyEnabled ?? false);
+        setAiReplyDirty(false);
         setEnabledDirty(false);
         setWelcome(res.data.welcome ?? '');
         setAllowAnonymous(res.data.allowAnonymous);
@@ -141,6 +145,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
     try {
       const res = await updateSiteAskConfig(siteId, {
         ...(enabledDirty ? { enabled } : {}),
+        ...(aiReplyDirty ? { aiReplyEnabled } : {}),
         welcome: welcome.trim() || null,
         ...(questionsDirty ? { suggestedQuestions: questions } : {}),
         allowAnonymous,
@@ -149,6 +154,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
       if (!res.success) { setError(res.error?.message ?? '保存失败'); return; }
       setEnabled(res.data.enabled);
       setEnabledDirty(false);
+      setAiReplyEnabled(res.data.aiReplyEnabled ?? false);
+      setAiReplyDirty(false);
       setRegenNote(null);
       setQuestionsDirty(false);
       await onSaved?.(res.data);
@@ -157,15 +164,17 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存失败，请重试');
     } finally { setSaving(false); }
-  }, [allowAnonymous, configReady, dailyLimit, embedded, enabled, enabledDirty, onClose, onSaved, questions, questionsDirty, regenerating, saving, siteId, welcome]);
+  }, [aiReplyDirty, aiReplyEnabled, allowAnonymous, configReady, dailyLimit, embedded, enabled, enabledDirty, onClose, onSaved, questions, questionsDirty, regenerating, saving, siteId, welcome]);
 
   const body = (
-    // z-index 必须高于 SitePreviewModal 的 z-[100]：本抽屉唯一的入口就在那个弹窗的顶栏里，
-    // 两者又是并列的 portal（都挂 body）。80 < 100 意味着抽屉永远被弹窗盖住点不到，
-    // 而这里是单站点提问开关的入口，盖住它就等于 owner 无法覆盖自己的全局默认。
-    <div style={embedded ? { display: 'flex', width: '100%', minHeight: 0 } : { position: 'fixed', inset: 0, zIndex: 110 }}>
+    // 独立抽屉高于站内审阅和全局通知，右下角保存按钮需要完整的点击区域。
+    <div style={embedded ? { display: 'flex', width: '100%', minHeight: 0 } : { position: 'fixed', inset: 0, zIndex: 140 }}>
       {!embedded && <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'var(--overlay-scrim, rgba(0,0,0,0.45))' }} />}
-      <aside
+      <aside role={embedded ? undefined : 'dialog'} aria-modal={embedded ? undefined : true}
+        aria-label={embedded ? undefined : '提问设置'}
+        onKeyDown={event => {
+          if (!embedded && event.key === 'Escape') { event.stopPropagation(); onClose(); }
+        }}
         style={{
           position: embedded ? 'relative' : 'absolute', top: 0, right: 0, bottom: 0, width: embedded ? '100%' : 'min(520px, 94vw)', minHeight: 0,
           display: 'flex', flexDirection: 'column',
@@ -180,7 +189,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
             <div style={{ fontSize: 14, fontWeight: 600 }}>提问设置</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{siteTitle}</div>
           </div>
-          <button onClick={onClose} aria-label="关闭" style={{ width: 30, height: 30, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
+          <button onClick={onClose} autoFocus={!embedded} aria-label="关闭" style={{ width: 30, height: 30, borderRadius: 8, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer' }}>
             <X size={16} />
           </button>
         </div>
@@ -191,6 +200,11 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: embedded ? '0 4px 0 0' : 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
             <fieldset onChange={() => setSaved(false)} onClick={() => setSaved(false)} disabled={saving || regenerating || !configReady}>
               <div className="site-settings-group">
+                <SiteSettingsToggleRow icon={<Bot size={13} />} label="AI 帮我回复" hint="开启后，AI 助手会根据当前发布的网页，回复新发表的文字评论和批注。自动回复与提问共用每日额度。">
+                  <Toggle ariaLabel="AI 帮我回复" checked={aiReplyEnabled}
+                    onChange={next => { setAiReplyEnabled(next); setAiReplyDirty(true); }}
+                    disabled={!!unsupportedReason && !aiReplyEnabled} />
+                </SiteSettingsToggleRow>
                 <SiteSettingsToggleRow icon={<MessageCircle size={12} />} label="开放提问" hint="未单独设置时沿用个人默认。">
                   <Toggle ariaLabel="开放提问" checked={enabled}
                     onChange={(next) => { setEnabled(next); setEnabledDirty(true); setRegenNote(null); }}
@@ -297,7 +311,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
                     </button>
                   </div>
                 </SiteSettingsRow>
-                <SiteSettingsRow icon={<Gauge size={12} />} label="每日提问上限" value={dailyLimit === 0 ? '沿用默认' : `${dailyLimit} 次`}>
+                <SiteSettingsRow icon={<Gauge size={12} />} label="提问与 AI 回复每日上限" value={dailyLimit === 0 ? '沿用默认' : `${dailyLimit} 次`}>
                   <label htmlFor={`ask-limit-${siteId}`}>填 0 沿用系统默认；达到上限后当天停止接受提问。</label>
                   <input id={`ask-limit-${siteId}`} type="number" min={0} value={dailyLimit}
                     onChange={(e) => setDailyLimit(Math.max(0, Number(e.target.value) || 0))}

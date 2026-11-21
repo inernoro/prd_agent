@@ -6,10 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CollectionShell } from '../CollectionShell';
 import { HostedCollectionDocument } from '../HostedCollectionDocument';
 
-const calls = vi.hoisted(() => ({ review: vi.fn(), comments: vi.fn(), clearDraft: vi.fn(), setEnabled: vi.fn(), previewHtml: '<h1>真实文档</h1>' }));
+const calls = vi.hoisted(() => ({ review: vi.fn(), comments: vi.fn(), clearDraft: vi.fn(), setEnabled: vi.fn(), setDisplayMode: vi.fn(), previewHtml: '<h1>真实文档</h1>' }));
 vi.mock('../../document-store/writing/WritingThreads', () => ({ WritingThreads: () => null }));
 vi.mock('@/components/web-hosting/useHostedReview', () => ({ useHostedReview: (...args: unknown[]) => {
-  calls.review(...args); return { annotations: { clearDraft: calls.clearDraft, setEnabled: calls.setEnabled, notifyFrame: vi.fn(), select: vi.fn() } };
+  calls.review(...args); return { annotations: { setDisplayMode: calls.setDisplayMode, clearDraft: calls.clearDraft, setEnabled: calls.setEnabled, notifyFrame: vi.fn(), select: vi.fn() } };
 } }));
 vi.mock('@/components/web-hosting/useSitePreviewHtml', () => ({ useSitePreviewHtml: () => ({ srcDoc: calls.previewHtml }) }));
 vi.mock('@/components/web-hosting/useHostedAnnotations', () => ({ withAnnotationRuntime: (html: string) => html }));
@@ -66,6 +66,8 @@ describe('手机合集控件必须通向可用内容', () => {
     const frame = container.querySelector('iframe');
     expect(frame?.getAttribute('srcdoc')).toBe('<h1>真实文档</h1>');
     expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    expect(container.querySelector('[data-tool="related"]')?.textContent).toBe('所属合集');
+    expect(container.querySelector('[data-tool="related"] .lucide-link-2')).toBeNull();
     await click('.hc-mobile-doc-header [aria-label="返回目录"]'); expect(back).toHaveBeenCalledOnce();
   });
   it('组合副本仅去重与外层标题严格匹配的首h1，保留原输入及后续标题且不执行parent脚本', async () => {
@@ -125,4 +127,17 @@ describe('手机合集控件必须通向可用内容', () => {
     await click('.hc-mobile-read-tools [data-tool="next"]'); expect(navigate).toHaveBeenCalledWith('b');
     expect(calls.review).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ mode: 'share', token: 'share-token', password: 'share-password', siteId: 'a' }), expect.any(Function));
   });
+});
+
+it('合集保留编号打开原有批注面板，已选意见关闭后可再次打开且可见性正确', async () => {
+  await mount(<HostedCollectionDocument item={items[0]} items={items} collection={collection} onBack={vi.fn()} onNavigate={vi.fn()} />);
+  expect(calls.setDisplayMode).toHaveBeenCalledWith('standard');
+  const openAnnotation = calls.review.mock.calls.at(-1)![3] as () => void;
+  await act(async () => openAnnotation());
+  expect(container.querySelector('.hc-mobile-panel-open')).not.toBeNull();
+  expect(calls.comments.mock.calls.at(-1)![0]).toMatchObject({ threadKind: 'annotation', visible: true });
+  await click('[aria-label="关闭阅读面板"]');
+  expect(calls.comments.mock.calls.at(-1)![0]).toMatchObject({ visible: false });
+  await act(async () => openAnnotation());
+  expect(calls.comments.mock.calls.at(-1)![0]).toMatchObject({ visible: true });
 });

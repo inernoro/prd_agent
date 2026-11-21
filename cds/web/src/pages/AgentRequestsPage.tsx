@@ -1,4 +1,4 @@
-import { AgentRequestsSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
+import { AGENT_REQUEST_FILTERS_CLASS, AGENT_REQUEST_FILTER_CLASS, AGENT_REQUEST_ROW_BODY_CLASS, AGENT_REQUEST_ROW_CLASS, AGENT_REQUEST_ROW_META_CLASS, AGENT_REQUEST_ROW_PREVIEW_CLASS, AGENT_REQUEST_SEARCH_CLASS, AgentRequestCardsSkeleton, AgentRequestsSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * Agent 请求观测台（2026-06-11 用户信任诉求）
@@ -234,12 +234,12 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
       <Workspace fluid className="flex flex-col gap-4">
       {loading && !data && !error ? <AgentRequestsSkeleton /> : <>
       {/* 筛选条：按用户 / 按应用 / 状态 / 关键字 */}
-      <div className="flex items-center gap-2 flex-wrap rounded-lg border border-border bg-card px-3 py-2" data-testid="request-filters">
+      <div className={AGENT_REQUEST_FILTERS_CLASS} data-testid="request-filters">
         <select
           aria-label="按应用筛选"
           value={fApp}
           onChange={(e) => setFApp(e.target.value)}
-          className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+          className={AGENT_REQUEST_FILTER_CLASS}
           data-testid="filter-app"
         >
           <option value="">全部应用</option>
@@ -249,7 +249,7 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
           aria-label="按用户筛选"
           value={fUser}
           onChange={(e) => setFUser(e.target.value)}
-          className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+          className={AGENT_REQUEST_FILTER_CLASS}
           data-testid="filter-user"
         >
           <option value="">全部用户</option>
@@ -259,13 +259,13 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
           aria-label="按状态筛选"
           value={fStatus}
           onChange={(e) => setFStatus(e.target.value)}
-          className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+          className={AGENT_REQUEST_FILTER_CLASS}
         >
           {statusOptions.map((st) => (
             <option key={st} value={st}>{st === '' ? '全部状态' : (STATUS_STYLE[st]?.label ?? st)}</option>
           ))}
         </select>
-        <div className="relative flex-1 min-w-[11.25rem]">
+        <div className={AGENT_REQUEST_SEARCH_CLASS}>
           <Search size="0.8125rem" className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             aria-label="搜索 Agent 请求"
@@ -297,7 +297,7 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
 
       {/* 请求列表：一条 = 一次 agent 会话（title/label + 收发预览 + 状态/耗时） */}
       <div className="flex flex-col gap-2" data-testid="request-list">
-        {loading && items.length === 0 ? <ContentLoading label="加载 Agent 请求" variant="table" /> : null}
+        {loading && items.length === 0 ? <AgentRequestCardsSkeleton /> : null}
         {items.length === 0 && !loading && !error && (
           <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
             {filtered ? <><p>没有符合当前筛选的请求。</p><button type="button" className="mt-3 text-primary underline" onClick={clearFilters}>清除筛选</button></> : '还没有 Agent 请求。应用发起生成后，请求会实时出现在这里。'}
@@ -310,15 +310,15 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
           return (
             <div
               key={item.sessionId}
-              className={['rounded-lg border bg-card transition-colors', open ? 'border-ok/40' : 'border-border'].join(' ')}
+              className={`${AGENT_REQUEST_ROW_CLASS} transition-colors ${open ? 'border-ok/40' : 'border-border'}`}
               data-testid={'request-row-' + item.sessionId}
             >
               <button
                 type="button"
                 onClick={() => toggleExpand(item.sessionId)}
-                className="w-full px-3 py-2.5 text-left"
+                className={AGENT_REQUEST_ROW_BODY_CLASS}
               >
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className={AGENT_REQUEST_ROW_META_CLASS}>
                   {open ? <ChevronDown size="0.8125rem" className="shrink-0 text-muted-foreground" /> : <ChevronRight size="0.8125rem" className="shrink-0 text-muted-foreground" />}
                   <span className={['inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.625rem] font-medium', st.cls].join(' ')}>
                     {st.pulse && <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
@@ -339,7 +339,7 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
                     {fmtTime(item.createdAt)} · {fmtDuration(item.durationMs)} · {item.eventCount} 事件
                   </span>
                 </div>
-                <div className="mt-1.5 grid gap-1 md:grid-cols-2 text-[0.6875rem]">
+                <div className={AGENT_REQUEST_ROW_PREVIEW_CLASS}>
                   <div className="truncate text-muted-foreground">
                     <span className="text-info font-medium">发 </span>
                     {item.requestPreview ?? '（无请求消息）'}

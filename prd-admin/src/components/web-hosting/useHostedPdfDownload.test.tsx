@@ -4,8 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
 
-const { download, save, packageDownload } = vi.hoisted(() => ({ download: vi.fn(), save: vi.fn(), packageDownload: vi.fn() }));
-vi.mock('@/services/real/webPages', () => ({ downloadHostedPdf: download }));
+const { download, save, packageDownload, zipDownload } = vi.hoisted(() => ({
+  download: vi.fn(), save: vi.fn(), packageDownload: vi.fn(), zipDownload: vi.fn(),
+}));
+vi.mock('@/services/real/webPages', () => ({ downloadHostedPdf: download, downloadZipHomepageAsset: zipDownload }));
 vi.mock('./packageDownloadBridge', async importOriginal => ({ ...(await importOriginal<typeof import('./packageDownloadBridge')>()), downloadHostedPackage: packageDownload }));
 vi.mock('./sourceDownload', () => ({ saveBlobAsFile: save }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>正在准备</span> }));
@@ -14,7 +16,7 @@ let root: Root;
 let container: HTMLDivElement;
 let bridge: ReturnType<typeof useHostedPdfDownload>;
 const site = { id: 'site-a', siteUrl: 'https://assets.example/site/index.html', entryFile: 'index.html', pdfFilePaths: ['guide.pdf'] };
-function Harness({ activeSite = site }: { activeSite?: typeof site }) {
+function Harness({ activeSite = site }: { activeSite?: typeof site & { zipHomepageAssetPath?: string } }) {
   bridge = useHostedPdfDownload(activeSite, { token: 'share' });
   return <><iframe ref={bridge.iframeRef} /><HostedPdfDownloadStatus status={bridge.status} /></>;
 }
@@ -35,7 +37,33 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
-  download.mockReset(); save.mockReset(); packageDownload.mockReset(); vi.unstubAllGlobals();
+  download.mockReset(); save.mockReset(); packageDownload.mockReset(); zipDownload.mockReset(); vi.unstubAllGlobals();
+});
+
+it('ZIP 首页只为当前 iframe 和真实点击下载服务端登记的原文件', async () => {
+  const activeSite = { ...site, siteUrl: 'https://assets.example/site/map-file.html?v=20000',
+    entryFile: 'map-file.html', zipHomepageAssetPath: 'data/清单 #1.json' };
+  await act(async () => { root.render(<Harness activeSite={activeSite} />); });
+  const frame = bridge.iframeRef.current!.contentWindow!;
+  const post = vi.spyOn(frame, 'postMessage');
+  bridge.notifyFrame();
+  const [, context] = post.mock.calls.map(([message]) => message);
+  expect(context).toMatchObject({ type: 'map-hosted-zip-original-init', siteId: activeSite.id });
+  const send = (source: MessageEventSource, nonce: string) => window.dispatchEvent(new MessageEvent('message', {
+    source, data: { type: 'map-hosted-zip-original-download', siteId: activeSite.id, nonce, filePath: 'other.json' },
+  }));
+  await act(async () => { send(window, context.nonce); send(frame, 'stale'); });
+  Object.defineProperty(navigator, 'userActivation', { value: { isActive: false }, configurable: true });
+  await act(async () => { send(frame, context.nonce); });
+  expect(zipDownload).not.toHaveBeenCalled();
+  Object.defineProperty(navigator, 'userActivation', { value: { isActive: true }, configurable: true });
+  const blob = new Blob(['{}']);
+  zipDownload.mockResolvedValue({ blob, fileName: '清单 #1.json' });
+  await act(async () => { send(frame, context.nonce); send(frame, context.nonce); });
+  expect(zipDownload).toHaveBeenCalledTimes(1);
+  expect(zipDownload).toHaveBeenCalledWith(activeSite.id, activeSite.zipHomepageAssetPath, activeSite.siteUrl,
+    { token: 'share', password: undefined });
+  expect(save).toHaveBeenCalledWith(blob, '清单 #1.json');
 });
 describe('PDF下载的父页处理', () => {
   it('伪造frame与未登记PDF都不发起下载', async () => {

@@ -149,6 +149,11 @@ import {
   GH_SESSION_COOKIE,
 } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
+import { createPasskeyRouter, isRecentAuthentication, readAuthCookie, trustedAuthOrigin } from './routes/passkeys.js';
+import { createHostedSsoRouter } from './routes/hosted-sso.js';
+import { HostedSso } from './services/hosted-sso.js';
+import { protectControlBrowser } from './middleware/browser-origin.js';
+import { LEGACY_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from './services/browser-session-cookies.js';
 import { toPublicUser, type CdsUser } from './domain/auth.js';
 import {
   TICKET_SSO_COOKIE,
@@ -238,11 +243,7 @@ function getRemoteAddr(req: express.Request): string | undefined {
     || req.socket?.remoteAddress;
 }
 
-function readCookie(cookieHeader: string | undefined, name: string): string | undefined {
-  if (!cookieHeader) return undefined;
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : undefined;
-}
+
 
 /**
  * 单项目作用域的 cdsg_ 全局 Key —— 同时 stamp req.cdsProjectKey（2026-07-09 Codex P1）。
@@ -726,6 +727,7 @@ function requestPathForLogs(req: express.Request, res: express.Response): string
   const planning = normalizedPrivateWorkspacePath(raw);
   if (planning) return planning;
   if (/^\/api\/cluster\/identity\//i.test(raw)) return raw.split('?')[0];
+  if (isHostedIdentityTraffic(raw)) return raw.split('?')[0];
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
@@ -734,9 +736,26 @@ function requestPathForLogs(req: express.Request, res: express.Response): string
     ?? '/api/cds-system/sealed-storage';
 }
 
+function isHostedIdentityTraffic(path: string): boolean {
+  return /^\/(?:_cds\/)?api\/(?:hosted-sso|oidc|auth\/passkeys)(?:\/|\?|$)/i.test(path)
+    || /^\/login\?.*\bchoose_account=1(?:&|$)/i.test(path);
+}
+
+function requiresSensitivePasskey(method: string, rawPath: string): boolean {
+  const path = rawPath.replace(/\/+$/, '').toLowerCase();
+  if (method === 'GET' || method === 'HEAD') {
+    return /^\/api\/branches\/[^/]+\/(effective-env\/reveal|resources\/[^/]+\/(connection-string|database-passes\/[^/]+\/credentials))$/.test(path);
+  }
+  if (method === 'PUT') return /^\/api\/auth\/users\/[^/]+\/projects$/.test(path);
+  if (method === 'PATCH') return /^\/api\/auth\/users\/[^/]+$/.test(path);
+  return method === 'POST' && /^\/api\/releases\/(branches\/[^/]+\/runs|runs\/[^/]+\/(retry|rollback)|batches\/[^/]+\/(start|targets\/[^/]+\/(retry|rollback)))$/.test(path);
+}
+
 function requestHeadersForLogs(req: express.Request, res: express.Response): Record<string, string> {
   if ((res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return {};
-  return redactHeaders(req.headers) ?? {};
+  const headers = redactHeaders(req.headers) ?? {};
+  if (headers.referer && /\/api\/(?:hosted-sso|oidc)|choose_account=1/i.test(headers.referer)) headers.referer = headers.referer.split('?')[0];
+  return headers;
 }
 
 function legacyAuthUser(username: string, authMode: 'disabled' | 'basic'): CdsUser {
@@ -1227,6 +1246,15 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /auth/sso/logout': '退出 SSO 登录',
     'GET /auth/sso/config': '读取 SSO 配置',
     'PUT /auth/sso/config': '保存 SSO 配置',
+    'GET /auth/passkeys/status': '查询通行密钥',
+    'POST /auth/passkeys/register/options': '发起密钥绑定',
+    'POST /auth/passkeys/register/verify': '验证密钥绑定',
+    'POST /auth/passkeys/login/options': '发起免密登录',
+    'POST /auth/passkeys/login/verify': '验证免密登录',
+    'POST /auth/passkeys/logout-everywhere': '退出所有站点',
+    'GET /hosted-sso/panel/status': '查询项目 CDS 登录',
+    'GET /hosted-sso/panel/start': '跳转项目登录入口',
+    'GET /hosted-sso/sites': '列出站点授权',
     'GET /instance-mode': '获取实例模式',
     'POST /auth/login': '本地账号登录',
     'GET /auth/bootstrap-status': '查询首启引导状态',
@@ -1262,7 +1290,6 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /branches/:id/service-graph': '分支服务关系图与体检',
     'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
     'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
-    'GET /overview/topology': '全局概览：各项目关系与体检',
     'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
@@ -1562,6 +1589,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/[^/]+\/infra\/[^/]+\/credential-rotation$/, '执行共享凭据轮换'],
     [/^GET \/projects\/[^/]+\/backup-health$/, '查看周期备份'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
+    [/^PUT \/hosted-sso\/sites\/[^/]+$/, '保存站点授权'],
+    [/^(GET|POST) \/hosted-sso\/interaction\/[^/]+$/, '验证应用登录'],
     [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
     [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
@@ -2091,6 +2120,10 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   deps.registerResourceShutdown?.(() => selfMaintenance.close());
   app.disable('x-powered-by');
+  const configuredPublicBaseUrl = process.env.CDS_PUBLIC_BASE_URL?.trim();
+  const passkeyOrigin = trustedAuthOrigin(configuredPublicBaseUrl);
+  // Keep existing HTTPS sessions when the operator has not enabled passkeys.
+  const hostSessionCookies = Boolean(passkeyOrigin && deps.authStore?.passkeys && process.env.CDS_PASSKEYS_ENABLED === '1');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -2275,6 +2308,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     next();
   });
+  if (passkeyOrigin && hostSessionCookies) app.use(protectControlBrowser(passkeyOrigin));
   // SSE 长连接计数（2026-10-08 卡顿复盘，药方第 1 步）：挂在所有路由之前，一处覆盖
   // 全部 text/event-stream 端点；非 SSE 响应只多两个闭包。数据见
   // GET /api/cds-system/diagnostics/main-thread 的 mainThread.sseOpen / sse。
@@ -2693,7 +2727,9 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)
+    const hostedIdentityTraffic = isHostedIdentityTraffic(req.originalUrl || req.url);
+    const suppressPreviewBody = hostedIdentityTraffic || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
+      || /^\/api\/cluster\/identity\//i.test(req.path)
       || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
@@ -2742,6 +2778,7 @@ export function createServer(deps: ServerDeps): express.Express {
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
       if (responseHeaders && normalizedPreviewAccessPath(req.originalUrl || req.path)) delete responseHeaders.location;
       if (responseHeaders?.location?.includes('/api/cluster/identity/callback?')) responseHeaders.location = responseHeaders.location.split('?')[0];
+      if (hostedIdentityTraffic && responseHeaders?.location) responseHeaders.location = responseHeaders.location.split('?')[0];
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
@@ -2836,10 +2873,10 @@ export function createServer(deps: ServerDeps): express.Express {
     (cdsUser && cdsPass) ? 'basic' : 'disabled';
   const authEnabled = authMode === 'basic';
   const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
-  const configuredPublicBaseUrl = process.env.CDS_PUBLIC_BASE_URL?.trim();
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
-  const cookieSecure = publicBaseUrl.startsWith('https://');
+  const cookieSecure = publicBaseUrl.startsWith('https://') || hostSessionCookies;
+  const browserCookieOptions = { cookieSecure, hostSessionCookies };
   // 登录有效期策略（全系统 7 天，用后自动延长）——GitHub / 本地密码会话与 ticket SSO 会话
   // 必须共用同一份，否则 SSO 这条真实登录路径会悄悄短命，用户在同一个 CDS 里体验不一致。
   const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
@@ -2942,6 +2979,35 @@ export function createServer(deps: ServerDeps): express.Express {
   // A member cannot issue or accept a separate set of credentials.
   app.use((req, res, next) => { void clusterIdentity.middleware(req, res, next).catch(next); });
 
+  const acceptingPasskeys = () => hostSessionCookies && Boolean(authService) && clusterIdentity.getConfig()?.role !== 'member';
+  const passkeysEnabled = (req: express.Request) => acceptingPasskeys() && req.get('host')?.toLowerCase() === passkeyOrigin?.host;
+  if (hostSessionCookies && passkeyOrigin && authService && authStore?.passkeys) {
+    app.use('/api', createPasskeyRouter({
+      origin: passkeyOrigin, auth: authService, store: authStore.passkeys,
+      enabled: acceptingPasskeys,
+    }));
+    const sso = new HostedSso(passkeyOrigin, deps.stateService, authService,
+      () => deps.getPublishedRoutes?.() ?? [], authStore.oidcArtifacts);
+    app.use('/api', createHostedSsoRouter({
+      sso, auth: authService, state: deps.stateService, accepting: acceptingPasskeys, oidcStore: authStore.oidcArtifacts,
+    }));
+    app.use((req, res, next) => {
+      if (!acceptingPasskeys() || !requiresSensitivePasskey(req.method, req.path)) { next(); return; }
+      const token = readAuthCookie(req.get('cookie'), sessionCookieName(GH_SESSION_COOKIE, true));
+      void authService.validateSession(token, { renew: false }).then(verified => {
+        if (verified && !isRecentAuthentication(verified.session, true)) {
+          res.status(403).json({ error: '该操作需要重新验证。请在 CDS 用户菜单用通行密钥重新验证后再重试。', code: 'passkey_verification_required' });
+          return;
+        }
+        next();
+      }).catch(next);
+    });
+  } else {
+    app.get('/api/hosted-sso/panel/status', (_req, res) => {
+      res.set('Cache-Control', 'no-store').json({ enabled: false });
+    });
+  }
+
   // Provider-neutral ticket SSO. Public routes are mounted before either
   // legacy-basic or GitHub gates so an anonymous browser can start/exchange
   // the one-time code. The resulting session is accepted alongside password
@@ -2951,7 +3017,7 @@ export function createServer(deps: ServerDeps): express.Express {
     createTicketSsoPublicRouter({
       resolveConfig: resolveSsoConfig,
       publicBaseUrl,
-      cookieSecure,
+      ...browserCookieOptions,
       stateStore: ticketSsoStateStore,
       sessionStore: ticketSsoSessionStore,
       logoutGithubSession: async (token) => {
@@ -2962,18 +3028,18 @@ export function createServer(deps: ServerDeps): express.Express {
   );
   app.use((req, res, next) => {
     if (clusterIdentity.getConfig()?.role === 'member') { next(); return; }
-    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore);
+    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore, hostSessionCookies);
     const identity = ssoSession?.identity ?? null;
     if (identity && ssoSession) {
       const now = new Date().toISOString();
       const expiresAt = ssoSession.expiresAt.toISOString();
       // 滑动续期后必须重发 cookie，否则服务端窗口推后了、浏览器那份仍在原时间点死掉。
       if (ssoSession.renewed) {
-        const ssoToken = parseCookie(req.headers.cookie || '', TICKET_SSO_COOKIE);
+        const ssoToken = readBrowserCookie(req.headers.cookie, sessionCookieName(TICKET_SSO_COOKIE, hostSessionCookies));
         if (ssoToken) {
           res.setHeader(
             'Set-Cookie',
-            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure),
+            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure, hostSessionCookies),
           );
         }
       }
@@ -3043,16 +3109,16 @@ export function createServer(deps: ServerDeps): express.Express {
       let session: ClusterIdentityContext['session'];
       let basicHuman = false;
       if (!user && authService) {
-        const token = parseCookie(req.headers.cookie || '', GH_SESSION_COOKIE);
+        const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
         const current = await authService.validateSession(token ?? null);
         if (current) {
           user = current.user; session = { createdAt: current.session.createdAt, expiresAt: current.session.expiresAt };
-          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure));
+          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure, hostSessionCookies));
         }
       }
-      if (!user && authEnabled && verifyHumanSessionToken(parseCookie(req.headers.cookie || '', 'cds_token'), cdsUser!, cdsPass!, sessionTtlMs)) {
+      if (!user && authEnabled && verifyHumanSessionToken(readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)), cdsUser!, cdsPass!, sessionTtlMs)) {
         user = legacyAuthUser(cdsUser!, 'basic'); basicHuman = true;
-        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure));
+        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure, hostSessionCookies));
       }
       if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
       const legacyMachine = !user && authEnabled && tokenMatches(req.headers['x-cds-token'] as string | undefined, validToken);
@@ -3091,7 +3157,7 @@ export function createServer(deps: ServerDeps): express.Express {
     void clusterIdentity.authenticate(req, res).then(handled => { if (!handled) next(); }).catch(next);
   });
 
-  app.get('/api/auth/public-status', (_req, res) => {
+  app.get('/api/auth/public-status', (req, res) => {
     const ssoConfig = resolveSsoConfig();
     const sso = publicTicketSsoConfig(ssoConfig);
     const publicMode = authMode === 'disabled' && sso.enabled ? 'sso' : authMode;
@@ -3108,6 +3174,7 @@ export function createServer(deps: ServerDeps): express.Express {
         github: authMode === 'github',
         local: authMode === 'basic' || authMode === 'github',
         sso: sso.enabled,
+        ...(passkeysEnabled(req) ? { passkey: true } : {}),
       },
       capabilities: {
         userManagement: localUserManagementEnabled,
@@ -3199,7 +3266,7 @@ export function createServer(deps: ServerDeps): express.Express {
       createAuthRouter({
         authService,
         publicBaseUrl,
-        cookieSecure,
+        ...browserCookieOptions,
       }),
     );
 
@@ -3219,7 +3286,7 @@ export function createServer(deps: ServerDeps): express.Express {
       isPendingReplay: req => !!trustedClusterIdentity(req) || pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
       isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
-      cookieSecure,
+      ...browserCookieOptions,
     }));
 
     // Local username + password routes. Public endpoints (login / bootstrap)
@@ -3230,7 +3297,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
     // （PR #865 Codex P1）。
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
-    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, cookieSecure, bootstrapAllowed }));
+    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, ...browserCookieOptions, bootstrapAllowed }));
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -3243,9 +3310,9 @@ export function createServer(deps: ServerDeps): express.Express {
       if (username === cdsUser && password === cdsPass) {
         const humanSessionToken = issueHumanSessionToken(cdsUser!, cdsPass!);
         res.setHeader('Set-Cookie', [
-          basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure),
-          buildLogoutCookie(cookieSecure),
-          buildSsoLogoutCookie(cookieSecure),
+          basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure, hostSessionCookies),
+          buildLogoutCookie(cookieSecure, hostSessionCookies),
+          buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
         ]);
         res.json({ success: true });
       } else {
@@ -3255,9 +3322,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     app.post('/api/logout', (_req, res) => {
       res.setHeader('Set-Cookie', [
-        buildLegacyLogoutCookie(cookieSecure),
-        buildLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.json({ success: true });
     });
@@ -3776,7 +3843,7 @@ export function createServer(deps: ServerDeps): express.Express {
       // Persisted local-account session. In basic mode this is checked before
       // the legacy environment credential so both account systems can coexist
       // without weakening machine-key separation.
-      const persistedToken = parseCookie(req.headers.cookie || '', GH_SESSION_COOKIE);
+      const persistedToken = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
       let persistedSession = null;
       try {
         persistedSession = authService
@@ -3790,7 +3857,7 @@ export function createServer(deps: ServerDeps): express.Express {
         if (persistedSession.renewed && persistedToken) {
           res.setHeader(
             'Set-Cookie',
-            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure),
+            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure, hostSessionCookies),
           );
         }
         (req as any).cdsUser = persistedSession.user;
@@ -3799,7 +3866,7 @@ export function createServer(deps: ServerDeps): express.Express {
       }
 
       // Check original environment-account auth.
-      const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
+      const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies));
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const humanCookieValid = authEnabled
         && verifyHumanSessionToken(cookieToken, cdsUser!, cdsPass!, sessionTtlMs);
@@ -3811,7 +3878,7 @@ export function createServer(deps: ServerDeps): express.Express {
         // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
         if (humanCookieValid) {
           const renewedToken = issueHumanSessionToken(cdsUser!, cdsPass!);
-          res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure));
+          res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure, hostSessionCookies));
           (req as any)._cdsCookieAuth = true;
           (req as any)._cdsBasicHumanAuth = true;
           (req as any).cdsUser = legacyAuthUser(cdsUser!, 'basic');
@@ -3877,7 +3944,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use('/api', createAuthLocalRouter({
       authService,
       stateService: deps.stateService,
-      cookieSecure,
+      ...browserCookieOptions,
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
       legacyLogin: ({ username, password }) => {
@@ -3888,6 +3955,7 @@ export function createServer(deps: ServerDeps): express.Express {
             issueHumanSessionToken(cdsUser!, cdsPass!),
             sessionTtlMs,
             cookieSecure,
+            hostSessionCookies,
           ),
         };
       },
@@ -3923,7 +3991,7 @@ export function createServer(deps: ServerDeps): express.Express {
           return true;
         }
         if (authMode === 'basic') {
-          const cookieToken = readCookie(req.headers.cookie, 'cds_token');
+          const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies));
           const headerToken = typeof req.headers['x-cds-token'] === 'string'
             ? req.headers['x-cds-token']
             : '';
@@ -4103,6 +4171,8 @@ export function createServer(deps: ServerDeps): express.Express {
               ? '/api/auth/logout'
             : null,
       postLogoutRedirect: ssoIdentity ? '/login' : null,
+      ...(passkeysEnabled(req) && sessionUser?.id && !ssoIdentity && sessionUser.authProvider !== 'legacy'
+        ? { canUsePasskeys: true, ...(sessionUser.isSystemOwner && authStore?.oidcArtifacts && Number(process.versions.node.split('.')[0]) >= 22 ? { hostedSiteSso: true } : {}) } : {}),
       user,
     });
   });
@@ -5785,6 +5855,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     shell: deps.shell,
     repoRoot: deps.config.repoRoot,
+    hostSessionCookies,
     serverEventLogStore: deps.serverEventLogStore,
   }));
 
@@ -6228,13 +6299,7 @@ export function installSpaFallback(
  * basic 模式的会话 cookie（`cds_token`）。走统一的登录有效期策略，并在每次带 cookie 的
  * 已鉴权请求上重发，实现「只要在用就不会掉登录」——该模式没有服务端会话记录，只能这样滑动。
  */
-function basicSessionCookie(token: string, ttlMs: number, secure: boolean): string {
+function basicSessionCookie(token: string, ttlMs: number, secure: boolean, hostSessionCookies: boolean): string {
   const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
-  return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
-}
-
-function parseCookie(cookieStr: string, name: string): string | undefined {
-  const match = cookieStr.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  if (!match) return undefined;
-  try { return decodeURIComponent(match[1]); } catch { return undefined; }
+  return `${sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)}=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
 }

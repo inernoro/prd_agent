@@ -5,23 +5,28 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
+import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
 import { updateSite } from '@/services/real/webPages';
 import { previewCollectionPermissions, syncCollectionPermissions } from '@/services/real/hostedCollections';
-import { RelatedDocumentContent } from './RelatedDocumentContent';
+import { RelatedDocumentContent, RelatedReaderList } from './RelatedDocumentContent';
 import { CollectionContextPanel } from './CollectionContextPanel';
 import './RelatedDocumentsBar.css';
 
-export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, siteTitle }: {
+export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, siteTitle, reviewReader = false, menuAnchor, onMenuClose }: {
   siteId: string; collectionNavigation?: boolean; siteTitle?: string; variant?: 'bar' | 'toolbar' | 'badge';
-  summary?: RelatedSummary; source?: RelatedDocumentSource; onNavigate?: (item: RelatedDocument) => void;
+  summary?: RelatedSummary; source?: RelatedDocumentSource; onNavigate?: (item: RelatedDocument) => void; reviewReader?: boolean;
+  menuAnchor?: HTMLElement | null; onMenuClose?: () => void;
 }) {
   const authToken = useAuthStore(state => state.token);
+  const theme = useResolvedThemeMode();
+  const mobile = useIsMobile();
   const [data, setData] = useState<RelatedDocuments | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
+  const [badgeOpen, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [tagTarget, setTagTarget] = useState<RelatedDocument | null>(null);
   const [manage, setManage] = useState(false);
@@ -36,12 +41,14 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const token = source?.token;
   const password = source?.password;
   const collectionsEnabled = collectionNavigation && !token;
+  const open = badgeOpen || !!menuAnchor;
+  const hasBadge = !!summary?.count;
   const active = !collectionsEnabled && (variant !== 'badge' || open);
-  const close = useCallback(() => { setOpen(false); setPinned(false); }, []);
+  const close = useCallback(() => { setOpen(false); setPinned(false); onMenuClose?.(); }, [onMenuClose]);
   const measureAvailableHeight = useCallback(() => {
-    const bounds = anchor.current?.getBoundingClientRect();
+    const bounds = (menuAnchor ?? anchor.current)?.getBoundingClientRect();
     return Math.min(360, bounds ? Math.floor(Math.max(bounds.top - 14, window.innerHeight - bounds.bottom - 14)) : window.innerHeight - 40);
-  }, []);
+  }, [menuAnchor]);
   useLayoutEffect(() => {
     if (!open) return;
     const update = () => setMaxHeight(measureAvailableHeight());
@@ -52,11 +59,11 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     if (!open) return;
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
-      event.preventDefault(); event.stopPropagation(); close(); anchor.current?.focus();
+      event.preventDefault(); event.stopPropagation(); close(); (menuAnchor ?? anchor.current)?.focus({ preventScroll: true });
     };
     window.addEventListener('keydown', onEscape, true);
     return () => window.removeEventListener('keydown', onEscape, true);
-  }, [open, close]);
+  }, [open, close, menuAnchor]);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
     const result = await getRelatedDocuments(siteId, { token, password });
@@ -66,7 +73,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     else { setData(null); setError(result.error?.message || '关联文档加载失败'); }
   }, [siteId, token, password]);
   const invalidate = useCallback(() => { generation.current++; }, []);
-  useLayoutEffect(() => { setData(null); setLoading(true); close(); }, [siteId, token, password, authToken, close]);
+  useLayoutEffect(() => { setData(null); setLoading(true); setOpen(false); setPinned(false); }, [siteId, token, password, authToken]);
   useEffect(() => {
     if (active) void refresh();
     return () => { invalidate(); clearTimeout(closeTimer.current); };
@@ -80,7 +87,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     return () => { window.removeEventListener('focus', revalidate); window.removeEventListener('hosted-comments-changed', revalidate); document.removeEventListener('visibilitychange', revalidate); };
   }, [refresh, active]);
   const keepOpen = () => clearTimeout(closeTimer.current);
-  const leave = () => { keepOpen(); if (!pinned) closeTimer.current = setTimeout(close, 240); };
+  const leave = () => { keepOpen(); if (!pinned && !menuAnchor) closeTimer.current = setTimeout(close, 240); };
   const openPanel = (pin: boolean) => {
     keepOpen(); if (!pin && pinned) return;
     if (pin && pinned && open) { close(); return; }
@@ -89,36 +96,45 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   };
   const openManager = (next = data) => { setData(next); close(); setManage(true); };
   const openPermissions = (next = data) => { setData(next); close(); setPermissions(true); };
-  if (variant === 'badge' && !summary?.count && !collectionsEnabled && !open) return null;
+  if (variant === 'badge' && !hasBadge && !menuAnchor && !manage && !permissions && !tagTarget) return null;
   const compact = variant !== 'bar';
+  const relatedItems = data?.items.filter(item => item.id !== siteId) ?? [];
+  const relatedCount = relatedItems.length;
+  if (variant === 'toolbar' && !collectionsEnabled && (loading || relatedCount === 0)) return null;
   const main = data?.items.find(item => item.isMain);
   const warn = variant === 'toolbar' && data?.canManage && data.hasPermissionDifferences;
   const badgeTitle = collectionsEnabled ? `查看${siteTitle ? '「' + siteTitle + '」的' : ''}关联文档与所属合集`
     : summary ? `${summary.isMain ? '主文档 · ' : ''}关联 ${summary.count} 份文档：${summary.titles.join('、')}` : undefined;
   return <div className={`related-documents-bar related-variant-${variant}`} aria-label="关联文档导航" data-no-drag>
-    <button ref={anchor} type="button" className="related-trigger" title={warn ? '关联文档权限不一致，展开查看' : badgeTitle}
+    {(variant !== 'badge' || hasBadge) && <button ref={anchor} type="button" className="related-trigger" title={warn ? '关联文档权限不一致，展开查看' : badgeTitle}
       aria-description={warn ? '关联文档权限不一致，展开可查看差异' : undefined} style={warn ? { color: 'var(--accent-fg-warning)' } : undefined}
       aria-label={variant === 'badge' ? badgeTitle : '关联文档'} aria-expanded={open} aria-controls={menuId} aria-haspopup="dialog"
-      onPointerEnter={event => { if (event.pointerType === 'mouse') openPanel(false); }} onPointerLeave={leave} onClick={() => openPanel(true)}
+      onPointerEnter={event => { if (variant !== 'toolbar' && event.pointerType === 'mouse') openPanel(false); }} onPointerLeave={leave} onClick={() => openPanel(true)}
       onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
         event.preventDefault(); keepOpen(); setMaxHeight(measureAvailableHeight()); setOpen(true); setPinned(true);
-        requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('input,a,button') ?? panel.current)?.focus());
+        requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('input,a,button') ?? panel.current)?.focus({ preventScroll: true }));
       } }}>
-      {variant === 'badge' ? <Link2 size={12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
+      {variant === 'badge' || reviewReader ? <Link2 size={reviewReader ? 15 : 12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
       {variant === 'badge' ? <>{!!summary?.count && <span className="related-count">{summary.count}</span>}<span className="related-badge-name">{summary?.isMain ? '主文档' : summary?.mainTitle || summary?.titles[0] || '关联'}</span></>
-        : loading ? <MapSpinner size={12} /> : <span className="related-count">{data?.items.length ?? '—'}</span>}
+        : loading ? <MapSpinner size={12} /> : <span className="related-count">{data ? relatedCount : '—'}</span>}
       {warn && <ShieldAlert size={12} data-permission-warning aria-hidden />}<ChevronDown size={13} className={open ? 'related-chevron-open' : ''} />
-    </button>
+    </button>}
     {!compact && main && <span className="related-main-label"><Star size={12} />主文档<span title={main.title}>{main.title}</span></span>}
     {!compact && data?.canManage && data.version > 0 && <button type="button" className={`related-permission-hint ${data.hasPermissionDifferences ? 'is-warning' : ''}`} onClick={() => openPermissions()}>
       {data.hasPermissionDifferences ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />}<span>{data.hasPermissionDifferences ? '权限不一致' : '权限与分享'}</span>
     </button>}
-    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} align={compact ? 'right' : 'left'} gap={6} minWidth={280}
-      className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: collectionsEnabled && split ? 'min(680px, calc(100vw - 24px))' : 'min(464px, calc(100vw - 24px))', maxHeight, padding: 0 }}>
+    <AnchoredMenu open={open} onClose={close} anchorRef={anchor} anchorEl={menuAnchor}
+      align={reviewReader && mobile ? 'viewport-right' : compact ? 'right' : 'left'}
+      offsetX={reviewReader && !mobile ? -28 : 0} gap={reviewReader && mobile ? 0 : 6} minWidth={280}
+      className={`related-popover ${reviewReader ? 'related-reader-popover' : token ? 'surface-tone-dark' : ''}`} theme={reviewReader ? theme : undefined}
+      style={{ width: reviewReader ? 'min(302px, calc(100vw - 24px))' : collectionsEnabled && split ? 'min(680px, calc(100vw - 24px))' : 'min(464px, calc(100vw - 24px))', maxHeight, padding: 0,
+        ...(reviewReader ? { background: 'var(--review-b-popover)', boxShadow: '0 12px 24px #0003, 0 2px 5px #0002' } : {}) }}>
       <div id={menuId} ref={panel} tabIndex={-1} role="dialog" aria-label="关联文档" onPointerDown={event => { event.stopPropagation(); setPinned(true); }} onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
         {collectionsEnabled ? <CollectionContextPanel key={siteId + authToken} siteId={siteId} maxHeight={maxHeight - 2} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate}
           onManage={next => openManager(next)} onPermissions={next => openPermissions(next)} onTagEdit={item => { close(); setTagTarget(item); }} />
+          : reviewReader ? <RelatedReaderList items={relatedItems} data={data} error={error} maxHeight={maxHeight - 2}
+            onReload={() => void refresh()} onManage={() => openManager()} onPermissions={() => openPermissions()} onNavigate={onNavigate} onClose={close} />
           : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact}
             onReload={() => { setLoading(true); void refresh(); }} onManage={() => openManager()} onPermissions={() => openPermissions()}
             onTagEdit={item => { close(); setTagTarget(item); }} onNavigate={onNavigate} onClose={close} />}
@@ -160,14 +176,15 @@ function RelatedDocumentsManager({ siteId, data, onClose, onSaved }: {
       if (result.success) onSaved(result.data); else setError(result.error?.message || '保存失败');
     } catch { setError('保存失败，请重试'); } finally { setSaving(false); }
   };
-  const available = candidates.filter(item => !draft.some(selected => selected.id === item.id) && item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const relatedCount = draft.filter(item => item.id !== siteId).length;
+  const available = candidates.filter(item => item.id !== siteId && !draft.some(selected => selected.id === item.id) && item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   return <Dialog open onOpenChange={open => { if (!open && !saving) onClose(); }} title="管理关联文档" maxWidth={680} zIndex={1000}
     description="选择同组文件并指定一份主文档。关联关系不会改变任何文件的权限。"
-    content={<div className="related-manager"><div className="related-section-label">已关联 {draft.length} / 90<span>星标设为主文档</span></div>
+    content={<div className="related-manager"><div className="related-section-label">已关联 {relatedCount} / 89<span>星标设为主文档</span></div>
       <div className="related-selected-list" style={{ maxHeight: '30dvh', overflowY: 'auto', minHeight: 0 }}>
         {draft.map((item, index) => <div className="related-selected-row" key={item.id}>
           <button type="button" className={main === item.id ? 'is-main' : ''} aria-label={`设为主文档：${item.title}`} aria-pressed={main === item.id} disabled={saving} onClick={() => setMain(item.id)}><Star size={15} /></button>
-          <span title={item.title}>{item.title}</span>{item.id === siteId && <small>当前</small>}
+          <span title={item.title}>{item.title}</span>{item.id === siteId && <small>当前文档</small>}
           <button type="button" aria-label={`上移：${item.title}`} disabled={saving || index === 0} onClick={() => move(index, -1)}><ArrowUp size={13} /></button>
           <button type="button" aria-label={`下移：${item.title}`} disabled={saving || index + 1 === draft.length} onClick={() => move(index, 1)}><ArrowDown size={13} /></button>
           <button type="button" aria-label={`移出关联：${item.title}`} title={item.id === siteId ? '当前文档需保留；可从其他成员页移出' : '只移出关联，不删除文件'} disabled={saving || item.id === siteId}

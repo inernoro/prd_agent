@@ -14,9 +14,9 @@ const settings = (node: ReactNode) => createElement(SettingsLoadingContext.Provi
 const geometryMarkup = (markup: string) => markup.replace(/aria-label="[^"]*"/g, '');
 
 describe('设置代码和数据只使用一副内容骨架', () => {
-  for (const [name, Page] of [['登录认证', AuthTab], ['设置概览', OverviewTab], ['存储设置', StorageTab]] as const) {
+  for (const [name, Page, auth] of [['登录认证', AuthTab, true], ['设置概览', OverviewTab, false], ['存储设置', StorageTab, false]] as const) {
     it(`${name}初始数据等待与代码等待轮廓相同`, () => {
-      expect(geometryMarkup(render(settings(createElement(Page))))).toBe(geometryMarkup(render(createElement(SettingsContentSkeleton))));
+      expect(geometryMarkup(render(settings(createElement(Page))))).toBe(geometryMarkup(render(createElement(SettingsContentSkeleton, { auth }))));
     });
   }
 

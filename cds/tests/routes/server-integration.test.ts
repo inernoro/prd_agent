@@ -12,6 +12,7 @@ const AUTH_ENV_KEYS = [
   'CDS_PUBLIC_BASE_URL',
   'CDS_GITHUB_CLIENT_ID',
   'CDS_GITHUB_CLIENT_SECRET',
+  'CDS_PASSKEYS_ENABLED',
   'CDS_SSO_ENABLED',
   'CDS_SSO_AUTHORIZATION_URL',
   'CDS_SSO_TOKEN_URL',
@@ -644,6 +645,7 @@ describe('Server route ordering (regression)', () => {
         isSystemOwner: true,
       });
 
+      expect(cookie).toMatch(/^cds_token=/);
       const humanToken = cookie.slice('cds_token='.length);
       const machineToken = crypto.createHash('sha256').update('cds:operator:secret').digest('hex');
       expect(humanToken).not.toBe(machineToken);
@@ -1208,11 +1210,12 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
-  it('invalidates the persisted GitHub session when the unified SSO logout route is used', async () => {
+  it('preserves and invalidates the existing HTTPS GitHub session when passkeys are disabled', async () => {
     try {
       process.env.CDS_AUTH_MODE = 'github';
       process.env.CDS_GITHUB_CLIENT_ID = 'test-client';
       process.env.CDS_GITHUB_CLIENT_SECRET = 'test-secret';
+      process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
       const authStore = new MemoryAuthStore();
       const user = await authStore.upsertUser({
         githubId: 42,
@@ -1231,6 +1234,13 @@ describe('Server route ordering (regression)', () => {
       const app = buildRealServerWithEvents([], undefined, authStore);
       server = await startServer(app);
 
+      const existing = await request(server, '/api/me', { Cookie: `cds_gh_session=${session.token}` });
+      expect(existing.status).toBe(200);
+      expect(JSON.parse(existing.body).user.id).toBe(user.id);
+      const siteStatus = await request(server, '/api/hosted-sso/panel/status');
+      expect(siteStatus.status).toBe(200);
+      expect(JSON.parse(siteStatus.body)).toEqual({ enabled: false });
+
       const response = await requestJson(server, 'POST', '/api/auth/sso/logout', {}, {
         Cookie: `cds_gh_session=${session.token}; cds_token=legacy-basic-token`,
       });
@@ -1239,14 +1249,78 @@ describe('Server route ordering (regression)', () => {
       expect(await authStore.findSessionByToken(session.token)).toBeNull();
       const cleared = response.headers['set-cookie'] as string[];
       expect(cleared).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0.*; Secure/),
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0.*; Secure/),
+        expect.stringMatching(/^cds_token=.*Max-Age=0.*; Secure/),
       ]));
     } finally {
       delete process.env.CDS_AUTH_MODE;
       delete process.env.CDS_GITHUB_CLIENT_ID;
       delete process.env.CDS_GITHUB_CLIENT_SECRET;
+      delete process.env.CDS_PUBLIC_BASE_URL;
+    }
+  });
+
+  it('requires recent Passkey verification for release, project grants and secret reads on the CDS authority', async () => {
+    const authority = 'https://cds.example.org';
+    vi.stubEnv('CDS_AUTH_MODE', 'github');
+    vi.stubEnv('CDS_GITHUB_CLIENT_ID', 'test-client');
+    vi.stubEnv('CDS_GITHUB_CLIENT_SECRET', 'test-secret');
+    vi.stubEnv('CDS_PUBLIC_BASE_URL', authority);
+    vi.stubEnv('CDS_PASSKEYS_ENABLED', '1');
+    try {
+      const authStore = Object.assign(new MemoryAuthStore(), {
+        passkeys: {
+          find: async () => null,
+          list: async () => [],
+          insert: async () => {},
+          advanceCounter: async () => false,
+        },
+      });
+      const user = await authStore.upsertUser({
+        githubId: 42, githubLogin: 'verification-user', email: null, name: 'Verification User', avatarUrl: null, orgs: [],
+      });
+      const session = { userId: user.id, ttlMs: 3600_000, userAgent: 'integration-test', ipAddress: '127.0.0.1' };
+      const password = await authStore.createSession(session);
+      const verified = { ...session, passkeyAuthenticated: true as const };
+      const stale = await authStore.createSession(verified, new Date(Date.now() - 360_000));
+      const fresh = await authStore.createSession(verified);
+      const listener = await startServer(buildRealServerWithEvents([], undefined, authStore));
+      server = listener;
+      const authorityHeaders = { Host: new URL(authority).host, Origin: authority };
+      const oldCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `cds_gh_session=${fresh.token}` });
+      expect(oldCookie.status).toBe(401);
+      const verifiedCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` });
+      expect(verifiedCookie.status).toBe(200);
+      const browserSession = { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` };
+      expect((await request(listener, '/_cds/api/me', browserSession)).status).toBe(200);
+      const sibling = await request(listener, '/_cds/api/me', {
+        ...browserSession, Origin: 'https://preview.example.org', 'Sec-Fetch-Site': 'same-site',
+      });
+      expect(sibling.status).toBe(403);
+      expect(JSON.parse(sibling.body).code).toBe('cds_browser_origin_required');
+      for (const [method, route] of [
+        ['POST', '/api/releases/branches/fixture-missing/runs'],
+        ['PUT', '/api/auth/users/fixture-missing/projects'],
+        ['GET', '/api/branches/fixture-missing/effective-env/reveal'],
+      ] as const) {
+        for (const { token } of [password, stale, fresh]) {
+          const headers = {
+            Host: new URL(authority).host,
+            Origin: authority,
+            Cookie: `__Host-cds_gh_session=${token}`,
+          };
+          const response = method === 'GET' ? await request(listener, route, headers) : await requestJson(listener, method, route, {}, headers);
+          if (token === fresh.token) {
+            expect(response.body).not.toContain('passkey_verification_required');
+          } else {
+            expect(response.status).toBe(403);
+            expect(JSON.parse(response.body).code).toBe('passkey_verification_required');
+          }
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 
