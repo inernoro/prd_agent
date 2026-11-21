@@ -3397,7 +3397,12 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     expandSectionForTarget(t);
     var scroll=function(){{
       t.scrollIntoView({{block:'start'}});
-      try{{if(history&&history.replaceState) history.replaceState(null,'',hash);}}catch(error){{}}
+      try{{history.replaceState(null,'',hash);}}catch(error){{
+        // 沙箱内的 srcdoc 拒绝 History API 改写地址，原生片段替换仍限于报告自身。
+        var url=new URL(location.href);
+        url.hash=hash;
+        location.replace(url.href);
+      }}
     }};
     if(isMobileNavigation()){{
       setMobileNavOpen(false);
