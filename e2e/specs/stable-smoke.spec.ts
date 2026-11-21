@@ -2524,7 +2524,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await captureStableSmokeVisualEvidence(page, testInfo, {
       slotId: 'CDS-VISUAL-IDENTITY-PROFILE-01',
       target: loginCard,
-      caption: '未认证登录页的品牌、欢迎标题与当前认证入口可见；本图不证明认证成功。',
+      caption: '未认证登录页的品牌、身份标题与当前认证入口可见；本图不证明认证成功。',
     });
 
     await loginAndReadToken(page, request, '/');
