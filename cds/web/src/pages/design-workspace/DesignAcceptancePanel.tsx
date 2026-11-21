@@ -91,9 +91,11 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     </section>
     {!!failures.length && <section><h3>要修的问题 <small>{failures.length}</small></h3>
       <div className="dw-issues">{failures.map(item => {
-        const cells = run!.cells.filter(cell => cell.itemId === item.id && cell.status === 'failed');
+        const unmatched = run!.cells.filter(cell => cell.itemId === item.id && cell.status !== 'passed');
+        const cells = unmatched.filter(cell => cell.status === 'failed');
         const evidence = cells.find(cell => cell.imageId);
         const issue = run!.issues[item.id];
+        const needsLink = issue && unmatched.some(cell => cell.debtId !== issue.id);
         return <article className="dw-issue dw-surface" key={item.id}>
           <button className="dw-issue-shot" type="button" aria-label={`查看 ${item.id} 证据`} disabled={!evidence} onClick={() => setSelected(evidence)}>
             {evidence?.imageId ? <img src={designArtifact(entry.projectId, evidence.imageId)} alt={item.rule} /> : '缺少截图'}
@@ -103,9 +105,9 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
             <div className="dw-row">{cells.map(cell => <span className="ep-badge" key={cell.slot}>{slotNames[cell.slot]}</span>)}</div>
             <dl className="dw-details"><dt>实测</dt><dd>{cells.map(cell => cell.actual).join(' · ')}</dd><dt>期望</dt><dd>{item.expected ?? item.rule}</dd></dl>
             <div className="dw-row">
-              {canWrite && !run!.signed && <button className="ep-button" disabled={busy || !!issue && !issue.pending} type="button"
+              {canWrite && !run!.signed && <button className="ep-button" disabled={busy || !!issue && !issue.pending && !needsLink} type="button"
                 onClick={() => void send('acceptance.debt', { runId: run!.id, itemId: item.id })}>
-                <ScrollText />{issue ? issue.pending ? '核对待确认提案' : '已记债' : '记成债务'}</button>}
+                <ScrollText />{issue ? issue.pending ? '核对待确认提案' : needsLink ? '重新关联债务' : '已记债' : '记成债务'}</button>}
               {issue && !issue.pending && <Link className="ep-link" to={`/engineering-planning?project=${encodeURIComponent(entry.projectId)}&view=debts&kind=debt&item=${encodeURIComponent(issue.id)}`}>{issue.id}</Link>}
               {evidence && <button className="ep-text-button" type="button" onClick={() => setSelected(evidence)}>看证据</button>}
             </div>

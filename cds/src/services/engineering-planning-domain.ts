@@ -32,6 +32,7 @@ type Changes = Pick<EngineeringPlanningCommit, 'debts' | 'decisions' | 'plans' |
 type DebtChange = Extract<PlanningCommand, { debtId: string }>;
 type DecisionChange = Omit<Extract<PlanningCommand, { type: 'decision.change' }>, 'type' | 'requestId'>;
 type EventDetail = Omit<PlanningEvent, 'id' | 'at' | 'actor' | 'projectId' | 'entity' | 'entityId' | 'type'>;
+export type GithubRemovalCheck = 'restored' | 'missing';
 
 function repaymentPlanChanges(old: PlanningDebt, patch: { dueAt?: string | null; trigger?: string | null }): EventDetail {
   const oldDueAt = old.dueAt ?? null;
@@ -380,14 +381,23 @@ export class PlanningMutation {
       automatic ? planningSweepActor : this.actor);
   }
 
-  sweepRecordedRemovals({ branch, through = this.at }: { branch?: string; through?: string } = {}): PlanningSweepResult {
+  sweepRecordedRemovals({ branch, through = this.at, githubFiles }: {
+    branch?: string; through?: string; githubFiles?: ReadonlyMap<string, GithubRemovalCheck>;
+  } = {}): PlanningSweepResult {
     if (branch && branch !== 'none' && !this.state.decisions.has(branch)) missing();
     const result: PlanningSweepResult = { projectId: this.projectId, at: this.at, pending: [], closed: [] };
     for (const debt of this.state.debts.values()) {
       if (branch && (debt.decisionId ?? 'none') !== branch) continue;
       const anchor = debt.anchor;
       if (!unpaid(debt) || anchor?.status !== 'missing' || !hasRecordedRemoval(anchor)) continue;
-      if (anchor.closeAt > through) {
+      const githubCheck = githubFiles?.get(debt.id);
+      if (githubCheck === 'restored') {
+        const { type, ref, by, boundAt } = anchor;
+        this.saveDebt(debt, { anchor: { type, ref, by, boundAt, status: 'alive' } }, 'anchor_kept',
+          { note: 'Git 默认分支已恢复绑定文件，撤回待结案记录。', via: 'system' }, planningSweepActor);
+        continue;
+      }
+      if (anchor.closeAt > through || (anchor.source?.kind === 'github-file' && githubCheck !== 'missing')) {
         result.pending.push(debt.id);
         continue;
       }
@@ -655,14 +665,14 @@ export class PlanningMutation {
     return row;
   }
 
-  run(command: PlanningCommand, designSourceRef?: string): PlanningCommitResult {
+  run(command: PlanningCommand, context?: { designSourceRef?: string; githubFiles?: ReadonlyMap<string, GithubRemovalCheck> }): PlanningCommitResult {
     switch (command.type) {
       case 'proposal.submit': return this.submit(command);
       case 'proposal.accept':
       case 'proposal.reject': return this.handleProposal(command);
       case 'debt.create': {
         const { source, distinction, assignToSelf, type: _, requestId: _request, ...draft } = command;
-        return this.newDebt(draft, source, { checkDuplicates: true, designAcceptance: source.ref === designSourceRef, distinction, assignToSelf });
+        return this.newDebt(draft, source, { checkDuplicates: true, designAcceptance: source.ref === context?.designSourceRef, distinction, assignToSelf });
       }
       case 'debt.import': {
         const batchId = id('BATCH');
@@ -690,7 +700,7 @@ export class PlanningMutation {
       case 'debt.anchor':
       case 'debt.anchor-missing':
       case 'debt.anchor-confirm': return this.changeDebt(command);
-      case 'debt.sweep': return this.sweepRecordedRemovals({ branch: command.branch });
+      case 'debt.sweep': return this.sweepRecordedRemovals({ branch: command.branch, githubFiles: context?.githubFiles });
       case 'decision.create': {
         const { source, type: _, requestId: _request, ...draft } = command;
         return this.newDecision(draft, source);

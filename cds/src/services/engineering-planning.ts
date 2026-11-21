@@ -6,7 +6,7 @@ import {
   type PlanningCounts, type PlanningDebt, type PlanningDebtDetail, type PlanningDebtList, type PlanningDecisionSearch,
   type PlanningDesignLink, type PlanningPlan, type PlanningReceipt, type PlanningStats,
 } from '../shared/engineering-planning.js';
-import { PlanningMutation, planningSweepActor, planningToday, sharesRepaymentCriteria, unpaid, type PlanningState } from './engineering-planning-domain.js';
+import { PlanningMutation, planningSweepActor, planningToday, sharesRepaymentCriteria, unpaid, type GithubRemovalCheck, type PlanningState } from './engineering-planning-domain.js';
 import { buildPlanningAnalytics, eventDelta, matchesBranch } from './engineering-planning-analytics.js';
 import { checkupDuplicatePairs, duplicatePresentAtBaseline, planningDuplicateKey } from './engineering-planning-checkup.js';
 import { buildDebtBrief } from './engineering-planning-brief.js';
@@ -143,9 +143,10 @@ export class EngineeringPlanningService {
       const state = await this.load(projectId);
       const at = this.now();
       if (through.getTime() > at.getTime()) return;
+      const githubFiles = await this.recheckGithubRemovals(projectId, state);
       const mutation = new PlanningMutation(state, projectId, planningSweepActor, at.toISOString());
-      const result = mutation.sweepRecordedRemovals({ through: through.toISOString() });
-      if (!result.closed.length || await this.publish(state, { projectId, revision: state.revision + 1, ...mutation.changes })) return;
+      mutation.sweepRecordedRemovals({ through: through.toISOString(), githubFiles });
+      if (!mutation.changes.debts.length || await this.publish(state, { projectId, revision: state.revision + 1, ...mutation.changes })) return;
     }
     throw new Error('Planning sweep could not acquire a project revision');
   }
@@ -182,6 +183,34 @@ export class EngineeringPlanningService {
     return debt?.source.type === 'test' && debt.source.ref === sourceRef && debt.status !== 'dropped' ? debt.id : undefined;
   }
 
+  private async recheckGithubRemovals(projectId: string, state: PlanningState, decisionBranch?: string) {
+    const checks = new Map<string, GithubRemovalCheck>();
+    const repository = this.github?.repositoryFor(projectId);
+    const branch = this.github?.defaultBranchFor?.(projectId);
+    const probe = this.github?.fileAnchorProbe;
+    if (!repository || !branch || !probe) return checks;
+    const candidates = [...state.debts.values()].flatMap(debt => {
+      if (!unpaid(debt) || (decisionBranch && (debt.decisionId ?? 'none') !== decisionBranch)) return [];
+      const anchor = debt.anchor;
+      if (anchor?.type !== 'file' || anchor.status !== 'missing' || anchor.source?.kind !== 'github-file') return [];
+      const file = fileAnchorPath(anchor.ref);
+      const proof = anchor.source.proof;
+      if (!file || proof?.repository?.toLowerCase() !== repository.toLowerCase() || proof.defaultBranch !== branch || proof.path !== file) return [];
+      return [{ id: debt.id, file, proof }];
+    });
+    if (!candidates.length) return checks;
+    const files = [...new Set(candidates.map(row => row.file))];
+    const commits = new Set(candidates.map(row => row.proof.mergeCommitSha));
+    const observation = await probe(projectId, repository, branch, files, commits);
+    if (this.github?.repositoryFor(projectId) !== repository || this.github.defaultBranchFor?.(projectId) !== branch) return checks;
+    for (const { id, file, proof } of candidates) {
+      const current = observation.removals.get(file);
+      if (observation.present.has(file)) checks.set(id, 'restored');
+      else if (current?.mergeCommitSha === proof.mergeCommitSha && current.parentCommitSha === proof.parentCommitSha) checks.set(id, 'missing');
+    }
+    return checks;
+  }
+
   async scanGithubFileAnchors(projectId: string): Promise<number> {
     const repository = this.github?.repositoryFor(projectId);
     const branch = this.github?.defaultBranchFor?.(projectId);
@@ -203,7 +232,7 @@ export class EngineeringPlanningService {
     });
     if (!merges.length) return 0;
     const files = [...new Set(anchors.map(anchor => anchor.file))];
-    const removals = await readProofs(projectId, repository, branch, files, new Set(merges.map(merge => merge.commit)));
+    const { removals } = await readProofs(projectId, repository, branch, files, new Set(merges.map(merge => merge.commit)));
     if (!removals.size) return 0;
 
     for (let attempts = 0; attempts < 10; attempts++) {
@@ -331,8 +360,9 @@ export class EngineeringPlanningService {
         || (command.type === 'plan.create' && command.initialSteps?.some(step => step.kind === 'design')))) {
         designIds = new Set((await this.designLinksFor?.(projectId))?.map(design => design.id));
       }
+      const githubFiles = command.type === 'debt.sweep' ? await this.recheckGithubRemovals(projectId, state, command.branch) : undefined;
       const mutation = new PlanningMutation(state, projectId, actor, this.now().toISOString(), designIds);
-      const result = mutation.run(command, context?.designSourceRef);
+      const result = mutation.run(command, { ...context, githubFiles });
       const receipt = { projectId, result, reused: mutation.reused };
       const commit: EngineeringPlanningCommit = { projectId, revision: state.revision + 1,
         request: { key, fingerprint, receipt }, ...mutation.changes };

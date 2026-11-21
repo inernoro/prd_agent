@@ -283,4 +283,100 @@ describe('engineering planning PR projection', () => {
     expect((await planning.debt(projectId, deleted)).debt).toMatchObject({ status: 'dropped',
       outcome: { kind: 'extinct', closedAt: '2026-11-28T06:00:00.000Z' } });
   });
+
+  it.each([
+    { via: 'automatic', tracking: 'restored' },
+    { via: 'manual', tracking: 'restored' },
+    { via: 'automatic', tracking: 'unavailable' },
+    { via: 'manual', tracking: 'unavailable' },
+  ])('rechecks recorded Git deletions during an $via sweep when the default ref is $tracking', async ({ via, tracking }) => {
+    const git = async (...args: string[]) => (await runProcess('git', args, { cwd: directory, env: {
+      ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ALLOW_PROTOCOL: '', GIT_NO_LAZY_FETCH: '1',
+    } })).stdout.trim();
+    const trackedDefault = 'refs/remotes/origin/main';
+    const restoredFile = 'restored-feature.ts';
+    const removedFile = 'still-removed-feature.ts';
+    await git('init', '--initial-branch=main');
+    await git('config', 'user.name', 'Planning fixture');
+    await git('config', 'user.email', 'planning@example.test');
+    await git('remote', 'add', 'origin', `https://github.com/${repository}.git`);
+    for (const file of [restoredFile, removedFile]) await writeFile(path.join(directory, file), '// fixture before deletion\n');
+    await git('add', restoredFile, removedFile);
+    await git('commit', '-m', 'Add two tracked features');
+
+    async function bind(file: string, title: string) {
+      const { result } = await planning.command(projectId, owner, { type: 'debt.create', requestId: `create-${file}`,
+        title, source: { ...source, ref: file } });
+      const { id, version } = result as { id: string; version: number };
+      await planning.command(projectId, owner, { type: 'debt.anchor', requestId: `bind-${file}`, debtId: id,
+        expectedVersion: version, anchor: { type: 'file', ref: `./${file}` }, reason: '功能位于已跟踪的文件' });
+      return id;
+    }
+
+    const restored = await bind(restoredFile, '复核报表刷新');
+    const removed = await bind(removedFile, '补足通知重试');
+    await git('switch', '-c', 'feature/report-theme');
+    await git('rm', '--', restoredFile, removedFile);
+    await git('commit', '-m', 'Remove both tracked features');
+    const headSha = await git('rev-parse', 'HEAD');
+    await git('switch', 'main');
+    await git('merge', '--no-ff', '--no-edit', 'feature/report-theme');
+    const mergeSha = await git('rev-parse', 'HEAD');
+    await git('update-ref', trackedDefault, mergeSha);
+
+    now = new Date('2026-11-21T06:00:00.000Z');
+    const mergedAt = '2026-11-20T11:00:00.000Z';
+    expect((await send('pull_request', pr('', { state: 'closed', merged: true, closed_at: mergedAt, merged_at: mergedAt,
+      updated_at: mergedAt, merge_commit_sha: mergeSha, base: { ref: 'main' },
+      head: { ref: 'feature/report-theme', sha: headSha, repo: { full_name: repository } },
+    }, repository, 'closed'))).status).toBe(200);
+    expect(await reopenPlanning().scanGithubFileAnchors(projectId)).toBe(2);
+    const deadline = '2026-11-28T06:00:00.000Z';
+    const captured = await reopenPlanning().debt(projectId, restored);
+    expect(captured.debt).toMatchObject({ status: 'open', anchor: { status: 'missing', closeAt: deadline,
+      source: { kind: 'github-file', proof: { path: restoredFile, mergeCommitSha: mergeSha } } } });
+    const deletion = captured.events.find(event => event.type === 'extinct_pending');
+    expect(deletion).toMatchObject({ type: 'extinct_pending', evidence: [{ type: 'change', url: prUrl }] });
+
+    now = new Date('2026-11-24T06:00:00.000Z');
+    if (tracking === 'restored') {
+      await writeFile(path.join(directory, restoredFile), '// came back on main\n');
+      await git('add', restoredFile);
+      await git('commit', '-m', 'Bring one feature back on the default branch');
+      await git('update-ref', trackedDefault, 'HEAD');
+      await git('switch', 'feature/report-theme');
+      expect(await git('ls-tree', '--name-only', trackedDefault, '--', restoredFile)).toBe(restoredFile);
+      expect(await git('ls-tree', '--name-only', 'HEAD', '--', restoredFile)).toBe('');
+    } else {
+      await git('update-ref', '-d', trackedDefault);
+      await expect(git('rev-parse', '--verify', trackedDefault)).rejects.toThrow();
+    }
+
+    async function sweep(label: string) {
+      const reader = reopenPlanning();
+      if (via === 'automatic') await reader.sweepRecordedRemovals(projectId, now);
+      else await reader.command(projectId, owner, { type: 'debt.sweep', requestId: `tracked-file-${label}` });
+    }
+
+    now = new Date(Date.parse(deadline) - 1);
+    await sweep('before');
+    expect((await reopenPlanning().debt(projectId, removed)).debt).toMatchObject({ status: 'open', anchor: { status: 'missing' } });
+    now = new Date(deadline);
+    await sweep('deadline');
+
+    const observed = await reopenPlanning().debt(projectId, restored);
+    expect(observed.debt).toMatchObject({ status: 'open', anchor: { type: 'file', ref: `./${restoredFile}`,
+      status: tracking === 'restored' ? 'alive' : 'missing' } });
+    expect(observed.debt.outcome).toBeUndefined();
+    expect(observed.events).toContainEqual(deletion);
+    expect(observed.events.some(event => event.type === 'extinct')).toBe(false);
+
+    if (tracking === 'unavailable') {
+      expect((await reopenPlanning().debt(projectId, removed)).debt).toMatchObject({ status: 'open', anchor: { status: 'missing' } });
+      await git('update-ref', trackedDefault, mergeSha);
+      await sweep('tracking-recovered');
+    }
+    expect((await reopenPlanning().debt(projectId, removed)).debt).toMatchObject({ status: 'dropped', anchor: { status: 'gone' },
+      outcome: { kind: 'extinct', closedAt: deadline, evidence: [{ type: 'change', url: prUrl }] } });
+  });
 });
