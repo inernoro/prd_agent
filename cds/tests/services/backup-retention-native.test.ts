@@ -12,22 +12,23 @@ import { DEFAULT_KEEP_COUNT, DEFAULT_KEEP_DAYS } from '../../src/services/infra-
 const roots: string[] = [];
 const DAY = 86_400_000;
 const now = Date.now();
-function fixture() {
+function fixture(mountProbe = ' return [] # Unit descriptor fixture; Docker mounts are exercised in the real VM.') {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'owned-backup-retention-')); roots.push(directory);
   // Native files + this fixture's real writer descriptors. The full /proc guard is
   // separately exercised in a private Docker PID namespace, including query failure.
   const proc = path.join(directory, '.fixture-proc');fs.mkdirSync(path.join(proc, String(process.pid)), { recursive: true });
   fs.symlinkSync(`/proc/${process.pid}/fd`, path.join(proc, String(process.pid), 'fd'));
-  const program = BACKUP_RETENTION_PROGRAM.replace('def backup_mount_references():\n','def backup_mount_references():\n return [] # Unit descriptor fixture; Docker mounts are exercised in the real VM.\n').replace("pathlib.Path('/proc')", `pathlib.Path(${JSON.stringify(proc)})`);
-  const request = (input: Record<string, unknown>) => JSON.parse(execFileSync('python3', ['-c', program], {
-    input: JSON.stringify({ catalog: path.join(directory, '.cds-retention'), directories: [directory], instanceId: 'owned-instance', automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS }, nowMs: now, ...input }), encoding: 'utf8', timeout: 30_000,
+  const program = BACKUP_RETENTION_PROGRAM.replace('def backup_mount_references():\n',`def backup_mount_references():\n${mountProbe}\n`).replace("pathlib.Path('/proc')", `pathlib.Path(${JSON.stringify(proc)})`);
+  const payload = (input: Record<string, unknown>) => JSON.stringify({ catalog: path.join(directory, '.cds-retention'), directories: [directory], instanceId: 'owned-instance', automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS }, nowMs: now, ...input });
+  const request = (input: Record<string, unknown>, timeout = 30_000) => JSON.parse(execFileSync('python3', ['-c', program], {
+    input: payload(input), encoding: 'utf8', timeout,
   }));
   const backup = (name: string, age: number, serviceId = 'retired-db') => {
     const file = path.join(directory, name);fs.writeFileSync(file, gzipSync(Buffer.alloc(1024 * 1024, name)));
     fs.utimesSync(file, new Date(now - age * DAY), new Date(now - age * DAY));
     request({ action: 'register', path: file, projectId: 'owned-project', serviceId, origin: serviceId === 'active-db' ? 'automatic' : 'historical', sourceComplete: serviceId === 'active-db', sourceFingerprint: 'a'.repeat(64), disposition: serviceId === 'active-db' ? 'business-backup' : 'reproducible-artifact', attestedBy: 'unit-fixture-owner', dispositionReason: 'synthetic data in a private unit fixture' });return file;
   };
-  return { directory, request, backup };
+  return { directory, request, backup, program, payload };
 }
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 describe('independent native backup retention', () => {
@@ -42,6 +43,33 @@ describe('independent native backup retention', () => {
     const lease = { projectId: 'owned-project', serviceId: 'active-db', token: 'restore-fixture', kind: 'restore' };
     expect(f.request({ action: 'lease', ...lease })).toEqual({ leased: true });
     await released;
+    expect(f.request({ action: 'release', ...lease })).toEqual({ released: true });
+  });
+  it('lets backup leases proceed during Docker mount discovery and protects the leased recovery point', async () => {
+    const f = fixture([
+      " print('scanning-mounts',flush=True)",
+      " while not (pathlib.Path(req['directories'][0])/'.mounts-ready').exists():",
+      '  check();time.sleep(.02)',
+      ' return []',
+    ].join('\n'));
+    const old = f.backup('expired.gz', 20);
+    const scan = spawn('python3', ['-c', f.program]);
+    const complete = once(scan, 'close');
+    let output = '';
+    scan.stdout.on('data', data => { output += String(data); });
+    scan.stdin.end(f.payload({ action: 'reconcile' }));
+    const lease = { projectId: 'owned-project', serviceId: 'retired-db', token: 'backup-during-scan', kind: 'backup' };
+    try {
+      await once(scan.stdout, 'data');
+      expect(f.request({ action: 'lease', ...lease }, 2_000)).toEqual({ leased: true });
+    } finally {
+      fs.writeFileSync(path.join(f.directory, '.mounts-ready'), '');
+      await complete;
+    }
+    const report = JSON.parse(output.trim().split('\n').at(-1)!);
+    expect(report.removed).toEqual([]);
+    expect(report.held).toContainEqual({ path: old, reason: 'active-backup-or-restore-lease' });
+    expect(fs.existsSync(old)).toBe(true);
     expect(f.request({ action: 'release', ...lease })).toEqual({ released: true });
   });
   it('retires an unregistered older local copy only with an exact, fresh, audited R2 proof', () => {

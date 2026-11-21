@@ -1,6 +1,9 @@
 
 import re,subprocess
-deadline=time.monotonic()+(900 if req['action']=='register' else 300 if req['action']=='reconcile' else 25)
+action=req['action']
+retention_scan=action in ['preview','reconcile']
+lease_request=action in ['lease','release']
+deadline=time.monotonic()+(900 if action=='register' else 300 if action=='reconcile' else 75 if lease_request else 25)
 def backup_mount_references():
  def query(args):
   check();value=subprocess.run(['docker',*args],capture_output=True,text=True,timeout=8)
@@ -58,6 +61,12 @@ if root.stat().st_uid!=os.getuid() or root.stat().st_mode&0o077:raise ValueError
 root_fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
 if (os.fstat(root_fd).st_dev,os.fstat(root_fd).st_ino)!=root_identity:raise ValueError('catalog-directory-replaced')
 lock=os.open('lock',(os.O_RDONLY if req['action']=='preview' else os.O_CREAT|os.O_RDWR)|os.O_NOFOLLOW,0o600,dir_fd=root_fd)
+mount_references=[];mount_query_error=False
+if retention_scan:
+ # The initial Docker inventory only classifies candidates. A fresh inventory
+ # is still required before any removal; leases can proceed during this read.
+ try:mount_references=backup_mount_references()
+ except Exception:mount_query_error=True
 def acquire_catalog(seconds,cancellable=True):
  until=time.monotonic()+seconds
  while True:
@@ -69,7 +78,7 @@ def acquire_catalog(seconds,cancellable=True):
    time.sleep(.1)
 # Background inventory yields. Foreground backup/restore steps can wait for a
 # bounded metadata operation instead of treating incidental contention as loss.
-acquire_catalog(0 if req['action'] in ['preview','reconcile'] else 15)
+acquire_catalog(0 if retention_scan else 60 if lease_request else 15)
 db=root/'backups.json';state={'schema':1,'files':{},'leases':{}}
 if db.exists():
  if db.is_symlink():raise ValueError('catalog-alias')
@@ -97,7 +106,7 @@ def execution_owner(pid):
   p=pathlib.Path('/proc',str(pid));parts=(p/'stat').read_text().split(') ',1)[1].split()
   return {'pid':pid,'start':parts[19],'uid':p.stat().st_uid,'boot':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
  except FileNotFoundError:return None
-now=req.get('nowMs',int(time.time()*1000));action=req['action']
+now=req.get('nowMs',int(time.time()*1000))
 state.setdefault('outputs',{})
 def key(project,service):return json.dumps([project,service],separators=(',',':'))
 if action=='output':
@@ -184,9 +193,8 @@ if automatic_policy is not None:
 out={'maxAgeDays':15,'automaticPolicy':automatic_policy,'scanStatus':'complete','candidates':[],'held':[],'removed':[],'failed':[],'pending':[],'unknown':[],'policyConflicts':[],'historicalCandidates':[],'filesystems':[]}
 def hold(p,reason):out['held'].append({'path':p,'reason':reason})
 active={key(v['projectId'],v['serviceId']) for v in req.get('activeServices',[])}
-try:mount_references=backup_mount_references();mount_query_error=False
-except Exception:
- mount_references=[];mount_query_error=True;out['scanStatus']='partial';out['unknown'].append({'path':str(req['directories'][0]),'reason':'container-or-stopped-container-references-unconfirmed'})
+if mount_query_error:
+ out['scanStatus']='partial';out['unknown'].append({'path':str(req['directories'][0]),'reason':'container-or-stopped-container-references-unconfirmed'})
 def backup_is_mounted(p):
  location=pathlib.Path(p);identities=[]
  for part in [location,*location.parents]:

@@ -100,12 +100,14 @@ export class BackupRetentionService {
   }
   private async run(directory: string, input: Record<string, unknown>): Promise<any> {
     const action = typeof input.action === 'string' && /^[a-z-]{1,40}$/.test(input.action) ? input.action : 'unknown';
+    const leaseRequest = action === 'lease' || action === 'release';
     // Persist exception type/errno/source lines, never native stderr or request contents.
     const loader = `import base64,json,sys,traceback\ntry:\n exec(compile(base64.b64decode("${Buffer.from(BACKUP_RETENTION_PROGRAM).toString('base64')}"),'<cds-backup-retention>','exec'))\nexcept Exception as e:\n d={'nativeException':type(e).__name__,'nativeLines':[f.lineno for f in traceback.extract_tb(e.__traceback__) if f.filename=='<cds-backup-retention>'][-5:]}\n if isinstance(getattr(e,'errno',None),int):d['errno']=e.errno\n print('CDS_BACKUP_DIAGNOSTIC='+json.dumps(d),file=sys.stderr)\n sys.exit(70)`;
     let result;
     try { result = await this.options.shell.exec(`python3 -c ${shellQuoteArg(loader)}`, {
       stdin: JSON.stringify({ ...input, automaticPolicy: { keepCount: DEFAULT_KEEP_COUNT, keepDays: DEFAULT_KEEP_DAYS }, catalog: path.join(directory, '.cds-retention'), directories: [directory], instanceId: this.options.instanceId }),
-      timeout: input.action === 'register' ? 905_000 : input.action === 'reconcile' ? 305_000 : 30_000, executionLane: input.action === 'preview' ? 'observation' : 'operation',
+      timeout: action === 'register' ? 905_000 : action === 'reconcile' ? 305_000 : leaseRequest ? 80_000 : 30_000,
+      executionLane: action === 'preview' ? 'observation' : 'operation',
     }); } catch { throw new BackupRetentionOperationError({ action, failureKind: 'transport', exitCode: null }); }
     if (result.exitCode !== 0) {
       let native: { nativeException?: string; errno?: number; nativeLines?: number[] } = {};
