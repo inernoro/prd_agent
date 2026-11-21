@@ -53,7 +53,8 @@ export function BranchRelationsPage(): JSX.Element {
     if (relationReturnKind(token, actor, branchId, location.key, window.history.state?.idx)) navigate(-1);
     else navigate(branchId ? `/branch-panel/${encodeURIComponent(branchId)}` : '/branch-list');
   };
-  const returnLabel = returnKind === 'branches' ? '返回分支总览' : '返回分支详情';
+  const returnLabel = returnKind === 'overview' ? '返回项目关系总览'
+    : returnKind === 'branches' ? '返回分支总览' : '返回分支详情';
   const { state, reload, refreshing, refreshError } = useRelationPayload(branchId);
   const [onlyProblems, setOnlyProblems] = useState(false);
   const data = state.status === 'ok' ? state.data : null;

@@ -290,6 +290,67 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
   });
 
   /**
+   * 全局概览（plan.cds.service-relations 第四批）：每个项目取代表分支（默认分支，没有就取最近
+   * 部署的那条），给出体检结论、服务构成、跨项目引用边。只返回调用方有权限的项目。
+   */
+  router.get('/overview/topology', (req, res) => {
+    const projects = (deps.stateService.getState().projects ?? []).filter((p) => canSeeProject(req, p.id));
+    const branches = deps.stateService.getAllBranches();
+    const out = projects.map((project) => {
+      const p = project as typeof project & { gitDefaultBranch?: string | null; defaultBranch?: string | null };
+      const mine = branches.filter((b) => b.projectId === project.id);
+      const wanted = (p.gitDefaultBranch || p.defaultBranch || 'main').trim();
+      const rep = mine.find((b) => b.id === wanted) ?? mine.find((b) => b.branch === wanted)
+        ?? [...mine].sort((a, b) => String((b as { lastDeployAt?: string }).lastDeployAt ?? b.createdAt ?? '').localeCompare(String((a as { lastDeployAt?: string }).lastDeployAt ?? a.createdAt ?? '')))[0];
+      if (!rep) {
+        return { projectId: project.id, slug: project.slug, name: project.name, branch: null, branchCount: 0, counts: { services: 0, sites: 0, apis: 0, webs: 0, workers: 0 }, lint: { errors: 0, warnings: 0, infos: 0 }, headline: '还没有分支', findings: [], edges: [] };
+      }
+      const payload = buildBranchGraphPayload(rep, (pid) => canSeeProject(req, pid));
+      const services = payload.graph.nodes.filter((n) => n.kind === 'service');
+      const edges: Array<{ toProjectId: string; toBranchId?: string; toBranchName?: string; kind: 'cds-ref' | 'url'; status: string; fromService: string; key: string }> = [];
+      for (const r of payload.references) {
+        if (r.kind === 'cds-ref') {
+          for (const x of r.resolved ?? []) {
+            if (x.target.projectId && x.target.projectId !== project.id) {
+              edges.push({ toProjectId: x.target.projectId, toBranchId: x.target.branchId, toBranchName: x.target.branchName, kind: 'cds-ref', status: x.status, fromService: r.profileId, key: r.key });
+            }
+          }
+        } else if (r.kind === 'url' && r.matchedBranch && r.matchedBranch.projectId !== project.id) {
+          edges.push({ toProjectId: r.matchedBranch.projectId, toBranchId: r.matchedBranch.branchId, toBranchName: r.matchedBranch.branchName, kind: 'url', status: r.matchedBranch.status, fromService: r.profileId, key: r.key });
+        }
+      }
+      const top = payload.lint.findings[0];
+      return {
+        projectId: project.id, slug: project.slug, name: project.name,
+        branch: { id: rep.id, name: rep.branch, status: String(rep.status) },
+        branchCount: mine.length,
+        counts: {
+          services: services.length,
+          sites: payload.graph.sites.length,
+          apis: services.filter((n) => n.role === 'api').length,
+          webs: services.filter((n) => n.role === 'web').length,
+          workers: services.filter((n) => n.role === 'worker').length,
+        },
+        lint: payload.lint.summary,
+        headline: top ? top.message : '无问题',
+        findings: payload.lint.findings.slice(0, 8),
+        edges,
+      };
+    });
+    const inbound = new Map<string, number>();
+    for (const p of out) for (const e of p.edges) inbound.set(e.toProjectId, (inbound.get(e.toProjectId) ?? 0) + 1);
+    res.json({
+      generatedAt: new Date().toISOString(),
+      summary: {
+        errors: out.reduce((n, p) => n + p.lint.errors, 0),
+        warnings: out.reduce((n, p) => n + p.lint.warnings, 0),
+        infos: out.reduce((n, p) => n + p.lint.infos, 0),
+      },
+      projects: out.map((p) => ({ ...p, inboundEdges: inbound.get(p.projectId) ?? 0 })),
+    });
+  });
+
+  /**
    * 路由判定查询（plan.cds.service-relations 第二批）：输入 host + path，回答
    * 「转发器现在会把它交给哪条路由 / 哪个服务」以及「master 兜底会选谁」。两者不一致就是漂移。
    */

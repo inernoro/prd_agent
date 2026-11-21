@@ -49,6 +49,13 @@
     "workspace": "fluid"
   },
   {
+    "route": "/overview",
+    "name": "全局关系概览",
+    "page": "pages/OverviewPage.tsx",
+    "kind": "relations",
+    "workspace": "fill"
+  },
+  {
     "route": "/release-center",
     "name": "发布中心",
     "page": "pages/ReleaseCenterPage.tsx",

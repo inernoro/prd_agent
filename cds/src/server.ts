@@ -1290,6 +1290,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /branches/:id/service-graph': '分支服务关系图与体检',
     'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
     'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
+    'GET /overview/topology': '全局概览：各项目关系与体检',
     'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',

@@ -234,6 +234,7 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
     </div>;
   }
   if (scene?.route === '/task-schedule') return <TaskScheduleSkeleton />;
+  if (scene?.route === '/overview') return <ContentLoading label="读取项目关系总览" variant="panel" />;
   switch (scene?.kind) {
     case 'auth': return <AuthPageSkeleton />;
     case 'public-status': return <PublicStatusSkeleton />;

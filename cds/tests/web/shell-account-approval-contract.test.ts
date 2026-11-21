@@ -68,6 +68,19 @@ const serverSource = fs.readFileSync(
 );
 
 describe('CDS 壳层用户入口与授权提醒契约', () => {
+  it('保留原主导航顺序并在审查之后追加工程规划和设计', () => {
+    const rail = shellSource.slice(shellSource.indexOf('function RailNav('), shellSource.indexOf('function RailThemeToggle('));
+    const mainItems = rail.slice(0, rail.indexOf('<div className="flex-1" />'));
+    expect([...mainItems.matchAll(/<Link\s+to="([^"]+)"/g)].map(([, href]) => href)).toEqual([
+      '/project-list', '/overview', '/release-center', '/task-schedule', '/reports', '/status',
+      '/code-reviews', '/engineering-planning', '/design',
+    ]);
+    const ownerItems = mainItems.slice(mainItems.indexOf('{canManageSettings ? <>'), mainItems.indexOf('</> : null}'));
+    expect(ownerItems).toContain('to="/overview"');
+    const ownerRoutes = appSource.slice(appSource.indexOf('<Route element={<OwnerConsoleRoute />}>'));
+    expect(ownerRoutes.slice(0, ownerRoutes.indexOf('</Route>'))).toContain('path="/overview"');
+  });
+
   /*
    * 2026-09-08 契约再变（用户拍板方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、
    * 紧贴账号——它们是动作不是页面，混在导航下面会被当成页面点；栏中间的空白是
