@@ -79,7 +79,8 @@ export class PlanningMutation {
   reused = false;
   private readonly actor: PlanningIdentity;
 
-  constructor(private readonly state: PlanningState, private readonly projectId: string, actor: PlanningIdentity, private readonly at: string) {
+  constructor(private readonly state: PlanningState, private readonly projectId: string, actor: PlanningIdentity,
+    private readonly at: string, private readonly designIds?: ReadonlySet<string>) {
     this.actor = { kind: actor.kind, id: actor.id, label: actor.label };
   }
 
@@ -527,8 +528,12 @@ export class PlanningMutation {
       if (command.pullRequest === null) delete row.pullRequest;
       else if (command.pullRequest !== undefined) row.pullRequest = command.pullRequest;
       if (command.structure) {
-        const { decisionKind, options, chosenOption, consequences } = command.structure;
-        Object.assign(row, { decisionKind, options, chosenOption, consequences });
+        const { decisionKind, options, chosenOption, consequences, aliases, appliesTo, provenance } = command.structure;
+        Object.assign(row, { decisionKind, options, chosenOption, consequences,
+          ...(aliases === undefined ? {} : { aliases }),
+          ...(appliesTo === undefined ? {} : { appliesTo }),
+          ...(provenance === undefined ? {} : { provenance }),
+        });
       }
     }
     if (command.change === 'accepted') row.status = 'accepted';
@@ -565,6 +570,8 @@ export class PlanningMutation {
         const detail = { note: `排入落地计划「${plan.title}」`, relatedPlanId: plan.id };
         if (earlier) this.saveDebt(debt, { dueAt: earlier }, 'planned', { ...detail, dates: { dueAt: [debt.dueAt ?? null, earlier] } });
         else this.event('debt', debt.id, 'planned', detail);
+      } else if (kind === 'design') {
+        if (!this.designIds?.has(relatedId)) missing();
       } else this.decision(relatedId);
     }
     const step: PlanningStep = { id: id('STEP'), kind, title, relatedId, dueAt, owner, status: 'todo' };
@@ -582,6 +589,7 @@ export class PlanningMutation {
     const step = original.steps.find(item => item.id === command.stepId);
     if (!step) missing();
     if (step.kind === 'debt') closed('偿还步骤随债务结局变化，请在债务详情操作');
+    if (step.kind === 'design') closed('稿件验收签收后，步骤会自动完成');
     const row = { ...original, ...this.next(original), steps: original.steps.map(item =>
       item.id === step.id ? { ...item, status: command.status } : item) };
     this.changes.plans.push(row);

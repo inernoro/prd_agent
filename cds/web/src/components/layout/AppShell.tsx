@@ -10,7 +10,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints, Layers } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -209,6 +209,7 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/reports')) return 'reports';
   if (pathname.startsWith('/code-reviews')) return 'code-reviews';
   if (pathname.startsWith('/engineering-planning')) return 'engineering-planning';
+  if (pathname.startsWith('/design')) return 'design';
   if (pathname.startsWith('/status')) return 'status';
   if (pathname.startsWith('/overview')) return 'overview';
   return 'projects';
@@ -339,6 +340,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   // 立即生效、无探针竞态），仍用 /api/instance-mode 探针确认；探针失败按「非预览
   // 实例」处理，不打扰生产。
   const [previewInstance, setPreviewInstance] = useState(isChildPreviewCdsInstance());
+  const previewAccessIdentity = !previewInstance && authStatus?.previewAccessNotices
+    ? authStatus.user?.id || authStatus.user?.username || authStatus.user?.githubLogin || undefined : undefined;
   const [mirrorSummary, setMirrorSummary] = useState<PreviewMirrorSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -492,7 +495,9 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {canPollOperatorApprovals ? <OperatorApprovalModal onCountChange={setOperatorPendingCount} openRequest={operatorOpenRequest} /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      {canManageSettings ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount} onOpenOperatorRequests={() => setOperatorOpenRequest(value => value + 1)} /> : null}
+      {canManageSettings || previewAccessIdentity ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}
+        onOpenOperatorRequests={() => setOperatorOpenRequest(value => value + 1)}
+        includeOperations={canManageSettings} previewAccessIdentity={previewAccessIdentity} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>
@@ -660,11 +665,18 @@ function RailNav({
           <span className="cds-rail-full">代码审查报告</span>
           <span className="cds-rail-short">审查</span>
         </Link>
+        <span className="cds-rail-planning-group">规划</span>
         <Link to="/engineering-planning" className="cds-rail-item" onClick={onNavigate}
           data-active={active === 'engineering-planning' ? 'true' : 'false'} aria-label="工程规划" title="工程规划">
           <Waypoints />
           <span className="cds-rail-full">工程规划</span>
           <span className="cds-rail-short">规划</span>
+        </Link>
+        <Link to="/design" className="cds-rail-item" onClick={onNavigate}
+          data-active={active === 'design' ? 'true' : 'false'} aria-label="设计" title="设计">
+          <Layers />
+          <span className="cds-rail-full">设计</span>
+          <span className="cds-rail-short">设计</span>
         </Link>
       </div>
       {/*

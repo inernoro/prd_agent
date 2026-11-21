@@ -1,3 +1,9 @@
+export const planningPreviewDecisionSubject = { subjectKind: 'preview', subjectRef: '预览登录' } as const;
+
+export function planningDecisionHref(projectId: string, id: string) {
+  return '/engineering-planning?' + new URLSearchParams({ project: projectId, kind: 'decision', item: id });
+}
+
 export function planningGitHubPullRequest(raw: unknown) {
   if (typeof raw !== 'string' || raw.length > 2000) return undefined;
   let url: URL;

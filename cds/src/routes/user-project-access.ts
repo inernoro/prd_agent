@@ -31,11 +31,11 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
           : '此账号的项目授权正在保存，请稍后刷新并重试。', update }); return;
       }
       const current = () => state.getProjectGrants().filter(g => g.principalId === principalId && !g.revokedAt);
-      if (req.method === 'PUT') {
+      if (req.method !== 'GET') {
         if (user.isSystemOwner) {
           res.status(400).json({ error: '系统所有者始终可访问全部项目，无需逐项授权。' }); return;
         }
-        const input = req.body?.projectIds;
+        const input = req.method === 'POST' ? [...current().map(grant => grant.projectId), req.params.projectId] : req.body?.projectIds;
         if (!Array.isArray(input) || input.some(id => typeof id !== 'string' || !supportsHumanProjectGrant(state.getProject(id)))) {
           res.status(400).json({ error: '请选择可操作分支的项目；共享服务暂不支持账号项目授权。' }); return;
         }
@@ -143,7 +143,7 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
           : '项目授权已保存，但后续处理失败，请刷新确认当前授权。'
         : recoveryUncertain
           ? '授权存储发生故障，内存修改已回退，但持久化状态无法确认。请恢复存储后核对授权再重试。'
-          : req.method === 'PUT'
+        : req.method !== 'GET'
             ? '项目授权保存失败，本次修改未生效，请刷新后重试。'
             : '项目授权读取失败，请刷新后重试。' });
     } finally {
@@ -152,5 +152,6 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
   };
   router.get('/auth/users/:id/projects', handle);
   router.put('/auth/users/:id/projects', handle);
+  router.post('/auth/users/:id/projects/:projectId', handle);
   return router;
 }

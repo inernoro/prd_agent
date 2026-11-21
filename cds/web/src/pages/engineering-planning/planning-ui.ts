@@ -17,7 +17,7 @@ export const debtLabels: Record<DebtStatus, string> = {
 export const decisionLabels = { proposed: '提议中', accepted: '已采纳', superseded: '已取代', deprecated: '已废弃' };
 export const kindLabels = { decision: '决策', debt: '债务', plan: '计划', proposal: '提案' };
 export const stepLabels = { todo: '待处理', doing: '进行中', done: '已完成', cancelled: '已取消' };
-export const stepKindLabels = { task: '任务', decision: '落地决策', debt: '偿还债务', review: '复核决策' };
+export const stepKindLabels = { task: '任务', decision: '落地决策', debt: '偿还债务', review: '复核决策', design: '定稿并通过做法验收' };
 export const priorityLabels = { high: '高', mid: '中', low: '低' };
 export const sourceLabels: Record<PlanningSource['type'], string> = {
   manual: '手动记录', review: '代码审查', test: '测试验收', incident: '故障复盘', code: '代码', adr: '决策文档', import: '历史台账',

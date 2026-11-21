@@ -5,7 +5,6 @@ import {
 } from '../../../../src/shared/engineering-planning';
 import { DebtHealthBadge } from './DebtHealth';
 import { closedDebt, dateLabel, debtLabels, priorityLabels, shortId, sourceLabels } from './planning-ui';
-import ledgerMotif from './debt-ledger-motif.svg';
 
 export type PlanningSelection = { kind: 'debt' | 'decision' | 'plan'; id: string };
 export const inactiveLabels = { cancelled: '已取消', superseded: '已替代', extinct: '随功能消失', merged: '已合并' };
@@ -24,8 +23,7 @@ export function DebtCoin({ debt }: { debt: PlanningDebt }) {
     return <span className="ep-coin" data-status="pending-extinct" aria-hidden="true"><Ghost /></span>;
   }
   return <span className="ep-coin" data-status={debt.status} aria-hidden="true">
-    {debt.status === 'repaid' ? <Check /> : debt.outcome?.kind === 'extinct' ? '消' : closedDebt(debt.status) ? '结' : '欠'}
-    {debt.status === 'deferred' && <Clock3 />}
+    {debt.status === 'repaid' ? <Check /> : debt.status === 'deferred' ? <Clock3 /> : null}
   </span>;
 }
 
@@ -71,24 +69,7 @@ export function DebtDeadline({ debt, today, large, at = Date.now() }: { debt: Pl
 
 export function DebtLedger({ data, stats, label }: { data?: PlanningDebtList; stats?: PlanningStats; label: string }) {
   const ledger = data?.ledger ?? { unpaid: stats?.backlogEnd ?? 0, repaid: data?.counts?.repaid ?? 0, extinct: data?.counts?.extinct ?? 0, verified: undefined };
-  const total = ledger.repaid + ledger.extinct + ledger.unpaid;
-  const segments = [[ledger.repaid, 'paid'], [ledger.extinct, 'gone'], [ledger.unpaid, 'owed']] as const;
-  let start = 0;
   return <div className="ep-ledger" aria-label="债务账本">
-    <div className="ep-ledger-mark" aria-hidden="true">
-      <img src={ledgerMotif} alt="" />
-      <svg viewBox="0 0 112 112" focusable="false">
-        <circle className="ep-ledger-track" cx="56" cy="56" r="42" />
-        {total > 0 && segments.map(([count, tone]) => {
-          const length = count / total * 100;
-          const offset = start;
-          start += length;
-          return count > 0 ? <circle key={tone} data-tone={tone} cx="56" cy="56" r="42" pathLength="100"
-            strokeDasharray={`${Math.max(.4, length - (length === 100 ? 0 : .9))} 100`}
-            strokeDashoffset={-offset} transform="rotate(-90 56 56)" /> : null;
-        })}
-      </svg>
-    </div>
     <div className="ep-ledger-body">
       <h2 className="sr-only">债务清单</h2>
       <div className="ep-ledger-metrics">

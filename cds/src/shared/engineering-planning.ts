@@ -97,7 +97,7 @@ export type PlanningDecisionLink = { type: typeof planningDecisionLinkTypes[numb
 export type PlanningPreviewTarget = { label: string; path: string };
 export type PlanningPullRequestReference = { url: string; target?: PlanningPreviewTarget };
 export type PlanningPullRequestPreview = {
-  status: 'ready' | 'building' | 'failed' | 'expired'; url?: string; path?: string; builtAt?: string; commit?: string;
+  status: 'ready' | 'building' | 'failed' | 'expired'; url?: string; path?: string; builtAt?: string; commit?: string; branchId?: string;
 };
 export type PlanningPullRequest = {
   number: number; projectId: string; repository: string; url: string; decisionIds: string[]; debtIds: string[];
@@ -105,11 +105,25 @@ export type PlanningPullRequest = {
   state: 'draft' | 'open' | 'merged' | 'closed'; checks?: 'pass' | 'fail' | 'running';
   preview?: PlanningPullRequestPreview; target?: PlanningPreviewTarget;
 };
+export const decisionSubjectKinds = ['feature', 'config', 'preview', 'module'] as const;
+export const decisionProvenanceLevels = ['original', 'backfilled', 'inferred'] as const;
+export type DecisionSubject = { kind: typeof decisionSubjectKinds[number]; ref: string };
+export type DecisionProvenance = {
+  level: typeof decisionProvenanceLevels[number];
+  url: string;
+  occurredOn?: string;
+  decidedBy?: string;
+  basis?: string;
+};
+
 export type DecisionStructure = {
   decisionKind?: 'forward' | 'debt';
   options?: { title: string; benefits?: string; drawbacks?: string }[];
   chosenOption?: string;
   consequences?: string;
+  aliases?: string[];
+  appliesTo?: DecisionSubject[];
+  provenance?: DecisionProvenance;
 };
 export type DecisionDraft = DecisionStructure & {
   title: string; summary?: string; rationale?: string; owner?: string; reviewAt?: string; resolves?: string[];
@@ -144,8 +158,14 @@ export type PlanningDecision = RecordBase & DecisionDraft & {
   reviewedAt?: string;
   pullRequests?: PlanningPullRequest[];
 };
+export type PlanningDecisionSearch = { projectId: string; total: number; items: PlanningDecision[] };
 
-export const planningStepKinds = ['task', 'decision', 'debt', 'review'] as const;
+export type PlanningDesignLink = {
+  id: string; title: string; version: number; decisionIds: string[]; frozen?: number;
+  signed?: { runId: string; pullRequest: number; commit: string };
+};
+
+export const planningStepKinds = ['task', 'decision', 'debt', 'review', 'design'] as const;
 export type PlanningStep = {
   id: string;
   kind: typeof planningStepKinds[number];
@@ -221,6 +241,7 @@ export type PlanningBoard = PlanningCapabilities & {
   plans: PlanningPlan[];
   events: PlanningEvent[];
   pendingReviewCount: number;
+  designs?: PlanningDesignLink[];
   pullRequests?: PlanningPullRequest[];
   debtBranches?: Record<string, PlanningDebtBranch>;
   relatedDebts?: Record<string, PlanningRelatedDebt>;
@@ -389,3 +410,30 @@ type PlanningCommandFields =
   | ({ type: 'plan.add-step' } & PlanningStepDraft & VersionedPlan)
   | ({ type: 'plan.step'; stepId: string; status: 'todo' | 'doing' | 'done'; note: string } & VersionedPlan);
 export type PlanningCommand = PlanningCommandFields & { requestId: string };
+
+export interface EnvAuditFact {
+  eventId: string;
+  projectId: string;
+  scope?: 'global' | 'project' | 'branch' | 'profile';
+  profileId?: string;
+  branchId?: string;
+  branchReason?: string;
+  ts: string;
+  key: string;
+  disposition: 'added' | 'changed' | 'deleted' | 'unchanged' | 'rotated' | 'unknown';
+  dispositionReason?: string;
+  actor?: string;
+  actorReason?: string;
+  signer?: string;
+  signerReason?: string;
+  sessionId?: string;
+  sessionReason?: string;
+  threadId?: string;
+  turnId?: string;
+  requestId?: string;
+  operationId?: string;
+  skillName?: string;
+  skillVersion?: string;
+  note?: string;
+  effect: { state: 'pending' | 'effective' | 'inferred' | 'unknown' | 'not-applicable'; runId?: string; at?: string; reason?: string };
+}

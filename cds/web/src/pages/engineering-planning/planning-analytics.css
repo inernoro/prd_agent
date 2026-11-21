@@ -176,7 +176,7 @@
 }
 .ep-a-chart-tooltip > span { display: flex; justify-content: space-between; gap: .6rem; }
 
-.ep-a-evolution-more,
+.ep-a-evolution-stage, .ep-a-evolution-more,
 .ep-a-graph-lower { display: grid; gap: 1.05rem; min-width: 0; }
 .ep-a-table-scroll { overflow-x: auto; min-width: 0; }
 .ep-a-summary-table { width: 100%; border-collapse: collapse; text-align: left; font-size: .84rem; }
@@ -436,6 +436,7 @@
 }
 @media (min-width: 890px) {
   .ep-a-evolution-more, .ep-a-graph-lower { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ep-a-evolution-stage { grid-template-columns: minmax(0, 1fr) minmax(14rem, 24%); align-items: start; }
   .ep-a-graph-stage { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
 }
 @media (min-width: 1180px) {

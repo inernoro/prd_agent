@@ -6649,3 +6649,11 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
 
 /* 关系画布保留可用空间；共享Dialog末尾关闭按钮在此工作区提供44px触区。 */
 .cds-relation-sheet > button:last-child { min-width: 3.25rem; min-height: 3.25rem; right: .5rem; top: .5rem; display: inline-flex; align-items: center; justify-content: center; }
+
+.cds-rail-planning-group {
+  display: block;
+  color: hsl(var(--muted-foreground));
+  font-size: .6875rem;
+  letter-spacing: .02em;
+  padding: .5rem .375rem .1875rem;
+}

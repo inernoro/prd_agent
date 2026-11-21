@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, ChartNoAxesColumn, ChevronDown, ChevronRight, Clock3, Flag, List, Maximize2, Minimize2, Plus, RefreshCw, Target, Terminal, Triangle } from 'lucide-react';
+import { CalendarDays, ChartNoAxesColumn, ChevronDown, Clock3, List, Maximize2, Minimize2, Plus, RefreshCw, Target, Terminal, Triangle } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { EngineeringPlanningSkeleton } from '@/components/skeletons/PageSkeletons';
@@ -17,6 +17,7 @@ import { DebtLedger, DebtList, DebtSearch, PlanningEmpty, type PlanningSelection
 import { PlanningBoardView, PlanningTimeline, planningBoardSummary } from './engineering-planning/PlanningDecisionViews';
 import { PlanningEvolution, PlanningGraph, planningBucketLabel } from './engineering-planning/PlanningAnalytics';
 import { PlanningActionDialog, PlanningDetailDialog, type PlanningAction } from './engineering-planning/PlanningDialogs';
+import { ConfigurationTrail, DecisionSearch, PlanningUtilities } from './engineering-planning/PlanningCompanion';
 import { PlanningCheckupMenu, usePlanningCheckup } from './engineering-planning/PlanningCheckup';
 import './engineering-planning/planning.css';
 import './engineering-planning/planning-shell.css';
@@ -61,6 +62,9 @@ export function EngineeringPlanningPage() {
   const { checkup, refreshCheckup } = usePlanningCheckup(target, reload);
 
   const requestedView = params.get('view') as PlanningView | null;
+  const requestedUtility = params.get('tools');
+  const utility = requestedUtility === 'cli' || requestedUtility === 'spec' || requestedUtility === 'changes' ? requestedUtility : null;
+  const selectUtility = (value: string) => change({ tools: value, item: '', kind: '' });
   const view: PlanningView = requestedView && views.includes(requestedView) ? requestedView : 'plan';
   const debtLevel = ['debts', 'map', 'evolution'].includes(view);
   const requestedStatus = params.get('status') as PlanningDebtView;
@@ -150,7 +154,7 @@ export function EngineeringPlanningPage() {
   }
   function selectView(next: PlanningView) {
     setPages([]); setScreen(false); setNotice(''); setError('');
-    change({ view: next, item: '', kind: '' });
+    change({ view: next, item: '', kind: '', tools: '' });
   }
   function selectItem(item: PlanningSelection) {
     if (selected && (selected.id !== item.id || selected.kind !== item.kind)) setDetailTrail(current => [...current, selected]);
@@ -247,20 +251,15 @@ export function EngineeringPlanningPage() {
             {options.map(row => <option value={row.id} key={row.id}>{row.aliasName || row.name}</option>)}
           </select>
         </label>
-        <nav className="ep-hierarchy" aria-label="工程规划层级">
-          <button type="button" data-level="root" aria-pressed={!debtLevel} onClick={() => selectView('plan')}><Flag aria-hidden="true" />
-            <span><strong>决策主线</strong><small>{data ? `${data.decisions.filter(row => row.status === 'accepted').length} 个生效中的决策` : '推进与时间线'}</small></span>
-          </button>
-          <span className="ep-hierarchy-line" aria-hidden="true">分支<ChevronRight /></span>
-          <button type="button" data-level="branch" aria-pressed={debtLevel} onClick={() => selectView('debts')}><List aria-hidden="true" />
-            <span><strong>债务分支</strong><small>{unpaidCount !== undefined ? `未还 ${unpaidCount} 笔` : '清单、图谱和演进'}</small></span>
-          </button>
-        </nav>
         <div className="ep-page-actions">
+          {allowed && <DecisionSearch key={activeProject} projectId={activeProject} reload={reload} onDecision={id => selectItem({ kind: 'decision', id })} />}
           {allowed && <PlanningCheckupMenu key={activeProject} projectId={activeProject} data={checkup} onRefresh={refreshCheckup}
             onDebt={id => selectItem({ kind: 'debt', id })} />}
           {allowed && <details className="ep-new ep-cli"><summary className="ep-button"><Terminal aria-hidden="true" />CLI</summary>
             <div><code>{`cdscli ${debtLevel ? 'debt list' : 'planning show'} --project ${activeProject}`}</code>
+              <button type="button" onClick={event => { event.currentTarget.closest('details')!.open = false; selectUtility('cli'); }}>CLI 协作</button>
+              <button type="button" onClick={event => { event.currentTarget.closest('details')!.open = false; selectUtility('spec'); }}>数据与 CLI 规范</button>
+              <button type="button" onClick={event => { event.currentTarget.closest('details')!.open = false; selectUtility('changes'); }}>配置变更记录</button>
               <button type="button" onClick={refresh}><RefreshCw aria-hidden="true" />刷新工程规划</button></div>
           </details>}
           {write && <details className="ep-new"><summary className="ep-button ep-button--primary"><Plus aria-hidden="true" />新建<ChevronDown aria-hidden="true" /></summary>
@@ -284,9 +283,12 @@ export function EngineeringPlanningPage() {
           : board.error || !data ? <ReadStatus loading={board.loading} error={board.error} onRetry={refresh} />
             : <>
               <div className="ep-toolbar">
+                <nav className="ep-level-tabs" aria-label="工程规划层级">
+                  <button type="button" aria-current={!debtLevel} onClick={() => selectView('plan')}>决策主线 <small>{data.decisions.filter(row => row.status === 'accepted').length} 生效</small></button>
+                  <button type="button" aria-current={debtLevel} aria-label={`债务分支 未还 ${unpaidCount ?? 0} 笔`}
+                    onClick={() => selectView('debts')}>债务分支 <small aria-hidden>{unpaidCount ?? 0} 未还</small></button>
+                </nav>
                 <div className="ep-toolbar-context">{debtLevel ? <>
-                  <button type="button" className="ep-parent-link" onClick={() => selectView('plan')}><Flag aria-hidden="true" />决策主线</button>
-                  <ChevronRight aria-hidden="true" />
                   <label className="ep-branch-picker"><span className="sr-only">决策分支</span><select aria-label="决策分支" value={branch} onChange={event => {
                     setPages([]); change({ branch: event.target.value, tag: '', tagMatch: '', owner: '', batch: '' }, true);
                   }}><option value="">全部分支</option><option value="none">未归属决策</option>
@@ -294,7 +296,7 @@ export function EngineeringPlanningPage() {
                 </> : <span className="ep-activity-summary"><Clock3 aria-hidden="true" />自两周前{since && `（${monthDay(since)}）`} · 决策变更 {changes}
                   {` · PR 更新 ${summary?.recentPulls ?? 0}`}</span>}</div>
                 <nav className="ep-tabs" aria-label={debtLevel ? '债务视图' : '决策视图'}>
-                  <span>展示</span>{tabs.map(tab => {
+                  {tabs.map(tab => {
                     const Icon = modes[tab];
                     return <button type="button" key={tab} aria-pressed={tab === view} onClick={() => selectView(tab)}>
                       <Icon aria-hidden="true" />{viewLabels[tab]}{tab === 'plan' && !!(summary?.stuck || summary?.pending)
@@ -304,16 +306,18 @@ export function EngineeringPlanningPage() {
                 </nav>
               </div>
 
-              {view === 'plan' && <PlanningBoardView data={data} busy={busy} onSelect={selectItem}
+              {(utility === 'cli' || utility === 'spec') && <PlanningUtilities projectId={activeProject} view={utility} onTab={selectUtility} />}
+              {utility === 'changes' && <ConfigurationTrail projectId={activeProject} reload={reload} />}
+              {!utility && view === 'plan' && <PlanningBoardView data={data} busy={busy} onSelect={selectItem}
                 onConfirm={(proposal, as) => {
                   if (as === 'hit' && proposal.suggest) {
                     void submit({ type: 'proposal.accept', proposalId: proposal.id, as, debtId: proposal.suggest.dupOf });
                   } else if (as !== 'hit') void submit({ type: 'proposal.accept', proposalId: proposal.id, as });
                 }}
                 onReject={proposal => openAction({ kind: 'reject', proposal })} />}
-              {view === 'timeline' && <PlanningTimeline data={data} onSelect={selectItem} onBranch={selectBranch} projectLabel={projectLabel}
+              {!utility && view === 'timeline' && <PlanningTimeline data={data} onSelect={selectItem} onBranch={selectBranch} projectLabel={projectLabel}
                 onCreatePlan={write ? () => openAction({ kind: 'create', record: 'plan' }) : undefined} />}
-              {view === 'debts' && <>
+              {!utility && view === 'debts' && <>
                 <DebtLedger data={debts.data} stats={stats.data} label={branchLabel ? `${projectLabel} · ${branchLabel}` : projectLabel} />
                 {checkup?.summary && !!(checkup.summary.duplicates || checkup.summary.pending || checkup.summary.closed) &&
                   <div className="ep-row ep-checkup-summary" aria-label="今日巡检">
@@ -340,7 +344,7 @@ export function EngineeringPlanningPage() {
                   onPrevious={() => setPages(values => values.slice(0, -1))} onNext={next => setPages(values => [...values, next])} />
                   : <ReadStatus loading={debts.loading} error={debts.error} onRetry={() => { setPages([]); refresh(); }} />}
               </>}
-              {view === 'map' && (stats.data
+              {!utility && view === 'map' && (stats.data
                 ? <PlanningGraph key={`${activeProject}:${branch}`} data={stats.data} onSelect={selectItem} scopeLabel={branchLabel || projectLabel} projectLabel={projectLabel}
                   onCategory={(name, outcome, exact) => {
                     setPages([]); setSearch('');
@@ -348,7 +352,7 @@ export function EngineeringPlanningPage() {
                     change({ view: 'debts', tag: name, tagMatch: exact ? 'exact' : '', q: '', status: next, owner: '', source: '', priority: '', batch: '' });
                   }} />
                 : <ReadStatus loading={stats.loading} error={stats.error} onRetry={refresh} />)}
-              {view === 'evolution' && <>
+              {!utility && view === 'evolution' && <>
                 <div className="ep-evolution-actions">
                   <div className="ep-range-tabs" role="group" aria-label="统计时间范围">{ranges.map(([days, label]) =>
                     <button type="button" key={days} aria-pressed={range === days} onClick={() => setRange(days)}>{label}</button>)}</div>

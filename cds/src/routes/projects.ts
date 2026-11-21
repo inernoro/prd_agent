@@ -85,7 +85,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
-import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -4551,12 +4551,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    // Capture signer identity from the github-auth middleware when present.
-    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
+    const account = isAuthenticatedHuman(req) ? (req as HumanAuthContext).cdsUser : undefined;
 
     let minted: { keyId: string; plaintext: string; preview: string };
     try {
-      minted = mintProjectAgentKey(stateService, project, label, ghUser?.login);
+      minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username);
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',

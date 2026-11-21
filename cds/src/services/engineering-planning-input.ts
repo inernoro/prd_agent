@@ -1,7 +1,7 @@
 import {
-  planningAnchorTypes, planningVerificationMethods, planningVerificationPeriods,
+  planningAnchorTypes, planningVerificationMethods, planningVerificationPeriods, decisionProvenanceLevels, decisionSubjectKinds,
   clearableDebtFields, debtApproachStates, debtPriorities, planningDecisionLinkTypes, planningEvidenceTypes, planningSourceTypes, planningStepKinds,
-  type CriterionResult, type DebtDirection, type DebtDraft, type DebtPatch, type DecisionDraft, type DecisionStructure, type PlanDraft, type PlanningCommand,
+  type CriterionResult, type DebtDirection, type DebtDraft, type DebtPatch, type DecisionDraft, type DecisionProvenance, type DecisionStructure, type PlanDraft, type PlanningCommand,
   type PlanningDecisionLink, type PlanningEvidence, type PlanningPullRequestReference, type PlanningRepaymentProof, type PlanningProposalSource, type PlanningStepDraft,
   type PlanningDuplicateCandidate, type PlanningImportRow, type ProposalDecisionChange, type ProposalDraft, type RootCause,
 } from '../shared/engineering-planning.js';
@@ -183,7 +183,7 @@ function debtDirection(value: unknown): DebtDirection {
 }
 
 const debtFields = ['title', 'summary', 'whyDebt', 'decisionId', 'priority', 'criteria', 'rootCause', 'impact', 'owner', 'module', 'dueAt', 'trigger', 'tags', 'direction'] as const;
-const decisionStructureFields = ['decisionKind', 'options', 'chosenOption', 'consequences'] as const;
+const decisionStructureFields = ['decisionKind', 'options', 'chosenOption', 'consequences', 'aliases', 'appliesTo', 'provenance'] as const;
 const decisionFields = ['title', 'summary', 'rationale', 'owner', 'reviewAt', 'resolves', 'links', 'pullRequest', ...decisionStructureFields] as const;
 const planFields = ['title', 'summary', 'decisionId', 'owner', 'startAt', 'dueAt'] as const;
 const stepFields = ['kind', 'title', 'relatedId', 'dueAt', 'owner'] as const;
@@ -257,6 +257,19 @@ function pullRequestReference(value: unknown): PlanningPullRequestReference {
   return { url: reference.url, target: { label: planningText(target.label, 'pullRequest.target.label', 160), path } };
 }
 
+function decisionProvenance(input: unknown): DecisionProvenance {
+  const data = object(input, 'provenance', ['level', 'url', 'occurredOn', 'decidedBy', 'basis']);
+  const level = of(data.level, 'provenance.level', decisionProvenanceLevels);
+  const basis = data.basis === undefined ? undefined : planningText(data.basis, 'provenance.basis', 2000);
+  if (level === 'inferred' && !basis) invalid('provenance.basis', '写明推断依据');
+  return {
+    level, url: location(data.url, 'provenance.url'),
+    ...(data.occurredOn === undefined ? {} : { occurredOn: planningDay(data.occurredOn, 'provenance.occurredOn') }),
+    ...(data.decidedBy === undefined ? {} : { decidedBy: planningText(data.decidedBy, 'provenance.decidedBy', 120) }),
+    ...(basis === undefined ? {} : { basis }),
+  };
+}
+
 function decisionStructure(data: Record<string, unknown>): DecisionStructure {
   const options = data.options === undefined ? undefined : collection(data.options, 'options', row => {
     const value = object(row, 'options', ['title', 'benefits', 'drawbacks']);
@@ -269,11 +282,18 @@ function decisionStructure(data: Record<string, unknown>): DecisionStructure {
   const chosenOption = data.chosenOption === undefined ? undefined : planningText(data.chosenOption, 'chosenOption', 120);
   if (chosenOption && !options?.some(row => row.title === chosenOption)) invalid('chosenOption', '请从已列出的候选方案选择');
   if (options && new Set(options.map(row => row.title)).size !== options.length) invalid('options', '候选方案标题重复');
+  const appliesTo = data.appliesTo === undefined ? undefined : collection(data.appliesTo, 'appliesTo', row => {
+    const value = object(row, 'appliesTo', ['kind', 'ref']);
+    return { kind: of(value.kind, 'appliesTo.kind', decisionSubjectKinds), ref: planningText(value.ref, 'appliesTo.ref', 200) };
+  }, 16);
   return {
     ...(data.decisionKind === undefined ? {} : { decisionKind: of(data.decisionKind, 'decisionKind', ['forward', 'debt']) }),
     ...(options === undefined ? {} : { options }),
     ...(chosenOption === undefined ? {} : { chosenOption }),
     ...(data.consequences === undefined ? {} : { consequences: planningText(data.consequences, 'consequences', 4000) }),
+    ...(data.aliases === undefined ? {} : { aliases: [...new Set(collection(data.aliases, 'aliases', row => planningText(row, 'aliases', 96), 16))] }),
+    ...(appliesTo === undefined ? {} : { appliesTo }),
+    ...(data.provenance === undefined ? {} : { provenance: decisionProvenance(data.provenance) }),
   };
 }
 

@@ -37,7 +37,8 @@ import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
 import { isMonitorOnboardingAgentRoute } from './shared/monitor-onboarding.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
-import { isHumanSystemOwner } from './services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from './services/human-auth.js';
+import { humanPrincipalId, isHumanProjectGrantUpdatePending } from './services/human-project-access.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
 import { ClusterIdentityService, clusterProjectRepository } from './services/cluster-identity.js';
@@ -57,6 +58,18 @@ import { createReportsRouter, createPublicReportShareRouter } from './routes/rep
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
 import { createEngineeringPlanningRouter, normalizedPlanningPath } from './routes/engineering-planning.js';
 import { resolveEngineeringPlanningAccess } from './services/engineering-planning-access.js';
+import { environmentAuditFacts } from './services/environment-audit.js';
+import { createPlanningPreviewAccessRouter, createPreviewTokenRouter, normalizedPreviewAccessPath } from './routes/planning-preview-access.js';
+import { PlanningPreviewAccess, previewPolicyReturnUrl, previewReturnPath, resolvePreviewClientSettings, type PreviewAccessCommit, type PreviewAccessClient } from './services/planning-preview-access.js';
+import { planningDecisionHref, planningPreviewDecisionSubject } from './shared/engineering-planning-links.js';
+import type { PlanningPullRequestPreview } from './shared/engineering-planning.js';
+import { hasActiveGrant } from './services/identity.js';
+
+import { rejectPlanning } from './services/engineering-planning-input.js';
+import { createDesignWorkspaceRouter, normalizedDesignPath } from './routes/design-workspace.js';
+import { DesignWorkspaceService, type DesignWorkspaceCommit } from './services/design-workspace.js';
+import { readDesignSourceZip } from './services/design-package.js';
+import { FileProjectRevisionStore, MongoProjectRevisionStore, type ProjectRevisionStore } from './services/project-revision-store.js';
 import { EngineeringPlanningService, FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './services/engineering-planning.js';
 import type { EngineeringPlanningStore } from './services/engineering-planning-store.js';
 import { startPlanningSweep } from './services/engineering-planning-sweep.js';
@@ -698,9 +711,17 @@ function isDatabasePassCredentialRequest(req: express.Request): boolean {
   return [req.url,req.originalUrl].some(value=>normalizedDatabasePassCredentialPath(value)!==null);
 }
 
+function normalizedPrivateWorkspacePath(value: unknown) {
+  const path = String(value ?? '').split('?')[0].replace(/^\/_cds\/api\//i, '/api/');
+  const environment = /^\/api\/env(?:\/(?:[^/]+))?\/?$/i.test(path) ? '/api/env' : undefined;
+  const profile = /^\/api\/build-profiles(?:\/[^/]+)?\/?$/i.test(path) ? '/api/build-profiles'
+    : /^\/api\/branches\/[^/]+\/profile-overrides(?:\/[^/]+)?\/?$/i.test(path) ? '/api/branches/:branchId/profile-overrides' : undefined;
+  return normalizedPlanningPath(value) ?? normalizedDesignPath(value) ?? normalizedPreviewAccessPath(value) ?? environment ?? profile;
+}
+
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
-  const planning = normalizedPlanningPath(raw);
+  const planning = normalizedPrivateWorkspacePath(raw);
   if (planning) return planning;
   if (/^\/api\/cluster\/identity\//i.test(raw)) return raw.split('?')[0];
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
@@ -1318,6 +1339,17 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/projects\/[^/]+\/design$/, '查看设计工作区'],
+    [/^GET \/projects\/[^/]+\/design\/artifacts\/[^/]+$/, '读取设计附件'],
+    [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
+    [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
+    [/^GET \/projects\/[^/]+\/planning\/changes$/, '读取配置变更'],
+    [/^GET \/projects\/[^/]+\/planning\/preview\/[^/]+$/, '核对预览访问'],
+    [/^GET \/auth\/preview\/access$/, '查看分支预览访问状态'],
+    [/^GET \/auth\/preview\/requests$/, '查看分支预览访问申请'],
+    [/^POST \/auth\/preview\/access$/, '申请分支预览访问'],
+    [/^POST \/auth\/preview\/token$/, '兑换分支预览票据'],
+    [/^POST \/auth\/users\/[^/]+\/projects\/[^/]+$/, '批准项目访问'],
     [/^GET \/acceptance\/templates\/[^/]+$/, '读取清单版本'],
     [/^GET \/acceptance\/tasks\/[^/]+$/, '查看验收任务'],
     [/^POST \/acceptance\/tasks\/[^/]+\/claim$/, '领取验收任务'],
@@ -1333,6 +1365,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/projects\/[^/]+\/planning$/, '查看工程规划'],
     [/^GET \/projects\/[^/]+\/planning\/capabilities$/, '查看规划权限'],
+    [/^GET \/projects\/[^/]+\/planning\/decisions$/, '检索决策'],
     [/^GET \/projects\/[^/]+\/planning\/debts$/, '查询债务'],
     [/^GET \/projects\/[^/]+\/planning\/debts\/[^/]+$/, '查看债务详情'],
     [/^GET \/projects\/[^/]+\/planning\/duplicates$/, '查询疑似重复债务'],
@@ -2219,7 +2252,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPlanningPath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
+    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2250,7 +2283,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use((req, res, next) => {
     if (isSealedStorageRequest(req)) return next();
-    if (normalizedPlanningPath(req.path)) return next();
+    if (normalizedPlanningPath(req.path) || normalizedDesignPath(req.path)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
     if (req.path === '/api/code-reviews' || req.path.startsWith('/api/code-reviews/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
@@ -2608,7 +2641,7 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || !!normalizedPlanningPath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)
+    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)
       || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
@@ -2655,6 +2688,7 @@ export function createServer(deps: ServerDeps): express.Express {
         suppressRequestBodyLog || suppressPreviewBody,
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
+      if (responseHeaders && normalizedPreviewAccessPath(req.originalUrl || req.path)) delete responseHeaders.location;
       if (responseHeaders?.location?.includes('/api/cluster/identity/callback?')) responseHeaders.location = responseHeaders.location.split('?')[0];
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
@@ -2788,6 +2822,50 @@ export function createServer(deps: ServerDeps): express.Express {
       })
     : null;
   if (authService) app.locals.cdsAuthService = authService;
+  const planningMongoUri = process.env.CDS_STORAGE_MODE === 'json' ? undefined : process.env.CDS_MONGO_URI;
+  const workspaceStateDirectory = path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json'));
+  const previewAccessStore: ProjectRevisionStore<PreviewAccessCommit> = planningMongoUri
+    ? new MongoProjectRevisionStore(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db', 'cds_preview_access_requests')
+    : new FileProjectRevisionStore(path.join(workspaceStateDirectory, 'preview-access'));
+  let lookupPlanningPreview: (projectId: string, number: number) => Promise<PlanningPullRequestPreview | undefined>
+    = async () => undefined;
+  let lookupPreviewDecision: (client: PreviewAccessClient) => Promise<string | undefined> = async () => undefined;
+  const previewAccess = new PlanningPreviewAccess({
+    store: previewAccessStore,
+    resolve: async (clientId) => {
+      if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return undefined;
+      const state = deps.stateService;
+      const candidates = state.getAllBranches().filter(branch => !branch.deleting && !branch.archive && !branch.mirror
+        && branch.githubPrNumber && state.getCustomEnvScope(branch.id).CDS_PREVIEW_SSO_CLIENT_ID === clientId);
+      if (candidates.length !== 1) return undefined;
+      const branch = candidates[0], project = state.getProject(branch.projectId || 'default');
+      if (!project || project.mirror || branch.branch === state.getDefaultBranchFor(project.id)) return undefined;
+      const pullRequest = branch.githubPrNumber!;
+      const preview = await lookupPlanningPreview(project.id, pullRequest);
+      if (!preview?.url || !preview.path || !preview.commit || preview.status !== 'ready' || preview.branchId !== branch.id) return undefined;
+      const url = new URL(preview.url);
+      // A host-wide preview session must not spill into another service on a shared host.
+      if (url.pathname !== '/' || url.search || url.hash || (url.protocol !== 'https:'
+        && !['localhost','127.0.0.1'].includes(url.hostname))) return undefined;
+      const settings = resolvePreviewClientSettings(state.getCustomEnvScope(branch.id), url, publicBaseUrl);
+      if (!settings) return undefined;
+      return { ...settings, projectId: project.id, branchId: branch.id, commit: preview.commit,
+        projectName: project.aliasName || project.name, branchName: branch.branch, pullRequest, origin: url.origin, path: preview.path };
+    },
+    allowed: async (person, projectId) => {
+      const state = deps.stateService;
+      const project = state.getProject(projectId);
+      if (!project || project.id !== projectId || project.mirror) return false;
+      if (person.owner && authMode === 'basic' && cdsUser && person.id === `basic:${cdsUser}`) return true;
+      const user = await authService?.findUserById(person.id);
+      if (!user || user.status !== 'active') return false;
+      if (user.isSystemOwner) return true;
+      const principal = humanPrincipalId(user.id);
+      return !isHumanProjectGrantUpdatePending(state, principal) && state.getPrincipal(principal)?.status === 'active'
+        && hasActiveGrant(state.getProjectGrants(), principal, projectId);
+    },
+  });
+  if (!isPreviewInstance()) app.use(createPreviewTokenRouter(previewAccess));
   const ticketSsoStateStore = new TicketSsoStateStore();
   const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
@@ -2946,8 +3024,15 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   app.get('/api/auth/public-status', (_req, res) => {
-    const sso = publicTicketSsoConfig(resolveSsoConfig());
+    const ssoConfig = resolveSsoConfig();
+    const sso = publicTicketSsoConfig(ssoConfig);
     const publicMode = authMode === 'disabled' && sso.enabled ? 'sso' : authMode;
+    const preview = isPreviewInstance() || sso.providerId === 'cds-preview' ? {
+      project: shortText(process.env.CDS_PREVIEW_PUBLIC_PROJECT, 120),
+      branch: shortText(process.env.CDS_PREVIEW_PUBLIC_BRANCH, 120),
+      pullRequest: /^[1-9]\d{0,9}$/.test(process.env.CDS_PREVIEW_PUBLIC_PR ?? '') ? Number(process.env.CDS_PREVIEW_PUBLIC_PR) : undefined,
+      policyUrl: sso.enabled ? previewPolicyReturnUrl(ssoConfig) : undefined,
+    } : undefined;
     res.json({
       mode: publicMode,
       enabled: authMode !== 'disabled' || sso.enabled,
@@ -2962,6 +3047,7 @@ export function createServer(deps: ServerDeps): express.Express {
         durableUsers: Boolean(authStore && !(authStore instanceof MemoryAuthStore)),
       },
       sso,
+      preview,
     });
   });
 
@@ -3823,6 +3909,8 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.get('/api/cluster/identity/login', (req, res) => clusterIdentity.login(req, res));
 
+  if (!isPreviewInstance()) app.use(createPlanningPreviewAccessRouter(previewAccess,
+    () => deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id), client => lookupPreviewDecision(client)));
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
   if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
 
@@ -3920,6 +4008,7 @@ export function createServer(deps: ServerDeps): express.Express {
         operator: isHumanSystemOwner(req),
         accessRequests: authMode === 'disabled' || isHumanSystemOwner(req),
       },
+      previewAccessNotices: !isPreviewInstance() && isAuthenticatedHuman(req),
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,
@@ -4725,7 +4814,7 @@ export function createServer(deps: ServerDeps): express.Express {
     (req as any).cdsRequestId = requestId;
     (res.locals as { cdsRequestId?: string }).cdsRequestId = requestId;
     res.setHeader('X-CDS-Request-Id', requestId);
-    const privatePlanningPath = normalizedPlanningPath(req.originalUrl || `/api${req.path}`);
+    const privatePlanningPath = normalizedPrivateWorkspacePath(req.originalUrl || `/api${req.path}`);
     const suppressPreviewDetails = Boolean(privatePlanningPath) || isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
     const { branchId, projectId, profileId } = suppressPreviewDetails ? {} : extractApiMutationContext(req, deps);
     const suppressRequestDetails = Boolean(
@@ -4790,7 +4879,8 @@ export function createServer(deps: ServerDeps): express.Express {
     res.setHeader('X-CDS-Request-Id', requestId);
 
     // Capture request body for detail view (truncate to 500 chars)
-    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const suppressPreviewDetails = Boolean(normalizedPrivateWorkspacePath(req.originalUrl || `/api${req.path}`))
+      || isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
     const suppressRequestDetails = Boolean(
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
     );
@@ -5285,10 +5375,10 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
 
-  const planningMongoUri = process.env.CDS_STORAGE_MODE === 'json' ? undefined : process.env.CDS_MONGO_URI;
   const planningStore: EngineeringPlanningStore = deps.engineeringPlanningStore ?? (planningMongoUri
     ? new MongoEngineeringPlanningStore(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db')
     : new FileEngineeringPlanningStore(path.join(path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'engineering-planning')));
+  let designWorkspace: DesignWorkspaceService;
   const planning = new EngineeringPlanningService(planningStore, undefined, {
     repositoryFor: (projectId) => deps.stateService.getProject(projectId)?.githubRepoFullName,
     previewFor: createPlanningPreviewResolver(deps.stateService, deps.config),
@@ -5297,10 +5387,84 @@ export function createServer(deps: ServerDeps): express.Express {
       const project = deps.stateService.getProject(projectId);
       return project && !project.mirror ? deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot) : undefined;
     }),
-  });
+  }, projectId => designWorkspace.planningLinks(projectId));
+  lookupPlanningPreview = (projectId, number) => planning.pullRequestPreview(projectId, number);
+  lookupPreviewDecision = async client => {
+    const { items } = await planning.decisions(client.projectId, planningPreviewDecisionSubject);
+    const decision = items.find(item => item.status === 'accepted');
+    return decision ? planningDecisionHref(client.projectId, decision.id) : undefined;
+  };
   app.use('/api', createEngineeringPlanningRouter({
     service: planning,
     resolveAccess: (req, projectId) => resolveEngineeringPlanningAccess(req, deps.stateService, projectId),
+    resolvePreviewEntry: async (projectId, number, requestedPath, actor) => {
+      const preview = await planning.pullRequestPreview(projectId, number);
+      if (!preview || preview.status !== 'ready' || !preview.url || !preview.branchId) return { projectId, state: preview?.status ?? 'unavailable' };
+      const root = new URL(preview.url);
+      const path = previewReturnPath(requestedPath ?? preview.path ?? root.pathname, root.pathname);
+      if (!path) rejectPlanning(400, 'invalid', '预览入口不在该分支地址范围内');
+      const env = deps.stateService.getCustomEnvScope(preview.branchId);
+      const client = await previewAccess.client(env.CDS_PREVIEW_SSO_CLIENT_ID);
+      if (client && client.projectId === projectId && client.pullRequest === number && actor.kind === 'human') {
+        const start = new URL('/api/auth/sso/start', client.origin);
+        start.searchParams.set('redirect', path);
+        return { projectId, branchId: preview.branchId, state: 'ready', url: start.href, commit: preview.commit };
+      }
+      return { projectId, branchId: preview.branchId, state: 'native-login', url: new URL(path, root).href, commit: preview.commit };
+    },
+    resolveChanges: async (projectId, branchId, includeArchive) => {
+      if (branchId) {
+        const branch = deps.stateService.getBranch(branchId);
+        if (!branch || branch.mirror || (branch.projectId || 'default') !== projectId) {
+          rejectPlanning(404, 'not_found', '没有可访问的分支变更记录');
+        }
+      }
+      const runs = deps.stateService.getDeploymentRuns({ projectId, branchId, status: 'running' });
+      for (const run of runs.slice().sort((a, b) => (a.finishedAt ?? '').localeCompare(b.finishedAt ?? ''))) {
+        deps.stateService.recordEnvironmentAuditEffect(run);
+      }
+      const facts = environmentAuditFacts(deps.stateService, projectId, branchId, includeArchive);
+      return { projectId, branchId, facts };
+    },
+  }));
+  const designStore: ProjectRevisionStore<DesignWorkspaceCommit> = planningMongoUri
+    ? new MongoProjectRevisionStore<DesignWorkspaceCommit>(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db', 'cds_design_workspace_commits')
+    : new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(
+      path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'design-workspace'));
+  designWorkspace = new DesignWorkspaceService(designStore, {
+    sourcePackage: (projectId, commit, sourcePath) => {
+      const project = deps.stateService.getProject(projectId);
+      return project && !project.mirror ? readDesignSourceZip(deps.stateService.getProjectRepoRoot(project.id, deps.config.repoRoot), commit, sourcePath)
+        : Promise.resolve(undefined);
+    },
+    resolvePreview: async (projectId, pullRequest, commit) => {
+      const preview = await planning.pullRequestPreview(projectId, pullRequest);
+      return preview?.status === 'ready' && preview.url && preview.commit && (!commit || preview.commit === commit)
+        ? { commit: preview.commit, url: preview.url } : undefined;
+    },
+    findDebt: async (projectId, debtId, sourceRef) => await planning.designAcceptanceDebt(projectId, debtId, sourceRef) === debtId,
+    resolveDebtProposal: (projectId, proposalId, sourceRef) => planning.designAcceptanceDebt(projectId, proposalId, sourceRef),
+    createDebt: async ({ projectId, actor, sourceRef, title, actual, version, pullRequest, commit, expected, high }) => {
+      const [designId, runId] = sourceRef.split('/');
+      const url = new URL('/design', publicBaseUrl);
+      url.search = new URLSearchParams({ project: projectId, design: designId, version: String(version), tab: 'accept', run: runId }).toString();
+      const source = { type: 'test', ref: sourceRef, url: url.href };
+      const draft = { title, summary: `稿件 V${version} · PR #${pullRequest} · 提交 ${commit}\n${actual}`,
+        priority: high ? 'high' : 'mid', criteria: [expected.slice(0, 400)] };
+      const requestId = 'design-debt-' + crypto.createHash('sha256').update(sourceRef).digest('hex');
+      const command = actor.kind === 'human' ? { type: 'debt.create', requestId, source, ...draft }
+        : { type: 'proposal.submit', kind: 'debt', requestId, source, draft };
+      const receipt = await planning.command(projectId, actor, command, { designSourceRef: sourceRef });
+      const result = receipt.result as { id: string };
+      return { id: result.id, pending: (await planning.designAcceptanceDebt(projectId, result.id, sourceRef)) !== result.id };
+    },
+  });
+  app.use('/api', createDesignWorkspaceRouter({
+    service: designWorkspace,
+    resolveAccess: (req, projectId) => {
+      const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId);
+      return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req) } : null;
+    },
   }));
   const stopPlanningSweep = startPlanningSweep({
     projects: () => clusterIdentity.getConfig()?.role === 'member' ? []
@@ -5312,7 +5476,7 @@ export function createServer(deps: ServerDeps): express.Express {
     },
     onError: () => console.warn('[engineering-planning] 功能消失巡检暂不可用，将重试'),
   });
-  const closePlanning = async () => { await stopPlanningSweep(); await planningStore.close?.(); };
+  const closePlanning = async () => { await stopPlanningSweep(); await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]); };
   app.once('close', () => { void closePlanning(); });
   deps.registerResourceShutdown?.(closePlanning);
 

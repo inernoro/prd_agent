@@ -41,6 +41,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService, deploymentNeedsSourceCheckout, hasDeploymentSource, type DeploymentSourceRecoveryPolicy } from '../services/worktree.js';
 import { worktreePathActivity, WorktreeClaimHeldError } from '../services/worktree-path-activity.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
+import { appendEnvironmentAudit, freezeEnvironmentAudit } from '../services/environment-audit.js';
 import { admittedArtifactProfile, artifactInspectionContext, verifyArtifactAdmission, type ArtifactAdmission } from '../services/artifact-admission.js';
 import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
@@ -11192,7 +11193,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const actor = resolveActorFromRequest(req);
     try {
       const result = await resetResourceBranchCredentials(runtime, rawInfra, branch);
+      const previous = stateService.getCustomEnvScope(branch.id);
       injectBranchEnv(branch, result.injectedEnv);
+      appendEnvironmentAudit(stateService, req, branch.id, 'set', previous, stateService.getCustomEnvScope(branch.id),
+        Object.keys(result.injectedEnv), { rotation: true });
       stateService.appendActivityLog(projectId, {
         type: 'resource-credentials-reset',
         branchId: branch.id,
@@ -13406,6 +13410,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const deploymentInput = replayInput || captureDeploymentInput(entry, managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry),
       getConfiguredDeploymentEnv(entry.projectId || 'default', entry.id), managedPlan, requestedCommitForPlan);
+    if (!replayInput) deploymentInput.environmentAuditIds = freezeEnvironmentAudit(
+      stateService, entry.projectId || 'default', entry.id, deploymentInput.configuredEnv, deploymentInput.profiles);
     const currentProfiles = deploymentInput.profiles;
     const inputBranch = () => deploymentInputBranch(deploymentInput, entry);
 
@@ -15378,6 +15384,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }));
     const deploymentInput = replayInput || captureDeploymentInput(entry, stateService.getEffectiveProfilesForBranch(entry),
       getConfiguredDeploymentEnv(entry.projectId || 'default', entry.id), undefined, profileRequestedSha);
+    if (!replayInput) deploymentInput.environmentAuditIds = freezeEnvironmentAudit(
+      stateService, entry.projectId || 'default', entry.id, deploymentInput.configuredEnv, deploymentInput.profiles, profileId);
     const profiles = deploymentInput.profiles;
     const inputBranch = () => deploymentInputBranch(deploymentInput, entry);
     const profile = profiles.find(p => p.id === profileId);
@@ -17221,6 +17229,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           ? { webEntry: prevOverride.webEntry } : {}),
       };
       stateService.setBranchProfileOverride(id, profileId, { ...override, ...preserved });
+      appendEnvironmentAudit(stateService, req, id, 'bulk-replace', prevOverride?.env ?? {}, envOverride ?? {}, undefined, { profileId });
       clearSourceModeCiMetadata(id);
       stateService.save();
 
@@ -18186,6 +18195,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } else {
         stateService.clearBranchProfileOverride(id, profileId);
       }
+      appendEnvironmentAudit(stateService, req, id, 'delete', prev?.env ?? {}, {}, undefined, { profileId });
       clearSourceModeCiMetadata(id);
       stateService.save();
       res.json({ message: '已恢复为公共配置', profileId, needsRedeploy: true });
@@ -19320,6 +19330,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       stateService.addBuildProfile(profile);
+      appendEnvironmentAudit(stateService, req, profile.projectId, 'set', {}, profile.env ?? {}, undefined, { profileId: profile.id });
       stateService.save();
       res.status(201).json({ profile });
     } catch (err) {
@@ -19428,7 +19439,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
       }
+      const previousEnv = { ...existing.env };
+      const envKeys = Object.keys(req.body?.environment ?? req.body?.env ?? {});
       stateService.updateBuildProfile(req.params.id, incomingBody);
+      if (envKeys.length) appendEnvironmentAudit(stateService, req, existing.projectId || 'default', 'set', previousEnv,
+        stateService.getBuildProfile(req.params.id)?.env ?? {}, envKeys, { profileId: existing.id });
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
@@ -19443,6 +19458,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const m = assertProjectAccess(req as any, existing.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
       stateService.removeBuildProfile(req.params.id);
+      appendEnvironmentAudit(stateService, req, existing.projectId || 'default', 'delete', existing.env ?? {}, {}, undefined, { profileId: existing.id });
       // Bug F (MED, 2026-05-10): when a build-profile is deleted, its
       // entries inside branch.services[<profileId>] are left behind as
       // ghost rows showing status='error' forever. Mirror the behaviour
@@ -20366,7 +20382,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // typeof req.body === 'object' 检查会让 fromBody 走假分支,scope 兜底 _global)。
   router.get('/env/audit', (req, res) => {
     const scope = resolveScope(req);
-    if (scope === '_global' || scope === '_all') {
+    if (scope === '_global') {
+      if (!isHumanSystemOwner(req)) { res.sendStatus(404); return; }
+      const archive = req.query.archive === '1';
+      const entries = stateService.getEnvChangeLog(scope, archive);
+      if (archive) res.attachment('cds-global-config-changes.json');
+      res.json({ scope, entries });
+      return;
+    }
+    if (scope === '_all') {
       res.status(400).json({ error: '审计日志只对项目级 scope 可用' });
       return;
     }
@@ -20374,6 +20398,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `项目 '${scope}' 不存在` });
       return;
     }
+    if (!allowEnvironmentScope(req, res, scope)) return;
     res.json({ scope, entries: stateService.getEnvChangeLog(scope) });
   });
 
@@ -20401,12 +20426,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (env.CDS_WORKTREE_BASE) config.worktreeBase = env.CDS_WORKTREE_BASE;
   }
 
+  function allowEnvironmentScope(req: Request, res: Response, scope: string) {
+    const stamped = req as Request & Parameters<typeof assertProjectAccess>[0];
+    if (scope === '_global') {
+      if (stamped.cdsProjectKey || (stamped.cdsAccess && stamped.cdsAccess.access.projects !== 'all')) {
+        res.status(403).json({ error: 'global_env_forbidden', message: '这把凭据无权修改全局配置' });
+        return false;
+      }
+      return true;
+    }
+    const project = stateService.getProject(scope);
+    const branch = project ? undefined : stateService.getBranch(scope);
+    const projectId = project?.id ?? (branch ? branch.projectId || 'default' : undefined);
+    if (!projectId || !stateService.getProject(projectId) || project?.mirror || branch?.mirror) {
+      res.status(404).json({ error: 'env_scope_not_found', message: '没有可操作的配置范围' });
+      return false;
+    }
+    const mismatch = assertProjectAccess(stamped, projectId);
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return false; }
+    return true;
+  }
+
   router.put('/env', (req, res) => {
     const { scope, fromBody } = resolveScopeAndSource(req);
     if (scope === '_all') {
       res.status(400).json({ error: '_all 仅用于读取，写入请指定具体 scope' });
       return;
     }
+    if (!allowEnvironmentScope(req, res, scope)) return;
     const rawBody = req.body as Record<string, string>;
     if (!rawBody || typeof rawBody !== 'object') {
       res.status(400).json({ error: '请求体必须是键值对对象' });
@@ -20426,6 +20473,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (k === 'scope' && fromBody) continue;
       env[k] = v;
     }
+    const previous = stateService.getCustomEnvScope(scope);
     stateService.setCustomEnv(env, scope);
     // Phase 8 — 项目级 env 修改时同步 defaultEnv,作为新分支创建时的继承模板。
     //
@@ -20437,13 +20485,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (scope !== '_global' && stateService.getProject(scope)) {
       stateService.setDefaultEnv(scope, env);
       // Phase 9.5 — 审计日志:记录 bulk-replace 操作 + 涉及的 keys
-      stateService.appendEnvChangeLog(scope, {
-        op: 'bulk-replace',
-        keys: Object.keys(env),
-        actor: resolveActorFromRequest(req),
-        source: 'api',
-      });
     }
+    appendEnvironmentAudit(stateService, req, scope, 'bulk-replace', previous, env);
     stateService.save();
     syncCdsConfig();
     res.json({ message: '环境变量已更新', env, scope });
@@ -20461,6 +20504,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '_all 仅用于读取' });
       return;
     }
+    if (!allowEnvironmentScope(req, res, scope)) return;
+    const previous = stateService.getCustomEnvScope(scope);
     stateService.setCustomEnvVar(key, value, scope);
     // Phase 8 — 项目级单 key 修改时同步 defaultEnv(新分支继承)
     if (scope !== '_global' && stateService.getProject(scope)) {
@@ -20468,13 +20513,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       current[key] = value;
       stateService.setDefaultEnv(scope, current);
       // Phase 9.5 — 审计:single key set
-      stateService.appendEnvChangeLog(scope, {
-        op: 'set',
-        keys: [key],
-        actor: resolveActorFromRequest(req),
-        source: 'api',
-      });
     }
+    appendEnvironmentAudit(stateService, req, scope, 'set', previous, stateService.getCustomEnvScope(scope), [key]);
     stateService.save();
     syncCdsConfig();
     res.json({ message: `Set ${key}`, scope });
@@ -20487,6 +20527,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '_all 仅用于读取' });
       return;
     }
+    if (!allowEnvironmentScope(req, res, scope)) return;
+    const previous = stateService.getCustomEnvScope(scope);
     stateService.removeCustomEnvVar(key, scope);
     // Bugbot fix(PR #521)+ Codex P2:同步从 defaultEnv 删,否则 PUT /env*
     // 已删的 key 还在 defaultEnv 模板里,新分支创建时会被 inheritDefaultEnv 复活
@@ -20498,13 +20540,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.setDefaultEnv(scope, current);
       }
       // Phase 9.5 — 审计:delete
-      stateService.appendEnvChangeLog(scope, {
-        op: 'delete',
-        keys: [key],
-        actor: resolveActorFromRequest(req),
-        source: 'api',
-      });
     }
+    appendEnvironmentAudit(stateService, req, scope, 'delete', previous, stateService.getCustomEnvScope(scope), [key]);
     stateService.save();
     res.json({ message: `Deleted ${key}`, scope });
   });
@@ -20576,6 +20613,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     if (!dryRun) {
+      if (!allowEnvironmentScope(req, res, '_global') || !allowEnvironmentScope(req, res, targetProject.id)) return;
       for (const entry of plan) {
         if (entry.flow === 'duplicate') {
           // 两边都写：全局原本就有，项目复制
@@ -20590,6 +20628,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         // global-only / duplicate-skip：什么都不做
       }
+      appendEnvironmentAudit(stateService, req, targetProjectId, 'set', projectEnv, stateService.getCustomEnvScope(targetProjectId),
+        plan.filter(entry => entry.flow === 'duplicate' || entry.flow === 'move').map(entry => entry.key));
+      appendEnvironmentAudit(stateService, req, '_global', 'delete', globalEnv, stateService.getCustomEnvScope('_global'),
+        plan.filter(entry => entry.flow === 'move' || entry.flow === 'move-skip').map(entry => entry.key));
       stateService.save();
     }
 

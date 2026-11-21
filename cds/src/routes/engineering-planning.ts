@@ -7,7 +7,7 @@ const route = '/projects/:projectId/planning';
 
 export function normalizedPlanningPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0].replace(/^\/_cds\/api\//i, '/api/').replace(/\/+$/, '');
-  const match = path.match(/^\/api\/projects\/[^/]+\/planning(?:\/(capabilities|commands|debts|stats|evidence|duplicates|import-preview|checkup)(\/[^/]+)?)?$/i);
+  const match = path.match(/^\/api\/projects\/[^/]+\/planning(?:\/(capabilities|commands|decisions|changes|preview|debts|stats|evidence|duplicates|import-preview|checkup)(\/[^/]+)?)?$/i);
   if (!match) return undefined;
   if (match[1]?.toLowerCase() === 'checkup' && match[2]?.toLowerCase() === '/read') return '/api/projects/:projectId/planning/checkup/read';
   return '/api/projects/:projectId/planning' + (match[1] ? '/' + match[1].toLowerCase() : '') + (match[2] ? '/:resourceId' : '');
@@ -25,6 +25,8 @@ function parseCheckupRead(input: unknown): PlanningCheckupRead {
 export function createEngineeringPlanningRouter(deps: {
   service: EngineeringPlanningService;
   resolveAccess: (req: Request, projectId: string) => PlanningActor | null | Promise<PlanningActor | null>;
+  resolveChanges?: (projectId: string, branchId: string | undefined, includeArchive: boolean) => unknown | Promise<unknown>;
+  resolvePreviewEntry?: (projectId: string, number: number, path: unknown, actor: PlanningActor) => unknown | Promise<unknown>;
 }): Router {
   const router = express.Router();
   function failure(error: unknown, res: Response) {
@@ -47,6 +49,19 @@ export function createEngineeringPlanningRouter(deps: {
   }
   router.get(route, handler(async (_req, res, projectId, actor) => res.json(await deps.service.board(projectId, actor))));
   router.get(`${route}/capabilities`, handler((_req, res, projectId, actor) => res.json(deps.service.capabilities(projectId, actor))));
+  router.get(`${route}/decisions`, handler(async (req, res, projectId) => res.json(await deps.service.decisions(projectId, req.query))));
+  if (deps.resolveChanges) router.get(`${route}/changes`, handler(async (req, res, projectId) => {
+    const branchId = req.query.branchId === undefined ? undefined : planningId(req.query.branchId, 'branchId');
+    const includeArchive = req.query.archive === '1';
+    const changes = await deps.resolveChanges!(projectId, branchId, includeArchive);
+    if (includeArchive) res.attachment('cds-config-changes.json');
+    res.json(changes);
+  }));
+  if (deps.resolvePreviewEntry) router.get(`${route}/preview/:number`, handler(async (req, res, projectId, actor) => {
+    const number = Number(req.params.number);
+    if (!/^[1-9]\d*$/.test(req.params.number) || !Number.isSafeInteger(number)) return rejectPlanning(400, 'invalid', '请填写有效的 PR 编号');
+    res.json(await deps.resolvePreviewEntry!(projectId, number, req.query.path, actor));
+  }));
   router.get(`${route}/debts`, handler(async (req, res, projectId) => res.json(await deps.service.debts(projectId, req.query))));
   router.get(`${route}/debts/:debtId`, handler(async (req, res, projectId) =>
     res.json(await deps.service.debt(projectId, planningId(req.params.debtId, 'debtId')))));

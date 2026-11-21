@@ -112,3 +112,121 @@
   .ep-projection-head .ep-row { align-self: flex-end; }
   .ep-projection-head .ep-button { white-space: nowrap; }
 }
+
+/* Both planning levels share the same two-row header and breakpoint geometry. */
+.ep-workspace .ep-workhead {
+  display: grid;
+  grid-template-columns: auto minmax(110px, 160px) minmax(0, 1fr);
+  align-items: center;
+  min-height: 42px;
+  column-gap: 10px;
+  border-bottom: 0;
+  padding: 0;
+}
+.ep-workspace .ep-workhead h1 { font-size: 20px; }
+.ep-workspace .ep-workhead .ep-project-picker select {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  background: var(--ep-soft);
+}
+.ep-workspace .ep-page-actions { justify-self: end; justify-content: end; }
+.ep-workspace .ep-toolbar {
+  min-height: 42px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--ep-line);
+  border-radius: 0;
+  background: transparent;
+  gap: 10px;
+}
+.ep-level-tabs { display: flex; align-self: stretch; align-items: stretch; gap: 14px; flex: none; }
+.ep-level-tabs button { min-height: 41px; padding: 4px 1px; border-bottom: 2px solid transparent; color: var(--ep-muted); white-space: nowrap; }
+.ep-level-tabs button[aria-current=true] { border-color: var(--ep-accent); color: var(--ep-fg); font-weight: 650; }
+.ep-level-tabs small { color: var(--ep-muted); font-size: 11px; font-weight: 450; }
+.ep-workspace .ep-toolbar-context { padding-left: 9px; border-left: 1px solid var(--ep-line); height: 29px; }
+.ep-workspace .ep-toolbar-context .ep-branch-picker { max-width: 260px; }
+.ep-workspace .ep-toolbar .ep-tabs {
+  margin-left: auto;
+  flex: none;
+  background: var(--ep-soft);
+  border-radius: 7px;
+  padding: 2px;
+}
+.ep-workspace .ep-toolbar .ep-tabs button { min-height: 28px; padding-block: 3px; }
+.ep-query-trigger { justify-content: flex-start; min-width: 185px; color: var(--ep-muted); font-weight: 450; }
+.ep-query-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-query-results { list-style: none; margin: 0; padding: 0; }
+.ep-query-results li { border-bottom: 1px solid var(--ep-line); }
+.ep-query-results button {
+  display: grid;
+  width: 100%;
+  text-align: left;
+  gap: 2px;
+  padding: 7px 5px;
+  border-radius: 5px;
+}
+.ep-query-results button:hover, .ep-trail-row:hover { background: var(--ep-inset); }
+.ep-query-results span, .ep-query-results small { color: var(--ep-muted); font-size: 12px; }
+.ep-query-popover { z-index: 49; display: grid; gap: .5rem; padding: .625rem; background: var(--ep-panel); border: 1px solid var(--ep-line); border-radius: .5rem; box-shadow: 0 .4rem 1.2rem #0002; }
+.ep-query-popover input { width: 100%; }
+.ep-trail-list { display: grid; gap: 6px; }
+.ep-trail .ep-section-header { gap: 5px; }
+.ep-trail-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 9px; padding: 8px;
+  border: 1px solid var(--ep-line); border-radius: 7px; min-width: 0; width: 100%; text-align: start; overflow-wrap: anywhere;
+}
+.ep-trail-row > span { display: grid; gap: 3px; min-width: 0; }
+.ep-trail-row > span:nth-child(2) { justify-items: start; }
+.ep-trail-row code, .ep-trail-row small { color: var(--ep-muted); font-size: 12px; }
+.ep-trail-detail, .ep-spec dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 12px; margin: 0; }
+.ep-trail-detail dt, .ep-spec dt { color: var(--ep-muted); }
+.ep-trail-detail dd, .ep-spec dd { margin: 0; overflow-wrap: anywhere; }
+.ep-trail-detail { row-gap: 0; }
+.ep-trail-detail > * { border-bottom: 1px solid var(--ep-line); padding-block: .4375rem; }
+.ep-trail-evidence-note { border: 1px solid var(--ep-line); background: var(--ep-warn-soft); padding: .625rem; border-radius: .375rem; }
+.ep-preview-why { font-size: 13px; line-height: 1.55; }
+.ep-preview-why summary { color: var(--ep-accent-ink); cursor: pointer; text-decoration: underline; }
+.ep-preview-why a { display: block; margin-top: 7px; }
+.ep-utility { display: grid; gap: 10px; }
+.ep-utility h2 { display: flex; align-items: center; gap: 6px; }
+.ep-cli-sheet { display: grid; gap: 6px; }
+.ep-spec h3 { margin-bottom: 8px; }
+.ep-spec { display: grid; gap: .75rem; min-width: 0; }
+.ep-spec > section { min-width: 0; padding: .875rem 1rem; }
+.ep-spec-scroll { overflow: auto; max-width: 100%; }
+.ep-spec-scroll table { width: 100%; min-width: 34rem; border-collapse: collapse; text-align: left; }
+.ep-spec-scroll th, .ep-spec-scroll td { padding: .5rem .625rem; border-bottom: 1px solid var(--ep-line); vertical-align: top; }
+.ep-spec-scroll th { background: var(--ep-soft); }
+.ep-spec-states { width: 100%; min-width: 39rem; font-size: .875rem; }
+.ep-spec-states rect { fill: var(--ep-soft); stroke: var(--ep-line); }
+.ep-spec-states text { fill: var(--ep-fg); }
+.ep-spec-states g[data-state='repaid'] rect { stroke: var(--ep-ok); }
+.ep-spec-states path[marker-end] { fill: none; stroke: var(--ep-muted); }
+.ep-spec-states marker path { fill: var(--ep-muted); }
+.ep-spec-states .ep-state-label { fill: var(--ep-muted); font-size: .75rem; }
+@media (max-width: 980px) {
+  .ep-workspace .ep-toolbar { gap: 5px; }
+  .ep-level-tabs { gap: 8px; }
+  .ep-workspace .ep-toolbar-context .ep-activity-summary { display: none; }
+  .ep-workspace .ep-toolbar-context { border-left: 0; padding-left: 0; }
+  .ep-query-trigger { min-width: 0; }
+}
+@media (max-width: 680px) {
+  .cds-workspace.ep-workspace { gap: 12px; }
+  .ep-workspace .ep-workhead { grid-template-columns: auto minmax(0, 1fr); row-gap: 6px; min-height: 82px; }
+  .ep-workspace .ep-page-actions { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; justify-content: start; }
+  .ep-workspace .ep-page-actions .ep-query-trigger { flex: 1; min-width: 100px; }
+  .ep-workspace .ep-page-actions .ep-cli { display: inline; }
+  .ep-workspace .ep-toolbar {
+    display: grid; grid-template: "level tabs" 41px "context context" 32px / auto minmax(0, 1fr);
+    min-height: 79px;
+  }
+  .ep-level-tabs { grid-area: level; }
+  .ep-level-tabs small { display: none; }
+  .ep-workspace .ep-toolbar-context { grid-area: context; }
+  .ep-workspace .ep-toolbar .ep-tabs { grid-area: tabs; min-width: 0; overflow-x: auto; max-width: 100%; }
+  .ep-workspace .ep-toolbar .ep-tabs button { font-size: 12px; padding-inline: 5px; }
+  .ep-workspace .ep-toolbar .ep-tabs button svg, .ep-workspace .ep-toolbar .ep-tabs small { display: none; }
+  .ep-trail-row { flex-wrap: wrap; }
+}

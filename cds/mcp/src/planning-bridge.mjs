@@ -37,10 +37,17 @@ const decisionChange = z.object({
   decisionId: id, expectedVersion: z.number().int().min(1), change: z.enum(['amended', 'accepted']),
 }).strict();
 const decisionOption = z.object({ title: text(120), benefits: text(2000).optional(), drawbacks: text(2000).optional() }).strict();
+const subjectKind = z.enum(['feature', 'config', 'preview', 'module']);
+const provenance = z.object({ level: z.enum(['original', 'backfilled', 'inferred']), url: text(2000),
+  occurredOn: day.optional(), decidedBy: text(120).optional(), basis: text(4000).optional() }).strict()
+  .refine(value => value.level !== 'inferred' || Boolean(value.basis));
 const distinction = z.object({ debtIds: z.array(id).min(1).max(6), reason: text(2000) }).strict();
 const schemas = {
   cds_planning_read: z.discriminatedUnion('view', [
     z.object({ view: z.literal('board') }).strict(),
+    z.object({ view: z.literal('decisions'), q: text(200).optional(), subjectKind: subjectKind.optional(), subjectRef: text(200).optional() })
+      .strict().refine(value => (value.subjectKind === undefined) === (value.subjectRef === undefined)),
+    z.object({ view: z.literal('changes'), branchId: id.optional() }).strict(),
     z.object({ view: z.literal('debts'), q: text(200).optional(), cursor: text(300).optional(), branch: id.optional(), module: text(80).optional(),
       status: z.enum(['unpaid', 'review_due', 'overdue', 'open', 'deferred', 'in_progress', 'repaid', 'dropped', 'all']).optional() }).strict(),
     z.object({ view: z.literal('debt'), debtId: id }).strict(),
@@ -54,6 +61,8 @@ const schemas = {
       decisionKind: z.enum(['forward', 'debt']).optional(), options: z.array(decisionOption).max(12).optional(),
       chosenOption: text(120).optional(), consequences: text(4000).optional(),
       resolves: z.array(id).max(32).optional(), links: z.array(decisionLink).max(16).optional(), pullRequest: pullRequest.optional(),
+      aliases: z.array(text(96)).max(16).optional(), appliesTo: z.array(z.object({ kind: subjectKind, ref: text(200) }).strict()).max(16).optional(),
+      provenance: provenance.optional(),
     }).strict() }).strict(),
     z.object({ ...proposalSubmit, kind: z.literal('plan'), draft: z.object({
       ...titleAndSummary, decisionId: id.optional(), owner: text(120).optional(), startAt: day.optional(), dueAt: day.optional(),
@@ -64,7 +73,7 @@ const schemas = {
 
 const permissions = { cds_planning_read: 'read', cds_planning_propose: 'propose', cds_planning_record_debt: 'write' };
 const descriptions = {
-  cds_planning_read: '读当前 CDS 项目的推进、债务、证据与历史或演进。duplicates 视图按标题查找疑似重复。项目随已授权凭据确定。',
+  cds_planning_read: '读当前 CDS 项目的推进、债务、证据与历史或演进。decisions 按日常说法及适用对象检索，changes 读配置变更事实，duplicates 按标题查找疑似重复。项目随已授权凭据确定。',
   cds_planning_propose: '根据用户要求或已确认的工程取舍提交债务、决策和计划草稿，可附上技能、把握度及触发来源。由项目成员确认入账。',
   cds_planning_record_debt: '用户明确要求登记这笔债务时使用。用户确认另记且给出区别时，提交已核对的候选编号和说明。返回正式债务编号。重试沿用原 requestId 与内容。',
 };
@@ -108,7 +117,8 @@ export function createPlanningBridge(credentials, options = {}) {
     if (status) filters.view = status;
     const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== undefined)).toString();
     const value = scope(await request('GET', '/' + view + (query ? '?' + query : '')));
-    if (view === 'debts') value.items.forEach(scope);
+    if (view === 'debts' || view === 'decisions') value.items.forEach(scope);
+    if (view === 'changes') value.facts.forEach(scope);
     return value;
   }
   return {

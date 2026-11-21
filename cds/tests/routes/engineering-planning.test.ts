@@ -27,13 +27,18 @@ describe('engineering planning HTTP contracts', () => {
   let server: Server | undefined;
   let endpoint: string;
   let now: Date;
+  let designVersion: { id: string; title: string; version: number; decisionIds: string[]; frozen?: number;
+    signed?: { runId: string; pullRequest: number; commit: string } } | undefined;
+  let service: EngineeringPlanningService;
 
   async function start() {
     const app = express();
     app.use(express.json());
     const store = new FileEngineeringPlanningStore(directory);
+    service = new EngineeringPlanningService(store, () => now, { repositoryFor: () => 'fixture/planning' },
+      async projectId => projectId === projectA && designVersion ? [designVersion] : []);
     app.use('/api', createEngineeringPlanningRouter({
-      service: new EngineeringPlanningService(store, () => now),
+      service,
       resolveAccess(req, projectId) {
         if (projectId !== projectA && projectId !== projectB) return null;
         const actor = req.get('x-fixture-actor');
@@ -107,8 +112,56 @@ describe('engineering planning HTTP contracts', () => {
     return response.body.result;
   }
 
+  it('finds decisions by everyday language and applicable objects within the authorized project', async () => {
+    const historical = {
+      title: '隔离子实例的登录凭据',
+      aliases: ['预览密码', '预览登录'],
+      appliesTo: [{ kind: 'config', ref: 'CDS_PREVIEW_PASSWORD' }],
+      provenance: { level: 'backfilled', url: 'https://example.test/adr/preview', occurredOn: '2026-01-18' },
+    };
+    const created = await write({
+      type: 'decision.create', requestId: 'trace-search-original', source: { type: 'adr', ref: 'fixture-origin' }, ...historical,
+    });
+    expect((await call('/commands', {
+      type: 'proposal.submit', requestId: 'trace-search-pending', kind: 'decision', source: { type: 'adr', ref: 'fixture-pending' },
+      draft: { ...historical, title: '待确认的同类提案' },
+    }, { actor: 'agent' })).status).toBe(201);
+    expect((await call('/commands', {
+      type: 'decision.create', requestId: 'trace-search-other', source: { type: 'adr', ref: 'fixture-other' },
+      ...historical, title: '另一个项目的同类决定',
+    }, { project: projectB })).status).toBe(201);
+    now = new Date(now.getTime() + 1000);
+    const mention = await write({ type: 'decision.create', requestId: 'trace-search-mention',
+      source: { type: 'adr', ref: 'fixture-mention' }, title: '业务日志脱敏', summary: '备注里提到预览密码的相关背景' });
+
+    const byAlias = await call(`/decisions?q=${encodeURIComponent('预览密码')}`, undefined, { actor: 'reader' });
+    expect(byAlias.status).toBe(200);
+    expect(byAlias.body.projectId).toBe(projectA);
+    expect(byAlias.body.items.map((row: { id: string }) => row.id)).toEqual([created.id, mention.id]);
+    expect(byAlias.body.items[0].provenance).toEqual(historical.provenance);
+    const byObject = await call('/decisions?subjectKind=config&subjectRef=cds_preview_password');
+    expect(byObject.body.items.map((row: { id: string }) => row.id)).toEqual([created.id]);
+    expect((await call('/decisions', undefined, { actor: 'anonymous' })).status).toBe(404);
+    expect((await call('/decisions?subjectKind=config')).status).toBe(400);
+  });
+
+  it('requires a basis for inferred decisions and keeps old decisions searchable', async () => {
+    const base = { type: 'decision.create', source: { type: 'manual', ref: 'fixture-legacy' } };
+    const invalid = await call('/commands', {
+      ...base, requestId: 'trace-inference-invalid', title: '未注明推断依据',
+      provenance: { level: 'inferred', url: 'https://example.test/changes/1' },
+    });
+    expect(invalid.status).toBe(400);
+    const previous = await write({ ...base, requestId: 'trace-legacy-written', title: '配置项采用服务端默认值' });
+    const found = await call(`/decisions?q=${encodeURIComponent('默认值')}`);
+    expect(found.status).toBe(200);
+    expect(found.body.items).toMatchObject([{ id: previous.id, title: previous.title }]);
+    expect(found.body.items[0].provenance).toBeUndefined();
+  });
+
   beforeEach(async () => {
     now = new Date();
+    designVersion = undefined;
     directory = await mkdtemp(path.join(tmpdir(), 'cds-engineering-planning-test-'));
     await start();
   });
@@ -737,6 +790,38 @@ describe('engineering planning HTTP contracts', () => {
 
     const otherProject = await call('/stats?from=2026-03-02&to=2026-03-02', undefined, { project: projectB });
     expect(otherProject.body).toMatchObject({ projectId: projectB, backlogEnd: 0, transferredIn: 0, transferredOut: 0 });
+  });
+
+  it('links a design within the project and completes its step only for a signed current commit', async () => {
+    const decision = await write({ type: 'decision.create', requestId: 'add-design-decision', title: 'Review the fixture design',
+      source: { type: 'manual', ref: 'test-design-decision' } });
+    designVersion = { id: 'DSN-fixture', title: 'Fixture design', version: 2, decisionIds: [decision.id] };
+    const create = { type: 'plan.create', requestId: 'add-design-to-plan', title: 'Ship the fixture design',
+      source: { type: 'manual', ref: 'test-design-in-plan' },
+      initialSteps: [{ kind: 'design', relatedId: designVersion.id, title: 'Finish design acceptance' }] };
+    expect((await call('/commands', create, { project: projectB })).status).toBe(404);
+    const plan = await write(create);
+    const board = async () => (await call('')).body;
+    expect((await board()).designs).toEqual([designVersion]);
+    expect((await board()).plans[0].steps[0].status).toBe('todo');
+    expect((await call('/commands', { type: 'plan.step', requestId: 'manual-design-completion', planId: plan.id,
+      expectedVersion: plan.version, stepId: plan.steps[0].id, status: 'done', note: 'Fixture bypass attempt' })).status).toBe(409);
+
+    const prNumber = 43;
+    const observed = async (commit: string, updatedAt: string) => service.recordGithubObservation(projectA, { type: 'pull_request', pullRequest: {
+      number: prNumber, repository: 'fixture/planning', url: 'https://github.com/fixture/planning/pull/43', title: 'Fixture PR',
+      author: 'fixture', openedAt: '2026-01-01T00:00:00Z', updatedAt, state: 'open', headBranch: 'feat/fixture', headSha: commit,
+      decisionRefs: [], debtRefs: [], observation: { action: 'synchronize' }, checks: {},
+    } });
+    const commit = '1'.repeat(40);
+    await observed(commit, '2026-01-01T00:00:00Z');
+    designVersion.frozen = 2;
+    expect((await board()).plans[0].steps[0].status).toBe('doing');
+    designVersion.signed = { commit, pullRequest: prNumber, runId: 'RUN-fixture' };
+    expect((await board()).plans[0].steps[0].status).toBe('done');
+    await observed('2'.repeat(40), '2026-01-02T00:00:00Z');
+    expect((await board()).plans[0].steps[0].status).toBe('doing');
+    expect((await board()).designs[0].signed).toEqual(designVersion.signed);
   });
 
   it('cancels an extinct debt step and only completes a debt step with verified repayment', async () => {

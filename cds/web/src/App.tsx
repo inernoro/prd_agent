@@ -24,6 +24,7 @@ const CdsSettingsPage = lazy(() => import('@/pages/CdsSettingsPage').then((m) =>
 const HelloPage = lazy(() => import('@/pages/HelloPage').then((m) => ({ default: m.HelloPage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const TicketSsoPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.TicketSsoPage })));
+const PreviewAccessPage = lazy(() => import('@/pages/PreviewAccessPage').then(m => ({ default: m.PreviewAccessPage })));
 const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').then((m) => ({ default: m.PreviewPreparingPage })));
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
 const PublicStatusPage = lazy(() => import('@/pages/PublicStatusPage').then((m) => ({ default: m.PublicStatusPage })));
@@ -34,6 +35,7 @@ const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then(
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
 const DtsPage = lazy(() => import('@/pages/DtsPage').then(m => ({ default: m.DtsPage })));
 const CodeReviewsPage = lazy(() => import('@/pages/CodeReviewsPage').then((m) => ({ default: m.CodeReviewsPage })));
+const DesignWorkspacePage = lazy(() => import('@/pages/DesignWorkspacePage').then(m => ({ default: m.DesignWorkspacePage })));
 const EngineeringPlanningPage = lazy(() => import('@/pages/EngineeringPlanningPage').then(m => ({ default: m.EngineeringPlanningPage })));
 const ProjectStatusPage = lazy(() => import('@/pages/ProjectStatusPage').then((m) => ({ default: m.ProjectStatusPage })));
 const StatusPage = lazy(() => import('@/pages/StatusPage').then((m) => ({ default: m.StatusPage })));
@@ -274,6 +276,7 @@ export function App(): JSX.Element {
             {/* 独立页面:营销首页 / 登录 / 预览过渡 / 基建演示,不带控制台外壳。 */}
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/preview-access" element={<PreviewAccessPage />} />
             <Route path="/auth/sso" element={<TicketSsoPage />} />
             <Route path="/preview-preparing" element={<PreviewPreparingPage />} />
             <Route path="/hello" element={<HelloPage />} />
@@ -293,6 +296,7 @@ export function App(): JSX.Element {
               <Route path="/dts" element={<DtsPage />} />
               <Route path="/code-reviews" element={<CodeReviewsPage />} />
               <Route path="/engineering-planning" element={<EngineeringPlanningPage />} />
+              <Route path="/design" element={<DesignWorkspacePage />} />
               <Route path="/release-center/approval/:authorizationId?" element={<ReleaseApprovalPage />} />
               <Route element={<OwnerConsoleRoute />}>
               <Route path="/branch-topology" element={<BranchTopologyPage />} />

@@ -173,6 +173,10 @@ const EXACT = {
     created: 0, imported: 0, repaid: 0, reopened: 0, dropped: 0, extinct: 0, merged: 0,
     transferredIn: 0, transferredOut: 0, buckets: [], categories: [],
   },
+  [`/api/projects/${PROJECT_ID}/design`]: {
+    projectId: PROJECT_ID, designs: [], frameworks: [],
+    permissions: { write: true, review: true, steward: true, actorId: 'fixture-owner' },
+  },
   '/api/dts/capabilities': { protocolVersion: 1, projectId: PROJECT_ID, configured: false, configureAllowed: false, executeAllowed: false, connectors: [] },
   '/api/dts/connections': { connections: [], services: [] },
   '/api/dts/runs': { runs: [] },

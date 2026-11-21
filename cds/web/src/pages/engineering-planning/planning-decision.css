@@ -30,19 +30,12 @@
   background: var(--lane-surface);
 }
 
-.ep-advancement-lane[data-lane=pending] {
-  --lane-surface: color-mix(in srgb, var(--ep-accent) 9%, var(--ep-panel));
-  border-style: dashed;
-}
-
 .ep-advancement-lane[data-lane=stuck] {
-  --lane-surface: color-mix(in srgb, var(--ep-danger) 10%, var(--ep-panel));
   --lane-color: color-mix(in srgb, var(--ep-danger) 70%, var(--ep-fg));
   --lane-mark: var(--ep-danger);
 }
 
 .ep-advancement-lane[data-lane=done] {
-  --lane-surface: color-mix(in srgb, var(--ep-ok) 3%, var(--ep-soft));
   --lane-color: var(--ep-plan-success-ink);
   --lane-mark: var(--ep-ok);
 }

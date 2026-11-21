@@ -9,6 +9,8 @@ import { isHostedSitePreviewRequest, redactHostedSitePreviewLog } from '../../sr
 import { ProxyService } from '../../src/services/proxy.js';
 import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
 import { normalizedPlanningPath } from '../../src/routes/engineering-planning.js';
+import { normalizedDesignPath } from '../../src/routes/design-workspace.js';
+import { normalizedPreviewAccessPath } from '../../src/routes/planning-preview-access.js';
 
 const ticket = 'SyntheticPreviewCanary-ONLY-0123456789';
 const preview = `/api/hosted-site-preview-files/${ticket}/assets/app.js?private=another-canary`;
@@ -247,7 +249,7 @@ function loadMasterMiddleware(kind: 'early-failure' | 'activity' | 'mutation', o
   expect(start).toBeGreaterThan(0);
   expect(end).toBeGreaterThan(start);
   const utilities = source.slice(source.indexOf('function shouldAuditApiMutation('), source.indexOf('function normalizeHttpLogPath('))
-    + source.slice(source.indexOf('function requestPathForLogs('), source.indexOf('function requestHeadersForLogs('));
+    + source.slice(source.indexOf('function normalizedPrivateWorkspacePath('), source.indexOf('function requestHeadersForLogs('));
   let registered: any;
   const code = ts.transpileModule(utilities + source.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
   vm.runInNewContext(code, {
@@ -255,7 +257,7 @@ function loadMasterMiddleware(kind: 'early-failure' | 'activity' | 'mutation', o
     deps: { config: { repoRoot: '/synthetic-no-read' }, stateService: { getBranch: () => undefined }, serverEventLogStore: { record: (value: unknown) => output.push(value) } },
     console: { warn: (...args: unknown[]) => output.push(args) },
     createRequestId: () => 'synthetic-master-request', readBundledCdsCliVersion: () => undefined,
-    isHostedSitePreviewRequest, redactHostedSitePreviewLog, normalizedPlanningPath,
+    isHostedSitePreviewRequest, redactHostedSitePreviewLog, normalizedPlanningPath, normalizedDesignPath, normalizedPreviewAccessPath,
     normalizedSealedStoragePath: () => null, resolveApiLabel: () => 'Synthetic endpoint', activitySeq: 0,
     broadcastActivity: (value: unknown) => output.push(value), getRemoteAddr: () => '127.0.0.1',
     extractApiMutationContext: () => ({}), resolveActorFromRequest: () => 'synthetic-user',

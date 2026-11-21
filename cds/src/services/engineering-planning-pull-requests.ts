@@ -261,7 +261,7 @@ export function createPlanningPreviewResolver(state: StateService, config: Pick<
       const rootPath = primary.subdomain || !profile ? '/' : mainDomainEntryPath(profile, '/');
       const builtAt = version?.createdAt ?? branch.lastReadyAt;
       const root = entry && (rootPath === '/' ? entry.origin : planningPreviewTargetUrl(entry.href, rootPath));
-      if (entry && root) return { status: 'ready', url: root, path: `${entry.pathname}${entry.search}${entry.hash}`, commit: headSha,
+      if (entry && root) return { status: 'ready', branchId: branch.id, url: root, path: `${entry.pathname}${entry.search}${entry.hash}`, commit: headSha,
         ...(builtAt ? { builtAt } : {}) };
     }
     const run = branch.lastDeploymentRunId ? state.getDeploymentRun(branch.lastDeploymentRunId) : undefined;

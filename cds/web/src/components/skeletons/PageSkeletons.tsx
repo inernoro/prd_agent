@@ -209,6 +209,10 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
     case 'rows': return <LoadingBlock />;
     case 'code-reviews': return <CodeReviewsSkeleton />;
     case 'engineering-planning': return <EngineeringPlanningSkeleton />;
+    case 'design': return <ContentLoading variant="table" label="正在读取设计工作区" />;
+    case 'preview-access': return <main className="grid min-h-screen place-items-center bg-background p-4">
+      <ContentLoading label="正在核对预览访问权限" variant="panel" className="max-w-md" />
+    </main>;
     default: return <ConsoleGenericSkeleton />;
   }
 }

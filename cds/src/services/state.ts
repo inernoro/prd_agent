@@ -4748,29 +4748,50 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     project.updatedAt = new Date().toISOString();
   }
 
-  // Phase 9.5 — env 修改审计日志(ring buffer)
+  // The default view remains bounded. Explicit export can also read earlier facts.
   private static readonly ENV_AUDIT_MAX_ENTRIES = 200;
+  private static readonly ENV_AUDIT_RETENTION_MS = 365 * 86_400_000;
 
   appendEnvChangeLog(
     projectId: string,
     entry: Omit<import('../types.js').EnvChangeLogEntry, 'ts'>,
   ): void {
+    const now = new Date();
+    const row = { ts: now.toISOString(), ...entry };
+    if (projectId === '_global') {
+      (this.state.globalEnvironmentChangeLog ??= []).push(row);
+      return;
+    }
     const project = this.getProject(projectId);
     if (!project) return;
-    if (!project.envChangeLog) project.envChangeLog = [];
-    project.envChangeLog.push({ ts: new Date().toISOString(), ...entry });
-    // Ring buffer:超过上限丢最旧的
-    if (project.envChangeLog.length > StateService.ENV_AUDIT_MAX_ENTRIES) {
-      project.envChangeLog = project.envChangeLog.slice(
-        -StateService.ENV_AUDIT_MAX_ENTRIES,
-      );
-    }
-    project.updatedAt = new Date().toISOString();
+    (project.envChangeLog ??= []).push(row);
+    project.updatedAt = now.toISOString();
   }
 
-  getEnvChangeLog(projectId: string): import('../types.js').EnvChangeLogEntry[] {
-    const project = this.getProject(projectId);
-    return project?.envChangeLog ? [...project.envChangeLog] : [];
+  recordEnvironmentAuditEffect(run: import('../types.js').DeploymentRun): void {
+    const project = this.getProject(run.projectId);
+    if (!project?.envChangeLog || run.status !== 'running' || !run.finishedAt || !run.environmentAuditIds?.length) return;
+    const frozen = new Set(run.environmentAuditIds);
+    let applied = false;
+    for (const entry of project.envChangeLog) {
+      for (const fact of entry.facts ?? []) {
+        if (fact.effect.state !== 'pending' || !frozen.has(fact.eventId) || (fact.branchId && fact.branchId !== run.branchId)) continue;
+        fact.effect = { state: 'effective', runId: run.id, at: run.finishedAt };
+        applied = true;
+      }
+    }
+    if (applied) {
+      project.updatedAt = run.finishedAt;
+      this.save();
+    }
+  }
+
+  getEnvChangeLog(projectId: string, includeArchive = false, legacyLimit = StateService.ENV_AUDIT_MAX_ENTRIES): import('../types.js').EnvChangeLogEntry[] {
+    const entries = (projectId === '_global' ? this.state.globalEnvironmentChangeLog : this.getProject(projectId)?.envChangeLog) ?? [];
+    if (includeArchive) return [...entries];
+    const cutoff = Date.now() - StateService.ENV_AUDIT_RETENTION_MS;
+    const legacy = new Set(entries.filter(row => !row.facts).slice(-legacyLimit));
+    return entries.filter(row => row.facts ? Date.parse(row.ts) >= cutoff : legacy.has(row));
   }
 
   // ── Infrastructure services ──

@@ -243,10 +243,6 @@ function EvolutionBreakdown({ data, screen, onSelect, projectLabel, buckets }: {
   });
   return <div className="ep-a-evolution-more">
     <section className="ep-a-panel">
-      <header className="ep-a-heading"><h2>最近变化</h2>{screen && <span>仅显示编号</span>}</header>
-      <ActivityList rows={data.recent ?? []} onSelect={onSelect} screen={screen} empty="这段时间没有债务状态变化" />
-    </section>
-    <section className="ep-a-panel">
       <header className="ep-a-heading"><h2>近期展望</h2>{outlook && <span>截至 {outlook.through}</span>}</header>
       {!!outlook?.items.length && <>
         <p className="ep-a-outlook-count">计划偿还 <b>{outlook.repayments}</b> · 待回看 <b>{outlook.reviews}</b></p>
@@ -313,15 +309,21 @@ export function PlanningEvolution({ data, screen, onSelect, onReviewDue, project
       <strong data-kpi-value data-tone={metric.tone}>{metric.value}</strong>
       <p>{metric.detail}</p>
     </article>)}</div>
-    <section className="ep-a-panel ep-a-charts">
-      <header className="ep-a-heading"><h2>流入与流出</h2>
-        <ul className="ep-a-legend" aria-label="流入与流出图例">{legend.map(({ key, label }) =>
-          <li key={key} title={key === 'imported' ? '采用原发现日期，缺失时采用入账日' : undefined}><i data-flow={key} aria-hidden="true" />{label}</li>)}</ul>
-      </header>
-      <DebtChart key={`flow:${data.from}:${data.to}`} buckets={buckets} initial={data.backlogStart} unit={unit} mode="flow" />
-      <header className="ep-a-heading"><h2>未还积压</h2><span>{planningBucketLabel(data.buckets.length)} · 笔</span></header>
-      <DebtChart key={`backlog:${data.from}:${data.to}`} buckets={buckets} initial={data.backlogStart} unit={unit} mode="backlog" />
-    </section>
+    <div className="ep-a-evolution-stage">
+      <section className="ep-a-panel ep-a-charts">
+        <header className="ep-a-heading"><h2>流入与流出</h2>
+          <ul className="ep-a-legend" aria-label="流入与流出图例">{legend.map(({ key, label }) =>
+            <li key={key} title={key === 'imported' ? '采用原发现日期，缺失时采用入账日' : undefined}><i data-flow={key} aria-hidden="true" />{label}</li>)}</ul>
+        </header>
+        <DebtChart key={`flow:${data.from}:${data.to}`} buckets={buckets} initial={data.backlogStart} unit={unit} mode="flow" />
+        <header className="ep-a-heading"><h2>未还积压</h2><span>{planningBucketLabel(data.buckets.length)} · 笔</span></header>
+        <DebtChart key={`backlog:${data.from}:${data.to}`} buckets={buckets} initial={data.backlogStart} unit={unit} mode="backlog" />
+      </section>
+      <section className="ep-a-panel ep-a-evolution-recent">
+        <header className="ep-a-heading"><h2>最近变化</h2>{screen && <span>仅显示编号</span>}</header>
+        <ActivityList rows={data.recent ?? []} onSelect={onSelect} screen={screen} empty="这段时间没有债务状态变化" />
+      </section>
+    </div>
     <EvolutionBreakdown data={data} screen={screen} onSelect={onSelect} projectLabel={projectLabel} buckets={buckets} />
   </div>;
 }

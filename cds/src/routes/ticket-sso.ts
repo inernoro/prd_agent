@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type { CdsSsoConfig } from '../types.js';
 import {
@@ -54,6 +55,10 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | u
   if (!cookieHeader) return undefined;
   const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : undefined;
+}
+
+function previewFlowCookie(state: unknown): string | undefined {
+  return typeof state === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(state) ? 'cds_preview_flow_' + state.slice(0, 16) : undefined;
 }
 
 function sessionCookie(token: string, expiresAt: Date, secure: boolean): string {
@@ -123,7 +128,9 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
     }
     let issued: ReturnType<TicketSsoStateStore['issue']>;
     try {
-      issued = deps.stateStore.issue(req.query.redirect, callbackUrl);
+      const binding = config.providerId === 'cds-preview' ? randomBytes(32).toString('base64url') : undefined;
+      issued = deps.stateStore.issue(req.query.redirect, callbackUrl, binding);
+      if (binding) res.append('Set-Cookie', `${previewFlowCookie(issued.state)}=${binding}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300${callbackUrl.startsWith('https:') ? '; Secure' : ''}`);
     } catch (error) {
       if (error instanceof TicketSsoStateCapacityError) {
         res.status(429).json({
@@ -134,7 +141,8 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       }
       throw error;
     }
-    res.redirect(302, buildTicketSsoAuthorizationUrl(config, callbackUrl, issued.state));
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    res.redirect(302, buildTicketSsoAuthorizationUrl(config, callbackUrl, issued.state, issued.redirect));
   });
 
   router.post('/auth/sso/exchange', async (req, res) => {
@@ -143,7 +151,10 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       res.status(503).json({ error: 'SSO 尚未配置完成', code: 'sso_not_configured' });
       return;
     }
-    const state = deps.stateStore.consume(req.body?.state);
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    const flowCookie = config.providerId === 'cds-preview' ? previewFlowCookie(req.body?.state) : undefined;
+    const binding = flowCookie ? parseCookie(req.headers.cookie, flowCookie) : undefined;
+    const state = deps.stateStore.consume(req.body?.state, binding);
     if (!state) {
       res.status(400).json({ error: 'SSO 登录状态无效或已过期', code: 'sso_state_invalid' });
       return;
@@ -155,6 +166,7 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
         state.callbackUrl,
         deps.fetchImpl,
         deps.tokenExchangeTimeoutMs,
+        req.body?.state,
       );
       const session = deps.sessionStore.create(identity);
       res.setHeader('Set-Cookie', [
@@ -165,6 +177,7 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
         ),
         buildLogoutCookie(deps.cookieSecure || state.callbackUrl.startsWith('https://')),
         buildLegacyLogoutCookie(deps.cookieSecure || state.callbackUrl.startsWith('https://')),
+        ...(flowCookie ? [logoutCookie(flowCookie, state.callbackUrl.startsWith('https://'))] : []),
       ]);
       res.json({
         success: true,

@@ -218,6 +218,8 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],
   ['acceptance-tasks', '结构化功能清单、领取任务与历史矩阵', 'acceptance-tasks.ts', 'project', 'project', 'write', 'direct', 'cds', 'acceptance', '先读冻结清单再领取，按真实业务路径回填断言、线上证据与清理；正式环境无需发布分支，报告绑定不等于线上验真通过'],
   ['engineering-planning', '工程规划与债务', 'engineering-planning.ts', 'project', 'project', 'write', 'guided', 'cds', 'planning / debt', 'MCP 读取当前项目并提交提案或明确授权的直接登记。项目成员确认提案及处理债务。'],
+  ['design-workspace', '项目设计稿件', 'design-workspace.ts', 'project', 'project', 'write', 'guided', 'cds', 'design / framework', '读取和发布授权项目稿件。定稿、评论核对和签收由项目成员确认。'],
+  ['planning-preview-access', '分支预览进入票据', 'planning-preview-access.ts', 'system', 'protocol-token', 'write', 'protocol-only', 'cds', '', '票据只用于当前分支的登录。访问申请由项目授权流程审批。'],
   ['scheduled-jobs', '定时任务与运行记录', 'scheduled-jobs.ts', 'project', 'project', 'write', 'direct', 'cds', 'schedule', '先 parse 和 test，默认不直接创建或执行危险命令'],
   ['snapshots', '配置快照、回滚与撤销', 'snapshots.ts', 'system', 'system', 'destructive', 'guided', 'cds', '', '破坏性操作前建立快照，优先使用 undo 而不是再次修改'],
   ['storage-mode', '状态存储模式切换', 'storage-mode.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '切换前必须预检后端、迁移路径和回滚策略'],

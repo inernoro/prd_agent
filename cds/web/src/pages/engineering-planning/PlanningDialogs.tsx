@@ -160,6 +160,17 @@ function DecisionFields({ decision }: { decision?: PlanningDecision }) {
       </select></label>
     </fieldset>
     <Field name="consequences" label="预期后果" initial={decision?.consequences} multiline />
+    <Field name="aliases" label="日常说法（每行一个）" initial={decision?.aliases?.join('\n')} multiline />
+    <Field name="appliesTo" label="适用对象（每行填类型和名称）" initial={decision?.appliesTo?.map(item => item.kind + ' ' + item.ref).join('\n')}
+      placeholder="例如 config PREVIEW_PASSWORD" multiline />
+    <div className="ep-form-pair">
+      <Field name="provenanceLevel" label="证据等级" initial={decision?.provenance?.level ?? ''}
+        choices={[[ '', '未填写' ], ['original','原始记录'], ['backfilled','补录'], ['inferred','推断']]} />
+      <Field name="provenanceUrl" label="原始依据链接" initial={decision?.provenance?.url} />
+      <Field name="occurredOn" label="原始日期" initial={decision?.provenance?.occurredOn} date />
+      <Field name="decidedBy" label="原决定者" initial={decision?.provenance?.decidedBy} />
+    </div>
+    <Field name="evidenceBasis" label="推断或补录依据" initial={decision?.provenance?.basis} multiline />
     <Field name="decisionLinks" label="决策文档（每行一个链接）" initial={decision?.links?.map(item => item.url).join('\n')} multiline />
     <Field name="pullRequestUrl" label="GitHub PR 链接" initial={decision?.pullRequest?.url} />
     <div className="ep-form-pair">
@@ -175,8 +186,22 @@ function decisionInput(form: FormData, previous?: PlanningDecision) {
   const options = form.getAll('optionTitle').map((value, index) => ({
     title: String(value).trim(), benefits: benefits[index] || undefined, drawbacks: drawbacks[index] || undefined,
   }));
+  const aliases = lines(optional(form, 'aliases')) ?? [];
+  const subjects = (lines(optional(form, 'appliesTo')) ?? []).map(value => {
+    const [kind, ...name] = value.split(/\s+/);
+    if (!['feature','config','preview','module'].includes(kind) || !name.length) throw new Error('适用对象每行填写类型和名称');
+    return { kind: kind as 'feature' | 'config' | 'preview' | 'module', ref: name.join(' ') };
+  });
+  const level = optional(form, 'provenanceLevel') as NonNullable<DecisionStructure['provenance']>['level'] | undefined;
+  const provenanceUrl = optional(form, 'provenanceUrl');
+  const basis = optional(form, 'evidenceBasis');
+  if ((level || provenanceUrl) && (!level || !provenanceUrl)) throw new Error('请同时填写原始依据和证据等级');
+  if (level === 'inferred' && !basis) throw new Error('推断需要说明依据');
   const structure: DecisionStructure = { decisionKind: field(form, 'decisionKind') as DecisionStructure['decisionKind'],
-    options, chosenOption: optional(form, 'chosenOption'), consequences: optional(form, 'consequences') };
+    options, chosenOption: optional(form, 'chosenOption'), consequences: optional(form, 'consequences'),
+    aliases, appliesTo: subjects,
+    provenance: level && provenanceUrl ? { level, url: provenanceUrl, occurredOn: optional(form, 'occurredOn'),
+      decidedBy: optional(form, 'decidedBy'), basis } : undefined };
   const links: PlanningDecisionLink[] = (lines(optional(form, 'decisionLinks')) ?? []).map(url =>
     previous?.links?.find(link => link.url === url) ?? { type: /\/adr(?:\/|[-_])/i.test(url) ? 'adr' : 'doc', title: url.slice(0, 200), url });
   const url = optional(form, 'pullRequestUrl');
@@ -357,7 +382,7 @@ function actionFields(action: PlanningAction, board: PlanningBoard, duplicateChe
     </> : <>
       <Field name="title" label="步骤标题" initial={action.initialTitle} required max={120} />
       <Field name="stepKind" label="步骤类型" initial={action.initialKind} choices={Object.entries(stepKindLabels)} />
-      <Field name="relatedId" label="相关决策或债务编号" initial={action.initialRelatedId} />
+      <Field name="relatedId" label="相关决策、债务或稿件编号" initial={action.initialRelatedId} />
       <Field name="dueAt" label="步骤期限" date />
       <Field name="stepOwner" label="步骤负责人" max={120} />
     </>;

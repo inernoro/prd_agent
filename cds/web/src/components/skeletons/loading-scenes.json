@@ -91,6 +91,13 @@
     "workspace": "fluid"
   },
   {
+    "route": "/design",
+    "name": "设计",
+    "page": "pages/DesignWorkspacePage.tsx",
+    "kind": "design",
+    "workspace": "fluid"
+  },
+  {
     "route": "/reports",
     "name": "验收报告",
     "page": "pages/ReportsPage.tsx",
@@ -144,6 +151,14 @@
     "name": "登录",
     "page": "pages/LoginPage.tsx",
     "kind": "auth",
+    "workspace": "standalone",
+    "scope": "standalone"
+  },
+  {
+    "route": "/preview-access",
+    "name": "分支预览访问",
+    "page": "pages/PreviewAccessPage.tsx",
+    "kind": "preview-access",
     "workspace": "standalone",
     "scope": "standalone"
   },

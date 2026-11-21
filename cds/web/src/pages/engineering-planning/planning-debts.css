@@ -1,20 +1,11 @@
-.ep-ledger { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; min-width: 0; min-height: 102px; }
-.ep-ledger-mark { position: relative; width: 104px; height: 104px; flex: 0 0 auto; color-scheme: light; }
-[data-theme="dark"] .ep-ledger-mark { color-scheme: dark; }
-.ep-ledger-mark > img, .ep-ledger-mark > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.ep-ledger-mark circle { stroke-width: 8; fill: none; stroke: var(--ep-line); }
-.ep-ledger-mark circle[data-tone="owed"] { stroke: var(--ep-accent); }
-.ep-ledger-mark circle[data-tone="paid"] { stroke: var(--ep-ok); }
-.ep-ledger-mark circle[data-tone="gone"] { stroke: var(--ep-strong-line); }
+.ep-ledger { display: flex; align-items: center; min-width: 0; min-height: 55px; }
 .ep-ledger-body { min-width: 0; }
 .ep-ledger-body p { margin-top: 3px; color: var(--ep-muted); font-size: 13px; }
 .ep-ledger-metrics { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 22px; color: var(--ep-muted); }
 .ep-ledger-metrics > span { display: inline-flex; align-items: baseline; gap: 5px; font-size: 13px; font-weight: 600; white-space: nowrap; line-height: 1.02; }
-.ep-ledger-metrics strong { font-size: 34px; font-weight: 740; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.ep-ledger-metrics strong { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 .ep-ledger-metrics small { font-size: 12px; font-weight: 400; }
-.ep-ledger-metrics [data-tone="owed"] strong { color: var(--ep-accent-ink); }
-.ep-ledger-metrics [data-tone="paid"] strong { color: var(--ep-ok); }
-.ep-ledger-metrics [data-tone="gone"] strong { font-size: 24px; }
+.ep-ledger-metrics [data-tone] strong { color: var(--ep-fg); }
 .ep-debt-controls { display: grid; gap: 11px; }
 .ep-search {
   display: flex; align-items: center; gap: 7px; width: min(100%, 380px); min-width: 0;
@@ -34,11 +25,12 @@
 .ep-priority-pills > button[aria-pressed="true"] { border-color: var(--ep-accent); box-shadow: 0 0 0 1px var(--ep-accent); }
 .ep-priority {
   display: inline-flex; align-items: center; justify-content: center; gap: 3px; justify-self: start; white-space: nowrap;
-  padding: 1px 5px; border-radius: 4px; background: var(--ep-soft); color: var(--ep-muted); font-size: 12px; font-weight: 650;
+  padding: 1px 5px; color: var(--ep-muted); font-size: 12px; font-weight: 650;
 }
 .ep-priority > svg { width: 14px; height: 14px; }
-.ep-priority[data-priority="high"] { background: var(--ep-danger); color: hsl(var(--destructive-foreground)); }
-.ep-priority[data-priority="mid"] { background: var(--ep-warn-soft); color: var(--ep-warn); }
+.ep-priority[data-priority="high"] { color: var(--ep-fg); font-weight: 650; }
+.ep-priority[data-priority="high"] > svg { color: var(--ep-danger); }
+.ep-priority[data-priority="mid"] { color: var(--ep-fg); }
 .ep-list-filter-menu { position: relative; }
 .ep-list-filter-menu > summary { min-height: 33px; border-color: transparent; background: transparent; font-size: 13px; color: var(--ep-muted); }
 .ep-list-filter-menu > summary::-webkit-details-marker { display: none; }
@@ -101,21 +93,18 @@
 .ep-deadline--large .ep-due-chip { padding: 4px 13px; font-size: 14px; line-height: 26px; }
 .ep-due-chip strong { font-size: 15px; font-weight: 750; }
 .ep-deadline--large .ep-due-chip strong { font-size: 23px; }
-.ep-due-chip[data-tone="bad"] { color: hsl(var(--destructive-foreground)); background: var(--ep-danger); }
+.ep-due-chip[data-tone="bad"] { color: var(--ep-danger); background: transparent; }
 .ep-due-chip[data-tone="soon"] { color: var(--ep-accent-ink); background: color-mix(in srgb, var(--ep-accent) 11%, var(--ep-panel)); }
-.ep-due-chip[data-tone="review"] { color: var(--ep-warn); background: var(--ep-warn-soft); }
+.ep-due-chip[data-tone="review"] { color: var(--ep-warn); background: transparent; }
 .ep-coin {
-  position: relative; display: grid; place-items: center; width: 29px; height: 29px; flex: none; border-radius: 50%;
-  border: 2px solid var(--ep-accent); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ep-accent) 26%, transparent);
-  color: var(--ep-accent-ink); background: color-mix(in srgb, var(--ep-accent) 9%, var(--ep-panel)); font-weight: 750; font-size: 13px;
+  position: relative; display: grid; place-items: center; width: 15px; height: 15px; flex: none;
+  border: 2px solid var(--ep-accent); border-radius: 50%; background: transparent;
 }
-.ep-coin[data-status="in_progress"] { border-top-color: var(--ep-ok); border-right-color: var(--ep-ok); }
-.ep-coin[data-status="repaid"] { border-color: var(--ep-ok); color: var(--ep-ok); background: var(--ep-ok-soft); }
-.ep-coin[data-status="dropped"] { border: 1px dashed var(--ep-muted); color: var(--ep-muted); background: var(--ep-inset); box-shadow: none; }
-.ep-coin svg { width: 56%; height: 56%; }
-.ep-coin[data-status="deferred"] svg {
-  position: absolute; top: -3px; right: -3px; width: 13px; height: 13px; background: var(--ep-panel); border-radius: 50%; color: var(--ep-muted);
-}
+.ep-coin[data-status="in_progress"] { border-color: var(--ep-info); }
+.ep-coin[data-status="repaid"] { border-color: var(--ep-ok); color: var(--ep-ok); }
+.ep-coin[data-status="dropped"] { border: 1px dashed var(--ep-muted); color: var(--ep-muted); }
+.ep-coin[data-status="deferred"], .ep-coin[data-status="pending-extinct"] { border: 0; color: var(--ep-muted); }
+.ep-coin svg { width: 100%; height: 100%; }
 .ep-pagination { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--ep-line); }
 @media (max-width: 780px) {
   .ep-debt-list-bar { flex-wrap: wrap; }
@@ -124,7 +113,6 @@
 }
 @media (max-width: 680px) {
   .ep-ledger { flex-direction: column; align-items: flex-start; gap: 8px; min-height: 0; }
-  .ep-ledger-mark { width: 76px; height: 76px; }
   .ep-ledger-metrics { column-gap: 9px; }
   .ep-ledger-metrics strong { font-size: 24px; }
   .ep-ledger-metrics [data-tone="gone"] strong { font-size: 20px; }
@@ -189,18 +177,19 @@
 .ep-escape-help { margin-left: auto; white-space: nowrap; }
 .ep-open-in-list + .ep-escape-help { margin-left: 2px; }
 .ep-dialog--debt-detail { background: var(--ep-base); }
-.ep-dialog--debt-detail .ep-detail { padding-inline: 0; }
-.ep-dialog--debt-detail .ep-detail > :not(.ep-brief, .ep-debt-actions) { margin-inline: .95rem; }
+.ep-dialog--debt-detail .ep-detail { --ep-debt-detail-inset: clamp(.875rem, 1.75vw, 1.5rem); padding-inline: var(--ep-debt-detail-inset); }
+.ep-dialog--debt-detail .ep-brief { margin-inline: calc(-1 * var(--ep-debt-detail-inset)); }
+.ep-dialog.ep-dialog--debt-detail { width: min(100vw, max(650px, 60vw), 880px) !important; }
 .ep-dialog.ep-dialog--debt-detail > button:last-child,
 .ep-dialog.ep-dialog--repay > button:last-child { top: 4px; right: 4px; width: 44px; height: 44px; background: transparent; }
 .ep-dialog.ep-dialog--debt-detail > button:last-child svg,
 .ep-dialog.ep-dialog--repay > button:last-child svg { width: 18px; height: 18px; }
-.ep-detail-scroll > .ep-debt-head { padding: 5px 0 0; background: transparent; border-bottom: 0; margin: 0; gap: 10px; }
-.ep-debt-headline { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-width: 0; }
-.ep-debt-headline > .ep-coin { width: 48px; height: 48px; font-size: 24px; border-width: 3px; }
+.ep-detail-scroll > .ep-debt-head { padding: 17px clamp(14px, 1.75vw, 24px) 4px; background: transparent; border-bottom: 0; margin: 0; gap: 10px; }
+.ep-debt-headline { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-width: 0; }
+.ep-debt-headline > .ep-coin { width: 17px; height: 17px; }
 .ep-debt-headline > .ep-debt-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .ep-debt-kicker { flex-wrap: wrap; gap: 7px; }
-.ep-debt-heading h2 { font-size: 23px; line-height: 1.28; font-weight: 700; }
+.ep-debt-heading h2 { font-size: 20px; line-height: 1.3; font-weight: 680; }
 .ep-debt-meta { gap: 5px 12px; font-size: 13px; }
 .ep-debt-meta > span { min-width: 0; max-width: 100%; }
 .ep-debt-deadline > .ep-deadline { align-items: flex-end; }
@@ -224,8 +213,6 @@
   .ep-repay-proof-line { grid-template-columns: 1fr; }
   .ep-verdicts { max-width: 100%; }
   .ep-verdicts label { min-height: 36px; padding-inline: 8px; }
-  .ep-debt-headline { grid-template-columns: 47px minmax(0, 1fr); gap: 7px; }
-  .ep-debt-headline > .ep-coin { height: 44px; width: 44px; }
   .ep-debt-heading h2 { font-size: 20px; }
   .ep-debt-deadline { grid-column: 1 / -1; }
   .ep-debt-deadline > .ep-deadline { align-items: flex-start; }
@@ -245,3 +232,15 @@
 .ep-lifecycle-actions { margin-block: 8px; }
 .ep-linked-items { display: grid; gap: 5px; max-height: 170px; overflow: auto; }
 .ep-import-preview li { margin-block: 4px 10px; }
+
+.ep-debt-kicker .ep-badge { border: 0; border-radius: 0; background: transparent; padding-inline: 0; }
+.ep-debt-kicker .ep-badge::before { content: ''; display: inline-block; width: 6px; height: 6px;
+  margin-right: 5px; border-radius: 50%; border: 1px solid currentColor; }
+.ep-debt-kicker .ep-badge[data-tone=success]::before, .ep-debt-kicker .ep-badge[data-tone=info]::before {
+  background: currentColor;
+}
+@media (max-width: 680px) {
+  .ep-dialog--debt-detail .ep-debt-headline { grid-template-columns: 18px minmax(0, 1fr) auto; gap: 5px; }
+  .ep-dialog--debt-detail .ep-debt-headline .ep-coin { width: 14px; height: 14px; }
+  .ep-debt-heading h2 { font-size: 19px; }
+}

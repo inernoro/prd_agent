@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Bot, CalendarDays, Check, ChevronRight, Clock3, Copy, ExternalLink, FileText, Flag, Flame,
-  Folder, GitBranch, GitPullRequest, ListChecks, Play, Plus, RotateCcw, Target, TriangleAlert, UserRound,
+  Folder, GitBranch, GitPullRequest, Layers, ListChecks, Play, Plus, RotateCcw, Target, TriangleAlert, UserRound,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type {
-  PlanningBoard, PlanningDebt, PlanningDebtList, PlanningDecision, PlanningEvent, PlanningPlan, PlanningProposal, PlanningSource, PlanningStep,
+  PlanningBoard, PlanningDebt, PlanningDebtList, PlanningDecision, PlanningDesignLink, PlanningEvent, PlanningPlan, PlanningProposal, PlanningSource, PlanningStep,
 } from '../../../../src/shared/engineering-planning';
+import { ConfigurationTrail, provenanceLabels } from './PlanningCompanion';
 import type { PlanningAction } from './PlanningDialogs';
 import { DecisionDocumentBadge, PlanningDecisionLinks, PlanningPullRequestBadge, PlanningPullRequestLink, PlanningPullRequestList } from './PlanningPullRequests';
 import { inactiveLabels, PlanningBadge, PlanningEmpty, type PlanningSelection } from './PlanningViews';
@@ -30,7 +32,7 @@ const lanes = {
   moving: { label: '推进中', icon: Play, empty: '没有正在推进的决策' },
   done: { label: '已完结', icon: Check, empty: '没有已完结的决策' },
 } as const;
-const stepIcons = { task: Check, decision: Flag, debt: FileText, review: RotateCcw };
+const stepIcons = { task: Check, decision: Flag, debt: FileText, review: RotateCcw, design: Layers };
 const planLabels = { planned: '已排期', doing: '进行中', done: '已完成', cancelled: '步骤已取消' } as const;
 const decisionKindLabels = { forward: '正向决策', debt: '债务决策' } as const;
 const proposalApprovals = { debt: '记下这笔债', decision: '采纳为决策', plan: '采纳为落地计划' } as const;
@@ -282,7 +284,8 @@ export function PlanningBoardView({ data, busy, onSelect, onConfirm, onReject }:
 }
 
 function stepSelection(step: PlanningStep, plan: PlanningPlan): PlanningSelection {
-  return step.relatedId ? { kind: step.kind === 'debt' ? 'debt' : 'decision', id: step.relatedId } : { kind: 'plan', id: plan.id };
+  return step.relatedId && step.kind !== 'design'
+    ? { kind: step.kind === 'debt' ? 'debt' : 'decision', id: step.relatedId } : { kind: 'plan', id: plan.id };
 }
 
 function markerLabel(step: PlanningStep, date: string, today: string) {
@@ -426,7 +429,8 @@ function HistoryBadge({ event, short = false }: { event: PlanningEvent; short?: 
 
 function Trunk({ data, onSelect, onBranch }: { data: PlanningBoard; onSelect: SelectRecord; onBranch: (id: string) => void }) {
   const [filter, setFilter] = useState<typeof trunkFilters[number]['key']>('all');
-  const decisions = useMemo(() => [...data.decisions].sort((a, b) => b.createdAt.localeCompare(a.createdAt)), [data.decisions]);
+  const sourceDate = (row: PlanningDecision) => row.provenance?.occurredOn ?? row.createdAt;
+  const decisions = useMemo(() => [...data.decisions].sort((a, b) => sourceDate(b).localeCompare(sourceDate(a))), [data.decisions]);
   const plans = useMemo(() => groupBy(data.plans, plan => plan.decisionId), [data.plans]);
   const history = useMemo(() => groupBy(data.events, event => event.entity === 'decision' ? event.entityId : undefined), [data.events]);
   const filtered = decisions.filter(trunkFilters.find(item => item.key === filter)!.match);
@@ -448,18 +452,21 @@ function Trunk({ data, onSelect, onBranch }: { data: PlanningBoard; onSelect: Se
         const live = activePullRequests(decision).length;
         const documentCount = decision.links?.filter(link => link.type === 'doc' || link.type === 'adr').length ?? 0;
         return <li className="ep-trunk-node" key={decision.id} data-state={decision.status} data-kind={decision.decisionKind} data-fresh={fresh > 0 || undefined}>
-          <time className="ep-trunk-date" dateTime={decision.createdAt}>{monthDay(decision.createdAt)}<small>{onDay(decision.createdAt).slice(0, 4)}</small></time>
+          <time className="ep-trunk-date" dateTime={sourceDate(decision)}>{monthDay(sourceDate(decision))}<small>{onDay(sourceDate(decision)).slice(0, 4)}</small></time>
           <span className="ep-trunk-dot" aria-hidden />
           <article className="ep-trunk-card" onClick={event => {
             if (event.target instanceof Element && !event.target.closest('button, a')) onSelect({ kind: 'decision', id: decision.id });
           }}>
             <div className="ep-decision-tags"><RecordId id={decision.id} /><DecisionKindBadge kind={decision.decisionKind} />
-              <DecisionStatus status={decision.status} /><ProgressBadge state={progress.state} />{fresh > 0 && <PlanningBadge tone="accent">新变更 {fresh}</PlanningBadge>}
+              <DecisionStatus status={decision.status} /><ProgressBadge state={progress.state} />
+              {decision.provenance && <PlanningBadge>{provenanceLabels[decision.provenance.level]}</PlanningBadge>}{fresh > 0 && <PlanningBadge tone="accent">新变更 {fresh}</PlanningBadge>}
               {decision.pullRequests?.length ? <span className="ep-trunk-pull-requests"><GitPullRequest aria-hidden />PR {decision.pullRequests.length}
                 {live > 0 && ` · ${live} 个进行中`}</span> : decision.pullRequest && <span className="ep-trunk-pull-requests"><GitPullRequest aria-hidden />PR 待同步</span>}
               {documentCount > 0 && <DecisionDocumentBadge count={documentCount} />}
             </div>
             <button type="button" className="ep-text-button ep-trunk-title" onClick={() => onSelect({ kind: 'decision', id: decision.id })}>{decision.title}</button>
+            {decision.provenance && <p className="ep-caption"><a className="ep-link" href={decision.provenance.url} target="_blank" rel="noreferrer">依据 <ExternalLink /></a>
+              {decision.provenance.level !== 'original' && ` · 记录于 ${dateLabel(decision.createdAt)}`}</p>}
             {changes.length > 0 && <div className="ep-trunk-history" aria-label="决策历程">{changes.map(event => <HistoryBadge key={event.id} event={event} short />)}</div>}
             {associated.length > 0 && <div className="ep-trunk-plans">{associated.map(plan => {
               const progress = planProgress(plan, data.today);
@@ -661,12 +668,27 @@ function RecordLink({ item, title, status, onSelect, focusKey }: {
 
 type DetailProps = { board: PlanningBoard; write: boolean; actionsDisabled: boolean; onSelect: SelectRecord; onAction: OpenAction };
 
+function DesignRecordLink({ projectId, design, signed = false }: { projectId: string; design: PlanningDesignLink; signed?: boolean }) {
+  const query = new URLSearchParams({ project: projectId, design: design.id });
+  if (signed && design.signed && design.frozen) {
+    query.set('version', String(design.frozen));
+    query.set('tab', 'accept');
+    query.set('run', design.signed.runId);
+  }
+  return <Link className="ep-record-link" to={`/design?${query}`}>
+    <span><RecordId id={design.id} /><strong>{design.title}</strong></span>
+    <span className="ep-record-muted">V{design.version} · {design.frozen === design.version ? '已定稿' : '待定稿'}</span>
+  </Link>;
+}
+
 export function DecisionDetails({ row, board, write, actionsDisabled, onSelect, onAction, onBranch }: DetailProps & {
   row: PlanningDecision; onBranch?: (id: string) => void;
 }) {
   const changeButton = useRef<HTMLButtonElement>(null);
   const available = row.status === 'proposed' || row.status === 'accepted';
   const associated = board.plans.filter(plan => plan.decisionId === row.id);
+  const designs = board.designs?.filter(design => design.decisionIds.includes(row.id));
+  const configurationKeys = row.appliesTo?.filter(subject => subject.kind === 'config').map(subject => subject.ref);
   const history = board.events.filter(event => event.entity === 'decision' && event.entityId === row.id);
   const branch = board.debtBranches?.[row.id];
   const total = branch ? branchTotal(branch) : 0;
@@ -703,9 +725,21 @@ export function DecisionDetails({ row, board, write, actionsDisabled, onSelect, 
       </div>
       <aside className="ep-record-related">
         {row.links?.length ? <RecordSection title="决策文档"><PlanningDecisionLinks links={row.links} /></RecordSection> : null}
-        <RecordSection title="决策来源"><Source source={row.source} /></RecordSection>
+        {!!designs?.length && <RecordSection title="设计稿">{designs.map(design =>
+          <DesignRecordLink key={design.id} projectId={board.projectId} design={design} />)}</RecordSection>}
+        <RecordSection title="决策来源"><Source source={row.source} />
+          {row.provenance && <div className="ep-record-provenance">
+            <PlanningBadge>{provenanceLabels[row.provenance.level]}</PlanningBadge>
+            <a className="ep-link" href={row.provenance.url} target="_blank" rel="noreferrer">查看原始依据</a>
+            <p>原始日期 {row.provenance.occurredOn ?? '未知'} · 决定者 {row.provenance.decidedBy ?? '未知'}</p>
+            {row.provenance.basis && <p>{row.provenance.basis}</p>}
+          </div>}
+          {!!row.aliases?.length && <p className="ep-caption">日常说法 · {row.aliases.join('、')}</p>}
+          {!!row.appliesTo?.length && <p className="ep-caption">适用对象 · {row.appliesTo.map(value => value.ref).join('、')}</p>}
+        </RecordSection>
         {row.supersededBy && <RecordSection title="接替决策"><RecordLink item={{ kind: 'decision', id: row.supersededBy }}
           title={successor?.title} status={successor && decisionLabels[successor.status]} onSelect={onSelect} /></RecordSection>}
+        {!!configurationKeys?.length && <ConfigurationTrail projectId={board.projectId} keys={configurationKeys} compact />}
         <RecordSection title="债务分支">
           {branch && total > 0 ? <><BranchBar branch={branch} />
             <p className="ep-record-muted">{total} 笔 · 未还 {branch.unpaid} · 已偿还 {branch.repaid}
@@ -735,7 +769,9 @@ const stateChoices = [['todo', '未开始'], ['doing', '进行中'], ['done', '�
 function PlanStep({ step, plan, board, write, actionsDisabled, onSelect, onAction }: DetailProps & { step: PlanningStep; plan: PlanningPlan }) {
   const Icon = stepIcons[step.kind];
   const isDebt = step.kind === 'debt';
-  const link = step.relatedId ? stepSelection(step, plan) : undefined;
+  const isDesign = step.kind === 'design';
+  const link = step.relatedId && !isDesign ? stepSelection(step, plan) : undefined;
+  const design = isDesign ? board.designs?.find(item => item.id === step.relatedId) : undefined;
   const debt = isDebt && step.relatedId ? board.relatedDebts?.[step.relatedId] : undefined;
   const decision = link?.kind === 'decision' ? board.decisions.find(item => item.id === link.id) : undefined;
   const late = stepIsLate(step, board.today);
@@ -750,10 +786,12 @@ function PlanStep({ step, plan, board, write, actionsDisabled, onSelect, onActio
         : step.dueAt && <span className="ep-record-muted">计划日期 <time dateTime={step.dueAt}>{fullDate(step.dueAt)}</time></span>}
       {link && <RecordLink item={link} title={debt?.title ?? decision?.title} onSelect={onSelect} focusKey={step.id}
         status={debt ? (debt.outcome ? inactiveLabels[debt.outcome.kind] : debtLabels[debt.status]) : decision && decisionLabels[decision.status]} />}
+      {design && <DesignRecordLink projectId={board.projectId} design={design} signed={step.status === 'done'} />}
     </div>
     {isDebt ? <span className="ep-record-muted ep-plan-step-state">
       {!step.relatedId ? '未关联债务' : step.status === 'done' ? '已还清' : step.status === 'cancelled' ? '债务已关闭' : '还清后自动完成'}
-    </span> : write ? <div className="ep-planning-segment ep-plan-step-state" role="group" aria-label={`步骤状态 ${step.title}`}>
+    </span> : isDesign ? <span className="ep-record-muted ep-plan-step-state">{step.status === 'done' ? '已签收' : '签收后自动完成'}</span>
+      : write ? <div className="ep-planning-segment ep-plan-step-state" role="group" aria-label={`步骤状态 ${step.title}`}>
       {stateChoices.map(([value, label]) => <button key={value} type="button" aria-pressed={value === step.status}
         disabled={actionsDisabled || value === step.status} onClick={event => onAction({ kind: 'step', plan, step, initialStatus: value }, event.currentTarget)}>{label}</button>)}
     </div> : <span className="ep-record-muted ep-plan-step-state">{stepLabels[step.status]}</span>}

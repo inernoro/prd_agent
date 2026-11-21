@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import {
-  debtPriorities, planningClosureDays, planningDebtSorts, planningDebtViews, planningPermissions, planningSourceTypes, planningVerificationState,
+  decisionSubjectKinds, debtPriorities, planningClosureDays, planningDebtSorts, planningDebtViews, planningPermissions, planningSourceTypes, planningVerificationState,
   type PlanningActor, type PlanningBoard, type PlanningCapabilities, type PlanningDebtView,
   type PlanningCheckup, type PlanningCheckupRead, type PlanningCheckupReadResult,
-  type PlanningCounts, type PlanningDebt, type PlanningDebtDetail, type PlanningDebtList,
-  type PlanningPlan, type PlanningReceipt, type PlanningStats,
+  type PlanningCounts, type PlanningDebt, type PlanningDebtDetail, type PlanningDebtList, type PlanningDecisionSearch,
+  type PlanningDesignLink, type PlanningPlan, type PlanningReceipt, type PlanningStats,
 } from '../shared/engineering-planning.js';
 import { PlanningMutation, planningSweepActor, planningToday, sharesRepaymentCriteria, unpaid, type PlanningState } from './engineering-planning-domain.js';
 import { buildPlanningAnalytics, eventDelta, matchesBranch } from './engineering-planning-analytics.js';
@@ -60,6 +60,8 @@ type DebtQuery = {
   priority?: unknown; owner?: unknown; source?: unknown; module?: unknown; batch?: unknown; sort?: unknown; tagMatch?: unknown;
 };
 type StatsQuery = { from?: unknown; to?: unknown; branch?: unknown; analytics?: unknown };
+type DecisionQuery = { q?: unknown; subjectKind?: unknown; subjectRef?: unknown };
+const decisionText = (value: string) => value.normalize('NFKC').toLocaleLowerCase().trim().replace(/\s+/gu, ' ');
 type Cursor = { revision: number; offset: number; filter: string };
 
 function pageCursor(value: unknown, fingerprint: string, revision: number): Cursor {
@@ -75,8 +77,14 @@ function pageCursor(value: unknown, fingerprint: string, revision: number): Curs
 }
 
 const order = <T extends { updatedAt: string; id: string }>(a: T, b: T) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id);
-function planProjection(plan: PlanningPlan, debts: PlanningState['debts']): PlanningPlan {
+function planProjection(plan: PlanningPlan, debts: PlanningState['debts'], designs: Map<string, PlanningDesignLink>,
+  hasCurrentSignature: (signature: NonNullable<PlanningDesignLink['signed']>) => boolean): PlanningPlan {
   return { ...plan, steps: plan.steps.map(step => {
+    if (step.kind === 'design' && step.relatedId) {
+      const design = designs.get(step.relatedId);
+      if (!design?.frozen) return step;
+      return { ...step, status: design.signed && hasCurrentSignature(design.signed) ? 'done' : 'doing' };
+    }
     const debt = step.kind === 'debt' && step.relatedId ? debts.get(step.relatedId) : undefined;
     if (!debt) return step;
     const status = { open: 'todo', deferred: 'todo', in_progress: 'doing', repaid: 'done', dropped: 'cancelled' } as const;
@@ -96,7 +104,7 @@ export class EngineeringPlanningService {
   constructor(private readonly store: EngineeringPlanningStore, private readonly now = () => new Date(), private readonly github?: {
     repositoryFor: (projectId: string) => string | undefined; previewFor?: PlanningPreviewResolver;
     defaultBranchFor?: (projectId: string) => string | null | undefined; fileAnchorProbe?: PlanningFileAnchorProbe;
-  }) {}
+  }, private readonly designLinksFor?: (projectId: string) => Promise<PlanningDesignLink[]>) {}
 
   private async load(projectId: string, revision?: number): Promise<PlanningState> {
     const base = this.latest.get(projectId) ?? empty();
@@ -158,6 +166,20 @@ export class EngineeringPlanningService {
   private projectPullRequests(projectId: string, state: PlanningState, now: Date) {
     const repository = this.github?.repositoryFor(projectId);
     return repository && state.pullRequests.size ? projectPlanningPullRequests(projectId, repository, state, now, this.github?.previewFor) : [];
+  }
+
+  async pullRequestPreview(projectId: string, number: number) {
+    const repository = this.github?.repositoryFor(projectId);
+    if (!repository || !this.github?.previewFor) return undefined;
+    const row = (await this.load(projectId)).pullRequests.get(planningPullRequestKey(repository, number));
+    return row ? this.github.previewFor(projectId, row, this.now()) : undefined;
+  }
+
+  async designAcceptanceDebt(projectId: string, id: string, sourceRef: string) {
+    const state = await this.load(projectId);
+    const proposal = state.proposals.get(id);
+    const debt = state.debts.get(proposal?.result?.kind === 'debt' ? proposal.result.id : id);
+    return debt?.source.type === 'test' && debt.source.ref === sourceRef && debt.status !== 'dropped' ? debt.id : undefined;
   }
 
   async scanGithubFileAnchors(projectId: string): Promise<number> {
@@ -278,7 +300,7 @@ export class EngineeringPlanningService {
     return rejectPlanning(409, 'write_contention', '通知正在更新，请稍后重试');
   }
 
-  async command(projectId: string, actor: PlanningActor, input: unknown): Promise<PlanningReceipt> {
+  async command(projectId: string, actor: PlanningActor, input: unknown, context?: { designSourceRef: string }): Promise<PlanningReceipt> {
     const command = parsePlanningCommand(input);
     if (command.type === 'debt.create' && command.assignToSelf && actor.kind !== 'human') {
       rejectPlanning(403, 'write_forbidden', '请由已认证的项目成员选择由自己负责');
@@ -290,6 +312,7 @@ export class EngineeringPlanningService {
     }
     const key = hash([actor.kind, actor.id, command.requestId]);
     const fingerprint = hash(command);
+    let designIds: Set<string> | undefined;
     for (let attempts = 0; attempts < 10; attempts++) {
       const state = await this.load(projectId);
       const previous = state.receipts.get(key);
@@ -298,7 +321,17 @@ export class EngineeringPlanningService {
         return { ...previous.receipt, reused: true };
       }
 
-      const mutation = new PlanningMutation(state, projectId, actor, this.now().toISOString());
+      if (context) {
+        const source = (row: { source: { type: string; ref: string } }) => row.source.type === 'test' && row.source.ref === context.designSourceRef;
+        const established = [...state.debts.values()].find(row => row.status !== 'dropped' && source(row))
+          ?? [...state.proposals.values()].find(row => row.kind === 'debt' && row.status === 'pending' && source(row));
+        if (established) return { projectId, result: established, reused: true };
+      }
+      if (!designIds && ((command.type === 'plan.add-step' && command.kind === 'design')
+        || (command.type === 'plan.create' && command.initialSteps?.some(step => step.kind === 'design')))) {
+        designIds = new Set((await this.designLinksFor?.(projectId))?.map(design => design.id));
+      }
+      const mutation = new PlanningMutation(state, projectId, actor, this.now().toISOString(), designIds);
       const result = mutation.run(command);
       const receipt = { projectId, result, reused: mutation.reused };
       const commit: EngineeringPlanningCommit = { projectId, revision: state.revision + 1,
@@ -309,10 +342,14 @@ export class EngineeringPlanningService {
   }
 
   async board(projectId: string, actor: PlanningActor): Promise<PlanningBoard> {
-    const state = await this.load(projectId);
+    const [state, designs] = await Promise.all([this.load(projectId), this.designLinksFor?.(projectId)]);
     const now = this.now();
     const today = planningToday(now);
     const pullRequests = this.projectPullRequests(projectId, state, now);
+    const designById = new Map(designs?.map(design => [design.id, design]));
+    const repository = this.github?.repositoryFor(projectId);
+    const hasCurrentSignature = (signature: NonNullable<PlanningDesignLink['signed']>) => Boolean(repository
+      && state.pullRequests.get(planningPullRequestKey(repository, signature.pullRequest))?.headSha === signature.commit);
     const proposals = [...state.proposals.values()].sort(order);
     const match = proposals.some(row => row.kind === 'debt' && row.status === 'pending')
       ? duplicateDebtMatcher(state.debts.values()) : undefined;
@@ -326,11 +363,32 @@ export class EngineeringPlanningService {
         return linked.length ? { ...decision, pullRequests: linked } : decision;
       }),
       ...(pullRequests.length ? { pullRequests } : {}),
-      plans: [...state.plans.values()].sort(order).map(plan => planProjection(plan, state.debts)),
+      ...(designs?.length ? { designs } : {}),
+      plans: [...state.plans.values()].sort(order).map(plan => planProjection(plan, state.debts, designById, hasCurrentSignature)),
       events: state.events.filter(event => event.entity !== 'debt').slice(-250).reverse(),
       pendingReviewCount: [...state.decisions.values()].filter(row => row.status === 'accepted' && row.reviewAt && row.reviewAt <= today
         && (!row.reviewedAt || planningToday(new Date(row.reviewedAt)) < row.reviewAt)).length,
     };
+  }
+
+  async decisions(projectId: string, query: DecisionQuery): Promise<PlanningDecisionSearch> {
+    const terms = query.q === undefined || query.q === '' ? [] : decisionText(planningText(query.q, 'q', 200)).split(/\s+/u);
+    const kind = query.subjectKind;
+    const subject = query.subjectRef === undefined ? undefined : decisionText(planningText(query.subjectRef, 'subjectRef', 200));
+    if ((kind === undefined) !== (subject === undefined) || (kind !== undefined && !decisionSubjectKinds.some(item => item === kind))) {
+      rejectPlanning(400, 'invalid', '请同时填写有效的适用对象类型和名称');
+    }
+    const state = await this.load(projectId);
+    const phrase = terms.join(' ');
+    const matches = [...state.decisions.values()].flatMap(row => {
+      if (subject && !row.appliesTo?.some(value => value.kind === kind && decisionText(value.ref) === subject)) return [];
+      const names = [row.id, row.title, ...(row.aliases ?? []), ...(row.appliesTo ?? []).map(value => value.ref)].map(decisionText);
+      const searchable = [...names, ...[row.summary, row.rationale, row.chosenOption].filter((value): value is string => Boolean(value)).map(decisionText)];
+      if (!terms.every(term => searchable.some(value => value.includes(term)))) return [];
+      const rank = !phrase ? 0 : names.includes(phrase) ? 2 : names.some(value => value.startsWith(phrase)) ? 1 : 0;
+      return [{ row, rank }];
+    }).sort((a, b) => b.rank - a.rank || order(a.row, b.row));
+    return { projectId, total: matches.length, items: matches.slice(0, 50).map(item => item.row) };
   }
 
   async debts(projectId: string, query: DebtQuery = {}): Promise<PlanningDebtList> {
