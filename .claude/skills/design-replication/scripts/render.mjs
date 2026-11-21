@@ -7,9 +7,10 @@
  *
  * 用法：
  *   node render.mjs --url <地址> --out <目录> --tag design \
- *     [--width 1440] [--themes dark,light] \
+ *     [--width 1440] [--height 900] [--dpr 2] [--themes dark,light] \
  *     [--state 'id=要点击的按钮文案'] ... \
- *     [--vendor <目录>] [--storage <storageState.json>] [--full] \
+ *     [--expect-state 'id=目标状态的 CSS 选择器'] ... \
+ *     [--vendor <目录>] [--storage <storageState.json>] [--viewport-only] \
  *     [--fixtures <目录> | --record-fixtures <目录>]
  *
  * --fixtures 回放设计样例数据（让实现页渲染出设计稿那套内容，覆盖率才可读）；
@@ -29,7 +30,7 @@ import { installFixtures } from './fixtures.mjs';
 import { launch } from './browser.mjs';
 
 function parseArgs(argv) {
-  const out = { states: [], themes: ['dark', 'light'], width: 1440, full: true };
+  const out = { states: [], expectations: new Map(), themes: ['dark', 'light'], width: 1440, height: 900, dpr: 2, full: true };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -37,8 +38,18 @@ function parseArgs(argv) {
     else if (a === '--out') out.out = next();
     else if (a === '--tag') out.tag = next();
     else if (a === '--width') out.width = Number(next());
+    else if (a === '--height') out.height = Number(next());
+    else if (a === '--dpr') out.dpr = Number(next());
     else if (a === '--themes') out.themes = next().split(',').map((s) => s.trim()).filter(Boolean);
     else if (a === '--state') out.states.push(next());
+    else if (a === '--expect-state') {
+      const expression = next() || '';
+      const at = expression.indexOf('=');
+      if (at < 1 || !expression.slice(at + 1).trim()) throw new Error('--expect-state 需要 id=CSS 选择器');
+      const id = expression.slice(0, at);
+      if (out.expectations.has(id)) throw new Error(`重复的状态验证：${id}`);
+      out.expectations.set(id, expression.slice(at + 1));
+    }
     else if (a === '--vendor') out.vendor = next();
     else if (a === '--theme-click') out.themeClick = next();
     else if (a === '--storage') out.storage = next();
@@ -50,9 +61,15 @@ function parseArgs(argv) {
 }
 
 const opts = parseArgs(process.argv.slice(2));
-if (!opts.url || !opts.out || !opts.tag) {
+if (!opts.url || !opts.out || !opts.tag || /[/\\]/.test(opts.tag)) {
   console.error('必填：--url --out --tag');
   process.exit(2);
+}
+if (![opts.width, opts.height].every((size) => Number.isSafeInteger(size) && size > 0)
+    || !Number.isFinite(opts.dpr) || opts.dpr <= 0
+    || !opts.themes.length || new Set(opts.themes).size !== opts.themes.length
+    || opts.themes.some((theme) => !['dark', 'light'].includes(theme))) {
+  throw new Error('需要有效的视口、DPR 和主题（dark / light）');
 }
 fs.mkdirSync(opts.out, { recursive: true });
 
@@ -62,6 +79,16 @@ const states = opts.states.length
       return at < 0 ? { id: s, click: null } : { id: s.slice(0, at), click: s.slice(at + 1) };
     })
   : [{ id: 'default', click: null }];
+const stateIds = new Set(states.map(({ id }) => id));
+if (stateIds.size !== states.length || [...stateIds].some((id) => !id || /[/\\]/.test(id))) {
+  throw new Error('画板 ID 必须非空、唯一且不能含路径分隔符');
+}
+for (const id of opts.expectations.keys()) {
+  if (!stateIds.has(id)) throw new Error(`未声明 --expect-state 的目标画板：${id}`);
+}
+const manifestPath = path.join(opts.out, `${opts.tag}.manifest.json`);
+// 新一轮取证只接受本轮证据，浏览器启动或导航中途失败时也拒绝复用旧清单。
+fs.writeFileSync(manifestPath, '[]\n');
 
 const target = /^https?:/.test(opts.url) ? opts.url : pathToFileURL(path.resolve(opts.url)).href;
 
@@ -84,8 +111,8 @@ const themeBg = new Map();
 
 for (const theme of opts.themes) {
   const ctx = await browser.newContext({
-    viewport: { width: opts.width, height: 900 },
-    deviceScaleFactor: 2,
+    viewport: { width: opts.width, height: opts.height },
+    deviceScaleFactor: opts.dpr,
     colorScheme: theme === 'light' ? 'light' : 'dark',
     storageState: opts.storage && fs.existsSync(opts.storage) ? opts.storage : undefined,
   });
@@ -131,16 +158,29 @@ for (const theme of opts.themes) {
       try {
         await hit.click({ timeout: 8000 });
       } catch {
-        problems.push(`[${theme}] 找不到可点击的「${state.click}」，画板 ${state.id} 用的是上一屏`);
+        problems.push(`[${theme}] 找不到可点击的「${state.click}」，停止该主题的状态序列`);
+        break;
       }
       await page.waitForTimeout(900);
     }
-    const file = path.join(opts.out, `${opts.tag}.${state.id}.${theme}.${opts.width}.png`);
+    const expected = opts.expectations.get(state.id);
+    if (expected) {
+      try {
+        await page.locator(expected).waitFor({ state: 'visible', timeout: 8000 });
+      } catch {
+        problems.push(`[${theme}] 画板 ${state.id} 的目标状态未出现：${expected}`);
+        break;
+      }
+    }
+    const file = path.resolve(opts.out, `${opts.tag}.${state.id}.${theme}.${opts.width}.png`);
     await page.screenshot({ path: file, fullPage: opts.full });
     const chars = await page.evaluate(() => document.body.innerText.trim().length);
     // 空白画布是最常见的假成功：截图有了，内容其实没渲染出来。
     if (chars < 40) problems.push(`[${theme}] 画板 ${state.id} 正文只有 ${chars} 个字符，多半没渲染`);
-    manifest.push({ tag: opts.tag, state: state.id, theme, width: opts.width, file, chars });
+    manifest.push({
+      tag: opts.tag, state: state.id, theme, width: opts.width, height: opts.height,
+      dpr: opts.dpr, fullPage: opts.full, file, chars,
+    });
     console.log(`${file}  text=${chars}`);
   }
   if (fixtures) {
@@ -166,7 +206,8 @@ if (themeBg.size > 1 && new Set(themeBg.values()).size === 1) {
     + '这批「双主题」截图是同一套，不算证据。给 --theme-click <切换控件文案> 重跑。');
 }
 
-fs.writeFileSync(path.join(opts.out, `${opts.tag}.manifest.json`), JSON.stringify(manifest, null, 2));
+fs.writeFileSync(manifestPath,
+  JSON.stringify(manifest.map((capture) => ({ ...capture, valid: problems.length === 0 })), null, 2));
 if (problems.length) {
   console.log('\n--- 取证异常（不许当作正常证据用）---');
   for (const p of problems.slice(0, 20)) console.log(p);

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { matchCaptures } from '../../.claude/skills/design-replication/scripts/pair.mjs';
 
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
 
@@ -44,4 +45,32 @@ test('漂移守卫在一次比对都没做成时必须判红', () => {
   const failedAt = src.indexOf('if (failed)');
   assert.ok(zeroAt > 0 && failedAt > 0, '两条收尾判据都得在');
   assert.ok(zeroAt < failedAt, '零比对判据排在了 failed 之后');
+});
+
+const collapsed = {
+  state: 'collapsed', theme: 'dark', width: 320, height: 680, dpr: 2,
+  fullPage: false, file: 'collapsed.png', valid: true,
+};
+const expanded = { ...collapsed, state: 'expanded', file: 'expanded.png' };
+
+test('同状态对照配对完整且保持设计稿顺序', () => {
+  const pair = matchCaptures([collapsed, expanded], [expanded, collapsed]);
+  assert.deepEqual(pair.pairs, [
+    { reference: collapsed, actual: collapsed },
+    { reference: expanded, actual: expanded },
+  ]);
+  assert.deepEqual(pair.extra, []);
+});
+
+test('空清单、未到达的状态、坏截图和重复截图均不能形成通过证据', () => {
+  assert.throws(() => matchCaptures([], []), /设计稿没有截图/);
+  assert.throws(() => matchCaptures([collapsed, expanded], [collapsed]), /缺少截图.*expanded/);
+  assert.throws(() => matchCaptures([collapsed], [{ ...collapsed, valid: false }]), /取证失败/);
+  assert.throws(() => matchCaptures([collapsed], [collapsed, collapsed]), /重复截图/);
+});
+
+test('同宽度但视口高度、DPR 或裁切方式不同的截图不能混配', () => {
+  for (const [key, value] of Object.entries({ height: 800, dpr: 1, fullPage: true })) {
+    assert.throws(() => matchCaptures([collapsed], [{ ...collapsed, [key]: value }]), new RegExp(key));
+  }
 });
