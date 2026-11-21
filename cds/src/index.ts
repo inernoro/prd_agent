@@ -63,6 +63,7 @@ import {
   buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
   buildRedisBackupProbeScript,
   buildRedisSnapshotCopyArgv,
+  controlPlaneMongoBackupConfig,
   redisAuthFromServiceDefinition,
   redisUsernameFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups,
@@ -815,7 +816,16 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           details: error instanceof BackupRetentionOperationError ? error.diagnostic : { stage: 'target-lease' },
         }), operation: async () => {
         try {
-          const backupSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          const stateMongoUri = t.kind === 'mongo' && t.projectId === '__system__' && t.id === 'cds-state-mongo'
+            ? process.env.CDS_MONGO_URI : undefined;
+          const stateMongoDatabase = stateMongoUri ? process.env.CDS_MONGO_DB || 'cds_state_db' : undefined;
+          const captureSource = async () => {
+            const physical = await backupRetentionService.captureSource(t.projectId, t.id);
+            return physical && stateMongoDatabase
+              ? createHash('sha256').update(JSON.stringify([physical, 'control-plane-mongo', stateMongoDatabase])).digest('hex')
+              : physical;
+          };
+          const backupSourceFingerprint = await captureSource();
           await backupRetentionService.beginOutput(out, t.projectId, t.id, backupSourceFingerprint);
           if (t.kind === 'mongo' || t.kind === 'redis') {
             try {
@@ -841,15 +851,23 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 后所有自动备份都会失败。口令不进入宿主或容器 argv。
             const current = stateService.getInfraServiceForProjectAndId(t.projectId, t.id);
             if (!current) throw new Error('轮换后的 Mongo 权威服务记录不存在');
-            const resolved = resolveEnvTemplates(current.env || {}, stateService.getCustomEnv(current.projectId));
-            const user = resolved.MONGO_INITDB_ROOT_USERNAME || resolved.MONGO_USERNAME || resolved.MONGODB_USERNAME || '';
-            const password = resolved.MONGO_INITDB_ROOT_PASSWORD || resolved.MONGO_PASSWORD || resolved.MONGODB_PASSWORD || '';
-            if (user) {
-              if (!password) throw new Error('Mongo 权威账号存在但口令为空');
-              cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --username=${shq(user)} --authenticationDatabase=admin --config=/dev/stdin > ${shq(out)}`;
-              commandStdin = `password: ${JSON.stringify(password)}\n`;
+            if (stateMongoUri && stateMongoDatabase) {
+              const ports = await shell.exec(`docker inspect --type container --format '{{json .NetworkSettings.Ports}}' ${shq(t.containerName)}`,
+                { executionLane: 'observation', timeout: 10_000 });
+              if (ports.exitCode !== 0) throw new Error('状态库容器端口未确认，请检查容器登记。');
+              commandStdin = controlPlaneMongoBackupConfig(stateMongoUri, stateMongoDatabase, JSON.parse(ports.stdout)?.['27017/tcp']);
+              cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --db ${shq(stateMongoDatabase)} --config=/dev/stdin > ${shq(out)}`;
             } else {
-              cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip > ${shq(out)}`;
+              const resolved = resolveEnvTemplates(current.env || {}, stateService.getCustomEnv(current.projectId));
+              const user = resolved.MONGO_INITDB_ROOT_USERNAME || resolved.MONGO_USERNAME || resolved.MONGODB_USERNAME || '';
+              const password = resolved.MONGO_INITDB_ROOT_PASSWORD || resolved.MONGO_PASSWORD || resolved.MONGODB_PASSWORD || '';
+              if (user) {
+                if (!password) throw new Error('Mongo 权威账号存在但口令为空');
+                cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --username=${shq(user)} --authenticationDatabase=admin --config=/dev/stdin > ${shq(out)}`;
+                commandStdin = `password: ${JSON.stringify(password)}\n`;
+              } else {
+                cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip > ${shq(out)}`;
+              }
             }
           } else if (t.kind === 'mysql') {
             // 密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器自己的
@@ -903,11 +921,14 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 脚本走 stdin（`sh -s`）而不是 `sh -c <脚本>`：这样 CDS 自己存的那份
             // 口令能一起送进去，而宿主命令行上只剩 `sh -s`，`ps` 看不到任何明文。
             const redisScript = buildRedisBackupProbeScript();
+            const redisService = stateService.getInfraServiceForProjectAndId(t.projectId, t.id);
+            if (!redisService) throw new Error('Redis 服务配置未找到，请检查备份目标。');
+            const variables = stateService.getCustomEnv(t.projectId);
             const redisProbe = await shell.exec(
               `docker exec -i ${shq(t.containerName)} sh -s`,
               {
                 timeout: 120_000,
-                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t), redisUsernameFromServiceDefinition(t, stateService.getCustomEnv(t.projectId))),
+                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(redisService, variables), redisUsernameFromServiceDefinition(redisService, variables)),
               },
             );
             if (redisProbe.exitCode !== 0) {
@@ -944,6 +965,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           }
           const r = await shell.exec(capped.command, { timeout: INFRA_BACKUP_TIMEOUT_MS, stdin: commandStdin });
           if (r.exitCode !== 0) {
+            if (stateMongoDatabase) throw new Error('状态库备份导出失败，请检查控制面 MongoDB 的连接、权限及可用空间。');
             const capGiB = (capped.capBytes / 1024 / 1024 / 1024).toFixed(1);
             // 撞上限和别的失败要能分开：前者是「这个库太大」，后者才是「备份坏了」。
             throw new Error(`${combinedOutput(r).slice(0, 400)}（本次写入上限 ${capGiB} GiB，超限会被内核中断）`);
@@ -952,7 +974,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           // 成功路径上的 stderr 也要读。导出脚本用它报「这份备份覆盖到哪」——
           // 只在失败时看 stderr 的话，一次成功但只覆盖了一个库的备份，
           // 会以「成功 1 个」的形态被读成全量。
-          const scopeNote = extractBackupScopeNote(r.stderr || '');
+          const scopeNote = stateMongoDatabase ? `控制面状态库：${stateMongoDatabase}` : extractBackupScopeNote(r.stderr || '');
           // 「机制本来就不含」与「这轮真的少备了」分两个字段接：混成一个的话，
           // rabbitmq / nacos 每轮无条件报的那行说明会把健康位永远钉死（Codex review P1）。
           const gapNote = extractBackupGapNote(r.stderr || '');
@@ -1010,7 +1032,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           maintenanceCompleted = true;
 
           // Completed outputs enter the shared catalog; the independent reconciler owns retirement.
-          const finalSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          const finalSourceFingerprint = await captureSource();
           await backupRetentionService.register(finalOut, t.projectId, t.id, 'automatic', {
             sourceFingerprint: backupSourceFingerprint,
             sourceComplete: Boolean(backupSourceFingerprint && backupSourceFingerprint === finalSourceFingerprint && !gapNote),

@@ -8,6 +8,7 @@ import {
   shouldSkipOffsiteThisRound,
   backupDirCandidates,
   backupFileName,
+  controlPlaneMongoBackupConfig,
   backupCoverageGaps,
   buildMysqlDumpScript,
   buildNacosConfigCountScript,
@@ -37,6 +38,25 @@ import {
   type ExistingBackup,
   shouldSkipOffsiteThisRound,
 } from '../../src/services/infra-backup-schedule.js';
+
+describe('控制面 MongoDB 普通备份', () => {
+  const ports = [{ HostIp: '127.0.0.1', HostPort: '10097' }];
+  it('使用现有用户的认证域，改用已确认容器内部端口并只选状态数据库', () => {
+    const config = controlPlaneMongoBackupConfig('mongodb://backup:fake%40fixture@127.0.0.1:10097/authdb', 'fixture_state', ports);
+    const uri = new URL(JSON.parse(config.slice('uri: '.length)));
+    expect([uri.hostname, uri.port, uri.pathname, uri.searchParams.get('authSource'), uri.searchParams.get('directConnection')])
+      .toEqual(['127.0.0.1', '27017', '/fixture_state', 'authdb', 'true']);
+    expect(decodeURIComponent(uri.password)).toBe('fake@fixture');
+  });
+  it('保持已配置的认证域，拒绝远端地址和同机其他 Mongo 容器', () => {
+    const config = controlPlaneMongoBackupConfig('mongodb://backup:fake@127.0.0.1:10097/fixture_state?authSource=admin', 'fixture_state', ports);
+    expect(new URL(JSON.parse(config.slice('uri: '.length))).searchParams.get('authSource')).toBe('admin');
+    expect(() => controlPlaneMongoBackupConfig('mongodb://backup:fake@remote.example:10097/authdb', 'fixture_state', ports))
+      .toThrow('状态库备份连接未确认');
+    expect(() => controlPlaneMongoBackupConfig('mongodb://backup:fake@127.0.0.1:10099/authdb', 'fixture_state', ports))
+      .toThrow('状态库备份连接未确认');
+  });
+});
 
 /**
  * 基础设施周期备份的判定层。
@@ -788,6 +808,19 @@ describe('Redis 备份探测脚本', () => {
     it('没配就是空，不瞎猜', () => {
       expect(redisAuthFromServiceDefinition({ command: ['redis-server', '--appendonly', 'yes'] })).toBe('');
       expect(redisAuthFromServiceDefinition({})).toBe('');
+    });
+
+    it('从容器启动的口令引用取已展开的环境值，保留空格和引号', () => {
+      const env = { PREVIEW_REDIS_PASSWORD: '${BACKUP_FIXTURE_PASSWORD}', OTHER_PASSWORD: 'unrelated' };
+      const variables = { BACKUP_FIXTURE_PASSWORD: 'A word "with" a quote' };
+      for (const reference of ['$PREVIEW_REDIS_PASSWORD', '${PREVIEW_REDIS_PASSWORD}']) {
+        expect(redisAuthFromServiceDefinition({
+          env, command: ['sh', '-c', `exec redis-server --requirepass "${reference}"`],
+        }, variables)).toBe(variables.BACKUP_FIXTURE_PASSWORD);
+      }
+      expect(redisAuthFromServiceDefinition({ env, command: ['sh', '-c', 'redis-server --requirepass "$MISSING"'] }, variables)).toBe('');
+      expect(redisAuthFromServiceDefinition({ env, command: ['sh', '-c', "redis-server --requirepass '$PREVIEW_REDIS_PASSWORD'"] }, variables))
+        .toBe('$PREVIEW_REDIS_PASSWORD');
     });
 
     it('env 优先于启动命令', () => {
