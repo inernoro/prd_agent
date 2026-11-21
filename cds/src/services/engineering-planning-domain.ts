@@ -71,6 +71,11 @@ export const planningToday = (at = new Date()) => planningCalendar.format(at);
 const importedDebtStatus = (legacy?: LegacyDebtOrigin): PlanningDebt['status'] =>
   legacy?.status === 'pending_verification' ? 'in_progress' : legacy?.status ?? 'open';
 const sourceMatches = (a: PlanningSource, b: PlanningSource) => a.type === b.type && a.ref === b.ref;
+function designRuleKey(source: PlanningSource | undefined) {
+  if (source?.type !== 'test') return undefined;
+  const [design, run, rule, ...extra] = source.ref.split('/');
+  return design && run && rule && !extra.length ? `${design}/${rule}` : undefined;
+}
 const id = (prefix: string) => `${prefix}-${randomUUID()}`;
 function missing(): never { return rejectPlanning(404, 'not_found', '此项目没有这条工程规划记录'); }
 function closed(message: string): never { return rejectPlanning(409, 'invalid_state', message); }
@@ -134,7 +139,8 @@ export class PlanningMutation {
 
   private newDebt(draft: DebtDraft, source: PlanningSource, options: {
     attribution?: EventDetail; forceNew?: boolean; imported?: boolean; discoveredAt?: string; importBatchId?: string;
-    checkDuplicates?: boolean; distinction?: PlanningDebtDistinction; explicitlyDifferent?: string; assignToSelf?: boolean; legacy?: LegacyDebtOrigin;
+    checkDuplicates?: boolean; designAcceptance?: boolean; distinction?: PlanningDebtDistinction; explicitlyDifferent?: string;
+    assignToSelf?: boolean; legacy?: LegacyDebtOrigin;
   } = {}) {
     const found = options.forceNew ? undefined : this.debtBySource(source, options.attribution?.proposal ? draft.title : undefined);
     if (found) {
@@ -142,8 +148,16 @@ export class PlanningMutation {
       return found;
     }
     const acknowledged = options.distinction?.debtIds ?? [];
+    const earlierRuns: string[] = [];
     if (options.checkDuplicates) {
-      const candidates = findSimilarDebts(this.state.debts.values(), draft.title, { includeRepaid: true }).slice(0, 6);
+      const rule = options.designAcceptance ? designRuleKey(source) : undefined;
+      const similar = findSimilarDebts(this.state.debts.values(), draft.title, { includeRepaid: true });
+      const candidates = similar.filter(row => {
+        const previous = this.state.debts.get(row.id)?.source;
+        if (!rule || designRuleKey(previous) !== rule || previous?.ref === source.ref) return true;
+        earlierRuns.push(row.id);
+        return false;
+      }).slice(0, 6);
       const valid = new Set(candidates.map(row => row.id));
       const blocked = candidates.some(row => row.similarity >= .9 && !acknowledged.includes(row.id));
       if (blocked || acknowledged.some(id => !valid.has(id))) {
@@ -154,7 +168,7 @@ export class PlanningMutation {
     if (options.discoveredAt && options.discoveredAt > planningToday(new Date(this.at))) {
       rejectPlanning(400, 'invalid', '发现日期不能晚于今天');
     }
-    const distinctFrom = options.explicitlyDifferent ? [options.explicitlyDifferent] : acknowledged;
+    const distinctFrom = options.explicitlyDifferent ? [options.explicitlyDifferent] : [...acknowledged, ...earlierRuns.slice(0, 6)];
     const row: PlanningDebt = {
       ...this.base('DEBT'), ...draft, source, originDecisionId: draft.decisionId, status: importedDebtStatus(options.legacy),
       priority: draft.priority ?? 'mid', criteria: criteria(draft.criteria ?? []), reopenCount: 0, hitCount: 0,
@@ -165,9 +179,9 @@ export class PlanningMutation {
       ...(options.legacy ? { legacy: options.legacy } : {}),
     };
     this.changes.debts.push(row);
+    const note = options.distinction?.reason ?? (earlierRuns.length ? '同一设计验收项在新的运行中再次失败' : undefined);
     this.event('debt', row.id, options.imported ? 'imported' : 'created',
-      { toStatus: row.status, toDecisionId: row.decisionId, ...options.attribution,
-        ...(options.distinction ? { note: options.distinction.reason } : {}) });
+      { toStatus: row.status, toDecisionId: row.decisionId, ...options.attribution, ...(note ? { note } : {}) });
     return row;
   }
 
@@ -641,14 +655,14 @@ export class PlanningMutation {
     return row;
   }
 
-  run(command: PlanningCommand): PlanningCommitResult {
+  run(command: PlanningCommand, designSourceRef?: string): PlanningCommitResult {
     switch (command.type) {
       case 'proposal.submit': return this.submit(command);
       case 'proposal.accept':
       case 'proposal.reject': return this.handleProposal(command);
       case 'debt.create': {
         const { source, distinction, assignToSelf, type: _, requestId: _request, ...draft } = command;
-        return this.newDebt(draft, source, { checkDuplicates: true, distinction, assignToSelf });
+        return this.newDebt(draft, source, { checkDuplicates: true, designAcceptance: source.ref === designSourceRef, distinction, assignToSelf });
       }
       case 'debt.import': {
         const batchId = id('BATCH');

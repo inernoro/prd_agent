@@ -332,7 +332,7 @@ export class EngineeringPlanningService {
         designIds = new Set((await this.designLinksFor?.(projectId))?.map(design => design.id));
       }
       const mutation = new PlanningMutation(state, projectId, actor, this.now().toISOString(), designIds);
-      const result = mutation.run(command);
+      const result = mutation.run(command, context?.designSourceRef);
       const receipt = { projectId, result, reused: mutation.reused };
       const commit: EngineeringPlanningCommit = { projectId, revision: state.revision + 1,
         request: { key, fingerprint, receipt }, ...mutation.changes };

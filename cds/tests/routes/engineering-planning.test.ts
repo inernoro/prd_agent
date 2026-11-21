@@ -458,6 +458,24 @@ describe('engineering planning HTTP contracts', () => {
     expect((await call('/import-preview', { items: [row] })).body.items).toMatchObject([{ index: 0, status: 'existing', debtId: result.items[0].id }]);
   });
 
+  it('distinguishes separate runs of the same design rule only through the design workspace', async () => {
+    const actor = { kind: 'human' as const, id: 'test-owner', label: 'Fixture owner', permissions: approvePermissions };
+    const fromRun = (run: string, rule: string, requestId: string) => ({ ...createCommand(requestId), source: { type: 'test', ref: `DSN-1/${run}/${rule}` } });
+    const recordDesignDebt = (command: ReturnType<typeof fromRun>) => service.command(projectA, actor, command, { designSourceRef: command.source.ref });
+    const first = await recordDesignDebt(fromRun('run-1', 'rule-1', 'test-design-debt-first'));
+    expect(first.result).toHaveProperty('id');
+    const firstId = (first.result as { id: string }).id;
+    const recurrence = fromRun('run-2', 'rule-1', 'test-design-debt-second');
+
+    expect(await call('/commands', recurrence)).toMatchObject({ status: 409, body: { error: 'possible_duplicate' } });
+    const second = await recordDesignDebt(recurrence);
+    expect(second).toMatchObject({ reused: false, result: { source: recurrence.source, notDuplicateWith: [firstId] } });
+    expect(second.result).not.toHaveProperty('id', firstId);
+    expect(await recordDesignDebt({ ...recurrence, requestId: 'test-design-debt-retry' })).toMatchObject({ reused: true, result: second.result });
+    await expect(recordDesignDebt(fromRun('run-2', 'rule-2', 'test-design-debt-other'))).rejects.toMatchObject({ code: 'possible_duplicate' });
+    expect((await call('/debts?view=all')).body.total).toBe(2);
+  });
+
   it('creates initial plan steps atomically and records the earlier repayment target', async () => {
     const debt = await write({ ...createCommand('test-initial-plan-debt-0001'), dueAt: '2026-12-20' });
     const plan = { type: 'plan.create', requestId: 'test-initial-steps-0001', title: '完成合成债务', startAt: '2026-12-01', dueAt: '2026-12-19',

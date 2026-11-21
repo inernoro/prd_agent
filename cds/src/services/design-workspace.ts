@@ -214,12 +214,9 @@ export class DesignWorkspaceService {
     return rejectPlanning(503, 'design_conflict', '稿件正在并发更新，请沿用原请求编号重试');
   }
 
-  async workspace(projectId: string, actor: DesignActor): Promise<DesignWorkspace> {
-    requireProjectRead(actor);
-    const state = await this.load(projectId);
-    const designs = structuredClone([...state.designs.values()].sort((a, b) =>
-      b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt)));
+  private async currentSignoffs(projectId: string, designs: readonly DesignEntry[]) {
     const previews = new Map<number, Promise<Preview | undefined>>();
+    const signoffs = new Map<string, DesignRun | null>();
     await Promise.all(designs.map(async entry => {
       const run = currentDesignRun(entry);
       if (!run?.signed) return;
@@ -229,8 +226,21 @@ export class DesignWorkspaceService {
         previews.set(run.pullRequest, target);
       }
       const preview = await target;
-      entry.currentSignoffRunId = preview?.commit === run.commit && preview.url === run.previewUrl ? run.id : null;
+      signoffs.set(entry.id, preview?.commit === run.commit && preview.url === run.previewUrl ? run : null);
     }));
+    return signoffs;
+  }
+
+  async workspace(projectId: string, actor: DesignActor): Promise<DesignWorkspace> {
+    requireProjectRead(actor);
+    const state = await this.load(projectId);
+    const designs = structuredClone([...state.designs.values()].sort((a, b) =>
+      b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt)));
+    const signoffs = await this.currentSignoffs(projectId, designs);
+    for (const entry of designs) {
+      const run = signoffs.get(entry.id);
+      if (run !== undefined) entry.currentSignoffRunId = run?.id ?? null;
+    }
     return { projectId, designs, frameworks: structuredClone([...state.frameworks.values()]),
       permissions: { write: actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
@@ -256,9 +266,11 @@ export class DesignWorkspaceService {
 
   async planningLinks(projectId: string): Promise<PlanningDesignLink[]> {
     const state = await this.load(projectId);
-    return [...state.designs.values()].map(entry => {
+    const entries = [...state.designs.values()];
+    const signoffs = await this.currentSignoffs(projectId, entries);
+    return entries.map(entry => {
       const latest = entry.versions.at(-1)!;
-      const run = entry.runs.slice().reverse().find(row => row.signed && row.version === entry.frozen && row.pullRequest === entry.pullRequest);
+      const run = signoffs.get(entry.id);
       return { id: entry.id, title: latest.title, version: latest.version, decisionIds: [...latest.decisionIds],
         frozen: entry.frozen, ...(run ? { signed: { runId: run.id, pullRequest: run.pullRequest, commit: run.commit } } : {}) };
     });

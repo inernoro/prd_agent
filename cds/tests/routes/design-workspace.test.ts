@@ -515,11 +515,34 @@ describe('private CDS design workspace', () => {
     expect((await command('acceptance.sign', { designId, runId })).status).toBe(201);
     const signed = await listing();
     expect(signed.currentSignoffRunId).toBe(runId);
+    expect((await service.planningLinks(projectId))[0].signed).toMatchObject({ runId });
     activeCommit = 'd'.repeat(40);
     const latest = await listing();
     expect(latest.currentSignoffRunId).toBeNull();
+    expect((await service.planningLinks(projectId))[0].signed).toBeUndefined();
     expect(latest.runs).toEqual(signed.runs);
     expect((await get(`/artifacts/${signed.runs[0].cells[0].imageId}`)).status).toBe(200);
+  });
+
+  it('projects only the latest run of the current design version to planning', async () => {
+    const { designId, runId, record } = await runWithScreenshot();
+    expect((await command('acceptance.sign', { designId, runId })).status).toBe(201);
+    const projection = async () => (await service.planningLinks(projectId))[0];
+    expect((await projection()).signed).toMatchObject({ runId });
+
+    const started = await command('acceptance.start', { designId, version: 1, pullRequest: 7 });
+    expect(started.status).toBe(201);
+    const { runId: newRunId } = (await started.json()).result;
+    expect((await projection()).signed).toBeUndefined();
+    expect((await command('acceptance.record', { ...record, runId: newRunId })).status).toBe(201);
+    expect((await command('acceptance.sign', { designId, runId: newRunId })).status).toBe(201);
+    expect((await projection()).signed).toMatchObject({ runId: newRunId });
+
+    expect((await publish('version-two-for-planning', draft('Fixture design V2'), { designId, sourceCommit: 'c'.repeat(40) })).status).toBe(201);
+    expect(await projection()).toMatchObject({ id: designId, version: 2, frozen: 1 });
+    expect((await projection()).signed).toBeUndefined();
+    const { designs } = await (await get()).json();
+    expect(designs[0].runs.map((run: { id: string; signed?: unknown }) => [run.id, Boolean(run.signed)])).toEqual([[runId, true], [newRunId, true]]);
   });
 
   it('cannot sign or use an older PR run to restore a former design link', async () => {

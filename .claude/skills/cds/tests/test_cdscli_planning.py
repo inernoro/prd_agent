@@ -2,6 +2,7 @@
 
 import json
 import os
+import select
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,9 @@ from urllib.parse import parse_qs, urlsplit
 CLI = Path(__file__).resolve().parents[1] / "cli" / "cdscli.py"
 PROJECT = "planning-fixture"
 KEY = "cdsp_planning_fixture_key"
+MEMBER = "fixture-member"
+PASSWORD = "planning-fixture-password"
+SESSION = "cds_session=planning-fixture-session"
 BASE = f"/api/projects/{PROJECT}/planning"
 PROPOSAL = {
     "type": "proposal.submit",
@@ -23,6 +27,7 @@ PROPOSAL = {
     "draft": {"title": "补齐导出测试", "whyDebt": "经确认安排下个版本"},
     "source": {"type": "manual", "ref": "fixture:confirmed-tradeoff-1"},
 }
+SWEEP = {"type": "debt.sweep", "requestId": "planning-fixture:sweep-1", "branch": "ADR-1"}
 BRIEF = {
     "readiness": {
         "score": 1, "max": 7,
@@ -55,17 +60,23 @@ class PlanningCliTest(unittest.TestCase):
         self.drop_write_response = False
         self.reject_write = False
         self.candidates = []
+        self.sweep_result = {"projectId": PROJECT, "at": "2026-11-20T22:00:00.000Z",
+                             "pending": ["DEBT-pending"], "closed": ["DEBT-closed"]}
+        self.sweep_receipt_overrides = {}
+        self.sweep_statuses = []
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
 
-            def respond(self, status, value):
+            def respond(self, status, value, *, headers=None):
                 body = json.dumps(value, ensure_ascii=False).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
+                for name, header in (headers or {}).items():
+                    self.send_header(name, header)
                 self.end_headers()
                 self.wfile.write(body)
 
@@ -74,7 +85,15 @@ class PlanningCliTest(unittest.TestCase):
                 key = self.headers.get("X-AI-Access-Key")
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or "{}")
                 fixture.requests.append((self.command, url, body, key))
-                if key != KEY:
+                if url.path == "/api/auth/login" and self.command == "POST":
+                    if not key and body == {"username": MEMBER, "password": PASSWORD}:
+                        self.respond(200, {"ok": True}, headers={"Set-Cookie": f"{SESSION}; Path=/; HttpOnly"})
+                    else:
+                        self.respond(401, {"error": "unauthorized"})
+                    return
+                is_sweep = url.path == BASE + "/commands" and self.command == "POST" and body.get("type") == "debt.sweep"
+                human_sweep = is_sweep and not key and self.headers.get("Cookie") == SESSION
+                if not human_sweep and key != KEY:
                     self.respond(401, {"error": "unauthorized"})
                     return
 
@@ -110,8 +129,8 @@ class PlanningCliTest(unittest.TestCase):
                         detail["brief"] = BRIEF
                     self.respond(200, detail)
                 elif url.path == BASE + "/commands" and self.command == "POST":
-                    permission = {"proposal.submit": "propose", "debt.create": "write"}.get(body.get("type"))
-                    if fixture.reject_write or permission not in fixture.permissions:
+                    permission = {"proposal.submit": "propose", "debt.create": "write", "debt.sweep": "write"}.get(body.get("type"))
+                    if fixture.reject_write or permission not in fixture.permissions or (is_sweep and not human_sweep):
                         self.respond(403, {"error": "write_forbidden", "message": KEY, "details": "upstream fixture detail"})
                         return
                     request_id = body.get("requestId")
@@ -129,9 +148,12 @@ class PlanningCliTest(unittest.TestCase):
                         self.close_connection = True
                         return
                     result = {"id": "P-0001", "projectId": project, "status": "pending"} if permission == "propose" else debt
-                    self.respond(200 if previous else 201, {
-                        "projectId": PROJECT, "result": result, "reused": previous is not None,
-                    })
+                    status = 200 if previous else 201
+                    receipt = {"projectId": PROJECT, "result": result, "reused": previous is not None}
+                    if is_sweep:
+                        receipt.update({"result": fixture.sweep_result, **fixture.sweep_receipt_overrides})
+                        fixture.sweep_statuses.append(status)
+                    self.respond(status, receipt)
                 else:
                     self.respond(404, {"error": "not_found"})
 
@@ -156,24 +178,52 @@ class PlanningCliTest(unittest.TestCase):
             "projectKey": KEY,
         }), encoding="utf-8")
 
-    def call(self, *args):
-        completed = subprocess.run(
-            [sys.executable, str(CLI), *args], cwd=self.root,
-            env={"PATH": os.defpath, "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"},
-            capture_output=True, text=True, timeout=12, check=False,
-        )
+    def call(self, *args, password=None):
+        command = [sys.executable, str(CLI), *args]
+        options = {"cwd": self.root, "env": {"PATH": os.defpath, "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"},
+                   "text": True}
+        if password is None:
+            completed = subprocess.run(command, capture_output=True, timeout=12, check=False, **options)
+        else:
+            completed = self.call_with_terminal(command, options, password)
         if "--human" in args or not completed.stdout.strip():
             return completed, {}
         return completed, json.loads(completed.stdout)
 
-    def submit(self, command):
+    def call_with_terminal(self, command, options, password):
+        if os.name != "posix":
+            self.skipTest("Interactive CLI requires a pseudoterminal")
+        import pty
+
+        master, slave = pty.openpty()
+        try:
+            with subprocess.Popen(command, stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  start_new_session=True, **options) as child:
+                try:
+                    self.assertTrue(select.select([child.stderr], [], [], 8)[0], "CLI password prompt timed out")
+                    prompt = os.read(child.stderr.fileno(), 1024).decode("utf-8")
+                    self.assertIn("CDS 密码", prompt)
+                    os.write(master, (password + "\n").encode())
+                    stdout, stderr = child.communicate(timeout=12)
+                    return subprocess.CompletedProcess(command, child.returncode, stdout, prompt + stderr)
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+        finally:
+            os.close(slave)
+            os.close(master)
+
+    def submit(self, command, *, as_user=False):
         filename = self.root / "command.json"
         filename.write_text(json.dumps(command, ensure_ascii=False), encoding="utf-8")
-        return self.call("planning", "submit", "--project", PROJECT, "--file", str(filename))
+        args = ("planning", "submit", "--project", PROJECT, "--file", str(filename))
+        if as_user:
+            return self.call(*args, "--as-user", MEMBER, password=PASSWORD)
+        return self.call(*args)
 
     def assert_ok(self, outcome):
         process, payload = outcome
-        self.assertEqual(process.returncode, 0, process.stderr or payload)
+        self.assertEqual(process.returncode, 0, payload or process.stderr)
         self.assertIs(payload["ok"], True)
         self.assertTrue(payload["trace"])
         return payload["data"]
@@ -252,6 +302,44 @@ class PlanningCliTest(unittest.TestCase):
         self.assert_error(outcome)
         self.assertIn('需要交互终端', outcome[0].stdout)
         self.assertEqual(self.requests, [])
+
+    def test_human_sweep_returns_original_aggregate_receipt_on_replay(self):
+        first = self.submit(SWEEP, as_user=True)
+        repeated = self.submit(SWEEP, as_user=True)
+        self.assertEqual(self.sweep_statuses, [201, 200])
+        self.assertEqual(self.committed, {SWEEP["requestId"]: SWEEP})
+        writes = [request for request in self.requests if request[1].path == BASE + "/commands"]
+        self.assertEqual([(body, key) for _, _, body, key in writes], [(SWEEP, ""), (SWEEP, "")])
+        for reused, outcome in ((False, first), (True, repeated)):
+            with self.subTest(reused=reused):
+                self.assertEqual(self.assert_ok(outcome), {
+                    "projectId": PROJECT, "result": self.sweep_result, "reused": reused,
+                })
+
+    def test_human_sweep_accepts_empty_result_lists(self):
+        self.sweep_result.update(pending=[], closed=[])
+        outcome = self.submit(SWEEP, as_user=True)
+        self.assertEqual(self.sweep_statuses, [201])
+        self.assertEqual(self.assert_ok(outcome), {"projectId": PROJECT, "result": self.sweep_result, "reused": False})
+
+    def test_human_sweep_rejects_malformed_or_foreign_receipts(self):
+        result = self.sweep_result
+        cases = {
+            "missing at": {"result": {key: value for key, value in result.items() if key != "at"}},
+            "pending not a list": {"result": {**result, "pending": "DEBT-pending"}},
+            "closed id is not a string": {"result": {**result, "closed": [1]}},
+            "ordinary resource instead of sweep": {"result": {"projectId": PROJECT, "id": "DEBT-closed"}},
+            "foreign result": {"result": {**result, "projectId": "other-project"}},
+            "foreign receipt": {"projectId": "other-project"},
+            "nonboolean reused": {"reused": "true"},
+        }
+        for index, (case, overrides) in enumerate(cases.items()):
+            with self.subTest(case=case):
+                self.sweep_receipt_overrides = overrides
+                outcome = self.submit({**SWEEP, "requestId": f"planning-fixture:bad-sweep-{index}"}, as_user=True)
+                self.assertEqual(self.sweep_statuses, [201] * (index + 1))
+                self.assert_error(outcome)
+                self.assertRegex(outcome[1]["error"], "工程规划回执不完整|工程规划记录与当前项目不符")
 
     def test_submission_reports_original_receipt_when_repeated(self):
         first = self.assert_ok(self.submit(PROPOSAL))

@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.4"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3914,9 +3914,15 @@ def cmd_planning(args: argparse.Namespace) -> None:
             die("项目和操作者由已授权的 CDS 凭据确定，请移除覆盖字段")
         receipt = request("POST", "/commands", body)
         result = scope(receipt.get("result"))
-        if not isinstance(receipt.get("reused"), bool) or not (
-            isinstance(result.get("id"), str) or isinstance(result.get("items"), list)
-        ):
+        if body["type"] == "debt.sweep":
+            at = result.get("at")
+            valid = isinstance(at, str) and bool(at.strip())
+            for field in ("pending", "closed"):
+                ids = result.get(field)
+                valid = valid and isinstance(ids, list) and all(isinstance(debt_id, str) and debt_id.strip() for debt_id in ids)
+        else:
+            valid = isinstance(result.get("id"), str) or isinstance(result.get("items"), list)
+        if not isinstance(receipt.get("reused"), bool) or not valid:
             die("CDS 返回的工程规划回执不完整")
         ok(receipt)
 
