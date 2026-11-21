@@ -346,10 +346,11 @@ export function EngineeringPlanningPage() {
               </>}
               {!utility && view === 'map' && (stats.data
                 ? <PlanningGraph key={`${activeProject}:${branch}`} data={stats.data} onSelect={selectItem} scopeLabel={branchLabel || projectLabel} projectLabel={projectLabel}
-                  onCategory={(name, outcome, exact) => {
+                  onCategory={(name, outcome, exact, leafPriority) => {
                     setPages([]); setSearch('');
                     const next = outcome === 'repaid' ? 'direct_repaid' : outcome === 'cancelled' ? 'void' : outcome;
-                    change({ view: 'debts', tag: name, tagMatch: exact ? 'exact' : '', q: '', status: next, owner: '', source: '', priority: '', batch: '' });
+                    change({ view: 'debts', tag: name, tagMatch: exact ? 'exact' : '', q: '', status: next, owner: '', source: '',
+                      priority: leafPriority ?? '', batch: '' });
                   }} />
                 : <ReadStatus loading={stats.loading} error={stats.error} onRetry={refresh} />)}
               {!utility && view === 'evolution' && <>

@@ -46,9 +46,18 @@ public partial class WebPagesController
         if (!approve)
         {
             var sources = await _privateSources.InspectRevisionAsync(site, revision, ct);
+            var existing = await _db.WebPageShareLinks.Find(row => row.Id == grant.ApprovalId && row.CreatedBy == userId
+                && row.SiteId == grant.SiteId).FirstOrDefaultAsync(ct);
+            if (existing?.FixedRevision?.CdsApproval is not { } recorded || recorded.PackageSha256 != grant.PackageSha256
+                || recorded.SourceCommit != grant.SourceCommit || existing.FixedRevision.RevisionId != grant.RevisionId)
+                existing = null;
+            var state = existing == null ? "awaiting_human_confirmation" : existing.IsRevoked ? "revoked"
+                : existing.ExpiresAt is not { } expiry || expiry <= DateTime.UtcNow ? "expired" : "approved";
             return Ok(ApiResponse<object>.Ok(new {
                 site.Title, grant.PreparationId, grant.Version, grant.SourceCommit, grant.Access, grant.ExpiresInHours,
                 privateSources = sources.Items.Select(item => new { item.Title, item.Scope }), sources.Fingerprint,
+                state, shareId = existing?.Id, expiresAt = existing?.ExpiresAt,
+                shareUrl = state == "approved" && existing != null ? FixedCdsShareUrl(existing, revision.Id) : null,
             }));
         }
 
@@ -71,7 +80,7 @@ public partial class WebPagesController
                 pinned, site.Title, null, password, TimeSpan.FromHours(grant.ExpiresInHours), "public", ct);
             return Ok(ApiResponse<object>.Ok(new {
                 share.Id, grant.PreparationId, share.ExpiresAt,
-                shareUrl = $"/s/wp/{share.Token}?revision={Uri.EscapeDataString(revision.Id)}",
+                shareUrl = FixedCdsShareUrl(share, revision.Id),
             }));
         }
         catch (UnauthorizedAccessException)
@@ -83,4 +92,7 @@ public partial class WebPagesController
             return Conflict(ApiResponse<object>.Fail("CDS_SHARE_CONFLICT", "这条 CDS 确认已变更或链接已失效"));
         }
     }
+
+    private static string FixedCdsShareUrl(WebPageShareLink share, string revisionId) =>
+        $"/s/wp/{share.Token}?revision={Uri.EscapeDataString(revisionId)}";
 }

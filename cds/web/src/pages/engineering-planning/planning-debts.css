@@ -141,6 +141,14 @@
 .ep-dialog--repay .ep-dialog-head { padding: 15px 60px 12px 17px; }
 .ep-dialog--repay .ep-dialog-head h2 { font-size: 18px; }
 .ep-dialog--repay .ep-dialog-content { padding: 14px 16px 16px; gap: 14px; }
+.ep-dialog--defer .ep-dialog-content { padding: 16px 20px; gap: 14px; }
+.ep-defer-shortcuts, .ep-defer-plan { display: flex; flex-wrap: wrap; gap: 6px; }
+.ep-defer-plan { flex-direction: column; gap: 10px; }
+@media (max-width: 560px) {
+  .ep-dialog.ep-dialog--defer { width: 100vw; max-width: none; height: 100dvh; max-height: 100dvh; border-radius: 0; border-width: 0; }
+  .ep-dialog--defer .ep-dialog-form { flex: 1; }
+  .ep-dialog--defer .ep-dialog-content { flex: 1; align-content: start; }
+}
 .ep-repay-record { font-weight: 560; }
 .ep-repay-section { display: grid; gap: 10px; min-width: 0; }
 .ep-repay-check {

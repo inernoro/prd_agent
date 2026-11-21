@@ -73,6 +73,8 @@ export async function verifyEngineeringPlanningRefresh(browser, base, out) {
     const action = name => drawer.getByRole('button', { name, exact: true });
     await action('暂缓').click();
     const deferForm = page.getByRole('dialog', { name: '暂缓', exact: true });
+    await deferForm.getByRole('button', { name: '2 周后', exact: true }).click();
+    assert.equal(await deferForm.getByLabel('下次回看日期').inputValue(), '2026-12-04');
     await deferForm.getByLabel('下次回看日期').fill('2026-11-23');
     await deferForm.getByLabel('暂缓原因').fill('合成暂缓原因');
     await deferForm.getByLabel('预计偿还日期').fill(dueAt);

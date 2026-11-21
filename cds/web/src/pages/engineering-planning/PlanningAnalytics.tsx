@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, Check, ChevronRight, History, Plus, RotateCcw, TrendingDown, TrendingUp } from 'lucide-react';
 import type {
-  PlanningAnalyticsActivity, PlanningCounts, PlanningGraphChange, PlanningGraphDebt, PlanningGraphOutcome, PlanningStats,
+  DebtPriority, PlanningAnalyticsActivity, PlanningCounts, PlanningGraphChange, PlanningGraphDebt, PlanningGraphOutcome, PlanningStats,
 } from '../../../../src/shared/engineering-planning';
 import { dateLabel, debtLabels, events, priorityLabels, shortId, sourceLabels } from './planning-ui';
 import type { PlanningSelection } from './PlanningViews';
@@ -699,7 +699,7 @@ function GraphSelection({ node, focus, pair, onFocus, onChild, onRecord, openCat
 type PlanningGraphProps = {
   data: PlanningStats;
   onSelect: SelectRecord;
-  onCategory?: (tag: string, outcome: PlanningGraphOutcome | 'all', exact?: boolean) => void;
+  onCategory?: (tag: string, outcome: PlanningGraphOutcome | 'all', exact: boolean, priority?: DebtPriority) => void;
   scopeLabel?: string;
   projectLabel?: string;
 };
@@ -781,8 +781,9 @@ function GraphContent({ graph, scopeLabel, projectLabel, onSelect, onCategory, s
   const legend = color === 'category' ? tree.children : [];
   const tag = node.path[1] ?? node.path[0];
   const exactOutcome = selectedOutcomes.length === 1 ? selectedOutcomes[0] : selectedOutcomes.length === outcomes.length ? 'all' : undefined;
-  const openCategory = onCategory && tag && !pair && !reopenedOnly && node.path.length < 3 && exactOutcome
-    ? () => onCategory(tag, exactOutcome, node.path.length === 2) : undefined;
+  const leafPriority = node.path.length === 3 && dimension === 'priority' ? node.records[0]?.priority : undefined;
+  const openCategory = onCategory && tag && !pair && !reopenedOnly && (node.path.length < 3 || leafPriority) && exactOutcome
+    ? () => onCategory(tag, exactOutcome, node.path.length >= 2, leafPriority) : undefined;
   let delta: number | undefined;
   if (showDeltas && root.path.length < 3) {
     delta = root.path.length ? nodeChanges.get(graphKey(root.path)) ?? 0 : changes.reduce((sum, row) => sum + row.delta, 0);

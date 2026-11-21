@@ -321,6 +321,29 @@ function DebtReviewFields() {
   </>;
 }
 
+function DebtDeferralFields({ debt, today }: { debt: PlanningDebt; today: string }) {
+  const [reviewAt, setReviewAt] = useState(debt.reviewAt && debt.reviewAt > today ? debt.reviewAt : '');
+  const dateIn = (days: number) => new Date(Date.parse(today) + days * 86_400_000).toISOString().slice(0, 10);
+  return <>
+    <Field name="reason" label="暂缓原因" required multiline />
+    <div className="ep-field">
+      <label htmlFor="planning-defer-review-date">下次回看日期</label>
+      <input id="planning-defer-review-date" name="reviewAt" type="date" value={reviewAt} min={dateIn(1)} required
+        onChange={event => setReviewAt(event.target.value)} />
+      <div className="ep-row ep-defer-shortcuts" role="group" aria-label="回看快捷日期">
+        {([[14, '2 周后'], [30, '1 个月后'], [90, '下个季度']] as const).map(([days, label]) =>
+          <button type="button" key={days} className="ep-button" onClick={() => setReviewAt(dateIn(days))}>{label}</button>)}
+      </div>
+    </div>
+    <fieldset className="ep-collateral ep-repay-section ep-defer-plan">
+      <legend>偿还计划</legend>
+      <Field name="dueAt" label="预计偿还日期" date initial={debt.dueAt} />
+      <Field name="trigger" label="偿还触发条件" initial={debt.trigger} max={4000} />
+      <p className="ep-caption">日期和触发条件可任选或同时填写。回看到期时会提醒重新判断。</p>
+    </fieldset>
+  </>;
+}
+
 function actionFields(action: PlanningAction, board: PlanningBoard, duplicateCheck?: ReactNode, onTitle?: (title: string) => void): ReactNode {
   switch (action.kind) {
     case 'create': return <>
@@ -344,15 +367,7 @@ function actionFields(action: PlanningAction, board: PlanningBoard, duplicateChe
         case 'edit': return <><Field name="title" label="标题" initial={row.title} required max={120} /><DebtFields debt={row} /></>;
         case 'branch': return <><Field name="decisionId" label="重新归属" initial={row.decisionId} choices={[[ '', '未归属决策' ], ...decisionOptions(board)]} />
           <Field name="reason" label="改挂原因" required multiline /></>;
-        case 'defer': return <>
-          <Field name="reason" label="暂缓原因" required multiline />
-          <Field name="reviewAt" label="下次回看日期" required date initial={row.reviewAt && row.reviewAt > board.today ? row.reviewAt : undefined} />
-          <fieldset className="ep-collateral ep-repay-section">
-            <legend>偿还计划</legend>
-            <div className="ep-form-pair"><Field name="dueAt" label="预计偿还日期" date initial={row.dueAt} />
-              <Field name="trigger" label="偿还触发条件" initial={row.trigger} max={4000} /></div>
-            <p className="ep-caption">日期和触发条件可任选或同时填写。回看到期时会提醒重新判断。</p>
-          </fieldset></>;
+        case 'defer': return <DebtDeferralFields debt={row} today={board.today} />;
         case 'review': return <DebtReviewFields />;
         case 'start': return <Field name="note" label="说明（可选）" placeholder="例如：排进本迭代" multiline />;
         case 'progress': return <><Field name="note" label="进展说明" required multiline />
@@ -553,7 +568,7 @@ export function PlanningActionDialog({ action, board, busy, error, returnFocusTo
     : action.kind === 'debt' || action.kind === 'health' ? action.debt.title : action.kind === 'reject' ? action.proposal.draft.title
     : action.kind === 'decision' ? action.decision.title : action.kind === 'step' ? action.plan.title : '变更保存到当前项目';
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
-    <DialogContent className={`ep-dialog ep-dialog--form${repayment ? ' ep-dialog--repay' : ''}`} overlayClassName="ep-dialog-overlay" frame
+    <DialogContent className={`ep-dialog ep-dialog--form${repayment ? ' ep-dialog--repay' : ''}${action.kind === 'debt' && action.action === 'defer' ? ' ep-dialog--defer' : ''}`} overlayClassName="ep-dialog-overlay" frame
       style={repayment ? { maxHeight: 'var(--ep-repay-max-height, 90dvh)' } : undefined}
       onInteractOutside={event => event.preventDefault()} onCloseAutoFocus={event => {
         if (!returnFocusTo?.isConnected || returnFocusTo.matches(':disabled') || !returnFocusTo.getClientRects().length) return;

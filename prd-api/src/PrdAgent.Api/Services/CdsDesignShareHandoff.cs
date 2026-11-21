@@ -19,7 +19,7 @@ public static class CdsDesignShareHandoff
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly Regex Digest = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
     private static readonly Regex Commit = new("^[a-f0-9]{40}(?:[a-f0-9]{24})?$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
-    private static readonly Regex Id = new("^[a-zA-Z0-9_.:-]{1,200}$", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+    private static readonly Regex Id = new(@"\A[a-zA-Z0-9_.:-]+\z", RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 
     public static CdsDesignShareGrant? Read(string? grant, string mapUserId, IConfiguration config, DateTimeOffset now)
     {
@@ -44,7 +44,8 @@ public static class CdsDesignShareHandoff
                 || value.Access is not ("public" or "password") || value.ExpiresInHours is < 1 or > 8760
                 || !Commit.IsMatch(value.SourceCommit ?? "") || !Digest.IsMatch(value.PackageSha256 ?? "")
                 || !Digest.IsMatch(value.PrototypeSha256 ?? "") || !new[] { value.ProjectId, value.DesignId, value.PreparationId,
-                    value.RevisionId, value.SiteId, value.ApproverId }.All(id => id is not null && Id.IsMatch(id) && id is not ("." or "..")))
+                    value.RevisionId, value.SiteId, value.ApproverId }.All(id => id is { Length: >= 1 and <= 200 }
+                        && Id.IsMatch(id) && id is not ("." or "..")))
                 return null;
             return value;
         }

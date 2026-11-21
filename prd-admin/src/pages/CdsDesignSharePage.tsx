@@ -5,10 +5,12 @@ import { revokeShare } from '@/services/real/webPages';
 
 type Handoff = { grant: string; cdsOrigin: string };
 type Approval = { title: string; preparationId: string; version: number; sourceCommit: string;
-  access: 'public' | 'password'; expiresInHours: number; privateSources: Array<{ title: string; scope: string }>; fingerprint?: string };
+  access: 'public' | 'password'; expiresInHours: number; privateSources: Array<{ title: string; scope: string }>; fingerprint?: string;
+  state: 'awaiting_human_confirmation' | 'approved' | 'revoked' | 'expired'; shareId?: string; shareUrl?: string; expiresAt?: string };
 type Approved = { id: string; preparationId: string; shareUrl: string; expiresAt: string };
 const path = '/api/web-pages/shares/cds';
 const primary = 'rounded-lg bg-primary px-4 py-2.5 text-primary-foreground disabled:opacity-50';
+const fixedSharePath = /^\/s\/wp\/[A-Za-z0-9_-]+\?revision=[A-Za-z0-9_.%:-]+$/;
 
 export default function CdsDesignSharePage() {
   const handoff = useRef<Handoff>();
@@ -33,8 +35,12 @@ export default function CdsDesignSharePage() {
       try {
         const response = await apiRequest<Approval>(`${path}/inspect`, { method: 'POST', body: input });
         if (!active) return;
-        if (response.success) setApproval(response.data);
-        else setError(response.error?.message || '无法读取固定版本，请回到 CDS 重新打开。');
+        if (!response.success) { setError(response.error?.message || '无法读取固定版本，请回到 CDS 重新打开。'); return; }
+        const data = response.data;
+        setApproval(data);
+        if (data.state === 'approved' && data.shareId && data.shareUrl && data.expiresAt && fixedSharePath.test(data.shareUrl))
+          setApproved({ id: data.shareId, preparationId: data.preparationId, shareUrl: data.shareUrl, expiresAt: data.expiresAt });
+        if (data.state === 'revoked') setRevoked(true);
       } catch {
         if (active) setError('无法读取固定版本，请回到 CDS 重新打开。');
       }
@@ -52,7 +58,7 @@ export default function CdsDesignSharePage() {
       const response = await apiRequest<Approved>(`${path}/approve`, { method: 'POST', body: { ...handoff.current, confirmed,
         password: approval.access === 'password' ? password : undefined, confirmedPrivateSourceFingerprint: approval.fingerprint } });
       if (!response.success || response.data.preparationId !== approval.preparationId
-        || !/^\/s\/wp\/[A-Za-z0-9_-]+\?revision=[A-Za-z0-9_.%:-]+$/.test(response.data.shareUrl)) {
+        || !fixedSharePath.test(response.data.shareUrl)) {
         setError(response.error?.message || '分享回执无法读取，请重试。');
         return;
       }
@@ -86,7 +92,8 @@ export default function CdsDesignSharePage() {
         <h2 className="font-semibold">这版引用的私有资料</h2>
         <ul className="list-disc pl-5">{approval.privateSources.map((source, index) => <li key={index}>{source.title}</li>)}</ul>
       </section>}
-      {!approved && <form className="flex flex-col gap-4" onSubmit={approve}>
+      {approval.state === 'expired' && <p role="status">链接已到期。</p>}
+      {!approved && !revoked && approval.state === 'awaiting_human_confirmation' && <form className="flex flex-col gap-4" onSubmit={approve}>
         {approval.access === 'password' && <label className="grid gap-1.5">访问密码
           <input type="password" className="rounded-lg border border-border bg-background px-3 py-2" value={password}
             autoComplete="new-password" onChange={event => setPassword(event.target.value)} maxLength={128} required />
@@ -96,7 +103,8 @@ export default function CdsDesignSharePage() {
         <button className={`self-start ${primary}`} disabled={busy || !confirmed}>确认并生成分享</button>
       </form>}
     </>}
-    {approved && (revoked ? <p role="status">链接已撤销。</p> : <section className="grid gap-4" aria-label="已生成的链接">
+    {revoked && <p role="status">链接已撤销。</p>}
+    {approved && !revoked && <section className="grid gap-4" aria-label="已生成的链接">
       <p role="status">分享已生成 · {new Date(approved.expiresAt).toLocaleString()} 到期</p>
       <div className="flex flex-wrap items-center gap-4">
         <Link className="text-primary underline" to={approved.shareUrl} target="_blank" rel="noreferrer">打开分享</Link>
@@ -107,7 +115,7 @@ export default function CdsDesignSharePage() {
         <button type="button" className="text-destructive underline" onClick={() => void revoke()} disabled={busy}>确认撤销</button>
         <button type="button" className="underline" onClick={() => setRevoking(false)} disabled={busy}>取消</button>
       </div>}
-    </section>)}
+    </section>}
     <Link to="/web-pages" className="text-muted-foreground underline">返回网页托管</Link>
   </main>;
 }

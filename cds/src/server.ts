@@ -5533,7 +5533,7 @@ export function createServer(deps: ServerDeps): express.Express {
       return { id: result.id, pending: (await planning.designAcceptanceDebt(projectId, result.id, sourceRef)) !== result.id };
     },
   });
-  const designShareHandoff = designShareHandoffConfig(publicBaseUrl, process.env);
+  const designShareHandoff = isPreviewInstance() ? undefined : designShareHandoffConfig(publicBaseUrl, process.env);
   app.use('/api', createDesignWorkspaceRouter({
     service: designWorkspace,
     mapShareHandoff: () => designShareHandoff,
