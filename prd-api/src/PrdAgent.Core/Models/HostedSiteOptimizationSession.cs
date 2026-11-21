@@ -45,6 +45,9 @@ public static class HostedSiteOptimizationStatuses
     public const string Uploading = "uploading";
     public const string Queued = "queued";
     public const string Analyzing = "analyzing";
+    // Older workers only recognize the original queue states and cannot read ZIP entry choices.
+    public const string ZipEntryQueued = "zip-entry-queued";
+    public const string ZipEntryAnalyzing = "zip-entry-analyzing";
     public const string AwaitingDecision = "awaiting-decision";
     public const string Previewing = "previewing";
     public const string PreviewReady = "preview-ready";

@@ -2,6 +2,9 @@ using Moq;
 using System.IO.Compression;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Shouldly;
@@ -11,6 +14,60 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class HostedSiteOptimizationServiceTests
 {
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadWithManualEntry_IsInvisibleToLegacyWorkerAndResumesWithTheSelectedOrdinal()
+    {
+        await using var mongo = await RunMongoFixture.CreateAsync("hosting_upload_queue");
+        using var zip = new MemoryStream();
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            AddTextEntry(archive, "report.md", "# Report");
+            AddTextEntry(archive, "data/manifest.json", "{}");
+        }
+        var bytes = zip.ToArray();
+        var storage = new Mock<IAssetStorage>();
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string id, string path) => $"web-hosting/sites/{id}/{path}");
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), CancellationToken.None))
+            .ReturnsAsync(bytes);
+        var hostedSites = new Mock<IHostedSiteService>();
+        const string owner = "upload-owner";
+        var site = new HostedSite { EntryFile = "map-file.html" };
+        var service = new HostedSiteOptimizationService(mongo.Db, storage.Object, hostedSites.Object,
+            NullLogger<HostedSiteOptimizationService>.Instance);
+        var upload = await service.CreateUploadAsync(owner, new CreateHostedSiteOptimizationUploadRequest
+        {
+            FileName = "reports.zip", FileSize = bytes.Length, EntryIndex = 1,
+        });
+        hostedSites.Setup(x => x.CreateFromZipAsync(owner, It.IsAny<Stream>(), "reports", null, null,
+                It.IsAny<List<string>>(), null, CancellationToken.None, null, upload.Id, null, 1))
+            .ReturnsAsync(site);
+        hostedSites.Setup(x => x.GetByIdAsync(site.Id, owner, CancellationToken.None)).ReturnsAsync(site);
+
+        await service.UploadChunkAsync(upload.Id, owner, 0, bytes);
+        await service.QueueUploadAsync(upload.Id, owner);
+        await service.QueueUploadAsync(upload.Id, owner);
+        (await service.GetUploadStatusAsync(upload.Id, owner)).Status.ShouldBe("queued");
+
+        var sessions = mongo.Db.HostedSiteOptimizationSessions;
+        var expired = DateTime.UtcNow.AddMinutes(-5);
+        var legacyClaim = Builders<HostedSiteOptimizationSession>.Filter.Where(x =>
+            x.Status == "queued" || (x.Status == "analyzing" && (x.LeaseExpiresAt == null || x.LeaseExpiresAt < DateTime.UtcNow)));
+        (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(0L);
+        await sessions.UpdateOneAsync(x => x.Id == upload.Id, Builders<HostedSiteOptimizationSession>.Update
+            .Set(x => x.Status, HostedSiteOptimizationStatuses.ZipEntryAnalyzing)
+            .Set(x => x.LeaseOwner, "expired-worker")
+            .Set(x => x.LeaseExpiresAt, expired));
+        (await service.GetUploadStatusAsync(upload.Id, owner)).Status.ShouldBe("analyzing");
+        (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(0L);
+
+        (await service.ProcessNextQueuedAsync()).ShouldBeTrue();
+        var result = await service.GetUploadStatusAsync(upload.Id, owner);
+        result.Status.ShouldBe("saved");
+        result.Review?.Site?.EntryFile.ShouldBe("map-file.html");
+    }
+
     [Fact]
     public void Analyze_ArchiveWithoutHtml_CanBePublishedAsDirectory()
     {
