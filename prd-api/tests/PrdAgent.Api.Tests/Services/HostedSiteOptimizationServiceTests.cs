@@ -14,9 +14,11 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class HostedSiteOptimizationServiceTests
 {
-    [Fact]
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait("Category", "Integration")]
-    public async Task UploadWithManualEntry_IsInvisibleToLegacyWorkerAndResumesWithTheSelectedOrdinal()
+    public async Task QueuedUpload_PreservesWorkerCompatibilityAndResumesWithTheSelectedEntry(bool legacy)
     {
         await using var mongo = await RunMongoFixture.CreateAsync("hosting_upload_queue");
         using var zip = new MemoryStream();
@@ -29,19 +31,18 @@ public class HostedSiteOptimizationServiceTests
         var storage = new Mock<IAssetStorage>();
         storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
             .Returns((string id, string path) => $"web-hosting/sites/{id}/{path}");
-        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), CancellationToken.None))
-            .ReturnsAsync(bytes);
         var hostedSites = new Mock<IHostedSiteService>();
         const string owner = "upload-owner";
-        var site = new HostedSite { EntryFile = "map-file.html" };
+        var site = new HostedSite { EntryFile = legacy ? "map-directory.html" : "map-file.html" };
+        int? entryIndex = legacy ? null : 1;
         var service = new HostedSiteOptimizationService(mongo.Db, storage.Object, hostedSites.Object,
             NullLogger<HostedSiteOptimizationService>.Instance);
         var upload = await service.CreateUploadAsync(owner, new CreateHostedSiteOptimizationUploadRequest
         {
-            FileName = "reports.zip", FileSize = bytes.Length, EntryIndex = 1,
+            FileName = "reports.zip", FileSize = bytes.Length, EntryIndex = entryIndex,
         });
         hostedSites.Setup(x => x.CreateFromZipAsync(owner, It.IsAny<Stream>(), "reports", null, null,
-                It.IsAny<List<string>>(), null, CancellationToken.None, null, upload.Id, null, 1))
+                It.IsAny<List<string>>(), null, CancellationToken.None, null, upload.Id, null, entryIndex))
             .ReturnsAsync(site);
         hostedSites.Setup(x => x.GetByIdAsync(site.Id, owner, CancellationToken.None)).ReturnsAsync(site);
 
@@ -51,21 +52,31 @@ public class HostedSiteOptimizationServiceTests
         (await service.GetUploadStatusAsync(upload.Id, owner)).Status.ShouldBe("queued");
 
         var sessions = mongo.Db.HostedSiteOptimizationSessions;
-        var expired = DateTime.UtcNow.AddMinutes(-5);
+        var now = DateTime.UtcNow;
+        var analyzingStatus = legacy ? "analyzing" : HostedSiteOptimizationStatuses.ZipEntryAnalyzing;
         var legacyClaim = Builders<HostedSiteOptimizationSession>.Filter.Where(x =>
-            x.Status == "queued" || (x.Status == "analyzing" && (x.LeaseExpiresAt == null || x.LeaseExpiresAt < DateTime.UtcNow)));
+            x.Status == "queued" || (x.Status == "analyzing" && (x.LeaseExpiresAt == null || x.LeaseExpiresAt < now)));
         (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(0L);
         await sessions.UpdateOneAsync(x => x.Id == upload.Id, Builders<HostedSiteOptimizationSession>.Update
-            .Set(x => x.Status, HostedSiteOptimizationStatuses.ZipEntryAnalyzing)
+            .Set(x => x.Status, analyzingStatus)
             .Set(x => x.LeaseOwner, "expired-worker")
-            .Set(x => x.LeaseExpiresAt, expired));
+            .Set(x => x.LeaseExpiresAt, now.AddMinutes(-5)));
         (await service.GetUploadStatusAsync(upload.Id, owner)).Status.ShouldBe("analyzing");
-        (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(0L);
+        (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(legacy ? 1L : 0L);
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), CancellationToken.None))
+            .Returns(async () =>
+            {
+                var active = await sessions.Find(x => x.Id == upload.Id).SingleAsync();
+                active.Status.ShouldBe(analyzingStatus);
+                active.LeaseOwner.ShouldNotBe("expired-worker");
+                (await sessions.CountDocumentsAsync(legacyClaim)).ShouldBe(0L);
+                return bytes;
+            });
 
         (await service.ProcessNextQueuedAsync()).ShouldBeTrue();
         var result = await service.GetUploadStatusAsync(upload.Id, owner);
         result.Status.ShouldBe("saved");
-        result.Review?.Site?.EntryFile.ShouldBe("map-file.html");
+        result.Review?.Site?.EntryFile.ShouldBe(site.EntryFile);
     }
 
     [Fact]

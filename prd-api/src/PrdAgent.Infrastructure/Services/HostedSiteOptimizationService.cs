@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -254,22 +255,9 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         var now = DateTime.UtcNow;
         await FailExpiredWorkerSavesAsync(now);
         var leaseOwner = Guid.NewGuid().ToString("N");
-        var session = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(
-            BuildUploadClaimFilter(now),
-            Builders<HostedSiteOptimizationSession>.Update
-                .Set(x => x.Status, HostedSiteOptimizationStatuses.ZipEntryAnalyzing)
-                .Set(x => x.Error, null)
-                .Set(x => x.LeaseOwner, leaseOwner)
-                .Set(x => x.LeaseExpiresAt, now.Add(WorkerLeaseLifetime))
-                .Set(x => x.UpdatedAt, now)
-                .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
-            new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
-            {
-                ReturnDocument = ReturnDocument.After,
-                Sort = Builders<HostedSiteOptimizationSession>.Sort.Ascending(x => x.UpdatedAt),
-            },
-            CancellationToken.None);
+        var session = await ClaimQueuedUploadAsync(now, leaseOwner);
         if (session == null) return false;
+        var analyzingStatus = session.Status;
 
         using var leaseCancellation = new CancellationTokenSource();
         var leaseHeartbeat = RenewWorkerLeaseAsync(session.Id, leaseOwner, leaseCancellation.Token);
@@ -291,7 +279,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 session.SourceSha256 = Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant();
                 var sourceRecorded = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                     x => x.Id == session.Id
-                         && x.Status == HostedSiteOptimizationStatuses.ZipEntryAnalyzing
+                         && x.Status == analyzingStatus
                          && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.SourceObjectKey, session.SourceObjectKey)
@@ -308,7 +296,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     "private, no-store");
                 var transitioned = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                     x => x.Id == session.Id
-                         && x.Status == HostedSiteOptimizationStatuses.ZipEntryAnalyzing
+                         && x.Status == analyzingStatus
                          && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.SourceObjectKey, session.SourceObjectKey)
@@ -327,7 +315,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
             var saveClaim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                 x => x.Id == session.Id
-                     && x.Status == HostedSiteOptimizationStatuses.ZipEntryAnalyzing
+                     && x.Status == analyzingStatus
                      && x.LeaseOwner == leaseOwner,
                 Builders<HostedSiteOptimizationSession>.Update
                     .Set(x => x.Analysis, analysis)
@@ -1426,14 +1414,40 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             cancellationToken: CancellationToken.None);
     }
 
-    private static FilterDefinition<HostedSiteOptimizationSession> BuildUploadClaimFilter(DateTime now)
+    private Task<HostedSiteOptimizationSession> ClaimQueuedUploadAsync(DateTime now, string leaseOwner)
     {
         var filter = Builders<HostedSiteOptimizationSession>.Filter;
-        return filter.In(x => x.Status,
-                   new[] { HostedSiteOptimizationStatuses.Queued, HostedSiteOptimizationStatuses.ZipEntryQueued })
-               | (filter.In(x => x.Status,
-                      new[] { HostedSiteOptimizationStatuses.Analyzing, HostedSiteOptimizationStatuses.ZipEntryAnalyzing })
-                  & (filter.Eq(x => x.LeaseExpiresAt, null) | filter.Lt(x => x.LeaseExpiresAt, now)));
+        var claimable = filter.In(x => x.Status,
+                new[] { HostedSiteOptimizationStatuses.Queued, HostedSiteOptimizationStatuses.ZipEntryQueued })
+            | (filter.In(x => x.Status,
+                   new[] { HostedSiteOptimizationStatuses.Analyzing, HostedSiteOptimizationStatuses.ZipEntryAnalyzing })
+               & (filter.Eq(x => x.LeaseExpiresAt, null) | filter.Lt(x => x.LeaseExpiresAt, now)));
+        // Choose the analysis state in the same write that takes the lease, so older workers can still
+        // recognize and recover their own jobs without being able to claim jobs with newer semantics.
+        var usesZipEntryStates = new BsonDocument("$in", new BsonArray
+        {
+            $"${nameof(HostedSiteOptimizationSession.Status)}",
+            new BsonArray { HostedSiteOptimizationStatuses.ZipEntryQueued, HostedSiteOptimizationStatuses.ZipEntryAnalyzing },
+        });
+        var updates = new BsonDocument
+        {
+            { nameof(HostedSiteOptimizationSession.Status), new BsonDocument("$cond", new BsonArray
+                { usesZipEntryStates, HostedSiteOptimizationStatuses.ZipEntryAnalyzing, HostedSiteOptimizationStatuses.Analyzing }) },
+            { nameof(HostedSiteOptimizationSession.Error), BsonNull.Value },
+            { nameof(HostedSiteOptimizationSession.LeaseOwner), leaseOwner },
+            { nameof(HostedSiteOptimizationSession.LeaseExpiresAt), now.Add(WorkerLeaseLifetime) },
+            { nameof(HostedSiteOptimizationSession.UpdatedAt), now },
+            { nameof(HostedSiteOptimizationSession.ExpiresAt), now.Add(SessionLifetime) },
+        };
+        return _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(
+            claimable,
+            Builders<HostedSiteOptimizationSession>.Update.Pipeline(new BsonDocument[] { new("$set", updates) }),
+            new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
+            {
+                ReturnDocument = ReturnDocument.After,
+                Sort = Builders<HostedSiteOptimizationSession>.Sort.Ascending(x => x.UpdatedAt),
+            },
+            CancellationToken.None);
     }
 
     private static string GetUploadClientStatus(string status) => status switch
