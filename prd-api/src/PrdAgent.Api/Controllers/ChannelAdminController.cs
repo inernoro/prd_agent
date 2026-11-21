@@ -193,6 +193,8 @@ public class ChannelAdminController : ControllerBase
             .Set(x => x.Priority, request.Priority)
             .Set(x => x.IsActive, request.IsActive)
             .Set(x => x.Note, request.Note)
+            .Unset(x => x.EmailQuotaAdmissions)
+            .Unset(x => x.TodayChargedDeliveryIds)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.ChannelWhitelists.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
@@ -235,6 +237,8 @@ public class ChannelAdminController : ControllerBase
         var newStatus = !item.IsActive;
         var update = Builders<ChannelWhitelist>.Update
             .Set(x => x.IsActive, newStatus)
+            .Unset(x => x.EmailQuotaAdmissions)
+            .Unset(x => x.TodayChargedDeliveryIds)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.ChannelWhitelists.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);

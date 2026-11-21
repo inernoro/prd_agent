@@ -62,7 +62,7 @@
 
 ### 决策 3：白名单优先级匹配 + 原子配额计数
 
-**结论**：白名单规则按 `Priority` 升序排列，首匹配即停止。每日配额通过 MongoDB 原子操作（TodayDate + TodayUsedCount）实现，避免并发竞态。
+**结论**：白名单规则按 `Priority` 升序排列，首匹配即停止。每日配额通过 MongoDB 原子操作（TodayDate + TodayUsedCount）实现，避免并发竞态。 认证邮件的同一投递在同规则、同 UTC 日只计一次准入，配额记账与重复判定原子完成；任务写入失败不自动返还已占额度，重试可补齐任务及接收审计。跨日未落库与规则变化等边界见[扫描 #26 / KD-17 台账](./debt.workflow-agent.md)。
 
 **理由**：优先级匹配允许精确规则覆盖通配规则（如 `user@co.com` 优先于 `*@co.com`）；原子配额避免分布式锁。
 
@@ -277,6 +277,6 @@
 | 企业邮箱 IMAP 限制 | 中 | 轮询失败 | 后台记录 LastPollResult/Error，管理界面可手动测试连接 |
 | 白名单规则冲突 | 低 | 错误匹配 | Priority 排序 + 首匹配即停，管理界面可查看规则优先级 |
 | 配额竞态 | 低 | 超额放行 | MongoDB 原子更新（TodayDate + TodayUsedCount 条件更新） |
-| SendGrid Webhook 签名验证未实现 | 中 | 伪造请求 | TODO：实现签名验证；当前依赖网络隔离 |
+| SendGrid Webhook 签名验证未实现（原始风险） | 中 | 伪造请求 | 历史：TODO，依赖网络隔离。2026-11-17 本地复核及修复进展见[扫描报告 #26 关联台账](./debt.workflow-agent.md#邮件入站认证扫描报告-26)，真实投递与部署尚未验证 |
 | Handler 执行异常 | 中 | 任务卡在 processing | StatusHistory 追踪 + 管理界面支持手动重试/取消 |
 | SMS/Siri/Webhook 通道模型预留但未实现 | - | 数据模型中有通道类型但无实际适配器 | 标记为未来扩展，不影响邮件通道功能 |
