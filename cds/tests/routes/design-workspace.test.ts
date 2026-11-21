@@ -315,6 +315,34 @@ describe('private CDS design workspace', () => {
     expect(designs[0].versions[1].frameworkCheck.items[0]).toMatchObject({ ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('1 / 2') });
   });
 
+  it('requires container evidence for the complete 375px rule and retains each publication result', async () => {
+    const frameworkId = 'FW-mobile-layout';
+    const rules = '| R-07 | 375 宽下文档没有横向溢出；只有表格、图表、代码块可以在自身容器里横向滚动 | 自动：比较文档宽度和视口宽度 |';
+    expect((await command('framework.import', { frameworkId, title: 'Mobile layout',
+      sourceCommit: 'c'.repeat(40), expectedVersion: 0, material: { rules } })).status).toBe(201);
+    const packageBytes = draft('Fixture mobile draft', { framework: frameworkId, frameworkVersion: 1,
+      screens: [{ id: 'mobile-members', name: 'Members', route: '#members', viewport: 'phone', themes: ['light', 'dark'] }] });
+    const light = { screenId: 'mobile-members', slot: 'phone-light', width: 375, contentWidth: 375 } as const;
+    const dark = { ...light, slot: 'phone-dark' } as const;
+    frameworkMeasurements = [light, dark];
+    const published = await publish('root-only', packageBytes);
+    expect(published.status).toBe(201);
+    const { designId } = (await published.json()).result;
+    const prohibited = { status: 'failed', element: 'nav', width: 343, contentWidth: 521 } as const;
+    frameworkMeasurements = [light, { ...dark, nestedScroll: prohibited }];
+    expect((await publish('prohibited-container', packageBytes, { designId, sourceCommit: 'd'.repeat(40) })).status).toBe(201);
+    frameworkMeasurements = [light, dark].map(row => ({ ...row, nestedScroll: { status: 'passed' } as const }));
+    expect((await publish('complete-mobile', packageBytes, { designId, sourceCommit: 'e'.repeat(40) })).status).toBe(201);
+
+    const { designs } = await (await get()).json();
+    const results = designs[0].versions.map((version: { frameworkCheck: { items: unknown[] } }) => version.frameworkCheck.items[0]);
+    expect(results).toMatchObject([
+      { ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('0 / 2') },
+      { ruleId: 'R-07', status: 'failed', actual: expect.stringContaining('521px'), measurements: [light, { ...dark, nestedScroll: prohibited }] },
+      { ruleId: 'R-07', status: 'passed' },
+    ]);
+  });
+
   it('acknowledges the source only after matching the archive against the project Git tree', async () => {
     const source = { sourcePath: 'design/fixture' };
     expect((await publish('fake-source', draft('Modified archive'), source)).status).toBe(409);

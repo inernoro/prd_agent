@@ -247,6 +247,12 @@ class PlanningCliTest(unittest.TestCase):
         self.assert_error(self.call("debt", "brief", "D-0001", "--project", PROJECT))
         self.assert_error(self.submit(PROPOSAL))
 
+    def test_planning_submit_accepts_a_human_identity_without_falling_back_to_the_key(self):
+        outcome = self.call('planning', 'submit', '--file', '-', '--as-user', 'fixture-member')
+        self.assert_error(outcome)
+        self.assertIn('需要交互终端', outcome[0].stdout)
+        self.assertEqual(self.requests, [])
+
     def test_submission_reports_original_receipt_when_repeated(self):
         first = self.assert_ok(self.submit(PROPOSAL))
         self.assertEqual(self.requests[-1][1].path, BASE + "/commands")

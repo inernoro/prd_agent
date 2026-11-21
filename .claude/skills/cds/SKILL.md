@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.2
+  version: 0.26.3
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design review, canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.2 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
+> **版本**：v0.26.3 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -396,7 +396,7 @@ $CLI debt stats
 
 脚手架把框架版本、规则类别和自检待办写进稿件。从 `--dir` 发布时带上仓库相对目录，CDS 可在该项目的代码仓库中核对时验证提交和文件。其他仓库的归档保留发布声明。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。两版有同尺寸截图时，可看实际像素差异。
 
-发布后在稿件的「规范」或 `design list` 的版本回读 `frameworkCheck`，其中记录固定框架版本、稿件提交和系统测量。目前已接入 R-07 的手机横向溢出检测。发布端须通过 `CDS_DESIGN_BROWSER_EXECUTABLE` 使用可运行 Chromium 沙箱的隔离执行环境。缺少实测的规则保持未验证，作者在 `checks/result.json` 中的自检仍可单独回读。
+发布后在稿件的「规范」或 `design list` 的版本回读 `frameworkCheck`，其中记录固定框架版本、稿件提交和系统测量。R-07 测量 375px 视口下的整页宽度。框架同时限定横向滚动容器时，还会检查内部容器并记录异常尺寸。表格、图表和代码块依照稿件的实际结构识别。容器用途不明或缺少实测时保持未验证，作者在 `checks/result.json` 中的自检仍可单独回读。发布端须通过 `CDS_DESIGN_BROWSER_EXECUTABLE` 使用可运行 Chromium 沙箱的隔离执行环境。
 
 ```bash
 $CLI framework list
@@ -419,7 +419,7 @@ $CLI design extract <稿件编号> --into <框架编号>
 
 分享从稿件信息中的「固定版本分享」开始。具备审批权的真人可为经 Git 核验的定稿版本记录受众和期限。待确认记录仍在项目内。配置了同一稿件版本和评审人的 MAP 对应授权后，评审人可在 MAP 查到待分享的版本、提交、期限和私有引用，确认后生成链接。分享使用固定版的已核验原型，内部批注、自检、实拍和验收记录仍按项目权限查看。不要把准备号、确认票据或密码当成可分享的链接。撤销在 MAP 分享确认页或原生分享管理中完成。
 
-`design accept` 在已安装 Playwright 与 Chromium 的执行环境中打开验收项对应的实现地址。有多个候选画面时，用 `screenId` 定位实际需要验收的一屏。动态页面的自动测量等待清单声明的 `readySelector` 可见，默认读取 `[data-cds-design-ready]`。`probe: { "type": "horizontal-overflow", "tolerance": 0 }` 读加载完成后的页面宽度，人工项取得截图后由成员核对。需要手动完成取证时可用 `--start-only` 创建运行。预览使用 CDS 一键登录时通过 `--as-user` 取得当前成员会话。
+`design accept` 在已安装 Playwright 与 Chromium 的执行环境中打开验收项对应的实现地址。有多个候选画面时，用 `screenId` 定位实际需要验收的一屏。动态页面的自动测量等待清单声明的 `readySelector` 可见，默认读取 `[data-cds-design-ready]`。`probe: { "type": "horizontal-overflow", "tolerance": 0 }` 读加载完成后的页面宽度。完整的 R-07 还要求核对内部横向滚动容器，CLI 在整页宽度合规时保留实拍并标记待核对。需要手动完成取证时可用 `--start-only` 创建运行。预览使用 CDS 一键登录时通过 `--as-user` 取得当前成员会话。
 
 预览一键登录复用该预览自己的票据 SSO 配置。项目所有者按分支配置独立客户端身份，`CDS_PREVIEW_SSO_PROVIDER_ID=cds-preview`，授权端点为父 CDS 的 `/preview/authorize`，兑换端点为 `/api/auth/preview/token`。给该分支配置独立 HTTPS 预览入口，通过 CDS 工程规划里的 PR 预览查访问状态。专用客户端凭据和测试账号保存在其原配置处。父 CDS 的登录凭据不进入预览。
 

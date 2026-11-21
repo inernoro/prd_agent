@@ -14,8 +14,11 @@ export type DesignRule = {
   probe?: { type: 'horizontal-overflow'; tolerance?: number };
 };
 export type DesignMaterial = { tokens?: Record<string, unknown>; rules?: string; components?: string; skeleton?: string };
+export type DesignNestedScroll = { status: 'passed' }
+  | { status: 'failed' | 'unverified'; element: string; width: number; contentWidth: number };
 export type DesignFrameworkMeasurement = {
   screenId: string; slot: 'phone-light' | 'phone-dark'; width: number; contentWidth: number;
+  nestedScroll?: DesignNestedScroll;
 };
 export type DesignFrameworkCheck = {
   framework: string; frameworkVersion: number; sourceCommit: string;

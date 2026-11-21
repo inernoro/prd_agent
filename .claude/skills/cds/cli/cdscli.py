@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4133,8 +4133,7 @@ def _register_planning_parser(sub: Any) -> None:
             parser.add_argument("--project", help="CDS 项目 ID，默认当前仓库绑定项目")
             if action in ("submit", "reconcile"):
                 parser.add_argument("--file", required=True, help="命令或导入待核对条目的 JSON")
-            if action == "reconcile":
-                parser.add_argument("--as-user", required=True, help="由 CDS 成员在交互终端登录后核对")
+                parser.add_argument("--as-user", required=action == "reconcile", help="由 CDS 成员在交互终端登录后执行")
             if action == "snapshot":
                 parser.add_argument("--module")
             if action in ("show", "brief") and routes is debt:
@@ -4413,6 +4412,10 @@ def _design_acceptance_browser(project: str, version: dict, run: dict, identity_
                         tolerance = probe.get("tolerance", 0)
                         row.update(status="passed" if overflow <= tolerance else "failed",
                                    actual=f"页面宽 {geometry['contentWidth']}px，视口宽 {geometry['width']}px，溢出 {overflow}px，允许 {tolerance}px。")
+                        if (row["status"] == "passed" and rule["id"] == "R-07"
+                                and "只有表格、图表、代码块" in rule["rule"] and "横向滚动" in rule["rule"]):
+                            row["status"] = "unverified"
+                            row["actual"] += "已保留实拍，需核对横向滚动容器是否属于表格、图表或代码块。"
                         measured += 1
                     else:
                         row.update(status="unverified", actual="已取得目标提交的真实截图，等待人工核对。")

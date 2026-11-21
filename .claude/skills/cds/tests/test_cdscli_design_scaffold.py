@@ -1,6 +1,8 @@
 """A scaffold uses framework rules in both Markdown formats."""
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 from test_cdscli_instances import cli, run, save, workspace  # noqa: F401
 
@@ -31,3 +33,32 @@ def test_scaffold_pins_framework_and_preserves_rule_check_modes(workspace, monke
     assert result['passed'] == 0
     assert [row['id'] for row in result['items']] == ['R-01', 'R-02', 'R-03']
     assert {row['status'] for row in result['items']} == {'unverified'}
+
+
+def test_design_accept_root_measurement_does_not_approve_a_container_rule(monkeypatch):
+    route = '/fixture'
+    full = {'id': 'R-07', 'rule': '375 宽下文档没有横向溢出；只有表格、图表、代码块可以在自身容器里横向滚动',
+            'how': 'measure', 'probe': {'type': 'horizontal-overflow'}}
+    version = {'acceptance': [full], 'screens': [{'impl': route, 'themes': ['light'], 'viewport': 'phone'}]}
+    run = {'pullRequest': 7, 'commit': 'a' * 40, 'previewUrl': 'https://preview.example/',
+           'cells': [{'itemId': 'R-07', 'slot': 'phone-light', 'status': 'unverified'}]}
+    monkeypatch.setattr(cli, '_request', lambda *_args, **_kwargs: (
+        200, {'projectId': 'fixture', 'commit': run['commit'], 'url': 'https://preview.example/fixture'}, {}))
+    geometry = {'width': 375, 'height': 812, 'contentWidth': 375}
+
+    def browser(_command, *, input, **_kwargs):
+        (Path(json.loads(input)['directory']) / 'screen-0.png').write_bytes(b'fixture screenshot')
+        return SimpleNamespace(stdout=json.dumps({'rows': [{'captured': True, 'geometry': geometry}]}))
+
+    monkeypatch.setattr(cli.subprocess, 'run', browser)
+    rows = []
+    cli._design_acceptance_browser('fixture', version, run, {}, rows.append)
+    assert rows[-1]['status'] == 'unverified'
+    assert '容器' in rows[-1]['actual'] and rows[-1]['image']
+    geometry['contentWidth'] = 520
+    cli._design_acceptance_browser('fixture', version, run, {}, rows.append)
+    assert rows[-1]['status'] == 'failed'
+    geometry['contentWidth'] = 375
+    version['acceptance'] = [{**full, 'rule': '375 宽下文档没有横向溢出'}]
+    cli._design_acceptance_browser('fixture', version, run, {}, rows.append)
+    assert rows[-1]['status'] == 'passed'
