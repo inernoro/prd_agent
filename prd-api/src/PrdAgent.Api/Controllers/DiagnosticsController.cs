@@ -1,10 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
-using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Security;
 using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using System.Net.Security;
 
@@ -19,19 +18,16 @@ public class DiagnosticsController : ControllerBase
 {
     private readonly ILogger<DiagnosticsController> _logger;
     private readonly IConfiguration _config;
-    private readonly ISafeOutboundUrlValidator _urlValidator;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly SafeOutboundDiagnosticConnector _connector;
 
     public DiagnosticsController(
         ILogger<DiagnosticsController> logger,
         IConfiguration config,
-        ISafeOutboundUrlValidator urlValidator,
-        IHttpClientFactory httpClientFactory)
+        SafeOutboundDiagnosticConnector connector)
     {
         _logger = logger;
         _config = config;
-        _urlValidator = urlValidator;
-        _httpClientFactory = httpClientFactory;
+        _connector = connector;
     }
 
     /// <summary>
@@ -71,11 +67,17 @@ public class DiagnosticsController : ControllerBase
             return Ok(ApiResponse<NetworkDiagnosticsResult>.Ok(result));
         }
 
+        var ct = HttpContext.RequestAborted;
+        SafeDiagnosticTarget target;
+        var dnsTimer = Stopwatch.StartNew();
         try
         {
-            uri = await _urlValidator.EnsureSafeHttpUrlAsync(clientUrl, "网络诊断目标");
-            clientUrl = uri.ToString();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            target = await _connector.PrepareAsync(uri, timeout.Token);
+            dnsTimer.Stop();
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             result.Tests.Add(new DiagnosticTest
@@ -89,22 +91,46 @@ public class DiagnosticsController : ControllerBase
         }
 
         // 1. DNS 解析测试
-        result.Tests.Add(await TestDns(uri.Host));
+        result.Tests.Add(new DiagnosticTest
+        {
+            Name = "DNS",
+            Status = "success",
+            Message = $"解析成功: {string.Join(", ", target.Addresses.Take(3))}",
+            Duration = (int)dnsTimer.ElapsedMilliseconds
+        });
 
         // 2. SSL/TLS 测试（仅 HTTPS）
         if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
         {
-            result.Tests.Add(await TestSsl(uri.Host, uri.Port == -1 ? 443 : uri.Port));
+            result.Tests.Add(await TestSsl(target, ct));
         }
 
+        var gatewayIsValid = Uri.TryCreate(_config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091",
+            UriKind.Absolute, out var gateway)
+            && (gateway.Scheme == Uri.UriSchemeHttp || gateway.Scheme == Uri.UriSchemeHttps)
+            && !string.IsNullOrEmpty(gateway.Host);
+        using var guardedTransport = gatewayIsValid
+            ? new MapModelEgressHandler("NetworkDiagnostics", gateway!)
+            {
+                InnerHandler = _connector.CreateHandler(target),
+            }
+            : null;
+        using var httpClient = guardedTransport is null
+            ? null
+            : new HttpClient(guardedTransport, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(5) };
+
         // 3. API 端点测试
-        result.Tests.Add(await TestApiEndpoint(clientUrl));
+        result.Tests.Add(httpClient is null
+            ? HttpConfigurationFailure("API")
+            : await TestApiEndpoint(httpClient, target.Uri, ct));
 
         // 4. Ping 测试（TCP 连接延迟）
-        result.Tests.Add(await TestPing(uri.Host, uri.Port == -1 ? (uri.Scheme == "https" ? 443 : 80) : uri.Port));
+        result.Tests.Add(await TestPing(target, ct));
 
         // 5. 聊天功能测试（简化版，只测试端点可达性）
-        result.Tests.Add(await TestChatEndpoint(clientUrl));
+        result.Tests.Add(httpClient is null
+            ? HttpConfigurationFailure("Chat")
+            : await TestChatEndpoint(httpClient, target.Uri, ct));
 
         // 6. Agent 功能测试（简化版）
         result.Tests.Add(TestAgentEndpoint(clientUrl));
@@ -112,56 +138,27 @@ public class DiagnosticsController : ControllerBase
         return Ok(ApiResponse<NetworkDiagnosticsResult>.Ok(result));
     }
 
-    private async Task<DiagnosticTest> TestDns(string host)
+    private static DiagnosticTest HttpConfigurationFailure(string name) => new()
+    {
+        Name = name,
+        Status = "failed",
+        Message = "网关 HTTP 诊断地址配置无效",
+        Duration = 0
+    };
+
+    private async Task<DiagnosticTest> TestSsl(SafeDiagnosticTarget target, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
-            var addresses = await Dns.GetHostAddressesAsync(host);
-            sw.Stop();
-
-            if (addresses.Length > 0)
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            using var stream = await _connector.ConnectAsync(target, timeout.Token);
+            using var sslStream = new SslStream(stream);
+            await sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
             {
-                return new DiagnosticTest
-                {
-                    Name = "DNS",
-                    Status = "success",
-                    Message = $"解析成功: {string.Join(", ", addresses.Take(3).Select(a => a.ToString()))}",
-                    Duration = (int)sw.ElapsedMilliseconds
-                };
-            }
-
-            return new DiagnosticTest
-            {
-                Name = "DNS",
-                Status = "failed",
-                Message = "未找到 IP 地址",
-                Duration = (int)sw.ElapsedMilliseconds
-            };
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            return new DiagnosticTest
-            {
-                Name = "DNS",
-                Status = "failed",
-                Message = $"DNS 解析失败: {ex.Message}",
-                Duration = (int)sw.ElapsedMilliseconds
-            };
-        }
-    }
-
-    private async Task<DiagnosticTest> TestSsl(string host, int port)
-    {
-        var sw = Stopwatch.StartNew();
-        try
-        {
-            using var client = new TcpClient();
-            await client.ConnectAsync(host, port);
-
-            using var sslStream = new SslStream(client.GetStream(), false, (sender, cert, chain, errors) => true);
-            await sslStream.AuthenticateAsClientAsync(host);
+                TargetHost = target.Uri.IdnHost
+            }, timeout.Token);
 
             sw.Stop();
 
@@ -178,6 +175,7 @@ public class DiagnosticsController : ControllerBase
                 Duration = (int)sw.ElapsedMilliseconds
             };
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             sw.Stop();
@@ -191,15 +189,26 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    private async Task<DiagnosticTest> TestApiEndpoint(string baseUrl)
+    private static async Task<HttpResponseMessage> ProbeEndpointAsync(
+        HttpClient client, Uri baseUri, string endpoint, CancellationToken ct)
+    {
+        var probe = new UriBuilder(baseUri)
+        {
+            Path = baseUri.AbsolutePath.TrimEnd('/') + endpoint,
+            Query = string.Empty,
+            Fragment = string.Empty,
+        };
+        using var request = new HttpRequestMessage(HttpMethod.Get, probe.Uri);
+        request.Options.Set(MapModelEgressHandler.DisableRedirects, true);
+        return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+    }
+
+    private async Task<DiagnosticTest> TestApiEndpoint(HttpClient client, Uri baseUri, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
-            var client = _httpClientFactory.CreateClient("SafeOutbound");
-            client.Timeout = TimeSpan.FromSeconds(5);
-            var healthUrl = $"{baseUrl.TrimEnd('/')}/health";
-            var response = await client.GetAsync(healthUrl);
+            using var response = await ProbeEndpointAsync(client, baseUri, "/health", ct);
             sw.Stop();
 
             if (response.IsSuccessStatusCode)
@@ -221,6 +230,7 @@ public class DiagnosticsController : ControllerBase
                 Duration = (int)sw.ElapsedMilliseconds
             };
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             sw.Stop();
@@ -234,13 +244,14 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    private async Task<DiagnosticTest> TestPing(string host, int port)
+    private async Task<DiagnosticTest> TestPing(SafeDiagnosticTarget target, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
-            using var client = new TcpClient();
-            await client.ConnectAsync(host, port);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            using var stream = await _connector.ConnectAsync(target, timeout.Token);
             sw.Stop();
 
             return new DiagnosticTest
@@ -251,6 +262,7 @@ public class DiagnosticsController : ControllerBase
                 Duration = (int)sw.ElapsedMilliseconds
             };
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             sw.Stop();
@@ -264,17 +276,13 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
-    private async Task<DiagnosticTest> TestChatEndpoint(string baseUrl)
+    private async Task<DiagnosticTest> TestChatEndpoint(HttpClient client, Uri baseUri, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
-            var client = _httpClientFactory.CreateClient("SafeOutbound");
-            client.Timeout = TimeSpan.FromSeconds(5);
-            var chatUrl = $"{baseUrl.TrimEnd('/')}/api/v1/sessions";
-            
             // 只测试端点是否存在（401/403 也算成功，因为说明端点可达）
-            var response = await client.GetAsync(chatUrl);
+            using var response = await ProbeEndpointAsync(client, baseUri, "/api/v1/sessions", ct);
             sw.Stop();
 
             var statusCode = (int)response.StatusCode;
@@ -297,6 +305,7 @@ public class DiagnosticsController : ControllerBase
                 Duration = (int)sw.ElapsedMilliseconds
             };
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             sw.Stop();
