@@ -1,5 +1,5 @@
 import { apiUrl } from '@/lib/api';
-import type { DesignEntry, DesignVersion } from '../../../../src/shared/design-workspace';
+import { currentDesignRun, type DesignEntry, type DesignVersion } from '../../../../src/shared/design-workspace';
 
 export const designPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/design`;
 export const designArtifact = (projectId: string, artifactId: string) => apiUrl(`${designPath(projectId)}/artifacts/${encodeURIComponent(artifactId)}`);
@@ -34,7 +34,8 @@ export function designFailureGroups(version: DesignVersion) {
 
 export function designStatus(entry: DesignEntry): keyof typeof statusNames {
   if (entry.reviewRequested) return 'review';
-  if (entry.runs.at(-1)?.signed) return 'signed';
+  const run = currentDesignRun(entry);
+  if (run?.signed && (entry.currentSignoffRunId === undefined || entry.currentSignoffRunId === run.id)) return 'signed';
   if (entry.pullRequest) return 'active';
   return entry.frozen ? 'frozen' : 'draft';
 }

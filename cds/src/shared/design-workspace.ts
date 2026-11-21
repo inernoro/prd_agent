@@ -67,10 +67,16 @@ export type DesignReviewNotice = {
 export type DesignEntry = {
   id: string; projectId: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
   comments: DesignComment[]; runs: DesignRun[]; reviewRequested?: boolean;
+  currentSignoffRunId?: string | null;
   reviewers?: DesignReviewer[];
   sharePreparations?: DesignSharePreparation[];
   freezes?: Array<{ version: number; by: string; at: string }>;
 };
+
+export function currentDesignRun(entry: DesignEntry): DesignRun | undefined {
+  if (!entry.pullRequest || entry.frozen !== entry.versions.at(-1)?.version) return undefined;
+  return entry.runs.slice().reverse().find(run => run.version === entry.frozen && run.pullRequest === entry.pullRequest);
+}
 export type FrameworkRevision = {
   version: number; title: string; sourceCommit: string; at: string; by: string;
   sourcePath?: string; sourceVerification?: 'git' | 'declared';

@@ -4,7 +4,7 @@ import type {
   DesignSharePreparation,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { designSlots } from '../shared/design-workspace.js';
+import { currentDesignRun, designSlots } from '../shared/design-workspace.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
@@ -217,8 +217,21 @@ export class DesignWorkspaceService {
   async workspace(projectId: string, actor: DesignActor): Promise<DesignWorkspace> {
     requireProjectRead(actor);
     const state = await this.load(projectId);
-    const designs = [...state.designs.values()].sort((a, b) => b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt));
-    return { projectId, designs: structuredClone(designs), frameworks: structuredClone([...state.frameworks.values()]),
+    const designs = structuredClone([...state.designs.values()].sort((a, b) =>
+      b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt)));
+    const previews = new Map<number, Promise<Preview | undefined>>();
+    await Promise.all(designs.map(async entry => {
+      const run = currentDesignRun(entry);
+      if (!run?.signed) return;
+      let target = previews.get(run.pullRequest);
+      if (!target) {
+        target = this.deps.resolvePreview?.(projectId, run.pullRequest).catch(() => undefined) ?? Promise.resolve(undefined);
+        previews.set(run.pullRequest, target);
+      }
+      const preview = await target;
+      entry.currentSignoffRunId = preview?.commit === run.commit && preview.url === run.previewUrl ? run.id : null;
+    }));
+    return { projectId, designs, frameworks: structuredClone([...state.frameworks.values()]),
       permissions: { write: actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
         steward: actor.steward === true, actorId: actor.id } };
@@ -366,7 +379,7 @@ export class DesignWorkspaceService {
       if (type === 'design.freeze') {
         designRecord(input, '定稿请求', ['type', 'requestId', 'designId', 'version']);
         review(actor);
-        if (entry.reviewers && (!entry.reviewers.some(reviewer => reviewer.id === actor.id) || !await this.deps.reviewer?.(projectId, actor.id))) {
+        if (entry.reviewers?.length && (!entry.reviewers.some(reviewer => reviewer.id === actor.id) || !await this.deps.reviewer?.(projectId, actor.id))) {
           forbidden('请由此稿件的指定评审人定稿');
         }
         const version = versionOf(entry, input.version).version;
@@ -418,7 +431,7 @@ export class DesignWorkspaceService {
     const design = state.designs.get(id) ?? missing('该稿件不存在');
     const preparation = design.sharePreparations?.find(row => row.id === preparationId) ?? missing('没有这条分享准备记录');
     const version = versionOf(design, preparation.version);
-    if (design.reviewers && !design.reviewers.some(reviewer => reviewer.id === actor.id)) forbidden('请由稿件的指定评审人交接');
+    if (design.reviewers?.length && !design.reviewers.some(reviewer => reviewer.id === actor.id)) forbidden('请由稿件的指定评审人交接');
     if (version.sourceVerification !== 'git' || version.sourceCommit !== preparation.sourceCommit || version.sha256 !== preparation.packageSha256
       || (design.frozen !== version.version && !design.freezes?.some(row => row.version === version.version))) {
       conflict('要分享的版本已不符合原定稿记录');
@@ -495,6 +508,7 @@ export class DesignWorkspaceService {
       if (run.signed) conflict('该运行已经签收，请创建新运行');
       if (type === 'acceptance.record') {
         designRecord(input, '验收回填', ['type', 'requestId', 'designId', 'runId', 'commit', 'cells']);
+        if (run.pullRequest !== entry.pullRequest) conflict('关联 PR 已变更，请对当前 PR 重新运行。');
         if (designCommit(input.commit) !== run.commit) conflict('验收证据的提交与冻结运行不符');
         const current = await this.deps.resolvePreview?.(projectId, run.pullRequest, run.commit);
         if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览已经变化，请对新提交重跑');
@@ -569,7 +583,7 @@ export class DesignWorkspaceService {
       } else if (type === 'acceptance.sign') {
         designRecord(input, '签收请求', ['type', 'requestId', 'designId', 'runId']);
         if (actor.kind !== 'human') forbidden('此操作需要有写权限的项目成员签收');
-        if (run.version !== entry.frozen || run.version !== entry.versions.at(-1)!.version || run.id !== entry.runs.at(-1)?.id) {
+        if (run.pullRequest !== entry.pullRequest || run.version !== entry.frozen || run.version !== entry.versions.at(-1)!.version || run.id !== entry.runs.at(-1)?.id) {
           conflict('签收须对应最新已定稿版本及其最新运行');
         }
         const current = await this.deps.resolvePreview?.(projectId, run.pullRequest, run.commit);
@@ -585,7 +599,9 @@ export class DesignWorkspaceService {
       run.verdict = evaluateDesignAcceptance(version.acceptance.map(rule => ({ id: rule.id, priority: rule.priority,
         cells: run.cells.filter(cell => cell.itemId === rule.id).map(cell => ({ ...cell, applicable: true })) })));
     }
-    return { result: { type, designId: id, runId: run.id }, changes: { assets, design: { id, run, pullRequest: run.pullRequest } } };
+    return { result: { type, designId: id, runId: run.id }, changes: {
+      assets, design: { id, run, ...(type === 'acceptance.start' ? { pullRequest: run.pullRequest } : {}) },
+    } };
   }
 
   private async framework(type: string, input: Record<string, unknown>, { projectId, actor, state, now }: Context): Promise<Update> {

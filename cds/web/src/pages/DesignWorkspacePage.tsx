@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, Folder, Grid2X2, Info, Layers, List, Maximize, MessageSquare, Search, Terminal, Upload, X } from 'lucide-react';
 import { AppShell, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -27,6 +27,7 @@ const validSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
 export function DesignWorkspacePage() {
   const [params, setParams] = useSearchParams();
   const [reload, refresh] = useState(0);
+  const refreshWorkspace = useCallback(() => refresh(value => value + 1), []);
   const [busy, setBusy] = useState(false);
   const writing = useRef(false);
   const [issue, setIssue] = useState('');
@@ -59,7 +60,7 @@ export function DesignWorkspacePage() {
   const frameworkVersion = framework?.versions.find(row => row.version === Number(params.get('version')));
   const frameworkList = params.get('view') === 'frameworks';
   const version = entry?.versions.find(row => row.version === Number(params.get('version'))) ?? (entry ? latestDesign(entry) : undefined);
-  const canFreeze = permissions?.review && (!entry?.reviewers || entry.reviewers.some(reviewer => reviewer.id === permissions.actorId));
+  const canFreeze = permissions?.review && (!entry?.reviewers?.length || entry.reviewers.some(reviewer => reviewer.id === permissions.actorId));
   const canAssign = permissions?.write && entry && (permissions.steward || latestDesign(entry).publisher.id === permissions.actorId);
   const pinnedFramework = workspace?.frameworks.find(row => row.id === version?.framework)?.versions.find(row => row.version === version?.frameworkVersion);
   const tab = tabs.find(([value]) => value === params.get('tab'))?.[0] ?? 'preview';
@@ -108,7 +109,7 @@ export function DesignWorkspacePage() {
       if (response.projectId !== project) throw new Error('操作回执与当前项目不符');
       pending.current = undefined;
       setNotice('操作已保存');
-      refresh(value => value + 1);
+      refreshWorkspace();
       return true;
     } catch (error) { setIssue(error instanceof Error ? error.message : '未能保存操作，请重试'); return false; }
     finally { writing.current = false; setBusy(false); }
@@ -178,7 +179,7 @@ export function DesignWorkspacePage() {
           <div className="dw-tabrow">{summaryTabLinks}</div>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
-            canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} />}
+            canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} onPreviewStale={refreshWorkspace} />}
           {tab === 'rationale' && <DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
           {tab === 'spec' && <DesignSpec version={version} baseline={pinnedFramework?.material} />}
           {tab === 'log' && <DesignHistory entry={entry}

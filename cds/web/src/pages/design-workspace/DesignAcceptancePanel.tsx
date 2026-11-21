@@ -6,8 +6,9 @@ import { designSlots, type DesignCell, type DesignEntry, type DesignRun, type De
 import { cellNames, designArtifact, designDate, ruleModes, slotNames, verdictNames, type DesignCommand } from './design-ui';
 import { planningPath, usePlanningRead } from '../engineering-planning/planning-ui';
 
-export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, canSign, command }: {
-  entry: DesignEntry; version: DesignVersion; busy: boolean; canWrite: boolean; canReview: boolean; canSign: boolean; command: DesignCommand;
+export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, canSign, command, onPreviewStale }: {
+  entry: DesignEntry; version: DesignVersion; busy: boolean; canWrite: boolean; canReview: boolean; canSign: boolean;
+  command: DesignCommand; onPreviewStale: () => void;
 }) {
   const [params] = useSearchParams();
   const [runId, setRunId] = useState(params.get('run') ?? '');
@@ -39,10 +40,13 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   ] as const;
   const state = run?.verdict ?? 'needs_evidence';
   const activeCommit = preview.data?.projectId === entry.projectId ? preview.data.commit : undefined;
-  const stale = !!run && !!activeCommit && activeCommit !== run.commit;
-  const evidenceWritable = canWrite && !!run && activeCommit === run.commit && !preview.loading;
+  const linkedChanged = !!run && run.pullRequest !== entry.pullRequest;
+  const stale = !!run && (linkedChanged || (!!activeCommit && activeCommit !== run.commit));
+  const staleSignature = stale && !!run && entry.currentSignoffRunId === run.id;
+  useEffect(() => { if (staleSignature) onPreviewStale(); }, [staleSignature, onPreviewStale]);
+  const evidenceWritable = canWrite && !!run && !run.signed && !stale && activeCommit === run.commit && !preview.loading;
   const signable = run && !run.signed && entry.frozen === version.version && run.id === entry.runs.at(-1)?.id
-    && activeCommit === run.commit && !preview.loading
+    && !stale && activeCommit === run.commit && !preview.loading
     && (state === 'passed' || state === 'conditional') && version.version === entry.versions.at(-1)?.version;
   const send = (action: string, fields: Record<string, unknown>) => command(action, { designId: entry.id, ...fields });
   const start = async () => {
@@ -58,9 +62,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     <div className="dw-baseline">基准 V{entry.frozen ?? '未定稿'}{run && <> · PR #{run.pullRequest} · 提交 <code>{run.commit.slice(0, 8)}</code></>}</div>
     <section className="dw-surface dw-verdict">
       <div>
-        <strong className="dw-status" data-state={stale ? 'needs_evidence' : state}>{stale ? '针对旧提交' : run ? verdictNames[state] : '等待运行'}</strong>
-        <h2>{run ? `PR #${run.pullRequest} ${stale ? '预览已更新' : `${signable ? '可以' : run.signed ? '已按' : '暂不能按'} V${version.version} 签收`}` : '尚无真实页面验收证据'}</h2>
-        <p>{stale ? `当前预览为 ${activeCommit?.slice(0, 8)}。请对当前提交重新运行，本次验收保留在记录里。`
+        <strong className="dw-status" data-state={stale ? 'needs_evidence' : state}>{linkedChanged ? '针对旧 PR' : stale ? '针对旧提交' : run ? verdictNames[state] : '等待运行'}</strong>
+        <h2>{run ? `PR #${run.pullRequest} ${linkedChanged ? '关联已变更' : stale ? '预览已更新' : `${signable ? '可以' : run.signed ? '已按' : '暂不能按'} V${version.version} 签收`}` : '尚无真实页面验收证据'}</h2>
+        <p>{linkedChanged ? '请对当前关联的 PR 重新运行，本次验收保留在记录里。'
+          : stale ? `当前预览为 ${activeCommit?.slice(0, 8)}。请对当前提交重新运行，本次验收保留在记录里。`
           : run?.signed ? `签收于 ${designDate(run.signed.at)} · 提交 ${run.commit.slice(0, 8)}`
           : run && preview.loading ? '正在核对当前预览提交。'
           : run && !activeCommit ? '暂时无法核对当前预览提交，请确认预览已部署。'

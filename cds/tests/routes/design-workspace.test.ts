@@ -85,8 +85,8 @@ describe('private CDS design workspace', () => {
     const dependencies = {
       now: () => new Date(clock),
       frameworkProbe: async () => frameworkMeasurements,
-      resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && pr === 7 && (!commit || commit === activeCommit)
-        ? { commit: activeCommit, url: 'https://preview.fixture.test/' } : undefined,
+      resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && [7, 8].includes(pr) && (!commit || commit === activeCommit)
+        ? { commit: activeCommit, url: pr === 7 ? 'https://preview.fixture.test/' : 'https://preview.fixture.test/other/' } : undefined,
       sourcePackage: async (project: string, sha: string, sourcePath: string) => project === projectId && sha === sourceCommit && sourcePath === 'design/fixture' ? draft() : undefined,
       reviewer: async (project: string, id: string) => {
         const member = projectActor(project, id);
@@ -200,6 +200,30 @@ describe('private CDS design workspace', () => {
       expect(response.status).toBe(400);
     }
     expect((await (await get()).json()).designs).toEqual([]);
+  });
+
+  it('clears the reviewer requirement when the publisher explicitly chooses an empty list', async () => {
+    const first = await publish('review-before-clear', draft(), { reviewerIds: JSON.stringify(['other']), sourcePath: 'design/fixture' });
+    expect(first.status).toBe(201);
+    const { designId } = (await first.json()).result;
+    const current = async () => (await (await get()).json()).designs[0];
+    const freeze = { designId, version: 1 };
+    expect((await command('design.freeze', freeze, 'author')).status).toBe(403);
+    expect((await command('design.review', { designId, reviewerIds: [] }, 'designer')).status).toBe(201);
+    expect(await current()).toMatchObject({ reviewers: [], reviewRequested: false });
+    expect(await service.reviewNotices(projectId, people.get('other')!)).toEqual([]);
+    expect((await command('design.freeze', freeze, 'without-approval')).status).toBe(403);
+    expect((await command('design.freeze', freeze, 'author')).status).toBe(201);
+
+    const version = (await current()).versions[0];
+    const prepared = await command('share.prepare', { ...freeze, sourceCommit, packageSha256: version.sha256,
+      audience: 'password', expiresInHours: 24 }, 'author');
+    expect(prepared.status).toBe(201);
+    const { id } = (await prepared.json()).result;
+    enableShareHandoff = true;
+    const response = await fetch(`${base}${projectId}/design/shares/${id}/handoff`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-fixture-user': 'author' }, body: JSON.stringify({ designId }) });
+    expect(response.status).toBe(200);
   });
 
   it('privately coalesces review notices by design and recipient for an hour across versions and retries', async () => {
@@ -471,5 +495,40 @@ describe('private CDS design workspace', () => {
     expect((await command('acceptance.sign', { designId, runId })).status).toBe(409);
     activeCommit = 'd'.repeat(40);
     expect((await command('acceptance.record', record)).status).toBe(409);
+  });
+
+  async function runWithScreenshot() {
+    const { designId } = (await (await publish('version-for-signoff', draft())).json()).result;
+    expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+    const started = await command('acceptance.start', { designId, version: 1, pullRequest: 7 });
+    expect(started.status).toBe(201);
+    const { runId } = (await started.json()).result;
+    const record = { designId, runId, commit: previewCommit, cells: [{ itemId: 'A-1', slot: 'desktop-light', status: 'passed', actual: 'Verified fixture',
+      image: `data:image/png;base64,${png(1280, 800).toString('base64')}`, measured: { width: 1280, height: 800, theme: 'light', path: '/members/' } }] };
+    expect((await command('acceptance.record', record)).status).toBe(201);
+    return { designId, runId, record };
+  }
+
+  it('keeps the signature as history when the linked PR deploys a different commit', async () => {
+    const { designId, runId } = await runWithScreenshot();
+    const listing = async () => (await (await get()).json()).designs[0];
+    expect((await command('acceptance.sign', { designId, runId })).status).toBe(201);
+    const signed = await listing();
+    expect(signed.currentSignoffRunId).toBe(runId);
+    activeCommit = 'd'.repeat(40);
+    const latest = await listing();
+    expect(latest.currentSignoffRunId).toBeNull();
+    expect(latest.runs).toEqual(signed.runs);
+    expect((await get(`/artifacts/${signed.runs[0].cells[0].imageId}`)).status).toBe(200);
+  });
+
+  it('cannot sign or use an older PR run to restore a former design link', async () => {
+    const { designId, runId, record } = await runWithScreenshot();
+    expect((await command('design.link', { designId, pullRequest: 8 })).status).toBe(201);
+    expect((await command('acceptance.record', record)).status).toBe(409);
+    expect((await command('acceptance.sign', { designId, runId })).status).toBe(409);
+    const entry = (await (await get()).json()).designs[0];
+    expect(entry.pullRequest).toBe(8);
+    expect(entry.runs[0].signed).toBeUndefined();
   });
 });
