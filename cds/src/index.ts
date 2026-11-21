@@ -57,6 +57,8 @@ import {
   type InfraExemptionFact,
   platformStoreFacts,
 } from './services/platform-daily-health.js';
+import type { BackupHealthRecord } from './services/backup-panel.js';
+import { readSupplementalBackupHealth, supplementalBackupFindings } from './services/supplemental-backup-health.js';
 import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
 import {
   backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
@@ -1357,6 +1359,54 @@ function readBackupHealth(): { localVerifiedAt?: Date | null; remoteVerifiedAt?:
  *
  * 判定全在 platform-daily-health（纯函数、可回归），这里只负责取事实和落事件。
  */
+function readPlatformBackupRecord(): BackupHealthRecord | null {
+  for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
+    try {
+      const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8'));
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value as BackupHealthRecord;
+    } catch { /* Try the next backup directory. */ }
+  }
+  return null;
+}
+
+function activeSupplementalBackupHealth(health: BackupHealthRecord | null, now: Date) {
+  const running = new Set((stateService.getInfraServices() || []).filter((row) => row.status === 'running')
+    .map((row) => JSON.stringify([row.projectId, row.id])));
+  return readSupplementalBackupHealth(health, now)
+    .filter((fact) => running.has(JSON.stringify([fact.projectId, fact.id])));
+}
+
+function startSupplementalBackupAlerts(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (!store || config.mode === 'executor' || isPreviewInstance()) return null;
+  let previous = new Map<string, string>();
+  const run = () => {
+    const facts = activeSupplementalBackupHealth(readPlatformBackupRecord(), new Date());
+    const current = new Map<string, string>();
+    for (const fact of facts) {
+      const key = JSON.stringify([fact.projectId, fact.id]);
+      const code = fact.code;
+      if (fact.status === 'alert' && code) {
+        current.set(key, code);
+        if (previous.get(key) === code) continue;
+        store.record({
+          category: 'system', severity: 'warn', source: 'supplemental-backup',
+          action: 'backup.supplemental.alert', projectId: fact.projectId, serviceId: fact.id,
+          message: fact.message, status: 'warn', details: { code, verifiedAt: fact.verifiedAt },
+        });
+      } else if (previous.has(key)) {
+        store.record({
+          category: 'system', severity: 'info', source: 'supplemental-backup',
+          action: 'backup.supplemental.recovered', projectId: fact.projectId, serviceId: fact.id,
+          message: fact.message, status: 'success', details: { verifiedAt: fact.verifiedAt },
+        });
+      }
+    }
+    previous = current;
+  };
+  setTimeout(run, 60_000).unref();
+  return setInterval(run, 5 * 60_000).unref();
+}
+
 function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS.Timeout | null {
   if (config.mode === 'executor' || isPreviewInstance()) return null;
 
@@ -1455,35 +1505,31 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
       let coverageGaps: string[] = [];
       let failedTargets: BackupTargetRef[] = [];
       let offsiteOnlyTargets: BackupTargetRef[] = [];
-      for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
-        try {
-          const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
-            completedAt?: string | null;
-            coverageGaps?: Array<{ id?: string }>;
-            failedTargets?: Array<{ id?: string; projectId?: string | null }>;
-            offsiteOnlyTargets?: Array<{ id?: string; projectId?: string | null }>;
-          };
+      const value = readPlatformBackupRecord();
+      const now = new Date();
+      const supplemental = activeSupplementalBackupHealth(value, now);
+      const managed = new Set(supplemental.map((fact) => JSON.stringify([fact.projectId, fact.id])));
+      if (value) {
           // completedAt **只**回答「跑没跑」。不要在这里按 coverageComplete 再抹一次空——
           // 那正是这条链路上被抄了两份、又各自漂移的那个判据（见落盘处与 readBackupHealth
           // 的注释）。备没备全走 coverageGaps，谁没备成走 failedTargets。
           lastCompletedAt = value.completedAt ?? null;
-          coverageGaps = (value.coverageGaps || []).map((g) => String(g?.id || '')).filter(Boolean);
+          coverageGaps = (value.coverageGaps || []).filter((gap) => !managed.has(JSON.stringify([gap?.projectId, gap?.id])))
+            .map((g) => String(g?.id || '')).filter(Boolean);
           // 两类各自读。**不许合并**：它们要的运维动作不同，合起来那条告警就没法照做。
-          failedTargets = toBackupTargetRefs(value.failedTargets);
-          offsiteOnlyTargets = toBackupTargetRefs(value.offsiteOnlyTargets);
-          break;
-        } catch { /* 换下一个候选目录 */ }
+          failedTargets = toBackupTargetRefs(value.failedTargets ?? undefined);
+          offsiteOnlyTargets = toBackupTargetRefs(value.offsiteOnlyTargets ?? undefined);
       }
 
       // 事实四：恢复演练。**目前没有任何地方记录它**，所以恒为 null——
       // 体检会如实报「从来没演练过」。这不是占位符：在补上记录之前，
       // 「能不能真的恢复」的答案就是「不知道」，报成不知道才是对的。
       const verdict = evaluateDailyHealth({
-        now: new Date(),
+        now,
         infra,
         infraExemptions: exemptions,
         platformStores,
-        backup: { lastCompletedAt, coverageGaps, failedTargets, offsiteOnlyTargets },
+        backup: { lastCompletedAt, coverageGaps, failedTargets, offsiteOnlyTargets, supplementalFindings: supplementalBackupFindings(supplemental) },
         lastRestoreDrillAt: null,
       });
 
@@ -2256,6 +2302,7 @@ const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeSer
 // 每日安全体检：把公网端口、无口令的库、备份新鲜度、恢复演练合成一句结论。
 // 这些事实各自都有人算，但此前没有任何一处把它们合起来——于是要等人想起来查才发现。
 const platformDailyHealthCheck = startPlatformDailyHealthCheck(activeServerEventLogStore);
+startSupplementalBackupAlerts(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 // 存量系统互联连接补 report:read —— **默认不做**，要管理员显式开开关。

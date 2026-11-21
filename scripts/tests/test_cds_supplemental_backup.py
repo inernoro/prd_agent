@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tarfile
 import tempfile
@@ -42,6 +43,14 @@ class KafkaBackupTests(unittest.TestCase):
             with self.subTest(variant=variant), self.assertRaisesRegex(BACKUP.BackupError, "full data"):
                 self.backup(**variant)
 
+    def test_live_probe_reports_data_without_running_an_upload(self):
+        with patch.object(BACKUP, "inspect", return_value={"Id": "same"}), patch.object(
+            BACKUP, "kafka_offsets", return_value={("one", 0): 7}
+        ), patch.object(BACKUP, "kafka_cli", return_value=""):
+            with self.assertRaises(BACKUP.BackupError) as caught:
+                BACKUP.observe_target({"kind": "kafka"})
+            self.assertEqual(caught.exception.code, "kafka-data-present")
+
     def test_mismatched_inventory_and_custom_configuration_fail(self):
         with self.assertRaisesRegex(BACKUP.BackupError, "disagree"):
             self.backup(listed="one\ntwo")
@@ -73,6 +82,20 @@ class RabbitBackupTests(unittest.TestCase):
             with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as reader:
                 self.assertEqual(reader.getnames(), ["mnesia", "mnesia/store", "backup.json"])
                 self.assertEqual(reader.extractfile("mnesia/store").read(), b"fixture")
+
+
+class ProbeReceiptTests(unittest.TestCase):
+    def test_probe_atomically_reports_a_scoped_failure(self):
+        config = {"targets": [{"project": "project", "service": "kafka", "kind": "kafka"}]}
+        with tempfile.TemporaryDirectory() as workspace, patch.object(
+            BACKUP, "observe_target", side_effect=BACKUP.BackupError("private details", "kafka-data-present")
+        ):
+            root = Path(workspace)
+            self.assertEqual(BACKUP.probe(root, config), 1)
+            receipt = json.loads((root / "probe.json").read_text())
+            self.assertEqual(receipt["targets"], [{"projectId": "project", "id": "kafka", "kind": "kafka",
+                                                   "ok": False, "code": "kafka-data-present"}])
+            self.assertEqual(list(root.iterdir()), [root / "probe.json"])
 
 
 if __name__ == "__main__":

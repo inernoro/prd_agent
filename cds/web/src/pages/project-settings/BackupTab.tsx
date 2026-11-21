@@ -22,7 +22,7 @@ import { createLatestOnly } from '@/lib/latest-only';
 
 type BackupTargetStatus =
   | 'failed' | 'artifact-missing' | 'not-in-last-round' | 'offsite-only' | 'partial'
-  | 'unprotected' | 'unsupported' | 'ok';
+  | 'unprotected' | 'unsupported' | 'supplemental-alert' | 'ok';
 
 interface BackupPanelTarget {
   id: string;
@@ -32,6 +32,7 @@ interface BackupPanelTarget {
   offsite: boolean;
   lastSuccessAt: string | null;
   fileCount: number;
+  source?: 'supplemental' | 'state-backup' | 'stateless';
 }
 
 interface BackupHealthFinding {
@@ -66,6 +67,7 @@ const STATUS_META: Record<BackupTargetStatus, { label: string; tone: 'ok' | 'war
   unprotected: { label: '没有保护', tone: 'warn' },
   // 与上一档的差别是**有没有数据**：memcached 重启即空，没有需要备份的状态，不必惊动人。
   unsupported: { label: '没有需要备份的状态', tone: 'muted' },
+  'supplemental-alert': { label: '补充备份告警', tone: 'bad' },
   ok: { label: '正常', tone: 'ok' },
 };
 
@@ -137,7 +139,7 @@ function TargetRow({ target }: { target: BackupPanelTarget }): JSX.Element {
     ? formatBytes(target.bytes)
     : last
       ? `上次 ${last}`
-      : '无副本';
+      : target.source === 'stateless' ? '—' : '无副本';
 
   return (
     <div className="border-b border-border last:border-b-0">
@@ -161,7 +163,10 @@ function TargetRow({ target }: { target: BackupPanelTarget }): JSX.Element {
           ) : (
             <p>这一轮没有异常说明。</p>
           )}
-          <div className="flex flex-wrap gap-x-5 gap-y-1">
+          {target.source !== 'stateless' ? <div className="flex flex-wrap gap-x-5 gap-y-1">
+            {target.source ? <span>来源 <span className="text-foreground">
+              {target.source === 'state-backup' ? 'CDS 状态库' : '补充离机备份'}
+            </span></span> : null}
             <span>
               最近一次成功{' '}
               <span className="font-mono text-foreground">
@@ -170,15 +175,15 @@ function TargetRow({ target }: { target: BackupPanelTarget }): JSX.Element {
               </span>
             </span>
             <span>
-              这一轮产物 <span className="font-mono text-foreground">{formatBytes(target.bytes)}</span>
+              {target.source ? '离机归档大小' : '这一轮产物'} <span className="font-mono text-foreground">{formatBytes(target.bytes)}</span>
             </span>
             <span>
-              离机副本 <span className="font-mono text-foreground">{target.offsite ? '有' : '无'}</span>
+              离机副本 <span className="font-mono text-foreground">{target.offsite ? '已验证' : target.source ? '当前未验证' : '无'}</span>
             </span>
             <span>
               盘上留存 <span className="font-mono text-foreground">{target.fileCount} 份</span>
             </span>
-          </div>
+          </div> : null}
         </div>
       ) : null}
     </div>
@@ -237,15 +242,17 @@ export function BackupPanel({
   const needsAttention = data.targets.filter((t) => t.status !== 'ok' && t.status !== 'unsupported');
   const normal = data.targets.filter((t) => t.status === 'ok');
   const unsupported = data.targets.filter((t) => t.status === 'unsupported');
+  const hasSupplemental = data.targets.some((t) => t.source);
   const VerdictIcon = data.verdict.tone === 'ok' ? ShieldCheck : data.verdict.tone === 'warn' ? TriangleAlert : ShieldAlert;
   const verdictSurface = data.verdict.tone === 'ok' ? 'bg-ok-soft' : data.verdict.tone === 'warn' ? 'bg-warn-soft' : 'bg-bad-soft';
   const verdictInk = data.verdict.tone === 'ok' ? 'text-ok' : data.verdict.tone === 'warn' ? 'text-warn' : 'text-bad';
   const lastRound = since(data.lastRoundAt);
   const nextRound = until(data.nextRoundEstimatedAt);
-  const offsiteCount = data.targets.filter((t) => t.offsite).length;
+  const offsiteCount = data.targets.filter((t) => t.offsite && t.bytes != null).length;
   const producedCount = data.targets.filter((t) => t.bytes != null).length;
   // 严重的排前面，页脚只摆一条：页脚是「顺带一提」，不是第二块结论区。
-  const topFinding = data.findings.find((f) => f.severity === 'critical') ?? data.findings[0] ?? null;
+  const topFinding = data.findings.find((f) => f.id.startsWith('backup.supplemental.'))
+    ?? data.findings.find((f) => f.severity === 'critical') ?? data.findings[0] ?? null;
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -253,7 +260,7 @@ export function BackupPanel({
         <div>
           <h3 className="text-base font-semibold">周期备份</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            CDS 每 6 小时自动导出一次这个项目的数据服务，本机留一份、离机再传一份。这里是最近一轮的结果。
+            查看常规周期备份、补充离机备份和需要处理的覆盖告警。
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={busy}>
@@ -267,8 +274,8 @@ export function BackupPanel({
         <div className="min-w-0 flex-1">
           <div className="text-[1.0625rem] font-semibold leading-7">{data.verdict.headline}</div>
           <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>上一轮 <span className="font-mono text-foreground">{lastRound ?? '不知道'}</span></span>
-            {nextRound ? <span>下一轮 <span className="font-mono text-foreground">{nextRound}</span></span> : null}
+            <span>常规备份上一轮 <span className="font-mono text-foreground">{lastRound ?? '不知道'}</span></span>
+            {nextRound ? <span>常规备份下一轮 <span className="font-mono text-foreground">{nextRound}</span></span> : null}
             {producedCount > 0 ? (
               <span>离机 <span className="font-mono text-foreground">{producedCount} 份里 {offsiteCount} 份</span></span>
             ) : null}
@@ -290,7 +297,8 @@ export function BackupPanel({
       ) : null}
 
       <div className="flex flex-col gap-1.5">
-        <CollapsedGroup label={`${normal.length} 个目标正常，最近一轮都有副本`} targets={normal} tone="ok" />
+        <CollapsedGroup label={hasSupplemental ? `${normal.length} 个目标的备份正常`
+          : `${normal.length} 个目标正常，最近一轮都有副本`} targets={normal} tone="ok" />
         <CollapsedGroup label={`${unsupported.length} 个服务没有需要备份的状态`} targets={unsupported} tone="muted" sunken />
       </div>
 

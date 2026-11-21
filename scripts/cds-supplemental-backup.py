@@ -38,7 +38,9 @@ OPTIONAL_BUCKET_SETTINGS = {
 
 
 class BackupError(RuntimeError):
-    pass
+    def __init__(self, message, code="backup-failed"):
+        super().__init__(message)
+        self.code = code
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -262,17 +264,34 @@ def kafka_cli(target, executable, *args):
                "--bootstrap-server", "127.0.0.1:9092", *args)
 
 
+def kafka_offsets(target, when):
+    values = {}
+    for line in kafka_cli(target, "kafka-get-offsets.sh", "--time", when).splitlines():
+        topic, partition, offset = line.rsplit(":", 2)
+        # Only Kafka-owned internal topics are exempt, not all user topics beginning with '__'.
+        if topic not in {"__consumer_offsets", "__transaction_state"}:
+            values[topic, int(partition)] = int(offset)
+    return values
+
+
+def assert_kafka_empty(target, offsets):
+    groups = kafka_cli(target, "kafka-consumer-groups.sh", "--list").strip()
+    if groups or any(offsets.values()):
+        raise BackupError("Kafka has messages or committed offsets, requiring full data replication",
+                          "kafka-data-present")
+
+
 def kafka_backup(target):
     identity = inspect(target)["Id"]
 
     def describe():
         actual = {line.strip() for line in kafka_cli(target, "kafka-topics.sh", "--list").splitlines()
-                  if line.strip() and not line.strip().startswith("__")}
+                  if line.strip() and line.strip() not in {"__consumer_offsets", "__transaction_state"}}
         rows = []
         for line in kafka_cli(target, "kafka-topics.sh", "--describe").splitlines():
             match = re.fullmatch(r"Topic: (\S+)\s+TopicId: \S+\s+PartitionCount: (\d+)\s+"
                                  r"ReplicationFactor: (\d+)\s+Configs:\s*(.*)", line.strip())
-            if match is None or match[1].startswith("__"):
+            if match is None or match[1] not in actual:
                 continue
             topic, parts, replicas, config = match.groups()
             if config or int(parts) < 1 or int(replicas) != 1:
@@ -286,19 +305,10 @@ def kafka_backup(target):
     if not before:
         raise BackupError("No Kafka business topic metadata was returned")
     expected = {(row["topic"], index) for row in before for index in range(row["partitions"])}
-    offsets = []
-    for when in ("earliest", "latest"):
-        values = {}
-        for line in kafka_cli(target, "kafka-get-offsets.sh", "--time", when).splitlines():
-            fields = line.rsplit(":", 2)
-            if len(fields) == 3 and fields[0] in {row["topic"] for row in before}:
-                values[fields[0], int(fields[1])] = int(fields[2])
-        if values.keys() != expected:
-            raise BackupError("Kafka partition offset inventory is incomplete")
-        offsets.append(values)
-    groups = kafka_cli(target, "kafka-consumer-groups.sh", "--list").strip()
-    if groups or offsets[0] != offsets[1] or any(offsets[1].values()):
-        raise BackupError("Kafka has messages or committed offsets, requiring full data replication")
+    earliest, latest = (kafka_offsets(target, when) for when in ("earliest", "latest"))
+    assert_kafka_empty(target, latest)
+    if earliest.keys() != expected or latest.keys() != expected or earliest != latest:
+        raise BackupError("Kafka partition offset inventory is incomplete")
     if identity != inspect(target)["Id"] or before != describe():
         raise BackupError("Kafka topology changed during capture")
     return {"kind": "kafka-empty-topics", "topics": before}
@@ -435,8 +445,11 @@ def rabbit_backup(target):
             or container["Id"] != inspect(target)["Id"]):
         raise BackupError("RabbitMQ activity changed during the read-only capture")
     disk_budget()
-    verify_rabbit_archive(archive, (permissions.st_uid, permissions.st_gid),
-                          (cookie_permissions.st_uid, cookie_permissions.st_gid), hostname, container["Image"], queues)
+    try:
+        verify_rabbit_archive(archive, (permissions.st_uid, permissions.st_gid),
+                              (cookie_permissions.st_uid, cookie_permissions.st_gid), hostname, container["Image"], queues)
+    except (BackupError, OSError, subprocess.TimeoutExpired) as error:
+        raise BackupError("Isolated RabbitMQ recovery verification failed", "rabbitmq-restore-failed") from error
     return archive, {"queues": metadata["queueCount"], "persistentMessages": metadata["persistentMessages"]}
 
 
@@ -446,15 +459,93 @@ def disk_budget():
         raise BackupError("Disk reserve before 85 percent is insufficient")
 
 
+def observe_target(target):
+    container = inspect(target)
+    if target["kind"] == "kafka":
+        offsets = kafka_offsets(target, "latest")
+        assert_kafka_empty(target, offsets)
+        if not offsets:
+            raise BackupError("Kafka probe returned no business partition offsets", "probe-failed")
+    elif target["kind"] == "stateless":
+        cfg = container["Config"]
+        command = [container["Image"], cfg["Entrypoint"], cfg["Cmd"]]
+        if container["Mounts"] or sha(encode(command)) != target["commandSha256"]:
+            raise BackupError("Audited proxy deployment changed", "stateless-changed")
+    elif target["kind"] == "state-runtime":
+        volumes = [Path(m["Source"]) for m in container["Mounts"]
+                   if m["Type"] == "volume" and m["Destination"] == "/data"]
+        if len(volumes) != 1 or len(container["Mounts"]) != 1 or not volumes[0].is_dir():
+            raise BackupError("Could not confirm the runtime data volume", "runtime-data-unconfirmed")
+        if any(p.is_symlink() or not p.is_dir() for p in volumes[0].rglob("*")):
+            raise BackupError("Runtime data volume contains files", "runtime-data-present")
+    if container["Id"] != inspect(target)["Id"]:
+        raise BackupError("Source changed during the coverage probe", "probe-failed")
+
+
+def read_previous(path):
+    if not path.is_file():
+        return {}
+    try:
+        receipt = json.loads(path.read_text())
+        return {(row["projectId"], row["id"], row["kind"]): row["lastVerified"]
+                for row in receipt["targets"] if row.get("lastVerified")}
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
+def publish(base, name, rows):
+    path = base / name
+    temporary = path.with_name(f".{name}.{os.getpid()}.tmp")
+    payload = {"version": 2, "completedAt": utc().isoformat(), "targets": rows}
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(encode(payload) + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def scoped_target(target):
+    project, service, kind = (target[k] for k in ("project", "service", "kind"))
+    if kind not in {"minio", "rustfs", "kafka", "rabbitmq", "stateless", "state-runtime"} or not all(
+            re.fullmatch(r"[a-z0-9_][a-z0-9_-]{0,100}", value) for value in (project, service)):
+        raise BackupError("Invalid backup target configuration")
+    return {"projectId": project, "id": service, "kind": kind}
+
+
+def probe(base, config):
+    rows = []
+    for target in config["targets"]:
+        if target["kind"] not in {"kafka", "stateless", "state-runtime"}:
+            continue
+        row = scoped_target(target)
+        try:
+            observe_target(target)
+            row["ok"] = True
+        except (BackupError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+            row.update(ok=False, code=error.code if isinstance(error, BackupError) and
+                       error.code != "backup-failed" else "probe-failed")
+        rows.append(row)
+    publish(base, "probe.json", rows)
+    print(json.dumps({"coverageProbe": {row["id"]: row.get("code", "ok") for row in rows}}))
+    return 0 if all(row["ok"] for row in rows) else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--probe", action="store_true")
     args = parser.parse_args()
     os.umask(0o077)
     config = json.loads(args.config.read_text())
     base = Path(config["stateDirectory"])
     base.mkdir(parents=True, exist_ok=True)
+    if args.probe:
+        return probe(base, config)
     stamp = utc().strftime("%Y%m%dT%H%M%S.%fZ")
+    previous = read_previous(base / "latest.json")
     master_pid = int(run("systemctl", "show", "cds-master", "-p", "MainPID", "--value"))
     if master_pid <= 1:
         raise BackupError("CDS backup configuration is unavailable")
@@ -464,15 +555,16 @@ def main():
     if not prefix or not env[b"R2_ENDPOINT"].startswith(b"https://"):
         raise BackupError("The configured CDS private R2 prefix is required")
     outcomes = {}
+    rows = []
     with (base / "requests.jsonl").open("a", encoding="utf-8") as audit:
         remote = S3(env[b"R2_ENDPOINT"].decode(), env[b"R2_ACCESS_KEY_ID"].decode(),
                     env[b"R2_SECRET_ACCESS_KEY"].decode(), "auto", "cds-backup-r2", audit)
         for target in config["targets"]:
-            service = target["service"]
-            project = target["project"]
-            if target["kind"] not in {"minio", "rustfs", "kafka", "rabbitmq"} or not all(
-                    re.fullmatch(r"[a-z0-9][a-z0-9-]{0,100}", value) for value in (project, service)):
-                raise BackupError("Invalid backup target configuration")
+            row = scoped_target(target)
+            service, project, kind = row["id"], row["projectId"], row["kind"]
+            if kind in {"stateless", "state-runtime"}:
+                continue
+            previous_point = previous.get((project, service, kind))
             try:
                 disk_budget()
                 if target["kind"] == "rabbitmq":
@@ -496,11 +588,18 @@ def main():
                     raise BackupError("R2 archive readback did not match the captured data")
                 outcomes[service] = {"ok": True, "object": path, "bytes": len(archive), "sha256": checksum,
                                      "verifiedRecovery": verified}
-            except (BackupError, ET.ParseError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+                row.update(ok=True, lastVerified={"at": utc().isoformat(), "bytes": len(archive),
+                                                  "sha256": checksum, "recovery": verified})
+            except (BackupError, ET.ParseError, ValueError, KeyError, OSError, subprocess.TimeoutExpired) as error:
                 detail = str(error) if isinstance(error, BackupError) else type(error).__name__
                 outcomes[service] = {"ok": False, "error": detail}
+                row.update(ok=False, code=error.code if isinstance(error, BackupError) else "backup-failed")
+                if previous_point:
+                    row["lastVerified"] = previous_point
+            rows.append(row)
     receipt = base / (stamp + ".json")
     receipt.write_bytes(encode({"completedAt": utc().isoformat(), "targets": outcomes}) + b"\n")
+    publish(base, "latest.json", rows)
     print(json.dumps({"receipt": str(receipt), "targets": {key: value["ok"] for key, value in outcomes.items()}}))
     return 0 if outcomes and all(value["ok"] for value in outcomes.values()) else 1
 

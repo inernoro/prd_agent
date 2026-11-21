@@ -24,6 +24,7 @@ import { detectInfraKind } from './infra-exposure-audit.js';
 // 陈旧阈值走每日体检那一份，不在这里另定一个数：两处各写一个数字，页脚说「已经陈旧」
 // 而第一屏还是绿的，就是同一屏自相矛盾（形状 3）。
 import { BACKUP_STALE_AFTER_MS } from './platform-daily-health.js';
+import type { SupplementalBackupFact } from './supplemental-backup-health.js';
 
 /**
  * 一个目标这一轮的处境。**五档不能合并**——每一档要人做的事都不一样：
@@ -62,7 +63,7 @@ import { BACKUP_STALE_AFTER_MS } from './platform-daily-health.js';
  */
 export type BackupTargetStatus =
   | 'failed' | 'artifact-missing' | 'not-in-last-round' | 'offsite-only' | 'partial'
-  | 'unprotected' | 'unsupported' | 'ok';
+  | 'unprotected' | 'unsupported' | 'supplemental-alert' | 'ok';
 
 export interface BackupPanelTarget {
   id: string;
@@ -77,6 +78,7 @@ export interface BackupPanelTarget {
   lastSuccessAt: string | null;
   /** 盘上属于这个目标的周期备份份数。 */
   fileCount: number;
+  source?: SupplementalBackupFact['source'];
 }
 
 /** 落盘的那份健康文件（`.cds-backup-health.json`）里，面板要用到的字段。 */
@@ -92,6 +94,7 @@ export interface BackupHealthRecord {
     projectId?: string | null;
     fileName?: string;
     remoteObjectKey?: string | null;
+    sha256?: string | null;
     bytes?: number | null;
   }> | null;
 }
@@ -255,6 +258,7 @@ export function buildBackupPanel(input: {
    * 新建的库和当时停着的服务会从面板上整个消失（Codex review 第二轮 P1）。
    */
   infra?: readonly BackupInfraFact[];
+  supplemental?: readonly SupplementalBackupFact[];
   /** 备份周期。默认取真实排程的那个常量，用例可以覆盖。 */
   intervalMs?: number;
 }): BackupPanelView {
@@ -311,6 +315,9 @@ export function buildBackupPanel(input: {
   const infraById = new Map(
     infraAll.filter((s) => s.running !== false).map((s) => [String(s.id), s]),
   );
+  const supplemental = new Map((input.supplemental || [])
+    .filter((fact) => fact.projectId === projectId && infraById.has(fact.id))
+    .map((fact) => [fact.id, fact]));
   const ids = [...new Set([
     ...objectById.keys(),
     ...failedById.keys(),
@@ -386,6 +393,16 @@ export function buildBackupPanel(input: {
           : (status === 'partial' || status === 'unprotected')
             ? cleanReason(gap?.reason)
             : null;
+    const extra = supplemental.get(id);
+    if (extra?.status === 'alert') {
+      return { id, status: 'supplemental-alert', reason: extra.message, bytes: null, offsite: false,
+        lastSuccessAt: extra.verifiedAt, fileCount: own.length, source: extra.source };
+    }
+    if (extra && status !== 'failed' && status !== 'artifact-missing' && status !== 'offsite-only') {
+      return { id, status: extra.status === 'exempt' ? 'unsupported' : 'ok', reason: extra.message,
+        bytes: extra.bytes, offsite: extra.status === 'verified', lastSuccessAt: extra.verifiedAt,
+        fileCount: own.length, source: extra.source };
+    }
     return {
       id,
       status,
@@ -455,7 +472,8 @@ function computeNothingToBackUp(
   // 于是判成「没有需要周期备份的服务」并把页脚整段关掉——那台 mysql 可能装着
   // 从没备过的数据。上一轮的用例只覆盖了「只有停机 mysql」（目标为空那一支），
   // 混着一台无状态服务就从另一支溜过去了（形状 1：判据比它该管的范围窄）。
-  if (infra.some(serviceNeedsBackup)) return false;
+  const auditedExempt = new Set(targets.filter((t) => t.source === 'stateless' && t.status === 'unsupported').map((t) => t.id));
+  if (infra.some((fact) => !auditedExempt.has(fact.id) && serviceNeedsBackup(fact))) return false;
   if (targets.length === 0) return true;
   return targets.every((t) => t.status === 'unsupported');
 }
@@ -474,6 +492,7 @@ function buildVerdict(
 ): BackupPanelView['verdict'] {
   const count = (s: BackupTargetStatus): number => targets.filter((t) => t.status === s).length;
   const failed = count('failed');
+  const supplementalAlerts = count('supplemental-alert');
   const missing = count('artifact-missing');
   const uncovered = count('not-in-last-round');
   const offsite = count('offsite-only');
@@ -481,13 +500,14 @@ function buildVerdict(
   const unprotected = count('unprotected');
   const unsupported = count('unsupported');
   const ok = count('ok');
+  const requiresPrimary = targets.length === 0 || targets.some((target) => !target.source);
 
   // 「上一轮是多久以前」要**先算**，因为它可能盖过下面几档的结论：调度器停了三天时，
   // 屏幕上那些目标状态描述的是三天前那一轮，拿其中一条当头条会让人以为那是此刻的处境
   // （Codex review 第九轮 P2）。
   const roundAt = health ? Date.parse(String(health.completedAt || '')) : NaN;
   const staleBy = Number.isFinite(roundAt) ? now.getTime() - roundAt : null;
-  const stale = staleBy !== null && staleBy > BACKUP_STALE_AFTER_MS;
+  const stale = requiresPrimary && staleBy !== null && staleBy > BACKUP_STALE_AFTER_MS;
   const staleHours = staleBy === null ? 0 : Math.floor(staleBy / 3_600_000);
 
   const rest: string[] = [];
@@ -514,7 +534,10 @@ function buildVerdict(
   if (nothingToBackUp) {
     return { tone: 'ok', headline: '这个项目没有需要周期备份的服务', subline: null };
   }
-  if (!health) {
+  if (supplementalAlerts > 0) {
+    return { tone: 'bad', headline: `${supplementalAlerts} 个目标的补充备份需要处理`, subline };
+  }
+  if (!health && requiresPrimary) {
     return {
       tone: 'bad',
       // 读不到不等于没问题——这句话是这套体检的第一条纪律。
@@ -543,7 +566,7 @@ function buildVerdict(
   // 时间读不出来（字段缺了、写坏了）**不能当没这回事**（Codex review 第五轮 P1）：
   // 一个说不出年龄的轮次凭什么叫「最近」。每日体检对同一份记录报的是 critical 的
   // `backup.unknown`，这里必须同调。
-  if (!Number.isFinite(roundAt)) {
+  if (requiresPrimary && !Number.isFinite(roundAt)) {
     return {
       tone: 'bad',
       headline: '上一轮备份没有记下完成时间，说不出手上这批副本是什么时候的',
@@ -556,7 +579,7 @@ function buildVerdict(
   //
   // 排在 failed / artifact-missing 之后：那两档同为 bad，且说的是「手上现在没有那份
   // 文件」，比「这批副本有点旧」更该先做。它们当头条时，陈旧退到第二行，不会消失。
-  if (stale) {
+  if (requiresPrimary && stale) {
     return {
       tone: 'bad',
       headline: `周期备份已经 ${staleHours} 小时没跑了，手上最新的副本就停在那一轮`,
@@ -599,7 +622,7 @@ function buildVerdict(
     };
   }
 
-  const age = relativeAge(now, health.completedAt ?? null);
+  const age = relativeAge(now, health?.completedAt ?? null);
   if (ok === 0) {
     // 走到这里，`nothingToBackUp` **必定为假**——真的话上面第一档早就返回了。
     // 所以这不是「没有需要备份的服务」，而是「有，但上一轮一个都没备到」：最典型的
@@ -616,7 +639,9 @@ function buildVerdict(
   }
   return {
     tone: 'ok',
-    headline: age
+    headline: targets.some((target) => target.source)
+      ? `${ok} 个目标有已验证的副本`
+      : age
       ? `${ok} 个能备的目标都有 ${age}的副本`
       : `${ok} 个能备的目标都拿到了最近一轮的副本`,
     subline: unsupported > 0 ? `没有需要备份的状态 ${unsupported} 个` : null,
