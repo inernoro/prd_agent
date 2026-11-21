@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IMAGE_CACHE_PROGRAM } from '../../src/services/image-cache-program.js';
 import { ImageCacheGovernance, collectImageCacheReferences } from '../../src/services/image-cache-governance.js';
 import { captureDeploymentIntent, readDeploymentIntent } from '../../src/services/deployment-intent.js';
-import type { DeploymentRun } from '../../src/types.js';
+import type { DeploymentRun, IShellExecutor } from '../../src/types.js';
 import { resumedReclaimExecution, recordReclaimExecution } from '../../src/services/reclaim-execution-journal.js';
 import { StateService } from '../../src/services/state.js';
 
@@ -199,6 +199,37 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
   });
 });
 describe('image cache orchestration and durable status', () => {
+  it('retries a busy runtime catalog with freshly read protection references', async () => {
+    const exec = vi.fn<IShellExecutor['exec']>()
+      .mockResolvedValueOnce({ exitCode: 3, stdout: '{"catalogError":"catalog-busy"}', stderr: '' })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '{"published":true}', stderr: '' });
+    const references = vi.fn<() => string[]>().mockReturnValueOnce(['previous']).mockReturnValueOnce(['current']);
+    const service = new ImageCacheGovernance({ shell: { exec }, catalog: '/unused', instanceId: 'owned', budgetBytes: 1, protectedReferences: references });
+
+    await expect(service.publish()).resolves.toEqual({ published: true });
+
+    expect(exec.mock.calls.map(([, options]) => JSON.parse(options!.stdin!).references)).toEqual([['previous'], ['current']]);
+    expect(exec.mock.calls[1][1]!.timeout).toBeLessThan(exec.mock.calls[0][1]!.timeout!);
+  });
+
+  it('does not retry a lock-busy request after its deployment lease expires', async () => {
+    let current = true;
+    const exec = vi.fn<IShellExecutor['exec']>().mockImplementationOnce(async () => {
+      setTimeout(() => { current = false; }, 0);
+      return { exitCode: 3, stdout: '{"catalogError":"catalog-busy"}', stderr: '' };
+    });
+    const service = new ImageCacheGovernance({ shell: { exec }, catalog: '/unused', instanceId: 'owned', budgetBytes: 1, protectedReferences: () => [] });
+    await expect(service.prepare(digest, () => { if (!current) throw new Error('lease expired'); })).rejects.toThrow('lease expired');
+    expect(exec).toHaveBeenCalledOnce();
+  });
+
+  it('does not repeat a native operation with an unconfirmed outcome', async () => {
+    const exec = vi.fn<IShellExecutor['exec']>().mockResolvedValue({ exitCode: 1, stdout: '', stderr: 'native operation failed' });
+    const service = new ImageCacheGovernance({ shell: { exec }, catalog: '/unused', instanceId: 'owned', budgetBytes: 1, protectedReferences: () => [] });
+    await expect(service.confirm('receipt', () => {})).rejects.toThrow('对象身份或引用未确认');
+    expect(exec).toHaveBeenCalledOnce();
+  });
+
   it.each([
     { versionId: 'fixed-version' },
     { hasOneShotOptions: true },
@@ -230,7 +261,8 @@ describe('image cache orchestration and durable status', () => {
     const service = new ImageCacheGovernance({ shell: shell as any, catalog: '/unused', instanceId: 'owned', budgetBytes: 1, protectedReferences: () => [] });
     const request = vi.spyOn(service, 'request').mockImplementation(async action => action === 'preview' ? { nextBatch: [{ identity: id, recoveryDigests: [digest] }] } : action === 'reconcile' ? { held: [], pending: [id], failed: [], counts: {} } : {});
     const result: any = await service.inspect(false);expect(shell.exec).not.toHaveBeenCalled();expect(result.failed).toHaveLength(1);
-    expect(request.mock.calls.find(c => c[0] === 'reconcile')?.[1]).toMatchObject({ targetIdentities: [] });
+    const reconcile = request.mock.calls.find(c => c[0] === 'reconcile')?.[1];
+    expect(typeof reconcile === 'function' ? reconcile() : reconcile).toMatchObject({ targetIdentities: [] });
   });
   it('preserves the current ledger anchor independently of idle cache generation order', () => {
     const state = { getDeploymentVersions: () => Array.from({ length: 8 }, (_, i) => ({ id: String(i), projectId: 'p', branchId: 'b', createdAt: '2026-11-' + String(10 - i).padStart(2, '0'), profiles: [{ profileId: 'web', artifactImage: 'image:' + i, reusable: true }] })), getBranch: () => ({ id: 'b', projectId: 'p', status: 'idle', currentVersionId: '7', lastAccessedAt: '2026-01-01' }), getProject: () => undefined, getDefaultBranchFor: () => undefined, getDeploymentIntents: () => [], getReleaseBatches: () => [] };
