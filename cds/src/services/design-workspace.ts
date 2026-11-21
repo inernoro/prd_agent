@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
+  DesignSharePreparation,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
 import { designSlots } from '../shared/design-workspace.js';
@@ -16,14 +17,15 @@ import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revis
 export type DesignActor = PlanningActor & { steward?: boolean };
 type Receipt = {
   projectId: string; reused: boolean;
-  result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string };
+  result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
+    state?: DesignSharePreparation['state']; sourceCommit?: string };
 };
 type RequestReceipt = { key: string; fingerprint: string; result: Receipt['result'] };
 export type DesignWorkspaceCommit = {
   projectId: string; revision: number; request: RequestReceipt; assets?: ProjectRevisionAsset[];
   design?: { id: string; version?: DesignVersion; comment?: DesignComment; run?: DesignRun;
     frozen?: number; freeze?: NonNullable<DesignEntry['freezes']>[number]; pullRequest?: number; reviewRequested?: boolean;
-    reviewers?: DesignReviewer[]; notifyReviewersAt?: string };
+    reviewers?: DesignReviewer[]; notifyReviewersAt?: string; sharePreparation?: DesignSharePreparation };
   framework?: DesignFramework;
 };
 type Changes = Pick<DesignWorkspaceCommit, 'assets' | 'design' | 'framework'>;
@@ -84,6 +86,7 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
     if (update.pullRequest !== undefined) design.pullRequest = update.pullRequest;
     if (update.reviewRequested !== undefined) design.reviewRequested = update.reviewRequested;
     if (update.reviewers !== undefined) design.reviewers = update.reviewers;
+    if (update.sharePreparation) design.sharePreparations = [...(design.sharePreparations ?? []), update.sharePreparation];
     if (update.notifyReviewersAt) {
       const at = update.notifyReviewersAt;
       const version = design.versions.at(-1)!;
@@ -334,12 +337,17 @@ export class DesignWorkspaceService {
     const input = designRecord(value, '设计命令');
     const type = planningText(input.type, '命令类型', 60);
     const requestId = designId(input.requestId, '请求编号');
+    if (type === 'share.prepare') {
+      requireProjectRead(actor);
+      review(actor);
+    }
     return this.mutate(projectId, actor, requestId, input, async context => {
       if (type === 'framework.import' || type === 'framework.extract') return this.framework(type, input, context);
       const id = designId(input.designId, '稿件编号');
       const entry = context.state.designs.get(id) ?? missing('该稿件不存在');
       if (type.startsWith('comment.')) return this.comment(type, input, context, entry);
       if (type.startsWith('acceptance.')) return this.acceptance(type, input, context, entry);
+      if (type === 'share.prepare') return this.prepareShare(input, context, entry);
       const result = { type, designId: id };
       if (type === 'design.review') {
         designRecord(input, '稿件评审请求', ['type', 'requestId', 'designId', 'reviewerIds']);
@@ -370,6 +378,28 @@ export class DesignWorkspaceService {
       }
       return invalidDesign('不支持的设计命令');
     });
+  }
+
+  private prepareShare(input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {
+    designRecord(input, '准备分享', ['type', 'requestId', 'designId', 'version', 'sourceCommit', 'packageSha256', 'audience', 'expiresInHours']);
+    const version = versionOf(entry, input.version);
+    if (entry.frozen !== version.version && !entry.freezes?.some(row => row.version === version.version)) {
+      conflict('请先定稿要分享的版本');
+    }
+    if (version.sourceVerification !== 'git' || version.sourceCommit !== designCommit(input.sourceCommit)
+      || version.sha256 !== input.packageSha256) conflict('请使用 Git 已核实的稿件提交与内容摘要');
+    const audience = input.audience;
+    if (audience !== 'public' && audience !== 'password') return invalidDesign('请选择分享受众');
+    const expiresInHours = number(input.expiresInHours, '分享有效小时数', 365 * 24);
+    const existing = entry.sharePreparations?.find(row =>
+      row.version === version.version && row.audience === audience && row.expiresInHours === expiresInHours);
+    const prepared: DesignSharePreparation = existing ?? {
+      id: `SHARE-${randomUUID()}`, version: version.version, sourceCommit: version.sourceCommit, packageSha256: version.sha256,
+      audience, expiresInHours, state: 'awaiting_human_confirmation', preparedAt: now, preparedBy: identity(actor),
+    };
+    return { result: { type: 'share.prepare', designId: entry.id, id: prepared.id, version: prepared.version,
+      sourceCommit: prepared.sourceCommit, state: prepared.state },
+      changes: existing ? {} : { design: { id: entry.id, sharePreparation: prepared } } };
   }
 
   private comment(type: string, input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {

@@ -51,6 +51,11 @@ export type DesignRun = {
   issues: Record<string, { id: string; pending: boolean }>;
 };
 export type DesignReviewer = { id: string; label: string };
+export type DesignSharePreparation = {
+  id: string; version: number; sourceCommit: string; packageSha256: string;
+  audience: 'public' | 'password'; expiresInHours: number;
+  state: 'awaiting_human_confirmation'; preparedAt: string; preparedBy: DesignReviewer;
+};
 export type DesignReviewNotice = {
   id: string; projectId: string; designId: string; version: number; title: string;
   createdAt: string; updatedAt: string; occurrences: number;
@@ -59,6 +64,7 @@ export type DesignEntry = {
   id: string; projectId: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
   comments: DesignComment[]; runs: DesignRun[]; reviewRequested?: boolean;
   reviewers?: DesignReviewer[];
+  sharePreparations?: DesignSharePreparation[];
   freezes?: Array<{ version: number; by: string; at: string }>;
 };
 export type FrameworkRevision = {

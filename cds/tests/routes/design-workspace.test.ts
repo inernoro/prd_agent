@@ -313,6 +313,30 @@ describe('private CDS design workspace', () => {
     expect(designs.map((entry: any) => entry.versions[0].sourceVerification).sort()).toEqual(['declared', 'git']);
   });
 
+  it('prepares a Git-verified frozen design for human confirmation without releasing a link', async () => {
+    const published = await publish('share-fixture', draft(), { sourcePath: 'design/fixture' });
+    expect(published.status).toBe(201);
+    const { designId } = (await published.json()).result;
+    const { designs } = await (await get()).json();
+    const fields = { designId, version: 1, sourceCommit, packageSha256: designs[0].versions[0].sha256,
+      audience: 'password', expiresInHours: 2 };
+    expect((await command('share.prepare', fields)).status).toBe(409);
+    expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+    expect((await command('share.prepare', fields, 'designer')).status).toBe(403);
+    expect((await command('share.prepare', fields, 'without-approval')).status).toBe(403);
+    expect((await command('share.prepare', { ...fields, sourceCommit: 'e'.repeat(40) })).status).toBe(409);
+    expect((await command('share.prepare', { ...fields, packageSha256: 'd'.repeat(64) })).status).toBe(409);
+    expect((await command('share.prepare', { ...fields, expiresInHours: 0 })).status).toBe(400);
+    const prepared = await command('share.prepare', fields, 'author', 'share-request');
+    expect(prepared.status).toBe(201);
+    const { result } = await prepared.json();
+    expect(result).toMatchObject({ version: 1, sourceCommit, state: 'awaiting_human_confirmation' });
+    expect(result).not.toHaveProperty('shareUrl');
+    const repeated = await command('share.prepare', fields, 'author', 'distinct-retry-id');
+    expect((await repeated.json()).result.id).toBe(result.id);
+    expect((await (await get()).json()).designs[0].sharePreparations).toMatchObject([{ id: result.id, packageSha256: fields.packageSha256 }]);
+  });
+
   it('keeps a prototype screenshot private and checks its declared viewport', async () => {
     const file = 'bundle/screens/members.light.png';
     const packed = (bytes: Buffer) => draft('Fixture design', {}, [{ name: file, data: bytes }]);
