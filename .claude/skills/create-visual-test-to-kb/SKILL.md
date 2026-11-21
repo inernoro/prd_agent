@@ -215,7 +215,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 - 任何通知和交付都禁止使用 `/tmp`、`file://` 或本机 HTML/Markdown 作为报告入口。报告必须发布到 CDS 验收中心；MAP 等系统只通过开放协议消费 CDS 报告，不作为交付回退。
 - 通知里出现的报告链接、raw 链接和页面链接必须同源且可由接收者打开。raw 内容验证通过不等于页面验证通过。
-- 归档后必须跑 `scripts/verify-open.mjs`,默认 3 次重试,同时等待标题、正文和图片，并全量校验交互报告内部链接、真实点击当前视口可见链接后目标是否进入可视区。三次都失败时判验收链路失败;若第 2/3 次通过,报告必须记录首试失败和最终通过次数。
+- 归档后必须跑 `scripts/verify-open.mjs`，默认最多尝试三次。脚本等待标题、正文和图片，核对全部内部链接并实点可见跳转。对标准交互报告逐张点开证据卡片，核对报告自身的地址片段、正文锚点与可解码的对应图片，再逐张返回证据列表。三次均失败判验收链路失败。若第二或第三次通过，记录首试失败和实际通过次数。
 - 如果 CDS 归档或线上打开校验失败,本轮必须判定「验收链路失败」并保持未完成；本地路径只能进入内部排障日志，不得出现在面向验收人的报告入口或交付摘要中。
 - Slack 摘要保持短格式:总 Verdict、线上报告链接、测试 commit、origin/main commit、P0/P1/P2/P3 数量、非零严重级的一句话问题概述、未覆盖数量、归档结果、打开验证结果。不能只给缺陷总数；详细证据放报告,不要塞进 automation prompt。
 - Slack 必须增加一句 Verdict 性质说明。例如：`综合结论 conditional：已测范围未发现缺陷，但目标日冻结版本有 4 项无法确认`。禁止发送 `FAIL + 缺陷 0 + 未覆盖 N` 而不解释失败对象。
@@ -413,7 +413,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
 | `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
 | `scripts/archive_report.py` | 配置驱动归档(默认 cds:Markdown 写作源 → 交互 HTML → POST /api/reports,按项目+文件夹归类,带 verdict/部署上下文;local 仅排障草稿;doc-store 向后兼容) | 归档时 |
-| `scripts/verify-open.mjs` | 归档后自查:headless 断言标题、正文、截图和全部内部锚点，真实点击可见链接核对滚动结果；任一失败 exit 2 | 归档后(强制) |
+| `scripts/verify-open.mjs` | 打开报告并核对可见链接。标准报告逐张检查证据卡片、地址、正文图片和返回列表 | 归档后(强制) |
 | `../cds/reference/acceptance-reports.md` | CDS 验收中心:报告/文件夹 API、cdscli report 命令、取证管线、深链格式、10MB/份压图注意 | 归档到 CDS 时 |
 | `acceptance.config.json` | 项目配置(预览域名/登录/CDS 项目与文件夹/截图);跨仓库改这个 | 接新仓库时 |
 

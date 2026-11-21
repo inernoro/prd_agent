@@ -1,6 +1,7 @@
 // 验收 · 归档后「自查能否打开」(项目无关，存储无关)
 // 用途：归档拿到可达链接后，headless 打开真页面断言报告确实渲染（标题 + 正文 + 截图），
 //       并全量核对交互报告的内部链接目标，真实点击当前桌面路径可见链接验证章节滚动。
+//       标准报告另逐张点击证据卡片，核对报告自身地址、正文图和返回证据列表。
 //       而不是"建了条目但点开空白"。空/打不开 → 退出码 2，调用方据此重新推送验收。
 // 链接来源（任选其一，脚本本身不关心存储）：
 //   - CDS 匿名分享链 /r/<token>（E6，无需登录，headless 可直接断言——首选）。
@@ -93,6 +94,80 @@ async function waitForRenderedContent(text, minImages) {
   return snapshot;
 }
 
+async function waitForEvidenceAnchor(frame, id) {
+  try {
+    const position = await frame.waitForFunction((targetId) => {
+      const target = document.getElementById(targetId)?.getBoundingClientRect();
+      return decodeURIComponent(location.hash.slice(1)) === targetId
+        && target && target.top >= -2 && target.top < innerHeight;
+    }, id, { timeout: settleTimeoutMs });
+    await position.dispose();
+  } catch (error) {
+    throw new Error(`报告地址锚点或可视位置未到达 #${id}`, { cause: error });
+  }
+}
+
+async function readEvidenceImageSource(image) {
+  return image.evaluate(async (element, timeoutMs) => {
+    let timer;
+    try {
+      await Promise.race([
+        element.decode(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('等待证据图片超时')), timeoutMs);
+        }),
+      ]);
+      if (!element.currentSrc || !element.naturalWidth) throw new Error('证据图片无法读取');
+      return element.currentSrc;
+    } finally {
+      clearTimeout(timer);
+    }
+  }, settleTimeoutMs, { timeout: 5000 });
+}
+
+async function auditEvidenceCards(frame) {
+  const cards = frame.locator('#evidence-gallery a.evidence-card');
+  const figureCount = await frame.locator('#reportBody .figure-anchor + figure.shot').count();
+  const cardCount = await cards.count();
+  let checked = 0;
+  let label = '证据缩略图';
+  try {
+    if (cardCount !== figureCount) throw new Error(`卡片 ${cardCount} 张，正文图 ${figureCount} 张`);
+    if (!cardCount) return { expected: 0, checked, errors: [] };
+    const fullView = frame.locator('button[data-view-mode="full"]');
+    if (await fullView.isVisible()) await fullView.click({ timeout: 5000 });
+    const all = frame.locator('button[data-filter="all"]');
+    if (await all.isVisible()) await all.click({ timeout: 5000 });
+    const contents = frame.locator('button[data-side-tab="contents"]');
+    if (await contents.isVisible()) await contents.click({ timeout: 5000 });
+
+    const targets = new Set();
+    for (const card of await cards.all()) {
+      const href = await card.getAttribute('href', { timeout: 5000 });
+      label = href || '证据缩略图';
+      if (!href?.startsWith('#fig-')) throw new Error('缺少对应正文图号');
+      const id = decodeURIComponent(href.slice(1));
+      const figure = frame.locator(`#reportBody .figure-anchor[id=${JSON.stringify(id)}] + figure.shot`);
+      if (targets.has(id) || await figure.count() !== 1) throw new Error('图卡和正文锚点无法唯一对应');
+      targets.add(id);
+      const thumbnailSource = await readEvidenceImageSource(card.locator('img'));
+      await card.click({ timeout: 5000 });
+      await waitForEvidenceAnchor(frame, id);
+      const figureSource = await readEvidenceImageSource(figure.locator('.shot-frame img'));
+      if (figureSource !== thumbnailSource) throw new Error('正文图片与缩略图不一致');
+      await figure.locator('a[data-return-evidence][href="#evidence-gallery"]').click({ timeout: 5000 });
+      await waitForEvidenceAnchor(frame, 'evidence-gallery');
+      if (!await frame.locator('button[data-side-tab="evidence"][aria-selected="true"]').count()) {
+        throw new Error('返回后未切回证据导航');
+      }
+      checked += 1;
+    }
+    return { expected: figureCount, checked, errors: [] };
+  } catch (error) {
+    return { expected: figureCount, checked, errors: [`${label}: ${String(error.message || error).split('\n')[0]}`] };
+  }
+}
+
 async function auditInteractiveReports() {
   const reports = [];
   for (const frame of page.frames()) {
@@ -150,7 +225,9 @@ async function auditInteractiveReports() {
           clickErrors.push(`${label}: ${error && error.message ? error.message.split('\n')[0] : String(error)}`);
         }
       }
-      reports.push({ ...staticAudit, clicked, clickErrors });
+      const standard = await frame.locator('meta[name="map-acceptance-template"][content="interactive-html-v2"]').count();
+      const evidence = standard ? await auditEvidenceCards(frame) : { expected: 0, checked: 0, errors: [] };
+      reports.push({ ...staticAudit, clicked, clickErrors: [...clickErrors, ...evidence.errors], evidence });
     } catch (error) {
       reports.push({ linkCount: 0, clicked: 0, broken: [], clickErrors: [String(error)] });
     }
@@ -161,6 +238,8 @@ async function auditInteractiveReports() {
     reportCount: reports.length,
     linkCount: reports.reduce((sum, report) => sum + (report.linkCount || 0), 0),
     clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
+    evidenceExpected: reports.reduce((sum, report) => sum + (report.evidence?.expected || 0), 0),
+    evidenceChecked: reports.reduce((sum, report) => sum + (report.evidence?.checked || 0), 0),
     broken,
     clickErrors,
     ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0,
@@ -204,6 +283,7 @@ try {
       attempts.push(result);
       console.log(`  第${attempt}次：标题命中=${result.hasText}  当前运行标识命中=${result.hasRequiredTexts}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
       console.log(`  第${attempt}次交互：报告=${result.interaction.reportCount}  内部链接=${result.interaction.linkCount}  已点击=${result.interaction.clicked}  断链=${result.interaction.broken.length}  点击失败=${result.interaction.clickErrors.length}`);
+      console.log(`  第${attempt}次证据卡片及返回：${result.interaction.evidenceChecked}/${result.interaction.evidenceExpected}`);
       if (result.interaction.broken.length) {
         console.log(`  断链明细：${result.interaction.broken.map((item) => `${item.text || item.href} -> ${item.href}`).join(' | ')}`);
       }
