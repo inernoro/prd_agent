@@ -767,6 +767,10 @@ function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }
       <dl className="ep-facts">
         <dt>问题概况</dt><dd>{debt.summary || '待补充'}</dd><dt>已知影响</dt><dd>{debt.impact || '待补充'}</dd>
         <dt>来源</dt><dd>{sourceLabels[debt.source.type]} · {debt.source.url ? <a href={debt.source.url} target="_blank" rel="noreferrer">{debt.source.ref}</a> : debt.source.ref}</dd>
+        {debt.legacy && <><dt>原台账状态</dt><dd>{debt.legacy.originalStatus}
+          {debt.legacy.status === 'repaid' && !repayment && ' · 待补 CDS 核验材料'}
+          <p>{debt.legacy.path} · 第 {debt.legacy.line} 行 · <span title={debt.legacy.commit}>{debt.legacy.commit.slice(0, 12)}</span></p>
+        </dd></>}
         <dt>根因</dt><dd>{debt.rootCause?.state === 'confirmed' ? '已确认' : debt.rootCause?.state === 'suspected' ? '推测' : '待查'}{debt.rootCause?.text && ` · ${debt.rootCause.text}`}{debt.rootCause?.basis && <p>{debt.rootCause.basis}</p>}</dd>
         <dt>欠债理由</dt><dd>{debt.whyDebt || '待补充'}</dd><dt>负责人</dt><dd>{debt.owner || '待认领'}</dd>
         {debt.module && <><dt>所属模块</dt><dd>{debt.module}</dd></>}

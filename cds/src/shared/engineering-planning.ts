@@ -57,6 +57,14 @@ export function planningClosureDays(closeAt: string, at: number) {
 export const debtPriorities = ['high', 'mid', 'low'] as const;
 export type DebtPriority = typeof debtPriorities[number];
 export type DebtStatus = 'open' | 'deferred' | 'in_progress' | 'repaid' | 'dropped';
+export const legacyDebtStatuses = ['open', 'in_progress', 'repaid', 'pending_verification'] as const;
+export type LegacyDebtStatus = typeof legacyDebtStatuses[number];
+export type LegacyDebtOrigin = {
+  status: LegacyDebtStatus; originalStatus: string; path: string; commit: string; line: number;
+};
+export const legacyDebtStatusLabels: Record<LegacyDebtStatus, string> = {
+  open: '未还', in_progress: '处理中', repaid: '已还', pending_verification: '已落地待验证',
+};
 export type DebtOutcome = 'cancelled' | 'superseded' | 'extinct' | 'merged';
 export type RootCause = { state: 'pending' | 'suspected' | 'confirmed'; text?: string; basis?: string };
 export type Criterion = { id: string; text: string };
@@ -150,6 +158,7 @@ export type PlanningDebt = RecordBase & Omit<DebtDraft, 'criteria'> & {
   hitCount: number;
   discoveredAt?: string;
   importBatchId?: string;
+  legacy?: LegacyDebtOrigin;
 };
 export type PlanningDecision = RecordBase & DecisionDraft & {
   source: PlanningSource;
@@ -261,10 +270,10 @@ export type PlanningDebtList = {
 };
 export type PlanningDuplicateCandidate = Pick<PlanningDebt, 'id' | 'title' | 'status' | 'summary' | 'owner' | 'version'> & { similarity: number };
 export type PlanningDebtDistinction = { debtIds: string[]; reason: string };
-export type PlanningImportRow = DebtDraft & { source: PlanningSource; discoveredAt?: string };
+export type PlanningImportRow = DebtDraft & { source: PlanningSource; discoveredAt?: string; legacy?: LegacyDebtOrigin };
 export type PlanningImportPreview = { projectId: string; items: {
   index: number; title?: string; sourceRef?: string; status: 'ready' | 'similar' | 'existing' | 'repeated' | 'invalid';
-  debtId?: string; message?: string; candidates?: PlanningDuplicateCandidate[];
+  debtId?: string; debtStatus?: DebtStatus; legacyStatus?: LegacyDebtStatus; message?: string; candidates?: PlanningDuplicateCandidate[];
 }[] };
 export type PlanningBriefTarget = 'header' | 'context' | 'criteria' | 'outcome';
 export type PlanningBriefCitation =

@@ -14,7 +14,7 @@ export function matchesDebtView(view: PlanningDebtView, debt: PlanningDebt, toda
     case 'reopened': return debt.reopenCount > 0;
     case 'dup': return duplicates.has(debt.id);
     case 'pending_extinct': return unpaid(debt) && debt.anchor?.status === 'missing';
-    case 'direct_repaid': return debt.status === 'repaid' && debt.repayment?.mode !== 'collateral';
+    case 'direct_repaid': return debt.status === 'repaid' && debt.repayment?.mode !== 'collateral' && (!debt.legacy || !!debt.repayment);
     case 'collateral': return debt.status === 'repaid' && debt.repayment?.mode === 'collateral';
     case 'extinct': return debt.outcome?.kind === 'extinct';
     case 'merged': return debt.outcome?.kind === 'merged';

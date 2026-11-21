@@ -10,7 +10,7 @@ import { type PlanningProject, usePlanningRead } from './engineering-planning/pl
 import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
 import { DesignFrameworkView, DesignMaterialView, FrameworkOverview, ReadableNotes, type FrameworkTab } from './design-workspace/DesignFramework';
-import { designDate, designPath, designStatus, latestDesign, materialNames, openReviews, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
+import { designCheckRows, designDate, designPath, designStatus, latestDesign, materialNames, openReviews, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
 import { compareDesignMaterial } from './design-workspace/design-structure';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
@@ -304,6 +304,7 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
           const reviews = openReviews(entry);
           const open = reviews[0];
           const failures = entry.runs.at(-1)?.cells.filter(cell => cell.status === 'failed').length ?? 0;
+          const failedRules = designCheckRows(version).filter(row => row.status === '不通过').map(row => `${row.id} ${row.name}`).join('、');
           return <article className="dw-design-card" key={entry.id} data-state={designStatus(entry)}>
             <div className="dw-thumb">{<DesignFrame projectId={workspace.projectId} version={version} screen={version.screens[0]} theme="light" zoom={null} />}
               {open ? <button className="dw-thumb-action" type="button" onClick={() => onReview(entry, open.comment, open.version)}>核对评论 {reviews.length > 1 ? `+${reviews.length - 1}` : ''}</button>
@@ -318,6 +319,10 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
                 {mode === 'list' && version.tags.length > 0 && <small className="dw-list-group">{version.tags.map(tag => `#${tag}`).join(' ')}</small>}
                 <span className="dw-card-count">{entry.comments.length > 0 && <><MessageSquare />{entry.comments.length}</>}
                   {failures > 0 && <strong>{failures} 不通过</strong>}{mode === 'list' && <span>{statusNames[designStatus(entry)]}</span>}</span></div>
+              {failedRules && <Link className="ep-text-button truncate text-left" title={failedRules} aria-label={`自检不通过 · ${failedRules}`}
+                to={`/design?${new URLSearchParams({ project: workspace.projectId, design: entry.id, version: String(version.version), tab: 'spec' })}`}>
+                自检不通过 · {failedRules}
+              </Link>}
             </footer>
           </article>;
         })}</div>
@@ -328,7 +333,7 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
 
 const recordTime = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 type DesignHistoryRow = {
-  key: string; at: string; title: string; details: string; note?: string; action: () => void; label: string; state: string;
+  key: string; at: string; title: string; details: string; note?: string; failedRules?: string; action: () => void; label: string; state: string;
 };
 
 function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVersion: (version: number) => void; onRun: (version: number, run: string) => void }) {
@@ -336,10 +341,12 @@ function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVers
     ...entry.versions.map(version => {
       const resolved = Object.keys(version.resolves);
       const checks = version.checks;
+      const failedRules = designCheckRows(version).filter(row => row.status === '不通过').map(row => `${row.id} ${row.name}`).join('、');
       return { key: `v${version.version}`, at: version.createdAt, title: `V${version.version} · ${version.note || '发布稿件'}`,
         details: `${version.publisher.label} · ${version.sourceCommit.slice(0, 8)}`,
         note: [resolved.length ? `声明处理 ${resolved.length} 条评论` : '', typeof checks?.total === 'number' && typeof checks.passed === 'number'
           ? `自检 ${checks.passed}/${checks.total}` : '本版未附自检结果'].filter(Boolean).join(' · '),
+        failedRules,
         action: () => onVersion(version.version), label: '查看版本', state: 'release' };
     }),
     ...(entry.freezes ?? []).map((freeze, index) => ({ key: `freeze-${index}`, at: freeze.at, title: `定稿 V${freeze.version}`, details: freeze.by,
@@ -358,7 +365,8 @@ function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVers
   return <section className="dw-surface dw-history-card"><h3>记录</h3><ol className="dw-design-timeline">
     {rows.map(row => <li key={row.key} data-result={row.state}>
       <div><div className="dw-history-summary"><strong>{row.title}</strong><time dateTime={row.at}>{recordTime.format(new Date(row.at))}</time></div>
-        <small>{row.details}</small>{row.note && <p>{row.note}</p>}</div>
+        <small>{row.details}</small>{row.note && <p>{row.note}</p>}
+        {row.failedRules && <p>自检不通过 · {row.failedRules}</p>}</div>
       <button type="button" className="ep-text-button" onClick={row.action}>{row.label}</button>
     </li>)}
   </ol></section>;
@@ -367,15 +375,7 @@ function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVers
 function DesignSpec({ version, baseline }: { version: DesignVersion; baseline?: DesignMaterial }) {
   const [tab, select] = useState<keyof typeof materialNames>('rules');
   const changes = compareDesignMaterial(baseline ?? {}, version.spec).filter(row => row.kind !== '移除');
-  const rows = (Array.isArray(version.checks?.items) ? version.checks.items : []).flatMap((item, index) => {
-    if (!item || typeof item !== 'object') return [];
-    const name = item.name ?? item.rule ?? item.label ?? item.title;
-    if (typeof name !== 'string') return [];
-    const passed = item.pass ?? item.passed ?? item.ok;
-    const status = passed === false || item.status === 'failed' ? '不通过' : passed === true || item.status === 'passed' ? '通过' : '未验证';
-    return [{ id: typeof item.id === 'string' ? item.id : String(index + 1), name, status }];
-  });
-  const unresolved = rows.filter(row => row.status !== '通过');
+  const unresolved = designCheckRows(version).filter(row => row.status !== '通过');
   return <>
     <div className="dw-spec-cards">
       {version.checks && <section className="dw-surface dw-markdown"><h3>规则检查与自检</h3>

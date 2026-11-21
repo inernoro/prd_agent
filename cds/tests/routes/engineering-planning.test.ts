@@ -923,6 +923,54 @@ describe('engineering planning HTTP contracts', () => {
     expect(details.events.at(-1).at).toBe('2026-03-02T01:00:00.000Z');
   });
 
+  it('reconciles original ledger statuses without fabricating new repayment evidence', async () => {
+    now = new Date('2026-03-02T01:00:00Z');
+    const statuses = [
+      { status: 'open', originalStatus: '未还', expected: 'open' },
+      { status: 'in_progress', originalStatus: '处理中', expected: 'in_progress' },
+      { status: 'repaid', originalStatus: '已还', expected: 'repaid' },
+      { status: 'pending_verification', originalStatus: '已落地待验证', expected: 'in_progress' },
+    ];
+    const items = statuses.map(({ status, originalStatus }, index) => ({
+      title: `合成台账条目 ${index + 1}`,
+      source: { type: 'import', ref: `fixture#${index + 1}` },
+      legacy: { status, originalStatus, path: 'doc/debt.fixture.md', commit: 'a'.repeat(40), line: index + 10 },
+    }));
+    const command = { type: 'debt.import', requestId: 'test-legacy-import-0001', items };
+    const preview = await call('/import-preview', { items });
+    expect(preview.status).toBe(200);
+    expect(preview.body.items).toEqual(items.map((row, index) => expect.objectContaining({
+      sourceRef: row.source.ref, status: 'ready', debtStatus: statuses[index].expected, legacyStatus: row.legacy.status,
+    })));
+    expect((await call('/debts?view=all')).body.items).toEqual([]);
+    expect((await call('/commands', command, { actor: 'agent-with-approve' })).status).toBe(403);
+    expect((await call('/commands', { ...createCommand('test-legacy-not-create'), legacy: items[2].legacy })).status).toBe(400);
+    const invalid = { ...items[0], source: { type: 'import', ref: 'other#1' } };
+    expect((await call('/commands', { ...command, items: [invalid] })).status).toBe(400);
+
+    const imported = await call('/commands', command);
+    expect(imported.status).toBe(201);
+    const ids: string[] = imported.body.result.items.map((item: { id: string }) => item.id);
+    await stop();
+    await start();
+    for (const [index, id] of ids.entries()) {
+      const detail = await call(`/debts/${id}`);
+      const { debt, events } = detail.body;
+      expect(debt).toMatchObject({ status: statuses[index].expected, legacy: items[index].legacy });
+      expect(debt.repayment).toBeUndefined();
+      expect(debt.verify).toBeUndefined();
+      expect(debt.decisionId).toBeUndefined();
+      expect(events.map((event: { type: string }) => event.type)).toEqual(['imported']);
+    }
+    expect((await call('/commands', { ...command, requestId: 'test-legacy-import-0002' })).body).toMatchObject({
+      reused: true, result: { items: ids.map(id => ({ id, status: 'existing' })) },
+    });
+    expect((await call('/debts?view=direct_repaid')).body.items).toEqual([]);
+    expect((await call('/stats?from=2026-03-02&to=2026-03-02')).body).toMatchObject({
+      backlogEnd: 3, imported: 3, created: 0, repaid: 0,
+    });
+  });
+
   it('rejects a batch with an invalid row before persisting any debt or receipt', async () => {
     now = new Date('2026-03-02T01:00:00Z');
     const valid = { title: 'Valid historic debt', source: { type: 'import', ref: 'fixture-atomic:001' } };

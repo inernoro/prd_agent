@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { apiRequest } from '@/lib/api';
-import type { PlanningImportPreview, PlanningImportRow } from '../../../../src/shared/engineering-planning';
-import { planningError, planningPath, shortId, type PlanningInput } from './planning-ui';
+import { legacyDebtStatusLabels, type PlanningImportPreview, type PlanningImportRow } from '../../../../src/shared/engineering-planning';
+import { debtLabels, planningError, planningPath, shortId, type PlanningInput } from './planning-ui';
 
 const limit = 1_500_000;
 const columns = ['title', 'sourceRef', 'sourceUrl', 'summary', 'whyDebt', 'owner', 'module', 'priority', 'discoveredAt', 'dueAt', 'decisionId', 'tags', 'criteria'];
@@ -95,6 +95,9 @@ export function PlanningImportForm({ projectId, busy, error, onCancel, onSubmit 
             setSelected(current => checked ? [...current, row.index] : current.filter(i => i !== row.index));
           }} />{row.title || `第 ${row.index + 1} 条`} · {labels[row.status]}</label>
           <p className="ep-caption">{row.message || row.sourceRef}{row.debtId && ` · ${shortId(row.debtId)}`}</p>
+          {row.legacyStatus && row.debtStatus && <p className="ep-caption">
+            原台账 {legacyDebtStatusLabels[row.legacyStatus]} · CDS {debtLabels[row.debtStatus]}
+          </p>}
           {row.candidates?.map(item => <p className="ep-caption" key={item.id}>{shortId(item.id)} · {item.title}</p>)}
         </li>)}</ul>
         <button type="button" className="ep-text-button" disabled={busy} onClick={() => setPreview(undefined)}>重新编辑</button>

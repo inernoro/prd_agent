@@ -12,6 +12,17 @@ export const cellNames = { passed: '通过', failed: '不通过', missing: '证�
 export const slotNames = { 'desktop-light': '桌面浅色', 'desktop-dark': '桌面深色', 'phone-light': '手机浅色', 'phone-dark': '手机深色' } as const;
 export const ruleModes = { measure: '测量', screenshot: '截图', human: '人工' } as const;
 
+export function designCheckRows(version: DesignVersion) {
+  return (Array.isArray(version.checks?.items) ? version.checks.items : []).flatMap((item, index) => {
+    if (!item || typeof item !== 'object') return [];
+    const name = item.name ?? item.rule ?? item.label ?? item.title;
+    if (typeof name !== 'string') return [];
+    const passed = item.pass ?? item.passed ?? item.ok;
+    const status = passed === false || item.status === 'failed' ? '不通过' : passed === true || item.status === 'passed' ? '通过' : '未验证';
+    return [{ id: typeof item.id === 'string' ? item.id : String(index + 1), name, status }];
+  });
+}
+
 export function designStatus(entry: DesignEntry): keyof typeof statusNames {
   if (entry.reviewRequested) return 'review';
   if (entry.runs.at(-1)?.signed) return 'signed';

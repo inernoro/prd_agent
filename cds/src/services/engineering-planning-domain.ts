@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { fileAnchorPath } from './engineering-planning-file-anchors.js';
 import { createCheckupNotices, planningDuplicateKey, type PlanningNoticeRecord } from './engineering-planning-checkup.js';
 import type {
-  Criterion, DebtDraft, DecisionDraft, PlanDraft, PlanningCommand, PlanningCommitResult,
+  Criterion, DebtDraft, DecisionDraft, LegacyDebtOrigin, PlanDraft, PlanningCommand, PlanningCommitResult,
   PlanningAnchorTarget, PlanningCheckupNotice, PlanningDebtAnchor, PlanningGithubFileRemovalProof, PlanningSweepResult, PlanningVerification,
   PlanningDebt, PlanningDebtDistinction, PlanningDecision, PlanningEvent, PlanningEvidence, PlanningIdentity, PlanningImportPreview,
   PlanningPlan, PlanningProposal, PlanningSource, PlanningStep, PlanningStepDraft, Repayment,
@@ -59,6 +59,8 @@ export const sharesRepaymentCriteria = (left: PlanningDebt, right: PlanningDebt)
   && left.criteria.every(criterion => right.criteria.some(other => other.text === criterion.text));
 const planningCalendar = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' });
 export const planningToday = (at = new Date()) => planningCalendar.format(at);
+const importedDebtStatus = (legacy?: LegacyDebtOrigin): PlanningDebt['status'] =>
+  legacy?.status === 'pending_verification' ? 'in_progress' : legacy?.status ?? 'open';
 const sourceMatches = (a: PlanningSource, b: PlanningSource) => a.type === b.type && a.ref === b.ref;
 const id = (prefix: string) => `${prefix}-${randomUUID()}`;
 function missing(): never { return rejectPlanning(404, 'not_found', '此项目没有这条工程规划记录'); }
@@ -123,7 +125,7 @@ export class PlanningMutation {
 
   private newDebt(draft: DebtDraft, source: PlanningSource, options: {
     attribution?: EventDetail; forceNew?: boolean; imported?: boolean; discoveredAt?: string; importBatchId?: string;
-    checkDuplicates?: boolean; distinction?: PlanningDebtDistinction; explicitlyDifferent?: string; assignToSelf?: boolean;
+    checkDuplicates?: boolean; distinction?: PlanningDebtDistinction; explicitlyDifferent?: string; assignToSelf?: boolean; legacy?: LegacyDebtOrigin;
   } = {}) {
     const found = options.forceNew ? undefined : this.debtBySource(source, options.attribution?.proposal ? draft.title : undefined);
     if (found) {
@@ -145,12 +147,13 @@ export class PlanningMutation {
     }
     const distinctFrom = options.explicitlyDifferent ? [options.explicitlyDifferent] : acknowledged;
     const row: PlanningDebt = {
-      ...this.base('DEBT'), ...draft, source, originDecisionId: draft.decisionId, status: 'open',
+      ...this.base('DEBT'), ...draft, source, originDecisionId: draft.decisionId, status: importedDebtStatus(options.legacy),
       priority: draft.priority ?? 'mid', criteria: criteria(draft.criteria ?? []), reopenCount: 0, hitCount: 0,
       ...(options.assignToSelf && this.actor.kind === 'human' ? { owner: this.actor.label, ownerAccountId: this.actor.id } : {}),
       ...(distinctFrom.length ? { notDuplicateWith: distinctFrom } : {}),
       ...(options.discoveredAt ? { discoveredAt: options.discoveredAt } : {}),
       ...(options.importBatchId ? { importBatchId: options.importBatchId } : {}),
+      ...(options.legacy ? { legacy: options.legacy } : {}),
     };
     this.changes.debts.push(row);
     this.event('debt', row.id, options.imported ? 'imported' : 'created',
@@ -164,9 +167,14 @@ export class PlanningMutation {
     const items = inputs.map<PlanningImportPreview['items'][number]>((input, index) => {
       try {
         const row = planningImportRow(input);
-        const base = { index, title: row.title, sourceRef: row.source.ref };
+        const base = { index, title: row.title, sourceRef: row.source.ref,
+          ...(row.legacy ? { debtStatus: importedDebtStatus(row.legacy), legacyStatus: row.legacy.status } : {}) };
         const existing = this.debtBySource(row.source);
-        if (existing) return { ...base, status: 'existing', debtId: existing.id };
+        if (existing) return { ...base, status: 'existing', debtId: existing.id, ...(row.legacy ? {
+          debtStatus: existing.status,
+          ...(existing.status !== base.debtStatus || existing.legacy?.status !== row.legacy.status
+            ? { message: '原台账状态与现有记录有差异，导入不会覆盖' } : {}),
+        } : {}) };
         this.related(row);
         if (row.discoveredAt && row.discoveredAt > planningToday(new Date(this.at))) {
           rejectPlanning(400, 'invalid', '发现日期不能晚于今天');
@@ -612,9 +620,9 @@ export class PlanningMutation {
       }
       case 'debt.import': {
         const batchId = id('BATCH');
-        const items = command.items.map(({ source, discoveredAt, ...draft }) => {
+        const items = command.items.map(({ source, discoveredAt, legacy, ...draft }) => {
           this.reused = false;
-          const debt = this.newDebt(draft, source, { imported: true, discoveredAt, importBatchId: batchId });
+          const debt = this.newDebt(draft, source, { imported: true, discoveredAt, importBatchId: batchId, legacy });
           return { id: debt.id, status: this.reused ? 'existing' as const : 'created' as const, sourceRef: source.ref };
         });
         this.reused = items.every(row => row.status === 'existing');

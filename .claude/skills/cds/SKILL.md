@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.1
+  version: 0.26.2
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design review, canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
+> **版本**：v0.26.2 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -379,6 +379,8 @@ $CLI debt stats
 补录决策时先读实际 PR、提交或仓库文档。使用 `--evidence-level backfilled` 和 `--url` 登记原始依据。有证据时可加 `--occurred-on`、`--decided-by`，日常说法用可重复的 `--alias`，适用对象用 `--applies-to <类型> <名称>`。推断用 `--evidence-level inferred --evidence-basis <依据>`。MCP 用 `decisions` 视图查询，用 `aliases`、`appliesTo`、`provenance` 提案。确认前的提案只在待确认列表中显示。
 
 历史台账对账由有写权限的成员运行 `planning reconcile --as-user <用户名> --file <待核对条目.json>`。顶层填写 `items`，每项使用稳定的原来源编号。用 `--human planning snapshot --module <模块>` 读取生成的 Markdown 快照。对账与导出只读取已授权项目。
+
+需要带入原台账的生命周期时，从固定的仓库提交核对每笔债务。`source.type` 用 `import`，`source.ref` 用旧台账的模块和原编号，例如 `cds#1`。每笔 `legacy` 提供 `status`、`originalStatus`、`path`、完整 `commit` 和起始 `line`。明确未还、处理中、已还、实际落地待验证分别映射为 `open`、`in_progress`、`repaid`、`pending_verification`。状态未明的记录交给对账成员确认。先对比预览返回的 `legacyStatus` 和 `debtStatus`，由项目成员确认后用 `planning submit --as-user <用户名> --file <导入命令.json>` 提交 `debt.import`。历史已还保留台账结论，新的偿还依据仍通过 `debt repay` 提交。若再次导入时原状态有差异，预览列出差异，由成员复核。
 
 用 `change list [--branch <分支>] [--key <配置键>]` 和 `change show <变更编号>` 核对配置留痕。MCP 使用 `changes` 视图读取当前项目的变更事实。用 `preview access <PR 编号>` 或 `preview link <PR 编号>` 查询已部署的入口。一键登录入口查询可使用 `--as-user`。记录债务进展由有写权限的成员执行 `debt progress <债务编号> --if-version <版本> --request-id <原请求编号> --note <进展> --as-user <用户名>`。
 

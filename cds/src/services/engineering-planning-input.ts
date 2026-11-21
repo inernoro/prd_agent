@@ -1,7 +1,7 @@
 import {
   planningAnchorTypes, planningVerificationMethods, planningVerificationPeriods, decisionProvenanceLevels, decisionSubjectKinds,
-  clearableDebtFields, debtApproachStates, debtPriorities, planningDecisionLinkTypes, planningEvidenceTypes, planningSourceTypes, planningStepKinds,
-  type CriterionResult, type DebtDirection, type DebtDraft, type DebtPatch, type DecisionDraft, type DecisionProvenance, type DecisionStructure, type PlanDraft, type PlanningCommand,
+  clearableDebtFields, debtApproachStates, debtPriorities, legacyDebtStatuses, planningDecisionLinkTypes, planningEvidenceTypes, planningSourceTypes, planningStepKinds,
+  type CriterionResult, type DebtDirection, type DebtDraft, type DebtPatch, type DecisionDraft, type DecisionProvenance, type DecisionStructure, type LegacyDebtOrigin, type PlanDraft, type PlanningCommand,
   type PlanningDecisionLink, type PlanningEvidence, type PlanningPullRequestReference, type PlanningRepaymentProof, type PlanningProposalSource, type PlanningStepDraft,
   type PlanningDuplicateCandidate, type PlanningImportRow, type ProposalDecisionChange, type ProposalDraft, type RootCause,
 } from '../shared/engineering-planning.js';
@@ -203,11 +203,30 @@ export function planningImportInputs(value: unknown): unknown[] {
   return collection(data.items, 'items', row => row, 100, 1);
 }
 
+function legacyDebtOrigin(value: unknown, sourceRef: string): LegacyDebtOrigin {
+  const data = object(value, 'legacy', ['status', 'originalStatus', 'path', 'commit', 'line']);
+  const path = planningText(data.path, 'legacy.path', 200);
+  const module = /^doc\/debt\.([a-z0-9][a-z0-9.-]*)\.md$/i.exec(path)?.[1];
+  const [refModule, refNumber, extra] = sourceRef.split('#');
+  if (!module || refModule !== module || !refNumber || extra !== undefined || !/^[a-z0-9][a-z0-9._-]{0,159}$/i.test(refNumber)) {
+    invalid('source.ref', '请使用与原台账路径对应的模块加原编号，例如 cds#1');
+  }
+  const commit = planningText(data.commit, 'legacy.commit', 40);
+  if (!/^[a-f0-9]{40}$/.test(commit)) invalid('legacy.commit', '请使用完整的小写 Git 提交号');
+  const line = data.line;
+  if (typeof line !== 'number' || !Number.isSafeInteger(line) || line < 1) invalid('legacy.line', '请使用原记录的行号');
+  return {
+    path, commit, line, status: of(data.status, 'legacy.status', legacyDebtStatuses),
+    originalStatus: planningText(data.originalStatus, 'legacy.originalStatus', 120),
+  };
+}
+
 export function planningImportRow(value: unknown): PlanningImportRow {
-  const row = object(value, 'items', [...debtFields, 'source', 'discoveredAt']);
+  const row = object(value, 'items', [...debtFields, 'source', 'discoveredAt', 'legacy']);
   const origin = source(row.source);
   if (origin.type !== 'import') invalid('source.type', '批量录入应为 import');
   return { ...debtDraft(row), source: origin,
+    ...(row.legacy === undefined ? {} : { legacy: legacyDebtOrigin(row.legacy, origin.ref) }),
     ...(row.discoveredAt === undefined ? {} : { discoveredAt: planningDay(row.discoveredAt, 'discoveredAt') }) };
 }
 
