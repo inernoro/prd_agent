@@ -931,10 +931,12 @@ describe('engineering planning HTTP contracts', () => {
       { status: 'repaid', originalStatus: '已还', expected: 'repaid' },
       { status: 'pending_verification', originalStatus: '已落地待验证', expected: 'in_progress' },
     ];
+    const module = 'fixture';
+    const ledgerPath = path.posix.join('doc', `debt.${module}.md`);
     const items = statuses.map(({ status, originalStatus }, index) => ({
       title: `合成台账条目 ${index + 1}`,
-      source: { type: 'import', ref: `fixture#${index + 1}` },
-      legacy: { status, originalStatus, path: 'doc/debt.fixture.md', commit: 'a'.repeat(40), line: index + 10 },
+      source: { type: 'import', ref: `${module}#${index + 1}` },
+      legacy: { status, originalStatus, path: ledgerPath, commit: 'a'.repeat(40), line: index + 10 },
     }));
     const command = { type: 'debt.import', requestId: 'test-legacy-import-0001', items };
     const preview = await call('/import-preview', { items });

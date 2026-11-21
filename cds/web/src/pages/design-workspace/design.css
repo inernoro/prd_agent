@@ -28,7 +28,7 @@
 .dw-head .dw-info > div { left: 0; right: auto; max-width: min(280px, 82vw); padding: 10px; display: grid; gap: 5px; }
 .dw-workspace .ep-button, .dw-stage .ep-button, .dw-surface .ep-button { min-height: 32px; }
 .dw-workspace .ep-button > svg, .dw-surface .ep-button > svg, .dw-stage .ep-button > svg { width: 14px; height: 14px; }
-.dw-workspace select, .dw-stage select, .dw-surface input:not([type=checkbox]), .dw-surface select {
+.dw-workspace select, .dw-stage select, .dw-surface input:not([type=checkbox]), .dw-surface select, .dw-workspace .dw-search input {
   min-height: 30px;
   border: 1px solid var(--dw-line);
   border-radius: 6px;
@@ -41,6 +41,7 @@
 .dw-search { position: relative; display: flex; align-items: center; }
 .dw-search svg { position: absolute; left: 10px; width: 14px; color: var(--dw-muted); pointer-events: none; }
 .dw-workspace .dw-search input { min-height: 32px; width: min(240px, 100%); padding-left: 29px; }
+.dw-workspace .dw-search input::placeholder { color: var(--dw-muted); opacity: 1; }
 .dw-cli { display: grid; gap: 5px; padding: 8px !important; max-width: min(400px, 90vw); }
 .dw-cli code { display: block; white-space: nowrap; overflow-x: auto; font-size: 12px; }
 .dw-cli button svg { display: inline-block; width: 13px; margin-right: 4px; }
@@ -95,11 +96,16 @@
 .dw-card-count { margin-left: auto; display: flex; gap: 4px; align-items: center; white-space: nowrap; }
 .dw-card-count svg { width: 13px; height: 13px; }
 .dw-card-count strong { color: var(--dw-danger); }
+.dw-card-rule-findings { display: block; min-width: 0; max-width: 100%; font-size: 12px; overflow-wrap: anywhere; }
+.dw-card-rule-findings strong { color: var(--dw-danger); }
+.dw-card-rule-findings ul { margin: 2px 0 0; padding: 0; list-style: none; font-weight: 450; }
 .dw-list { display: grid; gap: 6px; }
 .dw-list .dw-design-card { display: flex; align-items: stretch; }
 .dw-list .dw-thumb { width: 148px; aspect-ratio: auto; border: 0; flex: none; }
 .dw-list .dw-thumb .dw-card-screen { display: none; }
 .dw-list .dw-design-card footer { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dw-list .dw-design-card footer[data-rule-findings] { flex-wrap: wrap; }
+.dw-list .dw-card-rule-findings { flex: 1 1 100%; align-self: stretch; }
 .dw-framework-card { padding: 0; display: grid; text-align: left; overflow: hidden; }
 .dw-framework-card:focus-visible { outline: 2px solid var(--dw-accent); outline-offset: 2px; }
 .dw-framework-overview { display: grid; align-content: start; gap: 9px; padding: 12px; background: var(--dw-sunken); }
@@ -298,6 +304,8 @@
   .dw-card-screen svg { display: none; }
   .dw-list .dw-thumb { width: 106px; }
   .dw-list .dw-design-card footer { align-items: start; flex-direction: column; }
+  .dw-list .dw-design-card footer[data-rule-findings] { flex-wrap: nowrap; }
+  .dw-list .dw-card-rule-findings { flex: 0 1 auto; width: 100%; }
   .dw-canvas { height: max(330px, calc(100dvh - 258px)); padding-inline: 7px; }
   .dw-canvas[data-panel=true] { height: auto; min-height: 0; grid-template-rows: minmax(235px, 40dvh) auto; --dw-panel: 0px; }
   .dw-canvas[data-panel=true] .dw-screen-nav { top: 106px; }

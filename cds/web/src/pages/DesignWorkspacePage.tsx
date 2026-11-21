@@ -304,7 +304,7 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
           const reviews = openReviews(entry);
           const open = reviews[0];
           const failures = entry.runs.at(-1)?.cells.filter(cell => cell.status === 'failed').length ?? 0;
-          const failedRules = designCheckRows(version).filter(row => row.status === '不通过').map(row => `${row.id} ${row.name}`).join('、');
+          const failedRules = designCheckRows(version).filter(row => row.status === '不通过');
           return <article className="dw-design-card" key={entry.id} data-state={designStatus(entry)}>
             <div className="dw-thumb">{<DesignFrame projectId={workspace.projectId} version={version} screen={version.screens[0]} theme="light" zoom={null} />}
               {open ? <button className="dw-thumb-action" type="button" onClick={() => onReview(entry, open.comment, open.version)}>核对评论 {reviews.length > 1 ? `+${reviews.length - 1}` : ''}</button>
@@ -312,16 +312,17 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
                 : entry.reviewRequested ? <button className="dw-thumb-action" type="button" onClick={() => onSelect(entry.id)}>评审 V{version.version}</button> : null}
               <button className="ep-button dw-card-screen" type="button" aria-label={`大屏查看 ${version.title}`} onClick={() => onLarge(entry, version)}><Maximize />大屏</button>
             </div>
-            <footer><button className="dw-card-title" type="button" onClick={() => onSelect(entry.id)}>{version.title}</button>
+            <footer data-rule-findings={failedRules.length ? true : undefined}><button className="dw-card-title" type="button" onClick={() => onSelect(entry.id)}>{version.title}</button>
               <div><span className="dw-card-person">{version.publisher.label.slice(0, 1)}</span><code>V{version.version}</code>
                 <small>{designDate(version.createdAt)}</small>
                 {mode === 'list' && version.group && <small className="dw-list-group">{version.group}</small>}
                 {mode === 'list' && version.tags.length > 0 && <small className="dw-list-group">{version.tags.map(tag => `#${tag}`).join(' ')}</small>}
                 <span className="dw-card-count">{entry.comments.length > 0 && <><MessageSquare />{entry.comments.length}</>}
                   {failures > 0 && <strong>{failures} 不通过</strong>}{mode === 'list' && <span>{statusNames[designStatus(entry)]}</span>}</span></div>
-              {failedRules && <Link className="ep-text-button truncate text-left" title={failedRules} aria-label={`自检不通过 · ${failedRules}`}
+              {!!failedRules.length && <Link className="ep-text-button dw-card-rule-findings" aria-label={`自检不通过 · ${failedRules.map(row => `${row.id} ${row.name}`).join('、')}`}
                 to={`/design?${new URLSearchParams({ project: workspace.projectId, design: entry.id, version: String(version.version), tab: 'spec' })}`}>
-                自检不通过 · {failedRules}
+                <strong>自检不通过</strong>
+                <ul>{failedRules.map((row, index) => <li key={`${row.id}-${index}`}><code>{row.id}</code> {row.name}</li>)}</ul>
               </Link>}
             </footer>
           </article>;
