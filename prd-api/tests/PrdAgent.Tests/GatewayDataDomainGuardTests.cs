@@ -940,19 +940,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("action: \"auth.change_password\"", consoleProgram);
         Assert.Contains("action: \"platform.set_enabled\"", consoleProgram);
         Assert.Contains("action: \"model.set_enabled\"", consoleProgram);
-        Assert.Contains("WriteSystemOperationAuditAsync", consoleProgram);
-        Assert.Contains("\"admin.env_authority_reconcile\" : \"admin.force_reset\"", consoleProgram);
-        Assert.Contains("\"admin.env_authority_bootstrap\" : \"admin.force_reset_bootstrap\"", consoleProgram);
-        Assert.Contains("if (!passwordDrifted && !activeDrifted && !mustChangeDrifted && !ownershipDrifted)", consoleProgram);
-        Assert.Contains("var securityStateChanged = passwordDrifted || activeDrifted || mustChangeDrifted;", consoleProgram);
-        Assert.Contains("action: \"admin.bootstrap\"", consoleProgram);
-        Assert.Contains("action: \"admin.reactivate\"", consoleProgram);
+        var bootstrap = ReadRepoFile("llmgw/console-api/Auth/OwnerBootstrap.cs");
+        Assert.Contains("admin.bootstrap", bootstrap);
+        Assert.Contains("admin.force_reset", bootstrap);
+        Assert.DoesNotContain("DefaultAdminPwd", consoleProgram);
         Assert.Contains("\"team.create\"", consoleProgram);
         Assert.Contains("\"membership.create\"", consoleProgram);
         Assert.Contains("\"membership.update\"", consoleProgram);
         Assert.DoesNotContain("action: \"admin.deactivate_legacy_users\"", consoleProgram);
         Assert.Contains("Console.Error.WriteLine($\"[LlmGw] operation audit write failed:", consoleProgram);
-        Assert.Contains("Console.Error.WriteLine($\"[LlmGw] system operation audit write failed:", consoleProgram);
         Assert.DoesNotContain("mapDatabase.GetCollection<BsonDocument>(\"llmgw_operation_audits\")", consoleProgram);
     }
 
@@ -1000,7 +996,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("新口令至少 {LocalPasswordPolicy.MinPasswordLength} 位", consoleProgram);
         Assert.Contains("public const int MinPasswordLength = GwPasswordPolicy.MinimumLength;", localPasswordPolicy);
         Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
-        Assert.Contains("PASSWORD_MANAGED_BY_DEPLOYMENT", consoleProgram);
         Assert.Contains("body.ExpectedVersion != membership.Version", consoleProgram);
         Assert.Contains("x.Version == previousVersion", consoleProgram);
         Assert.Contains("DEVELOPER_TEAM_REQUIRED", consoleProgram);
@@ -1024,15 +1019,15 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void EnvironmentAuthority_UsesTheSamePasswordPolicyAsInteractiveAccounts()
+    public void OwnerBootstrap_UsesTheSamePasswordPolicyAsInteractiveAccounts()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
         var passwordPolicy = ReadRepoFile("llmgw/console-api/Auth/GwPasswordPolicy.cs");
         var localPasswordPolicy = ReadRepoFile("llmgw/console-api/Auth/LocalPasswordPolicy.cs");
 
         Assert.Contains("public const int MinimumLength = 12", passwordPolicy);
-        Assert.Contains("Environment.GetEnvironmentVariable(\"LLMGW_ADMIN_PASSWORD\")?.Trim()", consoleProgram);
-        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(adminBootstrapPwd)", consoleProgram);
+        Assert.Contains("Environment.GetEnvironmentVariable(\"LLMGW_ADMIN_PASSWORD\")", consoleProgram);
+        Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(password)", ReadRepoFile("llmgw/console-api/Auth/OwnerBootstrap.cs"));
         Assert.Contains("LocalPasswordPolicy.MeetsMinimumLength(newPwd)", consoleProgram);
         Assert.Contains("GwPasswordPolicy.MeetsMinimumLength(initialPassword)", consoleProgram);
         Assert.Contains("public const int MinPasswordLength = GwPasswordPolicy.MinimumLength;", localPasswordPolicy);
@@ -1042,14 +1037,14 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void EnvironmentAuthority_RejectsInteractiveAdminPasswordChanges()
+    public void EnvironmentAuthority_IsRejectedInFavorOfExplicitOneTimeRecovery()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
-
-        Assert.Contains("envAuthorityAdmin && string.Equals(user.Username, AdminUser, StringComparison.Ordinal)", consoleProgram);
-        Assert.Contains("PASSWORD_MANAGED_BY_DEPLOYMENT", consoleProgram);
-        Assert.Contains("该管理员口令由部署配置统一管理，当前页面不能修改。请联系系统管理员更新后重新登录。", consoleProgram);
-        Assert.Contains("statusCode: 409", consoleProgram);
+        Assert.Contains("if (Enabled(\"LLMGW_ADMIN_ENV_AUTHORITY\"))", consoleProgram);
+        Assert.Contains("长期环境口令覆盖已停用", consoleProgram);
+        Assert.Contains("LLMGW_ADMIN_RECOVERY_USER_ID", consoleProgram);
+        Assert.Contains("LLMGW_ADMIN_RECOVERY_ID", consoleProgram);
+        Assert.DoesNotContain("PASSWORD_MANAGED_BY_DEPLOYMENT", consoleProgram);
     }
 
     [Fact]
@@ -1555,7 +1550,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Ascending(\"TenantId\").Ascending(\"NameNormalized\")", initializer);
         Assert.Contains("Filter.Type(\"TenantId\", BsonType.String)", initializer);
         Assert.Contains("body: req", api);
-        Assert.Contains("new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId))", gateway);
+        Assert.Contains("new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId), _responseBudget)", gateway);
         Assert.Contains("CreateClient(\"SafeOutbound\")", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/UpstreamProxyClientScope.cs"));
         Assert.Contains("requirePublicPinnedWebSocket: externalTenant", gateway);
         Assert.Contains("AddHttpClient(\"SafeOutbound\")", serving);

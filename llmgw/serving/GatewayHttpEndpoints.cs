@@ -47,6 +47,28 @@ public static class GatewayHttpEndpoints
         string gatewayApiKey,
         string gitCommit)
     {
+        app.Use(async (context, next) =>
+        {
+            var original = context.Request.Body;
+            var limit = context.GetEndpoint()?.Metadata.GetMetadata<CodeReviewUserKeyEndpoint>() is not null
+                ? GatewayRequestBody.UserKeyMaxBytes : GatewayRequestBody.MaxBytes;
+            using var bounded = new GatewayBudgetReadStream(original, limit);
+            context.Request.Body = bounded;
+            try { await next(); }
+            catch (BadHttpRequestException ex) when (ex.StatusCode == 413 && !context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 413;
+                await context.Response.WriteAsJsonAsync(new { error = new { code = "request_body_too_large" } });
+            }
+            catch (JsonException) when (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = 400;
+                await context.Response.WriteAsJsonAsync(new { error = new { code = "invalid_json" } });
+            }
+            finally { context.Request.Body = original; }
+        });
         var configuredInternalTenantId = app.Configuration["LlmGateway:InternalTenantId"]?.Trim();
         var internalTenantId = string.IsNullOrWhiteSpace(configuredInternalTenantId)
             ? GatewayTenantDefaults.InternalTenantId
@@ -89,6 +111,33 @@ public static class GatewayHttpEndpoints
             {
                 var providedKey = ResolveProvidedGatewayKey(context);
                 var authorizer = context.RequestServices.GetService<IGatewayScopedKeyAuthorizer>();
+                // Body-derived caller/source and stream scope are checked again after bounded parsing.
+                var preliminary = authorizer is null
+                    ? new GatewayKeyAuthorization(HasGatewayKey(context, gatewayApiKey), false, 401,
+                        "GATEWAY_KEY_INVALID", "gateway key rejected")
+                    : await authorizer.AuthorizeAsync(providedKey ?? string.Empty, gatewayApiKey,
+                        ResolveHeader(context, "X-Gateway-Source") ?? string.Empty,
+                        ResolveHeader(context, "X-Gateway-App-Caller") ?? string.Empty,
+                        ResolveIngressProtocol(path), ResolveRequiredScope(path),
+                        context.Connection.RemoteIpAddress, context.RequestAborted,
+                        false, path, headersOnly: true);
+                if (!preliminary.Allowed)
+                {
+                    await WriteRejectedGatewayRequestLogAsync(context, preliminary,
+                        new GatewayAuthorizationInputs(ResolveHeader(context, "X-Gateway-Source") ?? "external",
+                            ResolveHeader(context, "X-Gateway-App-Caller") ?? string.Empty,
+                            ResolveIngressProtocol(path), ResolveRequiredScope(path)), path, context.RequestAborted);
+                    context.Response.StatusCode = preliminary.StatusCode;
+                    await context.Response.WriteAsJsonAsync(new
+                    {
+                        error = new { code = preliminary.ErrorCode, message = preliminary.Detail },
+                    });
+                    return;
+                }
+                if (context.Request.ContentLength > GatewayRequestBody.MaxBytes)
+                    throw new BadHttpRequestException("gateway request body exceeds byte budget", 413);
+                if (ShouldInspectAuthorizationBody(path) || context.Request.HasJsonContentType())
+                    await GatewayRequestBody.ValidateJsonAsync(context.Request, context.RequestAborted);
                 var authorizationInputs = authorizer != null
                     ? await ResolveScopedAuthorizationInputsAsync(context, path)
                     : new GatewayAuthorizationInputs(
@@ -5260,16 +5309,18 @@ public static class GatewayHttpEndpoints
         HttpRequest request,
         CancellationToken ct)
     {
-        IFormCollection form;
+        GatewayRequestBody.BufferedMultipartForm parsed;
         try
         {
-            form = await request.ReadFormAsync(ct);
+            parsed = await GatewayRequestBody.ReadMultipartAsync(request, ct);
         }
-        catch
+        catch (Exception ex) when (ex is not BadHttpRequestException && ex is not OperationCanceledException)
         {
             return OpenAiImageMultipartParseResult.Fail("invalid_multipart", "multipart/form-data 解析失败", 400);
         }
 
+        using var formLifetime = parsed;
+        var form = parsed.Form;
         var fields = new Dictionary<string, object>(StringComparer.Ordinal);
         foreach (var key in form.Keys)
         {

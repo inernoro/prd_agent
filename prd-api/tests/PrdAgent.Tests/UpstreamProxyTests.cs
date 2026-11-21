@@ -7,6 +7,7 @@ using PrdAgent.Core.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway;
 using MongoDB.Bson;
 using Xunit;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace PrdAgent.Tests;
 
@@ -25,6 +26,7 @@ public class UpstreamProxyTests
         using var clients = new UpstreamProxyClientScope(factory, false);
         clients.Get(new ModelResolutionResult { UpstreamProxy = resolved }, 30);
         Assert.Equal(1, factory.Calls);
+        Assert.Equal(GatewayOutboundHttpClients.InternalClientName, factory.LastName);
         var direct = UpstreamProxy.Build(new() { Mode = "direct" }, saved, _ => "unused", global: true);
         clients.Get(new ModelResolutionResult { UpstreamProxy = UpstreamProxy.Resolve(null, direct, _ => null) }, 30);
         Assert.Equal(1, factory.Calls); // 显式直连使用独立 handler，不能与部署默认混为一谈。
@@ -33,7 +35,86 @@ public class UpstreamProxyTests
     private sealed class CountingClientFactory : IHttpClientFactory
     {
         public int Calls;
-        public HttpClient CreateClient(string name) { Calls++; return new HttpClient(); }
+        public string? LastName;
+        public HttpClient CreateClient(string name) { Calls++; LastName = name; return new HttpClient(); }
+    }
+
+    [Theory]
+    [InlineData(301)]
+    [InlineData(302)]
+    [InlineData(303)]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task DeploymentClientAllowsApprovedInternalOriginButNeverForwardsCredentialsToRedirect(int status)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var origin = new TcpListener(IPAddress.Loopback, 0);
+        using var target = new TcpListener(IPAddress.Loopback, 0);
+        origin.Start(); target.Start();
+        var originPort = ((IPEndPoint)origin.LocalEndpoint).Port;
+        var targetPort = ((IPEndPoint)target.LocalEndpoint).Port;
+        var capture = Task.Run(async () =>
+        {
+            using var peer = await origin.AcceptTcpClientAsync(cts.Token);
+            using var stream = peer.GetStream();
+            var request = await ReadHeadersAsync(stream, cts.Token);
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(
+                $"HTTP/1.1 {status} Redirect\r\nLocation: http://127.0.0.1:{targetPort}/outside\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"), cts.Token);
+            return request;
+        }, cts.Token);
+        var services = new ServiceCollection();
+        services.AddGatewayOutboundHttpClient();
+        using var provider = services.BuildServiceProvider();
+        using var scope = new UpstreamProxyClientScope(provider.GetRequiredService<IHttpClientFactory>(), false);
+        using var message = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{originPort}/authorized");
+        message.Headers.Add("x-api-key", "synthetic-provider-secret");
+        message.Headers.Authorization = new("Bearer", "synthetic-bearer-secret");
+        using var response = await scope.Get(new ModelResolutionResult(), 10).SendAsync(message, cts.Token);
+        Assert.Equal(status, (int)response.StatusCode);
+        var received = await capture;
+        Assert.Contains("synthetic-provider-secret", received);
+        Assert.Contains("synthetic-bearer-secret", received);
+        Assert.False(target.Pending()); // SendAsync 已完成；被禁止的目标连 TCP 连接也没有收到。
+    }
+
+    [Fact]
+    public void ExternalTenantKeepsConnectTimeAddressValidationClient()
+    {
+        var factory = new CountingClientFactory();
+        using var scope = new UpstreamProxyClientScope(factory, true);
+        scope.Get(new ModelResolutionResult(), 10);
+        Assert.Equal("SafeOutbound", factory.LastName);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ControlledProxyCannotReflectProviderOrProxySecret(bool reflectProxy)
+    {
+        const string providerSecret = "synthetic-provider-secret-91e3";
+        const string proxySecret = "synthetic-proxy-secret-51b8";
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var upstream = Task.Run(async () =>
+        {
+            using var peer = await listener.AcceptTcpClientAsync(cts.Token);
+            using var stream = peer.GetStream();
+            await ReadHeadersAsync(stream, cts.Token);
+            var body = JsonSerializer.Serialize(new { content = reflectProxy ? proxySecret : providerSecret });
+            await stream.WriteAsync(Encoding.UTF8.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {Encoding.UTF8.GetByteCount(body)}\r\nConnection: close\r\n\r\n{body}"), cts.Token);
+        }, cts.Token);
+        using var scope = new UpstreamProxyClientScope(new CountingClientFactory(), false);
+        using var client = scope.Get(new ModelResolutionResult
+        {
+            ApiKey = providerSecret, UpstreamProxy = new("custom", $"http://127.0.0.1:{port}", "synthetic-user", proxySecret)
+        }, 10);
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => client.GetAsync("http://proxy-resolved.invalid/chat", cts.Token));
+        await upstream;
+        Assert.Contains("凭据回显", error.ToString());
+        Assert.DoesNotContain(providerSecret, error.ToString());
+        Assert.DoesNotContain(proxySecret, error.ToString());
     }
 
     [Fact]

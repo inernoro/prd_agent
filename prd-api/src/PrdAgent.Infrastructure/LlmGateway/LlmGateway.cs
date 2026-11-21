@@ -35,6 +35,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly string _internalTenantId;
     private readonly string? _openRouterReferer;
     private readonly int _firstByteTimeoutSeconds;
+    private readonly UpstreamResponseBudget _responseBudget;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -86,6 +87,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
         _openRouterReferer = OpenRouterAttribution.ResolveReferer(configuration);
+        _responseBudget = UpstreamResponseBudget.Read(configuration);
         _firstByteTimeoutSeconds = int.TryParse(configuration?["LlmGateway:FirstByteTimeoutSeconds"], out var firstByteSeconds)
             ? Math.Clamp(firstByteSeconds, 1, 30) : 30;
         _doubaoStreamAsr = doubaoStreamAsr
@@ -535,7 +537,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = admit is null ? GetProviderRetryResolutions(resolution, request) : new List<ModelResolutionResult> { resolution };
-            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
+            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId), _responseBudget);
             var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
             HttpResponseMessage? response = null;
             var responseBody = string.Empty;
@@ -672,9 +674,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                     MarkLastSendAttemptReachedProvider(providerAttempts);
                     reachedProvider = true;
-                    response = await httpClient.SendAsync(httpRequest, ct);
+                    response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
                 }
-                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
+                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException and not UpstreamResponseRejectedException)
                 {
                     var sendAttemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
@@ -818,8 +820,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             if (ex is TaskExecutionAdmissionException rejected && !reachedProvider)
                 return new GatewaySendRejectedBeforeSend { Success = false, ErrorCode = rejected.Code, ErrorMessage = msg, StatusCode = code };
             var unknown = providerAttempts?.LastOrDefault(a => a.Stage == "send")?.ReachedProvider == true;
-            return GatewayResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code
-                : unknown ? OutcomeUnknownErrorCode : "GATEWAY_ERROR", unknown ? OutcomeUnknownMessage : msg, code,
+            return GatewayResponse.Fail(GetResponseRejection(ex) is { } rejectedResponse ? rejectedResponse.Code
+                : ex is TaskExecutionAdmissionException task ? task.Code
+                : unknown ? OutcomeUnknownErrorCode : "GATEWAY_ERROR", unknown && GetResponseRejection(ex) is null ? OutcomeUnknownMessage : msg, code,
                 resolution?.ToGatewayResolution());
         }
     }
@@ -865,7 +868,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         DateTime? firstByteAt = null;
         var textBuilder = new StringBuilder();
         // 函数调用增量按 index 合并累积（首个 delta 带 id/name，后续 delta 拼 arguments），用于日志可视化
-        var toolCallAccum = new Dictionary<int, System.Text.Json.Nodes.JsonObject>();
+        var toolCallAccum = new Dictionary<int, StreamToolCallAccumulator>();
 
         ModelResolutionResult? resolution = null;
         GatewayModelResolution? gatewayResolution = null;
@@ -899,8 +902,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var retryResolutions = admit is null
                 ? GetProviderRetryResolutions(resolution, request)
                 : new List<ModelResolutionResult> { resolution };
-            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
-            var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
+            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId), _responseBudget);
+            var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds, lineEvents: true);
             HttpResponseMessage? rawResponse = null;
             IGatewayAdapter? adapter = null;
             string? terminalError = null;
@@ -912,7 +915,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 if (ct.IsCancellationRequested || firstByteDeadline.IsCancellationRequested) break;
                 resolution = retryResolutions[attemptIndex];
-                httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
+                httpClient = outboundClients.Get(resolution, request.TimeoutSeconds, lineEvents: true);
                 gatewayResolution = resolution.ToGatewayResolution(billingAlerts);
                 adapter = GetAdapterForResolution(resolution);
                 if (adapter == null)
@@ -1067,7 +1070,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         sendCode, resolution.ActualModel);
                     RecordTransportFailure(providerAttempts, sendException, sendCode, attemptDurationMs, sendMsg);
                     if (sendException is not TaskExecutionAdmissionException && !IsConfirmedNotSent(sendException))
-                        terminalErrorCode = OutcomeUnknownErrorCode;
+                        terminalErrorCode = GetResponseRejection(sendException)?.Code ?? OutcomeUnknownErrorCode;
                     if (sendException is not TaskExecutionAdmissionException && !callerCancellation.IsCancellationRequested
                         && HasTrackedHealthRoute(resolution))
                         await RecordRecoveryFailureAsync(resolution, ct);
@@ -1099,7 +1102,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     var (message, status) = ClassifyTransportException(ex, callerCancellation.IsCancellationRequested);
                     RecordTransportFailure(providerAttempts, ex, status, attemptDurationMs, message);
                     terminalError = message;
-                    terminalErrorCode = OutcomeUnknownErrorCode;
+                    terminalErrorCode = GetResponseRejection(ex)?.Code ?? OutcomeUnknownErrorCode;
                     terminalStatusCode = status;
                     break;
                 }
@@ -1187,7 +1190,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 RecordTransportFailure(providerAttempts, streamOpenException, status,
                     (long)(DateTime.UtcNow - startedAt).TotalMilliseconds, message);
                 await FinishFailedRecoveryLogAsync(logId, finalResolution, providerAttempts, status, message, startedAt);
-                yield return GatewayStreamChunk.Fail(OutcomeUnknownMessage, OutcomeUnknownErrorCode, finalGatewayResolution);
+                yield return GatewayStreamChunk.Fail(GetResponseRejection(streamOpenException) is not null ? message : OutcomeUnknownMessage,
+                    GetResponseRejection(streamOpenException)?.Code ?? OutcomeUnknownErrorCode, finalGatewayResolution);
                 yield break;
             }
             using var stream = responseStream!;
@@ -1212,6 +1216,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             bool streamAborted = false;
             string? streamAbortMsg = null;
             int? streamAbortCode = null;
+            string? responseRejectionCode = null;
             bool terminalUsageDrainStarted = false;
             bool protocolCompleted = false;
 
@@ -1254,6 +1259,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         readCode, finalResolution.ActualModel, firstByteAt);
                     streamAborted = true;
                     streamAbortMsg = readMsg;
+                    responseRejectionCode = GetResponseRejection(readException)?.Code;
                     streamAbortCode = readCode;
                     break;
                 }
@@ -1419,7 +1425,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     streamAbortMsg!, startedAt, textBuilder.ToString(), thinkingBuilder.ToString(), tokenUsage);
                 if (HasTrackedHealthRoute(finalResolution) && !callerCancellation.IsCancellationRequested)
                     await RecordRecoveryFailureAsync(finalResolution, ct);
-                yield return GatewayStreamChunk.Fail(OutcomeUnknownMessage, OutcomeUnknownErrorCode, finalGatewayResolution);
+                yield return GatewayStreamChunk.Fail(responseRejectionCode is null ? OutcomeUnknownMessage : streamAbortMsg!,
+                    responseRejectionCode ?? OutcomeUnknownErrorCode, finalGatewayResolution);
                 yield break;
             }
 
@@ -2603,9 +2610,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private static bool IsSpeechRawRequest(GatewayRawRequest request)
         => string.Equals(request.ModelType, ModelTypes.Tts, StringComparison.OrdinalIgnoreCase);
 
-    private bool RequiresBoundedRawRead(GatewayRawRequest request, ModelResolutionResult resolution)
-        => IsSpeechRawRequest(request)
-           || resolution.IsExchange && _transformerRegistry.Get(resolution.ExchangeTransformerType) is IRawExchangeResponseTransformer;
+    private UpstreamResponseBudget RawResponseBudget(GatewayRawRequest request, ModelResolutionResult resolution)
+    {
+        var transformer = resolution.IsExchange
+            ? _transformerRegistry.Get(resolution.ExchangeTransformerType) as IRawExchangeResponseTransformer : null;
+        var existing = transformer?.MaxResponseBytes ?? (IsSpeechRawRequest(request) ? GatewaySpeechResponseLimits.MaxAudioBytes : 0);
+        if (existing > 0) return _responseBudget with { ResponseBytes = null, BufferedPrefixBytes = existing + 1L };
+        return request.ModelType is ModelTypes.ImageGen or ModelTypes.VideoGen
+            ? _responseBudget with { ResponseBytes = _responseBudget.MediaResponseBytes } : _responseBudget;
+    }
 
     private async Task<byte[]> ReadRawExchangeContentAsync(
         HttpContent content, GatewayRawRequest request, ModelResolutionResult resolution, CancellationToken ct)
@@ -2942,8 +2955,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             logId = await StartRawLogAsync(request, gatewayResolution, endpoint, requestBodyForLog, startedAt, ct);
 
             // 6. 发送请求
-            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
-            var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
+            using var outboundClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId), RawResponseBudget(request, resolution));
+            var httpClient = outboundClients.Get(resolution, request.TimeoutSeconds, responseBudget: RawResponseBudget(request, resolution));
             var retryResolutions = GetProviderRetryResolutions(resolution, request);
 
             _logger.LogInformation(
@@ -2967,10 +2980,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                 MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                 response = await httpClient.SendAsync(httpRequest,
-                    RequiresBoundedRawRead(request, resolution)
-                        ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct);
+                    HttpCompletionOption.ResponseHeadersRead, ct);
             }
-            catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
+            catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException and not UpstreamResponseRejectedException)
             {
                 var (sendMessage, sendStatusCode) = ClassifyTransportException(
                     sendException,
@@ -3134,12 +3146,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                     MarkLastSendAttemptReachedProvider(rawProviderAttempts);
-                    httpClient = outboundClients.Get(resolution, request.TimeoutSeconds);
+                    httpClient = outboundClients.Get(resolution, request.TimeoutSeconds, responseBudget: RawResponseBudget(request, resolution));
                     response = await httpClient.SendAsync(nextBuild.HttpRequest,
-                        RequiresBoundedRawRead(request, resolution)
-                            ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct);
+                        HttpCompletionOption.ResponseHeadersRead, ct);
                 }
-                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
+                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException and not UpstreamResponseRejectedException)
                 {
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
                         sendException,
@@ -3270,14 +3281,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         if (submitRequestId != null)
                             queryRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
 
-                        using var queryClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId));
+                        using var queryClients = new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId), _responseBudget);
                         var queryClient = queryClients.Get(resolution, 30);
                         var queryStartedAt = DateTime.UtcNow;
                         HttpResponseMessage queryResp;
                         if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                         try
                         {
-                            queryResp = await queryClient.SendAsync(queryRequest, ct);
+                            queryResp = await queryClient.SendAsync(queryRequest, HttpCompletionOption.ResponseHeadersRead, ct);
                         }
                         catch (Exception ex)
                         {
@@ -3609,9 +3620,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var unknown = rawProviderAttempts?.LastOrDefault(a => a.Stage == "send")?.ReachedProvider == true;
             return new GatewayRawResponse
             {
-                Success = false, ErrorCode = ex is TaskExecutionAdmissionException task ? task.Code
+                Success = false, ErrorCode = GetResponseRejection(ex) is { } rejectedResponse ? rejectedResponse.Code
+                    : ex is TaskExecutionAdmissionException task ? task.Code
                     : unknown ? OutcomeUnknownErrorCode : "GATEWAY_ERROR",
-                ErrorMessage = unknown ? OutcomeUnknownMessage : msg, StatusCode = code,
+                ErrorMessage = unknown && GetResponseRejection(ex) is null ? OutcomeUnknownMessage : msg, StatusCode = code,
                 Resolution = resolution.ToGatewayResolution(), LogId = logId,
                 DurationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds,
             };
@@ -4082,6 +4094,16 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// - HttpRequestException → 502（网络层失败）
     /// - 其他 → 500
     /// </summary>
+    private static UpstreamResponseRejectedException? GetResponseRejection(Exception? error)
+    {
+        while (error is not null)
+        {
+            if (error is UpstreamResponseRejectedException rejected) return rejected;
+            error = error.InnerException;
+        }
+        return null;
+    }
+
     private static (string Message, int StatusCode) ClassifyTransportException(Exception ex, bool callerCancelled)
     {
         if (callerCancelled)
@@ -4089,8 +4111,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return ("caller 已取消", 499);
         }
 
+        if (GetResponseRejection(ex) is { } responseRejection) return (responseRejection.Message, 502);
         return ex switch
         {
+            UpstreamResponseRejectedException rejected => (rejected.Message, 502),
             TaskExecutionAdmissionException task => (task.Message, task.StatusCode),
             TaskCanceledException => ("上游超时未响应（HttpClient timeout）", 504),
             OperationCanceledException => ("上游超时未响应", 504),
@@ -5341,8 +5365,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// 把一批 OpenAI 形状 tool_calls 流式增量按 index 合并进累加器：
     /// 首个 delta 带 id/name，后续 delta 只追加 function.arguments 片段。纯日志用途，best-effort 容错。
     /// </summary>
+    private sealed class StreamToolCallAccumulator
+    {
+        public JsonObject Metadata { get; } = new();
+        public StringBuilder Arguments { get; } = new();
+    }
+
     private static void AccumulateToolCallDeltas(
-        Dictionary<int, System.Text.Json.Nodes.JsonObject> accum,
+        Dictionary<int, StreamToolCallAccumulator> accum,
         System.Text.Json.Nodes.JsonArray delta)
     {
         try
@@ -5355,20 +5385,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (!accum.TryGetValue(idx, out var existing))
                 {
-                    existing = new System.Text.Json.Nodes.JsonObject
-                    {
-                        ["index"] = idx,
-                        ["type"] = "function",
-                        ["function"] = new System.Text.Json.Nodes.JsonObject { ["name"] = "", ["arguments"] = "" }
-                    };
+                    existing = new StreamToolCallAccumulator();
+                    existing.Metadata["index"] = idx;
+                    existing.Metadata["type"] = "function";
+                    existing.Metadata["function"] = new JsonObject { ["name"] = "" };
                     accum[idx] = existing;
                 }
 
-                if (d["id"] is { } id && existing["id"] == null) existing["id"] = id.DeepClone();
-                if (d["type"] is { } ty) existing["type"] = ty.DeepClone();
+                if (d["id"] is { } id && existing.Metadata["id"] == null) existing.Metadata["id"] = id.DeepClone();
+                if (d["type"] is { } ty) existing.Metadata["type"] = ty.DeepClone();
 
                 if (d["function"] is System.Text.Json.Nodes.JsonObject fn &&
-                    existing["function"] is System.Text.Json.Nodes.JsonObject ef)
+                    existing.Metadata["function"] is System.Text.Json.Nodes.JsonObject ef)
                 {
                     if (fn["name"] is { } nm)
                     {
@@ -5377,9 +5405,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     }
                     if (fn["arguments"] is { } ar && ar.GetValueKind() == System.Text.Json.JsonValueKind.String)
                     {
-                        var prev = ef["arguments"]?.GetValueKind() == System.Text.Json.JsonValueKind.String
-                            ? ef["arguments"]!.GetValue<string>() : "";
-                        ef["arguments"] = prev + ar.GetValue<string>();
+                        // 不在每个增量复制此前全部参数，避免长工具调用产生二次方分配。
+                        existing.Arguments.Append(ar.GetValue<string>());
                     }
                 }
             }
@@ -5392,13 +5419,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     /// <summary>累加器 → 按 index 排序的 OpenAI 形状 tool_calls 数组；空则 null。</summary>
     private static System.Text.Json.Nodes.JsonArray? BuildAccumulatedToolCalls(
-        Dictionary<int, System.Text.Json.Nodes.JsonObject> accum)
+        Dictionary<int, StreamToolCallAccumulator> accum)
     {
         if (accum.Count == 0) return null;
         var arr = new System.Text.Json.Nodes.JsonArray();
         foreach (var kv in accum.OrderBy(k => k.Key))
         {
-            arr.Add(kv.Value.DeepClone());
+            var call = (JsonObject)kv.Value.Metadata.DeepClone();
+            ((JsonObject)call["function"]!)["arguments"] = kv.Value.Arguments.ToString();
+            arr.Add(call);
         }
         return arr;
     }

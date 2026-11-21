@@ -183,13 +183,8 @@ public class AgentToolsTests : IDisposable
     [Fact]
     public async Task RepoCreatePullRequestRequiresGitHubToken()
     {
-        await new RepoRunCommandTool(_workspace).InvokeAsync(
-            JsonDocument.Parse("""{"command":"git init && git remote add origin https://github.com/inernoro/prd_agent.git && git config user.email test@example.com && git config user.name Tester","timeoutSeconds":10}""").RootElement,
-            new AgentToolInvocationContext(),
-            CancellationToken.None);
-        await File.WriteAllTextAsync(Path.Combine(_root, "audit.txt"), "change\n");
-
-        var result = await new RepoCreatePullRequestTool(_workspace).InvokeAsync(
+        // Use an empty workspace and a simulated missing token before any Git or HTTP work.
+        var result = await new RepoCreatePullRequestTool(_workspace, () => null).InvokeAsync(
             JsonDocument.Parse("""
             {
               "branch": "cx/test-agent-pr",
@@ -202,6 +197,7 @@ public class AgentToolsTests : IDisposable
 
         result.Success.ShouldBeFalse();
         result.ErrorCode.ShouldBe("github_token_missing");
+        Directory.EnumerateFileSystemEntries(_root).ShouldBeEmpty();
     }
 
     [Fact]
