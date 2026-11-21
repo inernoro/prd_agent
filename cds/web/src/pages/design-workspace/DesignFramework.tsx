@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronLeft, Copy, Shapes, Terminal } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { DesignFramework as Framework, DesignMaterial, FrameworkRevision } from '../../../../src/shared/design-workspace';
+import { designFrameworkRules } from '../../../../src/shared/design-framework-rules';
 import { designDate, materialNames } from './design-ui';
 
 const frameworkTabs = ['tokens','components','skeleton','rules','history'] as const;
@@ -26,7 +27,7 @@ function tokenEntries(value: unknown): Array<[string, string | number]> {
 export function FrameworkOverview({ material, used }: { material: DesignMaterial; used: number }) {
   const colors = colorsOf(material);
   const sizes = typeOf(material);
-  const rules = material.rules?.match(/^(?:\|\s*|#{2,4}\s+)R[-_]\d+\b/gm)?.length;
+  const rules = designFrameworkRules(material.rules ?? '').size;
   return <div className="dw-framework-overview">
     {!!colors.length && <div className="dw-framework-swatches" aria-label="框架配色">
       {colors.slice(0, 8).map(color => <span key={color.name} title={color.name} style={{ backgroundColor: color.light }} />)}

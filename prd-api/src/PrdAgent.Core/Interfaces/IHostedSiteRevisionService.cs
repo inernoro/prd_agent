@@ -99,6 +99,9 @@ public interface IHostedSiteRevisionService
         string userId,
         CancellationToken ct = default);
 
+    Task<HostedSiteRevisionFile?> GetFixedShareFileAsync(
+        ShareSiteResolveResult access, string path, CancellationToken ct = default);
+
     Task<HostedSiteRevisionMutationResult> PublishAsync(
         string siteId,
         string revisionId,

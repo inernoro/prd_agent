@@ -421,8 +421,9 @@ function historyLabel(event: PlanningEvent) {
   return (event.entity === 'decision' && decisionHistoryLabels[event.type]) || events[event.type];
 }
 
-function HistoryBadge({ event, short = false }: { event: PlanningEvent; short?: boolean }) {
-  return <span className="ep-decision-history-badge" data-event={event.type} title={`${event.actor.label}${event.note ? ` · ${event.note}` : ''}`}>
+function HistoryBadge({ event, short = false, recent }: { event: PlanningEvent; short?: boolean; recent?: boolean }) {
+  return <span className="ep-decision-history-badge" data-event={event.type} data-recent={recent || undefined}
+    title={`${event.actor.label}${event.note ? ` · ${event.note}` : ''}`}>
     <i aria-hidden />{historyLabel(event)}{short && <time dateTime={event.at}>{monthDay(event.at)}</time>}
   </span>;
 }
@@ -467,7 +468,8 @@ function Trunk({ data, onSelect, onBranch }: { data: PlanningBoard; onSelect: Se
             <button type="button" className="ep-text-button ep-trunk-title" onClick={() => onSelect({ kind: 'decision', id: decision.id })}>{decision.title}</button>
             {decision.provenance && <p className="ep-caption"><a className="ep-link" href={decision.provenance.url} target="_blank" rel="noreferrer">依据 <ExternalLink /></a>
               {decision.provenance.level !== 'original' && ` · 记录于 ${dateLabel(decision.createdAt)}`}</p>}
-            {changes.length > 0 && <div className="ep-trunk-history" aria-label="决策历程">{changes.map(event => <HistoryBadge key={event.id} event={event} short />)}</div>}
+            {changes.length > 0 && <div className="ep-trunk-history" aria-label="决策历程">{changes.map(event =>
+              <HistoryBadge key={event.id} event={event} short recent={recentlyChanged(event.at, data.today)} />)}</div>}
             {associated.length > 0 && <div className="ep-trunk-plans">{associated.map(plan => {
               const progress = planProgress(plan, data.today);
               return <button type="button" key={plan.id} title={plan.title} className="ep-text-button" onClick={() => onSelect({ kind: 'plan', id: plan.id })}>

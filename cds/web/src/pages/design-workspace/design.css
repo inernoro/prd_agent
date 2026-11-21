@@ -290,6 +290,26 @@
 .dw-structure-list strong { overflow-wrap: anywhere; }
 .dw-skeleton-preview { width: 100%; min-height: 230px; border: 0; }
 
+.dw-rationale {
+  display: grid; gap: 18px; margin-top: 18px; min-width: 0; container: design-rationale / inline-size;
+  overflow-wrap: anywhere;
+}
+.dw-rationale h2 { font-size: 13px; color: var(--dw-muted); }
+.dw-rationale ul { list-style: disc; margin-top: 6px; padding-left: 18px; }
+.dw-rationale-goal ul { font-size: 15px; font-weight: 500; }
+.dw-rationale-choices {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; margin-top: 8px;
+}
+.dw-rationale-choice { display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 10px; min-width: 0; }
+.dw-rationale-choice strong { font-size: 14px; line-height: 1.45; font-weight: 600; }
+.dw-rationale-choice p { font-size: 13px; }
+.dw-rationale-details { display: grid; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dw-rationale .dw-rationale-rules { list-style: none; padding-left: 0; display: grid; gap: 6px; justify-items: start; }
+.dw-rationale-rules a { white-space: normal; }
+@container design-rationale (max-width: 820px) {
+  .dw-rationale-details { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (max-width: 740px) {
   .dw-compare-side[data-viewport='desktop'] { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(10rem, 1fr)); overflow-y: auto; }
   .dw-head .dw-right { margin-left: 0; }

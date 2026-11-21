@@ -1,24 +1,27 @@
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { designId, designPackageLimit } from '../services/design-package.js';
 import { decorateDesignPrototype, designPrototypeCsp } from '../services/design-prototype.js';
+import type { DesignShareHandoffConfig } from '../services/design-share-handoff.js';
 import type { DesignActor, DesignWorkspaceService } from '../services/design-workspace.js';
 import { PlanningError, planningId, rejectPlanning } from '../services/engineering-planning-input.js';
 import type { DesignReviewer } from '../shared/design-workspace.js';
 
 const route = '/projects/:projectId/design';
-const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|reviewers|artifacts\/[^/]+))?\/?$/i;
+const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|reviewers|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
 export function normalizedDesignPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0];
   if (/^(?:\/_cds)?\/api\/auth\/design\/notices\/?$/i.test(path)) return '/api/auth/design/notices';
   const match = path.match(normalize);
   if (!match) return undefined;
-  return '/api/projects/:projectId/design' + (match[1] ? '/' + match[1].toLowerCase().replace(/^artifacts\/.+$/, 'artifacts/:artifactId') : '');
+  return '/api/projects/:projectId/design' + (match[1] ? '/' + match[1].toLowerCase().replace(/^artifacts\/.+$/, 'artifacts/:artifactId')
+    .replace(/^shares\/[^/]+\/handoff$/, 'shares/:preparationId/handoff') : '');
 }
 
 export function createDesignWorkspaceRouter(deps: {
   service: DesignWorkspaceService;
   resolveAccess: (req: Request, projectId: string) => DesignActor | null | Promise<DesignActor | null>;
   reviewCandidates?: (projectId: string) => Promise<DesignReviewer[]>;
+  mapShareHandoff?: () => DesignShareHandoffConfig | undefined;
 }): Router {
   const router = express.Router();
   function failure(error: unknown, res: Response) {
@@ -59,6 +62,11 @@ export function createDesignWorkspaceRouter(deps: {
     handle(async (req, res, projectId, actor) => {
       const info = await deps.service.command(projectId, actor, req.body);
       res.status(info.reused ? 200 : 201).json(info);
+    }));
+  router.post(`${route}/shares/:preparationId/handoff`, authorized, express.json({ limit: '2kb' }),
+    handle(async (req, res, projectId, actor) => {
+      res.json(await deps.service.shareHandoff(projectId, actor, designId(req.params.preparationId, '分享准备编号'), req.body,
+        deps.mapShareHandoff?.()));
     }));
   router.get(`${route}/artifacts/:id`, authorized, handle(async (req, res, projectId, actor) => {
     const artifact = await deps.service.artifact(projectId, actor, designId(req.params.id, '稿件附件'));

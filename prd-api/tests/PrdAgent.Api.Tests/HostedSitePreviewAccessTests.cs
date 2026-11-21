@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
@@ -18,6 +19,60 @@ namespace PrdAgent.Api.Tests;
 public sealed class HostedSitePreviewAccessTests
 {
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
+    [Fact]
+    public void FixedShareFilesUseAnIndependentSealedTicketCappedByShareExpiry()
+    {
+        var service = new HostedSitePreviewAccessService(new EphemeralDataProtectionProvider());
+        var revision = Revision();
+        var fixedRevision = new HostedSiteFixedRevision(revision.Id,
+            HostedSitePreviewAccessService.ComputePackageFingerprint(revision.VerifiedFiles),
+            revision.VerifiedFiles.ToDictionary(file => file.Path, file => file.Sha256));
+        var expiry = DateTime.UtcNow.AddMinutes(2);
+        var issued = service.IssueFixedShare(revision.SiteId, fixedRevision, null, "synthetic-share", new string('b', 64), expiry);
+
+        Assert.Equal(expiry, issued.ExpiresAt);
+        Assert.False(service.TryRead(issued.Ticket, out _));
+        Assert.False(service.TryReadFixedShare(service.Issue(revision, "reviewer").Ticket, out _));
+        Assert.True(service.TryReadFixedShare(issued.Ticket, out var payload));
+        Assert.Equal(fixedRevision.PackageFingerprint, payload.PackageFingerprint);
+        Assert.Equal(revision.Id, payload.RevisionId);
+        Assert.False(issued.Ticket.Contains("synthetic-share", StringComparison.Ordinal));
+        Assert.False(service.TryReadFixedShare(issued.Ticket, out _, expiry));
+        Assert.False(service.TryReadFixedShare("invalid" + issued.Ticket, out _));
+    }
+
+    [Fact]
+    public void CdsHandoffRequiresTheApprovedIdentityTrustedOriginsAndLiveSignature()
+    {
+        const string issuer = "https://cds.example.test";
+        const string audience = "https://map.example.test";
+        var key = SHA256.HashData(Encoding.UTF8.GetBytes("synthetic fixture key"));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["CDS_DESIGN_MAP_HANDOFF_ISSUER"] = issuer,
+            ["CDS_DESIGN_MAP_HANDOFF_AUDIENCE"] = audience,
+            ["CDS_DESIGN_MAP_HANDOFF_KEY"] = WebEncoders.Base64UrlEncode(key),
+        }).Build();
+        var now = new DateTimeOffset(2026, 11, 21, 1, 2, 3, TimeSpan.Zero);
+        var iat = now.ToUnixTimeSeconds();
+        var grant = new CdsDesignShareGrant("cds-fixed-design-share", issuer, audience, "project-a", "DSN-a", "SHARE-a", 1,
+            new('a', 40), new('b', 64), new('c', 64), 2, "password", "site-a", "revision-a", "map-reviewer", iat, iat + 300);
+        var encoded = Sign(grant);
+
+        Assert.Equal(grant, CdsDesignShareHandoff.Read(encoded, "map-reviewer", config, now));
+        Assert.Null(CdsDesignShareHandoff.Read(encoded, "wrong-user", config, now));
+        Assert.Null(CdsDesignShareHandoff.Read(encoded, "map-reviewer", config, now.AddMinutes(5)));
+        Assert.Null(CdsDesignShareHandoff.Read("invalid" + encoded, "map-reviewer", config, now));
+        Assert.Null(CdsDesignShareHandoff.Read(Sign(grant with { AudienceOrigin = "https://other.example.test" }), "map-reviewer", config, now));
+        Assert.Null(CdsDesignShareHandoff.Read(Sign(grant with { ExpiresInHours = 0 }), "map-reviewer", config, now));
+
+        string Sign(CdsDesignShareGrant value)
+        {
+            var payload = WebEncoders.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(value, WebJson));
+            return $"{payload}.{WebEncoders.Base64UrlEncode(HMACSHA256.HashData(key, Encoding.ASCII.GetBytes(payload)))}";
+        }
+    }
 
     [Theory]
     [InlineData(null)]

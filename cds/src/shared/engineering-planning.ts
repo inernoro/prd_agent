@@ -225,6 +225,7 @@ export type PlanningEvent = {
   via?: 'system';
   triggeredBy?: PlanningIdentity;
   dates?: { dueAt?: [string | null, string | null]; reviewAt?: [string | null, string | null] };
+  triggerChange?: [string | null, string | null];
   proposedBy?: PlanningIdentity;
   proposal?: { id: string; source: PlanningProposalSource; skill?: string };
   relatedDebtId?: string;
@@ -397,7 +398,7 @@ type PlanningCommandFields =
   | { type: 'debt.import'; items: PlanningImportRow[] }
   | ({ type: 'debt.update'; patch: DebtPatch } & VersionedDebt)
   | ({ type: 'debt.branch'; decisionId: string | null; reason: string } & VersionedDebt)
-  | ({ type: 'debt.defer'; reason: string; reviewAt: string } & VersionedDebt)
+  | ({ type: 'debt.defer'; reason: string; reviewAt: string; dueAt?: string | null; trigger?: string | null } & VersionedDebt)
   | ({ type: 'debt.review'; next: 'start' | 'defer' | 'drop'; reason: string; reviewAt?: string } & VersionedDebt)
   | ({ type: 'debt.start' | 'debt.progress'; note: string; evidence?: PlanningEvidence[] } & VersionedDebt)
   | ({ type: 'debt.repay'; summary: string; results: CriterionResult[]; evidence: PlanningEvidence[];

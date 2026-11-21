@@ -207,9 +207,11 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
     let copiedBrief = false;
     let historicCitation = false;
     if (handoff) {
-      const drawerBounds = await drawer.boundingBox();
+      const contentBounds = await drawer.locator('.ep-detail').boundingBox();
       const cardBounds = await drawer.getByRole('region', { name: '接手卡', exact: true }).boundingBox();
-      check(Math.abs(cardBounds.x - drawerBounds.x) <= 2, '接手卡左边未贴齐债务抽屉');
+      check(Math.abs(cardBounds.x - contentBounds.x - 24) <= 1
+        && Math.abs(contentBounds.x + contentBounds.width - cardBounds.x - cardBounds.width - 24) <= 1,
+      '接手卡左右应和交付原型的 24px 内容边距一致');
       await button(drawer, '复制给智能体').click();
       await drawer.getByText('已复制接手卡', { exact: true }).waitFor();
       copiedBrief = await page.evaluate(() => navigator.clipboard.readText()) === brief.markdown;

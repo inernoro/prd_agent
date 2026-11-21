@@ -234,6 +234,9 @@ public interface IHostedSitePrivateSourceGate
         string userId,
         string? confirmedFingerprint,
         CancellationToken ct);
+
+    Task<HostedSitePrivateSourceDecision> EnforceForRevisionShareAsync(
+        HostedSite site, HostedSiteRevision revision, string userId, string? confirmedFingerprint, CancellationToken ct);
 }
 
 /// <summary>
@@ -411,6 +414,13 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
             userId,
             confirmedFingerprint,
             ct);
+    }
+
+    public async Task<HostedSitePrivateSourceDecision> EnforceForRevisionShareAsync(
+        HostedSite site, HostedSiteRevision revision, string userId, string? confirmedFingerprint, CancellationToken ct)
+    {
+        var report = await InspectRevisionAsync(site, revision, ct);
+        return await DecideAndRecordAsync(report, HostedSitePrivateSourceActions.ShareCreate, userId, confirmedFingerprint, ct);
     }
 
     private async Task<HostedSitePrivateSourceDecision> DecideAndRecordAsync(

@@ -176,8 +176,11 @@
 .ep-open-in-list { margin-left: auto; }
 .ep-escape-help { margin-left: auto; white-space: nowrap; }
 .ep-open-in-list + .ep-escape-help { margin-left: 2px; }
-.ep-dialog--debt-detail { background: var(--ep-base); container: debt-detail / inline-size; }
-.ep-dialog--debt-detail .ep-detail { --ep-debt-detail-inset: clamp(.875rem, 1.75vw, 1.5rem); padding-inline: var(--ep-debt-detail-inset); }
+.ep-dialog--debt-detail { background: var(--ep-base); container: debt-detail / inline-size; border-width: 0 0 0 1px; }
+.ep-dialog--debt-detail .ep-detail { padding-inline: 24px; }
+@container debt-detail (max-width: 560px) {
+  .ep-dialog--debt-detail .ep-detail { padding-inline: 16px; }
+}
 .ep-dialog.ep-dialog--debt-detail {
   /* The v21 reference sizes its drawer from the content area beside its navigation. */
   --debt-drawer-content-offset: 208px;
@@ -190,7 +193,7 @@
   .ep-dialog.ep-dialog--debt-detail { --debt-drawer-content-offset: 0px; }
 }
 @media (max-width: 720px) {
-  .ep-dialog.ep-dialog--debt-detail { width: 100vw !important; }
+  .ep-dialog.ep-dialog--debt-detail { width: 100vw !important; border-inline-start-width: 0; }
 }
 .ep-dialog.ep-dialog--debt-detail > button:last-child,
 .ep-dialog.ep-dialog--repay > button:last-child { top: 4px; right: 4px; width: 44px; height: 44px; background: transparent; }

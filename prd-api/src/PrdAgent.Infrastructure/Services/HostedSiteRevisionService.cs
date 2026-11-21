@@ -555,6 +555,22 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
     {
         if (await _sites.GetByIdAsync(siteId, userId, ct) == null)
             throw new KeyNotFoundException("站点不存在");
+        return await FindVerifiedFileAsync(siteId, revisionId, path, ct);
+    }
+
+    public async Task<HostedSiteRevisionFile?> GetFixedShareFileAsync(
+        ShareSiteResolveResult access, string path, CancellationToken ct = default)
+    {
+        if (access.Error != null || access.Site == null || access.Share?.FixedRevision is not { } fixedRevision
+            || access.Share.SiteId != access.Site.Id || !fixedRevision.FileHashes.TryGetValue(path, out var expectedHash))
+            return null;
+        var file = await FindVerifiedFileAsync(access.Site.Id, fixedRevision.RevisionId, path, ct);
+        return string.Equals(file?.Sha256, expectedHash, StringComparison.OrdinalIgnoreCase) ? file : null;
+    }
+
+    private async Task<HostedSiteRevisionFile?> FindVerifiedFileAsync(
+        string siteId, string revisionId, string path, CancellationToken ct)
+    {
         var filter = Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Id, revisionId)
                      & Builders<HostedSiteRevision>.Filter.Eq(revision => revision.SiteId, siteId)
                      & Builders<HostedSiteRevision>.Filter.ElemMatch(

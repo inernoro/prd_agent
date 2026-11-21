@@ -7,6 +7,7 @@ import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-pl
 import { designSlots } from '../shared/design-workspace.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
+import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
 import {
   designCommit, designDigest, designId, designPngDimensions, designRecord, designSourcePath, invalidDesign, localDesignPath,
   readDesignFrameworkSource, readDesignPackage,
@@ -400,6 +401,27 @@ export class DesignWorkspaceService {
     return { result: { type: 'share.prepare', designId: entry.id, id: prepared.id, version: prepared.version,
       sourceCommit: prepared.sourceCommit, state: prepared.state },
       changes: existing ? {} : { design: { id: entry.id, sharePreparation: prepared } } };
+  }
+
+  async shareHandoff(projectId: string, actor: DesignActor, preparationId: string, body: unknown,
+    config: DesignShareHandoffConfig | undefined) {
+    requireProjectRead(actor);
+    review(actor);
+    const input = designRecord(body, '分享交接', ['designId']);
+    const id = designId(input.designId, '稿件编号');
+    const state = await this.load(projectId);
+    const design = state.designs.get(id) ?? missing('该稿件不存在');
+    const preparation = design.sharePreparations?.find(row => row.id === preparationId) ?? missing('没有这条分享准备记录');
+    const version = versionOf(design, preparation.version);
+    if (design.reviewers && !design.reviewers.some(reviewer => reviewer.id === actor.id)) forbidden('请由稿件的指定评审人交接');
+    if (version.sourceVerification !== 'git' || version.sourceCommit !== preparation.sourceCommit || version.sha256 !== preparation.packageSha256
+      || (design.frozen !== version.version && !design.freezes?.some(row => row.version === version.version))) {
+      conflict('要分享的版本已不符合原定稿记录');
+    }
+    if (!config) return rejectPlanning(503, 'design_share_unavailable', '当前实例尚未接入 MAP 真人确认');
+    const binding = config.resolve(projectId, id, version.version, actor.id) ?? forbidden('该版本与当前评审人暂无 MAP 对应授权');
+    const prototype = await this.artifact(projectId, actor, version.prototypeId);
+    return issueDesignShareHandoff(config, binding, projectId, id, preparation, designDigest(prototype.bytes));
   }
 
   private comment(type: string, input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {

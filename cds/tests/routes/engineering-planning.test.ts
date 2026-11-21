@@ -401,6 +401,36 @@ describe('engineering planning HTTP contracts', () => {
       dates: { reviewAt: ['2026-11-22', null] } });
   });
 
+  it('records a change to the repayment plan and the next review in the same deferral', async () => {
+    now = new Date('2026-11-21T01:00:00Z');
+    const debt = await write({ ...createCommand('test-defer-plan-create'), dueAt: '2026-12-29', trigger: '合成迁移前' });
+    const command = { type: 'debt.defer', requestId: 'test-defer-plan-change', debtId: debt.id, expectedVersion: debt.version,
+      reviewAt: '2026-11-25', dueAt: '2026-12-31', trigger: '合成迁移完成', reason: '等回滚窗口' };
+    const changed = await write(command);
+    expect(changed).toMatchObject({ version: debt.version + 1, status: 'deferred', reviewAt: command.reviewAt, dueAt: command.dueAt, trigger: command.trigger });
+    const detail = (await call(`/debts/${debt.id}`)).body;
+    expect(detail.events[0]).toMatchObject({ type: 'deferred', note: command.reason,
+      dates: { reviewAt: [null, command.reviewAt], dueAt: [debt.dueAt, command.dueAt] }, triggerChange: [debt.trigger, command.trigger] });
+    expect(detail.brief.markdown).toContain(command.trigger);
+    expect(await call('/commands', command)).toMatchObject({ status: 200, body: { reused: true } });
+    expect((await call('/commands', { ...command, requestId: 'test-defer-plan-stale' })).status).toBe(409);
+    const removed = await write({ ...command, requestId: 'test-defer-plan-clear', expectedVersion: changed.version, dueAt: null, trigger: null });
+    expect(removed).not.toHaveProperty('dueAt');
+    expect(removed).not.toHaveProperty('trigger');
+  });
+
+  it('lists a discovery reference but scores a traceable source only when there is supporting evidence', async () => {
+    const debt = await write({ ...createCommand('test-brief-source-reference'), source: { type: 'review', ref: 'QA-REVIEW-42' } });
+    const detail = () => call(`/debts/${debt.id}`);
+    const sourceReady = (body: Awaited<ReturnType<typeof detail>>['body']) =>
+      body.brief.readiness.items.find((item: { label: string }) => item.label === '来源可追溯')?.ok;
+    const original = (await detail()).body;
+    expect(sourceReady(original)).toBe(false);
+    expect(original.brief.markdown).toContain('QA-REVIEW-42');
+    await write({ type: 'debt.hit', requestId: 'test-brief-source-hit', debtId: debt.id, expectedVersion: debt.version, note: '合成环境已复现' });
+    expect(sourceReady((await detail()).body)).toBe(true);
+  });
+
   it('checks similar debts within one project and records an explicit distinction atomically', async () => {
     const first = await createDebt();
     const path = `/duplicates?title=${encodeURIComponent(first.title)}`;

@@ -1343,6 +1343,8 @@ export interface SharedSiteInfo {
 }
 
 export interface ShareViewData {
+  revisionId?: string;
+  previewUrl?: string;
   documentCollectionId?: string;
   collectionId?: string;
   mainSiteId?: string;
@@ -1371,7 +1373,7 @@ export interface ShareAskInfo {
   openingQuestions: string[];
 }
 
-export async function viewShare(token: string, password?: string): Promise<ApiResponse<ShareViewData>> {
+export async function viewShare(token: string, password?: string, revisionId?: string): Promise<ApiResponse<ShareViewData>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
   // 使用 raw fetch 避免 apiRequest 的 401 自动 refresh/redirect 逻辑，此端点是公开的
   // 但仍需携带 auth token（如果已登录），以便后端识别观看者身份
@@ -1380,12 +1382,34 @@ export async function viewShare(token: string, password?: string): Promise<ApiRe
   const authToken = useAuthStore.getState().token;
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
+    if (revisionId) return await openFixedRevision(token, revisionId, password, headers);
     const res = await fetch(url, { headers });
-    const json = await res.json();
-    return json as ApiResponse<ShareViewData>;
+    const result = await res.json() as ApiResponse<ShareViewData>;
+    if (result.success && result.data.revisionId)
+      return await openFixedRevision(token, result.data.revisionId, password, headers);
+    return result;
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
   }
+}
+
+async function openFixedRevision(token: string, revisionId: string, password: string | undefined,
+  headers: Record<string, string>): Promise<ApiResponse<ShareViewData>> {
+  const endpoint = buildApiUrl(`${api.webPages.viewShare(encodeURIComponent(token))}/revisions/${encodeURIComponent(revisionId)}/access`);
+  const response = await fetch(endpoint, { method: 'POST', credentials: 'include', cache: 'no-store',
+    headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+  const result = await response.json() as ApiResponse<{ revisionId: string; previewUrl: string; title?: string; createdAt: string }>;
+  if (!result.success) return result;
+  const requestUrl = new URL(endpoint, globalThis.location?.href);
+  const previewUrl = new URL(result.data.previewUrl, requestUrl);
+  const apiPrefix = requestUrl.pathname.split('/api/web-pages/shares/view/', 1)[0];
+  const resources = `${apiPrefix}/api/hosted-site-preview-files/shared/`;
+  if (result.data.revisionId !== revisionId || previewUrl.origin !== requestUrl.origin
+      || !previewUrl.pathname.startsWith(resources) || !previewUrl.pathname.endsWith('/index.html')
+      || previewUrl.search || previewUrl.hash)
+    return { success: false, data: null as never, error: { code: 'NOT_FOUND', message: '分享的固定版本不可读取' } };
+  return { success: true, data: { revisionId, previewUrl: previewUrl.href, title: result.data.title || '固定版本',
+    shareType: 'single', createdAt: result.data.createdAt, sites: [] }, error: null };
 }
 
 // ─── Save Shared Site ───

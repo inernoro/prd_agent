@@ -56,6 +56,7 @@ export type DesignSharePreparation = {
   audience: 'public' | 'password'; expiresInHours: number;
   state: 'awaiting_human_confirmation'; preparedAt: string; preparedBy: DesignReviewer;
 };
+export type DesignShareHandoffReceipt = { preparationId: string; destination: string; grant: string; expiresAt: string };
 export type DesignReviewNotice = {
   id: string; projectId: string; designId: string; version: number; title: string;
   createdAt: string; updatedAt: string; occurrences: number;

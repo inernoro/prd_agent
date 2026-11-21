@@ -6,7 +6,7 @@ import { planningToday, unpaid } from './engineering-planning-domain.js';
 type Section = PlanningDebtBrief['sections'][number];
 type Line = Section['lines'][number];
 const historyLabels: Partial<Record<PlanningEvent['type'], string>> = {
-  updated: '调整预计偿还日期', deferred: '暂缓', started: '开始处理', progress: '处理进展', repaid: '曾登记偿还', reopened: '复发重开',
+  updated: '调整偿还计划', deferred: '暂缓', started: '开始处理', progress: '处理进展', repaid: '曾登记偿还', reopened: '复发重开',
   dropped: '失效', extinct: '随功能消失', branch_moved: '调整决策归属',
 };
 const approachLabels = { candidate: '候选', tried: '试过', rejected: '否决' } as const;
@@ -41,7 +41,7 @@ export function buildDebtBrief(debt: PlanningDebt, events: PlanningEvent[],
     Date.parse(today) - Date.parse(hitDate) < 30 * day;
   const items = [
     { label: '问题和影响写清楚', ok: Boolean(debt.summary && debt.impact), next: '补充问题概况和实际影响。' },
-    { label: '来源可追溯', ok: Boolean(debt.source.ref), next: '补充可追溯的发现来源。' },
+    { label: '来源可追溯', ok: Boolean(debt.source.url || debt.legacy || debt.verify || hit || debt.hitCount), next: '补充可追溯的发现来源。' },
     { label: '根因已确认', ok: debt.rootCause?.state === 'confirmed' && Boolean(debt.rootCause.text && debt.rootCause.basis), next: '定位并确认根因，补充依据。' },
     { label: '记录欠债时的取舍', ok: Boolean(debt.whyDebt), next: '补充当时接受债务的理由。' },
     { label: '记录期望方向', ok: Boolean(debt.direction?.target), next: '补充希望达成的结果和候选方案。' },
@@ -64,12 +64,13 @@ export function buildDebtBrief(debt: PlanningDebt, events: PlanningEvent[],
     problem.push({ kind: 'inference', text: `记录中的根因推测 · ${excerpt(debt.rootCause.text)}`, cites: [context] });
   } else problem.push(gap('根因尚未确认。'));
 
-  const recent = events.filter(event => event.type === 'updated' ? event.dates?.dueAt : historyLabels[event.type]).slice(0, 5);
+  const recent = events.filter(event => event.type === 'updated' ? event.dates?.dueAt || event.triggerChange : historyLabels[event.type]).slice(0, 5);
   const previousRepayment = events.find(event => event.type === 'repaid');
   for (const event of [reopened, previousRepayment]) if (event && !recent.includes(event)) recent.push(event);
   const attempts = recent.map(event => {
-    const date = (event.dates?.reviewAt ?? event.dates?.dueAt)?.map(value => value ?? '未设置').join(' → ');
-    return fact(`${historyLabels[event.type]}${event.note ? ` · ${excerpt(event.note)}` : ''}${date ? ` · 日期 ${date}` : ''}`, fromEvent(event));
+    const changes = ([['下次回看', event.dates?.reviewAt], ['预计偿还', event.dates?.dueAt], ['触发条件', event.triggerChange]] as const)
+      .flatMap(([name, values]) => values ? [`${name} ${values.map(value => value ? excerpt(value) : '未设置').join(' → ')}`] : []);
+    return fact([historyLabels[event.type], event.note && excerpt(event.note), ...changes].filter(Boolean).join(' · '), fromEvent(event));
   });
   for (const approach of debt.direction?.approaches ?? []) {
     if (approach.status !== 'candidate') attempts.push(fact(`${approachLabels[approach.status]} · ${excerpt(approach.title)}${approach.note ? ` · ${excerpt(approach.note)}` : ''}`, context));

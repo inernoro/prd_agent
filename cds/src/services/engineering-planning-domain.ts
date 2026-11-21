@@ -32,6 +32,15 @@ type Changes = Pick<EngineeringPlanningCommit, 'debts' | 'decisions' | 'plans' |
 type DebtChange = Extract<PlanningCommand, { debtId: string }>;
 type DecisionChange = Omit<Extract<PlanningCommand, { type: 'decision.change' }>, 'type' | 'requestId'>;
 type EventDetail = Omit<PlanningEvent, 'id' | 'at' | 'actor' | 'projectId' | 'entity' | 'entityId' | 'type'>;
+
+function repaymentPlanChanges(old: PlanningDebt, patch: { dueAt?: string | null; trigger?: string | null }): EventDetail {
+  const oldDueAt = old.dueAt ?? null;
+  const oldTrigger = old.trigger ?? null;
+  return {
+    ...(patch.dueAt !== undefined && patch.dueAt !== oldDueAt ? { dates: { dueAt: [oldDueAt, patch.dueAt] } } : {}),
+    ...(patch.trigger !== undefined && patch.trigger !== oldTrigger ? { triggerChange: [oldTrigger, patch.trigger] } : {}),
+  };
+}
 type MissingAnchor = Extract<PlanningDebtAnchor, { status: 'missing' }>;
 
 export const planningSweepActor: PlanningIdentity = { kind: 'system', id: 'cds-planning-sweep', label: 'CDS 巡检' };
@@ -374,18 +383,21 @@ export class PlanningMutation {
         const { criteria: values, ...patch } = command.patch;
         const updated = Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value ?? undefined]));
         if (patch.owner !== undefined && patch.owner !== old.owner) updated.ownerAccountId = undefined;
-        const oldDueAt = old.dueAt ?? null;
         return this.saveDebt(old, { ...updated, ...(values ? { criteria: criteria(values, old.criteria) } : {}) }, 'updated',
-          patch.dueAt !== undefined && patch.dueAt !== oldDueAt ? { dates: { dueAt: [oldDueAt, patch.dueAt] } } : {});
+          repaymentPlanChanges(old, patch));
       }
       case 'debt.branch':
         this.decision(command.decisionId ?? undefined);
         if ((command.decisionId ?? undefined) === old.decisionId) closed('当前承接决策没有变化');
         return this.move(old, command.decisionId ?? undefined, command.reason);
-      case 'debt.defer':
+      case 'debt.defer': {
         if (command.reviewAt <= planningToday(new Date(this.at))) rejectPlanning(400, 'invalid', '下次回看请选今天之后的日期');
-        return this.saveDebt(old, { status: 'deferred', reviewAt: command.reviewAt, deferReason: command.reason }, 'deferred',
-          { note: command.reason, dates: { reviewAt: [old.reviewAt ?? null, command.reviewAt] } });
+        const changes = repaymentPlanChanges(old, command);
+        return this.saveDebt(old, { status: 'deferred', reviewAt: command.reviewAt, deferReason: command.reason,
+          ...(command.dueAt === undefined ? {} : { dueAt: command.dueAt ?? undefined }),
+          ...(command.trigger === undefined ? {} : { trigger: command.trigger ?? undefined }),
+        }, 'deferred', { ...changes, note: command.reason, dates: { ...changes.dates, reviewAt: [old.reviewAt ?? null, command.reviewAt] } });
+      }
       case 'debt.review': {
         const today = planningToday(new Date(this.at));
         if (old.status !== 'deferred' || !old.reviewAt || old.reviewAt > today) closed('这笔债务尚未到回看日期');

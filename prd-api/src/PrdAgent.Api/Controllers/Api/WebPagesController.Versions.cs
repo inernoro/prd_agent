@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
@@ -50,6 +51,34 @@ public partial class WebPagesController
             return MapCommentError(access.Error, access.HttpStatus, access.ErrorCode, access.RetryAfterSeconds);
         return access.Site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享内无站点"))
             : await PreviewReviewVersionCoreAsync(access.Site, revisionId, !string.IsNullOrEmpty(viewer) && await _siteService.CanEditSiteAsync(access.Site, viewer, CancellationToken.None));
+    }
+
+    [AllowAnonymous]
+    [HttpPost("shares/view/{token}/revisions/{revisionId}/access")]
+    public async Task<IActionResult> OpenFixedRevisionShare(string token, string revisionId,
+        [FromBody] FixedRevisionShareAccessRequest request, [FromServices] HostedSitePreviewAccessService tickets,
+        [FromServices] IHostedSiteRevisionService revisions)
+    {
+        var ct = HttpContext.RequestAborted;
+        var viewer = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
+        var access = await _siteService.ResolveFixedRevisionShareAsync(token, revisionId, request.Password, viewer, null, ct);
+        if (access.Error != null)
+            return MapCommentError(access.Error, access.HttpStatus, access.ErrorCode, access.RetryAfterSeconds);
+        if (access.Site == null || access.Share?.FixedRevision is not { } fixedRevision)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享的固定版本不存在"));
+        var entry = await revisions.GetFixedShareFileAsync(access, "index.html", ct);
+        if (entry == null || !HostedSitePreviewAccessService.HasValidContentHash(entry))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享的固定版本不可读取"));
+        var issued = tickets.IssueFixedShare(access.Site.Id, fixedRevision, viewer, token,
+            HostedSiteService.FixedRevisionAccessProof(access.Share), access.Share.ExpiresAt);
+        if (issued.ExpiresAt <= DateTime.UtcNow)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接已失效"));
+        Response.Headers.CacheControl = "private, no-store, max-age=0";
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+        return Ok(ApiResponse<object>.Ok(new {
+            revisionId, previewUrl = $"{Request.PathBase}/{HostedSitePreviewFilesController.RoutePrefix}/shared/{Uri.EscapeDataString(issued.Ticket)}/index.html",
+            access.Share.Title, access.Share.CreatedAt, expiresAt = issued.ExpiresAt,
+        }));
     }
 
     private async Task<IActionResult> ListReviewVersionsCoreAsync(HostedSite site, bool canViewHistory)
@@ -115,3 +144,5 @@ public partial class WebPagesController
     private sealed record ReviewVersionSummary(string Id, string SiteId, string VersionLabel, string ContentVersionKey,
         DateTime? PublishedAt, bool IsCurrent, bool CanPreview, string EntryFile, string ContentShape, string? SiteUrl, bool HistoryRestricted = false);
 }
+
+public sealed record FixedRevisionShareAccessRequest(string? Password);

@@ -134,7 +134,7 @@
   background: var(--ep-panel);
   font-size: 13px;
 }
-.ep-brief h2 { font-size: 16px; line-height: 1.25; }
+.ep-brief h2 { font-size: 15px; line-height: 22px; font-weight: 600; }
 .ep-brief h3 { font-size: 13px; }
 .ep-brief-brand, .ep-brief-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ep-brief-brand { color: color-mix(in srgb, var(--ep-info) 82%, var(--ep-fg)); font-size: 12px; font-weight: 700; }

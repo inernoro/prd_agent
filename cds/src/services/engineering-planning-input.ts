@@ -427,7 +427,9 @@ export function parsePlanningCommand(input: unknown): PlanningCommand {
     case 'debt.branch':
       return { type, requestId, ...debt('decisionId', 'reason'), decisionId: value.decisionId === null ? null : planningId(value.decisionId, 'decisionId'), reason: reason() };
     case 'debt.defer':
-      return { type, requestId, ...debt('reason', 'reviewAt'), reason: reason(), reviewAt: planningDay(value.reviewAt, 'reviewAt') };
+      return { type, requestId, ...debt('reason', 'reviewAt', 'dueAt', 'trigger'), reason: reason(), reviewAt: planningDay(value.reviewAt, 'reviewAt'),
+        ...(value.dueAt === undefined ? {} : { dueAt: value.dueAt === null ? null : planningDay(value.dueAt, 'dueAt') }),
+        ...(value.trigger === undefined ? {} : { trigger: value.trigger === null ? null : planningText(value.trigger, 'trigger', 4000) }) };
     case 'debt.review': {
       const target = debt('next', 'reason', 'reviewAt');
       const next = of(value.next, 'next', ['start', 'defer', 'drop']);

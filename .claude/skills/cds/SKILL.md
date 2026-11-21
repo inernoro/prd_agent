@@ -388,6 +388,8 @@ $CLI debt stats
 
 偿还前用 `debt repay <债务编号> --dry-run` 读取当前版本和核对项。成员可用 `--as-user <用户名> --file <偿还记录.json>` 确认，也可在同一命令中提供 `--if-version`、`--summary`、逐项 `--criterion 标准编号=met:结果`、`--screenshot 图片路径=证据说明` 和 `--mark x,y,width,height`。JSON 记录使用 `expectedVersion`、`summary`、`results` 和 `repaymentProofs`。可同时附 `--pr`，请求失败时沿用原编号与证据。`debt stats` 以原发现日期计入已知日期的历史导入，与大屏采用同一口径。
 
+暂缓时分别确认下次回看和偿还计划。通过 `planning submit --as-user <用户名> --file <暂缓命令.json>` 提交 `debt.defer`，带当前 `expectedVersion`、`reviewAt` 和 `reason`。可选 `dueAt` 和 `trigger` 同次提交并保存变更前后。省略可选字段会保留原值，传 `null` 清除。`debt brief` 会回读来源编号，也会标明还缺可追溯来源。链接、原台账定位、实际复核或再次遇到的记录可作为追溯依据。
+
 ## 设计稿件与框架
 
 在项目内讨论出稿时读当前框架，评审时用对方指定的稿件版本。明确收到发布请求后，从已提交的目录发布。归档目录至少包含 `design.json`、`思路.md` 和清单声明的单文件 HTML 路径。默认原型入口是 `dist/index.html`。稿件附件沿用项目权限。
@@ -414,6 +416,8 @@ $CLI design extract <稿件编号> --into <框架编号>
 ```
 
 看稿时用真实的 Git 提交和版本。作者可根据用户指定的成员发起评审，新版默认沿用已有评审人，站内信息中心会合并同一稿件一小时内的发版。新版声明处理评论后，由评论人或项目管理者核对。已指定评审人的稿件由名单中的成员定稿，签收由有写权限的成员完成。CLI 用 `--as-user <用户名>` 从终端进行交互式登录。做法验收每格记录 `itemId`、`slot`、实测说明和对应视口的真实 PNG，回填时固定运行和部署提交。四列为 `desktop-light`、`desktop-dark`、`phone-light`、`phone-dark`。缺少实现路径、对应提交或证据时记录具体原因。没有对应截图的结果保持待补证据。重试先读取回执，结果不确定时使用同一个 `--request-id`。只允许对已绑定项目操作。
+
+分享从稿件信息中的「固定版本分享」开始。具备审批权的真人可为经 Git 核验的定稿版本记录受众和期限。待确认记录仍在项目内。配置了同一稿件版本和评审人的 MAP 对应授权后，评审人可在 MAP 查到待分享的版本、提交、期限和私有引用，确认后生成链接。分享使用固定版的已核验原型，内部批注、自检、实拍和验收记录仍按项目权限查看。不要把准备号、确认票据或密码当成可分享的链接。撤销在 MAP 分享确认页或原生分享管理中完成。
 
 `design accept` 在已安装 Playwright 与 Chromium 的执行环境中打开验收项对应的实现地址。有多个候选画面时，用 `screenId` 定位实际需要验收的一屏。动态页面的自动测量等待清单声明的 `readySelector` 可见，默认读取 `[data-cds-design-ready]`。`probe: { "type": "horizontal-overflow", "tolerance": 0 }` 读加载完成后的页面宽度，人工项取得截图后由成员核对。需要手动完成取证时可用 `--start-only` 创建运行。预览使用 CDS 一键登录时通过 `--as-user` 取得当前成员会话。
 

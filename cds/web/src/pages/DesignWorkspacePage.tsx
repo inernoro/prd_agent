@@ -9,7 +9,9 @@ import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, Design
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
-import { DesignFrameworkView, DesignMaterialView, FrameworkOverview, ReadableNotes, type FrameworkTab } from './design-workspace/DesignFramework';
+import { DesignRationale } from './design-workspace/DesignRationale';
+import { DesignShareDialog } from './design-workspace/DesignShareDialog';
+import { DesignFrameworkView, DesignMaterialView, FrameworkOverview, type FrameworkTab } from './design-workspace/DesignFramework';
 import { cellNames, designCheckRows, designDate, designFailureGroups, designPath, designStatus, latestDesign, materialNames, openReviews, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
 import { compareDesignMaterial } from './design-workspace/design-structure';
 import './engineering-planning/planning.css';
@@ -32,6 +34,7 @@ export function DesignWorkspacePage() {
   const [upload, setUpload] = useState(false);
   const [assignReviewers, setAssignReviewers] = useState<string>();
   const [extract, setExtract] = useState(false);
+  const [share, setShare] = useState(false);
   const [review, setReview] = useState<ReviewTarget>();
   const [large, setLarge] = useState<LargeTarget>();
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -149,6 +152,8 @@ export function DesignWorkspacePage() {
               <p>Git <code>{version.sourceCommit.slice(0, 12)}</code> · {version.sourceVerification === 'git' ? '已核验' : '发布声明'}</p>
               <p>评审人 · {entry.reviewers?.map(reviewer => reviewer.label).join('、') || '待指定'}</p>
               {canAssign && <button className="ep-button" type="button" onClick={() => setAssignReviewers(entry.id)}>设置评审人</button>}
+              {canFreeze && version.sourceVerification === 'git' && (entry.frozen === version.version || entry.freezes?.some(row => row.version === version.version))
+                && <button className="ep-button" type="button" onClick={() => setShare(true)}>固定版本分享</button>}
               {version.framework && <Link className="ep-link" to={`/design?${new URLSearchParams({ project, framework: version.framework,
                 ...(version.frameworkVersion ? { version: String(version.frameworkVersion) } : {}) })}`}>
                 {version.framework}{version.frameworkVersion ? ` · v${version.frameworkVersion}` : ''}</Link>}
@@ -166,6 +171,7 @@ export function DesignWorkspacePage() {
               && <button className="ep-button" type="button" disabled={busy} onClick={() => void command('design.freeze', { designId: entry.id, version: version.version })}>定稿</button>}
           </div>
         </header>
+        {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
         {canvas ? <DesignCanvas key={`${entry.id}/${version.version}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
           comparing={tab === 'diff'} tabs={summaryTabLinks} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
         : <>
@@ -173,7 +179,7 @@ export function DesignWorkspacePage() {
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} />}
-          {tab === 'rationale' && <div className="dw-surface dw-markdown"><ReadableNotes source={version.rationale} /></div>}
+          {tab === 'rationale' && <DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
           {tab === 'spec' && <DesignSpec version={version} baseline={pinnedFramework?.material} />}
           {tab === 'log' && <DesignHistory entry={entry}
             onVersion={selected => onChange({ version: String(selected), tab: 'preview', run: '' })}

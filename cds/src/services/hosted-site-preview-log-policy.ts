@@ -1,6 +1,8 @@
 // Log copies only. Never use these values for routing, authorization or responses.
 const FILES = '/api/hosted-site-preview-files';
 const ACCESS = '/api/hosted-site-preview-access';
+const SHARES = '/api/web-pages/shares';
+const SHARE_CREATE = '/api/web-pages/share';
 
 function previewLogPath(value: string): string | null {
   const absolute = /^((?:https?:)?\/\/[^/?#]+)(.*)$/i.exec(value);
@@ -19,6 +21,12 @@ function previewLogPath(value: string): string | null {
   if (files !== null) return `${files}${FILES}/[redacted]`;
   const access = segmentPrefix(normalized, ACCESS);
   if (access !== null) return `${access}${ACCESS}`;
+  const share = segmentPrefix(normalized, SHARES);
+  if (share !== null) return `${share}${SHARES}/[redacted]`;
+  const create = normalized.replace(/\/+$/, '');
+  if (create.endsWith(SHARE_CREATE)) return create;
+  const logs = /^(.*)\/api\/web-pages\/[^/]+\/share-logs\/?$/.exec(normalized);
+  if (logs) return `${logs[1]}/api/web-pages/:siteId/share-logs`;
   return null;
 }
 

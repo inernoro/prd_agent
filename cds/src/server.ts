@@ -69,6 +69,7 @@ import { rejectPlanning } from './services/engineering-planning-input.js';
 import { createDesignWorkspaceRouter, normalizedDesignPath } from './routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignWorkspaceCommit } from './services/design-workspace.js';
 import { createDesignFrameworkBrowser } from './services/design-framework-browser.js';
+import { designShareHandoffConfig } from './services/design-share-handoff.js';
 import { readDesignSourceZip } from './services/design-package.js';
 import { FileProjectRevisionStore, MongoProjectRevisionStore, type ProjectRevisionStore } from './services/project-revision-store.js';
 import { EngineeringPlanningService, FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './services/engineering-planning.js';
@@ -5532,8 +5533,10 @@ export function createServer(deps: ServerDeps): express.Express {
       return { id: result.id, pending: (await planning.designAcceptanceDebt(projectId, result.id, sourceRef)) !== result.id };
     },
   });
+  const designShareHandoff = designShareHandoffConfig(publicBaseUrl, process.env);
   app.use('/api', createDesignWorkspaceRouter({
     service: designWorkspace,
+    mapShareHandoff: () => designShareHandoff,
     reviewCandidates: async projectId => (await projectMemberDirectory(projectId))
       .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin })),
     resolveAccess: (req, projectId) => {

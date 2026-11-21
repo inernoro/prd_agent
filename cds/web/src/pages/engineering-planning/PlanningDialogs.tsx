@@ -344,8 +344,15 @@ function actionFields(action: PlanningAction, board: PlanningBoard, duplicateChe
         case 'edit': return <><Field name="title" label="标题" initial={row.title} required max={120} /><DebtFields debt={row} /></>;
         case 'branch': return <><Field name="decisionId" label="重新归属" initial={row.decisionId} choices={[[ '', '未归属决策' ], ...decisionOptions(board)]} />
           <Field name="reason" label="改挂原因" required multiline /></>;
-        case 'defer': return <><Field name="reviewAt" label="下次回看日期" required date initial={row.reviewAt && row.reviewAt > board.today ? row.reviewAt : undefined} />
-          <Field name="reason" label="暂缓原因" required multiline /></>;
+        case 'defer': return <>
+          <Field name="reason" label="暂缓原因" required multiline />
+          <Field name="reviewAt" label="下次回看日期" required date initial={row.reviewAt && row.reviewAt > board.today ? row.reviewAt : undefined} />
+          <fieldset className="ep-collateral ep-repay-section">
+            <legend>偿还计划</legend>
+            <div className="ep-form-pair"><Field name="dueAt" label="预计偿还日期" date initial={row.dueAt} />
+              <Field name="trigger" label="偿还触发条件" initial={row.trigger} max={4000} /></div>
+            <p className="ep-caption">日期和触发条件可任选或同时填写。回看到期时会提醒重新判断。</p>
+          </fieldset></>;
         case 'review': return <DebtReviewFields />;
         case 'start': return <Field name="note" label="说明（可选）" placeholder="例如：排进本迭代" multiline />;
         case 'progress': return <><Field name="note" label="进展说明" required multiline />
@@ -444,7 +451,8 @@ function actionCommand(action: PlanningAction, form: FormData, board: PlanningBo
       switch (action.action) {
         case 'edit': return { type: 'debt.update', ...common, patch: debtPatch(form, action.debt) };
         case 'branch': return { type: 'debt.branch', ...common, decisionId: optional(form, 'decisionId') ?? null, reason };
-        case 'defer': return { type: 'debt.defer', ...common, reason, reviewAt: field(form, 'reviewAt') };
+        case 'defer': return { type: 'debt.defer', ...common, reason, reviewAt: field(form, 'reviewAt'),
+          dueAt: optional(form, 'dueAt') ?? null, trigger: optional(form, 'trigger') ?? null };
         case 'review': return { type: 'debt.review', ...common, next: field(form, 'next') as 'start' | 'defer' | 'drop', reason, reviewAt: optional(form, 'reviewAt') };
         case 'start': return { type: 'debt.start', ...common, note: optional(form, 'note') ?? debtActions.start };
         case 'progress': {
@@ -842,9 +850,9 @@ function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }
         ['all', '全部'], ['plan', '暂缓与计划'], ['work', '处理进展'], ['repay', '偿还与重开'],
       ] as const).map(([value, text]) => <button key={value} type="button" aria-pressed={history === value} onClick={() => setHistory(value)}>{text}</button>)}</div>
     </div><ol className="ep-events">{data.events.filter(event => history === 'all'
-      || (history === 'work' && !event.dates?.dueAt && ['started', 'progress', 'updated', 'verified', 'hit', 'anchor_bound', 'anchor_kept', 'extinct_pending'].includes(event.type))
+      || (history === 'work' && !event.dates?.dueAt && !event.triggerChange && ['started', 'progress', 'updated', 'verified', 'hit', 'anchor_bound', 'anchor_kept', 'extinct_pending'].includes(event.type))
       || (history === 'repay' && ['repaid', 'reopened', 'dropped', 'extinct', 'merged_into'].includes(event.type))
-      || (history === 'plan' && (event.type === 'planned' || event.type === 'deferred' || event.dates?.dueAt || event.dates?.reviewAt))).map(event => <li key={event.id}
+      || (history === 'plan' && (event.type === 'planned' || event.type === 'deferred' || event.dates?.dueAt || event.dates?.reviewAt || event.triggerChange))).map(event => <li key={event.id}
       id={eventTarget(event.id)} className="ep-citation-target" tabIndex={-1}>
       <time dateTime={event.at}>{dateLabel(event.at)}</time><div><PlanningBadge>{events[event.type]}</PlanningBadge> {event.actor.label}
         {event.entityId !== debt.id && <p>来自 <button type="button" className="ep-text-button"
@@ -858,6 +866,7 @@ function DebtDetails({ data, board, write, actionsDisabled, onSelect, onAction }
           onClick={() => onSelect({ kind: 'plan', id: event.relatedPlanId! })}>查看落地计划 {shortId(event.relatedPlanId)}</button>}
         {event.dates?.dueAt && <p>预计偿还 · {event.dates.dueAt.map(day => day ?? '未设置').join(' → ')}</p>}
         {event.dates?.reviewAt && <p>下次回看 · {event.dates.reviewAt.map(day => day ?? '未设置').join(' → ')}</p>}
+        {event.triggerChange && <p>偿还触发条件 · {event.triggerChange.map(value => value ?? '未设置').join(' → ')}</p>}
         <EvidenceList items={event.evidence?.filter(item => !item.image)} />
         {event.type === 'repaid' && event.entityId !== debt.id && <DebtScreenshotGallery
           items={event.repayment?.evidence ?? event.evidence} projectId={data.projectId} />}

@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import { createHash, createHmac } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -76,6 +77,8 @@ describe('private CDS design workspace', () => {
   let service: DesignWorkspaceService;
   let revokedReviewers: Set<string>;
   let frameworkMeasurements: DesignFrameworkMeasurement[];
+  let enableShareHandoff: boolean;
+  const handoffKey = Buffer.alloc(32, 17);
 
   function openWorkspace() {
     const dependencies = {
@@ -102,7 +105,15 @@ describe('private CDS design workspace', () => {
     frameworkMeasurements = [];
     service = openWorkspace();
     const server = express();
-    server.use('/api', createDesignWorkspaceRouter({ service, resolveAccess: (req, project) => projectActor(project, req.get('x-fixture-user') ?? '') }));
+    server.use('/api', createDesignWorkspaceRouter({ service, resolveAccess: (req, project) => projectActor(project, req.get('x-fixture-user') ?? ''),
+      mapShareHandoff: () => enableShareHandoff ? {
+        issuer: 'https://cds.fixture.test', target: new URL('https://map.fixture.test/platform/'), key: handoffKey,
+        resolve: (project: string, _design: string, version: number, user: string) => project === projectId
+          && version === 1 && user === 'author' ? { approverId: 'map-reviewer', siteId: 'site-1', revisionId: 'map-v1' } : undefined,
+        now: () => new Date(clock),
+      } : undefined,
+    }));
+    enableShareHandoff = false;
     app = server.listen(0, '127.0.0.1');
     await once(app, 'listening');
     const address = app.address();
@@ -335,6 +346,40 @@ describe('private CDS design workspace', () => {
     const repeated = await command('share.prepare', fields, 'author', 'distinct-retry-id');
     expect((await repeated.json()).result.id).toBe(result.id);
     expect((await (await get()).json()).designs[0].sharePreparations).toMatchObject([{ id: result.id, packageSha256: fields.packageSha256 }]);
+  });
+
+  it('hands off only the privately pinned preparation to the configured MAP reviewer', async () => {
+    const publication = await publish('handoff-package', draft(), { sourcePath: 'design/fixture' });
+    expect(publication.status).toBe(201);
+    const { result: { designId } } = await publication.json();
+    expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+    const [{ versions: [version] }] = (await (await get()).json()).designs;
+    const prepared = await command('share.prepare', { designId, version: 1, sourceCommit, packageSha256: version.sha256,
+      audience: 'password', expiresInHours: 2 });
+    const { result: { id: preparationId } } = await prepared.json();
+    const handoff = (user = 'author', project = projectId, body = { designId }) => fetch(`${base}${project}/design/shares/${preparationId}/handoff`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-fixture-user': user }, body: JSON.stringify(body),
+    });
+    expect((await handoff()).status).toBe(503);
+    enableShareHandoff = true;
+    expect((await handoff('designer')).status).toBe(403);
+    expect((await handoff('other')).status).toBe(403);
+    expect((await handoff('author', otherProjectId)).status).toBe(404);
+    expect((await handoff('author', projectId, { designId, approverId: 'other' } as { designId: string })).status).toBe(400);
+    const response = await handoff();
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    const receipt = await response.json();
+    expect(receipt).toMatchObject({ preparationId, destination: 'https://map.fixture.test/platform/web-pages/cds-share' });
+    expect(receipt).not.toHaveProperty('shareUrl');
+    const [data, signature] = receipt.grant.split('.');
+    expect(createHmac('sha256', handoffKey).update(data).digest('base64url')).toBe(signature);
+    const grant = JSON.parse(Buffer.from(data, 'base64url').toString());
+    expect(grant).toMatchObject({ purpose: 'cds-fixed-design-share', projectId, designId, preparationId, version: 1, sourceCommit,
+      packageSha256: version.sha256, prototypeSha256: createHash('sha256').update(html).digest('hex'), audienceOrigin: 'https://map.fixture.test',
+      access: 'password', expiresInHours: 2, approverId: 'map-reviewer', siteId: 'site-1', revisionId: 'map-v1' });
+    expect(grant.exp - grant.iat).toBe(300);
+    expect((await (await handoff()).json()).grant).toBe(receipt.grant);
   });
 
   it('keeps a prototype screenshot private and checks its declared viewport', async () => {
