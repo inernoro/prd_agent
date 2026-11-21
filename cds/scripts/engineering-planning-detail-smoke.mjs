@@ -338,6 +338,10 @@ export async function verifyEngineeringPlanningDetail(browser, base, out) {
       const reason = defer.getByLabel('暂缓原因');
       await reason.focus();
       assert(await receivesFocus(page, reason), '暂缓表单的原因字段未取得键盘焦点');
+      await defer.evaluate(element => Promise.allSettled(element.getAnimations().map(animation => animation.finished)));
+      const bounds = await defer.boundingBox();
+      check(Math.abs(bounds.x) <= 1 && Math.abs(bounds.y) <= 1 && Math.abs(bounds.width - width) <= 1
+        && Math.abs(bounds.height - page.viewportSize().height) <= 1, `${width}px 暂缓表单未铺满手机视口`);
       await reason.press('Escape');
       await defer.waitFor({ state: 'hidden' });
       const returned = await receivesFocus(page, overflow);

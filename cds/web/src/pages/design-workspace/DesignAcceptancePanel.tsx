@@ -118,7 +118,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
       })}</div>
     </section>}
     <section><h3>全部验收项 <small>{items.length}</small></h3>
-      <div className="dw-surface dw-matrix"><table><thead><tr><th>验收项</th>{designSlots.map(slot => <th key={slot}>{slotNames[slot]}</th>)}</tr></thead>
+      <div className="dw-surface dw-matrix" role="region" aria-label="做法验收矩阵" tabIndex={0}><table><thead><tr><th>验收项</th>{designSlots.map(slot => <th key={slot}>{slotNames[slot]}</th>)}</tr></thead>
         <tbody>{items.map(item => <tr key={item.id}><th scope="row"><code>{item.id}</code> {item.rule}</th>
           {designSlots.map(slot => {
             const cell = run?.cells.find(value => value.itemId === item.id && value.slot === slot);

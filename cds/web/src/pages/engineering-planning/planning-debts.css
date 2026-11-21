@@ -145,7 +145,7 @@
 .ep-defer-shortcuts, .ep-defer-plan { display: flex; flex-wrap: wrap; gap: 6px; }
 .ep-defer-plan { flex-direction: column; gap: 10px; }
 @media (max-width: 560px) {
-  .ep-dialog.ep-dialog--defer { width: 100vw; max-width: none; height: 100dvh; max-height: 100dvh; border-radius: 0; border-width: 0; }
+  .ep-dialog.ep-dialog--defer { width: 100vw !important; max-width: none; height: 100dvh; max-height: 100dvh !important; border-radius: 0; border-width: 0; }
   .ep-dialog--defer .ep-dialog-form { flex: 1; }
   .ep-dialog--defer .ep-dialog-content { flex: 1; align-content: start; }
 }
