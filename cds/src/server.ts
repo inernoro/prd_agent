@@ -2913,7 +2913,9 @@ export function createServer(deps: ServerDeps): express.Express {
     clusterIdentity.exchange(req, res);
   });
   app.use((req, res, next) => {
+    // 已受理的重派由本进程验签并绑定原操作，不使用集群的用户或机器凭据。
     if (clusterIdentity.getConfig()?.role !== 'member'
+      || pendingReplayGate.isTrusted(req)
       || isPublicAccessRequestRoute(req.method, req.path)
       || req.path === '/' || req.path === '/healthz' || req.path === '/api/instance-mode'
       || /\.(?:css|js|ico|png|svg|woff2?|map)$/i.test(req.path)

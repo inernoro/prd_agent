@@ -9,6 +9,8 @@ import { ClusterIdentityService, parseClusterIdentityConfig } from '../../src/se
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { WorktreeService } from '../../src/services/worktree.js';
+import { BranchOperationCoordinator, pendingDeployBody, pendingDeployRoute } from '../../src/services/branch-operation-coordinator.js';
+import { internalPendingReplayAuth } from '../../src/services/internal-pending-replay-auth.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import type { CdsConfig, Project } from '../../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
@@ -35,14 +37,15 @@ async function node(name: string, username: string, password: string) {
       .filter(row => !filter?.requestId || row.requestId === filter.requestId).slice(-(filter?.limit || 200)) : [],
   };
   const shell = new MockShellExecutor();
+  const coordinator = new BranchOperationCoordinator();
   const config: CdsConfig = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'), masterPort: 9900, workerPort: 5500,
     dockerNetwork: 'fixture', portStart: 10001, sharedEnv: {}, jwt: { secret: 'fixture', issuer: 'fixture' }, mode: 'standalone', executorPort: 9901 };
-  const app = createServer({ stateService: state, shell, config, serverEventLogStore: sink,
+  const app = createServer({ stateService: state, shell, config, serverEventLogStore: sink, branchOperationCoordinator: coordinator,
     worktreeService: new WorktreeService(shell, dir), containerService: {} as any,
     proxyService: { getProxyLog: () => [], setOnProxyLog() {}, handleSwitchFromExpress() {} } as any, bridgeService: {} as any });
   const server = http.createServer(app);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); servers.push(server);
-  return { state, app, server, dir, sink, eventFile, url: `http://127.0.0.1:${(server.address() as { port: number }).port}` };
+  return { state, app, server, dir, sink, eventFile, coordinator, url: `http://127.0.0.1:${(server.address() as { port: number }).port}` };
 }
 async function request(n: Node, route: string, key?: string, method = 'GET', body?: unknown, cookie?: string, accept = 'application/json') {
   const response = await fetch(n.url + route, { method, redirect: 'manual', headers: { Accept: accept,
@@ -82,7 +85,30 @@ describe('cluster identity through two real HTTP control planes', () => {
   });
   afterEach(async () => {
     for (const s of servers) if (s.listening) { s.closeAllConnections(); await new Promise<void>(resolve => s.close(() => resolve())); }
+    primary?.coordinator.clearForTest();
+    member?.coordinator.clearForTest();
     await flushAllJsonStateStores(); vi.restoreAllMocks(); vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([undefined, 'api'])('admits an authenticated local replay on the member for profile %s', async profileId => {
+    const branchId = 'fixture-replay';
+    const projectId = 'local-a';
+    member.state.addBranch({ id: branchId, projectId, branch: 'main', worktreePath: member.dir,
+      status: 'idle', services: {}, createdAt: new Date().toISOString() });
+    const active = member.coordinator.begin({ branchId, projectId, kind: 'deploy', trigger: 'manual' });
+    member.coordinator.begin({ branchId, projectId, profileId, kind: profileId ? 'deploy-profile' : 'deploy',
+      trigger: 'webhook', commitSha: 'b'.repeat(40), commitPinned: true });
+    const [pending] = member.coordinator.completeAll(active.lease!, 'completed');
+    const url = member.url + pendingDeployRoute(pending);
+    const body = JSON.stringify(pendingDeployBody(pending));
+
+    const denied = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-cds-internal': '1' }, body });
+    expect(denied.status).toBe(401);
+    expect((await denied.json()).error).toBe('cluster_identity_rejected');
+
+    const replay = await fetch(url, { method: 'POST', headers: internalPendingReplayAuth.headersFor(url, pending, projectId), body });
+    expect(replay.status).toBe(profileId ? 404 : 400);
+    expect((await replay.json()).error).toContain('构建配置');
   });
 
   it('pins enrolled membership so an owner cannot restore independent authorization through reconfiguration', async () => {
