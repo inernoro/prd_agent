@@ -5,6 +5,7 @@
 原事故：Actions run 39374522104 / job 118469606598 在 checkout 前启动 Mongo 失败。
 """
 
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -102,14 +103,22 @@ class MongoCiContractTests(unittest.TestCase):
         self.assertNotRegex(layout, r"(?m)^    (?:needs|if|services|continue-on-error):")
         command = f"python3 {GUARD}"
         self.assertEqual(self.executable_run(layout, "MongoDB CI compatibility contract"), command)
-        self.assertLess(layout.index("uses: actions/checkout@v4"), layout.index(f"run: {command}"))
+        pins = json.loads((ROOT / ".github/action-pins.json").read_text(encoding="utf-8"))
+        checkout_sha = pins["actions"]["actions/checkout@v4"]["sha"]
+        self.assertRegex(checkout_sha, r"\A[0-9a-f]{40}\Z")
+        checkout_step = rf"(?m)^(?:        |      - )uses: actions/checkout@{checkout_sha}(?: +#[^\n]*)?$"
+        checkout = re.search(checkout_step, layout)
+        self.assertIsNotNone(checkout)
+        self.assertLess(checkout.start(), layout.index(f"run: {command}"))
         self.assertNotIn(f"run: {command}", release)
         required = block(self.workflow, "server-required", 2)
         self.assertEqual(re.findall(r"(?m)^    (?:name|needs|if): (.+)$", required),
                          ["Server Build & Test", "[changes, server-build]", "always()"])
         self.assertNotRegex(required, r"(?m)^    (?:continue-on-error|services|defaults):")
         self.assertEqual(self.executable_run(required, "MongoDB CI compatibility contract"), command)
-        self.assertLess(required.index("uses: actions/checkout@v4"), required.index(f"run: {command}"))
+        checkout = re.search(checkout_step, required)
+        self.assertIsNotNone(checkout)
+        self.assertLess(checkout.start(), required.index(f"run: {command}"))
         server = block(self.workflow, "server-build", 2)
         self.assertEqual(re.findall(r"(?m)^    name: (.+)$", server), ["Server Build & Test (execution)"])
         self.assertNotIn(f"run: {command}", server)

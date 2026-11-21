@@ -2355,7 +2355,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--gw-base \"$gw_base\"", workflow);
         Assert.Contains("--expect-commit \"$expect_commit\"", workflow);
         Assert.Contains("artifacts/llmgw-prod-preflight/prod-preflight.json", workflow);
-        Assert.Contains("actions/upload-artifact@v4", workflow);
+        using var pins = System.Text.Json.JsonDocument.Parse(ReadRepoFile(".github/action-pins.json"));
+        var uploadSha = pins.RootElement.GetProperty("actions").GetProperty("actions/upload-artifact@v4")
+            .GetProperty("sha").GetString()!;
+        Assert.Matches(@"\A[0-9a-f]{40}\z", uploadSha);
+        Assert.Matches($@"(?m)^        uses: actions/upload-artifact@{uploadSha}(?: +#[^\r\n]*)?\r?$", workflow);
         // 分阶段发布已删除：预检不再有 start / completion 两种模式，也不再读发布台账。
         Assert.DoesNotContain("--mode", workflow);
         Assert.DoesNotContain("rollout", workflow);
