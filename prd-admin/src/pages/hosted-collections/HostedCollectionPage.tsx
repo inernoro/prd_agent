@@ -34,7 +34,7 @@ function HostedCollectionReader() {
     const generation = ++loadGeneration.current;
     const result = token ? await readHostedCollectionShare(token, submittedPassword) : await getHostedCollection(collectionId!);
     if (generation !== loadGeneration.current) return;
-    if (result.success) { setData(result.data); setError(''); setPasswordRequired(false); }
+    if (result.success) { setData(result.data); setError(''); setPasswordRequired(false); setPassword(''); setSubmittedPassword(''); }
     else { setError(result.error.message); setPasswordRequired(!!token && result.error.code === 'UNAUTHORIZED'); }
   }, [collectionId, token, submittedPassword]);
   useEffect(() => {

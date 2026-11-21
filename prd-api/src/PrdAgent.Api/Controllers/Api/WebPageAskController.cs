@@ -19,6 +19,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// SSE 协议都和网页托管的 CRUD 完全不同族，混在一个 3000 行的控制器里没人找得到。
 /// </summary>
 [ApiController]
+[HostedShareCookie]
 [Route("api/web-pages")]
 [Authorize]
 public class WebPageAskController : ControllerBase

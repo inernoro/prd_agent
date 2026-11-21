@@ -418,10 +418,12 @@ public class WebPageShareLink
     public string AccessLevel { get; set; } = "public";
 
     /// <summary>
-    /// 明文密码 —— 仅旧分享和创建时"按密码去重"使用。
+    /// 迁移期兼容读取旧分享明文；禁止新写入和 JSON 返回。
     /// 新分享统一以 PasswordHash + PasswordSalt 存储；校验路径优先 Hash，
     /// 仅在 PasswordHash 为空时回退到本字段（向后兼容存量数据）。
     /// </summary>
+    [JsonIgnore]
+    [BsonIgnoreIfNull]
     public string? Password { get; set; }
 
     /// <summary>密码 Hash (PBKDF2-SHA256, base64)。新分享必填；旧分享为空时走明文回退路径</summary>

@@ -77,6 +77,9 @@ public class RequestResponseLoggingMiddleware
         // 仍按路径段匹配，不能把 /api/users-history 或 /api/v1/authorizations 一起挡掉。
         "/api/v1/auth",
         "/api/users",
+        // 单站点创建路由使用单数 share，请求及一次性响应均含密码。
+        "/api/web-pages/share",
+        "/api/web-pages/shares",
         // 本轮知识问答：消息/回答与 kb_read、kb_search 的正文只留在有权限的业务记录。
         "/api/chat-agent",
         "/api/agent-tools",
@@ -122,7 +125,10 @@ public class RequestResponseLoggingMiddleware
             || path.EndsWith("/llm/v1/responses", StringComparison.OrdinalIgnoreCase));
 
     private static bool CarriesCredential(string path) =>
-        AskAnswerRating.CarriesReceipt(path) || CredentialBearingPathPrefixes.Any(p =>
+        AskAnswerRating.CarriesReceipt(path)
+        || (path.StartsWith("/api/web-pages/collections/", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith("/shares", StringComparison.OrdinalIgnoreCase))
+        || CredentialBearingPathPrefixes.Any(p =>
         {
             var prefix = p.TrimEnd('/');
             return path.Equals(prefix, StringComparison.OrdinalIgnoreCase)

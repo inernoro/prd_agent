@@ -20,6 +20,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 网页托管与分享 — 用户上传 HTML/ZIP 并托管运行
 /// </summary>
 [ApiController]
+[HostedShareCookie]
 [Route("api/web-pages")]
 [Authorize]
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
@@ -1718,7 +1719,7 @@ public partial class WebPagesController : ControllerBase
                 share.Token,
                 share.ShareType,
                 share.AccessLevel,
-                share.Password,
+                Password = string.IsNullOrWhiteSpace(req.Password) ? null : req.Password.Trim(),
                 share.ExpiresAt,
                 share.ShortSeq,
                 share.Visibility,
@@ -1809,7 +1810,7 @@ public partial class WebPagesController : ControllerBase
             x.Title,
             x.Description,
             x.AccessLevel,
-            x.Password,
+            Password = (string?)null,
             x.ExpiresAt,
             x.Visibility,
             x.CreatedAt,

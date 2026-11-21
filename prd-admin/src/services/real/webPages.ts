@@ -1380,8 +1380,27 @@ export interface ShareAskInfo {
   openingQuestions: string[];
 }
 
+export async function unlockHostedShare(token: string, password: string): Promise<ApiResponse<unknown>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+  const response = await fetch(joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/access`), {
+    method: 'POST', headers, credentials: 'include', body: JSON.stringify({ password }),
+  });
+  return response.json();
+  } catch {
+    return { success: false, data: null, error: { code: 'NETWORK_ERROR', message: '网络请求失败，请重试' } };
+  }
+}
+
 export async function viewShare(token: string, password?: string): Promise<ApiResponse<ShareViewData>> {
-  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+  if (password) {
+    const access = await unlockHostedShare(token, password);
+    if (!access.success) return access as ApiResponse<ShareViewData>;
+  }
+  const q = '';
+  void password;
   // 使用 raw fetch 避免 apiRequest 的 401 自动 refresh/redirect 逻辑，此端点是公开的
   // 但仍需携带 auth token（如果已登录），以便后端识别观看者身份
   const url = joinUrl(getApiBaseUrl(), `${api.webPages.viewShare(encodeURIComponent(token))}${q}`);
@@ -1389,7 +1408,7 @@ export async function viewShare(token: string, password?: string): Promise<ApiRe
   const authToken = useAuthStore.getState().token;
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers, credentials: 'include' });
     const json = await res.json();
     return json as ApiResponse<ShareViewData>;
   } catch {
@@ -1400,7 +1419,8 @@ export async function viewShare(token: string, password?: string): Promise<ApiRe
 // ─── Save Shared Site ───
 
 export async function saveSharedSite(token: string, password?: string): Promise<ApiResponse<{ saved?: boolean; alreadySaved?: boolean; siteCount?: number }>> {
-  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+  const q = '';
+  void password;
   return apiRequest(`${api.webPages.saveShare(encodeURIComponent(token))}${q}`, { method: 'POST' });
 }
 
@@ -1467,14 +1487,14 @@ export type HostedReviewSource = { mode: 'site'; siteId: string }
 async function readHostedReview<T>(source: HostedReviewSource, suffix: string): Promise<ApiResponse<T>> {
   if (source.mode === 'site') return apiRequest(`/api/web-pages/${encodeURIComponent(source.siteId)}/revisions${suffix}`);
   const params = new URLSearchParams();
-  if (source.password) params.set('password', source.password);
+
   if (source.siteId) params.set('siteId', source.siteId);
   const query = params.size ? `?${params}` : '';
   const headers: Record<string, string> = { Accept: 'application/json' };
   const token = useAuthStore.getState().token;
   if (token) headers.Authorization = `Bearer ${token}`;
   try {
-    const response = await fetch(buildApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(source.token)}/revisions${suffix}${query}`), { headers });
+    const response = await fetch(buildApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(source.token)}/revisions${suffix}${query}`), { headers, credentials: 'include' });
     return await response.json() as ApiResponse<T>;
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '无法加载版本，请重试' } };
@@ -1570,9 +1590,9 @@ export async function addSiteComment(siteId: string, content: string, options?: 
 }
 
 /** 经分享链接列出评论（无需登录即可读）。走 raw fetch（公开端点 + 可选携带 token 识别身份） */
-export async function listShareComments(token: string, password?: string, siteId?: string): Promise<ApiResponse<SiteCommentsResult>> {
+export async function listShareComments(token: string, _password?: string, siteId?: string): Promise<ApiResponse<SiteCommentsResult>> {
   const params = new URLSearchParams();
-  if (password) params.set('password', password);
+
   if (siteId) params.set('siteId', siteId);
   const q = params.size ? `?${params}` : '';
   const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`);
@@ -1580,7 +1600,7 @@ export async function listShareComments(token: string, password?: string, siteId
   const authToken = useAuthStore.getState().token;
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers, credentials: 'include' });
     return (await res.json()) as ApiResponse<SiteCommentsResult>;
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
@@ -1596,18 +1616,18 @@ export async function listShareComments(token: string, password?: string, siteId
 export async function getShareSiteContent(
   token: string,
   siteId?: string,
-  password?: string,
+  _password?: string,
 ): Promise<ApiResponse<{ siteId: string; title: string; contentType: string; siteUrl: string; html: string }>> {
   const params = new URLSearchParams();
   if (siteId) params.set('siteId', siteId);
-  if (password) params.set('password', password);
+
   const q = params.toString() ? `?${params.toString()}` : '';
   const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/content${q}`);
   const headers: Record<string, string> = { Accept: 'application/json' };
   const authToken = useAuthStore.getState().token;
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers, credentials: 'include' });
     return (await res.json()) as ApiResponse<{ siteId: string; title: string; contentType: string; siteUrl: string; html: string }>;
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
@@ -1630,12 +1650,12 @@ export function downloadSiteOfflineHtml(siteId: string, fallbackFileName: string
 export function downloadShareOfflineHtml(
   token: string,
   siteId: string | undefined,
-  password: string | undefined,
+  _password: string | undefined,
   fallbackFileName: string,
 ): Promise<ApiDownloadedFile> {
   const params = new URLSearchParams();
   if (siteId) params.set('siteId', siteId);
-  if (password) params.set('password', password);
+
   const query = params.toString() ? `?${params.toString()}` : '';
   return apiDownload(api.webPages.shareOfflineHtml(token, query), fallbackFileName);
 }
@@ -1646,7 +1666,7 @@ export function downloadHostedPdf(siteId: string, filePath: string,
   const query = new URLSearchParams({ filePath });
   if (share) {
     query.set('siteId', siteId);
-    if (share.password) query.set('password', share.password);
+
   }
   const path = share ? api.webPages.sharePdf(share.token) : api.webPages.pdf(siteId);
   return apiDownload(`${path}?${query}`, filePath.split('/').pop() || 'document.pdf', false, !!share);
@@ -1666,17 +1686,18 @@ export function downloadZipHomepageAsset(siteId: string, filePath: string, siteU
 
 /** 经分享链接发表评论（需登录） */
 export async function addShareComment(token: string, content: string, password?: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
-  const q = password ? `?password=${encodeURIComponent(password)}` : '';
-  return postHostedComment(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, content, options);
+  void password;
+  return postHostedComment(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments`, content, options, true);
 }
 
-function postHostedComment(path: string, content: string, options: HostedSiteCommentOptions = {}): Promise<ApiResponse<HostedSiteCommentDto>> {
+function postHostedComment(path: string, content: string, options: HostedSiteCommentOptions = {}, includeShareCookie = false): Promise<ApiResponse<HostedSiteCommentDto>> {
   const { files, ...metadata } = options;
   const body = { content, ...metadata };
   const headers = options.clientId ? { 'Idempotency-Key': options.clientId } : undefined;
   if (!files?.length) return apiRequest(path, { method: 'POST', body, headers });
   return apiMultipartRequest(path, {
     headers,
+    ...(includeShareCookie ? { credentials: 'include' } : {}),
     createFormData: () => {
       const form = new FormData();
       form.append('comment', JSON.stringify(body));
@@ -1690,7 +1711,6 @@ export function downloadCommentFile(source: { siteId: string } | { token: string
   commentId: string, file: HostedSiteCommentFile): Promise<ApiDownloadedFile> {
   const params = new URLSearchParams();
   const shared = 'token' in source;
-  if (shared && source.password) params.set('password', source.password);
   if (shared && source.siteId) params.set('siteId', source.siteId);
   const prefix = shared ? `shares/view/${encodeURIComponent(source.token)}` : encodeURIComponent(source.siteId);
   const query = params.size ? `?${params}` : '';
@@ -1706,7 +1726,7 @@ export function setSiteCommentResolved(source: { siteId: string } | { token: str
     : `/api/web-pages/${encodeURIComponent(source.siteId)}`;
   const params = new URLSearchParams();
   if ('token' in source) {
-    if (source.password) params.set('password', source.password);
+
     if (source.siteId) params.set('siteId', source.siteId);
   }
   const query = params.size ? `?${params}` : '';
