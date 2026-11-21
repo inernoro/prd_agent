@@ -1,4 +1,6 @@
 import asyncio
+import time
+import hashlib
 import os
 import sys
 import tempfile
@@ -12,6 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.official_agent_sdk import run_official_agent, workspace_diagnostics  # noqa: E402
+from app.authorization import RunAuthorization
 from app.schemas import SidecarMessage, SidecarRunRequest  # noqa: E402
 
 LAST_OPTIONS: Any = None
@@ -150,6 +153,7 @@ def install_fake_sdk() -> None:
             self.interrupt = interrupt
             self.kwargs = kwargs
 
+    module.HookMatcher = lambda **kw: kw
     module.ClaudeSDKClient = FakeClaudeSDKClient
     module.ClaudeAgentOptions = ClaudeAgentOptions
     module.PermissionResultAllow = PermissionResultAllow
@@ -161,12 +165,15 @@ def install_fake_sdk() -> None:
 
 
 def build_request() -> SidecarRunRequest:
-    return SidecarRunRequest(
+    req = SidecarRunRequest(
         runId="official-test",
         model="claude-opus-4-5",
         messages=[SidecarMessage(role="user", content="check repo")],
         maxTurns=1,
     )
+
+    req._authorization = RunAuthorization("alice", req.run_id, int(time.time()) + 600, "test")
+    return req
 
 
 class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -255,18 +262,20 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_BASE_URL"], "https://gateway.example/v1")
 
     async def test_permission_callback_allows_readonly_and_denies_unbridged_write(self) -> None:
-        stream = run_official_agent(build_request())
-        first = await anext(stream)
-        self.assertEqual(first.type, "runtime_init")
-        await stream.aclose()
-
-        can_use_tool = LAST_OPTIONS.kwargs["can_use_tool"]
-        readonly = await can_use_tool("Read", {"file_path": "README.md"}, object())
-        write = await can_use_tool("Bash", {"command": "git status"}, object())
-
-        self.assertEqual(readonly.behavior, "allow")
-        self.assertEqual(write.behavior, "deny")
-        self.assertIn("MAP approval request failed", write.message)
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "README.md").write_text("allowed")
+            req = build_request().model_copy(update={"workspace_root": root, "builtin_tools": ["Read"]})
+            stream = run_official_agent(req)
+            self.assertEqual((await anext(stream)).type, "runtime_init")
+            can_use_tool = LAST_OPTIONS.kwargs["can_use_tool"]
+            readonly = await can_use_tool("Read", {"file_path": "README.md"}, object())
+            write = await can_use_tool("Bash", {"command": "git status"}, object())
+            self.assertEqual(readonly.behavior, "allow")
+            self.assertEqual(write.behavior, "deny")
+            self.assertIn("tool not authorized", write.message)
+            self.assertIn("PreToolUse", LAST_OPTIONS.kwargs["hooks"])
+            self.assertEqual(LAST_OPTIONS.kwargs["allowed_tools"], [])
+            await stream.aclose()
 
     async def test_runtime_init_reports_opt_in_builtin_write_tools(self) -> None:
         os.environ["CLAUDE_AGENT_SDK_ALLOWED_TOOLS"] = "Read,Bash,Edit,Write"
@@ -277,7 +286,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         await stream.aclose()
 
         self.assertEqual(first.type, "runtime_init")
-        self.assertEqual(first.content["permissionMode"], "acceptEdits")
+        self.assertEqual(first.content["permissionMode"], "default")
         self.assertEqual(first.content["builtinWriteToolsEnabled"], True)
         self.assertEqual(first.content["builtinWriteTools"], ["Bash", "Edit", "Write"])
         self.assertEqual(first.content["disallowedTools"], [])
@@ -434,7 +443,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
                 "git_ref": "main",
             })
             slug = "inernoro-prd_agent-main-24f20bb79b"
-            existing = Path(workspaces_root) / slug
+            existing = Path(workspaces_root) / hashlib.sha256(b"alice:official-test").hexdigest() / slug
             (existing / ".git").mkdir(parents=True)
 
             with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
@@ -455,7 +464,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
                 "git_ref": None,
             })
             slug = "inernoro-prd_agent-default-2f4ed769c8"
-            existing = Path(workspaces_root) / slug
+            existing = Path(workspaces_root) / hashlib.sha256(b"alice:official-test").hexdigest() / slug
             (existing / ".git").mkdir(parents=True)
 
             with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):

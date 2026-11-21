@@ -109,6 +109,12 @@ public sealed class SidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
         }
     }
 
+    public async Task<InfraAgentRuntimeCancelResult> CancelOwnedRunAsync(string runId, string subject, CancellationToken ct)
+    {
+        var result = await _router.CancelOwnedRunAsync(runId, subject, ct);
+        return new InfraAgentRuntimeCancelResult(result.Cancelled, result.Reason, SourceName);
+    }
+
     public async Task<InfraAgentRuntimeCancelResult> CancelAsync(string runId, CancellationToken ct)
     {
         var result = await _router.CancelRunAsync(runId, ct);

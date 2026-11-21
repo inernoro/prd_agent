@@ -16,10 +16,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// claude-sdk Sidecar 反向调用主服务工具的入口。
 ///
 /// 调用源：Python sidecar 的 ToolBridge（`claude-sdk-sidecar/app/tool_bridge.py`）
-/// 鉴权方式：X-Sidecar-Token header，明文比对任一已配置 sidecar 的 Token。
-///   双向同 token 是有意为之 —— "调用方"和"被调用方"用同一对称凭据，免去额外的
-///   AgentApiKey 签发/吊销心智负担，对运维更"无脑"。
-/// 这个端点不对外（不在 OpenAPI 文档中宣传），属于内部基础设施层。
+/// 鉴权方式：任务续接凭据绑定主体、运行、期限、工具与运行时配置。共享 sidecar token 不授权工具。
 /// </summary>
 [ApiController]
 [Route("api/agent-tools")]
@@ -50,7 +47,7 @@ public class AgentToolsController : ControllerBase
     }
 
     [HttpGet("list")]
-    public IActionResult List()
+    public async Task<IActionResult> List([FromQuery] string runId)
     {
         if (!ValidateToken(out var why))
         {
@@ -58,7 +55,9 @@ public class AgentToolsController : ControllerBase
             return Unauthorized(new { error = why });
         }
 
-        var tools = _registry.ListAll().Select(t => new
+        var grant = await Authorize(runId, "run");
+        if (grant is null) return StatusCode(403);
+        var tools = _registry.Filter(grant.Tools).Select(t => new
         {
             name = t.Name,
             description = t.Description,
@@ -81,7 +80,15 @@ public class AgentToolsController : ControllerBase
         if (req == null || string.IsNullOrWhiteSpace(req.ToolName))
             return BadRequest(new { error = "toolName required" });
 
+        var grant = await Authorize(req.RunId ?? "", "callback", req.ToolName);
+        if (grant is null) return StatusCode(403);
+        var runState = await Replay.ControlRunAsync(Binding(grant, "", ""), "status", ct);
+        if (runState.Result != ReplayResult.Accepted) return ReplayDenied(runState.Result);
+        if (runState.State != "running") return StatusCode(403, new { error = "run_not_active" });
         var session = await FindSessionByRunIdAsync(req.RunId, ct);
+        if (session is not null && session.UserId != grant.Subject
+            || session is null && req.RunId?.StartsWith("infra-agent-", StringComparison.Ordinal) == true)
+            return StatusCode(403);
         var connection = await ResolveSessionConnectionAsync(session, ct);
         var cdsToken = connection == null
             ? null
@@ -91,16 +98,11 @@ public class AgentToolsController : ControllerBase
         var ctx = new AgentToolInvocationContext
         {
             RunId = req.RunId ?? string.Empty,
-            AppCallerCode = req.AppCallerCode,
+            AppCallerCode = grant.Runtime.AppCallerCode,
             SidecarName = Request.Headers["X-Sidecar-Name"].FirstOrDefault(),
             InfraAgentSessionId = session?.Id,
-            // 工具按「谁发起的」判权限。基础设施 Agent 会话优先；
-            // 通用对话没有这种会话，改用轮次 id 回查对话会话的归属用户；
-            // 一次性转派（宿主自带上下文、不落库）再退到进程内台账。
-            // 三条都查不到 = 无主调用，工具会自己拒绝，这里不兜底成某个默认用户。
-            UserId = session?.UserId
-                     ?? await ResolveChatAgentUserIdAsync(req.RunId, ct)
-                     ?? _oneOffRuns.TryResolveUserId(req.RunId),
+            // 主体由任务签发时冻结，不能由请求或 runId 猜测。
+            UserId = grant.Subject,
             ApprovalId = req.ApprovalId,
             CdsBaseUrl = connection?.PartnerBaseUrl,
             CdsProjectId = connection?.ProjectId,
@@ -122,6 +124,10 @@ public class AgentToolsController : ControllerBase
                 message = approval.Message
             });
         }
+
+        var consumption = await Replay.ConsumeAsync(Binding(grant, req.ApprovalId ?? "", req.ToolName,
+            req.Input?.GetRawText() ?? "{}"), ct);
+        if (consumption != ReplayResult.Accepted) return ReplayDenied(consumption);
 
         var result = await _registry.InvokeAsync(req.ToolName, inputElement, ctx, ct);
         return Ok(new
@@ -146,6 +152,14 @@ public class AgentToolsController : ControllerBase
             return Unauthorized(new { error = why });
         }
 
+        var grant = await Authorize(runId, "callback", req?.ToolName);
+        if (grant is null) return StatusCode(403);
+        var runState = await Replay.ControlRunAsync(Binding(grant, "", ""), "status", ct);
+        if (runState.Result != ReplayResult.Accepted) return ReplayDenied(runState.Result);
+        if (runState.State != "running") return StatusCode(403, new { error = "run_not_active" });
+        var binding = Binding(grant, approvalId, req!.ToolName!);
+        var claim = await Replay.ClaimWaitAsync(binding, ct);
+        if (claim != ReplayResult.Accepted) return ReplayDenied(claim);
         var timeoutSeconds = Math.Clamp(req?.TimeoutSeconds ?? 600, 1, 900);
         var approval = await ResolveToolApprovalAsync(
             runId,
@@ -154,9 +168,16 @@ public class AgentToolsController : ControllerBase
             TimeSpan.FromSeconds(timeoutSeconds),
             ct);
 
+        // Recheck the live lease after waiting, before any SDK tool can be released.
+        var afterWait = await Replay.ControlRunAsync(binding with { Tool = "", InputHash = null }, "status", ct);
+        if (afterWait.Result != ReplayResult.Accepted) return ReplayDenied(afterWait.Result);
+        var stillAuthorized = afterWait.State == "running" && await Authorize(runId, "callback", req?.ToolName) is not null;
+        var completion = await Replay.FinishWaitAsync(binding, approval.Allowed && stillAuthorized,
+            grant.Runtime.Tools.Any(t => t.Name == req!.ToolName), ct);
+        if (completion != ReplayResult.Accepted) return ReplayDenied(completion);
         return Ok(new
         {
-            success = approval.Allowed,
+            success = approval.Allowed && stillAuthorized,
             decision = approval.Decision,
             errorCode = approval.ErrorCode,
             message = approval.Message,
@@ -180,7 +201,20 @@ public class AgentToolsController : ControllerBase
         if (req == null || string.IsNullOrWhiteSpace(req.ToolName))
             return BadRequest(new { success = false, errorCode = "toolName_required", message = "toolName required" });
 
+        var grant = await Authorize(runId, "callback", req.ToolName);
+        if (grant is null || !approvalId.StartsWith(runId + ":", StringComparison.Ordinal)) return StatusCode(403);
+        var runState = await Replay.ControlRunAsync(Binding(grant, "", ""), "status", ct);
+        if (runState.Result != ReplayResult.Accepted) return ReplayDenied(runState.Result);
+        if (runState.State != "running") return StatusCode(403, new { error = "run_not_active" });
+        var registration = await Replay.RegisterApprovalAsync(Binding(grant, approvalId, req.ToolName,
+            req.Input?.GetRawText() ?? "{}"), ct);
+        if (registration != ReplayResult.Accepted) return ReplayDenied(registration);
         var session = await FindSessionByRunIdAsync(runId, ct);
+        if (session is not null && session.UserId != grant.Subject
+            || session is null && runId.StartsWith("infra-agent-", StringComparison.Ordinal)) return StatusCode(403);
+        if (session == null && (ClassifyToolRisk(req.ToolName) == "readonly"
+            || req.ToolName == "kb_index" && await ResolveChatAgentUserIdAsync(runId, ct) == grant.Subject))
+            return Ok(new { success = true, decision = "auto_allowed", risk = "readonly" });
         if (session == null)
         {
             return Ok(new
@@ -237,6 +271,8 @@ public class AgentToolsController : ControllerBase
         var session = await FindSessionByRunIdAsync(runId, ct);
         if (session == null)
         {
+            if (runId?.StartsWith("infra-agent-", StringComparison.Ordinal) == true)
+                return ToolApprovalDecision.Deny("run_inactive", "run is no longer active", risk);
             // 单篇索引只在已归属的通用对话轮次内执行；基础设施只读会话仍由下方策略拒绝。
             if (toolName == "kb_index" && await ResolveChatAgentUserIdAsync(runId, ct) != null)
                 return ToolApprovalDecision.Allow("chat_entry_index", risk);
@@ -321,7 +357,7 @@ public class AgentToolsController : ControllerBase
         var dash = rest.IndexOf('-', StringComparison.Ordinal);
         var sessionId = dash > 0 ? rest[..dash] : rest;
         if (string.IsNullOrWhiteSpace(sessionId)) return null;
-        return await _db.InfraAgentSessions.Find(x => x.Id == sessionId).FirstOrDefaultAsync(ct);
+        return await _db.InfraAgentSessions.Find(x => x.Id == sessionId && x.CurrentRuntimeRunId == runId).FirstOrDefaultAsync(ct);
     }
 
     private async Task<InfraConnection?> ResolveSessionConnectionAsync(InfraAgentSession? session, CancellationToken ct)
@@ -493,56 +529,50 @@ public class AgentToolsController : ControllerBase
 
     private bool ValidateToken(out string reason)
     {
-        var presented = Request.Headers["X-Sidecar-Token"].FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(presented))
-        {
-            reason = "missing X-Sidecar-Token";
-            return false;
-        }
-
-        if (TaskContinuationTokens.IsTaskToken(presented))
-        {
-            var valid = HttpContext.RequestServices.GetRequiredService<TaskContinuationTokens>()
-                .ValidateTokenAsync(presented).GetAwaiter().GetResult();
-            reason = valid ? "ok" : "task continuation expired";
-            return valid;
-        }
-        var configured = _options.CurrentValue.Sidecars
-            .Select(s =>
-                !string.IsNullOrWhiteSpace(s.Token)
-                    ? s.Token
-                    : (!string.IsNullOrWhiteSpace(s.TokenEnvVar)
-                        ? Environment.GetEnvironmentVariable(s.TokenEnvVar)
-                        : null))
-            .Where(t => !string.IsNullOrWhiteSpace(t))
-            .Cast<string>()
-            .ToList();
-
-        var sharedDiscoveryToken = _options.CurrentValue.CdsDiscovery.SharedSidecarToken;
-        if (!string.IsNullOrWhiteSpace(sharedDiscoveryToken)) configured.Add(sharedDiscoveryToken);
-
-        var defaultSidecarToken = _options.CurrentValue.DefaultSidecarToken;
-        if (!string.IsNullOrWhiteSpace(defaultSidecarToken)) configured.Add(defaultSidecarToken);
-
-        // 兜底：环境变量 CLAUDE_SIDECAR_TOKEN 也作为合法凭据（与 PostConfigure 自动注入对齐）
-        var envToken = Environment.GetEnvironmentVariable("CLAUDE_SIDECAR_TOKEN");
-        if (!string.IsNullOrWhiteSpace(envToken)) configured.Add(envToken);
-
-        if (configured.Count == 0)
-        {
-            reason = "no sidecar token configured";
-            return false;
-        }
-
-        if (configured.Any(t => string.Equals(t, presented, StringComparison.Ordinal)))
-        {
-            reason = "ok";
-            return true;
-        }
-
-        reason = "token mismatch";
-        return false;
+        var token = Request.Headers["X-Sidecar-Token"].ToString();
+        var valid = TaskContinuationTokens.IsTaskToken(token) && HttpContext.RequestServices
+            .GetRequiredService<TaskContinuationTokens>().ValidateTokenAsync(token).GetAwaiter().GetResult();
+        reason = valid ? "ok" : "scoped task credential required";
+        return valid;
     }
+
+    private Task<TaskContinuationTokens.RuntimeAuthorization?> Authorize(string runId, string purpose, string? tool = null) =>
+        HttpContext.RequestServices.GetRequiredService<TaskContinuationTokens>().AuthorizeRuntimeAsync(
+            Request.Headers["X-Sidecar-Token"].ToString(), runId, purpose, tool);
+
+    [HttpPost("authorize")]
+    public async Task<IActionResult> AuthorizeRuntime([FromBody] RuntimeAuthorizationRequest request)
+    {
+        if (request.Purpose is not ("run" or "cancel" or "status" or "complete" or "fail")) return Forbid();
+        var grant = await Authorize(request.RunId, request.Purpose == "run" ? "run" : "cancel");
+        if (grant is null) return StatusCode(403, new { error = "runtime_authorization_denied" });
+        if (request.Purpose == "run")
+        {
+            var reservation = await Replay.ReserveRunAsync(Binding(grant, "", ""), HttpContext.RequestAborted);
+            if (reservation != ReplayResult.Accepted) return ReplayDenied(reservation);
+        }
+        else
+        {
+            var state = await Replay.ControlRunAsync(Binding(grant, "", ""), request.Purpose, CancellationToken.None);
+            if (state.Result != ReplayResult.Accepted) return ReplayDenied(state.Result);
+            return Ok(new { grant.Subject, grant.RunId, Purpose = request.Purpose, grant.ExpiresAt, State = state.State });
+        }
+        return Ok(grant);
+    }
+
+    public sealed class RuntimeAuthorizationRequest
+    {
+        public string RunId { get; set; } = "";
+        public string Purpose { get; set; } = "";
+    }
+
+    private ISidecarReplayStore Replay => HttpContext.RequestServices.GetRequiredService<ISidecarReplayStore>();
+    private SidecarReplayBinding Binding(TaskContinuationTokens.RuntimeAuthorization grant, string approvalId,
+        string tool, string? input = null) => new(grant.RunId, grant.Subject,
+            SidecarReplayBinding.Hash(Request.Headers["X-Sidecar-Token"].ToString()), approvalId, tool,
+            input is null ? null : SidecarReplayBinding.Hash(input), grant.ExpiresAt);
+    private IActionResult ReplayDenied(ReplayResult result) => StatusCode(result == ReplayResult.Unavailable ? 503 : 403,
+        new { error = result == ReplayResult.Unavailable ? "replay_store_unavailable" : "approval_or_run_replayed" });
 
     public sealed class InvokeRequest
     {

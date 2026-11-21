@@ -28,6 +28,8 @@ public interface IInfraAgentRuntimeAdapter
         CancellationToken ct);
 
     Task<InfraAgentRuntimeCancelResult> CancelAsync(string runId, CancellationToken ct);
+    Task<InfraAgentRuntimeCancelResult> CancelOwnedRunAsync(string runId, string subject, CancellationToken ct)
+        => CancelAsync(runId, ct);
 }
 
 public sealed class InfraAgentRuntimeRunRequest

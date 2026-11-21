@@ -16,6 +16,25 @@ namespace PrdAgent.Tests;
 public sealed class SidecarTaskTransportTests
 {
     [Fact]
+    public async Task BackgroundCancellationForwardsVerifiedOwnerWithoutHttpContext()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var calls = new List<(string RunId, string Subject, CancellationToken Token)>();
+        var router = new TestRouter(_ => throw new InvalidOperationException(), (runId, subject, token) =>
+        {
+            calls.Add((runId, subject, token));
+            return new SidecarCancelResult(false, "cancel_requested");
+        });
+
+        var result = await new SidecarRuntimeAdapter(router)
+            .CancelOwnedRunAsync("run-1", "owner-1", cancellation.Token);
+
+        Assert.False(result.Cancelled);
+        Assert.Equal("cancel_requested", result.Reason);
+        Assert.Equal(("run-1", "owner-1", cancellation.Token), Assert.Single(calls));
+    }
+
+    [Fact]
     public async Task NormalTask_DispatchesIssuerPreparedCredentialsAndPreservesModelToolsAndTrace()
     {
         var original = new SidecarRunRequest
@@ -32,6 +51,7 @@ public sealed class SidecarTaskTransportTests
             AppCallerCode = original.AppCallerCode, TraceId = original.TraceId, MapSessionId = original.MapSessionId,
             Tools = original.Tools, BuiltinTools = original.BuiltinTools,
             BaseUrl = "https://gateway.invalid", ApiKey = "gwrg_finite-task-grant", Protocol = "anthropic",
+            AgentApiKey = "map-task-v2.bound-runtime",
         };
         var issuer = new TestIssuer(request =>
         {
@@ -48,6 +68,7 @@ public sealed class SidecarTaskTransportTests
 
         Assert.Equal(SidecarEventType.Done, Assert.Single(events).Type);
         Assert.Equal(1, transport.Sends);
+        Assert.Equal(prepared.AgentApiKey, transport.Bearer);
         using var body = JsonDocument.Parse(transport.Body!);
         var json = body.RootElement;
         Assert.Equal(original.RunId, json.GetProperty("runId").GetString());
@@ -128,7 +149,8 @@ public sealed class SidecarTaskTransportTests
         }
     }
 
-    private sealed class TestRouter(Action<SidecarRunRequest> capture) : IClaudeSidecarRouter
+    private sealed class TestRouter(Action<SidecarRunRequest> capture,
+        Func<string, string, CancellationToken, SidecarCancelResult>? cancelOwned = null) : IClaudeSidecarRouter
     {
         public bool IsConfigured => true;
         public int InstanceCount => 1;
@@ -137,6 +159,8 @@ public sealed class SidecarTaskTransportTests
         public IReadOnlyList<string> NextActions => Array.Empty<string>();
         public IAsyncEnumerable<SidecarEvent> RunStreamAsync(SidecarRunRequest request, CancellationToken ct)
         { capture(request); return EmptyEvents(); }
+        public Task<SidecarCancelResult> CancelOwnedRunAsync(string runId, string subject, CancellationToken ct)
+            => Task.FromResult((cancelOwned ?? throw new NotImplementedException())(runId, subject, ct));
         public Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct) => throw new NotImplementedException();
         public Task<SidecarPoolDiagnostics> GetDiagnosticsAsync(CancellationToken ct) => throw new NotImplementedException();
     }
@@ -170,9 +194,11 @@ public sealed class SidecarTaskTransportTests
     {
         public int Sends { get; private set; }
         public string? Body { get; private set; }
+        public string? Bearer { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Sends++;
+            Bearer = request.Headers.Authorization?.Parameter;
             Body = await request.Content!.ReadAsStringAsync(ct);
             return new HttpResponseMessage(HttpStatusCode.OK)
             { Content = new StringContent("event: done\ndata: {\"final_text\":\"ok\"}\n\n", Encoding.UTF8, "text/event-stream") };

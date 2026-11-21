@@ -119,7 +119,9 @@ public sealed class TaskScopedRuntimeGrantIssuer(
                 "任务保护暂时无法登记，本次运行未启动；请稍后重试。", 503);
         }
 
-        return CopyWithGrant(request, baseUrl, plainKey, context.UserId, identity.RunId, continuations?.Issue(identity, request.RunId, context.UserId, expiresAt));
+        var scoped = CopyWithGrant(request, baseUrl, plainKey, context.UserId, identity.RunId, null);
+        return CopyWithGrant(request, baseUrl, plainKey, context.UserId, identity.RunId,
+            continuations?.Issue(identity, request.RunId, context.UserId, expiresAt, scoped));
     }
 
     private string GatewayBaseUrl()

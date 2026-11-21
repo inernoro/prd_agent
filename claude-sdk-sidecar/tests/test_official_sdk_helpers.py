@@ -1,4 +1,6 @@
 import os
+import time
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -7,6 +9,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.authorization import RunAuthorization
 from app.schemas import SidecarRunRequest, SidecarToolDef  # noqa: E402
 from app.sdk_events import SdkEventAccumulator, handle_sdk_message, safe_result_metadata, usage_value  # noqa: E402
 from app.sdk_tooling import build_sdk_tooling  # noqa: E402
@@ -104,7 +107,7 @@ def create_sdk_mcp_server(name: str, version: str, tools: list[Any]) -> dict[str
 
 
 def helper_request() -> SidecarRunRequest:
-    return SidecarRunRequest(
+    req = SidecarRunRequest(
         runId="helper-test",
         model="claude-opus-4-5",
         tools=[
@@ -112,6 +115,9 @@ def helper_request() -> SidecarRunRequest:
             SidecarToolDef(name="issue_lookup", description="lookup issue", input_schema={"type": "object"}),
         ],
     )
+
+    req._authorization = RunAuthorization("alice", req.run_id, int(time.time()) + 600, "test")
+    return req
 
 
 class SdkEventHelperTests(unittest.TestCase):
@@ -228,51 +234,21 @@ class SdkToolingHelperTests(unittest.IsolatedAsyncioTestCase):
             ("issue_lookup", {"issue": 7}),
         ])
 
-    async def test_permission_callback_allows_read_tools_and_bridges_write_tools(self) -> None:
-        bridge = FakeBridge(approved=True)
-        tooling = build_sdk_tooling(
-            SidecarRunRequest(runId="permissions"),
-            bridge,  # type: ignore[arg-type]
-            create_sdk_mcp_server=create_sdk_mcp_server,
-            sdk_tool=sdk_tool,
-            permission_result_allow=PermissionResultAllow,
-            permission_result_deny=PermissionResultDeny,
-        )
+    async def test_permissions_require_scope_containment_and_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "file").write_text("safe")
+            req = helper_request().model_copy(update={"workspace_root": root, "builtin_tools": ["Read", "Edit", "Write"]})
+            for bridge, expected in [(FakeBridge(), PermissionResultAllow),
+                    (FakeBridge(permission_requested=False), PermissionResultDeny),
+                    (FakeBridge(approved=False), PermissionResultDeny)]:
+                tooling = build_sdk_tooling(req, bridge, create_sdk_mcp_server=create_sdk_mcp_server,
+                    sdk_tool=sdk_tool, permission_result_allow=PermissionResultAllow, permission_result_deny=PermissionResultDeny)
+                self.assertIsInstance(await tooling.can_use_tool("Read", {"file_path": "file"}, None), PermissionResultAllow)
+                self.assertIsInstance(await tooling.can_use_tool("Edit", {"file_path": "file"}, None), expected)
+                self.assertIsInstance(await tooling.can_use_tool("Bash", {"command": "pwd"}, None), PermissionResultDeny)
+                if bridge.permission_requested:
+                    self.assertTrue(bridge.waited[1].startswith(req.run_id + ":"))
 
-        self.assertIsInstance(await tooling.can_use_tool("Read", {}, None), PermissionResultAllow)
-        self.assertIsInstance(await tooling.can_use_tool("Bash", {"cmd": "pwd"}, None), PermissionResultAllow)
-        self.assertEqual(bridge.permission[0], "Bash")
-        self.assertEqual(bridge.waited, ("Bash", "bash-permissions-1"))
-
-        self.assertIsInstance(await tooling.can_use_tool("Bash", {"cmd": "ls"}, None), PermissionResultAllow)
-        self.assertEqual(bridge.waited, ("Bash", "bash-permissions-2"))
-
-    async def test_permission_callback_denies_failed_or_rejected_map_approval(self) -> None:
-        failed_bridge = FakeBridge(permission_requested=False)
-        tooling = build_sdk_tooling(
-            SidecarRunRequest(runId="failed-permission"),
-            failed_bridge,  # type: ignore[arg-type]
-            create_sdk_mcp_server=create_sdk_mcp_server,
-            sdk_tool=sdk_tool,
-            permission_result_allow=PermissionResultAllow,
-            permission_result_deny=PermissionResultDeny,
-        )
-        failed = await tooling.can_use_tool("Write", {"path": "x"}, None)
-        self.assertIsInstance(failed, PermissionResultDeny)
-        self.assertIn("MAP approval request failed", failed.message)
-
-        rejected_bridge = FakeBridge(approved=False)
-        tooling = build_sdk_tooling(
-            SidecarRunRequest(runId="rejected-permission"),
-            rejected_bridge,  # type: ignore[arg-type]
-            create_sdk_mcp_server=create_sdk_mcp_server,
-            sdk_tool=sdk_tool,
-            permission_result_allow=PermissionResultAllow,
-            permission_result_deny=PermissionResultDeny,
-        )
-        rejected = await tooling.can_use_tool("Edit", {"path": "x"}, None)
-        self.assertIsInstance(rejected, PermissionResultDeny)
-        self.assertIn("MAP approval denied", rejected.message)
 
 
 class WorkspaceHelperTests(unittest.TestCase):
