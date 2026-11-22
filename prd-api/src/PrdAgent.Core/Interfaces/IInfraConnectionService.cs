@@ -75,7 +75,8 @@ public record InfraConnectionPublicView(
     DateTime? LastProbedAt,
     bool? LastProbeOk,
     string? LastProbeError,
-    DateTime LongTokenExpiresAt
+    DateTime LongTokenExpiresAt,
+    bool WorkspaceOnly = false
 );
 
 public record CdsAuthorizationStartView(
