@@ -2,11 +2,12 @@ import { useContext, useState, type FormEvent } from 'react';
 import { KeyRound } from 'lucide-react';
 import { AppShell, ConsoleAuthContext, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { MotionLink } from '@/components/layout/RouteMotion';
+import { PersonalSettingsSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { Button } from '@/components/ui/button';
 import { ApiError, changeMyPassword } from '@/lib/api';
 import { consoleAccountIdentity } from '@/lib/consoleIdentity';
 import { approveSystemPasswordChange } from '@/lib/passkeys';
-import { ErrorBlock, LoadingBlock, Section } from './cds-settings/components';
+import { ErrorBlock, Section } from './cds-settings/components';
 
 const passwordInputClass = 'min-h-11 w-full rounded-md border border-border bg-input px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm';
 
@@ -97,11 +98,11 @@ export function PersonalSettingsPage(): JSX.Element {
   return (
     <AppShell active="personal-settings" topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '个人设置' }]} />} />}>
       <Workspace fluid>
-        <div className="max-w-xl space-y-5 py-5">
+        {pending ? <PersonalSettingsSkeleton /> : <div className="max-w-xl space-y-5 py-5">
           <h1 className="text-xl font-semibold">个人设置</h1>
           <Section title="修改密码" description={localAccount ? '修改当前本地账号的登录密码。修改后，请使用新密码重新登录。'
             : systemAccount ? '由指定的系统所有者使用通行密钥批准本次改密。批准人和时间会记入用户操作痕迹。' : undefined}>
-            {pending ? <LoadingBlock label="确认当前账号" /> : !status ? (
+            {!status ? (
               <div className="space-y-3"><ErrorBlock message="暂时无法确认当前账号，请重新读取登录状态。" /><Button onClick={retry}>重新读取</Button></div>
             ) : identity && (localAccount || systemAccount) ? (
               <PasswordForm key={identity} systemAccount={systemAccount} />
@@ -111,7 +112,7 @@ export function PersonalSettingsPage(): JSX.Element {
               <p className="text-sm text-muted-foreground">当前登录方式没有可在这里修改的密码。需要帮助时，请联系系统所有者。</p>
             )}
           </Section>
-        </div>
+        </div>}
       </Workspace>
     </AppShell>
   );

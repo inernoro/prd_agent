@@ -29,6 +29,7 @@ const selectors = {
   overview: '[aria-label="读取项目关系总览"]',
   'agent-table': '[data-agent-requests-skeleton]', 'topology': '[data-topology-page-skeleton]', 'release-center': '[data-release-center-skeleton]', monitor: '[aria-label="正在读取监控数据"]',
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
+  'personal-settings': '[data-personal-settings-skeleton]',
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
   'release-approval': '[data-release-approval-skeleton]', 'project-monitor': '[data-project-status-skeleton]',
   'code-reviews': '[data-code-reviews-skeleton]',
@@ -37,7 +38,7 @@ const selectors = {
   dts: '[aria-label="正在加载数据同步"]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.CDS_CHROMIUM_PATH || undefined });
 const results = [];
 try {
   for (const scene of scenes.filter(s => s.scope !== 'standalone' && s.route !== '/branch-panel' && (!only || only.includes(s.route)))) {
@@ -52,6 +53,10 @@ try {
       if (isEventStream(p) || p === '/api/activity-stream') return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
       if (p === '/api/auth/status') {
         authRequests++;
+        if (scene.kind === 'personal-settings') {
+          await data.promise;
+          return route.fulfill({ json: { authenticated: true, enabled: true, mode: 'basic', user: { id: 'fixture-member', username: 'fixture-member', authProvider: 'local', isSystemOwner: false } } });
+        }
         if (scene.kind === 'settings' && authRequests > 1) await data.promise;
         return route.fulfill({ json: { authenticated: true, enabled: true, mode: 'basic', user: { id: 'fixture-owner', name: '合成验收账号', isSystemOwner: true } } });
       }
@@ -115,7 +120,7 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'release-approval', 'project-monitor', 'projects',
+        if (['settings', 'project-settings', 'personal-settings', 'release-console', 'release-approval', 'project-monitor', 'projects',
           'branches', 'topology', 'overview', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail',
           'code-reviews', 'engineering-planning', 'design', 'dts'].includes(scene.kind)) {
           assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
@@ -136,6 +141,10 @@ try {
       data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
+      if (!before && scene.kind === 'personal-settings') {
+        await page.getByRole('heading', { name: '个人设置', exact: true }).waitFor();
+        await page.getByRole('button', { name: '修改密码', exact: true }).waitFor();
+      }
       if (!before && scene.kind === 'overview') {
         const graph = page.getByRole('region', { name: '跨项目关系画布' });
         await graph.getByText('fixture-project', { exact: true }).waitFor();

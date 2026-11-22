@@ -150,7 +150,7 @@
     "route": "/personal-settings",
     "name": "个人设置",
     "page": "pages/PersonalSettingsPage.tsx",
-    "kind": "settings",
+    "kind": "personal-settings",
     "workspace": "fluid"
   },
   {
