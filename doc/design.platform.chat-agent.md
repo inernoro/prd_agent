@@ -182,7 +182,7 @@
    remote host、经 `deploy-sidecar` 部署 sidecar、shared pool 审计），**不能**用普通分支
    create/deploy 去建 `main`；完整步骤与禁止路径见
    [guide.cds.agent.runtime-pool-recovery.md](./guide.cds.agent.runtime-pool-recovery.md)，
-   债务登记为 [debt.platform.md](./debt.platform.md) 的 CHAT-1。
+   债务登记为 [debt.platform.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md) 的 CHAT-1。
 2. **出图的画面质量**。出图链路全通，但灰度环境的生图模型池命中的是占位模型，
    产出的是占位图而非真实作画。链路是真的，画笔是环境配置决定的。
    换成真实生图模型后代码无需改动。

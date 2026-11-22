@@ -63,7 +63,7 @@ export function siteFormBadge(site: SiteFormInput): string | null {
   if (form === 'zip') return `${count.toLocaleString()} 文件`;
   // 设计稿的幻灯片角标是「1 / 24」页码、PDF 是「24 页」、视频是「02:14」——
   // 这三个数后端目前都没有（页数要解析 PDF、时长要探媒体），写「-- 页」比不写更糟。
-  // 缺口记在 doc/debt.web-hosting.md，不在这里编。
+  // 缺口记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md，不在这里编。
   return null;
 }
 

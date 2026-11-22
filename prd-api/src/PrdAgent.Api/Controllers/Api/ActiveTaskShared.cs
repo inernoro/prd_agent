@@ -78,7 +78,7 @@ public static class ActiveTaskShared
     ///
     /// 真原子要么上事务、要么给 (UserId, State=active) 建唯一部分索引，而本仓库禁止
     /// 应用自建索引。残留边界（并发下可能两条 active）记在
-    /// doc/debt.platform.active-tasks.md 第 19 条，不在这里用更坏的办法假装解决。
+    /// https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.active-tasks.md 第 19 条，不在这里用更坏的办法假装解决。
     /// </summary>
     public static async Task MakeActiveAsync(MongoDbContext db, string userId, string id, DateTime now, CancellationToken ct = default)
     {

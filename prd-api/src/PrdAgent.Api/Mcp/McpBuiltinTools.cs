@@ -373,7 +373,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_debt_list",
-            Description = "读工程债务台账：还欠着什么、谁认领了、哪几条已经转成任务了。债务正文来自仓库的 doc/debt.*.md，认领人与状态来自任务台。mineOnly=true 只看我认领的。",
+            Description = "读取任务台已有的债务快照、认领人与转为任务的记录。mineOnly=true 只看我认领的。当前项目的债务登记、状态与偿还进展通过 CDS 工程规划读取。",
             RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
             Method = "GET",
             PathTemplate = "/api/open/tasks/debts",
@@ -386,7 +386,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_debt_sync",
-            Description = "把仓库里 doc/debt.*.md 的债务台账推到任务台，按 key 幂等（重复推同一条只更新不新建）。key 形如 platform.active-tasks#15 —— 台账文件名去掉 debt. 前缀和 .md，加表格里的编号。**只覆盖正文**（标题/现状/补的条件）；谁认领了、转成了哪条任务一律不动，所以反复跑不会抹掉认领记录。改完 debt 文档顺手跑一次即可。",
+            Description = "任务台历史债务快照的兼容导入，按原 key 幂等更新标题、现状与补的条件。key 形如 platform.active-tasks#15。认领与任务关系继续可读。当前工程债务通过 CDS 工程规划登记或提交提案。",
             RequiredScope = McpCapabilityCatalog.ScopeTasksManage,
             Method = "POST",
             PathTemplate = "/api/open/tasks/debts/sync",

@@ -7,7 +7,7 @@ namespace PrdAgent.Tests;
 /// OpenApi 对外网关注册守卫（CI 可运行，无需 DB）。
 ///
 /// 守护「make-or-break」不变量：OpenApi 的两个伞形 appCallerCode 必须已在
-/// <see cref="AppCallerRegistry"/> 静态注册。原因（见 doc/debt.open-platform.open-api.md）：
+/// <see cref="AppCallerRegistry"/> 静态注册。原因（见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.open-platform.open-api.md）：
 /// 1. MAP 自有调用点仍通过静态注册表获得编译期拼写守卫和展示元数据；
 /// 2. <c>AppCallerRegistrySyncService</c> 启动时把已注册 code 同步成 llm_app_callers DB 记录，
 ///    没有这条记录，<c>ModelResolver.ResolveAsync</c> 会直接返回 NotFound，

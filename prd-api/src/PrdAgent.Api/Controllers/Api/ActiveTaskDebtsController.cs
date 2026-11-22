@@ -18,7 +18,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 权责划分（一句话）：**正文归仓库，归属与状态归这里**。
 /// 同步端点只覆盖正文三件套，认领/转换端点只改归属与状态，两边不越界 ——
 /// 越界就会变成两份都能写的账，也就是必然漂移的两份账。
-/// 详见 <see cref="ActiveTaskDebt"/> 的类注释与 doc/debt.platform.active-tasks.md 第 15 条。
+/// 详见 <see cref="ActiveTaskDebt"/> 的类注释与 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.active-tasks.md 第 15 条。
 /// </summary>
 [ApiController]
 [Route("api/active-tasks/debts")]

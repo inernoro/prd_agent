@@ -368,7 +368,7 @@ describe('与认证门禁对齐', () => {
    * 两处键名各写一份必然漂（形状 3）。理想解是抽一份共享的键名表，两边都读它；
    * 那要动认证门禁本身，而门禁是安全件、这个 PR 已冻结，所以先用守卫钉住：
    * 扫门禁源码里 `hasValue(env, ...)` 认的键，逐个断言本表也认。
-   * 往门禁加别名却忘了加到这里，这条会红。欠的那次收敛记在 doc/debt.cds.md。
+   * 往门禁加别名却忘了加到这里，这条会红。欠的那次收敛记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md。
    */
   const policySource = readFileSync(join(process.cwd(), 'src/services/infra-auth-policy.ts'), 'utf8');
 

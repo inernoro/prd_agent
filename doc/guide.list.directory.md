@@ -369,7 +369,6 @@
 - [MD 转 PPT 对话工作台收尾 · 计划](./plan.md-to-ppt.chat-redesign.md) `plan.md-to-ppt.chat-redesign`
 - [知识驱动设计生成体系 · 计划](./plan.platform.design-generation.md) `plan.platform.design-generation`
 - [OpenDesign 六步实施计划](./plan.platform.open-design.md) `plan.platform.open-design`
-- [OpenDesign 接入 · 债务台账](./debt.platform.open-design.md) `debt.platform.open-design`
 - [OpenDesign 内核与能力边界](./design.platform.open-design.kernel.md) `design.platform.open-design.kernel`
 - [MAP 核心业务稳定基线落地 · 计划](./plan.platform.core-business-stability.md) `plan.platform.core-business-stability`
 - [关键业务监控 · 计划](./plan.platform.business-monitoring.md) `plan.platform.business-monitoring`
@@ -389,60 +388,9 @@
 - [视觉创作配图标记人工控制 · 计划](./plan.visual-agent.manual-image-marking.md) `plan.visual-agent.manual-image-marking`
 - [视觉创作 优化清单 · 计划](./plan.visual-agent.optimization-backlog.md) `plan.visual-agent.optimization-backlog`
 
-### 六、技术债务台账
+### 六、工程债务
 
-- [模型生命周期边界 · 债务台账](./debt.llmgw.model-lifecycle.md) `debt.llmgw.model-lifecycle`
-
-- [CDS 通知验收边界 · 债务台账](./debt.cds.notification.md) `debt.cds.notification`
-- [平台后台任务与消费治理 · 债务台账](./debt.platform.background-task-safety.md) `debt.platform.background-task-safety`
-- [缺陷提交可靠性 · 债务台账](./debt.defect-agent.submit-reliability.md) `debt.defect-agent.submit-reliability`
-
-- [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
-- [每日验收的锚点契约 · 债务台账](./debt.acceptance.daily-anchors.md) `debt.acceptance.daily-anchors`
-- [功能验收体系 · 债务台账](./debt.acceptance.system.md) `debt.acceptance.system`
-- [智能体宇宙 · 债务台账](./debt.agent-universe.md) `debt.agent-universe`
-- [CDS 平台杂项 · 债务台账](./debt.cds.md) `debt.cds`
-- [CDS Agent 工作台 · 债务台账](./debt.cds.agent.md) `debt.cds.agent`
-- [CDS Agent 验收 smoke 断言漂移 · 债务台账](./debt.cds.agent.acceptance-smoke-drift.md) `debt.cds.agent.acceptance-smoke-drift`
-- [CDS Agent SDK 执行器 · 债务台账](./debt.cds.agent.sdk-executor.md) `debt.cds.agent.sdk-executor`
-- [CDS 多分支跨分支隔离 · 债务台账](./debt.cds.branch-isolation.md) `debt.cds.branch-isolation`
-- [CDS 构建闸（build-gate） · 债务台账](./debt.cds.build-gate.md) `debt.cds.build-gate`
-- [CDS 极速版（CI 预构建） · 债务台账](./debt.cds.ci-prebuilt.md) `debt.cds.ci-prebuilt`
-- [一仓多项目与身份层的工程债务](./debt.cds.multi-project-identity.md) `debt.cds.multi-project-identity`
-- [CDS 分支详情「总览」 · 债务台账](./debt.cds.overview.md) `debt.cds.overview`
-- [CDS 构建与前端性能 · 债务台账](./debt.cds.performance.md) `debt.cds.performance`
-- [CDS 生产发布系统 · 债务台账](./debt.cds.release-system.md) `debt.cds.release-system`
-- [CDS 自更新极速版（预构建产物） · 债务台账](./debt.cds.selfupdate-prebuilt.md) `debt.cds.selfupdate-prebuilt`
-- [CDS state.json 影子存储 · 债务台账](./debt.cds.state-json.md) `debt.cds.state-json`
-- [小技巧与新手引导 · 债务台账](./debt.daily-tips.md) `debt.daily-tips`
-- [缺陷管理手机截图分享提交 · 债务台账](./debt.defect-agent.mobile-share.md) `debt.defect-agent.mobile-share`
-- [文档可读性 · 债务台账](./debt.doc.readability.md) `debt.doc.readability`
-- [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
-- [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
-- [活动任务清单 · 债务台账](./debt.platform.active-tasks.md) `debt.platform.active-tasks`
-- [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
-- [跨 MAP 实例数据同步 · 债务台账](./debt.platform.cross-instance-data-sync.md) `debt.platform.cross-instance-data-sync`
-- [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
-- [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
-- [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`
-- [平台基础设施杂项 · 债务台账](./debt.platform.md) `debt.platform`
-- [LLM 网关与模型池 · 债务台账](./debt.platform.llm-gateway.md) `debt.platform.llm-gateway`
-- [LLM 网关物理剥离 · 债务台账](./debt.platform.llm-gateway.isolation.md) `debt.platform.llm-gateway.isolation`
-- [LLM Gateway 协议保真 · 债务台账](./debt.platform.llm-gateway.protocol-fidelity.md) `debt.platform.llm-gateway.protocol-fidelity`
-- [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
-- [prd-agent 平台杂项 · 债务台账](./debt.prd-agent.md) `debt.prd-agent`
-- [产品与项目管理智能体 · 债务台账](./debt.product-agent.md) `debt.product-agent`
-- [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
-- [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
-- [角色技能套装 · 债务台账](./debt.skill.role-bundle.md) `debt.skill.role-bundle`
-- [海鲜市场时间与热度展示边界 · 债务台账](./debt.marketplace.activity.md) `debt.marketplace.activity`
-- [演讲智能体 · 债务台账](./debt.speech-agent.md) `debt.speech-agent`
-- [团队动态 · 债务台账](./debt.team-activity.md) `debt.team-activity`
-- [视频生成 Agent · 债务台账](./debt.video-agent.md) `debt.video-agent`
-- [视觉创作 · 债务台账](./debt.visual-agent.md) `debt.visual-agent`
-- [视觉创作 · AI 分层 · 验收债务台账](./debt.visual-agent.layering.md) `debt.visual-agent.layering`
-- [网页托管 · 债务台账](./debt.web-hosting.md) `debt.web-hosting`
-- [工作流 · 债务台账](./debt.workflow-agent.md) `debt.workflow-agent`
+从 CDS 工程规划查询项目债务。原台账资料可通过记录中的固定 Git 来源回读。 [债务指南](./guide.doc.pri.debt.md)
 
 ### 七、报告与周报
 
@@ -480,7 +428,6 @@
 - [周报 2026-W38 (2026-09-14 ~ 2026-09-20)](./report.2026-W38.md) `report.2026-W38`
 - [周报 2026-W39 (2026-09-21 ~ 2026-09-27)](./report.2026-W39.md) `report.2026-W39`
 - [周报 2026-W40 (2026-09-28 ~ 2026-10-04)](./report.2026-W40.md) `report.2026-W40`
-- [CDS DTS 数据传输能力边界 · 债务](./debt.cds.dts.md) `debt.cds.dts`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`

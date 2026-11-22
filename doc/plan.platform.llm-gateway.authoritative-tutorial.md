@@ -206,4 +206,4 @@ G2-E 本地实现证据：控制台已提供空状态创建、动态模型映射
 - [design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)：租户平台化、密钥、提示词、控制台与物理隔离的当前架构事实。
 - [rule.acceptance.map-enterprise.md](./rule.acceptance.map-enterprise.md)、[rule.acceptance.ssot.md](./rule.acceptance.ssot.md)：视觉验收和归档规则。
 - [guide.acceptance.report-evidence.md](./guide.acceptance.report-evidence.md)：截图、说明和证据完整性合同。
-- [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)：不在本教程批次内重开的运行边界和技术债。
+- [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)：不在本教程批次内重开的运行边界和技术债。

@@ -31,7 +31,7 @@ services:
       cds.readiness-path: /api/health
 
   # NATS server. Internal clients reach it at nats:4222 and must authenticate:
-  # CDS 的基础设施认证门禁不再接受裸奔的 nats(见 doc/debt.cds.md E49)。
+  # CDS 的基础设施认证门禁不再接受裸奔的 nats(见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md E49)。
   nats:
     image: nats:2-alpine
     command: --user ${NATS_USER} --pass ${NATS_PASSWORD}

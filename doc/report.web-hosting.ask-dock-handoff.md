@@ -36,12 +36,12 @@
 | 维度 | 状态 | 证据或待办 |
 |---|---|---|
 | 入口与使用路径 | 已完成 | 四态几何在真机逐态量过（收起 132×40 / 长条 660×54 居中 / 对话 400×视口高 / 竖条 44×视口高），坞全程只有一个节点 |
-| 文档与决策 | 已完成 | [debt.web-hosting.md](./debt.web-hosting.md) #56–#88，含一条我自己走错的弯路（误判成去 MAP 建池） |
+| 文档与决策 | 已完成 | [debt.web-hosting.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md) #56–#88，含一条我自己走错的弯路（误判成去 MAP 建池） |
 | 契约与数据 | 已完成 | 站点上新增两个字段记「这批题是谁写的、按哪一版正文生成的」；新增一个按正文重新生成的端点（owner/editor 门）；新增一个用于开场问题的调用方标识，黄金快照已同步 |
 | 测试与证据 | 已完成 | 前端 246 文件 / 2216 用例全绿、tsc 零错误；后端 `PrdAgent.Tests` 1468 全绿；判据类改动逐条红绿闭环 |
 | 发布与运维 | 已完成 | 预览环境两个出口均可达；意图池已配好可调用模型 |
 | 安全与隐私 | 已完成 | 未引入新凭据；提问上下文由服务端取，不接受前端传入正文；调试用隧道已关闭 |
-| 已知风险 | 已记录 | 见 [debt.web-hosting.md](./debt.web-hosting.md)，未做项在 PR 描述「后续事项」逐条列出 |
+| 已知风险 | 已记录 | 见 [debt.web-hosting.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md)，未做项在 PR 描述「后续事项」逐条列出 |
 | 后续行动 | 见下表 | |
 
 ## 已运行验证
@@ -71,4 +71,4 @@
 | 访客阅读页只有暗色一套皮肤 | 浅色偏好的人观感不一致 | P2 | 既有缺口，非本分支引入 | 补齐浅色档 |
 | 我在预览环境留了 4 个 `[坞验收]` 测试站点 | 轻微数据噪音 | P3 | 本分支 | 确认不再需要后删除 |
 
-完整台账（含每条的修法与验收标准）见 [debt.web-hosting.md](./debt.web-hosting.md)。
+完整台账（含每条的修法与验收标准）见 [debt.web-hosting.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md)。

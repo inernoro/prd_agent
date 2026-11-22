@@ -10,7 +10,7 @@
 
 > **更新**:2026-07-15
 > 背景:用户计划迁移 CDS 宿主。本 runbook 把迁移前中后的检查单固化下来,数据依据来自
-> [doc/debt.cds.performance.md](./debt.cds.performance.md)(2026-06-21/22 性能专项实测)与 [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md)。
+> [doc/debt.cds.performance.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.performance.md)(2026-06-21/22 性能专项实测)与 [doc/debt.cds.ci-prebuilt.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.ci-prebuilt.md)。
 
 
 ## 一、迁移前(旧实例上,提前做)
@@ -57,7 +57,7 @@
 
 ## 五、关联
 
-- [doc/debt.cds.performance.md](./debt.cds.performance.md) — 性能根因实测台账(调度器禁用事故、并发闸、两个假设证伪)
-- [doc/debt.cds.ci-prebuilt.md](./debt.cds.ci-prebuilt.md) — 极速版债务(ghcr public、首拉 I/O、回退链)
+- [doc/debt.cds.performance.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.performance.md) — 性能根因实测台账(调度器禁用事故、并发闸、两个假设证伪)
+- [doc/debt.cds.ci-prebuilt.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.ci-prebuilt.md) — 极速版债务(ghcr public、首拉 I/O、回退链)
 - [doc/design.cds.self-hosting.md](./design.cds.self-hosting.md) — cds-self 预览实例(迁移期 CDS 改动的验收通道)
 - `.claude/rules/cross-project-isolation.md` — 通道 1/2(JWT 密钥两用)、通道 4(共享库全局状态)

@@ -2332,7 +2332,7 @@ public static class GatewayHttpEndpoints
     ///
     /// 只拒**显式点名且明确越权**的那一种：请求头没带调用方时照旧走 key 自己的身份，
     /// 不在这里改那条路的行为（那一档另有台账：多调用方 key 的无头清单只按一个调用方出，
-    /// 见 doc/debt.platform.llm-gateway.md 的 2026-09-17-models-list-uses-one-caller）。
+    /// 见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md 的 2026-09-17-models-list-uses-one-caller）。
     /// </summary>
     private static bool CatalogCallerDenied(HttpContext context, out string? appCallerCode)
     {

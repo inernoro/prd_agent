@@ -15,7 +15,7 @@
 > 逐块的分数、扣分条目、判官原话与截图属于**评测产出**，按 `AGENTS.md` §10 不进 `doc/`：
 > 它们随每次取证跑留在对应产物里，复核时从那次 run 取。本文档只留决策层要知道的
 > verdict 与取舍。**仍欠着的一件事**：这批证据还没归档进验收知识库——归档要预览域名的
-> 登录凭据，我这边没有，已记进 [debt.knowledge-base.md](./debt.knowledge-base.md)。
+> 登录凭据，我这边没有，已记进 [debt.knowledge-base.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md)。
 
 ### 这一轮学到的：判零分的三块，实现一行都没少
 
@@ -109,7 +109,7 @@
 两条路二选一：设计方把这两个数字从稿面删掉并给替代文案，或者后端把录音后转写改成流式、
 把句级进度真做出来。**在拍板之前 R4 的天花板就是 93 左右**，剩下的不是实现能补的。
 
-另有 1 分是有意偏离，已记进 [debt.knowledge-base.md](./debt.knowledge-base.md) 且不申请豁免：
+另有 1 分是有意偏离，已记进 [debt.knowledge-base.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md) 且不申请豁免：
 稿面把主按钮画成本屏最后一个元素，实现在它下方仍保留播放器——因为这一屏抬头
 就写着「音频已经安全保存，你现在就可以播放」，撤掉播放器这句承诺在本屏没有兑现处。
 

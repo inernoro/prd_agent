@@ -16,7 +16,7 @@ namespace PrdAgent.Api.Tests.Mcp;
 /// 说明这个文件为什么只剩一条：原先还有三条钉「建站先占坑再上传 / 租约窗口 / 撤回收尾按持有者过滤」。
 /// 那套「确定性 id + 占坑 + 租约」的发布幂等已整套撤除（对象存储没有条件写入原语，跨两套存储凑
 /// 原子发布连续三轮 review 都在长新洞），守卫随之失效 —— 留着就是钉住一个不存在的设计。
-/// 取舍与收敛方案见 doc/debt.platform.md 边界 12。
+/// 取舍与收敛方案见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md 边界 12。
 /// </summary>
 public class McpRollbackInvariantTests
 {
@@ -173,7 +173,7 @@ public class McpRollbackInvariantTests
     /// 六天前建的 7 天链接遇上今天的「我要 7 天」，天数一样却被判成没变，调用方以为拿到
     /// 七天、实际那条明天就过期。
     ///
-    /// 没有请求键的时候，能分开这两件事的只有时间距离。真正的解法见 doc/debt.platform.md 边界 7。
+    /// 没有请求键的时候，能分开这两件事的只有时间距离。真正的解法见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md 边界 7。
     /// </summary>
     [Fact]
     public void 分享链复用_秒级重试不算变_隔天再来才算()

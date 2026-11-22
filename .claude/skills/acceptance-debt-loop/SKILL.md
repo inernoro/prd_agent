@@ -52,14 +52,7 @@ description: Runs the acceptance-debt loop for a feature - inventory every claim
 
 ### 第 3 步：落账
 
-写进 `doc/debt.{appname}.{topic}.md`，六列固定：
-
-`# | 项 | 判据状态 | 为什么证不了 | 要什么才证得了 | 当前兜底`
-
-「为什么证不了」必须是具体障碍（缺第二个上游、上游参数必填、时序无法稳定复现），
-不许写「暂时没做」。「当前兜底」写清楚在没有判据的情况下用什么降低风险。
-
-命名遵守 `doc/rule.doc.naming.md`；写完同步 `doc/index.yml` 与 `doc/guide.list.directory.md`。
+用 CDS 工程规划技能在当前项目按模块查重，再登记或提交验收债务提案。填标题、判据状态、原始证据、不能验证的具体障碍、可复核的偿还标准和现有兜底。障碍可为缺少必要样本、未获得上游参数或时序尚无法稳定复现。提交后回读实际编号和登记状态。 [债务指南](../../../doc/guide.doc.pri.debt.md)
 
 ### 第 4 步：挑一条，把它变成判据
 
@@ -81,7 +74,7 @@ description: Runs the acceptance-debt loop for a feature - inventory every claim
 把修复临时撤掉 → 确认判据变红 → 恢复 → 确认变绿。
 **用例不变红就是它没在测你以为它在测的东西**，回第 4 步重写。
 
-然后把台账那一行改成「已守」并写明判据名。**不要删行**——删了就看不出它曾经欠过。
+在 CDS 原债务上附红绿证据、判据名和固定提交，由已授权成员核对偿还标准并更新状态。变更随原编号保留。
 
 ---
 
@@ -127,4 +120,4 @@ description: Runs the acceptance-debt loop for a feature - inventory every claim
 - `.claude/rules/closed-loop-acceptance.md` —— 断头验收的判定
 - `.claude/rules/real-visual-acceptance.md` —— 用户可见功能的真视觉验收
 - `CLAUDE.md §8.1` —— 自测优先，跑不通就明说
-- 首个实例：`doc/debt.visual-agent.layering.md`、`scripts/smoke/visual-layering.mjs`
+- 首个实例的冒烟脚本为 `scripts/smoke/visual-layering.mjs`。 [历史记录](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.visual-agent.layering.md)

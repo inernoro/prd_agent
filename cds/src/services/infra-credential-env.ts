@@ -62,7 +62,7 @@
  * prd-agent 就是另外用 `MongoDB__DatabaseName` 指定的）。mysql / postgres 的 `_URL`
  * 目前没有任何消费方，等真有人用再按引擎补库名，别现在凭空替他们决定。
  *
- * 两条边界都记在 `doc/debt.cds.md`。
+ * 两条边界都记在 `https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md`。
  */
 
 import { detectInfraAuth, readStartupFlagValue, type InfraKind } from './infra-exposure-audit.js';

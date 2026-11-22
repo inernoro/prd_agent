@@ -33,7 +33,7 @@ const ALLOW: Array<{ file: string; needle: string; why: string }> = [
 
 /** 整个文件按画布单位工作的组件：几何是 px 常量或量出来的容器宽度，内容也必须是同一套单位，
  *  否则「框是 px、字是 rem」在 85% 下会双重缩小。RelationGraph 由 transform 按容器整体缩放，
- *  本来就跟着尺度走；ReplicaSetPanel 的画布常量尚未随根字号走，记在 doc/debt.cds.md。 */
+ *  本来就跟着尺度走；ReplicaSetPanel 的画布常量尚未随根字号走，记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md。 */
 // RelationFlowStrip 的 chip 宽度与连线几何是量出来的画布 px（连接器 SVG 的 viewBox 要和列高逐像素对齐），同 RelationGraph 一档。
 const CANVAS_FILES = ['components/branch/RelationGraph.tsx', 'components/branch/ReplicaSetPanel.tsx', 'components/branch/RelationFlowStrip.tsx'];
 

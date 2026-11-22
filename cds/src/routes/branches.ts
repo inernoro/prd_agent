@@ -11358,10 +11358,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 接受任意库名 + CREATE DATABASE IF NOT EXISTS）、派生库名因 slug 截断会撞车、
       // 兄弟分支可先用 mode=empty 把自己绑到本分支派生的名字上。每修一次就多一道拒绝，
       // 下一轮又出新进路——所有权模型不存在，护栏就补不完。
-      // 重开条件见 doc/debt.cds.md：建库时记录「这个库是我建的」+ 破坏性操作改用抗碰撞身份。
+      // 重开条件见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md：建库时记录「这个库是我建的」+ 破坏性操作改用抗碰撞身份。
       res.status(400).json({
         error: 'reset_withdrawn',
-        message: 'mode=reset 已撤下：它的安全性依赖一个尚不存在的库所有权模型，连续四次被发现跨分支删除路径。分支库需要推倒重建时请由有权限的人直连数据库处理；重开条件见 doc/debt.cds.md。',
+        message: 'mode=reset 已撤下：它的安全性依赖一个尚不存在的库所有权模型，连续四次被发现跨分支删除路径。分支库需要推倒重建时请由有权限的人直连数据库处理；可在 CDS 工程债务的 cds 模块查看重开条件。',
       });
       return;
     }
@@ -12702,7 +12702,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 墓碑持续重试 rm -f -v（removeVolumes 标记，连匿名数据卷一并删——
           // 卷里装的是生产派生克隆，只删容器会让它永久失去追踪，Codex 第三十二轮 P1）。
           // 共享库里的 _rs_ 隔离库无容器可墓碑，仅数据残留在活着的共享 infra 里，
-          // 记事件供人工收口（残留台账见 doc/debt.cds.md「CDS 复制集模式工程债务」 #19）。
+          // 记事件供人工收口（残留台账见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS 复制集模式工程债务」 #19）。
           if (snapshot.dedicatedContainer) {
             try {
               stateService.addContainerTeardownTombstones([{
