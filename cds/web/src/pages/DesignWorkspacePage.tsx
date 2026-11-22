@@ -13,6 +13,7 @@ import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspac
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
 import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
 import { DesignRationale } from './design-workspace/DesignRationale';
+import { DesignRequirementList, DesignRequirementView } from './design-workspace/DesignRequirements';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, DesignMaterialView, FrameworkOverview, type FrameworkTab } from './design-workspace/DesignFramework';
 import { cellNames, designCheckRows, designDate, designFailureGroups, designPath, designSourceNames, designStatus, latestDesign, materialNames, openReviews, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
@@ -41,6 +42,7 @@ export function DesignWorkspacePage() {
   const [upload, setUpload] = useState(false);
   const [assignReviewers, setAssignReviewers] = useState<string>();
   const [extract, setExtract] = useState(false);
+  const [unfreeze, setUnfreeze] = useState<{ id: string; version: number }>();
   const [share, setShare] = useState(false);
   const [review, setReview] = useState<ReviewTarget>();
   const [large, setLarge] = useState<LargeTarget>();
@@ -62,12 +64,15 @@ export function DesignWorkspacePage() {
   const workspace = source.data?.projectId === project ? source.data : !source.error && prior?.projectId === project ? prior : undefined;
   const permissions = workspace?.permissions;
   const entry = workspace?.designs.find(row => row.id === params.get('design'));
+  const requirementKey = params.get('brief');
+  const requirement = workspace?.requirements?.find(row => row.designKey === requirementKey);
   const assignment = workspace?.designs.find(row => row.id === assignReviewers);
   const framework = workspace?.frameworks.find(row => row.id === params.get('framework'));
   const frameworkVersion = framework?.versions.find(row => row.version === Number(params.get('version')));
   const frameworkList = params.get('view') === 'frameworks';
   const version = entry?.versions.find(row => row.version === Number(params.get('version'))) ?? (entry ? latestDesign(entry) : undefined);
   const canFreeze = permissions?.review && (!entry?.reviewers?.length || entry.reviewers.some(reviewer => reviewer.id === permissions.actorId));
+  const canUnfreeze = permissions?.review && (permissions.steward || canFreeze);
   const canAssign = permissions?.write && entry && (permissions.steward || latestDesign(entry).publisher.id === permissions.actorId);
   const pinnedFramework = workspace?.frameworks.find(row => row.id === version?.framework)?.versions.find(row => row.version === version?.frameworkVersion);
   const tab = tabs.find(([value]) => value === params.get('tab'))?.[0] ?? 'preview';
@@ -131,7 +136,7 @@ export function DesignWorkspacePage() {
     const requestId = pending.current?.key === key ? pending.current.id : crypto.randomUUID();
     pending.current = { key, id: requestId };
     try {
-      const response = await apiRequest<{ projectId: string }>(designPath(project) + (type.startsWith('feedback.') ? '/feedback' : '/commands'),
+      const response = await apiRequest<{ projectId: string }>(designPath(project) + (type.startsWith('feedback.') || type === 'brief.reply' ? '/feedback' : '/commands'),
         { method: 'POST', body: { type, requestId, ...fields } });
       if (response.projectId !== project) throw new Error('操作回执与当前项目不符');
       pending.current = undefined;
@@ -143,8 +148,7 @@ export function DesignWorkspacePage() {
   };
 
   const breadcrumbs = <TopBar left={<span className="dw-crumb">CDS <span>/</span> <Link to={`/design?project=${encodeURIComponent(project)}`}>设计</Link>
-    {(entry || framework) && <> <span>/</span> <strong>{version?.title ?? framework?.versions.at(-1)?.title}</strong></>}
-    {entry && tab !== 'preview' && <> <span>/</span> {tabs.find(([value]) => value === tab)?.[1]}</>}
+    {framework && <> <span>/</span> <strong>{framework.versions.at(-1)?.title}</strong></>}
   </span>} />;
   const summaryTabLinks = entry && version && <nav className="dw-tablinks" aria-label="稿件标签">
     {tabs.map(([value, label]) => {
@@ -164,23 +168,28 @@ export function DesignWorkspacePage() {
     selectedTheme: canvasTheme, onThemeChange: setCanvasTheme,
   };
   return <AppShell active="design" topbar={breadcrumbs} wide>
-    <Workspace fluid className="ep-workspace dw-workspace" data-canvas={canvas}>
+    <Workspace fluid className={`ep-workspace dw-workspace${entry ? ' dw-workspace--detail' : ''}${canvas ? ' cds-workspace--fill dw-workspace--canvas' : ''}`}>
       {issue && <div className="dw-message ep-error" role="alert">{issue}</div>}
       {notice && <p className="dw-message" role="status">{notice}</p>}
       {!workspace ? (projects.error || source.error)
         ? <p role="alert" className="dw-placeholder">{projects.error ?? source.error} <button type="button" className="ep-button" onClick={() => refresh(value => value + 1)}>重试</button></p>
         : projects.loading || source.loading ? <ContentLoading variant="table" label="正在读取设计工作区" />
         : <p className="dw-placeholder">当前没有可查看的设计项目。</p>
+      : requirementKey ? <DesignRequirementView key={`${project}/${requirementKey}`} project={project} requirement={requirement} workspace={workspace} command={command} busy={busy} />
       : framework ? <DesignFrameworkView key={framework.id} framework={framework} revision={frameworkVersion} tab={frameworkTab}
         onTab={value => onChange({ tab: value })} back={() => onChange({ framework: '', tab: '', view: 'frameworks' })} />
       : entry && version ? <>
-        <header className="dw-head dw-row">
+        <header className="dw-head dw-head--draft dw-row">
+          <div className="dw-draft-heading">
           <button className="ep-button ep-icon-button" type="button" aria-label="返回设计库" onClick={() => selectEntry('')}><ChevronLeft /></button>
           <h1>{version.title}</h1><span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
           <details className="ep-new dw-info"><summary className="ep-button ep-icon-button" aria-label="稿件信息"><Info /></summary>
             <div><strong>{entry.id}</strong><p>V{version.version} · {version.publisher.label} · {designDate(version.createdAt)}</p>
               <p>提交 <code>{version.sourceCommit.slice(0, 12)}</code> · {designSourceNames[version.sourceVerification ?? 'declared']}</p>
               <p>评审人 · {entry.reviewers?.map(reviewer => reviewer.label).join('、') || '待指定'}</p>
+              <p>{entry.frozen ? `实施基线 V${entry.frozen}` : '尚未定稿'}。同一稿件可以继续发布新版本。</p>
+              {canUnfreeze && entry.frozen !== undefined && <button className="ep-button" type="button"
+                onClick={() => setUnfreeze({ id: entry.id, version: entry.frozen! })}>撤销定稿</button>}
               {canAssign && <button className="ep-button" type="button" onClick={() => setAssignReviewers(entry.id)}>设置评审人</button>}
               {canFreeze && version.sourceVerification === 'git' && (entry.frozen === version.version || entry.freezes?.some(row => row.version === version.version))
                 && <button className="ep-button" type="button" onClick={() => setShare(true)}>固定版本分享</button>}
@@ -191,6 +200,8 @@ export function DesignWorkspacePage() {
               {version.decisionIds.map(id => <Link className="ep-link" key={id} to={`/engineering-planning?project=${encodeURIComponent(project)}&kind=decision&item=${encodeURIComponent(id)}`}>{id}</Link>)}
             </div>
           </details>
+          </div>
+          {summaryTabLinks}
           <div className="dw-tools dw-right">
             {canvas && deliveryReturn.current?.designId === entry.id && <button className="ep-button" type="button" onClick={() => {
               onChange({ tab: 'delivery', version: String(deliveryReturn.current!.version), screen: '' });
@@ -199,16 +210,17 @@ export function DesignWorkspacePage() {
               {[...entry.versions].reverse().map(row => <option key={row.version} value={row.version}>V{row.version}{entry.frozen === row.version ? ' · 定稿' : ''}</option>)}
             </select>
             <button className="ep-button" type="button" onClick={() => openLarge(entry, version)}><Maximize />大屏</button>
-            {permissions?.review && entry.frozen === version.version && <button className="ep-button" type="button" onClick={() => setExtract(true)}><Layers />提取到框架</button>}
+            {permissions?.review && entry.frozen === version.version && Object.values(version.spec).some(value => value !== undefined)
+              && <button className="ep-button" type="button" onClick={() => setExtract(true)}><Layers />框架候选</button>}
             {canFreeze && entry.frozen !== version.version && version.version === latestDesign(entry).version
-              && <button className="ep-button" type="button" disabled={busy} onClick={() => void command('design.freeze', { designId: entry.id, version: version.version })}>定稿</button>}
+              && <button className="ep-button" type="button" title="设为实施基线，仍可继续发布新版本" disabled={busy}
+                onClick={() => void command('design.freeze', { designId: entry.id, version: version.version })}>定为实施基线</button>}
           </div>
         </header>
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
         {canvas ? <DesignCanvas key={`${entry.id}/${version.version}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
-          comparing={tab === 'diff'} initialScreenId={screenParam} tabs={summaryTabLinks} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
+          comparing={tab === 'diff'} initialScreenId={screenParam} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
         : <>
-          <div className="dw-tabrow">{summaryTabLinks}</div>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} onPreviewStale={refreshWorkspace} />}
@@ -221,7 +233,7 @@ export function DesignWorkspacePage() {
             }}
             openVersion={selected => onChange({ version: String(selected), tab: 'delivery', screen: '' })} />}
           {tab === 'rationale' && <DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
-          {tab === 'spec' && <DesignSpec version={version} baseline={pinnedFramework?.material} />}
+          {tab === 'spec' && <DesignSpec key={`${entry.id}/${version.version}`} version={version} baseline={pinnedFramework?.material} />}
           {tab === 'log' && <DesignHistory entry={entry}
             onVersion={selected => onChange({ version: String(selected), tab: 'preview', run: '' })}
             onRun={(selected, run) => onChange({ version: String(selected), tab: 'accept', run })} />}
@@ -239,6 +251,7 @@ export function DesignWorkspacePage() {
             {permissions?.write && <button className="ep-button ep-button--primary" type="button" onClick={() => setUpload(true)}><Upload />发布稿件</button>}
           </div>
         </header>
+        <DesignRequirementList workspace={workspace} />
         <DesignLibrary workspace={workspace} search={search} groupBy={groupBy} onGroupBy={setGroupBy} mode={mode}
           onMode={value => onChange({ mode: value === 'list' ? 'list' : '' })}
           filter={filter} setFilter={setFilter} frameworkList={frameworkList} onShowFrameworks={() => onChange({ view: 'frameworks' })}
@@ -263,6 +276,18 @@ export function DesignWorkspacePage() {
       command={command} busy={busy} onClose={closeReview} />}
     {extract && entry && version && workspace && <ExtractFramework entry={entry} version={version} workspace={workspace} command={command}
       busy={busy} close={() => setExtract(false)} />}
+    {unfreeze && entry?.id === unfreeze.id && <Dialog open onOpenChange={open => { if (!open && !busy) setUnfreeze(undefined); }}>
+      <DialogContent className="dw-modal dw-surface">
+        <DialogTitle>撤销 V{unfreeze.version} 定稿</DialogTitle>
+        <DialogDescription>取消当前实施基线。稿件版本、定稿记录和已有验收证据保留。</DialogDescription>
+        <footer className="dw-row">
+          <button className="ep-button" type="button" disabled={busy} onClick={() => setUnfreeze(undefined)}>取消</button>
+          <button className="ep-button ep-button--primary" type="button" disabled={busy} onClick={async () => {
+            if (await command('design.unfreeze', { designId: unfreeze.id, version: unfreeze.version })) setUnfreeze(undefined);
+          }}>确认撤销定稿</button>
+        </footer>
+      </DialogContent>
+    </Dialog>}
   </AppShell>;
 }
 
@@ -355,7 +380,8 @@ function DesignLibrary({ workspace, search, groupBy, onGroupBy, mode, onMode, fi
           const failures = entry.runs.at(-1)?.cells.filter(cell => cell.status === 'failed').length ?? 0;
           const failedRules = designFailureGroups(version);
           return <article className="dw-design-card" key={entry.id} data-state={designStatus(entry)}>
-            <div className="dw-thumb">{<DesignFrame projectId={workspace.projectId} version={version} screen={version.screens[0]} theme="light" zoom={null} />}
+            <button className="dw-card-cover" type="button" aria-label={`打开稿件 ${version.title}`} onClick={() => onSelect(entry.id)} />
+            <div className="dw-thumb"><DesignFrame projectId={workspace.projectId} version={version} screen={version.screens[0]} theme="light" zoom={null} decorative />
               {open ? <button className="dw-thumb-action" type="button" onClick={() => onReview(entry, open.comment, open.version)}>核对评论 {reviews.length > 1 ? `+${reviews.length - 1}` : ''}</button>
                 : failures ? <Link className="dw-thumb-action" to={`/design?project=${encodeURIComponent(workspace.projectId)}&design=${encodeURIComponent(entry.id)}&tab=accept`}>验收未通过</Link>
                 : entry.reviewRequested ? <button className="dw-thumb-action" type="button" onClick={() => onSelect(entry.id)}>评审 V{version.version}</button> : null}
@@ -404,6 +430,8 @@ function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVers
     }),
     ...(entry.freezes ?? []).map((freeze, index) => ({ key: `freeze-${index}`, at: freeze.at, title: `定稿 V${freeze.version}`, details: freeze.by,
       action: () => onVersion(freeze.version), label: '查看定稿', state: 'freeze' })),
+    ...(entry.unfreezes ?? []).map((event, index) => ({ key: `unfreeze-${index}`, at: event.at, title: `撤销 V${event.version} 定稿`, details: event.by,
+      action: () => onVersion(event.version), label: '查看版本', state: 'unfreeze' })),
     ...entry.comments.flatMap(comment => comment.reviews.map((review, index) => ({ key: `${comment.id}/${index}`, at: review.at,
       title: review.decision === 'resolved' ? `确认评论已处理 · V${review.version}` : `退回评论 · V${review.version}`,
       details: comment.body, note: review.body, action: () => onVersion(comment.version), label: '查看原版', state: review.decision }))),
@@ -426,11 +454,14 @@ function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVers
 }
 
 function DesignSpec({ version, baseline }: { version: DesignVersion; baseline?: DesignMaterial }) {
-  const [tab, select] = useState<keyof typeof materialNames>('rules');
+  const [tab, select] = useState<keyof typeof materialNames>(version.spec.tokens ? 'tokens' : 'rules');
   const changes = compareDesignMaterial(baseline ?? {}, version.spec).filter(row => row.kind !== '移除');
   const unresolved = designCheckRows(version).filter(row => row.status !== '通过');
   const frameworkCheck = version.frameworkCheck;
   return <>
+    <div className="dw-row dw-spec-tabs" role="group" aria-label="规范资料">{Object.entries(materialNames).map(([key, name]) => <button type="button" className="ep-button" aria-pressed={tab === key}
+      onClick={() => select(key as keyof typeof materialNames)} key={key}>{name}</button>)}</div>
+    <DesignMaterialView material={version.spec} tab={tab} />
     <div className="dw-spec-cards">
       {!!frameworkCheck?.items.length && <section className="dw-surface dw-markdown"><h3>发布规则检查</h3>
         <small>{frameworkCheck.framework} · v{frameworkCheck.frameworkVersion}</small>
@@ -455,9 +486,6 @@ function DesignSpec({ version, baseline }: { version: DesignVersion; baseline?: 
       <section className="dw-surface dw-markdown"><h3>验收项</h3>{version.acceptance.length ? <ul>{version.acceptance.map(rule =>
         <li key={rule.id}><code>{rule.id}</code> {rule.rule}</li>)}</ul> : <p>本版未声明验收项。</p>}</section>
     </div>
-    <div className="dw-row">{Object.entries(materialNames).map(([key, name]) => <button type="button" className="ep-button" aria-pressed={tab === key}
-      onClick={() => select(key as keyof typeof materialNames)} key={key}>{name}</button>)}</div>
-    <DesignMaterialView material={version.spec} tab={tab} />
   </>;
 }
 
@@ -562,34 +590,43 @@ function DesignReviewerDialog({ project, entry, command, busy, close }: {
 function ExtractFramework({ entry, version, workspace, command, busy, close }: {
   entry: DesignEntry; version: DesignVersion; workspace: DesignWorkspace; command: DesignCommand; busy: boolean; close: () => void;
 }) {
-  const [id, setId] = useState(workspace.frameworks[0]?.id ?? '');
-  const [title, setTitle] = useState('');
-  const [commit, setCommit] = useState('');
-  const [sourcePath, setSourcePath] = useState('');
-  const [keys, setKeys] = useState<string[]>([]);
+  const derivedId = `fw-${entry.id.toLowerCase()}`;
+  const [step, setStep] = useState(1);
+  const [id, setId] = useState(derivedId);
+  const [title, setTitle] = useState(`${version.title.slice(0, 140)}框架`);
+  const [excluded, setExcluded] = useState<string[]>([]);
   const current = workspace.frameworks.find(row => row.id === id)?.versions.at(-1);
-  const keyNames = Object.keys(version.spec) as (keyof typeof materialNames)[];
+  const keyNames = (Object.keys(materialNames) as (keyof typeof materialNames)[]).filter(key => version.spec[key] !== undefined);
   const comparable = (value: unknown) => typeof value === 'string' ? value.replace(/\r\n/g, '\n').trim() : JSON.stringify(value);
+  const changes = keyNames.filter(key => comparable(version.spec[key]) !== comparable(current?.material[key]));
+  const keys = changes.filter(key => !excluded.includes(key));
   return <Dialog open onOpenChange={open => { if (!open) close(); }}><DialogContent className="dw-modal dw-surface">
-    <DialogTitle>提取到框架</DialogTitle><DialogDescription>{version.title} · V{version.version} 定稿稿件</DialogDescription>
+    <DialogTitle>{step === 1 ? '选择框架' : '确认采用规范'}</DialogTitle>
+    <DialogDescription>第 {step} 步，共 2 步 · {version.title} V{version.version} 已自动提取 {keyNames.length} 类规范</DialogDescription>
     <form onSubmit={async event => {
       event.preventDefault();
-      if (await command('framework.extract', { designId: entry.id, frameworkId: id, title: title || undefined,
-        version: version.version, expectedVersion: current?.version ?? 0, sourceCommit: commit, sourcePath: sourcePath.trim() || undefined, keys })) close();
+      if (step === 1) { setStep(2); return; }
+      if (await command('framework.extract', { designId: entry.id, frameworkId: id, title: current ? undefined : title.trim(),
+        version: version.version, expectedVersion: current?.version ?? 0, keys })) close();
     }}>
-      <label>框架编号<input list="dw-framework-existing" value={id} required onChange={event => { setId(event.target.value); setKeys([]); }} />
-        <datalist id="dw-framework-existing">{workspace.frameworks.map(row => <option key={row.id} value={row.id}>{row.versions.at(-1)?.title}</option>)}</datalist></label>
-      {!current && <label>框架名称<input value={title} onChange={event => setTitle(event.target.value)} required /></label>}
-      {keyNames.length ? keyNames.map(key => {
-        const same = comparable(version.spec[key]) === comparable(current?.material[key]);
-        return <label className="dw-row" key={key}><input disabled={same} type="checkbox" checked={keys.includes(key)}
-          onChange={event => setKeys(event.target.checked ? [...keys, key] : keys.filter(item => item !== key))} />
-          {materialNames[key]}{same && <span className="ep-badge">框架里已有</span>}</label>;
-      }) : <p>这版稿件没有附加框架材料。</p>}
-      <label>框架提交 SHA<input value={commit} onChange={event => setCommit(event.target.value)} required /></label>
-      <label>仓库内框架目录（可选）<input value={sourcePath} maxLength={400} placeholder="例如 design/spec" onChange={event => setSourcePath(event.target.value)} /></label>
-      <footer><button className="ep-button" type="button" onClick={close}>取消</button>
-        <button className="ep-button ep-button--primary" disabled={busy || !keys.length || !validSha.test(commit)}>确认提取</button></footer>
+      {step === 1 ? <>
+        <label>采用到<select value={id} onChange={event => { setId(event.target.value); setExcluded([]); }}>
+          {!workspace.frameworks.some(row => row.id === derivedId) && <option value={derivedId}>新建本稿框架</option>}
+          {workspace.frameworks.map(row => <option key={row.id} value={row.id}>{row.versions.at(-1)?.title}</option>)}
+        </select></label>
+        {!current && <label>框架名称<input value={title} maxLength={150} onChange={event => setTitle(event.target.value)} required /></label>}
+        <p>已提取 {keyNames.map(key => materialNames[key]).join('、')}。来源与提交信息由 CDS 记录。</p>
+      </> : <>
+        <p>{current?.title ?? title} · 将生成 V{(current?.version ?? 0) + 1}</p>
+        <p>{changes.length ? `将采用 ${keys.map(key => materialNames[key]).join('、') || '0 项规范'}` : '目标框架已包含这版的规范。'}</p>
+        {!!changes.length && <details><summary>手动选择采用的规范</summary>
+          {changes.map(key => <label className="dw-row" key={key}><input type="checkbox" checked={!excluded.includes(key)}
+            onChange={event => setExcluded(event.target.checked ? excluded.filter(item => item !== key) : [...excluded, key])} />
+            {materialNames[key]}</label>)}
+        </details>}
+      </>}
+      <footer><button className="ep-button" type="button" disabled={busy} onClick={step === 1 ? close : () => setStep(1)}>{step === 1 ? '取消' : '上一步'}</button>
+        <button className="ep-button ep-button--primary" disabled={busy || (step === 2 && !keys.length)}>{step === 1 ? '下一步' : '确认采用'}</button></footer>
     </form>
   </DialogContent></Dialog>;
 }

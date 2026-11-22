@@ -104,6 +104,8 @@ describe('private CDS design workspace', () => {
   function openWorkspace() {
     const dependencies = {
       now: () => new Date(clock),
+      approvedPlanFor: async (project: string, plan: string) => project === projectId && plan === 'PLN-approved'
+        ? { planVersion: 2, proposalId: 'PRO-fixture', title: 'Approved brief', requirements: 'Original **approved** requirements' } : undefined,
       frameworkProbe: async () => frameworkMeasurements,
       resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && [7, 8].includes(pr) && (!commit || commit === activeCommit)
         ? { commit: activeCommit, url: pr === 7 ? 'https://preview.fixture.test/' : 'https://preview.fixture.test/other/' } : undefined,
@@ -176,6 +178,35 @@ describe('private CDS design workspace', () => {
       body: JSON.stringify({ type, requestId, ...fields }),
     });
   }
+
+  it('lets design credentials read and reply to one explicit planning handoff before publishing a draft', async () => {
+    const fields = { designKey: 'fixture/brief', planId: 'PLN-approved', expectedVersion: 2 };
+    expect((await command('brief.share', fields, 'designer')).status).toBe(403);
+    expect((await command('brief.share', fields, 'author')).status).toBe(403);
+    expect((await command('brief.share', { ...fields, expectedVersion: 1 }, 'steward')).status).toBe(409);
+    expect((await command('brief.share', fields, 'steward', 'other-share', otherProjectId)).status).toBe(404);
+    expect((await command('brief.share', fields, 'steward', 'share-approved')).status).toBe(201);
+    expect((await command('brief.share', fields, 'steward', 'share-approved')).status).toBe(200);
+    expect((await command('brief.share', { ...fields, designKey: 'fixture/duplicate' }, 'steward')).status).toBe(409);
+    const reply = { type: 'brief.reply', requestId: 'clarify-once', designKey: fields.designKey, expectedVersion: 2, body: 'Which empty state?' };
+    const feedback = () => fetch(`${base}${projectId}/design/feedback`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-fixture-user': 'designer' }, body: JSON.stringify(reply) });
+    const first = await feedback();
+    const replay = await feedback();
+    expect(first.status).toBe(201);
+    expect(replay.status).toBe(200);
+    const intake = await (await get('/intake', 'designer')).json();
+    expect(intake.requirements).toEqual([{
+      designKey: fields.designKey, planId: fields.planId, planVersion: 2, proposalId: 'PRO-fixture', title: 'Approved brief',
+      requirements: 'Original **approved** requirements', sharedAt: clock, replies: [expect.objectContaining({
+        id: (await first.json()).result.id, body: reply.body, planVersion: 2,
+      })],
+    }]);
+    expect(intake.designs).toEqual([]);
+    expect((await command('brief.revoke', { ...fields, expectedVersion: 1 }, 'steward')).status).toBe(409);
+    expect((await command('brief.revoke', fields, 'steward')).status).toBe(201);
+    expect((await (await get('/intake', 'designer')).json()).requirements).toEqual([]);
+  });
 
   describe('private-source publication', () => {
     it('stores and serves exact private archives across versions without Git and keeps human review and sharing gates', async () => {
@@ -794,6 +825,205 @@ describe('private CDS design workspace', () => {
     expect((await command('comment.review', review)).status).toBe(201);
     const { designs } = await (await get()).json();
     expect(designs[0].comments[0]).toMatchObject({ version: 1, closed: true, reviews: [{ version: 2, decision: 'resolved' }] });
+  });
+
+  describe('design feedback follow-up', () => {
+    it('reverses the pinned baseline while keeping signed evidence, then freezes a revision of the same draft', async () => {
+      const firstBytes = draft('Reversible fixture V1');
+      const sourcePath = 'design/reversible-fixture';
+      const designKey = 'fixture/reversible';
+      const first = await publish('reversible-first', firstBytes, { sourceMode: 'private', intent: 'create',
+        sourcePath, designKey, reviewerIds: JSON.stringify(['author']) });
+      expect(first.status).toBe(201);
+      const { designId } = (await first.json()).result;
+      const baseline = { designId, version: 1 };
+      const read = async () => (await (await get()).json()).designs[0];
+      expect((await command('comment.create', { ...baseline, screenId: 'members', body: 'Keep this review note', x: 0.2, y: 0.3 })).status).toBe(201);
+      expect((await command('design.freeze', baseline)).status).toBe(201);
+      const started = await command('acceptance.start', { ...baseline, pullRequest: 7 });
+      expect(started.status).toBe(201);
+      const { runId } = (await started.json()).result;
+      const capture = png(1280, 800);
+      expect((await command('acceptance.record', { designId, runId, commit: previewCommit,
+        cells: [{ itemId: 'A-1', slot: 'desktop-light', status: 'passed', actual: 'Verified synthetic fixture',
+          image: `data:image/png;base64,${capture.toString('base64')}`,
+          measured: { width: 1280, height: 800, theme: 'light', path: '/members/' } }],
+      })).status).toBe(201);
+      expect((await command('acceptance.sign', { designId, runId })).status).toBe(201);
+      const before = await read();
+      expect(before).toMatchObject({ id: designId, frozen: 1, currentSignoffRunId: runId });
+      const denied = await Promise.all([
+        command('design.unfreeze', baseline, 'agent-with-reviewer-id'),
+        command('design.unfreeze', baseline, 'other'),
+        command('design.unfreeze', baseline, 'reviewer-without-approval'),
+        command('design.unfreeze', baseline, 'author', 'undo-cross-project', otherProjectId),
+      ]);
+      clock = '2026-11-21T09:30:00.000Z';
+      const undone = await command('design.unfreeze', baseline, 'author', 'undo-v1');
+      expect(undone.status).toBe(201);
+      const receipt = await undone.json();
+      expect(receipt).toMatchObject({ reused: false, result: { type: 'design.unfreeze', designId, version: 1 } });
+      expect(denied.map(response => response.status)).toEqual([403, 403, 403, 404]);
+      const unfrozen = await read();
+      expect(unfrozen.frozen).toBeUndefined();
+      expect(unfrozen.currentSignoffRunId).toBeFalsy();
+      expect(unfrozen).toMatchObject({ reviewRequested: true, unfreezes: [{ version: 1, by: 'Fixture reviewer', at: clock }] });
+      expect(unfrozen.versions).toEqual(before.versions);
+      expect(unfrozen.freezes).toEqual(before.freezes);
+      expect(unfrozen.comments).toEqual(before.comments);
+      expect(unfrozen.runs).toEqual(before.runs);
+      expect((await command('acceptance.start', { ...baseline, pullRequest: 7 })).status).toBe(409);
+      const firstArchive = await get(`/artifacts/${before.versions[0].delivery.archiveId}`, 'read-designer');
+      const firstCapture = await get(`/artifacts/${before.runs[0].cells[0].imageId}`, 'read-designer');
+      expect(firstArchive.status).toBe(200);
+      expect(Buffer.from(await firstArchive.arrayBuffer())).toEqual(firstBytes);
+      expect(firstCapture.status).toBe(200);
+      expect(Buffer.from(await firstCapture.arrayBuffer())).toEqual(capture);
+
+      const secondBytes = draft('Reversible fixture V2', { id: designId });
+      const revision = { sourceMode: 'private', intent: 'revise', designId, expectedVersion: '1',
+        sourcePath, sourceCommit: '2'.repeat(40) };
+      expect((await publish('reversible-wrong-author', secondBytes, revision, { actor: 'git-designer' })).status).toBe(403);
+      const next = await publish('reversible-second', secondBytes, revision);
+      expect(next.status).toBe(201);
+      expect((await next.json()).result).toMatchObject({ designId, version: 2 });
+      expect((await command('design.freeze', { designId, version: 2 })).status).toBe(201);
+      expect((await command('design.unfreeze', baseline, 'author', 'stale-undo-v1')).status).toBe(409);
+      const replay = await command('design.unfreeze', baseline, 'author', 'undo-v1');
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual({ ...receipt, reused: true });
+      const { designs } = await (await get()).json();
+      expect(designs).toHaveLength(1);
+      const after = designs[0];
+      expect(after).toMatchObject({ id: designId, designKey, frozen: 2, reviewRequested: false });
+      expect(after.versions.map((version: { version: number }) => version.version)).toEqual([1, 2]);
+      expect(after.versions[0]).toEqual(before.versions[0]);
+      expect(after.runs).toEqual(before.runs);
+      expect(after.unfreezes).toEqual(unfrozen.unfreezes);
+      expect(after.freezes).toMatchObject([...before.freezes, { version: 2, by: 'Fixture reviewer' }]);
+    });
+
+    it('extracts attached specs from the selected frozen source and applies an explicit framework revision', async () => {
+      const frameworkId = 'FW-extracted-fixture';
+      const sourcePath = 'design/extracted-framework';
+      const firstTokens = { color: { primary: '#14578a' }, spacing: { unit: 8 } };
+      const secondTokens = { color: { primary: '#4d2980' }, spacing: { unit: 8 } };
+      const firstRules = '# Fixture rules\nUse the shared page heading.';
+      const secondRules = '# New fixture rules\nDo not adopt this change yet.';
+      const components = '# Fixture components\nReuse the shared card.';
+      const skeleton = '<main><h1>Shared fixture</h1></main>';
+      const withSpecs = (title: string, tokens: typeof firstTokens, rules: string, id?: string) => draft(title, { id, frameworkDraft: 'spec/' }, [
+        { name: 'bundle/spec/tokens.json', data: Buffer.from(JSON.stringify(tokens)) },
+        { name: 'bundle/spec/rules.md', data: Buffer.from(rules) },
+        { name: 'bundle/spec/components.md', data: Buffer.from(components) },
+        { name: 'bundle/spec/skeleton.html', data: Buffer.from(skeleton) },
+      ]);
+      const firstBytes = withSpecs('Attached framework V1', firstTokens, firstRules);
+      const firstSource = gitSource(firstBytes, sourcePath, '1');
+      const first = await publish('extract-source-first', firstBytes, { ...firstSource, intent: 'create', designKey: 'fixture/framework-source' });
+      expect(first.status).toBe(201);
+      const { designId } = (await first.json()).result;
+      expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+      const secondBytes = withSpecs('Attached framework V2', secondTokens, secondRules, designId);
+      const secondSource = gitSource(secondBytes, sourcePath, '2');
+      expect((await publish('extract-source-second', secondBytes, { ...secondSource, intent: 'revise', designId, expectedVersion: '1' })).status).toBe(201);
+
+      const request = { designId, version: 1, frameworkId, expectedVersion: 0, title: 'Extracted fixture framework' };
+      expect((await command('framework.extract', request, 'agent-with-reviewer-id')).status).toBe(403);
+      expect((await command('framework.extract', request, 'without-approval')).status).toBe(403);
+      const extracted = await command('framework.extract', request, 'author', 'extract-v1');
+      expect(extracted.status).toBe(201);
+      const prior = await extracted.json();
+      expect(prior.result).toMatchObject({ type: 'framework.extract', frameworkId, version: 1 });
+      const replay = await command('framework.extract', request, 'author', 'extract-v1');
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual({ ...prior, reused: true });
+      expect((await command('framework.extract', request, 'author', 'extract-stale-framework')).status).toBe(409);
+      expect((await command('framework.extract', request, 'author', 'extract-cross-project', otherProjectId)).status).toBe(404);
+      expect((await command('framework.extract', { ...request, version: 2, expectedVersion: 1 })).status).toBe(409);
+      expect((await command('framework.extract', { ...request, expectedVersion: 1 })).status).toBe(409);
+      const firstMaterial = { tokens: firstTokens, rules: firstRules, components, skeleton };
+      const before = await (await get()).json();
+      expect(before.frameworks).toHaveLength(1);
+      expect(before.frameworks[0].versions).toMatchObject([{ version: 1, sourceCommit: firstSource.sourceCommit,
+        from: { designId, version: 1 }, material: firstMaterial }]);
+      expect(before.designs[0].versions.map((version: { sourceCommit: string }) => version.sourceCommit)).toEqual([
+        firstSource.sourceCommit, secondSource.sourceCommit,
+      ]);
+
+      expect((await command('design.unfreeze', { designId, version: 2 })).status).toBe(409);
+      expect((await command('design.unfreeze', { designId, version: 1 })).status).toBe(201);
+      expect((await command('design.freeze', { designId, version: 2 })).status).toBe(201);
+      expect((await command('framework.extract', { ...request, expectedVersion: 1 })).status).toBe(409);
+      const adopted = await command('framework.extract', { designId, version: 2, frameworkId, expectedVersion: 1, keys: ['tokens'] });
+      expect(adopted.status).toBe(201);
+      expect((await adopted.json()).result).toMatchObject({ frameworkId, version: 2 });
+      const { frameworks } = await (await get()).json();
+      expect(frameworks[0].versions[0]).toEqual(before.frameworks[0].versions[0]);
+      expect(frameworks[0].versions[1]).toMatchObject({ title: request.title, version: 2, sourceCommit: secondSource.sourceCommit,
+        from: { designId, version: 2 }, material: { ...firstMaterial, tokens: secondTokens } });
+
+      const consumer = { sourceMode: 'private', intent: 'create', designKey: 'fixture/framework-consumer',
+        sourcePath: 'design/framework-consumer', sourceCommit: '3'.repeat(40) };
+      expect((await publish('apply-missing-framework', draft('Fixture consumer', { framework: frameworkId, frameworkVersion: 3 }), consumer)).status).toBe(400);
+      const applied = await publish('apply-pinned-framework', draft('Fixture consumer', { framework: frameworkId, frameworkVersion: 1 }), consumer);
+      expect(applied.status).toBe(201);
+      const { designId: consumerId } = (await applied.json()).result;
+      const after = await (await get()).json();
+      expect(after.frameworks).toEqual(frameworks);
+      expect(after.designs).toHaveLength(2);
+      expect(after.designs.find((entry: { id: string }) => entry.id === consumerId).versions[0]).toMatchObject({ framework: frameworkId, frameworkVersion: 1 });
+      expect(after.designs.find((entry: { id: string }) => entry.id === designId).versions.every((version: { framework?: string }) => !version.framework)).toBe(true);
+    });
+
+    it('binds implementation for a fixed version without changing the archive and locks it after a run', async () => {
+      const bytes = draft('Implementation binding fixture', {
+        screens: [{ id: 'members', name: 'Members', route: '#members', viewport: 'desktop' }],
+      });
+      const published = await publish('binding-first', bytes, { sourceMode: 'private', intent: 'create',
+        designKey: 'fixture/implementation', sourcePath: 'design/implementation-fixture' });
+      expect(published.status).toBe(201);
+      const { designId } = (await published.json()).result;
+      const read = async () => (await (await get()).json()).designs[0];
+      const before = (await read()).versions[0];
+      expect(before.screens[0].impl).toBeNull();
+      const binding = { designId, version: 1, screens: [{ screenId: 'members', path: '/expected/', readySelector: '#specific' }] };
+      const denied = await Promise.all([
+        command('implementation.bind', { ...binding, screens: [{ ...binding.screens[0], path: 'https://outside.fixture.test/' }] }),
+        command('implementation.bind', { ...binding, version: 2 }),
+        command('implementation.bind', binding, 'author', 'binding-cross-project', otherProjectId),
+        command('implementation.bind', binding, 'agent-with-reviewer-id'),
+      ]);
+      const bound = await command('implementation.bind', binding, 'author', 'bind-v1');
+      expect(bound.status).toBe(201);
+      expect((await bound.json()).result).toMatchObject({ type: 'implementation.bind', designId, version: 1 });
+      expect(denied.map(response => response.status)).toEqual([400, 404, 404, 403]);
+      const projected = await read();
+      expect(projected.versions[0]).toEqual({ ...before, screens: [{ ...before.screens[0], impl: '/expected/', readySelector: '#specific' }] });
+      expect(projected.implementations[1]).toMatchObject([{ ...binding.screens[0], by: 'Fixture reviewer' }]);
+      const archive = await get(`/artifacts/${before.delivery.archiveId}`, 'read-designer');
+      expect(archive.status).toBe(200);
+      expect(Buffer.from(await archive.arrayBuffer())).toEqual(bytes);
+
+      expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+      const started = await command('acceptance.start', { designId, version: 1, pullRequest: 7 });
+      expect(started.status).toBe(201);
+      const { runId } = (await started.json()).result;
+      expect((await read()).runs[0]).toMatchObject({ id: runId, version: 1, cells: [{ itemId: 'A-1', status: 'unverified' }] });
+      const changed = { ...binding, screens: [{ ...binding.screens[0], path: '/changed/' }] };
+      expect((await command('implementation.bind', changed)).status).toBe(409);
+      const capture = png(1280, 800);
+      const record = (path: string) => command('acceptance.record', { designId, runId, commit: previewCommit,
+        cells: [{ itemId: 'A-1', slot: 'desktop-light', status: 'passed', actual: 'Verified synthetic path',
+          image: `data:image/png;base64,${capture.toString('base64')}`,
+          measured: { width: 1280, height: 800, theme: 'light', path } }],
+      });
+      expect((await record('/changed/')).status).toBe(400);
+      expect((await record('/expected/')).status).toBe(201);
+      expect((await read()).runs[0]).toMatchObject({ cells: [{ status: 'passed', measured: { path: '/expected/' } }] });
+      const final = await get(`/artifacts/${before.delivery.archiveId}`);
+      expect(Buffer.from(await final.arrayBuffer())).toEqual(bytes);
+    });
   });
 
   it('pins a framework revision and rejects unknown revisions', async () => {

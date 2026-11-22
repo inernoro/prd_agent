@@ -11,6 +11,7 @@ import { verifyCodeReviewDocument } from './code-review-document-smoke.mjs';
 import { verifyMonitorWorkspaceNavigation, verifyMonitorOnboardingSessionCleanup } from './monitor-workspace-navigation-smoke.mjs';
 import { verifyEngineeringPlanningRefresh } from './engineering-planning-refresh-smoke.mjs';
 import { verifyEngineeringPlanningDetail } from './engineering-planning-detail-smoke.mjs';
+import { verifyEngineeringPlanningApproval } from './engineering-planning-approval-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -148,6 +149,7 @@ try {
         await page.getByRole('button', { name: /债务分支\s*未还 0 笔/ }).waitFor();
         result.debtMutationRefresh = await verifyEngineeringPlanningRefresh(browser, base, out);
         result.debtDetail = await verifyEngineeringPlanningDetail(browser, base, out);
+        result.independentPlanApproval = await verifyEngineeringPlanningApproval(browser, base);
       }
       if (!before && scene.kind === 'design') {
         await page.getByText(/此项目还没有稿件/).waitFor();

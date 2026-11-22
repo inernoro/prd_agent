@@ -49,6 +49,7 @@ export function EngineeringPlanningPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [confirmedPlan, setConfirmedPlan] = useState<{ id: string; projectId: string }>();
   const [importBatch, setImportBatch] = useState('');
   const pending = useRef<{ projectId: string; input: string; requestId: string }>();
   const working = useRef(false);
@@ -178,7 +179,7 @@ export function EngineeringPlanningPage() {
   async function submit(input: PlanningInput) {
     if (!target || working.current) return;
     working.current = true;
-    setBusy(true); setError(''); setNotice(''); setImportBatch('');
+    setBusy(true); setError(''); setNotice(''); setImportBatch(''); setConfirmedPlan(undefined);
     const payload = JSON.stringify(input);
     if (pending.current?.input !== payload || pending.current.projectId !== activeProject) {
       pending.current = { projectId: activeProject, input: payload, requestId: crypto.randomUUID() };
@@ -188,8 +189,11 @@ export function EngineeringPlanningPage() {
       if (receipt.projectId !== activeProject || receipt.result.projectId !== activeProject) throw new Error('invalid planning receipt');
       pending.current = undefined;
       setActionEntry(undefined);
-      if (input.type === 'proposal.accept') setNotice('提案已确认');
-      else if (input.type === 'proposal.reject') setNotice('提案已驳回');
+      if (input.type === 'proposal.accept') {
+        setNotice('提案已确认');
+        const approved = 'result' in receipt.result ? receipt.result.result : undefined;
+        if (approved?.kind === 'plan') setConfirmedPlan({ id: approved.id, projectId: receipt.projectId });
+      } else if (input.type === 'proposal.reject') setNotice('提案已驳回');
       else if (input.type === 'debt.repay') setNotice('已记录偿还证据');
       else if ('items' in receipt.result) {
         const imported = receipt.result.items.filter(item => item.status === 'created').length;
@@ -273,7 +277,8 @@ export function EngineeringPlanningPage() {
         </div>
       </header>
 
-      {notice && <p className="ep-message" role="status">{notice}{importBatch && <> · <button type="button" className="ep-text-button" onClick={() => {
+      {notice && <p className="ep-message" role="status">{notice}{confirmedPlan?.projectId === activeProject && <> · <button type="button"
+        className="ep-text-button" onClick={() => selectItem({ kind: 'plan', id: confirmedPlan.id })}>查看落地计划</button></>}{importBatch && <> · <button type="button" className="ep-text-button" onClick={() => {
         setSearch(''); setPages([]); change({ view: 'debts', status: 'all', batch: importBatch, q: '', tag: '', tagMatch: '', priority: '', owner: '', source: '', branch: '', item: '', kind: '' });
       }}>查看此次导入</button></>}</p>}
       {!action && error && <p className="ep-error" role="alert">{error}</p>}

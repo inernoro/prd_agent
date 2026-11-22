@@ -5,7 +5,9 @@
 ## 开工前
 
 1. 在当前工作区用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 自检。设计发布用 `publish`，实施反馈用 `feedback`，读取资料用 `read`。缺权限时，保持同一项目和角色，用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者到「项目」页右下角的「授权申请」核对项目和角色后批准。智能体自动领取凭据，保存在本工作区，并再次自检。等待中断时继续原命令。MCP 从同一工作区以 `node <CDS 源码>/cds/mcp/src/server.mjs --design` 启动。
-2. 调 `cds_design_read`，传 `{"view":"intake"}`。回读项目、协议版本、稿件 ID、接入标识、已登记的稿件目录、最新版本、续版权限、待处理反馈数量和框架。CLI 的同等入口是 `cdscli design intake`。接口为 `GET /api/projects/:projectId/design/intake`，当前协议版本为 `1`。
+2. 调 `cds_design_read`，传 `{"view":"intake"}`。核对项目、框架和稿件，并从 `requirements` 按约定的 `designKey` 读取已确认需求原文、来源计划和对话。CLI 的同等入口是 `cdscli design intake`。接口为 `GET /api/projects/:projectId/design/intake`，当前协议版本为 `1`。已授权的设计凭据可直接读取项目中交给设计的单条需求，工程规划接口继续按现有范围控制。
+
+交给设计的需求以系统所有者确认的原计划为来源。接入清单同时提供 `designs`。相同标识已有稿件时用原稿 ID 和读到的最新版续版，尚未有稿件时才用该标识发布首稿。指定的需求查不到时先核对项目与标识，请项目管理者从原计划交给设计。开工前有问题时，用 `cds_design_feedback` 的 `brief.reply`，提供 `designKey`、回读的 `expectedVersion`（即需求的 `planVersion`）、`requestId` 与 `body`。CLI 用 `cdscli design brief-reply <designKey> --expected-version <planVersion> --body <说明>`。服务端把澄清与需求原文一起回读，人和设计智能体可在同一处回复。
 3. 先从清单定位与用户目标有关的稿件。按 `designId` 与 `latestVersion` 固定原稿，按框架 ID 与版本读取规则。目标项目、原稿、基线、改动范围或权限依然不明确时，在修改和发布前一次提清问题。已读到的信息直接采用。不同项目或已存在的历史相似稿件均按实际 ID 与授权范围处理。
 
 同一工作区的设计凭据到期时，使用原接入口令续接。CDS 会核对原凭据，获批后保留原稿作者身份。

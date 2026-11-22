@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import type { DesignFramework as Framework, DesignMaterial, FrameworkRevision } from '../../../../src/shared/design-workspace';
 import { designFrameworkRules } from '../../../../src/shared/design-framework-rules';
 import { designDate, materialNames } from './design-ui';
+import { ReadableNotes } from './DesignMarkdown';
 
 const frameworkTabs = ['tokens','components','skeleton','rules','history'] as const;
 export type FrameworkTab = typeof frameworkTabs[number];
@@ -89,28 +90,6 @@ export function DesignMaterialView({ material, tab }: { material: DesignMaterial
     <details><summary>查看源码</summary><pre>{detail}</pre></details>
   </section>;
   return <div className="dw-markdown dw-surface"><ReadableNotes source={detail} /></div>;
-}
-
-export function ReadableNotes({ source }: { source: string }) {
-  return <>{source.split(/\r?\n\s*\r?\n/).map((block, index) => {
-    const trimmed = block.trim();
-    if (!trimmed) return null;
-    const lines = trimmed.split(/\r?\n/);
-    if (lines.length > 2 && lines[0].startsWith('|') && /^\|[ |:\-]+\|$/.test(lines[1]) && lines.slice(2).every(line => /^\|.*\|$/.test(line))) {
-      const cells = (line: string) => line.slice(1, -1).split(/(?<!\\)\|/).map(value => value.trim().replace(/\\\|/g, '|'));
-      return <div key={index} className="dw-notes-table" role="region" aria-label="规范列表" tabIndex={0}>
-        <table><thead><tr>{cells(lines[0]).map((cell, column) => <th scope="col" key={column}>{cell}</th>)}</tr></thead>
-          <tbody>{lines.slice(2).map((line, row) => <tr key={row}>{cells(line).map((cell, column) => <td key={column}>{cell}</td>)}</tr>)}</tbody></table>
-      </div>;
-    }
-    const heading = lines[0].match(/^#{1,5}\s+(.+)$/);
-    const body = heading ? lines.slice(1) : lines;
-    return <section key={index}>
-      {heading && <h3>{heading[1]}</h3>}
-      {body.length > 0 && (body.every(line => line.startsWith('- '))
-        ? <ul>{body.map((line, i) => <li key={i}>{line.slice(2)}</li>)}</ul> : <p>{body.join('\n')}</p>)}
-    </section>;
-  })}</>;
 }
 
 export function DesignFrameworkView({ framework, revision, tab, onTab, back }: {

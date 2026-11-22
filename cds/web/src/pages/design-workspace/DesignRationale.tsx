@@ -2,7 +2,7 @@ import { marked, type Tokens } from 'marked';
 import { Link } from 'react-router-dom';
 import type { DesignEntry, DesignVersion, FrameworkRevision } from '../../../../src/shared/design-workspace';
 import { designFrameworkRules } from '../../../../src/shared/design-framework-rules';
-import { ReadableNotes } from './DesignFramework';
+import { InlineDesignNotes, ReadableNotes } from './DesignMarkdown';
 
 type RationaleSection = { heading: string; body: string };
 const rationaleHeadings = new Map([
@@ -30,13 +30,13 @@ function Tradeoffs({ source }: { source: string }) {
     {items.map((item, index) => {
       const [title, ...details] = item.text.trim().split(/\r?\n/);
       return <article className="dw-surface dw-rationale-choice" key={index}>
-        <strong>{title}</strong>
+        <strong><InlineDesignNotes source={title} /></strong>
         {details.map((line, detailIndex) => {
           const text = line.replace(/^\s*[-*+]\s+/, '').trim();
           if (!text) return null;
           const dropped = text.match(/^放弃[：:\s]+(.+)$/);
-          return dropped ? <small key={detailIndex}>放弃：<s>{dropped[1]}</s></small>
-            : <p key={detailIndex}>{text.replace(/^(?:原因|理由)[：:\s]+/, '')}</p>;
+          return dropped ? <small key={detailIndex}>放弃 <s><InlineDesignNotes source={dropped[1]} /></s></small>
+            : <p key={detailIndex}><InlineDesignNotes source={text.replace(/^(?:原因|理由)[：:\s]+/, '')} /></p>;
         })}
       </article>;
     })}
@@ -52,7 +52,7 @@ function FrameworkReferences({ source, href, baseline }: { source: string; href?
     const [, id, title] = note!;
     const name = title.trim() || catalog.get(id)?.name;
     return <li key={index}>{catalog.has(id) ? <Link className="ep-badge" to={href}>
-      <code>{id}</code> {name}</Link> : <>{id} {name}</>}</li>;
+      <code>{id}</code> {name && <InlineDesignNotes source={name} />}</Link> : <>{id} {name && <InlineDesignNotes source={name} />}</>}</li>;
   })}</ul>;
 }
 
@@ -77,7 +77,7 @@ export function DesignRationale({ entry, version, baseline }: { entry: DesignEnt
       <section><h2>待定</h2><ReadableNotes source={content('open')} /></section>
     </div>
     {more.map((section, index) => <section key={index}>
-      {section.heading && section.heading !== '设计思路' && <h2>{section.heading}</h2>}
+      {section.heading && section.heading !== '设计思路' && <h2><InlineDesignNotes source={section.heading} /></h2>}
       <ReadableNotes source={section.body} />
     </section>)}
   </div>;

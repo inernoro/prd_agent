@@ -5,7 +5,7 @@ import {
   designFeedbackCategories, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
 } from '../../../../src/shared/design-workspace';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
-import { ReadableNotes } from './DesignFramework';
+import { ReadableNotes } from './DesignMarkdown';
 import { designArtifact, designCheckRows, designDate, designPath, designSourceNames, type DesignCommand } from './design-ui';
 
 const fileNames: Record<DesignDeliveryFile['kind'], string> = {
@@ -181,6 +181,7 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
 }) {
   const threads = [...(entry.feedback ?? [])].reverse();
   const delivery = version.delivery;
+  const pendingFeedback = threads.filter(thread => thread.status !== 'closed').length;
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -192,7 +193,14 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
   }
   return <div className="dw-delivery-panel">
     <section className="dw-surface dw-delivery-card dw-delivery-version">
-      <div><h2>V{version.version} 交付摘要</h2>
+      <div><header className="dw-delivery-heading"><h2>V{version.version} 交付摘要</h2>
+        <a className="ep-link" href="#dw-delivery-feedback" onClick={event => {
+          event.preventDefault();
+          const heading = document.getElementById('dw-delivery-feedback');
+          heading?.scrollIntoView({ block: 'start' });
+          heading?.focus({ preventScroll: true });
+        }}><MessageSquare size={16} aria-hidden />实施反馈 {pendingFeedback || ''}</a>
+      </header>
         <p>{version.note || delivery?.notes || '本版未附变更说明。'}</p>
         {version.note && delivery?.notes && version.note !== delivery.notes && <p>{delivery.notes}</p>}
         <small>{version.publisher.label} · {designDate(version.createdAt)}{delivery?.prototypeVersion ? ` · 原型第 ${delivery.prototypeVersion} 版` : ''}
@@ -209,8 +217,8 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
     <DeliveryChecks version={version} openScreen={openScreen} />
     <DeliveryFiles entry={entry} version={version} />
     <section className="dw-surface dw-delivery-card" aria-labelledby="dw-delivery-feedback">
-      <header className="dw-delivery-heading"><div><h2 id="dw-delivery-feedback">实施反馈</h2>
-        <small>{threads.filter(thread => thread.status !== 'closed').length} 条待处理 · 跨版本保留</small></div><MessageSquare /></header>
+      <header className="dw-delivery-heading"><div><h2 id="dw-delivery-feedback" tabIndex={-1}>实施反馈</h2>
+        <small>{pendingFeedback} 条待处理 · 跨版本保留</small></div><MessageSquare /></header>
       {permissions.feedback && <details><summary>登记实施反馈</summary>
         <form className="dw-delivery-form" onSubmit={event => void create(event)}>
           <div className="dw-delivery-fields">

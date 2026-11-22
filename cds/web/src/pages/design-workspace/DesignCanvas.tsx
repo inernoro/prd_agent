@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { ChevronLeft, ChevronRight, ListMinus, MessageSquare, Minus, Moon, Plus, Sun, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import type { DesignComment, DesignEntry, DesignRun, DesignScreen, DesignTheme, DesignVersion } from '../../../../src/shared/design-workspace';
-import { designViewports } from '../../../../src/shared/design-workspace';
-import { designArtifact, designDate, slotNames, type DesignCommand } from './design-ui';
+import { designAcceptanceTarget, designViewports } from '../../../../src/shared/design-workspace';
+import { designArtifact, designDate, type DesignCommand } from './design-ui';
 import { compareDesignStructure } from './design-structure';
 
 type CompareMode = 'side' | 'slide' | 'diff';
@@ -84,10 +85,10 @@ type FrameProps = {
   comments?: DesignComment[]; pin?: Point; placing?: boolean; onPin?: (point: Point) => void;
   onComment?: (id: string) => void; onScrollFrom?: (data: { left: number; top: number }) => void;
   scroll?: { left: number; top: number }; onKey?: (key: string) => void;
-  onLayout?: (boxes: LayoutBox[]) => void; boxes?: LayoutChange[]; screenshot?: string;
+  onLayout?: (boxes: LayoutBox[]) => void; boxes?: LayoutChange[]; screenshot?: string; decorative?: boolean;
 };
 
-export function DesignFrame({ projectId, version, screen: scene, theme, zoom, comments, pin, placing, onPin, onComment, onScrollFrom, scroll, onKey, onLayout, boxes, screenshot }: FrameProps) {
+export function DesignFrame({ projectId, version, screen: scene, theme, zoom, comments, pin, placing, onPin, onComment, onScrollFrom, scroll, onKey, onLayout, boxes, screenshot, decorative }: FrameProps) {
   const screen = scene ?? (version && !version.screens.length ? standalonePrototype : undefined);
   const outer = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -135,10 +136,10 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
   const source = screen && version
     ? `${designArtifact(projectId, version.prototypeId)}?theme=${theme}${screen.route.startsWith('#') ? screen.route : '#' + screen.route}`
     : null;
-  return <div className="dw-fit" ref={outer}>
+  return <div className="dw-fit" ref={outer} aria-hidden={decorative || undefined}>
     {source ? <div className="dw-frame" style={{ width: width * scale, height: height * scale, colorScheme: theme }}>
       {screenshot ? <img className="dw-frame-png" src={screenshot} alt={screen!.name + ' · V' + version!.version} /> :
-        <iframe key={screen!.id} ref={frame} title={screen!.name + ' · V' + version!.version} loading="lazy" src={source}
+        <iframe key={screen!.id} ref={frame} title={screen!.name + ' · V' + version!.version} loading="lazy" src={source} tabIndex={decorative ? -1 : undefined}
           onLoad={event => {
             setEntryWarning(false);
             if (needsEntry) event.currentTarget.contentWindow?.postMessage({ type: 'cds-design-entry',
@@ -180,10 +181,10 @@ export function CanvasSettings({ theme, onTheme, zoom, onZoom }: { theme: Design
 type CanvasProps = {
   entry: DesignEntry; version: DesignVersion; comparing: boolean; active: boolean; full?: boolean;
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
-  commandBusy: boolean; tabs?: ReactNode; initialScreenId?: string; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
+  commandBusy: boolean; initialScreenId?: string; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, tabs, initialScreenId, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
   const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
@@ -258,7 +259,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
 
   const compareMode = real ? (mode === 'side' ? 'side' : 'slide') : mode;
   const [leftScreen, rightScreen] = [leftVersion, rightVersion].map(row => row?.screens.find(candidate => candidate.id === screen?.id));
-  const capture = run && screen ? realEvidence(run, screen, visibleTheme) : undefined;
+  const capture = run && screen ? realEvidence(run, version, screen, visibleTheme) : undefined;
   const structure = useMemo(() => compare && leftVersion && rightVersion ? compareDesignStructure(leftVersion, rightVersion) : [],
     [compare, leftVersion, rightVersion]);
   const reported = Object.entries(rightVersion?.resolves ?? {});
@@ -293,13 +294,14 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
     boxes={compareMode === 'side' ? overlays?.left : undefined} />;
   const rightFrame = real ? <div className="dw-fit">
     {capture?.imageId ? <img className="dw-real-shot" alt={screen!.name + '真实页面截图'} src={designArtifact(entry.projectId, capture.imageId)} />
-      : <div className="dw-frame-empty"><b>真实页面</b><p>{screen?.impl ? '该提交和视口缺少截图' : '画面清单未绑定实现地址'}</p></div>}
+      : <div className="dw-frame-empty"><b>真实页面</b><p>{screen?.impl ? (run ? '该提交和视口缺少截图' : '已绑定地址，等待真实页面取证') : '当前画面待绑定实现地址'}</p>
+        <Link className="ep-link" to={`/design?${new URLSearchParams({ project: entry.projectId, design: entry.id,
+          version: String(version.version), tab: 'accept', ...(screen ? { screen: screen.id } : {}) })}`}>查看做法验收</Link></div>}
   </div> : <DesignFrame projectId={entry.projectId} version={rightVersion} screen={rightScreen} theme={visibleTheme} zoom={zoom}
     scroll={rightScroll} onScrollFrom={useRightScroll} onKey={key} onLayout={boxes => setRightLayout({ key: layoutKey, boxes })}
     screenshot={readyPixels ? rightShot : undefined} boxes={readyPixels?.boxes ?? (compareMode === 'slide' ? undefined : overlays?.right)} />;
   return <>
-    <div className="dw-tabrow">
-      {tabs}
+    <div className="dw-tabrow dw-canvas-tools">
       <div className="dw-tools">
         {full && entry.versions.length > 1 && <button className="ep-button" type="button" aria-pressed={compare} onClick={() => setWithCompare(!compare)}>
           {compare ? '单版' : `对比 V${left}`}</button>}
@@ -427,9 +429,16 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   </>;
 }
 
-function realEvidence(run: DesignRun, screen: DesignScreen, theme: DesignTheme) {
-  return run.cells.find(cell => cell.imageId && cell.measured?.path === screen.impl
-    && cell.measured.theme === theme && cell.slot in slotNames && cell.slot.startsWith(screen.viewport));
+function realEvidence(run: DesignRun, version: DesignVersion, screen: DesignScreen, theme: DesignTheme) {
+  return run.cells.find(cell => {
+    if (!cell.imageId || !cell.measured || cell.measured.path !== screen.impl || cell.measured.theme !== theme
+      || !cell.slot.startsWith(screen.viewport)) return false;
+    const rule = version.acceptance.find(row => row.id === cell.itemId);
+    if (!rule) return false;
+    const target = designAcceptanceTarget(version, rule, cell.slot);
+    return target && target.impl === screen.impl && (target.readySelector ?? null) === (screen.readySelector ?? null)
+      && (!rule.screenId || rule.screenId === screen.id);
+  });
 }
 
 export function DesignReviewDialog({ entry, comment, version, canReview, command, busy, onClose }: {

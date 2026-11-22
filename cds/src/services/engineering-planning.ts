@@ -183,6 +183,17 @@ export class EngineeringPlanningService {
     return debt?.source.type === 'test' && debt.source.ref === sourceRef && debt.status !== 'dropped' ? debt.id : undefined;
   }
 
+  async approvedDesignRequirement(projectId: string, planId: string) {
+    const state = await this.load(projectId);
+    const plan = state.plans.get(planId);
+    if (!plan) return undefined;
+    const proposal = [...state.proposals.values()].find(row => row.kind === 'plan' && row.status === 'accepted'
+      && row.result?.kind === 'plan' && row.result.id === plan.id);
+    if (!proposal?.draft.summary) return undefined;
+    return { planVersion: plan.version, proposalId: proposal.id, title: proposal.draft.title,
+      requirements: proposal.draft.summary };
+  }
+
   private async recheckGithubRemovals(projectId: string, state: PlanningState, decisionBranch?: string) {
     const checks = new Map<string, GithubRemovalCheck>();
     const repository = this.github?.repositoryFor(projectId);

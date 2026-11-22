@@ -78,6 +78,14 @@ export type DesignVersion = {
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
   delivery?: DesignDelivery;
 };
+
+export function designAcceptanceTarget(version: DesignVersion, rule: DesignRule, slot: DesignSlot): DesignScreen | undefined {
+  const [viewport, theme] = slot.split('-') as ['desktop' | 'phone', DesignTheme];
+  const matches = version.screens.filter(screen => screen.impl && screen.themes.includes(theme)
+    && (rule.screenId ? screen.id === rule.screenId : screen.viewport === viewport));
+  return new Set(matches.map(screen => JSON.stringify([screen.impl, screen.readySelector ?? null]))).size === 1
+    ? matches[0] : undefined;
+}
 export type DesignComment = {
   id: string; version: number; screenId: string; body: string; x: number; y: number; createdAt: string;
   author: { id: string; label: string }; closed: boolean;
@@ -93,6 +101,9 @@ export type DesignRun = {
   cells: DesignCell[]; verdict: DesignVerdict; previewUrl: string;
   signed?: { by: string; at: string; verdict: 'passed' | 'conditional' };
   issues: Record<string, { id: string; pending: boolean }>;
+};
+export type DesignImplementation = {
+  screenId: string; path: string; readySelector: string; by: string; at: string;
 };
 export type DesignReviewer = { id: string; label: string };
 export type DesignSharePreparation = {
@@ -112,6 +123,8 @@ export type DesignEntry = {
   reviewers?: DesignReviewer[];
   sharePreparations?: DesignSharePreparation[];
   freezes?: Array<{ version: number; by: string; at: string }>;
+  unfreezes?: Array<{ version: number; by: string; at: string }>;
+  implementations?: Record<number, DesignImplementation[]>;
 };
 
 export function currentDesignRun(entry: DesignEntry): DesignRun | undefined {
@@ -124,12 +137,19 @@ export type FrameworkRevision = {
   from?: { designId: string; version: number }; material: DesignMaterial; note?: string;
 };
 export type DesignFramework = { id: string; projectId: string; versions: FrameworkRevision[] };
+/** Project members explicitly release one accepted requirement to the design workspace. */
+export type DesignRequirement = {
+  designKey: string; planId: string; planVersion: number; proposalId: string;
+  title: string; requirements: string; sharedAt: string;
+  replies?: Array<{ id: string; author: DesignFeedbackAuthor; body: string; at: string; planVersion: number }>;
+};
 export type DesignIntake = {
   protocolVersion: 1;
   projectId: string;
   permissions: { write: boolean; feedback?: boolean };
   keyFormat: 'module/draft';
   intents: readonly ['create', 'revise'];
+  requirements: DesignRequirement[];
   designs: Array<{
     designId: string; designKey?: string; title: string; latestVersion: number;
     sourceCommit: string; sourcePaths: string[]; canRevise: boolean; openFeedbackCount?: number;
@@ -138,5 +158,6 @@ export type DesignIntake = {
 };
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
+  requirements?: DesignRequirement[];
   permissions: { write: boolean; feedback?: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
 };

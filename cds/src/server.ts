@@ -5644,6 +5644,7 @@ export function createServer(deps: ServerDeps): express.Express {
     : new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(
       path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'design-workspace'));
   designWorkspace = new DesignWorkspaceService(designStore, {
+    approvedPlanFor: (projectId, planId) => planning.approvedDesignRequirement(projectId, planId),
     frameworkProbe: createDesignFrameworkBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
     reviewer: async (projectId, id) => {
       const user = await authService?.findUserById(id);

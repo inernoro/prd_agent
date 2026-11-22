@@ -2,9 +2,41 @@ import { useEffect, useState } from 'react';
 import { Check, FileCheck2, RefreshCw, ScrollText } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { designSlots, type DesignCell, type DesignEntry, type DesignRun, type DesignVersion } from '../../../../src/shared/design-workspace';
+import { designAcceptanceTarget, designSlots, type DesignCell, type DesignEntry, type DesignRun, type DesignVersion } from '../../../../src/shared/design-workspace';
 import { cellNames, designArtifact, designDate, ruleModes, slotNames, verdictNames, type DesignCommand } from './design-ui';
 import { planningPath, usePlanningRead } from '../engineering-planning/planning-ui';
+
+function BindImplementation({ version, preferred, busy, close, bind }: {
+  version: DesignVersion; preferred: string | null; busy: boolean; close: () => void;
+  bind: (fields: Record<string, unknown>) => Promise<boolean>;
+}) {
+  const initial = version.screens.find(screen => screen.id === preferred) ?? version.screens.find(screen => !screen.impl) ?? version.screens[0];
+  const [screenId, selectScreen] = useState(initial.id);
+  const [path, setPath] = useState(initial.impl ?? '');
+  const [ready, setReady] = useState(initial.readySelector ?? '');
+  const select = (id: string) => {
+    const screen = version.screens.find(row => row.id === id);
+    selectScreen(id);
+    setPath(screen?.impl ?? '');
+    setReady(screen?.readySelector ?? '');
+  };
+  return <Dialog open onOpenChange={open => { if (!open && !busy) close(); }}><DialogContent className="dw-modal dw-surface">
+    <DialogTitle>绑定实现画面</DialogTitle>
+    <DialogDescription>填写该画面在项目预览中的相对地址，以及只能在目标状态出现的元素选择器。</DialogDescription>
+    <form onSubmit={async event => {
+      event.preventDefault();
+      if (await bind({ screens: [{ screenId, path: path.trim(), readySelector: ready.trim() }] })) close();
+    }}>
+      <label>原型画面<select value={screenId} onChange={event => select(event.target.value)}>
+        {version.screens.map(row => <option key={row.id} value={row.id}>{row.name} · {row.viewport === 'phone' ? '手机' : '桌面'}{row.impl ? ' · 已绑定' : ''}</option>)}
+      </select></label>
+      <label>预览内地址<input value={path} onChange={event => setPath(event.target.value)} placeholder="/页面?参数=值" maxLength={1200} required /></label>
+      <label>就绪选择器<input value={ready} onChange={event => setReady(event.target.value)} maxLength={300} placeholder="#当前画面" required /></label>
+      <footer><button className="ep-button" type="button" onClick={close} disabled={busy}>取消</button>
+        <button className="ep-button ep-button--primary" disabled={busy}>保存定位</button></footer>
+    </form>
+  </DialogContent></Dialog>;
+}
 
 export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, canSign, command, onPreviewStale }: {
   entry: DesignEntry; version: DesignVersion; busy: boolean; canWrite: boolean; canReview: boolean; canSign: boolean;
@@ -14,6 +46,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const [runId, setRunId] = useState(params.get('run') ?? '');
   const [pr, setPr] = useState(String(entry.pullRequest ?? ''));
   const [selected, setSelected] = useState<DesignCell>();
+  const [binding, setBinding] = useState(false);
   const [previewRevision, refreshPreview] = useState(0);
   const runs = entry.runs.filter(row => row.version === version.version);
   const run = runs.find(row => row.id === runId) ?? runs.at(-1);
@@ -89,6 +122,15 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
         </div>
       </div>
     </section>
+    <section className="dw-surface dw-delivery-card">
+      <header className="dw-delivery-heading">
+        <div><h3>真实页面定位</h3><p>{version.screens.filter(screen => screen.impl).length} / {version.screens.length} 个画面已绑定</p></div>
+        {!runs.length && canReview && !!version.screens.length && <button className="ep-button" type="button" onClick={() => setBinding(true)}>绑定实现画面</button>}
+      </header>
+      {!runs.length && <p className="dw-muted">运行验收后，这里绑定的画面用于定位实拍。每条规则需要能定位到对应页面。</p>}
+    </section>
+    {binding && <BindImplementation version={version} preferred={params.get('screen')} busy={busy}
+      close={() => setBinding(false)} bind={fields => send('implementation.bind', { version: version.version, ...fields })} />}
     {!!failures.length && <section><h3>要修的问题 <small>{failures.length}</small></h3>
       <div className="dw-issues">{failures.map(item => {
         const unmatched = run!.cells.filter(cell => cell.itemId === item.id && cell.status !== 'passed');
@@ -150,9 +192,8 @@ function DesignEvidenceDialog({ entry, run, cell, version, command, canWrite, ca
   const [file, setFile] = useState<File>();
   const [issue, setIssue] = useState('');
   const [uploading, setUploading] = useState(false);
-  const [viewport, theme] = cell.slot.split('-');
-  const path = version.screens.find(screen => (rule.screenId ? screen.id === rule.screenId : screen.viewport === viewport)
-    && screen.impl && screen.themes.some(value => value === theme))?.impl;
+  const [, theme] = cell.slot.split('-');
+  const path = designAcceptanceTarget(version, rule, cell.slot)?.impl;
   const canSubmit = canWrite && !!path && !run.signed && (rule.how !== 'human' || canReview);
   const hasScreenshot = !!file || !!cell.imageId;
   const submit = async (status: 'passed' | 'failed') => {

@@ -14,6 +14,8 @@ const intakeResult = z.object({
   protocolVersion: z.literal(1), projectId: z.string(), permissions: z.object({ write: z.boolean(), feedback: z.boolean().optional() }),
   designs: z.array(z.object({ designId: id, designKey: designKey.optional(), latestVersion: positiveVersion,
     sourceCommit, sourcePaths: z.array(z.string()), canRevise: z.boolean() })),
+  requirements: z.array(z.object({ designKey, planId: id, planVersion: positiveVersion, proposalId: id,
+    title: z.string().min(1), requirements: z.string().min(1), sharedAt: z.string() })).optional(),
 });
 const feedbackBase = { requestId: id, designId: id };
 const feedbackBody = z.string().trim().min(1).max(4_000);
@@ -30,6 +32,7 @@ const schemas = {
       offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(16_000).optional() }).strict(),
   ]),
   [feedbackTool]: z.discriminatedUnion('type', [
+    z.object({ type: z.literal('brief.reply'), requestId: id, designKey, expectedVersion: positiveVersion, body: feedbackBody }).strict(),
     z.object({ ...feedbackBase, type: z.literal('feedback.create'), version: positiveVersion,
       category: z.enum(['reuse', 'implementation', 'gap', 'constraint', 'acceptance']),
       title: z.string().trim().min(1).max(180), body: feedbackBody, screenId: id.optional(),
@@ -63,8 +66,8 @@ const schemas = {
   }),
 };
 const descriptions = {
-  [readTool]: '用 intake 确认项目、最新版本、已登记的稿件目录和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。目标或基线无法唯一确定时，开工前一次澄清。',
-  [feedbackTool]: '在同一稿件中登记实施反馈，包含分类、目标版本、问题和证据。可以回复并指向本人发布的版本。原反馈者或项目管理者确认关闭或重新打开。重试沿用 requestId。',
+  [readTool]: '用 intake 读取已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。稿件发布前可用 brief.reply 在当前需求下澄清。',
+  [feedbackTool]: '稿件发布前用 brief.reply 在设计需求下提出问题。在同一稿件中登记实施反馈，包含分类、目标版本、问题和证据。可以回复并指向本人发布的版本。原反馈者或项目管理者确认关闭或重新打开。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
@@ -157,8 +160,11 @@ export function createDesignBridge(credentials, options = {}) {
         const data = await intake();
         if (!data.permissions.feedback) throw new Error('当前凭据没有设计反馈权限，请核对项目实施反馈授权或稿件发布授权');
         const receipt = await client.request('POST', `${path}/feedback`, args);
-        if (receipt.projectId !== projectId || receipt.result?.designId !== args.designId || receipt.result.type !== args.type
-          || typeof receipt.reused !== 'boolean' || !id.safeParse(receipt.result.id).success) {
+        const result = receipt.result;
+        const targetMatches = args.type === 'brief.reply' ? result?.designKey === args.designKey && result?.version === args.expectedVersion
+          : result?.designId === args.designId;
+        if (receipt.projectId !== projectId || !targetMatches || result?.type !== args.type
+          || typeof receipt.reused !== 'boolean' || !id.safeParse(result?.id).success) {
           throw new Error('CDS 返回的反馈回执与本次稿件或操作不符');
         }
         return receipt;
