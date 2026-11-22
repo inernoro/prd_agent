@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -13,8 +14,58 @@ import { describe, expect, it } from 'vitest';
  */
 
 const CSS = fs.readFileSync(path.resolve(process.cwd(), '../cds/web/src/index.css'), 'utf8');
-const TW = fs.readFileSync(path.resolve(process.cwd(), '../cds/web/tailwind.config.js'), 'utf8');
+const TW_CONFIG = path.resolve(process.cwd(), '../cds/web/tailwind.config.js');
+const TW = fs.readFileSync(TW_CONFIG, 'utf8');
 const strip = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+const themeBlock = (selector: string): string => {
+  const at = CSS.indexOf(selector);
+  if (at < 0) throw new Error(`找不到主题块 ${selector}`);
+  const open = CSS.indexOf('{', at);
+  return CSS.slice(open, CSS.indexOf('\n  }', open));
+};
+
+const token = (block: string, name: string): [number, number, number] => {
+  const alias = block.match(new RegExp(`--${name}:\\s*var\\(--([\\w-]+)\\)`));
+  if (alias) return token(block, alias[1]);
+  const m = block.match(new RegExp(`--${name}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%`));
+  if (!m) throw new Error(`${name} 没在这个主题块里定义`);
+  return [Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100];
+};
+
+const luminance = ([h, s, l]: [number, number, number]): number => {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const seg = Math.floor(h / 60) % 6;
+  const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][seg]
+    .map((v) => v + m)
+    .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+};
+
+const ratio = (a: [number, number, number], b: [number, number, number]): number => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+describe('account management contrast', () => {
+  const pairs = [
+    ['primary-foreground', 'primary'],
+    ['primary-foreground', 'primary-hover'],
+    ['destructive-foreground', 'destructive'],
+    ['destructive-foreground', 'destructive-hover'],
+    ['ok-ink', 'card'],
+    ['warn-ink', 'card'],
+    ['muted-foreground', 'card'],
+  ];
+  for (const theme of ['dark', 'light']) {
+    const block = themeBlock(`[data-theme='${theme}']`);
+    it.each(pairs)(`${theme} %s on %s meets AA`, (ink, fill) => {
+      expect(ratio(token(block, ink), token(block, fill))).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});
 
 describe('主色：填充用 primary，文字用 primary-ink', () => {
   /**
@@ -30,12 +81,22 @@ describe('主色：填充用 primary，文字用 primary-ink', () => {
     expect(css).toContain('color: hsl(var(--primary-ink)');
   });
 
-  it('Tailwind 的 text-primary 也指向 ink（组件里那一半）', () => {
-    const tw = strip(TW);
-    expect(tw).toContain('textColor: {');
-    expect(tw).toMatch(/textColor:\s*\{[^}]*primary:\s*'hsl\(var\(--primary-ink\)/);
-    // bg-primary 仍然是亮绿，别一起改掉
-    expect(tw).toMatch(/primary:\s*\{[^}]*DEFAULT:\s*'hsl\(var\(--primary\)/);
+  it('Tailwind 为按钮底色和文字分别生成正确的 token', async () => {
+    const fromWeb = createRequire(path.join(path.dirname(TW_CONFIG), 'package.json'));
+    const postcss = fromWeb('postcss');
+    const tailwind = fromWeb('tailwindcss');
+    const loadConfig = fromWeb('tailwindcss/loadConfig');
+    const compiled = await postcss([tailwind({
+      ...loadConfig(TW_CONFIG),
+      content: [{ raw: 'bg-primary text-primary text-primary-foreground text-ok-ink text-warn-ink', extension: 'html' }],
+    })]).process('@tailwind utilities;', { from: undefined });
+    expect(compiled.css).toMatch(/\.bg-primary\s*\{[^}]*background-color:\s*hsl\(var\(--primary\)/);
+    for (const [rule, tokenName] of [
+      ['text-primary', 'primary-ink'], ['text-primary-foreground', 'primary-foreground'],
+      ['text-ok-ink', 'ok-ink'], ['text-warn-ink', 'warn-ink'],
+    ]) {
+      expect(compiled.css).toMatch(new RegExp(`\\.${rule}\\s*\\{[^}]*color:\\s*hsl\\(var\\(--${tokenName}\\)`));
+    }
   });
 });
 

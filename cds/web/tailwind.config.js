@@ -24,6 +24,7 @@ export default {
         foreground: 'hsl(var(--foreground) / <alpha-value>)',
         primary: {
           DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
+          hover: 'hsl(var(--primary-hover) / <alpha-value>)',
           foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
         },
         secondary: {
@@ -32,6 +33,7 @@ export default {
         },
         destructive: {
           DEFAULT: 'hsl(var(--destructive) / <alpha-value>)',
+          hover: 'hsl(var(--destructive-hover) / <alpha-value>)',
           foreground: 'hsl(var(--destructive-foreground) / <alpha-value>)',
         },
         muted: {
@@ -96,7 +98,12 @@ export default {
       // 「有些按钮都看不清了」就是这么来的。所以文字单独压深两档；
       // 暗色下两者同值，零变化。bg-primary / border-primary 不受影响。
       textColor: {
-        primary: 'hsl(var(--primary-ink) / <alpha-value>)',
+        primary: {
+          DEFAULT: 'hsl(var(--primary-ink) / <alpha-value>)',
+          foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
+        },
+        'ok-ink': 'hsl(var(--ok-ink) / <alpha-value>)',
+        'warn-ink': 'hsl(var(--warn-ink) / <alpha-value>)',
       },
       borderRadius: {
         lg: 'var(--radius)',

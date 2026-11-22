@@ -69,7 +69,8 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --card-foreground: 240 6% 90%;
 
     --primary: 24 100% 60%;
-    --primary-foreground: 0 0% 100%;
+    --primary-hover: 24 100% 55%;
+    --primary-foreground: 222 24% 8%;
 
     --secondary: 240 4% 16%;
     --secondary-foreground: 240 6% 90%;
@@ -80,8 +81,9 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --accent: 240 4% 18%;
     --accent-foreground: 240 6% 95%;
 
-    --destructive: 0 70% 55%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 0 70% 59%;
+    --destructive-hover: 0 70% 64%;
+    --destructive-foreground: 0 50% 5%;
 
     --border: 240 4% 18%;
     --input: 240 4% 16%;
@@ -195,7 +197,8 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --card-foreground: 24 20% 15%;
 
     --primary: 24 90% 50%;
-    --primary-foreground: 0 0% 100%;
+    --primary-hover: 24 90% 47%;
+    --primary-foreground: 222 24% 8%;
 
     --secondary: 30 20% 90%;
     --secondary-foreground: 24 20% 15%;
@@ -207,6 +210,7 @@ body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) 
     --accent-foreground: 24 20% 15%;
 
     --destructive: 0 65% 50%;
+    --destructive-hover: 0 65% 45%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 30 15% 82%;

@@ -51,7 +51,7 @@ export function SystemPasswordPanel({ owner }: { owner: boolean }): JSX.Element 
                 <p className="text-xs text-muted-foreground">最近活动 {new Date(session.lastSeenAt).toLocaleString()}</p>
               </li>)}
             </ul> : <p className="mt-3 text-muted-foreground">已有浏览器重新访问系统时会登记到此处。</p>}
-            {!current.available ? <p className="mt-2 text-warn">当前审批存储不可用，请恢复后再提交变更。</p> : null}
+            {!current.available ? <p className="mt-2 text-warn-ink">当前审批存储不可用，请恢复后再提交变更。</p> : null}
           </div>}
       {open && current ? <SystemPasswordDialog accountName={current.account.name} sessions={current.sessions}
         onClose={() => setOpen(false)} /> : null}

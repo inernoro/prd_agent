@@ -194,7 +194,7 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, availableLo
                         </span>
                         <span className="account-member-desktop text-muted-foreground">{accountRoleLabel(user)}</span>
                         <span className="account-member-desktop min-w-0 break-words text-muted-foreground">{signIn || '—'}</span>
-                        <span className={state === 'active' ? 'text-ok' : 'text-warn'}>
+                        <span className={state === 'active' ? 'text-ok-ink' : 'text-warn-ink'}>
                           {memberStateLabels[state]}
                         </span>
                         <span className="account-member-desktop text-xs text-muted-foreground">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : '尚未登录'}</span>
@@ -222,7 +222,7 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, availableLo
                   <button type="button" className="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left text-sm hover:bg-muted/50"
                     onClick={() => { setSubject({ entry }); changeView('approvals', entry.id); }}>
                     <span className="break-words"><strong>{actionLabels[entry.action]}</strong> · {entry.targetName}</span>
-                    <span className={entry.status === 'pending' ? 'text-warn' : 'text-muted-foreground'}>{actionStateLabels[entry.status]}</span>
+                    <span className={entry.status === 'pending' ? 'text-warn-ink' : 'text-muted-foreground'}>{actionStateLabels[entry.status]}</span>
                   </button>
                 </li>
               ))}

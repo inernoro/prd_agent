@@ -59,7 +59,7 @@ export function LoginMethodsTab({ loginMethods, accountProviders, canListAccount
             <div className="flex flex-wrap items-center gap-2">
               <Icon size={16} aria-hidden="true" />
               <strong>{name}</strong>
-              <span className={enabled ? 'ml-auto text-ok' : 'ml-auto text-muted-foreground'}>{enabled ? '可用' : '未开通'}</span>
+              <span className={enabled ? 'ml-auto text-ok-ink' : 'ml-auto text-muted-foreground'}>{enabled ? '可用' : '未开通'}</span>
             </div>
             <p className="mt-2 break-words text-muted-foreground">{detail}</p>
             {canListAccounts && accounts && !countFailed ? <p className="mt-2 text-xs text-muted-foreground">
@@ -138,7 +138,7 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
             ? `当前 CDS 账号已绑定另一个 ${bindingLabel} 身份`
             : `${bindingLabel} 绑定未完成，请核对当前登录账号后重试`} /> : null}
         {result.get('external') === 'bound' && providers.some(([provider]) => provider === bindingProvider && user.linkedLogins?.[provider])
-          ? <p className="mb-3 text-sm text-ok" role="status">身份已绑定</p> : null}
+          ? <p className="mb-3 text-sm text-ok-ink" role="status">身份已绑定</p> : null}
         <div className="divide-y divide-border rounded-lg border border-border bg-card px-4">
           <div className="flex flex-wrap items-center justify-between gap-3 py-3">
             <div className="min-w-0">
