@@ -227,6 +227,9 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     const invalid=f.request({action:'prepare',image,nativePull:true,peakBytes:1024,nowMs:old});
     f.values.pullDelay=0.25;f.save();
     expect(f.request({action:'execute-pull',token:timed.token,image,pullTimeoutMs:20}).recorded).toBe(false);
+    expect(f.request({}).pullReservations).toEqual(expect.arrayContaining([
+      expect.objectContaining({confirmed:false,diagnostic:{executionState:'timeout',summary:'拉取等待超时，完成结果未知',signals:[],stdoutTailBytes:0,stderrTailBytes:0}}),
+    ]));
     f.values.pullDelay=0;f.values.pullImage=f.image();f.save();
     for(const pin of [drifted,invalid]) f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000});
     const proofPath=path.join(f.root,'catalog','pull-receipt-'+invalid.token);
@@ -236,6 +239,21 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     expect(f.request({action:'settle-pulls'}).settled).toEqual([]);
     expect(f.request({budgetBytes:6144,peakBytes:2048}).pullBudget)
       .toMatchObject({reservedBytes:4096,availableBytes:1024,overdueCount:4,overdueReservedBytes:4096,headroom:'blocked'});
+  });
+  it('keeps a queryable safe diagnostic for an unknown native failure with arbitrary stderr', () => {
+    const f=fixture(), image='registry.example/test:old';
+    const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:1024});
+    const privateDetail='https://registry.example/private?token=example-secret fixture-private-note';
+    f.values.pullError='x509: certificate signed by unknown authority '+privateDetail;f.save();
+    expect(f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000})).toEqual({outcome:'verification-unavailable',recorded:true});
+    const proof=fs.readFileSync(path.join(f.root,'catalog','pull-receipt-'+pin.token),'utf8');
+    expect(proof).not.toContain('example-secret');
+    expect(proof).not.toContain('fixture-private-note');
+    expect(f.request({action:'settle-pulls'}).settled).toEqual([]);
+    expect(f.request({}).pullReservations).toMatchObject([{
+      image,confirmed:false,diagnostic:{executionState:'exited',summary:'镜像仓库证书或加密连接校验失败',
+        signals:[{code:'tls'}],stderrTailBytes:Buffer.byteLength(f.values.pullError+'\n')},
+    }]);
   });
   it('fences a never-started managed pull before returning its reservation', () => {
     const f=fixture(), image='registry.example/test:old';

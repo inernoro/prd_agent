@@ -192,7 +192,12 @@ def read_pull_receipt(token,pull):
   decoded=json.load(f)
  if not isinstance(decoded,dict) or any(decoded.get(key)!=value for key,value in pull_receipt_identity(token,pull).items()):
   raise ValueError('pull-receipt-identity-mismatch')
- if type(decoded.get('exitCode')) is not int or type(decoded.get('completedAt')) is not int or decoded['completedAt']<pull['startedAt']:
+ if type(decoded.get('completedAt')) is not int or decoded['completedAt']<pull['startedAt']:
+  raise ValueError('pull-receipt-completion-unconfirmed')
+ if 'exitCode' not in decoded or type(decoded['exitCode']) is not int and not (
+  decoded.get('exitCode') is None and decoded.get('executionState') in ('timeout','unavailable','interrupted')
+  and decoded.get('outcome')=='verification-unavailable' and decoded.get('observation')=='unconfirmed'
+ ):
   raise ValueError('pull-receipt-completion-unconfirmed')
  return decoded
 
@@ -205,7 +210,34 @@ def pull_diagnostic(out,err,image):
 
 def pull_output(stream):
  stream.seek(max(0,stream.tell()-8192))
- return stream.read().decode('utf8',errors='replace')
+ return stream.read()
+
+PULL_DIAGNOSTIC_SIGNALS=(
+ ('tls','镜像仓库证书或加密连接校验失败',r'x509:|tls:|tls handshake timeout|certificate verify failed'),
+ ('dns','镜像仓库域名解析失败',r'no such host|temporary failure in name resolution|server misbehaving'),
+ ('connection','连接镜像仓库时中断或被拒绝',r'connection refused|connection reset|network is unreachable|unexpected eof|broken pipe'),
+ ('upstream-timeout','镜像仓库响应超时',r'i/o timeout|context deadline exceeded|client\.timeout|timed out'),
+ ('rate-limit','镜像仓库限制了拉取频率',r'toomanyrequests|too many requests|rate limit'),
+)
+
+def pull_evidence(stdout,stderr,execution_state,outcome):
+ # A registry can include arbitrary user text in an error. Retain only known
+ # diagnostics and actual output channel/size observations, never raw lines.
+ observed=stderr+'\n'+stdout
+ signals=[{'code':code,'summary':summary} for code,summary,pattern in PULL_DIAGNOSTIC_SIGNALS if re.search(pattern,observed,re.I)]
+ summary={
+  'timeout':'拉取等待超时，完成结果未知',
+  'unavailable':'拉取程序未能启动，没有收到响应',
+  'interrupted':'拉取程序被中断，完成结果未知',
+ }.get(execution_state)
+ if not summary:
+  summary={
+   'success':'拉取程序已确认完成',
+   'missing':'镜像仓库未找到指定镜像',
+   'access-denied':'镜像仓库拒绝了本次拉取',
+  }.get(outcome) or (signals[0]['summary'] if signals else
+      '拉取程序返回了未分类的错误' if stdout or stderr else '拉取程序未返回诊断内容')
+ return {'executionState':execution_state,'summary':summary,'signals':signals}
 
 if action=='execute-pull':
  token=cache_token(req['token']);pull=state['pulls'].get(token)
@@ -220,29 +252,37 @@ if action=='execute-pull':
  # The reservation is already durable and remains a cross-master pin.
  # Holding the ledger lock during network I/O would block all other deployments.
  os.close(lock)
+ execution_state='exited';exit_code=None
  with tempfile.TemporaryFile() as out,tempfile.TemporaryFile() as err:
-  try:result=subprocess.run(['docker','pull',image],stdout=out,stderr=err,timeout=seconds)
-  except (subprocess.TimeoutExpired,OSError):
-   print(json.dumps({'outcome':'verification-unavailable','recorded':False}));sys.exit(0)
-  stdout,stderr=pull_output(out),pull_output(err)
- if result.returncode<0:
-  print(json.dumps({'outcome':'verification-unavailable','recorded':False}));sys.exit(0)
- outcome='success' if result.returncode==0 else pull_diagnostic(stdout,stderr,image)
+  try:
+   result=subprocess.run(['docker','pull',image],stdout=out,stderr=err,timeout=seconds)
+   if result.returncode>=0:exit_code=result.returncode
+   else:execution_state='interrupted'
+  except subprocess.TimeoutExpired:execution_state='timeout'
+  except OSError:execution_state='unavailable'
+  stdout_bytes,stderr_bytes=pull_output(out),pull_output(err)
+ stdout,stderr=(output.decode('utf8',errors='replace') for output in (stdout_bytes,stderr_bytes))
+ completed=execution_state=='exited'
+ outcome='verification-unavailable'
+ if completed:outcome='success' if exit_code==0 else pull_diagnostic(stdout,stderr,image)
  observation='unconfirmed';observed_id=None
- deadline=time.monotonic()+8
- try:
-  if json.loads(docker(['info','--format','{{json .}}'],3))['ID']!=state['daemonId']:raise ValueError('pull-daemon-identity-changed')
-  observed=inspect_image(image)
-  observation='present' if observed else 'absent'
-  observed_id=observed['Id'] if observed else None
- except (OSError,ValueError,KeyError):pass
+ if completed:
+  deadline=time.monotonic()+8
+  try:
+   if json.loads(docker(['info','--format','{{json .}}'],3))['ID']!=state['daemonId']:raise ValueError('pull-daemon-identity-changed')
+   observed=inspect_image(image)
+   observation='present' if observed else 'absent'
+   observed_id=observed['Id'] if observed else None
+  except (OSError,ValueError,KeyError):pass
  digest=re.search(r'^Digest:\s+(sha256:[a-f0-9]{64})\s*$',stdout,re.M)
  receipt={**pull_receipt_identity(token,pull),'completedAt':max(pull['startedAt'],int(time.time()*1000)),
-          'exitCode':result.returncode,'outcome':outcome,'observation':observation,'observedId':observed_id,
+          'exitCode':exit_code,'executionState':execution_state,'outcome':outcome,'observation':observation,'observedId':observed_id,
           'registryDigest':digest.group(1) if digest else None,
-          'diagnosticSha256':hashlib.sha256((stdout+'\n'+stderr).encode()).hexdigest()}
+          'diagnostic':{**pull_evidence(stdout,stderr,execution_state,outcome),
+                       'stdoutTailBytes':len(stdout_bytes),'stderrTailBytes':len(stderr_bytes)},
+          'diagnosticSha256':hashlib.sha256(stdout_bytes+b'\n'+stderr_bytes).hexdigest()}
  write_pull_receipt(token,receipt)
- print(json.dumps({'outcome':outcome,'recorded':True}));sys.exit(0)
+ print(json.dumps({'outcome':outcome,'recorded':completed}));sys.exit(0)
 
 def remove_image_reference(reference):
  try:docker(['image','rm','--no-prune',reference])
@@ -329,7 +369,7 @@ def settle_pull(token,pull):
   if now-pull['createdAt']<=PULL_OVERDUE_MS:return None
   return {'outcome':'never-started','completedAt':now}
  receipt=read_pull_receipt(token,pull)
- if not receipt:return None
+ if not receipt or receipt['exitCode'] is None:return None
  row=inspect_image(pull['image'])
  current_id=row['Id'] if row else None
  if receipt['observation']!=('present' if row else 'absent') or receipt['observedId']!=current_id:
@@ -388,7 +428,18 @@ for pull in state['pulls'].values():
 protected.update(reference_sources)
 foreign_masters={((r.get('Config') or {}).get('Labels') or {}).get('cds.instance') for r in refs_now}-set(state['masters'])-{None,'',instance}
 out={'scanStatus':'complete','daemonId':state['daemonId'],'platform':{'os':info.get('OSType'),'architecture':{'x86_64':'amd64','aarch64':'arm64'}.get(info.get('Architecture'),info.get('Architecture'))},'budgetBytes':req.get('budgetBytes',0),'imageBytesEstimate':sum(r['Size'] for r in rows),'protectedBytesEstimate':0,'candidates':[],'held':[],'removed':[],'failed':[],'pending':[],'unknown':[],'measurement':'unique-image-logical-size-is-a-conservative-budget-not-released-bytes'}
-out['pullReservations']=[{'identity':pull_public_id(token),'image':pull['image'],'instanceId':pull['instanceId'],'createdAt':pull['createdAt'],'confirmed':bool(pull.get('confirmed')),'reservedBytesEstimate':pull.get('reserveBytes',0),'reason':'awaiting-current-and-inflight-reference-publication' if pull.get('confirmed') else 'native-pull-result-unconfirmed'} for token,pull in state['pulls'].items()]
+def pull_reservation_report(token,pull):
+ confirmed=bool(pull.get('confirmed'))
+ report={'identity':pull_public_id(token),'image':pull['image'],'instanceId':pull['instanceId'],'createdAt':pull['createdAt'],
+         'confirmed':confirmed,'reservedBytesEstimate':pull.get('reserveBytes',0),
+         'reason':'awaiting-current-and-inflight-reference-publication' if confirmed else 'native-pull-result-unconfirmed'}
+ if not confirmed and pull.get('nativePull') and 'startedAt' in pull:
+  try:
+   receipt=read_pull_receipt(cache_token(token),pull)
+   if receipt and receipt.get('diagnostic'):report['diagnostic']=receipt['diagnostic']
+  except (OSError,ValueError,TypeError):pass
+ return report
+out['pullReservations']=[pull_reservation_report(token,pull) for token,pull in state['pulls'].items()]
 unconfirmed=[p for p in out['pullReservations'] if not p['confirmed']]
 reserved=sum(p['reservedBytesEstimate'] for p in unconfirmed)
 overdue=[p for p in unconfirmed if now-p['createdAt']>PULL_OVERDUE_MS]
