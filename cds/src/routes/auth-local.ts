@@ -9,9 +9,9 @@
  *   POST /api/auth/bootstrap          → public; create first local system-owner (only when zero users)
  *   POST /api/auth/login              → public; {username,password} → session cookie
  *   POST /api/auth/change-password    → authed; {oldPassword,newPassword}
- *   GET  /api/auth/users              → authed + system-owner; list users (no secrets)
- *   POST /api/auth/users              → authed + system-owner; create local user
- *   PATCH /api/auth/users/:id         → authed + system-owner; enable/disable / reset password
+ *   GET  /api/auth/users              → owner or admin, within assigned account scope
+ *   POST /api/auth/users              → owner or admin; provision a personal account
+ *   PATCH /api/auth/users/:id         → owner; low-risk changes, including enabling an account
  *   GET  /api/auth/activity           → authed; owner sees all, others see only their own
  *
  * The cookie name + flags are shared with the OAuth router (GH_SESSION_COOKIE)
@@ -27,7 +27,8 @@ import {
   buildSsoLogoutCookie,
   GH_SESSION_COOKIE,
 } from './auth.js';
-import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
+import { accountRole, toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
+import { AccountActionError, AccountActionsService, publicAccountAction } from '../services/account-actions.js';
 import type { StateService } from '../services/state.js';
 import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
   markHumanProjectGrantRecovery, reconcileHumanAccessRestore, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
@@ -35,6 +36,7 @@ import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush
 export interface LegacyLocalLoginResult {
   user: PublicCdsUser;
   setCookie: string;
+  proofCookie?: string;
 }
 
 import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
@@ -88,6 +90,7 @@ function clientIp(req: Request): string | null {
 function localErrStatus(err: LocalAuthError): number {
   switch (err.code) {
     case 'username_taken':
+    case 'account_changed':
       return 409;
     case 'username_invalid':
     case 'password_too_short':
@@ -134,7 +137,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         password: String(password || ''),
         name: typeof name === 'string' ? name : undefined,
       });
-      const session = await authService.createSessionForUser(user.id, {
+      const session = await authService.createSessionForUser(user, {
         userAgent: (req.headers['user-agent'] as string) || null,
         ipAddress: clientIp(req),
       });
@@ -181,6 +184,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
           legacy.setCookie,
           buildLogoutCookie(cookieSecure, hostSessionCookies),
           buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
+          ...(legacy.proofCookie ? [legacy.proofCookie] : []),
         ]);
         res.json({ user: legacy.user });
         return;
@@ -190,7 +194,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         res.status(401).json({ error: '用户名或密码错误' });
         return;
       }
-      const session = await authService.createSessionForUser(user.id, {
+      const session = await authService.createSessionForUser(user, {
         userAgent: (req.headers['user-agent'] as string) || null,
         ipAddress: clientIp(req),
       });
@@ -260,30 +264,62 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     }
   });
 
-  // ── User management (authed + system-owner only) ──
-  function requireOwner(req: AuthedRequest, res: Response): CdsUser | null {
+  // ── Account management ──
+  function requireAccountManager(req: AuthedRequest, res: Response, ownerOnly = false): CdsUser | null {
     const me = req.cdsUser;
     if (!me) {
       res.status(401).json({ error: 'unauthenticated' });
       return null;
     }
-    if (!me.isSystemOwner) {
-      res.status(403).json({ error: '仅系统所有者可管理用户' });
+    if (me.authProvider === 'sso' || (!me.isSystemOwner && (ownerOnly || !me.isAdministrator))) {
+      res.status(403).json({ error: ownerOnly ? '仅系统所有者可执行此操作' : '需要账号管理权限' });
       return null;
     }
     return me;
   }
 
   router.get('/auth/users', async (req: AuthedRequest, res: Response) => {
-    if (!requireOwner(req, res)) return;
-    const users = await authService.listUsers();
-    res.json({ users: users.map(toPublicUser) });
+    const me = requireAccountManager(req, res);
+    if (!me) return;
+    try {
+      const users = await authService.listUsers();
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({
+        users: users.filter(user => me.isSystemOwner || user.id === me.id || accountRole(user) === 'member').map(toPublicUser),
+      });
+    } catch {
+      res.status(503).json({ error: '账号列表读取失败，请重试' });
+    }
+  });
+
+  router.get('/auth/users/:id/impact', async (req: AuthedRequest, res: Response) => {
+    const me = requireAccountManager(req, res);
+    if (!me) return;
+    res.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const user = await authService.findUserById(req.params.id);
+      if (!user || user.id === me.id || user.isSystemOwner || (!me.isSystemOwner && user.isAdministrator)) {
+        res.status(404).json({ error: '当前管理范围内没有该账号' });
+        return;
+      }
+      res.json({ affectedSessions: await authService.countAccountSessions(user) });
+    } catch {
+      res.status(503).json({ error: '会话影响读取失败，请重试' });
+    }
   });
 
   router.post('/auth/users', async (req: AuthedRequest, res: Response) => {
-    const me = requireOwner(req, res);
+    const me = requireAccountManager(req, res);
     if (!me) return;
-    const { username, password, name, isSystemOwner } = req.body || {};
+    const { username, password, name, isSystemOwner, role, externalLoginAllowed, invite } = req.body || {};
+    if (!me.isSystemOwner && (isSystemOwner === true || role === 'admin' || role === 'owner')) {
+      res.status(403).json({ error: '仅系统所有者可创建授权账号' });
+      return;
+    }
+    if (role !== undefined && role !== 'admin' && role !== 'member') {
+      res.status(400).json({ error: '请选择成员或管理员' });
+      return;
+    }
     try {
       const normalizedUsername = String(username || '').trim().toLowerCase();
       if (reservedUsernames.has(normalizedUsername)) {
@@ -293,22 +329,34 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         });
         return;
       }
-      const user = await authService.createLocalUser({
+      const account = {
         username: normalizedUsername,
-        password: String(password || ''),
         name: typeof name === 'string' ? name : undefined,
-        isSystemOwner: isSystemOwner === true,
+        isAdministrator: role === 'admin',
+        externalLoginAllowed: externalLoginAllowed === true,
+      };
+      if (invite === true && (password !== undefined || isSystemOwner === true)) {
+        res.status(400).json({ error: '请选择一次性邀请，或填写初始口令创建账号' });
+        return;
+      }
+      const activation = invite === true ? await authService.createAccountInvitation(account) : null;
+      const user = activation?.user ?? await authService.createLocalUser({
+        ...account, password: String(password || ''), isSystemOwner: isSystemOwner === true,
       });
       await authService.recordActivity({
         userId: me.id,
         userLogin: me.username || me.githubLogin,
         action: 'create-user',
-        summary: `创建本地账号 ${user.username}`,
+        summary: `创建${role === 'admin' ? '管理员' : '本地'}账号 ${user.username}`,
         targetType: 'user',
         targetId: user.id,
         ip: clientIp(req),
       });
-      res.status(201).json({ user: toPublicUser(user) });
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.status(201).json({
+        user: toPublicUser(user),
+        ...(activation ? { invitation: { path: `/login#invite=${activation.invitation}`, expiresAt: activation.expiresAt } } : {}),
+      });
     } catch (err) {
       if (err instanceof LocalAuthError) {
         res.status(localErrStatus(err)).json({ error: err.message, code: err.code });
@@ -321,93 +369,76 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   });
 
   router.patch('/auth/users/:id', async (req: AuthedRequest, res: Response) => {
-    const me = requireOwner(req, res);
-    if (!me) return;
     const targetId = req.params.id;
-    const { status, newPassword } = req.body || {};
-    let finishUpdate: FinishHumanAccessUpdate | undefined;
-    let linkedStatusFailed = false;
+    const { status, newPassword, role, externalLoginAllowed } = req.body || {};
+    const bindingChange = status === undefined && newPassword === undefined && role === undefined
+      && typeof externalLoginAllowed === 'boolean';
+    const me = requireAccountManager(req, res, !bindingChange);
+    if (!me) return;
     try {
       let result: CdsUser | null = await authService.findUserById(targetId);
       if (!result) {
         res.status(404).json({ error: '用户不存在' });
         return;
       }
-      // 先做"可能失败"的密码重置，再做状态变更：否则状态会先落库，密码重置抛错
-      // （如目标是 GitHub 账号 not_local_account）后状态已改却返回错误，无原子回滚
-      // （修复 PR #865 Bugbot Medium「PATCH user applies status before password」）。
-      if (typeof newPassword === 'string' && newPassword.length > 0) {
-        // Admin reset: skip old-password check (caller is system owner).
-        await authService.changePassword(targetId, '', newPassword, true);
+      if (bindingChange) {
+        if (!me.isSystemOwner && (result.id === me.id || accountRole(result) !== 'member')) {
+          res.status(403).json({ error: '管理员只能为普通成员设置绑定资格' });
+          return;
+        }
+        const current = await authService.setExternalLoginAllowed(result, externalLoginAllowed);
+        if (!current) {
+          res.status(409).json({ error: '账号已停用或权限有变化，请刷新当前成员' });
+          return;
+        }
+        await authService.recordActivity({
+          userId: me.id, userLogin: me.username || me.githubLogin,
+          action: 'set-login-binding-eligibility', targetType: 'user', targetId,
+          summary: externalLoginAllowed ? '开通本人绑定第三方账号资格' : '暂停新增第三方账号绑定资格',
+        });
+        res.json({ user: toPublicUser(current) });
+        return;
+      }
+      if (newPassword !== undefined || status === 'disabled' || (role === 'member' && result.isAdministrator)) {
+        res.status(409).json({ code: 'account_action_required', error: '请从「账号与登录」为这次操作逐次确认' });
+        return;
+      }
+      if (role === 'admin') {
+        if (status !== undefined || result.isSystemOwner || result.status !== 'active') {
+          res.status(400).json({ error: '只能为单个启用的非所有者账号授予管理员角色' });
+          return;
+        }
+        if (result.isAdministrator) {
+          res.json({ user: toPublicUser(result) });
+          return;
+        }
+        result = await authService.setUserAdministrator(targetId, true);
+        if (!result) {
+          res.status(409).json({ error: '账号状态已改变，请刷新后重试' });
+          return;
+        }
         await authService.recordActivity({
           userId: me.id,
           userLogin: me.username || me.githubLogin,
-          action: 'reset-password',
-          summary: `重置账号 ${result?.username || result?.githubLogin} 的密码`,
+          action: 'grant-admin',
+          summary: `授予账号 ${result.username || result.githubLogin} 管理员角色`,
           targetType: 'user',
           targetId,
           ip: clientIp(req),
         });
+        res.json({ user: toPublicUser(result) });
+        return;
       }
-      if (status === 'active' || status === 'disabled') {
-        if (status === 'disabled' && targetId === me.id) {
-          res.status(400).json({ error: '不能禁用自己的账号' });
-          return;
-        }
-        const state = deps.stateService;
-        const principalId = humanPrincipalId(targetId);
-        if (state) {
-          finishUpdate = beginHumanProjectGrantUpdate(state, principalId, 'disabled');
-          if (!finishUpdate) {
-            res.status(409).json({ error: '此账号的访问状态正在保存或恢复，请稍后刷新并重试。' }); return;
-          }
-        }
-        let writing: Promise<void> | undefined;
-        try {
-          // Disable the credential side durably before disabling the account.
-          // Enable the account first; the shared gate blocks credentials until
-          // their active state is durable. No cross-store atomicity is assumed.
-          if (state?.getPrincipal(principalId) && status === 'disabled') {
-            state.setPrincipalStatus(principalId, 'disabled', me.username || me.githubLogin);
-            writing = state.flush();
-            await boundedHumanAccessFlush(writing);
-          }
-          result = await authService.setUserStatus(targetId, status);
-          if (state?.getPrincipal(principalId) && status === 'active') {
-            state.setPrincipalStatus(principalId, 'active', me.username || me.githubLogin);
-            writing = state.flush();
-            await boundedHumanAccessFlush(writing);
-          }
-        } catch (error) {
-          if (state?.getPrincipal(principalId)) {
-            linkedStatusFailed = true;
-            // On either store failure, retain a disabled credential side, not
-            // an optimistic enable. Serialize compensation after a late write.
-            try { state.setPrincipalStatus(principalId, 'disabled', me.username || me.githubLogin); }
-            catch { /* Mutation precedes save; retry durable compensation below. */ }
-            const restored = (writing || Promise.resolve()).catch(() => {}).then(async () => {
-              state.save(); await state.flush();
-            });
-            try { await boundedHumanAccessFlush(restored); } catch {
-              markHumanProjectGrantRecovery(state, principalId);
-              const release = finishUpdate!;
-              finishUpdate = undefined;
-              reconcileHumanAccessRestore(state, restored, release);
-            }
-          }
-          throw error;
-        }
-        const cleared = await finishUpdate?.();
-        finishUpdate = undefined;
-        if (cleared === false) {
-          linkedStatusFailed = true;
-          throw new Error('account access journal cleanup pending');
-        }
+      if (status === 'active') {
+        await setLinkedAccountStatus(deps.stateService, result, me, 'active', async () => {
+          result = await authService.setUserStatus(targetId, 'active');
+          if (!result) throw new AccountActionError(404, 'account_not_found', '目标账号不存在');
+        });
         await authService.recordActivity({
           userId: me.id,
           userLogin: me.username || me.githubLogin,
-          action: status === 'disabled' ? 'disable-user' : 'enable-user',
-          summary: `${status === 'disabled' ? '禁用' : '启用'}账号 ${result?.username || result?.githubLogin}`,
+          action: 'enable-user',
+          summary: `启用账号 ${result?.username || result?.githubLogin}`,
           targetType: 'user',
           targetId,
           ip: clientIp(req),
@@ -416,25 +447,91 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       const fresh = (await authService.findUserById(targetId)) ?? result;
       res.json({ user: fresh ? toPublicUser(fresh) : null });
     } catch (err) {
-      if (finishUpdate) {
-        if (!await finishUpdate()) linkedStatusFailed = true;
-        finishUpdate = undefined;
+      if (err instanceof AccountActionError) {
+        res.status(err.status).json({ error: err.message, code: err.code });
+        return;
       }
       if (err instanceof LocalAuthError) {
         res.status(localErrStatus(err)).json({ error: err.message, code: err.code });
         return;
       }
-      // eslint-disable-next-line no-console
-      console.error('[auth-local] patch-user failed:', err);
-      res.status(500).json({ error: linkedStatusFailed
-        ? '账号更新未能完整保存；关联机器凭据已暂停，请恢复存储后刷新账号状态并重试。'
-        : '更新用户失败' });
-    } finally {
-      await finishUpdate?.();
+      res.status(500).json({ error: '更新用户失败' });
     }
   });
 
+  const accountActions = new AccountActionsService(authService, (target, actor, apply) =>
+    setLinkedAccountStatus(deps.stateService, target, actor, 'disabled', apply));
+
+  function accountActionRoute(
+    ownerOnly: boolean,
+    handle: (req: AuthedRequest, res: Response, actor: CdsUser) => Promise<void>,
+  ) {
+    return async (req: AuthedRequest, res: Response): Promise<void> => {
+      const actor = requireAccountManager(req, res, ownerOnly);
+      if (!actor) return;
+      res.setHeader('Cache-Control', 'private, no-store');
+      try {
+        await handle(req, res, actor);
+      } catch (err) {
+        if (err instanceof AccountActionError) {
+          res.status(err.status).json({ error: err.message, code: err.code });
+          return;
+        }
+        res.status(503).json({ error: '账号操作暂时无法确认，请刷新原申请', code: 'account_action_readback_required' });
+      }
+    };
+  }
+
+  router.get('/auth/account-actions', accountActionRoute(false, async (_req, res, actor) => {
+    const requests = await accountActions.list(actor);
+    res.json({ requests: requests.map(publicAccountAction) });
+  }));
+  router.post('/auth/account-actions', accountActionRoute(false, async (req, res, actor) => {
+    const request = await accountActions.submit(actor, req.body || {});
+    res.status(201).json({ request: publicAccountAction(request) });
+  }));
+  router.post('/auth/account-actions/:id/confirm', accountActionRoute(true, async (req, res, actor) => {
+    const request = await accountActions.confirm(actor, req.params.id, req.body || {});
+    res.json({ request: publicAccountAction(request) });
+  }));
+  router.post('/auth/account-actions/:id/reject', accountActionRoute(true, async (req, res, actor) => {
+    const request = await accountActions.decide(actor, req.params.id, 'rejected', req.body?.reason);
+    res.json({ request: publicAccountAction(request) });
+  }));
+  router.post('/auth/account-actions/:id/cancel', accountActionRoute(false, async (req, res, actor) => {
+    const request = await accountActions.decide(actor, req.params.id, 'cancelled', req.body?.reason);
+    res.json({ request: publicAccountAction(request) });
+  }));
+  router.get('/auth/account-action-audit', async (req: AuthedRequest, res: Response) => {
+    const actor = req.cdsUser;
+    if (!actor) {
+      res.status(401).json({ error: '请登录后查看账号审计' });
+      return;
+    }
+    res.setHeader('Cache-Control', 'private, no-store');
+    try {
+      res.json({ records: await accountActions.audit(actor, req.query) });
+    } catch (error) {
+      if (error instanceof AccountActionError) res.status(error.status).json({ code: error.code, error: error.message });
+      else res.status(503).json({ error: '账号审计读取失败，请重试' });
+    }
+  });
+  router.post('/auth/account-action-audit/backfill', accountActionRoute(true, async (req, res, actor) => {
+    const request = await accountActions.backfill(actor, req.body || {});
+    res.status(201).json({ request: publicAccountAction(request) });
+  }));
+
   // ── Activity / trace log (authed) ──
+  router.get('/auth/my-sessions', async (req: AuthedRequest, res: Response) => {
+    const me = req.cdsUser;
+    if (!me) { res.status(401).json({ error: '请先登录' }); return; }
+    res.setHeader('Cache-Control', 'private, no-store');
+    try {
+      res.json(await authService.personalBrowserSessions(me, sessionToken(req, hostSessionCookies)));
+    } catch {
+      res.status(503).json({ error: '本人会话读取失败，请重试' });
+    }
+  });
   router.get('/auth/activity', async (req: AuthedRequest, res: Response) => {
     const me = req.cdsUser;
     if (!me) {
@@ -455,4 +552,61 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   });
 
   return router;
+}
+
+/** Keep the account and linked machine credentials consistent when access changes. */
+async function setLinkedAccountStatus(
+  state: StateService | undefined,
+  target: CdsUser,
+  actor: CdsUser,
+  status: CdsUser['status'],
+  apply: () => Promise<void>,
+): Promise<void> {
+  if (!state) {
+    await apply();
+    return;
+  }
+  const principalId = humanPrincipalId(target.id);
+  const changedBy = actor.username || actor.githubLogin;
+  let finishUpdate: FinishHumanAccessUpdate | undefined = beginHumanProjectGrantUpdate(state, principalId, 'disabled') ?? undefined;
+  if (!finishUpdate) {
+    throw new AccountActionError(409, 'account_access_update_pending', '此账号的访问状态正在保存或恢复，请稍后刷新并重试');
+  }
+  let writing: Promise<void> | undefined;
+  const changeCredentials = async () => {
+    if (!state.getPrincipal(principalId)) return;
+    state.setPrincipalStatus(principalId, status, changedBy);
+    writing = state.flush();
+    await boundedHumanAccessFlush(writing);
+  };
+  try {
+    // Disable credentials first. Enable them only after the account is durable.
+    if (status === 'disabled') await changeCredentials();
+    await apply();
+    if (status === 'active') await changeCredentials();
+    const cleared = await finishUpdate();
+    finishUpdate = undefined;
+    if (cleared === false) {
+      throw new AccountActionError(500, 'account_access_reconciliation_pending', '账号更新已保存，关联凭据正在核对，请刷新账号状态');
+    }
+  } catch (error) {
+    if (!finishUpdate || !state.getPrincipal(principalId)) throw error;
+    // Serialize compensation after an outstanding write and keep access paused.
+    try { state.setPrincipalStatus(principalId, 'disabled', changedBy); }
+    catch { /* Retry durable compensation after the outstanding write. */ }
+    const restored = (writing || Promise.resolve()).catch(() => {}).then(async () => {
+      state.save();
+      await state.flush();
+    });
+    try {
+      await boundedHumanAccessFlush(restored);
+    } catch {
+      markHumanProjectGrantRecovery(state, principalId);
+      reconcileHumanAccessRestore(state, restored, finishUpdate);
+      finishUpdate = undefined;
+    }
+    throw new AccountActionError(500, 'account_access_update_failed', '账号更新未能完整保存；关联机器凭据已暂停，请恢复存储后刷新账号状态并重试。');
+  } finally {
+    await finishUpdate?.();
+  }
 }

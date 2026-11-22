@@ -5,7 +5,7 @@ import type { StateService } from '../services/state.js';
 import type { AuthService } from '../services/auth-service.js';
 import type { IdentityConnection, UserCredential, AgentKey } from '../types.js';
 import { bootstrapRepository } from '../services/bootstrap-target.js';
-import { isHumanSystemOwner } from '../services/human-auth.js';
+import { isHumanSystemOwner, verifiedHumanAccountId } from '../services/human-auth.js';
 import { humanPrincipalId, isHumanProjectGrantUpdatePending } from '../services/human-project-access.js';
 import { hasActiveGrant, credentialUsability, daysFromNow, USER_CREDENTIAL_TTL_DAYS, PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
 import { principalRecoveryBlock, recoveryMessage } from '../services/access-recovery.js';
@@ -89,9 +89,12 @@ export function createIdentityConnectionsRouter({ stateService: state, authServi
           const principalId = r.principalId!; const project = state.getProject(r.projectId!)!;
           const userPlain = mintUserCredentialPlaintext(); const projectPlain = mintProjectCredentialPlaintext(project.slug);
           const user: UserCredential = { id: id('uc_'), principalId, projectIds: [project.id], hash: hash(userPlain),
-            createdAt: new Date().toISOString(), createdBy: r.decidedBy, expiresAt: daysFromNow(USER_CREDENTIAL_TTL_DAYS), issuedCount: 1 };
+            createdAt: new Date().toISOString(), createdBy: r.decidedBy, issuedByAccountId: r.approvedByAccountId ?? null,
+            ...(r.accountProposals ? { accountProposals: true } : {}),
+            expiresAt: daysFromNow(USER_CREDENTIAL_TTL_DAYS), issuedCount: 1 };
           const key: AgentKey = { id: id(''), principalId, hash: hash(projectPlain), scope: 'rw', label: `设备接入 ${r.agentName}`,
-            createdAt: new Date().toISOString(), createdBy: r.decidedBy, expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS), issuedByCredentialId: user.id };
+            createdAt: new Date().toISOString(), createdBy: r.decidedBy, issuedByAccountId: r.approvedByAccountId ?? null,
+            expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS), issuedByCredentialId: user.id };
           const envelope = encrypt({ userCredential: userPlain, authorizationKey: projectPlain,
             projectId: project.id, projectName: project.aliasName || project.name, projectSlug: project.slug }, token, r.id);
           try {
@@ -135,7 +138,8 @@ export function createIdentityConnectionsRouter({ stateService: state, authServi
     if (!owner(req, res)) return;
     try {
       const users = (await auth.listUsers()).filter(u => !u.isSystemOwner).map(u => ({ id: u.id, name: u.name || u.username || u.githubLogin,
-        status: u.status, projectIds: state.getProjectGrants().filter(g => g.principalId === humanPrincipalId(u.id) && !g.revokedAt).map(g => g.projectId) }));
+        status: u.status, isAdministrator: u.isAdministrator === true,
+        projectIds: state.getProjectGrants().filter(g => g.principalId === humanPrincipalId(u.id) && !g.revokedAt).map(g => g.projectId) }));
       res.json({ users, requests: state.getIdentityConnections().filter(live).map(r => ({ id: r.id, agentName: r.agentName,
         repository: r.repository, status: r.status, createdAt: r.createdAt, expiresAt: r.expiresAt,
         projectId: r.projectId, userId: r.userId, decidedBy: r.decidedBy,
@@ -156,12 +160,18 @@ export function createIdentityConnectionsRouter({ stateService: state, authServi
       const blocked = await block(selected);
       if (r.status !== 'pending' || !live(r)) { res.status(409).json({ error: 'request_unavailable' }); return; }
       if (blocked) { res.status(409).json({ error: blocked, message: '请先在用户管理恢复该账号对原项目的授权，再批准接入。' }); return; }
+      const proposals = req.body?.allowAccountProposals === true;
+      if (proposals && !(await auth.findUserById(selected.userId))?.isAdministrator) {
+        res.status(400).json({ error: 'account_proposal_scope_denied', message: '只有在用管理员的设备可以单独授权提交账号提案' }); return;
+      }
       state.updateIdentityConnection(r.id, { status: 'approved', userId: selected.userId, principalId: humanPrincipalId(selected.userId),
-        projectId: project.id, decidedAt: new Date().toISOString(), decidedBy: actor(req) });
+        projectId: project.id, decidedAt: new Date().toISOString(), decidedBy: actor(req),
+        approvedByAccountId: verifiedHumanAccountId(req), ...(proposals ? { accountProposals: true } : {}) });
       await state.flush(); res.json({ approved: true });
     } catch (error) {
       // 先恢复内存中的授权决定；存储本身故障时仍把原错误交给统一处理器。
-      Object.assign(r, { status: 'pending', userId: undefined, principalId: undefined, projectId: undefined, decidedAt: undefined, decidedBy: undefined });
+      Object.assign(r, { status: 'pending', userId: undefined, principalId: undefined, projectId: undefined,
+        decidedAt: undefined, decidedBy: undefined, approvedByAccountId: undefined, accountProposals: undefined });
       try { state.save(); } catch { /* 原错误仍由 next 处理，故障期间不会签发。 */ }
       next(error);
     } finally { deciding.delete(r.id); }

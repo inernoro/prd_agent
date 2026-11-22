@@ -4583,7 +4583,22 @@ export interface Project {
  * kept as a field so a later read-only tier can slot in without a
  * schema migration.
  */
-export interface AgentKey {
+export interface KeyNotificationMetadata {
+  /** Missing on legacy keys. Null when a new key has no verified human signer. */
+  issuedByAccountId?: string | null;
+  notificationHandoff?: {
+    accountId: string;
+    previousAccountId: string | null;
+    byAccountId: string;
+    reason: string;
+    at: string;
+  };
+}
+
+export type NotificationKeyRef = { kind: 'project'; projectId: string; id: string }
+  | { kind: 'global' | 'user'; id: string };
+
+export interface AgentKey extends KeyNotificationMetadata {
   /** Random 8-hex id, used for revocation by keyId. */
   id: string;
   /** 明确人工核对的历史凭据归属审计，不按名称推断。 */
@@ -4645,6 +4660,8 @@ export interface AgentKey {
  */
 export interface IdentityConnection {
   id: string;
+  approvedByAccountId?: string;
+  accountProposals?: boolean;
   repository: string;
   projectHint?: string;
   agentName: string;
@@ -4672,6 +4689,10 @@ export interface AccessRequest {
   projectId: string;
   /** sha256 of the one-time pollToken issued at submit. Only the submitter holds the plaintext. */
   pollTokenHash: string;
+  /** Legacy requests omit this property; null leaves the item in the manual queue. */
+  notificationAccountId?: string | null;
+  notificationKey?: NotificationKeyRef;
+  approvedByAccountId?: string;
   /** 申请方名称(body 传入),用户审批时可见。 */
   agentName: string;
   /** 申请理由,用户审批时可见。 */
@@ -4781,7 +4802,7 @@ export interface Principal {
  * 一步），而是**每一次签发都必然留痕** + **一处可一键切断的总闸**。所以有效期与
  * 级联撤销不是可选项，是这套设计成立的前提。
  */
-export interface UserCredential {
+export interface UserCredential extends KeyNotificationMetadata {
   /** `uc_` + 12 hex */
   id: string;
   principalId: string;
@@ -4792,6 +4813,8 @@ export interface UserCredential {
   label?: string;
   createdAt: string;
   createdBy?: string;
+  /** Granted by a human owner for an administrator's scoped device. */
+  accountProposals?: boolean;
   /** 90 天，用一次自动续 90 天：天天在用的永不打断，闲置三个月的自动失效 */
   expiresAt: string;
   lastUsedAt?: string;
@@ -4852,7 +4875,7 @@ export interface AgentKeyAccess {
  * Storage parallels AgentKey: only sha256 of the plaintext is persisted;
  * plaintext is shown once at signing time.
  */
-export interface GlobalAgentKey {
+export interface GlobalAgentKey extends KeyNotificationMetadata {
   /** Random 8-hex id, used for revocation by keyId. */
   id: string;
   /** Human-readable label, e.g. "bootstrap for prd-agent Claude 2026-04-18". */

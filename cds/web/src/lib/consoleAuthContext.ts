@@ -22,6 +22,7 @@ export type ShellUser = {
   name?: string | null;
   avatarUrl?: string | null;
   isSystemOwner?: boolean;
+  role?: 'owner' | 'admin' | 'member';
 };
 
 export const ConsoleAuthContext = createContext<{

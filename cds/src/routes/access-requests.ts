@@ -26,7 +26,11 @@ import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { inspectAccessRecovery, principalRecoveryBlock, recoveryMessage } from '../services/access-recovery.js';
 import { bootstrapTarget } from '../services/bootstrap-target.js';
 import { PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
-import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner, verifiedHumanAccountId, type HumanAuthContext } from '../services/human-auth.js';
+import { humanPrincipalId } from '../services/human-project-access.js';
+import { hasActiveGrant } from '../services/identity.js';
+import { accessRequestNotificationRecipient, findNotificationKey, keyNotificationRecipient } from '../services/key-notification-routing.js';
+import type { NotificationKeyRef } from '../types.js';
 
 export interface AccessRequestsRouterDeps {
   stateService: StateService;
@@ -67,16 +71,25 @@ function extractPollToken(req: import('express').Request): string {
 }
 
 /** Strip the authorization-key plaintext + poll-token hash before returning to operator UI. */
-function publicView(r: AccessRequest): Omit<AccessRequest, 'issuedKeyPlaintext' | 'pollTokenHash' | 'designRecoveryKeyId'> {
-  const { issuedKeyPlaintext: _k, pollTokenHash: _t, designRecoveryKeyId: _d, ...rest } = r;
+function publicView(r: AccessRequest, state: StateService): Omit<AccessRequest, 'issuedKeyPlaintext' | 'pollTokenHash' | 'designRecoveryKeyId' | 'notificationKey'> {
+  const { issuedKeyPlaintext: _k, pollTokenHash: _t, designRecoveryKeyId: _d, notificationKey: _n, ...rest } = r;
+  const recipient = accessRequestNotificationRecipient(r, state);
+  if (recipient !== undefined) rest.notificationAccountId = recipient;
   if (r.kind === 'bootstrap' && r.status === 'pending' && bootstrapTarget(r.requestedProject)) {
     return { ...rest, targetBound: true };
   }
   return rest;
 }
 
-function pendingCount(stateService: StateService): number {
-  return stateService.listAccessRequests().filter((r) => r.status === 'pending').length;
+export function isAccessRequestRecipient(item: AccessRequest, req: unknown, legacyAudience: boolean, state?: StateService): boolean {
+  const account = accessRequestNotificationRecipient(item, state);
+  if (account === undefined) return legacyAudience;
+  if (typeof account !== 'string' || account !== verifiedHumanAccountId(req)) return false;
+  if (!state || isHumanSystemOwner(req)) return true;
+  if (!item.notificationKey) return true;
+  if (item.notificationKey.kind !== 'project') return (req as HumanAuthContext).cdsUser?.isAdministrator === true;
+  const principalId = humanPrincipalId(account);
+  return state.getPrincipal(principalId)?.status === 'active' && hasActiveGrant(state.getProjectGrants(), principalId, item.notificationKey.projectId);
 }
 
 /** 从请求头里取出调用方出示的凭据明文（两种写法等价，与鉴权中间件同一口径）。 */
@@ -86,6 +99,21 @@ function presentedKey(req: { headers: Record<string, unknown> }): string {
   const auth = req.headers['authorization'];
   if (typeof auth === 'string' && auth.startsWith('Bearer ')) return auth.slice(7).trim();
   return '';
+}
+
+function globalNotification(state: StateService, plaintext: string, projectId?: string): Pick<AccessRequest, 'notificationAccountId' | 'notificationKey'> {
+  if (!plaintext.startsWith('cdsg_')) return {};
+  const credential = state.findGlobalAgentKeyForAuth(plaintext);
+  if (!credential || (projectId && credential.access.projects !== 'all' && !credential.access.projects.includes(projectId))) {
+    return { notificationAccountId: null };
+  }
+  return notificationSource(state, { kind: 'global', id: credential.keyId });
+}
+
+function notificationSource(state: StateService, ref: NotificationKeyRef): Pick<AccessRequest, 'notificationAccountId' | 'notificationKey'> {
+  const key = findNotificationKey(state, ref);
+  if (!key || key.issuedByAccountId === undefined) return {};
+  return { notificationAccountId: keyNotificationRecipient(key), notificationKey: ref };
 }
 
 export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Router {
@@ -163,6 +191,9 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       }
     }
     const principalId = proof?.principalId;
+    const notification = proof?.credentialId ? notificationSource(stateService, proof.kind === 'project'
+      ? { kind: 'project', projectId: project.id, id: proof.credentialId }
+      : { kind: 'user', id: proof.credentialId }) : globalNotification(stateService, key, project.id);
 
     const pollToken = randomBytes(24).toString('base64url');
     const item: AccessRequest = {
@@ -174,13 +205,14 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       purpose,
       status: 'pending',
       createdAt: new Date().toISOString(),
+      ...notification,
       ...(principalId ? { principalId } : {}),
       ...(designAccess ? { designAccess } : {}),
       ...(designAccess && proof?.design ? { designRecoveryKeyId: proof.design.keyId } : {}),
     };
     stateService.addAccessRequest(item);
     cdsEventsBus.publish('access-request.created', {
-      requestId: item.id, projectId: project.id, agentName, purpose, designAccess, pendingCount: pendingCount(stateService),
+      requestId: item.id, projectId: project.id, agentName, purpose, designAccess,
     });
     // 调用方允许用 slug 发起，但后续项目级操作必须使用真实 project.id。
     // 把解析结果随申请返回，避免 CLI 把别名写进 credentials.json 后 project_mismatch。
@@ -208,9 +240,11 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       return;
     }
     const pollToken = randomBytes(24).toString('base64url');
+    const notification = globalNotification(stateService, presentedKey(req));
     const item: AccessRequest = {
       id: newRequestId(),
       kind: 'bootstrap',
+      ...notification,
       expiresAt: new Date(Date.now() + Math.min(3600, Math.max(10, Number.isFinite(body.waitSeconds) ? body.waitSeconds! : 600)) * 1000).toISOString(),
       requestedProject: target,
       targetBound: true,
@@ -228,7 +262,6 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       kind: item.kind,
       agentName,
       purpose,
-      pendingCount: pendingCount(stateService),
     });
     res.status(201).json({ requestId: item.id, pollToken, status: 'pending' });
   });
@@ -336,7 +369,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       status: 'cancelled',
       issuedKeyPlaintext: undefined, decidedAt: new Date().toISOString(),
     });
-    cdsEventsBus.publish('access-request.decided', { requestId: item.id, status: 'cancelled', pendingCount: pendingCount(stateService) });
+    cdsEventsBus.publish('access-request.decided', { requestId: item.id, status: 'cancelled' });
     res.json({ cancelled: true });
   });
 
@@ -347,11 +380,20 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   router.get('/access-requests', (req, res) => {
     // 列表是操作员审批盒的数据源,只给登录用户。机器密钥不得跨项目枚举别人的
     // 申请方/用途(信息泄露),与 approve/reject 的人类门槛保持一致。
-    if (!requireHumanOperator(req, res)) return;
+    const inboxOnly = req.query.queue === 'mine';
+    const all = req.query.queue === 'all';
+    if (inboxOnly) {
+      if (!verifiedHumanAccountId(req)) {
+        res.status(403).json({ error: 'human_account_required', message: '请登录后查看自己的授权通知' });
+        return;
+      }
+    } else if (!requireHumanOperator(req, res)) return;
     const decidedCount = stateService.listAccessRequests().filter((r) => r.status !== 'pending').length;
     if (decidedCount > 20) stateService.pruneAccessRequests(AUDIT_RETENTION_MS);
-    const list = stateService.listAccessRequests().map(item => ({
-      ...publicView(item),
+    const list = stateService.listAccessRequests()
+      .filter(item => all || isAccessRequestRecipient(item, req, !inboxOnly, stateService))
+      .map(item => ({
+      ...publicView(item, stateService),
       ...(item.kind === 'bootstrap' && item.status === 'approved' && item.createdProject
         && stateService.isProjectRemovalConfirmed(item.createdProject.id) ? { receiptArchived: true, creationReceiptEnabled: false } : {}),
       ...(item.kind !== 'bootstrap' ? { projectName: stateService.getProject(item.projectId)?.name } : {}),
@@ -420,6 +462,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       const plaintext = `cdsg_${randomBytes(32).toString('base64url')}`;
       const keyId = randomBytes(4).toString('hex');
       const decidedBy = decider(req);
+      const approvedByAccountId = verifiedHumanAccountId(req);
       const keyEntry: GlobalAgentKey = {
         id: keyId,
         label: `一次性新项目接入 (申请 ${item.id} · ${item.agentName})`,
@@ -431,6 +474,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         expiresAt: new Date(now.getTime() + 300_000).toISOString(),
         createdAt: now.toISOString(),
         createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
+        issuedByAccountId: approvedByAccountId ?? null,
       };
       try {
         stateService.addGlobalAgentKey(keyEntry);
@@ -440,6 +484,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
           targetBound: true,
           decidedAt: now.toISOString(),
           decidedBy,
+          approvedByAccountId,
           issuedKeyId: keyId,
           issuedKeyPlaintext: plaintext,
         });
@@ -453,8 +498,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         projectId: item.projectId,
         kind: item.kind,
         status: 'approved',
-        pendingCount: pendingCount(stateService),
-      });
+        });
       res.json({ approved: true, requestId: item.id });
       return;
     }
@@ -479,7 +523,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       const message = '原设计凭据已吊销或已不存在，请核对本次续接申请';
       stateService.updateAccessRequest(item.id, { status: 'rejected', decidedAt: now.toISOString(), decidedBy: decider(req), rejectReason: message });
       cdsEventsBus.publish('access-request.decided', {
-        requestId: item.id, projectId: project.id, status: 'rejected', pendingCount: pendingCount(stateService),
+        requestId: item.id, projectId: project.id, status: 'rejected',
       });
       res.status(409).json({ error: 'design_key_revoked', message });
       return;
@@ -489,6 +533,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     const plaintext = `cdsp_${slugHead}_${suffix}`;
     const keyId = randomBytes(4).toString('hex');
     const decidedBy = decider(req);
+    const approvedByAccountId = verifiedHumanAccountId(req);
     const keyEntry: AgentKey = {
       id: keyId,
       label: `授权密钥 (申请 ${item.id} · ${item.agentName})`,
@@ -503,6 +548,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       } : {}),
       createdAt: now.toISOString(),
       createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
+      issuedByAccountId: approvedByAccountId ?? null,
     };
     try {
       stateService.addAgentKey(project.id, keyEntry);
@@ -535,6 +581,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         status: 'approved',
         decidedAt: now.toISOString(),
         decidedBy,
+        approvedByAccountId,
         issuedKeyId: keyId,
         issuedKeyPlaintext: plaintext,
       });
@@ -546,7 +593,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       return;
     }
     cdsEventsBus.publish('access-request.decided', {
-      requestId: item.id, projectId: project.id, status: 'approved', pendingCount: pendingCount(stateService),
+      requestId: item.id, projectId: project.id, status: 'approved',
     });
     res.json({ approved: true, requestId: item.id });
   });
@@ -571,7 +618,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       rejectReason: reason,
     });
     cdsEventsBus.publish('access-request.decided', {
-      requestId: item.id, projectId: item.projectId, status: 'rejected', pendingCount: pendingCount(stateService),
+      requestId: item.id, projectId: item.projectId, status: 'rejected',
     });
     res.json({ rejected: true, requestId: item.id });
   });

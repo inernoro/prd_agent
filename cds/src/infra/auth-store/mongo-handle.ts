@@ -11,6 +11,7 @@
 import { MongoClient, type Db, type Collection } from 'mongodb';
 import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UserActivityRecord } from '../../domain/auth.js';
 import type { CdsPasskey } from '../../domain/passkey.js';
+import type { AccountActionRequest } from '../../domain/account-actions.js';
 import type { OidcArtifact } from './oidc-store.js';
 
 // ── Collection interface ──────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ export interface IAuthCollection<T = any> {
   ): Promise<void>;
   /** Update specific fields on the first matching document. */
   updateOne(filter: Record<string, unknown>, update: Record<string, unknown>): Promise<void>;
+  updateOneMatched?(filter: Record<string, unknown>, update: Record<string, unknown>): Promise<boolean>;
   deleteOne(filter: Record<string, unknown>): Promise<void>;
   /** Delete all matching documents; returns the count deleted. */
   deleteMany(filter: Record<string, unknown>): Promise<number>;
@@ -58,6 +60,8 @@ export interface IAuthMongoHandle {
   invitesCollection(): IAuthCollection<CdsWorkspaceInvite>;
   /** User activity / trace log records. */
   activityCollection(): IAuthCollection<UserActivityRecord>;
+  accountActionsCollection?(): IAuthCollection<AccountActionRequest>;
+  ensureExternalIdentityIndexes?(): Promise<void>;
   passkeysCollection?(): Collection<CdsPasskey & { _id: string }>;
   oidcCollection?(): Collection<OidcArtifact>;
   /** Graceful shutdown — waits for any pending ops. */
@@ -138,6 +142,11 @@ function adaptCollection<TEntity>(col: Collection<any>): IAuthCollection<TEntity
       await col.updateOne(filter, update);
     },
 
+    async updateOneMatched(filter, update) {
+      const result = await col.updateOne(filter, update);
+      return result.matchedCount === 1;
+    },
+
     async deleteOne(filter) {
       await col.deleteOne(filter);
     },
@@ -158,6 +167,7 @@ function adaptCollection<TEntity>(col: Collection<any>): IAuthCollection<TEntity
 export class RealAuthMongoHandle implements IAuthMongoHandle {
   private client: MongoClient | null = null;
   private db: Db | null = null;
+  private identityIndexes?: Promise<void>;
 
   private readonly uri: string;
   private readonly databaseName: string;
@@ -228,6 +238,30 @@ export class RealAuthMongoHandle implements IAuthMongoHandle {
     return adaptCollection<UserActivityRecord>(
       this.requireDb().collection<Record<string, unknown>>('cds_user_activity'),
     );
+  }
+
+  accountActionsCollection(): IAuthCollection<AccountActionRequest> {
+    return adaptCollection<AccountActionRequest>(this.requireDb().collection('cds_account_actions'));
+  }
+
+  ensureExternalIdentityIndexes(): Promise<void> {
+    if (!this.identityIndexes) {
+      this.identityIndexes = (async () => {
+        const users = this.requireDb().collection('cds_users');
+        const indexes = await users.listIndexes().toArray().catch(error => {
+          if ((error as { code?: number }).code === 26) return [];
+          throw error;
+        });
+        if (!indexes.some(index => index.unique && Object.keys(index.key).length === 1 && index.key.githubId === 1 &&
+          (!index.partialFilterExpression || index.name === 'cds_linked_github_id'))) {
+          await users.createIndex({ githubId: 1 }, {
+            name: 'cds_linked_github_id', unique: true, partialFilterExpression: { githubId: { $gt: 0 } },
+          });
+        }
+        await users.createIndex({ googleSubject: 1 }, { name: 'cds_linked_google_sub', sparse: true, unique: true });
+      })().catch(error => { this.identityIndexes = undefined; throw error; });
+    }
+    return this.identityIndexes;
   }
 
   passkeysCollection(): Collection<CdsPasskey & { _id: string }> {

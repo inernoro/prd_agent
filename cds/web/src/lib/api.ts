@@ -639,6 +639,11 @@ export interface CdsPublicUser {
   avatarUrl: string | null;
   authProvider: CdsAuthProvider;
   isSystemOwner: boolean;
+  role?: 'owner' | 'admin' | 'member';
+  externalLoginAllowed?: boolean;
+  linkedLogins?: Partial<Record<'github' | 'google', string>>;
+  hasPassword?: boolean;
+  invitationPending?: boolean;
   status: 'active' | 'disabled';
   lastLoginAt: string | null;
   createdAt: string;
@@ -660,6 +665,7 @@ export interface CdsAuthPublicStatus {
   preview?: { project?: string; branch?: string; pullRequest?: number; policyUrl?: string };
   mode: 'disabled' | 'basic' | 'github' | 'sso';
   enabled: boolean;
+  accountProviders?: { github: boolean; google: boolean };
   loginMethods: {
     github: boolean;
     local: boolean;
@@ -788,26 +794,37 @@ export async function changeMyPassword(input: {
   await apiRequest('/api/auth/change-password', { method: 'POST', body: input });
 }
 
-/** List all users (system-owner only). */
+/** List the accounts within the current manager's scope. */
 export async function listUsers(): Promise<CdsPublicUser[]> {
   const res = await apiRequest<{ users: CdsPublicUser[] }>('/api/auth/users');
   return res.users;
 }
 
-/** Create a local user (system-owner only). */
+/** Provision an account within the current manager's role. */
 export async function createLocalUser(input: {
   username: string;
   password: string;
   name?: string;
+  role?: 'admin' | 'member';
+  externalLoginAllowed?: boolean;
 }): Promise<CdsPublicUser> {
   const res = await apiRequest<{ user: CdsPublicUser }>('/api/auth/users', { method: 'POST', body: input });
   return res.user;
 }
 
-/** Enable/disable or admin-reset a user (system-owner only). */
+export async function inviteLocalUser(input: {
+  username: string;
+  name?: string;
+  role: 'admin' | 'member';
+  externalLoginAllowed: boolean;
+}): Promise<{ user: CdsPublicUser; invitation: { path: string; expiresAt: string } }> {
+  return apiRequest('/api/auth/users', { method: 'POST', body: { ...input, invite: true } });
+}
+
+/** Enable an account or assign the administrator role (system-owner only). */
 export async function updateUser(
   id: string,
-  input: { status?: 'active' | 'disabled'; newPassword?: string },
+  input: { status?: 'active'; role?: 'admin'; externalLoginAllowed?: boolean },
 ): Promise<CdsPublicUser | null> {
   const res = await apiRequest<{ user: CdsPublicUser | null }>(
     `/api/auth/users/${encodeURIComponent(id)}`,

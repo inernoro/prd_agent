@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { StateService } from '../services/state.js';
+import { ACCOUNT_NOTIFICATION_SCOPE } from '../services/key-notification-routing.js';
 import { canHumanAccessProject, isScopedHuman, humanPrincipalId, isHumanProjectGrantUpdatePending, logPayloadForHumanView } from '../services/human-project-access.js';
 
 /** Members enter only project-scoped product routes. Unknown/system routes fail closed. */
@@ -21,6 +22,8 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       message: '你没有此项目或系统操作的权限，请联系系统所有者分配项目授权。',
     });
     if ((method === 'GET' && ['/api/me', '/api/auth/status', '/api/auth/activity', '/api/auth/design/notices'].includes(path))
+      || (method === 'GET' && path === '/api/access-requests' && req.query.queue === 'mine')
+      || (method === 'GET' && path === '/api/cds-events' && req.query.scope === ACCOUNT_NOTIFICATION_SCOPE)
       || (method === 'POST' && ['/api/auth/logout', '/api/logout', '/api/auth/change-password', '/api/auth/sso/logout'].includes(path))) {
       next(); return;
     }

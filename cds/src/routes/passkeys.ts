@@ -196,7 +196,7 @@ export function createPasskeyRouter({ origin, auth, store, enabled }: PasskeyRou
     if (!result?.verified || !await store.advanceCounter(key.id, key.counter, result.authenticationInfo.newCounter)) return invalid();
     const user = await auth.findUserById(key.userId);
     if (!user || user.status !== 'active') return invalid();
-    const session = await auth.createSessionForUser(user.id, {
+    const session = await auth.createSessionForUser(user, {
       userAgent: req.get('user-agent') || null, ipAddress: req.ip || null, passkeyAuthenticated: true,
     });
     await auth.recordActivity({ userId: user.id, userLogin: user.username || user.githubLogin, action: 'passkey.login', summary: '使用通行密钥登录' });

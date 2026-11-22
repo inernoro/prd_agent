@@ -5,6 +5,7 @@ import { Activity, RefreshCw, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, listUserActivity, type CdsUserActivity } from '@/lib/api';
 import { Section, LoadingBlock, ErrorBlock, EmptyBlock } from '../components';
+import { AccountAudit } from '../components/AccountAudit';
 
 const ACTION_LABEL: Record<string, string> = {
   login: '登录',
@@ -48,6 +49,8 @@ export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Elemen
     return (rows || []).filter(row => !needle || [row.userLogin,row.userId,row.action,actionLabel(row.action),row.summary,row.targetId,row.ip].some(value => value?.toLocaleLowerCase().includes(needle)));
   }, [rows, query]);
   return (
+    <div className="space-y-6">
+    <AccountAudit canViewAll={canViewAll} />
     <Section
       title="用户操作痕迹"
       description={
@@ -106,5 +109,6 @@ export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Elemen
         )}
       </div>
     </Section>
+    </div>
   );
 }

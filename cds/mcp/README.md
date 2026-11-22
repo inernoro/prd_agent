@@ -53,6 +53,17 @@ cwd = "/absolute/path/project"
 ZIP 最大 100 MiB，报告最大 10 MiB。文件只在本机读取，以 multipart 字节上传；服务器不读取客户端路径。
 所有报告默认受 CDS 项目权限保护，不开启匿名分享。通过任务返回的报告 ID 打开 CDS 报告阅读器。
 
+## 账号操作提案
+
+账号提案使用独立服务。给同一启动脚本加 `--accounts`。CDS 从本机已有的设备授权读取所选实例的用户级凭据，系统所有者可在设备接入审批时为管理员的设备开通此能力。多实例时用现有 `CDS_HOST` 指明使用哪一个已授权实例。
+
+| 工具 | 输入 | 结果 |
+|---|---|---|
+| `cds_account_propose` | `action`、`targetId`、`reason` | 对同一授权项目的普通成员登记待批准请求 |
+| `cds_account_receipt` | `requestId` | 回读本设备发起的提案 |
+
+动作支持 `reset-password`、`disable-user` 和 `revoke-sessions`。批准和执行在 CDS 页面由系统所有者逐次完成。
+
 查询结果保留原有 `task`，额外返回 `reportUrl` 和 `result`。`result.findings` 可直接用于定位文件、解释原因与生成修复建议；默认每页 50 条，使用 `result.page.nextOffset` 继续查询，统计与覆盖说明独立于当前页。所有引擎发现都保留未验证状态，不据此自动修改代码、合并或发布。
 
 新审查在私有对象存储中保留结构化原始字段；旧版 CDS Markdown 能完整还原时提供已有问题字段。导入文档或不能完整还原的历史报告返回 `result: null` 与原因，并保留原文阅读入口，不伪造结构化扫描结果。

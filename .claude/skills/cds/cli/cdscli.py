@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.13"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.14"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -12928,6 +12928,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sm.add_argument("id", help="branchId")
     sm.set_defaults(func=cmd_smoke)
 
+    account = sub.add_parser("account", help="提交及回读已授权项目范围的账号操作提案").add_subparsers(dest="account_action", required=True)
+    propose = account.add_parser("propose", help="登记待系统所有者逐次确认的请求")
+    propose.add_argument("action", choices=["reset-password", "disable-user", "revoke-sessions"])
+    propose.add_argument("--target", required=True, help="当前授权项目中成员的 CDS 账号编号")
+    propose.add_argument("--reason", required=True, help="变更原因，不包含任何凭据")
+    propose.set_defaults(func=cmd_account_proposal)
+    receipt = account.add_parser("receipt", help="回读由当前设备发起的提案")
+    receipt.add_argument("request_id", help="服务端申请编号")
+    receipt.set_defaults(func=cmd_account_proposal)
+
     ident = sub.add_parser("identity", help="身份层：用户级凭证 / 我是谁 / 凭据自愈").add_subparsers(dest="sub", required=True)
     isave = ident.add_parser("save", help="保存用户级凭证到用户目录（跟着人走，不跟着仓库走）")
     # 明文**不走命令行参数**：argv 对同机任何进程可见，还会留在 shell 历史里。
@@ -13017,6 +13027,28 @@ def cmd_identity_save(args: argparse.Namespace) -> None:
     path = save_user_credential(host, credential)
     ok({"host": host, "path": path}, note=f"用户级凭证已保存到 {path}（0600，不进仓库）")
 
+
+def cmd_account_proposal(args: argparse.Namespace) -> None:
+    credential = _load_user_credential(_cds_base())
+    if not credential.startswith("cdsu_"):
+        die("当前实例暂无设备授权。请通过 CDS 设备接入，获得账号提案权限。", code=2)
+        return
+    if args.account_action == "propose":
+        method, endpoint = "POST", "/api/auth/account-proposals"
+        body = {"action": args.action, "targetId": args.target.strip(), "reason": args.reason.strip()}
+    else:
+        if not re.fullmatch(r"[a-f0-9]{64}", args.request_id):
+            die("申请编号无效，请使用服务端回执。", code=2)
+            return
+        method, endpoint = "GET", f"/api/auth/account-proposals/{args.request_id}"
+        body = None
+    status, response, _ = _request(method, endpoint, body, extra_headers={"X-AI-Access-Key": credential},
+                                   fatal_network_errors=False, follow_redirects=False)
+    if status not in (200, 201):
+        error_code = response.get("code") if isinstance(response, dict) else None
+        die(f"账号提案请求失败（HTTP {status}）", code=2, extra={"serverCode": error_code})
+        return
+    ok(response, note="账号操作提案回执")
 
 def cmd_identity_whoami(args: argparse.Namespace) -> None:
     """我是谁 / 我对哪些项目有授权。"""

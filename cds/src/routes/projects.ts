@@ -85,7 +85,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
-import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner, verifiedHumanAccountId, type HumanAuthContext } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -339,7 +339,7 @@ function mintProjectAgentKey(
   project: Project,
   label: string,
   createdBy?: string,
-  restrictions: Pick<AgentKey, 'planningAccess' | 'designAccess'> = {},
+  metadata: Pick<AgentKey, 'planningAccess' | 'designAccess' | 'issuedByAccountId'> = {},
 ): { keyId: string; plaintext: string; preview: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
   const suffix = randomBytes(32).toString('base64url');
@@ -351,7 +351,8 @@ function mintProjectAgentKey(
     label,
     hash,
     scope: 'rw',
-    ...restrictions,
+    ...metadata,
+    issuedByAccountId: metadata.issuedByAccountId ?? null,
     createdAt: new Date().toISOString(),
     createdBy: createdBy || undefined,
   };
@@ -3413,6 +3414,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
             newProject,
             `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
             (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login,
+            { issuedByAccountId: verifiedHumanAccountId(req) ?? creationKey?.issuedByAccountId ?? null },
           );
         } catch {
           // 签发失败不阻断建项目本身:项目已建好,用户仍可去项目卡手动签 key。
@@ -4571,6 +4573,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     try {
       minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, {
         planningAccess: body.planningAccess, designAccess: body.designAccess,
+        issuedByAccountId: verifiedHumanAccountId(req) ?? null,
       });
     } catch (err) {
       res.status(500).json({
@@ -4602,6 +4605,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         designAccess: e.designAccess,
         createdAt: e.createdAt,
         createdBy: e.createdBy,
+        issuedByAccountId: e.issuedByAccountId,
         lastUsedAt: e.lastUsedAt,
         revokedAt: e.revokedAt,
         status: e.revokedAt ? 'revoked' : 'active',
@@ -4738,6 +4742,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       access,
       createdAt: now.toISOString(),
       createdBy: ghUser?.login || undefined,
+      issuedByAccountId: verifiedHumanAccountId(req) ?? null,
     };
     try {
       stateService.addGlobalAgentKey(entry);
@@ -4768,6 +4773,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         access: StateService.resolveGlobalAgentKeyAccess(e),
         createdAt: e.createdAt,
         createdBy: e.createdBy,
+        issuedByAccountId: e.issuedByAccountId,
         lastUsedAt: e.lastUsedAt,
         revokedAt: e.revokedAt,
         status: e.revokedAt ? 'revoked' : 'active',

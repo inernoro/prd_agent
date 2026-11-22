@@ -615,6 +615,7 @@ function RailNav({
   onBugReport,
   onNavigate,
 }: RailNavProps & { onNavigate?: () => void }): JSX.Element {
+  const { status } = useContext(ConsoleAuthContext);
   return (
     <>
       <div className="cds-rail-section">
@@ -785,6 +786,7 @@ function RailNav({
           <span className="cds-rail-short">设置</span>
         </Link>
         </> : !authPending ? (
+          <>
           <Link to="/cds-settings#activity" className="cds-rail-item"
             data-active={active === 'cds-settings' ? 'true' : 'false'}
             aria-label="个人操作痕迹" title="查看自己的操作记录" onClick={onNavigate}>
@@ -792,6 +794,15 @@ function RailNav({
             <span className="cds-rail-full">个人操作痕迹</span>
             <span className="cds-rail-short">痕迹</span>
           </Link>
+          {status?.user?.role === 'admin' ? (
+            <Link to="/cds-settings#users" className="cds-rail-item"
+              aria-label="账号与登录" title="管理个人账号和登录方式" onClick={onNavigate}>
+              <SlidersHorizontal />
+              <span className="cds-rail-full">账号与登录</span>
+              <span className="cds-rail-short">账号</span>
+            </Link>
+          ) : null}
+          </>
         ) : null}
       </div>
       <div className="cds-rail-footer">

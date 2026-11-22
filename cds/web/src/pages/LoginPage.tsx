@@ -26,6 +26,7 @@ import {
   apiUrl,
   exchangeTicketSso,
   fetchAuthPublicStatus,
+  apiRequest,
   fetchBootstrapStatus,
   bootstrapFirstUser,
   fetchSessionAuthed,
@@ -67,14 +68,21 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
   const [loginMethodsReady, setLoginMethodsReady] = useState(false);
   const [localLoginEnabled, setLocalLoginEnabled] = useState(false);
   const [githubLoginEnabled, setGithubLoginEnabled] = useState(false);
+  const [accountGithubLogin, setAccountGithubLogin] = useState(false);
+  const [googleLoginEnabled, setGoogleLoginEnabled] = useState(false);
   const [passkeyEnabled, setPasskeyEnabled] = useState(false);
+  const [showOtherMethods, setShowOtherMethods] = useState(false);
+  const [signInNotice, setSignInNotice] = useState<{ action: string; at: string; receiptId?: string } | null>(null);
   const [ssoLogin, setSsoLogin] = useState<{ enabled: boolean; label: string }>({
     enabled: false,
     label: '使用 SSO 登录',
   });
   const [bootstrapName, setBootstrapName] = useState('');
   const target = useMemo(() => redirectTarget(), []);
-  const githubLoginHref = useMemo(() => apiUrl(`/api/auth/github/login?redirect=${encodeURIComponent(target)}`), [target]);
+  const githubLoginHref = apiUrl(accountGithubLogin
+    ? `/api/auth/external/github/start?purpose=login&redirect=${encodeURIComponent(target)}`
+    : `/api/auth/github/login?redirect=${encodeURIComponent(target)}`);
+  const googleLoginHref = apiUrl(`/api/auth/external/google/start?purpose=login&redirect=${encodeURIComponent(target)}`);
 
   useEffect(() => {
     let alive = true;
@@ -83,6 +91,8 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
         if (!alive) return;
         setLocalLoginEnabled(s.loginMethods.local);
         setGithubLoginEnabled(s.loginMethods.github);
+        setAccountGithubLogin(s.accountProviders?.github === true && s.mode !== 'github');
+        setGoogleLoginEnabled(s.accountProviders?.google === true);
         setPasskeyEnabled(s.loginMethods.passkey === true && Boolean(window.PublicKeyCredential));
         setSsoLogin({
           enabled: s.loginMethods.sso === true && s.sso?.enabled === true,
@@ -98,6 +108,9 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
         setSsoLogin({ enabled: false, label: '使用 SSO 登录' });
         setLoginMethodsReady(true);
       });
+    apiRequest<{ notice: { action: string; at: string; receiptId?: string } | null }>('/api/auth/sign-in-notice')
+      .then(result => { if (alive) setSignInNotice(result.notice); })
+      .catch(() => {});
     fetchBootstrapStatus()
       .then((s) => { if (alive) setNeedsBootstrap(s.needsBootstrap); })
       .catch(() => { /* endpoint absent in non-github modes — ignore */ })
@@ -106,7 +119,8 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
   }, []);
 
   const showLocalLogin = needsBootstrap || localLoginEnabled;
-  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled || passkeyEnabled;
+  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled || googleLoginEnabled || passkeyEnabled;
+  const showPasswordForm = showLocalLogin && (needsBootstrap || !hasExternalLogin || showOtherMethods);
 
   function goToTarget() {
     // Server endpoints (including the cluster login handoff) must reach Express.
@@ -224,7 +238,64 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
 
 
 
-      {loginMethodsReady && showLocalLogin ? <div className="cds-auth-fields">
+      {signInNotice ? (
+        <div className="rounded-md border border-border bg-muted/35 p-3 text-sm" role="status">
+          <p className="font-semibold">需要重新登录</p>
+          <p className="mt-1 text-muted-foreground">
+            {signInNotice.action === 'rotate-system-password' ? '系统账号口令已变更，旧共用会话已结束。请使用新口令重新登录。'
+              : signInNotice.action === 'disable-user' ? '此会话因账号状态变更已退出。请联系 CDS 管理员恢复访问。'
+              : signInNotice.action === 'reset-password' ? '账号口令已更新，之前的会话已结束。请用当前口令或已绑定身份登录。'
+                : '账号的登录会话已由授权操作结束。请重新登录。'}
+          </p>
+          <p className="mt-2 break-all text-xs text-muted-foreground">{new Date(signInNotice.at).toLocaleString()}
+            {signInNotice.receiptId ? ` · 记录 ${signInNotice.receiptId}` : ''}</p>
+        </div>
+      ) : null}
+      {new URLSearchParams(window.location.search).get('external') === 'error' ? (
+        <div className="cds-auth-error" role="alert">
+          第三方登录未完成。可重试，或先用个人口令登录并在「我的账号」完成绑定。
+        </div>
+      ) : null}
+      {!loginMethodsReady || needsBootstrap || !hasExternalLogin ? null : (
+        <>
+          <div className="grid gap-2">
+            {passkeyEnabled ? (
+              <Button type="button" variant="outline" className="cds-auth-github" disabled={busy}
+                onClick={() => { void signInPasskey(); }}>
+                <ShieldCheck />
+                使用通行密钥登录
+              </Button>
+            ) : null}
+            {ssoLogin.enabled ? (
+              <Button asChild type="button" variant="outline" className="cds-auth-github">
+                <a href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}>
+                  <KeyRound />
+                  {ssoLogin.label}
+                </a>
+              </Button>
+            ) : null}
+            {githubLoginEnabled ? (
+              <Button asChild type="button" variant="outline" className="cds-auth-github">
+                <a href={githubLoginHref}>
+                  <Github />
+                  使用 GitHub 登录
+                </a>
+              </Button>
+            ) : null}
+            {googleLoginEnabled ? (
+              <Button asChild variant={githubLoginEnabled ? 'outline' : 'default'} className="cds-auth-github">
+                <a href={googleLoginHref}><KeyRound />使用 Google 登录</a>
+              </Button>
+            ) : null}
+          </div>
+          {showLocalLogin ? (
+            <Button type="button" variant="ghost" aria-expanded={showOtherMethods}
+              onClick={() => setShowOtherMethods(value => !value)}>其他登录方式</Button>
+          ) : null}
+        </>
+      )}
+
+      {loginMethodsReady && showPasswordForm ? <div className="cds-auth-fields">
         <label className="cds-auth-field">
           <span>用户名</span>
           <input
@@ -283,7 +354,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
         </div>
       ) : null}
 
-      {loginMethodsReady && showLocalLogin ? (
+      {loginMethodsReady && showPasswordForm ? (
         <Button type="submit" disabled={busy} className="cds-auth-submit h-10">
           {busy ? <Loader2 className="animate-spin" /> : null}
           {busy
@@ -293,42 +364,115 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
         </Button>
       ) : null}
 
-      {!loginMethodsReady || needsBootstrap || !hasExternalLogin ? null : (
-        <>
-          {showLocalLogin ? (
-            <div className="cds-auth-divider" aria-hidden>
-              <span>或</span>
-            </div>
-          ) : null}
-          <div className="grid gap-2">
-            {passkeyEnabled ? (
-              <Button type="button" variant="outline" className="cds-auth-github" disabled={busy}
-                onClick={() => { void signInPasskey(); }}>
-                <ShieldCheck />
-                使用通行密钥登录
-              </Button>
-            ) : null}
-            {ssoLogin.enabled ? (
-              <Button asChild type="button" variant="outline" className="cds-auth-github">
-                <a href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}>
-                  <KeyRound />
-                  {ssoLogin.label}
-                </a>
-              </Button>
-            ) : null}
-            {githubLoginEnabled ? (
-              <Button asChild type="button" variant="outline" className="cds-auth-github">
-                <a href={githubLoginHref}>
-                  <Github />
-                  使用 GitHub 登录
-                </a>
-              </Button>
-            ) : null}
-          </div>
-        </>
-      )}
-
+      <a className="text-sm text-muted-foreground underline" href="/login?recovery=1">申请身份恢复</a>
       <p className="cds-auth-hint">同源会话 Cookie · 凭据不落本地存储</p>
+    </form>
+  );
+}
+
+function AccountActivation({ invitation }: { invitation: string }): JSX.Element {
+  const [providers, setProviders] = useState<{ github: boolean; google: boolean } | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    void fetchAuthPublicStatus().then(result => {
+      if (active) setProviders(result.accountProviders ?? { github: false, google: false });
+    }).catch(() => { if (active) setProviders({ github: false, google: false }); });
+    return () => { active = false; };
+  }, []);
+  const thirdParty = providers?.github || providers?.google;
+
+  async function activate(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      await apiRequest('/api/auth/invitations/activate', { method: 'POST', body: { invitation, password } });
+      window.location.replace('/cds-settings#my-account');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+      setBusy(false);
+    }
+  }
+
+  async function openProvider(provider: 'github' | 'google'): Promise<void> {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await apiRequest<{ authorizationUrl: string }>(`/api/auth/external/${provider}/start`, {
+        method: 'POST', body: { purpose: 'activate', invitation },
+      });
+      const url = new URL(result.authorizationUrl);
+      if (url.origin !== (provider === 'github' ? 'https://github.com' : 'https://accounts.google.com')) throw new Error('登录服务地址异常');
+      window.location.assign(url.toString());
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="cds-auth-card" onSubmit={activate}>
+      <h1 className="cds-auth-title">激活 CDS 账号</h1>
+      <p className="cds-auth-sub">选择一种方式完成首次登录。激活后可在「我的账号」绑定更多方式。</p>
+      {providers ? <div className="grid gap-2">
+        {providers.github ? <Button type="button" variant="outline" className="cds-auth-github" disabled={busy}
+          onClick={() => { void openProvider('github'); }}><Github />用 GitHub 激活</Button> : null}
+        {providers.google ? <Button type="button" variant="outline" className="cds-auth-github" disabled={busy}
+          onClick={() => { void openProvider('google'); }}><KeyRound />用 Google 激活</Button> : null}
+        {thirdParty ? <Button type="button" variant="ghost" aria-expanded={showPassword}
+          onClick={() => setShowPassword(value => !value)}>设置个人口令</Button> : null}
+        {!thirdParty || showPassword ? <>
+          <label className="cds-auth-field"><span>个人口令（至少 8 位）</span>
+            <input aria-label="个人口令" type="password" className="cds-auth-input" required minLength={8}
+              maxLength={512} autoComplete="new-password" value={password} disabled={busy}
+              onChange={event => setPassword(event.target.value)} />
+          </label>
+          <Button className="cds-auth-submit" type="submit" disabled={busy}>{busy ? '正在激活' : '激活并登录'}</Button>
+        </> : null}
+      </div> : <p className="text-sm text-muted-foreground">读取可用登录方式</p>}
+      {error ? <div className="cds-auth-error" role="alert">{error}</div> : null}
+      <a href="/login" className="text-sm text-muted-foreground underline">返回登录</a>
+    </form>
+  );
+}
+
+function RecoveryRequestForm(): JSX.Element {
+  const [username, setUsername] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      await apiRequest('/api/auth/recovery-requests', { method: 'POST', body: { username, reason } });
+      setSent(true);
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <form className="cds-auth-card" onSubmit={submit}>
+      <h1 className="cds-auth-title">申请身份恢复</h1>
+      {sent ? <p className="cds-auth-sub" role="status">信息已提交。如适用，CDS 管理员会核实身份。可通过原团队渠道联系管理员。</p> : <>
+        <p className="cds-auth-sub">填写 CDS 用户名和恢复说明。请勿填写口令或访问密钥。</p>
+        <div className="cds-auth-fields">
+          <label className="cds-auth-field"><span>CDS 用户名</span><input className="cds-auth-input" value={username}
+            onChange={event => setUsername(event.target.value)} required minLength={3} maxLength={32} disabled={busy} /></label>
+          <label className="cds-auth-field"><span>恢复说明</span><textarea className="cds-auth-input" value={reason}
+            onChange={event => setReason(event.target.value)} required minLength={3} maxLength={500} disabled={busy} rows={3} /></label>
+        </div>
+        {error ? <div className="cds-auth-error" role="alert">{error}</div> : null}
+        <Button className="cds-auth-submit" type="submit" disabled={busy}>{busy ? '正在提交' : '提交恢复申请'}</Button>
+      </>}
+      <a href="/login" className="text-sm text-muted-foreground underline">返回登录</a>
     </form>
   );
 }
@@ -337,6 +481,8 @@ export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
   // 'checking' = 正在探会话态;'anon' = 未登录,展示登录框。已登录则直接跳走,
   // 不会停留在此状态。探测期间用同轮廓骨架占位,避免先闪一下登录框再跳转。
+  const [recovery] = useState(() => new URLSearchParams(window.location.search).get('recovery') === '1');
+  const [invitation] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('invite'));
   const [authPhase, setAuthPhase] = useState<'checking' | 'anon'>('checking');
   const [preview, setPreview] = useState<PreviewLoginContext | undefined>(() => isChildPreviewCdsInstance() ? {} : undefined);
   useEffect(() => {
@@ -356,6 +502,7 @@ export function LoginPage(): JSX.Element {
   // 直接访问 /login 时,若会话 cookie 仍有效,跳过登录框直达目标页
   // (默认 /project-list,或 ?redirect= 指定的合法内部路径)。
   useEffect(() => {
+    if (invitation || recovery) return;
     let alive = true;
     if (new URLSearchParams(window.location.search).get('choose_account') === '1') {
       setAuthPhase('anon');
@@ -384,9 +531,9 @@ export function LoginPage(): JSX.Element {
     return () => {
       alive = false;
     };
-  }, [navigate]);
+  }, [navigate, invitation, recovery]);
 
-  const content = authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm preview={preview} />;
+  const content = recovery ? <RecoveryRequestForm /> : invitation ? <AccountActivation invitation={invitation} /> : authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm preview={preview} />;
   return preview ? <PreviewAccessFrame>{content}</PreviewAccessFrame> : <AuthPageFrame>{content}</AuthPageFrame>;
 }
 

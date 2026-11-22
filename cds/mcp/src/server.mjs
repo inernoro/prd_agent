@@ -5,15 +5,17 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { createDtsBridge } from './dts-bridge.mjs';
 import { createDesignBridge } from './design-bridge.mjs';
 import { createPlanningBridge } from './planning-bridge.mjs';
+import { createAccountBridge, readAccountCredentials } from './account-bridge.mjs';
 import { createBridge, readProjectCredentials } from './bridge.mjs';
 
 async function main() {
-  const credentials = await readProjectCredentials();
+  const accounts = process.argv.includes('--accounts');
+  const credentials = await (accounts ? readAccountCredentials() : readProjectCredentials());
   const dts = process.argv.includes('--dts');
   const planning = process.argv.includes('--planning');
   const design = process.argv.includes('--design');
-  if ([dts, planning, design].filter(Boolean).length > 1) throw new Error('请为不同的 CDS 能力分别配置 MCP 服务');
-  const [name, create] = design ? ['cds-design', createDesignBridge] : planning ? ['cds-planning', createPlanningBridge]
+  if ([dts, planning, design, accounts].filter(Boolean).length > 1) throw new Error('请为不同的 CDS 能力分别配置 MCP 服务');
+  const [name, create] = accounts ? ['cds-accounts', createAccountBridge] : design ? ['cds-design', createDesignBridge] : planning ? ['cds-planning', createPlanningBridge]
     : dts ? ['cds-dts', createDtsBridge] : ['cds-code-review', createBridge];
   const bridge = create(credentials);
   const server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } });

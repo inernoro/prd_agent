@@ -62,6 +62,17 @@ CDS 这边您想做什么？
 
 ## cdscli — 唯一 CLI 入口（其他两个技能也走它）
 
+### 账号操作提案
+
+用户明确要求对已知成员账号进行重置口令、停用或结束会话时，先核对用户给的 CDS 账号编号、当前项目范围和变更原因。使用已经获「账号提案」授权的设备，不接收口令或粘贴密钥。若缺权，由系统所有者在「系统设置 › 账号与登录 › 身份恢复 › 设备接入」批准原项目及管理员设备的提案资格。
+
+```bash
+cdscli account propose revoke-sessions --target <CDS账号编号> --reason "<变更原因>"
+cdscli account receipt <服务端申请编号>
+```
+
+MCP 的 `--accounts` 服务提供 `cds_account_propose` 和 `cds_account_receipt`。CLI、MCP 与 HTTP 走同一服务端校验。收到 `pending` 时把原编号和下一步交还给用户，系统所有者可在「待批申请」核对目标、影响及原因。回读 `completed` 后再报告实际执行结果。
+
 ```bash
 CLI="python3 $(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"
 
