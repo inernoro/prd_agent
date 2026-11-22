@@ -29,6 +29,7 @@ interface CdsConnectionView {
   pairingExpiresAt?: string;
   partnerName?: string;
   partnerBaseUrl?: string;
+  workspaceOnly?: boolean;
   createdAt: string;
 }
 
@@ -150,9 +151,11 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
   const activeMapConnections = connections.filter(
     (connection) => connection.partnerKind === 'map' && connection.status === 'active',
   );
+  const workspaceConnections = activeMapConnections.filter(connection => connection.workspaceOnly);
   const integration = integrationState.status === 'ok' ? integrationState.data : null;
   const authorizationConfirmed = state.status === 'ok' && integrationState.status === 'ok';
-  const fullyAuthorized = activeMapConnections.length > 0 && Boolean(integration?.configured);
+  const fullyAuthorized = workspaceConnections.length > 0
+    || activeMapConnections.length > 0 && Boolean(integration?.configured);
 
   return (
     <Section
@@ -200,7 +203,9 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
             title="MAP 系统互联"
             ready={state.status === 'ok' ? activeMapConnections.length > 0 : undefined}
             detail={state.status !== 'ok' ? '状态未确认，请重试读取' : activeMapConnections.length > 0
-              ? `${activeMapConnections.length} 条有效长期连接`
+              ? workspaceConnections.length
+                ? `${workspaceConnections.length} 条 OpenDesign 工作区授权`
+                : `${activeMapConnections.length} 条有效长期连接`
               : '尚未建立双向信任连接'}
           />
           <StatusCard

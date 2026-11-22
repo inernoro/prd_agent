@@ -3150,6 +3150,10 @@ export interface CdsConnection {
   pairingTokenHash?: string;
   /** 配对密钥过期时间（默认 issuedAt + 10 分钟）。 */
   pairingExpiresAt?: string;
+  /** Consumed hash, used to reject a repeated exchange for a cluster connection. */
+  redeemedPairingTokenHash?: string;
+  /** The authority owns this record. Only this member may exchange or use it. */
+  clusterMemberId?: string;
 
   // ── 激活态字段（status='active' 时有） ──
   /** SHA256 hash of long token（明文不存）。 */
@@ -3164,7 +3168,7 @@ export interface CdsConnection {
   partnerName?: string;
   /** 对端公开访问 URL，CDS 反向 callback / 健康检查用。 */
   partnerBaseUrl?: string;
-  /** 这条连接绑定的 shared-service Project（accept 时 CDS 自动创建）。 */
+  /** Standalone shared-service project, or pre-approved authority project for a cluster member. */
   projectId?: string;
 
   /** ISO 时间戳。 */
