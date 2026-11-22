@@ -53,10 +53,15 @@ describe('真实HTTP固定授权与期限', () => {
     let usedMB = 24 * 1024;
     scheduler.setMemoryCapacityProvider(async () => ({ scope: 'host', totalMB: 100 * 1024, limitMB: 85 * 1024, usedMB }));
     const read = () => fetch(base + '/scheduler/state').then(r => r.json());
+    const health = () => fetch(base + '/cds-system/perf-health').then(r => r.json());
+    const initialHealth = await health();
+    expect(initialHealth.scheduler.memoryCapacity).toMatchObject({ usedMB });
+    expect(initialHealth.warnings).not.toContainEqual(expect.objectContaining({ code: 'scheduler-memory-unavailable' }));
     expect(await read()).toMatchObject({ memoryCapacity: { usedMB }, capacityUsage: { max: null } });
     const saved = await request('/scheduler/config', { idleTTLSeconds: 3600, maxHotBranches: 10 }, 'owner', 'PUT');
     expect(saved.status).toBe(200);
     usedMB = 85 * 1024;
+    expect((await health()).warnings).toContainEqual(expect.objectContaining({ code: 'scheduler-memory-limit' }));
     expect(await read()).toMatchObject({ config: { idleTTLSeconds: 3600 }, memoryCapacity: { usedMB }, capacityUsage: { max: null } });
   });
 

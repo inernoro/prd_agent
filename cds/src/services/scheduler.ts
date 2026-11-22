@@ -5,6 +5,7 @@ import { resolveBranchProtection } from './branch-protection.js';
 import { resolvePreviewActivity, type PreviewActivityUnknownReason } from '../forwarder/preview-activity.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
 import type { PreviewMemoryCapacity } from './deployment-phase-budget.js';
+import { isAutoWakeEligible } from './branch-wake-eligibility.js';
 
 /**
  * SchedulerService — branch warm-pool manager for small servers.
@@ -97,6 +98,8 @@ export class SchedulerService {
   private pressure?: () => SchedulerSnapshot['resourcePressure'] | Promise<SchedulerSnapshot['resourcePressure']>;
   private observedPressure: SchedulerSnapshot['resourcePressure'] = 'unknown';
   private memoryCapacityProvider?: () => Promise<PreviewMemoryCapacity | null>;
+  private hasStartupMemoryPressure?: (limitMB: number, requestedWakeMB?: number) => boolean;
+  private deferredWake?: { slug: string; memoryMB: number; expiresAt: number };
   private memoryCapacity: PreviewMemoryCapacity | null = null;
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
@@ -174,8 +177,26 @@ export class SchedulerService {
   setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null): void { this.runtimePresence = provider; }
   setOperationProtection(provider: (slug: string) => boolean): void { this.operationProtection = provider; }
   setResourcePressureProvider(provider: NonNullable<SchedulerService['pressure']>): void { this.pressure = provider; }
-  setMemoryCapacityProvider(provider: NonNullable<SchedulerService['memoryCapacityProvider']>): void {
+  setMemoryCapacityProvider(provider: NonNullable<SchedulerService['memoryCapacityProvider']>,
+    hasStartupMemoryPressure?: NonNullable<SchedulerService['hasStartupMemoryPressure']>): void {
     this.memoryCapacityProvider = provider;
+    this.hasStartupMemoryPressure = hasStartupMemoryPressure;
+  }
+
+  noteDeferredWakeMemory(slug: string, memoryMB: number): void {
+    // Remember recent demand for cooling decisions. Only a later user visit can restart it.
+    const tickMs = Math.max(1000, (this.config.tickIntervalSeconds || 60) * 1000);
+    this.deferredWake = { slug, memoryMB, expiresAt: this.activityMonotonicNow() + 2 * tickMs };
+  }
+
+  private requestedWakeMemory(): number | undefined {
+    const demand = this.deferredWake;
+    if (!demand) return undefined;
+    const branch = this.stateService.getBranch(demand.slug);
+    if (this.activityMonotonicNow() < demand.expiresAt && branch && isAutoWakeEligible(branch,
+      { projectPaused: this.stateService.getProject(branch.projectId || 'default')?.paused })) return demand.memoryMB;
+    this.deferredWake = undefined;
+    return undefined;
   }
 
   async refreshMemoryCapacity(): Promise<PreviewMemoryCapacity | null> {
@@ -568,7 +589,12 @@ export class SchedulerService {
     const idleTTLMs = (this.config.idleTTLSeconds || 900) * 1000;
     if (this.memoryCapacityProvider) {
       const capacity = await this.refreshMemoryCapacity();
-      if (!capacity || capacity.usedMB < capacity.limitMB) return;
+      if (!capacity) return;
+      const requestedWakeMB = this.requestedWakeMemory();
+      const startupPressure = this.hasStartupMemoryPressure?.(capacity.limitMB, requestedWakeMB);
+      if (!startupPressure) this.deferredWake = undefined;
+      if (capacity.usedMB < capacity.limitMB && !startupPressure) return;
+      this.observedPressure = 'pressure';
       const victim = this.selectLruVictim(undefined, now - idleTTLMs);
       if (victim) await this.markCold(victim.id);
       return;

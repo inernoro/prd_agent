@@ -27150,7 +27150,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // 预览调度器被禁用 → 空闲分支永不回收 → 容器无限堆积 → 18 核主机 load 28 →
   // 构建越来越慢/失败。这一切此前在面板上完全不可见。本端点把它显性化，监控弹窗
   // 据此红黄告警，让「调度器禁用/主机过载/容器堆积/构建变慢」一眼可见、不再静默复发。
-  router.get('/cds-system/perf-health', (_req, res) => {
+  router.get('/cds-system/perf-health', async (_req, res) => {
     const cores = (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1;
     const load = os.loadavg();
     const loadAvg1 = Number((load[0] || 0).toFixed(2));
@@ -27163,6 +27163,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const nodes = registry?.getAll() || [];
     const runningContainers = nodes.reduce((sum, n) => sum + (n.runningContainers ?? n.branches.length), 0);
 
+    await schedulerService?.refreshMemoryCapacity();
     const snap = schedulerService?.getSnapshot();
     const scheduler = snap
       ? { wired: true, enabled: snap.enabled, maxHotBranches: snap.config.maxHotBranches, idleTTLSeconds: snap.config.idleTTLSeconds,

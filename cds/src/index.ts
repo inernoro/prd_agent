@@ -2975,7 +2975,8 @@ deploymentMemoryReconciler.unref?.();
 const schedulerService = new SchedulerService(stateService, config.scheduler);
 schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
 schedulerService.setResourcePressureProvider(schedulerResourcePressure);
-schedulerService.setMemoryCapacityProvider(deploymentPreviewMemoryCapacity);
+schedulerService.setMemoryCapacityProvider(deploymentPreviewMemoryCapacity,
+  (limitMB, requestedWakeMB) => deploymentPhaseBudget.hasStartupMemoryPressure(limitMB, requestedWakeMB));
 schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
   .some(operation => operation.request.kind !== 'scheduler-cooling'));
 let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];
@@ -3332,7 +3333,9 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         total + Math.max(1, profiles.find(profile => profile.id === svc.profileId)?.resources?.memoryMB || 512), 0);
       try {
         await schedulerService.evictLruIfOverCapacity(slug);
+        lease?.assertCurrent('auto-wake memory preflight');
         if (!deploymentPhaseBudget.hasStartupMemoryHeadroom(startupMB)) {
+          schedulerService.noteDeferredWakeMemory(slug, startupMB);
           throw new Error('当前内存余量无法启动完整预览，请等资源释放后重试。');
         }
       } catch {

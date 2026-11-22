@@ -166,6 +166,17 @@ export class DeploymentPhaseBudget {
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, { memoryMB, pids, owner }]) => ({ key, memoryMB, pids, owner })); }
   hasStartupMemoryHeadroom(memoryMB: number): boolean { return this.memoryAllows(memoryMB); }
+
+  hasStartupMemoryPressure(limitMB: number, requestedWakeMB?: number): boolean {
+    const blocked = (memoryMB: number, key?: string) =>
+      memoryMB + this.headroomMB <= limitMB && !this.memoryAllows(memoryMB, key);
+    if (requestedWakeMB !== undefined && blocked(requestedWakeMB)) return true;
+    return (this.waiting.get('start') || []).some(request => {
+      if (request.signal?.aborted || Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) return false;
+      try { request.check?.(); } catch { return false; }
+      return blocked(request.memoryMB, request.reservationKey);
+    });
+  }
   /** 在异步停止/失败收尾之前捕获预约身份，确认后也不能清掉同名称的新预约。 */
   captureMemoryRelease(key: string, owner?: DeploymentPhaseOwner): () => boolean {
     const reservation = this.memoryReservations.get(key);

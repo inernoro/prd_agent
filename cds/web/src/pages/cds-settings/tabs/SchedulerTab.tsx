@@ -175,7 +175,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
       <ReclaimExecutionStatus snapshot={j?.snapshot} readError={j?.readError} />
 
     </Section>
-    <Section title="自动冷却" description={dynamic ? '达到内存上限时，新启动等待资源释放。自动冷却只处理已超过空闲时长且未受保护的预览。' : '空闲超过时长或热分支达到上限时，冷却最久未访问的非固定分支。'} actions={<Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={scheduler.busy} onClick={() => void scheduler.load(true)}>重新读取冷却规则</Button>}>
+    <Section title="自动冷却" description={dynamic ? '内存不足时，新启动等待资源释放。自动冷却只处理已超过空闲时长且未受保护的预览。' : '空闲超过时长或热分支达到上限时，冷却最久未访问的非固定分支。'} actions={<Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" size="sm" disabled={scheduler.busy} onClick={() => void scheduler.load(true)}>重新读取冷却规则</Button>}>
       {scheduler.state.status === 'loading' ? <LoadingBlock label="读取冷却规则" /> : scheduler.state.status === 'error' ? <ErrorBlock message={scheduler.state.message} /> : !s ? <LoadingBlock label="读取当前会话冷却规则" /> : !s.snapshot.config ? <p className="text-sm text-muted-foreground">调度服务未启动，当前没有可编辑配置。请确认服务运行后重新读取。</p> : <div className="space-y-4">
         <p role="status" className="text-sm text-muted-foreground">{s.unknown ? '保存结果未确认' : `已确认状态：${s.saved.enabled ? '已启用' : '已停用'}`}{scheduler.dirty && !s.unknown ? ' · 草稿未保存' : ''}</p>
         <fieldset disabled={scheduler.busy} className="space-y-4"><label className="flex min-h-[3.25rem] items-center gap-2 text-sm"><input type="checkbox" checked={s.draft.enabled} onChange={event => scheduler.update({ enabled: event.target.checked })} className="h-4 w-4 accent-primary" />允许自动冷却（保存后生效）</label>
