@@ -4,14 +4,13 @@ import type { StateService } from './state.js';
 import { resolveBranchProtection } from './branch-protection.js';
 import { resolvePreviewActivity, type PreviewActivityUnknownReason } from '../forwarder/preview-activity.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
+import type { PreviewMemoryCapacity } from './deployment-phase-budget.js';
 
 /**
  * SchedulerService — branch warm-pool manager for small servers.
  *
- * Core idea: CDS does NOT keep every branch running forever. It maintains a
- * bounded "warm pool" of HOT branches. When a new branch needs to wake, if the
- * pool is full, the least-recently-accessed non-pinned branch is cooled down.
- * Idle branches become eligible after `idleTTLSeconds`; confirmed ample resources defer idle cooling.
+ * The warm pool follows live memory pressure. A new wake waits for capacity.
+ * During pressure, only branches with confirmed idle time become eligible for cooling.
  *
  * See `doc/design.cds.resilience.md` for the full design.
  *
@@ -51,7 +50,8 @@ export interface SchedulerSnapshot {
   config: SchedulerConfig;
   hot: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
   cold: Array<{ slug: string; lastAccessedAt: string | undefined }>;
-  capacityUsage: { current: number; max: number };
+  capacityUsage: { current: number; max: number | null };
+  memoryCapacity?: PreviewMemoryCapacity | null;
   previewActivity?: PreviewActivityStatus;
   resourcePressure: 'ample' | 'pressure' | 'unknown';
   occupancy: Array<{ slug: string; state: 'resident' | 'reserved' | 'unknown' | 'nonresident'; reason: string }>;
@@ -96,6 +96,8 @@ export class SchedulerService {
   private tickInFlight?: Promise<void>;
   private pressure?: () => SchedulerSnapshot['resourcePressure'] | Promise<SchedulerSnapshot['resourcePressure']>;
   private observedPressure: SchedulerSnapshot['resourcePressure'] = 'unknown';
+  private memoryCapacityProvider?: () => Promise<PreviewMemoryCapacity | null>;
+  private memoryCapacity: PreviewMemoryCapacity | null = null;
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
   private activitySource?: { read: () => Promise<unknown>; isProbe: (fingerprint: string) => boolean; masterStartedAt: number };
@@ -172,6 +174,15 @@ export class SchedulerService {
   setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null): void { this.runtimePresence = provider; }
   setOperationProtection(provider: (slug: string) => boolean): void { this.operationProtection = provider; }
   setResourcePressureProvider(provider: NonNullable<SchedulerService['pressure']>): void { this.pressure = provider; }
+  setMemoryCapacityProvider(provider: NonNullable<SchedulerService['memoryCapacityProvider']>): void {
+    this.memoryCapacityProvider = provider;
+  }
+
+  async refreshMemoryCapacity(): Promise<PreviewMemoryCapacity | null> {
+    try { this.memoryCapacity = await this.memoryCapacityProvider?.() ?? null; }
+    catch { this.memoryCapacity = null; }
+    return this.memoryCapacity;
+  }
   private async refreshResourcePressure(): Promise<void> {
     try { this.observedPressure = await this.pressure?.() ?? 'unknown'; } catch { this.observedPressure = 'unknown'; }
   }
@@ -277,7 +288,8 @@ export class SchedulerService {
     if (typeof this.tickHandle.unref === 'function') {
       this.tickHandle.unref();
     }
-    console.log(`[scheduler] started (maxHot=${this.config.maxHotBranches}, idleTTL=${this.config.idleTTLSeconds}s, tick=${this.config.tickIntervalSeconds}s)`);
+    const capacity = this.memoryCapacityProvider ? 'dynamic-memory' : `maxHot=${this.maxHot()}`;
+    console.log(`[scheduler] started (${capacity}, idleTTL=${this.config.idleTTLSeconds}s, tick=${this.config.tickIntervalSeconds}s)`);
   }
 
   /**
@@ -489,9 +501,13 @@ export class SchedulerService {
    * Find the LRU (least-recently-accessed) non-pinned HOT branch.
    * Returns null if there's nothing to evict.
    */
-  selectLruVictim(excludeSlug?: string): BranchEntry | null {
-    const hotBranches = this.getHotBranches().filter(b => b.id !== excludeSlug && !this.isPinned(b)
-      && this.occupancy(b).state === 'resident' && !this.cooling.has(b.id) && !this.reservations.has(b.id));
+  selectLruVictim(excludeSlug?: string, idleThrough?: number): BranchEntry | null {
+    const hotBranches = this.getHotBranches().filter(b => {
+      const accessedAt = Date.parse(b.lastAccessedAt || '');
+      return b.id !== excludeSlug && !this.isPinned(b) && this.occupancy(b).state === 'resident'
+        && !this.cooling.has(b.id) && !this.reservations.has(b.id)
+        && (idleThrough === undefined || (accessedAt > 0 && accessedAt <= idleThrough));
+    });
     if (hotBranches.length === 0) return null;
 
     return hotBranches.reduce<BranchEntry | null>((oldest, b) => {
@@ -503,12 +519,16 @@ export class SchedulerService {
   }
 
   /**
-   * If the hot pool would exceed maxHotBranches after waking `excludeSlug`,
-   * cool the LRU victim. Returns the number of branches cooled (0 or 1).
-   *
-   * Effective capacity never exceeds 25, including legacy unlimited settings.
+   * Dynamic hosts defer wake at their memory limit without stopping another
+   * branch. The count-based path remains for callers without a host sampler.
    */
   async evictLruIfOverCapacity(excludeSlug?: string): Promise<number> {
+    if (this.memoryCapacityProvider) {
+      const capacity = await this.refreshMemoryCapacity();
+      if (!capacity) throw new Error('暂时无法确认预览内存容量，请稍后重试。');
+      if (capacity.usedMB >= capacity.limitMB) throw new Error('预览内存已达容量上限，请等资源释放后重试。');
+      return 0;
+    }
     if (!this.isEnabled()) return 0;
     const max = this.maxHot();
 
@@ -546,6 +566,13 @@ export class SchedulerService {
 
     const now = this.clock.now();
     const idleTTLMs = (this.config.idleTTLSeconds || 900) * 1000;
+    if (this.memoryCapacityProvider) {
+      const capacity = await this.refreshMemoryCapacity();
+      if (!capacity || capacity.usedMB < capacity.limitMB) return;
+      const victim = this.selectLruVictim(undefined, now - idleTTLMs);
+      if (victim) await this.markCold(victim.id);
+      return;
+    }
 
     // 1. Idle-based cooling
     const hotBranches = this.getHotBranches();
@@ -618,8 +645,9 @@ export class SchedulerService {
       cold,
       capacityUsage: {
         current: this.hotIds().size,
-        max: this.maxHot(),
+        max: this.memoryCapacityProvider ? null : this.maxHot(),
       },
+      memoryCapacity: this.memoryCapacityProvider ? this.memoryCapacity : undefined,
       resourcePressure: this.observedPressure,
       occupancy: all.map(b => this.occupancy(b)),
       protections: all.flatMap(branch => {

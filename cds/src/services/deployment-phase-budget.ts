@@ -7,7 +7,7 @@ import { buildLoadPressure, buildGateStatus, registerJointBuildSlot, pumpWaiters
   type BuildLoadPressure, type BuildSlot, type AcquireOptions } from './build-gate.js';
 import { HOST_LOAD_SATURATED_RATIO } from './control-plane-pressure.js';
 
-let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
+let memorySample: { mb: number; at: number } | undefined;
 let memoryRead: Promise<void> | undefined;
 let daemonMemory: { usedMB: number; pids?: number; at: number; maxAgeMs: number } | undefined;
 export function setDeploymentPhaseHostUsage(usedMB: number, at: number, maxAgeMs: number, pids?: number): void {
@@ -31,30 +31,76 @@ export function deploymentHostMemoryBudgetMB(): number | null {
   const value = Number(raw);
   return Number.isInteger(value) && value >= 1024 ? value : 0;
 }
-function sampleHostMemoryMB(): number {
-  if (process.platform === 'linux' && !memoryRead) {
+function samplePhysicalHostMemoryMB(): number | undefined {
+  if (process.platform !== 'linux') return os.freemem() / 1048576;
+  if (!memoryRead && (!memorySample || Date.now() - memorySample.at >= 500)) {
     memoryRead = readFile('/proc/meminfo', 'utf8').then(text => {
       const value = /(?:^|\n)MemAvailable:\s+(\d+) kB/.exec(text);
       if (!value) throw new Error('memory sample unavailable');
       memorySample = { mb: Number(value[1]) / 1024, at: Date.now() };
-    }).catch(() => { memorySample = { mb: os.freemem() / 1048576, at: Date.now() }; })
+    }).catch(() => { memorySample = undefined; })
       .finally(() => { memoryRead = undefined; });
   }
-  const physical = process.platform !== 'linux' ? os.freemem() / 1048576 : Date.now() - memorySample.at > 5000 ? 0 : memorySample.mb;
+  return memorySample && Date.now() - memorySample.at <= 5000 ? memorySample.mb : undefined;
+}
+
+function sampleHostMemoryMB(): number {
+  const physical = samplePhysicalHostMemoryMB() ?? 0;
   const budget = deploymentHostMemoryBudgetMB();
   if (budget === null) return physical;
   if (!budget || !daemonMemory || Date.now() - daemonMemory.at > daemonMemory.maxAgeMs) return 0;
   return Math.max(0, Math.min(physical, budget - daemonMemory.usedMB));
 }
-let memoryProvider = sampleHostMemoryMB;
-export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null): void {
-  memoryProvider = provider || sampleHostMemoryMB;
+
+export const PREVIEW_MEMORY_LIMIT_PERCENT = 85;
+export interface PreviewMemoryCapacity {
+  scope: 'host' | 'docker';
+  totalMB: number;
+  usedMB: number;
+  limitMB: number;
 }
-/** Observation uses the same physical/daemon budget as startup admission. */
-export async function deploymentHostAvailableMemoryMB(): Promise<number> {
-  memoryProvider();
+
+export function calculatePreviewMemoryCapacity(physicalTotalMB: number, physicalAvailableMB: number | undefined,
+  docker?: { totalMB: number; usedMB: number }): PreviewMemoryCapacity | null {
+  if (physicalAvailableMB === undefined || !Number.isFinite(physicalAvailableMB)
+    || !Number.isFinite(physicalTotalMB) || physicalTotalMB <= 0
+    || physicalAvailableMB < 0 || physicalAvailableMB > physicalTotalMB) return null;
+  const host = { scope: 'host' as const, totalMB: physicalTotalMB, usedMB: physicalTotalMB - physicalAvailableMB,
+    limitMB: physicalTotalMB * PREVIEW_MEMORY_LIMIT_PERCENT / 100 };
+  if (!docker) return host;
+  if (!Number.isFinite(docker.totalMB) || docker.totalMB <= 0 || !Number.isFinite(docker.usedMB) || docker.usedMB < 0) return null;
+  const daemon = { scope: 'docker' as const, ...docker, limitMB: docker.totalMB * PREVIEW_MEMORY_LIMIT_PERCENT / 100 };
+  return daemon.limitMB - daemon.usedMB < host.limitMB - host.usedMB ? daemon : host;
+}
+
+function samplePreviewMemoryCapacity(): PreviewMemoryCapacity | null {
+  const physical = samplePhysicalHostMemoryMB();
+  const dockerBudget = deploymentHostMemoryBudgetMB();
+  if (dockerBudget === null) return calculatePreviewMemoryCapacity(os.totalmem() / 1048576, physical);
+  if (!dockerBudget || !daemonMemory || Date.now() - daemonMemory.at > daemonMemory.maxAgeMs) return null;
+  return calculatePreviewMemoryCapacity(os.totalmem() / 1048576, physical, { totalMB: dockerBudget, usedMB: daemonMemory.usedMB });
+}
+
+export async function deploymentPreviewMemoryCapacity(): Promise<PreviewMemoryCapacity | null> {
+  samplePhysicalHostMemoryMB();
   if (memoryRead) await memoryRead;
-  return memoryProvider();
+  return samplePreviewMemoryCapacity();
+}
+
+function samplePreviewStartupMemoryMB(): number {
+  const capacity = samplePreviewMemoryCapacity();
+  return capacity ? Math.max(0, capacity.limitMB - capacity.usedMB) : 0;
+}
+
+let memoryProvider = samplePreviewStartupMemoryMB;
+export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null): void {
+  memoryProvider = provider || samplePreviewStartupMemoryMB;
+}
+/** Reports available memory before the preview-specific reserve. */
+export async function deploymentHostAvailableMemoryMB(): Promise<number> {
+  sampleHostMemoryMB();
+  if (memoryRead) await memoryRead;
+  return sampleHostMemoryMB();
 }
 
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
@@ -119,6 +165,7 @@ export class DeploymentPhaseBudget {
       containerId: containerId && /^[a-f0-9]{64}$/.test(containerId) ? containerId : undefined });
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, { memoryMB, pids, owner }]) => ({ key, memoryMB, pids, owner })); }
+  hasStartupMemoryHeadroom(memoryMB: number): boolean { return this.memoryAllows(memoryMB); }
   /** 在异步停止/失败收尾之前捕获预约身份，确认后也不能清掉同名称的新预约。 */
   captureMemoryRelease(key: string, owner?: DeploymentPhaseOwner): () => boolean {
     const reservation = this.memoryReservations.get(key);

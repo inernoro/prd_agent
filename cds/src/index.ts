@@ -141,7 +141,7 @@ import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } f
 import { ResourceUsageSampler, getObservedRunningContainerNames, forgetConfirmedStoppedContainers } from './services/resource-usage-sampler.js';
 import { serviceRuntimeRefs, servingRuntime } from './services/service-runtime.js';
 import { stopServiceForCooling } from './services/scheduler-service-stop.js';
-import { restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
+import { deploymentPhaseBudget, deploymentPreviewMemoryCapacity, restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
 import { isRemoteExecutorOwned } from './services/executor-ownership.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
@@ -2975,6 +2975,7 @@ deploymentMemoryReconciler.unref?.();
 const schedulerService = new SchedulerService(stateService, config.scheduler);
 schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
 schedulerService.setResourcePressureProvider(schedulerResourcePressure);
+schedulerService.setMemoryCapacityProvider(deploymentPreviewMemoryCapacity);
 schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
   .some(operation => operation.request.kind !== 'scheduler-cooling'));
 let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];
@@ -3324,15 +3325,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       }
       stateService.save();
 
-      // Enforce the scheduler's hot-pool budget the same way scheduler.wake()
-      // does — evict the LRU branch before bringing this one up. Otherwise
-      // opening several cooled preview URLs would markHot() them all past
-      // maxHotBranches until the next scheduler tick, blowing the configured
-      // hot-container budget. No-op when the scheduler is disabled or
-      // maxHotBranches is unset.
-      //
-      // A conflict is a retryable deferral: restore the request state and retain
-      // all existing protections rather than bypassing the configured capacity.
+      // Defer when host memory headroom is unavailable and keep existing routes.
       try {
         await schedulerService.evictLruIfOverCapacity(slug);
       } catch {
@@ -3351,7 +3344,11 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       const failed: string[] = [];
       for (const svc of services) {
         lease?.assertCurrent(`auto-wake before ${svc.profileId}`);
-        if (!autoWakeAdmission.hasHeadroom()) throw new Error('宿主资源不足，已停止继续唤醒；请稍后重新启动分支');
+        const profile = profiles.find(candidate => candidate.id === svc.profileId);
+        const startupMB = Math.max(1, profile?.resources?.memoryMB || 512);
+        if (!autoWakeAdmission.hasHeadroom() || !deploymentPhaseBudget.hasStartupMemoryHeadroom(startupMB)) {
+          throw new Error('宿主资源不足，已停止继续唤醒；请稍后重新启动分支');
+        }
         const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
           projectId: branch.projectId,
           branchId: branch.id,
@@ -3379,7 +3376,6 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         // deploy path: optional startup-signal, then TCP/HTTP probe. The branch
         // stays 'restarting' meanwhile, so the waiting page keeps showing
         // progress until the upstream truly serves.
-        const profile = profiles.find((p) => p.id === svc.profileId);
         let ready = false;
         if (profile?.startupSignal) {
           // 唤醒是 docker restart 级操作：启动信号等待收紧到 120s（默认 300s 是给

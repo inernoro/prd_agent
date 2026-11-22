@@ -26956,7 +26956,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // consistent "disabled" payload so Dashboard UIs can degrade gracefully.
   // ─────────────────────────────────────────────────────────────────────
 
-  router.get('/scheduler/state', (_req, res) => {
+  router.get('/scheduler/state', async (_req, res) => {
     if (!schedulerService) {
       res.json({
         enabled: false,
@@ -26967,6 +26967,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       return;
     }
+    await schedulerService.refreshMemoryCapacity();
     res.json(schedulerService.getSnapshot());
   });
 
@@ -27164,7 +27165,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
     const snap = schedulerService?.getSnapshot();
     const scheduler = snap
-      ? { wired: true, enabled: snap.enabled, maxHotBranches: snap.config.maxHotBranches, idleTTLSeconds: snap.config.idleTTLSeconds, hotCount: snap.hot.length }
+      ? { wired: true, enabled: snap.enabled, maxHotBranches: snap.config.maxHotBranches, idleTTLSeconds: snap.config.idleTTLSeconds,
+        hotCount: snap.hot.length, memoryCapacity: snap.memoryCapacity }
       : { wired: false, enabled: false, maxHotBranches: 0, idleTTLSeconds: 0, hotCount: 0 };
 
     const projects = stateService.getState().projects || [];
@@ -27182,8 +27184,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
     const warnings: Array<{ level: 'critical' | 'warning'; code: string; message: string }> = [];
     if (scheduler.wired && !scheduler.enabled) {
-      warnings.push({ level: 'critical', code: 'scheduler-disabled', message: '预览调度器已禁用：空闲分支不会自动回收，运行容器会无限堆积拖垮主机（本次性能问题根因）。请到调度器设置启用并设 maxHotBranches。' });
-    } else if (scheduler.enabled && scheduler.maxHotBranches === 0) {
+      warnings.push({ level: 'critical', code: 'scheduler-disabled', message: '预览自动冷却已停用。请在调度器设置中启用空闲预览的自动冷却。' });
+    } else if (snap?.memoryCapacity === null) {
+      warnings.push({ level: 'warning', code: 'scheduler-memory-unavailable', message: '暂时无法确认预览内存容量，请稍后重新读取。' });
+    } else if (snap?.memoryCapacity && snap.memoryCapacity.usedMB >= snap.memoryCapacity.limitMB) {
+      warnings.push({ level: 'warning', code: 'scheduler-memory-limit', message: '预览内存已达到容量上限，新启动会等待资源释放。' });
+    } else if (scheduler.enabled && snap?.memoryCapacity === undefined && scheduler.maxHotBranches === 0) {
       warnings.push({ level: 'warning', code: 'scheduler-unlimited', message: '调度器已启用但 maxHotBranches=0（不限）：高峰期热分支数无上限，建议设一个上限防止容器堆积。' });
     }
     if (loadPercent >= 100) {

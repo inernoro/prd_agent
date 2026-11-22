@@ -5,6 +5,7 @@ import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import { SchedulerService, type Clock } from '../../src/services/scheduler.js';
 import type { BranchEntry, SchedulerConfig } from '../../src/types.js';
+import type { PreviewMemoryCapacity } from '../../src/services/deployment-phase-budget.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -101,6 +102,44 @@ describe('SchedulerService', () => {
   // ── capacity and LRU eviction ──
 
   describe('capacity', () => {
+    it('wakes the 26th branch with memory available and never evicts an existing preview on admission', async () => {
+      for (let index = 0; index < 25; index++) stateService.addBranch(makeBranch(`online-${index}`));
+      let memory: PreviewMemoryCapacity | null = { scope: 'host', totalMB: 100, limitMB: 85, usedMB: 40 };
+      scheduler.setMemoryCapacityProvider(async () => memory);
+      await scheduler.wake('eligible');
+      expect(woken).toEqual(['eligible']);
+      expect(cooled).toEqual([]);
+      expect(scheduler.getSnapshot().memoryCapacity).toMatchObject({ usedMB: 40, limitMB: 85 });
+      expect(scheduler.getSnapshot().capacityUsage.max).toBeNull();
+      memory = { ...memory, usedMB: 85 };
+      await expect(scheduler.wake('wait-at-limit')).rejects.toThrow('已达容量上限');
+      memory = null;
+      await expect(scheduler.wake('wait-unknown')).rejects.toThrow('无法确认');
+      expect(cooled).toEqual([]);
+      expect(woken).toEqual(['eligible']);
+    });
+
+    it('cools only one confirmed idle and unprotected preview at a time when physical memory is tight', async () => {
+      const before = (offset: number) => new Date(clock.now() - offset).toISOString();
+      stateService.addBranch(makeBranch('never-observed'));
+      stateService.addBranch(makeBranch('fixed', 'running', { pinnedByUser: true, lastAccessedAt: before(3_000_000) }));
+      stateService.addBranch(makeBranch('idle-old', 'running', { lastAccessedAt: before(2_000_000) }));
+      stateService.addBranch(makeBranch('idle-next', 'running', { lastAccessedAt: before(1_000_000) }));
+      stateService.addBranch(makeBranch('recent', 'running', { lastAccessedAt: before(10_000) }));
+      let memory: PreviewMemoryCapacity | null = null;
+      scheduler.setMemoryCapacityProvider(async () => memory);
+      await scheduler.tick();
+      memory = { scope: 'host', totalMB: 100, limitMB: 85, usedMB: 84 };
+      await scheduler.tick();
+      expect(cooled).toEqual([]);
+      memory = { ...memory, usedMB: 86 };
+      await scheduler.tick();
+      expect(cooled).toEqual(['idle-old']);
+      memory = { ...memory, usedMB: 84 };
+      await scheduler.tick();
+      expect(cooled).toEqual(['idle-old']);
+    });
+
     it('markHot succeeds when under capacity', () => {
       stateService.addBranch(makeBranch('a'));
       scheduler.markHot('a');
