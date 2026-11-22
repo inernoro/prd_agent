@@ -24,6 +24,7 @@ const people = new Map<string, DesignActor>([
   ['rotated-designer', { kind: 'agent', id: 'designer', label: 'Fixture refreshed key', permissions }],
   ['git-designer', { kind: 'agent', id: 'git-designer', label: 'Fixture restricted designer', permissions, gitPublishOnly: true }],
   ['read-designer', { kind: 'agent', id: 'read-designer', label: 'Read-only designer', permissions: ['read'] }],
+  ['implementer', { kind: 'agent', id: 'implementer', label: 'Implementation agent', permissions: ['read'], feedback: true }],
   ['author', { kind: 'human', id: 'author', label: 'Fixture reviewer', permissions }],
   ['other', { kind: 'human', id: 'other', label: 'Other member', permissions }],
   ['steward', { kind: 'human', id: 'steward', label: 'Fixture steward', permissions, steward: true }],
@@ -170,6 +171,109 @@ describe('private CDS design workspace', () => {
       body: JSON.stringify({ type, requestId, ...fields }),
     });
   }
+
+
+  it('preserves complete delivery files and advice as private versioned material', async () => {
+    const guide = '# 合成交付说明\n核对实现地址和手机画面。\n';
+    const spec = '# 实现契约\n明暗双主题。\n';
+    const bytes = draft('Complete delivery', {
+      source: '原型源码/', frameworkDraft: 'spec/', prototypeVersion: 21, date: '2026-11-21',
+      notes: '验收时核对导航和滚动。', docs: ['设计文档/实现.md', '开发说明/开发说明.md'],
+    }, [
+      { name: 'bundle/交付说明.md', data: Buffer.from(guide) },
+      { name: 'bundle/设计文档/实现.md', data: Buffer.from(spec) },
+      { name: 'bundle/开发说明/开发说明.md', data: Buffer.from('# 开发说明\n合成数据。') },
+      { name: 'bundle/原型源码/build.mjs', data: Buffer.from('console.log("fixture");') },
+      { name: 'bundle/spec/rules.md', data: Buffer.from('# Rules\nMaterial only.') },
+      { name: 'bundle/checks/result.json', data: Buffer.from(JSON.stringify({ total: 1, passed: 1, items: [{ name: 'Synthetic', pass: true }] })) },
+      { name: 'bundle/other/example.dat', data: Buffer.from([0, 255, 100]) },
+    ]);
+    const created = await publish('complete-delivery', bytes, {
+      intent: 'create', designKey: 'fittings/receipt', ...gitSource(bytes, 'design/fittings/receipt'),
+    });
+    expect(created.status).toBe(201);
+    const { result: { designId } } = await created.json();
+    // A separate service reads the durable revision, not a live writer's memory.
+    base = await openApi(openWorkspace());
+    const listing = await (await get('', 'read-designer')).json();
+    const version = listing.designs.find((row: { id: string }) => row.id === designId).versions[0];
+    const delivery = version.delivery;
+    expect(delivery).toMatchObject({ source: '原型源码/', frameworkDraft: 'spec/', prototypeVersion: 21,
+      date: '2026-11-21', notes: '验收时核对导航和滚动。', warnings: [] });
+    expect(delivery.files.map((file: { path: string }) => file.path)).toHaveLength(10);
+    const guideFile = delivery.files.find((file: { path: string }) => file.path === '交付说明.md');
+    expect(guideFile).toMatchObject({ kind: 'guide', sha256: createHash('sha256').update(guide).digest('hex') });
+    expect(delivery.files).toContainEqual(expect.objectContaining({ path: '原型源码/build.mjs', kind: 'source' }));
+    expect(delivery.files).toContainEqual(expect.objectContaining({ path: '设计文档/实现.md', kind: 'document' }));
+    const file = await get(`/artifacts/${guideFile.id}`, 'read-designer');
+    expect(file.headers.get('content-disposition')).toContain('attachment');
+    expect(await file.text()).toBe(guide);
+    const text = await (await get(`/artifacts/${guideFile.id}?view=text&offset=0&limit=5`, 'read-designer')).json();
+    expect(text).toMatchObject({ path: '交付说明.md', offset: 0, nextOffset: 5, text: guide.slice(0, 5), sha256: guideFile.sha256 });
+    const archive = await get(`/artifacts/${delivery.archiveId}`, 'read-designer');
+    expect(archive.headers.get('content-type')).toContain('application/zip');
+    expect(Buffer.from(await archive.arrayBuffer())).toEqual(bytes);
+    expect((await get(`/artifacts/${guideFile.id}`, 'outside', otherProjectId)).status).toBe(404);
+    const preview = await get(`/artifacts/${version.prototypeId}?theme=dark`, 'read-designer');
+    expect(preview.headers.get('content-security-policy')).toBeTruthy();
+    expect(await preview.text()).toContain('Fixture');
+    const rawPrototype = await get(`/artifacts/${version.prototypeId}?download=true`, 'read-designer');
+    expect(rawPrototype.headers.get('content-disposition')).toContain('index.html');
+    expect(await rawPrototype.text()).toBe(html);
+  });
+
+  it('preserves declarative prototype state for screens sharing a route', async () => {
+    const shape = { name: 'Fixture', route: '#workspace', viewport: 'desktop' };
+    const bytes = draft('Screen states', { screens: [
+      { ...shape, id: 'cards' }, { ...shape, id: 'list', name: 'Fixture list',
+        entryActions: ['button[data-view="list"]'], entryReadySelector: '[data-scene="list"]' },
+    ] });
+    expect((await publish('prototype-states', bytes)).status).toBe(201);
+    const result = await (await get()).json();
+    expect(result.designs[0].versions[0].screens[1]).toMatchObject({
+      id: 'list', entryActions: ['button[data-view="list"]'], entryReadySelector: '[data-scene="list"]',
+    });
+  });
+
+  it('lets scoped implementation feedback travel through a revision and back to its author', async () => {
+    const first = draft('Fixture V1');
+    const source = 'design/fittings/feedback';
+    const creation = await publish('feedback-initial', first, { intent: 'create', designKey: 'fittings/feedback', ...gitSource(first, source) });
+    expect(creation.status).toBe(201);
+    const { result: { designId } } = await creation.json();
+    const send = (actor: string, requestId: string, type: string, values: object, project = projectId) =>
+      fetch(`${base}${project}/design/feedback`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-fixture-user': actor },
+        body: JSON.stringify({ type, requestId, designId, ...values }) });
+    const report = { version: 1, category: 'reuse', title: 'Use the shared list',
+      body: 'The current implementation can reuse the shared list component.', screenId: 'members', evidence: ['Shared list component'] };
+    expect((await send('read-designer', 'read-forbidden', 'feedback.create', report)).status).toBe(403);
+    expect((await send('outside', 'project-forbidden', 'feedback.create', report, otherProjectId)).status).toBe(404);
+    const request = await send('implementer', 'reuse-report', 'feedback.create', report);
+    expect(request.status).toBe(201);
+    const { result: { id: feedbackId } } = await request.json();
+    const replay = await send('implementer', 'reuse-report', 'feedback.create', report);
+    expect(replay.status).toBe(200);
+    expect((await replay.json()).result.id).toBe(feedbackId);
+    expect((await send('designer', 'premature-close', 'feedback.resolve', { feedbackId,
+      decision: 'close', body: 'The publisher cannot sign off another author’s finding.' })).status).toBe(403);
+
+    const update = draft('Fixture V2');
+    const publishParams = { intent: 'revise', designId, expectedVersion: '1', ...gitSource(update, source, 'b') };
+    expect((await publish('should-not-publish', update, publishParams, { actor: 'implementer' })).status).toBe(403);
+    expect((await publish('feedback-next', update, publishParams)).status).toBe(201);
+    const reply = await send('designer', 'reuse-response', 'feedback.reply', { feedbackId, body: 'V2 uses the shared list.', revision: 2 });
+    expect(reply.status).toBe(201);
+    expect((await send('implementer', 'confirm-reuse', 'feedback.resolve', { feedbackId, decision: 'close', body: 'Confirmed on V2.' })).status).toBe(201);
+    const context = await (await get('', 'read-designer')).json();
+    const row = context.designs.find((entry: { id: string }) => entry.id === designId);
+    expect(row.feedback).toEqual([expect.objectContaining({ id: feedbackId, version: 1, screenId: 'members',
+      category: 'reuse', status: 'closed', author: expect.objectContaining({ id: 'implementer' }),
+      replies: [expect.objectContaining({ revision: 2, author: expect.objectContaining({ id: 'designer' }) })],
+      decisions: [expect.objectContaining({ decision: 'close', body: 'Confirmed on V2.' })],
+    })]);
+    expect(row.versions.map((version: { version: number }) => version.version)).toEqual([1, 2]);
+  });
 
   it('lists an intake with Git-verified sources, stable identity and revision rights for the actual caller', async () => {
     const first = draft('Billing workspace');
@@ -605,6 +709,25 @@ describe('private CDS design workspace', () => {
         items: [{ ruleId: 'R-07', status: 'failed', measurements: [{ contentWidth: 520 }] }, { ruleId: 'R-01', status: 'unverified' }] },
     });
     expect(designs[0].versions[1].frameworkCheck.items[0]).toMatchObject({ ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('1 / 2') });
+  });
+
+
+  it('keeps framework measurement unverified for shared routes without a verified entry state', async () => {
+    const frameworkId = 'FW-entry-state';
+    const rules = '| R-07 | 375px 手机没有横向溢出 | 自动：实测 |';
+    expect((await command('framework.import', { frameworkId, title: 'Fixture shell',
+      sourceCommit: 'c'.repeat(40), expectedVersion: 0, material: { rules } })).status).toBe(201);
+    const baseScreen = { name: 'Shared route', route: '#shared', viewport: 'phone', themes: ['light'] };
+    const bytes = draft('Fixture alternative states', { framework: frameworkId, frameworkVersion: 1, screens: [
+      { ...baseScreen, id: 'cards' }, { ...baseScreen, id: 'list', entryActions: ['button[data-view="list"]'] },
+    ] });
+    frameworkMeasurements = ['cards', 'list'].map(screenId => ({ screenId, slot: 'phone-light', width: 375, contentWidth: 375 }));
+    expect((await publish('state-unverified', bytes)).status).toBe(201);
+    const { designs } = await (await get()).json();
+    expect(designs[0].versions[0].frameworkCheck.items[0]).toMatchObject({
+      ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('1 / 2'),
+      measurements: [{ screenId: 'cards' }],
+    });
   });
 
   it('requires container evidence for the complete 375px rule and retains each publication result', async () => {

@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, Folder, Grid2X2, Info, Layers, List, Maximize, MessageSquare, Search, Terminal, Upload, X } from 'lucide-react';
 import { AppShell, TopBar, Workspace } from '@/components/layout/AppShell';
+import { rememberRouteFocus } from '@/components/layout/RouteMotion';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
-import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignVersion, DesignWorkspace } from '../../../src/shared/design-workspace';
+import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignTheme, DesignVersion, DesignWorkspace } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
+import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
 import { DesignRationale } from './design-workspace/DesignRationale';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, DesignMaterialView, FrameworkOverview, type FrameworkTab } from './design-workspace/DesignFramework';
@@ -17,7 +19,7 @@ import { compareDesignMaterial } from './design-workspace/design-structure';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
 
-const tabs = [['preview','预览'],['diff','对比'],['accept','做法验收'],['rationale','思路'],['spec','规范'],['log','记录']] as const;
+const tabs = [['preview','预览'],['diff','对比'],['delivery','交付'],['accept','做法验收'],['rationale','思路'],['spec','规范'],['log','记录']] as const;
 type ReviewTarget = { entryId: string; commentId: string; version: number };
 type LargeTarget = { entryId: string; version: number };
 type Filter = { kind: 'view' | 'group' | 'tag' | 'framework'; value: string };
@@ -26,12 +28,15 @@ const validSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
 
 export function DesignWorkspacePage() {
   const [params, setParams] = useSearchParams();
+  const { key: locationKey } = useLocation();
   const [reload, refresh] = useState(0);
   const refreshWorkspace = useCallback(() => refresh(value => value + 1), []);
   const [busy, setBusy] = useState(false);
   const writing = useRef(false);
   const [issue, setIssue] = useState('');
   const [notice, setNotice] = useState('');
+  const [canvasTheme, setCanvasTheme] = useState<DesignTheme>(() =>
+    document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   const [upload, setUpload] = useState(false);
   const [assignReviewers, setAssignReviewers] = useState<string>();
   const [extract, setExtract] = useState(false);
@@ -39,6 +44,7 @@ export function DesignWorkspacePage() {
   const [review, setReview] = useState<ReviewTarget>();
   const [large, setLarge] = useState<LargeTarget>();
   const returnFocus = useRef<HTMLElement | null>(null);
+  const deliveryReturn = useRef<{ designId: string; version: number; origin: string }>();
   const pending = useRef<{ key: string; id: string }>();
   const [search, setSearch] = useState('');
   const [groupBy, setGroupBy] = useState<'phase' | 'area' | 'date'>('phase');
@@ -66,7 +72,24 @@ export function DesignWorkspacePage() {
   const tab = tabs.find(([value]) => value === params.get('tab'))?.[0] ?? 'preview';
   const selectedFrameworkTab = params.get('tab') as FrameworkTab;
   const frameworkTab = ['tokens','components','skeleton','rules','history'].includes(selectedFrameworkTab) ? selectedFrameworkTab : 'tokens';
+  const screenParam = params.get('screen') ?? undefined;
+  const activeFeedback = (entry?.feedback ?? []).filter(row => row.status !== 'closed').length;
   const canvas = !!entry && (tab === 'preview' || tab === 'diff');
+  useEffect(() => {
+    const source = deliveryReturn.current;
+    if (tab !== 'delivery' || !source || entry?.id !== source.designId || version?.version !== source.version) return;
+    const frame = requestAnimationFrame(() => {
+      const element = document.getElementById(source.origin);
+      if (!element) return;
+      for (let parent = element.closest('details'); parent; parent = parent.parentElement?.closest('details') ?? null) {
+        parent.open = true;
+      }
+      element.scrollIntoView({ block: 'center' });
+      element.focus({ preventScroll: true });
+      deliveryReturn.current = undefined;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [entry?.id, version?.version, tab]);
   const modalEntry = workspace?.designs.find(item => item.id === review?.entryId);
   const reviewComment = modalEntry?.comments.find(item => item.id === review?.commentId);
   const reviewVersion = modalEntry?.versions.find(item => item.version === review?.version);
@@ -81,7 +104,10 @@ export function DesignWorkspacePage() {
     setParams(next);
     setIssue(''); setNotice('');
   };
-  const selectEntry = (id: string) => onChange({ design: id, framework: '', tab: '', version: '', view: '' });
+  const selectEntry = (id: string) => {
+    deliveryReturn.current = undefined;
+    onChange({ design: id, framework: '', tab: '', version: '', view: '', screen: '' });
+  };
   const selectFramework = (id: string) => onChange({ design: '', framework: id, tab: '', version: '', view: '' });
   const openReview = (row: DesignEntry, comment: DesignComment, version: DesignVersion) => {
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -104,7 +130,7 @@ export function DesignWorkspacePage() {
     const requestId = pending.current?.key === key ? pending.current.id : crypto.randomUUID();
     pending.current = { key, id: requestId };
     try {
-      const response = await apiRequest<{ projectId: string }>(designPath(project) + '/commands',
+      const response = await apiRequest<{ projectId: string }>(designPath(project) + (type.startsWith('feedback.') ? '/feedback' : '/commands'),
         { method: 'POST', body: { type, requestId, ...fields } });
       if (response.projectId !== project) throw new Error('操作回执与当前项目不符');
       pending.current = undefined;
@@ -122,6 +148,7 @@ export function DesignWorkspacePage() {
   const summaryTabLinks = entry && version && <nav className="dw-tablinks" aria-label="稿件标签">
     {tabs.map(([value, label]) => {
       const extra = value === 'preview' && entry.comments.length ? `${entry.comments.length} 条评论`
+        : value === 'delivery' && activeFeedback ? `${activeFeedback} 条待处理`
         : value === 'log' ? `${entry.versions.length} 版`
         : value === 'accept' && entry.runs.at(-1)?.cells.some(cell => cell.status === 'failed')
           ? `${entry.runs.at(-1)!.cells.filter(cell => cell.status === 'failed').length} 不通过` : '';
@@ -133,6 +160,7 @@ export function DesignWorkspacePage() {
   const canvasCommon = {
     command, canComment: Boolean(permissions?.review), canWrite: Boolean(permissions?.write),
     actorId: permissions?.actorId ?? '', steward: Boolean(permissions?.steward), commandBusy: busy,
+    selectedTheme: canvasTheme, onThemeChange: setCanvasTheme,
   };
   return <AppShell active="design" topbar={breadcrumbs} wide>
     <Workspace fluid className="ep-workspace dw-workspace" data-canvas={canvas}>
@@ -163,6 +191,9 @@ export function DesignWorkspacePage() {
             </div>
           </details>
           <div className="dw-tools dw-right">
+            {canvas && deliveryReturn.current?.designId === entry.id && <button className="ep-button" type="button" onClick={() => {
+              onChange({ tab: 'delivery', version: String(deliveryReturn.current!.version), screen: '' });
+            }}><ChevronLeft />返回交付</button>}
             <select value={version.version} aria-label="稿件版本" onChange={event => onChange({ version: event.target.value })}>
               {[...entry.versions].reverse().map(row => <option key={row.version} value={row.version}>V{row.version}{entry.frozen === row.version ? ' · 定稿' : ''}</option>)}
             </select>
@@ -174,12 +205,20 @@ export function DesignWorkspacePage() {
         </header>
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
         {canvas ? <DesignCanvas key={`${entry.id}/${version.version}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
-          comparing={tab === 'diff'} tabs={summaryTabLinks} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
+          comparing={tab === 'diff'} initialScreenId={screenParam} tabs={summaryTabLinks} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
         : <>
           <div className="dw-tabrow">{summaryTabLinks}</div>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} onPreviewStale={refreshWorkspace} />}
+          {tab === 'delivery' && permissions && <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}
+            permissions={permissions} busy={busy} command={command}
+            openScreen={(selected, screen, origin) => {
+              deliveryReturn.current = { designId: entry.id, version: version.version, origin };
+              rememberRouteFocus(locationKey, origin);
+              onChange({ version: String(selected), tab: 'preview', screen });
+            }}
+            openVersion={selected => onChange({ version: String(selected), tab: 'delivery', screen: '' })} />}
           {tab === 'rationale' && <DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
           {tab === 'spec' && <DesignSpec version={version} baseline={pinnedFramework?.material} />}
           {tab === 'log' && <DesignHistory entry={entry}

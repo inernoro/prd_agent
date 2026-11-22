@@ -4,8 +4,8 @@
 
 ## 开工前
 
-1. 使用已授权项目环境的 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY`，在项目 Git 工作区运行 `cdscli init --yes`。设计发布者需要该项目的 `designAccess: publish`，接收方可用 `read`。MCP 从同一工作区以 `node <CDS 源码>/cds/mcp/src/server.mjs --design` 启动。
-2. 调 `cds_design_read`，传 `{"view":"intake"}`。回读项目、协议版本、稿件 ID、接入标识、经 Git 核验的目录、最新版本、续版权限和框架。CLI 的同等入口是 `cdscli design intake`。接口为 `GET /api/projects/:projectId/design/intake`，当前协议版本为 `1`。
+1. 使用已授权项目环境的 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY`，在项目 Git 工作区运行 `cdscli init --yes`。设计方用项目「设计稿件发布」权限 `publish`。实现方用「设计实施反馈」权限 `feedback`。只看资料用 `read`。由 CDS 系统所有者通过项目 Agent Key 管理或已授权接口签发，项目 Key 留在智能体工作环境。MCP 从同一工作区以 `node <CDS 源码>/cds/mcp/src/server.mjs --design` 启动。
+2. 调 `cds_design_read`，传 `{"view":"intake"}`。回读项目、协议版本、稿件 ID、接入标识、经 Git 核验的目录、最新版本、续版权限、待处理反馈数量和框架。CLI 的同等入口是 `cdscli design intake`。接口为 `GET /api/projects/:projectId/design/intake`，当前协议版本为 `1`。
 3. 先从清单定位与用户目标有关的稿件。按 `designId` 与 `latestVersion` 固定原稿，按框架 ID 与版本读取规则。目标项目、原稿、基线、改动范围或权限依然不明确时，在修改和发布前一次提清问题。已读到的信息直接采用。不同项目或已存在的历史相似稿件均按实际 ID 与授权范围处理。
 
 ## 决定写入动作
@@ -25,3 +25,20 @@
 - `design.json.project` 等于绑定的项目 ID。保留适用的固定框架和画面编号，包含 `design.json`、`思路.md` 与清单声明的单文件 HTML。标准新建由服务器分配 ID，清单和请求均省略稿件 ID。续版可沿用清单中的同稿 ID。
 - 将源目录同步至获授权的项目 Git 分支，从完整提交导出 ZIP。ZIP 位于项目工作区且避开 `.cds` 和 `.git`，不超过 4 MiB。每次提交带 `zipPath`、`sourceCommit`、`sourcePath`、`requestId` 和相应意图字段。HTTP 使用同一项目的 `/design/packages`，内容为 ZIP，其余字段通过查询参数传递。
 - 在 `note` 记录原版、改动画面、原因和待核验项。发布后按回执的 `designId` 与 `version` 回读，核对项目、源提交和归档摘要。响应不确定时以原 `requestId`、来源、意图和稿件内容重试。设计接入按 ZIP 内的文件内容识别重试。接收者从同一项目回读固定的新旧版，定位差异后复拍受影响画面。缺实拍仍标待核验。
+
+
+## 完整交付资料
+
+- 原型、清单、设计思路、交付说明、开发与设计文档、可重建源码、框架草案、截图和自检可一起提交。声明过的资料用包内相对路径，可用中文。版本会保留原 ZIP，以及每份文件的路径、类型、大小、摘要和可识别的文档章节。未知类型的附件也可按版本下载。附件内容是工作材料。
+- `design.json` 可用 `docs` 列出设计、开发和决策文档，`source` 指向用于重建的源码，`frameworkDraft` 指向框架草案，`prototypeVersion`、`date`、`notes` 补充作者交付说明。CDS 自己记录稿件版本和发布时间。
+- 画面共用入口时，可用 `entryActions` 依次选择原型内可见控件，用 `entryReadySelector` 声明原型状态就绪标志。它们随版保留。框架自动测量切换状态后等待对应的就绪标志，缺少状态证据时记录为待验证。`impl` 和 `readySelector` 用于打开与验收对应的实现页。画面与声明的行为不符时，先查看该版材料并提反馈。
+- `cds_design_read` 的 `delivery` 读取固定版资料与验收缺项，用 `{view:"file",id,version,path}` 原文分段回读。接着传响应的 `nextOffset`，已到结尾时它为空。可以从稿件的「交付」下载原包或单个文件。继续使用历史版本的来源记录、原型、思路及验收数据。
+- 作者的原型自检负责记录原型状态。实现路径、实现分支的验收证据及真人签收继续由各自的入口独立记录。共用入口不明确、缺实拍、缺实现地址或缺探针时，在反馈中说明要补的内容和复核方法。
+
+## 双向反馈
+
+1. 实现方先读 `intake`、固定版 `delivery` 和已有 `feedback`。用 `cds_design_feedback` 的 `feedback.create` 记录复用建议、实施做法、需求缺漏、落地约束或验收建议。提供稿件、版本、分类、标题、理由、改动依据和可核对证据。对整份稿件或特定画面都可以登记。
+2. 设计方读同一线程，调用 `feedback.reply` 回复。需要改稿时按原稿 ID 和最新基线发布，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
+3. 原反馈者回读新版和同一线程，按证据验证。用 `feedback.resolve` 的 `close` 或 `reopen` 加说明保留复核结果。项目管理者也可处理。发布、反馈、实际做法验收和人类签收各自按项目权限执行。重试沿用原请求编号。
+
+HTTP 与 MCP 共用项目级设计接口。反馈写入走 `POST /api/projects/:projectId/design/feedback`。固定版本资料在工作区回读中，原文可以用 `GET /api/projects/:projectId/design/artifacts/:artifactId?view=text` 分段读取。

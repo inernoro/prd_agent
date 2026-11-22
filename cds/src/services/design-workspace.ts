@@ -1,21 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import type {
   DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
-  DesignIntake, DesignSharePreparation,
+  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignIntake, DesignSharePreparation,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { currentDesignRun, designSlots } from '../shared/design-workspace.js';
+import { currentDesignRun, designFeedbackCategories, designSlots } from '../shared/design-workspace.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
 import {
   designCommit, designDigest, designId, designPngDimensions, designRecord, designSourcePath, invalidDesign, localDesignPath,
-  readDesignFrameworkSource, readDesignPackage,
+  readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
 } from './design-package.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revision-store.js';
 
-export type DesignActor = PlanningActor & { steward?: boolean; gitPublishOnly?: boolean };
+export type DesignActor = PlanningActor & { steward?: boolean; gitPublishOnly?: boolean; feedback?: boolean };
 type Receipt = {
   projectId: string; reused: boolean;
   result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
@@ -24,7 +24,7 @@ type Receipt = {
 type RequestReceipt = { key: string; fingerprint: string; result: Receipt['result'] };
 export type DesignWorkspaceCommit = {
   projectId: string; revision: number; request: RequestReceipt; assets?: ProjectRevisionAsset[];
-  design?: { id: string; designKey?: string; version?: DesignVersion; comment?: DesignComment; run?: DesignRun;
+  design?: { id: string; designKey?: string; version?: DesignVersion; comment?: DesignComment; run?: DesignRun; feedback?: DesignFeedback;
     frozen?: number; freeze?: NonNullable<DesignEntry['freezes']>[number]; pullRequest?: number; reviewRequested?: boolean;
     reviewers?: DesignReviewer[]; notifyReviewersAt?: string; sharePreparation?: DesignSharePreparation };
   framework?: DesignFramework;
@@ -35,9 +35,11 @@ type WorkspaceState = {
   revision: number; designs: Map<string, DesignEntry>; frameworks: Map<string, DesignFramework>;
   requests: Map<string, RequestReceipt>; assets: Map<string, number>;
   reviewNotices: Map<string, DesignReviewNotice[]>;
+  deliveryFiles: Map<string, { archiveId: string; root: string; file: DesignDeliveryFile }>;
 };
 type Context = { projectId: string; actor: DesignActor; state: WorkspaceState; now: string };
 type Update = { result: Receipt['result']; changes: Changes };
+type DesignArtifact = { bytes: Buffer; mime: string; file?: DesignDeliveryFile; attachment?: string };
 
 const missing = (message: string): never => rejectPlanning(404, 'design_not_found', message);
 const conflict = (message: string): never => rejectPlanning(409, 'design_conflict', message);
@@ -48,6 +50,10 @@ const reviewNoticeWindow = 60 * 60_000;
 const reviewNoticeLimit = 50;
 const write = (actor: DesignActor) => {
   if (!actor.permissions.includes('write')) forbidden('当前身份无权写入稿件');
+};
+const canLeaveFeedback = (actor: DesignActor) => actor.feedback === true || actor.permissions.includes('write');
+const writeFeedback = (actor: DesignActor) => {
+  if (!canLeaveFeedback(actor)) forbidden('当前身份无权提交设计反馈，请使用本项目实施反馈或发布权限');
 };
 const review = (actor: DesignActor) => {
   if (actor.kind !== 'human' || !actor.permissions.includes('approve')) forbidden('此操作需要项目成员确认');
@@ -81,7 +87,17 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
       : { id: update.id, projectId: commit.projectId, versions: [], comments: [], runs: [] };
     state.designs.set(update.id, design);
     if (update.designKey !== undefined) design.designKey = update.designKey;
-    if (update.version) design.versions.push(update.version);
+    if (update.version) {
+      design.versions.push(update.version);
+      const delivery = update.version.delivery;
+      for (const file of delivery?.files ?? []) {
+        state.deliveryFiles.set(file.id, { archiveId: delivery!.archiveId, root: delivery!.archiveRoot, file });
+      }
+    }
+    if (update.feedback) {
+      design.feedback = [...(previous?.feedback ?? [])];
+      replace(design.feedback, update.feedback);
+    }
     if (update.comment) replace(design.comments, update.comment);
     if (update.run) replace(design.runs, update.run);
     if (update.frozen !== undefined) design.frozen = update.frozen;
@@ -215,7 +231,7 @@ export class DesignWorkspaceService {
     const commits = await this.store.read(projectId, base?.revision ?? 0);
     if (base && !commits.length) return base;
     const state: WorkspaceState = { revision: base?.revision ?? 0, requests: new Map(base?.requests),
-      designs: new Map(base?.designs), frameworks: new Map(base?.frameworks), assets: new Map(base?.assets), reviewNotices: new Map(base?.reviewNotices) };
+      designs: new Map(base?.designs), frameworks: new Map(base?.frameworks), assets: new Map(base?.assets), reviewNotices: new Map(base?.reviewNotices), deliveryFiles: new Map(base?.deliveryFiles) };
     for (const commit of commits) {
       if (commit.projectId !== projectId || commit.revision !== state.revision + 1) throw new Error('Design revision history is inconsistent');
       apply(state, commit);
@@ -227,9 +243,9 @@ export class DesignWorkspaceService {
   }
 
   private async mutate(projectId: string, actor: DesignActor, requestId: string, input: unknown,
-    build: (context: Context) => Update | Promise<Update>): Promise<Receipt> {
+    build: (context: Context) => Update | Promise<Update>, authorize = write): Promise<Receipt> {
     requireProjectRead(actor);
-    write(actor);
+    authorize(actor);
     const key = designDigest(JSON.stringify([actor.kind, actor.id, requestId]));
     const fingerprint = designDigest(stableJson(input));
     const at = (this.deps.now ?? (() => new Date()))().toISOString();
@@ -276,7 +292,7 @@ export class DesignWorkspaceService {
       if (run !== undefined) entry.currentSignoffRunId = run?.id ?? null;
     }
     return { projectId, designs, frameworks: structuredClone([...state.frameworks.values()]),
-      permissions: { write: actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
+      permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
         steward: actor.steward === true, actorId: actor.id } };
   }
@@ -286,12 +302,13 @@ export class DesignWorkspaceService {
     const state = await this.load(projectId);
     const canWrite = actor.permissions.includes('write');
     return {
-      protocolVersion: 1, projectId, permissions: { write: canWrite }, keyFormat: 'module/draft', intents: ['create', 'revise'],
+      protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor) }, keyFormat: 'module/draft', intents: ['create', 'revise'],
       designs: [...state.designs.values()].map(entry => {
         const latest = entry.versions.at(-1)!;
         return { designId: entry.id, designKey: entry.designKey, title: latest.title, latestVersion: latest.version,
           sourceCommit: latest.sourceCommit, sourcePaths: verifiedDesignPaths(entry),
-          canRevise: canWrite && (actor.steward === true || latest.publisher.id === actor.id) };
+          canRevise: canWrite && (actor.steward === true || latest.publisher.id === actor.id),
+          openFeedbackCount: entry.feedback?.filter(item => item.status !== 'closed').length ?? 0 };
       }),
       frameworks: [...state.frameworks.values()].map(frame => {
         const latest = frame.versions.at(-1)!;
@@ -329,13 +346,24 @@ export class DesignWorkspaceService {
     });
   }
 
-  async artifact(projectId: string, actor: DesignActor, artifactId: string) {
+  async artifact(projectId: string, actor: DesignActor, artifactId: string): Promise<DesignArtifact> {
     requireProjectRead(actor);
     const state = await this.load(projectId);
-    const revision = state.assets.get(artifactId) ?? missing('该稿件附件不存在');
-    const asset = await this.store.readAsset?.(projectId, revision, artifactId);
+    const archived = state.deliveryFiles.get(artifactId);
+    const storedId = archived?.archiveId ?? artifactId;
+    const revision = state.assets.get(storedId) ?? missing('该稿件附件不存在');
+    const asset = await this.store.readAsset?.(projectId, revision, storedId);
     if (!asset?.base64) return missing('该稿件附件不存在');
-    return { mime: asset.mime, bytes: Buffer.from(asset.base64, 'base64') };
+    const bytes = Buffer.from(asset.base64, 'base64');
+    if (!archived) return { mime: asset.mime, bytes, ...(asset.mime === 'application/zip' ? { attachment: 'design-package.zip' } : {}) };
+
+    const { file } = archived;
+    const content = await readArchivedDesignFile(bytes, archived.root + file.path);
+    if (!content || designDigest(content) !== file.sha256) return missing('该版本附件不可读');
+    if (file.kind === 'prototype') return { mime: 'text/html; charset=utf-8', bytes: content, file };
+    if (file.kind === 'render') return { mime: 'image/png', bytes: content, file };
+    return { mime: file.text ? 'text/plain; charset=utf-8' : 'application/octet-stream', bytes: content, file,
+      attachment: file.path.split('/').at(-1)! };
   }
 
   async publish(projectId: string, actor: DesignActor, query: Record<string, unknown>, bytes: Buffer) {
@@ -370,7 +398,7 @@ export class DesignWorkspaceService {
       try { reviewerIds = JSON.parse(planningText(params.reviewerIds, '评审账号', 3500)); }
       catch { return invalidDesign('评审账号须是 JSON 数组'); }
     }
-    const prototypeId = randomUUID();
+    const archiveId = randomUUID();
     const frameworkChecks = new Map<number, DesignFrameworkCheck>();
     // Legacy receipts fingerprinted the ZIP bytes. Intake v1 reuses the Git package's file digest across repacking.
     const packageFingerprint = intent ? loaded.filesSha256 : loaded.sha256;
@@ -423,16 +451,22 @@ export class DesignWorkspaceService {
             frameworkRevision, sourceCommit, loaded.prototype, screens, this.deps.frameworkProbe);
           frameworkChecks.set(frameworkRevision.version, frameworkCheck);
         }
-        const assets: ProjectRevisionAsset[] = [{ id: prototypeId, mime: 'text/html; charset=utf-8', base64: loaded.prototype.toString('base64') }];
+        // Keep one private archive per revision. Preview and screenshot IDs point into
+        // this archive, so large packages do not store the same bytes twice.
+        const { index, prototype, ...manifest } = loaded.delivery;
+        const files = index.map(file => ({ ...file, id: randomUUID() }));
+        const byPath = new Map(files.map(file => [file.path, file]));
+        const prototypeId = byPath.get(prototype)!.id;
+        const delivery: DesignDelivery = { archiveId, files, ...manifest };
+        const assets: ProjectRevisionAsset[] = [{ id: archiveId, mime: 'application/zip', base64: bytes.toString('base64') }];
         const renders: NonNullable<DesignVersion['renders']> = {};
         for (const capture of loaded.renders) {
-          const id = randomUUID();
+          const { id } = byPath.get(`screens/${capture.screenId}.${capture.theme}.png`)!;
           const themes = renders[capture.screenId] ??= {};
           themes[capture.theme] = { id, sha256: capture.sha256 };
-          assets.push({ id, mime: 'image/png', base64: capture.content.toString('base64') });
         }
         const version: DesignVersion = { version: (previous?.version ?? 0) + 1, title, sourceCommit, sha256, prototypeId,
-          prototypeSha256: designDigest(loaded.prototype),
+          prototypeSha256: byPath.get(prototype)!.sha256, delivery,
           sourcePath, sourceVerification: source ? 'git' : 'declared',
           createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
           ...(frameworkCheck ? { frameworkCheck } : {}),
@@ -442,6 +476,59 @@ export class DesignWorkspaceService {
             reviewRequested: Boolean(reviewers?.length) || params.review === 'true' || Boolean(existing?.frozen),
             ...(reviewers?.length ? { notifyReviewersAt: now } : {}) }, assets } };
       });
+  }
+
+  async feedback(projectId: string, actor: DesignActor, value: unknown): Promise<Receipt> {
+    const input = designRecord(value, '设计反馈');
+    const type = input.type;
+    if (type !== 'feedback.create' && type !== 'feedback.reply' && type !== 'feedback.resolve') {
+      return invalidDesign('请选择提交反馈、回复或确认处理');
+    }
+    const requestId = designId(input.requestId, '请求编号');
+    const designIdValue = designId(input.designId, '稿件编号');
+    const common = ['type', 'requestId', 'designId'];
+    return this.mutate(projectId, actor, requestId, input, ({ state, now }) => {
+      const entry = state.designs.get(designIdValue) ?? missing('该稿件不存在');
+      if (type === 'feedback.create') {
+        designRecord(input, '提交设计反馈', [...common, 'version', 'category', 'title', 'body', 'screenId', 'evidence']);
+        const version = versionOf(entry, input.version);
+        const category = designFeedbackCategories.find(kind => kind === input.category) ?? invalidDesign('请选择有效的反馈分类');
+        const screenId = input.screenId === undefined ? undefined : designId(input.screenId, '反馈画面');
+        if (screenId && !version.screens.some(screen => screen.id === screenId)) invalidDesign('所选版本没有这个画面');
+        if (input.evidence !== undefined && (!Array.isArray(input.evidence) || input.evidence.length > 8)) invalidDesign('证据最多八条');
+        const evidence = (input.evidence as unknown[] | undefined)?.map(row => planningText(row, '反馈证据', 1_000)) ?? [];
+        const feedback: DesignFeedback = { id: `FDB-${randomUUID()}`, version: version.version, screenId, category, evidence,
+          title: planningText(input.title, '反馈标题', 180), body: planningText(input.body, '反馈正文', 4_000),
+          author: identity(actor), createdAt: now, status: 'open', replies: [], decisions: [] };
+        return { result: { type, designId: entry.id, id: feedback.id, version: version.version },
+          changes: { design: { id: entry.id, feedback } } };
+      }
+      const feedbackId = designId(input.feedbackId, '反馈编号');
+      const thread = entry.feedback?.find(item => item.id === feedbackId) ?? missing('该反馈不存在');
+      const body = planningText(input.body, '处理说明', 4_000);
+      const feedback = { ...thread };
+      if (type === 'feedback.reply') {
+        designRecord(input, '回复设计反馈', [...common, 'feedbackId', 'body', 'revision']);
+        if (thread.status === 'closed') conflict('请由反馈者或项目管理者重开后再回复');
+        const revision = input.revision === undefined ? undefined : versionOf(entry, input.revision);
+        if (revision) {
+          authored(actor, revision.publisher);
+          if (revision.version < thread.version) invalidDesign('回复引用的版本不能早于反馈版本');
+        }
+        feedback.replies = [...thread.replies, { body, revision: revision?.version, author: identity(actor), at: now }];
+        if (actor.id !== thread.author.id) feedback.status = 'responded';
+      } else {
+        designRecord(input, '确认设计反馈', [...common, 'feedbackId', 'body', 'decision']);
+        authored(actor, thread.author);
+        const decision = input.decision;
+        if (decision !== 'close' && decision !== 'reopen') return invalidDesign('请选择确认关闭或重新打开');
+        if ((decision === 'close') === (thread.status === 'closed')) conflict('反馈已是所选状态，请先回读当前反馈');
+        feedback.status = decision === 'close' ? 'closed' : 'open';
+        feedback.decisions = [...thread.decisions, { decision, body, author: identity(actor), at: now }];
+      }
+      return { result: { type, designId: entry.id, id: feedbackId, version: thread.version },
+        changes: { design: { id: entry.id, feedback } } };
+    }, writeFeedback);
   }
 
   async command(projectId: string, actor: DesignActor, value: unknown) {
