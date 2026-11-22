@@ -57,6 +57,7 @@ describe('human project grants through the production server', () => {
     vi.stubEnv('CDS_USERNAME', 'owner');
     vi.stubEnv('CDS_PASSWORD', 'test-owner-password');
     vi.stubEnv('CDS_PUBLIC_BASE_URL', 'http://localhost');
+    vi.stubEnv('CDS_UPSTREAM', '');
     vi.stubEnv('CDS_SSO_ENABLED', 'false');
     vi.stubEnv('CDS_GRANT_RECONCILE_MS', '20');
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-human-grants-'));
@@ -1332,6 +1333,49 @@ describe('human project grants through the production server', () => {
     await grant(['project-a']);
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
     expect((await call('GET', '/api/projects', member)).status).toBe(401);
+  });
+
+  it('authenticates a passively issued design key without broadening access or bypassing revocation', async () => {
+    const principalId = 'passive-design-fixture';
+    const now = new Date().toISOString();
+    const identity = 'cdsu_synthetic_passive_design_fixture';
+    state.addPrincipal({ id: principalId, name: 'Passive design fixture', kind: 'machine', status: 'active', createdAt: now });
+    state.addUserCredential({ id: 'passive-design-identity', principalId, hash: createHash('sha256').update(identity).digest('hex'),
+      createdAt: now, expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
+    const approval = '/api/projects/project-a/access-requests';
+    const start = await credentialCall('POST', approval, identity, { designAccess: 'publish' });
+    expect(start.status).toBe(201);
+    expect((await call('POST', `/api/access-requests/${start.body.requestId}/approve`, owner, {})).status).toBe(200);
+    const delivery = await fetch(`${base}${approval}/${start.body.requestId}`, { headers: { 'X-Poll-Token': start.body.pollToken } });
+    expect(delivery.status).toBe(200);
+    const issued = await delivery.json();
+    const key: string = issued.authorizationKey;
+    expect(typeof key === 'string' && key.startsWith('cdsp_')).toBe(true);
+    expect(state.getProjectGrants().some(grant => grant.principalId === principalId)).toBe(false);
+
+    const checkPath = '/api/credentials/self-check';
+    const identityCheck = await credentialCall('GET', checkPath, key);
+    expect(identityCheck.status).toBe(200);
+    expect(identityCheck.body.status).toBe('active');
+    const setup = '/api/agent/setup.json?target=existing&project=project-a&mission=design-publish';
+    const manifest = await credentialCall('GET', setup, key);
+    expect(manifest.status).toBe(200);
+    expect(manifest.body.designAccess).toBe('publish');
+    const intake = '/api/projects/project-a/design/intake';
+    const access = await credentialCall('GET', intake, key);
+    expect(access.status).toBe(200);
+    expect(access.body.permissions.write).toBe(true);
+
+    const deniedReads = ['/api/projects/project-a', '/api/projects/project-a/planning/capabilities', '/api/projects/project-b/design/intake'];
+    for (const denied of deniedReads) expect((await credentialCall('GET', denied, key)).status).toBe(403);
+    const otherProjectApproval = '/api/projects/project-b/access-requests';
+    expect((await credentialCall('POST', otherProjectApproval, key, { designAccess: 'publish' })).status).toBe(403);
+
+    state.addProjectGrant({ id: 'passive-design-revoke-fixture', projectId: 'project-a', principalId, origin: 'approved', grantedAt: now });
+    expect(state.revokeProjectGrant('passive-design-revoke-fixture')).toBe(true);
+    expect((await credentialCall('GET', intake, key)).status).not.toBe(200);
+    expect((await credentialCall('GET', checkPath, key)).body.status).toBe('grant-revoked');
+    expect((await credentialCall('POST', approval, identity, { designAccess: 'publish' })).status).toBe(403);
   });
 
   it('authorizes a design agent only for the selected project and does not issue broader keys', async () => {

@@ -1,10 +1,10 @@
 # CDS 设计接入
 
-通用交办提示是「请阅读 CDS 设计接入并按规范提交」。交付者和接收者通过项目里的私有稿件、版本和回执协作。
+从 CDS「设计」页的「接入 Agent」复制标准口令，再交办「请按说明接入并提交当前设计稿」。接入链接使用 `target=existing`、项目 ID、`skills=cds` 和 `mission=design-publish`。交付者和接收者通过项目里的私有稿件、版本和回执协作。
 
 ## 开工前
 
-1. 使用已授权项目环境的 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY`，在项目 Git 工作区运行 `cdscli init --yes`。设计方用项目「设计稿件发布」权限 `publish`。实现方用「设计实施反馈」权限 `feedback`。只看资料用 `read`。由 CDS 系统所有者通过项目 Agent Key 管理或已授权接口签发，项目 Key 留在智能体工作环境。MCP 从同一工作区以 `node <CDS 源码>/cds/mcp/src/server.mjs --design` 启动。
+1. 在当前工作区用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 自检。设计发布用 `publish`，实施反馈用 `feedback`，读取资料用 `read`。缺权限时，保持同一项目和角色，用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者到「项目」页右下角的「授权申请」核对项目和角色后批准。智能体自动领取凭据，保存在本工作区，并再次自检。等待中断时继续原命令。MCP 从同一工作区以 `node <CDS 源码>/cds/mcp/src/server.mjs --design` 启动。
 2. 调 `cds_design_read`，传 `{"view":"intake"}`。回读项目、协议版本、稿件 ID、接入标识、经 Git 核验的目录、最新版本、续版权限、待处理反馈数量和框架。CLI 的同等入口是 `cdscli design intake`。接口为 `GET /api/projects/:projectId/design/intake`，当前协议版本为 `1`。
 3. 先从清单定位与用户目标有关的稿件。按 `designId` 与 `latestVersion` 固定原稿，按框架 ID 与版本读取规则。目标项目、原稿、基线、改动范围或权限依然不明确时，在修改和发布前一次提清问题。已读到的信息直接采用。不同项目或已存在的历史相似稿件均按实际 ID 与授权范围处理。
 

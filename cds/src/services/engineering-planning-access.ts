@@ -19,7 +19,8 @@ export function resolveEngineeringPlanningAccess(req: Request, state: StateServi
   };
   const key = request.cdsProjectKey;
   if (key) {
-    if (key.projectId !== projectId || !dtsCredentialAllowed(state, { kind: 'project-key', id: key.keyId }, projectId)) return null;
+    if (key.projectId !== projectId || !dtsCredentialAllowed(state, { kind: 'project-key', id: key.keyId }, projectId,
+      workspace === 'design' ? 'design' : 'project')) return null;
     const credential = state.getAgentKeys(projectId).find(item => item.id === key.keyId);
     if (!credential) return null;
     if ((credential.designAccess && workspace !== 'design') || (credential.planningAccess && workspace !== 'planning')) return null;

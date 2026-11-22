@@ -1860,11 +1860,14 @@ function presentedAiAccessKey(req: express.Request): string | undefined {
 function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
   if (!key.planningAccess && !key.designAccess) return true;
   if (key.planningAccess && key.designAccess) return false;
+  if (req.method === 'GET' && req.path === '/api/credentials/self-check') return true;
+  if (isPublicAgentSetupRoute(req.method, req.path)) return true;
   const segment = req.path.replace(/^\/_cds\/api\//i, '/api/').split('/')[3];
   try { if (decodeURIComponent(segment) !== key.projectId) return false; }
   catch { return false; }
   const read = req.method === 'GET' || req.method === 'HEAD';
   if (key.designAccess) {
+    if (req.method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(req.path)) return true;
     const route = '/api/projects/:projectId/design';
     const path = normalizedDesignPath(req.path);
     return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)

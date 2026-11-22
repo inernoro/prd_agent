@@ -30,6 +30,10 @@ export interface AgentSetupSelection {
   stage: 'connect' | 'task';
 }
 
+export function getAgentSetupMinCliVersion(selection: AgentSetupSelection): string {
+  return selection.mission === 'design-publish' ? '0.26.9' : AGENT_SETUP_MIN_CLI_VERSION;
+}
+
 export function parseAgentSetupSelection(query: Record<string, unknown>): AgentSetupSelection | null {
   const kind = query.target ?? 'system';
   const project = query.project;

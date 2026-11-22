@@ -48,6 +48,7 @@ export type AgentPageContextId =
   | 'project-onboarding'
   | 'code-review'
   | 'engineering-planning'
+  | 'design-publish'
   | 'branches'
   | 'build-diagnostics'
   | 'startup-diagnostics'
@@ -219,6 +220,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['remote-hosts', '远程主机、Sidecar 与 Agent 会话', 'remote-hosts.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', '', '主机密钥、工具审批和会话停止需要人类边界'],
   ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],
   ['acceptance-tasks', '结构化功能清单、领取任务与历史矩阵', 'acceptance-tasks.ts', 'project', 'project', 'write', 'direct', 'cds', 'acceptance', '先读冻结清单再领取，按真实业务路径回填断言、线上证据与清理；正式环境无需发布分支，报告绑定不等于线上验真通过'],
+  ['design-workspace', '设计工作区', 'design-workspace.ts', 'project', 'project', 'write', 'guided', 'cds', 'design', '同项目读取接入清单、发布已提交稿件和回传实施反馈，修订沿用稿件编号。'],
   ['engineering-planning', '工程规划与债务', 'engineering-planning.ts', 'project', 'project', 'write', 'guided', 'cds', 'planning / debt', 'MCP 读取当前项目并提交提案或明确授权的直接登记。项目成员确认提案及处理债务。'],
   ['design-workspace', '项目设计稿件', 'design-workspace.ts', 'project', 'project', 'write', 'guided', 'cds', 'design / framework', '读取和发布授权项目稿件。定稿、评论核对和签收由项目成员确认。'],
   ['planning-preview-access', '分支预览进入票据', 'planning-preview-access.ts', 'system', 'protocol-token', 'write', 'protocol-only', 'cds', '', '票据只用于当前分支的登录。访问申请由项目授权流程审批。'],
@@ -274,9 +276,10 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
     preferredSkill,
     ...(cliFamily ? { cliFamily } : {}),
     mcpExposure: ['host-capacity-observation', 'host-capacity-sampling'].includes(id) ? 'not-exposed'
-      : ['code-reviews', 'dts', 'engineering-planning'].includes(id) ? 'available' : deriveMcpExposure(risk, agentUse),
+      : ['code-reviews', 'dts', 'engineering-planning', 'design-workspace'].includes(id) ? 'available' : deriveMcpExposure(risk, agentUse),
     ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : id === 'dts' ? { mcpTools: DTS_TOOLS }
-      : id === 'engineering-planning' ? { mcpTools: PLANNING_MCP_TOOLS } : {}),
+      : id === 'engineering-planning' ? { mcpTools: PLANNING_MCP_TOOLS }
+        : id === 'design-workspace' ? { mcpTools: ['cds_design_read', 'cds_design_publish', 'cds_design_feedback'] } : {}),
     note,
   }));
 
@@ -292,6 +295,7 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   'project-onboarding': ['projects', 'pending-import', 'project-compose'],
   'code-review': ['code-reviews', 'project-compose', 'deployment-runs'],
   'engineering-planning': ['engineering-planning'],
+  'design-publish': ['design-workspace'],
   branches: ['branches', 'branch-lifecycle', 'branch-service-isolation', 'deployment-runs', 'deployment-versions', 'replica-sets', 'infra-credential-rotation'],
   'build-diagnostics': ['branches', 'deployment-runs'],
   'startup-diagnostics': ['branches', 'deployment-runs', 'docker-network-health'],
@@ -548,6 +552,26 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     checks: ['待确认提案由有权成员处理', '可疑来源作为证据处理', '失联时沿用原请求编号核对'],
     completion: ['项目和记录编号可核对', '有明确登记或待确认的结果', '重复提交可读回原记录与状态'],
     pagePath: projectId => projectQueryPath('/engineering-planning', projectId),
+  },
+  'design-publish': {
+    id: 'design-publish',
+    categoryId: 'deliver',
+    scope: 'project',
+    connectTargets: ['existing'],
+    icon: 'code',
+    shortLabel: '设计发布',
+    cardDescription: '提交设计稿件或更新已有版本',
+    title: '发布或修订设计稿',
+    summary: '把已提交到仓库的设计交付内容发布到当前项目，保留可追溯版本。',
+    goal: '交付新稿或修订同稿，返回稿件编号、版本和服务端回执。',
+    steps: ['读取 CDS 技能的 reference/design-intake.md 和当前项目设计接入清单',
+      '按稳定稿件键查重，区分新稿与已有稿件的修订，有歧义先澄清稿件归属',
+      '核对当前工作树、资料范围、固定提交与仓库，推送用户已授权的稿件提交',
+      '通过 cds_design_publish 或 cdscli design publish 登记，回读稿件和版本'],
+    checks: ['同稿修订使用原稿编号和当前版本', '先核对必需资料和 Git 来源，缺失时说明需补充的信息',
+      '超时使用原请求编号继续，角色权限以该项目的设计接入清单为准'],
+    completion: ['有项目、稿件、版本和来源提交', '已读取服务端回执并返回稿件入口'],
+    pagePath: projectId => projectQueryPath('/design', projectId),
   },
   branches: {
     id: 'branches',

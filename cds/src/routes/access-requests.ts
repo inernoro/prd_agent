@@ -123,17 +123,30 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       return;
     }
 
-    const body = (req.body || {}) as { agentName?: string; purpose?: string };
+    const body = (req.body || {}) as { agentName?: string; purpose?: string; designAccess?: unknown };
+    const { designAccess } = body;
+    if (designAccess !== undefined && designAccess !== 'read' && designAccess !== 'feedback' && designAccess !== 'publish') {
+      res.status(400).json({ error: 'invalid_design_access', message: '请选择设计只读、实施反馈或稿件发布权限' });
+      return;
+    }
+    if (designAccess && project.mirror) {
+      res.status(409).json({ error: 'design_project_mirrored', message: '请在原 CDS 项目申请设计权限' });
+      return;
+    }
     const agentName = typeof body.agentName === 'string' && body.agentName.trim()
       ? body.agentName.trim().slice(0, 100) : 'AI Agent';
     const purpose = typeof body.purpose === 'string' && body.purpose.trim()
-      ? body.purpose.trim().slice(0, 500) : '请求项目授权密钥(全权访问)。';
+      ? body.purpose.trim().slice(0, 500) : designAccess ? '请求当前项目的设计访问权限。' : '请求项目访问权限。';
 
     // 这条路由是免鉴权的（鸡生蛋：还没凭据才来申请），所以主体身份只能在这里
     // 核对原身份：已知身份停用或项目撤权时只等待恢复，不能退成匿名申请。
     // 无凭据的首次接入保持兼容；已知项目密钥也保留原主体约束。
     const key = presentedKey(req);
     const proof = inspectAccessRecovery(stateService, project.id, key);
+    if (!designAccess && proof?.designAccess) {
+      res.status(403).json({ error: 'design_key_scope', message: '设计凭据只能用于申请当前项目的设计权限' });
+      return;
+    }
     if (key.startsWith('cdsu_') || key.startsWith('cdsp_')) {
       if (!proof || (proof.kind === 'user' && proof.state === 'credential-unusable')) {
         res.status(401).json({ error: 'recovery_credential_invalid', message: '原身份凭据已失效，不能改为匿名申请；请管理员恢复原身份。' }); return;
@@ -156,14 +169,15 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       status: 'pending',
       createdAt: new Date().toISOString(),
       ...(principalId ? { principalId } : {}),
+      ...(designAccess ? { designAccess } : {}),
     };
     stateService.addAccessRequest(item);
     cdsEventsBus.publish('access-request.created', {
-      requestId: item.id, projectId: project.id, agentName, purpose, pendingCount: pendingCount(stateService),
+      requestId: item.id, projectId: project.id, agentName, purpose, designAccess, pendingCount: pendingCount(stateService),
     });
     // 调用方允许用 slug 发起，但后续项目级操作必须使用真实 project.id。
     // 把解析结果随申请返回，避免 CLI 把别名写进 credentials.json 后 project_mismatch。
-    res.status(201).json({ requestId: item.id, pollToken, status: 'pending', projectId: project.id });
+    res.status(201).json({ requestId: item.id, pollToken, status: 'pending', projectId: project.id, designAccess });
   });
 
   // 首次接入:免密申请一把一次性「只能创建项目」授权。批准后签发 create-only
@@ -250,7 +264,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (item.issuedKeyPlaintext && !item.deliveredAt) {
       const authorizationKey = item.issuedKeyPlaintext;
       stateService.updateAccessRequest(item.id, { issuedKeyPlaintext: undefined, deliveredAt: new Date().toISOString() });
-      res.json({ status: 'approved', authorizationKey });
+      res.json({ status: 'approved', authorizationKey, designAccess: item.designAccess });
       return;
     }
     res.json({ status: 'approved', delivered: true });
@@ -372,7 +386,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     return true;
   }
 
-  // 批准:当场签发一把全权项目 AgentKey(授权密钥),明文挂记录上待发起方取走一次。
+  // 依据申请范围发放凭据，由原申请的轮询票据领取一次。
   router.post('/access-requests/:reqId/approve', (req, res) => {
     if (!requireHumanOperator(req, res)) return;
     const item = stateService.getAccessRequest(req.params.reqId);
@@ -384,7 +398,11 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       res.status(409).json({ error: 'already_decided', message: `Access request already ${item.status}.` });
       return;
     }
-    // bootstrap 申请签发一次性 create-only cdsg_；项目申请签发全权项目 cdsp_。
+    if (item.designAccess && !isHumanSystemOwner(req)) {
+      res.status(403).json({ error: 'system_owner_required', message: '设计权限申请由 CDS 系统所有者批准' });
+      return;
+    }
+    // Bootstrap requests issue a create-only key. Project requests may carry a design scope.
     const now = new Date();
     if (item.kind === 'bootstrap') {
       const target = bootstrapTarget(item.requestedProject);
@@ -439,6 +457,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       res.status(404).json({ error: 'project_not_found', message: `Project '${item.projectId}' no longer exists.` });
       return;
     }
+    if (item.designAccess && project.mirror) {
+      res.status(409).json({ error: 'design_project_mirrored', message: '请在原 CDS 项目批准设计权限' });
+      return;
+    }
     const blocked = item.principalId && principalRecoveryBlock(stateService, item.principalId, project.id);
     if (blocked) {
       res.status(409).json({ error: blocked, message: recoveryMessage(blocked) }); return;
@@ -453,6 +475,12 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       label: `授权密钥 (申请 ${item.id} · ${item.agentName})`,
       hash: sha256(plaintext),
       scope: 'rw',
+      ...(item.designAccess ? {
+        designAccess: item.designAccess,
+        designAccessRequestId: item.id,
+        expiresAt: new Date(now.getTime() + PROJECT_CREDENTIAL_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+        ...(item.principalId ? { principalId: item.principalId } : {}),
+      } : {}),
       createdAt: now.toISOString(),
       createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
     };
@@ -461,7 +489,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       // 批准 = 授权，不只是发一把钥匙。少了这一步，同一个主体丢了钥匙还得再申请
       // 一次，「批一次就够」只是句口号；而且 addProjectGrant 是集合语义，
       // 重复批准不会写第二行。
-      if (item.principalId) {
+      if (item.principalId && !item.designAccess) {
         stateService.addProjectGrant({
           id: `pg_${randomBytes(6).toString('hex')}`,
           projectId: project.id,

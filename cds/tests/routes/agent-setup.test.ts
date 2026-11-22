@@ -73,6 +73,35 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect((await fetch(`${origin}/api/private`)).status).toBe(401);
   });
 
+  it('匿名设计发布引导先自检并申请同项目设计发布权限，再进入设计接入清单', async () => {
+    const query = 'target=existing&project=proj-a&mission=design-publish';
+    const response = await fetch(`${origin}/api/agent/setup.md?${query}`);
+    expect(response.status).toBe(200);
+    const guide = await response.text();
+    expect(guide).toMatch(/setup-check[^\n]*--project 'proj-a'/);
+    const command = guide.split('\n').find(line => line.includes('cdscli.py connect') && line.includes('--design-access'));
+    expect(command).toContain("--project 'proj-a'");
+    expect(command).toMatch(/--design-access (?:publish|'publish'|"publish")(?=\s|$)/);
+    expect(guide).toContain('右下角');
+    expect(guide).toContain('批准');
+    expect(guide).toContain('0.26.9');
+    expect(guide).toContain('stage=task');
+
+    const manifest = await fetch(`${origin}/api/agent/setup.json?${query}`);
+    expect(manifest.status).toBe(200);
+    const body = await manifest.json();
+    expect(body).toMatchObject({ target: { kind: 'existing', projectId: 'proj-a' }, mission: 'design-publish',
+      minCliVersion: '0.26.9', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
+    expect(body.skills).toContain('cds');
+    expect(body).not.toHaveProperty('authorizationKey');
+
+    const task = await fetch(`${origin}/api/agent/setup.md?${query}&stage=task`);
+    expect(task.status).toBe(200);
+    const instructions = await task.text();
+    expect(instructions).toMatch(/设计接入清单|cds_design_intake|design intake/);
+    expect(instructions).toMatch(/原稿|同稿|已有稿件/);
+  });
+
   it('TLS 在反代前终止时，安装和接入说明均使用已配置的公网 HTTPS 地址', async () => {
     bootstrapDeps.publicBaseUrl = 'https://cds.example.test/';
     for (const endpoint of ['/api/agent/setup.md?target=new&mission=projects', '/api/bootstrap/cds-only']) {
@@ -202,6 +231,8 @@ describe('Agent public bootstrap through the real auth gate', () => {
     'target=new&mission=auth',
     'target=existing&project=proj-a&mission=auth',
     'target=system&mission=branches',
+    'target=new&mission=design-publish',
+    'target=system&mission=design-publish',
   ])('rejects contradictory mission scopes in both stages: %s', async query => {
     for (const stage of ['connect', 'task']) {
       for (const format of ['md', 'json']) {
@@ -323,5 +354,25 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const discovery = await fetch(`${origin}/api/agent/setup.json`);
     expect(discovery.status).toBe(503);
     expect(await discovery.json()).toMatchObject({ cliVersion: '0.17.4', minCliVersion: '0.17.5' });
+  });
+
+  it('仅设计发布任务拒绝 0.26.8 上游包，普通接入维持既有最低版本', async () => {
+    const upstreamRoot = tempRoot();
+    const skills = path.join(upstreamRoot, '.claude/skills');
+    fs.mkdirSync(skills, { recursive: true });
+    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
+      fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(skills, skill), { recursive: true });
+    }
+    const cli = path.join(skills, 'cds/cli/cdscli.py');
+    fs.writeFileSync(cli, fs.readFileSync(cli, 'utf8').replace(/^VERSION = ".*"/m, 'VERSION = "0.26.8"'));
+    const upstream = await listen(appFor(upstreamRoot));
+    const origin = await listen(appFor(tempRoot(), upstream));
+    const entry = `${origin}/api/agent/setup.json?target=existing&project=proj-a`;
+    const general = await fetch(entry);
+    expect(general.status).toBe(200);
+    expect(await general.json()).toMatchObject({ minCliVersion: '0.17.5', cliVersion: '0.26.8' });
+    const scoped = await fetch(`${entry}&mission=design-publish`);
+    expect(scoped.status).toBe(503);
+    expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.9', cliVersion: '0.26.8' });
   });
 });

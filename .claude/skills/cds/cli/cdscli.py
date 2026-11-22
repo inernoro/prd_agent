@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.8"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.9"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -832,6 +832,33 @@ def _setup_origin(value: str) -> str:
     return parsed.scheme + "://" + host
 
 
+def _design_setup_path(project_id: str) -> str:
+    return "/api/agent/setup.json?" + urllib.parse.urlencode({
+        "target": "existing", "project": project_id, "mission": "design-publish",
+    })
+
+
+def _design_setup_supported(manifest: dict[str, Any], project_id: str) -> bool:
+    versions = (manifest.get("minCliVersion"), manifest.get("cliVersion"))
+    return (manifest.get("version") == "cds-agent-setup.v1"
+            and manifest.get("mission") == "design-publish"
+            and manifest.get("target") == {"kind": "existing", "projectId": project_id}
+            and manifest.get("designAccess") == "publish"
+            and all(isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version)
+                    and _version_compare(version, "0.26.9") >= 0 for version in versions)
+            and _version_compare(VERSION, versions[0]) >= 0
+            and _version_compare(versions[1], versions[0]) >= 0)
+
+
+def _design_intake_matches(body: Any, project_id: str) -> bool:
+    return (isinstance(body, dict) and body.get("projectId") == project_id
+            and body.get("protocolVersion") == 1 and isinstance(body.get("permissions"), dict))
+
+
+def _design_scope_available(body: dict[str, Any], scope: str) -> bool:
+    return scope == "read" or body["permissions"].get("write" if scope == "publish" else "feedback") is True
+
+
 def cmd_setup_check(args: argparse.Namespace) -> None:
     """接入验收：只读实测，不因配置存在就声称连接成功，绝不打印响应原文。"""
     checks: list[dict[str, Any]] = []
@@ -847,6 +874,9 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             fail("host", "unexpected_redirect", "目标接口发生重定向，已停止继续发送凭据；先核对 CDS 主机与代理配置，不重新授权。")
         return response
 
+    design_access = getattr(args, "design_access", None)
+    if design_access and not getattr(args, "project", None):
+        fail("project", "invalid_project", "设计接入需要已有项目的 ID。")
     summary = _credential_summary(getattr(args, "instance", None))
     if summary["conflicts"]:
         fail("credentials", "credential_conflict", "先解决环境与仓库的凭据来源冲突，不要重新授权。")
@@ -854,6 +884,8 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("credentials", "missing_credentials",
              "系统 CLI 没有可复用凭据，请由人类在已登录的 CDS 页面处理，不申请项目权限或自行提权。"
              if getattr(args, "system", False) else "当前没有可复用凭据；按接入说明发起 CDS 页面授权。")
+    if design_access and not summary["host"]:
+        fail("host", "unbound_credential", "现有凭据没有可核对的 CDS 主机，请在目标工作区确认接入来源。")
     try:
         expected_host = _setup_origin(args.host)
         actual_host = _setup_origin(_cds_base())
@@ -910,9 +942,11 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     checks.append({"stage": "skills", "passed": True, "loadOnly": selected})
 
     print("接入自检：核对服务端协议与版本。", file=sys.stderr)
-    status, manifest, _ = request("/api/agent/setup.json")
+    status, manifest, _ = request(_design_setup_path(project) if design_access else "/api/agent/setup.json")
     if status != 200 or not isinstance(manifest, dict) or manifest.get("version") != "cds-agent-setup.v1":
         fail("protocol", "setup_unavailable", "CDS 接入协议不可用，请确认服务版本和网络。")
+    if design_access and not _design_setup_supported(manifest, project):
+        fail("protocol", "design_approval_unavailable", "目标实例还不支持当前项目的设计授权，请核对服务版本。")
     remote_version = manifest.get("cliVersion")
     minimum_version = manifest.get("minCliVersion")
     if any(not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+", value)
@@ -955,18 +989,28 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             fail("authorization", "system_scope_required", "当前全局凭据只限建项目或指定项目，不能证明系统访问范围；请由人类在 CDS 页面处理，不自行扩大权限。")
     checks.append({"stage": "authorization", "passed": True, "kind": identity.get("kind")})
     path = "/api/projects/" + urllib.parse.quote(project, safe="") if project else "/api/config"
+    if design_access:
+        path += "/design/intake"
     status, body, _ = request(path)
+    if design_access and status in (401, 403, 404):
+        fail("access", "design_scope_required", "当前没有所需设计权限，按接入说明发起页面授权。")
     if status != 200 or not isinstance(body, dict):
         fail("access", "access_denied" if status in (401, 403) else "target_unavailable",
              "目标只读访问未通过，请确认目标存在且当前凭据具有权限。")
-    if project:
+    if design_access:
+        if not _design_intake_matches(body, project):
+            fail("access", "target_mismatch", "设计接入清单的项目或协议不匹配。")
+        if not _design_scope_available(body, design_access):
+            fail("access", "design_scope_required", "当前设计权限不足，按接入说明发起页面授权。")
+    elif project:
         resolved = body.get("project", body)
         if not isinstance(resolved, dict) or resolved.get("id") != project:
             fail("access", "target_mismatch", "服务端返回的项目与目标不一致，停止当前操作。")
     checks.append({"stage": "access", "passed": True, "status": status})
     ok({"connected": True, "host": expected_host, "projectId": project or None,
-        "scope": "project" if project else "system-read", "checks": checks},
-       note="接入自检通过；只证明当前目标的只读访问，业务执行仍需独立验收。")
+        "scope": f"design-{design_access}" if design_access else "project" if project else "system-read", "checks": checks},
+       note="接入自检通过。设计稿是否发布以实际提交回执为准。" if design_access
+       else "接入自检通过；只证明当前目标的只读访问，业务执行仍需独立验收。")
 
 
 _PROJECT_SENSITIVE_FIELDS = (
@@ -5842,8 +5886,23 @@ def cmd_connect(args: argparse.Namespace) -> None:
     project_id = str(getattr(args, "project", "") or "").strip()
     new_project = bool(getattr(args, "new_project", False))
     recover = bool(getattr(args, "recover", False))
+    design_access = getattr(args, "design_access", None)
     if sum((bool(project_id), new_project, recover)) != 1:
         die("请选择项目接入、新建或原身份恢复中的一项", code=1)
+    if design_access:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", project_id):
+            die("设计接入需要已存在项目的真实 ID。", code=1)
+        try:
+            host = _setup_origin(host)
+            summary = _credential_summary(getattr(args, "instance", None))
+            known_host = summary["host"] or _connection_context().get("host")
+            known_project = summary["projectId"] or _connection_context().get("projectId")
+            if (summary["conflicts"] or (known_host and _setup_origin(known_host) != host)
+                    or (known_project and known_project != project_id)
+                    or (not summary["host"] and _auth_headers().get("X-AI-Access-Key"))):
+                die("当前工作区的主机或项目绑定与申请不一致，请先确认目标。", code=2)
+        except (ValueError, TypeError):
+            die("请使用接入页面提供的 CDS 主机地址。", code=1)
     # Reject an already broken local archive before creating an approval or
     # consuming a one-time delivery. Do not discover it only while saving the key.
     _instance_store()
@@ -5955,12 +6014,12 @@ def cmd_connect(args: argparse.Namespace) -> None:
 
     saved_user_cred = _load_user_credential(host)
     recovery_deadline = time.monotonic() + timeout_seconds
-    if not new_project and _pending_identity_request(host, git_url):
+    if not new_project and not design_access and _pending_identity_request(host, git_url):
         _restore_auth_env(previous)
         _connect_original_identity(args, host, git_url, project_id)
         return
     local_key = ""
-    if not new_project:
+    if not new_project and not design_access:
         local_key = str(local.get("projectKey") or "") if str(local.get("host") or "").rstrip("/") == host and local.get("projectId") == project_id else ""
         if local_key:
             check_status, check_body, _ = _request(
@@ -6024,6 +6083,52 @@ def cmd_connect(args: argparse.Namespace) -> None:
                 return
             print("正在申请恢复原项目访问；批准后自动保存凭据。", file=sys.stderr)
 
+    approval_url = host + "/project-list"
+    safe_transport = {"follow_redirects": False, "fatal_network_errors": False} if design_access else {}
+    pending_path = ""
+    pending: dict[str, Any] = {}
+    design_scope = f"design-{design_access}" if design_access else ""
+    project_endpoint = f"/api/projects/{urllib.parse.quote(project_id, safe='')}"
+    if design_access:
+        current_key = previous["CDS_PROJECT_KEY"] or previous["AI_ACCESS_KEY"]
+        if current_key:
+            check_status, intake, _ = _request(
+                "GET", project_endpoint + "/design/intake", timeout=10,
+                extra_headers={"X-AI-Access-Key": current_key}, **safe_transport,
+            )
+            if check_status == 200 and _design_intake_matches(intake, project_id):
+                if _design_scope_available(intake, design_access):
+                    _restore_auth_env(previous)
+                    ok({"projectId": project_id, "scope": design_scope, "reused": True},
+                       note="已复用当前项目的设计权限。")
+                    return
+            elif check_status not in (401, 403, 404):
+                _restore_auth_env(previous)
+                die("暂时无法核对当前项目的设计接入清单，请核对项目和服务。", code=2)
+            if current_key.startswith(("cdsp_", "cdsu_")):
+                saved_user_cred = current_key
+        # An old server may silently ignore the field and issue a general grant.
+        status, manifest, _ = _request("GET", _design_setup_path(project_id), timeout=10, **safe_transport)
+        if status != 200 or not isinstance(manifest, dict) or not _design_setup_supported(manifest, project_id):
+            _restore_auth_env(previous)
+            die("该 CDS 未确认支持当前项目的设计授权，请核对接入实例和技能版本。", code=2)
+        pending_path = os.path.join(_workspace_root(), ".cds", "design-approval.json")
+        try:
+            with open(pending_path, encoding="utf-8") as existing_request:
+                pending = json.load(existing_request)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError):
+            _restore_auth_env(previous)
+            die("本地设计授权申请无法读取，请保留申请记录并核对文件。", code=2)
+        if not isinstance(pending, dict) or (pending and (
+            pending.get("host") != host or pending.get("projectId") != project_id
+            or pending.get("designAccess") != design_access
+            or not pending.get("requestId") or not pending.get("pollToken")
+        )):
+            _restore_auth_env(previous)
+            die("当前工作区已有不同的设计授权申请，请先处理原申请。", code=2)
+
     request_path = (
         "/api/bootstrap-access-requests"
         if new_project
@@ -6034,7 +6139,10 @@ def cmd_connect(args: argparse.Namespace) -> None:
         if new_project
         else "申请恢复或连接原项目访问；项目由 CDS 自动核对，批准后自动保存凭据，不会重新建项目。"
     )
-    # The shipped approval endpoint resolves user credentials only. A project key
+    if design_access:
+        purpose = {"read": "申请读取当前项目的设计稿件。", "feedback": "申请读取稿件并回传实施反馈。",
+                   "publish": "申请发布或修订当前项目中可核对 Git 来源的设计稿件。"}[design_access]
+    # The ordinary recovery path uses the saved user credential. A project key
     # cannot preserve principal/expiry policy when requesting a replacement key.
     if local_key:
         identity_status, identity, _ = _request(
@@ -6046,24 +6154,32 @@ def cmd_connect(args: argparse.Namespace) -> None:
             _restore_auth_env(previous)
             die("原项目凭据已失效，需先恢复本机用户身份后再申请原项目授权；未降为匿名申请、未覆盖原连接。", code=2)
     request_proof = saved_user_cred
-    status, body, _ = _request(
-        "POST",
-        request_path,
-        body={
-            "agentName": agent_name, "purpose": purpose,
-            **({"waitSeconds": max(10, int(recovery_deadline - time.monotonic()))} if new_project else {}),
-            **({"requestedProject": {
-                "name": create_name or _repository_identity(git_url).rsplit("/", 1)[-1],
-                "repository": str(getattr(args, "git_url", "") or "").strip(),
-            }} if new_project else {}),
-        },
-        # 创建请求会触发持久化与事件通知；共享控制面忙时可能超过 10 秒，
-        # 但该 POST 不能盲目重试，否则响应丢失时会生成重复审批单。
-        timeout=30,
-        extra_headers=({"x-ai-access-key": request_proof} if request_proof else None),
-    )
+    if pending:
+        status, body = 201, pending
+    else:
+        status, body, _ = _request(
+            "POST",
+            request_path,
+            body={
+                "agentName": agent_name, "purpose": purpose,
+                **({"designAccess": design_access} if design_access else {}),
+                **({"waitSeconds": max(10, int(recovery_deadline - time.monotonic()))} if new_project else {}),
+                **({"requestedProject": {
+                    "name": create_name or _repository_identity(git_url).rsplit("/", 1)[-1],
+                    "repository": str(getattr(args, "git_url", "") or "").strip(),
+                }} if new_project else {}),
+            },
+            timeout=30,
+            extra_headers=({"x-ai-access-key": request_proof} if request_proof else None),
+            **safe_transport,
+        )
     if status not in (200, 201) or not isinstance(body, dict):
         _restore_auth_env(previous)
+        if design_access:
+            known_errors = {"account-disabled", "project-access-revoked", "access-update-pending", "recovery_credential_invalid"}
+            error = body.get("error") if isinstance(body, dict) else None
+            die(f"设计授权申请未受理（HTTP {status}）。", code=2,
+                extra={"reason": error} if error in known_errors else None)
         die(f"发起授权失败: HTTP {status} {body}", code=2)
     request_id = str(body.get("requestId") or "")
     poll_token = str(body.get("pollToken") or "")
@@ -6071,10 +6187,18 @@ def cmd_connect(args: argparse.Namespace) -> None:
     if not request_id or not poll_token:
         _restore_auth_env(previous)
         die("授权响应缺少 requestId 或 pollToken", code=3)
+    if design_access and (body.get("designAccess") != design_access or body.get("projectId") != project_id):
+        _restore_auth_env(previous)
+        die("审批申请返回的项目或设计权限与请求不符。", code=2)
+    if design_access and not pending:
+        _exclude_local_path(_workspace_root(), "/.cds/design-approval.json")
+        _exclude_local_path(_workspace_root(), "/.cds/*.tmp")
+        _write_private_json(pending_path, {"host": host, "projectId": project_id, "designAccess": design_access,
+                                          "requestId": request_id, "pollToken": poll_token})
 
-    approval_url = host + "/project-list"
-    print(f"已向 CDS 发起授权申请 {request_id}。", file=sys.stderr)
-    print(f"请在浏览器打开 {approval_url}，在右下角授权申请中点击批准。", file=sys.stderr)
+    print(f"{'已恢复' if pending else '已向 CDS 发起'}授权申请 {request_id}。", file=sys.stderr)
+    approval_button = {"read": "批准设计只读", "feedback": "批准实施反馈", "publish": "批准设计发布"}.get(design_access, "批准")
+    print(f"请在浏览器打开 {approval_url}，在右下角授权申请中点击{approval_button}。", file=sys.stderr)
     print("等待批准，期间不需要复制任何密钥。", file=sys.stderr)
 
     poll_path = (
@@ -6094,6 +6218,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
                 timeout=10,
                 extra_headers={"X-Poll-Token": poll_token},
                 fatal_network_errors=False,
+                **({"follow_redirects": False} if design_access else {}),
             )
             if poll_status == 0:
                 now = time.monotonic()
@@ -6105,16 +6230,28 @@ def cmd_connect(args: argparse.Namespace) -> None:
                 continue
             if poll_status != 200 or not isinstance(poll_body, dict):
                 _restore_auth_env(previous)
+                if design_access:
+                    if poll_status == 404:
+                        Path(pending_path).unlink(missing_ok=True)
+                    die(f"暂时无法读取设计授权状态（HTTP {poll_status}）。", code=2)
                 die(f"轮询授权失败: HTTP {poll_status} {poll_body}", code=2)
             state = str(poll_body.get("status") or "")
             if state == "approved":
                 authorization_key = str(poll_body.get("authorizationKey") or "")
                 if not authorization_key:
                     _restore_auth_env(previous)
+                    if design_access and poll_body.get("delivered") is True:
+                        Path(pending_path).unlink(missing_ok=True)
                     die("授权已批准，但凭据已被其他轮询方取走。请重新发起。", code=2)
+                if design_access and (poll_body.get("designAccess") != design_access or not authorization_key.startswith("cdsp_")):
+                    _restore_auth_env(previous)
+                    die("实际发放的凭据与申请的设计范围不符。", code=2)
                 break
             if state in ("rejected", "expired", "cancelled"):
                 _restore_auth_env(previous)
+                if design_access:
+                    Path(pending_path).unlink(missing_ok=True)
+                    die("设计授权申请已结束，请在 CDS 核对审批结果。", code=2, extra={"status": state})
                 reason = poll_body.get("rejectReason") or poll_body.get("message") or "用户拒绝"
                 die(f"授权未通过: {reason}", code=2)
             if state not in ("pending", "blocked"):
@@ -6123,7 +6260,8 @@ def cmd_connect(args: argparse.Namespace) -> None:
             now = time.monotonic()
             if now - last_progress_at >= 10:
                 remaining = max(0, int(deadline - now))
-                print((str(poll_body.get("message") or "等待管理员恢复原访问权限，同一条命令将自动继续。")
+                print(((str(poll_body.get("message") or "") if not design_access else "")
+                       or "等待管理员恢复原访问权限，同一条命令将自动继续。"
                        if state == "blocked" else f"仍在等待批准，剩余约 {remaining} 秒。"), file=sys.stderr)
                 last_progress_at = now
             time.sleep(interval_seconds)
@@ -6139,6 +6277,9 @@ def cmd_connect(args: argparse.Namespace) -> None:
 
     if not authorization_key:
         _restore_auth_env(previous)
+        if design_access:
+            die("等待窗口已结束，原申请已保存。再次运行相同命令可继续领取。", code=2,
+                extra={"requestId": request_id, "approvalUrl": approval_url, "status": "pending"})
         die("等待授权超时，未保存任何凭据。", code=2)
 
     if new_project:
@@ -6161,13 +6302,20 @@ def cmd_connect(args: argparse.Namespace) -> None:
         os.environ["CDS_PROJECT_KEY"] = authorization_key
         os.environ.pop("AI_ACCESS_KEY", None)
         verification_path = f"/api/projects/{urllib.parse.quote(resolved_project_id)}"
-        auth_scope = "project"
+        if design_access:
+            verification_path += "/design/intake"
+        auth_scope = design_scope or "project"
 
-    verify_status, _verify_body, _ = _request("GET", verification_path, timeout=10)
+    if design_access:
+        Path(pending_path).unlink(missing_ok=True)
+    verify_status, _verify_body, _ = _request("GET", verification_path, timeout=10, **safe_transport)
     if not 200 <= verify_status < 300:
         die(f"授权已保存，但验证失败: HTTP {verify_status}", code=2)
 
-    if not new_project and isinstance(_verify_body, dict):
+    if design_access:
+        if not _design_intake_matches(_verify_body, resolved_project_id) or not _design_scope_available(_verify_body, design_access):
+            die("已保存凭据。设计接入清单尚未验证当前项目和申请范围。", code=2)
+    elif not new_project and isinstance(_verify_body, dict):
         actual = _verify_body.get("project", _verify_body)
         if isinstance(actual, dict) and actual.get("id") == resolved_project_id:
             _save_local_credentials(host=host, project_id=resolved_project_id, project_key=authorization_key,
@@ -12135,6 +12283,7 @@ def _build_parser() -> argparse.ArgumentParser:
     setup_target.add_argument("--project", help="目标项目 ID（新建后使用服务端返回的 ID）")
     setup_target.add_argument("--system", action="store_true", help="系统只读任务，不代入项目")
     setup_check.add_argument("--skills", default="cds", help="当前任务需要加载的技能，逗号分隔")
+    setup_check.add_argument("--design-access", choices=("read", "feedback", "publish"), help="核实当前项目的设计权限")
     setup_check.set_defaults(func=cmd_setup_check)
 
     auth = sub.add_parser("auth", help="认证").add_subparsers(dest="sub", required=True)
@@ -12611,6 +12760,7 @@ def _build_parser() -> argparse.ArgumentParser:
     con.add_argument("--git-url", help="随 --create-project 一起给新项目绑定的 Git 仓库地址（可选）")
     con.add_argument("--slug", help="随 --create-project 一起指定 slug（可选，默认后端从名称推导）")
     con.add_argument("--agent", default="Agent", help="审批盒中显示的 Agent 名称")
+    con.add_argument("--design-access", choices=("read", "feedback", "publish"), help="申请所选范围的设计权限")
     con.add_argument("--timeout", type=int, default=300, help="等待批准秒数（默认 300）")
     con.add_argument("--interval", type=int, default=2, help="轮询间隔秒数（默认 2）")
     con.set_defaults(func=cmd_connect)
