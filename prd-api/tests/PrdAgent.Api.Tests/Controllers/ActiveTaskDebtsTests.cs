@@ -43,7 +43,7 @@ public class ActiveTaskDebtsTests
     [InlineData("platform active#1")]
     [InlineData("platform#1#2")]
     [InlineData("platform#99999")]  // 五位编号：没有哪份台账有上万条，多半是把别的数字塞进来了
-    [InlineData("https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md#1")] // 路径不是模块名
+    [InlineData("doc/guide.doc.pri.debt.md#1")] // 路径不是模块名
     public void ParseKey_挡住不合法的标识(string? key)
     {
         Assert.Null(ActiveTaskDebtsController.ParseKey(key));
