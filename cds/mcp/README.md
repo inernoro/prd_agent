@@ -101,3 +101,34 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 先在项目中运行 `cdscli connect`。工具支持查看连接、比较、幂等启动、查询、暂停、取消、续传和账号规则。
 数据库连接与传输服务账号由管理员在 CDS 项目配置中登记；MCP 不接收调用方传入的 host、项目或数据库密码覆盖。
 版本不兼容或能力目录失效会阻止写操作。任务必须通过 CDS 独立对账才显示完成；超时继续查询原编号。
+
+## 工程规划
+
+工程规划复用当前项目的 CDS 凭据，使用独立的 `--planning` 模式。
+
+```json
+{
+  "mcpServers": {
+    "cds-planning": {
+      "command": "node",
+      "args": ["/absolute/path/to/prd_agent/cds/mcp/src/server.mjs", "--planning"],
+      "cwd": "/absolute/path/to/your/project"
+    }
+  }
+}
+```
+
+先在项目中运行 `cdscli connect`。工具按项目返回的能力显示，可读取工程规划、提交待确认提案，或在用户明确授权后直接登记债务。MCP 的回执是当前操作依据，提案确认由有权限的成员在 CDS 中完成。写入没有回执时复用原请求编号和内容。
+
+计划提案可在 `draft.debtIds` 提交已核对的本项目未偿债务编号。成员确认后同时创建计划和关联步骤。
+
+## 私有设计
+
+按 [CDS 设计接入](../../.claude/skills/cds/reference/design-intake.md) 从已绑定的项目 Git 工作区启动 `--design` MCP。系统所有者可为智能体签发当前项目的 `designAccess: "read"` 或 `designAccess: "publish"` 凭据。用项目环境的主机、项目和凭据运行 `cdscli init --yes`。
+
+| 工具 | 输入 | 行为 |
+| --- | --- | --- |
+| `cds_design_read` | `view` 使用 `intake`、`designs`、`frameworks`、`design` 或 `framework`。读取单项时填 `id`，可选 `version` | 读取项目接入清单，发现稿件和框架，或回读固定版本。`intake` 由项目 API 提供，含 `protocolVersion`、稿件接入标识、已核验 Git 目录和续版权限。 |
+| `cds_design_publish` | 公共字段 `zipPath`、`sourceCommit`、`sourcePath`、`requestId`，可选 `note`。新稿传 `intent=create` 与 `designKey`，续版传 `intent=revise`、`designId` 与 `expectedVersion` | 从已同步项目 Git 导出 ZIP 并发布。服务器在同一项目内核对稳定标识、可信目录、基线版本和发布身份。 |
+
+先从 `intake` 识别同稿、基线和权限，再确定写入目标。信息有歧义时在制作前一次澄清。`designKey` 是 `module/draft`，新模块使用新的模块段，同稿一直沿用稿件 ID。回执用于固定版回读，超时沿用原请求和内容重试。

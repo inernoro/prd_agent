@@ -1,6 +1,9 @@
 .cds-settings-mobile-directory { display: none; }
 .cds-settings-desktop-directory { display: contents; }
+.cds-settings-skeleton-description-wrap { display: none; }
 @media (max-width: 900px) {
+  .cds-settings-skeleton-description { min-height: 2.5rem; }
+  .cds-settings-skeleton-description-wrap { display: block; }
   .cds-settings-mobile-directory {
     display: flex;
     min-width: 0;

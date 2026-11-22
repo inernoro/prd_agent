@@ -1,8 +1,118 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
+
+test('右侧快捷上传直接提交 ZIP，普通上传仍可搜索并指定首页', async ({ page }) => {
+  const { ZipWriter, TextReader, Uint8ArrayWriter } = createRequire(new URL('../../prd-admin/package.json', import.meta.url))('@zip.js/zip.js');
+  const zip = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false });
+  await zip.add('bundle/report.md', new TextReader('# Report'));
+  await zip.add('bundle/manifest.json', new TextReader('{}'));
+  await zip.add('bundle/run.sh', new TextReader('echo sample'));
+  const longPath = `bundle/checkpoints/${'a'.repeat(112)}.json`;
+  await zip.add(longPath, new TextReader('{}'));
+  for (let index = 0; index < 8; index++) {
+    await zip.add(`bundle/checkpoints/result-${index}.json`, new TextReader('{}'));
+  }
+  const buffer = Buffer.from(await zip.close());
+  // Simulate a legacy ZIP with backslashes in both its local header and its central directory.
+  const pathWithSlash = 'bundle/manifest.json';
+  for (let index = buffer.indexOf(pathWithSlash); index !== -1; index = buffer.indexOf(pathWithSlash, index + pathWithSlash.length)) {
+    buffer.write('bundle\\manifest.json', index);
+  }
+  let uploadBody: string | null = null;
+  let resumeRequests = 0;
+  let finishResume!: () => void;
+  const resumeResponse = new Promise<void>(resolve => { finishResume = resolve; });
+  const manualSite = { id: 'manual', title: 'scan', entryFile: 'map-file.html', visibility: 'private', files: [] };
+  await page.addInitScript(() => {
+    localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+      isAuthenticated: true, user: { userId: 'zip-qa', username: 'zip-qa', role: 'ADMIN' },
+      token: 'zip-qa-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
+      menuCatalog: [], menuCatalogLoaded: true,
+    }, version: 0 }));
+    sessionStorage.setItem('web-pages:pending-optimization-session', JSON.stringify({ sessionId: 'previous-upload' }));
+  });
+  await page.route('**/api/**', async route => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
+    if (pathname === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+    if (pathname === '/api/web-pages/upload' && request.method() === 'POST') {
+      uploadBody = request.postData();
+      data = { id: 'published', title: 'scan', entryFile: 'map-directory.html', visibility: 'private' };
+    }
+    const optimization = '/api/web-pages/optimization/uploads';
+    if (pathname === `${optimization}/previous-upload`) {
+      resumeRequests++;
+      await resumeResponse;
+      await route.fulfill({ status: 404, json: { success: false, data: null, error: { code: 'NOT_FOUND' } } });
+      return;
+    }
+    if (pathname === optimization && request.method() === 'POST')
+      data = { sessionId: 'zip-qa', chunkSize: buffer.length, totalChunks: 1 };
+    if (pathname === `${optimization}/zip-qa`)
+      data = { status: 'saved', review: { outcome: 'saved', site: manualSite } };
+    await route.fulfill({ json: { success: true, data, error: null } });
+  });
+  await page.goto('/web-pages');
+  await page.getByRole('button', { name: '展开投放面板' }).click();
+  const dock = page.locator('[data-tour-id="share-dock-panel"]');
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'), dock.getByRole('button', { name: '点击或拖文件到此上传' }).click(),
+  ]);
+  await chooser.setFiles({ name: 'scan.zip', mimeType: 'application/zip', buffer });
+  await expect(dock.getByRole('button', { name: '无密码分享' })).toBeVisible();
+  await expect(dock.getByRole('combobox', { name: '打开站点时' })).toHaveCount(0);
+  expect(uploadBody).toContain('filename="scan.zip"');
+  expect(uploadBody).not.toMatch(/name="(?:entryFile|openAsDirectory)"/);
+
+  await dock.getByRole('button', { name: '收起投放面板' }).click();
+  await page.getByRole('button', { name: '上传网页', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '上传站点' });
+  const fileInput = dialog.locator('input[type="file"]');
+  try {
+    await expect.poll(() => resumeRequests).toBe(1);
+    await expect(page.getByText('正在恢复上次文件检查', { exact: true })).toBeVisible();
+    await expect(fileInput).toHaveCount(0);
+  } finally {
+    finishResume();
+  }
+  await expect(fileInput).toBeEnabled();
+  await fileInput.setInputFiles({ name: 'scan.zip', mimeType: 'application/zip', buffer });
+  const mode = dialog.getByRole('combobox', { name: '打开站点时' });
+  await expect(mode).toHaveValue('auto');
+  await expect(mode.locator('option')).toHaveText(['系统查找', '文件目录', '手动选择']);
+  const files = dialog.getByRole('group', { name: '选择首页文件' });
+  await expect(files).toHaveCount(0);
+  await mode.selectOption('directory');
+  await expect(files).toHaveCount(0);
+  await mode.selectOption('manual');
+  const list = files.getByRole('list', { name: 'ZIP 文件列表' });
+  await expect(list.getByRole('radio')).toHaveCount(11);
+  await expect(list.getByRole('radio', { name: 'run.sh' })).toHaveCount(0);
+  await page.setViewportSize({ width: 1024, height: 500 });
+  expect(await list.getByText(longPath.replace('bundle/', ''), { exact: true }).evaluate(node =>
+    node.clientHeight > 18 && node.scrollWidth === node.clientWidth)).toBe(true);
+  const submit = dialog.getByRole('button', { name: '开始上传' });
+  await expect(submit).toBeDisabled();
+  const search = files.getByRole('searchbox', { name: '搜索文件名或路径' });
+  await search.fill('manifest');
+  await expect(list.getByRole('radio')).toHaveCount(1);
+  await list.getByRole('radio', { name: 'manifest.json' }).check();
+  await search.fill('report');
+  await expect(files.getByText('已选 manifest.json')).toBeVisible();
+  const request = page.waitForRequest(req => new URL(req.url()).pathname === '/api/web-pages/optimization/uploads'
+    && req.method() === 'POST');
+  await submit.click();
+  const payload = (await request).postDataJSON();
+  expect(payload).toMatchObject({ entryIndex: 1 });
+  expect(payload).not.toHaveProperty('entryFile');
+  await expect(page.getByRole('dialog', { name: '上传完成' })).toBeVisible();
+  expect(resumeRequests).toBe(1);
+});
 
 test('合集切换到较早版本成员时不复制上一成员的预览地址', async ({ page }) => {
   const sites = ['a', 'b'].map((id, index) => ({ id, title: `来源文档 ${id}`, siteUrl: `https://hosting.example/${id}/${id}.html?v=${index ? '10000' : '20000'}`,
@@ -116,10 +226,17 @@ for (const width of [390, 1440]) {
           if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity, traffic,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
           else if (path === '/api/web-pages/related-documents/summaries') data = { items: Object.fromEntries(sites.map((site, i) => [site.id, { count: i === 3 ? 0 : 3, mainTitle: i === 3 ? undefined : titles[0], isMain: i === 0, titles: i === 3 ? [] : titles.filter(title => title !== site.title) }])) };
+          else if (path === '/api/web-pages/layout-3/collection-contexts') data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
+          else if (path === '/api/web-pages/layout-3/related-documents') data = { items: [sites[3]], canManage: true, version: 0 };
           else if (path === '/api/web-pages/tags') data = { tags: tagNames.map((tag, index) => ({ tag, count: tagCounts[index] })) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
-          else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
-            siteIds: [sites[i].id], shareType: 'single', createdAt: date, expiresAt: null, isRevoked: false, viewCount: 0 })) };
+          else if (path === '/api/web-pages/shares') data = { items: [...[0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
+            siteIds: [sites[i].id], shareType: 'single', createdAt: date, expiresAt: null, isRevoked: false, viewCount: 0 })),
+              { id: 'expired', token: 'expired', siteId: sites[1].id, siteIds: [sites[1].id], shareType: 'single',
+                createdAt: date, expiresAt: new Date(Date.now() - 60_000).toISOString(), isRevoked: false, viewCount: 0 },
+              { id: 'single-member-collection', token: 'single-member-collection', siteId: sites[3].id, siteIds: [sites[3].id], shareType: 'collection',
+                createdAt: date, expiresAt: null, isRevoked: false, viewCount: 0 },
+            ] };
           else if (path === '/api/changelog/current-week') data = { weekStart: date, weekEnd: date, fetchedAt: date,
             dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
           await route.fulfill({ json: { success: true, data, error: null } });
@@ -128,17 +245,26 @@ for (const width of [390, 1440]) {
         const cards = page.locator('[data-tour-id="webpages-card"]');
         await expect(cards).toHaveCount(4);
         await expect(page.getByLabel('已编辑 987654321 次', { exact: true })).toBeAttached();
-        await expect(cards.locator('.related-variant-badge')).toHaveCount(4);
+        await expect(cards.locator('.related-trigger')).toHaveCount(3);
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         await page.evaluate(() => document.fonts.ready);
-        const zeroRelated = cards.nth(3).locator('.related-trigger');
-        await expect(zeroRelated).toBeVisible();
-        await expect(zeroRelated.locator('.related-count')).toHaveCount(0);
-        await expect(zeroRelated.locator('svg.lucide-link2')).toBeVisible();
-        await cards.nth(3).hover();
-        await expect(zeroRelated).toBeVisible();
+        const unlinkedCard = cards.nth(3);
+        await expect(cards.nth(0).locator('[data-site-shared-badge]')).toHaveCount(1);
+        await expect(cards.nth(1).locator('[data-site-shared-badge]')).toHaveCount(0);
+        await expect(unlinkedCard.locator('[data-site-shared-badge]')).toHaveCount(0);
+        await expect(unlinkedCard.locator('.related-trigger')).toHaveCount(0);
+        await unlinkedCard.hover();
+        await expect(unlinkedCard.locator('.related-trigger')).toHaveCount(0);
+        await unlinkedCard.getByRole('button', { name: '更多设置', exact: true }).filter({ visible: true }).last().click();
+        await page.getByRole('menuitem', { name: '关联与合集', exact: true }).click();
+        const relations = page.getByRole('dialog', { name: '关联文档', exact: true });
+        await expect(relations.getByText('暂无关联文档。')).toBeVisible();
+        await relations.getByRole('button', { name: '管理关联', exact: true }).click();
+        const manager = page.getByRole('dialog', { name: '管理关联文档', exact: true });
+        await expect(manager).toBeVisible();
+        await manager.getByRole('button', { name: '取消', exact: true }).click();
         await page.mouse.move(0, 0);
-        await expect(zeroRelated).toBeVisible();
+        await expect(unlinkedCard.locator('.related-trigger')).toHaveCount(0);
         const metrics = await cards.evaluateAll(elements => elements.map(card => {
           const bounds = card.getBoundingClientRect();
           const stats = card.querySelector<HTMLElement>('[data-site-card-stats]')!;

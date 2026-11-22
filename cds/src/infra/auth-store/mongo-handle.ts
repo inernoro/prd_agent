@@ -10,6 +10,8 @@
 
 import { MongoClient, type Db, type Collection } from 'mongodb';
 import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UserActivityRecord } from '../../domain/auth.js';
+import type { CdsPasskey } from '../../domain/passkey.js';
+import type { OidcArtifact } from './oidc-store.js';
 
 // ── Collection interface ──────────────────────────────────────────────────────
 
@@ -56,6 +58,8 @@ export interface IAuthMongoHandle {
   invitesCollection(): IAuthCollection<CdsWorkspaceInvite>;
   /** User activity / trace log records. */
   activityCollection(): IAuthCollection<UserActivityRecord>;
+  passkeysCollection?(): Collection<CdsPasskey & { _id: string }>;
+  oidcCollection?(): Collection<OidcArtifact>;
   /** Graceful shutdown — waits for any pending ops. */
   close(): Promise<void>;
   /** Health probe used by the Settings panel. */
@@ -224,6 +228,14 @@ export class RealAuthMongoHandle implements IAuthMongoHandle {
     return adaptCollection<UserActivityRecord>(
       this.requireDb().collection<Record<string, unknown>>('cds_user_activity'),
     );
+  }
+
+  passkeysCollection(): Collection<CdsPasskey & { _id: string }> {
+    return this.requireDb().collection('cds_passkeys');
+  }
+
+  oidcCollection(): Collection<OidcArtifact> {
+    return this.requireDb().collection('cds_oidc_artifacts');
   }
 
   async close(): Promise<void> {

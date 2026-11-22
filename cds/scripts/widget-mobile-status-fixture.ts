@@ -65,6 +65,7 @@ async function fixture(hosted = false, width = 390, tags: string[] = [], profile
       let body;
       if (url === '/_cds/api/branches') body = { tabTitleEnabled: false, branches: [{ id: 'fixture-branch', status: window.widgetFixture.status, runningCommitSha: 'a'.repeat(40), tags }] };
       else if (url === '/_cds/api/build-profiles') body = { profiles: Array.from({ length: profileCount }, (_, index) => ({ id: `service-${index}`, name: `合成服务 ${index}` })) };
+      else if (url === '/_cds/api/hosted-sso/panel/status') body = { enabled: false };
       else { window.widgetFixture.unknown.push(url); throw new Error(`未登记的夹具请求：${url}`); }
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     };
@@ -120,6 +121,7 @@ async function check(name: string, run: (page: Page) => Promise<void>, hosted = 
   try {
     await run(page);
     assert.deepEqual(await page.evaluate(() => window.widgetFixture.unknown), []);
+    assert.equal(await page.locator('button[data-action="site-sign-in"], button[data-action="site-switch"]').count(), 0);
     const measured = await geometry(page);
     if (await page.evaluate(() => innerWidth <= 640)) assert.equal(measured.touch, true, '手机保留 44px 触控目标');
     assert.equal(measured.visible, true, '保留可见、可命中的徽标入口');

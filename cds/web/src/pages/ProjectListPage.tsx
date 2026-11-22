@@ -51,7 +51,7 @@ import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { useNowTick } from '@/hooks/useNowTick';
 import { readProjectInventoryPreferences, writeProjectInventoryPreferences, type ProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanShowProjectActions } from '@/components/layout/AppShell';
+import { AppShell, ProjectListTopBar, Workspace, useCanShowProjectActions } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
@@ -317,6 +317,7 @@ interface AgentKeySummary {
   id: string;
   label?: string;
   scope?: string;
+  planningAccess?: 'read' | 'propose';
   access?: AgentKeyScope;
   createdAt?: string;
   createdBy?: string;
@@ -776,15 +777,22 @@ export function ProjectListPage(): JSX.Element {
   }
 
   // 页面标题、操作与筛选属于完整项目页；全局顶栏继续承载通用运维入口。
+  const refreshAction = <Button
+    variant="ghost"
+    size="icon"
+    onClick={() => { void refresh(false); setEnvironmentRefresh(value => value + 1); }}
+    aria-label="刷新项目列表"
+    title="刷新"
+  >
+    <RefreshCw />
+    <span className="md:hidden">刷新</span>
+  </Button>;
   return (
     <AppShell
       active="projects"
       topbar={
-        <TopBar
-          left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />}
-          right={
-            <>
-              <PaletteHint />
+        <ProjectListTopBar canManageProjects={showProjectCreator} refreshWhileLoading={refreshAction}>
+          {state.status === 'loading' ? undefined : <>
               {canManageProjects ? <>
               <Button
                 variant="ghost"
@@ -816,16 +824,7 @@ export function ProjectListPage(): JSX.Element {
                 </Button>
               ) : null}
               </> : null}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => { void refresh(false); setEnvironmentRefresh(value => value + 1); }}
-                aria-label="刷新项目列表"
-                title="刷新"
-              >
-                <RefreshCw />
-                <span className="md:hidden">刷新</span>
-              </Button>
+              {refreshAction}
               {state.status === 'ok' && !canManageProjects ? <Button variant="outline" size="sm" onClick={() => navigate('/dts')}><Database />数据同步</Button> : null}
               {canManageProjects ? <DropdownMenu
                 trigger={
@@ -869,9 +868,8 @@ export function ProjectListPage(): JSX.Element {
                   Agent 申请记录
                 </DropdownItem>
               </DropdownMenu> : null}
-            </>
-          }
-        />
+          </>}
+        </ProjectListTopBar>
       }
     >
       <Workspace fluid className="cds-project-inventory-workspace">
@@ -2359,6 +2357,7 @@ function AgentKeyManagerDialog({
                         <CodePill>{key.scope || 'rw'}</CodePill>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        {key.planningAccess && <span>{key.planningAccess === 'read' ? '工程规划只读' : '工程规划提案'}</span>}
                         <span>签发：{formatDate(key.createdAt)}</span>
                         <span>最近使用：{formatDate(key.lastUsedAt)}</span>
                         {key.createdBy ? <span>签发人：{key.createdBy}</span> : null}
@@ -2725,6 +2724,7 @@ function AgentKeySignDialog({
   onToast: (message: string) => void;
 }): JSX.Element {
   const [label, setLabel] = useState('');
+  const [planningAccess, setPlanningAccess] = useState<AgentKeySummary['planningAccess']>();
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState('');
   const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
@@ -2732,6 +2732,7 @@ function AgentKeySignDialog({
   useEffect(() => {
     if (!open) {
       setLabel('');
+      setPlanningAccess(undefined);
       setError('');
       setSigned(null);
       setSigning(false);
@@ -2747,7 +2748,7 @@ function AgentKeySignDialog({
         `/api/projects/${encodeURIComponent(project.id)}/agent-keys`,
         {
           method: 'POST',
-          body: { label: label.trim() || undefined },
+          body: { label: label.trim() || undefined, planningAccess },
         },
       );
       setSigned(data);
@@ -2802,6 +2803,15 @@ function AgentKeySignDialog({
                 maxLength={100}
                 placeholder="例如 Codex 本地调试"
               />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">权限</span>
+              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={planningAccess ?? ''}
+                onChange={event => setPlanningAccess(event.target.value === 'read' ? 'read' : event.target.value === 'propose' ? 'propose' : undefined)}>
+                <option value="">项目读写</option>
+                <option value="read">工程规划只读</option>
+                <option value="propose">工程规划提案</option>
+              </select>
             </label>
             <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
               签发后请只交给需要操作此项目的 Agent。用完可在管理列表吊销。

@@ -2,14 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, Check, ClipboardList, Copy, RotateCw } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
-import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { APPROVAL_DIALOG_BODY_CLASS, APPROVAL_DIALOG_FOOTER_CLASS, APPROVAL_DIALOG_HEADER_CLASS, APPROVAL_DIALOG_WIDTH, APPROVAL_FILTERS_CLASS, APPROVAL_INBOX_CLASS, APPROVAL_ROW_CLASS, APPROVAL_ROWS_CLASS, ReleaseApprovalDetailSkeleton, ReleaseApprovalSkeleton } from '@/components/skeletons/ReleaseApprovalSkeleton';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ApiError, apiRequest } from '@/lib/api';
 import { releaseApprovalInboxPath, releaseApprovalLabels, releaseApprovalPath, releaseApprovalReadFailure, releaseApprovalState, releaseApprovalTitle, releaseApprovalWorkbenchPath, type ReleaseApprovalRead } from '@/lib/releaseApproval';
 import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { useNowTick } from '@/hooks/useNowTick';
-import { LoadingBlock } from '../cds-settings/components';
 import { Chip, formatDateTime } from './shared';
 import { releaseGovernanceFailure } from './ReleaseGovernancePanel';
 import type { ReleaseApprovalDetail, ReleaseApprovalInbox } from '../../../../src/domain/release-governance';
@@ -70,7 +69,7 @@ function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
 
   const result = state?.key === key ? state?.result : undefined;
   const error = state?.key === key ? state?.error : undefined;
-  if (!result && !error && (key || opening)) return <LoadingBlock label="读取环境审批列表" />;
+  if (!result && !error && (key || opening)) return <ReleaseApprovalSkeleton hasScope={Boolean(key || opening)} />;
 
   const records = result?.records.map(record => ({ ...record, state: releaseApprovalState(record, now) })) || [];
   const waiting = records.filter(record => record.state === 'pending' && record.mayReview);
@@ -81,7 +80,7 @@ function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
     { id: 'all', name: '全部申请', count: records.length }, { id: 'review', name: '待我审批', count: waiting.length },
     { id: 'mine', name: '我发起的', count: mine.length },
   ];
-  return <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-7">
+  return <div className={APPROVAL_INBOX_CLASS}>
     <div className="mb-4 flex justify-end">
       <Button variant="ghost" size="sm" onClick={onRefresh}><RotateCw />刷新记录</Button>
     </div>
@@ -92,15 +91,15 @@ function ApprovalInbox({ scope, refresh, onRefresh, opening }: {
     </header>
     {error ? <p role="alert" className="mb-3 text-sm text-bad">{result ? '刷新失败，仍显示上次读取的记录。' : null}{error}</p> : null}
     {!result && !error ? <p className="text-sm text-muted-foreground">从发布中心选中一个环境，再打开该环境的审批列表。</p> : null}
-    {result ? <section aria-label="环境审批申请" className="cds-surface-raised cds-hairline min-w-0 rounded-xl">
-        <div className="flex flex-wrap gap-1 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
+    {result ? <section aria-label="环境审批申请" className={APPROVAL_ROWS_CLASS}>
+        <div className={APPROVAL_FILTERS_CLASS}>
           {filterOptions.map(option => <Button key={option.id} variant={filter === option.id ? 'secondary' : 'ghost'} size="sm" aria-pressed={filter === option.id} onClick={() => setFilter(option.id)}>
             {option.name}<span className="tabular-nums text-muted-foreground">{option.count}</span>
           </Button>)}
         </div>
         {visible.length ? <ul aria-label="审批申请" className="divide-y divide-[hsl(var(--hairline))]">
           {visible.map(record => <li key={record.id}>
-            <Link to={releaseApprovalPath(record.id, scope)} data-approval-row={record.id} className="group grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-3 hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring sm:grid-cols-[minmax(0,1fr)_10rem_10rem_auto] sm:px-5">
+            <Link to={releaseApprovalPath(record.id, scope)} data-approval-row={record.id} className={`${APPROVAL_ROW_CLASS} group hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring`}>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{releaseApprovalTitle(record)}</span>
@@ -201,10 +200,15 @@ function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
   }
 
   if (!data) return <Dialog open onOpenChange={open => { if (!open) close(); }}>
-    <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>{loadError ? '无法打开发布审批' : '读取发布审批'}</DialogTitle>
-      <DialogDescription>{loadError || '正在核对这笔申请和你的访问权限。'}</DialogDescription>
-    </DialogHeader>{loadError ? <Button variant="outline" onClick={() => readApproval(true)}>重新读取</Button>
-      : <ContentLoading label="读取这笔发布审批" variant="panel" />}</DialogContent>
+    <DialogContent frame style={{ width: APPROVAL_DIALOG_WIDTH }}>
+      <DialogHeader className={APPROVAL_DIALOG_HEADER_CLASS}>
+        <DialogDescription className={loadError ? 'text-left' : 'sr-only'}>{loadError || '正在核对这笔申请和你的访问权限。'}</DialogDescription>
+        {!loadError ? <div className="flex h-5 items-center gap-2" aria-hidden="true"><span className="cds-loading-skeleton-line h-3 w-20" /><span className="cds-loading-skeleton-line h-4 w-12" /></div> : null}
+        <DialogTitle className="text-left text-xl font-semibold">{loadError ? '无法打开发布审批' : '读取发布审批'}</DialogTitle>
+      </DialogHeader>
+      {loadError ? <div className={APPROVAL_DIALOG_BODY_CLASS}><Button variant="outline" onClick={() => readApproval(true)}>重新读取</Button></div>
+        : <ReleaseApprovalDetailSkeleton />}
+    </DialogContent>
   </Dialog>;
 
   const { authorization: record, target, viewer } = data;
@@ -259,18 +263,18 @@ function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
   }
   const commandLabel = command === 'reapply' ? '重新申请' : command === 'reject' ? '拒绝申请' : '填写批准意见';
   return <Dialog open onOpenChange={open => { if (!open) close(); }}>
-    <DialogContent frame style={{ width: 'min(40rem, calc(100vw - 1rem))' }} aria-describedby="approval-next-step"
+    <DialogContent frame style={{ width: APPROVAL_DIALOG_WIDTH }} aria-describedby="approval-next-step"
       onEscapeKeyDown={event => { if (sending) event.preventDefault(); else if (command) { event.preventDefault(); setCommand(undefined); } }}
       onCloseAutoFocus={event => {
         const row = Array.from(document.querySelectorAll<HTMLElement>('[data-approval-row]')).find(item => item.dataset.approvalRow === id);
         const nextFocus = row || document.getElementById('release-approval-inbox');
         if (nextFocus) { event.preventDefault(); nextFocus.focus({ preventScroll:true }); }
       }}>
-      <DialogHeader className="shrink-0 border-b border-[hsl(var(--hairline))] px-4 py-3 pr-10 sm:px-6 sm:py-4 sm:pr-12">
+      <DialogHeader className={APPROVAL_DIALOG_HEADER_CLASS}>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">{target.name}{target.environment === 'staging' ? ' · 预发' : ''}<Chip tone={state === 'pending' || state === 'expired' ? 'warn' : state === 'approved' ? 'ok' : 'muted'}>{releaseApprovalLabels[state]}</Chip></div>
         <DialogTitle className="text-left text-xl font-semibold">{typeLabel}</DialogTitle>
       </DialogHeader>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-6">
+      <div className={APPROVAL_DIALOG_BODY_CLASS}>
         <dl className="grid grid-cols-2 gap-x-3 gap-y-2.5 text-sm">
           <div className="min-w-0"><dt className="text-xs text-muted-foreground">申请人</dt><dd className="break-words">{releaseActorLabel(record.requestedBy)}</dd></div>
           <div className="min-w-0"><dt className="text-xs text-muted-foreground">截止时间 · 本地</dt><dd className="break-words tabular-nums">{formatDateTime(record.expiresAt)}</dd></div>
@@ -297,7 +301,7 @@ function ApprovalDetail({ id, scope, onScope, onResolved, onChanged }: {
         </div> : null}
         {showLink ? <input className={field} aria-label="可复制的审批链接" readOnly value={shareUrl} onFocus={e => e.currentTarget.select()} /> : null}
       </div>
-      <footer className="shrink-0 space-y-2 border-t border-[hsl(var(--hairline))] px-4 py-3 sm:px-6">
+      <footer className={APPROVAL_DIALOG_FOOTER_CLASS}>
         <div id="approval-next-step" className="text-xs leading-5 text-muted-foreground" aria-live="polite"><strong className="mr-2 text-sm text-foreground">{next}</strong>{command === 'reapply' ? '新申请会重新核验当前分支和批准范围。' : command ? '决定会记录你的身份，不会直接执行发布。' : help}</div>
         {loadError ? <p role="alert" className="text-xs text-bad">暂时无法核对最新审批状态，请刷新申请。{loadError}</p> : null}
         {notice ? <p role="status" className="text-xs text-ok">{notice}</p> : null}

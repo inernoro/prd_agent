@@ -3490,6 +3490,8 @@ html select:not([multiple]):not([size]):not(.appearance-none):dir(rtl) {
     flex-direction: column;
     gap: 0.75rem;
     padding: 1.25rem 1rem;
+    overflow: hidden auto;
+    overscroll-behavior-y: contain;
     background-color: hsl(var(--surface-sunken));
     border-right: 1px solid hsl(var(--hairline));
     box-shadow: 0 0.75rem 2.5rem hsl(var(--foreground) / 0.18);

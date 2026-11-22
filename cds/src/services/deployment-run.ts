@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { freezeEnvironmentAudit } from './environment-audit.js';
 import type {
   DeploymentFailure,
   DeploymentRun,
@@ -103,6 +104,9 @@ export class DeploymentRunService {
       operationGeneration: input.operationGeneration,
       operationAdmissionGeneration: input.operationAdmissionGeneration ?? input.operationGeneration,
       profileId: input.profileId,
+      environmentAuditIds: input.versionId ? undefined : (input.executionInput
+        ? input.executionInput.input.environmentAuditIds
+        : freezeEnvironmentAudit(this.stateService, input.projectId, input.branchId, undefined, undefined, input.profileId)),
       executorId: input.executorId,
       versionId: input.versionId,
       configHash: input.configHash,
@@ -338,7 +342,7 @@ export class DeploymentRunService {
       failure?: DeploymentFailure;
     },
   ): DeploymentRun {
-    return this.stateService.updateDeploymentRun(id, (run) => {
+    const updated = this.stateService.updateDeploymentRun(id, (run) => {
       this.assertTransition(run, nextStatus);
       if (nextStatus !== 'queued') this.acceptedQueuedIntents.delete(run.id);
       const at = this.nowIso();
@@ -363,6 +367,8 @@ export class DeploymentRunService {
         evidenceRefs: input.evidenceRefs,
       });
     });
+    if (nextStatus === 'running') this.stateService.recordEnvironmentAuditEffect(updated);
+    return updated;
   }
 
   heartbeat(id: string, phase?: string): DeploymentRun {

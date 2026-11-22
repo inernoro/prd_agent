@@ -1,5 +1,6 @@
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { SettingsMaintenanceControlsSkeleton, SettingsMaintenanceStatusSkeleton } from '@/components/skeletons/SettingsMaintenanceSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Copy, GitBranch, Network, RefreshCw, RotateCw } from 'lucide-react';
 
@@ -901,7 +902,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
             onRestart={() => void runSelfUpdate('/api/self-restart', '重启')}
             restarting={runState === 'running'}
           />
-          {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
+          {branchState.status === 'loading' ? <SettingsMaintenanceControlsSkeleton /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
           {branchState.status === 'ok' ? (
             <div className="grid gap-4">
@@ -1484,7 +1485,7 @@ function SelfUpdateStatusPanel({
   restarting: boolean;
 }): JSX.Element {
   if (state.status === 'loading') {
-    return <SettingsContentSkeleton label="读取自更新状态" />;
+    return <SettingsMaintenanceStatusSkeleton />;
   }
   if (state.status === 'error') {
     return (

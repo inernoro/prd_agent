@@ -1,3 +1,4 @@
+import type { EnvAuditFact } from './shared/engineering-planning.js';
 import type { ProjectInspection } from './shared/project-inspections.js';
 // ── Cloud Development Suite (CDS) — Core Types ──
 
@@ -373,7 +374,7 @@ export interface EnvKeyProvenance {
  * 每次 PUT /env 或 PUT /env/:key 时追加一条,记录"谁、何时、改了哪些 key"。
  * 不记 value(避免密钥泄漏到日志);只记 key 列表 + 操作类型。
  *
- * 用 ring buffer 限制 ≤ 200 条 / project,防止无限增长。
+ * 普通列表限制历史窗口，项目授权的导出可读视图外的记录。
  */
 export interface EnvChangeLogEntry {
   /** ISO 时间戳 */
@@ -386,6 +387,7 @@ export interface EnvChangeLogEntry {
   actor?: string;
   /** 来源:UI / cdscli / api(通用) */
   source?: 'ui' | 'cdscli' | 'api';
+  facts?: EnvAuditFact[];
 }
 
 /**
@@ -978,6 +980,8 @@ export interface BranchPin {
 }
 
 export interface BranchEntry {
+  /** CDS login required at this branch's registered HTTPS site. */
+  hostedSso?: import('./services/hosted-sso.js').HostedSsoConfig;
   /** 逻辑归档仍保留服务、工作区与数据；到期前可恢复。 */
   archive?: { archivedAt: string; retireAt: string; reason: string; actor: string } | null;
   /** 整组未就绪的连续观察起点，完全就绪后清空。 */
@@ -1488,6 +1492,7 @@ export interface DeploymentRun {
   /** 原请求的受理顺序；强制重建续接不因执行代次递增而成为更晚意图。 */
   operationAdmissionGeneration?: number;
   profileId?: string;
+  environmentAuditIds?: string[];
   executorId?: string;
   configHash?: string;
   startedAt: string;
@@ -2291,6 +2296,7 @@ export interface LegacyDataCase {
 }
 
 export interface CdsState {
+  globalEnvironmentChangeLog?: EnvChangeLogEntry[];
   /** Explicit owner opt-in for bounded read-only capacity collection. */
   hostCapacitySamplingEnabled?: boolean;
   /** 不可变模板版本与任务快照；跟随现有 backingStore 持久化。 */
@@ -4589,9 +4595,13 @@ export interface AgentKey {
   hash: string;
   /** Permission scope. Always 'rw' — a placeholder for future tiers. */
   scope: 'rw';
+  /** Optional restriction to this project's planning reads or proposal intake. */
+  planningAccess?: 'read' | 'propose';
+  /** Optional restriction to this project's private design reads or Git-verified publishing. */
+  designAccess?: 'read' | 'publish';
   /** ISO timestamp of sign time. */
   createdAt: string;
-  /** GitHub login of the signer if github auth mode, else undefined. */
+  /** Verified account that issued the key, when present. */
   createdBy?: string;
   /** ISO timestamp updated (best-effort) each time the key authenticates. */
   lastUsedAt?: string;

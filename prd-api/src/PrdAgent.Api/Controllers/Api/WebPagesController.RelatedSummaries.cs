@@ -95,7 +95,8 @@ public partial class WebPagesController
                 .OrderByDescending(x => x.CreatedAt).Take(100))
                 if (targets.TryGetValue(comment.Id, out var refs) && refs.Contains(id)) related.Add(comment.SiteId);
             related.Remove(id);
-            var primary = group != null && readable.TryGetValue(group.MainSiteId, out var main) ? main : null;
+            var primary = group != null && family.Count > 1 && family.Contains(group.MainSiteId)
+                ? readable[group.MainSiteId] : null;
             summaries[id] = new { count = related.Count, mainTitle = primary?.Title, isMain = primary?.Id == id,
                 titles = related.Select(x => readable[x].Title).Take(8).ToList() };
         }

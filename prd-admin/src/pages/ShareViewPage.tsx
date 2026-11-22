@@ -192,6 +192,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const token = tokenOverride ?? params.token;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const fixedRevisionId = searchParams.get('revision') ?? undefined;
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const currentUser = useAuthStore(s => s.user);
   const currentUserId = currentUser?.userId;
@@ -321,6 +322,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
         coverImageUrl: updated.coverImageUrl,
         pdfAssetUrl: updated.pdfAssetUrl,
         pdfFilePaths: updated.pdfFilePaths,
+        zipHomepageAssetPath: updated.zipHomepageAssetPath,
         wrappedAssetType: updated.wrappedAssetType,
       } : item),
     } : current);
@@ -435,7 +437,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
     setError(null);
     setWrongPassword(false);
     setRateLimitedHint(null);
-    const res = await viewSiteShare(token, pwd?.trim());
+    const res = await viewSiteShare(token, pwd?.trim(), fixedRevisionId);
     if (request !== shareRequest.current) return;
     setLoading(false);
     if (res.success) {
@@ -465,7 +467,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   useEffect(() => {
     void fetchShare(password || undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, requestedRelatedSiteId]);
+  }, [token, requestedRelatedSiteId, fixedRevisionId]);
 
   // 全屏演示：优先请求浏览器原生全屏。iPhone WebKit 不支持普通元素 requestFullscreen，
   // 此时降级为页面级沉浸模式：固定铺满可视视口并隐藏 MAP 顶栏，同时提供退出按钮。
@@ -848,6 +850,17 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
 
   // ── Success: show site(s) ──
   if (!data) return null;
+
+  if (data.revisionId && data.previewUrl) return (
+    <main className="flex min-h-dvh flex-col">
+      <header className="flex items-center justify-between gap-4 border-b px-4 py-3">
+        <h1 className="min-w-0 break-words text-lg font-semibold">{data.title}</h1>
+        <span className="shrink-0 text-sm">固定版本</span>
+      </header>
+      <iframe className="min-h-[calc(100dvh-64px)] w-full flex-1 border-0" src={data.previewUrl} title={data.title}
+        sandbox="allow-scripts allow-forms allow-modals allow-downloads" referrerPolicy="no-referrer" />
+    </main>
+  );
 
   const isOwner = isAuthenticated && currentUserId && data.createdBy === currentUserId;
   const openCollectionManager = (sharing = false) => {

@@ -21,6 +21,8 @@ PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库与 LLMGW
 
 新增或修改查询时，应先更新可执行清单，再在设计或债务文档中引用集合名和索引名；不要把完整 DDL 再粘回文档。
 
+MAP 启用 CDS 登录前，在试点应用库建立 `cds_sso_sessions` 的 `ttl_cds_sso_sessions_expires_at`。该索引清理过期的委托会话，应用每次鉴权仍实时核对有效期。
+
 OpenDesign 直连 LLMGW 使用的 `llmgw_runtime_grants` 需要三条人工维护索引：授权哈希唯一索引、
 过期时间 TTL 索引，以及租户与任务联合索引。它们只在网关库生效；首次初始化空网关库时，
 DBA 必须按脚本说明设置 `PRD_GATEWAY_DB=1` 后执行清单。API 和 LLMGW 启动过程都不会创建这些索引。

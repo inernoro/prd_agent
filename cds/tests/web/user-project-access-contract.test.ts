@@ -46,7 +46,7 @@ describe('human project access UI wiring', () => {
     expect(list).toContain('open={canManageProjects && pendingImportOpen}');
     expect(list).toContain('{canManageProjects ? <CreateProjectDialog');
   });
-  it('renders only project and personal activity navigation for members, preserving owner controls', () => {
+  it('keeps owner navigation hidden from project members', () => {
     const render = (canManageSettings: boolean) => renderToStaticMarkup(createElement(MemoryRouter, null,
       createElement(AppRail, { active: 'projects', canManageSettings, canLogout: false, logoutState: 'idle',
         onLogout() {}, onAgentAccess() {}, onBugReport() {} })));
@@ -61,6 +61,7 @@ describe('human project access UI wiring', () => {
     const owner = render(true);
     expect(owner).toContain('CDS 系统设置');
     expect(owner).toContain('href="/release-center"');
+    expect(owner).toContain('href="/overview"');
   });
   it('fails closed before auth resolves and keeps legacy owner/disabled mode compatibility', () => {
     expect(canManageSystemSettings(null)).toBe(false);

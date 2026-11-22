@@ -7,6 +7,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using MongoDB.Driver;
 using Serilog.Context;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
@@ -25,6 +26,11 @@ namespace PrdAgent.Api.Middleware;
 /// </summary>
 public class RequestResponseLoggingMiddleware
 {
+    private static (string Path, string Query, bool Sensitive) ProjectLogTarget(HttpRequest request) =>
+        request.Path.StartsWithSegments(CdsSsoSettings.AuthPath, StringComparison.OrdinalIgnoreCase)
+            ? (request.Path.Value ?? "", "", true)
+            : HostedSitePreviewLogPolicy.Project(request.Path.Value ?? "", request.QueryString.Value);
+
     private readonly RequestDelegate _next;
     private readonly ILogger<RequestResponseLoggingMiddleware> _logger;
     private readonly MongoDbContext _db;
@@ -145,7 +151,7 @@ public class RequestResponseLoggingMiddleware
         }
 
         var path = context.Request.Path.Value ?? "";
-        var logTarget = HostedSitePreviewLogPolicy.Project(path, context.Request.QueryString.Value);
+        var logTarget = ProjectLogTarget(context.Request);
         var carriesCredential = CarriesCredential(path) || logTarget.Sensitive;
         if (SkipLogPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
         {
@@ -766,7 +772,7 @@ public class RequestResponseLoggingMiddleware
         string? tokenClientType,
         string? tokenSessionKey)
     {
-        var logTarget = HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", context.Request.QueryString.Value);
+        var logTarget = ProjectLogTarget(context.Request);
         var path = logTarget.Path;
         var query = logTarget.Query;
         var method = context.Request.Method;
@@ -1104,7 +1110,7 @@ public class RequestResponseLoggingMiddleware
             entry.LastSeenAt = now;
             entry.ClientType = "desktop";
 
-            var logTarget = HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", context.Request.QueryString.Value);
+            var logTarget = ProjectLogTarget(context.Request);
             var path = logTarget.Path;
             // 心跳不计入最近请求（避免刷屏）
             var isHeartbeat = path.StartsWith("/api/v1/desktop/presence/heartbeat", StringComparison.OrdinalIgnoreCase);

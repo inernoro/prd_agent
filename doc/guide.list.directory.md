@@ -97,6 +97,7 @@
 - [CDS 控制面 / 数据面分离设计(蓝绿部分已废弃) · 设计](./design.cds.control-data-split.md) `design.cds.control-data-split`
 - [CDS 数据迁移设计 · 设计](./design.cds.data-migration.md) `design.cds.data-migration`
 - [CDS 数据库隔离三档（共享库 / 分支独立库 / 隔离库）· 设计](./design.cds.database-isolation.md) `design.cds.database-isolation`
+- [CDS 工程债务 · 设计](./design.cds.debt.md) `design.cds.debt`
 - [CDS FU-02 MapAuthStore（Mongo 后端） · 设计](./design.cds.fu-02-auth-store-mongo.md) `design.cds.fu-02-auth-store-mongo`
 - [CDS 生命周期原子性 · 架构设计（对账收敛取代命令式级联） · 设计](./design.cds.lifecycle-atomicity.md) `design.cds.lifecycle-atomicity`
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
@@ -344,6 +345,7 @@
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
 - [CDS 控制面卡顿治理 · 计划](./plan.cds.control-plane-lag.md) `plan.cds.control-plane-lag`
 - [CDS 数据库隔离三档收敛 · 计划](./plan.cds.database-isolation.md) `plan.cds.database-isolation`
+- [CDS 工程规划与债务交付验收 · 计划](./plan.cds.engineering-planning.md) `plan.cds.engineering-planning`
 - [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
 - [CDS 本地多用户认证解耦 · 计划](./plan.cds.local-multi-user-auth.md) `plan.cds.local-multi-user-auth`

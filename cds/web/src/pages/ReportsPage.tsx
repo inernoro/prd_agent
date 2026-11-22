@@ -1,3 +1,4 @@
+import { REPORTS_LEDGER, ReportsSkeleton } from '@/components/skeletons/ReportsSkeleton';
 import { AnchoredPopover } from '@/components/ui/anchored-popover';
 import { ClassificationFilters, ClassificationSummary, NotificationTemplateCatalog, type ClassificationSelection } from '@/components/ReportClassification';
 import { matchesClassification } from '../../../src/shared/notification-templates';
@@ -791,12 +792,12 @@ export function ReportsPage(): JSX.Element {
           {reportsError && state.status === 'ok' ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm"><span className="min-w-0 flex-1 break-words">报告刷新失败，以下保留上次读取结果。{reportsError}</span><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试读取报告</Button></div> : null}
           {directReport?.status === 'loading' && !selected ? <LoadingBlock label="正在打开验收报告" /> : null}
           {directReport?.status === 'error' ? <div role="alert" className="space-y-2"><ErrorBlock message={directReport.message || '报告未能打开，请重新读取。'} /><Button variant="outline" onClick={() => void loadDirectReport()}>重试打开报告</Button></div> : null}
-          {state.status === 'loading' && !selected && directReport?.status !== 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
+          {state.status === 'loading' && !selected && directReport?.status !== 'loading' ? <ReportsSkeleton overview={showOverview} /> : null}
           {state.status === 'error' ? <div role="alert" className="space-y-2"><ErrorBlock message={selected ? `报告清单未读取成功，当前报告仍可阅读。${state.message}` : state.transient ? '报告暂时无法读取，请稍后重试。' : state.message} /><Button variant="outline" disabled={refreshing} onClick={() => void load()}>重试读取报告</Button></div> : null}
 
           {state.status === 'ok' && !selected && !showOverview && overviewState.status === 'error' ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm"><span className="min-w-0 flex-1 break-words">版本关系汇总未读取成功，当前保留原始报告清单，暂不折叠历史版本。{overviewState.message}</span><Button size="sm" variant="outline" onClick={() => void loadOverview()}>重试版本汇总</Button></div> : null}
-          {state.status === 'ok' && !selected ? <div className="shrink-0 flex flex-wrap items-center gap-3">
-            <div className="inline-flex gap-1 rounded-md border border-[hsl(var(--hairline))] p-1" role="group" aria-label="报告视图">
+          {state.status === 'ok' && !selected ? <div className={REPORTS_LEDGER.toolbar}>
+            <div className={REPORTS_LEDGER.viewSwitch} role="group" aria-label="报告视图">
               <Button size="sm" variant={!showOverview ? 'default' : 'ghost'} aria-pressed={!showOverview} onClick={() => setOverviewView(false)}>报告</Button>
               <Button size="sm" variant={showOverview ? 'default' : 'ghost'} aria-pressed={showOverview} onClick={() => setOverviewView(true)}>验收概况</Button>
             </div>
@@ -1202,13 +1203,13 @@ function ReportsHome({
         </>
       ))}
 
-      <section id="reports-ledger" className="mt-1 overflow-hidden rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-card">
+      <section id="reports-ledger" className={REPORTS_LEDGER.frame}>
         {/*
           台账表头拆成两行：第一行「标题 ——— 控件组」，第二行「类目页签」。
           原来九个页签和四个控件挤同一行，一定会折，折叠开关还会孤零零掉到第二行最左边。
           两组各自成立之后，类目多少个都不影响这一行的结构。
         */}
-        <div className="flex flex-col gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2.5">
+        <div className={REPORTS_LEDGER.heading}>
           <div className="flex flex-wrap items-center gap-2">
             <h2 tabIndex={-1} className="text-[0.9375rem] font-semibold tracking-tight">报告台账</h2>
             <span className="flex-1" />
@@ -1259,7 +1260,7 @@ function ReportsHome({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="block w-full table-fixed border-collapse text-base lg:table lg:min-w-[72rem]">
+            <table className={REPORTS_LEDGER.table}>
               <thead className="hidden lg:table-header-group">
                 <tr className="bg-[hsl(var(--surface-sunken))] text-left text-[0.6875rem] uppercase tracking-[0.04em] text-muted-foreground">
                   {/*
@@ -1268,13 +1269,13 @@ function ReportsHome({
                     宽屏下固定列合计约 50rem，剩下的一千多像素全灌进标题列，标题文字只占三分之一，
                     中间空出一大块（用户截图圈出来的就是它）。百分比之和恒为 100，富余按比例摊开。
                   */}
-                  <th className="w-[9%] px-3 py-2.5 font-medium">结论</th>
-                  <th className="w-[30%] px-3 py-2.5 font-medium">报告 · 前缀 / 对象 / 目标日</th>
-                  <th className="w-[5%] px-3 py-2.5 font-medium">档位</th>
-                  <th className="w-[10%] px-3 py-2.5 font-medium">缺陷</th>
-                  <th className="w-[22%] px-3 py-2.5 font-medium">验收对象</th>
-                  <th className="w-[18%] px-3 py-2.5 font-medium">归档时间</th>
-                  <th className="w-[6%] px-3 py-2.5 font-medium" aria-label="操作" />
+                  <th className={`${REPORTS_LEDGER.columnWidths[0]} px-3 py-2.5 font-medium`}>结论</th>
+                  <th className={`${REPORTS_LEDGER.columnWidths[1]} px-3 py-2.5 font-medium`}>报告 · 前缀 / 对象 / 目标日</th>
+                  <th className={`${REPORTS_LEDGER.columnWidths[2]} px-3 py-2.5 font-medium`}>档位</th>
+                  <th className={`${REPORTS_LEDGER.columnWidths[3]} px-3 py-2.5 font-medium`}>缺陷</th>
+                  <th className={`${REPORTS_LEDGER.columnWidths[4]} px-3 py-2.5 font-medium`}>验收对象</th>
+                  <th className={`${REPORTS_LEDGER.columnWidths[5]} px-3 py-2.5 font-medium`}>归档时间</th>
+                  <th className={`${REPORTS_LEDGER.columnWidths[6]} px-3 py-2.5 font-medium`} aria-label="操作" />
                 </tr>
               </thead>
               <tbody className="block lg:table-row-group">
@@ -1322,7 +1323,7 @@ function ReportsHome({
                     <tr
                       key={r.id}
                       data-report-id={r.id}
-                      className={`group flex cursor-pointer flex-col gap-2 border-t border-[hsl(var(--hairline))] p-3 align-top transition-colors hover:bg-[hsl(var(--surface-sunken))] lg:table-row lg:p-0 ${superseded ? 'opacity-60' : ''}`}
+                      className={`${REPORTS_LEDGER.row} cursor-pointer transition-colors hover:bg-[hsl(var(--surface-sunken))] ${superseded ? 'opacity-60' : ''}`}
                       style={{ boxShadow: `inset 3px 0 0 ${rail}` }}
                       onClick={() => onSelect(r)}
                       onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(r); } }}

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { TASK_LAYOUT } from '../../web/src/components/skeletons/TaskScheduleSkeleton';
 
 /**
  * 任务调度页里几处「删掉之后页面照样渲染、所有用例照样绿」的接线。
@@ -107,7 +108,8 @@ describe('任务调度页的接线', () => {
    */
   it('固定宽的统计段要等到宽度够了才露，不能挤掉结论条', () => {
     expect(src, '统计段仍从 md 就露，48rem 那一档会挤掉结论条').not.toMatch(/hidden shrink-0 items-stretch md:flex/);
-    expect(src).toContain('hidden shrink-0 items-stretch lg:flex');
+    expect(src).toContain('className={TASK_LAYOUT.summaryStats}');
+    expect(TASK_LAYOUT.summaryStats).toBe('hidden shrink-0 items-stretch lg:flex');
   });
 
   /*

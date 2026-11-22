@@ -93,7 +93,10 @@ describe('github auth middleware — agent key coexistence', () => {
     expect((req as any).cdsUser).toEqual({ id: 'u1' });
   });
 
-  it('re-issues the session cookie when the session slid forward', async () => {
+  it.each([
+    { hostSessionCookies: false, name: 'cds_gh_session' },
+    { hostSessionCookies: true, name: '__Host-cds_gh_session' },
+  ])('renews an HTTPS session as $name', async ({ hostSessionCookies, name }) => {
     const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
     const authService = {
       validateSession: vi.fn(async () => ({
@@ -102,8 +105,8 @@ describe('github auth middleware — agent key coexistence', () => {
         renewed: true,
       })),
     } as any;
-    const mw = createGithubAuthMiddleware({ authService, cookieSecure: true });
-    const req = apiReq({ cookie: 'cds_gh_session=valid' });
+    const mw = createGithubAuthMiddleware({ authService, cookieSecure: true, hostSessionCookies });
+    const req = apiReq({ cookie: `${name}=valid` });
     const res = mockRes();
     const next = vi.fn();
 
@@ -111,7 +114,7 @@ describe('github auth middleware — agent key coexistence', () => {
 
     expect(next).toHaveBeenCalledOnce();
     const cookie = res.headers['Set-Cookie'];
-    expect(cookie).toContain('cds_gh_session=valid');
+    expect(cookie.startsWith(`${name}=valid;`)).toBe(true);
     expect(cookie).toContain('Secure');
     expect(cookie).toContain(`Expires=${new Date(expiresAt).toUTCString()}`);
   });

@@ -35,7 +35,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { postSse } from '@/lib/sse';
 import { multiPreviewUrl, resolveWebEntryPresentation, resolveWebEntryUrl, simplePreviewUrl, type PreviewMode } from '@/lib/previewUrl';
-import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
+import {
+  BRANCH_DETAIL_COLUMN_CLASS, BRANCH_DETAIL_GRID_CLASS, BRANCH_DETAIL_HEADER_CLASS, BRANCH_DIAGNOSTIC_TABS_CLASS,
+  BRANCH_SELECTOR_GRID_CLASS, BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile,
+} from '@/pages/cds-settings/components';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
@@ -1279,7 +1282,7 @@ function BranchWorkspace({ branchId, projectId }: { branchId: string; projectId:
       }
     >
       <Workspace fluid>
-        {state.status === 'loading' ? <BranchDetailLoadingSkeleton className="rounded-md" /> : null}
+        {state.status === 'loading' ? <BranchDetailLoadingSkeleton selectBranch={!branchId && Boolean(projectId)} canManage={canManageConsole} /> : null}
         {state.status === 'error' ? (
           // 2026-07-09：错误码翻译成人话 + 给出路（旧版把 branch_not_found 机器码
           // 裸展示且无任何按钮——从旧链接/收藏进来的用户看不懂也走不出去）。
@@ -1302,13 +1305,13 @@ function BranchWorkspace({ branchId, projectId }: { branchId: string; projectId:
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
-            <section className="min-w-0 space-y-5">
+          <div className={BRANCH_DETAIL_GRID_CLASS}>
+            <section className={BRANCH_DETAIL_COLUMN_CLASS}>
               {!canOpenPreview ? <p role="status" className="text-sm text-muted-foreground">{!state.previewMode ? '预览模式尚未确认，请重试读取后再打开预览。' : MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
               {Object.keys(state.readFailures).length > 0 ? <div role="alert" className="rounded-md border border-warn/35 bg-warn-soft p-3 text-sm">{Object.keys(state.readFailures).join('、')}读取失败，当前结果不完整；未读取到的内容不能视为不存在。<Button className="ml-2" size="sm" variant="outline" onClick={() => void load()}>重试读取</Button><details className="mt-2"><summary className="cursor-pointer">查看读取错误</summary><ul className="mt-2 space-y-1">{Object.entries(state.readFailures).map(([source, message]) => <li key={source}>{source}：{message}</li>)}</ul></details></div> : null}
               <Card className="rounded-md">
                 <CardHeader className="p-5">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className={BRANCH_DETAIL_HEADER_CLASS}>
                     <div className="min-w-0">
                       <CardTitle className="break-all text-lg">{state.branch.branch}</CardTitle>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -1581,7 +1584,7 @@ function BranchWorkspace({ branchId, projectId }: { branchId: string; projectId:
 
               {/* 选中服务后直接进入诊断工作区；不让低频空态挡在日志与配置之前。 */}
               <Tabs orientation="horizontal" value={detailTab} onValueChange={(value) => setDetailTab(value as typeof detailTab)}>
-                <TabsList aria-label="分支诊断分区" className="cds-surface-raised cds-hairline grid grid-cols-4 gap-1 p-1">
+                <TabsList aria-label="分支诊断分区" className={BRANCH_DIAGNOSTIC_TABS_CLASS}>
                   <TabsTrigger value="logs" className="min-w-0 justify-center gap-1 px-1">
                     <FileText className="h-4 w-4 shrink-0" />
                     日志
@@ -1893,7 +1896,7 @@ function BranchWorkspace({ branchId, projectId }: { branchId: string; projectId:
               </DisclosurePanel>
             </section>
 
-            <aside className="min-w-0 space-y-5">
+            <aside className={BRANCH_DETAIL_COLUMN_CLASS}>
               <Card className="rounded-md">
                 <CardHeader className="p-5">
                   <div className="flex items-center justify-between gap-3">
@@ -1978,7 +1981,7 @@ function BranchSelect({ project, branches }: { project: ProjectSummary; branches
           这个项目还没有跟踪分支。先到分支列表从远程分支创建并部署。
         </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className={BRANCH_SELECTOR_GRID_CLASS}>
           {branches.map((branch) => (
             <a key={branch.id} href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(project.id)}`} className="cds-surface-raised cds-hairline p-4 hover:bg-accent/50">
               <div className="font-medium">{branch.branch}</div>

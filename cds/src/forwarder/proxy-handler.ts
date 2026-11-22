@@ -21,6 +21,7 @@
 import http from 'node:http';
 import { ControlPlaneStreams, type WidgetStreamRecoveryOptions } from './control-plane-stream.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from '../services/hosted-site-preview-log-policy.js';
+import { setCdsForwardedHost } from '../services/forwarded-host.js';
 import zlib from 'node:zlib';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
@@ -446,6 +447,7 @@ export class ProxyHandler {
     if (!fwdHeaders['x-forwarded-host']) {
       fwdHeaders['x-forwarded-host'] = originalHost;
     }
+    setCdsForwardedHost(fwdHeaders, route.branchId ? req.headers.host : undefined);
     // Host 字段改写为 upstream 的 hostname:port —— 容器内应用通常以 vhost
     // 路由(nginx server_name / .NET Host filtering / Vite host check),
     // 看不到 127.0.0.1:port 这类内部 host 就返回 404 / "Invalid Host header"。
@@ -805,6 +807,7 @@ export class ProxyHandler {
     if (!fwdHeaders['x-forwarded-host']) {
       fwdHeaders['x-forwarded-host'] = originalHostUp;
     }
+    setCdsForwardedHost(fwdHeaders, route.branchId ? req.headers.host : undefined);
     if (!route.preserveHost) {
       fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
     }

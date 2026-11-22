@@ -63,7 +63,9 @@ public interface IHostedSiteService
         string? wrappedAssetType = null,
         CancellationToken ct = default,
         string? uploadId = null,
-        string? sourceRef = null);
+        string? sourceRef = null,
+        string? entryFile = null,
+        int? entryIndex = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
     /// <param name="maxStoredBytes">
@@ -113,7 +115,9 @@ public interface IHostedSiteService
         string? wrappedAssetType = null,
         CancellationToken ct = default,
         string? uploadId = null,
-        string? reuploadRef = null);
+        string? reuploadRef = null,
+        string? zipEntryFile = null,
+        int? zipEntryIndex = null);
 
     /// <summary>
     /// 读取可微调的入口 HTML。会执行站点编辑权限与形态校验，且限制正文最多 2MB。
@@ -280,6 +284,10 @@ public interface IHostedSiteService
     Task<WebPageShareLink> CreateCollectionShareAsync(string userId, string displayName,
         HostedCollectionSnapshot snapshot, string? title, string? description, string? password,
         int expiresInDays, string visibility, CancellationToken ct = default);
+
+    Task<WebPageShareLink> CreateFixedRevisionShareAsync(string userId, string displayName,
+        string siteId, HostedSiteFixedRevision revision, string? title, string? description,
+        string? password, TimeSpan validity, string visibility, CancellationToken ct = default);
 
     /// <summary>
     /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方这次**有没有真的写下什么**。
@@ -453,6 +461,9 @@ public interface IHostedSiteService
     /// </summary>
     Task<ShareSiteResolveResult> ResolveCollectionShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
 
+    Task<ShareSiteResolveResult> ResolveFixedRevisionShareAsync(string token, string revisionId,
+        string? password, string? viewerUserId, string? proof, CancellationToken ct = default);
+
     Task<ShareSiteResolveResult> ResolveShareSiteAsync(
         string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default);
 }
@@ -562,6 +573,7 @@ public class TagCountResult
 
 public class ShareViewResult
 {
+    public string? RevisionId { get; set; }
     public string? DocumentCollectionId { get; set; }
     public string? CollectionId { get; set; }
     public string? MainSiteId { get; set; }
@@ -784,6 +796,7 @@ public class SharedSiteInfo
     /// <summary>与站内预览相同的文件结构判据；多文件网站需要真实文档 URL。</summary>
     public string ContentShape { get; set; } = string.Empty;
     public bool RequiresPreviewBridge { get; set; }
+    public string? ZipHomepageAssetPath { get; set; }
     public long TotalSize { get; set; }
 
     /// <summary>

@@ -13,7 +13,10 @@ public sealed record HostedSitePreviewTicket(
     string UserId,
     string? DeploymentScope,
     string PackageFingerprint,
-    DateTime ExpiresAt);
+    DateTime ExpiresAt,
+    HostedSiteFixedShareProof? FixedShare = null);
+
+public sealed record HostedSiteFixedShareProof(string Token, string AccessProof);
 
 /// <summary>Issues a short-lived, revision-bound capability for a verified web package.</summary>
 public sealed class HostedSitePreviewAccessService
@@ -22,11 +25,13 @@ public sealed class HostedSitePreviewAccessService
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
     private const int MaxTicketLength = 8192;
     private readonly IDataProtector _protector;
+    private readonly IDataProtector _fixedShareProtector;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public HostedSitePreviewAccessService(IDataProtectionProvider protectionProvider)
     {
         _protector = protectionProvider.CreateProtector(ProtectorPurpose);
+        _fixedShareProtector = protectionProvider.CreateProtector("PrdAgent.HostedSite.FixedShareFiles.v1");
     }
 
     public (string Ticket, DateTime ExpiresAt) Issue(
@@ -47,21 +52,41 @@ public sealed class HostedSitePreviewAccessService
         return (_protector.Protect(JsonSerializer.Serialize(payload, JsonOptions)), expiresAt);
     }
 
-    public bool TryRead(string? ticket, out HostedSitePreviewTicket payload, DateTime? now = null)
+    public (string Ticket, DateTime ExpiresAt) IssueFixedShare(string siteId, HostedSiteFixedRevision revision, string? viewerUserId,
+        string shareToken, string shareProof, DateTime? shareExpiresAt)
+    {
+        var expiresAt = DateTime.UtcNow.Add(Lifetime);
+        if (shareExpiresAt is { } shareExpiry && shareExpiry < expiresAt) expiresAt = shareExpiry;
+        var payload = new HostedSitePreviewTicket(
+            Guid.NewGuid().ToString("N"), siteId, revision.RevisionId, viewerUserId ?? string.Empty,
+            DeploymentScope.Current, revision.PackageFingerprint, expiresAt, new(shareToken, shareProof));
+        return (_fixedShareProtector.Protect(JsonSerializer.Serialize(payload, JsonOptions)), expiresAt);
+    }
+
+    public bool TryRead(string? ticket, out HostedSitePreviewTicket payload, DateTime? now = null) =>
+        TryReadTicket(ticket, _protector, false, out payload, now);
+
+    public bool TryReadFixedShare(string? ticket, out HostedSitePreviewTicket payload, DateTime? now = null) =>
+        TryReadTicket(ticket, _fixedShareProtector, true, out payload, now);
+
+    private static bool TryReadTicket(string? ticket, IDataProtector protector, bool fixedShare,
+        out HostedSitePreviewTicket payload, DateTime? now)
     {
         payload = null!;
         if (string.IsNullOrWhiteSpace(ticket) || ticket.Length > MaxTicketLength) return false;
         try
         {
             var value = JsonSerializer.Deserialize<HostedSitePreviewTicket>(
-                _protector.Unprotect(ticket),
+                protector.Unprotect(ticket),
                 JsonOptions);
             if (value == null
                 || value.ExpiresAt <= (now ?? DateTime.UtcNow)
                 || value.AccessId.Length != 32
                 || string.IsNullOrWhiteSpace(value.SiteId)
                 || string.IsNullOrWhiteSpace(value.RevisionId)
-                || string.IsNullOrWhiteSpace(value.UserId)
+                || fixedShare != (value.FixedShare != null)
+                || (!fixedShare && string.IsNullOrWhiteSpace(value.UserId))
+                || (value.FixedShare is { } share && (string.IsNullOrWhiteSpace(share.Token) || share.AccessProof.Length != 64))
                 || value.PackageFingerprint.Length != 64
                 || !string.Equals(value.DeploymentScope, DeploymentScope.Current, StringComparison.Ordinal))
                 return false;

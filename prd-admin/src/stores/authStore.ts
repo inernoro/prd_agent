@@ -146,8 +146,15 @@ export const useAuthStore = create<AuthState>()(
         // 换的是另一个人就先把上一个人的东西清干净。同一个人重新登录（续期、
         // 刷新令牌）不清，否则会把他自己没推上去的本地改动一并抹掉。
         const prev = useAuthStore.getState().user;
-        if (prev && prev.userId !== user.userId) runUserScopedCleanup();
-        set((state) => ({ isAuthenticated: true, user, token, authSessionEpoch: state.authSessionEpoch + 1 }));
+        const switchedUser = Boolean(prev && prev.userId !== user.userId);
+        if (switchedUser) runUserScopedCleanup();
+        set((state) => ({
+          ...(switchedUser ? INITIAL_STATE : {}),
+          isAuthenticated: true,
+          user,
+          token,
+          authSessionEpoch: state.authSessionEpoch + 1,
+        }));
       },
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
       setPermissions: (permissions) => set({ permissions: Array.isArray(permissions) ? permissions : [] }),

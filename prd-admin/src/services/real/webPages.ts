@@ -59,6 +59,7 @@ export interface HostedSite {
   pdfAssetUrl: string | undefined;
   /** 后端依据当前文件清单派生的 PDF 下载白名单。 */
   pdfFilePaths?: string[];
+  zipHomepageAssetPath?: string | null;
   files: HostedSiteFile[];
   /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
   contentShape?: 'self-contained-html' | 'multi-file';
@@ -557,6 +558,7 @@ export function buildApiUrl(path: string) {
 
 export async function uploadSite(input: {
   file: File;
+  entryFile?: string;
   title?: string;
   description?: string;
   folder?: string;
@@ -583,6 +585,8 @@ export async function uploadSite(input: {
 
   const fd = new FormData();
   fd.append('file', input.file);
+  if (input.entryFile === '') fd.append('openAsDirectory', 'true');
+  else if (input.entryFile !== undefined) fd.append('entryFile', input.entryFile);
   if (input.title) fd.append('title', input.title);
   if (input.description) fd.append('description', input.description);
   if (input.folder) fd.append('folder', input.folder);
@@ -630,6 +634,8 @@ export async function uploadSite(input: {
  */
 export async function reviewSiteZip(input: {
   file: File;
+  entryFile?: string;
+  entryIndex?: number;
   title?: string;
   description?: string;
   folder?: string;
@@ -652,6 +658,8 @@ export async function reviewSiteZip(input: {
       body: {
         fileName: input.file.name,
         fileSize: input.file.size,
+        entryFile: input.entryFile,
+        entryIndex: input.entryIndex,
         title: input.title,
         description: input.description,
         folder: input.folder,
@@ -1323,6 +1331,7 @@ export interface SharedSiteInfo {
   entrySize: number;
   /** 服务端登记的可下载 PDF 路径；不包含对象存储物理键。 */
   pdfFilePaths?: string[];
+  zipHomepageAssetPath?: string | null;
   fileCount: number;
   coverImageUrl?: string;
   // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
@@ -1343,6 +1352,8 @@ export interface SharedSiteInfo {
 }
 
 export interface ShareViewData {
+  revisionId?: string;
+  previewUrl?: string;
   documentCollectionId?: string;
   collectionId?: string;
   mainSiteId?: string;
@@ -1371,7 +1382,7 @@ export interface ShareAskInfo {
   openingQuestions: string[];
 }
 
-export async function viewShare(token: string, password?: string): Promise<ApiResponse<ShareViewData>> {
+export async function viewShare(token: string, password?: string, revisionId?: string): Promise<ApiResponse<ShareViewData>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
   // 使用 raw fetch 避免 apiRequest 的 401 自动 refresh/redirect 逻辑，此端点是公开的
   // 但仍需携带 auth token（如果已登录），以便后端识别观看者身份
@@ -1380,12 +1391,34 @@ export async function viewShare(token: string, password?: string): Promise<ApiRe
   const authToken = useAuthStore.getState().token;
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
+    if (revisionId) return await openFixedRevision(token, revisionId, password, headers);
     const res = await fetch(url, { headers });
-    const json = await res.json();
-    return json as ApiResponse<ShareViewData>;
+    const result = await res.json() as ApiResponse<ShareViewData>;
+    if (result.success && result.data.revisionId)
+      return await openFixedRevision(token, result.data.revisionId, password, headers);
+    return result;
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
   }
+}
+
+async function openFixedRevision(token: string, revisionId: string, password: string | undefined,
+  headers: Record<string, string>): Promise<ApiResponse<ShareViewData>> {
+  const endpoint = buildApiUrl(`${api.webPages.viewShare(encodeURIComponent(token))}/revisions/${encodeURIComponent(revisionId)}/access`);
+  const response = await fetch(endpoint, { method: 'POST', credentials: 'include', cache: 'no-store',
+    headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+  const result = await response.json() as ApiResponse<{ revisionId: string; previewUrl: string; title?: string; createdAt: string }>;
+  if (!result.success) return result;
+  const requestUrl = new URL(endpoint, globalThis.location?.href);
+  const previewUrl = new URL(result.data.previewUrl, requestUrl);
+  const apiPrefix = requestUrl.pathname.split('/api/web-pages/shares/view/', 1)[0];
+  const resources = `${apiPrefix}/api/hosted-site-preview-files/shared/`;
+  if (result.data.revisionId !== revisionId || previewUrl.origin !== requestUrl.origin
+      || !previewUrl.pathname.startsWith(resources) || !previewUrl.pathname.endsWith('/index.html')
+      || previewUrl.search || previewUrl.hash)
+    return { success: false, data: null as never, error: { code: 'NOT_FOUND', message: '分享的固定版本不可读取' } };
+  return { success: true, data: { revisionId, previewUrl: previewUrl.href, title: result.data.title || '固定版本',
+    shareType: 'single', createdAt: result.data.createdAt, sites: [] }, error: null };
 }
 
 // ─── Save Shared Site ───
@@ -1641,6 +1674,18 @@ export function downloadHostedPdf(siteId: string, filePath: string,
   }
   const path = share ? api.webPages.sharePdf(share.token) : api.webPages.pdf(siteId);
   return apiDownload(`${path}?${query}`, filePath.split('/').pop() || 'document.pdf', false, !!share);
+}
+
+export function downloadZipHomepageAsset(siteId: string, filePath: string, siteUrl: string,
+  share?: { token: string; password?: string }): Promise<ApiDownloadedFile> {
+  const version = new URL(siteUrl, window.location.href).searchParams.get('v') ?? '';
+  const query = new URLSearchParams({ filePath, version });
+  if (share) {
+    query.set('siteId', siteId);
+    if (share.password) query.set('password', share.password);
+  }
+  const path = share ? api.webPages.shareZipHomepageAsset(share.token) : api.webPages.zipHomepageAsset(siteId);
+  return apiDownload(`${path}?${query}`, filePath.split('/').pop() || '原文件', false, !!share);
 }
 
 /** 经分享链接发表评论（需登录） */

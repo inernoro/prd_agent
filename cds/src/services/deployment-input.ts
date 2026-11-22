@@ -12,6 +12,7 @@ export interface DeploymentInputSnapshot {
   targetOrigin?: 'remote-head';
   remoteHeadObservedAt?: string;
   configuredEnv: Record<string, string>;
+  environmentAuditIds?: string[];
   managedPlan?: ManagedProjectPlan | null;
   configHash?: string;
   agentRequest?: boolean;

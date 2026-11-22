@@ -29,14 +29,18 @@ import {
   fetchBootstrapStatus,
   bootstrapFirstUser,
   fetchSessionAuthed,
+  isChildPreviewCdsInstance,
 } from '@/lib/api';
 import { parseTicketSsoCallback } from '@/lib/ticket-sso-callback';
+import { signInWithPasskey } from '@/lib/passkeys';
+
+import { PreviewAccessFrame, PreviewLabel, WhyPreviewLogin, type PreviewLoginContext } from './PreviewAccessPage';
 
 export function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
-  if (!raw.startsWith('/') || raw.startsWith('//')) return '/project-list';
+  if (!raw.startsWith('/') || raw.startsWith('//') || /[\\\x00-\x1f]|%5c/i.test(raw)) return '/project-list';
   // 绝不把目标指回登录路由本身 —— 否则已登录用户从 /login 跳 /login 是 no-op,
   // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
   const path = raw.split(/[?#]/)[0];
@@ -47,7 +51,7 @@ export function redirectTarget(): string {
   return raw.includes('#') || !params.get('redirect') ? raw : raw + window.location.hash;
 }
 
-function AuthForm(): JSX.Element {
+function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -63,6 +67,7 @@ function AuthForm(): JSX.Element {
   const [loginMethodsReady, setLoginMethodsReady] = useState(false);
   const [localLoginEnabled, setLocalLoginEnabled] = useState(false);
   const [githubLoginEnabled, setGithubLoginEnabled] = useState(false);
+  const [passkeyEnabled, setPasskeyEnabled] = useState(false);
   const [ssoLogin, setSsoLogin] = useState<{ enabled: boolean; label: string }>({
     enabled: false,
     label: '使用 SSO 登录',
@@ -78,6 +83,7 @@ function AuthForm(): JSX.Element {
         if (!alive) return;
         setLocalLoginEnabled(s.loginMethods.local);
         setGithubLoginEnabled(s.loginMethods.github);
+        setPasskeyEnabled(s.loginMethods.passkey === true && Boolean(window.PublicKeyCredential));
         setSsoLogin({
           enabled: s.loginMethods.sso === true && s.sso?.enabled === true,
           label: s.sso?.label || '使用 SSO 登录',
@@ -100,15 +106,29 @@ function AuthForm(): JSX.Element {
   }, []);
 
   const showLocalLogin = needsBootstrap || localLoginEnabled;
-  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled;
+  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled || passkeyEnabled;
 
   function goToTarget() {
     // Server endpoints (including the cluster login handoff) must reach Express.
     // Dashboard routes retain SPA navigation and their view transition.
-    if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
+    if (target.startsWith('/api/') || target.split(/[?#]/)[0] === '/preview/authorize' || /\.html(?:$|[?#])/i.test(target)) {
       window.location.assign(target);
     } else {
       navigate(target, { replace: true, viewTransition: true });
+    }
+  }
+
+  async function signInPasskey() {
+    setError('');
+    setBusy(true);
+    try {
+      await signInWithPasskey();
+      goToTarget();
+    } catch {
+      setError('通行密钥登录未完成，请重试或使用其他登录方式。');
+      setShake(true);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -153,6 +173,28 @@ function AuthForm(): JSX.Element {
   }
 
   if (!loginMethodsReady || !bootstrapReady) return <AuthFormSkeleton />;
+
+  if (preview && !needsBootstrap) {
+    const previewAccount = <form onSubmit={submit} aria-busy={busy}>
+      <small>本预览单独生成的账号用于自动化测试和运维排障。</small>
+      <label>预览用户名<input value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" required /></label>
+      <label>预览密码<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required /></label>
+      {error && <p className="pv-error" role="alert">预览专用账号校验失败。{ssoLogin.enabled ? '可用 CDS 账号继续。' : '请核对本预览的账号和密码。'}</p>}
+      <button type="submit" className={ssoLogin.enabled ? 'pv-secondary' : 'pv-primary'} disabled={busy}>{busy ? '正在验证…' : '用预览专用账号登录'}</button>
+    </form>;
+    return <article className="pv-card">
+      <PreviewLabel {...preview} />
+      <h1>登录这个分支预览</h1>
+      {ssoLogin.enabled && <>
+        <a className="pv-primary" href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}><KeyRound />用 CDS 账号继续</a>
+        <small>用平时的 CDS 账号确认身份。已登录 CDS 时，页面会直接返回预览。</small>
+      </>}
+      <WhyPreviewLogin policyUrl={preview.policyUrl} />
+      {showLocalLogin && (ssoLogin.enabled
+        ? <details className="pv-native"><summary>其他方式 · 预览专用账号</summary>{previewAccount}</details>
+        : previewAccount)}
+    </article>;
+  }
 
   return (
     <form
@@ -259,6 +301,13 @@ function AuthForm(): JSX.Element {
             </div>
           ) : null}
           <div className="grid gap-2">
+            {passkeyEnabled ? (
+              <Button type="button" variant="outline" className="cds-auth-github" disabled={busy}
+                onClick={() => { void signInPasskey(); }}>
+                <ShieldCheck />
+                使用通行密钥登录
+              </Button>
+            ) : null}
             {ssoLogin.enabled ? (
               <Button asChild type="button" variant="outline" className="cds-auth-github">
                 <a href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}>
@@ -289,6 +338,14 @@ export function LoginPage(): JSX.Element {
   // 'checking' = 正在探会话态;'anon' = 未登录,展示登录框。已登录则直接跳走,
   // 不会停留在此状态。探测期间用同轮廓骨架占位,避免先闪一下登录框再跳转。
   const [authPhase, setAuthPhase] = useState<'checking' | 'anon'>('checking');
+  const [preview, setPreview] = useState<PreviewLoginContext | undefined>(() => isChildPreviewCdsInstance() ? {} : undefined);
+  useEffect(() => {
+    let mounted = true;
+    void fetchAuthPublicStatus().then(status => {
+      if (mounted && (status.preview || status.sso?.providerId === 'cds-preview')) setPreview(status.preview ?? {});
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, []);
   // 登录成功后要跳的内容页(默认控制台)是 lazy chunk:登录页一挂载就预取,
   // 提交成功 navigate 时不会触发 Suspense 白屏,配合 viewTransition 丝滑进内容页。
   useEffect(() => {
@@ -300,6 +357,10 @@ export function LoginPage(): JSX.Element {
   // (默认 /project-list,或 ?redirect= 指定的合法内部路径)。
   useEffect(() => {
     let alive = true;
+    if (new URLSearchParams(window.location.search).get('choose_account') === '1') {
+      setAuthPhase('anon');
+      return;
+    }
     fetchSessionAuthed().then((ok) => {
       if (!alive) return;
       if (!ok) {
@@ -313,7 +374,7 @@ export function LoginPage(): JSX.Element {
         setAuthPhase('anon');
         return;
       }
-      if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
+      if (target.startsWith('/api/') || target.split(/[?#]/)[0] === '/preview/authorize' || /\.html(?:$|[?#])/i.test(target)) {
         // Authenticated visits also need the server to perform the handoff.
         window.location.assign(target);
       } else {
@@ -325,7 +386,8 @@ export function LoginPage(): JSX.Element {
     };
   }, [navigate]);
 
-  return <AuthPageFrame>{authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm />}</AuthPageFrame>;
+  const content = authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm preview={preview} />;
+  return preview ? <PreviewAccessFrame>{content}</PreviewAccessFrame> : <AuthPageFrame>{content}</AuthPageFrame>;
 }
 
 function readSsoCallback(): { code: string; state: string } | null {
@@ -354,7 +416,7 @@ export function TicketSsoPage(): JSX.Element {
       .then((result) => {
         if (!alive) return;
         const target = result.redirect || '/project-list';
-        if (target.startsWith('/api/') || /\.html(?:$|[?#])/i.test(target)) {
+        if (target.startsWith('/api/') || target.split(/[?#]/)[0] === '/preview/authorize' || /\.html(?:$|[?#])/i.test(target)) {
           window.location.assign(target);
           return;
         }

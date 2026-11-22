@@ -15,6 +15,75 @@ namespace PrdAgent.Api.Tests.Controllers;
 public class HostedSitePdfDownloadControllerTests
 {
     private const string PdfPath = "downloads/教材.pdf";
+    private const string HomepageAsset = "data/报告 #1.json";
+    private static HostedSite ZipSite()
+    {
+        var site = Site();
+        site.ContentVersion = new DateTime(638000000000000000, DateTimeKind.Utc);
+        site.Files.Add(new HostedSiteFile { Path = HomepageAsset, CosKey = $"web-hosting/sites/site-a/.versions/v1/{HomepageAsset}",
+            MimeType = "application/json", Size = 2, IsZipHomepageAsset = true });
+        return site;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ZipHomepage_DownloadsOnlyTheSelectedVersionAsAttachment(bool signedIn)
+    {
+        var (controller, sites, storage) = Build(signedIn);
+        var site = ZipSite();
+        var file = site.Files.Single(file => file.IsZipHomepageAsset);
+        if (signedIn)
+            sites.Setup(x => x.GetByIdAsync("site-a", "viewer", It.IsAny<CancellationToken>())).ReturnsAsync(site);
+        else
+            sites.Setup(x => x.ResolveShareSiteAsync("share", "site-a", "password", null, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ShareSiteResolveResult { Site = site });
+        storage.Setup(x => x.TryDownloadBytesAsync(file.CosKey, It.IsAny<CancellationToken>())).ReturnsAsync("{}"u8.ToArray());
+
+        // The URL of a freshly published site may include finer precision than the stored date.
+        var version = site.ContentVersion.Ticks + 1;
+        var result = Assert.IsType<FileContentResult>(signedIn
+            ? await controller.DownloadSiteZipHomepage("site-a", HomepageAsset, version)
+            : await controller.DownloadSharedZipHomepage("share", "site-a", HomepageAsset, version, "password"));
+
+        Assert.Equal("报告 #1.json", result.FileDownloadName);
+        Assert.Equal("application/octet-stream", result.ContentType);
+        Assert.Equal("{}"u8.ToArray(), result.FileContents);
+        Assert.Equal("nosniff", controller.Response.Headers["X-Content-Type-Options"]);
+        Assert.Equal("sandbox", controller.Response.Headers["Content-Security-Policy"]);
+        sites.VerifyAll();
+        storage.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ZipHomepage_DeniesOtherPathsStaleVersionsAndOtherSiteKeys()
+    {
+        var (controller, sites, storage) = Build(true);
+        var site = ZipSite();
+        sites.Setup(x => x.GetByIdAsync("site-a", "viewer", It.IsAny<CancellationToken>())).ReturnsAsync(site);
+        var version = site.ContentVersion.Ticks;
+
+        Assert.IsType<NotFoundObjectResult>(await controller.DownloadSiteZipHomepage("site-a", PdfPath, version));
+        Assert.IsType<NotFoundObjectResult>(await controller.DownloadSiteZipHomepage("site-a", HomepageAsset, version - TimeSpan.TicksPerMillisecond));
+        site.Files.Single(file => file.IsZipHomepageAsset).CosKey = "web-hosting/sites/other/data/报告 #1.json";
+        Assert.IsType<NotFoundObjectResult>(await controller.DownloadSiteZipHomepage("site-a", HomepageAsset, version));
+
+        storage.Verify(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ZipHomepage_SharePasswordDenialDoesNotReadStorage()
+    {
+        var (controller, sites, storage) = Build();
+        sites.Setup(x => x.ResolveShareSiteAsync("share", "site-a", null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShareSiteResolveResult { Error = "需要分享密码", HttpStatus = 401 });
+
+        var result = Assert.IsAssignableFrom<ObjectResult>(await controller.DownloadSharedZipHomepage("share", "site-a", HomepageAsset, 1));
+
+        Assert.Equal(403, result.StatusCode);
+        storage.VerifyNoOtherCalls();
+    }
+
     private static HostedSite Site() => new()
     {
         Id = "site-a", Files = new()

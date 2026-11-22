@@ -123,7 +123,7 @@ export async function readProjectCredentials(cwd = process.cwd()) {
   return { root, host: host.origin, projectId: raw.projectId.trim(), projectKey: raw.projectKey };
 }
 
-async function localFile(credentials, filename, extensions, limit) {
+export async function localFile(credentials, filename, extensions, limit) {
   let resolved;
   try { resolved = await fs.realpath(path.resolve(credentials.root, filename)); }
   catch { throw new Error('本地上传文件不存在或不可读'); }
@@ -171,6 +171,7 @@ export function createProjectApiClient(credentials, { fetchImpl = fetch, dispatc
   const ownedDispatcher = dispatcher ?? new EnvHttpProxyAgent();
   async function request(method, endpoint, body) {
     const multipart = body instanceof FormData;
+    const zip = Buffer.isBuffer(body);
     let response;
     try {
       response = await fetchImpl(`${credentials.host}${endpoint}`, {
@@ -178,9 +179,9 @@ export function createProjectApiClient(credentials, { fetchImpl = fetch, dispatc
         headers: {
           'Accept': 'application/json', 'User-Agent': 'curl/8.5.0 cds-code-review-mcp/1.0.0',
           'X-AI-Access-Key': credentials.projectKey, 'X-CDS-Agent': 'mcp',
-          ...(body && !multipart ? { 'Content-Type': 'application/json' } : {}),
+          ...(body && !multipart ? { 'Content-Type': zip ? 'application/zip' : 'application/json' } : {}),
         },
-        body: body ? (multipart ? body : JSON.stringify(body)) : undefined,
+        body: body ? (multipart || zip ? body : JSON.stringify(body)) : undefined,
         signal: AbortSignal.timeout(60_000),
       });
     } catch { throw new Error('CDS 请求失败或超时；请检查连接，不会跟随重定向发送凭据'); }
@@ -190,6 +191,9 @@ export function createProjectApiClient(credentials, { fetchImpl = fetch, dispatc
       // Upstream messages may echo SMTP passwords, model tokens or request data.
       // Keep the status actionable; detailed diagnostics stay in CDS's protected
       // audit log rather than being forwarded into the MCP conversation.
+      if (response.status === 409 && parsed.error === 'plan_debt_closed') throw new Error('CDS HTTP 409: 请重新读取债务并选择仍未偿还的记录');
+      if (response.status === 409 && parsed.error === 'design_intake_conflict') throw new Error('CDS HTTP 409: 请重新读取设计接入 intake，核对稿件、Git 目录和最新版本后再决定续版或新建');
+      if (response.status === 409 && parsed.error === 'design_git_source_required') throw new Error('CDS HTTP 409: 项目 Git 尚找不到该稿件的提交与目录，请同步提交后重试');
       const details = { 400: '参数不符合要求', 401: '项目凭据无效或已过期', 403: '当前项目无权访问此资源', 404: '任务或报告不存在', 409: '任务状态或幂等键冲突', 413: '上传超过大小限制', 429: '请求过于频繁', 502: '上游服务失败', 503: '服务未配置或不可用' };
       throw new Error(`CDS HTTP ${response.status}: ${details[response.status] ?? '请求失败，请查看 CDS 任务详情'}`);
     }

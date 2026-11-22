@@ -2,7 +2,7 @@ import { consoleAccountIdentity } from '@/lib/consoleIdentity';
 import { SettingsDirectory } from '@/pages/cds-settings/SettingsDirectory';
 import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
 import { lazy, Suspense, useContext, useEffect, useState } from 'react';
-import { SettingsContentSkeleton, SettingsLoadingContext, SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { SettingsLoadingContext, SettingsPageSkeleton, SystemSettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor, Network, Plug, Save, ServerCog, Settings, ShieldAlert, ShieldCheck, TerminalSquare, Timer, Users, Wrench } from 'lucide-react';
 
 import { AppShell, ConsoleAuthContext, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
@@ -271,8 +271,8 @@ function getInitialTab(): TabValue {
   return 'maintenance';
 }
 
-function SettingsTabFallback(): JSX.Element {
-  return <SettingsContentSkeleton />;
+function SettingsTabFallback({ tab = 'auth' }: { tab?: TabValue }): JSX.Element {
+  return <SystemSettingsContentSkeleton tab={tab} />;
 }
 
 export function settingsTitleForViewer(status: ShellAuthStatus | null): string {
@@ -372,7 +372,7 @@ export function CdsSettingsPage(): JSX.Element {
             <p>登录状态暂时无法确认，请重试。</p>
             <button type="button" className="text-primary underline" onClick={retryViewer}>重新检查登录状态</button>
           </section>
-        ) : viewerPending || !viewerStatus || !authCapabilities ? <SettingsPageSkeleton /> : (
+        ) : viewerPending || !viewerStatus || !authCapabilities ? <SettingsPageSkeleton personal={!!viewerStatus && !canManageSettings} systemTab={activeTab} /> : (
         <Tabs
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as TabValue)}
@@ -409,7 +409,7 @@ export function CdsSettingsPage(): JSX.Element {
               <ButtonSizeProvider value="sm">
               <div className="cds-settings-section-body">
               <SettingsLoadingContext.Provider value={true}>
-              <Suspense fallback={<SettingsTabFallback />}>
+              <Suspense fallback={<SettingsTabFallback tab={activeTab} />}>
                 <TabsContent value="overview">
                   {activeTab === 'overview' ? <OverviewTab /> : null}
                 </TabsContent>

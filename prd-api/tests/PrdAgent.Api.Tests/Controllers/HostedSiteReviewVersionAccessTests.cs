@@ -120,6 +120,53 @@ public class HostedSiteReviewVersionAccessTests
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task RelatedDocuments_SelfAndUnreadableReferencesDoNotBecomeRelated()
+    {
+        await WithReviewDb(async db =>
+        {
+            var current = ReviewSite();
+            var hidden = ReviewSite();
+            hidden.Id = "hidden";
+            hidden.OwnerUserId = "other-user";
+            await db.HostedSites.InsertManyAsync([current, hidden]);
+            await db.HostedDocumentGroups.InsertOneAsync(new HostedDocumentGroup
+            {
+                OwnerUserId = "owner", SiteIds = ["site", "site"], MainSiteId = "site",
+            });
+            await db.HostedSiteComments.InsertOneAsync(new HostedSiteComment
+            {
+                SiteId = "site", AuthorUserId = "owner", Content = "/web-pages?openSite=site /web-pages?openSite=hidden",
+                ContentVersion = HostedSiteCommentRules.VersionKey(current.ContentVersion),
+            });
+            var service = new Mock<IHostedSiteService>(MockBehavior.Strict);
+            service.Setup(s => s.GetByIdAsync(It.IsAny<string>(), "owner", It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string id, string _, CancellationToken __) => id == "site" ? current : null);
+            service.Setup(s => s.CanEditSiteAsync(current, "owner", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            using var provider = new ServiceCollection().AddSingleton<IConfiguration>(new ConfigurationBuilder().Build()).BuildServiceProvider();
+            var controller = ReviewController(service.Object, db, new Mock<IAssetStorage>(MockBehavior.Strict).Object, "owner");
+            controller.HttpContext.RequestServices = provider;
+            controller.HttpContext.Request.Host = new HostString("map.example.test");
+
+            var detail = Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await controller.GetRelatedDocuments("site")).Value);
+            using var detailJson = JsonDocument.Parse(JsonSerializer.Serialize(detail.Data));
+            var item = Assert.Single(detailJson.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("site", item.GetProperty("Id").GetString());
+            Assert.False(item.GetProperty("isMain").GetBoolean());
+
+            var summary = Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await controller.RelatedSummaries("site")).Value);
+            using var summaryJson = JsonDocument.Parse(JsonSerializer.Serialize(summary.Data));
+            var document = summaryJson.RootElement.GetProperty("items").GetProperty("site");
+            Assert.Equal(0, document.GetProperty("count").GetInt32());
+            Assert.False(document.GetProperty("isMain").GetBoolean());
+
+            var candidates = Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await controller.RelatedCandidates("site", null)).Value);
+            using var candidatesJson = JsonDocument.Parse(JsonSerializer.Serialize(candidates.Data));
+            Assert.Empty(candidatesJson.RootElement.GetProperty("items").EnumerateArray());
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task CollectionDiscussionResolution_UsesSelectedMemberAndPreservesShareBoundary()
     {
         await WithReviewDb(async db =>
@@ -159,19 +206,21 @@ public class HostedSiteReviewVersionAccessTests
     }
 
     [Theory]
-    [InlineData("create-zip")]
-    [InlineData("replace-zip")]
-    [InlineData("replace-html")]
-    public async Task CommittedUpload_ReturnsPublishedSiteWithoutPostCommitSnapshotWork(string operation)
+    [InlineData("create-zip", null, false)]
+    [InlineData("create-zip", null, true)]
+    [InlineData("create-zip", "目录/report.md", false)]
+    [InlineData("replace-zip", null, false)]
+    [InlineData("replace-html", null, false)]
+    public async Task CommittedUpload_ReturnsPublishedSiteWithoutPostCommitSnapshotWork(string operation, string? entryFile, bool directory)
     {
         var published = ReviewSite();
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         if (operation == "create-zip")
-            sites.Setup(x => x.CreateFromZipAsync("owner", It.IsAny<Stream>(), null, null, null,
-                It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>(), "upload", null)).ReturnsAsync(published);
+            sites.Setup(x => x.CreateFromZipAsync("owner", It.IsAny<Stream>(), "page", null, null,
+                It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>(), "upload", null, directory ? string.Empty : entryFile, null)).ReturnsAsync(published);
         else if (operation == "replace-zip")
             sites.Setup(x => x.ReuploadAsync("site", "owner", It.IsAny<Stream>(), "page.zip", null,
-                It.IsAny<CancellationToken>(), "upload", null)).ReturnsAsync(published);
+                It.IsAny<CancellationToken>(), "upload", null, null, null)).ReturnsAsync(published);
         else
             sites.Setup(x => x.ReuploadAsync("site", "owner", It.IsAny<byte[]>(), "page.html", null,
                 It.IsAny<CancellationToken>(), "upload", null)).ReturnsAsync(published);
@@ -185,7 +234,7 @@ public class HostedSiteReviewVersionAccessTests
         using var bytes = new MemoryStream(new byte[] { 1 });
         var file = new FormFile(bytes, 0, 1, "file", operation == "replace-html" ? "page.html" : "page.zip");
         var result = operation == "create-zip"
-            ? await controller.Upload(file, null, null, null, null, "upload")
+            ? await controller.Upload(file, null, null, null, null, "upload", entryFile, directory)
             : await controller.Reupload("site", file, "upload");
         Assert.Same(published, Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data);
         sites.VerifyAll(); sites.VerifyNoOtherCalls(); storage.VerifyNoOtherCalls();

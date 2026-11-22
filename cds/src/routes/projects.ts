@@ -85,7 +85,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
-import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -339,6 +339,7 @@ function mintProjectAgentKey(
   project: Project,
   label: string,
   createdBy?: string,
+  restrictions: Pick<AgentKey, 'planningAccess' | 'designAccess'> = {},
 ): { keyId: string; plaintext: string; preview: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
   const suffix = randomBytes(32).toString('base64url');
@@ -350,6 +351,7 @@ function mintProjectAgentKey(
     label,
     hash,
     scope: 'rw',
+    ...restrictions,
     createdAt: new Date().toISOString(),
     createdBy: createdBy || undefined,
   };
@@ -4541,7 +4543,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const body = (req.body || {}) as { label?: string };
+    const body = (req.body || {}) as { label?: string; planningAccess?: unknown; designAccess?: unknown };
+    if (body.planningAccess !== undefined && body.planningAccess !== 'read' && body.planningAccess !== 'propose') {
+      return res.status(400).json({ error: 'invalid_planning_access', message: '请选择工程规划只读或提案权限' });
+    }
+    if (body.designAccess !== undefined && body.designAccess !== 'read' && body.designAccess !== 'publish') {
+      return res.status(400).json({ error: 'invalid_design_access', message: '请选择设计只读或稿件发布权限' });
+    }
+    if (body.planningAccess && body.designAccess) {
+      return res.status(400).json({ error: 'invalid_key_scope', message: '请为工程规划和设计分别签发凭据' });
+    }
+    if ((body.planningAccess || body.designAccess) && !isHumanSystemOwner(req)) {
+      return res.status(403).json({ error: 'owner_required', message: '仅 CDS 系统所有者可签发此类受限项目凭据' });
+    }
     const now = new Date();
     // Label: auto-generate from timestamp when the user didn't supply one.
     const defaultLabel =
@@ -4551,12 +4565,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    // Capture signer identity from the github-auth middleware when present.
-    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
+    const account = isAuthenticatedHuman(req) ? (req as HumanAuthContext).cdsUser : undefined;
 
     let minted: { keyId: string; plaintext: string; preview: string };
     try {
-      minted = mintProjectAgentKey(stateService, project, label, ghUser?.login);
+      minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, {
+        planningAccess: body.planningAccess, designAccess: body.designAccess,
+      });
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -4583,6 +4598,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         id: e.id,
         label: e.label,
         scope: e.scope,
+        planningAccess: e.planningAccess,
+        designAccess: e.designAccess,
         createdAt: e.createdAt,
         createdBy: e.createdBy,
         lastUsedAt: e.lastUsedAt,

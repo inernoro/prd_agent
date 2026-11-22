@@ -254,13 +254,13 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     res.json({ branchId: branch.id, profileId, key, value: nextValue, token: value, resolved, scope: 'branch-override', restartHint: '切换写入该服务的分支覆盖，重新部署该服务后生效（原地重启不会刷新容器环境变量）' });
   });
 
-  /** 分支服务图 + 体检 + 引用（service-graph 接口与全局概览共用同一份计算）。 */
+  /** 分支服务图 + 体检 + 引用。 */
   function buildBranchGraphPayload(branch: NonNullable<ReturnType<StateService['getBranch']>>, canSeeProject: (projectId: string) => boolean) {
     // env 用生效合并结果（与 replica-sets 的服务图同一口径），只暴露键名
     const projectEnv = deps.stateService.getCustomEnv(branch.projectId);
     const branchEnv = deps.stateService.getCustomEnvScope(branch.id);
     // 先按分支解析 profileOverrides（前缀 / 子域 / 入口 / 部署模式），再合并 env：转发器与 master 兜底
-    // 路由用的都是 resolveEffectiveProfile 之后的 profile，图、体检、概览、cdscli topology 必须看同一份
+    // 路由用的都是 resolveEffectiveProfile 之后的 profile，图、体检、cdscli topology 必须看同一份
     const profiles = deps.stateService.getEffectiveProfilesForBranch(branch)
       .map((p) => resolveEffectiveProfile(p, branch))
       .map((p) => ({ ...p, env: { ...projectEnv, ...branchEnv, ...(p.env || {}) } }));

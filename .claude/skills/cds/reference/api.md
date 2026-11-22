@@ -8,6 +8,7 @@
 - [核心分组速查](#核心分组速查)
 - [AI 配对](#ai-配对)
 - [项目](#项目)
+- [工程规划](#工程规划)
 - [分支](#分支)
 - [日志与诊断](#日志与诊断)
 - [基础设施](#基础设施)
@@ -38,6 +39,7 @@
 | Agent Key | `/api/projects/:id/agent-keys`, `/api/global-agent-keys` | 签发 / 吊销 |
 | 自更新 | `/api/self-*` | 切 CDS 自身分支 |
 | 结构化验收 | `/api/acceptance/*` | 模板版本、任务领取、逐项结果和历史矩阵 |
+| 工程规划 | `/api/projects/:id/planning` | 推进、项目内提案和工程债务 |
 
 ## 结构化验收
 
@@ -84,6 +86,24 @@
 | POST | `/api/projects/:id/pending-import` | 提交 compose YAML 待审批 | `cdscli scan --apply-to-cds <id>` |
 
 > 一键 onboarding（create + clone + 检测 required env keys）: `cdscli onboard <git-url>`。
+
+## 工程规划
+
+| 方法 | 路径 | CLI 等价 |
+|------|------|----------|
+| GET | `/api/projects/:id/planning` | `planning show`、`proposal list`、`decision show`、`pr list`、`pr show` |
+| GET | `/api/projects/:id/planning/capabilities` | `planning capabilities` |
+| GET | `/api/projects/:id/planning/duplicates?title=...` | `debt duplicates --title` |
+| GET | `/api/projects/:id/planning/checkup` | `debt checkup` |
+| POST | `/api/projects/:id/planning/commands` | `planning submit --file`、`proposal create`、`debt create` |
+
+项目内的技能可以提交结构化 `proposal.submit`。`skill`、`confidence` 和 `source.excerpt` 为可选字段，提案身份由 CDS 授权确定。同一来源编号和标题的同类新提案返回原有记录。待确认的债务提案可能含有 CDS 查出的 `suggest.dupOf`。
+
+决策提案可附上 `decisionChange`，指定同项目的 `decisionId`、`expectedVersion` 及 `change`（`amended` 或 `accepted`）。成员确认时再次核对当前版本，更新原决策并记录提案来源。债务草稿以 `module` 填写所属模块，`GET /api/projects/:id/planning/debts?module=...` 按同名模块筛选。
+
+普通登记遇到高度相似的债务会返回 `possible_duplicate` 和该项目的候选。核对后决定单独登记时，在 `debt.create` 提交 `distinction: { debtIds, reason }`。保存时系统会再核对候选，并把区别写入记录历史。
+
+有审批权限的项目成员在页面调用 `proposal.accept` 或 `proposal.reject`。确认疑似重复时发送 `as: 'hit'` 和页面显示的 `debtId`，服务器在原债追加一次踩坑。`as: 'new'` 表示明确新记一笔。
 
 ## 分支
 

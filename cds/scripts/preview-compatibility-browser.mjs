@@ -134,8 +134,9 @@ try {
   let running = start(oldImage, port);
   await ready(url, 'a');
   console.error('旧容器与页面入口已就绪');
-  const executablePath = process.env.CDS_CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
-  browser = await chromium.launch({ executablePath, args: ['--no-sandbox'], timeout: 15_000 });
+  // CI installs the Chromium build pinned by Playwright. Local probes can select another executable explicitly.
+  const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
+  browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
   const oldTab = await browser.newPage();
   await oldTab.goto(url);
   console.error('浏览器已打开旧标签页');

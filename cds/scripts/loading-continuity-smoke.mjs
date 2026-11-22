@@ -9,6 +9,8 @@ import { verifySettingsRefresh } from './project-settings-refresh-smoke.mjs';
 import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
 import { verifyCodeReviewDocument } from './code-review-document-smoke.mjs';
 import { verifyMonitorWorkspaceNavigation, verifyMonitorOnboardingSessionCleanup } from './monitor-workspace-navigation-smoke.mjs';
+import { verifyEngineeringPlanningRefresh } from './engineering-planning-refresh-smoke.mjs';
+import { verifyEngineeringPlanningDetail } from './engineering-planning-detail-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -23,11 +25,15 @@ const before = process.argv.includes('--before');
 const scenes = JSON.parse(await fs.readFile(path.join(here, '../web/src/components/skeletons/loading-scenes.json'), 'utf8'));
 const selectors = {
   projects: '[aria-label="加载项目列表"]', branches: '[aria-label="加载项目与本地分支列表"]',
-  'branch-detail': '[aria-label^="加载分支详情"]', relations: '[data-content-loading="panel"]',
+  'branch-detail': '[aria-label^="加载分支详情"]', relations: '[data-branch-relations-skeleton]',
+  overview: '[aria-label="读取项目关系总览"]',
   'agent-table': '[data-agent-requests-skeleton]', 'topology': '[data-topology-page-skeleton]', 'release-center': '[data-release-center-skeleton]', monitor: '[aria-label="正在读取监控数据"]',
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
+  'release-approval': '[data-release-approval-skeleton]', 'project-monitor': '[data-project-status-skeleton]',
   'code-reviews': '[data-code-reviews-skeleton]',
+  'engineering-planning': '[aria-label="加载工程规划"]',
+  design: '[aria-label="正在读取设计工作区"]',
   dts: '[aria-label="正在加载数据同步"]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
@@ -53,7 +59,6 @@ try {
       let payload = resolveFixture(p) ?? {};
       if (scene.kind === 'release-center' && p === '/api/releases/center') payload = { ...payload, rows: [] };
       if (p === '/api/auth/sso/config') payload = { enabled: false, providerId: 'fixture', label: '使用 SSO 登录', authorizationUrl: '', tokenUrl: '', clientId: '', defaultRedirect: '/project-list', hasClientSecret: false };
-      if (p === '/api/overview/topology') payload = {generatedAt: new Date().toISOString(),summary:{errors:0,warnings:0,infos:0},projects:[]};
       if (p === '/api/reports/overview') payload = {overview:{window:{from:'2026-10-01',to:'2026-11-01',days:30,previousFrom:'2026-09-01'},headline:{status:'untested',statusLabel:'尚无记录',sentence:'合成空结果',supports:[]},releaseGate:{state:'unknown',reason:'尚无记录',latest:null,lastPass:null},totals:{archived:0,folded:0,counted:0,pass:0,conditional:0,fail:0,undetermined:0,previous:{counted:0,pass:0,conditional:0,fail:0,undetermined:0}},passRate:{kind:'acceptance',numerator:0,denominator:0,rate:null,previous:{numerator:0,denominator:0,rate:null}},kinds:[],clusters:[],daily:[],mergeCoverage:{items:[],counts:{verified:0,conditional:0,failed:0,unverified:0}},reports:[],supersededReports:[]}};
       if (p === '/api/reports/pipeline') payload = {pipeline:{generatedAt:new Date().toISOString(),recentDays:null,total:{changes:0,deployed:0,accepted:0,merged:0,pass:0,conditional:0,fail:0,undetermined:0},totalLeaks:{'deployed-not-accepted':0,'merged-not-accepted':0,'merged-while-failing':0,'report-missing-change-key':0},projects:[],staleReports:0,leaks:[]},series:null};
       if (/\/agent-requests$/.test(p)) payload = {items:[],users:[],apps:[],liveCount:0,historyCount:0};
@@ -97,7 +102,7 @@ try {
       result.code = await inspect('code');
       code.release();
       await page.getByRole('status', { name: '页面加载中', exact: true }).waitFor({ state: 'hidden' });
-      await page.locator('main .cds-workspace .cds-loading-skeleton-line').first().waitFor();
+      await page.locator('main .cds-workspace .cds-loading-skeleton-line:visible').first().waitFor();
       result.data = await inspect('data');
       if (route.startsWith('/release-center/approval?')) {
         const crumbs = page.getByRole('navigation', { name: '面包屑', exact: true });
@@ -110,14 +115,18 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews', 'dts'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        if (['settings', 'project-settings', 'release-console', 'release-approval', 'project-monitor', 'projects',
+          'branches', 'topology', 'overview', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail',
+          'code-reviews', 'engineering-planning', 'design', 'dts'].includes(scene.kind)) {
+          assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        }
       }
       if (!before) {
         await page.emulateMedia({reducedMotion:'reduce'});
         await page.getByRole('button',{name:'切换到黑天主题',exact:true}).click();
         await page.setViewportSize({width:390,height:844});
         assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${route}: horizontal overflow at 390`);
-        assert.equal(await page.locator('main .cds-loading-skeleton-line').first().evaluate(e=>getComputedStyle(e).animationName),'none');
+        assert.equal(await page.locator('main .cds-loading-skeleton-line:visible').first().evaluate(e=>getComputedStyle(e).animationName),'none');
         if (['settings','project-settings','release-console','topology','release-center','agent-table'].includes(scene.kind)) await page.screenshot({path:path.join(out,`after-${scene.kind}-dark390.jpg`)});
         result.dark390ReducedMotion = true;
         await page.setViewportSize({width:1440,height:940});
@@ -127,8 +136,21 @@ try {
       data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
+      if (!before && scene.kind === 'overview') {
+        const graph = page.getByRole('region', { name: '跨项目关系画布' });
+        await graph.getByText('fixture-project', { exact: true }).waitFor();
+      }
       if (!before && scene.kind === 'release-center') {
         await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();
+      }
+      if (!before && scene.kind === 'engineering-planning') {
+        await page.getByRole('heading', { name: '待你确认', exact: true }).waitFor();
+        await page.getByRole('button', { name: /债务分支\s*未还 0 笔/ }).waitFor();
+        result.debtMutationRefresh = await verifyEngineeringPlanningRefresh(browser, base, out);
+        result.debtDetail = await verifyEngineeringPlanningDetail(browser, base, out);
+      }
+      if (!before && scene.kind === 'design') {
+        await page.getByText(/此项目还没有稿件/).waitFor();
       }
       if (!before && scene.kind === 'release-console') {
         await page.getByRole('region', { name: '批次发布', exact: true }).waitFor();

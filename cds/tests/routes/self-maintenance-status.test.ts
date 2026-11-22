@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, installSpaFallback, type ServerDeps } from '../../src/server.js';
 import { SelfMaintenanceRuntime } from '../../src/services/self-maintenance-runtime.js';
+import { EngineeringPlanningService } from '../../src/services/engineering-planning.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
@@ -216,4 +217,60 @@ describe('真实服务器的维护占用观察入口', () => {
     expect(light.status).toBe(200); expect(JSON.parse(light.raw)).toEqual({ ok: true, port: 9900 });
     expect(healthRead).not.toHaveBeenCalled();
   });
+});
+
+
+it('bounds registered engineering planning cleanup while a scan is stalled', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-planning-shutdown-'));
+  const releaseScan = deferred();
+  const scanStarted = deferred();
+  const closers: Array<() => Promise<void>> = [];
+  let shutdown: Promise<PromiseSettledResult<void>[]> | undefined;
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  for (const name of ['CDS_AI_ACCESS_KEY', 'AI_ACCESS_KEY', 'CDS_MONGO_URI', 'CDS_MONGO_URL', 'CDS_PREVIEW_INSTANCE']) {
+    vi.stubEnv(name, '');
+  }
+  vi.stubEnv('CDS_REPO_ROOT', root);
+  try {
+    const state = new StateService(path.join(root, 'state.json'), root);
+    state.load();
+    vi.spyOn(state, 'getProjects').mockReturnValue([{ id: 'planning-shutdown-fixture' } as ReturnType<StateService['getProjects']>[number]]);
+    vi.spyOn(EngineeringPlanningService.prototype, 'sweepRecordedRemovals').mockImplementation(async () => {
+      scanStarted.resolve();
+      await releaseScan.promise;
+    });
+    const nextScan = vi.spyOn(EngineeringPlanningService.prototype, 'scanGithubFileAnchors');
+    const shell = new MockShellExecutor();
+    const config: CdsConfig = {
+      repoRoot: root, worktreeBase: path.join(root, 'worktrees'),
+      masterPort: 9900, workerPort: 5500, dockerNetwork: 'fixture', portStart: 10001,
+      sharedEnv: {}, jwt: { secret: 'fixture', issuer: 'fixture' }, mode: 'standalone',
+      rootDomains: ['example.test'],
+    };
+    createServer({ stateService: state, config, shell,
+      worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config),
+      proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress() {} } as unknown as ServerDeps['proxyService'],
+      bridgeService: {} as ServerDeps['bridgeService'],
+      registerResourceShutdown: close => { closers.push(close); },
+    });
+
+    await scanStarted.promise;
+    const cleanupErrors: unknown[] = [];
+    shutdown = Promise.allSettled(closers.map(close => close().catch(error => {
+      cleanupErrors.push(error);
+      throw error;
+    })));
+    await vi.advanceTimersByTimeAsync(2_500);
+    expect(cleanupErrors).toContainEqual(expect.objectContaining({ message: '工程规划资源退出等待超时' }));
+    releaseScan.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(nextScan).not.toHaveBeenCalled();
+  } finally {
+    releaseScan.resolve();
+    await (shutdown ?? Promise.allSettled(closers.map(close => close())));
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

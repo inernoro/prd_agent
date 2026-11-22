@@ -11,9 +11,7 @@ import { homeState, sortHomeTargets } from '@/lib/statusHome';
 import { classifyAlert } from '../../../src/shared/alarm-classification';
 import { checkPurpose, checkTitle, EVENT_NAMES, frequency, inspectionState, inspectionCheckState, inspectionCheckLabel, projectChannels, type ChannelStatus, type ProjectInspection } from '@/lib/projectStatus';
 import { HomeStateBadge } from './status/BusinessHome';
-import { MonitorCenterSkeleton } from './status/primitives';
-import './status/status-home.css';
-import './status/project-status.css';
+import { ProjectStatusSkeleton } from '@/components/skeletons/ProjectStatusSkeleton';
 
 type Delivery = { reportId?: string; deliveryId: string; projectId: string; targetId?: string; targetName?: string; channelName?: string; eventKind?: string; status: string; at: string; reason?: string; kind?: string };
 type Job = { id: string; name: string; description?: string; enabled: boolean; nextRunAt?: string; lastRunAt?: string; lastRunStatus?: string };
@@ -60,7 +58,7 @@ export function ProjectStatusPage(): JSX.Element {
   const title = data?.project.aliasName || data?.project.name || projectId;
   const detailUrl = (id: string): string => `/status?target=${encodeURIComponent(id)}`;
   return <AppShell active="status" topbar={<TopBar left={<Crumb items={[{ label: '监控中心', href: '/status' }, { label: title }]} />} right={<Button variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className={busy ? 'animate-spin' : ''} />{busy ? '正在更新' : '刷新'}</Button>} />}>
-    <Workspace fluid className="cds-workspace--fill">{!data && !error ? <MonitorCenterSkeleton /> : <div className="status-home project-status-page">
+    <Workspace fluid className="cds-workspace--fill">{!data && !error ? <ProjectStatusSkeleton /> : <div className="status-home project-status-page">
       {error && <div role="alert" className="status-home-guidance border-destructive">{error}<Button onClick={() => void load()}>重新读取</Button></div>}
       {data && <>
         <header className="status-home-panel"><div className="project-status-title"><div><p className="status-home-muted">项目运行总览</p><h1>{title} · 检查与通知</h1></div><ShieldCheck className="h-8 w-8 text-primary" /></div>

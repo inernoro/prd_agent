@@ -1,8 +1,7 @@
 /** 关系页的会话内返回上下文；只恢复界面任务，不参与权限或业务操作。刷新/未知来源回分支详情。 */
-export type RelationReturnTask =
-  | { kind: 'branches'; branchId: string; projectId: string; activeTagFilter: string | null; showArchived: boolean; selectedBranchIds: string[]; relationExpanded: boolean }
-  | { kind: 'overview'; branchId: string; projectId: string; onlyProblems: boolean }
-  | { kind: 'branch'; branchId: string };
+type BranchListReturnTask = { kind: 'branches'; branchId: string; projectId: string; activeTagFilter: string | null; showArchived: boolean; selectedBranchIds: string[]; relationExpanded: boolean };
+type OverviewReturnTask = { kind: 'overview'; branchId: string; projectId: string; onlyProblems: boolean };
+export type RelationReturnTask = BranchListReturnTask | OverviewReturnTask | { kind: 'branch'; branchId: string };
 interface Origin {
   token: string; actor: string; sourceKey: string; sourceIndex: number; task: RelationReturnTask; targetKey?: string;
 }
@@ -10,7 +9,7 @@ const origins = new Map<string, Origin>();
 let sequence = 0;
 const isIndex = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const isId = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512 && !value.includes('\0');
-function cloneTask(task: RelationReturnTask): RelationReturnTask {
+function cloneTask<T extends RelationReturnTask>(task: T): T {
   return task.kind === 'branches' ? { ...task, selectedBranchIds: [...task.selectedBranchIds] } : { ...task };
 }
 export function rememberRelationReturn(task: RelationReturnTask, actor: string | null, sourceKey: string, sourceIndex: unknown): string | undefined {
@@ -42,13 +41,22 @@ export function relationReturnKind(token: unknown, actor: string | null, branchI
   const origin = matching(token, actor, branchId, targetKey, targetIndex);
   return origin?.targetKey === targetKey ? origin.task.kind : null;
 }
-export function relationRestoreForVisit(kind: 'branches' | 'overview', actor: string | null, sourceKey: string, sourceIndex: unknown, projectId?: string): { token: string; task: RelationReturnTask } | null {
+function restoreForVisit<T extends RelationReturnTask>(
+  actor: string | null, sourceKey: string, sourceIndex: unknown,
+  matchesTask: (task: RelationReturnTask) => task is T,
+): { token: string; task: T } | null {
   if (!actor || !isIndex(sourceIndex)) return null;
   for (const origin of [...origins.values()].reverse()) {
-    if (!origin.targetKey || origin.actor !== actor || origin.sourceKey !== sourceKey || origin.sourceIndex !== sourceIndex || origin.task.kind !== kind) continue;
-    if (origin.task.kind === 'branches' && origin.task.projectId !== projectId) continue;
-    return { token: origin.token, task: cloneTask(origin.task) };
+    if (!origin.targetKey || origin.actor !== actor || origin.sourceKey !== sourceKey || origin.sourceIndex !== sourceIndex) continue;
+    if (matchesTask(origin.task)) return { token: origin.token, task: cloneTask(origin.task) };
   }
   return null;
+}
+export function relationRestoreForVisit(actor: string | null, sourceKey: string, sourceIndex: unknown, projectId: string | undefined): { token: string; task: BranchListReturnTask } | null {
+  return restoreForVisit(actor, sourceKey, sourceIndex,
+    (task): task is BranchListReturnTask => task.kind === 'branches' && task.projectId === projectId);
+}
+export function overviewRelationRestoreForVisit(actor: string | null, sourceKey: string, sourceIndex: unknown): { token: string; task: OverviewReturnTask } | null {
+  return restoreForVisit(actor, sourceKey, sourceIndex, (task): task is OverviewReturnTask => task.kind === 'overview');
 }
 export function consumeRelationRestore(token: string): void { origins.delete(token); }

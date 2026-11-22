@@ -221,12 +221,13 @@
     },
     "prd-api/src/PrdAgent.Api/Program.cs": {
       "calls": {
+        "new:HttpClientHandler:4cc61a8a363df91e98c0f903": 1,
         "new:HttpClientHandler:7bea2d90c3b06fea1ad75704": 1,
         "new:HttpClientHandler:9c61d19cea3e678653110bcb": 1,
         "new:SocketsHttpHandler:0a19d9f99aa8623e7c16a558": 1,
         "new:SocketsHttpHandler:d00295f24a464f73b6417fea": 1
       },
-      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝；主干新增HistoricalAsset命名客户端仅探测历史附件，禁自动重定向。"
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝；HistoricalAsset 命名客户端仅探测历史附件，禁自动重定向；CdsSsoClient 命名客户端仅访问已配置的 HTTPS CDS 颁发方，禁用重定向和 Cookie。"
     },
     "prd-api/src/PrdAgent.Api/Services/AdminPushNotificationService.cs": {
       "calls": {
@@ -282,6 +283,20 @@
         "call:SendAsync:d5fb003543027d8b39aedb4d": 1
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/CdsSsoAuditHandler.cs": {
+      "calls": {
+        "call:SendAsync:777ee246723036b42848cc4b": 1
+      },
+      "purpose": "为 CDS OIDC 请求记录脱敏审计，并禁用共享出站处理器的重定向。仅转发原请求，模型出口守卫保持生效。"
+    },
+    "prd-api/src/PrdAgent.Api/Services/CdsSsoClient.cs": {
+      "calls": {
+        "call:CreateClient:2d1ddc61f6bcfba0288342b2": 3,
+        "call:PostAsync:3310b7407c651484b8da362d": 1,
+        "call:SendAsync:b1e01451f6a1150fcbe007a2": 1
+      },
+      "purpose": "仅向管理员配置的 HTTPS CDS 颁发方读取 OIDC 发现文档和签名公钥，交换一次性授权码并核验会话身份。发现的端点须位于同一颁发方，使用受模型出口守卫保护的专用客户端。"
     },
     "prd-api/src/PrdAgent.Api/Services/ContentReprocessProcessor.cs": {
       "calls": {

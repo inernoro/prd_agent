@@ -5,12 +5,6 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       img .absolute.h-full.inset-0.w-full
       div .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20
         div .flex
-          div [data-no-drag=true aria-label=关联文档导航]
-            button [aria-label=查看「多租户架构设计」的关联文档与所属合集 type=button]
-              svg
-              span
-                "关联"
-              svg
         span .inline-flex.items-center
           span .@[235px]:inline-flex.gap-1.hidden.items-center [aria-label=已分享]
             span .h-4.inline-flex.items-center.justify-center.w-4

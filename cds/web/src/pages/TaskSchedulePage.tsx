@@ -9,7 +9,8 @@ import { userErrorMessage } from '@/lib/userErrorMessage';
 import { createLatestWinsGate } from '@/lib/latest-wins';
 import { parseCurlCommand } from '@/lib/curl-import';
 import { resolveTaskScheduleProjectId, taskScheduleProjectReference } from '@/lib/task-schedule-project';
-import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { ErrorBlock } from '@/pages/cds-settings/components';
+import { TASK_LAYOUT, TaskScheduleSkeleton } from '@/components/skeletons/TaskScheduleSkeleton';
 import type {
   HttpMethod, RunStatus, ScheduleType, ScheduledJob, ScheduledJobAction,
   ScheduledJobRun, ScheduledJobTarget, TargetType,
@@ -530,8 +531,8 @@ export function TaskSchedulePage(): JSX.Element {
           </div>
         ) : null}
 
-        {loading && !hasSnapshot ? <LoadingBlock label="加载任务调度配置" /> : !hasSnapshot ? null : (
-          <div className="flex flex-col gap-3 xl:min-h-0 xl:flex-1">
+        {loading && !hasSnapshot ? <TaskScheduleSkeleton /> : !hasSnapshot ? null : (
+          <div className={TASK_LAYOUT.root}>
 
             {/* 值班条：常驻，跨左右两栏。它回答的是页面级的「有没有出事」，
                 与选中了哪个任务无关，所以不进右栏。 */}
@@ -539,8 +540,8 @@ export function TaskSchedulePage(): JSX.Element {
               {/* 一块，不是三块。原来是「卡片 + 橙色实心块」两种容器并排，
                   卡片内部又用左分割线切了一段统计——同一行里三种分组语言。
                   现在统一成「结论句 + 等分统计段」，与详情里的指标条同一套节奏。 */}
-              <div className="flex min-w-0 flex-1 items-stretch overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
-                <div className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3">
+              <div className={TASK_LAYOUT.summary}>
+                <div className={TASK_LAYOUT.summaryText}>
                   <div className="flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${overview.tone === 'bad' ? 'bg-bad' : overview.tone === 'warn' ? 'bg-warn' : 'bg-ok'}`} />
                     <span className="min-w-0 break-words text-base font-semibold">{loadError ? '上次记录：' : ''}{overview.headline}</span>
@@ -555,14 +556,14 @@ export function TaskSchedulePage(): JSX.Element {
                   * 1024px 起才有余量：888 − 618 ≈ 270px 留给结论条。
                   * 露不出来的那一档不是信息丢失：统计值在下面的调度轴与运行流里都还在。
                   */}
-                <div className="hidden shrink-0 items-stretch lg:flex">
+                <div className={TASK_LAYOUT.summaryStats}>
                   {overview.stats.map((stat) => (
-                    <div key={stat.label} className="flex w-[5.375rem] flex-col justify-center border-l border-[hsl(var(--hairline))] px-3 py-2">
+                    <div key={stat.label} className={TASK_LAYOUT.summaryStat}>
                       <div className="truncate text-[0.625rem] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
                       <div className={`mt-0.5 font-mono text-[1.0625rem] font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
                     </div>
                   ))}
-                  <div className="flex w-[11.75rem] flex-col justify-center border-l border-[hsl(var(--hairline))] bg-primary-soft/50 px-3 py-2">
+                  <div className={TASK_LAYOUT.nextStat}>
                     <div className="truncate text-[0.625rem] uppercase tracking-wide text-muted-foreground">下一次触发</div>
                     <div className="mt-0.5 flex items-baseline gap-2">
                       <span className="font-mono text-[1.0625rem] font-semibold leading-tight text-primary-ink">{overview.nextCountdown}</span>
@@ -581,11 +582,11 @@ export function TaskSchedulePage(): JSX.Element {
                 此前索引被时间轴压到 y=445（52% 屏高）、只有 280×367，而它是使用频率
                 最高的元件；同时 2xl 才存在的第三栏让「新建」在 1536px 以下不可见。
                 两栏之后没有断点分歧，那个洞从结构上被填掉。 */}
-            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[18.75rem_minmax(0,1fr)]">
+            <div className={TASK_LAYOUT.columns}>
 
               {/* 左：任务索引。窄屏（<xl）退回自然流并限高，桌面才满高填充。 */}
-              <section className="flex min-h-0 max-h-[52vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
-                <div className="flex shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
+              <section className={`${TASK_LAYOUT.panel} max-h-[52vh] xl:max-h-none`}>
+                <div className={TASK_LAYOUT.indexHeader}>
                   <div className="text-sm font-semibold">任务</div>
                   <span className="font-mono text-xs text-muted-foreground">{jobs.length}</span>
                   <div className="flex-1" />
@@ -626,7 +627,7 @@ export function TaskSchedulePage(): JSX.Element {
 
               {/* 右：两态。未选中 = 值班概览（时间轴在这里满高展开）；
                   选中 = 这一个任务（时间轴收成 44px 细带，高度让给动作链与运行流）。 */}
-              <section className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+              <section className={TASK_LAYOUT.panel}>
                 {selectedJob ? (
                   <>
                     {/* 三层表头（页面 / 上下文 / 详情）连排是噪音：细带自己就写着任务名，
@@ -1310,7 +1311,7 @@ function TimelineBand({
     <section className={compact
       ? 'shrink-0 overflow-hidden border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))]'
       : 'shrink-0 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'}>
-      <div className={`items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-2 ${compact ? 'hidden' : 'flex'}`}>
+      <div className={`${TASK_LAYOUT.timelineHeader} ${compact ? 'hidden' : 'flex'}`}>
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold">今日调度轴</span>
           <span className="text-xs text-muted-foreground">左侧已发生，右侧待触发</span>
@@ -1441,7 +1442,7 @@ function RunStream({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* 380px 那一栏里，标题不写 shrink-0 会被 min-w-0 的兄弟挤成一列竖排的「运行流」。
           实测截图见 2026-09-01 本地 1512 档。 */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+      <div className={TASK_LAYOUT.runHeader}>
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 whitespace-nowrap text-sm font-semibold">运行流</span>
           <span className="min-w-0 truncate text-xs text-muted-foreground">{caption}</span>

@@ -10,7 +10,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { useLocation } from 'react-router-dom';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { consoleAccountIdentity } from '@/lib/consoleIdentity';
-import { rememberRelationReturn, relationRestoreForVisit, consumeRelationRestore } from '@/lib/relationReturn';
+import { rememberRelationReturn, overviewRelationRestoreForVisit, consumeRelationRestore } from '@/lib/relationReturn';
 import { RefreshCw } from 'lucide-react';
 import { AppShell, ConsoleAuthContext, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -37,15 +37,15 @@ export function OverviewPage(): JSX.Element {
   const location = useLocation(), navigate = useNavigate();
   const auth = useContext(ConsoleAuthContext);
   const relationActor = auth.pending ? null : consoleAccountIdentity(auth.status);
-  const relationRestore = useMemo(() => relationRestoreForVisit('overview', relationActor, location.key, window.history.state?.idx), [relationActor, location.key]);
+  const relationRestore = useMemo(() => overviewRelationRestoreForVisit(relationActor, location.key, window.history.state?.idx), [relationActor, location.key]);
   const appliedRestore = useRef<string | null>(null);
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ok'; data: OverviewResponse } | { status: 'error'; message: string }>({ status: 'loading' });
   const [refreshError, setRefreshError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const readGate = useRef(createLatestWinsGate());
-  const [onlyProblems, setOnlyProblems] = useState(() => relationRestore?.task.kind === 'overview' ? relationRestore.task.onlyProblems : false);
+  const [onlyProblems, setOnlyProblems] = useState(() => relationRestore?.task.onlyProblems ?? false);
   useEffect(() => {
-    if (!relationRestore || relationRestore.task.kind !== 'overview' || appliedRestore.current === relationRestore.token) return;
+    if (!relationRestore || appliedRestore.current === relationRestore.token) return;
     appliedRestore.current = relationRestore.token;
     setOnlyProblems(relationRestore.task.onlyProblems); consumeRelationRestore(relationRestore.token);
   }, [relationRestore]);
@@ -105,9 +105,9 @@ export function OverviewPage(): JSX.Element {
       const width = canvas.clientWidth;
       setCanvasWidth(previous => previous === width ? previous : width);
       setCardHeights(previous => {
-      const next = Object.fromEntries(nodes.map(node => [node.dataset.projectId!, Math.ceil(node.getBoundingClientRect().height)]));
-      return Object.keys(next).length === Object.keys(previous).length
-        && Object.entries(next).every(([id, height]) => previous[id] === height) ? previous : next;
+        const next = Object.fromEntries(nodes.map(node => [node.dataset.projectId!, Math.ceil(node.getBoundingClientRect().height)]));
+        return Object.keys(next).length === Object.keys(previous).length
+          && Object.entries(next).every(([id, height]) => previous[id] === height) ? previous : next;
       });
     };
     measure();

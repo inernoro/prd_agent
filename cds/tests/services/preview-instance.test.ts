@@ -38,6 +38,20 @@ describe('isPreviewInstance', () => {
 });
 
 describe('scrubParentSecretsFromEnv', () => {
+  it('keeps the MAP approval signing configuration out of a branch preview', () => {
+    const handoff = {
+      CDS_DESIGN_MAP_HANDOFF_BASE: 'https://map.example.test',
+      CDS_DESIGN_MAP_HANDOFF_KEY: 'synthetic-signing-key',
+      CDS_DESIGN_MAP_HANDOFF_BINDINGS: '{}',
+    };
+    const preview: NodeJS.ProcessEnv = { ...handoff, CDS_PREVIEW_INSTANCE: '1' };
+    expect(scrubParentSecretsFromEnv(preview).sort()).toEqual(Object.keys(handoff).sort());
+    for (const key of Object.keys(handoff)) expect(preview[key]).toBeUndefined();
+    const standalone = { ...handoff, CDS_PREVIEW_INSTANCE: '0' };
+    expect(scrubParentSecretsFromEnv(standalone)).toEqual([]);
+    expect(standalone).toMatchObject(handoff);
+  });
+
   it('removes parent-secret-looking keys including inherited CDS_PASSWORD, remaps CDS_PREVIEW_* gate', () => {
     const env: NodeJS.ProcessEnv = {
       CDS_PREVIEW_INSTANCE: '1',

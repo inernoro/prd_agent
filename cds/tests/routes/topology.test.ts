@@ -121,6 +121,32 @@ describe('topology router', () => {
     expect((await request(server, 'POST', '/api/compose/lint', { composeYaml: CONFLICT_YAML, projectId: 'p-x' })).status).toBe(403);
     denyProject = null;
   });
+
+  it('GET /overview/topology 保留默认分支概览并过滤未授权项目', async () => {
+    const now = '2026-11-22T01:00:00.000Z';
+    for (const id of ['overview-project', 'overview-private', 'overview-empty']) {
+      stateService.addProject({ id, slug: id, name: id, kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now });
+    }
+    stateService.addBranch({ id: 'overview-main', projectId: 'overview-project', branch: 'main', worktreePath: tmpDir,
+      status: 'stopped', createdAt: '2026-11-21T01:00:00.000Z' });
+    stateService.addBranch({ id: 'overview-newer', projectId: 'overview-project', branch: 'preview', worktreePath: tmpDir,
+      status: 'stopped', createdAt: now });
+    stateService.addBranch({ id: 'overview-private-main', projectId: 'overview-private', branch: 'main', worktreePath: tmpDir,
+      status: 'stopped', createdAt: now });
+    denyProject = 'overview-private';
+    try {
+      const res = await request(server, 'GET', '/api/overview/topology');
+      expect(res.status).toBe(200);
+      expect(res.body.projects).toHaveLength(2);
+      expect(res.body.projects).toEqual(expect.arrayContaining([
+        expect.objectContaining({ projectId: 'overview-project', branch: { id: 'overview-main', name: 'main', status: 'stopped' }, branchCount: 2 }),
+        expect.objectContaining({ projectId: 'overview-empty', branch: null, branchCount: 0 }),
+      ]));
+    } finally {
+      denyProject = null;
+    }
+  });
+
   it('GET /branches/:id/route-lookup 给出转发器与 master 兜底的判定并标一致性', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'proj', slug: 'demo', name: 'demo', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
@@ -268,18 +294,13 @@ describe('topology router', () => {
     }
   });
 
-  it('GET /overview/topology 项目配置的默认分支是 CDS 分支 id 时也能认出代表分支', async () => {
-    const now = new Date().toISOString();
-    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, defaultBranch: 'md-feat' } as Parameters<typeof stateService.addProject>[0]);
-    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'] } as Parameters<typeof stateService.addBuildProfile>[0]);
-    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, lastDeployAt: '2026-09-02T10:00:00Z', services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
-    stateService.addBranch({ id: 'md-feat', projectId: 'p-md', branch: 'feature/y', worktreePath: tmpDir, status: 'running', createdAt: now, lastDeployAt: '2026-09-01T10:00:00Z', services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 3, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
-    const res = await request(server, 'GET', '/api/overview/topology');
-    expect(res.status).toBe(200);
-    expect(res.body.projects[0].branch).toMatchObject({ id: 'md-feat', name: 'feature/y' });
+  it('没有可见项目时，概览返回空列表和零汇总', async () => {
+    const result = await request(server, 'GET', '/api/overview/topology');
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ projects: [], summary: { errors: 0, warnings: 0, infos: 0 } });
   });
 
-  it('目标项目对当前凭据不可见时：引用读成 restricted 不下发地址与分支，PUT 指向它被拒，概览不画到它的边', async () => {
+  it('目标项目对当前凭据不可见时：引用读成 restricted 不下发地址与分支，PUT 指向它被拒', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
     stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
@@ -308,10 +329,6 @@ describe('topology router', () => {
 
       const graph = await request(srv, 'GET', '/api/branches/md-main/service-graph');
       expect(JSON.stringify(graph.body)).not.toContain('prd-main');
-
-      const overview = await request(srv, 'GET', '/api/overview/topology');
-      expect(overview.body.projects.map((p: { slug: string }) => p.slug)).toEqual(['mdimp']);
-      expect(overview.body.projects[0].edges).toEqual([]);
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }
@@ -339,36 +356,6 @@ describe('topology router', () => {
       expect(remote.status).toBe(409);
       expect(remote.body.error).toBe('remote_executor_branch');
       expect(stateService.getBranch('md-pinned')?.profileOverrides?.['cb-web']?.env?.LLMGW_BASE).toBeUndefined();
-    } finally {
-      await new Promise<void>((r) => srv.close(() => r()));
-    }
-  });
-
-  it('GET /overview/topology 每个项目给代表分支、体检结论与跨项目引用边', async () => {
-    const now = new Date().toISOString();
-    stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
-    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
-    stateService.addProject({ id: 'p-empty', slug: 'empty', name: 'empty', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
-    stateService.addBuildProfile({ id: 'llmgw-serve', name: 'llmgw', projectId: 'p-prd', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 8091, subdomain: 'llmgw' } as Parameters<typeof stateService.addBuildProfile>[0]);
-    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'], env: { LLMGW_BASE: '${CDS_REF:prd-agent/llmgw-serve}' } } as Parameters<typeof stateService.addBuildProfile>[0]);
-    stateService.addBranch({ id: 'prd-main', projectId: 'p-prd', branch: 'main', worktreePath: tmpDir, status: 'stopped', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'stopped' } } } as Parameters<typeof stateService.addBranch>[0]);
-    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
-    const app = express();
-    app.use(express.json());
-    app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: (_r, pid) => (pid === 'p-empty' ? { status: 403, body: { error: 'forbidden' } } : null), envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = listenLoopbackFixture(app);
-    try {
-      const res = await request(srv, 'GET', '/api/overview/topology');
-      expect(res.status).toBe(200);
-      expect(res.body.projects.map((p: { slug: string }) => p.slug).sort()).toEqual(['mdimp', 'prd-agent']);
-      const md = res.body.projects.find((p: { slug: string }) => p.slug === 'mdimp');
-      expect(md.branch).toMatchObject({ id: 'md-main', name: 'main' });
-      expect(md.edges).toEqual([expect.objectContaining({ toProjectId: 'p-prd', kind: 'cds-ref', status: 'stopped', fromService: 'cb-web', key: 'LLMGW_BASE' })]);
-      expect(md.lint.errors).toBeGreaterThanOrEqual(1);
-      expect(md.headline).toContain('LLMGW_BASE');
-      const prd = res.body.projects.find((p: { slug: string }) => p.slug === 'prd-agent');
-      expect(prd.inboundEdges).toBe(1);
-      expect(res.body.summary.errors).toBeGreaterThanOrEqual(1);
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }

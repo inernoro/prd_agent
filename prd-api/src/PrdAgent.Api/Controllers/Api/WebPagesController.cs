@@ -324,7 +324,9 @@ public partial class WebPagesController : ControllerBase
         [FromForm] string? description,
         [FromForm] string? folder,
         [FromForm] string? tags,
-        [FromForm] string? uploadId)
+        [FromForm] string? uploadId,
+        [FromForm] string? entryFile = null,
+        [FromForm] bool openAsDirectory = false)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
@@ -341,8 +343,9 @@ public partial class WebPagesController : ControllerBase
                 using var zipStream = file.OpenReadStream();
                 var zipTags = string.IsNullOrWhiteSpace(tags) ? new List<string>()
                     : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-                var zipSite = await _siteService.CreateFromZipAsync(
-                    userId, zipStream, title, description, folder, zipTags, uploadId: uploadId);
+                var zipTitle = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title;
+                var zipSite = await _siteService.CreateFromZipAsync(userId, zipStream, zipTitle, description, folder, zipTags,
+                    uploadId: uploadId, entryFile: openAsDirectory ? string.Empty : entryFile);
                 return Ok(ApiResponse<object>.Ok(zipSite));
             }
             catch (InvalidOperationException ex)
@@ -1674,7 +1677,7 @@ public partial class WebPagesController : ControllerBase
 
             // 新建「不止协作者能打开」的分享之前核对私有资料。visit 便捷链不经过这道闸（已知边界：
             // 它是作者自己点「访问 / 扫码」时用的入口，失败时前端本就回退站点原始地址，拦它挡不住任何人）。
-            if (!isVisit && IsBeyondCollaborators(visibility) && _privateSources != null)
+            if (req.RevisionId == null && !isVisit && IsBeyondCollaborators(visibility) && _privateSources != null)
             {
                 var targetSiteIds = TargetShareSiteIds(req.SiteId, req.SiteIds);
                 // 先过与 CreateShareAsync 同一道权限门，再核查、记录确认：GetByIdAsync 对团队 viewer 也放行，
@@ -1689,7 +1692,38 @@ public partial class WebPagesController : ControllerBase
                 if (refusal != null) return refusal;
             }
 
-            var share = snapshot != null ? await _siteService.CreateCollectionShareAsync(
+            HostedSiteFixedRevision? fixedRevision = null;
+            var fixedValidity = TimeSpan.Zero;
+            if (req.RevisionId != null)
+            {
+                var validHours = req.ExpiresInHours ?? (long)req.ExpiresInDays * 24;
+                if (isVisit || snapshot != null || req.ShareType == "collection" || req.SiteIds is { Count: > 0 }
+                    || string.IsNullOrWhiteSpace(req.SiteId) || string.IsNullOrWhiteSpace(req.RevisionId) || validHours is < 1 or > 8760)
+                    throw new ArgumentException("固定版本分享需选择一个站点、版本与有效期");
+                fixedValidity = TimeSpan.FromHours(validHours);
+                var ct = HttpContext.RequestAborted;
+                if (!await _siteService.CanCreateShareAsync([req.SiteId], GetUserId(), ct))
+                    throw new UnauthorizedAccessException(HostedSiteService.NoSharePermissionMessage);
+                var site = await _siteService.GetByIdAsync(req.SiteId, GetUserId(), ct);
+                var revision = await _db.HostedSiteRevisions.Find(row => row.Id == req.RevisionId && row.SiteId == req.SiteId
+                    && row.Status == HostedSiteRevisionStatuses.Published).FirstOrDefaultAsync(ct);
+                if (site == null || revision == null)
+                    return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "已核验的发布版本不存在"));
+                var fingerprint = HostedSitePreviewAccessService.ComputePackageFingerprint(revision.VerifiedFiles);
+                if (IsBeyondCollaborators(visibility) && _privateSources != null)
+                {
+                    var decision = await _privateSources.EnforceForRevisionShareAsync(
+                        site, revision, GetUserId(), req.ConfirmedPrivateSourceFingerprint, ct);
+                    if (!decision.Allowed) return Conflict(ApiResponse<object>.Fail(decision.ErrorCode, decision.Message));
+                }
+                var hashes = revision.VerifiedFiles.ToDictionary(file => file.Path, file => file.Sha256, StringComparer.Ordinal);
+                fixedRevision = new HostedSiteFixedRevision(revision.Id, fingerprint, hashes);
+            }
+
+            var share = fixedRevision != null ? await _siteService.CreateFixedRevisionShareAsync(
+                GetUserId(), await ResolveDisplayNameAsync(GetUserId()), req.SiteId!, fixedRevision, req.Title,
+                req.Description, req.Password, fixedValidity, visibility, HttpContext.RequestAborted)
+                : snapshot != null ? await _siteService.CreateCollectionShareAsync(
                 GetUserId(), await ResolveDisplayNameAsync(GetUserId()), snapshot, req.Title, req.Description,
                 req.Password, req.ExpiresInDays, visibility) : await _siteService.CreateShareAsync(
                 GetUserId(), await ResolveDisplayNameAsync(GetUserId()),
@@ -1719,7 +1753,10 @@ public partial class WebPagesController : ControllerBase
                 share.ExpiresAt,
                 share.ShortSeq,
                 share.Visibility,
-                shareUrl = $"/s/wp/{share.Token}",
+                revisionId = share.FixedRevision?.RevisionId,
+                shareUrl = share.FixedRevision is { } pinned
+                    ? $"/s/wp/{share.Token}?revision={Uri.EscapeDataString(pinned.RevisionId)}"
+                    : $"/s/wp/{share.Token}",
                 // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；ShortSeq=0（未注册）时两者都
                 // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
                 shortShareUrl = share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : null,
@@ -1954,6 +1991,7 @@ public partial class WebPagesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             result.DocumentCollectionId,
+            result.RevisionId,
             result.CollectionId,
             result.MainSiteId,
             result.CollectionVersion,
@@ -2255,6 +2293,8 @@ public class InspectPrivateSourcesRequest
 public class CreateWebPageShareRequest
 {
     public string? SiteId { get; set; }
+    public string? RevisionId { get; set; }
+    public int? ExpiresInHours { get; set; }
     public List<string>? SiteIds { get; set; }
     public string? ShareType { get; set; }
     public string? Title { get; set; }
