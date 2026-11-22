@@ -3325,9 +3325,16 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       }
       stateService.save();
 
-      // Defer when host memory headroom is unavailable and keep existing routes.
+      // Check the full branch before restarting any service. Insufficient
+      // headroom is a retryable deferral that preserves the prior state.
+      const profiles = stateService.getBuildProfilesForProject(branch.projectId);
+      const startupMB = services.reduce((total, svc) =>
+        total + Math.max(1, profiles.find(profile => profile.id === svc.profileId)?.resources?.memoryMB || 512), 0);
       try {
         await schedulerService.evictLruIfOverCapacity(slug);
+        if (!deploymentPhaseBudget.hasStartupMemoryHeadroom(startupMB)) {
+          throw new Error('当前内存余量无法启动完整预览，请等资源释放后重试。');
+        }
       } catch {
         { // Capacity/protection uncertainty is a deferral, never permission to exceed the pool.
           lease?.assertCurrent('auto-wake capacity deferred');
@@ -3340,13 +3347,11 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         }
       }
 
-      const profiles = stateService.getBuildProfilesForProject(branch.projectId);
       const failed: string[] = [];
       for (const svc of services) {
         lease?.assertCurrent(`auto-wake before ${svc.profileId}`);
         const profile = profiles.find(candidate => candidate.id === svc.profileId);
-        const startupMB = Math.max(1, profile?.resources?.memoryMB || 512);
-        if (!autoWakeAdmission.hasHeadroom() || !deploymentPhaseBudget.hasStartupMemoryHeadroom(startupMB)) {
+        if (!autoWakeAdmission.hasHeadroom()) {
           throw new Error('宿主资源不足，已停止继续唤醒；请稍后重新启动分支');
         }
         const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
