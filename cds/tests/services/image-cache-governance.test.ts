@@ -40,7 +40,9 @@ import json,sys,pathlib,time
 p=pathlib.Path(${JSON.stringify(db)});v=json.loads(p.read_text());a=sys.argv[1:]
 with open(${JSON.stringify(calls)},'a') as f:f.write(json.dumps(a)+chr(10))
 if v.get('fail'):sys.exit(2)
-if a[0]=='info':print(json.dumps({'ID':'owned-daemon','DockerRootDir':${JSON.stringify(root)},'Architecture':'x86_64','OSType':'linux'}))
+if a[0]=='info':
+ if v.get('infoDelay'):time.sleep(v['infoDelay'])
+ print(json.dumps({'ID':'owned-daemon','DockerRootDir':${JSON.stringify(root)},'Architecture':'x86_64','OSType':'linux'}))
 elif a[0]=='pull':
  if v.get('pullDelay'):time.sleep(v['pullDelay'])
  if v.get('pullError'):print(v['pullError'],file=sys.stderr);sys.exit(1)
@@ -260,6 +262,17 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:1024,nowMs:now-700_000});
     expect(f.request({action:'settle-pulls'}).settled).toMatchObject([{outcome:'never-started'}]);
     expect(()=>f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000})).toThrow(/pull-authorization-unconfirmed/);
+  });
+  it('spends the original deadline on daemon startup before launching a native pull', () => {
+    const f=fixture(), image='registry.example/test:old';
+    const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:1024});
+    f.values.infoDelay=0.65;f.save();
+    expect(f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:90_000,pullDeadlineMs:Date.now()+350}))
+      .toEqual({outcome:'verification-unavailable',recorded:false});
+    const commands=fs.readFileSync(f.calls,'utf8').trim().split('\n').map(line=>JSON.parse(line) as string[]);
+    expect(commands.some(command=>command[0]==='pull')).toBe(false);
+    const ledger=JSON.parse(fs.readFileSync(path.join(f.root,'catalog','images.json'),'utf8'));
+    expect(ledger.pulls[pin.token].startedAt).toBeUndefined();
   });
   it('settles completed failed refreshes of unchanged cached IDs across independent worker invocations', () => {
     const f=fixture();f.values.images=[f.image()];f.save();f.request({action:'publish',references:[]});

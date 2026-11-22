@@ -1,10 +1,19 @@
 import { DISK_RESOURCE_NATIVE } from './disk-resource-native.js';
 
+export const IMAGE_CACHE_PULL_RECEIPT_WINDOW_MS = 9_000;
+
 /** Host image-ID receipts and cross-master pins. Never accesses Docker layer directories. */
 export const IMAGE_CACHE_PROGRAM = DISK_RESOURCE_NATIVE + String.raw`
 import datetime,http.client,re,socket,subprocess,tempfile
 PULL_OVERDUE_MS=10*60*1000
 DEFAULT_PULL_PEAK_BYTES=4*1024**3
+PULL_RECEIPT_WRITE_MARGIN_SECONDS=1
+PULL_RECEIPT_MAX_WINDOW_SECONDS=${IMAGE_CACHE_PULL_RECEIPT_WINDOW_MS}/1000
+pull_wall_deadline=req.get('pullDeadlineMs')
+# Turn the same-host caller deadline into a local monotonic budget once. The
+# delay before the worker starts, the lock and Docker info all spend from it.
+pull_deadline=(time.monotonic()+(pull_wall_deadline/1000-time.time())
+               if type(pull_wall_deadline) is int else float('inf'))
 root_fd=None;root=pathlib.Path(req['catalog'])
 if req['action']=='cancel':
  root,_=directory(root);identifier=req.get('executionId','')
@@ -246,8 +255,11 @@ if action=='execute-pull':
  image=pull['image']
  if not isinstance(image,str) or not image or image.startswith('-') or len(image)>512 or any(c.isspace() for c in image):
   raise ValueError('image-reference-invalid')
- seconds=min(90,req['pullTimeoutMs']/1000)
- if seconds<=0:raise ValueError('pull-timeout-expired')
+ pull_now=time.monotonic()
+ receipt_window=min(PULL_RECEIPT_MAX_WINDOW_SECONDS,max(PULL_RECEIPT_WRITE_MARGIN_SECONDS+.25,(pull_deadline-pull_now)/3))
+ pull_stop=min(pull_now+min(90,req['pullTimeoutMs']/1000),pull_deadline-receipt_window)
+ if pull_stop<=pull_now:
+  print(json.dumps({'outcome':'verification-unavailable','recorded':False}));sys.exit(0)
  pull['startedAt']=max(pull['createdAt'],int(time.time()*1000));save()
  # The reservation is already durable and remains a cross-master pin.
  # Holding the ledger lock during network I/O would block all other deployments.
@@ -255,6 +267,8 @@ if action=='execute-pull':
  execution_state='exited';exit_code=None
  with tempfile.TemporaryFile() as out,tempfile.TemporaryFile() as err:
   try:
+   seconds=pull_stop-time.monotonic()
+   if seconds<=0:raise subprocess.TimeoutExpired(['docker','pull'],0)
    result=subprocess.run(['docker','pull',image],stdout=out,stderr=err,timeout=seconds)
    if result.returncode>=0:exit_code=result.returncode
    else:execution_state='interrupted'
@@ -267,7 +281,7 @@ if action=='execute-pull':
  if completed:outcome='success' if exit_code==0 else pull_diagnostic(stdout,stderr,image)
  observation='unconfirmed';observed_id=None
  if completed:
-  deadline=time.monotonic()+8
+  deadline=min(time.monotonic()+8,pull_deadline-PULL_RECEIPT_WRITE_MARGIN_SECONDS)
   try:
    if json.loads(docker(['info','--format','{{json .}}'],3))['ID']!=state['daemonId']:raise ValueError('pull-daemon-identity-changed')
    observed=inspect_image(image)

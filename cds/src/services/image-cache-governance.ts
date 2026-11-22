@@ -1,6 +1,6 @@
 import type { IShellExecutor } from '../types.js';
 import { shellQuoteArg } from './secure-database-cli.js';
-import { IMAGE_CACHE_PROGRAM } from './image-cache-program.js';
+import { IMAGE_CACHE_PROGRAM, IMAGE_CACHE_PULL_RECEIPT_WINDOW_MS } from './image-cache-program.js';
 import { reclaimLock } from './reclaim-lock.js';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -17,7 +17,7 @@ export class ImageCacheBudgetError extends Error {}
 const IMAGE_CACHE_REQUEST_TIMEOUT_MS = 30_000;
 const IMAGE_CACHE_LOCK_RETRY_MS = 150;
 const NATIVE_PULL_LIMIT_MS = 90_000;
-const PULL_RECEIPT_WINDOW_MS = 9_000;
+const NATIVE_PULL_STARTUP_WINDOW_MS = 9_000;
 
 type NativePullOutcome = 'success' | 'missing' | 'access-denied' | 'verification-unavailable';
 interface PullSettlement {
@@ -110,9 +110,10 @@ export class ImageCacheGovernance {
   confirm(token: string, assertCurrent: () => void) { return this.request('confirm', { token }, assertCurrent); }
   abort(token: string, assertCurrent: () => void, completedNativeOperation = false) { return this.request('abort', { token, completedNativeOperation }, assertCurrent); }
   async executePull(token: string, image: string, assertCurrent: () => void, remainingMs?: () => number): Promise<{ outcome: NativePullOutcome; recorded: boolean }> {
-    const limit = Math.min(remainingMs?.() ?? Infinity, NATIVE_PULL_LIMIT_MS + PULL_RECEIPT_WINDOW_MS);
+    const limit = Math.min(remainingMs?.() ?? Infinity, NATIVE_PULL_LIMIT_MS + NATIVE_PULL_STARTUP_WINDOW_MS + IMAGE_CACHE_PULL_RECEIPT_WINDOW_MS);
     return this.request('execute-pull', remaining => ({
-      token, image, pullTimeoutMs: Math.min(NATIVE_PULL_LIMIT_MS, remaining - Math.min(PULL_RECEIPT_WINDOW_MS, Math.floor(remaining / 3))),
+      token, image, pullTimeoutMs: NATIVE_PULL_LIMIT_MS,
+      pullDeadlineMs: Date.now() + remaining,
     }), assertCurrent, limit);
   }
   async settlePulls(token?: string): Promise<PullSettlement[]> {
