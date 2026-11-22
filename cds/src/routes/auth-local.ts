@@ -27,8 +27,9 @@ import {
   buildSsoLogoutCookie,
   GH_SESSION_COOKIE,
 } from './auth.js';
-import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
+import { toPublicUser, type CdsUser, type PublicCdsUser, type UserActivityRecord } from '../domain/auth.js';
 import type { StateService } from '../services/state.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
   markHumanProjectGrantRecovery, reconcileHumanAccessRestore, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 
@@ -66,6 +67,7 @@ export interface AuthLocalRouterDeps {
   ) => Promise<LegacyLocalLoginResult | null> | LegacyLocalLoginResult | null;
   /** Usernames owned by external/legacy providers and unavailable for creation. */
   reservedUsernames?: string[];
+  systemPasswordActivity?: () => UserActivityRecord[];
 }
 
 interface AuthedRequest extends Request {
@@ -450,8 +452,16 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     } else {
       userId = me.id;
     }
-    const activity = await authService.listActivity({ userId, limit });
-    res.json({ activity });
+    try {
+      const activity = await authService.listActivity({ userId, limit });
+      if (deps.systemPasswordActivity && isHumanSystemOwner(req)) {
+        activity.push(...deps.systemPasswordActivity().filter(row => !userId || row.userId === userId));
+        activity.sort((a, b) => b.at.localeCompare(a.at));
+      }
+      res.json({ activity: activity.slice(0, limit) });
+    } catch {
+      res.status(503).json({ error: '无法完整读取用户操作痕迹，请稍后重试。' });
+    }
   });
 
   return router;

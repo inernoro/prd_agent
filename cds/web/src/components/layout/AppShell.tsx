@@ -207,6 +207,7 @@ const ShellFrameContext = createContext(false);
 /** Map a pathname to the rail item that should light up. */
 function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/cds-settings')) return 'cds-settings';
+  if (pathname === '/personal-settings') return 'personal-settings';
   // 发布控制台与发布中心是同一件事的两个视图，共用一个导航高亮项。
   if (pathname.startsWith('/release-center') || pathname.startsWith('/release-console')) return 'release-center';
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
@@ -910,6 +911,15 @@ function UserAccountMenu({
           <div className="truncate text-xs text-muted-foreground">{accountLabel}</div>
         </div>
       </div>
+      {user ? (
+        <Link to="/personal-settings" className="cds-account-menu-item" role="menuitem" onClick={() => {
+          setOpen(false);
+          onNavigate?.();
+        }}>
+          <KeyRound />
+          <span>个人设置</span>
+        </Link>
+      ) : null}
       <Link
         to={canManageSettings ? '/cds-settings#auth' : '/cds-settings#activity'}
         className="cds-account-menu-item"

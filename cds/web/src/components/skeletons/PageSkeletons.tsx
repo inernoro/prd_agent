@@ -13,7 +13,7 @@ import { loadingSceneForPath } from './loadingScenes';
 import { isBatchReleaseMode, ReleaseConsoleSkeleton } from './ReleaseConsoleSkeleton';
 import { ReleaseApprovalSkeleton } from './ReleaseApprovalSkeleton';
 import { ProjectStatusSkeleton } from './ProjectStatusSkeleton';
-import { SettingsPageSkeleton } from './SettingsSkeleton';
+import { PersonalSettingsSkeleton, SettingsPageSkeleton } from './SettingsSkeleton';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '@/pages/cds-settings/components';
 import { MonitorCenterSkeleton } from '@/pages/status/primitives';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
@@ -263,6 +263,7 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
       return <SettingsPageSkeleton personal={personal} systemTab={tab} />;
     }
     case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" project projectTab={resolveProjectSettingsTab(capabilities.search, capabilities.hash)} />;
+    case 'personal-settings': return <PersonalSettingsSkeleton />;
     case 'release-console': return <ReleaseConsoleSkeleton batch={isBatchReleaseMode(new URLSearchParams(capabilities.search))} />;
     case 'rows': return <LoadingBlock />;
     case 'code-reviews': return <CodeReviewsSkeleton detail={new URLSearchParams(capabilities.search).has('task')} />;
