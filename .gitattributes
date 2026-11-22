@@ -1,6 +1,0 @@
-# Packaged CDS skills have a manifest of canonical byte hashes.
-/.claude/skills/cds/** text=auto eol=lf
-/.claude/skills/cds-project-scan/** text=auto eol=lf
-/.claude/skills/cds-deploy-pipeline/** text=auto eol=lf
-/.claude/skills/cds-release/** text=auto eol=lf
-/.claude/skills/preview-url/** text=auto eol=lf
