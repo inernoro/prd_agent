@@ -24,30 +24,31 @@ function fixture() {
 describe('完整预构建产物准入', () => {
   it('数字失败状态没有原生完成回执时保留拉取预留，避免把超时当作完成', async () => {
     const shell=fixture();const cache=new ImageCacheGovernance({shell,catalog:'/unused',instanceId:'pull-failure',budgetBytes:1,protectedReferences:()=>[]});
-    vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});const abort=vi.spyOn(cache,'abort').mockResolvedValue({});configureImageCacheGovernance(cache);
-    shell.addResponsePatternFirst(/docker pull/,()=>({stdout:'',stderr:'connection interrupted',exitCode:1}));
+    vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});
+    vi.spyOn(cache,'executePull').mockResolvedValue({outcome:'verification-unavailable',recorded:false});
+    const settle=vi.spyOn(cache,'settlePulls');configureImageCacheGovernance(cache);
     expect(await inspectDeploymentArtifacts(shell,[profile('api')],target)).toMatchObject({state:'waiting'});
-    expect(abort).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
   });
   it('只有匹配本轮原生完成回执的失败才结清拉取预留', async () => {
     const shell=fixture();const cache=new ImageCacheGovernance({shell,catalog:'/unused',instanceId:'pull-failure',budgetBytes:1,protectedReferences:()=>[]});
-    vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});const abort=vi.spyOn(cache,'abort').mockResolvedValue({});configureImageCacheGovernance(cache);
-    shell.addResponsePatternFirst(/docker pull/,match=>({stdout:'\n'+match.input!.match(/__CDS_PULL_EXIT_[a-f0-9]{32}:/)![0]+'1\n',stderr:'registry unavailable',exitCode:1}));
+    vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});
+    vi.spyOn(cache,'executePull').mockResolvedValue({outcome:'missing',recorded:true});
+    const settle=vi.spyOn(cache,'settlePulls').mockResolvedValue([]);configureImageCacheGovernance(cache);
     expect(await inspectDeploymentArtifacts(shell,[profile('api')],target)).toMatchObject({state:'waiting'});
-    expect(abort).toHaveBeenCalledWith('owned-pin',expect.any(Function),true);
+    expect(settle).toHaveBeenCalledWith('owned-pin');
   });
   it.each([0, 1])('原生拉取已完成时，即使全轮校验到期也结清预留（退出码 %i）', async exitCode => {
     const shell = fixture();
     const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'pull-deadline', budgetBytes: 1, protectedReferences: () => [] });
     vi.spyOn(cache, 'prepare').mockResolvedValue({ token: 'owned-pin' });
-    const confirm = vi.spyOn(cache, 'confirm').mockResolvedValue({});
-    const abort = vi.spyOn(cache, 'abort').mockResolvedValue({});
+    const outcome = exitCode === 0 ? 'success' : 'missing';
+    const settle = vi.spyOn(cache, 'settlePulls').mockResolvedValue([{ identity: 'pull:fixture', outcome, source: 'caller', reservedBytesEstimate: 0 }]);
     configureImageCacheGovernance(cache);
     let expired = false;
-    shell.addResponsePatternFirst(/docker pull/, match => {
+    vi.spyOn(cache, 'executePull').mockImplementation(async () => {
       expired = true;
-      const receipt = match.input!.match(/__CDS_PULL_EXIT_[a-f0-9]{32}:/)![0];
-      return { stdout: `\n${receipt}${exitCode}\n`, stderr: '', exitCode };
+      return { outcome, recorded: true };
     });
     const options = { remainingMs: () => {
       if (expired) throw new Error('inspection deadline');
@@ -55,15 +56,8 @@ describe('完整预构建产物准入', () => {
     } };
     expect(await inspectDeploymentArtifacts(shell, [profile('api')], target, () => {}, options))
       .toMatchObject({ state: 'waiting', reason: 'verification-unavailable', artifacts: [] });
-    if (exitCode === 0) {
-      expect(confirm).toHaveBeenCalledTimes(1);
-      expect(confirm).toHaveBeenCalledWith('owned-pin', expect.any(Function));
-      expect(abort).not.toHaveBeenCalled();
-    } else {
-      expect(abort).toHaveBeenCalledTimes(1);
-      expect(abort).toHaveBeenCalledWith('owned-pin', expect.any(Function), true);
-      expect(confirm).not.toHaveBeenCalled();
-    }
+    expect(settle).toHaveBeenCalledTimes(1);
+    expect(settle).toHaveBeenCalledWith('owned-pin');
     expect(shell.commands.some(command => command.startsWith('docker image inspect'))).toBe(false);
   });
   it('本地已有可变标签仍在拉取前预留新内容，预算不足时不执行pull', async () => {
@@ -73,16 +67,20 @@ describe('完整预构建产物准入', () => {
     });
     vi.spyOn(cache, 'confirm').mockResolvedValue({});configureImageCacheGovernance(cache);
     expect(await inspectDeploymentArtifacts(shell, [profile('api')], target)).toMatchObject({ state: 'waiting', reason: 'cache-budget' });
-    expect(prepare).toHaveBeenCalledWith(image, expect.any(Function), false, true);
+    expect(prepare).toHaveBeenCalledWith(image, expect.any(Function), false, true, true);
     expect(shell.commands.filter(command => command.startsWith('docker pull '))).toEqual([]);
   });
   it('已缓存固定digest和纯本地产物保持原有复用，不预留不存在的新内容', async () => {
     const shell = fixture();const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'immutable-budget', budgetBytes: 1, protectedReferences: () => [] });
-    const prepare = vi.spyOn(cache, 'prepare').mockResolvedValue({ token: 'immutable-pin' });vi.spyOn(cache, 'confirm').mockResolvedValue({});configureImageCacheGovernance(cache);
+    const prepare = vi.spyOn(cache, 'prepare').mockResolvedValue({ token: 'immutable-pin' });
+    vi.spyOn(cache, 'confirm').mockResolvedValue({});
+    vi.spyOn(cache, 'executePull').mockResolvedValue({outcome:'success',recorded:true});
+    vi.spyOn(cache, 'settlePulls').mockResolvedValue([{identity:'pull:fixture',outcome:'success',source:'caller',reservedBytesEstimate:0}]);
+    configureImageCacheGovernance(cache);
     expect((await inspectDeploymentArtifacts(shell, [{ ...profile('api'), dockerImage: digest }], target)).state).toBe('ready');
-    expect(prepare).toHaveBeenLastCalledWith(digest, expect.any(Function), false, false);
+    expect(prepare).toHaveBeenLastCalledWith(digest, expect.any(Function), false, false, true);
     expect((await inspectDeploymentArtifacts(shell, [{ ...profile('api'), localArtifact: true }], target, () => {}, { inspectLocalArtifacts: true })).state).toBe('ready');
-    expect(prepare).toHaveBeenLastCalledWith(image, expect.any(Function), true, false);
+    expect(prepare).toHaveBeenLastCalledWith(image, expect.any(Function), true, false, false);
   });
 
   it('全量部署已预检的固定镜像使用只读通道复核内容，不会在并发启动时再抢账本', async () => {

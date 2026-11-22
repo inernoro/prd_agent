@@ -13,17 +13,39 @@ import { StateService } from '../../src/services/state.js';
 
 const roots: string[] = [], now = Date.now(), id = 'sha256:' + 'a'.repeat(64), digest = 'registry.example/test@sha256:' + 'b'.repeat(64);
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+
+it('emits pull quota alerts on observed changes and leaves alerts active during an unknown scan', () => {
+  const record=vi.fn();
+  const cache=new ImageCacheGovernance({shell:{} as IShellExecutor,catalog:'/unused',instanceId:'master-a',budgetBytes:100,protectedReferences:()=>[],audit:{record}});
+  const blocked={reservedBytes:40,overdueCount:2,overdueReservedBytes:40,availableBytes:10,peakBytes:20,headroom:'blocked'} as const;
+  cache.observePullBudget(blocked);
+  cache.observePullBudget(blocked);
+  cache.observePullBudget();
+  expect(record.mock.calls.map(([entry])=>[entry.action,entry.severity])).toEqual([
+    ['image.cache.pull.overdue.alert','warn'],['image.cache.pull.headroom.alert','error'],
+  ]);
+  cache.observePullBudget({ ...blocked, reservedBytes:0, overdueCount:0, overdueReservedBytes:0, availableBytes:50, headroom:'normal' });
+  expect(record.mock.calls.slice(2).map(([entry])=>entry.action)).toEqual([
+    'image.cache.pull.overdue.recovered','image.cache.pull.headroom.recovered',
+  ]);
+});
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'image-cache-native-unit-'));roots.push(root);
   const db = path.join(root, 'docker.json'), calls = path.join(root, 'calls.jsonl');
   let values: any = { images: [], containers: [], fail: false };
   const save = () => fs.writeFileSync(db, JSON.stringify(values));save();
   fs.writeFileSync(path.join(root, 'docker'), `#!/usr/bin/env python3
-import json,sys,pathlib
+import json,sys,pathlib,time
 p=pathlib.Path(${JSON.stringify(db)});v=json.loads(p.read_text());a=sys.argv[1:]
 with open(${JSON.stringify(calls)},'a') as f:f.write(json.dumps(a)+chr(10))
 if v.get('fail'):sys.exit(2)
 if a[0]=='info':print(json.dumps({'ID':'owned-daemon','DockerRootDir':${JSON.stringify(root)},'Architecture':'x86_64','OSType':'linux'}))
+elif a[0]=='pull':
+ if v.get('pullDelay'):time.sleep(v['pullDelay'])
+ if v.get('pullError'):print(v['pullError'],file=sys.stderr);sys.exit(1)
+ if v.get('pullImage'):v['images']=[v['pullImage']];p.write_text(json.dumps(v))
+ print('Digest: '+${JSON.stringify(id)})
 elif a[:2]==['image','ls']:sys.stdout.write(chr(10).join(r['Id'] for r in v['images']))
 elif a[:2]==['ps','-aq']:sys.stdout.write(chr(10).join(r['Id'] for r in v['containers']))
 elif a[:2]==['image','inspect']:
@@ -117,7 +139,9 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     image.Descriptor.digest = id;
     f.save();
     expect(f.request(adoption).registered).toBe(true);
-    expect(f.request({ action: 'reconcile', targetIdentities: [id], registryProofs: adoption.registryProofs }).removed).toEqual([id]);
+    const removal=f.request({ action: 'reconcile', targetIdentities: [id], registryProofs: adoption.registryProofs });
+    expect(removal.failed).toEqual([]);
+    expect(removal.removed).toEqual([id]);
   });
   it('never adopts a pre-existing foreign image through a new pull/tag', () => {
     const f = fixture();f.values.images = [f.image()];f.save();f.request({ action: 'publish', references: [] });
@@ -170,6 +194,54 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     const f = fixture();f.request({ action: 'publish', references: [] });
     expect(() => f.request({ action: 'prepare', image: 'missing:tag', budgetBytes: 1024, peakBytes: 2048 })).toThrow();
     expect(f.request({}).filesystem.netAvailableBytesDelta).toEqual(expect.any(Number));
+  });
+  it('replays a durable native receipt from another worker without charging the peak twice', () => {
+    const f=fixture(), image='registry.example/test:old';
+    const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:4096,nowMs:now-700_000});
+    f.values.pullImage=f.image();f.save();
+    expect(f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000})).toEqual({outcome:'success',recorded:true});
+    expect(f.request({peakBytes:4096}).pullBudget).toMatchObject({reservedBytes:4096,overdueCount:1});
+    expect(f.request({action:'settle-pulls',instanceId:'other-master'}).settled).toEqual([]);
+    const {settled}=f.request({action:'settle-pulls'});
+    expect(settled).toMatchObject([{outcome:'success',source:'scheduled',image,exitCode:0,observedId:id,reservedBytesEstimate:4096}]);
+    expect(f.request({})).toMatchObject({pullBudget:{reservedBytes:0,overdueCount:0},recentPullSettlements:settled,
+      pullReservations:[{confirmed:true}]});
+    expect(f.request({action:'settle-pulls'}).settled).toEqual([]);
+    expect(f.request({action:'settle-pulls',token:pin.token}).settled).toEqual(settled);
+  });
+  it.each([false,true])('uses only conclusive failed pulls with an unchanged local identity (present=%s)', present => {
+    const f=fixture(), image='registry.example/test:old';
+    if(present){f.values.images=[f.image()];f.save();}
+    const pin=f.request({action:'prepare',image,forceNew:true,nativePull:true,peakBytes:4096});
+    f.values.pullError='manifest unknown';f.save();
+    expect(f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000})).toEqual({outcome:'missing',recorded:true});
+    expect(f.request({action:'settle-pulls'}).settled).toMatchObject([{outcome:'missing',source:'scheduled'}]);
+    expect(f.request({}).pullReservations).toEqual([]);
+  });
+  it('retains incomplete, changed, malformed and legacy pull reservations', () => {
+    const f=fixture(), image='registry.example/test:old';
+    const old=now-700_000;
+    f.request({action:'prepare',image,peakBytes:1024,nowMs:old});
+    const timed=f.request({action:'prepare',image,nativePull:true,peakBytes:1024,nowMs:old});
+    const drifted=f.request({action:'prepare',image,nativePull:true,peakBytes:1024,nowMs:old});
+    const invalid=f.request({action:'prepare',image,nativePull:true,peakBytes:1024,nowMs:old});
+    f.values.pullDelay=0.25;f.save();
+    expect(f.request({action:'execute-pull',token:timed.token,image,pullTimeoutMs:20}).recorded).toBe(false);
+    f.values.pullDelay=0;f.values.pullImage=f.image();f.save();
+    for(const pin of [drifted,invalid]) f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000});
+    const proofPath=path.join(f.root,'catalog','pull-receipt-'+invalid.token);
+    const proof=JSON.parse(fs.readFileSync(proofPath,'utf8'));
+    fs.writeFileSync(proofPath,JSON.stringify({...proof,daemonId:'other-daemon'}));
+    f.values.images=[{...f.image(),Id:'sha256:'+'d'.repeat(64)}];f.save();
+    expect(f.request({action:'settle-pulls'}).settled).toEqual([]);
+    expect(f.request({budgetBytes:6144,peakBytes:2048}).pullBudget)
+      .toMatchObject({reservedBytes:4096,availableBytes:1024,overdueCount:4,overdueReservedBytes:4096,headroom:'blocked'});
+  });
+  it('fences a never-started managed pull before returning its reservation', () => {
+    const f=fixture(), image='registry.example/test:old';
+    const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:1024,nowMs:now-700_000});
+    expect(f.request({action:'settle-pulls'}).settled).toMatchObject([{outcome:'never-started'}]);
+    expect(()=>f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000})).toThrow(/pull-authorization-unconfirmed/);
   });
   it('settles completed failed refreshes of unchanged cached IDs across independent worker invocations', () => {
     const f=fixture();f.values.images=[f.image()];f.save();f.request({action:'publish',references:[]});
