@@ -113,7 +113,7 @@ import { releaseMergeBackReader } from './services/release-merge-back.js';
 import { ReleaseTargetHistoryStore } from './services/release-target-history.js';
 import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
-import { clusterMapOrigin, sha256Hex, type PairingMember } from './services/connection/pairing-service.js';
+import { CLUSTER_MAP_SCOPES, clusterMapOrigin, sha256Hex, type PairingMember } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostics.js';
 import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
@@ -3188,8 +3188,22 @@ export function createServer(deps: ServerDeps): express.Express {
         clusterMapConnection?: ClusterMapConnection;
       };
       const humanReq = { cdsUser: user, cdsSession: session, _cdsBasicHumanAuth: basicHuman };
+      const versionRoute = method === 'GET'
+        ? /^\/api\/projects\/([^/]+)\/(?:agent-requests|agent-runtime-providers)$/.exec(virtual.path)
+        : method === 'POST' ? /^\/api\/projects\/([^/]+)\/agent-runtime-version$/.exec(virtual.path) : null;
+      const canonicalProject = versionRoute && isHumanSystemOwner(humanReq)
+        ? Object.entries(member.projects).find(([, local]) => encodeURIComponent(local) === versionRoute[1])?.[0]
+        : undefined;
+      const origins = canonicalProject ? new Set(deps.stateService.getActiveCdsConnections()
+        .filter(connection => connection.clusterMemberId === member.nodeId && connection.projectId === canonicalProject
+          && connection.partnerKind === 'map' && CLUSTER_MAP_SCOPES.every(scope => connection.scopes.includes(scope))
+          && (!connection.longTokenExpiresAt || Date.parse(connection.longTokenExpiresAt) > Date.now()))
+        .map(connection => clusterMapOrigin(connection.partnerBaseUrl))
+        .filter((origin): origin is string => !!origin)) : undefined;
+      const uniqueOrigin = origins?.size === 1 ? origins.values().next().value : undefined;
       const context: ClusterIdentityContext = {
         clusterId: config.clusterId, authorityNodeId: config.nodeId, nodeId: member.nodeId,
+        ...(canonicalProject && uniqueOrigin ? { mapConnectionOrigin: { projectId: canonicalProject, origin: uniqueOrigin } } : {}),
         ...(user ? { user: toPublicUser(user) as CdsUser, session, basicHuman,
           humanProjects: deps.stateService.getProjects().filter(p => clusterHumanProjectAccess(humanReq, deps.stateService, p.id)).map(p => p.id) } : {}),
         ...(aiSession ? { aiSession: { ...aiSession, token: '' }, projectKey: stamps.cdsProjectKey, access: stamps.cdsAccess,
@@ -5427,6 +5441,7 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
     shell: deps.shell,
+    refreshMapConnectionOrigin: (req, projectId) => clusterIdentity.refreshMapConnectionOrigin(req, projectId),
     registerResourceShutdown: deps.registerResourceShutdown,
     serverEventLogStore: deps.serverEventLogStore,
   }));

@@ -24,6 +24,7 @@ export interface ClusterIdentityContext {
   principal?: { principalId: string; credentialId: string };
   principalProjects?: string[];
   mapConnection?: ClusterMapConnection;
+  mapConnectionOrigin?: { projectId: string; origin: string };
 }
 
 const contexts = new WeakMap<object, ClusterIdentityContext>();
