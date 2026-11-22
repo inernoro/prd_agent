@@ -203,6 +203,10 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       await page.clock.pauseAt(new Date('2026-11-03T12:00:01Z'));
     }
     await page.getByText('评论管理', { exact: true }).click();
+    if (page.viewportSize()!.width < 768) {
+      await expect(page.getByRole('tab', { name: '讨论', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await page.getByRole('tab', { name: '正文', exact: true }).click();
+    }
   } else {
     await page.goto('/s/wp/qa-native');
   }
@@ -606,6 +610,8 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await expect(page.locator('.annotation-mobile-dock, .annotation-chat-bubble')).toHaveCount(0);
     } else {
       if (page.viewportSize()!.width >= 1024) {
+        await expect(discussion).toHaveAttribute('aria-expanded', 'false');
+        await discussion.click();
         await expect(discussion).toHaveAttribute('aria-expanded', 'true');
         await expect(page.locator('.review-thread')).toHaveCount(comments.length);
         await expect(page.locator('.annotation-chat-bubble')).toHaveCount(0);
@@ -1023,8 +1029,12 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       const reads = await frame.locator('body').evaluate(() => (window as typeof window & { __followReads?: { scans: number; rects: number } }).__followReads!);
       const messages = await page.evaluate(() => (window as typeof window & { __followMessages?: number }).__followMessages!);
       expect(reads.scans).toBe(0); expect(reads.rects).toBeLessThanOrEqual((messages + 3) * 60);
-      if (mobile) await page.getByRole('tab', { name: '讨论', exact: true }).tap();
-      else await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
+      if (mobile) {
+        const discussion = page.getByRole('tab', { name: '讨论', exact: true });
+        // A touch immediately after the swipe can be consumed by the browser to stop scrolling.
+        await discussion.press('Enter');
+        await expect(discussion).toHaveAttribute('aria-selected', 'true');
+      } else await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
       expect((await page.locator('.review-message-body').first().textContent())!.length).toBeLessThanOrEqual(281);
       {
         await tap(page.getByRole('button', { name: /^展开全文/ }).first());

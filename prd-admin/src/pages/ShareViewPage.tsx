@@ -209,7 +209,6 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const readsSingleSite = data?.sites.length === 1 && (embedded || !!requestedRelatedSiteId || data.shareType !== 'collection');
   const readerWidth = useReviewReaderWidth(singleViewRef, !!readsSingleSite);
   const isMobile = readsSingleSite ? readerWidth < 768 : viewportMobile;
-  const defaultDiscussion = !isMobile && readerWidth >= 1024 && !data?.sites[0]?.wrappedAssetType;
   const sideBySide = !isMobile && readerWidth >= 1024;
   const [relatedAccountSite, setRelatedAccountSite] = useState<HostedSite | null>(null);
   const [relatedSharedSite, setRelatedSharedSite] = useState<RelatedDocument | null>(null);
@@ -251,11 +250,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
    */
   const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
   const reviewFrameRef = useRef<HTMLIFrameElement>(null);
-  const [discussionOverride, setDiscussionOverride] = useState<boolean | null>(() => searchParams.has('review') ? true : null);
-  const showComments = discussionOverride ?? defaultDiscussion;
-  const setShowComments = useCallback((next: boolean | ((previous: boolean) => boolean)) => {
-    setDiscussionOverride(previous => typeof next === 'function' ? next(previous ?? defaultDiscussion) : next);
-  }, [defaultDiscussion]);
+  const [showComments, setShowComments] = useState(() => !embedded && searchParams.has('review'));
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
   const [askState, setAskState] = useState<AskDockState>('collapsed');
   const reviewSidebar = useReviewSidebarWidth(readerWidth);

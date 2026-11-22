@@ -1748,12 +1748,22 @@ void main(){
 <title>${heading} · ${safeBranch}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{color-scheme:dark;--text:#f7f5ff;--muted:rgba(245,242,255,.64);--surface:#120f17;--veil:18,15,23;--track:rgba(255,255,255,.18);--line:rgba(245,242,255,.16)}
+:root{color-scheme:dark;--text:#f7f5ff;--muted:rgba(245,242,255,.64);--surface:#120f17;--veil:18,15,23;--veil-center:.22;--track:rgba(255,255,255,.18);--line:rgba(245,242,255,.16);--ring-line:rgba(225,215,255,.18);--ring-glow:rgba(161,137,207,.14)}
 [hidden]{display:none!important}
 html,body{min-height:100%}
 body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--surface);color:var(--text);min-height:100vh;overflow-x:hidden}
-.magic-rings-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:var(--surface);pointer-events:none}
-body::before{content:"";position:fixed;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(var(--veil),.8),rgba(var(--veil),.22) 60%,rgba(var(--veil),.7));z-index:1}
+/* Keep the ring backdrop visible before the first WebGL frame and without WebGL. */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse at 60% 50%,var(--ring-glow),transparent 70%),
+    radial-gradient(circle at center,
+      transparent calc(35vmin - 1px),var(--ring-line) 35vmin,transparent calc(35vmin + 1px),
+      transparent calc(46vmin - 1px),var(--ring-line) 46vmin,transparent calc(46vmin + 1px),
+      transparent calc(57vmin - 1px),var(--ring-line) 57vmin,transparent calc(57vmin + 1px));
+}
+.magic-rings-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;pointer-events:none}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(var(--veil),.8),rgba(var(--veil),var(--veil-center)) 60%,rgba(var(--veil),.7));z-index:1}
 .shell{position:relative;z-index:2;min-height:100vh;min-height:100svh;padding:48px clamp(28px,5.5vw,112px);display:flex;align-items:center}
 .content{width:min(100%,650px);text-shadow:0 2px 24px rgba(0,0,0,.4)}
 .brand{display:flex;align-items:center;gap:18px;margin-bottom:26px}
@@ -1784,9 +1794,8 @@ h1{font-size:clamp(30px,3.1vw,56px);line-height:1.2;letter-spacing:-.02em;margin
 .links a{color:var(--text);text-decoration:none;text-underline-offset:5px;padding:8px 0}
 .links a:hover{text-decoration:underline}
 a:focus-visible,summary:focus-visible{outline:2px solid var(--text);outline-offset:5px;border-radius:2px}
-.magic-rings-bg.is-static{background:radial-gradient(ellipse at 60% 45%,rgba(255,255,255,.12),transparent 55%),var(--surface)}
 ${WAITING_GEM_CSS}
-@media(prefers-color-scheme:light){:root{color-scheme:light;--text:#28252d;--muted:#625d69;--surface:#f6f5f7;--veil:246,245,247;--line:rgba(40,37,45,.16);--track:rgba(40,37,45,.18)}.magic-rings-bg{background:transparent;filter:invert(1);opacity:.3}.content{text-shadow:none}.svc-dot{filter:brightness(.55)}.cds-waiting-gem{filter:invert(1)}.summary-dot{box-shadow:none}}
+@media(prefers-color-scheme:light){:root{color-scheme:light;--text:#28252d;--muted:#625d69;--surface:#f6f5f7;--veil:246,245,247;--veil-center:.1;--line:rgba(40,37,45,.16);--track:rgba(40,37,45,.18);--ring-line:rgba(86,72,113,.32);--ring-glow:rgba(133,111,176,.2)}.magic-rings-bg{filter:invert(1);opacity:.48}.content{text-shadow:none}.svc-dot{filter:brightness(.55)}.cds-waiting-gem{filter:invert(1)}.summary-dot{box-shadow:none}}
 @media(max-width:760px){.shell{padding:36px 24px}.brand{gap:12px}.content{width:100%}.subtitle{font-size:14px}.estimate-time{gap:6px 14px}.services{max-height:220px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
@@ -1874,10 +1883,7 @@ void main(){
   if(!canvas) return;
   var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var gl=canvas.getContext('webgl',{alpha:true,antialias:false});
-  if(!gl){
-    canvas.className='magic-rings-bg is-static';
-    return;
-  }
+  if(!gl) return;
   function source(id){var node=document.getElementById(id);return node?node.textContent:'';}
   function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){throw new Error(gl.getShaderInfoLog(s)||'shader compile failed');}return s;}
   function hex(hexColor){var raw=String(hexColor).replace('#','');var n=parseInt(raw.length===3?raw.replace(/(.)/g,'$1$1'):raw,16);return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];}
@@ -1889,7 +1895,6 @@ void main(){
     gl.linkProgram(program);
     if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'program link failed');
   }catch(err){
-    canvas.className='magic-rings-bg is-static';
     return;
   }
   var buffer=gl.createBuffer();
