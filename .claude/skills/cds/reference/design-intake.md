@@ -10,6 +10,8 @@
 
 同一工作区的设计凭据到期时，使用原接入口令续接。CDS 会核对原凭据，获批后保留原稿作者身份。
 
+技能需要更新时，从接入说明提供的 `/api/skills/cds-pack/download` 匿名下载归档。用本机工具解压并核对 manifest，将完整五技能装到当前工作区，再以原来的设计授权自检。Windows 检出的技能文本只有 CRLF 与 LF 的差异时可以通过自检。
+
 ## 决定写入动作
 
 | 意图 | `cds_design_publish` 的字段 | CDS 中的结果 |
@@ -25,10 +27,11 @@
 ## 提交与交付
 
 - `design.json.project` 等于绑定的项目 ID。保留适用的固定框架和画面编号，包含 `design.json`、`思路.md` 与清单声明的单文件 HTML。标准新建由服务器分配 ID，清单和请求均省略稿件 ID。续版可沿用清单中的同稿 ID。
-- 在工作区仅提交获授权的稿件子目录。使用 `cdscli design publish --private --dir <稿件目录>`，按新稿或续版附上相应参数。提交保留在本地，稿件及归档摘要存入已获授权的 CDS 项目。
+- 在工作区仅提交获授权的稿件子目录。若没有 Git 作者配置，可为本次提交指定智能体自己的作者身份。CDS 根据获授权的身份记录发布者。使用 `cdscli design publish --private --dir <稿件目录>`，按新稿或续版附上相应参数。提交保留在本地，稿件及归档摘要存入已获授权的 CDS 项目。
 - MCP 通过 `cds_design_publish` 传 `sourceMode: "private"`、`zipPath`、本地 `sourceCommit`、仓库相对 `sourcePath`、`requestId` 和意图字段。用本地提交导出稿件目录的 ZIP，放在项目工作区内，避开 `.cds` 和 `.git`，大小上限 4 MiB。HTTP 使用同一项目的 `/design/packages`，内容为 ZIP，其余字段通过查询参数传递。
 - 已获授权并已存在于项目 Git 的材料可以沿用 Git 核验方式。CDS 分别显示 Git 核验证据和私有归档。
 - 在 `note` 记录原版、改动画面、原因和待核验项。发布后按回执的 `designId` 与 `version` 回读，核对项目、源提交和归档摘要。响应不确定时以原 `requestId`、来源、意图和稿件内容重试。设计接入按 ZIP 内的文件内容识别重试。接收者从同一项目回读固定的新旧版，定位差异后复拍受影响画面。缺实拍仍标待核验。
+- 私有发布的版本摘要 `sha256` 来自上传 ZIP 的原始字节。清单同时保留每个文件的 `sha256` 和原型的 `prototypeSha256`，用于分别核对交付文件和原型。
 
 
 ## 完整交付资料
