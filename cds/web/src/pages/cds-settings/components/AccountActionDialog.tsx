@@ -131,7 +131,7 @@ export function AccountActionDialog({
             </Field>
           ) : (
             <>
-              <Field label={`输入 ${targetName} 确认目标`}>
+              <Field preserveCase label={`输入 ${targetName} 确认目标`}>
                 <input aria-label="确认目标账号" className={accountInputClass} autoComplete="off"
                   required value={typed} disabled={busy} onChange={event => setTyped(event.target.value)} />
               </Field>

@@ -142,7 +142,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       res.redirect(302, result.redirect || '/project-list');
     } catch (err) {
       if (err instanceof AuthServiceError) {
-        const status = err.code === 'org_not_allowed' ? 403 : err.code === 'state_mismatch' ? 400 : 500;
+        const status = err.code === 'org_not_allowed' || err.code === 'identity_detached' ? 403 : err.code === 'state_mismatch' ? 400 : 500;
         res.status(status).send(renderErrorPage(formatError(err), '/login'));
         return;
       }
@@ -266,6 +266,8 @@ function formatError(err: AuthServiceError): string {
       return `首次登录初始化失败：${err.message}`;
     case 'account_disabled':
       return '账号已被禁用，无法登录，请联系系统所有者';
+    case 'identity_detached':
+      return '使用另一种方式登录 CDS 后重新绑定 GitHub';
     default:
       return '登录失败';
   }

@@ -3,13 +3,15 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express, { type Request } from 'express';
 import { describe, expect, it, vi } from 'vitest';
-import type { CdsUser } from '../../src/domain/auth.js';
+import { toPublicUser, type CdsUser } from '../../src/domain/auth.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { createGithubAuthMiddleware } from '../../src/middleware/github-auth.js';
 import { createAccountIdentitiesRouter } from '../../src/routes/account-identities.js';
+import { createAuthRouter } from '../../src/routes/auth.js';
 import { createAuthLocalRouter } from '../../src/routes/auth-local.js';
 import { GH_SESSION_COOKIE, sessionCookieName } from '../../src/services/browser-session-cookies.js';
 import { AuthService } from '../../src/services/auth-service.js';
+import { GitHubOAuthClient } from '../../src/services/github-oauth-client.js';
 import { listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
 
 type Provider = 'github' | 'google';
@@ -18,6 +20,7 @@ type Identity = { subject: string; label: string };
 
 const publicBaseUrl = 'https://cds-account.fixture.invalid';
 const externalReturnPath = '/project-list?panel=fixture#activity';
+const legacyGithubOrigin = 'https://legacy-github.oauth.fixture.invalid';
 const fixturePassword = 'isolated-fixture-password';
 const providersInOrder = ['github', 'google'] as const;
 const callbackPath = (provider: Provider) => `/api/auth/external/${provider}/callback`;
@@ -63,15 +66,35 @@ function responseLocation(response: Response): URL {
   return new URL(location!, publicBaseUrl);
 }
 
-async function setup(hostSessionCookies = false) {
-  const store = new MemoryAuthStore();
-  const authService = new AuthService({ store, config: { allowedOrgs: [] } });
+async function setup(hostSessionCookies = false, options: {
+  store?: MemoryAuthStore;
+  enabled?: readonly Provider[];
+  legacyGithubProfiles?: Readonly<Record<string, Identity>>;
+} = {}) {
+  const store = options.store ?? new MemoryAuthStore();
+  const legacyGithub = options.legacyGithubProfiles ? new GitHubOAuthClient({
+    clientId: 'fixture-legacy-github-client', clientSecret: 'fixture-legacy-github-secret', oauthBaseUrl: legacyGithubOrigin,
+    fetchImpl: async () => { throw new Error('No network in the legacy GitHub fixture'); },
+  }) : undefined;
+  if (legacyGithub) {
+    vi.spyOn(legacyGithub, 'exchangeCodeForToken').mockImplementation(async code => code);
+    vi.spyOn(legacyGithub, 'fetchProfile').mockImplementation(async token => {
+      const profile = options.legacyGithubProfiles![token];
+      if (!profile) throw new Error('Unknown legacy fixture profile');
+      return { id: Number(profile.subject), login: profile.label, name: profile.label, avatarUrl: null, email: null };
+    });
+    vi.spyOn(legacyGithub, 'fetchOrgs').mockResolvedValue([]);
+  }
+  const authService = new AuthService({ store, github: legacyGithub, config: { allowedOrgs: [] } });
   const providers = { github: fakeProvider('github'), google: fakeProvider('google') };
+  const enabled = options.enabled ?? providersInOrder;
+  const enabledDrivers = Object.fromEntries(enabled.map(provider => [provider, providers[provider]]));
   const cookieSecure = hostSessionCookies;
   const sessionName = sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies);
   const app = express();
   app.use(express.json());
-  app.use('/api', createAccountIdentitiesRouter({ authService, providers, publicBaseUrl, cookieSecure, hostSessionCookies }));
+  app.use('/api', createAccountIdentitiesRouter({ authService, providers: enabledDrivers, publicBaseUrl, cookieSecure, hostSessionCookies }));
+  if (legacyGithub) app.use('/api', createAuthRouter({ authService, publicBaseUrl, cookieSecure, hostSessionCookies }));
   app.use('/api', createAuthLocalRouter({ authService, cookieSecure, hostSessionCookies, bootstrapAllowed: false }));
   app.use(createGithubAuthMiddleware({ authService, cookieSecure, hostSessionCookies }));
   app.get('/api/fixture-viewer', (req: Request & { cdsUser?: CdsUser }, res) => {
@@ -82,12 +105,12 @@ async function setup(hostSessionCookies = false) {
   if (!server.address()) await once(server, 'listening');
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-  async function call(path: string, options: { cookie?: string; json?: unknown } = {}): Promise<Response> {
+  async function call(path: string, options: { cookie?: string; json?: unknown; method?: 'DELETE' } = {}): Promise<Response> {
     const headers = new Headers({ Accept: 'application/json' });
     if (options.cookie) headers.set('Cookie', options.cookie);
     if (options.json) headers.set('Content-Type', 'application/json');
     return fetch(origin + path, {
-      headers, method: options.json ? 'POST' : 'GET', redirect: 'manual',
+      headers, method: options.method ?? (options.json ? 'POST' : 'GET'), redirect: 'manual',
       ...(options.json ? { body: JSON.stringify(options.json) } : {}),
       signal: AbortSignal.timeout(5000),
     });
@@ -148,6 +171,21 @@ async function setup(hostSessionCookies = false) {
 
   function activateStart(provider: Provider, invitation: string) {
     return call(`/api/auth/external/${provider}/start`, { json: { purpose: 'activate', invitation } });
+  }
+
+  function unlink(provider: Provider, session?: string) {
+    return call(`/api/auth/external/${provider}/link`, { method: 'DELETE', cookie: session });
+  }
+
+  async function legacyGithubLogin(code: string) {
+    const start = await call(`/api/auth/github/login?${new URLSearchParams({ redirect: externalReturnPath })}`);
+    expect(start.status).toBe(302);
+    const outbound = responseLocation(start);
+    expect(outbound.origin).toBe(legacyGithubOrigin);
+    const state = outbound.searchParams.get('state');
+    expect(Boolean(state)).toBe(true);
+    const cookie = activeCookie(start, '__Host-cds-github-flow');
+    return call(`/api/auth/github/callback?${new URLSearchParams({ state: state!, code })}`, { cookie });
   }
 
   async function beginActivation(provider: Provider, invitation: string) {
@@ -229,7 +267,7 @@ async function setup(hostSessionCookies = false) {
   }
 
   return { authService, store, providers, sessionName, person, call, localLogin, begin, start, callback, complete, viewer,
-    beginActivation, activateStart, finish, readIssuedSession, assertBound, blockedCallback, loggedIn, close };
+    beginActivation, activateStart, unlink, legacyGithubLogin, finish, readIssuedSession, assertBound, blockedCallback, loggedIn, close };
 }
 
 describe('GitHub and Google account identities', () => {
@@ -535,6 +573,143 @@ describe('personal account invitations', () => {
       expect(Boolean(activeCookie(reused, fixture.sessionName))).toBe(false);
       await fixture.readIssuedSession(first.response, user);
       expect(await fixture.store.countUsers()).toBe(1);
+    } finally { await fixture.close(); }
+  });
+});
+
+describe('unlinking a personal login identity', () => {
+  it('keeps the last usable login and session when there is no enabled alternative', async () => {
+    const store = new MemoryAuthStore();
+    const fixture = await setup(false, { store });
+    const github = { subject: '45420048', label: 'Fixture sole GitHub login' };
+    const google = { subject: 'fixture-disabled-google-48', label: 'Fixture secondary Google login' };
+    const assertLastMethod = async (response: Response) => {
+      expect(response.status).toBe(409);
+      expect(await response.json()).toHaveProperty('code', 'last_login_method');
+    };
+    let user: CdsUser;
+    let session: string;
+    try {
+      const account = await fixture.authService.createAccountInvitation({
+        username: 'last-login-member', externalLoginAllowed: true,
+      });
+      user = account.user;
+      const flow = await fixture.beginActivation('github', account.invitation);
+      const activation = await fixture.finish('github', flow, github);
+      await fixture.readIssuedSession(activation.response, user);
+      session = activeCookie(activation.response, fixture.sessionName)!;
+      expect((await fixture.unlink('github')).status).toBe(401);
+      await assertLastMethod(await fixture.unlink('github', session));
+      await fixture.viewer(session, user);
+      expect(Boolean((await store.findUserById(user.id))?.passwordHash)).toBe(false);
+
+      const secondary = await fixture.complete('google', 'bind', google, session);
+      fixture.assertBound(secondary.response, 'google');
+    } finally { await fixture.close(); }
+
+    // Keep the stored account and session but start another router with Google disabled.
+    const githubOnly = await setup(false, { store, enabled: ['github'] });
+    try {
+      expect((await githubOnly.authService.findUserByExternalIdentity('google', google.subject))?.id).toBe(user.id);
+      expect((await githubOnly.start('google', 'login')).status).toBe(404);
+      await assertLastMethod(await githubOnly.unlink('github', session));
+      await githubOnly.viewer(session, user);
+      const login = await githubOnly.complete('github', 'login', github);
+      await githubOnly.loggedIn(login.response, user);
+      expect(await store.countUsers()).toBe(1);
+    } finally { await githubOnly.close(); }
+  });
+
+  it('allows unlink with either remaining method and revokes old sessions for only that account', async () => {
+    const fixture = await setup();
+    try {
+      const passwordUser = await fixture.person('unlink-password-member');
+      const passwordSession = await fixture.localLogin(passwordUser.username!);
+      const github = { subject: '45420049', label: 'Fixture removable GitHub login' };
+      const bound = await fixture.complete('github', 'bind', github, passwordSession);
+      fixture.assertBound(bound.response, 'github');
+
+      const { user: externalUser, invitation } = await fixture.authService.createAccountInvitation({
+        username: 'unlink-external-member', externalLoginAllowed: true,
+      });
+      const firstProfile = { subject: 'fixture-unlink-google-49', label: 'Fixture removable Google login' };
+      const otherProfile = { subject: '45420050', label: 'Fixture retained GitHub login' };
+      const flow = await fixture.beginActivation('google', invitation);
+      const activation = await fixture.finish('google', flow, firstProfile);
+      await fixture.readIssuedSession(activation.response, externalUser);
+      const externalSession = activeCookie(activation.response, fixture.sessionName)!;
+      const other = await fixture.complete('github', 'bind', otherProfile, externalSession);
+      fixture.assertBound(other.response, 'github');
+
+      async function remove(provider: Provider, profile: Identity, session: string, user: CdsUser) {
+        const oldProviderLogin = await fixture.complete(provider, 'login', profile);
+        await fixture.loggedIn(oldProviderLogin.response, user);
+        const oldProviderSession = activeCookie(oldProviderLogin.response, fixture.sessionName)!;
+        const response = await fixture.unlink(provider, session);
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.user).toMatchObject({ id: user.id, username: user.username, authProvider: 'local' });
+        expect(body.user.linkedLogins).not.toHaveProperty(provider);
+        for (const cookie of [session, oldProviderSession]) {
+          expect((await fixture.call('/api/fixture-viewer', { cookie })).status).toBe(401);
+        }
+        expect(await fixture.authService.findUserByExternalIdentity(provider, profile.subject)).toBeNull();
+        const removed = await fixture.complete(provider, 'login', profile);
+        fixture.blockedCallback(removed.response, provider, 'account_unavailable', '/login');
+        return body.user;
+      }
+
+      expect((await remove('github', github, passwordSession, passwordUser)).hasPassword).toBe(true);
+      await fixture.viewer(externalSession, externalUser);
+      const freshPassword = await fixture.localLogin(passwordUser.username!);
+      await fixture.viewer(freshPassword, passwordUser);
+
+      const remaining = await remove('google', firstProfile, externalSession, externalUser);
+      expect(remaining).toMatchObject({ hasPassword: false, linkedLogins: { github: otherProfile.label } });
+      const freshProvider = await fixture.complete('github', 'login', otherProfile);
+      await fixture.loggedIn(freshProvider.response, externalUser);
+      await fixture.viewer(freshPassword, passwordUser);
+      expect(await fixture.store.countUsers()).toBe(2);
+    } finally { await fixture.close(); }
+  });
+
+  it('blocks legacy GitHub account creation after unlink while allowing explicit rebinding', async () => {
+    const detached = { subject: '45420051', label: 'fixture-legacy-detached' };
+    const unseen = { subject: '45420052', label: 'fixture-legacy-unseen' };
+    const fixture = await setup(false, { legacyGithubProfiles: { detached, unseen } });
+    try {
+      await fixture.authService.createLocalUser({ username: 'fixture-legacy-owner', password: fixturePassword, isSystemOwner: true });
+      const user = await fixture.person('legacy-unlink-member');
+      const bind = async (session: string) => {
+        const bound = await fixture.complete('github', 'bind', detached, session);
+        fixture.assertBound(bound.response, 'github');
+      };
+      const session = await fixture.localLogin(user.username!);
+      await bind(session);
+      await fixture.loggedIn(await fixture.legacyGithubLogin('detached'), user);
+      expect((await fixture.unlink('github', session)).status).toBe(200);
+
+      const rejected = await fixture.legacyGithubLogin('detached');
+      expect({
+        status: rejected.status, sessionIssued: Boolean(activeCookie(rejected, fixture.sessionName)),
+        userCount: await fixture.store.countUsers(),
+      }).toEqual({ status: 403, sessionIssued: false, userCount: 2 });
+      const recovery = await rejected.text();
+      expect(recovery).toContain('href="/login"');
+      expect(recovery).toContain('重新绑定 GitHub');
+
+      await bind(await fixture.localLogin(user.username!));
+      await fixture.loggedIn(await fixture.legacyGithubLogin('detached'), user);
+      expect(await fixture.store.countUsers()).toBe(2);
+
+      const registered = await fixture.legacyGithubLogin('unseen');
+      expect(registered.status).toBe(302);
+      expect(Boolean(activeCookie(registered, fixture.sessionName))).toBe(true);
+      const newUser = await fixture.authService.findUserByExternalIdentity('github', unseen.subject);
+      expect(newUser).not.toBeNull();
+      expect(toPublicUser(newUser!)).toMatchObject({ githubLogin: unseen.label, authProvider: 'github' });
+      expect(newUser?.id).not.toBe(user.id);
+      expect(await fixture.store.countUsers()).toBe(3);
     } finally { await fixture.close(); }
   });
 });

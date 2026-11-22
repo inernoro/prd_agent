@@ -7,6 +7,7 @@
 - 每个个人账号有稳定的 CDS ID。所有者可授予管理员角色，管理员管理普通成员，成员管理自己的登录。
 - 首次激活链接有效七天，只在签发时回传一次。成员可自行设置口令，或使用此实例已开通的 GitHub 或 Google。激活保留原账号 ID、角色和项目授权。
 - GitHub 依据数字 ID，Google 依据提供方主体标识。绑定使用当前浏览器的短时一次性流程和当前 CDS 个人会话。CDS 不按姓名、邮箱或账号标签关联身份。
+- 解除绑定必须保留另一种可用登录方式。解除后旧会话失效，旧 GitHub 入口不会为这个身份自动另建账号。解除他人绑定需要逐次批准。
 - GitHub 个人登录配置使用 `CDS_ACCOUNT_GITHUB_CLIENT_ID` 与 `CDS_ACCOUNT_GITHUB_CLIENT_SECRET`，回调为本实例 `/api/auth/external/github/callback`。
 - Google 个人登录配置使用 `CDS_GOOGLE_CLIENT_ID` 与 `CDS_GOOGLE_CLIENT_SECRET`，回调为本实例 `/api/auth/external/google/callback`。
 - 提供方状态以公开能力读取为准。两个应用各自独立于仓库 GitHub App 授权。仍在用的本地登录、GitHub 登录及 SSO 保留各自既有入口。

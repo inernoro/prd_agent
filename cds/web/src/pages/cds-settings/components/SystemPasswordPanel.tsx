@@ -112,7 +112,7 @@ export function SystemPasswordDialog({ accountName, initial, sessions, onClose, 
           </>}
           {entry && canSubmit ? <>
             {sessions?.length ? <p className="text-sm text-muted-foreground">已登记设备 {sessions.map(session => session.device).join('、')}。共用账号无法识别具体人员。</p> : null}
-            <Field label={`输入 ${accountName} 确认目标`}><input aria-label="确认系统账号" className={accountInputClass}
+            <Field preserveCase label={`输入 ${accountName} 确认目标`}><input aria-label="确认系统账号" className={accountInputClass}
               value={targetName} disabled={busy} onChange={event => setTargetName(event.target.value)} required autoComplete="off" /></Field>
             <Field label="目前口令"><input aria-label="目前口令" className={accountInputClass} type="password" autoComplete="current-password"
               value={oldPassword} disabled={busy} onChange={event => setOldPassword(event.target.value)} required /></Field>

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
-import { toPublicUser, type AccountIdentityProvider, type CdsUser } from '../domain/auth.js';
+import { canDetachAccountIdentity, toPublicUser, type AccountIdentityProvider, type CdsUser } from '../domain/auth.js';
 import type { AccountOAuthDriver } from '../services/account-oauth.js';
 import { LocalAuthError, type AuthService } from '../services/auth-service.js';
 import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
@@ -14,6 +14,7 @@ interface Options {
   publicBaseUrl: string;
   cookieSecure: boolean;
   hostSessionCookies?: boolean;
+  legacyGithubEnabled?: boolean;
 }
 
 interface Flow {
@@ -59,6 +60,31 @@ export function createAccountIdentitiesRouter(options: Options): Router {
   const cookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: cookieSecure || hostSessionCookies, path: '/' };
   const callbackUri = (provider: AccountIdentityProvider) => new URL(`/api/auth/external/${provider}/callback`, publicBaseUrl).toString();
   const sessionToken = (req: Request) => readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies)) ?? null;
+
+  router.delete('/auth/external/:provider/link', async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    const provider = verifiedProvider(req.params.provider);
+    if (!provider) { res.status(404).json({ error: '未找到指定身份提供方' }); return; }
+    try {
+      const active = await authService.validateSession(sessionToken(req), { renew: false });
+      if (!active) { res.status(401).json({ error: '请用个人账号登录后操作' }); return; }
+      const { user } = active;
+      if (!canDetachAccountIdentity(user, provider, {
+        github: Boolean(providers.github || options.legacyGithubEnabled), google: Boolean(providers.google),
+      })) {
+        res.status(409).json({ code: 'last_login_method', error: '须保留另一种可用登录方式' }); return;
+      }
+      const current = await authService.detachIdentity(user, provider);
+      if (!current) { res.status(409).json({ code: 'account_changed', error: '账号状态已变化，请重新读取' }); return; }
+      await authService.recordActivity({
+        userId: user.id, userLogin: user.username || user.githubLogin, action: 'unlink-identity',
+        targetType: 'user', targetId: user.id, summary: `本人解除 ${provider === 'github' ? 'GitHub' : 'Google'} 绑定`,
+      });
+      res.json({ user: toPublicUser(current) });
+    } catch {
+      res.status(503).json({ error: '无法确认解绑结果，请重新登录后读取当前身份' });
+    }
+  });
 
   async function signIn(req: Request, res: Response, user: CdsUser, activity: string): Promise<void> {
     const session = await authService.createSessionForUser(user, {

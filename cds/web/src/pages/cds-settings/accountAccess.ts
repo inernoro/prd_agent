@@ -23,6 +23,8 @@ export const actionLabels = {
   'rotate-system-password': '变更系统口令',
   'recover-identity': '恢复登录身份',
   'historical-account-event': '历史账号事件补录',
+  'unlink-github': '解除 GitHub 绑定',
+  'unlink-google': '解除 Google 绑定',
 } as const;
 
 export type AccountAction = keyof typeof actionLabels;

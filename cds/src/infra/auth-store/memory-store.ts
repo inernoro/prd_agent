@@ -28,6 +28,7 @@ import type {
   AccountIdentityProvider,
   AccountInvitationProof,
 } from '../../domain/auth.js';
+import { GithubIdentityDetachedError } from '../../domain/auth.js';
 // 2026-06-20：本文件是 ESM 模块（package.json "type":"module"），运行时
 // 不存在 require()。原先三处 require('node:crypto') 在 vitest（CJS interop）
 // 下能跑，但真实运行（尤其 CDS_AUTH_BACKEND=memory）会抛 "require is not
@@ -52,6 +53,7 @@ export interface AuthStore {
   setExternalLoginAllowed(user: CdsUser, allowed: boolean): Promise<CdsUser | null>;
   findUserByGoogleSubject(subject: string): Promise<CdsUser | null>;
   linkIdentity(user: CdsUser, provider: AccountIdentityProvider, subject: string, label: string): Promise<AccountIdentityLinkResult>;
+  detachIdentity(user: CdsUser, provider: AccountIdentityProvider, change: AccountSecurityChange, now: Date): Promise<boolean>;
   findAccountInvitation(hash: string, now: Date): Promise<CdsUser | null>;
   consumeAccountInvitation(user: CdsUser, proof: AccountInvitationProof, now: Date, security?: AccountSecurityChange): Promise<CdsUser | null>;
   applyAccountSecurityChange(user: CdsUser, change: AccountSecurityChange, now: Date): Promise<boolean>;
@@ -216,6 +218,9 @@ export class MemoryAuthStore implements AuthStore {
       return updated;
     }
 
+    if (Array.from(this.usersById.values()).some(user => user.detachedGithubIds?.includes(input.githubId))) {
+      throw new GithubIdentityDetachedError();
+    }
     const id = genUuid();
     const user: CdsUser = {
       id,
@@ -299,6 +304,24 @@ export class MemoryAuthStore implements AuthStore {
   async findAccountInvitation(hash: string, now: Date): Promise<CdsUser | null> {
     return Array.from(this.usersById.values()).find(user =>
       user.status === 'active' && user.invitationHash === hash && (user.invitationExpiresAt ?? '') > now.toISOString()) ?? null;
+  }
+
+  async detachIdentity(expected: CdsUser, provider: AccountIdentityProvider, change: AccountSecurityChange, now: Date): Promise<boolean> {
+    const user = this.usersById.get(expected.id);
+    if (!user || user.status !== 'active' || user.sessionRevision !== expected.sessionRevision ||
+        user.passwordHash !== expected.passwordHash || user.githubId !== expected.githubId || user.googleSubject !== expected.googleSubject) return false;
+    const updated = { ...user, ...change, updatedAt: now.toISOString() };
+    if (provider === 'github') {
+      this.usersByGithubId.delete(user.githubId);
+      updated.githubId = localPlaceholderGithubId();
+      updated.detachedGithubIds = Array.from(new Set([...(user.detachedGithubIds ?? []), user.githubId]));
+      delete updated.linkedGithubLogin;
+    } else {
+      delete updated.googleSubject;
+      delete updated.linkedGoogleLabel;
+    }
+    this.usersById.set(user.id, updated);
+    return true;
   }
 
   async consumeAccountInvitation(expected: CdsUser, proof: AccountInvitationProof, now: Date, security?: AccountSecurityChange): Promise<CdsUser | null> {

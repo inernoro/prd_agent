@@ -987,6 +987,7 @@ export function resolveApiLabel(method: string, path: string): string {
   if (method === 'GET' && /^\/auth\/users\/[^/]+\/impact$/.test(p)) return '估算账号操作影响';
   if (method === 'GET' && /^\/auth\/account-proposals\/[^/]+$/.test(p)) return '回读设备提交的账号提案';
   if (method === 'GET' && /^\/auth\/external\/(github|google)\/(start|callback)$/.test(p)) return '验证第三方登录身份';
+  if (method === 'DELETE' && /^\/auth\/external\/(github|google)\/link$/.test(p)) return '解除本人第三方身份绑定';
   if (method === 'POST' && /^\/auth\/external\/(github|google)\/start$/.test(p)) return '发起第三方账号激活';
   if (method === 'POST' && /^\/auth\/account-actions\/[^/]+\/confirm$/.test(p)) return '确认账号操作';
   if (method === 'POST' && /^\/auth\/account-actions\/[^/]+\/(reject|cancel)$/.test(p)) return '关闭账号操作申请';
@@ -3253,7 +3254,7 @@ export function createServer(deps: ServerDeps): express.Express {
     } catch (error) { next(error); }
   });
   if (authService) app.use('/api', createAccountIdentitiesRouter({
-    authService, providers: accountProviders, publicBaseUrl, ...browserCookieOptions,
+    authService, providers: accountProviders, legacyGithubEnabled: authMode === 'github', publicBaseUrl, ...browserCookieOptions,
   }));
   if (accountRecovery) app.use('/api', accountRecovery.publicRouter);
 
@@ -3398,7 +3399,10 @@ export function createServer(deps: ServerDeps): express.Express {
     // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
     // （PR #865 Codex P1）。
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
-    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, ...browserCookieOptions, bootstrapAllowed }));
+    app.use('/api', createAuthLocalRouter({
+      authService, stateService: deps.stateService, ...browserCookieOptions, bootstrapAllowed,
+      availableProviders: { github: true, google: Boolean(accountProviders.google) },
+    }));
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -4099,6 +4103,7 @@ export function createServer(deps: ServerDeps): express.Express {
       ...browserCookieOptions,
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
+      availableProviders: { github: Boolean(accountProviders.github), google: Boolean(accountProviders.google) },
       legacyLogin: async ({ username, password }, req) => {
         if (username !== cdsUser || password !== cdsPass) return null;
         return {

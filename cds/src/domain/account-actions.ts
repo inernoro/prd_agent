@@ -1,6 +1,6 @@
 import type { CdsAccountRole, CdsUser } from './auth.js';
 
-export const ACCOUNT_ACTIONS = ['reset-password', 'disable-user', 'revoke-sessions', 'revoke-admin'] as const;
+export const ACCOUNT_ACTIONS = ['reset-password', 'disable-user', 'revoke-sessions', 'revoke-admin', 'unlink-github', 'unlink-google'] as const;
 export type AccountAction = typeof ACCOUNT_ACTIONS[number] | 'rotate-system-password' | 'recover-identity' | 'historical-account-event';
 
 export type AccountActionState = 'pending' | 'verified' | 'executing' | 'completed' | 'rejected' | 'cancelled' | 'failed' | 'expired';
@@ -59,6 +59,8 @@ export const ACCOUNT_ACTION_LABELS: Record<AccountAction, string> = {
   'rotate-system-password': '变更系统账号口令',
   'recover-identity': '恢复登录身份',
   'historical-account-event': '历史账号事件补录',
+  'unlink-github': '解除 GitHub 绑定',
+  'unlink-google': '解除 Google 绑定',
 };
 
 export type AccountSecurityChange = Pick<CdsUser,

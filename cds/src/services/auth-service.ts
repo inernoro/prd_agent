@@ -24,6 +24,7 @@ import type {
 } from '../infra/auth-store/memory-store.js';
 import { DEFAULT_SESSION_TTL_MS } from '../infra/auth-store/memory-store.js';
 import type { AccountIdentityProvider, AccountInvitationProof, CdsSession, CdsUser, CdsWorkspace, CreateLocalUserInput, UserActivityRecord } from '../domain/auth.js';
+import { GithubIdentityDetachedError } from '../domain/auth.js';
 import type { AccountAction, AccountActionRequest, AccountActionStore, AccountSecurityChange } from '../domain/account-actions.js';
 import { hashPassword, verifyPassword, MIN_PASSWORD_LENGTH } from './password.js';
 import type {
@@ -50,7 +51,8 @@ export class AuthServiceError extends Error {
       | 'oauth_upstream'
       | 'oauth_disabled'
       | 'bootstrap_failed'
-      | 'account_disabled',
+      | 'account_disabled'
+      | 'identity_detached',
     message: string,
     public readonly cause?: unknown,
   ) {
@@ -230,14 +232,22 @@ export class AuthService {
     }
 
     const now = new Date();
-    const user = await this.store.upsertUser({
-      githubId: profile.id,
-      githubLogin: profile.login,
-      email: profile.email,
-      name: profile.name || profile.login,
-      avatarUrl: profile.avatarUrl,
-      orgs: orgLogins,
-    }, now);
+    let user: CdsUser;
+    try {
+      user = await this.store.upsertUser({
+        githubId: profile.id,
+        githubLogin: profile.login,
+        email: profile.email,
+        name: profile.name || profile.login,
+        avatarUrl: profile.avatarUrl,
+        orgs: orgLogins,
+      }, now);
+    } catch (err) {
+      if (err instanceof GithubIdentityDetachedError) {
+        throw new AuthServiceError('identity_detached', '使用另一种方式登录 CDS 后重新绑定 GitHub');
+      }
+      throw err;
+    }
 
     // 被 owner 禁用的账号不得再通过 GitHub OAuth 登录——upsert 只同步资料，禁用
     // 状态要在发会话前拦掉，否则禁用形同虚设、且会签出一个下次 validateSession 即失效
@@ -524,6 +534,13 @@ export class AuthService {
     return this.store.linkIdentity(user, provider, subject, label);
   }
 
+  async detachIdentity(user: CdsUser, provider: AccountIdentityProvider, receipt: string = randomUUID()): Promise<CdsUser | null> {
+    const now = new Date();
+    const change = this.sessionRevocation(user, receipt, provider === 'github' ? 'unlink-github' : 'unlink-google', now);
+    if (!await this.store.detachIdentity(user, provider, change, now)) return null;
+    return this.store.findUserById(user.id);
+  }
+
   get accountActions(): AccountActionStore | undefined {
     return this.store.accountActions;
   }
@@ -571,6 +588,9 @@ export class AuthService {
 
   async applyAccountAction(user: CdsUser, request: AccountActionRequest, newPassword?: string): Promise<boolean> {
     const now = new Date();
+    if (request.action === 'unlink-github' || request.action === 'unlink-google') {
+      return Boolean(await this.detachIdentity(user, request.action === 'unlink-github' ? 'github' : 'google', request.id));
+    }
     const change = this.sessionRevocation(user, request.id, request.action, now);
     if (request.action === 'disable-user') change.status = 'disabled';
     if (request.action === 'revoke-admin') change.isAdministrator = false;

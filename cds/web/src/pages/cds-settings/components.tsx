@@ -37,13 +37,15 @@ export function Section({
 export function Field({
   label,
   children,
+  preserveCase = false,
 }: {
   label: string;
   children: ReactNode;
+  preserveCase?: boolean;
 }): JSX.Element {
   return (
     <div className="space-y-1.5">
-      <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">{label}</div>
+      <div className={cn('text-xs font-semibold tracking-normal text-muted-foreground', !preserveCase && 'uppercase')}>{label}</div>
       <div className="text-sm leading-6">{children}</div>
     </div>
   );

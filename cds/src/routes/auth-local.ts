@@ -27,7 +27,7 @@ import {
   buildSsoLogoutCookie,
   GH_SESSION_COOKIE,
 } from './auth.js';
-import { accountRole, toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
+import { accountRole, toPublicUser, type AccountIdentityProvider, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
 import { AccountActionError, AccountActionsService, publicAccountAction } from '../services/account-actions.js';
 import type { StateService } from '../services/state.js';
 import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
@@ -68,6 +68,7 @@ export interface AuthLocalRouterDeps {
   ) => Promise<LegacyLocalLoginResult | null> | LegacyLocalLoginResult | null;
   /** Usernames owned by external/legacy providers and unavailable for creation. */
   reservedUsernames?: string[];
+  availableProviders?: Partial<Record<AccountIdentityProvider, boolean>>;
 }
 
 interface AuthedRequest extends Request {
@@ -460,7 +461,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   });
 
   const accountActions = new AccountActionsService(authService, (target, actor, apply) =>
-    setLinkedAccountStatus(deps.stateService, target, actor, 'disabled', apply));
+    setLinkedAccountStatus(deps.stateService, target, actor, 'disabled', apply), deps.availableProviders);
 
   function accountActionRoute(
     ownerOnly: boolean,

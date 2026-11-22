@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from 'react';
 import { Github, KeyRound, ShieldCheck } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiRequest, apiUrl, changeMyPassword, type CdsAuthPublicStatus, type CdsPublicUser } from '@/lib/api';
 import { ErrorBlock, Field, LoadingBlock, Section } from '../components';
@@ -53,6 +54,7 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [unlinkError, setUnlinkError] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -82,6 +84,13 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
   const bindingLabel = providers.find(([provider]) => provider === bindingProvider)?.[1];
   const bindingError = result.get('external') === 'error';
   const errorCode = result.get('code');
+  async function detach(provider: typeof providers[number][0]): Promise<void> {
+    setUnlinkError('');
+    try {
+      await apiRequest(`/api/auth/external/${provider}/link`, { method: 'DELETE' });
+      window.location.assign('/login?redirect=%2Fcds-settings%23my-account');
+    } catch (error) { setUnlinkError(error instanceof Error ? error.message : String(error)); }
+  }
   return (
     <div className="space-y-6">
       <Section title="我的账号">
@@ -96,6 +105,7 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
       </Section>
 
       <Section title="我的登录">
+        {unlinkError ? <ErrorBlock message={unlinkError} /> : null}
         {bindingError && bindingLabel ? <ErrorBlock message={errorCode === 'identity_taken'
           ? `这个 ${bindingLabel} 身份已绑定到另一个 CDS 账号`
           : errorCode === 'provider_already_linked'
@@ -120,6 +130,8 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
             const available = accountProviders?.[provider] === true;
             const providerOnline = available || (linked && provider === 'github' && loginMethods.github);
             const canBind = available && user.externalLoginAllowed && user.authProvider !== 'legacy' && !linked;
+            const alternative = user.hasPassword || (provider === 'github'
+              ? accountProviders?.google && user.linkedLogins?.google : loginMethods.github && user.linkedLogins?.github);
             return (
               <div key={provider} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div className="min-w-0">
@@ -132,6 +144,11 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
                   </p>
                 </div>
                 {canBind ? <Button asChild variant="outline"><a href={apiUrl(`/api/auth/external/${provider}/start?purpose=bind`)}>绑定 {label}</a></Button> : null}
+                {linked && alternative ? <ConfirmAction title={`解除 ${label} 绑定`}
+                  description="完成后，现有会话会退出，请使用另一种登录方式重新进入。"
+                  confirmLabel="解除绑定" onConfirm={() => detach(provider)}
+                  trigger={<Button variant="outline">解除绑定</Button>} /> : null}
+                {linked && !alternative ? <span className="text-xs text-muted-foreground">须保留此登录方式</span> : null}
               </div>
             );
           })}

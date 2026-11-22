@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ACCOUNT_ACTIONS, ACCOUNT_ACTION_LABELS, type AccountAction, type AccountActionFilter, type AccountActionRequest } from '../domain/account-actions.js';
-import { accountRole, type CdsUser } from '../domain/auth.js';
+import { accountRole, canDetachAccountIdentity, type AccountIdentityProvider, type CdsUser } from '../domain/auth.js';
 import type { AuthService } from './auth-service.js';
 import { MIN_PASSWORD_LENGTH } from './password.js';
 
@@ -30,6 +30,7 @@ export class AccountActionsService {
   constructor(
     private readonly auth: AuthService,
     private readonly disable: (target: CdsUser, actor: CdsUser, apply: () => Promise<void>) => Promise<void>,
+    private readonly availableProviders: Partial<Record<AccountIdentityProvider, boolean>> = {},
   ) {}
 
   private get store() {
@@ -272,6 +273,10 @@ export class AccountActionsService {
     if (target.status !== 'active' || (action === 'revoke-admin' && !target.isAdministrator) ||
         (action === 'reset-password' && (target.authProvider !== 'local' || !target.passwordHash))) {
       throw new AccountActionError(409, 'invalid_account_state', '目标账号当前状态不支持此操作');
+    }
+    if ((action === 'unlink-github' || action === 'unlink-google') &&
+        !canDetachAccountIdentity(target, action === 'unlink-github' ? 'github' : 'google', this.availableProviders)) {
+      throw new AccountActionError(409, 'last_login_method', '目标账号须保留另一种可用登录方式');
     }
   }
 }

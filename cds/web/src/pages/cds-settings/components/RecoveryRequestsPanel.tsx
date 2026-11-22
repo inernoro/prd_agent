@@ -99,7 +99,7 @@ function RecoveryRequestDialog({ request, viewerId, owner, onClose, onChanged }:
           </p> : null}
           {verifying ? <Field label="身份核实依据"><textarea aria-label="身份核实依据" className={accountInputClass}
             required minLength={3} maxLength={500} value={evidence} onChange={event => setEvidence(event.target.value)} disabled={busy} rows={3} /></Field> : null}
-          {approving ? <Field label={`输入 ${request.targetName} 确认签发`}><input aria-label="确认目标账号" className={accountInputClass} required
+          {approving ? <Field preserveCase label={`输入 ${request.targetName} 确认签发`}><input aria-label="确认目标账号" className={accountInputClass} required
             value={targetName} onChange={event => setTargetName(event.target.value)} disabled={busy} autoComplete="off" /></Field> : null}
           {request.status === 'verified' && !approving ? <p className="text-sm text-muted-foreground">等待另一位系统所有者批准。</p> : null}
           {verifying || approving ? <Button type="submit" className="justify-self-start" variant={approving ? 'destructive' : 'default'}

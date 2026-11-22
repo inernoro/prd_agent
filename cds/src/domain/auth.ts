@@ -53,6 +53,8 @@ export interface CdsUser {
   username?: string;
   externalLoginAllowed?: boolean;
   linkedGithubLogin?: string;
+  /** Previously detached identities cannot create accounts through legacy GitHub sign-in. */
+  detachedGithubIds?: number[];
   googleSubject?: string;
   linkedGoogleLabel?: string;
   invitationHash?: string;
@@ -246,6 +248,22 @@ export function toPublicUser(user: CdsUser): PublicCdsUser {
 export function accountRole(user: Pick<CdsUser, 'isSystemOwner' | 'isAdministrator'>): CdsAccountRole {
   if (user.isSystemOwner) return 'owner';
   return user.isAdministrator ? 'admin' : 'member';
+}
+
+export function canDetachAccountIdentity(
+  user: CdsUser,
+  provider: AccountIdentityProvider,
+  enabled: Partial<Record<AccountIdentityProvider, boolean>>,
+): boolean {
+  const password = user.authProvider === 'local' && Boolean(user.username && user.passwordHash && user.passwordSalt);
+  return provider === 'github' ? user.githubId > 0 && (password || Boolean(user.googleSubject && enabled.google))
+    : Boolean(user.googleSubject) && (password || (user.githubId > 0 && enabled.github === true));
+}
+
+export class GithubIdentityDetachedError extends Error {
+  constructor() {
+    super('This GitHub identity must be bound before it can sign in again');
+  }
 }
 
 /**

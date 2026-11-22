@@ -45,6 +45,7 @@ import type {
   AccountIdentityLinkResult, AccountIdentityProvider,
   AccountInvitationProof,
 } from '../../domain/auth.js';
+import { GithubIdentityDetachedError } from '../../domain/auth.js';
 import { ACTIVITY_RING_CAPACITY, localPlaceholderGithubId } from './memory-store.js';
 import type { IAuthMongoHandle } from './mongo-handle.js';
 import type { CdsPasskeyStore } from '../../domain/passkey.js';
@@ -110,10 +111,14 @@ export class MongoAuthStore implements AuthStore {
         orgsCheckedAt: now.toISOString(),
         updatedAt: now.toISOString(),
       };
-      await users.updateOne({ id: existing.id }, { $set: updated });
-      return (await users.findOne({ id: existing.id }))!;
+      const binding = { id: existing.id, githubId: input.githubId };
+      await users.updateOne(binding, { $set: updated });
+      const current = await users.findOne(binding);
+      if (!current) throw new GithubIdentityDetachedError();
+      return current;
     }
 
+    if (await users.findOne({ detachedGithubIds: input.githubId })) throw new GithubIdentityDetachedError();
     const newUser: CdsUser = {
       id: randomUUID().replace(/-/g, ''),
       githubId: input.githubId,
@@ -196,6 +201,22 @@ export class MongoAuthStore implements AuthStore {
 
   async findAccountInvitation(hash: string, now: Date): Promise<CdsUser | null> {
     return this.handle.usersCollection().findOne({ status: 'active', invitationHash: hash, invitationExpiresAt: { $gt: now.toISOString() } });
+  }
+
+  async detachIdentity(user: CdsUser, provider: AccountIdentityProvider, change: AccountSecurityChange, now: Date): Promise<boolean> {
+    const users = this.handle.usersCollection();
+    if (!users.updateOneMatched) return false;
+    const github = provider === 'github';
+    return users.updateOneMatched({
+      id: user.id, status: 'active', githubId: user.githubId,
+      googleSubject: user.googleSubject ?? { $exists: false },
+      passwordHash: user.passwordHash ?? { $exists: false },
+      sessionRevision: user.sessionRevision ?? { $exists: false },
+    }, {
+      $set: { ...change, updatedAt: now.toISOString(), ...(github ? { githubId: localPlaceholderGithubId() } : {}) },
+      $unset: github ? { linkedGithubLogin: '' } : { googleSubject: '', linkedGoogleLabel: '' },
+      ...(github ? { $addToSet: { detachedGithubIds: user.githubId } } : {}),
+    });
   }
 
   async consumeAccountInvitation(user: CdsUser, proof: AccountInvitationProof, now: Date, security?: AccountSecurityChange): Promise<CdsUser | null> {

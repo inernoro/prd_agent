@@ -265,6 +265,8 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, view, chang
               {canChange ? ([
                 ...(selected.authProvider === 'local' && selected.hasPassword !== false ? ['reset-password'] : []),
                 'revoke-sessions', 'disable-user',
+                ...(selected.linkedLogins?.github ? ['unlink-github'] : []),
+                ...(selected.linkedLogins?.google ? ['unlink-google'] : []),
                 ...(owner && selected.role === 'admin' ? ['revoke-admin'] : []),
               ] as AccountAction[]).map(action => (
                 <Button key={action} variant="outline" onClick={() => setSubject({ user: selected, action })}>{actionLabels[action]}</Button>
