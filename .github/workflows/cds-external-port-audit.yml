@@ -35,7 +35,7 @@ jobs:
       AUDIT_TARGET: ${{ matrix.environment == 'cds' && secrets.CDS_EDGE_AUDIT_HOST || secrets.PRODUCTION_EDGE_AUDIT_HOST }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # 目标缺失一律判失败，不降级成跳过：一条永远不会红的巡检等于没有巡检。
       # 但失败必须**说清下一步**，否则运维只看到一行「未配置」，不知道该填什么、填哪里。
@@ -62,7 +62,7 @@ jobs:
       # 再报一次错，把真正的原因埋在第二条噪音下面——所以按扫描步骤的实际结果决定传不传。
       - name: Upload sanitized evidence
         if: ${{ always() && steps.scan.outcome != 'skipped' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: external-port-audit-${{ matrix.environment }}-ipv4
           path: ${{ matrix.environment }}-ipv4-report.json
@@ -84,7 +84,7 @@ jobs:
       AUDIT_TARGET: ${{ matrix.environment == 'cds' && secrets.CDS_EDGE_AUDIT_IPV6 || secrets.PRODUCTION_EDGE_AUDIT_IPV6 }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # 登记豁免：经人决定「这套环境不查 IPv6」时在此短路，并把「未经扫描证明」写进结论。
       # 与「忘了配」的区别全靠这份登记——它要求理由、决定人、日期、复审期限、残留风险五样俱全，
@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload sanitized evidence
         if: ${{ always() && steps.scan.outcome != 'skipped' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: external-port-audit-${{ matrix.environment }}-ipv6
           path: ${{ matrix.environment }}-ipv6-report.json

@@ -1517,15 +1517,15 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
         pages = self.workflow_job("pages")
         steps = re.split(r"^      - ", pages.split("    steps:\n", 1)[1], flags=re.M)[1:]
         writing = [step for step in steps if any(target in step for target in (
-            "name: Prepare Pages from the retained bundle", "uses: actions/configure-pages@v5",
-            "uses: actions/upload-pages-artifact@v3", "uses: actions/deploy-pages@v4"))]
-        self.assertEqual(len(writing), 4)
+            "name: Prepare Pages from the retained bundle", "uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b",
+            "name: Package Pages artifact", "name: github-pages", "uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e"))]
+        self.assertEqual(len(writing), 5)
         for step in writing:
             self.assertRegex(step, r"(?m)^        if: steps\.main-head\.outputs\.publish == 'true'$")
         self.assertLess(pages.index("Check current main before Pages writes"), pages.index("Prepare Pages from the retained bundle"))
         audit = next(step for step in steps if "name: Preserve safe third-party response audit" in step)
         self.assertRegex(audit, r"(?m)^        if: always\(\)$")
-        self.assertIn("uses: actions/upload-artifact@v4", audit)
+        self.assertIn("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", audit)
         self.assertNotIn("main-head.outputs.publish", audit)
         permission = re.search(r"^    permissions:\n(.*?)(?=^    [a-z-]+:)", pages, re.M | re.S).group(1)
         self.assertEqual(textwrap.dedent(permission).strip(), "contents: read\npages: write\nid-token: write")
@@ -1696,8 +1696,8 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
         self.assertIn("GH_TOKEN: ${{ github.token }}", migration)
         self.assertIn("group: web-bundle-${{ inputs.retain_commit }}", migration)
         self.assertIn("cancel-in-progress: false", migration)
-        self.assertLess(migration.index("Verify the original successful workflow identity"), migration.index("actions/download-artifact@v4"))
-        self.assertLess(migration.index("actions/download-artifact@v4"), migration.index("Retain the original bytes without rebuilding"))
+        self.assertLess(migration.index("Verify the original successful workflow identity"), migration.index("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"))
+        self.assertLess(migration.index("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"), migration.index("Retain the original bytes without rebuilding"))
         self.assertIn("name: github-pages", migration)
         self.assertIn("run-id: ${{ inputs.retain_from_run }}", migration)
         self.assertIn("github-token: ${{ github.token }}", migration)
@@ -1707,7 +1707,7 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
         for supplied in (None, *fields):
             inputs = {field: "provided" if field == supplied else "" for field in fields}
             expression = re.sub(r"inputs\.([a-z_0-9]+)", lambda item: repr(inputs[item.group(1)]), condition)
-            expression = expression.replace("||", " or ")
+            expression = expression.replace("&&", " and ").replace("||", " or ")
             self.assertEqual(eval(expression, {"__builtins__": {}}, {}), supplied is not None)
         self.assertIn("needs: retain-existing", build)
 
@@ -1785,7 +1785,7 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
         self.assertIn("pages: write", pages)
         self.assertIn("id-token: write", pages)
         self.assertRegex(pages, r"environment:\n      name: github-pages\n")
-        self.assertIn("uses: actions/deploy-pages@v4", pages)
+        self.assertIn("uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e", pages)
         self.assertIn("group: pages", pages)
         self.assertIn("cancel-in-progress: false", pages)
         self.assertIn("PUBLISH_LATEST: ${{ github.event_name == 'push' || inputs.publish_latest == true }}", pages)
