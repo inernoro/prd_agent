@@ -3,6 +3,7 @@ import { shellQuoteArg } from './secure-database-cli.js';
 import { IMAGE_CACHE_PROGRAM } from './image-cache-program.js';
 import { reclaimLock } from './reclaim-lock.js';
 import { randomBytes } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { resolveBranchProtection } from './branch-protection.js';
 import { readDeploymentIntent } from './deployment-intent.js';
 import { deploymentInputBranch } from './deployment-input.js';
@@ -13,6 +14,9 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 import { resumedReclaimExecution, recordReclaimExecution, type ReclaimExecutionJournal } from './reclaim-execution-journal.js';
 
 export class ImageCacheBudgetError extends Error {}
+const IMAGE_CACHE_REQUEST_TIMEOUT_MS = 30_000;
+const IMAGE_CACHE_LOCK_RETRY_MS = 150;
+
 export class ImageCacheGovernance {
   private execution: { id: string; status: string; startedAt: string; report?: any; error?: string } | null = null;
   constructor(readonly options: { shell: IShellExecutor; catalog: string; instanceId: string; budgetBytes: number; protectedReferences: () => string[]; peakBytes?: number; audit?: ServerEventLogSink | null; journal?: ReclaimExecutionJournal }) { this.execution = resumedReclaimExecution(options.journal); }
@@ -55,16 +59,34 @@ export class ImageCacheGovernance {
     const registryProofs = await this.recoveryProofs(row.digests[0], preview.platform, audit);
     return this.request('adopt', { ...input, registryProofs, registryAuditId: audit.operationId });
   }
-  async request(action: string, input: Record<string, unknown> = {}, assertCurrent: () => void = () => {}) {
+  async request(action: string, input: Record<string, unknown> | (() => Record<string, unknown>) = {}, assertCurrent: () => void = () => {}) {
     const loader = `import base64;exec(base64.b64decode("${Buffer.from(IMAGE_CACHE_PROGRAM).toString('base64')}"))`;
-    const result = await this.options.shell.exec(`python3 -c ${shellQuoteArg(loader)}`, { stdin: JSON.stringify({ ...input, action, catalog: this.options.catalog, instanceId: this.options.instanceId, budgetBytes: this.options.budgetBytes, peakBytes: this.options.peakBytes }), executionLane: action === 'preview' ? 'observation' : 'operation', timeout: 30_000, beforeStart: assertCurrent });
-    assertCurrent();
-    if (result.exitCode !== 0 && result.stderr.includes('ValueError: host-image-cache-budget-exceeded')) throw new ImageCacheBudgetError('宿主镜像总量预算不足，等待回收或容量调整。');
-    if (result.exitCode !== 0 || result.stdout.length > 4 * 1024 * 1024) throw new Error('镜像总量预算、对象身份或引用未确认，未允许新的大批量拉取或删除。');
+    const command = `python3 -c ${shellQuoteArg(loader)}`;
+    const deadline = performance.now() + IMAGE_CACHE_REQUEST_TIMEOUT_MS;
+    let result: Awaited<ReturnType<IShellExecutor['exec']>> | undefined;
+    while (performance.now() < deadline) {
+      assertCurrent();
+      const payload = typeof input === 'function' ? input() : input;
+      const timeout = Math.floor(deadline - performance.now());
+      if (timeout <= 0) break;
+      result = await this.options.shell.exec(command, {
+        stdin: JSON.stringify({ ...payload, action, catalog: this.options.catalog, instanceId: this.options.instanceId, budgetBytes: this.options.budgetBytes, peakBytes: this.options.peakBytes }),
+        executionLane: action === 'preview' ? 'observation' : 'operation',
+        timeout,
+        beforeStart: assertCurrent,
+      });
+      assertCurrent();
+      // Native exit 3 means the catalog lock rejected the request before any write.
+      if (result.exitCode !== 3) break;
+      const wait = Math.min(IMAGE_CACHE_LOCK_RETRY_MS, deadline - performance.now());
+      if (wait > 0) await delay(wait);
+    }
+    if (result && result.exitCode !== 0 && result.stderr.includes('ValueError: host-image-cache-budget-exceeded')) throw new ImageCacheBudgetError('宿主镜像总量预算不足，等待回收或容量调整。');
+    if (result?.exitCode !== 0 || result.stdout.length > 4 * 1024 * 1024) throw new Error('镜像总量预算、对象身份或引用未确认，未允许新的大批量拉取或删除。');
     try { return JSON.parse(result.stdout); } catch { throw new Error('镜像盘点不完整，不能判断零占用。'); }
   }
-  async publish() { return this.request('publish', { references: this.options.protectedReferences() }); }
-  async prepare(image: string, assertCurrent: () => void, requirePresent = false, forceNew = false) { await this.publish();return this.request('prepare', { image, requirePresent, forceNew }, assertCurrent); }
+  async publish(assertCurrent?: () => void) { return this.request('publish', () => ({ references: this.options.protectedReferences() }), assertCurrent); }
+  async prepare(image: string, assertCurrent: () => void, requirePresent = false, forceNew = false) { await this.publish(assertCurrent);return this.request('prepare', { image, requirePresent, forceNew }, assertCurrent); }
   confirm(token: string, assertCurrent: () => void) { return this.request('confirm', { token }, assertCurrent); }
   abort(token: string, assertCurrent: () => void, completedNativeOperation = false) { return this.request('abort', { token, completedNativeOperation }, assertCurrent); }
   async inspect(dryRun = true, alreadyLocked = false, executionId?: string) {
@@ -82,8 +104,8 @@ export class ImageCacheGovernance {
           Object.assign(proofs, await this.recoveryProofs(item.recoveryDigests[0], preview.platform, audit));
         } catch { failed.push({ identity:item.identity, reason:'registry 清单或持久审计未确认，已保留' }); }
       }
-      const report = await this.request('reconcile', { maxRemovals:2, targetIdentities:batch.filter(item=>!failed.some(f=>f.identity===item.identity)).map(item=>item.identity), attemptedIdentities:batch.map(item=>item.identity), registryProofs:proofs,
-        registryAuditId:audit.operationId, references:this.options.protectedReferences(),...(executionId?{executionId}:{}) });
+      const report = await this.request('reconcile', () => ({ maxRemovals:2, targetIdentities:batch.filter(item=>!failed.some(f=>f.identity===item.identity)).map(item=>item.identity), attemptedIdentities:batch.map(item=>item.identity), registryProofs:proofs,
+        registryAuditId:audit.operationId, references:this.options.protectedReferences(),...(executionId?{executionId}:{}) }));
       const retainedFailures=failed.filter(f=>!report.held.some((row:any)=>row.identity===f.identity));
       report.pending=report.pending.filter((id:string)=>!retainedFailures.some(f=>f.identity===id));report.counts.pending=report.pending.length;
       report.failed.push(...retainedFailures);report.counts.failed=report.failed.length;if(retainedFailures.length)report.scanStatus='partial';report.registryAuditId=audit.operationId;return report;
@@ -138,7 +160,7 @@ export function collectImageCacheReferences(state: import('./state.js').StateSer
   for(const intent of state.getDeploymentIntents()) {
     const run=state.getDeploymentRun(intent.runId);
     if(!run)throw new Error('恢复记录的镜像引用未确认。');
-    const input=readDeploymentIntent(run,intent);
+    const input=readDeploymentIntent(run,intent,'image-protection');
     const branch=state.getBranch(intent.request.branchId);
     if(!branch)throw new Error('在途部署归属未确认。');
     const captured=deploymentInputBranch(input,branch);
