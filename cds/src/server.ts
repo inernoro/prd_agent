@@ -1861,11 +1861,14 @@ function presentedAiAccessKey(req: express.Request): string | undefined {
 function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
   if (!key.planningAccess && !key.designAccess) return true;
   if (key.planningAccess && key.designAccess) return false;
+  if (req.method === 'GET' && req.path === '/api/credentials/self-check') return true;
+  if (isPublicAgentSetupRoute(req.method, req.path)) return true;
   const segment = req.path.replace(/^\/_cds\/api\//i, '/api/').split('/')[3];
   try { if (decodeURIComponent(segment) !== key.projectId) return false; }
   catch { return false; }
   const read = req.method === 'GET' || req.method === 'HEAD';
   if (key.designAccess) {
+    if (req.method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(req.path)) return true;
     const route = '/api/projects/:projectId/design';
     const path = normalizedDesignPath(req.path);
     return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
@@ -5205,7 +5208,11 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
   // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。
-  app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
+  app.use('/api', createAccessRequestsRouter({
+    stateService: deps.stateService,
+    authMode,
+    isSsoEnabled: () => publicTicketSsoConfig(resolveSsoConfig()).enabled,
+  }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
     shell: deps.shell,

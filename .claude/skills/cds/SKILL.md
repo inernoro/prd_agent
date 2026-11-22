@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.8
+  version: 0.26.9
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design intake (CDS 设计接入), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.8 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.9 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -396,11 +396,13 @@ $CLI debt stats
 
 ## 设计稿件与框架
 
-收到「请阅读 CDS 设计接入并按规范提交」时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和 Git 来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
+收到「请阅读 CDS 设计接入并按规范提交」时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
 
-CDS 系统所有者可在项目 Agent Key 管理或 `POST /api/projects/:projectId/agent-keys` 签发 `designAccess` 为 `read`、`feedback` 或 `publish` 的项目凭据。项目环境提供 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY` 后，以 `cdscli init --yes` 绑定当前 Git 工作区。外部智能体从该目录启动 `node <CDS 源码>/cds/mcp/src/server.mjs --design`。不同 Agent 可在稿件的「交付」标签和专用 MCP 上交换完整资料、实施反馈与修订回执。定稿、签收和固定版本分享由获授权成员处理。
+从 CDS「设计」页的「接入 Agent」复制设计发布口令。新工作区先用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 验证设计接入清单。缺少权限时，由智能体用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者在「项目」页右下角「授权申请」核对项目和智能体，点击「批准设计发布」。智能体领取凭据并在当前工作区重新自检。等待超时用同一命令继续领取。实施反馈和只读任务可分别申请 `feedback` 与 `read`。
 
-脚手架把框架版本、规则类别和自检待办写进稿件。从 `--dir` 发布时带上仓库相对目录，CDS 可在该项目的代码仓库中核对时验证提交和文件。常规项目凭据可记录其他仓库的发布声明。仅设计发布凭据及设计 MCP 要求项目 Git 实际核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
+从已接入目录启动 `node <CDS 源码>/cds/mcp/src/server.mjs --design`，也可直接使用 CLI。不同 Agent 在稿件的「交付」标签和专用 MCP 上交换资料、实施反馈与修订回执。定稿、签收和固定版本分享由获授权成员处理。
+
+脚手架把框架版本、规则类别和自检待办写进稿件。从本地提交的稿件子目录用 `design publish --private --dir <目录>` 或 MCP 的 `sourceMode: "private"` 私有归档。项目内已同步的授权材料可沿用 Git 核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
 
 新版到达后，用 `design diff <稿件编号> <旧版> <新版>` 固定两个版本及提交。输出包括画面清单、框架和规则变化、包及 HTML 摘要变化，并按画面及主题比对已有实拍。缺实拍的主题显示 `unverified`。同尺寸实拍可在设计「对比」查看像素差异。先复现变化区域，再调整受影响的页面。
 
@@ -414,9 +416,9 @@ $CLI framework show <框架编号>
 $CLI design intake
 $CLI design scaffold --framework <框架编号> --dir design/<目录> --title "稿件标题"
 $CLI design reviewers
-$CLI design publish --intent create --design-key <模块>/<稿件> --dir design/<目录> --note "本版修改" --reviewer <成员ID>
+$CLI design publish --private --intent create --design-key <模块>/<稿件> --dir design/<目录> --note "本版修改" --reviewer <成员ID>
 $CLI design request-review <稿件编号> --reviewer <成员ID>
-$CLI design publish <稿件编号> --intent revise --expected-version <最新版本> --dir design/<目录> --resolves "<评论编号>=如何处理"
+$CLI design publish <稿件编号> --private --intent revise --expected-version <最新版本> --dir design/<目录> --resolves "<评论编号>=如何处理"
 $CLI design list
 $CLI design comments <稿件编号> --open
 $CLI design diff <稿件编号> 1 2
@@ -426,7 +428,7 @@ $CLI design result <稿件编号> --run <运行编号>
 $CLI design extract <稿件编号> --into <框架编号>
 ```
 
-看稿时用真实的 Git 提交和版本。作者可根据用户指定的成员发起评审，新版默认沿用已有评审人，站内信息中心会合并同一稿件一小时内的发版。新版声明处理评论后，由评论人或项目管理者核对。已指定评审人的稿件由名单中的成员定稿，签收由有写权限的成员完成。CLI 用 `--as-user <用户名>` 从终端进行交互式登录。做法验收每格记录 `itemId`、`slot`、实测说明和对应视口的真实 PNG，回填时固定运行和部署提交。四列为 `desktop-light`、`desktop-dark`、`phone-light`、`phone-dark`。缺少实现路径、对应提交或证据时记录具体原因。没有对应截图的结果保持待补证据。重试先读取回执，结果不确定时使用同一个 `--request-id`。只允许对已绑定项目操作。
+看稿时根据稿件版本、来源提交和归档摘要定位。作者可根据用户指定的成员发起评审，新版默认沿用已有评审人，站内信息中心会合并同一稿件一小时内的发版。新版声明处理评论后，由评论人或项目管理者核对。已指定评审人的稿件由名单中的成员定稿，签收由有写权限的成员完成。CLI 用 `--as-user <用户名>` 从终端进行交互式登录。做法验收每格记录 `itemId`、`slot`、实测说明和对应视口的真实 PNG，回填时固定运行和部署提交。四列为 `desktop-light`、`desktop-dark`、`phone-light`、`phone-dark`。缺少实现路径、对应提交或证据时记录具体原因。没有对应截图的结果保持待补证据。重试先读取回执，结果不确定时使用同一个 `--request-id`。只允许对已绑定项目操作。
 
 分享从稿件信息中的「固定版本分享」开始。具备审批权的真人可为经 Git 核验的定稿版本记录受众和期限。待确认记录仍在项目内。配置了同一稿件版本和评审人的 MAP 对应授权后，评审人可在 MAP 查到待分享的版本、提交、期限和私有引用，确认后生成链接。分享使用固定版的已核验原型，内部批注、自检、实拍和验收记录仍按项目权限查看。不要把准备号、确认票据或密码当成可分享的链接。撤销在 MAP 分享确认页或原生分享管理中完成。
 

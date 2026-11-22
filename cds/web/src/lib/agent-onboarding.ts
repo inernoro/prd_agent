@@ -103,6 +103,7 @@ export function resolveAgentPageContext(
     else if (location.pathname.startsWith('/task-schedule')) id = 'tasks';
     else if (location.pathname.startsWith('/reports')) id = 'reports';
     else if (location.pathname.startsWith('/engineering-planning')) id = 'engineering-planning';
+    else if (location.pathname === '/design' || location.pathname.startsWith('/design/')) id = 'design-publish';
     else if (location.pathname.startsWith('/project-list')) id = 'projects';
     else id = 'general';
   }

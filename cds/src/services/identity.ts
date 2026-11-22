@@ -92,13 +92,24 @@ export function slideExpiry(
 
 /** 某主体对某项目是否**当前**有授权（created 与 approved 一视同仁）。 */
 export function hasActiveGrant(
-  grants: readonly ProjectGrant[],
+  grants: readonly Pick<ProjectGrant, 'principalId' | 'projectId' | 'revokedAt'>[],
   principalId: string,
   projectId: string,
 ): boolean {
   return grants.some(
     (g) => g.principalId === principalId && g.projectId === projectId && !g.revokedAt,
   );
+}
+
+export function hasProjectKeyGrant(
+  grants: readonly Pick<ProjectGrant, 'principalId' | 'projectId' | 'revokedAt'>[],
+  key: Pick<AgentKey, 'principalId' | 'designAccess' | 'designAccessRequestId'>,
+  projectId: string,
+): boolean {
+  const { principalId } = key;
+  if (!principalId || hasActiveGrant(grants, principalId, projectId)) return true;
+  return Boolean(key.designAccess && key.designAccessRequestId
+    && !grants.some(grant => grant.principalId === principalId && grant.projectId === projectId && grant.revokedAt));
 }
 
 export type IssueDecision =

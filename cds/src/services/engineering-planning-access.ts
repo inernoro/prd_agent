@@ -19,11 +19,13 @@ export function resolveEngineeringPlanningAccess(req: Request, state: StateServi
   };
   const key = request.cdsProjectKey;
   if (key) {
-    if (key.projectId !== projectId || !dtsCredentialAllowed(state, { kind: 'project-key', id: key.keyId }, projectId)) return null;
+    if (key.projectId !== projectId || !dtsCredentialAllowed(state, { kind: 'project-key', id: key.keyId }, projectId,
+      workspace === 'design' ? 'design' : 'project')) return null;
     const credential = state.getAgentKeys(projectId).find(item => item.id === key.keyId);
     if (!credential) return null;
     if ((credential.designAccess && workspace !== 'design') || (credential.planningAccess && workspace !== 'planning')) return null;
-    const identity = { kind: 'agent' as const, id: credential.principalId ?? `project-key:${credential.id}`, label: credential.label };
+    const publisherKeyId = workspace === 'design' ? credential.designPublisherKeyId ?? credential.id : credential.id;
+    const identity = { kind: 'agent' as const, id: credential.principalId ?? `project-key:${publisherKeyId}`, label: credential.label };
     if (credential.designAccess) {
       if (credential.designAccess === 'publish') return { ...identity, permissions: ['read', 'write'], gitPublishOnly: true };
       return { ...identity, permissions: ['read'], ...(credential.designAccess === 'feedback' ? { feedback: true } : {}) };
