@@ -5,6 +5,7 @@ import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import { SchedulerService, type Clock } from '../../src/services/scheduler.js';
 import type { BranchEntry, SchedulerConfig } from '../../src/types.js';
+import { DeploymentPhaseBudget, type PreviewMemoryCapacity } from '../../src/services/deployment-phase-budget.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -22,6 +23,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 class FakeClock implements Clock {
   constructor(private t: number = 0) {}
   now(): number { return this.t; }
+  monotonicNow(): number { return this.t; }
   advance(ms: number): void { this.t += ms; }
   set(ms: number): void { this.t = ms; }
 }
@@ -101,6 +103,85 @@ describe('SchedulerService', () => {
   // ── capacity and LRU eviction ──
 
   describe('capacity', () => {
+    it('wakes the 26th branch with memory available and never evicts an existing preview on admission', async () => {
+      for (let index = 0; index < 25; index++) stateService.addBranch(makeBranch(`online-${index}`));
+      let memory: PreviewMemoryCapacity | null = { scope: 'host', totalMB: 100, limitMB: 85, usedMB: 40 };
+      scheduler.setMemoryCapacityProvider(async () => memory);
+      await scheduler.wake('eligible');
+      expect(woken).toEqual(['eligible']);
+      expect(cooled).toEqual([]);
+      expect(scheduler.getSnapshot().memoryCapacity).toMatchObject({ usedMB: 40, limitMB: 85 });
+      expect(scheduler.getSnapshot().capacityUsage.max).toBeNull();
+      memory = { ...memory, usedMB: 85 };
+      await expect(scheduler.wake('wait-at-limit')).rejects.toThrow('已达容量上限');
+      memory = null;
+      await expect(scheduler.wake('wait-unknown')).rejects.toThrow('无法确认');
+      expect(cooled).toEqual([]);
+      expect(woken).toEqual(['eligible']);
+    });
+
+    it('cools only one confirmed idle and unprotected preview at a time when physical memory is tight', async () => {
+      const before = (offset: number) => new Date(clock.now() - offset).toISOString();
+      stateService.addBranch(makeBranch('never-observed'));
+      stateService.addBranch(makeBranch('fixed', 'running', { pinnedByUser: true, lastAccessedAt: before(3_000_000) }));
+      stateService.addBranch(makeBranch('idle-old', 'running', { lastAccessedAt: before(2_000_000) }));
+      stateService.addBranch(makeBranch('idle-next', 'running', { lastAccessedAt: before(1_000_000) }));
+      stateService.addBranch(makeBranch('recent', 'running', { lastAccessedAt: before(10_000) }));
+      let memory: PreviewMemoryCapacity | null = null;
+      scheduler.setMemoryCapacityProvider(async () => memory);
+      await scheduler.tick();
+      memory = { scope: 'host', totalMB: 100, limitMB: 85, usedMB: 84 };
+      await scheduler.tick();
+      expect(cooled).toEqual([]);
+      memory = { ...memory, usedMB: 86 };
+      await scheduler.tick();
+      expect(cooled).toEqual(['idle-old']);
+      memory = { ...memory, usedMB: 84 };
+      await scheduler.tick();
+      expect(cooled).toEqual(['idle-old']);
+    });
+
+    it('releases confirmed idle memory for a queued deployment before physical usage reaches the ceiling', async () => {
+      stateService.addBranch(makeBranch('idle', 'running', { lastAccessedAt: new Date(clock.now() - 2_000_000).toISOString() }));
+      stateService.addBranch(makeBranch('recent', 'running', { lastAccessedAt: new Date(clock.now()).toISOString() }));
+      const capacity: PreviewMemoryCapacity = { scope: 'host', totalMB: 8192, limitMB: 6963.2, usedMB: 6000 };
+      const budget = new DeploymentPhaseBudget(() => capacity.limitMB - capacity.usedMB);
+      scheduler.setMemoryCapacityProvider(async () => capacity, (limitMB, wakeMB) => budget.hasStartupMemoryPressure(limitMB, wakeMB));
+      const request = new AbortController();
+      const pending = budget.acquire('start', { branchId: 'queued' }, { memoryMB: 512, signal: request.signal });
+      try {
+        expect(budget.snapshot().start.queued[0]?.reason).toBe('memory-headroom');
+        await scheduler.tick();
+        expect(cooled).toEqual(['idle']);
+        expect(scheduler.getSnapshot().resourcePressure).toBe('pressure');
+        capacity.usedMB = 4000;
+        budget.pump();
+        (await pending)();
+        await scheduler.tick();
+        expect(cooled).toEqual(['idle']);
+      } finally { request.abort(); await pending.catch(() => undefined); }
+    });
+
+    it('lets a recent deferred wake request trigger idle cooling without starting a branch in the background', async () => {
+      const idleAt = new Date(clock.now() - 2_000_000).toISOString();
+      stateService.addBranch(makeBranch('idle-a', 'running', { lastAccessedAt: idleAt }));
+      stateService.addBranch(makeBranch('idle-b', 'running', { lastAccessedAt: idleAt }));
+      stateService.addBranch(makeBranch('requested', 'idle', { heatState: 'cold', lastStopSource: 'scheduler',
+        services: { api: { profileId: 'api', containerName: 'preserved', hostPort: 1024, status: 'stopped' } } }));
+      const capacity: PreviewMemoryCapacity = { scope: 'host', totalMB: 8192, limitMB: 6963.2, usedMB: 6000 };
+      const budget = new DeploymentPhaseBudget(() => capacity.limitMB - capacity.usedMB);
+      scheduler.setMemoryCapacityProvider(async () => capacity, (limitMB, wakeMB) => budget.hasStartupMemoryPressure(limitMB, wakeMB));
+      await scheduler.tick();
+      expect(cooled).toEqual([]);
+      scheduler.noteDeferredWakeMemory('requested', 512);
+      await scheduler.tick();
+      expect(cooled).toHaveLength(1);
+      expect(woken).toEqual([]);
+      clock.advance(120_001);
+      await scheduler.tick();
+      expect(cooled).toHaveLength(1);
+    });
+
     it('markHot succeeds when under capacity', () => {
       stateService.addBranch(makeBranch('a'));
       scheduler.markHot('a');

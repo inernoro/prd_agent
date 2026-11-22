@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DeploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
+import { calculatePreviewMemoryCapacity, DeploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
 
 import { acquireBuildSlot, buildGateStatus, __resetBuildGateForTest, setMaxConcurrentBuildsProvider,
   setBuildGateHostLoadProvider, type BuildLoadPressure } from '../../src/services/build-gate.js';
@@ -9,6 +9,15 @@ import type { BranchEntry } from '../../src/types.js';
 describe('部署阶段容量准入', () => {
   beforeEach(() => { __resetBuildGateForTest(); setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 })); });
   afterEach(() => { __resetBuildGateForTest(); setBuildGateHostLoadProvider(null); });
+
+  it('以实际内存的 85% 动态重算上限，并同时遵守显式 Docker 容量', () => {
+    expect(calculatePreviewMemoryCapacity(100_000, 70_000)).toEqual({ scope: 'host', totalMB: 100_000, usedMB: 30_000, limitMB: 85_000 });
+    expect(calculatePreviewMemoryCapacity(200_000, 170_000)?.limitMB).toBe(170_000);
+    expect(calculatePreviewMemoryCapacity(100_000, 70_000, { totalMB: 40_000, usedMB: 30_000 }))
+      .toEqual({ scope: 'docker', totalMB: 40_000, usedMB: 30_000, limitMB: 34_000 });
+    expect(calculatePreviewMemoryCapacity(100_000, 10_000, { totalMB: 40_000, usedMB: 5_000 })?.scope).toBe('host');
+    expect(calculatePreviewMemoryCapacity(100_000, undefined)).toBeNull();
+  });
 
   it('编译槽不足时首次启动不占半份资源，既有启动可以先推进', async () => {
     setMaxConcurrentBuildsProvider(() => 1);

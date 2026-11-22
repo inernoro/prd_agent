@@ -14,7 +14,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import type { CdsConfig } from '../../src/types.js';
 
 describe('真实HTTP固定授权与期限', () => {
-  let root: string, base: string, state: StateService, server: http.Server;
+  let root: string, base: string, state: StateService, scheduler: SchedulerService, server: http.Server;
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-pin-http-'));
     const config = { repoRoot: root, worktreeBase: root, masterPort: 9900, workerPort: 5500, dockerNetwork: 'fixture',
@@ -22,7 +22,7 @@ describe('真实HTTP固定授权与期限', () => {
     state = new StateService(path.join(root, 'state.json')); state.load();
     state.addBranch({ id: 'branch', projectId: 'default', branch: 'feature', services: {}, status: 'idle', worktreePath: root, createdAt: new Date().toISOString() });
     const shell = new MockShellExecutor();
-    const scheduler = new SchedulerService(state, { enabled: true, maxHotBranches: 25, idleTTLSeconds: 900, tickIntervalSeconds: 60, pinnedBranches: ['branch'] });
+    scheduler = new SchedulerService(state, { enabled: true, maxHotBranches: 25, idleTTLSeconds: 900, tickIntervalSeconds: 60, pinnedBranches: ['branch'] });
     const app = express(); app.use(express.json());
     // Trusted authentication middleware stamps, never request body attributes.
     app.use((req, _res, next) => {
@@ -48,6 +48,22 @@ describe('真实HTTP固定授权与期限', () => {
   function request(route: string, body: unknown = {}, role = 'agent', method = 'POST', headers = {}) {
     return fetch(base + route, { method, headers: { 'Content-Type': 'application/json', 'x-fixture-role': role, ...headers }, body: JSON.stringify(body) });
   }
+
+  it('读取实时内存额度，旧数量配置和保存空闲时长不影响动态容量', async () => {
+    let usedMB = 24 * 1024;
+    scheduler.setMemoryCapacityProvider(async () => ({ scope: 'host', totalMB: 100 * 1024, limitMB: 85 * 1024, usedMB }));
+    const read = () => fetch(base + '/scheduler/state').then(r => r.json());
+    const health = () => fetch(base + '/cds-system/perf-health').then(r => r.json());
+    const initialHealth = await health();
+    expect(initialHealth.scheduler.memoryCapacity).toMatchObject({ usedMB });
+    expect(initialHealth.warnings).not.toContainEqual(expect.objectContaining({ code: 'scheduler-memory-unavailable' }));
+    expect(await read()).toMatchObject({ memoryCapacity: { usedMB }, capacityUsage: { max: null } });
+    const saved = await request('/scheduler/config', { idleTTLSeconds: 3600, maxHotBranches: 10 }, 'owner', 'PUT');
+    expect(saved.status).toBe(200);
+    usedMB = 85 * 1024;
+    expect((await health()).warnings).toContainEqual(expect.objectContaining({ code: 'scheduler-memory-limit' }));
+    expect(await read()).toMatchObject({ config: { idleTTLSeconds: 3600 }, memoryCapacity: { usedMB }, capacityUsage: { max: null } });
+  });
 
   it('AI空body默认24小时；AI伪造永久授权被拒绝；旧保护不能被AI覆盖/解除', async () => {
     const created = await request('/scheduler/pin/branch', {}, 'project-first'); expect(created.status).toBe(200);

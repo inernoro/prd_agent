@@ -265,8 +265,8 @@ describe('forwarder活动收据的有限资格与恢复', () => {
     expect(f.scheduler.getSnapshot().previewActivity?.status).toBe('unknown');
   });
 
-  it.each(['unknown', 'victim-conflict', 'free-room'] as const)('实际预览唤醒在%s时遵守容量资格且保留原重试状态', async mode => {
-    const f = fixture(); let released = 0, restarts = 0; const completed: string[] = [];
+  it.each(['unknown', 'victim-conflict', 'free-room', 'dynamic-full', 'forecast-wait'] as const)('实际预览唤醒在%s时遵守容量资格且保留原重试状态', async mode => {
+    const f = fixture(); let released = 0, restarts = 0; const completed: string[] = [], checkedMemory: number[] = [];
     f.state.addBranch({ id: 'cold', projectId: 'default', branch: 'codex/cold', status: 'idle', heatState: 'cold',
       lastStopSource: 'scheduler', worktreePath: '/unused', createdAt: new Date(f.now()).toISOString(),
       services: { api: { profileId: 'api', containerName: 'fixture-only', hostPort: 1, status: 'stopped' } } } as never);
@@ -274,20 +274,25 @@ describe('forwarder活动收据的有限资格与恢复', () => {
       if (mode !== 'victim-conflict') throw new Error('活动未确认');
       return new PreviewActivityCollector(f.now).snapshot();
     }, isTrustedProbeFingerprint, f.now());
-    if (mode === 'free-room') f.scheduler.setMaxHotBranches(3);
+    if (mode === 'free-room' || mode === 'dynamic-full' || mode === 'forecast-wait') {
+      f.scheduler.setMemoryCapacityProvider(async () => ({ scope: 'host', totalMB: 8192, limitMB: 6963.2,
+        usedMB: mode === 'dynamic-full' ? 6963.2 : 2000 }));
+    }
     if (mode === 'victim-conflict') f.scheduler.setCoolFn(async () => { throw new Error('原分支资格冲突'); });
     const index = fs.readFileSync(path.resolve(import.meta.dirname, '../../src/index.ts'), 'utf8');
     const start = index.indexOf('proxyService.setOnReviveCooled(async');
     const end = index.indexOf('\n  });\n}', start); expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     let revive!: (slug: string) => Promise<void>;
     new Function('proxyService', 'stateService', 'isAutoWakeEligible', 'autoWakeAdmission', 'beginBackgroundBranchOperation',
-      'completeBackgroundBranchOperation', 'schedulerService', 'containerService', transpile(index.slice(start, end + 6)))(
+      'completeBackgroundBranchOperation', 'schedulerService', 'containerService', 'deploymentPhaseBudget', transpile(index.slice(start, end + 6)))(
       { setOnReviveCooled: (fn: typeof revive) => { revive = fn; } }, f.state, isAutoWakeEligible,
       { tryAcquire: () => () => { released++; }, hasHeadroom: () => true }, () => ({ assertCurrent: () => {} }),
       (_lease: unknown, status: string) => { completed.push(status); }, f.scheduler,
-      { restartServiceInPlace: async () => { restarts++; return false; } });
+      { restartServiceInPlace: async () => { restarts++; return false; } },
+      { hasStartupMemoryHeadroom: (memoryMB: number) => { checkedMemory.push(memoryMB); return mode !== 'forecast-wait'; } });
     await revive('cold');
     expect(restarts).toBe(mode === 'free-room' ? 1 : 0);
+    expect(checkedMemory).toEqual(mode === 'free-room' || mode === 'forecast-wait' ? [512] : []);
     expect(released).toBe(1);
     if (mode !== 'free-room') {
       expect(f.state.getBranch('cold')).toMatchObject({ status: 'idle', heatState: 'cold', services: { api: { status: 'stopped' } } });
