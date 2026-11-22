@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Download, FileText, MessageSquare } from 'lucide-react';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import {
   designFeedbackCategories, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
 } from '../../../../src/shared/design-workspace';
@@ -66,7 +67,7 @@ function DeliveryFiles({ entry, version }: { entry: DesignEntry; version: Design
         <div className="dw-delivery-contents" role="region" aria-label="文件内容" tabIndex={0}>
           {visibleChunk ? (/\.md$/i.test(selected.path) ? <ReadableNotes source={visibleChunk.text} /> : <pre>{visibleChunk.text}</pre>)
             : chunk.error ? <p role="alert">{chunk.error} <button className="ep-button" type="button" onClick={() => setRetry(value => value + 1)}>重试</button></p>
-            : selected.text && chunk.loading ? <p role="status">正在读取文件</p>
+            : selected.text && chunk.loading ? <ContentLoading label="正在读取文件" />
               : <p className="dw-muted">请下载原文件查看此附件。</p>}
         </div>
         <div className="dw-delivery-actions dw-delivery-pagination" aria-label="文件分页">
