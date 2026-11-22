@@ -27,6 +27,7 @@ if a[0]=='info':print(json.dumps({'ID':'owned-daemon','DockerRootDir':${JSON.str
 elif a[:2]==['image','ls']:sys.stdout.write(chr(10).join(r['Id'] for r in v['images']))
 elif a[:2]==['ps','-aq']:sys.stdout.write(chr(10).join(r['Id'] for r in v['containers']))
 elif a[:2]==['image','inspect']:
+ if v.get('removed') and v.get('rejectPostRemovalInspect'):print('daemon unavailable',file=sys.stderr);sys.exit(1)
  rows=[r for r in v['images'] if any(q in [r['Id'],*r['RepoTags'],*r['RepoDigests']] for q in a[2:])]
  if not rows and len(a)==3:print('Error response from daemon: No such image: '+a[2],file=sys.stderr);sys.exit(1)
  print(json.dumps(rows))
@@ -37,7 +38,7 @@ elif a[:2]==['image','rm']:
  if any(c['Image']==r['Id'] for c in v['containers']):p.write_text(json.dumps(v));sys.exit(1)
  if q in r['RepoTags']:r['RepoTags'].remove(q)
  if not r['RepoTags']:v['images'].remove(r)
- p.write_text(json.dumps(v));print('deleted')
+ v['removed']=True;p.write_text(json.dumps(v));print('deleted')
 else:sys.exit(2)
 `, { mode: 0o700 });
   const request = (input: any, dockerHost?: string) => JSON.parse(execFileSync('python3', ['-c', IMAGE_CACHE_PROGRAM], { input: JSON.stringify({ action: 'preview', catalog: path.join(root, 'catalog'), instanceId: 'master-a', budgetBytes: 1024 ** 3, nowMs: now, ...input }), env: { ...process.env, PATH: root + ':' + process.env.PATH, ...(dockerHost ? { DOCKER_HOST: dockerHost } : {}) }, encoding: 'utf8', timeout: 30_000 }));
@@ -78,7 +79,17 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
   it('retires all known aliases once by physical identity with exact registry config proof', () => {
     const f = fixture();f.born();expect(f.request({}).candidates).toHaveLength(1);
     expect(f.reconcile().removed).toEqual([id]);expect(JSON.parse(fs.readFileSync(path.join(f.root, 'docker.json'), 'utf8')).images).toEqual([]);
+    const commands = fs.readFileSync(f.calls, 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]);
+    const deletion = commands.findIndex(command => command[0] === 'image' && command[1] === 'rm');
+    expect(commands.slice(deletion + 1)).toEqual([['image', 'inspect', id]]);
     expect(f.request({}).candidates).toEqual([]);
+  });
+  it('keeps the retirement receipt if exact post-delete image identity cannot be confirmed', () => {
+    const f = fixture();f.born();f.values.rejectPostRemovalInspect = true;f.save();
+    expect(f.reconcile()).toMatchObject({ removed: [], failed: [{ identity: id, reason: 'docker-image-inspect-unconfirmed' }] });
+    const ledger = JSON.parse(fs.readFileSync(path.join(f.root, 'catalog', 'images.json'), 'utf8'));
+    expect(ledger.images[id].retiring).toBe(true);
+    expect(ledger.retired).toEqual([]);
   });
   it.each([false, true])('accepts the Docker 29 descriptor for a manifest or index (index=%s) and rejects drift', (index) => {
     const f = fixture();
