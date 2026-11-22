@@ -85,6 +85,10 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(guide).toContain('右下角');
     expect(guide).toContain('批准');
     expect(guide).toContain('0.26.9');
+    expect(guide).toContain(`${origin}/api/skills/cds-pack/download`);
+    expect(guide).toContain('用本机工具解压');
+    expect(guide).toMatch(/Windows[^\n]*0\.26\.10[^\n]*CRLF/);
+    expect(guide).not.toContain('先运行 cdscli update');
     expect(guide).toContain('stage=task');
 
     const manifest = await fetch(`${origin}/api/agent/setup.json?${query}`);
