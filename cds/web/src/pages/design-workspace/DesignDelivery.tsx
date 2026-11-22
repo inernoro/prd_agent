@@ -63,15 +63,16 @@ function DeliveryFiles({ entry, version }: { entry: DesignEntry; version: Design
           <summary>章节目录 · {selected.headings.length} 项</summary>
           <ul>{selected.headings.map((heading, index) => <li key={index}>{heading}</li>)}</ul>
         </details> : null}
-        {visibleChunk ? <>
-          {/\.md$/i.test(selected.path) ? <ReadableNotes source={visibleChunk.text} /> : <pre>{visibleChunk.text}</pre>}
-          {(history.length > 1 || visibleChunk.nextOffset !== null) && <div className="dw-delivery-actions" aria-label="文件分页">
-            {history.length > 1 && <button className="ep-button" type="button" onClick={() => setHistory(history.slice(0, -1))}>上一段</button>}
-            {visibleChunk.nextOffset !== null && <button className="ep-button" type="button" onClick={() => setHistory([...history, visibleChunk.nextOffset!])}>下一段</button>}
-          </div>}
-        </> : chunk.error ? <p role="alert">{chunk.error} <button className="ep-button" type="button" onClick={() => setRetry(value => value + 1)}>重试</button></p>
-          : selected.text && chunk.loading ? <p role="status">正在读取文件</p>
-            : <p className="dw-muted">请下载原文件查看此附件。</p>}
+        <div className="dw-delivery-contents" role="region" aria-label="文件内容" tabIndex={0}>
+          {visibleChunk ? (/\.md$/i.test(selected.path) ? <ReadableNotes source={visibleChunk.text} /> : <pre>{visibleChunk.text}</pre>)
+            : chunk.error ? <p role="alert">{chunk.error} <button className="ep-button" type="button" onClick={() => setRetry(value => value + 1)}>重试</button></p>
+            : selected.text && chunk.loading ? <p role="status">正在读取文件</p>
+              : <p className="dw-muted">请下载原文件查看此附件。</p>}
+        </div>
+        <div className="dw-delivery-actions dw-delivery-pagination" aria-label="文件分页">
+          {history.length > 1 && <button className="ep-button" type="button" onClick={() => setHistory(history.slice(0, -1))}>上一段</button>}
+          {visibleChunk && visibleChunk.nextOffset !== null && <button className="ep-button" type="button" onClick={() => setHistory([...history, visibleChunk.nextOffset!])}>下一段</button>}
+        </div>
       </div>}
     </div>
   </section>;

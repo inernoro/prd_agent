@@ -441,16 +441,18 @@
 .dw-delivery-files svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 2px; }
 .dw-delivery-files small { display: block; margin-top: 3px; }
 .dw-delivery-document { display: grid; gap: 12px; align-content: start; min-width: 0; padding: 12px; }
-.dw-delivery-document pre {
-  border: 1px solid var(--dw-line);
-  background: var(--dw-sunken);
-  padding: 10px;
-  margin: 0;
-  max-height: 28rem;
+.dw-delivery-contents {
+  block-size: clamp(12rem, 42vh, 26rem);
+  min-width: 0;
   overflow: auto;
-  white-space: pre-wrap;
-  tab-size: 2;
+  padding: 10px;
+  border: 1px solid var(--dw-line);
+  border-radius: 6px;
+  background: var(--dw-sunken);
+  overscroll-behavior: contain;
 }
+.dw-delivery-contents pre { margin: 0; white-space: pre-wrap; tab-size: 2; }
+.dw-delivery-pagination { min-height: 32px; }
 .dw-delivery-document .dw-notes-table { max-width: 100%; overflow: auto; }
 .dw-delivery-outline ul { margin-bottom: 0; }
 .dw-delivery-thread {
