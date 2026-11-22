@@ -6351,18 +6351,15 @@ const BranchCard = memo(function BranchCard({
           - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
-      {/* 卡片按实际内容排布，CSS grid 只拉齐同一行；状态和主操作保留固定阅读顺序。 */}
+      {/* 网格按同排最高卡片拉齐，失败摘要最多两行，完整原因在分支详情。 */}
       {showsIssue && !failedPhase ? (
-        <div
-          className={`mx-5 mt-3 flex min-w-0 flex-col gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}
-          title={deployFailureMessage(branch, projectProfileIds)}
-        >
+        <div className={`mx-5 mt-3 flex min-w-0 flex-col gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}>
           <div className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="min-w-0 truncate">{issueLabel}</span>
             <span className="ml-auto shrink-0 whitespace-nowrap font-normal opacity-75">{statusTimeText}</span>
           </div>
-          <div className="break-words text-xs font-normal leading-5 text-foreground/85">
+          <div className="line-clamp-2 break-words text-xs font-normal leading-5 text-foreground/85">
             {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
           </div>
         </div>
@@ -6713,7 +6710,7 @@ const BranchCard = memo(function BranchCard({
       {!showsIssue || failedPhase ? (
         <div className="mx-5 mt-2.5 mb-3 flex min-h-[1.125rem] min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs leading-[1.125rem] text-muted-foreground">
           {failedPhase ? (
-            <span className="min-w-0 truncate text-destructive" title={deployFailureMessage(branch, projectProfileIds)}>
+            <span className="min-w-0 max-w-full truncate text-destructive">
               {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
             </span>
           ) : finishing ? (
