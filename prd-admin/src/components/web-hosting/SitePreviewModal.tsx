@@ -46,6 +46,7 @@ interface Props {
   onAskEnabledChange?: (siteId: string, enabled: boolean) => void;
   /** 是否可改「允许访客评论」开关（仅 owner/editor）。viewer 角色只读评论、不显示开关 */
   canToggleComments?: boolean;
+  initialCommentsOpen?: boolean;
   /**
    * 「帮我修改」：交给页面打开生成工作台（一个对话 + 一个预览，历史版本也在那里）。
    * 2026-09-24 起修改不再挤在预览右侧 440px 的侧栏里——草稿只剩一小块，看不到改了什么。
@@ -64,6 +65,7 @@ export default function SitePreviewModal({
   onCommentsEnabledChange,
   onAskEnabledChange,
   canToggleComments = true,
+  initialCommentsOpen = false,
   onEditInWorkbench,
   onSiteVersionChanged,
 }: Props) {
@@ -92,8 +94,7 @@ export default function SitePreviewModal({
   /** 加载偏慢：只挂一条角标提示，不遮挡已经绘制出来的内容 */
   const [slow, setSlow] = useState(false);
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
-  const [panelOverride, setRightPanel] = useState<'none' | 'comments' | 'ask' | null>(null);
-  const rightPanel = panelOverride ?? (sideBySide ? 'comments' : 'none');
+  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>(initialCommentsOpen ? 'comments' : 'none');
   const showComments = rightPanel === 'comments';
   const reviewSidebar = useReviewSidebarWidth(readerWidth);
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {

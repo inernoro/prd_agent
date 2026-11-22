@@ -480,20 +480,26 @@ export default function WebPagesPage() {
   const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
-  // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
-  const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
+  const [sitePreview, setSitePreview] = useState<{ site: HostedSite; openComments: boolean } | null>(null);
+  const commentSite = sitePreview?.site;
   const relatedOpenId = new URLSearchParams(location.search).get('openSite');
   const [relatedOpenError, setRelatedOpenError] = useState('');
-  const { open: openRelatedSite, cancel: cancelRelatedSite } = useRelatedSiteOpener(setCommentSite, setRelatedOpenError);
+  const showSitePreview = useCallback((site: HostedSite) => setSitePreview({ site, openComments: false }), []);
+  const { open: openRelatedSite, cancel: cancelRelatedSite } = useRelatedSiteOpener(showSitePreview, setRelatedOpenError);
   useEffect(() => {
     if (!relatedOpenId) return;
     void openRelatedSite(relatedOpenId);
     return cancelRelatedSite;
   }, [relatedOpenId, openRelatedSite, cancelRelatedSite]);
 
+  const openSiteComments = (site: HostedSite) => {
+    cancelRelatedSite();
+    setSitePreview({ site, openComments: true });
+  };
+
   // 「帮我修改」进生成工作台：对话里就是每一轮修改，右边在线上版与草稿之间切换，版本记录也在那里。
   const openSiteEditor = (site: HostedSite) => {
-    setCommentSite(null);
+    setSitePreview(null);
     setWorkbenchTarget({ kind: 'site', site });
   };
   // 提问设置：站点卡「更多设置」直达。原先只有大预览顶栏的齿轮一个入口，
@@ -1291,7 +1297,7 @@ export default function WebPagesPage() {
               onReplaceFile={(file) => setReplaceTarget({ site, file })}
               onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
               onMove={() => setMovingSite(site)}
-              onComments={() => setCommentSite(site)}
+              onComments={() => openSiteComments(site)}
               onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
               onAiEdit={() => openSiteEditor(site)}
             />
@@ -1319,7 +1325,7 @@ export default function WebPagesPage() {
             onShare={(anchor) => handleShare(site.id, anchor)}
             onQrCode={() => setQrSite(site)}
             onTogglePublic={() => handleMakePublic(site)}
-            onComments={() => setCommentSite(site)}
+            onComments={() => openSiteComments(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
             onAiEdit={() => openSiteEditor(site)}
           />
@@ -2392,26 +2398,26 @@ export default function WebPagesPage() {
       <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }} title="无法打开关联文档"
         content={<p className="p-5 text-sm text-token-secondary" role="alert">{relatedOpenError}</p>}
         actions={<Button onClick={() => setRelatedOpenError('')}>关闭</Button>} />
-      {/* 评论管理：站点预览 iframe + 评论面板 + 允许评论开关 */}
       {commentSite && (
         <SitePreviewModal
           key={commentSite.id}
           site={commentSite}
+          initialCommentsOpen={sitePreview.openComments}
           onNavigateRelated={openRelatedSite}
           onSiteVersionChanged={(updated) => {
-            setCommentSite(updated);
+            setSitePreview(prev => prev?.site.id === updated.id ? { ...prev, site: updated } : prev);
             setSites(current => current.map(item => item.id === updated.id ? updated : item));
           }}
           onEditInWorkbench={() => openSiteEditor(commentSite)}
-          onClose={() => { cancelRelatedSite(); setCommentSite(null); }}
+          onClose={() => { cancelRelatedSite(); setSitePreview(null); }}
           canToggleComments={siteCaps(commentSite).canEdit}
           onCommentsEnabledChange={(sid, enabled) => {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
-            setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, commentsEnabled: enabled } : prev));
+            setSitePreview(prev => prev?.site.id === sid ? { ...prev, site: { ...prev.site, commentsEnabled: enabled } } : prev);
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, commentsEnabled: enabled } : x)));
           }}
           onAskEnabledChange={(sid, enabled) => {
-            setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, askEnabled: enabled } : prev));
+            setSitePreview(prev => prev?.site.id === sid ? { ...prev, site: { ...prev.site, askEnabled: enabled } } : prev);
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, askEnabled: enabled } : x)));
           }}
         />
