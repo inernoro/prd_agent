@@ -17,7 +17,7 @@
     "cds/cli/acceptance/design-browser.mjs": "1d2e474d5d4a6f93e34f78b52bae070b174a5cbb793871bf4be6e475dc997c97",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "fbb27344fe4be3d2feeb3c3bd9b7492bd0d47161ad308dad4bb589b5096c1a72",
+    "cds/cli/cdscli.py": "ccbba9569c72568566e6739b12981087c555f072c925383157b3f07ab101aadc",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "003ae9a82cd1a9536cbd27c1842166513e4f629d046ff0a513bdef5b238ac46a",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -51,7 +51,7 @@
     "cds/tests/test_cdscli_release_target.py": "99f956ef04882e32a2a49f4456092b48a9713e4792ca7bb7b1254f6a7d3d91d6",
     "cds/tests/test_cdscli_schedule_prompt.py": "69c2dfe74b6813604b7e90e6c2e1c5b22ac374c6f1a07cb52d68adc84306e711",
     "cds/tests/test_cdscli_self_action_completion.py": "86a8742594badc73cefaa57eef858f4f2050cdfe2d57b02ae6f7316dd909a056",
-    "cds/tests/test_cdscli_setup_check.py": "9126883edf2d73058aa305e9f1c3c87fd50414b8ae5a3da3e47662de5e41871a",
+    "cds/tests/test_cdscli_setup_check.py": "1731f557d394d5025c5948ec8b7648038410d5c3037aafbb88d8b83a2ffce666",
     "cds/tests/test_cdscli_verify_runtime_env.py": "3a56bb496a5d02bd4fabbe7ce21d162117ece1483933caa4cf920d0421426719",
     "cds/tests/test_env_meta_phase8.py": "ca4192bf4ae5da0511b6dd0f4e4a5abaceda8d3436c998b62c5811bba390852c",
     "cds/tests/test_init_script_phase17.py": "61097a32ed23e2856befa73203a9bd0f7a1f123efd98586cbb4e68106840066e",
@@ -73,5 +73,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-22T11:44:48.532419+00:00"
+  "generatedAt": "2026-11-22T11:46:43.933453+00:00"
 }

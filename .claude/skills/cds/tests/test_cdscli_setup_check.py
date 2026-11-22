@@ -222,6 +222,7 @@ class SetupCheckTests(unittest.TestCase):
         self.assertTrue(self.requests[-1][1] == SECRET)
         self.assertEqual([row.get("designAccess") for row in self.design_requests], ["publish"])
         self.assertEqual([row.get("agentName") for row in self.design_requests], ["Fixture designer"])
+        self.assertIn("在当前项目发布、续版和读取设计稿件", self.design_requests[0]["purpose"])
         self.assertEqual(self.poll_proofs, [True, True])
         binding = json.loads(self.credentials.read_text())
         self.assertEqual((binding.get("host"), binding.get("projectId")), (self.host, "proj-a"))

@@ -6147,7 +6147,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
     )
     if design_access:
         purpose = {"read": "申请读取当前项目的设计稿件。", "feedback": "申请读取稿件并回传实施反馈。",
-                   "publish": "申请发布或修订当前项目中可核对 Git 来源的设计稿件。"}[design_access]
+                   "publish": "申请在当前项目发布、续版和读取设计稿件，以及回复实施反馈。"}[design_access]
     # The ordinary recovery path uses the saved user credential. A project key
     # cannot preserve principal/expiry policy when requesting a replacement key.
     if local_key:
