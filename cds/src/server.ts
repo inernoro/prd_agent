@@ -5642,15 +5642,31 @@ export function createServer(deps: ServerDeps): express.Express {
   const stopPlanningSweep = startPlanningSweep({
     projects: () => clusterIdentity.getConfig()?.role === 'member' ? []
       : deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id),
-    sweep: async (projectId, through) => {
+    sweep: async (projectId, through, signal) => {
       await planning.sweepRecordedRemovals(projectId, through);
+      if (signal.aborted) return;
       await planning.scanGithubFileAnchors(projectId);
+      if (signal.aborted) return;
       await planning.sweepDuplicatePairs(projectId, through);
     },
     onError: () => console.warn('[engineering-planning] 功能消失巡检暂不可用，将重试'),
   });
-  const closePlanning = async () => { await stopPlanningSweep(); await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]); };
-  app.once('close', () => { void closePlanning(); });
+  let planningShutdown: Promise<void> | undefined;
+  const closePlanning = () => planningShutdown ??= (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Reserve time in the process shutdown window for the control plane's state flush.
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('工程规划资源退出等待超时')), 2_000);
+    });
+    try {
+      await Promise.race([deadline, stopPlanningSweep().then(async () => {
+        await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]);
+      })]);
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  app.once('close', () => { void closePlanning().catch(() => console.warn('[engineering-planning] 资源收尾未确认')); });
   deps.registerResourceShutdown?.(closePlanning);
 
   const dtsActor = (req: express.Request): DtsActor => {

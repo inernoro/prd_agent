@@ -16,7 +16,8 @@ public class ModelUpgradeExpiryTests
     [InlineData(false)]
     public async Task OnlySuccessfulExpiredPendingCasReleasesBudgetAndMakesRequestRetryable(bool winsCas)
     {
-        var now = DateTime.UtcNow;
+        // The queued request and the reserved budget belong to the same UTC day.
+        var now = new DateTime(2026, 11, 21, 12, 0, 0, DateTimeKind.Utc);
         var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
         var queue = new Mock<IMongoCollection<BsonDocument>>(MockBehavior.Strict);
         var audits = new Mock<IMongoCollection<BsonDocument>>(MockBehavior.Strict);
