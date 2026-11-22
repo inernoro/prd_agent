@@ -34,7 +34,7 @@ export function buildAgentSetupGuide(origin: string, selection: AgentSetupSelect
     '```sh', check, '```',
     target.kind === 'system'
       ? '当前是系统任务，没有项目 ID；不得拿项目列表第一项代替。CLI 只复用已有系统凭据；浏览器登录不能替代 CLI 凭据。没有系统 CLI 权限时由人类在已登录的 CDS 页面处理，不反复要求登录、不执行项目 connect、不自行签发或扩大权限。系统写操作仍按页面审批执行。'
-      : `仅在自检明确报告缺少或失效的目标权限时，执行以下命令。\n\n\`\`\`sh\n${connect}\n\`\`\`\n\n申请发出后，让系统所有者打开 ${origin}/project-list，在右下角「授权申请」核对项目与智能体，点击${design ? '「批准设计发布」' : '「批准」'}。智能体等待批准，自动领取并保存凭据，然后再次运行自检。${design ? '等待窗口中断时，用同行命令继续领取原申请。' : ''}${target.kind === 'new' ? '使用同一条 connect 命令创建和换取授权，再用返回的 projectId 再次执行自检。' : ''}`,
+      : `仅在自检明确报告缺少或失效的目标权限时，执行以下命令。\n\n\`\`\`sh\n${connect}\n\`\`\`\n\n申请发出后，让系统所有者打开 ${origin}/project-list，在右下角「授权申请」核对项目与智能体，点击${design ? '「批准设计发布」' : '「批准」'}。智能体等待批准，自动领取并保存凭据，然后再次运行自检。${design ? '等待中断时，运行同一条命令继续领取原申请。' : ''}${target.kind === 'new' ? '使用同一条 connect 命令创建和换取授权，再用返回的 projectId 再次执行自检。' : ''}`,
     '主机、项目或凭据来源冲突时停止并报告冲突，不把冲突当作缺少权限重新授权。凭据由现有 connect 原子保存到 .cds/credentials.json 并加入 Git 忽略；不索要、不展示、不复述密钥。',
     '',
     '## 3. 自检通过后才执行任务',

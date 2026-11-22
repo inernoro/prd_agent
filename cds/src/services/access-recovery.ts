@@ -37,7 +37,7 @@ export function inspectAccessRecovery(state: StateService, projectId: string, pl
   if ('projectIds' in credential && credential.projectIds && !credential.projectIds.includes(projectId)) return undefined;
   const principalId = credential.principalId;
   if (kind === 'user' && !principalId) return { state: 'credential-unusable', kind };
-  const identity = { principalId, kind, ...('designAccess' in credential ? { designAccess: credential.designAccess } : {}) };
+  const identity = { principalId, kind, ...('designAccess' in credential ? { designAccess: credential.designAccess } : {}) } as const;
   if (principalId) {
     const blocked = principalRecoveryBlock(state, principalId, projectId);
     if (blocked) return { state: blocked, ...identity };
