@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.26.8",
+  "version": "0.26.9",
   "skills": [
     "cds",
     "cds-project-scan",
@@ -9,7 +9,7 @@
     "preview-url"
   ],
   "files": {
-    "cds/SKILL.md": "8a7910b5a549573c0064e6d62fcc7bac35e57968c3dc9beb3501f98fc0415d7e",
+    "cds/SKILL.md": "372dd6be365fdb74d96849c5b05d42498ffef02d509884b4cfaaddfea9c4c0b2",
     "cds/cli/acceptance/.gitignore": "5875f28fb25c8a9449faa5ebb5100a488f79ea807932fb21fb52ce48fcab1db0",
     "cds/cli/acceptance/build_report_html.py": "332ef0716bfc531f3c815acc783695121fb1a6fe25c5001312b4cd34ff7ce9af",
     "cds/cli/acceptance/cds-harness.mjs": "be6a9af00cb5ae704a6f08f295795d3921d9f860447bf9b5dc207faf2e9cef75",
@@ -17,11 +17,11 @@
     "cds/cli/acceptance/design-browser.mjs": "1d2e474d5d4a6f93e34f78b52bae070b174a5cbb793871bf4be6e475dc997c97",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "5fa613c3ed607e9b39cd5d61b2aef3bf49022638f61629649455bb9db2b94074",
+    "cds/cli/cdscli.py": "3023764d4d25fbd8ea1a4630534ff3bc36ac8a19b9d5f12aa7c8ba35957c6fe1",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "003ae9a82cd1a9536cbd27c1842166513e4f629d046ff0a513bdef5b238ac46a",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
-    "cds/reference/design-intake.md": "7bef6cbd75c73d2517896698fd21cacc8cd3b9bf187e73aa696c91df5506fc14",
+    "cds/reference/design-intake.md": "9c3e7da6da7554600300015d24b45d4d63630578bc8fad190860833b2336cccc",
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
     "cds/reference/instance-catalog.json": "ba7e9fe58f72fc6eddd2a016ee15ff4cf09d57b588e017d7e99be2f8272fbb92",
@@ -44,13 +44,14 @@
     "cds/tests/test_cdscli_instances.py": "40f93c945eb58974b86ce789830e440d7708534dcc5dd29d08e810a1d2859f87",
     "cds/tests/test_cdscli_load_advice.py": "8b8b261ef3bcc9c42f1efcfc3484d8591fcaab7c14ad97eb1f3c8b60b2a07de9",
     "cds/tests/test_cdscli_planning.py": "f943620a0959eade7a3f002e53a85439442a65f9c723756e3e8a84876382245f",
+    "cds/tests/test_cdscli_private_design.py": "f7245396b5e0940cf24b9bb9b9179f0b80659b8eac8f3577aec1038bb606a8fa",
     "cds/tests/test_cdscli_profile_prebuilt_modes.py": "a269f862607531666f6a667dcd49ce2bbf889e23879851b325b611c3f10dc27b",
     "cds/tests/test_cdscli_project_branch_phase16.py": "db90f35ac6b99db15ba5e2324b0d945203f797e145a67f00d8decdece8b69b47",
     "cds/tests/test_cdscli_project_key_handover.py": "b26c7eff46d0f586617c0df1fa026d34e81ed26d986c1f830bbb22554698f4d9",
     "cds/tests/test_cdscli_release_target.py": "99f956ef04882e32a2a49f4456092b48a9713e4792ca7bb7b1254f6a7d3d91d6",
     "cds/tests/test_cdscli_schedule_prompt.py": "69c2dfe74b6813604b7e90e6c2e1c5b22ac374c6f1a07cb52d68adc84306e711",
     "cds/tests/test_cdscli_self_action_completion.py": "86a8742594badc73cefaa57eef858f4f2050cdfe2d57b02ae6f7316dd909a056",
-    "cds/tests/test_cdscli_setup_check.py": "8a69fa0f4c5766c845b96ad4978b3bf338e6d99349f0c28d65764856d2a17389",
+    "cds/tests/test_cdscli_setup_check.py": "1731f557d394d5025c5948ec8b7648038410d5c3037aafbb88d8b83a2ffce666",
     "cds/tests/test_cdscli_verify_runtime_env.py": "3a56bb496a5d02bd4fabbe7ce21d162117ece1483933caa4cf920d0421426719",
     "cds/tests/test_env_meta_phase8.py": "ca4192bf4ae5da0511b6dd0f4e4a5abaceda8d3436c998b62c5811bba390852c",
     "cds/tests/test_init_script_phase17.py": "61097a32ed23e2856befa73203a9bd0f7a1f123efd98586cbb4e68106840066e",
@@ -72,5 +73,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-22T11:37:51.510726+00:00"
+  "generatedAt": "2026-11-22T11:59:07.339375+00:00"
 }

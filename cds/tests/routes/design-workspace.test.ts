@@ -91,6 +91,7 @@ describe('private CDS design workspace', () => {
   let frameworkMeasurements: DesignFrameworkMeasurement[];
   let enableShareHandoff: boolean;
   let sources: Map<string, Buffer>;
+  let sourceLookups: number;
   const handoffKey = Buffer.alloc(32, 17);
   const sourceKey = (project: string, commit: string, sourcePath: string) => JSON.stringify([project, commit, sourcePath]);
 
@@ -106,8 +107,11 @@ describe('private CDS design workspace', () => {
       frameworkProbe: async () => frameworkMeasurements,
       resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && [7, 8].includes(pr) && (!commit || commit === activeCommit)
         ? { commit: activeCommit, url: pr === 7 ? 'https://preview.fixture.test/' : 'https://preview.fixture.test/other/' } : undefined,
-      sourcePackage: async (project: string, sha: string, sourcePath: string) => sources.get(sourceKey(project, sha, sourcePath))
-        ?? (project === projectId && sha === sourceCommit && sourcePath === 'design/fixture' ? draft() : undefined),
+      sourcePackage: async (project: string, sha: string, sourcePath: string) => {
+        sourceLookups++;
+        return sources.get(sourceKey(project, sha, sourcePath))
+          ?? (project === projectId && sha === sourceCommit && sourcePath === 'design/fixture' ? draft() : undefined);
+      },
       reviewer: async (project: string, id: string) => {
         const member = projectActor(project, id);
         if (!revokedReviewers.has(id) && member?.kind === 'human' && member.permissions.includes('read') && member.permissions.includes('approve')) {
@@ -144,6 +148,7 @@ describe('private CDS design workspace', () => {
     revokedReviewers = new Set();
     frameworkMeasurements = [];
     sources = new Map();
+    sourceLookups = 0;
     enableShareHandoff = false;
     service = openWorkspace();
     base = await openApi(service);
@@ -171,6 +176,123 @@ describe('private CDS design workspace', () => {
       body: JSON.stringify({ type, requestId, ...fields }),
     });
   }
+
+  describe('private-source publication', () => {
+    it('stores and serves exact private archives across versions without Git and keeps human review and sharing gates', async () => {
+      const first = draft('Private version one');
+      const sourcePath = 'design/private-fixture';
+      const firstInput = { sourceMode: 'private', intent: 'create', designKey: 'fixture/private', sourcePath,
+        sourceCommit: '1'.repeat(40), reviewerIds: JSON.stringify(['author']) };
+      const publisher = { actor: 'git-designer' };
+      const published = await publish('private-first', first, firstInput, publisher);
+      expect(published.status).toBe(201);
+      const receipt = await published.json();
+      const { designId } = receipt.result;
+      const replay = await publish('private-first', withZipComment(first), firstInput, { ...publisher, api: await openApi(openWorkspace()) });
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual({ ...receipt, reused: true });
+      const { sourceMode: _private, ...gitInput } = firstInput;
+      const changedMode = await publish('private-first', first, gitInput, publisher);
+      expect(changedMode.status).toBe(409);
+      expect(await changedMode.json()).toMatchObject({ message: expect.stringContaining('同一请求编号') });
+
+      const second = draft('Private version two');
+      const revise = { sourceMode: 'private', intent: 'revise', designId, expectedVersion: '1', sourcePath, sourceCommit: '2'.repeat(40) };
+      expect((await publish('unowned-revision', second, revise, { actor: 'designer' })).status).toBe(403);
+      expect((await publish('read-only-revision', second, revise, { actor: 'read-designer' })).status).toBe(403);
+      expect((await publish('outside-revision', second, revise, { actor: 'outside' })).status).toBe(404);
+      expect((await publish('private-revision', second, revise, publisher)).status).toBe(201);
+      expect((await publish('stale-revision', second, { ...revise, sourceCommit: '3'.repeat(40) }, publisher)).status).toBe(409);
+      expect(sourceLookups).toBe(0);
+      const { designs } = await (await get()).json();
+      const item = designs[0];
+      expect(designs).toHaveLength(1);
+      expect(item).toMatchObject({ id: designId, reviewRequested: true, reviewers: [{ id: 'author' }] });
+      expect(item.versions).toHaveLength(2);
+      expect(item.versions[0].delivery.archiveId).not.toBe(item.versions[1].delivery.archiveId);
+      for (const [index, bytes] of [first, second].entries()) {
+        const version = item.versions[index];
+        expect(version).toMatchObject({ version: index + 1, sourceVerification: 'private-upload', sourcePath,
+          sourceCommit: [firstInput.sourceCommit, revise.sourceCommit][index], sha256: createHash('sha256').update(bytes).digest('hex') });
+        const path = `/artifacts/${version.delivery.archiveId}`;
+        const archive = await get(path, 'read-designer');
+        expect(archive.status).toBe(200);
+        expect(archive.headers.get('cache-control')).toBe('private, no-store');
+        expect(archive.headers.get('content-type')).toContain('application/zip');
+        expect(Buffer.from(await archive.arrayBuffer())).toEqual(bytes);
+        expect((await get(path, 'outside')).status).toBe(404);
+        expect((await get(path, 'author', otherProjectId)).status).toBe(404);
+      }
+      expect((await (await get('/intake')).json()).designs).toEqual([
+        expect.objectContaining({ designId, designKey: firstInput.designKey, latestVersion: 2, sourcePaths: [sourcePath] }),
+      ]);
+      const freeze = { designId, version: 2 };
+      expect((await command('design.freeze', freeze, 'git-designer')).status).toBe(403);
+      expect((await command('design.freeze', freeze, 'other')).status).toBe(403);
+      expect((await command('design.freeze', freeze, 'author')).status).toBe(201);
+      const share = await command('share.prepare', { ...freeze, sourceCommit: revise.sourceCommit,
+        packageSha256: item.versions[1].sha256, audience: 'password', expiresInHours: 24 });
+      expect(share.status).toBe(409);
+      expect(await share.json()).toMatchObject({ message: expect.stringContaining('Git') });
+    });
+
+    it('reserves private directory and design identity across source modes in the same project', async () => {
+      const git = draft('Git verified fixture');
+      const gitPath = 'design/git-owned';
+      const gitResponse = await publish('git-owned', git, { ...gitSource(git, gitPath), requireGit: 'true', intent: 'create', designKey: 'fixture/git' });
+      expect(gitResponse.status).toBe(201);
+      const { designId: gitId } = (await gitResponse.json()).result;
+      const input = { sourceMode: 'private', intent: 'create', designKey: 'fixture/private-owned', sourceCommit: '2'.repeat(40) };
+      const privateBytes = draft('Private upload fixture');
+      const collision = await publish('private-in-git-directory', privateBytes, { ...input, sourcePath: gitPath });
+      expect(collision.status).toBe(409);
+      expect(JSON.stringify(await collision.json())).toContain(gitId);
+
+      const sourcePath = 'design/private-owned';
+      const published = await publish('private-owned', privateBytes, { ...input, sourcePath });
+      expect(published.status).toBe(201);
+      const { designId: privateId } = (await published.json()).result;
+      const keyCollision = await publish('private-key-taken', privateBytes, { ...input, sourcePath: 'design/new-directory' }, { actor: 'git-designer' });
+      expect(keyCollision.status).toBe(409);
+      expect(JSON.stringify(await keyCollision.json())).toContain(privateId);
+      const pathCollision = await publish('private-path-taken', privateBytes, { ...input, sourcePath, designKey: 'fixture/another' }, { actor: 'git-designer' });
+      expect(pathCollision.status).toBe(409);
+      expect(JSON.stringify(await pathCollision.json())).toContain(privateId);
+      const gitCollision = await publish('git-in-private-directory', git, { ...gitSource(git, sourcePath, 'b'),
+        intent: 'create', designKey: 'fixture/another-git', requireGit: 'true' }, { actor: 'git-designer' });
+      expect(gitCollision.status).toBe(409);
+      expect(JSON.stringify(await gitCollision.json())).toContain(privateId);
+      expect(await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0)).toHaveLength(2);
+    });
+
+    it('rejects invalid private source submissions and preserves explicit Git verification', async () => {
+      const bytes = draft('Validated private upload');
+      const sourcePath = 'design/validated-private';
+      const input = { sourceMode: 'private', intent: 'create', designKey: 'fixture/validation', sourcePath, sourceCommit: '3'.repeat(40) };
+      const { intent: _intent, ...missingIntent } = input;
+      const { sourcePath: _path, ...missingPath } = input;
+      for (const [label, fields] of Object.entries({
+        'missing-intent': missingIntent, 'missing-path': missingPath, 'root-path': { ...input, sourcePath: '.' },
+        'absolute-path': { ...input, sourcePath: '/design/private' }, 'traversal-path': { ...input, sourcePath: '../private' },
+        'invalid-sha': { ...input, sourceCommit: 'main' }, 'ambiguous-mode': { ...input, requireGit: 'true' },
+        'unsupported-mode': { ...input, sourceMode: 'arbitrary' },
+      })) {
+        expect((await publish(label, bytes, fields)).status, label).toBe(400);
+      }
+      expect((await publish('malformed-archive', Buffer.from('not a ZIP'), input)).status).toBe(400);
+      expect(await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0)).toEqual([]);
+
+      const { sourceMode: _mode, ...gitInput } = input;
+      const credentials = { actor: 'git-designer' };
+      const absent = await publish('git-source-absent', bytes, gitInput, credentials);
+      expect(absent.status).toBe(409);
+      expect(await absent.json()).toMatchObject({ error: 'design_git_source_required' });
+      const source = gitSource(bytes, sourcePath, '3');
+      expect((await publish('git-bytes-mismatch', draft('Different revision'), { ...gitInput, ...source, requireGit: 'true' }, credentials)).status).toBe(409);
+      expect((await publish('git-bytes-match', bytes, { ...gitInput, ...source, requireGit: 'true' }, credentials)).status).toBe(201);
+      expect((await (await get()).json()).designs[0].versions[0]).toMatchObject({ sourceVerification: 'git' });
+    });
+  });
 
 
   it('preserves complete delivery files and advice as private versioned material', async () => {

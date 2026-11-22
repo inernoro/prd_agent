@@ -41,11 +41,15 @@ const schemas = {
   ]),
   [publishTool]: z.object({
     requestId: id, designId: id.optional(), zipPath: z.string().trim().min(1).max(1200),
-    sourceCommit, sourcePath: z.string().trim().min(1).max(400),
+    sourceCommit, sourcePath: z.string().trim().min(1).max(400), sourceMode: z.literal('private').optional(),
     note: z.string().trim().min(1).max(1000).optional(),
     intent: z.enum(['create', 'revise']).optional(), designKey: designKey.optional(), expectedVersion: version,
   }).strict().superRefine((args, context) => {
     const issue = (field, message) => context.addIssue({ code: 'custom', path: [field], message });
+    if (args.sourceMode === 'private') {
+      if (!args.intent) issue('intent', '私有归档须明确新稿或续版');
+      if (args.sourcePath === '.') issue('sourcePath', '私有归档须指定稿件子目录');
+    }
     if (args.intent === 'create') {
       if (!args.designKey) issue('designKey', '新建须提供 module/draft 标识');
       if (args.designId) issue('designId', '新稿件 ID 由 CDS 分配');
@@ -59,9 +63,9 @@ const schemas = {
   }),
 };
 const descriptions = {
-  [readTool]: '用 intake 确认项目、最新版本、已核验 Git 目录和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。目标或基线无法唯一确定时，开工前一次澄清。',
+  [readTool]: '用 intake 确认项目、最新版本、已登记的稿件目录和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。目标或基线无法唯一确定时，开工前一次澄清。',
   [feedbackTool]: '在同一稿件中登记实施反馈，包含分类、目标版本、问题和证据。可以回复并指向本人发布的版本。原反馈者或项目管理者确认关闭或重新打开。重试沿用 requestId。',
-  [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。ZIP 与项目 Git 一致。重试沿用 requestId 和相同内容。',
+  [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
   name, description: descriptions[name], inputSchema: { ...z.toJSONSchema(schema), type: 'object' },
@@ -167,7 +171,7 @@ export function createDesignBridge(credentials, options = {}) {
         throw new Error('请先通过 intake 或 designs 查询当前项目。找不到要续发的原稿时，先确认稿件和基线再发布。');
       }
       const { bytes } = await localFile(credentials, zipPath, ['.zip'], fileLimit);
-      const query = new URLSearchParams({ ...fields, requireGit: 'true' });
+      const query = new URLSearchParams({ ...fields, ...(fields.sourceMode ? {} : { requireGit: 'true' }) });
       let receipt;
       try { receipt = await client.request('POST', `${path}/packages?${query}`, bytes); } catch (error) {
         if (error instanceof Error && /请求失败或超时|返回非 JSON/.test(error.message)) {
