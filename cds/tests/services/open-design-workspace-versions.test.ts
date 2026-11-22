@@ -89,6 +89,26 @@ describe('CDS OpenDesign session versions', () => {
     expect(verify).not.toHaveBeenCalled();
   });
 
+  it('preserves the persisted version if the authority revokes access during a successful probe', async () => {
+    const { filename, projectId, versions, verify } = await setup();
+    let finish!: () => void;
+    let allowed = true;
+    verify.mockImplementationOnce(() => new Promise(resolve => {
+      finish = () => resolve(healthy);
+    }));
+    const refreshScope = vi.fn(async () => allowed);
+    const change = versions.change(projectId, origin, { action: 'activate', image: newImage, expectedImage: oldImage }, refreshScope);
+    const outcome = expect(change).rejects.toMatchObject({ code: 'workspace_version_conflict' });
+    expect(refreshScope).not.toHaveBeenCalled();
+    allowed = false;
+    finish();
+    await outcome;
+    expect(refreshScope).toHaveBeenCalledOnce();
+    const restarted = new StateService(filename, root);
+    restarted.load();
+    expect(new OpenDesignWorkspaceVersions(restarted, oldImage, verify).view(projectId, origin).activeImage).toBe(oldImage);
+  });
+
   it('does not admit an unconfirmed change and keeps the accepted version during a delayed upload', async () => {
     const { filename, projectId, state, versions, verify } = await setup();
     vi.spyOn(state, 'flush').mockRejectedValueOnce(new Error('simulated state-store write failure'));
