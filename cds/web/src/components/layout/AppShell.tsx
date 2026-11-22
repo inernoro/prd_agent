@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Activity, Check, CircleAlert, Clock, Contrast, Database, Expand, FileText, Gauge, KeyRound, Layers, LayoutGrid,
   LogOut, Menu, Monitor, Moon, MoreVertical, Plus, RefreshCw, Rocket, Scaling, Search, SearchCode, Settings, ShieldCheck,
-  Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, Waypoints, X } from 'lucide-react';
+  Shrink, SlidersHorizontal, SquareTerminal, Sun, Target, Upload, UserRound, Waypoints, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -215,6 +215,7 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/engineering-planning')) return 'engineering-planning';
   if (pathname.startsWith('/design')) return 'design';
   if (pathname.startsWith('/status')) return 'status';
+  if (pathname.startsWith('/overview')) return 'overview';
   return 'projects';
 }
 
@@ -632,6 +633,17 @@ function RailNav({
           <span className="cds-rail-short">项目</span>
         </Link>
         {canManageSettings ? <>
+        <Link
+          to="/overview"
+          className="cds-rail-item"
+          data-active={active === 'overview' ? 'true' : 'false'}
+          aria-label="概览"
+          title="概览：全部项目的关系与体检"
+          onClick={onNavigate}
+        >
+          <Waypoints />
+          <span>Overview</span>
+        </Link>
         {/*
          * 发布中心先展示线上版本、责任与主干差异；执行发布从中心进入发布控制台。
          * 两页共用一个高亮项，见 activeNavKeyFor。
@@ -707,10 +719,9 @@ function RailNav({
           <span className="cds-rail-full">代码审查报告</span>
           <span className="cds-rail-short">审查</span>
         </Link>
-        <span className="cds-rail-planning-group">规划</span>
         <Link to="/engineering-planning" className="cds-rail-item" onClick={onNavigate}
           data-active={active === 'engineering-planning' ? 'true' : 'false'} aria-label="工程规划" title="工程规划">
-          <Waypoints />
+          <Target />
           <span className="cds-rail-full">工程规划</span>
           <span className="cds-rail-short">规划</span>
         </Link>

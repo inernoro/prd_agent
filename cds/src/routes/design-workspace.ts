@@ -7,7 +7,7 @@ import { PlanningError, planningId, rejectPlanning } from '../services/engineeri
 import type { DesignReviewer } from '../shared/design-workspace.js';
 
 const route = '/projects/:projectId/design';
-const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|reviewers|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
+const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|reviewers|intake|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
 export function normalizedDesignPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0];
   if (/^(?:\/_cds)?\/api\/auth\/design\/notices\/?$/i.test(path)) return '/api/auth/design/notices';
@@ -50,6 +50,7 @@ export function createDesignWorkspaceRouter(deps: {
   }
 
   router.get(route, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.workspace(projectId, actor))));
+  router.get(`${route}/intake`, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.intake(projectId, actor))));
   router.get(`${route}/reviewers`, authorized, handle(async (_req, res, projectId) => {
     res.json({ projectId, reviewers: await deps.reviewCandidates?.(projectId) ?? [] });
   }));

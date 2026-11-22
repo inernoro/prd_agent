@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rememberRelationReturn, enterRelationReturn, relationReturnKind, relationRestoreForVisit, consumeRelationRestore, type RelationReturnTask } from '../../web/src/lib/relationReturn.js';
+import { rememberRelationReturn, enterRelationReturn, relationReturnKind, relationRestoreForVisit, overviewRelationRestoreForVisit, consumeRelationRestore, type RelationReturnTask } from '../../web/src/lib/relationReturn.js';
 const task = (): RelationReturnTask => ({ kind: 'branches', branchId: 'branch-a', projectId: 'project-a', activeTagFilter: '业务', showArchived: true, selectedBranchIds: ['branch-a', 'branch-b'], relationExpanded: true });
 const enter = (token: unknown, actor = 'actor-a', branch = 'branch-a', key = 'relation-visit', index = 5) => enterRelationReturn(token, actor, branch, key, index);
 describe('关系返回的来源与任务边界', () => {
@@ -10,6 +10,19 @@ describe('关系返回的来源与任务边界', () => {
     const restore = relationRestoreForVisit('actor-a', 'source-visit', 4, 'project-a');
     expect(restore?.task).toEqual(task());
     expect(relationReturnKind(token, 'actor-a', 'branch-a', 'relation-visit', 5)).toBe('branches');
+  });
+
+  it('恢复从概览进入前的筛选并隔离分支列表和其他会话', () => {
+    const overviewTask: RelationReturnTask = { kind: 'overview', branchId: 'branch-a', projectId: 'project-a', onlyProblems: true };
+    const token = rememberRelationReturn(overviewTask, 'actor-a', 'overview-visit', 4);
+    expect(token).toBeDefined();
+    expect(enter(token)).toBe('overview');
+    expect(relationReturnKind(token, 'actor-a', 'branch-a', 'relation-visit', 5)).toBe('overview');
+    expect(relationRestoreForVisit('actor-a', 'overview-visit', 4, 'project-a')).toBeNull();
+    expect(overviewRelationRestoreForVisit('actor-b', 'overview-visit', 4)).toBeNull();
+    expect(overviewRelationRestoreForVisit('actor-a', 'overview-visit', 4)?.task).toEqual(overviewTask);
+    consumeRelationRestore(token!);
+    expect(overviewRelationRestoreForVisit('actor-a', 'overview-visit', 4)).toBeNull();
   });
   it('未知token、身份、对象、history index/key不吻合均不能猜前一页', () => {
     const token = rememberRelationReturn(task(), 'actor-a', 'boundary-source', 4)!;

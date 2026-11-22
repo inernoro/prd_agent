@@ -65,7 +65,7 @@ export type DesignReviewNotice = {
   createdAt: string; updatedAt: string; occurrences: number;
 };
 export type DesignEntry = {
-  id: string; projectId: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
+  id: string; projectId: string; designKey?: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
   comments: DesignComment[]; runs: DesignRun[]; reviewRequested?: boolean;
   currentSignoffRunId?: string | null;
   reviewers?: DesignReviewer[];
@@ -83,6 +83,18 @@ export type FrameworkRevision = {
   from?: { designId: string; version: number }; material: DesignMaterial; note?: string;
 };
 export type DesignFramework = { id: string; projectId: string; versions: FrameworkRevision[] };
+export type DesignIntake = {
+  protocolVersion: 1;
+  projectId: string;
+  permissions: { write: boolean };
+  keyFormat: 'module/draft';
+  intents: readonly ['create', 'revise'];
+  designs: Array<{
+    designId: string; designKey?: string; title: string; latestVersion: number;
+    sourceCommit: string; sourcePaths: string[]; canRevise: boolean;
+  }>;
+  frameworks: Array<{ id: string; title: string; latestVersion: number }>;
+};
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
   permissions: { write: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };

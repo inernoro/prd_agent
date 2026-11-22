@@ -1290,6 +1290,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /branches/:id/service-graph': '分支服务关系图与体检',
     'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
     'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
+    'GET /overview/topology': '全局概览：各项目关系与体检',
     'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
@@ -1865,7 +1866,7 @@ function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnTy
   if (key.designAccess) {
     const route = '/api/projects/:projectId/design';
     const path = normalizedDesignPath(req.path);
-    return read && (path === route || path === `${route}/artifacts/:artifactId`)
+    return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
       || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
   }
   const path = normalizedPlanningPath(req.path);
@@ -5641,15 +5642,31 @@ export function createServer(deps: ServerDeps): express.Express {
   const stopPlanningSweep = startPlanningSweep({
     projects: () => clusterIdentity.getConfig()?.role === 'member' ? []
       : deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id),
-    sweep: async (projectId, through) => {
+    sweep: async (projectId, through, signal) => {
       await planning.sweepRecordedRemovals(projectId, through);
+      if (signal.aborted) return;
       await planning.scanGithubFileAnchors(projectId);
+      if (signal.aborted) return;
       await planning.sweepDuplicatePairs(projectId, through);
     },
     onError: () => console.warn('[engineering-planning] 功能消失巡检暂不可用，将重试'),
   });
-  const closePlanning = async () => { await stopPlanningSweep(); await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]); };
-  app.once('close', () => { void closePlanning(); });
+  let planningShutdown: Promise<void> | undefined;
+  const closePlanning = () => planningShutdown ??= (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Reserve time in the process shutdown window for the control plane's state flush.
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('工程规划资源退出等待超时')), 2_000);
+    });
+    try {
+      await Promise.race([deadline, stopPlanningSweep().then(async () => {
+        await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]);
+      })]);
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  app.once('close', () => { void closePlanning().catch(() => console.warn('[engineering-planning] 资源收尾未确认')); });
   deps.registerResourceShutdown?.(closePlanning);
 
   const dtsActor = (req: express.Request): DtsActor => {

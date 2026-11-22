@@ -124,11 +124,11 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 
 ## 私有设计
 
-将启动参数设为 `--design` 并从已绑定的 CDS 项目工作区启动。请由系统所有者为智能体签发项目内 `designAccess: "read"` 或 `designAccess: "publish"` 的专用凭据。把已授权的主机、项目和凭据注入当前执行环境，用 `cdscli init --yes` 建立本地绑定。
+按 [CDS 设计接入](../../.claude/skills/cds/reference/design-intake.md) 从已绑定的项目 Git 工作区启动 `--design` MCP。系统所有者可为智能体签发当前项目的 `designAccess: "read"` 或 `designAccess: "publish"` 凭据。用项目环境的主机、项目和凭据运行 `cdscli init --yes`。
 
 | 工具 | 输入 | 行为 |
-|---|---|---|
-| `cds_design_read` | `view` 取 `designs`、`frameworks`、`design` 或 `framework`。读取单项时填写 `id`，可选 `version` | 列出稿件和框架，或读取选定版本。 |
-| `cds_design_publish` | `zipPath`、`sourceCommit`、`sourcePath`、`requestId`。更新时填写原 `designId`，可选 `note` | 由 CDS 核对该项目 Git 提交和文件后，发布私有版本。同一稿件沿用同一发布者。 |
+| --- | --- | --- |
+| `cds_design_read` | `view` 使用 `intake`、`designs`、`frameworks`、`design` 或 `framework`。读取单项时填 `id`，可选 `version` | 读取项目接入清单，发现稿件和框架，或回读固定版本。`intake` 由项目 API 提供，含 `protocolVersion`、稿件接入标识、已核验 Git 目录和续版权限。 |
+| `cds_design_publish` | 公共字段 `zipPath`、`sourceCommit`、`sourcePath`、`requestId`，可选 `note`。新稿传 `intent=create` 与 `designKey`，续版传 `intent=revise`、`designId` 与 `expectedVersion` | 从已同步项目 Git 导出 ZIP 并发布。服务器在同一项目内核对稳定标识、可信目录、基线版本和发布身份。 |
 
-项目内 ZIP 须从已同步的 Git 提交导出，最大 4 MiB。源目录包含稿件清单、思路和原型。发布后用项目内同稿编号读取新旧版本。对比实拍可用 `cdscli design diff` 或 CDS 设计页。
+先从 `intake` 识别同稿、基线和权限，再确定写入目标。信息有歧义时在制作前一次澄清。`designKey` 是 `module/draft`，新模块使用新的模块段，同稿一直沿用稿件 ID。回执用于固定版回读，超时沿用原请求和内容重试。

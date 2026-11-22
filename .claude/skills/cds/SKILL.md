@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.6
-description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design review, canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
+  version: 0.26.7
+description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design intake (CDS 设计接入), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.6 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"
+> **版本**：v0.26.7 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -396,9 +396,9 @@ $CLI debt stats
 
 ## 设计稿件与框架
 
-在项目内讨论出稿时读当前框架，评审时用对方指定的稿件版本。明确收到发布请求后，从已提交的目录发布。归档目录至少包含 `design.json`、`思路.md` 和清单声明的单文件 HTML 路径。默认原型入口是 `dist/index.html`。稿件附件沿用项目权限。
+收到「请阅读 CDS 设计接入并按规范提交」时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和 Git 来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
 
-外部设计智能体使用 `cds/mcp/src/server.mjs --design`，从目标项目工作区启动。CDS 系统所有者可在 `POST /api/projects/:projectId/agent-keys` 签发 `designAccess` 为 `read` 或 `publish` 的项目凭据。用执行环境注入已授权的 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY`，以 `cdscli init --yes` 写入该工作区绑定。凭据用 `cds_design_read` 读取私有框架和稿件。具备发布权限时，用 `cds_design_publish` 提交工作区内的 ZIP、已同步至项目 Git 的 `sourceCommit` 和 `sourcePath`。续发提供原 `designId`，沿用同一已授权发布者。首次发布保存回执，超时沿用原 `requestId` 重试。定稿、签收和固定版本分享由获授权成员处理。
+项目所有者在 `POST /api/projects/:projectId/agent-keys` 签发 `designAccess` 为 `read` 或 `publish` 的项目凭据。项目环境提供 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY` 后，以 `cdscli init --yes` 绑定当前 Git 工作区。外部智能体从该目录启动 `node <CDS 源码>/cds/mcp/src/server.mjs --design`。定稿、签收和固定版本分享由获授权成员处理。
 
 脚手架把框架版本、规则类别和自检待办写进稿件。从 `--dir` 发布时带上仓库相对目录，CDS 可在该项目的代码仓库中核对时验证提交和文件。常规项目凭据可记录其他仓库的发布声明。仅设计发布凭据及设计 MCP 要求项目 Git 实际核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
 
@@ -411,11 +411,12 @@ $CLI debt stats
 ```bash
 $CLI framework list
 $CLI framework show <框架编号>
+$CLI design intake
 $CLI design scaffold --framework <框架编号> --dir design/<目录> --title "稿件标题"
 $CLI design reviewers
-$CLI design publish --dir design/<目录> --note "本版修改" --reviewer <成员ID>
+$CLI design publish --intent create --design-key <模块>/<稿件> --dir design/<目录> --note "本版修改" --reviewer <成员ID>
 $CLI design request-review <稿件编号> --reviewer <成员ID>
-$CLI design publish <稿件编号> --dir design/<目录> --resolves "<评论编号>=如何处理"
+$CLI design publish <稿件编号> --intent revise --expected-version <最新版本> --dir design/<目录> --resolves "<评论编号>=如何处理"
 $CLI design list
 $CLI design comments <稿件编号> --open
 $CLI design diff <稿件编号> 1 2

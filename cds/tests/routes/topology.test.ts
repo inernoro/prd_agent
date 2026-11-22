@@ -121,6 +121,32 @@ describe('topology router', () => {
     expect((await request(server, 'POST', '/api/compose/lint', { composeYaml: CONFLICT_YAML, projectId: 'p-x' })).status).toBe(403);
     denyProject = null;
   });
+
+  it('GET /overview/topology 保留默认分支概览并过滤未授权项目', async () => {
+    const now = '2026-11-22T01:00:00.000Z';
+    for (const id of ['overview-project', 'overview-private', 'overview-empty']) {
+      stateService.addProject({ id, slug: id, name: id, kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now });
+    }
+    stateService.addBranch({ id: 'overview-main', projectId: 'overview-project', branch: 'main', worktreePath: tmpDir,
+      status: 'stopped', createdAt: '2026-11-21T01:00:00.000Z' });
+    stateService.addBranch({ id: 'overview-newer', projectId: 'overview-project', branch: 'preview', worktreePath: tmpDir,
+      status: 'stopped', createdAt: now });
+    stateService.addBranch({ id: 'overview-private-main', projectId: 'overview-private', branch: 'main', worktreePath: tmpDir,
+      status: 'stopped', createdAt: now });
+    denyProject = 'overview-private';
+    try {
+      const res = await request(server, 'GET', '/api/overview/topology');
+      expect(res.status).toBe(200);
+      expect(res.body.projects).toHaveLength(2);
+      expect(res.body.projects).toEqual(expect.arrayContaining([
+        expect.objectContaining({ projectId: 'overview-project', branch: { id: 'overview-main', name: 'main', status: 'stopped' }, branchCount: 2 }),
+        expect.objectContaining({ projectId: 'overview-empty', branch: null, branchCount: 0 }),
+      ]));
+    } finally {
+      denyProject = null;
+    }
+  });
+
   it('GET /branches/:id/route-lookup 给出转发器与 master 兜底的判定并标一致性', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'proj', slug: 'demo', name: 'demo', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
@@ -268,9 +294,10 @@ describe('topology router', () => {
     }
   });
 
-  it('已移除的全局概览接口返回 404', async () => {
+  it('没有可见项目时，概览返回空列表和零汇总', async () => {
     const result = await request(server, 'GET', '/api/overview/topology');
-    expect(result.status).toBe(404);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ projects: [], summary: { errors: 0, warnings: 0, infos: 0 } });
   });
 
   it('目标项目对当前凭据不可见时：引用读成 restricted 不下发地址与分支，PUT 指向它被拒', async () => {
