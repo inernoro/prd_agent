@@ -23,7 +23,6 @@ export interface VerifiedDeploymentArtifact {
 export interface ArtifactInspectionOptions {
   inspectLocalArtifacts?: boolean;
   /** Identity pinned by the runtime storage admission for this local profile. */
-  localStorageImageId?: string;
   isComponentUnchangedSince?: ProveFallbackImageInput['isComponentUnchangedSince'];
   remainingMs?: () => number;
 }
@@ -122,12 +121,7 @@ export async function inspectDeploymentArtifacts(
     const promise = (async (): Promise<Inspection> => {
       const cache = configuredImageCacheGovernance();let pin: { token: string } | undefined;
       const digestPinned = /^.+@sha256:[0-9a-f]{64}$/.test(image);
-      const storagePinned = !needsPull && options.localStorageImageId &&
-        (digestPinned || /^sha256:[0-9a-f]{64}$/.test(image));
-      // This local image already belongs to the admitted deployment graph. Do
-      // not issue another pull receipt in parallel startup; still verify Docker's
-      // current identity, revision and platform against that graph.
-      if (cache && !storagePinned) {
+      if (cache) {
         try { const prepared = await cache.prepare(image, checkInspection, !needsPull, needsPull && !digestPinned, needsPull);if (prepared.token) pin = prepared; }
         catch (error) { assertCurrent();return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' }; }
       }
@@ -165,7 +159,6 @@ export async function inspectDeploymentArtifacts(
       // 核验本地内容ID，并保存OCI固定digest用于运行及版本台账；不保存可变tag。
       const immutable = metadata?.Id;
       if (typeof immutable !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(immutable)) return { reason: 'verification-unavailable' };
-      if (storagePinned && immutable !== options.localStorageImageId) return { reason: 'verification-unavailable' };
       // 已按固定仓库digest查询并核验内容，保留可跨执行器取回的引用。
       const digest = digestPinned ? `${imageRepositoryOf(image)}@${image.split('@')[1]}`
         : !needsPull ? immutable : Array.isArray(metadata.RepoDigests)

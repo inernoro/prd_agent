@@ -197,10 +197,10 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     expect(() => f.request({ action: 'prepare', image: 'missing:tag', budgetBytes: 1024, peakBytes: 2048 })).toThrow();
     expect(f.request({}).filesystem.netAvailableBytesDelta).toEqual(expect.any(Number));
   });
-  it('replays a durable native receipt from another worker without charging the peak twice', () => {
+  it.each(['2026-10-01T00:00:00Z', '2026-10-01T00:00:00.123456789Z'])('replays a durable native receipt for Docker timestamp %s without charging the peak twice', created => {
     const f=fixture(), image='registry.example/test:old';
     const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:4096,nowMs:now-700_000});
-    f.values.pullImage=f.image();f.save();
+    f.values.pullImage={...f.image(),Created:created};f.save();
     expect(f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000})).toEqual({outcome:'success',recorded:true});
     expect(f.request({peakBytes:4096}).pullBudget).toMatchObject({reservedBytes:4096,overdueCount:1});
     expect(f.request({action:'settle-pulls',instanceId:'other-master'}).settled).toEqual([]);

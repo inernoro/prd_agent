@@ -103,6 +103,10 @@ def docker_summary(endpoint):
 
 def created_second(value):
  if isinstance(value,int):return value
+ if isinstance(value,str):
+  # Docker emits RFC 3339 with UTC Z and up to nanosecond precision.
+  if value.endswith('Z'):value=value[:-1]+'+00:00'
+  value=re.sub(r'(\.\d+)(?=[+-]\d{2}:\d{2}$)',lambda match:match.group(1)[:7].ljust(7,'0'),value)
  try:
   stamp=datetime.datetime.fromisoformat(value)
   return int(stamp.timestamp()) if stamp.tzinfo else None
