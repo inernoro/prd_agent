@@ -6,6 +6,25 @@ import '../../pages/cds-settings/settings-directory.css';
 /** 设置页签统一等待轮廓；预览区和独立弹窗显式退出此作用域。 */
 export const SettingsLoadingContext = createContext(false);
 
+export function PersonalSettingsSkeleton(): JSX.Element {
+  return (
+    <div className="max-w-xl space-y-5 py-5" role="status" aria-label="确认当前账号" aria-busy="true" data-personal-settings-skeleton>
+      <div className="cds-loading-skeleton-line h-7 w-24" aria-hidden="true" />
+      <div className="space-y-4" aria-hidden="true">
+        <div className="cds-loading-skeleton-line h-6 w-24" />
+        <div className="cds-loading-skeleton-line h-4 w-72 max-w-full" />
+        <div className="max-w-md space-y-4">
+          {[0, 1].map(field => <div key={field} className="space-y-1.5">
+            <div className="cds-loading-skeleton-line h-4 w-24" />
+            <div className="cds-loading-skeleton-panel h-11 rounded-md" />
+          </div>)}
+          <div className="cds-loading-skeleton-panel h-11 w-28 rounded-md" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** 设置内容轮廓；不渲染可交互控件或尚未确认的设置名称。 */
 export function SettingsContentSkeleton({ label = '加载设置内容', auth = false, projectGeneral = false }: { label?: string; auth?: boolean; projectGeneral?: boolean }): JSX.Element {
   const [slow, setSlow] = useState(false);

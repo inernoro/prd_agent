@@ -147,6 +147,13 @@
     "workspace": "bleed"
   },
   {
+    "route": "/personal-settings",
+    "name": "个人设置",
+    "page": "pages/PersonalSettingsPage.tsx",
+    "kind": "personal-settings",
+    "workspace": "fluid"
+  },
+  {
     "route": "/login",
     "name": "登录",
     "page": "pages/LoginPage.tsx",

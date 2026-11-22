@@ -11,6 +11,7 @@ const ACTION_LABEL: Record<string, string> = {
   logout: '退出登录',
   bootstrap: '初始化系统所有者',
   'change-password': '修改密码',
+  'system-password.rotate': '批准并修改系统密码',
   'create-user': '创建用户',
   'reset-password': '重置密码',
   'disable-user': '禁用用户',
