@@ -2467,7 +2467,7 @@ export function BranchDetailDrawer({
                         {copiedFailurePrompt ? '已复制' : '复制到大模型'}
                       </button>
                     </div>
-                    <div className="mt-1 whitespace-pre-wrap text-destructive/90">{currentFailureReason}</div>
+                    <div className="mt-1 whitespace-pre-wrap break-words text-destructive/90">{currentFailureReason}</div>
                     {failureDiag && failureDiag.failedServices.length > 0 ? (
                       <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2">
                         {failureDiag.failedServices.map((diag) => {
