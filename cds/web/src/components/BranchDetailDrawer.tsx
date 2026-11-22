@@ -4088,7 +4088,7 @@ function ResourceConsole({
                       <button
                         type="button"
                         disabled={guarding}
-                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-ok/50 bg-ok-soft text-ok transition-colors hover:bg-ok hover:text-white disabled:opacity-60"
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-ok/50 bg-ok-soft text-ok transition-colors hover:bg-ok hover:text-status-ink disabled:opacity-60"
                         title={guarding ? '正在整库克隆隔离副本…' : '保护罩：一键把当前库克隆成隔离副本（保留在数据快照列表，可随时删除）'}
                         onClick={(e) => { e.stopPropagation(); void onDbGuard?.(infraId); }}
                       >

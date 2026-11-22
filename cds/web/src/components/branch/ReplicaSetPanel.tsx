@@ -1827,7 +1827,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                 <div key={`ghost-${n.node.actionKey}`} className="absolute rounded-xl border-[1.5px] border-dashed border-warn/60 bg-warn/[.04] text-xs shadow-md"
                   style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}>
                   <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold text-warn">
-                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-warn text-[10px] font-extrabold text-white">PRJ</span>
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-warn text-[10px] font-extrabold text-status-ink">PRJ</span>
                     <span className="min-w-0 flex-1 truncate">项目-复制集-{num}</span>
                     <button type="button" className="rounded border border-warn/50 bg-background p-0.5 text-warn hover:text-destructive "
                       title="撤销这条整组副本草稿" onClick={() => onRemoveAction(n.node.actionKey!)}>

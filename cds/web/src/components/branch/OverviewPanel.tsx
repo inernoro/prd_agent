@@ -987,7 +987,7 @@ function ServiceTable({
       ) : rows.map(({ sv, name, on, cpu, mem, color }, i) => (
         <div key={`${name}-${i}`} className={`grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 border-b border-[hsl(var(--hairline))]/60 py-3 text-sm last:border-b-0 sm:h-14 ${COLS} sm:items-center sm:gap-4 sm:py-0`} data-service-row={name}>
           <div className="flex min-w-0 items-center gap-3">
-            <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] font-mono text-[0.66rem] font-extrabold uppercase text-primary-foreground" style={{ background: color }} aria-hidden>{name.slice(0, 3)}</span>
+            <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] border-b-2 bg-secondary font-mono text-[0.66rem] font-extrabold uppercase text-secondary-foreground" style={{ borderBottomColor: color }} aria-hidden>{name.slice(0, 3)}</span>
             <span className="truncate font-mono font-semibold text-foreground" title={name}>{name}</span>
           </div>
           <div className="flex items-center gap-2 whitespace-nowrap">

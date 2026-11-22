@@ -1402,7 +1402,7 @@ function TimelineBand({
           />
           {compact ? null : (
             <span
-              className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[0.625rem] font-semibold text-[hsl(var(--status-ink))]"
+              className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[0.625rem] font-semibold text-primary-foreground"
               style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, top: `${lanes.length * 28 + 4}px` }}
             >
               现在 {nowLabel}

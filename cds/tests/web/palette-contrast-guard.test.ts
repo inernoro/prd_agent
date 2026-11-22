@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * 调色板的两条硬约束。都属于「改完页面照样渲染、测试照样绿，只有真人看才发现」
+ * 调色板的回归约束。都属于「改完页面照样渲染、测试照样绿，只有真人看才发现」
  * 的那一类，所以必须机械钉住。
  *
  * 背景：2026-08-15 全站换用 design_handoff_release_center 的调色板，主色是一抹
@@ -12,9 +13,79 @@ import { describe, expect, it } from 'vitest';
  * 模板本来就为此分了两个值：--accent 填充 / --accent-ink 文字。
  */
 
-const CSS = fs.readFileSync(path.resolve(process.cwd(), '../cds/web/src/index.css'), 'utf8');
-const TW = fs.readFileSync(path.resolve(process.cwd(), '../cds/web/tailwind.config.js'), 'utf8');
+const WEB = path.resolve(process.cwd(), 'web');
+const CSS = fs.readFileSync(path.join(WEB, 'src/index.css'), 'utf8');
+const TW_CONFIG = path.join(WEB, 'tailwind.config.js');
+const TW = fs.readFileSync(TW_CONFIG, 'utf8');
+const BUTTON = fs.readFileSync(path.join(WEB, 'src/components/ui/button.tsx'), 'utf8');
 const strip = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+const themeBlock = (selector: string): string => {
+  const at = CSS.indexOf(selector);
+  if (at < 0) throw new Error(`找不到主题块 ${selector}`);
+  const open = CSS.indexOf('{', at);
+  return CSS.slice(open, CSS.indexOf('\n  }', open));
+};
+
+const token = (block: string, name: string): [number, number, number] => {
+  const alias = block.match(new RegExp(`--${name}:\\s*var\\(--([\\w-]+)\\)`));
+  if (alias) return token(block, alias[1]);
+  const m = block.match(new RegExp(`--${name}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%`));
+  if (!m) throw new Error(`${name} 没在这个主题块里定义`);
+  return [Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100];
+};
+
+const luminance = ([h, s, l]: [number, number, number]): number => {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const seg = Math.floor(h / 60) % 6;
+  const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][seg]
+    .map((v) => v + m)
+    .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+};
+
+const ratio = (a: [number, number, number], b: [number, number, number]): number => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+describe('实色按钮、状态标记和焦点框的对比度', () => {
+  it.each([['default', 'primary'], ['destructive', 'destructive']])(
+    '%s 按钮使用实色前景、背景与悬停配色', (variant, fill) => {
+      expect(BUTTON).toMatch(new RegExp(`${variant}: '[^']*\\bbg-${fill}\\s+text-${fill}-foreground\\s+hover:bg-${fill}-hover(?=\\s|')`));
+      expect(TW).toContain(`hover: 'hsl(var(--${fill}-hover) / <alpha-value>)'`);
+    },
+  );
+
+  const pairs = [
+    ['primary-foreground', 'primary'],
+    ['primary-foreground', 'primary-hover'],
+    ['destructive-foreground', 'destructive'],
+    ['destructive-foreground', 'destructive-hover'],
+    ['secondary-foreground', 'secondary'],
+    ['muted-foreground', 'secondary'],
+    ['status-ink', 'ok'],
+    ['status-ink', 'warn'],
+    ['status-ink', 'info'],
+    ['bad-foreground', 'bad'],
+    ['foreground', 'hairline-strong'],
+  ];
+
+  for (const theme of ['dark', 'light']) {
+    const block = themeBlock(`[data-theme='${theme}']`);
+
+    it.each(pairs)(`${theme} %s on %s ≥ 4.5:1`, (ink, fill) => {
+      const contrast = ratio(token(block, ink), token(block, fill));
+      expect(contrast, `${ink} on ${fill} has ${contrast.toFixed(2)}:1 contrast`).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it.each(['background', 'surface-base', 'surface-raised', 'surface-sunken'])(`${theme} focus ring on %s ≥ 3:1`, (surface) => {
+      expect(ratio(token(block, 'ring'), token(block, surface))).toBeGreaterThanOrEqual(3);
+    });
+  }
+});
 
 describe('主色：填充用 primary，文字用 primary-ink', () => {
   /**
@@ -30,12 +101,19 @@ describe('主色：填充用 primary，文字用 primary-ink', () => {
     expect(css).toContain('color: hsl(var(--primary-ink)');
   });
 
-  it('Tailwind 的 text-primary 也指向 ink（组件里那一半）', () => {
-    const tw = strip(TW);
-    expect(tw).toContain('textColor: {');
-    expect(tw).toMatch(/textColor:\s*\{[^}]*primary:\s*'hsl\(var\(--primary-ink\)/);
-    // bg-primary 仍然是亮绿，别一起改掉
-    expect(tw).toMatch(/primary:\s*\{[^}]*DEFAULT:\s*'hsl\(var\(--primary\)/);
+  it('Tailwind 生成主色填充、浅底主色文字与主色填充上的字色', async () => {
+    const requireFromWeb = createRequire(path.join(WEB, 'package.json'));
+    const postcss = requireFromWeb('postcss');
+    const tailwind = requireFromWeb('tailwindcss');
+    const loadConfig = requireFromWeb('tailwindcss/loadConfig');
+    const compiled = await postcss([tailwind({
+      ...loadConfig(TW_CONFIG),
+      content: [{ raw: 'bg-primary text-primary text-primary-foreground', extension: 'html' }],
+    })]).process('@tailwind utilities;', { from: undefined });
+
+    expect(compiled.css).toMatch(/\.bg-primary\s*\{[^}]*background-color:\s*hsl\(var\(--primary\)/);
+    expect(compiled.css).toMatch(/\.text-primary\s*\{[^}]*color:\s*hsl\(var\(--primary-ink\)/);
+    expect(compiled.css).toMatch(/\.text-primary-foreground\s*\{[^}]*color:\s*hsl\(var\(--primary-foreground\)/);
   });
 });
 
@@ -104,8 +182,8 @@ describe('状态色只走 token，不再硬编码调色板', () => {
   const NEUTRAL_RATCHET: Record<string, number> = {
     'pages/ProjectListPage.tsx': 19,
     'pages/PreviewPreparingPage.tsx': 14,
-    'components/BranchDetailDrawer.tsx': 12,
-    'components/branch/ReplicaSetPanel.tsx': 9,
+    'components/BranchDetailDrawer.tsx': 11,
+    'components/branch/ReplicaSetPanel.tsx': 8,
     'pages/cds-settings/tabs/LoadingPagesTab.tsx': 8,
     'components/GlobalUpdateBadge.tsx': 7,
     'components/deployment/ActiveDeployment.tsx': 6,
@@ -137,7 +215,7 @@ describe('状态色只走 token，不再硬编码调色板', () => {
     expect(
       over,
       `中性色请走 token：底色 bg-[hsl(var(--surface-raised|base|sunken))]、边框 border-[hsl(var(--hairline))]、\n`
-      + `文字 text-foreground / text-muted-foreground；落在 ok/warn/bad/info 实色上的文字用 text-status-ink。\n${over.join('\n')}`,
+      + `文字 text-foreground / text-muted-foreground；落在 ok/warn/info 实色上的文字用 text-status-ink。\n${over.join('\n')}`,
     ).toEqual([]);
   });
 
@@ -182,35 +260,6 @@ describe('左栏当前页：一处强调，且不许退回淡底橙字', () => {
    * 红绿闭环见每条用例。
    */
   const css = strip(CSS);
-
-  const themeBlock = (selector: string): string => {
-    const at = css.indexOf(selector);
-    if (at < 0) throw new Error(`找不到主题块 ${selector}`);
-    const open = css.indexOf('{', at);
-    return css.slice(open, css.indexOf('\n  }', open));
-  };
-
-  const token = (block: string, name: string): [number, number, number] => {
-    const m = block.match(new RegExp(`--${name}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%`));
-    if (!m) throw new Error(`${name} 没在这个主题块里定义`);
-    return [Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100];
-  };
-
-  const luminance = ([h, s, l]: [number, number, number]): number => {
-    const c = (1 - Math.abs(2 * l - 1)) * s;
-    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-    const m = l - c / 2;
-    const seg = Math.floor(h / 60) % 6;
-    const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][seg]
-      .map((v) => v + m)
-      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-  };
-
-  const ratio = (a: [number, number, number], b: [number, number, number]): number => {
-    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-    return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100;
-  };
 
   const ruleAt = (selector: string): string => {
     const at = css.indexOf(selector);

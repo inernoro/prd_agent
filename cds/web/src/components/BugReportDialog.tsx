@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bug, ImagePlus, Loader2, Paperclip, X } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
 import {
   BUG_SEVERITY_OPTIONS,
@@ -384,15 +385,16 @@ export function BugReportDialog(): JSX.Element | null {
           >
             {result ? '关闭' : '取消'}
           </button>
-          <button
+          <Button
             type="button"
             onClick={() => (result ? resetForm() : void handleSubmit())}
             disabled={submitting || (!result && !description.trim())}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            size="sm"
+            className="h-auto gap-1.5 py-1.5"
           >
             {submitting ? <Loader2 className="size-4 animate-spin" /> : <Bug className="size-4" />}
             {submitting ? '提交中…' : result ? '再提交一条' : '提交缺陷'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
