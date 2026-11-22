@@ -94,6 +94,168 @@ describe('cluster identity through two real HTTP control planes', () => {
     expect((await request(member, '/api/projects/local-a', oldMemberKey)).status).toBe(401);
   });
 
+  it('pairs MAP on the authority and uses the grant only on its bound execution project', async () => {
+    const route = '/api/cds-system/connections';
+    const mapBaseUrl = 'https://map-preview.example.test';
+    const owner = await login(member);
+    expect(owner.status).toBe(200);
+    const issue = await request(member, route + '/issue', undefined, 'POST', {
+      projectId: 'local-a', mapBaseUrl, scopes: ['instance:read'],
+    }, owner.cookie);
+    expect(issue.status).toBe(201);
+    const connectionId: string = issue.json.connectionId;
+    expect(member.state.getCdsConnection(connectionId)).toBeUndefined();
+    expect(primary.state.getCdsConnection(connectionId)).toMatchObject({
+      projectId: 'source-a', status: 'pending-pairing',
+    });
+    const payload = JSON.parse(Buffer.from(issue.json.clipboardText.split(':')[2], 'base64url').toString('utf8'));
+    expect(payload.cdsBaseUrl).toBe(member.url);
+    const accept = {
+      pairingToken: payload.pairingToken, mapId: 'map-preview', mapName: 'MAP preview', mapBaseUrl,
+      projectIntent: { kind: 'shared-service', name: 'sidecar-pool' },
+    };
+    expect((await request(primary, route + '/accept', undefined, 'POST', accept)).status).toBe(403);
+    const wrongOrigin = await request(member, route + '/accept', undefined, 'POST', {
+      ...accept, mapBaseUrl: 'https://other.example.test',
+    });
+    expect(wrongOrigin.status).toBe(403);
+    const results = await Promise.all([
+      request(member, route + '/accept', undefined, 'POST', accept),
+      request(member, route + '/accept', undefined, 'POST', accept),
+    ]);
+    const exchanged = results.find(reply => reply.status === 200);
+    expect(exchanged?.json.projectId).toBe('local-a');
+    expect(exchanged?.json.instanceDiscoveryUrl).toBe('/api/projects/local-a/instances');
+    expect(results.filter(reply => reply.status === 200)).toHaveLength(1);
+    expect(results.every(reply => reply.status === 200 || reply.status === 410)).toBe(true);
+    expect(member.state.getCdsConnections()).toHaveLength(0);
+    expect(primary.state.getCdsConnections().filter(item => item.status === 'active')).toHaveLength(1);
+    expect(primary.state.getProjects()).toHaveLength(2);
+    const key: string = exchanged!.json.cdsLongToken;
+    expect((await request(member, '/api/projects/local-a/agent-runtime-providers', key)).status).toBe(200);
+    expect((await request(member, '/api/projects/local-b/agent-runtime-providers', key)).status).toBe(401);
+    expect((await request(primary, '/api/projects/source-a/agent-runtime-providers', key)).status).toBe(401);
+    expect((await request(member, '/api/projects/local-a/agent-sessions', key, 'POST', {})).status).toBe(401);
+    const originalRepo = member.state.getProject('local-a')!.gitRepoUrl;
+    member.state.updateProject('local-a', { gitRepoUrl: 'https://github.com/fixture/wrong.git' });
+    expect((await request(member, '/api/projects/local-a/agent-runtime-providers', key)).status).toBe(503);
+    member.state.updateProject('local-a', { gitRepoUrl: originalRepo });
+    const revoked = await request(member, route + '/' + connectionId + '/revoke', undefined, 'POST', {}, owner.cookie);
+    expect(revoked.status).toBe(200);
+    expect(primary.state.getCdsConnection(connectionId)?.status).toBe('revoked');
+    expect((await request(member, '/api/projects/local-a/agent-runtime-providers', key)).status).toBe(401);
+  });
+
+  it('denies an expired or consumed pairing code and can recover with a new approval', async () => {
+    const route = '/api/cds-system/connections';
+    const mapBaseUrl = 'https://map-preview.example.test';
+    const owner = await login(member);
+    const issue = async () => {
+      const result = await request(member, route + '/issue', undefined, 'POST', {
+        projectId: 'local-a', mapBaseUrl,
+      }, owner.cookie);
+      expect(result.status).toBe(201);
+      const payload = JSON.parse(Buffer.from(result.json.clipboardText.split(':')[2], 'base64url').toString('utf8'));
+      return { id: result.json.connectionId as string, code: payload.pairingToken as string };
+    };
+    const exchange = (code: string) => request(member, route + '/accept', undefined, 'POST', {
+      pairingToken: code, mapId: 'recovery-map', mapName: 'MAP preview', mapBaseUrl,
+      projectIntent: { kind: 'shared-service', name: 'sidecar-pool' },
+    });
+    const expired = await issue();
+    primary.state.updateCdsConnection(expired.id, { pairingExpiresAt: new Date(Date.now() - 1000).toISOString() });
+    expect((await exchange(expired.code)).status).toBe(410);
+    const lost = await issue();
+    // The authority completed the exchange, but the client has no usable response.
+    expect((await exchange(lost.code)).status).toBe(200);
+    expect((await exchange(lost.code)).status).toBe(410);
+    const replacement = await issue();
+    const accepted = await exchange(replacement.code);
+    expect(accepted.status).toBe(200);
+    expect(primary.state.getActiveCdsConnections().map(item => item.id)).toEqual([replacement.id]);
+    expect((await request(member, '/api/projects/local-a/agent-runtime-providers', accepted.json.cdsLongToken)).status).toBe(200);
+  });
+
+  it('requires a system owner and a bound project when issuing MAP pairing through a member', async () => {
+    const route = '/api/cds-system/connections/issue';
+    const approval = { projectId: 'local-a', mapBaseUrl: 'https://map-preview.example.test' };
+    expect((await request(member, route, primaryKey, 'POST', approval)).status).toBe(403);
+    const owner = await login(member);
+    expect(owner.status).toBe(200);
+    expect((await request(member, route, undefined, 'POST', {
+      ...approval, projectId: 'unbound-project',
+    }, owner.cookie)).status).toBe(400);
+    expect(member.state.getCdsConnections()).toHaveLength(0);
+    expect(primary.state.getCdsConnections()).toHaveLength(0);
+  });
+
+  it('uses the browser approval and server-side token exchange without external redirect or excess scope', async () => {
+    const route = '/api/cds-system/connections';
+    const mapBaseUrl = 'https://map-preview.example.test';
+    const approval = {
+      mapBaseUrl, redirectUri: mapBaseUrl + '/settings?tab=infra-services',
+      state: 'fixture-callback-state', mapId: 'browser-map', mapName: 'MAP preview',
+    };
+    const entry = route + '/authorize?' + new URLSearchParams({ ...approval, approve: '1' });
+    const anonymous = await request(member, entry, undefined, 'GET', undefined, undefined, 'text/html');
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.get('location')).toMatch(/^\/login\?/);
+    const owner = await login(member);
+    expect(owner.status).toBe(200);
+    const page = await request(member, entry, undefined, 'GET', undefined, owner.cookie, 'text/html');
+    expect(page.status).toBe(200);
+    expect(page.text).toContain('执行项目');
+    expect(primary.state.getCdsConnections()).toHaveLength(0);
+    const approve = (origin: string, redirectUri = approval.redirectUri) =>
+      fetch(member.url + route + '/authorize', {
+        method: 'POST', redirect: 'manual', headers: { Cookie: owner.cookie, Origin: origin },
+        body: new URLSearchParams({ ...approval, redirectUri, projectId: 'local-a' }),
+      });
+    expect((await approve('https://other.example.test')).status).toBe(403);
+    expect((await approve(member.url, 'https://other.example.test/settings?tab=infra-services')).status).toBe(400);
+    expect(primary.state.getCdsConnections()).toHaveLength(0);
+    const approved = await approve(member.url);
+    expect(approved.status).toBe(303);
+    const location = new URL(approved.headers.get('location')!);
+    expect(location.origin).toBe(mapBaseUrl);
+    const code = location.searchParams.get('cds_code')!;
+    expect(location.searchParams.get('state')).toBe(approval.state);
+    expect(location.searchParams.get('cds_base_url')).toBe(member.url);
+    const token = await request(member, route + '/token', undefined, 'POST', {
+      code, mapId: approval.mapId, mapName: approval.mapName, mapBaseUrl,
+      projectIntent: { kind: 'shared-service', name: 'sidecar-pool' },
+    });
+    expect(token.status).toBe(200);
+    expect(token.json.workspaceOnly).toBe(true);
+    expect(token.json.scopes).toEqual(['shared-service:deploy', 'instance:read', 'deployment:stream']);
+    expect((await request(member, '/api/projects/local-a/agent-runtime-providers', token.json.cdsLongToken)).status).toBe(200);
+    expect((await request(member, '/api/projects/local-a/agent-sessions?clientRequestId=not-created-yet', token.json.cdsLongToken)).status).toBe(200);
+    expect((await request(member, '/api/reports', token.json.cdsLongToken)).status).toBe(401);
+    expect([primary, member].some(instance => {
+      const events = fs.readFileSync(instance.eventFile, 'utf8');
+      return events.includes(code) || events.includes(token.json.cdsLongToken);
+    })).toBe(false);
+  });
+
+  it('does not fall back to standalone pairing when the authority lacks the cluster protocol', async () => {
+    const owner = await login(member);
+    expect(owner.status).toBe(200);
+    const actualFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (input === primary.url + '/api/cluster/identity/map-connections/issue') {
+        return Promise.resolve(Response.json({ error: 'unknown route' }, { status: 404 }));
+      }
+      return actualFetch(input, init);
+    });
+    const result = await request(member, '/api/cds-system/connections/issue', undefined, 'POST', {
+      projectId: 'local-a', mapBaseUrl: 'https://map-preview.example.test',
+    }, owner.cookie);
+    expect(result.status).toBe(503);
+    expect(result.json.error.code).toBe('cluster_map_connection_unsupported');
+    expect(primary.state.getCdsConnections()).toHaveLength(0);
+    expect(member.state.getCdsConnections()).toHaveLength(0);
+  });
+
   it('routes member DTS through the authority and rejects cross-project sync scope', async () => {
     const key = projectKey();
     const capabilities = vi.spyOn(primary.app.locals.dtsService, 'capabilities').mockImplementation(async (projectId: unknown) => ({ projectId, protocolVersion: 1, tools: [] }));

@@ -3636,6 +3636,22 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return merged;
   }
 
+  activateCdsConnection(id: string, fields: Partial<CdsConnection>, previousId?: string): CdsConnection {
+    const connections = this.state.cdsConnections;
+    const pending = connections?.[id];
+    if (!connections || pending?.status !== 'pending-pairing') {
+      throw new Error('CDS connection is no longer pending');
+    }
+    const active: CdsConnection = { ...pending, ...fields, id, status: 'active' };
+    const previous = previousId ? connections[previousId] : undefined;
+    if (previous?.status === 'active' && previous.id !== id) {
+      connections[previous.id] = { ...previous, status: 'revoked', longTokenHash: undefined };
+    }
+    connections[id] = active;
+    this.save();
+    return active;
+  }
+
   removeCdsConnection(id: string): boolean {
     if (!this.state.cdsConnections || !this.state.cdsConnections[id]) return false;
     delete this.state.cdsConnections[id];
