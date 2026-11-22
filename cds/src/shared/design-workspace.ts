@@ -64,6 +64,7 @@ export type DesignFeedback = {
   author: DesignFeedbackAuthor;
   createdAt: string;
   status: 'open' | 'responded' | 'closed';
+  attachments?: Array<{ id: string; title: string; size: number; sha256: string; author: DesignFeedbackAuthor; at: string }>;
   replies: Array<{ body: string; revision?: number; author: DesignFeedbackAuthor; at: string }>;
   decisions: Array<{ decision: 'close' | 'reopen'; body: string; author: DesignFeedbackAuthor; at: string }>;
 };

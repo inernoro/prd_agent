@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Download, FileText, MessageSquare } from 'lucide-react';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import {
@@ -19,6 +20,7 @@ const feedbackStates: Record<DesignFeedback['status'], string> = { open: '待回
 type FileChunk = { artifactId: string; path: string; sha256: string; offset: number; nextOffset: number | null; text: string };
 type OpenScreen = (version: number, screenId: string, from: string) => void;
 type Permissions = DesignWorkspace['permissions'];
+const threadAnchor = (id: string) => `dw-feedback-${id}`;
 
 function DeliveryFiles({ entry, version }: { entry: DesignEntry; version: DesignVersion }) {
   const delivery = version.delivery;
@@ -122,6 +124,43 @@ function DeliveryChecks({ version, openScreen }: { version: DesignVersion; openS
   </section>;
 }
 
+function FeedbackAttachmentForm({ submit, busy }: { submit: (title: string, image: string) => Promise<boolean>; busy: boolean }) {
+  const [issue, setIssue] = useState('');
+  const [reading, setReading] = useState(false);
+  return <details className="dw-delivery-resolution"><summary>添加对照图</summary>
+    <form className="dw-delivery-form" onSubmit={async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const inputs = new FormData(form);
+      const file = inputs.get('image');
+      if (!(file instanceof File) || file.type !== 'image/png' || file.size === 0 || file.size > 1.5 * 1024 * 1024) {
+        setIssue('请选择 1.5 MiB 以内的 PNG 截图');
+        return;
+      }
+      setReading(true);
+      setIssue('');
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        if (await submit(String(inputs.get('title')), dataUrl)) form.reset();
+      } catch {
+        setIssue('读取截图失败，请重新选择');
+      } finally {
+        setReading(false);
+      }
+    }}>
+      <label>图片说明<input name="title" required maxLength={180} /></label>
+      <label>对照图<input name="image" type="file" accept="image/png" required /></label>
+      {issue && <p role="alert">{issue}</p>}
+      <button className="ep-button" type="submit" disabled={busy || reading}>保存私有对照图</button>
+    </form>
+  </details>;
+}
+
 function FeedbackThread({ row, entry, permissions, busy, command, openScreen, openVersion }: {
   row: DesignFeedback; entry: DesignEntry; permissions: Permissions; busy: boolean; command: DesignCommand;
   openScreen: OpenScreen; openVersion: (version: number) => void;
@@ -141,7 +180,7 @@ function FeedbackThread({ row, entry, permissions, busy, command, openScreen, op
     if (await command(type, { designId: entry.id, feedbackId: row.id, body: String(data.get('body')),
       ...(revision ? { revision } : {}), ...(type === 'feedback.resolve' ? { decision: row.status === 'closed' ? 'reopen' : 'close' } : {}) })) form.reset();
   }
-  return <details className="dw-delivery-thread" open={row.status !== 'closed' || undefined}>
+  return <details id={threadAnchor(row.id)} className="dw-delivery-thread" open={row.status !== 'closed' || undefined}>
     <summary><strong>{row.title}</strong><small>{feedbackNames[row.category]} · {feedbackStates[row.status]}</small></summary>
     <div className="dw-delivery-actions">
       <small>{row.author.label} · {designDate(row.createdAt)}</small>
@@ -151,6 +190,17 @@ function FeedbackThread({ row, entry, permissions, busy, command, openScreen, op
     </div>
     <p>{row.body}</p>
     {row.evidence.length > 0 && <ul>{row.evidence.map((evidence, index) => <li key={index}>{evidence}</li>)}</ul>}
+    {!!row.attachments?.length && <details className="dw-feedback-figures">
+      <summary>查看对照图 ({row.attachments.length})</summary>
+      <div>{row.attachments.map(image => <figure key={image.id}>
+        <a href={designArtifact(entry.projectId, image.id)} target="_blank" rel="noreferrer">
+          <img loading="lazy" src={designArtifact(entry.projectId, image.id)} alt={image.title} />
+        </a>
+        <figcaption>{image.title}</figcaption>
+      </figure>)}</div>
+    </details>}
+    {permissions.feedback && <FeedbackAttachmentForm busy={busy} submit={(title, image) =>
+      command('feedback.attach', { designId: entry.id, feedbackId: row.id, title, image })} />}
     {history.length > 0 && <ol className="dw-delivery-replies">
       {history.map((item, index) => <li key={index}>
         <small>{item.label} · {item.author.label} · {designDate(item.at)}</small>
@@ -182,6 +232,14 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
   const threads = [...(entry.feedback ?? [])].reverse();
   const delivery = version.delivery;
   const pendingFeedback = threads.filter(thread => thread.status !== 'closed').length;
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash.startsWith('#dw-feedback-')) return;
+    const target = document.getElementById(hash.slice(1));
+    if (!(target instanceof HTMLDetailsElement)) return;
+    target.open = true;
+    target.scrollIntoView({ block: 'start' });
+  }, [entry.id, hash]);
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;

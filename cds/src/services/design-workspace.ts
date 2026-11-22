@@ -19,7 +19,7 @@ export type DesignActor = PlanningActor & { steward?: boolean; gitPublishOnly?: 
 type Receipt = {
   projectId: string; reused: boolean;
   result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
-    state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string };
+    state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string; artifactId?: string };
 };
 type RequestReceipt = { key: string; fingerprint: string; result: Receipt['result'] };
 export type DesignWorkspaceCommit = {
@@ -532,8 +532,8 @@ export class DesignWorkspaceService {
           changes: { brief: { designKey, value: { ...requirement, replies: [...(requirement.replies ?? []), reply] } } } };
       }, writeFeedback);
     }
-    if (type !== 'feedback.create' && type !== 'feedback.reply' && type !== 'feedback.resolve') {
-      return invalidDesign('请选择提交反馈、回复或确认处理');
+    if (type !== 'feedback.create' && type !== 'feedback.reply' && type !== 'feedback.resolve' && type !== 'feedback.attach') {
+      return invalidDesign('请选择提交反馈、回复、附图或确认处理');
     }
     const requestId = designId(input.requestId, '请求编号');
     const designIdValue = designId(input.designId, '稿件编号');
@@ -556,6 +556,20 @@ export class DesignWorkspaceService {
       }
       const feedbackId = designId(input.feedbackId, '反馈编号');
       const thread = entry.feedback?.find(item => item.id === feedbackId) ?? missing('该反馈不存在');
+      if (type === 'feedback.attach') {
+        designRecord(input, '添加反馈附件', [...common, 'feedbackId', 'title', 'image']);
+        const attachments = thread.attachments ?? [];
+        const title = planningText(input.title, '附件说明', 180);
+        const asset = image(input.image);
+        const content = Buffer.from(asset.base64!, 'base64');
+        const sha256 = designDigest(content);
+        const existing = attachments.find(row => row.sha256 === sha256 && row.title === title);
+        const result = { type, designId: entry.id, id: feedbackId, version: thread.version, artifactId: existing?.id ?? asset.id };
+        if (existing) return { result, changes: {} };
+        if (attachments.length >= 32) conflict('此反馈已有 32 张证据图');
+        return { result, changes: { assets: [asset], design: { id: entry.id, feedback: { ...thread, attachments: [...attachments,
+          { id: asset.id, title, size: content.length, sha256, author: identity(actor), at: now }] } } } };
+      }
       const body = planningText(input.body, '处理说明', 4_000);
       const feedback = { ...thread };
       if (type === 'feedback.reply') {

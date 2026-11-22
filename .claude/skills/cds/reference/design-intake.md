@@ -50,4 +50,6 @@
 2. 设计方读同一线程，调用 `feedback.reply` 回复。需要改稿时按原稿 ID 和最新基线发布，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
 3. 原反馈者回读新版和同一线程，按证据验证。用 `feedback.resolve` 的 `close` 或 `reopen` 加说明保留复核结果。项目管理者也可处理。发布、反馈、实际做法验收和人类签收各自按项目权限执行。重试沿用原请求编号。
 
+需要提交对照图时，用 `feedback.attach` 提供原稿 ID、反馈 ID、图片说明、请求编号与工作区内 `imagePath`。CLI 用 `cdscli design attach-evidence <designId> --feedback-id <feedbackId> --title <说明> --file <图片.png>`。反馈里回读 `attachments`，可在已授权的交付页查看，也可以凭同一项目的设计授权读取 `GET /api/projects/:projectId/design/artifacts/:artifactId`。每张 PNG 上限 1.5 MiB。原型与实际页面对照可在评审前上传，逐规则的验收结论仍由做法验收记录。
+
 HTTP 与 MCP 共用项目级设计接口。反馈写入走 `POST /api/projects/:projectId/design/feedback`。固定版本资料在工作区回读中，原文可以用 `GET /api/projects/:projectId/design/artifacts/:artifactId?view=text` 分段读取。

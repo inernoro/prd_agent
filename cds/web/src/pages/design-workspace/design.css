@@ -515,6 +515,10 @@
   border-radius: 6px;
 }
 .dw-delivery-resolution { margin-top: 8px; }
+.dw-feedback-figures > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 8px; margin-top: 8px; }
+.dw-feedback-figures figure { margin: 0; min-width: 0; border: 1px solid var(--dw-line); border-radius: 8px; overflow: clip; }
+.dw-feedback-figures img { display: block; width: 100%; aspect-ratio: 2.15; object-fit: contain; background: var(--dw-sunken); }
+.dw-feedback-figures figcaption { padding: 7px 9px; color: var(--dw-muted); font-size: 12px; }
 @media (max-width: 700px) {
   .dw-delivery-version, .dw-delivery-browser { grid-template-columns: minmax(0, 1fr); }
   .dw-delivery-filelist { border-inline-end: 0; border-bottom: 1px solid var(--dw-line); }

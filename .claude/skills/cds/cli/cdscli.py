@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.11"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.12"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4552,6 +4552,24 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 返回的回复回执与当前设计需求不符")
         ok(receipt)
 
+    if action == "attach-evidence":
+        file_path = Path(args.file)
+        try:
+            with file_path.open("rb") as stream:
+                content = stream.read(1536 * 1024 + 1)
+        except OSError:
+            die("无法读取对照图")
+        if file_path.suffix.lower() != ".png" or len(content) > 1536 * 1024 or not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            die("请提供 1.5 MiB 以内的 PNG 对照图")
+        command = {"type": "feedback.attach", "designId": args.id, "feedbackId": args.feedback_id, "title": args.title,
+                   "image": "data:image/png;base64," + base64.b64encode(content).decode("ascii")}
+        request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        receipt = request("POST", "/feedback", {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if result.get("type") != command["type"] or result.get("designId") != args.id or result.get("id") != args.feedback_id or not result.get("artifactId"):
+            die("CDS 返回的对照图回执与当前反馈不符")
+        ok(receipt)
+
     if action == "publish":
         if args.zip:
             try:
@@ -4745,7 +4763,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
 def _register_design_parser(sub: Any) -> None:
     design = sub.add_parser("design", help="设计稿件、版本、评论与做法验收").add_subparsers(dest="design_action", required=True)
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("intake", "brief-reply", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
@@ -4760,6 +4778,11 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--request-id")
                 parser.add_argument("--expected-version", type=int, required=True, help="接入清单中的 planVersion")
                 parser.add_argument("--body", required=True, help="对该已交接需求的回复")
+            if action == "attach-evidence":
+                parser.add_argument("--request-id")
+                parser.add_argument("--feedback-id", required=True)
+                parser.add_argument("--title", required=True)
+                parser.add_argument("--file", required=True, help="可附到设计反馈的私有 PNG")
             if action == "publish":
                 parser.add_argument("id", nargs="?")
                 source = parser.add_mutually_exclusive_group(required=True)

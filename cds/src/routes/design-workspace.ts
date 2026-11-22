@@ -59,7 +59,7 @@ export function createDesignWorkspaceRouter(deps: {
       const info = await deps.service.publish(projectId, actor, req.query, req.body);
       res.status(info.reused ? 200 : 201).json(info);
     }));
-  router.post(`${route}/feedback`, authorized, express.json({ limit: '48kb' }),
+  router.post(`${route}/feedback`, authorized, express.json({ limit: '2.1mb' }),
     handle(async (req, res, projectId, actor) => {
       const receipt = await deps.service.feedback(projectId, actor, req.body);
       res.status(receipt.reused ? 200 : 201).json(receipt);
