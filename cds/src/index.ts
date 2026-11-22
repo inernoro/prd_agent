@@ -3697,7 +3697,9 @@ const stopImageCacheRetention = configuredImageCacheBudgetGiB > 0 && scheduleHos
   ? startReclaimSchedule({
     intervalMs: 60_000,
     run: async () => {
+      await imageCacheGovernance.settlePulls();
       const report = await imageCacheGovernance.inspect(false);
+      imageCacheGovernance.observePullBudget(report.pullBudget);
       activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'image-cache-retention', action: 'image.cache.reconciled', message: '宿主镜像总量与引用对账', details: { report } });
       return report;
     },
