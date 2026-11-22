@@ -603,20 +603,55 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(res.status).toBe(404);
   });
 
-  // 回归(Cursor):CDS_AUTH_MODE=disabled 本地 dev 全站无鉴权,审批盒所在 dashboard
-  // 用户即操作员,approve/reject/list 必须放行,否则本地 dev 用不了。
-  it('disabled 模式:无 cookie 身份也能列出/批准', async () => {
+  it.each([
+    { label: '普通项目', designAccess: undefined },
+    { label: '设计发布', designAccess: 'publish' },
+  ])('未启用 SSO 的免登录本地模式可列出并批准 $label 申请', async ({ designAccess }) => {
     const app2 = express();
     app2.use(express.json());
-    app2.use((req, _res, next) => { next(); }); // 不 stamp 任何身份(模拟 disabled)
-    app2.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled' }));
+    app2.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled', isSsoEnabled: () => false }));
     const srv2 = app2.listen(0);
     try {
-      const init = await request(srv2, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'disabled' });
+      const init = await request(srv2, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'local approval', designAccess });
       expect(init.status).toBe(201);
       const reqId = init.body.requestId as string;
       expect((await request(srv2, 'GET', '/api/access-requests')).status).toBe(200);
       expect((await request(srv2, 'POST', `/api/access-requests/${reqId}/approve`, {})).status).toBe(200);
+      expect(stateService.getAgentKeys('proj-a').map(key => key.designAccess)).toEqual([designAccess]);
+    } finally {
+      await new Promise<void>((resolve) => srv2.close(() => resolve()));
+    }
+  });
+
+  it('启用 SSO 后，disabled 模式的设计审批仍要求已验证的系统所有者', async () => {
+    let ssoEnabled = false;
+    const app2 = express();
+    app2.use(express.json());
+    app2.use((req, _res, next) => {
+      const approver = req.get('x-fixture-approver');
+      if (approver && approver !== 'anonymous') {
+        Object.assign(req, {
+          cdsUser: { username: approver, isSystemOwner: approver !== 'member', authProvider: approver === 'sso' ? 'sso' : 'local' },
+          cdsSession: { id: `fixture-${approver}-session` },
+        });
+      }
+      next();
+    });
+    app2.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled', isSsoEnabled: () => ssoEnabled }));
+    const srv2 = app2.listen(0);
+    try {
+      const init = await request(srv2, 'POST', '/api/projects/proj-a/access-requests', { designAccess: 'publish' });
+      expect(init.status).toBe(201);
+      const requestId = init.body.requestId as string;
+      const approve = `/api/access-requests/${requestId}/approve`;
+      ssoEnabled = true;
+      for (const approver of ['anonymous', 'member', 'sso']) {
+        expect((await request(srv2, 'POST', approve, {}, { 'x-fixture-approver': approver })).status).toBe(403);
+      }
+      expect(stateService.getAccessRequest(requestId)?.status).toBe('pending');
+      expect(stateService.getAgentKeys('proj-a')).toHaveLength(0);
+      expect((await request(srv2, 'POST', approve, {}, { 'x-fixture-approver': 'owner' })).status).toBe(200);
+      expect(stateService.getAgentKeys('proj-a').map(key => key.designAccess)).toEqual(['publish']);
     } finally {
       await new Promise<void>((resolve) => srv2.close(() => resolve()));
     }

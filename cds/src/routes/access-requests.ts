@@ -36,6 +36,8 @@ export interface AccessRequestsRouterDeps {
    * 放行;否则 approve/reject/list 会对所有人 403,本地 dev 用不了。
    */
   authMode?: 'disabled' | 'basic' | 'github';
+  /** SSO can require login even when local and GitHub login are disabled. */
+  isSsoEnabled?: () => boolean;
 }
 
 /** Audit retention: decided access requests disappear from list after 7d. */
@@ -403,7 +405,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       res.status(409).json({ error: 'already_decided', message: `Access request already ${item.status}.` });
       return;
     }
-    if (item.designAccess && !isHumanSystemOwner(req)) {
+    if (item.designAccess && (!authDisabled || deps.isSsoEnabled?.()) && !isHumanSystemOwner(req)) {
       res.status(403).json({ error: 'system_owner_required', message: '设计权限申请由 CDS 系统所有者批准' });
       return;
     }
