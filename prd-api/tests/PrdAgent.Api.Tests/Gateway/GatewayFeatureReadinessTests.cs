@@ -157,7 +157,7 @@ public sealed class GatewayFeatureReadinessTests
         {
             Success = true, ActualModel = "future-thinking-readiness-fixture", ResolutionType = "Pinned",
             ActualPlatformId = "fixture-platform", PlatformType = "openai", Protocol = "openai",
-            ApiUrl = "https://never-called.example.test/v1", ApiKey = "fixture",
+            ApiUrl = "https://never-called.example.test/v1", ApiKey = "synthetic-readiness-credential-not-in-response",
             SupportsThinking = supportsThinking,
             ParameterCapabilities = new() { ["temperature"] = true },
         };

@@ -46,6 +46,8 @@ public sealed record GatewayKeyAuthorization(
 
 public interface IGatewayScopedKeyAuthorizer
 {
+    // headersOnly admits bounded parsing only: absent source/caller and body stream scope are deferred.
+    // It must never reserve rate/call budgets or replace the final authorization before dispatch.
     Task<GatewayKeyAuthorization> AuthorizeAsync(
         string providedKey,
         string legacySharedKey,
@@ -56,7 +58,8 @@ public interface IGatewayScopedKeyAuthorizer
         IPAddress? remoteIp,
         CancellationToken ct,
         bool allowSingleAppCallerInference = false,
-        string? requestPath = null);
+        string? requestPath = null,
+        bool headersOnly = false);
 }
 
 public sealed record GatewayRuntimeGrantCallAdmission(
@@ -709,7 +712,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         IPAddress? remoteIp,
         CancellationToken ct,
         bool allowSingleAppCallerInference = false,
-        string? requestPath = null)
+        string? requestPath = null,
+        bool headersOnly = false)
     {
         if (string.IsNullOrWhiteSpace(providedKey))
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
@@ -717,7 +721,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         if (FixedTimeEquals(providedKey, legacySharedKey))
             return requiredScope == GatewayConsumptionRetries.ControlScope
                 ? new(false, true, 403, "GATEWAY_KEY_SCOPE_DENIED", "补跑需要使用原调用方的接入密钥，请核对密钥后重试。")
-                : await AuthorizeLegacyKeyAsync(sourceSystem, appCallerCode, ingressProtocol, requiredScope, ct);
+                : await AuthorizeLegacyKeyAsync(sourceSystem, appCallerCode, ingressProtocol, requiredScope, ct, headersOnly);
 
         var hash = Sha256Hex(providedKey);
         var keys = _data.Database.GetCollection<GatewayServiceKeyRecord>("llmgw_service_keys");
@@ -735,7 +739,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 requiredScope,
                 requestPath,
                 allowSingleAppCallerInference,
-                ct);
+                ct, headersOnly);
         var effectiveAppCallerCode = allowSingleAppCallerInference
             ? ResolveSingleAppCallerCode(record) ?? appCallerCode
             : appCallerCode;
@@ -764,7 +768,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         var scopeAllowed = serviceKeyScope == GatewayConsumptionRetries.ControlScope
             ? record.Scopes?.Any(scope => scope?.Trim().ToLowerInvariant() is { } value
                 && (value == "*" || GatewaySuccessorObservationPolicy.IsBusinessInvocationScope(value))) == true
-            : MatchesAny(record.Scopes, serviceKeyScope);
+            : MatchesAny(record.Scopes, serviceKeyScope)
+                || (headersOnly && serviceKeyScope == "invoke" && MatchesAny(record.Scopes, "stream:invoke"));
         if (!GatewayKeyPurposePolicy.AllowsDataPlaneRequest(record, readOnlyProbe))
         {
             await WriteKeyDeniedAuditAsync(record, "service_key.purpose_denied", "purpose-mismatch", new BsonDocument
@@ -787,8 +792,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 KeyPrefixSnapshot: record.KeyPrefix);
         }
         if (!readOnlyProbe
-            && (!Matches(record.SourceSystem, sourceSystem)
-                || !MatchesAny(record.AppCallerCodes, effectiveAppCallerCode))
+            && (!(headersOnly && string.IsNullOrEmpty(sourceSystem)) && !Matches(record.SourceSystem, sourceSystem)
+                || !(headersOnly && string.IsNullOrEmpty(effectiveAppCallerCode)) && !MatchesAny(record.AppCallerCodes, effectiveAppCallerCode))
             || !MatchesAny(record.IngressProtocols, ingressProtocol)
             || !scopeAllowed)
         {
@@ -848,6 +853,9 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 Environment: ResolveEnvironment(record),
                 KeyPrefixSnapshot: record.KeyPrefix);
         }
+
+        // Header admission must not consume rate windows or record a successful invocation.
+        if (headersOnly) return new(true, true, 200, string.Empty, "headers admitted");
 
         if (record.RateLimitPerMinute is > 0)
         {
@@ -953,7 +961,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string requiredScope,
         string? requestPath,
         bool allowSingleAppCallerInference,
-        CancellationToken ct)
+        CancellationToken ct, bool headersOnly = false)
     {
         var grants = _data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
         var now = DateTime.UtcNow;
@@ -983,11 +991,11 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         var allowedPath = sidecar
             ? path.ToLowerInvariant() is "/v1/messages" or "/v1/responses" or "/v1/chat/completions" or "/gw/v1/resolve"
             : design && path.Equals("/gw/v1/responses", StringComparison.OrdinalIgnoreCase);
-        var caller = sidecar && (allowSingleAppCallerInference || resolve && string.IsNullOrWhiteSpace(appCallerCode))
+        var caller = headersOnly && string.IsNullOrEmpty(appCallerCode) ? known.AppCallerCode : sidecar && (allowSingleAppCallerInference || resolve && string.IsNullOrWhiteSpace(appCallerCode))
             ? known.AppCallerCode : appCallerCode;
         var allowedTransport = sidecar
             ? ingressProtocol is "openai-compatible" or "claude-compatible" || resolve && ingressProtocol == "gw-native"
-            : string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase)
+            : (headersOnly && string.IsNullOrEmpty(sourceSystem) || string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase))
                 && string.Equals(ingressProtocol, "gw-native", StringComparison.OrdinalIgnoreCase);
         var filter = Builders<GatewayRuntimeGrantRecord>.Filter.And(
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.KeyHash, keyHash),
@@ -1049,7 +1057,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string appCallerCode,
         string ingressProtocol,
         string requiredScope,
-        CancellationToken ct)
+        CancellationToken ct, bool headersOnly = false)
     {
         var now = DateTime.UtcNow;
         var cutover = await _data.Database.GetCollection<GatewayLegacyKeyCutoverRecord>("llmgw_legacy_key_cutovers")
@@ -1061,9 +1069,9 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             ? GatewayLegacyProbeScopes.ResolveAuditCaller(requiredScope)
             : appCallerCode.Trim();
         var normalizedProtocol = ingressProtocol.Trim().ToLowerInvariant();
-        var externalDenied = !readOnlyProbe && !string.Equals(normalizedSource, "map", StringComparison.Ordinal);
-        var callerMissing = !readOnlyProbe && string.IsNullOrWhiteSpace(normalizedCaller);
-        var callerDenied = !readOnlyProbe
+        var externalDenied = !readOnlyProbe && !(headersOnly && string.IsNullOrEmpty(sourceSystem)) && !string.Equals(normalizedSource, "map", StringComparison.Ordinal);
+        var callerMissing = !headersOnly && !readOnlyProbe && string.IsNullOrWhiteSpace(normalizedCaller);
+        var callerDenied = !readOnlyProbe && !(headersOnly && string.IsNullOrEmpty(appCallerCode))
                            && cutover?.AllowedAppCallerCodes.Count > 0
                            && !cutover.AllowedAppCallerCodes.Contains(normalizedCaller, StringComparer.OrdinalIgnoreCase);
         var deadlineReached = cutover?.DeadlineAt is not null && cutover.DeadlineAt <= now;
@@ -1076,7 +1084,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             : revoked ? "revoked"
             : readOnlyProbe ? "read-only-preflight-allowed"
             : "allowed";
-        await RecordLegacyUsageAsync(normalizedSource, normalizedCaller, normalizedProtocol, allowed, decision, now, ct);
+        if (!headersOnly || !allowed) await RecordLegacyUsageAsync(normalizedSource, normalizedCaller, normalizedProtocol, allowed, decision, now, ct);
 
         if (allowed)
         {

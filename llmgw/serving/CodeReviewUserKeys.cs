@@ -86,6 +86,7 @@ public static class CodeReviewUserKeys
         app.MapPost("/internal/code-review/user-keys/bind", async (HttpContext http, IConfiguration config, LlmGatewayDataContext data) =>
         {
             if (!ManagementAuthorized(http, config)) return Results.Unauthorized();
+            await GatewayRequestBody.ValidateJsonAsync(http.Request, http.RequestAborted);
             var input = await http.Request.ReadFromJsonAsync<CodeReviewKeyBind>();
             if (input is null || string.IsNullOrEmpty(input.Provider) || string.IsNullOrEmpty(input.Owner) || string.IsNullOrEmpty(input.ProjectId) || string.IsNullOrEmpty(input.TaskId) || string.IsNullOrEmpty(input.Model) || string.IsNullOrEmpty(input.ApiKey) || !Providers.ContainsKey(input.Provider) || input.Owner.Length is < 1 or > 200
                 || input.ProjectId.Length is < 1 or > 100 || input.TaskId.Length is < 1 or > 100
@@ -165,14 +166,15 @@ public static class CodeReviewUserKeys
         var tokenHash = Hash(raw[7..]);
         var task = await tasks.Find(x => x.TokenHash == tokenHash && !x.Closed && x.ExpiresAt > DateTime.UtcNow).FirstOrDefaultAsync(http.RequestAborted);
         if (task is null) return Results.Unauthorized();
-        if (http.Request.ContentLength > 1024 * 1024) return Results.StatusCode(413);
+        var key = await data.Database.GetCollection<CodeReviewUserKey>("llmgw_code_review_user_keys").Find(x => x.Id == task.KeyId).FirstOrDefaultAsync(http.RequestAborted);
+        if (key is null || key.Owner != task.Owner || key.ProjectId != task.ProjectId || !Providers.TryGetValue(key.Provider, out var provider)) return Results.Unauthorized();
+        if (http.Request.ContentLength > GatewayRequestBody.UserKeyMaxBytes) return Results.StatusCode(413);
+        await GatewayRequestBody.ValidateJsonAsync(http.Request, http.RequestAborted);
         JsonObject? body;
         try { body = await http.Request.ReadFromJsonAsync<JsonObject>(cancellationToken: http.RequestAborted); }
         catch { return Results.BadRequest(new { error = "invalid_request" }); }
         if (body is null || body["messages"] is not JsonArray || body["stream"]?.GetValue<bool>() == true)
             return Results.BadRequest(new { error = "non_streaming_chat_required" });
-        var key = await data.Database.GetCollection<CodeReviewUserKey>("llmgw_code_review_user_keys").Find(x => x.Id == task.KeyId).FirstOrDefaultAsync(http.RequestAborted);
-        if (key is null || key.Owner != task.Owner || key.ProjectId != task.ProjectId || !Providers.TryGetValue(key.Provider, out var provider)) return Results.Unauthorized();
         body["model"] = task.Model;
         var output = body["max_tokens"] is JsonValue cap && cap.TryGetValue<int>(out var requested) ? Math.Clamp(requested, 1, 4096) : 4096;
         body.Remove("max_completion_tokens"); body["max_tokens"] = output;
