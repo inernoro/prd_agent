@@ -99,7 +99,7 @@ public class OfficialSkillCatalogTests
 
         var skillMd = entry.Files.Single(f => f.Path == "SKILL.md").Content;
         Assert.Contains("name: create-visual-test-to-kb", skillMd);
-        Assert.Contains("version: 1.0.2", skillMd);
+        Assert.Contains($"version: {entry.Version}", skillMd);
     }
 
     [Fact]
