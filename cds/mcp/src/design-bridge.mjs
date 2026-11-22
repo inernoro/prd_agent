@@ -38,6 +38,8 @@ const schemas = {
   ]),
   [feedbackTool]: z.discriminatedUnion('type', [
     z.object({ type: z.literal('brief.reply'), requestId: id, designKey, expectedVersion: positiveVersion, body: feedbackBody }).strict(),
+    z.object({ type: z.literal('brief.claim'), requestId: id, designKey, expectedVersion: positiveVersion }).strict(),
+    z.object({ type: z.literal('brief.release'), requestId: id, designKey, expectedVersion: positiveVersion }).strict(),
     z.object({ ...feedbackBase, type: z.literal('feedback.create'), version: positiveVersion,
       category: z.enum(['reuse', 'implementation', 'gap', 'constraint', 'acceptance']),
       title: z.string().trim().min(1).max(180), body: feedbackBody, screenId: id.optional(), filePath: z.string().trim().min(1).max(400).optional(),
@@ -75,7 +77,7 @@ const schemas = {
 };
 const descriptions = {
   [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。稿件发布前可用 brief.reply 在当前需求下澄清。',
-  [feedbackTool]: '稿件发布前用 brief.reply 在设计需求下提出问题。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
+  [feedbackTool]: '稿件发布前用 brief.claim 认领需求，brief.reply 在原需求下澄清，brief.release 交回未出稿需求。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
@@ -177,7 +179,7 @@ export function createDesignBridge(credentials, options = {}) {
         const endpoint = args.type === 'feedback.attach' ? '/feedback/attachments' : '/feedback';
         const receipt = await client.request('POST', path + endpoint, body);
         const result = receipt.result;
-        const targetMatches = args.type === 'brief.reply' ? result?.designKey === args.designKey && result?.version === args.expectedVersion
+        const targetMatches = args.type.startsWith('brief.') ? result?.designKey === args.designKey && result?.version === args.expectedVersion
           : result?.designId === args.designId;
         if (receipt.projectId !== projectId || !targetMatches || result?.type !== args.type
           || (args.type === 'feedback.attach' && (result.id !== args.feedbackId || !id.safeParse(result.artifactId).success

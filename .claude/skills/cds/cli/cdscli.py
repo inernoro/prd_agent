@@ -4543,13 +4543,17 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 设计接入协议版本不符，请检查当前安装的技能与 CDS 版本")
         ok(intake)
 
-    if action == "brief-reply":
-        command = {"type": "brief.reply", "designKey": args.id, "expectedVersion": args.expected_version, "body": args.body}
-        request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    if action in ("brief-reply", "brief-claim", "brief-release"):
+        command = {"type": action.replace("-", ".", 1), "designKey": args.id, "expectedVersion": args.expected_version}
+        if action == "brief-reply":
+            command["body"] = args.body
+            request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        else:
+            request_id = args.request_id or secrets.token_hex(18)
         receipt = request("POST", "/feedback", {**command, "requestId": request_id}, retry_id=request_id)
         result = receipt.get("result") or {}
         if result.get("type") != command["type"] or result.get("designKey") != args.id or result.get("version") != args.expected_version:
-            die("CDS 返回的回复回执与当前设计需求不符")
+            die("CDS 返回的回执与当前设计需求不符")
         ok(receipt)
 
     if action == "feedback":
@@ -4847,7 +4851,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
@@ -4858,10 +4862,11 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("id")
             if action in ("publish", "request-review", "accept", "record", "freeze", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
-            if action == "brief-reply":
+            if action in ("brief-reply", "brief-claim", "brief-release"):
                 parser.add_argument("--request-id")
                 parser.add_argument("--expected-version", type=int, required=True, help="接入清单中的 planVersion")
-                parser.add_argument("--body", required=True, help="对该已交接需求的回复")
+                if action == "brief-reply":
+                    parser.add_argument("--body", required=True, help="对该已交接需求的回复")
             if action == "feedback":
                 parser.add_argument("--version", type=int, help="按版本查看，仍包括前版未关闭的反馈")
             if action in ("feedback-create", "feedback-reply", "feedback-resolve"):

@@ -178,7 +178,7 @@ h1{{font-size:1.25rem}} iframe{{border:1px solid GrayText;display:block}}</style
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Cache-Control", "private, no-store, no-transform")
             self.end_headers()
             self.wfile.write(body)
 

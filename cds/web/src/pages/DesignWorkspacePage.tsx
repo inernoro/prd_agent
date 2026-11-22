@@ -7,18 +7,18 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
 import { requestAgentAccess } from '@/lib/agent-onboarding';
-import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignTheme, DesignVersion, DesignWorkspace } from '../../../src/shared/design-workspace';
-import { frameworkInUse, frameworkMaterialCandidates, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
+import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../src/shared/design-workspace';
+import { frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
 import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
 import { DesignRationale } from './design-workspace/DesignRationale';
 import { DesignRequirementView } from './design-workspace/DesignRequirements';
-import { designFeedbackAt, DesignLibrary, libraryStatuses, type DesignReadChanges } from './design-workspace/DesignLibrary';
+import { DesignLibrary, libraryStatuses } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, DesignMaterialView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
-import { cellNames, designCheckRows, designDate, designFailureGroups, designPath, designSourceNames, designStatus, latestDesign, materialNames, scopePath, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
+import { cellNames, designCheckRows, designDate, designFailureGroups, designPath, designSourceNames, designStatus, emptyDesignViewer, latestDesign, materialNames, scopePath, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
 import { compareDesignMaterial } from './design-workspace/design-structure';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
@@ -27,13 +27,6 @@ const tabs = [['preview','预览'],['diff','对比'],['delivery','交付'],['acc
 type ReviewTarget = { entryId: string; commentId: string; version: number };
 type LargeTarget = { entryId: string; version: number };
 const validSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
-
-function readDesignChanges(key: string): DesignReadChanges {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) ?? '{}');
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  } catch { return {}; }
-}
 
 function frameworkVersionPath(project: string, version: DesignVersion) {
   return '/design?' + new URLSearchParams({ project, framework: version.framework!,
@@ -100,6 +93,7 @@ export function DesignWorkspacePage() {
   const linkedUnfreeze = draftVisible && canUnfreeze && panel === 'unfreeze' && entry && entry.frozen === requestedBaseline
     ? { id: entry.id, version: requestedBaseline } : undefined;
   const unfreeze = unfreezeTarget ?? linkedUnfreeze;
+  const freeze = freezeTarget ?? (draftVisible && panel === 'freeze' && entry && version ? { id: entry.id, version: version.version } : undefined);
   const showCandidates = draftVisible && permissions?.review && entry?.frozen === version?.version
     && (extract || (panel === 'framework-candidates' && (!versionParam || Number(versionParam) === version?.version)));
   const canAssign = permissions?.write && entry && (permissions.steward || latestDesign(entry).publisher.id === permissions.actorId);
@@ -111,21 +105,43 @@ export function DesignWorkspacePage() {
   const compareFrom = Number(params.get('compareFrom')) || undefined;
   const currentVersion = entry ? latestDesign(entry).version : undefined;
   const activeFeedback = (entry?.feedback ?? []).filter(row => row.status !== 'closed').length;
-  const readKey = permissions?.actorId && `cds.design.read/${encodeURIComponent(project)}/${encodeURIComponent(permissions.actorId)}`;
-  const [read, setRead] = useState<{ key: string; data: DesignReadChanges }>();
+  const readKey = permissions?.actorId && project + '/' + permissions.actorId;
+  const [read, setRead] = useState<{ key: string; viewer: DesignViewerState }>();
+  const viewer = read?.key === readKey && read ? read.viewer : workspace?.viewer ?? emptyDesignViewer;
+  const viewedVersion = draftVisible ? version?.version : undefined;
+  const viewedDesign = draftVisible ? entry?.id : undefined;
+  const viewedFeedback = tab === 'delivery' && draftVisible && entry ? latestDesignFeedbackAt(entry) || undefined : undefined;
+  const viewedBrief = requirement?.designKey;
+  const viewedBriefAt = requirement?.sharedAt;
+  const viewingLibrary = !requirementKey && !entry && !framework && !frameworkList;
+  const serverReading = Boolean(workspace?.viewer);
   useEffect(() => {
-    if (readKey) setRead({ key: readKey, data: readDesignChanges(readKey) });
-  }, [readKey]);
-  useEffect(() => {
-    if (!readKey || !entry || !version || !draftVisible) return;
-    const data = readDesignChanges(readKey);
-    const prior = data[entry.id];
-    const feedbackAt = tab === 'delivery' ? designFeedbackAt(entry) : (prior?.feedbackAt ?? '');
-    if ((prior?.version ?? 0) >= version.version && (prior?.feedbackAt ?? '') >= feedbackAt) return;
-    data[entry.id] = { version: Math.max(prior?.version ?? 0, version.version), feedbackAt };
-    try { localStorage.setItem(readKey, JSON.stringify(data)); } catch { /* Browsing works with storage disabled. */ }
-    setRead({ key: readKey, data });
-  }, [readKey, entry, version, tab, draftVisible]);
+    if (!readKey) return;
+    const mark = viewedDesign && viewedVersion ? { kind: 'design', designId: viewedDesign, version: viewedVersion,
+      ...(viewedFeedback ? { feedbackAt: viewedFeedback } : {}) }
+      : viewedBrief && viewedBriefAt ? { kind: 'brief', designKey: viewedBrief, sharedAt: viewedBriefAt }
+        : viewingLibrary ? { kind: 'library' } : undefined;
+    if (!mark) return;
+    if (viewedDesign && viewedVersion || viewedBrief && viewedBriefAt) {
+      setRead(current => {
+        const base = current?.key === readKey ? current.viewer : workspace?.viewer ?? emptyDesignViewer;
+        if (viewedDesign && viewedVersion) {
+          const old = base.designs?.[viewedDesign];
+          const feedbackAt = [old?.feedbackAt ?? '', viewedFeedback ?? ''].sort().at(-1);
+          const updated = { version: Math.max(old?.version ?? 0, viewedVersion), ...(feedbackAt ? { feedbackAt } : {}) };
+          return { key: readKey, viewer: { ...base, designs: { ...base.designs, [viewedDesign]: updated } } };
+        }
+        return { key: readKey, viewer: { ...base, briefs: { ...base.briefs, [viewedBrief!]: viewedBriefAt! } } };
+      });
+    }
+    if (!serverReading) return;
+    const controller = new AbortController();
+    void apiRequest<{ projectId: string; viewer: DesignViewerState }>(designPath(project) + '/viewed',
+      { method: 'POST', body: mark, signal: controller.signal }).then(result => {
+      if (!controller.signal.aborted && result.projectId === project) setRead({ key: readKey, viewer: result.viewer });
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [readKey, project, serverReading, viewedDesign, viewedVersion, viewedFeedback, viewedBrief, viewedBriefAt, viewingLibrary]);
   const draftSystem = workspace?.systems?.find(row => row.id === entry?.scope?.systemId);
   const draftModule = draftSystem?.modules.find(row => row.id === entry?.scope?.moduleId);
   const canvas = !!entry && (tab === 'preview' || tab === 'diff');
@@ -199,7 +215,7 @@ export function DesignWorkspacePage() {
     pending.current = { key, id: requestId };
     try {
       const endpoint = type === 'feedback.attach' ? '/feedback/attachments'
-        : type.startsWith('feedback.') || type === 'brief.reply' ? '/feedback' : '/commands';
+        : type.startsWith('feedback.') || ['brief.reply', 'brief.claim', 'brief.release'].includes(type) ? '/feedback' : '/commands';
       const response = await apiRequest<{ projectId: string }>(designPath(project) + endpoint,
         { method: 'POST', body: { type, requestId, ...fields } });
       if (response.projectId !== project) throw new Error('操作回执与当前项目不符');
@@ -216,14 +232,16 @@ export function DesignWorkspacePage() {
       <Link to={scopePath(project, entry!.scope)}>{draftSystem.name} · {draftModule.name}</Link></>}
     {framework && <> <span>/</span> <strong>{framework.versions.at(-1)?.title}</strong></>}
   </span>} />;
+  const versionRun = entry?.runs.filter(run => run.version === version?.version).at(-1);
   const summaryTabLinks = entry && version && <nav className="dw-tablinks" aria-label="稿件标签">
     {tabs.map(([value, label]) => {
       const count = value === 'preview' ? entry.comments.length : value === 'delivery' ? activeFeedback
-        : value === 'log' ? entry.versions.length : value === 'accept' ? entry.runs.at(-1)?.cells.filter(cell => cell.status === 'failed').length : undefined;
+        : value === 'log' ? entry.versions.length : value === 'accept' ? versionRun?.cells.filter(cell => cell.status === 'failed').length : undefined;
       const details = value === 'preview' ? '条评论' : value === 'delivery' ? '条待处理' : value === 'log' ? '版' : '项不通过';
       return <button type="button" className="dw-tab" key={value} aria-current={tab === value}
         aria-label={count ? label + ' ' + count + ' ' + details : undefined} onClick={() => onChange({ tab: value, compareFrom: '' })}>
-        {label}{count ? <small data-negative={value === 'accept'} title={count + ' ' + details}>{count}</small> : null}
+        {label}{count ? <small className={value === 'accept' || value === 'delivery' ? 'dw-tab-todo' : undefined}
+          data-negative={value === 'accept'} title={count + ' ' + details}>{count}{value === 'accept' ? ' 不通过' : value === 'delivery' ? ' 待处理' : ''}</small> : null}
       </button>;
     })}
   </nav>;
@@ -240,7 +258,7 @@ export function DesignWorkspacePage() {
         ? <p role="alert" className="dw-placeholder">{projects.error ?? source.error} <button type="button" className="ep-button" onClick={() => refresh(value => value + 1)}>重试</button></p>
         : projects.loading || source.loading ? <ContentLoading variant="table" label="正在读取设计工作区" />
         : <p className="dw-placeholder">当前没有可查看的设计项目。</p>
-      : requirementKey ? <DesignRequirementView key={`${project}/${requirementKey}`} project={project} requirement={requirement} workspace={workspace} command={command} busy={busy} />
+      : requirementKey ? <DesignRequirementView key={`${project}/${requirementKey}`} project={project} requirement={requirement} workspace={workspace} command={command} busy={busy} startOpen={panel === 'brief-start'} />
       : framework ? <DesignFrameworkView key={framework.id} framework={framework} revision={frameworkVersion} tab={frameworkTab} designs={workspace.designs}
         onTab={value => onChange({ tab: value })} back={() => onChange({ framework: '', tab: '', version: '', view: 'frameworks' })} />
       : entry && version ? <>
@@ -279,7 +297,7 @@ export function DesignWorkspacePage() {
                     <dt>来源</dt><dd><code>{version.sourceCommit.slice(0, 12)}</code> · {designSourceNames[version.sourceVerification ?? 'declared']}</dd>
                     <dt>基线</dt><dd>{entry.frozen === undefined ? '尚未定稿' : `实施基线 V${entry.frozen}`}。同一稿件可以继续发布新版本。
                     {canFreeze && entry.frozen !== version.version && version.version === currentVersion
-                      && <button className="ep-button" type="button" disabled={busy} onClick={() => setFreezeTarget({ id: entry.id, version: version.version })}>定为实施基线</button>}
+                      && <button className="ep-button" type="button" disabled={busy} data-action="freeze" onClick={() => setFreezeTarget({ id: entry.id, version: version.version })}>定为实施基线</button>}
                     </dd>
                     <dt>需求</dt><dd>{workspace.requirements?.some(row => row.designKey === entry.designKey)
                       ? <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, brief: entry.designKey! })}>查看来源需求</Link> : '无交接记录'}</dd>
@@ -310,7 +328,7 @@ export function DesignWorkspacePage() {
         {entry.frozen !== undefined && entry.frozen !== version.version && <p className="dw-baseline-note" role="status">
           你在看 V{version.version}。实施基线是 V{entry.frozen}，{version.version > entry.frozen ? `V${entry.frozen + 1}${version.version > entry.frozen + 1 ? `–V${version.version}` : ''} 是定稿之后的新版本，实现仍按基线` : '这一版早于基线'}。续版不会移动基线，只有重新定稿才会。
           <button className="ep-text-button" type="button" onClick={() => onChange({ version: String(entry.frozen), tab: 'preview', compareFrom: '' })}>打开基线 V{entry.frozen}</button>
-          <button className="ep-text-button" type="button" onClick={() => onChange({ tab: 'diff', compareFrom: String(entry.frozen) })}>和基线对比</button>
+          <button className="ep-text-button" type="button" onClick={() => onChange({ tab: 'diff', compareFrom: String(entry.frozen) })}>和基线 V{entry.frozen} 对比</button>
         </p>}
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
         {canvas ? <DesignCanvas key={`${entry.id}/${version.version}/${screenParam ?? ''}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
@@ -350,7 +368,7 @@ export function DesignWorkspacePage() {
           </div>
         </header>
         <DesignLibrary workspace={workspace} query={query} onChange={changeLibrary} mode={mode} theme={canvasTheme}
-          read={read?.key === readKey && read ? read.data : {}} frameworkList={frameworkList} onFramework={selectFramework}
+          viewer={viewer} frameworkList={frameworkList} onFramework={selectFramework}
           onReview={openReview} onLarge={openLarge} />
       </>}
     </Workspace>
@@ -371,16 +389,24 @@ export function DesignWorkspacePage() {
       command={command} busy={busy} onClose={closeReview} />}
     {showCandidates && entry && version && workspace && <ExtractFramework key={`${entry.id}/${version.version}`} entry={entry} version={version} workspace={workspace} command={command}
       busy={busy} issue={issue} close={() => { setIssue(''); setExtract(false); dismissPanel('framework-candidates'); }} />}
-    {draftVisible && canFreeze && entry && version && freezeTarget?.id === entry.id && freezeTarget.version === version.version
-      && version.version === currentVersion && entry.frozen !== version.version && <Dialog open onOpenChange={open => { if (!open && !busy) setFreezeTarget(undefined); }}>
-      <DialogContent className="dw-modal dw-surface">
+    {draftVisible && canFreeze && entry && version && freeze?.id === entry.id && freeze.version === version.version
+      && version.version === currentVersion && entry.frozen !== version.version && <Dialog open onOpenChange={open => {
+        if (!open && !busy) { setFreezeTarget(undefined); dismissPanel('freeze'); }
+      }}>
+      <DialogContent className="dw-modal dw-surface" data-design-panel="freeze">
         <DialogTitle>将 V{version.version} 定为实施基线</DialogTitle>
-        <DialogDescription>{entry.frozen === undefined ? '实现方将以此版本作为对照。' : `此操作会将实施基线从 V${entry.frozen} 移到 V${version.version}。`}
-          历史版本可以继续查看，续版可以继续发布。</DialogDescription>
+        <DialogDescription>{entry.frozen === undefined ? '实现方将以此版本作为对照。' : `实施基线将从 V${entry.frozen} 移到 V${version.version}。`}</DialogDescription>
+        <ul className="dw-consequences">
+          <li>原基线的验收和签收继续保留在原版本。</li>
+          <li>本次定稿会记入稿件记录，保留操作者和时间。</li>
+          <li>同一稿件可继续续版，续版不会移动实施基线。</li>
+        </ul>
         <footer className="dw-row">
-          <button className="ep-button" type="button" disabled={busy} onClick={() => setFreezeTarget(undefined)}>取消</button>
+          <button className="ep-button" type="button" disabled={busy} onClick={() => { setFreezeTarget(undefined); dismissPanel('freeze'); }}>取消</button>
           <button className="ep-button ep-button--primary" type="button" disabled={busy} onClick={async () => {
-            if (await command('design.freeze', { designId: entry.id, version: version.version })) setFreezeTarget(undefined);
+            if (await command('design.freeze', { designId: entry.id, version: version.version })) {
+              setFreezeTarget(undefined); dismissPanel('freeze');
+            }
           }}>确认实施基线</button>
         </footer>
       </DialogContent>

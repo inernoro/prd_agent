@@ -7,7 +7,7 @@ import { PlanningError, planningId, rejectPlanning } from '../services/engineeri
 import type { DesignReviewer } from '../shared/design-workspace.js';
 
 const route = '/projects/:projectId/design';
-const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|feedback(?:\/attachments)?|reviewers|intake|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
+const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|feedback(?:\/attachments)?|reviewers|intake|viewed|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
 export function normalizedDesignPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0];
   if (/^(?:\/_cds)?\/api\/auth\/design\/notices\/?$/i.test(path)) return '/api/auth/design/notices';
@@ -51,6 +51,8 @@ export function createDesignWorkspaceRouter(deps: {
 
   router.get(route, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.workspace(projectId, actor))));
   router.get(`${route}/intake`, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.intake(projectId, actor))));
+  router.post(`${route}/viewed`, authorized, express.json({ limit: '2kb' }),
+    handle(async (req, res, projectId, actor) => res.json(await deps.service.viewed(projectId, actor, req.body))));
   router.get(`${route}/reviewers`, authorized, handle(async (_req, res, projectId) => {
     res.json({ projectId, reviewers: await deps.reviewCandidates?.(projectId) ?? [] });
   }));
@@ -104,6 +106,8 @@ export function createDesignWorkspaceRouter(deps: {
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (artifact.mime.startsWith('text/html')) {
+      // CDN rewriting can inject analytics into an immutable sandboxed document.
+      res.setHeader('Cache-Control', 'private, no-store, no-transform');
       res.setHeader('Content-Security-Policy', designPrototypeCsp);
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     }

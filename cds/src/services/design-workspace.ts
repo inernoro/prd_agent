@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type {
   DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
-  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, FrameworkResolutions,
+  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignViewerState, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, frameworkInUse, frameworkMaterialCandidates } from '../shared/design-workspace.js';
+import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
@@ -31,9 +31,10 @@ export type DesignWorkspaceCommit = {
     implementation?: { version: number; screens: DesignImplementation[] } };
   framework?: DesignFramework;
   system?: DesignSystem;
+  viewing?: { actorId: string; state: DesignViewerState };
   brief?: { designKey: string; value: DesignRequirement | null };
 };
-type Changes = Pick<DesignWorkspaceCommit, 'assets' | 'design' | 'framework' | 'system' | 'brief'>;
+type Changes = Pick<DesignWorkspaceCommit, 'assets' | 'design' | 'framework' | 'system' | 'brief' | 'viewing'>;
 type Preview = { commit: string; url: string };
 type WorkspaceState = {
   revision: number; designs: Map<string, DesignEntry>; frameworks: Map<string, DesignFramework>;
@@ -41,6 +42,7 @@ type WorkspaceState = {
   reviewNotices: Map<string, DesignReviewNotice[]>;
   requirements: Map<string, DesignRequirement>;
   systems: Map<string, DesignSystem>;
+  viewers: Map<string, DesignViewerState>;
   deliveryFiles: Map<string, { archiveId: string; root: string; file: DesignDeliveryFile }>;
 };
 type Context = { projectId: string; actor: DesignActor; state: WorkspaceState; now: string };
@@ -110,6 +112,7 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
   for (const asset of commit.assets ?? []) state.assets.set(asset.id, commit.revision);
   if (commit.framework) state.frameworks.set(commit.framework.id, commit.framework);
   if (commit.system) state.systems.set(commit.system.id, commit.system);
+  if (commit.viewing) state.viewers.set(commit.viewing.actorId, commit.viewing.state);
   if (commit.brief) {
     if (commit.brief.value) state.requirements.set(commit.brief.designKey, commit.brief.value);
     else state.requirements.delete(commit.brief.designKey);
@@ -291,7 +294,7 @@ export class DesignWorkspaceService {
     if (base && !commits.length) return base;
     const state: WorkspaceState = { revision: base?.revision ?? 0, requests: new Map(base?.requests),
       designs: new Map(base?.designs), frameworks: new Map(base?.frameworks), assets: new Map(base?.assets), reviewNotices: new Map(base?.reviewNotices),
-      requirements: new Map(base?.requirements), systems: new Map(base?.systems), deliveryFiles: new Map(base?.deliveryFiles) };
+      requirements: new Map(base?.requirements), systems: new Map(base?.systems), viewers: new Map(base?.viewers), deliveryFiles: new Map(base?.deliveryFiles) };
     for (const commit of commits) {
       if (commit.projectId !== projectId || commit.revision !== state.revision + 1) throw new Error('Design revision history is inconsistent');
       apply(state, commit);
@@ -355,6 +358,7 @@ export class DesignWorkspaceService {
     return { projectId, designs, frameworks: structuredClone([...state.frameworks.values()]),
       requirements: visibleRequirements(state),
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
+      ...(actor.kind === 'human' ? { viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) } : {}),
       permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
         steward: actor.steward === true, actorId: actor.id } };
@@ -383,6 +387,63 @@ export class DesignWorkspaceService {
           ...(adoptedVersion ? { adoptedVersion } : {}) };
       }),
     };
+  }
+
+  async viewed(projectId: string, actor: DesignActor, value: unknown) {
+    requireProjectRead(actor);
+    if (actor.kind !== 'human') forbidden('只有当前登录成员可以保存自己的阅读进度');
+    const input = designRecord(value, '设计阅读进度');
+    const kind = input.kind;
+    const now = (this.deps.now ?? (() => new Date()))();
+    const base = await this.load(projectId);
+    const previous = base.viewers.get(actor.id);
+    let build: (state: WorkspaceState, next: DesignViewerState) => void;
+    let identity: string[];
+    if (kind === 'library') {
+      designRecord(input, '设计库阅读进度', ['kind']);
+      if (previous?.lastVisitAt && now.getTime() - Date.parse(previous.lastVisitAt) < 60 * 60_000) {
+        return { projectId, viewer: structuredClone(previous) };
+      }
+      identity = ['library', String(Math.floor(now.getTime() / (60 * 60_000)))];
+      build = (_state, next) => { next.firstVisitAt ??= now.toISOString(); next.lastVisitAt = [next.lastVisitAt ?? '', now.toISOString()].sort().at(-1); };
+    } else if (kind === 'design') {
+      designRecord(input, '稿件阅读进度', ['kind', 'designId', 'version', 'feedbackAt']);
+      const id = designId(input.designId, '稿件编号');
+      const version = number(input.version, '稿件版本');
+      const at = input.feedbackAt === undefined ? undefined : planningText(input.feedbackAt, '反馈时间', 30);
+      if (at && (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at) || !Number.isFinite(Date.parse(at))
+        || new Date(at).toISOString() !== at)) invalidDesign('反馈时间不正确');
+      identity = ['design', id, String(version), at ?? ''];
+      build = (state, next) => {
+        const draft = state.designs.get(id) ?? missing('该稿件不存在');
+        versionOf(draft, version);
+        if (at && at > latestDesignFeedbackAt(draft)) invalidDesign('反馈阅读时间超出当前稿件记录');
+        const stored = next.designs[id];
+        next.designs[id] = { version: Math.max(version, stored?.version ?? 0),
+          ...(at || stored?.feedbackAt ? { feedbackAt: [at ?? '', stored?.feedbackAt ?? ''].sort().at(-1) } : {}) };
+      };
+    } else if (kind === 'brief') {
+      designRecord(input, '需求阅读进度', ['kind', 'designKey', 'sharedAt']);
+      const designKey = designIntakeKey(input.designKey);
+      const at = planningText(input.sharedAt, '交接时间', 30);
+      const visible = base.requirements.get(designKey) ?? missing('该需求不存在');
+      if (visible.sharedAt !== at) conflict('需求已重新交接，请刷新后阅读');
+      identity = ['brief', designKey, at];
+      build = (state, next) => {
+        const brief = state.requirements.get(designKey) ?? missing('该需求不存在');
+        if (brief.sharedAt !== at) conflict('需求已重新交接，请刷新后阅读');
+        next.briefs[designKey] = at;
+      };
+    } else {
+      return invalidDesign('请选择设计库、稿件或需求阅读记录');
+    }
+    await this.mutate(projectId, actor, 'read-' + designDigest(JSON.stringify(identity)), input, ({ state }) => {
+      const next = structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} });
+      build(state, next);
+      return { result: { type: 'viewed' }, changes: { viewing: { actorId: actor.id, state: next } } };
+    }, requireProjectRead);
+    const state = await this.load(projectId);
+    return { projectId, viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) };
   }
 
   async reviewNotices(projectId: string, actor: DesignActor): Promise<DesignReviewNotice[]> {
@@ -507,7 +568,11 @@ export class DesignWorkspaceService {
         }
         if (existing?.versions.some(version => version.sourceCommit === sourceCommit)) conflict('该稿件已经发布过此提交');
         const reviewers = reviewerIds === undefined ? existing?.reviewers : await this.reviewers(projectId, reviewerIds);
-        const sharedScope = state.requirements.get(designKey ?? existing?.designKey ?? '')?.scope;
+        const brief = state.requirements.get(designKey ?? existing?.designKey ?? '');
+        if (!existing && brief?.assignee && brief.assignee.id !== actor.id && !actor.steward) {
+          intakeConflict('此需求已分配给出稿人，请先在原需求完成交接');
+        }
+        const sharedScope = brief?.scope;
         const registeredScope = existing?.scope ?? sharedScope;
         if (loaded.scope && registeredScope && (loaded.scope.systemId !== registeredScope.systemId || loaded.scope.moduleId !== registeredScope.moduleId)) {
           intakeConflict('稿件已有主归属。请沿用该系统和模块，或请项目管理者调整归属后再续版');
@@ -568,6 +633,26 @@ export class DesignWorkspaceService {
   async feedback(projectId: string, actor: DesignActor, value: unknown): Promise<Receipt> {
     const input = designRecord(value, '设计反馈');
     const type = input.type;
+    if (type === 'brief.claim' || type === 'brief.release') {
+      designRecord(input, '设计需求认领', ['type', 'requestId', 'designKey', 'expectedVersion']);
+      const requestId = designId(input.requestId, '请求编号');
+      const designKey = designIntakeKey(input.designKey);
+      const expectedVersion = number(input.expectedVersion, '需求版本');
+      return this.mutate(projectId, actor, requestId, input, ({ state }) => {
+        const brief = state.requirements.get(designKey) ?? missing('请先读取接入清单中的设计需求');
+        if (brief.planVersion !== expectedVersion) conflict('需求已更新，请重新读取接入清单');
+        if (type === 'brief.claim' && brief.assignee && brief.assignee.id !== actor.id) {
+          conflict('此需求已有出稿人，请先在原需求说明交接');
+        }
+        if (type === 'brief.release' && brief.assignee?.id !== actor.id && !actor.steward) {
+          forbidden('出稿人或项目管理者可以交回这条需求');
+        }
+        if ([...state.designs.values()].some(row => row.designKey === designKey)) conflict('此需求已出稿，请回读原稿');
+        const assignee = type === 'brief.claim' ? identity(actor) : undefined;
+        return { result: { type, id: 'BCL-' + designDigest(designKey).slice(0, 24), designKey, planId: brief.planId, version: expectedVersion },
+          changes: { brief: { designKey, value: { ...brief, assignee } } } };
+      });
+    }
     if (type === 'brief.reply') {
       designRecord(input, '回复设计需求', ['type', 'requestId', 'designKey', 'expectedVersion', 'body']);
       const requestId = designId(input.requestId, '请求编号');

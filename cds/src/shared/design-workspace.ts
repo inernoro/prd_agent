@@ -201,7 +201,7 @@ export function frameworkInUse(id: string, revision: FrameworkRevision | undefin
 export type DesignRequirement = {
   designKey: string; planId: string; planVersion: number; proposalId: string;
   title: string; requirements: string; sharedAt: string;
-  scope?: DesignScope; owner?: DesignReviewer;
+  scope?: DesignScope; owner?: DesignReviewer; assignee?: DesignReviewer;
   replies?: Array<{ id: string; author: DesignFeedbackAuthor; body: string; at: string; planVersion: number }>;
 };
 export type DesignIntake = {
@@ -218,9 +218,27 @@ export type DesignIntake = {
   }>;
   frameworks: Array<{ id: string; title: string; latestVersion: number; adoptedVersion?: number }>;
 };
+export type DesignReadMark = { version: number; feedbackAt?: string };
+export type DesignViewerState = {
+  firstVisitAt?: string; lastVisitAt?: string;
+  designs: Record<string, DesignReadMark>;
+  briefs: Record<string, string>;
+};
+
+export function latestDesignFeedbackAt(entry: DesignEntry): string {
+  let latest = '';
+  for (const item of entry.feedback ?? []) {
+    for (const at of [item.createdAt, item.replies.at(-1)?.at, item.decisions.at(-1)?.at, item.attachments?.at(-1)?.at]) {
+      if (at && at > latest) latest = at;
+    }
+  }
+  return latest;
+}
+
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
   requirements?: DesignRequirement[];
   systems?: DesignSystem[];
+  viewer?: DesignViewerState;
   permissions: { write: boolean; feedback?: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
 };

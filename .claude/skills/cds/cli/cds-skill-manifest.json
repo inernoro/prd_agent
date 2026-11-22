@@ -17,13 +17,13 @@
     "cds/cli/acceptance/design-browser.mjs": "1d2e474d5d4a6f93e34f78b52bae070b174a5cbb793871bf4be6e475dc997c97",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "a216708a6877aba621f68039a65d3aa13a90f2251999d3a329a537f8ddc88b4d",
-    "cds/cli/design-preview-contract.json": "6d8e7563dc651b6902f4abff3c532524ba4dc5bf0ffa2d95c8d1cf1e4f10ba82",
-    "cds/cli/design_preview.py": "c40b282dc786551c9c12746ef2421b8c129efef6567105eef24e7b5aa9d15dce",
+    "cds/cli/cdscli.py": "50810edf9331a505e404cd82a45cb8abe4f7cefbd8ebf650efedbcc75f0b7068",
+    "cds/cli/design-preview-contract.json": "487475257fc81cdf9fa53e28f6e246c837e360329ce206b4508ce8d240cd7f47",
+    "cds/cli/design_preview.py": "64bff0257bb9fa1bacaacc13460341671b621e09cc0b6a9758ff8b603a31207e",
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "003ae9a82cd1a9536cbd27c1842166513e4f629d046ff0a513bdef5b238ac46a",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
-    "cds/reference/design-intake.md": "651a1b97e32437edebb8310dd552ebd375622c163a2d016573b2eef994d74d7b",
+    "cds/reference/design-intake.md": "cb3b21c9f6e473b40f24e63149c65c099ba1d78aa173e2d6b9f51a0df3ded773",
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
     "cds/reference/instance-catalog.json": "ba7e9fe58f72fc6eddd2a016ee15ff4cf09d57b588e017d7e99be2f8272fbb92",
@@ -76,5 +76,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-22T22:26:52.319538+00:00"
+  "generatedAt": "2026-11-22T22:40:10.921674+00:00"
 }

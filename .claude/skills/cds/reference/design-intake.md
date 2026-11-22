@@ -73,3 +73,5 @@
 先读同一项目的 `cdscli design intake` 或 MCP `cds_design_read` 的 `intake`。使用 `systems[].modules` 选择系统和模块。交接需求与原稿会附上 `scope`，已有的 `designKey`、稿件编号和来源路径仍可继续用。若 `design.json` 声明归属，可填 `scope: {"systemId":"<系统>","moduleId":"<模块>","related":[{"systemId":"<系统>","moduleId":"<受影响模块>"}]}`。服务端会校验所有归属在当前项目登记。同一稿件的续版沿用主归属，需调整时由项目管理者先登记变更。
 
 稿件未指定框架时沿用原稿框架；新稿依次查模块和系统的默认框架，使用 `intake.frameworks[].adoptedVersion` 对应的可用版本并在发布时锁定。设计方先读该版框架的范围、示意稿和源码，属于模块的局部差异写在已有稿件反馈或接入需求线程。
+
+首稿可以先用 `cdscli design brief-claim <接入标识> --expected-version <计划版号>` 认领，也可调用 MCP 的 `brief.claim`。接入清单回读实际出稿人，写作权限沿用现有项目授权。原出稿人和项目管理者可在未发布首稿时用 `design brief-release` 或 `brief.release` 交回。需要澄清的事项继续回复同一个需求线程。

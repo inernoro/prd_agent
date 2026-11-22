@@ -1,4 +1,4 @@
-import type { DesignModuleRef } from '../../../../src/shared/design-workspace';
+import type { DesignModuleRef, DesignRequirement, DesignViewerState } from '../../../../src/shared/design-workspace';
 import { apiUrl } from '@/lib/api';
 import { currentDesignRun, type DesignEntry, type DesignVersion } from '../../../../src/shared/design-workspace';
 
@@ -62,4 +62,28 @@ export function scopePath(project: string, ref?: DesignModuleRef, group?: string
     params.set('module', ref.moduleId);
   } else if (group) params.set('group', group);
   return '/design?' + params;
+}
+
+export const emptyDesignViewer: DesignViewerState = { designs: {}, briefs: {} };
+
+export function legacyRequirementGroup(requirement: DesignRequirement, entries: DesignEntry[]): string {
+  const linked = entries.find(row => row.designKey === requirement.designKey);
+  if (linked) return latestDesign(linked).group ?? '未分组';
+  const moduleKey = requirement.designKey.split('/')[0];
+  const groups = new Set(entries.filter(row => !row.scope && row.designKey?.split('/')[0] === moduleKey)
+    .map(row => latestDesign(row).group ?? '未分组'));
+  return groups.size === 1 ? [...groups][0] : '未分组';
+}
+
+export function newDesignLabel(entry: DesignEntry, viewer: DesignViewerState): string | undefined {
+  const latest = latestDesign(entry);
+  const seen = viewer.designs?.[entry.id];
+  const firstVisit = viewer.firstVisitAt ?? viewer.lastVisitAt;
+  if (latest.version <= (seen?.version ?? 0) || (!seen && firstVisit && latest.createdAt <= firstVisit)) return;
+  return latest.version === 1 ? '新稿' : '新 V' + latest.version;
+}
+
+export function isNewDesignRequirement(requirement: DesignRequirement, viewer: DesignViewerState): boolean {
+  const seen = viewer.briefs?.[requirement.designKey] ?? viewer.firstVisitAt ?? viewer.lastVisitAt ?? '';
+  return requirement.sharedAt > seen;
 }

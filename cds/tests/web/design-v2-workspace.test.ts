@@ -1,11 +1,12 @@
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { build } from 'esbuild';
 import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { chromium, type BrowserContextOptions, type Locator, type Page } from 'playwright';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DesignComment, DesignEntry, DesignFeedback, DesignScreen, DesignVersion, DesignWorkspace } from '../../src/shared/design-workspace';
+import { chromium, type Browser, type BrowserContextOptions, type Locator, type Page } from 'playwright';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import type { DesignComment, DesignEntry, DesignFeedback, DesignRequirement, DesignScreen, DesignVersion, DesignViewerState, DesignWorkspace } from '../../src/shared/design-workspace';
 import type { PlanningBoard } from '../../src/shared/engineering-planning';
 import { DesignWorkspacePage } from '../../web/src/pages/DesignWorkspacePage';
 import { EngineeringPlanningPage } from '../../web/src/pages/EngineeringPlanningPage';
@@ -20,6 +21,16 @@ vi.mock('../../web/src/pages/engineering-planning/planning-ui', async importOrig
 }));
 
 afterEach(() => vi.unstubAllGlobals());
+
+let fixtureBrowser: Promise<Browser> | undefined;
+afterAll(async () => { await fixtureBrowser?.then(browser => browser.close()); });
+
+async function fixturePage(options?: BrowserContextOptions) {
+  fixtureBrowser ??= chromium.launch({ headless: true,
+    ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : { channel: 'chrome' }),
+  });
+  return (await fixtureBrowser).newPage({ ...options, serviceWorkers: 'block' });
+}
 
 const projectId = 'fixture-design-v2';
 const frameworkId = 'FW-fixture';
@@ -142,19 +153,86 @@ async function withLayout(markup: string, cssFiles: string[], check: (page: Page
     ...loadConfig(path.resolve('web/tailwind.config.js')),
     content: [{ raw: markup, extension: 'html' }],
   }), fromWeb('autoprefixer')]).process(styles.join('\n'), { from: path.resolve('web/src/index.css') });
-  const browser = await chromium.launch({ headless: true,
-    ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : { channel: 'chrome' }),
-  });
+  const page = await fixturePage(options);
   try {
-    const page = await browser.newPage({ ...options, serviceWorkers: 'block' });
     await page.route('**/*', routed => routed.abort());
     // Compile the AppShell utilities so the fixture measures the same workspace width as the application.
     await page.setContent(`<!doctype html><html data-theme="light"><head><meta name="viewport" content="width=device-width, initial-scale=1">
       <style>${css}</style></head><body><div id="root">${markup}</div></body></html>`);
     await check(page);
   } finally {
-    await browser.close();
+    await page.close();
   }
+}
+
+type RecordedDesignCommand = Record<string, unknown> & { type: string };
+type FixtureView = { kind: 'library' } | { kind: 'brief'; designKey: string; sharedAt: string }
+  | { kind: 'design'; designId: string; version: number; feedbackAt?: string };
+const browserDesignOrigin = 'http://127.0.0.1:1';
+let browserDesignScript: Promise<string> | undefined;
+
+async function withDesignBrowser(input: () => DesignWorkspace,
+  check: (page: Page, commands: RecordedDesignCommand[], views: FixtureView[]) => Promise<void>) {
+  browserDesignScript ??= build({
+    stdin: {
+      contents: `import React from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { BrowserRouter } from 'react-router-dom';
+        import { DesignWorkspacePage } from './src/pages/DesignWorkspacePage';
+        createRoot(document.getElementById('root')).render(
+          React.createElement(BrowserRouter, null, React.createElement(DesignWorkspacePage)));
+      `,
+      resolveDir: path.resolve('web'),
+    },
+    alias: { '@': path.resolve('web/src') },
+    define: { 'process.env.NODE_ENV': '"production"', 'import.meta.env': '{}' },
+    loader: { '.css': 'empty', '.svg': 'dataurl' }, jsx: 'automatic', bundle: true, write: false,
+  }).then(result => result.outputFiles[0].text);
+  const script = await browserDesignScript;
+  const page = await fixturePage();
+  try {
+    page.setDefaultTimeout(8000);
+    page.setDefaultNavigationTimeout(15_000);
+    const commands: RecordedDesignCommand[] = [];
+    const views: FixtureView[] = [];
+    const viewer = structuredClone(input().viewer);
+    const designPath = `/api/projects/${projectId}/design`;
+    await page.route('**/*', async route => {
+      const url = new URL(route.request().url());
+      if (url.origin !== browserDesignOrigin) return route.abort();
+      if (url.pathname === '/fixture-design.js') return route.fulfill({ body: script, contentType: 'text/javascript' });
+      if (url.pathname === '/design') return route.fulfill({ contentType: 'text/html', body:
+        '<!doctype html><html data-theme="light"><body><div id="root"></div><script src="/fixture-design.js"></script></body></html>',
+      });
+      if (url.pathname === '/api/projects') {
+        return route.fulfill({ json: { projects: [{ id: projectId, name: '虚拟工程项目' }] } });
+      }
+      if (url.pathname === designPath) return route.fulfill({ json: { ...input(), ...(viewer ? { viewer } : {}) } });
+      if (url.pathname === `${designPath}/viewed` && viewer && route.request().method() === 'POST') {
+        const view: FixtureView = route.request().postDataJSON();
+        views.push(view);
+        if (view.kind === 'brief') viewer.briefs[view.designKey] = view.sharedAt;
+        if (view.kind === 'design') {
+          const prior = viewer.designs[view.designId];
+          viewer.designs[view.designId] = { version: Math.max(prior?.version ?? 0, view.version),
+            feedbackAt: [prior?.feedbackAt ?? '', view.feedbackAt ?? ''].sort().at(-1) };
+        }
+        return route.fulfill({ json: { projectId, viewer } });
+      }
+      if (url.pathname === `${designPath}/commands` && route.request().method() === 'POST') {
+        commands.push(route.request().postDataJSON());
+        return route.fulfill({ json: { projectId } });
+      }
+      return route.abort();
+    });
+    await check(page, commands, views);
+  } finally {
+    await page.close();
+  }
+}
+
+function browserDesignUrl(params: Record<string, string> = {}) {
+  return browserDesignOrigin + '/design?' + new URLSearchParams({ project: projectId, ...params });
 }
 
 const draftStyles = ['web/src/pages/engineering-planning/planning.css', 'web/src/pages/design-workspace/design.css'];
@@ -205,6 +283,18 @@ const libraryWorkspace: DesignWorkspace = {
     libraryDraft('old', '较早未绑定稿件', '归档资料', 17, { framework: undefined, frameworkVersion: undefined }),
   ],
   frameworks: [...workspace.frameworks, { ...workspace.frameworks[0], id: auxiliaryFramework }],
+};
+const awaitingBrief: DesignRequirement = {
+  designKey: 'settings/start-workspace', planId: 'PLN-fixture-brief', planVersion: 3, proposalId: 'PRO-fixture-brief',
+  title: '待出稿的示例需求', requirements: '核对首次进入设置的空状态。', sharedAt: at, owner: author,
+};
+const publishedBrief: DesignRequirement = { ...awaitingBrief, designKey: 'settings/already-published', title: '已经出稿的示例需求' };
+const viewerBeforeChanges: DesignViewerState = { firstVisitAt: '2026-11-16T00:00:00.000Z', designs: {}, briefs: {} };
+const requirementWorkspace: DesignWorkspace = {
+  ...libraryWorkspace,
+  designs: libraryWorkspace.designs.map((draft, index) => index === 0 ? { ...draft, designKey: publishedBrief.designKey } : draft),
+  requirements: [awaitingBrief, publishedBrief],
+  viewer: viewerBeforeChanges,
 };
 
 async function measureDraftHeader(page: Page, title: string, primaryAction?: string) {
@@ -346,10 +436,8 @@ describe('工程规划与设计 V2 前端回归', () => {
     expect(shared).toMatch(/^<details\b[^>]*\sopen(?:=|[\s>])/);
   });
 
-  it('A-19 设计库将项目框架和每份稿件的绑定、落后状态一起展示', () => {
+  it('A-19 首页范围行进入项目框架，稿件卡保留绑定版本和可升级状态', async () => {
     const html = design();
-    expect(text(html)).toContain('本项目框架');
-    expect(text(html)).toContain(frameworkTitle);
     expect(text(html)).toContain(frameworkId);
     const cards = Array.from(html.matchAll(/<article\b[^>]*class="[^"]*\bdw-design-card\b[^"]*"[^>]*>([\s\S]*?)<\/article>/g), match => text(match[1]));
     const boundCard = cards.find(card => card.includes(boundTitle));
@@ -357,15 +445,40 @@ describe('工程规划与设计 V2 前端回归', () => {
     expect(boundCard).toMatch(/(?:V|v)1\b/);
     expect(boundCard).toMatch(/可升级|落后|有新版本/);
     expect(cards.find(card => card.includes(unboundTitle))).toContain('未绑定框架');
-  });
+    await withDesignBrowser(() => workspace, async page => {
+      await page.goto(browserDesignUrl());
+      const frameworks = page.locator('.dw-library-bar').getByRole('button', { name: '框架 1 套', exact: true });
+      await frameworks.waitFor();
+      expect(await page.getByRole('region', { name: '本项目框架' }).count()).toBe(0);
+      await frameworks.click();
+      await page.waitForURL(url => url.searchParams.get('view') === 'frameworks');
+      const card = page.locator('.dw-framework-card');
+      expect(await card.count()).toBe(1);
+      expect(await card.innerText()).toContain(frameworkTitle);
+      expect(await card.innerText()).toContain('2 份稿件使用');
+    });
+    const scope = { systemId: 'fixture-console', moduleId: 'settings' };
+    const module = design(`&system=${scope.systemId}&module=${scope.moduleId}`, {
+      ...workspace, designs: [{ ...bound, scope }], systems: [{ id: scope.systemId, name: '示例控制台',
+        modules: [{ id: scope.moduleId, name: libraryFolder, framework: frameworkId }] }],
+    });
+    expect(module).toContain('aria-label="适用框架"');
+    expect(visibleText(module)).toContain(frameworkTitle);
+  }, 20_000);
 
   it('A-29 V3 设计库按最近更新、文件夹和框架排列，375px 不横向溢出', async () => {
-    await withLayout(design('', libraryWorkspace), draftStyles, async page => {
+    const withoutPending = { ...libraryWorkspace, designs: libraryWorkspace.designs.map(draft => ({ ...draft, reviewRequested: false })) };
+    const empty = { ...withoutPending, designs: [], frameworks: [], requirements: [] };
+    expect(visibleText(design('', empty))).toContain('此项目还没有稿件');
+    await withLayout(design('', withoutPending), draftStyles, async page => {
+      const first = page.locator('.dw-library > section').first();
+      expect.soft(await first.getByRole('heading').innerText(), '有稿、没有待办时首页仍从待办空态开始').toMatch(/^等你处理(?:\s|$)/);
+      expect.soft(await first.innerText()).toMatch(/(?:没有|暂无)[^。\n]*(?:处理|待办|事项)|全部处理完/);
       const recentTitle = page.getByRole('heading', { name: '最近更新', exact: true });
       const folderTitle = page.getByRole('heading', { name: /^文件夹/ });
       const recent = recentTitle.locator('xpath=ancestor::section[1]');
       const folders = folderTitle.locator('xpath=ancestor::section[1]');
-      const frameworks = page.getByRole('region', { name: '本项目框架' });
+      const frameworks = page.locator('.dw-library-bar').getByRole('button', { name: '框架 2 套', exact: true });
       expect.soft(await page.locator('.dw-side').count(), '库不再占用左侧范围栏').toBe(0);
       expect.soft(await recent.locator('.dw-card-title').allTextContents(), '最近更新按最新一版时间排序且只列四份').toEqual([
         '另一文件夹稿件', '其他分类稿件', '实现阶段稿件', '目标稿件',
@@ -375,11 +488,10 @@ describe('工程规划与设计 V2 前端回归', () => {
       for (const group of [libraryFolder, otherFolder, '归档资料']) {
         expect.soft(folderLabels.filter(label => label.includes(group)), `${group} 文件夹卡片`).toHaveLength(1);
       }
-      const rects = await Promise.all([recent, folders, frameworks].map(area => area.boundingBox({ timeout: 900 }).catch(() => null)));
-      expect.soft(rects.every(Boolean), '最近更新、文件夹和框架都是可见分区').toBe(true);
+      const rects = await Promise.all([frameworks, first, recent, folders].map(area => area.boundingBox({ timeout: 900 }).catch(() => null)));
+      expect.soft(rects.every(Boolean), '范围入口、待办、最近更新和文件夹均可见').toBe(true);
       if (rects.every(box => box !== null)) {
-        expect.soft(rects[0].y).toBeLessThan(rects[1].y);
-        expect.soft(rects[1].y).toBeLessThan(rects[2].y);
+        for (let i = 1; i < rects.length; i++) expect.soft(rects[i - 1].y).toBeLessThan(rects[i].y);
       }
 
       const overflow = await page.evaluate(() => ({
@@ -399,6 +511,151 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(overflow.cardFacts, '稿件卡片底部信息没有被裁切').toEqual([]);
     }, { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
   }, 15_000);
+
+  it('A-29/A-32 设计库优先展示待处理事项，未出稿需求归到同模块文件夹且不重复列稿', async () => {
+    const failedTitle = '实施基线验收未通过的合成稿';
+    const failedDraft: DesignEntry = { ...layoutDraft, id: 'DSN-fixture-failed-baseline', pullRequest: 41,
+      versions: layoutDraft.versions.map(version => ({ ...version, title: failedTitle })) };
+    const input = { ...requirementWorkspace, designs: [
+      ...requirementWorkspace.designs.map((draft, index) => ({ ...draft, reviewRequested: index === 0 })), failedDraft,
+    ] };
+    await withDesignBrowser(() => input, async (page, _commands, views) => {
+      await page.goto(browserDesignUrl());
+      const firstSection = page.locator('.dw-library > section').first();
+      const pending = firstSection.getByRole('link', { name: new RegExp(awaitingBrief.title) });
+      const recent = page.getByRole('heading', { name: '最近更新' }).locator('xpath=ancestor::section[1]');
+      await recent.waitFor();
+      expect.soft(await firstSection.getByRole('heading').innerText()).toMatch(/^等你处理(?:\s|$)/);
+      expect.soft(await firstSection.innerText()).toContain('目标稿件');
+      expect.soft(await pending.count(), '可发布的设计方从第一节直接进待出稿需求').toBe(1);
+      if (await pending.count() === 1) {
+        const href = new URL((await pending.getAttribute('href'))!, browserDesignOrigin);
+        expect.soft(Object.fromEntries(href.searchParams)).toEqual({ project: projectId, brief: awaitingBrief.designKey });
+      }
+      expect.soft(await firstSection.innerText()).not.toContain(publishedBrief.title);
+      const recentTitles = await recent.locator('.dw-card-title').allTextContents();
+      expect.soft(recentTitles).toHaveLength(4);
+      expect.soft(new Set(recentTitles).size).toBe(recentTitles.length);
+      expect.soft(recentTitles).not.toContain('目标稿件');
+      expect.soft(await page.locator('main').getByText(awaitingBrief.title, { exact: true }).count(), '需求没有在首页额外浮出一节').toBe(1);
+      const folder = page.locator('.dw-folder').filter({ hasText: libraryFolder });
+      expect.soft(await folder.innerText()).toContain('1 份待出稿');
+      const badge = firstSection.getByText('新需求', { exact: true });
+      expect.soft(await badge.isVisible()).toBe(true);
+      if (await pending.count() === 1) {
+        await pending.click();
+        await page.getByRole('heading', { name: awaitingBrief.title }).waitFor();
+        await expect.poll(() => views.find(view => view.kind === 'brief')).toEqual({
+          kind: 'brief', designKey: awaitingBrief.designKey, sharedAt: awaitingBrief.sharedAt,
+        });
+        await page.goto(browserDesignUrl());
+        await pending.waitFor();
+        expect(await badge.isVisible()).toBe(false);
+      }
+
+      const failedCard = firstSection.getByRole('article').filter({ hasText: failedTitle });
+      const failure = failedCard.getByRole('link', { name: '验收未通过', exact: true });
+      expect.soft(await failure.count(), '已续版的稿件仍把实施基线验收失败放在待办图卡').toBe(1);
+      if (await failure.count() === 1) {
+        expect.soft(await failedCard.innerText()).not.toMatch(/\d+\s+不通过/);
+        await failure.click();
+        await page.waitForURL(url => url.searchParams.get('design') === failedDraft.id && url.searchParams.get('tab') === 'accept');
+        expect(new URL(page.url()).searchParams.get('version')).toBe('2');
+        expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
+        expect(await page.getByRole('button', { name: /^做法验收/ }).getAttribute('aria-current')).toBe('true');
+        expect(await page.getByRole('heading', { name: /^PR #41 .*V2/ }).isVisible()).toBe(true);
+      }
+
+      await page.goto(browserDesignUrl({ group: libraryFolder }));
+      await page.locator('.dw-library > section').first().waitFor();
+      expect.soft(await firstSection.getByRole('heading').innerText()).toMatch(/^待出稿\s*1/);
+      expect.soft(await firstSection.getByRole('link', { name: new RegExp(awaitingBrief.title) }).count()).toBe(1);
+      expect.soft(await firstSection.innerText()).not.toContain(publishedBrief.title);
+    });
+  }, 20_000);
+
+  it('A-33 无稿需求提供回原文件夹和开始出稿，撤回从页尾经二次确认', async () => {
+    let input = requirementWorkspace;
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl({ brief: awaitingBrief.designKey }));
+      const brief = page.locator('.dw-brief');
+      const heading = brief.getByRole('heading', { name: awaitingBrief.title });
+      await heading.waitFor();
+      const nav = brief.getByRole('navigation', { name: /需求(?:位置|归属)/ });
+      const parent = nav.getByRole('link', { name: libraryFolder });
+      expect.soft(await nav.getByRole('link', { name: '设计库' }).count()).toBe(1);
+      expect.soft(await parent.count()).toBe(1);
+      if (await parent.count() === 1) {
+        const href = new URL((await parent.getAttribute('href'))!, browserDesignOrigin);
+        expect.soft(Object.fromEntries(href.searchParams)).toEqual({ project: projectId, group: libraryFolder });
+      }
+      const facts = brief.locator('dl');
+      expect.soft((await facts.allTextContents()).join(' '), '交接人和认领的出稿人应分开')
+        .toMatch(/所属[\s\S]*项目设置[\s\S]*交接[\s\S]*11月20日[\s\S]*出稿[\s\S]*等设计方认领/);
+      const source = new URL((await brief.getByRole('link', { name: /原计划|来源计划/ }).getAttribute('href'))!, browserDesignOrigin);
+      expect.soft(source.pathname).toBe('/engineering-planning');
+      expect.soft(Object.fromEntries(source.searchParams)).toEqual({ project: projectId, kind: 'plan', item: awaitingBrief.planId });
+      const start = heading.locator('xpath=ancestor::header[1]').getByText('开始出稿', { exact: true });
+      expect.soft(await start.isVisible(), '开始出稿是未发布需求的主动作').toBe(true);
+      if (await start.isVisible()) {
+        await start.click();
+        const cli = await brief.locator('code:visible').allTextContents();
+        expect.soft(cli.some(line => /^cdscli design intake\b/.test(line))).toBe(true);
+        const publish = cli.find(line => /^cdscli design publish\b/.test(line));
+        expect.soft(publish).toMatch(/--private\b/);
+        expect.soft(publish).toMatch(/--intent\s+create/);
+        expect.soft(publish).toContain(`--design-key ${awaitingBrief.designKey}`);
+        expect.soft(commands, '打开命令说明不会写数据').toEqual([]);
+      }
+
+      const revoke = brief.getByRole('button', { name: /^撤回需求交接/ });
+      expect.soft(await revoke.locator('xpath=ancestor::footer[1]').count()).toBe(1);
+      await revoke.click();
+      expect(commands).toEqual([]);
+      await page.getByRole('button', { name: '取消', exact: true }).click();
+      expect(commands).toEqual([]);
+      await revoke.click();
+      await page.getByRole('button', { name: '确认撤回', exact: true }).click();
+      await expect.poll(() => commands.length).toBe(1);
+      expect(commands[0]).toMatchObject({ type: 'brief.revoke', designKey: awaitingBrief.designKey,
+        planId: awaitingBrief.planId, expectedVersion: awaitingBrief.planVersion, requestId: expect.any(String) });
+
+      await page.goto(browserDesignUrl({ brief: publishedBrief.designKey }));
+      await brief.getByRole('link', { name: '查看稿件' }).waitFor();
+      expect(await brief.getByText('开始出稿', { exact: true }).isVisible()).toBe(false);
+      input = { ...requirementWorkspace, permissions: { ...requirementWorkspace.permissions, write: false, steward: false } };
+      await page.goto(browserDesignUrl({ brief: awaitingBrief.designKey }));
+      await heading.waitFor();
+      expect(await start.isVisible()).toBe(false);
+      expect(await revoke.isVisible()).toBe(false);
+      await page.goto(browserDesignUrl({ group: libraryFolder }));
+      await page.getByRole('link', { name: new RegExp(awaitingBrief.title) }).waitFor();
+    });
+  }, 20_000);
+
+  it('A-33 已采用框架的出稿命令可复制，未采用时先指引查看接入清单', () => {
+    const scope = { systemId: 'fixture-console', moduleId: 'settings' };
+    const requirement: DesignRequirement = { ...awaitingBrief, scope, title: "核对 O'Neil 的设计 $DRAFT_NAME" };
+    const module = { id: scope.moduleId, name: libraryFolder };
+    const withFramework: DesignWorkspace = { ...workspace, requirements: [requirement], systems: [
+      { id: scope.systemId, name: '示例控制台', modules: [{ ...module, framework: frameworkId }] },
+    ] };
+    const query = '&' + new URLSearchParams({ brief: requirement.designKey, panel: 'brief-start' });
+    const markup = design(query, withFramework);
+    const scaffold = markup.match(/<code>\s*(cdscli design scaffold\b[^<]+)<\/code>/)?.[1]
+      .replaceAll('&#x27;', "'").replaceAll('&quot;', '"');
+    expect.soft(scaffold).toMatch(/^cdscli design scaffold\b.*--framework FW-fixture\b.*--framework-version 2\b.*--dir \S+/);
+    expect.soft(["'核对 O'\\''Neil 的设计 $DRAFT_NAME'", `'核对 O'"'"'Neil 的设计 $DRAFT_NAME'`], '单引号保护撇号、空格和美元符号')
+      .toContain(scaffold?.split(' --title ').at(-1));
+
+    const withoutFramework = { ...withFramework, systems: [{ id: scope.systemId, name: '示例控制台', modules: [module] }] };
+    const steps = visibleText(design(query, withoutFramework));
+    const intakeAt = steps.indexOf('cdscli design intake');
+    const scaffoldAt = steps.indexOf('cdscli design scaffold');
+    expect(intakeAt).toBeGreaterThanOrEqual(0);
+    expect(scaffoldAt).toBeGreaterThan(intakeAt);
+    expect(steps.slice(intakeAt, scaffoldAt)).toMatch(/接入清单[^\n]*(?:采用框架|采用.*框架)/);
+  });
 
   it('A-30 V3 从稳定地址恢复状态、文件夹、标签和框架的交集，并按范围分节', () => {
     function titles(html: string) {
@@ -444,25 +701,34 @@ describe('工程规划与设计 V2 前端回归', () => {
 
   it('示意稿不增加框架套数，仍能从框架详情进入指定的示意版本', () => {
     const example: DesignEntry = {
-      ...bound, id: 'DSN-fixture-framework-example',
-      versions: [{ ...first, title: '框架使用示意', group: '框架资料' }, { ...second, title: '更新后的框架使用示意', group: '框架资料' }],
+      id: 'DSN-fixture-framework-example', projectId, comments: [], runs: [],
+      versions: [{ ...first, title: '框架使用示意', group: '框架资料' }],
     };
+    const reviewTitle = '旧版被引作示意的普通稿最新待评审';
+    const active: DesignEntry = { ...bound, reviewRequested: true, versions: [first, second,
+      { ...second, version: 3 }, { ...second, version: 4, title: reviewTitle }] };
     const framework = workspace.frameworks[0];
     const revision = framework.versions.at(-1)!;
+    const charter = {
+      status: 'adopted' as const, intent: '约定控制台常用控件', problems: ['控件排列不一致'], nonGoals: ['业务流程'],
+      scope: { system: '合成系统', modules: ['设置'] }, owner: author.label,
+    };
     const input: DesignWorkspace = {
-      ...workspace, designs: [example, ...workspace.designs],
-      frameworks: [{ ...framework, versions: [framework.versions[0], {
-        ...revision, charter: {
-          status: 'adopted', intent: '约定控制台常用控件', problems: ['控件排列不一致'], nonGoals: ['业务流程'],
-          scope: { system: '合成系统', modules: ['设置'] }, owner: author.label, example: { designId: example.id, version: 1 },
-        },
-      }] }],
+      ...workspace, designs: [example, active, latestBound, unbound],
+      frameworks: [{ ...framework, versions: [
+        { ...framework.versions[0], charter: { ...charter, example: { designId: active.id, version: 2 } } },
+        { ...revision, charter: { ...charter, example: { designId: example.id, version: 1 } } },
+      ] }],
     };
     const home = design('', input);
-    const section = home.match(/<section\b[^>]*aria-label="本项目框架"[^>]*>([\s\S]*?)<\/section>/)?.[1] ?? '';
-    expect([...section.matchAll(/\bdw-fw-tile\b/g)]).toHaveLength(1);
-    expect(text(section)).toContain(frameworkTitle);
-    expect(visibleText(home)).not.toContain('更新后的框架使用示意');
+    expect(visibleText(home)).toContain('框架 1 套');
+    expect(visibleText(home)).not.toContain('框架使用示意');
+    const pending = home.match(/<section\b[^>]*aria-label="等你处理"[^>]*>([\s\S]*?)<\/section>/)?.[1] ?? '';
+    expect(text(pending)).toContain(reviewTitle);
+    expect(text(pending)).toContain('新 V4');
+    const frameworks = design('&view=frameworks', input);
+    expect([...frameworks.matchAll(/\bdw-framework-card\b/g)]).toHaveLength(1);
+    expect(visibleText(frameworks)).toContain('2 份稿件使用');
     const detail = design(`&framework=${frameworkId}&version=${revision.version}`, input);
     const link = detail.match(new RegExp(`<a[^>]*href="([^\"]+)"[^>]*>示意稿 ${example.id}[^<]*`));
     expect(link).not.toBeNull();
@@ -482,7 +748,7 @@ describe('工程规划与设计 V2 前端回归', () => {
     expect(html).toContain('aria-label="稿件分类"');
     expect(html).toContain(`#${tag}`);
     expect(visible).toContain('打开基线');
-    expect(visible).toContain('和基线对比');
+    expect(visible).toMatch(/和基线(?:\s+V1\s+)?对比/);
   });
 
   it('A-12 有权限时在当前文件区域展示反馈入口', () => {
@@ -553,6 +819,47 @@ describe('工程规划与设计 V2 前端回归', () => {
       }
     });
   }, 30_000);
+
+  it('跨版交付只把未关闭反馈计入待办，打开交付才清除新反馈，旧版的新回复可再次提示', async () => {
+    const closed: DesignFeedback = { ...previousFeedback, id: 'FDB-fixture-closed', title: '已经处理的旧版反馈',
+      body: '可回读的已处理反馈原文', status: 'closed', replies: [], decisions: [
+        { decision: 'close', body: '已按原版画面复核关闭', author, at: '2026-11-21T00:00:00.000Z' },
+      ] };
+    let feedback = [previousFeedback, currentFeedback, closed];
+    await withDesignBrowser(() => ({ ...historyWorkspace, viewer: viewerBeforeChanges, designs: [{ ...historyDraft, feedback }] }), async page => {
+      const newFeedback = page.locator('.dw-design-card').filter({ hasText: boundTitle }).getByRole('link', { name: '新反馈' });
+      const draftPath = { design: historyDraft.id };
+      await page.goto(browserDesignUrl());
+      await newFeedback.waitFor();
+      await page.goto(browserDesignUrl({ ...draftPath, version: '1' }));
+      await page.getByRole('heading', { name: boundTitle }).waitFor();
+      await page.goto(browserDesignUrl());
+      await newFeedback.click();
+      await page.waitForURL(url => url.searchParams.get('tab') === 'delivery');
+      const section = page.getByRole('region', { name: '实施反馈' });
+      const closedThread = section.locator('details').filter({ has: page.locator('summary strong', { hasText: closed.title }) });
+      await section.getByRole('heading', { name: '实施反馈' }).waitFor();
+      expect(await section.innerText()).toContain('2 条待处理');
+      expect(await section.getByText(previousFeedback.body, { exact: true }).isVisible()).toBe(true);
+      expect(await section.getByText(currentFeedback.body, { exact: true }).isVisible()).toBe(true);
+      expect(await closedThread.getByText(closed.body, { exact: true }).isVisible()).toBe(false);
+      await section.getByText(closed.title, { exact: true }).click();
+      expect(await closedThread.getByText(closed.decisions[0].body, { exact: true }).isVisible()).toBe(true);
+      expect(await closedThread.getByRole('button', { name: 'V1 资料' }).isVisible()).toBe(true);
+
+      await page.goto(browserDesignUrl());
+      await page.locator('.dw-design-card').filter({ hasText: boundTitle }).waitFor();
+      await expect.poll(() => newFeedback.count()).toBe(0);
+      const reply = '旧版反馈在打开交付后收到的新回复';
+      feedback = [{ ...previousFeedback, replies: [...previousFeedback.replies,
+        { author, at: '2026-11-22T00:00:00.000Z', body: reply }] }, currentFeedback, closed];
+      await page.reload();
+      await newFeedback.click();
+      await section.getByText(reply, { exact: true }).waitFor();
+      expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
+      expect(await section.innerText()).toContain('2 条待处理');
+    });
+  }, 20_000);
 
   it('A-03 V3 桌面稿件页头第一行保留标题和完整动作组，第二行只放页签', async () => {
     const cases = [[4, undefined], [2, '框架候选']] as const;
@@ -637,6 +944,42 @@ describe('工程规划与设计 V2 前端回归', () => {
     expect(readOnlyHtml).not.toContain('定为实施基线');
     expect(readOnlyHtml).not.toContain('撤销定稿');
   }, 15_000);
+
+  it('A-35 定实施基线须确认旧验收留存、续版不移动基线和记入记录，且确认前不发送命令', async () => {
+    const input = { ...workspace, designs: [layoutDraft] };
+    await withDesignBrowser(() => input, async (page, commands) => {
+      const version = page.getByRole('combobox', { name: '稿件版本' });
+      await page.goto(browserDesignUrl({ design: layoutDraft.id }));
+      await version.waitFor();
+      expect(await version.inputValue()).toBe('4');
+      await page.getByRole('button', { name: /^和基线(?:\s+V2\s+)?对比$/ }).click();
+      await page.waitForURL(url => url.searchParams.get('compareFrom') === '2');
+      expect(await page.getByRole('combobox', { name: '对比左侧版本' }).inputValue()).toBe('2');
+      expect(await page.getByRole('combobox', { name: '对比右侧版本' }).inputValue()).toBe('4');
+      const action = page.getByRole('button', { name: /^定为实施基线(?:[.…]+)?$/ });
+      const info = page.getByLabel('稿件信息', { exact: true });
+      const modal = page.getByRole('dialog', { name: /V4.*定为实施基线/ });
+      expect(await action.isVisible()).toBe(false);
+      await info.click();
+      await action.click();
+      await modal.waitFor();
+      const consequences = await modal.innerText();
+      expect.soft(consequences, '明确从实施基线 V2 改到 V4').toMatch(/实施基线[^。\n]*V2[^。\n]*V4/);
+      expect.soft(consequences, '明确旧基线及其验收和签收保留').toMatch(/(?:原基线|V2)[^。\n]*验收[^。\n]*签收[^。\n]*保留/);
+      expect.soft(consequences, '明确普通续版不会更改当前实施基线').toMatch(/(?:新版本|续版)[^。\n]*(?:不会|不)[^。\n]*(?:改变|移动|变更|自动更新)[^。\n]*基线/);
+      expect.soft(consequences, '明确此次定稿写入记录').toMatch(/定稿[^。\n]*(?:记入|写入|记录)[^。\n]*(?:稿件记录|版本记录|谁)/);
+      expect(commands).toEqual([]);
+      await modal.getByRole('button', { name: '取消', exact: true }).click();
+      await modal.waitFor({ state: 'hidden' });
+      expect(await version.locator('option[value="2"]').innerText()).toContain('实施基线');
+      expect(commands).toEqual([]);
+      if (!(await action.isVisible())) await info.click();
+      await action.click();
+      await modal.getByRole('button', { name: /^确认.*实施基线$/ }).click();
+      await expect.poll(() => commands.length).toBe(1);
+      expect(commands[0]).toMatchObject({ type: 'design.freeze', designId: layoutDraft.id, version: 4, requestId: expect.any(String) });
+    });
+  }, 20_000);
 
   it('A-27 稿件信息有具名分组，危险操作在底部靠右，缩窄后仍在视口内', async () => {
     const entry: DesignEntry = {
@@ -769,4 +1112,32 @@ describe('工程规划与设计 V2 前端回归', () => {
       }
     });
   }, 25_000);
+
+  it('A-31 原型或旧响应只有上次访问时间时仍能区分新旧稿、需求及反馈', () => {
+    const older = libraryDraft('legacy-viewed', '较早发布的示例稿', libraryFolder, 17, {}, false);
+    const newer = libraryDraft('legacy-unread', '最近发布的示例稿', libraryFolder, 20, {}, false);
+    const earlier = '2026-11-17T00:00:00.000Z';
+    const staleBrief = { ...awaitingBrief, designKey: 'settings/earlier-reference', title: '上次访问前的示例需求', sharedAt: earlier };
+    const html = design('', {
+      ...workspace,
+      designs: [{ ...older, feedback: [{ ...currentFeedback, createdAt: earlier }] }, { ...newer, feedback: [currentFeedback] }],
+      requirements: [staleBrief, awaitingBrief],
+      viewer: { lastVisitAt: '2026-11-18T00:00:00.000Z' } as DesignViewerState,
+    });
+    const cards = [...html.matchAll(/<article\b[^>]*class="[^"]*\bdw-design-card\b[^"]*"[^>]*>([\s\S]*?)<\/article>/g)]
+      .map(([, card]) => text(card));
+    const olderCard = cards.find(card => card.includes(older.versions.at(-1)!.title));
+    const newerCard = cards.find(card => card.includes(newer.versions.at(-1)!.title));
+    expect(olderCard).toBeDefined();
+    expect(olderCard).not.toMatch(/新 V|新稿|新反馈/);
+    expect(newerCard).toContain('新 V2');
+    expect(newerCard).toContain('新反馈');
+
+    const briefRows = [...html.matchAll(/<a\b[^>]*href="[^"]*\bbrief=[^"]+"[^>]*>([\s\S]*?)<\/a>/g)]
+      .map(([, row]) => text(row));
+    const staleRow = briefRows.find(row => row.includes(staleBrief.title));
+    expect(staleRow).toBeDefined();
+    expect(staleRow).not.toContain('新需求');
+    expect(briefRows.find(row => row.includes(awaitingBrief.title))).toContain('新需求');
+  });
 });

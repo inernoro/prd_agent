@@ -29,7 +29,7 @@ const consoleStimulus = 120;
 const readySelector = '[data-fixture-ready]';
 const recoveryCases = ['control-unavailable', 'readiness-timeout', 'prototype-error'] as const;
 type FailureReason = typeof recoveryCases[number];
-type Scene = 'security' | 'slow' | FailureReason;
+type Scene = 'security' | 'slow' | 'details' | FailureReason;
 type Diagnostics = { runtime: number; blocked: number; console: number; directives: string[] };
 type Envelope = {
   type: string;
@@ -44,11 +44,12 @@ type Envelope = {
 type Message = { origin: string; data: Envelope };
 type HostWindow = Window & { prototypeHostMessages: Message[] };
 
-const scenes: DesignScreen[] = (['security', 'slow', ...recoveryCases] as const).map(id => ({
+const scenes: DesignScreen[] = (['security', 'slow', 'details', ...recoveryCases] as const).map(id => ({
   id, name: id, route: `#${id}`, viewport: 'desktop', themes: ['light', 'dark'], impl: null,
   ...(id === 'security' ? {} : {
-    entryActions: [id === 'control-unavailable' ? '#missing-fixture-entry' : '#open-fixture-entry'],
-    entryReadySelector: readySelector,
+    entryActions: [id === 'details' ? '#fixture-first-summary'
+      : id === 'control-unavailable' ? '#missing-fixture-entry' : '#open-fixture-entry'],
+    entryReadySelector: id === 'details' ? '#fixture-details[open] > #fixture-details-ready' : readySelector,
     entryTimeoutMs: id === 'slow' ? 3000 : 750,
   }),
 }));
@@ -56,8 +57,19 @@ const scenes: DesignScreen[] = (['security', 'slow', ...recoveryCases] as const)
 const prototype = `<!doctype html><html><head><meta charset="utf-8"></head><body>
   <h1>Synthetic prototype</h1>
   <button type="button" id="open-fixture-entry">Open fixture entry</button>
+  <details id="fixture-details">
+    <summary id="fixture-first-summary">Primary disclosure</summary>
+    <summary id="fixture-second-summary">Secondary heading</summary>
+    <p id="fixture-details-ready">Native disclosure content</p>
+  </details>
+  <summary id="fixture-orphan-summary">Unrelated heading</summary>
   <script>
     const scene = location.hash.slice(1);
+    for (const summary of document.querySelectorAll('summary')) {
+      summary.addEventListener('click', () => {
+        summary.dataset.clicks = String(Number(summary.dataset.clicks || 0) + 1);
+      });
+    }
     document.querySelector('#open-fixture-entry').addEventListener('click', () => {
       if (scene === 'slow') setTimeout(() => {
         const ready = document.createElement('p');
@@ -221,18 +233,23 @@ describe('prototype host in Chromium', () => {
     });
   }
 
-  async function firstMessage(page: Page, type: string, timeout = 5000): Promise<Message> {
-    await page.waitForFunction(messageType => (window as HostWindow).prototypeHostMessages.some(message => message.data?.type === messageType), type, { timeout });
-    return page.evaluate(messageType => (window as HostWindow).prototypeHostMessages.find(message => message.data?.type === messageType)!, type);
+  async function firstMessage(page: Page, type: string, timeout = 5000, requestId?: string): Promise<Message> {
+    const filter = { type, requestId };
+    await page.waitForFunction(filter => (window as HostWindow).prototypeHostMessages.some(message =>
+      message.data?.type === filter.type && (!filter.requestId || message.data.requestId === filter.requestId),
+    ), filter, { timeout });
+    return page.evaluate(filter => (window as HostWindow).prototypeHostMessages.find(message =>
+      message.data?.type === filter.type && (!filter.requestId || message.data.requestId === filter.requestId),
+    )!, filter);
   }
 
-  async function runEntry(page: Page, scene: Scene, timeoutMs: number) {
+  async function runEntry(page: Page, scene: Scene, timeoutMs: number, options: { requestId?: string; actions?: string[] } = {}) {
     const screen = version.screens.find(item => item.id === scene)!;
-    const requestId = `fixture-entry-${scene}`;
+    const requestId = options.requestId ?? `fixture-entry-${scene}`;
     await page.evaluate(input => {
       document.querySelector('iframe')!.contentWindow!.postMessage(input, '*');
-    }, { type: 'cds-design-entry', actions: screen.entryActions, ready: screen.entryReadySelector, requestId, timeoutMs });
-    const message = await firstMessage(page, 'cds-design-entry-result');
+    }, { type: 'cds-design-entry', actions: options.actions ?? screen.entryActions, ready: screen.entryReadySelector, requestId, timeoutMs });
+    const message = await firstMessage(page, 'cds-design-entry-result', 5000, options.requestId);
     expect(message.origin).toBe('null');
     return { requestId, data: message.data };
   }
@@ -247,7 +264,7 @@ describe('prototype host in Chromium', () => {
       const headers = await response.allHeaders();
       expect(headers).toMatchObject({
         'x-frame-options': 'SAMEORIGIN', 'x-content-type-options': 'nosniff',
-        'cross-origin-resource-policy': 'same-origin', 'referrer-policy': 'no-referrer', 'cache-control': 'private, no-store',
+        'cross-origin-resource-policy': 'same-origin', 'referrer-policy': 'no-referrer', 'cache-control': 'private, no-store, no-transform',
       });
       const policy = headers['content-security-policy']?.split(';').map(item => item.trim());
       expect(policy).toEqual(expect.arrayContaining(["sandbox allow-scripts", "default-src 'none'", "frame-ancestors 'self'", "form-action 'none'", "base-uri 'none'"]));
@@ -272,6 +289,41 @@ describe('prototype host in Chromium', () => {
       expect(data.reason).toBeUndefined();
       expectSafeDiagnostics(data);
       expect(await page.frameLocator('iframe').locator(readySelector).count()).toBe(1);
+    } finally {
+      await context.close();
+    }
+  }, 10_000);
+
+  it('opens a native disclosure once and skips summaries that cannot toggle it', async () => {
+    const context = await browser.newContext({ serviceWorkers: 'block' });
+    try {
+      const { page } = await visit(context, 'details');
+      const frame = page.frameLocator('iframe');
+      const details = frame.locator('#fixture-details');
+      const summary = frame.locator('#fixture-first-summary');
+      const content = frame.locator('#fixture-details-ready');
+      expect(await summary.getAttribute('role')).toBeNull();
+      expect(await details.getAttribute('open')).toBeNull();
+      expect(await content.isHidden()).toBe(true);
+
+      for (const requestId of ['fixture-disclosure-open', 'fixture-disclosure-repeat']) {
+        const { data } = await runEntry(page, 'details', 750, { requestId });
+        expect(data).toMatchObject({ requestId, reached: true });
+        expect(await details.getAttribute('open')).not.toBeNull();
+        expect(await content.isVisible()).toBe(true);
+        expect(await summary.getAttribute('data-clicks')).toBe('1');
+      }
+
+      for (const selector of ['#fixture-second-summary', '#fixture-orphan-summary']) {
+        const unrelated = frame.locator(selector);
+        expect(await unrelated.isVisible()).toBe(true);
+        const requestId = `fixture-disclosure-${selector.slice(1)}`;
+        const { data } = await runEntry(page, 'details', 500, { requestId, actions: [selector] });
+        expect(data).toMatchObject({ requestId, reached: false, reason: 'control-unavailable' });
+        expect(await unrelated.getAttribute('data-clicks')).toBeNull();
+      }
+      expect(await details.getAttribute('open')).not.toBeNull();
+      expect(await summary.getAttribute('data-clicks')).toBe('1');
     } finally {
       await context.close();
     }

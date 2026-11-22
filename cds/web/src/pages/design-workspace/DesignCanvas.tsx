@@ -338,6 +338,8 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const rightShot = comparePixels && leftImage && rightImage ? designArtifact(entry.projectId, rightImage.id) : undefined;
   const pixelKey = leftShot && rightShot ? `${leftShot}\n${rightShot}` : undefined;
   const readyPixels = pixels?.key === pixelKey ? pixels?.value : undefined;
+  const changedOnScreen = readyPixels ? readyPixels.boxes.length
+    : overlays ? new Set([...overlays.left, ...overlays.right].map(box => box.id)).size : undefined;
   useEffect(() => {
     if (!pixelKey || !leftShot || !rightShot) return;
     let current = true;
@@ -384,7 +386,8 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
         </> : version.screens.length ? <Segments options={ [['one','单个'], ['all',`全部 ${version.screens.length}`]] as const } value={all ? 'all' : 'one'}
           onChange={value => { showAll(value === 'all'); setPlacing(false); setPin(undefined); }} /> : null}
         <CanvasSettings theme={theme} onTheme={setTheme} zoom={zoom} onZoom={setZoom} />
-        {compare ? <button type="button" className="ep-button" aria-expanded={changes} onClick={() => showChanges(!changes)}><ListMinus />变化 {structure.length + reported.length}</button>
+        {compare ? <button type="button" className="ep-button" aria-expanded={changes} onClick={() => showChanges(!changes)}><ListMinus />声明变化 {structure.length + reported.length}
+          {!real && <small> · {changedOnScreen === undefined ? '本屏待测量' : '本屏 ' + changedOnScreen + ' 处'}</small>}</button>
           : <button type="button" className="ep-button" disabled={!screen} aria-expanded={comments} onClick={() => { showComments(!comments); setPlacing(false); }}>
             <MessageSquare />评论 {commentCount}</button>}
       </div>

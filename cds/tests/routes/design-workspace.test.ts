@@ -7,9 +7,12 @@ import { deflateSync } from 'node:zlib';
 import path from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
+import { humanPrincipalId } from '../../src/services/human-project-access.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
+import { StateService } from '../../src/services/state.js';
 import type { DesignFrameworkMeasurement } from '../../src/shared/design-workspace.js';
 import { buildZip, crc32 } from '../../src/utils/zip.js';
 
@@ -24,6 +27,7 @@ const people = new Map<string, DesignActor>([
   ['rotated-designer', { kind: 'agent', id: 'designer', label: 'Fixture refreshed key', permissions }],
   ['git-designer', { kind: 'agent', id: 'git-designer', label: 'Fixture restricted designer', permissions, gitPublishOnly: true }],
   ['read-designer', { kind: 'agent', id: 'read-designer', label: 'Read-only designer', permissions: ['read'] }],
+  ['reading-member', { kind: 'human', id: 'reading-member', label: 'Reading member', permissions: ['read'] }],
   ['implementer', { kind: 'agent', id: 'implementer', label: 'Implementation agent', permissions: ['read'], feedback: true }],
   ['author', { kind: 'human', id: 'author', label: 'Fixture reviewer', permissions }],
   ['other', { kind: 'human', id: 'other', label: 'Other member', permissions }],
@@ -86,6 +90,7 @@ describe('private CDS design workspace', () => {
   let base: string;
   let activeCommit: string;
   let clock: string;
+  let approvedPlanVersion: number;
   let service: DesignWorkspaceService;
   let revokedReviewers: Set<string>;
   let frameworkMeasurements: DesignFrameworkMeasurement[];
@@ -105,7 +110,7 @@ describe('private CDS design workspace', () => {
     const dependencies = {
       now: () => new Date(clock),
       approvedPlanFor: async (project: string, plan: string) => project === projectId && plan === 'PLN-approved'
-        ? { planVersion: 2, proposalId: 'PRO-fixture', title: 'Approved brief', requirements: 'Original **approved** requirements' } : undefined,
+        ? { planVersion: approvedPlanVersion, proposalId: 'PRO-fixture', title: 'Approved brief', requirements: 'Original **approved** requirements' } : undefined,
       frameworkProbe: async () => frameworkMeasurements,
       resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && [7, 8].includes(pr) && (!commit || commit === activeCommit)
         ? { commit: activeCommit, url: pr === 7 ? 'https://preview.fixture.test/' : 'https://preview.fixture.test/other/' } : undefined,
@@ -124,8 +129,17 @@ describe('private CDS design workspace', () => {
     return new DesignWorkspaceService(new FileProjectRevisionStore<DesignWorkspaceCommit>(directory), dependencies);
   }
 
-  async function openApi(workspace: DesignWorkspaceService) {
+  async function openApi(workspace: DesignWorkspaceService, projectAccess?: StateService) {
     const server = express();
+    if (projectAccess) {
+      server.use((req, _res, next) => {
+        const actor = people.get(req.get('x-fixture-user') ?? '');
+        if (actor?.kind === 'human') Object.assign(req, { cdsUser: { id: actor.id, isSystemOwner: actor.steward === true },
+          cdsSession: { userId: actor.id } });
+        next();
+      });
+      server.use(createHumanProjectAccessMiddleware(projectAccess));
+    }
     server.use('/api', createDesignWorkspaceRouter({ service: workspace, resolveAccess: (req, project) => projectActor(project, req.get('x-fixture-user') ?? ''),
       mapShareHandoff: () => enableShareHandoff ? {
         issuer: 'https://cds.fixture.test', target: new URL('https://map.fixture.test/platform/'), key: handoffKey,
@@ -147,6 +161,7 @@ describe('private CDS design workspace', () => {
     directory = await mkdtemp(path.join(tmpdir(), 'cds-design-test-'));
     activeCommit = previewCommit;
     clock = '2026-11-21T09:05:00.000Z';
+    approvedPlanVersion = 2;
     revokedReviewers = new Set();
     frameworkMeasurements = [];
     sources = new Map();
@@ -207,6 +222,144 @@ describe('private CDS design workspace', () => {
     expect((await command('brief.revoke', { ...fields, expectedVersion: 1 }, 'steward')).status).toBe(409);
     expect((await command('brief.revoke', fields, 'steward')).status).toBe(201);
     expect((await (await get('/intake', 'designer')).json()).requirements).toEqual([]);
+  });
+
+  describe('design collaboration', () => {
+    const brief = { designKey: 'fixture/collaboration-brief', planId: 'PLN-approved', expectedVersion: 2 };
+
+    function post(endpoint: 'feedback' | 'viewed', body: object, actor: string, project = projectId) {
+      return fetch(`${base}${project}/design/${endpoint}`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-fixture-user': actor }, body: JSON.stringify(body) });
+    }
+
+    async function readViewer(actor: string, project = projectId) {
+      const response = await get('', actor, project);
+      expect(response.status).toBe(200);
+      return (await response.json()).viewer;
+    }
+
+    it('lets authorized publishers claim the same brief only once across concurrent credentials', async () => {
+      expect((await command('brief.share', brief, 'steward')).status).toBe(201);
+      const intake = async () => (await (await get('/intake', 'read-designer')).json()).requirements[0];
+      expect(await intake()).toMatchObject({ designKey: brief.designKey, requirements: 'Original **approved** requirements' });
+      expect(await intake()).not.toHaveProperty('assignee');
+
+      const claim = (actor: string, requestId: string, expectedVersion = brief.expectedVersion, project = projectId) =>
+        post('feedback', { type: 'brief.claim', requestId, designKey: brief.designKey, expectedVersion }, actor, project);
+      const candidates = ['designer', 'git-designer'];
+      const results = await Promise.all(candidates.map(actor => claim(actor, `claim-${actor}`)));
+      expect(results.map(response => response.status).sort()).toEqual([201, 409]);
+      const winner = candidates[results.findIndex(response => response.status === 201)];
+      const loser = candidates.find(actor => actor !== winner)!;
+      const { id, label } = people.get(winner)!;
+      expect(await intake()).toMatchObject({ designKey: brief.designKey, assignee: { id, label }, owner: { id: 'steward' } });
+
+      const replay = await claim(winner, `claim-${winner}`);
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({ projectId, reused: true, result: { type: 'brief.claim', designKey: brief.designKey, version: 2 } });
+      expect((await claim(winner, 'repeat-my-claim')).ok).toBe(true);
+      expect((await claim(loser, 'second-attempt')).status).toBe(409);
+      expect((await claim(winner, 'stale-plan', 1)).status).toBe(409);
+      expect((await claim('read-designer', 'no-publish-scope')).status).toBe(403);
+      expect((await claim('implementer', 'feedback-only')).status).toBe(403);
+      expect((await claim('outside', 'no-project-access')).status).toBe(404);
+      expect((await claim(winner, 'separate-project', 2, otherProjectId)).status).toBe(404);
+      expect(await intake()).toMatchObject({ assignee: { id, label } });
+    });
+
+    it('keeps design version and feedback read marks independent and monotonic for one member', async () => {
+      const reader = 'reading-member';
+      const path = 'design/collaboration/monotonic';
+      const v1 = draft('Read progress V1');
+      const first = await publish('read-progress-publish-1', v1, {
+        ...gitSource(v1, path), intent: 'create', designKey: 'fixture/read-progress',
+      });
+      expect(first.status).toBe(201);
+      const { designId } = (await first.json()).result;
+      const seen = (version: number, fields: object = {}, actor = reader, project = projectId) =>
+        post('viewed', { kind: 'design', designId, version, ...fields }, actor, project);
+      const mark = async () => (await readViewer(reader)).designs[designId];
+      const firstRead = await seen(1);
+      expect(firstRead.ok, `mark V1 returned HTTP ${firstRead.status}`).toBe(true);
+      expect(await mark()).toEqual({ version: 1 });
+
+      const v2 = draft('Read progress V2');
+      expect((await publish('read-progress-publish-2', v2, {
+        ...gitSource(v2, path, 'b'), intent: 'revise', designId, expectedVersion: '1',
+      })).status).toBe(201);
+      expect((await seen(1)).ok).toBe(true);
+      expect(await mark()).toEqual({ version: 1 });
+      const sendFeedback = (requestId: string, title: string) => post('feedback', { type: 'feedback.create', requestId, designId,
+        version: 2, category: 'reuse', title, body: 'Review the new card independently.' }, 'implementer');
+      clock = '2026-11-21T10:05:00.000Z';
+      const firstFeedbackAt = clock;
+      expect((await sendFeedback('first-feedback-for-read', 'Check the V2 card')).status).toBe(201);
+      expect((await seen(2)).ok).toBe(true);
+      expect(await mark()).toEqual({ version: 2 });
+      expect((await seen(2, { feedbackAt: firstFeedbackAt })).ok).toBe(true);
+      expect(await mark()).toEqual({ version: 2, feedbackAt: firstFeedbackAt });
+
+      clock = '2026-11-21T10:20:00.000Z';
+      expect((await sendFeedback('new-feedback-for-read', 'Check the V2 empty state')).status).toBe(201);
+      expect((await seen(1, { feedbackAt: firstFeedbackAt })).ok).toBe(true);
+      expect((await seen(2)).ok).toBe(true);
+      expect(await mark()).toEqual({ version: 2, feedbackAt: firstFeedbackAt });
+      expect((await seen(2, { feedbackAt: '2026-11-22T10:20:00.000Z' })).status).toBe(400);
+      expect((await seen(2, { feedbackAt: 'yesterday' })).status).toBe(400);
+      expect((await seen(2, { feedbackAt: '2026-11-00T10:20:00.000Z' })).status).toBe(400);
+      expect((await seen(99)).status).toBe(404);
+      expect((await seen(2, { actorId: 'other' })).status).toBe(400);
+      expect((await seen(2, {}, 'designer')).status).toBe(403);
+      expect((await seen(2, {}, 'outside')).status).toBe(404);
+      expect((await seen(2, {}, reader, otherProjectId)).status).toBe(404);
+      expect((await readViewer('other')).designs).toEqual({});
+      expect((await readViewer(reader, otherProjectId)).designs).toEqual({});
+      expect(await readViewer('designer')).toBeUndefined();
+      expect((await seen(2, { feedbackAt: clock })).ok).toBe(true);
+      expect(await mark()).toEqual({ version: 2, feedbackAt: clock });
+    });
+
+    it('records personal visits and protects a newly shared brief from stale read marks', async () => {
+      const reader = 'reading-member';
+      const firstVisitAt = clock;
+      const visit = await post('viewed', { kind: 'library' }, reader);
+      expect(visit.ok, `mark library returned HTTP ${visit.status}`).toBe(true);
+      expect(await readViewer(reader)).toMatchObject({ firstVisitAt, lastVisitAt: firstVisitAt, designs: {}, briefs: {} });
+      expect((await readViewer('other')).firstVisitAt).toBeUndefined();
+      expect((await command('brief.share', brief, 'steward')).status).toBe(201);
+      const seen = (sharedAt: string, actor = reader) => post('viewed', { kind: 'brief', designKey: brief.designKey, sharedAt }, actor);
+      expect((await seen(firstVisitAt)).ok).toBe(true);
+      expect((await readViewer(reader)).briefs).toEqual({ [brief.designKey]: firstVisitAt });
+      expect((await readViewer('other')).briefs).toEqual({});
+      clock = '2026-11-21T11:05:00.000Z';
+      approvedPlanVersion = 3;
+      expect((await command('brief.share', { ...brief, expectedVersion: 3 }, 'steward')).status).toBe(201);
+      expect((await seen(firstVisitAt, 'other')).status).toBe(409);
+      expect((await seen(firstVisitAt)).status).toBe(409);
+      expect((await readViewer(reader)).briefs).toEqual({ [brief.designKey]: firstVisitAt });
+      expect((await seen(clock)).ok).toBe(true);
+      expect((await post('viewed', { kind: 'library' }, reader)).ok).toBe(true);
+      expect(await readViewer(reader)).toMatchObject({ firstVisitAt, lastVisitAt: clock, briefs: { [brief.designKey]: clock } });
+      expect(await readViewer('other')).toEqual({ designs: {}, briefs: {} });
+    });
+
+    it('allows the personal mark through the normal project grant guard', async () => {
+      const state = new StateService(path.join(directory, 'project-access.json'), directory);
+      state.load();
+      state.addProject({ id: projectId, slug: projectId, name: 'Fixture project', kind: 'git',
+        dockerNetwork: 'fixture-no-containers', createdAt: clock, updatedAt: clock });
+      const principalId = humanPrincipalId('reading-member');
+      state.addPrincipal({ id: principalId, name: 'Reading member', kind: 'human', status: 'active', createdAt: clock });
+      state.addProjectGrant({ id: 'fixture-read-grant', projectId, principalId, origin: 'approved', grantedAt: clock });
+      await state.flush();
+      const guarded = `${await openApi(service, state)}${projectId}/design`;
+      const mark = (actor: string) => fetch(`${guarded}/viewed`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-fixture-user': actor }, body: JSON.stringify({ kind: 'library' }) });
+      const accepted = await mark('reading-member');
+      expect(accepted.ok, `the project member mark returned HTTP ${accepted.status}`).toBe(true);
+      expect(await accepted.json()).toMatchObject({ projectId, viewer: { firstVisitAt: clock } });
+      expect((await mark('other')).status).toBe(404);
+    });
   });
 
   describe('project design scope', () => {
@@ -1057,7 +1210,8 @@ describe('private CDS design workspace', () => {
     const endpoint = '/artifacts/' + designs[0].versions[0].prototypeId;
     const artifact = await get(endpoint);
     expect(await artifact.text()).toBe(html);
-    expect(artifact.headers.get('cache-control')).toBe('private, no-store');
+    expect(artifact.headers.get('cache-control')?.split(',').map(value => value.trim()))
+      .toEqual(expect.arrayContaining(['private', 'no-store', 'no-transform']));
     expect(artifact.headers.get('content-security-policy')).toContain('sandbox allow-scripts');
     expect((await get(endpoint, 'anonymous')).status).toBe(404);
     expect((await get(endpoint, 'author', 'fixture-design-b')).status).toBe(404);
