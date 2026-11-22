@@ -92,7 +92,8 @@ export function createDesignWorkspaceRouter(deps: {
       return res.json({ artifactId, path: artifact.file.path, sha256: artifact.file.sha256, offset,
         nextOffset: end < content.length ? end : null, text: content.slice(offset, end) });
     }
-    if (artifact.attachment) res.attachment(artifact.attachment);
+    const attachment = artifact.attachment ?? (req.query.download === 'true' ? artifact.file?.path.split('/').at(-1) : undefined);
+    if (attachment) res.attachment(attachment);
     res.setHeader('Content-Type', artifact.mime);
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     res.setHeader('X-Content-Type-Options', 'nosniff');

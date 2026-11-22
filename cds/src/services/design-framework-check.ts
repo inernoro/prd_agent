@@ -12,11 +12,18 @@ export async function checkDesignFramework(framework: string, baseline: Framewor
   const checksNestedScroll = responsiveRule?.name.includes('只有表格、图表、代码块') === true && responsiveRule.name.includes('横向滚动');
   const phones = screens.filter(screen => screen.viewport === 'phone');
   const expected = new Set(phones.flatMap(screen => screen.themes.map(theme => `${screen.id}:phone-${theme}`)));
+  const defaultRoutes = new Set<string>();
+  const eligible = phones.filter(screen => {
+    const alreadySeen = defaultRoutes.has(screen.route);
+    defaultRoutes.add(screen.route);
+    return !!screen.entryReadySelector || (!alreadySeen && !screen.entryActions?.length);
+  });
+  const eligibleIds = new Set(eligible.map(screen => screen.id));
   const measured = new Map<string, DesignFrameworkMeasurement>();
-  if (expected.size && probe && checksOverflow) {
-    for (const measurement of await probe(prototype, phones, checksNestedScroll)) {
+  if (eligible.length && probe && checksOverflow) {
+    for (const measurement of await probe(prototype, eligible, checksNestedScroll)) {
       const key = `${measurement.screenId}:${measurement.slot}`;
-      if (expected.has(key) && measurement.width === designViewports.phone.width
+      if (eligibleIds.has(measurement.screenId) && expected.has(key) && measurement.width === designViewports.phone.width
         && Number.isSafeInteger(measurement.contentWidth) && measurement.contentWidth >= measurement.width) {
         measured.set(key, measurement);
       }

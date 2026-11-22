@@ -16,7 +16,7 @@ const feedbackNames: Record<DesignFeedback['category'], string> = {
 };
 const feedbackStates: Record<DesignFeedback['status'], string> = { open: '待回复', responded: '待复核', closed: '已确认' };
 type FileChunk = { artifactId: string; path: string; sha256: string; offset: number; nextOffset: number | null; text: string };
-type OpenScreen = (version: number, screenId: string) => void;
+type OpenScreen = (version: number, screenId: string, from: string) => void;
 type Permissions = DesignWorkspace['permissions'];
 
 function DeliveryFiles({ entry, version }: { entry: DesignEntry; version: DesignVersion }) {
@@ -57,7 +57,7 @@ function DeliveryFiles({ entry, version }: { entry: DesignEntry; version: Design
       {selected && <div className="dw-delivery-document">
         <header className="dw-delivery-heading">
           <div><h3>{selected.path}</h3><small>{fileNames[selected.kind]} · {(selected.size / 1024).toFixed(1)} KiB</small></div>
-          <a className="ep-button" href={designArtifact(entry.projectId, selected.id)} download><Download />原文件</a>
+          <a className="ep-button" href={designArtifact(entry.projectId, selected.id) + '?download=true'} download={selected.path.split('/').at(-1)}><Download />原文件</a>
         </header>
         {selected.headings?.length ? <details className="dw-delivery-outline">
           <summary>章节目录 · {selected.headings.length} 项</summary>
@@ -99,7 +99,8 @@ function DeliveryChecks({ version, openScreen }: { version: DesignVersion; openS
     {missing.length > 0 && <details>
       <summary>{missing.length} 个画面待补实现地址</summary>
       <ul>{missing.map(screen => <li key={screen.id}>
-        <button className="ep-link" type="button" onClick={() => openScreen(version.version, screen.id)}>{screen.name}</button>
+        <button id={`delivery-check-${screen.id}`} className="ep-link" type="button"
+          onClick={() => openScreen(version.version, screen.id, `delivery-check-${screen.id}`)}>{screen.name}</button>
       </li>)}</ul>
     </details>}
     {sharedEntries.length > 0 && <details>
@@ -143,7 +144,8 @@ function FeedbackThread({ row, entry, permissions, busy, command, openScreen, op
     <div className="dw-delivery-actions">
       <small>{row.author.label} · {designDate(row.createdAt)}</small>
       <button className="ep-link" type="button" onClick={() => openVersion(row.version)}>V{row.version} 资料</button>
-      {row.screenId && <button className="ep-link" type="button" onClick={() => openScreen(row.version, row.screenId!)}>定位画面</button>}
+      {row.screenId && <button id={`delivery-feedback-${row.id}`} className="ep-link" type="button"
+        onClick={() => openScreen(row.version, row.screenId!, `delivery-feedback-${row.id}`)}>定位画面</button>}
     </div>
     <p>{row.body}</p>
     {row.evidence.length > 0 && <ul>{row.evidence.map((evidence, index) => <li key={index}>{evidence}</li>)}</ul>}
