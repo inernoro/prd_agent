@@ -205,6 +205,9 @@ describe('cluster identity through two real HTTP control planes', () => {
     const page = await request(member, entry, undefined, 'GET', undefined, owner.cookie, 'text/html');
     expect(page.status).toBe(200);
     expect(page.text).toContain('执行项目');
+    expect(page.headers.get('referrer-policy')).toBe('same-origin');
+    expect(page.headers.get('content-security-policy')).toContain("form-action 'self' " + mapBaseUrl);
+    expect(page.text).toContain('<form method="post" action="/api/cds-system/connections/authorize">');
     expect(primary.state.getCdsConnections()).toHaveLength(0);
     const approve = (origin: string, redirectUri = approval.redirectUri) =>
       fetch(member.url + route + '/authorize', {

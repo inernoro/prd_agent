@@ -225,7 +225,9 @@ export function createCdsSystemConnectionsRouter(
         res.status(400).type('html').send(renderAuthorizeError('请核对 MAP 回跳地址和当前 CDS 节点已绑定的项目，再发起授权。'));
         return;
       }
-      res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; form-action 'self'; base-uri 'none'");
+      // Chromium sends Origin: null for a form submitted from a no-referrer document.
+      res.setHeader('Referrer-Policy', 'same-origin');
+      res.setHeader('Content-Security-Policy', `frame-ancestors 'none'; form-action 'self' ${approval.mapBaseUrl}; base-uri 'none'`);
       res.type('html').send(renderAuthorizePage({
         mapName: approval.mapName, mapBaseUrl: approval.mapBaseUrl, redirectHost: approval.redirectUri.origin,
         workspace: { approval, projects },
@@ -491,7 +493,7 @@ function renderAuthorizePage(input: {
     mapName: workspace.approval.mapName,
   } : null;
   const approvalControls = workspace
-    ? `<form method="post">
+    ? `<form method="post" action="/api/cds-system/connections/authorize">
       ${Object.entries(approvalFields ?? {}).map(([name, value]) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}" />`).join('')}
       <label for="projectId">执行项目</label>
       <select id="projectId" name="projectId" required>
