@@ -8447,6 +8447,17 @@ describe('Branch Routes', () => {
       expect(res.body).not.toContain('rings-orbit');
       expect(res.body).not.toContain('class="panel"');
       expect(res.body).toContain('分支环境正在构建');
+      expect(res.body).toContain('@media(prefers-color-scheme:light)');
+    });
+
+    it('keeps the hot-restart waiting room dark regardless of browser preference', async () => {
+      const res = await request(server, 'GET', '/api/loading-pages/cds-waiting-room/preview?status=restarting');
+
+      expect(res.status).toBe(503);
+      expect(res.body).toContain('分支环境正在热重启');
+      expect(res.body).toContain('color-scheme:dark');
+      expect(res.body).toContain('--surface:#120f17');
+      expect(res.body).not.toContain('prefers-color-scheme');
     });
   });
 
