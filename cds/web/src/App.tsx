@@ -21,6 +21,7 @@ const BranchTopologyPage = lazy(() => import('@/pages/BranchTopologyPage').then(
 const BranchRelationsPage = lazy(() => import('@/pages/BranchRelationsPage').then((m) => ({ default: m.BranchRelationsPage })));
 const OverviewPage = lazy(() => import('@/pages/OverviewPage').then((m) => ({ default: m.OverviewPage })));
 const CdsSettingsPage = lazy(() => import('@/pages/CdsSettingsPage').then((m) => ({ default: m.CdsSettingsPage })));
+const PersonalSettingsPage = lazy(() => import('@/pages/PersonalSettingsPage').then((m) => ({ default: m.PersonalSettingsPage })));
 const HelloPage = lazy(() => import('@/pages/HelloPage').then((m) => ({ default: m.HelloPage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const TicketSsoPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.TicketSsoPage })));
@@ -287,6 +288,7 @@ export function App(): JSX.Element {
                 侧栏/命令面板/全局浮层永不卸载 —— 布局归一 + 切页流畅的架构保证。 */}
             <Route element={<ConsoleLayout />}>
               <Route path="/cds-settings" element={<CdsSettingsPage />} />
+              <Route path="/personal-settings" element={<PersonalSettingsPage />} />
               <Route path="/project-list" element={<ProjectListPage />} />
               <Route path="/branches/:projectId" element={<BranchListPage />} />
               <Route path="/branch-list" element={<BranchListPage />} />

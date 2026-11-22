@@ -2,8 +2,7 @@ import { useContext, useEffect, useRef, useState } from 'react';
 import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { useSettingsSessionState } from '../useSettingsSessionState';
 import { consoleAccountIdentity } from '@/lib/consoleIdentity';
-import { approveSystemPasswordChange } from '@/lib/passkeys';
-import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { ShieldCheck, UserPlus, Users } from 'lucide-react';
 
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -14,10 +13,9 @@ import {
   listUsers,
   createLocalUser,
   updateUser,
-  changeMyPassword,
   type CdsPublicUser,
 } from '@/lib/api';
-import { Section, Field, LoadingBlock, ErrorBlock, CodePill, EmptyBlock } from '../components';
+import { Section, Field, LoadingBlock, ErrorBlock, EmptyBlock } from '../components';
 import { IdentityRecoveryPanel } from '../components/IdentityRecoveryPanel';
 import { UserProjectAccessDialog } from '../components/UserProjectAccessDialog';
 
@@ -62,12 +60,6 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, [unconfirmedResets, busyUser]);
 
-  // ── My password ──
-  const [oldPw, setOldPw] = useState('');
-  const [newPw, setNewPw] = useState('');
-  const [pwBusy, setPwBusy] = useState(false);
-  const [pwError, setPwError] = useState('');
-
   // ── User list (owner) ──
   const [users, setUsers] = useState<CdsPublicUser[] | null>(null);
   const [usersError, setUsersError] = useState('');
@@ -89,9 +81,7 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
   }, [meAttempt]);
 
   const isOwner = me?.isSystemOwner === true;
-  const isLocal = me?.authProvider === 'local';
   const isLegacy = me?.authProvider === 'legacy';
-  const canRotateSystemPassword = isLegacy && isOwner;
 
   const refreshUsers = async (): Promise<void> => {
     setUsersError('');
@@ -105,33 +95,6 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
   useEffect(() => {
     if (isOwner) void refreshUsers();
   }, [isOwner]);
-
-  const submitPassword = async (event: React.FormEvent): Promise<void> => {
-    event.preventDefault();
-    setPwError('');
-    if (newPw.length < 8) {
-      setPwError('新密码长度至少 8 位');
-      return;
-    }
-    setPwBusy(true);
-    try {
-      const passwordChange = { oldPassword: oldPw, newPassword: newPw };
-      if (canRotateSystemPassword) {
-        await approveSystemPasswordChange(passwordChange);
-        if (alive.current) window.location.assign('/login');
-        return;
-      }
-      await changeMyPassword(passwordChange);
-      if (!alive.current) return;
-      onToast('密码已修改，请使用新密码重新登录');
-      setOldPw('');
-      setNewPw('');
-    } catch (err) {
-      setPwError(err instanceof ApiError ? err.message : canRotateSystemPassword ? '管理员通行密钥未完成验证，请重试。' : String(err));
-    } finally {
-      setPwBusy(false);
-    }
-  };
 
   const submitCreate = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
@@ -301,59 +264,6 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
           </div>
         </Section>
       )}
-      <details className="pt-3"><summary className="cursor-pointer text-sm font-medium">我的登录密码</summary><div className="mt-3">      <Section
-        title="修改密码"
-        description={
-          isLocal
-            ? '修改当前本地账号的登录密码。修改后所有会话失效，需要用新密码重新登录。'
-            : canRotateSystemPassword
-              ? '由已指定的系统所有者使用通行密钥批准本次改密。批准后旧会话立即失效，审批人和时间会记入用户操作痕迹。'
-              : isLegacy
-                ? '当前使用原始环境变量账号登录，密码继续由 CDS_USERNAME / CDS_PASSWORD 管理。'
-                : '当前账号通过外部身份提供方登录，密码由身份提供方管理，无需在此修改。'
-        }
-      >
-        {isLocal || canRotateSystemPassword ? (
-          <form onSubmit={submitPassword} className="max-w-md space-y-3">
-            <Field label="原密码">
-              <input
-                type="password"
-                disabled={pwBusy}
-                value={oldPw}
-                onChange={(e) => setOldPw(e.target.value)}
-                autoComplete="current-password"
-                required
-                className={inputCls}
-                placeholder="原密码"
-              />
-            </Field>
-            <Field label="新密码（至少 8 位）">
-              <input
-                type="password"
-                disabled={pwBusy}
-                value={newPw}
-                onChange={(e) => setNewPw(e.target.value)}
-                autoComplete="new-password"
-                required
-                minLength={8}
-                className={inputCls}
-                placeholder="新密码"
-              />
-            </Field>
-            {pwError ? <ErrorBlock message={pwError} /> : null}
-            <Button type="submit" disabled={pwBusy}>
-              <KeyRound />
-              {pwBusy ? '修改中' : canRotateSystemPassword ? '使用通行密钥批准并改密' : '修改密码'}
-            </Button>
-          </form>
-        ) : (
-          <div className="rounded-md border border-border bg-card px-4 py-4 text-sm leading-6 text-muted-foreground">
-            {isLegacy ? '原始管理员账号' : '外部身份账号'}{' '}
-            <CodePill>{me?.username || me?.name || '当前用户'}</CodePill>{' '}
-            的凭据不在持久化用户库中修改。
-          </div>
-        )}
-      </Section></div></details>
       {isOwner ? <Dialog open={createOpen} onOpenChange={open => { if (!createBusy) setCreateOpen(open); }}><DialogContent className="[&>button]:min-h-[3.25rem] [&>button]:min-w-[3.25rem] [&>button>svg]:size-[1.875rem]"><DialogHeader className="pr-10"><DialogTitle>创建本地账号</DialogTitle><DialogDescription>新账号默认为普通成员，与 GitHub OAuth 用户共存。{!durableUsers ? '当前认证为内存模式，账号会在 CDS 重启后丢失。' : ''}</DialogDescription></DialogHeader>            <form onSubmit={submitCreate} className="grid gap-3">
               <Field label="用户名">
                 <input

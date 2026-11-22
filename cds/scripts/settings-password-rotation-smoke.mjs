@@ -70,13 +70,17 @@ async function check({ provider, owner, form, relogin }) {
       }
       if (pathname === rotationPath && req.method() === 'POST') {
         const body = req.postDataJSON();
+        if (provider === 'local' && body?.oldPassword === wrongPassword) {
+          submitted.push('wrong-password');
+          return route.fulfill({ status: 400, json: { code: 'invalid_credentials', error: '原密码不正确' } });
+        }
         const exactNewPassword = body?.newPassword === newPassword && Object.keys(body).length === (relogin ? 3 : 2);
         if (!exactNewPassword || body?.oldPassword !== oldPassword || (relogin && body.approval?.id !== fixtureCredentialId)) {
           submitted.push('unexpected');
           return route.fulfill({ status: 400, json: { error: 'Unexpected fixture payload' } });
         }
         submitted.push('matched');
-        if (relogin) authenticated = false;
+        authenticated = false;
         return route.fulfill({ json: { ok: true } });
       }
       if (pathname === '/api/client-events') return route.fulfill({ json: { ok: true } });
@@ -86,15 +90,16 @@ async function check({ provider, owner, form, relogin }) {
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
     page.on('pageerror', () => scriptErrors++);
-    await page.goto(new URL('/cds-settings#users', base).href, { waitUntil: 'domcontentloaded' });
-    const disclosure = page.locator('summary').filter({ hasText: '我的登录密码' });
-    if (owner) {
-      await disclosure.waitFor({ timeout: 15_000 });
-      if (!(await disclosure.evaluate(node => node.parentElement.open))) await disclosure.click();
-    } else {
+    if (!owner) {
+      await page.goto(new URL('/cds-settings#users', base).href, { waitUntil: 'domcontentloaded' });
       await page.waitForURL(url => url.hash === '#activity', { timeout: 15_000 });
-      assert.equal(await disclosure.count(), 0, 'Member cannot open the user management tab');
+      assert.equal(await page.getByRole('tab', { name: '用户管理' }).count(), 0, 'Member cannot open user management');
     }
+    await page.goto(new URL('/project-list', base).href, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /^用户设置/ }).click();
+    await page.getByRole('menuitem', { name: '个人设置', exact: true }).click();
+    await page.waitForURL(url => url.pathname === '/personal-settings');
+    await page.getByRole('heading', { name: '个人设置', exact: true }).waitFor();
     const previousPassword = page.locator('input[autocomplete="current-password"]');
     assert.equal(await previousPassword.isVisible(), form, `${provider} account (${owner ? 'owner' : 'member'}) password form`);
     if (form) {
@@ -108,12 +113,12 @@ async function check({ provider, owner, form, relogin }) {
         ]);
         return response.status();
       };
-      if (relogin) {
+      if (relogin || provider === 'local') {
         await previousPassword.fill(wrongPassword);
         await newPasswordField.fill(newPassword);
-        assert.equal(await submit(approvalPath), 400);
+        assert.equal(await submit(relogin ? approvalPath : rotationPath), 400);
         await page.getByText('原密码不正确').waitFor();
-        assert.equal(new URL(page.url()).pathname, '/cds-settings', 'Wrong password keeps the settings page');
+        assert.equal(new URL(page.url()).pathname, '/personal-settings', 'Wrong password keeps the settings page');
       }
       await previousPassword.fill(oldPassword);
       await newPasswordField.fill(newPassword);
@@ -125,17 +130,15 @@ async function check({ provider, owner, form, relogin }) {
         await page.evaluate(() => { window.cancelFixtureApproval = false; });
       }
       assert.equal(await submit(), 200);
-      if (relogin) {
-        await page.waitForURL(url => url.pathname === '/login', { timeout: 8_000 });
-        await page.getByRole('heading', { name: '登录 CDS 控制台' }).waitFor();
-        await page.getByRole('button', { name: '登录', exact: true }).waitFor();
-      } else {
-        await page.getByText('密码已修改，请使用新密码重新登录', { exact: true }).waitFor({ timeout: 8_000 });
-      }
-      assert.equal(new URL(page.url()).pathname, relogin ? '/login' : '/cds-settings');
+      await page.getByText('密码已修改，请使用新密码重新登录。', { exact: true }).waitFor({ timeout: 8_000 });
+      assert.equal(await previousPassword.count(), 0, 'Success removes password fields');
+      await page.getByRole('link', { name: '重新登录', exact: true }).click();
+      await page.waitForURL(url => url.pathname === '/login', { timeout: 8_000 });
+      await page.getByRole('heading', { name: '登录 CDS 控制台' }).waitFor();
     }
     const expected = form ? ['matched'] : [];
     if (relogin) expected.unshift('wrong-password', 'approval-requested', 'approval-requested');
+    if (provider === 'local') expected.unshift('wrong-password');
     assert.deepEqual(submitted, expected, 'Password attempts use the exact expected fields');
     assert.equal(scriptErrors, 0, 'No page errors');
   } catch (error) {
@@ -148,6 +151,7 @@ try {
   for (const fixture of [
     { provider: 'legacy', owner: true, form: true, relogin: true },
     { provider: 'local', owner: true, form: true, relogin: false },
+    { provider: 'local', owner: false, form: true, relogin: false },
     { provider: 'sso', owner: true, form: false, relogin: false },
     { provider: 'legacy', owner: false, form: false, relogin: false },
   ]) {
