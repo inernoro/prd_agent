@@ -4,10 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { createHash, createDecipheriv } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import express from 'express';
 import * as sqlConsole from '../../src/services/sql-console-executor.js';
 import { createServer } from '../../src/server.js';
 import { StateService } from '../../src/services/state.js';
+import { readDesignSourceZip } from '../../src/services/design-package.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
@@ -1376,6 +1378,103 @@ describe('human project grants through the production server', () => {
     expect((await credentialCall('GET', intake, key)).status).not.toBe(200);
     expect((await credentialCall('GET', checkPath, key)).body.status).toBe('grant-revoked');
     expect((await credentialCall('POST', approval, identity, { designAccess: 'publish' })).status).toBe(403);
+  });
+
+  it('lets the same anonymous design publisher revise after expiry and denies name or revoked-key recovery', async () => {
+    const projectId = 'project-a';
+    const approval = `/api/projects/${projectId}/access-requests`;
+    const designs = `/api/projects/${projectId}/design`;
+    const sourcePath = 'design/fixture';
+    const repo = path.join(dir, 'design-recovery-repo');
+    const source = path.join(repo, sourcePath);
+    fs.mkdirSync(path.join(source, 'dist'), { recursive: true });
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=CDS Test',
+      '-c', 'user.email=cds-test@example.test', ...args], { encoding: 'utf8' }).trim();
+    git('init', '-q');
+    state.updateProject(projectId, { repoPath: repo });
+
+    async function designRevision(revision: number) {
+      const title = `Fixture design V${revision}`;
+      fs.writeFileSync(path.join(source, 'design.json'), JSON.stringify({ project: projectId, title,
+        screens: [{ id: 'main', name: 'Main', route: '#main', viewport: 'desktop', impl: '/fixture/' }],
+        acceptance: [{ id: 'A-1', rule: 'Main loads', how: 'human', slots: ['desktop-light'] }],
+      }));
+      fs.writeFileSync(path.join(source, '思路.md'), '# Goal\nKeep the original design journey.');
+      fs.writeFileSync(path.join(source, 'dist', 'index.html'), `<!doctype html><html><body><h1>${title}</h1></body></html>`);
+      git('add', sourcePath);
+      git('commit', '-qm', title);
+      const sourceCommit = git('rev-parse', 'HEAD');
+      const archive = await readDesignSourceZip(repo, sourceCommit, sourcePath);
+      if (!archive) throw new Error('The local design fixture was not archived');
+      return { sourceCommit, archive };
+    }
+
+    function begin(key = '', agentName = 'Fixture designer') {
+      return credentialCall('POST', approval, key, { designAccess: 'publish', agentName });
+    }
+
+    async function issue(key = '', agentName?: string) {
+      const request = await begin(key, agentName);
+      expect(request.status).toBe(201);
+      const approve = await call('POST', `/api/access-requests/${request.body.requestId}/approve`, owner, {});
+      expect(approve.status).toBe(200);
+      const reply = await fetch(`${base}${approval}/${request.body.requestId}`, { headers: { 'X-Poll-Token': request.body.pollToken } });
+      expect(reply.status).toBe(200);
+      const { authorizationKey } = await reply.json() as { authorizationKey: string };
+      const credential = state.findAgentKeyForAuth(authorizationKey);
+      expect(credential).toMatchObject({ projectId, designAccess: 'publish' });
+      return { key: authorizationKey, keyId: credential!.keyId };
+    }
+
+    function expire(keyId: string) {
+      const entry = state.getAgentKeys(projectId).find(key => key.id === keyId);
+      expect(Boolean(entry?.expiresAt)).toBe(true);
+      entry!.expiresAt = new Date(Date.now() - 1000).toISOString();
+    }
+
+    function publish(key: string, input: Awaited<ReturnType<typeof designRevision>>, requestId: string, intent: Record<string, string>) {
+      const params = new URLSearchParams({ requestId, sourceCommit: input.sourceCommit, sourcePath, ...intent });
+      return fetch(`${base}${designs}/packages?${params}`, { method: 'POST', body: new Uint8Array(input.archive),
+        headers: { 'x-ai-access-key': key, 'Content-Type': 'application/zip' } });
+    }
+
+    const initial = await issue();
+    const first = await publish(initial.key, await designRevision(1), 'design-recovery-first', { intent: 'create', designKey: 'fixture/main' });
+    expect(first.status).toBe(201);
+    const { result: { designId } } = await first.json();
+    expire(initial.keyId);
+    expect((await credentialCall('GET', '/api/credentials/self-check', initial.key)).body.status).toBe('expired');
+    expect((await credentialCall('GET', `${designs}/intake`, initial.key)).status).toBe(401);
+    const outside = await credentialCall('POST', '/api/projects/project-b/access-requests', initial.key, { designAccess: 'publish' });
+    expect([401, 403]).toContain(outside.status);
+    expect(state.countPendingAccessRequests('project-b')).toBe(0);
+
+    const second = await designRevision(2);
+    const reviseFirst = { intent: 'revise', designId, expectedVersion: '1' };
+    const unrelated = await issue();
+    expect((await publish(unrelated.key, second, 'design-recovery-same-name', reviseFirst)).status).toBe(403);
+    const recovered = await issue(initial.key, 'Renamed fixture designer');
+    const recoveredIntake = await credentialCall('GET', `${designs}/intake`, recovered.key);
+    expect.soft(recoveredIntake.body.designs[0]).toMatchObject({ designId, canRevise: true });
+    const renewed = await publish(recovered.key, second, 'design-recovery-renewed', reviseFirst);
+    expect(renewed.status).toBe(201);
+
+    expire(recovered.keyId);
+    const recoveredAgain = await issue(recovered.key);
+    const third = await publish(recoveredAgain.key, await designRevision(3), 'design-recovery-third',
+      { intent: 'revise', designId, expectedVersion: '2' });
+    expect(third.status).toBe(201);
+    const published = await credentialCall('GET', designs, recoveredAgain.key);
+    const versions = published.body.designs.find((design: { id: string }) => design.id === designId).versions;
+    expect(versions.map((version: { version: number }) => version.version)).toEqual([1, 2, 3]);
+    expect(new Set(versions.map((version: { publisher: { id: string } }) => version.publisher.id)).size).toBe(1);
+
+    expire(recoveredAgain.keyId);
+    const pending = await begin(recoveredAgain.key);
+    expect(pending.status).toBe(201);
+    expect((await call('DELETE', `/api/projects/${projectId}/agent-keys/${recoveredAgain.keyId}`, owner)).status).toBe(200);
+    expect((await call('POST', `/api/access-requests/${pending.body.requestId}/approve`, owner, {})).status).toBe(409);
+    expect((await begin(recoveredAgain.key)).status).toBe(403);
   });
 
   it('authorizes a design agent only for the selected project and does not issue broader keys', async () => {

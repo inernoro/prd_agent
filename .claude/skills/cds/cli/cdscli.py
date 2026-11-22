@@ -6176,10 +6176,12 @@ def cmd_connect(args: argparse.Namespace) -> None:
     if status not in (200, 201) or not isinstance(body, dict):
         _restore_auth_env(previous)
         if design_access:
-            known_errors = {"account-disabled", "project-access-revoked", "access-update-pending", "recovery_credential_invalid"}
+            known_errors = {"account-disabled", "project-access-revoked", "access-update-pending", "recovery_credential_invalid", "design_key_revoked"}
             error = body.get("error") if isinstance(body, dict) else None
+            if error == "design_key_revoked":
+                die("原设计凭据已吊销，请由 CDS 系统所有者核对发布身份。", code=2, extra={"reason": error})
             die(f"设计授权申请未受理（HTTP {status}）。", code=2,
-                extra={"reason": error} if error in known_errors else None)
+                extra={"reason": error} if isinstance(error, str) and error in known_errors else None)
         die(f"发起授权失败: HTTP {status} {body}", code=2)
     request_id = str(body.get("requestId") or "")
     poll_token = str(body.get("pollToken") or "")

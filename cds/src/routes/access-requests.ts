@@ -65,8 +65,8 @@ function extractPollToken(req: import('express').Request): string {
 }
 
 /** Strip the authorization-key plaintext + poll-token hash before returning to operator UI. */
-function publicView(r: AccessRequest): Omit<AccessRequest, 'issuedKeyPlaintext' | 'pollTokenHash'> {
-  const { issuedKeyPlaintext: _k, pollTokenHash: _t, ...rest } = r;
+function publicView(r: AccessRequest): Omit<AccessRequest, 'issuedKeyPlaintext' | 'pollTokenHash' | 'designRecoveryKeyId'> {
+  const { issuedKeyPlaintext: _k, pollTokenHash: _t, designRecoveryKeyId: _d, ...rest } = r;
   if (r.kind === 'bootstrap' && r.status === 'pending' && bootstrapTarget(r.requestedProject)) {
     return { ...rest, targetBound: true };
   }
@@ -143,8 +143,12 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     // 无凭据的首次接入保持兼容；已知项目密钥也保留原主体约束。
     const key = presentedKey(req);
     const proof = inspectAccessRecovery(stateService, project.id, key);
-    if (!designAccess && proof?.designAccess) {
+    if (!designAccess && proof?.design) {
       res.status(403).json({ error: 'design_key_scope', message: '设计凭据只能用于申请当前项目的设计权限' });
+      return;
+    }
+    if (proof?.design?.revoked) {
+      res.status(403).json({ error: 'design_key_revoked', message: '原设计凭据已吊销，无法续用原作者身份' });
       return;
     }
     if (key.startsWith('cdsu_') || key.startsWith('cdsp_')) {
@@ -170,6 +174,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       createdAt: new Date().toISOString(),
       ...(principalId ? { principalId } : {}),
       ...(designAccess ? { designAccess } : {}),
+      ...(designAccess && proof?.design ? { designRecoveryKeyId: proof.design.keyId } : {}),
     };
     stateService.addAccessRequest(item);
     cdsEventsBus.publish('access-request.created', {
@@ -465,6 +470,18 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (blocked) {
       res.status(409).json({ error: blocked, message: recoveryMessage(blocked) }); return;
     }
+    const oldDesignKey = item.designRecoveryKeyId
+      ? stateService.getAgentKeys(project.id).find(entry => entry.id === item.designRecoveryKeyId)
+      : undefined;
+    if (item.designRecoveryKeyId && (!oldDesignKey?.designAccess || oldDesignKey.revokedAt)) {
+      const message = '原设计凭据已吊销或已不存在，请核对本次续接申请';
+      stateService.updateAccessRequest(item.id, { status: 'rejected', decidedAt: now.toISOString(), decidedBy: decider(req), rejectReason: message });
+      cdsEventsBus.publish('access-request.decided', {
+        requestId: item.id, projectId: project.id, status: 'rejected', pendingCount: pendingCount(stateService),
+      });
+      res.status(409).json({ error: 'design_key_revoked', message });
+      return;
+    }
     const slugHead = project.slug.slice(0, 12).toLowerCase();
     const suffix = randomBytes(32).toString('base64url');
     const plaintext = `cdsp_${slugHead}_${suffix}`;
@@ -478,6 +495,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       ...(item.designAccess ? {
         designAccess: item.designAccess,
         designAccessRequestId: item.id,
+        ...(oldDesignKey ? { designPublisherKeyId: oldDesignKey.designPublisherKeyId ?? oldDesignKey.id } : {}),
         expiresAt: new Date(now.getTime() + PROJECT_CREDENTIAL_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString(),
         ...(item.principalId ? { principalId: item.principalId } : {}),
       } : {}),
