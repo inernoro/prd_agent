@@ -182,6 +182,7 @@ export class ClusterIdentityService {
     };
     for (const id of Object.keys(c.projects)) mapId(id);
     const connection = raw.mapConnection;
+    const mapConnectionOrigin = raw.mapConnectionOrigin;
     if (connection && (raw.user || raw.projectKey || raw.access || raw.principal
       || raw.aiSession?.id !== `cds-connection:${connection.id}`
       || !/^conn_[a-f0-9]{16}$/.test(connection.id)
@@ -189,8 +190,12 @@ export class ClusterIdentityService {
       || !clusterMapOrigin(connection.partnerBaseUrl))) {
       throw new ClusterIdentityValidationError('cluster_map_connection_invalid');
     }
+    if (mapConnectionOrigin && (!raw.user?.isSystemOwner || !clusterMapOrigin(mapConnectionOrigin.origin))) {
+      throw new ClusterIdentityValidationError('cluster_map_origin_invalid');
+    }
     return { ...raw,
       ...(connection ? { mapConnection: { ...connection, projectId: mapId(connection.projectId) } } : {}),
+      ...(mapConnectionOrigin ? { mapConnectionOrigin: { ...mapConnectionOrigin, projectId: mapId(mapConnectionOrigin.projectId) } } : {}),
       ...(raw.projectKey ? { projectKey: { ...raw.projectKey, projectId: mapId(raw.projectKey.projectId) } } : {}),
       ...(raw.humanProjects ? { humanProjects: raw.humanProjects.filter(id => c.projects[id] && this.state.getProject(c.projects[id])).map(mapId) } : {}),
       ...(raw.principalProjects ? { principalProjects: raw.principalProjects.filter(id => c.projects[id] && this.state.getProject(c.projects[id])).map(mapId) } : {}),
@@ -405,6 +410,16 @@ export class ClusterIdentityService {
       } catch { console.warn('[cluster-identity] 本地校验拒绝记录未能持久化'); }
       failure(res, code); return true;
     }
+  }
+  async refreshMapConnectionOrigin(req: Request, projectId: string): Promise<string | null> {
+    if (this.config?.role !== 'member') return null;
+    try {
+      const reply = await this.call(req, '/api/cluster/identity/resolve', { method: req.method, path: req.originalUrl });
+      if (reply.status !== 200) return null;
+      const { mapConnectionOrigin } = this.mapContext(reply.json as Parameters<ClusterIdentityService['mapContext']>[0]);
+      if (mapConnectionOrigin?.projectId === projectId) return mapConnectionOrigin.origin;
+    } catch { /* A fresh authority decision is required to change the active image. */ }
+    return null;
   }
   login(req: Request, res: Response): void {
     const c = this.config;

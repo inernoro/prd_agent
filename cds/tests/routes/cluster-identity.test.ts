@@ -257,6 +257,12 @@ describe('cluster identity through two real HTTP control planes', () => {
     expect((await request(member, '/api/projects/local-a/agent-runtime-providers', token.json.cdsLongToken)).status).toBe(200);
     expect((await request(member, '/api/projects/local-a/agent-sessions?clientRequestId=not-created-yet', token.json.cdsLongToken)).status).toBe(200);
     expect((await request(member, '/api/reports', token.json.cdsLongToken)).status).toBe(401);
+    const versions = await request(member, '/api/projects/local-a/agent-requests', undefined, 'GET', undefined, owner.cookie);
+    expect(versions.json.workspaceVersion).toMatchObject({ activeImage: expect.any(String) });
+    expect((await request(member, '/api/projects/local-a/agent-runtime-version', undefined, 'POST', {}, owner.cookie)).status).toBe(400);
+    expect((await request(primary, route + '/' + token.json.connectionId + '/revoke', undefined, 'POST', {}, owner.cookie)).status).toBe(200);
+    const revoked = await request(member, '/api/projects/local-a/agent-requests', undefined, 'GET', undefined, owner.cookie);
+    expect(revoked.json.workspaceVersion).toBeNull();
     expect([primary, member].some(instance => {
       const events = fs.readFileSync(instance.eventFile, 'utf8');
       return events.includes(code) || events.includes(token.json.cdsLongToken);

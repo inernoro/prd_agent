@@ -24,7 +24,7 @@
  */
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { prepareServiceReplacement, reserveServiceReplacements, replacementLaunchEntry, preserveReplacementNames, commitServiceReplacements } from '../services/service-replacement.js';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { worktreePathActivity } from '../services/worktree-path-activity.js';
@@ -79,6 +79,7 @@ export interface RemoteHostsRouterDeps {
   config?: Pick<CdsConfig, 'portStart'>;
   shell?: IShellExecutor;
   agentWorkspaceSessionRuntime?: AgentWorkspaceSessionRuntime;
+  refreshMapConnectionOrigin?: (req: Request, projectId: string) => Promise<string | null>;
   registerResourceShutdown?: (close: () => Promise<void>) => void;
   serverEventLogStore?: ServerEventLogSink | null;
 }
@@ -114,7 +115,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         (image) => agentWorkspaceSessionRuntime.verifyVersion(image),
       )
     : null;
-  function pairedMapOrigin(projectId: string): string | null {
+  function pairedMapOrigin(req: Request, projectId: string): string | null {
+    const cluster = trustedClusterIdentity(req);
+    if (cluster) return cluster.mapConnectionOrigin?.projectId === projectId ? cluster.mapConnectionOrigin.origin : null;
     const origins = new Set(deps.stateService.getActiveCdsConnections()
       .filter(connection => connection.projectId === projectId && connection.partnerKind === 'map')
       .map(connection => safeOrigin(connection.partnerBaseUrl))
@@ -769,7 +772,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(404).json({ error: { code: 'project_not_found', message: 'CDS 项目不存在' } });
       return;
     }
-    const origin = pairedMapOrigin(project.id);
+    const origin = pairedMapOrigin(req, project.id);
     if (!workspaceVersions || !origin || project.mirror) {
       res.status(409).json({ error: { code: 'workspace_version_unavailable', message: '当前项目没有可单独切换版本的 MAP 工作区连接' } });
       return;
@@ -781,9 +784,12 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
     try {
       const change = action === 'rollback' ? { action, expectedImage } : { action, expectedImage, image };
-      res.json(await workspaceVersions.change(project.id, origin, change, () =>
-        !deps.stateService.getProject(project.id)?.mirror && pairedMapOrigin(project.id) === origin,
-      ));
+      res.json(await workspaceVersions.change(project.id, origin, change, async () => {
+        const currentOrigin = trustedClusterIdentity(req)
+          ? await deps.refreshMapConnectionOrigin?.(req, project.id)
+          : pairedMapOrigin(req, project.id);
+        return currentOrigin === origin && !deps.stateService.getProject(project.id)?.mirror;
+      }));
     } catch (error) {
       const failure = sanitizeAgentWorkspaceRuntimeError(error, []);
       const status = failure.code === 'workspace_version_image_invalid' ? 422 : failure.retryable ? 503 : 409;
@@ -804,7 +810,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
-    const origin = safeOrigin(auth.partnerBaseUrl) ?? pairedMapOrigin(project.id);
+    const origin = safeOrigin(auth.partnerBaseUrl) ?? pairedMapOrigin(req, project.id);
     const activeImage = origin ? workspaceVersions?.view(project.id, origin).activeImage : undefined;
     const workspaceCapability = agentWorkspaceSessionRuntime
       ? await agentWorkspaceSessionRuntime.capability(false, activeImage)
@@ -2317,7 +2323,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const all = [...liveSummaries, ...history];
     const users = Array.from(new Set(all.map(x => x.clientUser).filter(Boolean))) as string[];
     const apps = Array.from(new Set(all.map(x => x.clientApp).filter(Boolean))) as string[];
-    const origin = pairedMapOrigin(req.params.id);
+    const origin = pairedMapOrigin(req, req.params.id);
     const version = origin ? workspaceVersions?.view(req.params.id, origin) : undefined;
     const workspaceVersion = version ? {
       ...version,

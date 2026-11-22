@@ -135,7 +135,7 @@ export class OpenDesignWorkspaceVersions {
     projectId: string,
     origin: string,
     change: OpenDesignWorkspaceVersionChange,
-    scopeStillValid: () => boolean = () => true,
+    scopeStillValid: () => boolean | Promise<boolean> = () => true,
   ) {
     const scope = digest(origin);
     const key = `${projectId}:${scope}`;
@@ -160,7 +160,7 @@ export class OpenDesignWorkspaceVersions {
       }
       await this.serialize(projectId, async () => {
         const { states, version } = this.read(projectId, scope);
-        if (version.activeImage !== change.expectedImage || !scopeStillValid()) {
+        if (version.activeImage !== change.expectedImage || !await scopeStillValid()) {
           throw new AgentWorkspaceRuntimeError('workspace_version_conflict', '工作区版本已变化，请刷新后重试', false);
         }
         await this.persist(projectId, states, scope, {
