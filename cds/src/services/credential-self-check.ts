@@ -353,7 +353,7 @@ export function checkCredential(plaintext: string, facts: CredentialFacts): Cred
               'project',
               'grant-revoked',
               `凭据本身有效、主体也正常，但该主体对项目「${project.name || project.slug}」的授权已被撤销 —— 鉴权因此拒绝它。`,
-              '请系统所有者先恢复该主体的项目授权，再重新执行接入自检。',
+              '这不是凭据问题，重新签发也进不来。请人重新批准一次该项目的接入；批准之后这把凭据无需更换即可恢复。',
             ),
             entry,
           ),

@@ -6,7 +6,7 @@ import {
 } from '../../../../src/shared/design-workspace';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
 import { ReadableNotes } from './DesignFramework';
-import { designArtifact, designCheckRows, designDate, designPath, type DesignCommand } from './design-ui';
+import { designArtifact, designCheckRows, designDate, designPath, designSourceNames, type DesignCommand } from './design-ui';
 
 const fileNames: Record<DesignDeliveryFile['kind'], string> = {
   manifest: '稿件清单', guide: '交付说明', rationale: '设计思路', document: '设计与开发文档', framework: '框架材料',
@@ -198,7 +198,7 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
         <small>{version.publisher.label} · {designDate(version.createdAt)}{delivery?.prototypeVersion ? ` · 原型第 ${delivery.prototypeVersion} 版` : ''}
           {delivery?.date ? ` · 稿件日期 ${delivery.date}` : ''}</small>
       </div>
-      <div><strong>{version.sourceVerification === 'git' ? 'Git 已核验' : '发布者声明来源'}</strong>
+      <div><strong>{designSourceNames[version.sourceVerification ?? 'declared']}</strong>
         <code>{version.sourceCommit}</code>
         {version.sourcePath && <small>{version.sourcePath}</small>}
         {delivery?.frameworkDraft && <small>框架草案 {delivery.frameworkDraft}</small>}

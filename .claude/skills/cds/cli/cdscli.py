@@ -4316,7 +4316,7 @@ def _register_planning_parser(sub: Any) -> None:
 
 
 
-def _design_git_package(directory: Path) -> tuple[str, str, bytes]:
+def _design_git_package(directory: Path, *, allow_root: bool = True) -> tuple[str, str, bytes]:
     directory = directory.resolve()
     if not directory.is_dir() or not (directory / "design.json").is_file():
         die("稿件目录须包含 design.json")
@@ -4331,6 +4331,8 @@ def _design_git_package(directory: Path) -> tuple[str, str, bytes]:
             die("请先提交稿件目录的更改，以便将发布绑定到准确的提交")
         prefix = os.fsdecode(git("rev-parse", "--show-prefix")).rstrip("\r\n").rstrip("/")
         root = os.fsdecode(git("rev-parse", "--show-toplevel")).rstrip("\r\n")
+        if not prefix and not allow_root:
+            die("私有归档须指定稿件子目录")
         tree = f"{commit}:{prefix}" if prefix else commit
         archive = subprocess.run(["git", "-C", root, "archive", "--format=zip", tree],
                                  check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20).stdout
@@ -4540,11 +4542,13 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             if not commit:
                 die("从 ZIP 发布时请提供稿件的完整 --source-commit")
         else:
-            commit, source_path, content = _design_git_package(Path(args.dir))
+            commit, source_path, content = _design_git_package(Path(args.dir), allow_root=not args.private)
             if args.source_commit and args.source_commit != commit:
                 die("目录中的 Git 提交与 --source-commit 不符")
             if args.source_path and args.source_path != source_path:
                 die("仓库中的稿件目录与 --source-path 不符")
+        if args.private and (not args.intent or not source_path or source_path == "."):
+            die("私有归档须声明 --intent，并指定稿件子目录")
         if len(content) > 4 * 1024 * 1024:
             die("稿件 ZIP 超过 4 MiB")
         resolves = {}
@@ -4556,6 +4560,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         query = {key: value for key, value in {
             "designId": args.id, "sourceCommit": commit, "sourcePath": source_path, "note": args.note,
             "intent": args.intent, "designKey": args.design_key, "expectedVersion": args.expected_version,
+            "sourceMode": "private" if args.private else None,
             "resolves": json.dumps(resolves, sort_keys=True, ensure_ascii=False) if resolves else None,
             "review": "true" if args.review else None,
             "reviewerIds": json.dumps(sorted(set(args.reviewer))) if args.reviewer else None,
@@ -4735,7 +4740,8 @@ def _register_design_parser(sub: Any) -> None:
                 source.add_argument("--dir")
                 source.add_argument("--zip")
                 parser.add_argument("--source-commit")
-                parser.add_argument("--source-path", help="用于核对的 Git 仓库相对目录，仓库根用 .")
+                parser.add_argument("--source-path", help="稿件的 Git 仓库相对目录")
+                parser.add_argument("--private", action="store_true", help="将本地提交中的稿件归档到当前 CDS 项目")
                 parser.add_argument("--note")
                 parser.add_argument("--intent", choices=("create", "revise"), help="新稿或同稿续版")
                 parser.add_argument("--design-key", help="稳定的 module/draft 接入标识")

@@ -100,6 +100,10 @@ describe('Agent public bootstrap through the real auth gate', () => {
     const instructions = await task.text();
     expect(instructions).toMatch(/设计接入清单|cds_design_intake|design intake/);
     expect(instructions).toMatch(/原稿|同稿|已有稿件/);
+    expect(instructions).toContain('只在本地提交');
+    expect(instructions).toContain('sourceMode=private');
+    expect(instructions).toContain('cdscli design publish --private');
+    expect(instructions).not.toMatch(/git push|推送[^。]*稿件/);
   });
 
   it('TLS 在反代前终止时，安装和接入说明均使用已配置的公网 HTTPS 地址', async () => {

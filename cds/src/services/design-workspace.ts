@@ -126,9 +126,10 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
   }
 }
 
-function verifiedDesignPaths(design: DesignEntry): string[] {
+function registeredDesignPaths(design: DesignEntry): string[] {
   return [...new Set(design.versions.flatMap(version =>
-    version.sourceVerification === 'git' && version.sourcePath ? [version.sourcePath] : []))];
+    version.sourcePath && (version.sourceVerification === 'git' || version.sourceVerification === 'private-upload')
+      ? [version.sourcePath] : []))];
 }
 
 function readPublicationIntent(params: Record<string, unknown>, targetId: string | undefined, sourcePath: string | undefined) {
@@ -146,7 +147,7 @@ function readPublicationIntent(params: Record<string, unknown>, targetId: string
     expectedVersion = number(Number(params.expectedVersion), '当前稿件版本');
   }
   if (!intent && (designKey || expectedVersion)) return invalidDesign('使用接入标识或基线版本时，须明确新建或续版');
-  if (intent && sourcePath === undefined) return invalidDesign('设计接入须提供已同步的 Git 稿件目录 sourcePath');
+  if (intent && sourcePath === undefined) return invalidDesign('设计接入须提供稿件的仓库相对目录 sourcePath');
   if (intent === 'create' && (!designKey || targetId || expectedVersion)) {
     return invalidDesign('新建须提供 designKey，稿件 ID 由 CDS 分配');
   }
@@ -306,7 +307,7 @@ export class DesignWorkspaceService {
       designs: [...state.designs.values()].map(entry => {
         const latest = entry.versions.at(-1)!;
         return { designId: entry.id, designKey: entry.designKey, title: latest.title, latestVersion: latest.version,
-          sourceCommit: latest.sourceCommit, sourcePaths: verifiedDesignPaths(entry),
+          sourceCommit: latest.sourceCommit, sourcePaths: registeredDesignPaths(entry),
           canRevise: canWrite && (actor.steward === true || latest.publisher.id === actor.id),
           openFeedbackCount: entry.feedback?.filter(item => item.status !== 'closed').length ?? 0 };
       }),
@@ -370,14 +371,20 @@ export class DesignWorkspaceService {
     requireProjectRead(actor);
     write(actor);
     const params = designRecord(query, '发布参数', ['requestId', 'designId', 'sourceCommit', 'sourcePath', 'note',
-      'resolves', 'review', 'reviewerIds', 'requireGit', 'intent', 'designKey', 'expectedVersion']);
+      'resolves', 'review', 'reviewerIds', 'requireGit', 'intent', 'designKey', 'expectedVersion', 'sourceMode']);
     const requestId = designId(params.requestId, '请求编号');
     const sourceCommit = designCommit(params.sourceCommit);
     const sourcePath = params.sourcePath === undefined ? undefined : designSourcePath(params.sourcePath);
     const targetId = params.designId === undefined ? undefined : designId(params.designId, '稿件编号');
     const { intent, designKey, expectedVersion } = readPublicationIntent(params, targetId, sourcePath);
+    if (params.sourceMode !== undefined && params.sourceMode !== 'private') invalidDesign('私有归档须使用 sourceMode=private');
+    const privateUpload = params.sourceMode === 'private';
+    if (privateUpload && (!intent || sourcePath === undefined || sourcePath === '.')) {
+      invalidDesign('私有归档须明确新稿或续版，并指定稿件子目录');
+    }
     if (params.requireGit !== undefined && params.requireGit !== 'true') invalidDesign('Git 来源校验须使用 requireGit=true');
-    const requireGit = Boolean(intent || actor.gitPublishOnly || params.requireGit === 'true');
+    if (privateUpload && params.requireGit === 'true') invalidDesign('私有归档和 Git 来源校验请选择一种');
+    const requireGit = !privateUpload && Boolean(intent || actor.gitPublishOnly || params.requireGit === 'true');
     const note = optionalText(params.note, '发布说明', 1000);
     const loaded = await readDesignPackage(bytes);
     if (loaded.project !== projectId) invalidDesign('稿件包项目与当前 CDS 项目不符');
@@ -404,7 +411,7 @@ export class DesignWorkspaceService {
     const packageFingerprint = intent ? loaded.filesSha256 : loaded.sha256;
     return this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: packageFingerprint, resolves,
       review: params.review, reviewerIds, ...(intent ? { intent, designKey, expectedVersion } : {}),
-      ...(requireGit ? { requireGit } : {}) },
+      ...(requireGit ? { requireGit } : {}), ...(privateUpload ? { sourceMode: 'private' } : {}) },
       async ({ state, now }) => {
         const id = selectedId ?? `DSN-${randomUUID().slice(0, 8).toUpperCase()}`;
         const existing = state.designs.get(id);
@@ -421,11 +428,11 @@ export class DesignWorkspaceService {
           const keyOwner = [...state.designs.values()].find(entry => entry.id !== id && entry.designKey === designKey);
           if (keyOwner) intakeConflict(`接入标识已登记为稿件 ${keyOwner.id}。请先读取并按当前版本续发`);
         }
-        if (sourcePath !== undefined && (!existing || !verifiedDesignPaths(existing).includes(sourcePath))) {
-          const matches = [...state.designs.values()].filter(entry => entry.id !== id && verifiedDesignPaths(entry).includes(sourcePath));
+        if (sourcePath !== undefined && (!existing || !registeredDesignPaths(existing).includes(sourcePath))) {
+          const matches = [...state.designs.values()].filter(entry => entry.id !== id && registeredDesignPaths(entry).includes(sourcePath));
           if (matches.length) {
             const candidates = matches.slice(0, 5).map(entry => `${entry.id}@V${entry.versions.at(-1)!.version}`).join('、');
-            intakeConflict(`Git 稿件目录已登记为 ${candidates}。请先读设计接入清单并确认目标版本`);
+            intakeConflict(`稿件目录已登记为 ${candidates}。请先读设计接入清单并确认目标版本`);
           }
         }
         if (!existing && !intent && actor.kind === 'agent' && state.designs.size > 0) {
@@ -442,7 +449,7 @@ export class DesignWorkspaceService {
           invalidDesign('只能声明处理此稿件仍开放的评论');
         }
         const { title, sha256, rationale, screens, acceptance, spec, checks, framework, group, tags, decisionIds } = loaded;
-        const source = sourcePath && await this.deps.sourcePackage?.(projectId, sourceCommit, sourcePath);
+        const source = !privateUpload && sourcePath && await this.deps.sourcePackage?.(projectId, sourceCommit, sourcePath);
         if (requireGit && !source) rejectPlanning(409, 'design_git_source_required', '项目 Git 尚无法核验此稿件的提交和目录，请同步已提交的稿件再发布。');
         if (source && (await readDesignPackage(source)).filesSha256 !== loaded.filesSha256) conflict('上传内容与项目 Git 中的提交和目录不一致');
         let frameworkCheck: DesignFrameworkCheck | undefined;
@@ -467,7 +474,7 @@ export class DesignWorkspaceService {
         }
         const version: DesignVersion = { version: (previous?.version ?? 0) + 1, title, sourceCommit, sha256, prototypeId,
           prototypeSha256: byPath.get(prototype)!.sha256, delivery,
-          sourcePath, sourceVerification: source ? 'git' : 'declared',
+          sourcePath, sourceVerification: privateUpload ? 'private-upload' : source ? 'git' : 'declared',
           createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
           ...(frameworkCheck ? { frameworkCheck } : {}),
           ...(loaded.renders.length ? { renders } : {}) };
