@@ -220,7 +220,6 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['remote-hosts', '远程主机、Sidecar 与 Agent 会话', 'remote-hosts.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', '', '主机密钥、工具审批和会话停止需要人类边界'],
   ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],
   ['acceptance-tasks', '结构化功能清单、领取任务与历史矩阵', 'acceptance-tasks.ts', 'project', 'project', 'write', 'direct', 'cds', 'acceptance', '先读冻结清单再领取，按真实业务路径回填断言、线上证据与清理；正式环境无需发布分支，报告绑定不等于线上验真通过'],
-  ['design-workspace', '设计工作区', 'design-workspace.ts', 'project', 'project', 'write', 'guided', 'cds', 'design', '同项目读取接入清单、发布已提交稿件和回传实施反馈，修订沿用稿件编号。'],
   ['engineering-planning', '工程规划与债务', 'engineering-planning.ts', 'project', 'project', 'write', 'guided', 'cds', 'planning / debt', 'MCP 读取当前项目并提交提案或明确授权的直接登记。项目成员确认提案及处理债务。'],
   ['design-workspace', '项目设计稿件', 'design-workspace.ts', 'project', 'project', 'write', 'guided', 'cds', 'design / framework', '读取和发布授权项目稿件。定稿、评论核对和签收由项目成员确认。'],
   ['planning-preview-access', '分支预览进入票据', 'planning-preview-access.ts', 'system', 'protocol-token', 'write', 'protocol-only', 'cds', '', '票据只用于当前分支的登录。访问申请由项目授权流程审批。'],
@@ -570,7 +569,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
       '通过 cds_design_publish 或 cdscli design publish 登记，回读稿件和版本'],
     checks: ['同稿修订使用原稿编号和当前版本', '先核对必需资料和 Git 来源，缺失时说明需补充的信息',
       '超时使用原请求编号继续，角色权限以该项目的设计接入清单为准'],
-    completion: ['有项目、稿件、版本和来源提交', '已读取服务端回执并返回稿件入口'],
+    completion: ['在服务端核对项目与来源提交', '同稿修订可读回原编号和新增版本', '返回稿件入口和发布回执'],
     pagePath: projectId => projectQueryPath('/design', projectId),
   },
   branches: {
