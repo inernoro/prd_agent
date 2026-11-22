@@ -1867,6 +1867,7 @@ function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnTy
     const route = '/api/projects/:projectId/design';
     const path = normalizedDesignPath(req.path);
     return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
+      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST' && path === `${route}/feedback`)
       || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
   }
   const path = normalizedPlanningPath(req.path);
