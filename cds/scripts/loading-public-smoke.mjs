@@ -85,10 +85,15 @@ export async function verifyPublicLoading(browser, base, out) {
     });
     const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
     async function measure(phase) {
-      const box = await page.locator(selector).evaluate(e => {
+      const current = await page.waitForFunction(selector => {
+        const e = document.querySelector(selector);
+        if (!e?.isConnected) return false;
         const r=e.getBoundingClientRect();
+        if (!r.width || !r.height) return false;
         return {x:r.x,y:r.y,width:r.width,height:r.height,lines:[...e.querySelectorAll('.cds-loading-skeleton-line')].map(l=>{const b=l.getBoundingClientRect();return [b.x-r.x,b.y-r.y,b.width,b.height]})};
-      });
+      }, selector);
+      let box;
+      try { box = await current.jsonValue(); } finally { await current.dispose(); }
       await page.screenshot({path:path.join(out,`${kind}-${phase}.jpg`)}); return box;
     }
     try {
@@ -108,6 +113,7 @@ export async function verifyPublicLoading(browser, base, out) {
         config.release(); await page.getByRole('button',{name:'登录',exact:true}).waitFor();
         assert.equal(await page.locator(selector).count(),0);
         assert.equal(await page.getByLabel('用户名',{exact:true}).count(),1);
+        assert.equal(await page.getByRole('link',{name:'申请身份恢复',exact:true}).getAttribute('href'), '/login?recovery=1');
         const ready=await page.locator('form.cds-auth-card').boundingBox();
         assert(Math.abs(ready.height-code.height)<1 && Math.abs(ready.y-code.y)<1, 'basic login readiness must preserve card geometry');
       } else {

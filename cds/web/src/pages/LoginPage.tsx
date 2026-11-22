@@ -364,8 +364,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
         </Button>
       ) : null}
 
-      <a className="text-sm text-muted-foreground underline" href="/login?recovery=1">申请身份恢复</a>
-      <p className="cds-auth-hint">同源会话 Cookie · 凭据不落本地存储</p>
+      <p className="cds-auth-hint"><a className="font-medium text-primary underline" href="/login?recovery=1">申请身份恢复</a></p>
     </form>
   );
 }

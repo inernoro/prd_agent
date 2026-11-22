@@ -686,7 +686,17 @@ export interface CdsAuthPublicStatus {
 
 /** Public auth capability probe for the login page. Does not expose current user details. */
 export async function fetchAuthPublicStatus(): Promise<CdsAuthPublicStatus> {
-  return apiRequest<CdsAuthPublicStatus>('/api/auth/public-status');
+  const status = await apiRequest<CdsAuthPublicStatus>('/api/auth/public-status');
+  if (status.loginMethods) return status;
+  // An older instance may report only its configured authentication mode.
+  return {
+    ...status,
+    loginMethods: {
+      github: status.mode === 'github',
+      local: status.mode === 'basic',
+      sso: status.mode === 'sso' && status.sso?.enabled === true,
+    },
+  };
 }
 
 export async function exchangeTicketSso(input: {

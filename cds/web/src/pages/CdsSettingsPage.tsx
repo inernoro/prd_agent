@@ -15,6 +15,7 @@ import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 import { MotionLink, useSurfaceNavigate } from '@/components/layout/RouteMotion';
 import { accountViews, availableAccountLogins, readAccountView, type AccountView } from './cds-settings/accountAccess';
+import { LoginMethodsTab, MyAccountTab } from './cds-settings/tabs/MyAccountTab';
 import './status/monitor-frame.css';
 import './cds-settings/account-settings.css';
 
@@ -22,8 +23,6 @@ const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab
 const IdentityTab = lazy(() => import('@/pages/cds-settings/tabs/IdentityTab').then((m) => ({ default: m.IdentityTab })));
 const AuthTab = lazy(() => import('@/pages/cds-settings/tabs/AuthTab').then((m) => ({ default: m.AuthTab })));
 const UsersTab = lazy(() => import('@/pages/cds-settings/tabs/UsersTab').then((m) => ({ default: m.UsersTab })));
-const MyAccountTab = lazy(() => import('@/pages/cds-settings/tabs/MyAccountTab').then((m) => ({ default: m.MyAccountTab })));
-const LoginMethodsTab = lazy(() => import('@/pages/cds-settings/tabs/MyAccountTab').then((m) => ({ default: m.LoginMethodsTab })));
 const ActivityTab = lazy(() => import('@/pages/cds-settings/tabs/ActivityTab').then((m) => ({ default: m.ActivityTab })));
 const ClusterTab = lazy(() => import('@/pages/cds-settings/tabs/ClusterTab').then((m) => ({ default: m.ClusterTab })));
 const ConnectionsTab = lazy(() => import('@/pages/cds-settings/tabs/ConnectionsTab').then((m) => ({ default: m.ConnectionsTab })));
@@ -327,6 +326,8 @@ export function CdsSettingsPage(): JSX.Element {
   const authCapabilities = authStatus?.capabilities;
   const usersVisible = authCapabilities?.userManagement === true;
   const activityVisible = authCapabilities?.userActivity === true;
+  const loginMethods = authStatus ? <LoginMethodsTab loginMethods={authStatus.loginMethods}
+    accountProviders={authStatus.accountProviders} canListAccounts={usersVisible} /> : null;
 
   useEffect(() => {
     let alive = true;
@@ -452,12 +453,9 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'overview' ? <OverviewTab /> : null}
                 </TabsContent>
                 <TabsContent value="auth">
-                  {activeTab === 'auth' && authStatus ? (
-                    <div className="space-y-6">
-                      <LoginMethodsTab loginMethods={authStatus.loginMethods} accountProviders={authStatus.accountProviders} canListAccounts={usersVisible} />
-                      {canManageSettings ? <AuthTab /> : null}
-                    </div>
-                  ) : null}
+                  {activeTab === 'auth' && authStatus
+                    ? canManageSettings ? <AuthTab>{loginMethods}</AuthTab> : loginMethods
+                    : null}
                 </TabsContent>
                 <TabsContent value="my-account">
                   {activeTab === 'my-account' && authStatus ? (

@@ -1,7 +1,7 @@
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { useSettingsSessionOwner, useSettingsSessionState } from '../useSettingsSessionState';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Bot, KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -41,7 +41,7 @@ export function normalizeSsoReadbackFields(input: TicketSsoConfig): TicketSsoCon
   return { ...input, providerId: input.providerId.trim().slice(0, 64) || 'ticket-sso', label: input.label.trim().slice(0, 80) || '使用 SSO 登录', authorizationUrl: cleanUrl(input.authorizationUrl), tokenUrl: cleanUrl(input.tokenUrl), clientId: input.clientId.trim().slice(0, 160), defaultRedirect: redirect };
 }
 
-export function AuthTab(): JSX.Element {
+export function AuthTab({ children }: { children?: ReactNode }): JSX.Element {
   const owner = useSettingsSessionOwner();
   const currentOwner = useRef(owner); currentOwner.current = owner;
   const [statusAttempt, setStatusAttempt] = useState(0);
@@ -159,13 +159,15 @@ export function AuthTab(): JSX.Element {
   };
 
   if (state.status === 'loading') return <SettingsContentSkeleton auth />;
-  if (state.status === 'error') return <div className="space-y-3"><ErrorBlock message={state.message} /><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={() => setStatusAttempt(value => value + 1)}>重试读取认证状态</Button></div>;
+  if (state.status === 'error') return <div className="space-y-6">{children}
+    <div className="space-y-3"><ErrorBlock message={state.message} /><Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={() => setStatusAttempt(value => value + 1)}>重试读取认证状态</Button></div>
+  </div>;
 
   const auth = state.data;
   const enabled = auth.enabled !== false && auth.mode !== 'disabled';
   const userName = auth.user?.githubLogin || auth.user?.username || auth.user?.name || (enabled ? '已登录用户' : '本地匿名访问');
 
-  return (
+  const controls = (
     <Section
       title="登录与认证"
       description={
@@ -320,4 +322,5 @@ export function AuthTab(): JSX.Element {
       </div>
     </Section>
   );
+  return children ? <div className="space-y-6">{children}{controls}</div> : controls;
 }

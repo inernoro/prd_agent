@@ -137,6 +137,11 @@ try {
       data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
+      if (!before && scene.kind === 'settings') {
+        await page.getByRole('heading', { name: '登录方式', exact: true }).waitFor();
+        const localMethod = page.getByRole('listitem').filter({ hasText: '个人口令' });
+        assert(await localMethod.getByText('可用', { exact: true }).isVisible(), 'older basic mode must still show password login as available');
+      }
       if (!before && scene.kind === 'overview') {
         const graph = page.getByRole('region', { name: '跨项目关系画布' });
         await graph.getByText('fixture-project', { exact: true }).waitFor();
