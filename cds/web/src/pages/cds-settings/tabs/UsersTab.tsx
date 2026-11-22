@@ -90,6 +90,7 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
   const isOwner = me?.isSystemOwner === true;
   const isLocal = me?.authProvider === 'local';
   const isLegacy = me?.authProvider === 'legacy';
+  const canRotateSystemPassword = isLegacy && isOwner;
 
   const refreshUsers = async (): Promise<void> => {
     setUsersError('');
@@ -115,6 +116,10 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
     try {
       await changeMyPassword({ oldPassword: oldPw, newPassword: newPw });
       if (!alive.current) return;
+      if (canRotateSystemPassword) {
+        window.location.assign('/login');
+        return;
+      }
       onToast('密码已修改，请使用新密码重新登录');
       setOldPw('');
       setNewPw('');
@@ -298,12 +303,14 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
         description={
           isLocal
             ? '修改当前本地账号的登录密码。修改后所有会话失效，需要用新密码重新登录。'
-            : isLegacy
-              ? '当前使用原始环境变量账号登录，密码继续由 CDS_USERNAME / CDS_PASSWORD 管理。'
-              : '当前账号通过外部身份提供方登录，密码由身份提供方管理，无需在此修改。'
+            : canRotateSystemPassword
+              ? '修改系统账号的登录密码。旧会话立即失效，请使用新密码重新登录。'
+              : isLegacy
+                ? '当前使用原始环境变量账号登录，密码继续由 CDS_USERNAME / CDS_PASSWORD 管理。'
+                : '当前账号通过外部身份提供方登录，密码由身份提供方管理，无需在此修改。'
         }
       >
-        {isLocal ? (
+        {isLocal || canRotateSystemPassword ? (
           <form onSubmit={submitPassword} className="max-w-md space-y-3">
             <Field label="原密码">
               <input
