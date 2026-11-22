@@ -7,7 +7,7 @@ import { isAuthenticatedHuman } from './human-auth.js';
 import { dtsCredentialAllowed } from './dts-access.js';
 
 export function resolveEngineeringPlanningAccess(req: Request, state: StateService, projectId: string,
-  workspace: 'planning' | 'design' = 'planning'): (PlanningActor & { gitPublishOnly?: true }) | null {
+  workspace: 'planning' | 'design' = 'planning'): (PlanningActor & { gitPublishOnly?: true; feedback?: true }) | null {
   const project = state.getProject(projectId);
   if (!project || project.id !== projectId || project.mirror) return null;
   const request = req as Request & {
@@ -25,8 +25,8 @@ export function resolveEngineeringPlanningAccess(req: Request, state: StateServi
     if ((credential.designAccess && workspace !== 'design') || (credential.planningAccess && workspace !== 'planning')) return null;
     const identity = { kind: 'agent' as const, id: credential.principalId ?? `project-key:${credential.id}`, label: credential.label };
     if (credential.designAccess) {
-      return credential.designAccess === 'publish' ? { ...identity, permissions: ['read', 'write'], gitPublishOnly: true }
-        : { ...identity, permissions: ['read'] };
+      if (credential.designAccess === 'publish') return { ...identity, permissions: ['read', 'write'], gitPublishOnly: true };
+      return { ...identity, permissions: ['read'], ...(credential.designAccess === 'feedback' ? { feedback: true } : {}) };
     }
     return {
       ...identity,

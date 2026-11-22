@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import { crc32 } from '../utils/zip.js';
-import { designSlots, designViewports, type DesignMaterial, type DesignRule, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
+import { designSlots, designViewports, type DesignDeliveryFile, type DesignMaterial, type DesignRule, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 
 const mib = 1024 * 1024;
@@ -78,7 +78,7 @@ export function designPngDimensions(bytes: Buffer): { width: number; height: num
   return undefined;
 }
 
-async function zipEntries(bytes: Buffer): Promise<Map<string, Buffer>> {
+async function zipEntries(bytes: Buffer, onlyPath?: string): Promise<Map<string, Buffer>> {
   if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > designPackageLimit) invalidDesign('稿件包须是 4 MiB 以内的 ZIP');
   const zip = await new Promise<ZipFile>((resolve, reject) => fromBuffer(bytes, {
     lazyEntries: true, strictFileNames: true, validateEntrySizes: true, autoClose: false,
@@ -99,7 +99,7 @@ async function zipEntries(bytes: Buffer): Promise<Map<string, Buffer>> {
           if (paths.has(name) || paths.size >= 600 || expanded > 12 * mib || entry.uncompressedSize > 4 * mib
             || entry.isEncrypted() || (type !== 0 && type !== (directory ? 0x4000 : 0x8000))) invalidDesign('稿件包含不支持的文件，或超过文件数与解压限制');
           paths.add(name);
-          if (!directory) {
+          if (!directory && (onlyPath === undefined || name === onlyPath)) {
             const stream = await new Promise<NodeJS.ReadableStream>((ok, fail) => zip.openReadStream(entry,
               (error, value) => error || !value ? fail(error) : ok(value)));
             const chunks: Buffer[] = [];
@@ -121,6 +121,10 @@ async function zipEntries(bytes: Buffer): Promise<Map<string, Buffer>> {
     });
   } finally { zip.close(); }
   return entries;
+}
+
+export async function readArchivedDesignFile(bytes: Buffer, filename: string): Promise<Buffer | undefined> {
+  return (await zipEntries(bytes, filename)).get(filename);
 }
 
 export async function readDesignFrameworkSource(bytes: Buffer): Promise<DesignMaterial> {
@@ -157,8 +161,12 @@ function screen(value: unknown): DesignScreen {
     return invalidDesign('画面主题须是 light 或 dark');
   }), item => item, '主题');
   if (!themes.length) invalidDesign('每个画面至少须有一个主题');
+  const entryActions = list(input.entryActions, '原型进入操作', 6,
+    selector => planningText(selector, '原型进入控件选择器', 300), true);
   return { id: designId(input.id, '画面编号'), name, route, viewport, themes,
     impl: input.impl == null ? null : localDesignPath(input.impl),
+    ...(entryActions.length ? { entryActions } : {}),
+    ...(input.entryReadySelector === undefined ? {} : { entryReadySelector: planningText(input.entryReadySelector, '原型画面就绪选择器', 300) }),
     ...(input.readySelector === undefined ? {} : { readySelector: planningText(input.readySelector, '画面就绪选择器', 300) }) };
 }
 
@@ -185,6 +193,74 @@ function rule(value: unknown, screens: DesignScreen[]): DesignRule {
   }
   return { id: designId(input.id, '验收编号'), rule: planningText(input.rule, '验收规则', 600), how, priority, slots,
     screenId, probe, expected: input.expected === undefined ? undefined : planningText(input.expected, '验收期望', 800) };
+}
+
+const deliveryText = /\.(?:md|mdx|txt|json|ya?ml|html?|css|[cm]?js|ts|tsx|jsx|csv|toml|xml|svg)$/i;
+
+function describeDesignDelivery(entries: Map<string, Buffer>, root: string, input: Record<string, unknown>,
+  prototype: string, rationale: string, checks: string, rendered: ReadonlySet<string>) {
+  const files = new Map([...entries].map(([name, content]) => [name.slice(root.length), content]));
+  const warnings: string[] = [];
+  function location(value: unknown, label: string, directory = false) {
+    if (value === undefined || value === null) return undefined;
+    try {
+      const name = relativeFile(typeof value === 'string' && directory ? value.replace(/\/+$/, '') : value);
+      if (!files.has(name) && !(directory && [...files.keys()].some(file => file.startsWith(name + '/')))) {
+        warnings.push(`${label}未随包提供：${name}`);
+      }
+      return name;
+    } catch {
+      warnings.push(`${label}须是稿件内的相对路径`);
+      return undefined;
+    }
+  }
+  const source = location(input.source, '声明的原型源码', true);
+  const frameworkDraft = location(input.frameworkDraft, '声明的框架草案', true);
+  const docs = new Set<string>();
+  if (Array.isArray(input.docs)) {
+    for (const declared of input.docs.slice(0, 600)) {
+      const name = location(declared, '声明的交付文档');
+      if (name) docs.add(name);
+    }
+  } else if (input.docs !== undefined) warnings.push('交付文档清单须由包内相对路径组成');
+  const prototypeVersion = typeof input.prototypeVersion === 'number' && Number.isSafeInteger(input.prototypeVersion)
+    && input.prototypeVersion > 0 ? input.prototypeVersion : undefined;
+  if (input.prototypeVersion !== undefined && prototypeVersion === undefined) warnings.push('原型版本须是正整数，原值见稿件清单');
+  const date = typeof input.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.date) ? input.date : undefined;
+  if (input.date !== undefined && date === undefined) warnings.push('稿件日期须使用 YYYY-MM-DD，原值见稿件清单');
+  const notes = typeof input.notes === 'string' ? input.notes.slice(0, 4_000) : undefined;
+  if (input.notes !== undefined && (notes === undefined || notes !== input.notes)) warnings.push('完整的稿件说明见原稿件清单');
+  const base = (part: string | undefined) => part ? part.replace(/\/+$/, '') : undefined;
+  const within = (filename: string, folder: string | undefined) => folder !== undefined && (filename === folder || filename.startsWith(folder + '/'));
+  function kind(path: string): DesignDeliveryFile['kind'] {
+    if (path === 'design.json') return 'manifest';
+    if (path === prototype) return 'prototype';
+    if (path === rationale) return 'rationale';
+    if (path === checks) return 'checks';
+    if (rendered.has(path)) return 'render';
+    if (/^(?:交付说明|handoff|delivery)\.md$/i.test(path)) return 'guide';
+    if (docs.has(path)) return 'document';
+    if (within(path, base(frameworkDraft)) || within(path, 'spec')) return 'framework';
+    if (within(path, base(source))) return 'source';
+    return 'attachment';
+  }
+  const index = [...files].map(([path, content]) => {
+    const type = kind(path);
+    let text = false;
+    let headings: string[] | undefined;
+    if (deliveryText.test(path)) {
+      try {
+        const decoded = decoder.decode(content);
+        text = !decoded.includes('\0');
+        if (text && /\.md$/i.test(path)) {
+          headings = [...decoded.matchAll(/^#{1,6}[ \t]+([^\r\n]+)$/gm)].slice(0, 40).map(match => match[1].trim().slice(0, 150));
+        }
+      } catch { /* Preserve undecodable files as downloads. */ }
+    }
+    return { path, kind: type, size: content.length, sha256: designDigest(content), text, ...(headings?.length ? { headings } : {}) };
+  }).sort((a, b) => a.path.localeCompare(b.path));
+  return { archiveRoot: root, index, warnings: [...new Set(warnings)], prototype, source: source ? input.source as string : undefined,
+    frameworkDraft: frameworkDraft ? input.frameworkDraft as string : undefined, prototypeVersion, date, notes };
 }
 
 export async function readDesignPackage(bytes: Buffer) {
@@ -233,12 +309,14 @@ export async function readDesignPackage(bytes: Buffer) {
   const frameworkVersion = input.frameworkVersion;
   if (frameworkVersion !== undefined && (!framework || typeof frameworkVersion !== 'number'
     || !Number.isSafeInteger(frameworkVersion) || frameworkVersion < 1)) return invalidDesign('请提供所用框架的有效版本号');
+  const delivery = describeDesignDelivery(entries, root, input, relativeFile(prototypeFile),
+    relativeFile(input.rationale ?? '思路.md'), relativeFile(input.checks ?? 'checks/result.json'),
+    new Set(renders.map(row => `screens/${row.screenId}.${row.theme}.png`)));
   return {
     packageId: input.id === undefined ? undefined : designId(input.id, '稿件编号'),
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
-    sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify([...entries.entries()].map(([filename, content]) =>
-      [filename.slice(root.length), designDigest(content)]).sort((a, b) => a[0].localeCompare(b[0])))),
-    prototype: Buffer.from(html), screens, acceptance, spec, renders,
+    sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
+    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery,
     checks: json(input.checks ?? 'checks/result.json'),
     framework, frameworkVersion,
     group: input.group === undefined ? undefined : planningText(input.group, '稿件分组', 80),

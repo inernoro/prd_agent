@@ -55,6 +55,60 @@ const prototypeBridge = `<script>
       const { left, top } = event.data;
       if (Number.isFinite(left) && Number.isFinite(top)) scrollTo(left, top);
     });
+    const controls = 'button:not([type=submit]), a[href^="#"], [role=tab], [role=button]';
+    const visibleControl = node => node instanceof HTMLElement && node.matches(controls)
+      && !node.matches(':disabled,[aria-disabled=true]') && (!node.matches('a') || node.getAttribute('href')?.startsWith('#'))
+      && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
+    const normalizeLabel = value => String(value || '').toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, '');
+    const waitFor = async find => {
+      for (let step = 0; step < 25; step++) {
+        const result = find();
+        if (result) return result;
+        await new Promise(resolve => setTimeout(resolve, 40));
+      }
+      return null;
+    };
+    const bySelector = (selector, test = node => node.getClientRects().length > 0) => {
+      try {
+        const found = [...document.querySelectorAll(selector)].filter(test);
+        return found.length === 1 ? found[0] : null;
+      } catch { return null; }
+    };
+    const byLabel = name => {
+      const target = normalizeLabel(name);
+      let longest = 0;
+      const best = new Set();
+      for (const node of document.querySelectorAll(controls)) {
+        if (!visibleControl(node)) continue;
+        for (const value of [node.getAttribute('aria-label'), node.getAttribute('title'), node.textContent]) {
+          const label = normalizeLabel(value);
+          if (label.length < 2 || label.length < longest || !target.endsWith(label)) continue;
+          if (label.length > longest) { longest = label.length; best.clear(); }
+          best.add(node);
+        }
+      }
+      return best.size === 1 ? best.values().next().value : null;
+    };
+    let currentEntry = 0;
+    addEventListener('message', async event => {
+      if (event.source !== parent || event.data?.type !== 'cds-design-entry') return;
+      const marker = ++currentEntry;
+      const { actions, ready, legacyLabel } = event.data;
+      const steps = Array.isArray(actions) ? actions.slice(0, 6).filter(selector => typeof selector === 'string' && selector.length <= 300) : [];
+      const hasLegacy = !steps.length && typeof legacyLabel === 'string' && legacyLabel.length <= 120;
+      const paths = steps.map(selector => () => bySelector(selector, visibleControl));
+      if (hasLegacy) paths.push(() => byLabel(legacyLabel));
+      let reached = true;
+      for (const find of paths) {
+        const control = await waitFor(find);
+        if (marker !== currentEntry) return;
+        if (!control) { reached = false; break; }
+        const active = ['aria-pressed', 'aria-current', 'aria-selected'].some(attribute => control.getAttribute(attribute) === 'true');
+        if (!active) control.click();
+      }
+      if (reached && typeof ready === 'string' && ready.length <= 300) reached = !!await waitFor(() => bySelector(ready));
+      if (marker === currentEntry) parent.postMessage({ type: 'cds-design-entry-result', reached }, '*');
+    });
     addEventListener('scroll', () => parent.postMessage({ type: 'cds-design-scroll', left: scrollX, top: scrollY }, '*'), { passive: true });
     addEventListener('keydown', (event) => {
       if (event.defaultPrevented || (event.key !== 'Escape' && event.target instanceof Element && event.target.closest('input, select, textarea, [contenteditable]'))) return;

@@ -318,6 +318,7 @@ interface AgentKeySummary {
   label?: string;
   scope?: string;
   planningAccess?: 'read' | 'propose';
+  designAccess?: 'read' | 'feedback' | 'publish';
   access?: AgentKeyScope;
   createdAt?: string;
   createdBy?: string;
@@ -325,6 +326,8 @@ interface AgentKeySummary {
   revokedAt?: string;
   status?: 'active' | 'revoked';
 }
+
+const agentDesignAccessLabels = { read: '设计只读', feedback: '设计实施反馈', publish: '设计稿件发布' } as const;
 
 interface AgentKeysResponse {
   keys: AgentKeySummary[];
@@ -2354,7 +2357,7 @@ function AgentKeyManagerDialog({
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{key.label || key.id}</span>
                         <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
-                        <CodePill>{key.scope || 'rw'}</CodePill>
+                        <CodePill>{key.designAccess ? agentDesignAccessLabels[key.designAccess] : key.scope || 'rw'}</CodePill>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                         {key.planningAccess && <span>{key.planningAccess === 'read' ? '工程规划只读' : '工程规划提案'}</span>}
@@ -2725,6 +2728,7 @@ function AgentKeySignDialog({
 }): JSX.Element {
   const [label, setLabel] = useState('');
   const [planningAccess, setPlanningAccess] = useState<AgentKeySummary['planningAccess']>();
+  const [designAccess, setDesignAccess] = useState<AgentKeySummary['designAccess']>();
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState('');
   const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
@@ -2733,6 +2737,7 @@ function AgentKeySignDialog({
     if (!open) {
       setLabel('');
       setPlanningAccess(undefined);
+      setDesignAccess(undefined);
       setError('');
       setSigned(null);
       setSigning(false);
@@ -2748,7 +2753,7 @@ function AgentKeySignDialog({
         `/api/projects/${encodeURIComponent(project.id)}/agent-keys`,
         {
           method: 'POST',
-          body: { label: label.trim() || undefined, planningAccess },
+          body: { label: label.trim() || undefined, planningAccess, designAccess },
         },
       );
       setSigned(data);
@@ -2806,11 +2811,18 @@ function AgentKeySignDialog({
             </label>
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">权限</span>
-              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={planningAccess ?? ''}
-                onChange={event => setPlanningAccess(event.target.value === 'read' ? 'read' : event.target.value === 'propose' ? 'propose' : undefined)}>
+              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={designAccess ? 'design-' + designAccess : planningAccess ?? ''}
+                onChange={event => {
+                  const scope = event.target.value;
+                  setPlanningAccess(scope === 'read' || scope === 'propose' ? scope : undefined);
+                  setDesignAccess((Object.keys(agentDesignAccessLabels) as Array<keyof typeof agentDesignAccessLabels>)
+                    .find(access => scope === 'design-' + access));
+                }}>
                 <option value="">项目读写</option>
                 <option value="read">工程规划只读</option>
                 <option value="propose">工程规划提案</option>
+                {Object.entries(agentDesignAccessLabels).map(([access, label]) => <option key={access} value={'design-' + access}>{label}</option>)}
               </select>
             </label>
             <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
