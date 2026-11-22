@@ -159,7 +159,7 @@ tsc --noEmit + 单元测试，把「端到端是否真的解决」丢给用户�
 
 正确 `spec.cds.settings.md`、`design.cds.agent.runtime.md`；错误 `spec.cds-settings.md`（黏连）、`design.defect-automation-autonomy.md`（appname 不在首段）、`output-xxx.md`（无前缀）。
 
-`debt.*` 记工程债务台账——交付时声明的「已知边界」必须固化进对应 `debt.{module}.md`，不能只留在 commit message 里。
+工程债务登记到 CDS 工程规划，按项目和模块查阅，交付时保留正式债务编号及可复核来源。智能体遵循 [CDS 工程规划技能](.claude/skills/cds/SKILL.md) 提交并回读。`debt.*` 是旧版本文档的历史前缀，旧台账由 CDS 债务的固定 Git 链接回读。
 
 **每篇文档必须带导读三行**（`**一句话**` / `**谁该读**` / `**读完能做什么**`，写在 H1 与版本行之后）。正文只写人类要掌控的层次（为什么做 / 给谁用 / 数据怎么流动 / 关键表设计 / 取舍与风险 / 验收标准）；**实现代码、接口签名、目录树、逐文件改法一律不进文档**——AI 要细节直接读源码。闸门：`python3 scripts/doc-readability-check.py --ratchet`（CI `docs-readability`，新文档不带导读三行会红）。
 

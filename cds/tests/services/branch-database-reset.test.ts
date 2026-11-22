@@ -18,7 +18,7 @@ import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
  *      而撞名检查只比对「重新算出来的名字」，从不看别人实际绑在哪。
  *
  * 每修一次就多一道拒绝，下一轮又出新进路——所有权模型不存在，护栏就补不完。
- * 重开条件写在 doc/debt.cds.md：建库时记录「这个库是我建的」+ 破坏性操作改用抗碰撞身份。
+ * 重开条件写在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md：建库时记录「这个库是我建的」+ 破坏性操作改用抗碰撞身份。
  */
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -43,7 +43,7 @@ describe('分支库推倒重建已撤下，且不许悄悄回来', () => {
     expect(slice).toContain("if (mode === 'reset') {");
     expect(slice).toContain('reset_withdrawn');
     // 拒绝要给得出下一步，而不是一句「不支持」
-    expect(slice).toContain('直连数据库处理；重开条件见 doc/debt.cds.md。');
+    expect(slice).toContain('直连数据库处理；可在 CDS 工程债务的 cds 模块查看重开条件。');
   });
 
   it('reset 不在被接受的模式里', () => {
@@ -114,13 +114,11 @@ describe('分支库推倒重建已撤下，且不许悄悄回来', () => {
 
   it('红用例：拒绝文案里拿掉去处，守卫必须变红', () => {
     // 锚点必须落在**给用户的那句话**上，不能是随便一处出现。
-    // `doc/debt.cds.md` 与「重开条件见 …」在同段注释里也各出现一次，拿它们当锚点
-    // 变异后守卫照样通过——这条红用例前两版就是这么空转的，被 expectGuardRedOnMutation
-    // 当场抓住两次。锚点取消息串独有的尾部。
+    // 注释里的历史链接在移除提示后仍然存在。锚点应匹配给用户的消息。
     const guard = (source: string) => {
-      expect(cloneTasksRouteSlice(source)).toContain('直连数据库处理；重开条件见 doc/debt.cds.md。');
+      expect(cloneTasksRouteSlice(source)).toContain('直连数据库处理；可在 CDS 工程债务的 cds 模块查看重开条件。');
     };
     const real = readBranchesRoute();
-    expectGuardRedOnMutation(guard, real, mutate(real, '直连数据库处理；重开条件见 doc/debt.cds.md。', '直连数据库处理。'));
+    expectGuardRedOnMutation(guard, real, mutate(real, '直连数据库处理；可在 CDS 工程债务的 cds 模块查看重开条件。', '直连数据库处理。'));
   });
 });

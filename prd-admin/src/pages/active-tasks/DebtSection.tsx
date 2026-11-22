@@ -119,7 +119,8 @@ export function DebtSection({ onConverted }: DebtSectionProps) {
                     {d.status && <p><span className="atb-debt-row__label">现状</span>{d.status}</p>}
                     {d.closeCondition && <p><span className="atb-debt-row__label">补的条件</span>{d.closeCondition}</p>}
                     <p className="atb-debt-row__src">
-                      正文在 <code>{d.sourcePath}</code> 第 {d.num} 条 —— 要改措辞去改那份文档，这里改了存不住
+                      历史来源 <code>{d.sourcePath}</code> 第 {d.num} 条。当前登记和进度见{' '}
+                      <a href="https://cds.miduo.org/engineering-planning?view=debts" target="_blank" rel="noreferrer">CDS 工程债务</a>。
                     </p>
                   </div>
                 )}

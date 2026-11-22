@@ -138,7 +138,7 @@ describe('scrubParentSecretsFromEnv', () => {
       'cds/cds-compose.selfhost.yml',
       'cds-compose.yml',
       '.claude/rules/cross-project-isolation.md',
-      'doc/debt.cds.md',
+      'https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md',
     ];
     for (const rel of anchors) {
       expect(fs.existsSync(path.join(repoRoot, rel)), `扫描清单里的 ${rel} 不在了，改名后要同步这里`)

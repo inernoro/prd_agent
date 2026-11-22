@@ -848,7 +848,7 @@ check("no-such-job" not in ci_status_needs, "needs 成员判据不是恒真")
 
 print("[6] 标准文档自己得合规")
 
-for name in ("rule.doc.readability.md", "guide.doc.reading-map.md", "debt.doc.readability.md"):
+for name in ("rule.doc.readability.md", "guide.doc.reading-map.md", "guide.doc.pri.debt.md"):
     path = os.path.join(REPO_ROOT, "doc", name)
     check(os.path.exists(path) and checker.check_file(path) == [], f"{name} 自身合规")
 
@@ -947,6 +947,11 @@ print("[6.4] 代码注释里的文档指路都点得到")
 # 台账合并后，代码注释里的 doc/xxx.md 面包屑会指向已删除的册子。人跟着注释走
 # 却落空，比没有注释更糟 —— 所以扫一遍源码里的文档引用，逐个验存在。
 DOC_REF = re.compile(r"doc/([a-z][\w.-]*\.md)")
+# 已冻结的同仓库 Git URL 解析到特定提交，其路径独立于当前工作树。
+PINNED_DOC_URL = re.compile(r"https://github\.com/inernoro/prd_agent/blob/[0-9a-f]{40}/doc/[a-z][\w.-]*\.md")
+archived_sample = f"https://github.com/inernoro/prd_agent/blob/{'a' * 40}/doc/debt.retired.md"
+check(DOC_REF.findall(PINNED_DOC_URL.sub("", archived_sample + " doc/debt.current.md")) == ["debt.current.md"],
+      "固定 Git 证据读取其提交，当前文档指路仍须存在")
 # 两类不算数：① 引用的文档在本仓库历史里从未存在过（更早的重命名遗留，定位不到
 # 目标，不许凭空指一个）；② 测试用例里现编的示例文件名。都写清楚，不做模糊放过。
 # 白名单按「文件 + 目标」配对，不按目标一刀切 —— 只认目标的话，同一个死名字
@@ -961,6 +966,11 @@ KNOWN_ROTTEN_PAIRS = {
     ("prd-admin/src/pages/infra-services/InfraServicesPage.tsx", "plan.cds-shared-service-extension.md"),
     ("prd-api/src/PrdAgent.Core/Interfaces/IDynamicSidecarRegistry.cs", "plan.cds-shared-service-extension.md"),
     ("prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarOptions.cs", "plan.cds-shared-service-extension.md"),
+}
+# 该证明脚本对既有提交的 Git 差分和 blob 做校验。这些字段是历史路径。
+HISTORICAL_RELEASE_PATHS = {
+    ("cds/scripts/current-source-qualification.ts", target)
+    for target in ("debt.cds.md", "debt.cds.ci-prebuilt.md", "debt.cds.selfupdate-prebuilt.md")
 }
 FIXTURE_NAMES = {"x.md", "guide.md", "sample.md", "visible.md", "design.foo.md", "guide.current.md",
                  "a.md", "b.md", "xxx.md", "demo.md",
@@ -990,9 +1000,9 @@ for rel in tracked:
     except (OSError, UnicodeDecodeError, IsADirectoryError):
         continue
     scanned += 1
-    for hit in DOC_REF.finditer(body):
+    for hit in DOC_REF.finditer(PINNED_DOC_URL.sub("", body)):
         target = hit.group(1)
-        if (rel, target) in KNOWN_ROTTEN_PAIRS or target in FIXTURE_NAMES:
+        if (rel, target) in KNOWN_ROTTEN_PAIRS or (rel, target) in HISTORICAL_RELEASE_PATHS or target in FIXTURE_NAMES:
             continue
         if not os.path.exists(os.path.join(REPO_ROOT, "doc", target)):
             dangling.setdefault(target, set()).add(rel)

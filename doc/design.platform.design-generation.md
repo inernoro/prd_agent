@@ -118,7 +118,7 @@ flowchart TB
 | 页面结构 | 5 个章节、2 张对比表、1 个可展开块、9 个站内锚点 | 4 个章节、0 张表、4 个站内锚点 |
 | 占位残留 / 空链接 | 0 / 0 | 0 / 0 |
 
-取舍：OpenDesign 版结构更像设计稿，但慢约 10 倍、输入 token 高两个数量级（每轮自审都带着完整上下文）。适合「一次做好、会被反复看」的页面；要快速出稿或成本敏感时走直连。当前只有 1 份成功样本，稳定性与编辑路径尚未验证，见 [debt.platform.open-design.md](debt.platform.open-design.md)。
+取舍：OpenDesign 版结构更像设计稿，但慢约 10 倍、输入 token 高两个数量级（每轮自审都带着完整上下文）。适合「一次做好、会被反复看」的页面；要快速出稿或成本敏感时走直连。当前只有 1 份成功样本，稳定性与编辑路径尚未验证，见 [debt.platform.open-design.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md)。
 
 ## 强链路控制（2026-09-23 按代码基线 58f8205d5 核对）
 
@@ -369,4 +369,4 @@ MAP/CDS 是多租户服务端，仍必须保留自己的授权、审批、配额
 - [网页托管与分享](./design.web-hosting.md)
 - [生成快照](./design.platform.generation-snapshot.md)
 - [CDS Agent 运行时架构](./design.cds.agent.runtime-architecture.md)
-- [MD 转网页 PPT 债务台账](./debt.md-to-ppt.md)
+- [MD 转网页 PPT 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.md-to-ppt.md)

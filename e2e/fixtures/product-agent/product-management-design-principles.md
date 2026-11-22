@@ -157,7 +157,7 @@ P0 只保证六类对象够用；不为 hypothetical 场景过度抽象。
 
 ## 9. 已知边界（持续演进）
 
-详见 `doc/debt.product-agent.md`，包括：大版本升级申请 P2、图谱超大产品性能、部分导入字段仅入 legacyData 等。
+详见 `https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.product-agent.md`，包括：大版本升级申请 P2、图谱超大产品性能、部分导入字段仅入 legacyData 等。
 
 ---
 

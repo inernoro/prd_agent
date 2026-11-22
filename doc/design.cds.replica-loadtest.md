@@ -8,7 +8,7 @@
 
 ---
 >
-> 关联：[design.cds.replica-set.md](./design.cds.replica-set.md)、[debt.cds.md](./debt.cds.md)、`.claude/rules/concurrency-gate-discipline.md`
+> 关联：[design.cds.replica-set.md](./design.cds.replica-set.md)、[debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)、`.claude/rules/concurrency-gate-discipline.md`
 
 ---
 

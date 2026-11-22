@@ -348,4 +348,4 @@ else if 是多图 / 是单图     → 再换 / 又一种           ← 能力
 
 - 看板与验收证据：[plan.platform.llm-gateway.model-consolidation.md](./plan.platform.llm-gateway.model-consolidation.md)
 - 物理拓扑与剥离边界：[design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)
-- 工程债务台账：[debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)
+- 工程债务台账：[debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)

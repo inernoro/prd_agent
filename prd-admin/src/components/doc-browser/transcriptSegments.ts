@@ -238,7 +238,7 @@ const STOP_WORDS = new Set([
  *
  * 已知边界：Segmenter 也会切出单字（常规优化 → 常规|优|化），单字一律不进词云；
  * 极旧浏览器没有 Intl.Segmenter 时中文词云会退化为空，英文词仍然统计
- * （详见 doc/debt.knowledge-base.md）。
+ * （详见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md）。
  */
 export function buildTranscriptWordCloud(
   segments: TranscriptSegment[],

@@ -7006,7 +7006,7 @@ _INFRA_TEMPLATES: list[dict] = [
         # NATS 默认任何人都能连、能订阅任何主题。开认证只要 --user/--pass。
         # 与 redis 同一种写法:口令走 ${CDS_*} 占位,由 CDS 在 docker run 前解析。
         # (后端预设那条路把口令留在容器内展开、不进 argv;compose 这条路沿用 redis
-        #  已有的取舍,见 doc/debt.cds.md E49。)
+        #  已有的取舍,见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md E49。)
         "service_command": "--user ${CDS_NATS_USER} --pass ${CDS_NATS_PASSWORD}",
         "global_env": [
             ("CDS_NATS_USER", "app", False, "NATS 账号(CDS 命名空间)"),

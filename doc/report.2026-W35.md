@@ -333,4 +333,4 @@
 
 **fix 122 次，占全部 234 次提交的 52%**（分母为提交总数 234）。这个比例说明本周的性质：大部分投入花在把三条长线功能里自己引入的缺陷收口上（首页 11 轮评审、网页托管 18 轮、跨实例同步的附件 key 契约 4 轮）。**评审在提交前就把缺陷挡下来了**——它们从未变成线上问题。唯一的例外是 #1453 的四条严重问题，评审送达晚于合并，已随自更新上线后由 #1454 修掉。
 
-**引用**：备份与安全的完整台账见 [debt.cds.md](./debt.cds.md)；基础设施加固看板见 [plan.cds.infra-hardening.md](./plan.cds.infra-hardening.md)（**注意该看板最后更新仍停在 2026-08-18，本周的备份可见性工作未回写**）；跨实例同步边界见 [debt.platform.cross-instance-data-sync.md](./debt.platform.cross-instance-data-sync.md)；网页托管边界见 [debt.web-hosting.md](./debt.web-hosting.md)。
+**引用**：备份与安全的完整台账见 [debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)；基础设施加固看板见 [plan.cds.infra-hardening.md](./plan.cds.infra-hardening.md)（**注意该看板最后更新仍停在 2026-08-18，本周的备份可见性工作未回写**）；跨实例同步边界见 [debt.platform.cross-instance-data-sync.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.cross-instance-data-sync.md)；网页托管边界见 [debt.web-hosting.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md)。

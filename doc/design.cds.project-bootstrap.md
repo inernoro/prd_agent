@@ -237,7 +237,7 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 
 ## 九、风险与已知边界
 
-见 [doc/debt.cds.md](./debt.cds.md)。
+见 [doc/debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)。
 
 ## 十、关联
 

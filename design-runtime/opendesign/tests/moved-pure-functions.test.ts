@@ -1438,7 +1438,7 @@ describe('legacy quality classification is not an execution gate', () => {
     // 显式豁免，不是「顺手放过」：这三条是资源上限类拒绝（页面大到校验不动），
     // 与「这里有个缺陷，去改」不是一类。它们早于本次改动就没有修复条目，
     // 本 PR 的单一目标不含它们，按 AGENTS.md 5.5 记 B 类，去向见
-    // doc/debt.platform.open-design.md。新增消息一律不许进这张表——那正是本守卫要防的。
+    // https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md。新增消息一律不许进这张表——那正是本守卫要防的。
     const knownTerminalLimits = [
       'index.html contains too much visible text to validate safely',
       'index.html contains too many fragment targets to validate safely',

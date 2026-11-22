@@ -140,4 +140,4 @@ Cloudflare R2 的 S3 兼容端点对真实录音大小的写入曾两次暴露�
 
 - [doc/design.platform.image-ref-and-persistence.md](./design.platform.image-ref-and-persistence.md)
 - [doc/design.platform.workspace.md](./design.platform.workspace.md)
-- [doc/debt.platform.md](./debt.platform.md)
+- [doc/debt.platform.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md)

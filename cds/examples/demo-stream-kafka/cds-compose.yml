@@ -39,7 +39,7 @@ services:
   # Single-node Kafka in KRaft mode (no Zookeeper). The broker is both
   # controller and broker; internal clients reach it at kafka:9092 and must
   # authenticate with SASL/PLAIN — CDS 的基础设施认证门禁不再接受裸 PLAINTEXT
-  # 的客户端监听器（见 doc/debt.cds.md E49）。客户端监听器叫 CLIENT 而不是
+  # 的客户端监听器（见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md E49）。客户端监听器叫 CLIENT 而不是
   # SASL_PLAINTEXT：镜像把 env 名里的下划线全部转成点，监听器名带下划线时
   # JAAS 那条 env 表达不出正确的属性名，容器会以 `!1: unbound variable` 起不来。
   # CONTROLLER 监听器保持 PLAINTEXT：
