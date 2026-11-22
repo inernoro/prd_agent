@@ -7,6 +7,7 @@ import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 
 export interface InfraConnectionPublicView {
+  workspaceOnly?: boolean;
   id: string;
   partner: string;
   partnerName: string;
