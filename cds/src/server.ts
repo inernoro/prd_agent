@@ -117,7 +117,8 @@ import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostic
 import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
 import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
 import { createCdsSystemSealedStorageRouter } from './routes/cds-system-sealed-storage.js';
-import { defaultEnvFilePath, EnvFileBusyError, rotateBasicPasswordInEnv } from './services/env-file.js';
+import { defaultEnvFilePath, EnvFileBusyError, readSystemPasswordActivity, rotateBasicPasswordInEnv } from './services/env-file.js';
+import { createSystemPasswordApproval } from './services/system-password-approval.js';
 import { MIN_PASSWORD_LENGTH } from './services/password.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
@@ -151,7 +152,7 @@ import {
   GH_SESSION_COOKIE,
 } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
-import { createPasskeyRouter, isRecentAuthentication, readAuthCookie, trustedAuthOrigin } from './routes/passkeys.js';
+import { authCookie, createPasskeyRouter, isRecentAuthentication, readAuthCookie, trustedAuthOrigin } from './routes/passkeys.js';
 import { createHostedSsoRouter } from './routes/hosted-sso.js';
 import { HostedSso } from './services/hosted-sso.js';
 import { protectControlBrowser } from './middleware/browser-origin.js';
@@ -695,7 +696,7 @@ function tokenMatches(actual: string | undefined, expected: string): boolean {
 }
 
 function isPasswordChangeRequest(req: express.Request): boolean {
-  return req.method === 'POST' && /^\/api\/auth\/change-password\/?$/i.test(req.path);
+  return req.method === 'POST' && /^\/(?:_cds\/)?api\/auth\/change-password(?:\/approval)?\/?$/i.test(req.path);
 }
 
 function normalizedSealedStoragePath(value: unknown): string | null {
@@ -1266,6 +1267,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /auth/bootstrap-status': '查询首启引导状态',
     'POST /auth/bootstrap': '创建首个本地账号',
     'POST /auth/change-password': '修改密码',
+    'POST /auth/change-password/approval': '发起改密审批',
     'GET /auth/users': '列出用户',
     'POST /auth/users': '创建本地账号',
     'GET /auth/activity': '查看用户操作痕迹',
@@ -3956,14 +3958,31 @@ export function createServer(deps: ServerDeps): express.Express {
   }
 
   if (basicEnvFilePath) {
-    app.post('/api/auth/change-password', (req, res, next) => {
-      if ((req as express.Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth !== true || !cdsUser || !cdsPass) {
-        next();
-        return;
-      }
+    const approvalCookie = '__Host-cds-system-password-approval';
+    const approval = passkeyOrigin && hostSessionCookies && authService && authStore?.passkeys
+      ? createSystemPasswordApproval(passkeyOrigin, authService, authStore.passkeys, process.env.CDS_SYSTEM_PASSWORD_APPROVER_IDS)
+      : null;
+    const isBasicHuman = (req: express.Request) =>
+      (req as express.Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth === true;
+    const canApprove = (req: express.Request, res: express.Response) => {
       res.setHeader('Cache-Control', 'private, no-store');
+      if (!isBasicHuman(req) || req.get('x-cds-token') || req.get('x-ai-access-key') || req.get('ai-access-key') || req.get('authorization')) {
+        res.status(403).json({ code: 'system_password_human_required', error: '请使用系统管理员账号在 CDS 设置中发起改密。' });
+        return false;
+      }
+      if (!approval || !passkeyOrigin || !acceptingPasskeys()) {
+        res.status(409).json({ code: 'system_password_approval_unavailable', error: '此站点尚未配置改密审批通行密钥，请联系系统运维。' });
+        return false;
+      }
+      if (req.get('host')?.toLowerCase() !== passkeyOrigin.host || req.get('origin') !== passkeyOrigin.origin) {
+        res.status(403).json({ code: 'system_password_origin_invalid', error: '请在本站的 HTTPS 设置页面批准改密。' });
+        return false;
+      }
+      return true;
+    };
+    const validatePassword = (req: express.Request, res: express.Response): string | undefined => {
       const { oldPassword, newPassword } = req.body || {};
-      if (typeof oldPassword !== 'string' || !tokenMatches(oldPassword, cdsPass)) {
+      if (typeof oldPassword !== 'string' || !tokenMatches(oldPassword, cdsPass ?? '')) {
         res.status(400).json({ code: 'invalid_credentials', error: '原密码不正确' });
         return;
       }
@@ -3975,24 +3994,69 @@ export function createServer(deps: ServerDeps): express.Express {
         res.status(400).json({ code: 'invalid_new_password', error: '请设置不同且不含换行的密码' });
         return;
       }
-      try {
-        if (!rotateBasicPasswordInEnv(basicEnvFilePath, cdsPass, newPassword)) {
-          res.status(409).json({ code: 'system_password_source_mismatch', error: '系统配置中的密码与当前登录配置不一致' });
+      return newPassword;
+    };
+
+    app.post('/api/auth/change-password/approval', (req, res, next) => {
+      if (!canApprove(req, res) || !approval) return;
+      const newPassword = validatePassword(req, res);
+      if (!newPassword) return;
+      void approval.issue(newPassword).then(issued => {
+        if (!issued) {
+          res.status(429).json({ error: '待验证请求过多，请稍后重试。' });
           return;
         }
-      } catch (error) {
-        if (error instanceof EnvFileBusyError) {
-          res.status(409).json({ code: 'system_password_source_busy', error: '系统配置正在更新，请稍后重试' });
+        res.append('Set-Cookie', authCookie(approvalCookie, issued.ticket, issued.expiresInSeconds));
+        res.json(issued.options);
+      }).catch(next);
+    });
+
+    app.post('/api/auth/change-password', (req, res, next) => {
+      if (!isBasicHuman(req) || !cdsUser || !cdsPass) { next(); return; }
+      if (!canApprove(req, res) || !approval) return;
+      const newPassword = validatePassword(req, res);
+      if (!newPassword) return;
+      const oldPassword = cdsPass;
+      const systemUsername = cdsUser;
+      const ticket = readAuthCookie(req.get('cookie'), approvalCookie);
+      res.append('Set-Cookie', authCookie(approvalCookie, '', 0));
+      void approval.verify(ticket, newPassword, req.body?.approval).then(approver => {
+        if (!approver) {
+          res.status(403).json({ code: 'system_password_approval_required', error: '请用已指定的管理员通行密钥批准本次改密。' });
           return;
         }
-        res.status(503).json({ code: 'system_password_update_failed', error: '系统登录密码保存失败' });
-        return;
-      }
-      cdsPass = newPassword;
-      process.env.CDS_PASSWORD = newPassword;
-      validToken = makeToken(cdsUser, newPassword);
-      res.setHeader('Set-Cookie', buildLegacyLogoutCookie(cookieSecure, hostSessionCookies));
-      res.json({ ok: true });
+        if (cdsPass !== oldPassword) {
+          res.status(409).json({ code: 'system_password_stale', error: '系统密码已变更，请重新登录后再发起。' });
+          return;
+        }
+        try {
+          if (!rotateBasicPasswordInEnv(basicEnvFilePath, oldPassword, newPassword, {
+            id: crypto.randomUUID(),
+            userId: approver.id,
+            userLogin: approver.username || approver.githubLogin,
+            action: 'system-password.rotate',
+            targetType: 'user',
+            targetId: legacyAuthUser(systemUsername, 'basic').id,
+            summary: `批准并修改系统账号 ${systemUsername} 的登录密码`,
+            at: new Date().toISOString(),
+          })) {
+            res.status(409).json({ code: 'system_password_source_mismatch', error: '系统配置中的密码与当前登录配置不一致' });
+            return;
+          }
+        } catch (error) {
+          if (error instanceof EnvFileBusyError) {
+            res.status(409).json({ code: 'system_password_source_busy', error: '系统配置正在更新，请稍后重试' });
+            return;
+          }
+          res.status(503).json({ code: 'system_password_update_failed', error: '系统登录密码保存失败' });
+          return;
+        }
+        cdsPass = newPassword;
+        process.env.CDS_PASSWORD = newPassword;
+        validToken = makeToken(systemUsername, newPassword);
+        res.setHeader('Set-Cookie', [buildLegacyLogoutCookie(cookieSecure, hostSessionCookies), authCookie(approvalCookie, '', 0)]);
+        res.json({ ok: true });
+      }).catch(next);
     });
   }
 
@@ -4006,6 +4070,7 @@ export function createServer(deps: ServerDeps): express.Express {
       ...browserCookieOptions,
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
+      systemPasswordActivity: basicEnvFilePath ? () => readSystemPasswordActivity(basicEnvFilePath) : undefined,
       legacyLogin: ({ username, password }) => {
         if (username !== cdsUser || password !== cdsPass) return null;
         return {

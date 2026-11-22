@@ -2,6 +2,7 @@ import { useContext, useEffect, useRef, useState } from 'react';
 import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { useSettingsSessionState } from '../useSettingsSessionState';
 import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { approveSystemPasswordChange } from '@/lib/passkeys';
 import { KeyRound, ShieldCheck, UserPlus, Users } from 'lucide-react';
 
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -114,17 +115,19 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
     }
     setPwBusy(true);
     try {
-      await changeMyPassword({ oldPassword: oldPw, newPassword: newPw });
-      if (!alive.current) return;
+      const passwordChange = { oldPassword: oldPw, newPassword: newPw };
       if (canRotateSystemPassword) {
-        window.location.assign('/login');
+        await approveSystemPasswordChange(passwordChange);
+        if (alive.current) window.location.assign('/login');
         return;
       }
+      await changeMyPassword(passwordChange);
+      if (!alive.current) return;
       onToast('密码已修改，请使用新密码重新登录');
       setOldPw('');
       setNewPw('');
     } catch (err) {
-      setPwError(err instanceof ApiError ? err.message : String(err));
+      setPwError(err instanceof ApiError ? err.message : canRotateSystemPassword ? '管理员通行密钥未完成验证，请重试。' : String(err));
     } finally {
       setPwBusy(false);
     }
@@ -304,7 +307,7 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
           isLocal
             ? '修改当前本地账号的登录密码。修改后所有会话失效，需要用新密码重新登录。'
             : canRotateSystemPassword
-              ? '修改系统账号的登录密码。旧会话立即失效，请使用新密码重新登录。'
+              ? '由已指定的系统所有者使用通行密钥批准本次改密。批准后旧会话立即失效，审批人和时间会记入用户操作痕迹。'
               : isLegacy
                 ? '当前使用原始环境变量账号登录，密码继续由 CDS_USERNAME / CDS_PASSWORD 管理。'
                 : '当前账号通过外部身份提供方登录，密码由身份提供方管理，无需在此修改。'
@@ -340,7 +343,7 @@ function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) 
             {pwError ? <ErrorBlock message={pwError} /> : null}
             <Button type="submit" disabled={pwBusy}>
               <KeyRound />
-              {pwBusy ? '修改中' : '修改密码'}
+              {pwBusy ? '修改中' : canRotateSystemPassword ? '使用通行密钥批准并改密' : '修改密码'}
             </Button>
           </form>
         ) : (
