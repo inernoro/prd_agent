@@ -20,8 +20,9 @@ export function captureDeploymentIntent(run: DeploymentRun, execution: Deploymen
   };
 }
 
-/** 私有恢复记录与公开 run 必须是同一个真实目标，损坏或密钥不可读时拒绝恢复。 */
-export function readDeploymentIntent(run: DeploymentRun, intent: PersistedDeploymentIntent): DeploymentInputSnapshot {
+/** 私有记录必须对应同一次部署。保护镜像只读已受理的目标，不授予自动重放资格。 */
+export function readDeploymentIntent(run: DeploymentRun, intent: PersistedDeploymentIntent,
+  purpose: 'replay' | 'image-protection' = 'replay'): DeploymentInputSnapshot {
   const request = intent.request;
   if (intent.schema !== 1 || intent.runId !== run.id || intent.operationId !== run.operationId
     || intent.generation !== run.operationGeneration || !Number.isSafeInteger(intent.generation)
@@ -31,7 +32,8 @@ export function readDeploymentIntent(run: DeploymentRun, intent: PersistedDeploy
     || request.kind !== (run.profileId ? 'deploy-profile' : 'deploy')
     || (request.configHash || undefined) !== run.configHash
     || (request.commitPinned && request.commitSha?.toLowerCase() !== run.commitSha?.toLowerCase())
-    || request.versionId || request.hasOneShotOptions) throw new Error('Deployment intent target mismatch');
+    || (request.versionId && request.versionId !== run.versionId)
+    || (purpose === 'replay' && (request.versionId || request.hasOneShotOptions))) throw new Error('Deployment intent target mismatch');
   const payload = unsealToken(intent.inputPayload);
   if (intent.inputDigest !== digest(request, payload)) throw new Error('Deployment intent content mismatch');
   const input = JSON.parse(payload) as DeploymentInputSnapshot;

@@ -73,6 +73,7 @@ import {
 import { BackupRetentionService } from './services/backup-retention.js';
 import { OwnedResourceLifecycle } from './services/owned-resource-task.js';
 import { ImageCacheGovernance, collectImageCacheReferences, configureImageCacheGovernance } from './services/image-cache-governance.js';
+import { startReclaimSchedule } from './services/reclaim-lock.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
 import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
 import {
@@ -3614,14 +3615,21 @@ const imageCacheGovernance = new ImageCacheGovernance({ shell, catalog: path.joi
     7, Date.now(), (profile, branch) => resolveEffectiveProfile(profile, branch).dockerImage) });
 if (configuredImageCacheBudgetGiB > 0) configureImageCacheGovernance(imageCacheGovernance);
 // The hourly general Janitor cannot drain a two-image batch at deployment speed.
-// Share its global reclaim lock and native cross-process catalog lock; never queue ticks.
-const imageCacheRetentionTimer = configuredImageCacheBudgetGiB > 0 && config.mode !== 'executor' && !isPreviewInstance()
-  ? setInterval(() => {
-    void imageCacheGovernance.inspect(false).then(report => {
+// Share its global reclaim lock and native cross-process catalog lock.
+const stopImageCacheRetention = configuredImageCacheBudgetGiB > 0 && config.mode !== 'executor' && !isPreviewInstance()
+  ? startReclaimSchedule({
+    intervalMs: 60_000,
+    run: async () => {
+      await imageCacheGovernance.settlePulls();
+      const report = await imageCacheGovernance.inspect(false);
+      imageCacheGovernance.observePullBudget(report.pullBudget);
       activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'image-cache-retention', action: 'image.cache.reconciled', message: '宿主镜像总量与引用对账', details: { report } });
-    }, () => activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'image-cache-retention', action: 'image.cache.failed', message: '镜像引用、registry 或审计未确认，相关镜像保持保护。' }));
-  }, 60_000) : null;
-imageCacheRetentionTimer?.unref();
+      return report;
+    },
+    onError: () => {
+      activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'image-cache-retention', action: 'image.cache.failed', message: '镜像引用、registry 或审计未确认，相关镜像保持保护。' });
+    },
+  }) : null;
 const janitorService = new JanitorService(
   stateService,
   // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
@@ -4904,7 +4912,7 @@ async function shutdown(signal: string): Promise<void> {
   if (backupRetentionTimer) clearInterval(backupRetentionTimer);
   if (backupRetentionStartup) clearTimeout(backupRetentionStartup);
   if (acceptanceRetentionTimer) clearInterval(acceptanceRetentionTimer);
-  if (imageCacheRetentionTimer) clearInterval(imageCacheRetentionTimer);
+  stopImageCacheRetention?.();
   clearInterval(deploymentMemoryReconciler);
   clearInterval(rotationRecoveryCleanup);
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
