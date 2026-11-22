@@ -18,6 +18,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import type { UserActivityRecord } from '../domain/auth.js';
+
+const PASSWORD_AUDIT_PREFIX = '# CDS_SYSTEM_PASSWORD_ROTATION ';
 
 export interface EnvLine {
   /** `export` declaration, comment, or blank line. */
@@ -304,7 +307,9 @@ export function updateEnvFileWhileLocked(
 }
 
 /** Rotate the startup password only when its authoritative file still contains the active value. */
-export function rotateBasicPasswordInEnv(envFilePath: string, current: string, replacement: string): boolean {
+export function rotateBasicPasswordInEnv(
+  envFilePath: string, current: string, replacement: string, audit: UserActivityRecord,
+): boolean {
   return withEnvFileLock(envFilePath, () => {
     if (!fs.lstatSync(envFilePath, { throwIfNoEntry: false })?.isFile()) return false;
     const lines = fs.readFileSync(envFilePath, 'utf8').split('\n');
@@ -317,8 +322,28 @@ export function rotateBasicPasswordInEnv(envFilePath: string, current: string, r
     if (assignments.length !== 1 || assignments[0].entry.value !== current) return false;
     const [{ index, entry }] = assignments;
     lines[index] = applyEnvUpdates([entry], { CDS_PASSWORD: replacement })[0].raw;
+    // Persist the password and its audit together. A failed write cannot leave
+    // a successful rotation with no record, or an audit for a rejected change.
+    const auditIndex = lines.at(-1) === '' ? lines.length - 1 : lines.length;
+    lines.splice(auditIndex, 0, PASSWORD_AUDIT_PREFIX + JSON.stringify(audit));
     writeEnvFileAtomic(envFilePath, lines.join('\n'));
     return true;
+  });
+}
+
+export function readSystemPasswordActivity(envFilePath: string): UserActivityRecord[] {
+  if (!fs.lstatSync(envFilePath, { throwIfNoEntry: false })?.isFile()) return [];
+  return fs.readFileSync(envFilePath, 'utf8').split('\n').flatMap(line => {
+    if (!line.startsWith(PASSWORD_AUDIT_PREFIX)) return [];
+    try {
+      const entry = JSON.parse(line.slice(PASSWORD_AUDIT_PREFIX.length)) as UserActivityRecord;
+      if (entry.action !== 'system-password.rotate' || !entry.id || !entry.userId || !entry.userLogin
+        || !Number.isFinite(Date.parse(entry.at))) return [];
+      const { id, userId, userLogin, action, targetType, targetId, summary, at } = entry;
+      return [{ id, userId, userLogin, action, targetType, targetId, summary, at }];
+    } catch {
+      return [];
+    }
   });
 }
 
