@@ -170,6 +170,11 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['instance-catalog', '主备 CDS 实例目录', 'instance-catalog.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'instance', '只读公共地址；已登记集群成员沿用统一授权，切换不迁移数据库或接管流量'],
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
+  ['account-identities', '账号登录方式与邀请激活', 'account-identities.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', '本人通过 CDS 页面使用 GitHub、Google 或有效邀请。绑定和解绑须验证本人会话，解绑后须保留可用登录方式。'],
+  ['account-recovery', '账号身份恢复', 'account-recovery.ts', 'system', 'public', 'write', 'guided', 'cds', '', '匿名仅可提交恢复申请。已登录管理员仅核实普通成员，由系统所有者确认签发恢复链接。核实人与批准人必须不同。'],
+  ['key-notification-owners', 'Key 通知收件归属与交接', 'key-notification-owners.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '本人可查自己的收件归属。系统所有者确认交接并填写原因，项目 Key 的接手管理员须持有当前项目授权。存量 Key 沿用历史受众。'],
+  ['system-password', '系统账号口令变更', 'system-password.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '仅系统所有者可登记申请，由发起人逐次确认目标账号、原口令及旧会话退出影响。口令仅在 CDS 页面填写。'],
+  ['account-proposals', '设备账号操作提案与回执', 'account-proposals.ts', 'project', 'project', 'write', 'guided', 'cds', 'account', '限已授权管理员设备凭据及当前获授权项目内的成员，仅提交提案和回读同一设备的回执。系统所有者在页面批准实际账号操作。'],
   ['passkeys', '通行密钥登录', 'passkeys.ts', 'system', 'human-only', 'protocol', 'guided', 'cds', '', '由用户在 CDS 登录域完成绑定和身份验证'],
   ['hosted-sso', '托管站点登录与授权', 'hosted-sso.ts', 'system', 'human-only', 'protocol', 'guided', 'cds', '', '所有者在 CDS 登录域登记已发布的同注册域站点，项目自行实现登录与回调。面板只从本机代理读取接入状态和站内登录入口'],
   ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
@@ -252,6 +257,22 @@ function deriveMcpExposure(
   return 'approval-required';
 }
 
+const MCP_TOOLS_BY_CAPABILITY: Readonly<Partial<Record<string, readonly string[]>>> = {
+  'code-reviews': CODE_REVIEW_MCP_TOOLS,
+  dts: DTS_TOOLS,
+  'engineering-planning': PLANNING_MCP_TOOLS,
+  'design-workspace': ['cds_design_read', 'cds_design_publish', 'cds_design_feedback'],
+  'account-proposals': ['cds_account_propose', 'cds_account_receipt'],
+};
+
+const CAPABILITIES_WITHOUT_MCP = new Set([
+  'host-capacity-observation',
+  'host-capacity-sampling',
+  'account-recovery',
+  'key-notification-owners',
+  'system-password',
+]);
+
 export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefinition[] =
   CDS_AGENT_CAPABILITY_SEEDS.map(([
     id,
@@ -264,23 +285,25 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
     preferredSkill,
     cliFamily,
     note,
-  ]) => ({
-    id,
-    label,
-    routeSource,
-    scope,
-    access,
-    risk,
-    agentUse,
-    preferredSkill,
-    ...(cliFamily ? { cliFamily } : {}),
-    mcpExposure: ['host-capacity-observation', 'host-capacity-sampling'].includes(id) ? 'not-exposed'
-      : ['code-reviews', 'dts', 'engineering-planning', 'design-workspace'].includes(id) ? 'available' : deriveMcpExposure(risk, agentUse),
-    ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : id === 'dts' ? { mcpTools: DTS_TOOLS }
-      : id === 'engineering-planning' ? { mcpTools: PLANNING_MCP_TOOLS }
-        : id === 'design-workspace' ? { mcpTools: ['cds_design_read', 'cds_design_publish', 'cds_design_feedback'] } : {}),
-    note,
-  }));
+  ]) => {
+    const mcpTools = MCP_TOOLS_BY_CAPABILITY[id];
+    const mcpExposure = CAPABILITIES_WITHOUT_MCP.has(id) ? 'not-exposed'
+      : mcpTools ? 'available' : deriveMcpExposure(risk, agentUse);
+    return {
+      id,
+      label,
+      routeSource,
+      scope,
+      access,
+      risk,
+      agentUse,
+      preferredSkill,
+      ...(cliFamily ? { cliFamily } : {}),
+      mcpExposure,
+      ...(mcpTools ? { mcpTools } : {}),
+      note,
+    };
+  });
 
 export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, readonly string[]> = {
   'agent-access': ['access-requests', 'projects', 'operator-console'],
