@@ -101,7 +101,10 @@ async def prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, dic
     repo_slug, clone_url = parsed
     git_ref = normalize_git_ref(req.git_ref)
     root = Path(os.environ.get("SIDECAR_WORKSPACES_ROOT", "/tmp/cds-agent-workspaces")).expanduser()
-    target = root / workspace_slug(repo_slug, git_ref)
+    if req._authorization is None:
+        raise ValueError("workspace requires runtime authorization")
+    owner = hashlib.sha256(f"{req._authorization.subject}:{req.run_id}".encode()).hexdigest()
+    target = root / owner / workspace_slug(repo_slug, git_ref)
     git_env = git_auth_env()
     metadata: dict[str, Any] = {
         "workspacePrepared": True,
@@ -114,6 +117,9 @@ async def prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, dic
     }
 
     root.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError("workspace outside authorized root")
     async with workspace_lock(target):
         if (target / ".git").exists():
             metadata["workspaceAction"] = "fetch"

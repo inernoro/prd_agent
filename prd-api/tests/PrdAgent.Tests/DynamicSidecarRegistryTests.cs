@@ -866,6 +866,7 @@ public class DynamicSidecarRegistryTests
             {
                 RunId = request.RunId, Model = request.Model, AppCallerCode = request.AppCallerCode,
                 BaseUrl = "https://gateway.invalid", ApiKey = "gwrg_callback-transport-test",
+                AgentApiKey = "map-task-v2.callback-transport-test",
             });
         }
     }

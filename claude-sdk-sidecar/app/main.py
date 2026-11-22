@@ -6,11 +6,9 @@ Sidecar HTTP 入口。
 - GET  /healthz              存活探针
 - GET  /readyz               就绪探针（含 Anthropic 凭据探测）
 
-鉴权：所有 /v1/* 请求必须带 Authorization: Bearer <SIDECAR_TOKEN>，避免裸暴露。
-本地开发可设 SIDECAR_TOKEN=dev-skip 让所有请求放行。
+鉴权：所有 /v1/* 请求必须带短期任务凭据，由固定的 SIDECAR_AUTHORITY_URL 核验。
 """
 import asyncio
-import hmac
 import importlib
 import importlib.metadata
 import importlib.util
@@ -27,6 +25,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic.warnings import UnsupportedFieldAttributeWarning
 
 from .official_agent_sdk import run_official_agent, workspace_diagnostics
+from .authorization import authorize, narrow_request, authority_url
 from .schemas import SidecarEvent, SidecarRunRequest
 
 
@@ -50,26 +49,13 @@ DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "claude-agent-sd
 OFFICIAL_AGENT_ADAPTER_ALIASES = {"official", "official-claude", "claude-agent-sdk", "agent-sdk"}
 LEGACY_AGENT_ADAPTER_ALIASES = {"legacy", "legacy-sidecar"}
 
-_active_runs: dict[str, asyncio.Event] = {}
+_active_runs: dict[str, tuple[object, asyncio.Event]] = {}
+_used_runs: dict[str, int] = {}
 
 
 def _legacy_agent_stream(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
     module = importlib.import_module(".agent_loop", package=__package__)
     return module.run_agent(req)
-
-
-def _check_token(authorization: str | None) -> None:
-    if not SIDECAR_TOKEN:
-        raise HTTPException(status_code=500, detail="SIDECAR_TOKEN env not configured")
-    if SIDECAR_TOKEN == "dev-skip":
-        return
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="missing bearer token")
-    presented = authorization[len("Bearer ") :].strip()
-    # constant-time compare 防止 timing side-channel 让攻击者按字节猜出 token
-    # （PR #529 Bugbot LOW）。compare_digest 要求两边等长，先用 utf-8 编码后比对。
-    if not hmac.compare_digest(presented.encode("utf-8"), SIDECAR_TOKEN.encode("utf-8")):
-        raise HTTPException(status_code=401, detail="invalid bearer token")
 
 
 @app.get("/healthz")
@@ -80,7 +66,11 @@ async def healthz() -> JSONResponse:
 @app.get("/readyz")
 async def readyz() -> JSONResponse:
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
-    has_token = bool(SIDECAR_TOKEN)
+    try:
+        authority_url()
+        has_token = True
+    except HTTPException:
+        has_token = False
     provider_key_mode = os.environ.get("SIDECAR_PROVIDER_KEY_MODE", "runtime-profile-or-env").strip().lower()
     provider_key_required = provider_key_mode in ("env", "environment", "env-required")
     ready = has_token and (has_key or not provider_key_required)
@@ -107,7 +97,8 @@ async def readyz() -> JSONResponse:
             "anthropicKey": has_key,
             "providerKeyMode": provider_key_mode,
             "providerKeyRequiredForReady": provider_key_required,
-            "sidecarToken": has_token,
+            "sidecarToken": False,
+            "runtimeAuthorityConfigured": has_token,
             "activeRuns": len(_active_runs),
             "agentAdapter": adapter,
             "adapterDiagnostics": diagnostics,
@@ -127,7 +118,7 @@ def _readyz_blockers(
 ) -> list[str]:
     blockers: list[str] = []
     if not has_token:
-        blockers.append("missing SIDECAR_TOKEN")
+        blockers.append("missing SIDECAR_AUTHORITY_URL")
     if provider_key_required and not has_key:
         blockers.append("missing ANTHROPIC_API_KEY")
 
@@ -151,8 +142,8 @@ def _readyz_next_actions(
         actions.append("ready: start or attach a MAP/CDS Agent run")
         return actions
 
-    if "missing SIDECAR_TOKEN" in blockers:
-        actions.append("set SIDECAR_TOKEN and restart the sidecar")
+    if "missing SIDECAR_AUTHORITY_URL" in blockers:
+        actions.append("set SIDECAR_AUTHORITY_URL to the trusted MAP control plane and restart the sidecar")
     if "missing ANTHROPIC_API_KEY" in blockers:
         actions.append("set ANTHROPIC_API_KEY or use SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env when MAP provides provider keys per request")
     elif not provider_key_required:
@@ -216,7 +207,7 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
         if item.strip()
     ]
     write_tools = sorted({name for name in allowed_tools if name.lower() in {"bash", "edit", "write"}})
-    permission_mode = os.environ.get("CLAUDE_AGENT_SDK_PERMISSION_MODE", "default")
+    permission_mode = "default"
     missing = []
     if sdk_spec is None:
         missing.append("claude_agent_sdk")
@@ -284,22 +275,56 @@ def _legacy_runtime_init_event(req: SidecarRunRequest) -> SidecarEvent:
 
 
 async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator[bytes]:
-    cancel_event = asyncio.Event()
-    _active_runs[req.run_id] = cancel_event
+    cancel_event = req._cancel_event
     keepalive_task: asyncio.Task | None = None
     queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=64)
+    settling = asyncio.Event()
+    stream_closed = asyncio.Event()
 
     async def keepalive() -> None:
         while not cancel_event.is_set():
             await asyncio.sleep(15)
             await queue.put(b": keepalive\n\n")
 
-    async def producer() -> None:
+    async def expire() -> None:
+        import time
+        await asyncio.sleep(max(0, min(req.timeout_seconds, req._authorization.expires_at - time.time())))
+        cancel_event.set()
+
+    expiry_task = asyncio.create_task(expire())
+
+    async def control(operation: str) -> str:
+        _, state = await authorize("Bearer " + req.agent_api_key, req.run_id, operation)
+        value = state.get("state")
+        if value not in {"running", "cancel_requested", "cancelled", "completed", "failed", "expired"}:
+            raise HTTPException(503, "invalid run state")
+        return value
+
+    async def watch() -> None:
         try:
+            while not cancel_event.is_set():
+                if await control("status") != "running":
+                    cancel_event.set()
+                    break
+                await asyncio.sleep(0.5)
+        except Exception:
+            cancel_event.set()  # Loss of authority never grants continued execution.
+        finally:
+            if cancel_event.is_set() and not settling.is_set() and not producer_task.done():
+                producer_task.cancel()
+
+
+    async def producer() -> None:
+        stream = None
+        terminal = SidecarEvent(type="error", error_code="runtime_incomplete", message="run did not complete")
+        try:
+            if await control("status") != "running":
+                cancel_event.set()
+                return
             try:
                 selected_adapter = _adapter_for(req)
             except ValueError as ex:
-                await queue.put(_format_sse(SidecarEvent(
+                terminal = SidecarEvent(
                     type="error",
                     error_code="unsupported_runtime_adapter",
                     message=str(ex),
@@ -312,7 +337,7 @@ async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator
                             "Use runtimeAdapter=legacy-sidecar only for explicit legacy fallback."
                         ],
                     },
-                )))
+                )
                 return
             official_adapter = selected_adapter == "claude-agent-sdk"
             stream = run_official_agent(req, cancel_event=cancel_event) if official_adapter else _legacy_agent_stream(req)
@@ -320,21 +345,34 @@ async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator
                 await queue.put(_format_sse(_legacy_runtime_init_event(req)))
             async for ev in stream:
                 if cancel_event.is_set() and not official_adapter:
-                    await queue.put(_format_sse(SidecarEvent(
-                        type="error", error_code="cancelled", message="run cancelled"
-                    )))
+                    terminal = SidecarEvent(type="error", error_code="cancelled", message="run cancelled")
                     return
+                if ev.type in {"done", "error"}:
+                    terminal = ev
+                    break
                 await queue.put(_format_sse(ev))
+        except asyncio.CancelledError:
+            terminal = SidecarEvent(type="error", error_code="cancelled", message="run stopped")
         except Exception as ex:
             logger.exception("agent loop crashed run_id=%s", req.run_id)
-            await queue.put(_format_sse(SidecarEvent(
-                type="error", error_code="sidecar_internal_error", message=str(ex)
-            )))
+            terminal = SidecarEvent(type="error", error_code="sidecar_internal_error", message="run failed")
         finally:
-            await queue.put(None)
+            settling.set()
+            try:
+                if stream is not None:
+                    await asyncio.wait_for(stream.aclose(), timeout=5)
+                state = await control("complete" if terminal.type == "done" and not cancel_event.is_set() else "fail")
+                if state != "completed":
+                    terminal = SidecarEvent(type="error", error_code=state, message="run stopped")
+            except Exception:
+                terminal = SidecarEvent(type="error", error_code="run_state_unconfirmed", message="run stopped; terminal state not confirmed")
+            if not stream_closed.is_set():
+                await queue.put(_format_sse(terminal))
+                await queue.put(None)
 
     keepalive_task = asyncio.create_task(keepalive())
     producer_task = asyncio.create_task(producer())
+    watcher_task = asyncio.create_task(watch())
 
     try:
         while True:
@@ -350,10 +388,12 @@ async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator
                 break
             yield chunk
     finally:
+        stream_closed.set()
         cancel_event.set()
-        for t in (keepalive_task, producer_task):
+        for t in (keepalive_task, producer_task, expiry_task, watcher_task):
             if t and not t.done():
                 t.cancel()
+        await asyncio.gather(keepalive_task, producer_task, expiry_task, watcher_task, return_exceptions=True)
         _active_runs.pop(req.run_id, None)
 
 
@@ -363,9 +403,19 @@ async def run(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> StreamingResponse:
-    _check_token(authorization)
-    if req.run_id in _active_runs:
+    auth, scope = await authorize(authorization, req.run_id, "run")
+    narrow_request(req, scope, authorization[7:])
+    import time
+    for key, expires in list(_used_runs.items()):
+        if expires <= time.time() and key not in _active_runs:
+            del _used_runs[key]
+    if req.run_id in _used_runs or req.run_id in _active_runs:
         raise HTTPException(status_code=409, detail=f"runId {req.run_id} already active")
+    # Reserve before returning the lazy stream: no await between check and insert.
+    req._authorization = auth
+    req._cancel_event = asyncio.Event()
+    _active_runs[req.run_id] = (auth, req._cancel_event)
+    _used_runs[req.run_id] = auth.expires_at
     return StreamingResponse(
         _run_stream(req, request),
         media_type="text/event-stream",
@@ -375,9 +425,14 @@ async def run(
 
 @app.post("/v1/agent/cancel/{run_id}")
 async def cancel(run_id: str, authorization: str | None = Header(default=None)) -> JSONResponse:
-    _check_token(authorization)
-    ev = _active_runs.get(run_id)
-    if ev is None:
-        return JSONResponse({"cancelled": False, "reason": "not found"}, status_code=404)
-    ev.set()
-    return JSONResponse({"cancelled": True, "runId": run_id})
+    auth, state = await authorize(authorization, run_id, "cancel")
+    active = _active_runs.get(run_id)
+    if active is not None:
+        owner, ev = active
+        if owner.subject != auth.subject or owner.credential_hash != auth.credential_hash:
+            raise HTTPException(403, "run belongs to another credential")
+        if state.get("state") in {"cancel_requested", "cancelled"}:
+            ev.set()
+    value = state.get("state")
+    return JSONResponse({"cancelled": value == "cancelled", "accepted": value in {"cancel_requested", "cancelled"},
+        "state": value, "runId": run_id}, status_code=202 if value == "cancel_requested" else 200)

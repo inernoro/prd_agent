@@ -120,6 +120,7 @@ class SidecarReadinessTests(unittest.TestCase):
 
     def test_official_adapter_reports_write_tool_opt_in(self) -> None:
         with patch.dict(os.environ, {
+                "SIDECAR_AUTHORITY_URL": "https://authority.test",
             "CLAUDE_AGENT_SDK_ALLOWED_TOOLS": "Read,Grep,Glob,Bash,Write",
             "CLAUDE_AGENT_SDK_PERMISSION_MODE": "acceptEdits",
         }, clear=False):
@@ -130,7 +131,7 @@ class SidecarReadinessTests(unittest.TestCase):
 
         self.assertEqual(diagnostics["ready"], True)
         self.assertEqual(diagnostics["sdkVersion"], "0.2.82")
-        self.assertEqual(diagnostics["permissionMode"], "acceptEdits")
+        self.assertEqual(diagnostics["permissionMode"], "default")
         self.assertEqual(diagnostics["builtinWriteToolsEnabled"], True)
         self.assertEqual(diagnostics["builtinWriteTools"], ["Bash", "Write"])
 
@@ -141,6 +142,7 @@ class SidecarReadinessTests(unittest.TestCase):
         sidecar_main.DEFAULT_AGENT_ADAPTER = "claude-agent-sdk"
         try:
             with patch.dict(os.environ, {
+                "SIDECAR_AUTHORITY_URL": "https://authority.test",
                 "SIDECAR_AGENT_ADAPTER": "claude-agent-sdk",
             }, clear=True), \
                     patch("importlib.util.find_spec", return_value=object()), \
@@ -168,6 +170,7 @@ class SidecarReadinessTests(unittest.TestCase):
         sidecar_main.SIDECAR_TOKEN = "test-token"
         try:
             with patch.dict(os.environ, {
+                "SIDECAR_AUTHORITY_URL": "https://authority.test",
                 "SIDECAR_AGENT_ADAPTER": "legacy-sidecar",
                 "SIDECAR_PROVIDER_KEY_MODE": "env",
             }, clear=True):
@@ -193,6 +196,7 @@ class SidecarReadinessTests(unittest.TestCase):
         sidecar_main.DEFAULT_AGENT_ADAPTER = "claude-agent-sdk"
         try:
             with patch.dict(os.environ, {
+                "SIDECAR_AUTHORITY_URL": "https://authority.test",
                 "SIDECAR_AGENT_ADAPTER": "claude-agent-sdk",
             }, clear=True), \
                     patch("importlib.util.find_spec", return_value=None), \
@@ -219,6 +223,7 @@ class SidecarReadinessTests(unittest.TestCase):
         sidecar_main.DEFAULT_AGENT_ADAPTER = "codex"
         try:
             with patch.dict(os.environ, {
+                "SIDECAR_AUTHORITY_URL": "https://authority.test",
                 "SIDECAR_AGENT_ADAPTER": "codex",
             }, clear=True):
                 response = self._run_readyz()

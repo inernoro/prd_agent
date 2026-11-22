@@ -3,7 +3,7 @@ Sidecar 协议数据契约。与 prd-api 的 ClaudeSidecar* 类型一一对应�
 任何字段调整必须同步更新 prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/SidecarTypes.cs
 """
 from typing import Any, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class SidecarMessage(BaseModel):
@@ -20,6 +20,9 @@ class SidecarToolDef(BaseModel):
 
 class SidecarRunRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    _authorization: Any = PrivateAttr(default=None)
+    _cancel_event: Any = PrivateAttr(default=None)
 
     run_id: str = Field(..., alias="runId")
     # 已批准的网关业务编号；run_id 保持为工具回调/sidecar 会话编号。

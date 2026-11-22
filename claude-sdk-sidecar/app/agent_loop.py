@@ -99,6 +99,9 @@ async def run_agent(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
             run_id=req.run_id,
             app_caller_code=req.app_caller_code,
             timeout_seconds=req.timeout_seconds,
+            authorization=req._authorization,
+            cancel_event=req._cancel_event,
+            allowed_tools={t.name for t in req.tools},
         )
 
         history: list[dict] = [m.model_dump() for m in req.messages]
@@ -277,6 +280,9 @@ async def _run_openai_compatible(
         run_id=req.run_id,
         app_caller_code=req.app_caller_code,
         timeout_seconds=req.timeout_seconds,
+        authorization=req._authorization,
+        cancel_event=req._cancel_event,
+        allowed_tools={t.name for t in req.tools},
     )
     history: list[dict] = [
         {"role": m.role, "content": m.content}
