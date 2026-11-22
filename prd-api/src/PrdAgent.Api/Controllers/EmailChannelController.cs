@@ -1,4 +1,12 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
+using PrdAgent.Api.Services.Channels;
+using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
+using MimeKit;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.Channels;
 
@@ -33,33 +41,47 @@ public class EmailChannelController : ControllerBase
     /// 主要字段：from, to, subject, text, html, attachments
     /// </remarks>
     [HttpPost("inbound")]
+    [VerifyRawEmailBody]
+    [RequestSizeLimit(SendGridInboundAuthentication.MaxBodyBytes)]
     [Consumes("multipart/form-data", "application/x-www-form-urlencoded")]
     public async Task<IActionResult> ReceiveInbound(CancellationToken ct)
     {
         try
         {
-            // 1. 验证 Webhook 签名（如果配置了）
-            var signingKey = _configuration["Channels:Email:SendGrid:WebhookSigningKey"];
-            if (!string.IsNullOrWhiteSpace(signingKey))
-            {
-                // TODO: 实现 SendGrid 签名验证
-                // var signature = Request.Headers["X-Twilio-Email-Event-Webhook-Signature"];
-                // if (!ValidateSignature(signature, signingKey))
-                // {
-                //     _logger.LogWarning("Invalid webhook signature from {IP}", GetClientIp());
-                //     return Unauthorized();
-                // }
-            }
+            // A Parse-specific security policy is mandatory, including when configuration is absent.
+            var verified = await SendGridInboundAuthentication.ValidateAsync(Request, _configuration, ct);
+            if (verified == null) return Unauthorized();
 
-            // 2. 解析邮件数据
             var form = await Request.ReadFormAsync(ct);
+            // SMTP envelope recipient, not the sender-controlled To header, selects the channel.
+            if (form["envelope"].Count != 1) return BadRequest();
+            using var envelope = JsonDocument.Parse(form["envelope"].ToString());
+            if (envelope.RootElement.ValueKind != JsonValueKind.Object
+                || !envelope.RootElement.TryGetProperty("to", out var recipients)
+                || recipients.ValueKind != JsonValueKind.Array || recipients.GetArrayLength() != 1
+                || recipients[0].ValueKind != JsonValueKind.String
+                || !string.Equals(recipients[0].GetString(), verified.Recipient, StringComparison.OrdinalIgnoreCase))
+                return Unauthorized();
+            // This endpoint accepts parsed fields; raw MIME mode is a different Parse contract.
+            if (form.ContainsKey("email")) return BadRequest();
 
             var fromRaw = form["from"].ToString();
             var to = form["to"].ToString();
             var subject = form["subject"].ToString();
             var text = form["text"].ToString();
             var html = form["html"].ToString();
-            var messageId = form["Message-Id"].ToString();
+            // SendGrid places Message-ID inside the original RFC mail headers.
+            string? messageId = null;
+            if (form["headers"].Count > 1) return BadRequest();
+            if (!string.IsNullOrWhiteSpace(form["headers"].ToString()))
+            {
+                using var headerStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(form["headers"].ToString() + "\r\n\r\n"));
+                var headers = HeaderList.Load(headerStream);
+                if (headers.Count(h => h.Id == HeaderId.MessageId) > 1) return BadRequest();
+                messageId = headers[HeaderId.MessageId]?.Trim();
+            }
+            var deliveryKey = string.IsNullOrWhiteSpace(messageId)
+                ? "content:" + await HashParsedEmailAsync(form, ct) : "message:" + messageId;
 
             // 解析发件人
             var (fromEmail, fromName) = ParseEmailAddress(fromRaw);
@@ -91,7 +113,9 @@ public class EmailChannelController : ControllerBase
             var metadata = new Dictionary<string, object>
             {
                 ["to"] = to,
-                ["messageId"] = messageId,
+                ["envelopeRecipient"] = verified.Recipient,
+                ["provider"] = "sendgrid-inbound-parse",
+                ["messageId"] = messageId ?? string.Empty,
                 ["hasHtml"] = !string.IsNullOrWhiteSpace(html),
                 ["clientIp"] = GetClientIp()
             };
@@ -105,7 +129,8 @@ public class EmailChannelController : ControllerBase
                 messageId,
                 attachments,
                 metadata,
-                ct);
+                ct,
+                new VerifiedEmailIngress(verified.Recipient, verified.OwnerUserId, deliveryKey));
 
             if (result.Success)
             {
@@ -125,11 +150,15 @@ public class EmailChannelController : ControllerBase
             // 返回 200 确认收到（无论是否创建任务）
             return Ok();
         }
+        catch (Exception ex) when (ex is JsonException or FormatException or InvalidDataException)
+        {
+            return BadRequest();
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing email inbound webhook");
-            // 返回 200 避免 SendGrid 重试
-            return Ok();
+            // Transient persistence failures must be retried; deterministic IDs make retries safe.
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -149,29 +178,10 @@ public class EmailChannelController : ControllerBase
     [HttpPost("inbound/test")]
     public async Task<IActionResult> TestInbound([FromBody] TestEmailInboundRequest request, CancellationToken ct)
     {
-        var env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
-        if (env != "Development")
-        {
-            return NotFound();
-        }
-
-        var result = await _taskService.CreateTaskAsync(
-            ChannelTypes.Email,
-            request.From,
-            request.FromName,
-            request.Subject,
-            request.Text,
-            request.MessageId ?? $"test-{Guid.NewGuid():N}@localhost",
-            null,
-            new Dictionary<string, object> { ["test"] = true },
-            ct);
-
-        if (result.Success)
-        {
-            return Ok(ApiResponse<ChannelTask>.Ok(result.Task!));
-        }
-
-        return BadRequest(ApiResponse<object>.Fail(result.RejectReason!, result.RejectReasonDisplay!));
+        // The former Development-only route bypassed provider authentication and ownership.
+        // Use signed raw request fixtures against /inbound for local tests.
+        await Task.CompletedTask;
+        return NotFound();
     }
 
     #region Helper Methods
@@ -220,6 +230,25 @@ public class EmailChannelController : ControllerBase
         // 规范化空白
         text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
         return text.Trim();
+    }
+
+    // Boundary strings are transport metadata and may change on a provider retry. For mail
+    // without Message-ID, hash authenticated form values and attachment bytes with framing.
+    private static async Task<string> HashParsedEmailAsync(IFormCollection form, CancellationToken ct)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        void AppendDescriptor(object value) => hash.AppendData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value) + "\n"));
+        foreach (var field in form.OrderBy(x => x.Key, StringComparer.Ordinal))
+            AppendDescriptor(new { field.Key, Values = field.Value.ToArray() });
+        foreach (var file in form.Files.OrderBy(x => x.Name, StringComparer.Ordinal).ThenBy(x => x.FileName, StringComparer.Ordinal))
+        {
+            AppendDescriptor(new { file.Name, file.FileName, file.ContentType, file.Length });
+            using var stream = file.OpenReadStream();
+            var buffer = new byte[64 * 1024];
+            int count;
+            while ((count = await stream.ReadAsync(buffer, ct)) > 0) hash.AppendData(buffer, 0, count);
+        }
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 
     private string GetClientIp()

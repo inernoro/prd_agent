@@ -65,4 +65,9 @@
   <ItemGroup>
     <Compile Include="..\..\src\PrdAgent.Api\Controllers\Api\WebPageAskRatingController.cs" Link="Controllers\WebPageAskRatingController.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\PrdAgent.Api\Controllers\EmailChannelController.cs" Link="Controllers\EmailChannelController.cs" />
+    <Compile Include="..\..\src\PrdAgent.Api\Services\Channels\SendGridInboundAuthentication.cs" Link="Services\SendGridInboundAuthentication.cs" />
+    <None Update="fixtures/sendgrid-inbound/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
