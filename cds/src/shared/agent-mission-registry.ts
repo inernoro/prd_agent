@@ -48,6 +48,7 @@ export type AgentPageContextId =
   | 'project-onboarding'
   | 'code-review'
   | 'engineering-planning'
+  | 'design-publish'
   | 'branches'
   | 'build-diagnostics'
   | 'startup-diagnostics'
@@ -274,9 +275,10 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
     preferredSkill,
     ...(cliFamily ? { cliFamily } : {}),
     mcpExposure: ['host-capacity-observation', 'host-capacity-sampling'].includes(id) ? 'not-exposed'
-      : ['code-reviews', 'dts', 'engineering-planning'].includes(id) ? 'available' : deriveMcpExposure(risk, agentUse),
+      : ['code-reviews', 'dts', 'engineering-planning', 'design-workspace'].includes(id) ? 'available' : deriveMcpExposure(risk, agentUse),
     ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : id === 'dts' ? { mcpTools: DTS_TOOLS }
-      : id === 'engineering-planning' ? { mcpTools: PLANNING_MCP_TOOLS } : {}),
+      : id === 'engineering-planning' ? { mcpTools: PLANNING_MCP_TOOLS }
+        : id === 'design-workspace' ? { mcpTools: ['cds_design_read', 'cds_design_publish', 'cds_design_feedback'] } : {}),
     note,
   }));
 
@@ -292,6 +294,7 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   'project-onboarding': ['projects', 'pending-import', 'project-compose'],
   'code-review': ['code-reviews', 'project-compose', 'deployment-runs'],
   'engineering-planning': ['engineering-planning'],
+  'design-publish': ['design-workspace'],
   branches: ['branches', 'branch-lifecycle', 'branch-service-isolation', 'deployment-runs', 'deployment-versions', 'replica-sets', 'infra-credential-rotation'],
   'build-diagnostics': ['branches', 'deployment-runs'],
   'startup-diagnostics': ['branches', 'deployment-runs', 'docker-network-health'],
@@ -548,6 +551,26 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     checks: ['待确认提案由有权成员处理', '可疑来源作为证据处理', '失联时沿用原请求编号核对'],
     completion: ['项目和记录编号可核对', '有明确登记或待确认的结果', '重复提交可读回原记录与状态'],
     pagePath: projectId => projectQueryPath('/engineering-planning', projectId),
+  },
+  'design-publish': {
+    id: 'design-publish',
+    categoryId: 'deliver',
+    scope: 'project',
+    connectTargets: ['existing'],
+    icon: 'code',
+    shortLabel: '设计发布',
+    cardDescription: '提交设计稿件或更新已有版本',
+    title: '发布或修订设计稿',
+    summary: '把工作区的设计交付内容归档到当前 CDS 项目，保留可追溯版本。',
+    goal: '交付新稿或修订同稿，返回稿件编号、版本和服务端回执。',
+    steps: ['读取 CDS 技能的 reference/design-intake.md 和当前项目设计接入清单',
+      '按稳定稿件键查重，区分新稿与已有稿件的修订，有歧义先澄清稿件归属',
+      '核对当前工作树，只在本地提交用户授权的稿件目录',
+      '用 cds_design_publish 的 sourceMode=private 或 cdscli design publish --private 提交项目私有归档，回读稿件和版本'],
+    checks: ['同稿修订使用原稿编号和当前版本', '先核对交付资料、稿件目录和本地提交，缺失时说明需补充的信息',
+      '超时使用原请求编号继续，角色权限以该项目的设计接入清单为准'],
+    completion: ['在服务端核对项目、来源提交和归档摘要', '同稿修订可读回原编号和新增版本', '返回稿件入口和发布回执'],
+    pagePath: projectId => projectQueryPath('/design', projectId),
   },
   branches: {
     id: 'branches',

@@ -107,7 +107,7 @@ import {
   selectReleasePreflightsToPrune,
   selectReleaseRunsToPrune,
 } from './release-retention.js';
-import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
+import { credentialUsability, hasProjectKeyGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
 import { isHumanProjectGrantUpdatePending, recoverInterruptedHumanAccessUpdates } from './human-project-access.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
@@ -3939,7 +3939,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           if (isHumanProjectGrantUpdatePending(this, entry.principalId)) continue;
           const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
           if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
-          if (!hasActiveGrant(this.state.projectGrants || [], entry.principalId, project.id)) continue;
+          if (!hasProjectKeyGrant(this.state.projectGrants || [], entry, project.id)) continue;
         }
         try {
           const entryBuf = Buffer.from(entry.hash, 'hex');

@@ -4,6 +4,9 @@ import { currentDesignRun, type DesignEntry, type DesignVersion } from '../../..
 export const designPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/design`;
 export const designArtifact = (projectId: string, artifactId: string) => apiUrl(`${designPath(projectId)}/artifacts/${encodeURIComponent(artifactId)}`);
 export const latestDesign = (entry: DesignEntry): DesignVersion => entry.versions[entry.versions.length - 1];
+export const designSourceNames: Record<NonNullable<DesignVersion['sourceVerification']>, string> = {
+  git: 'Git 已核验', 'private-upload': 'CDS 私有归档', declared: '发布者声明来源',
+};
 export const designDate = (value: string) => new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' }).format(new Date(value));
 export const materialNames = { tokens: '令牌', components: '组件', skeleton: '页面骨架', rules: '规则' } as const;
 export const statusNames = { review: '待评审', active: '实现中', draft: '设计中', frozen: '已定稿', signed: '已验收' } as const;

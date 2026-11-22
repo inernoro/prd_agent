@@ -4,10 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { createHash, createDecipheriv } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import express from 'express';
 import * as sqlConsole from '../../src/services/sql-console-executor.js';
 import { createServer } from '../../src/server.js';
 import { StateService } from '../../src/services/state.js';
+import { readDesignSourceZip } from '../../src/services/design-package.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
@@ -57,6 +59,7 @@ describe('human project grants through the production server', () => {
     vi.stubEnv('CDS_USERNAME', 'owner');
     vi.stubEnv('CDS_PASSWORD', 'test-owner-password');
     vi.stubEnv('CDS_PUBLIC_BASE_URL', 'http://localhost');
+    vi.stubEnv('CDS_UPSTREAM', '');
     vi.stubEnv('CDS_SSO_ENABLED', 'false');
     vi.stubEnv('CDS_GRANT_RECONCILE_MS', '20');
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-human-grants-'));
@@ -1332,6 +1335,146 @@ describe('human project grants through the production server', () => {
     await grant(['project-a']);
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
     expect((await call('GET', '/api/projects', member)).status).toBe(401);
+  });
+
+  it('authenticates a passively issued design key without broadening access or bypassing revocation', async () => {
+    const principalId = 'passive-design-fixture';
+    const now = new Date().toISOString();
+    const identity = 'cdsu_synthetic_passive_design_fixture';
+    state.addPrincipal({ id: principalId, name: 'Passive design fixture', kind: 'machine', status: 'active', createdAt: now });
+    state.addUserCredential({ id: 'passive-design-identity', principalId, hash: createHash('sha256').update(identity).digest('hex'),
+      createdAt: now, expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
+    const approval = '/api/projects/project-a/access-requests';
+    const start = await credentialCall('POST', approval, identity, { designAccess: 'publish' });
+    expect(start.status).toBe(201);
+    expect((await call('POST', `/api/access-requests/${start.body.requestId}/approve`, owner, {})).status).toBe(200);
+    const delivery = await fetch(`${base}${approval}/${start.body.requestId}`, { headers: { 'X-Poll-Token': start.body.pollToken } });
+    expect(delivery.status).toBe(200);
+    const issued = await delivery.json();
+    const key: string = issued.authorizationKey;
+    expect(typeof key === 'string' && key.startsWith('cdsp_')).toBe(true);
+    expect(state.getProjectGrants().some(grant => grant.principalId === principalId)).toBe(false);
+
+    const checkPath = '/api/credentials/self-check';
+    const identityCheck = await credentialCall('GET', checkPath, key);
+    expect(identityCheck.status).toBe(200);
+    expect(identityCheck.body.status).toBe('active');
+    const setup = '/api/agent/setup.json?target=existing&project=project-a&mission=design-publish';
+    const manifest = await credentialCall('GET', setup, key);
+    expect(manifest.status).toBe(200);
+    expect(manifest.body.designAccess).toBe('publish');
+    const intake = '/api/projects/project-a/design/intake';
+    const access = await credentialCall('GET', intake, key);
+    expect(access.status).toBe(200);
+    expect(access.body.permissions.write).toBe(true);
+
+    const deniedReads = ['/api/projects/project-a', '/api/projects/project-a/planning/capabilities', '/api/projects/project-b/design/intake'];
+    for (const denied of deniedReads) expect((await credentialCall('GET', denied, key)).status).toBe(403);
+    const otherProjectApproval = '/api/projects/project-b/access-requests';
+    expect((await credentialCall('POST', otherProjectApproval, key, { designAccess: 'publish' })).status).toBe(403);
+
+    state.addProjectGrant({ id: 'passive-design-revoke-fixture', projectId: 'project-a', principalId, origin: 'approved', grantedAt: now });
+    expect(state.revokeProjectGrant('passive-design-revoke-fixture')).toBe(true);
+    expect((await credentialCall('GET', intake, key)).status).not.toBe(200);
+    expect((await credentialCall('GET', checkPath, key)).body.status).toBe('grant-revoked');
+    expect((await credentialCall('POST', approval, identity, { designAccess: 'publish' })).status).toBe(403);
+  });
+
+  it('lets the same anonymous design publisher revise after expiry and denies name or revoked-key recovery', async () => {
+    const projectId = 'project-a';
+    const approval = `/api/projects/${projectId}/access-requests`;
+    const designs = `/api/projects/${projectId}/design`;
+    const sourcePath = 'design/fixture';
+    const repo = path.join(dir, 'design-recovery-repo');
+    const source = path.join(repo, sourcePath);
+    fs.mkdirSync(path.join(source, 'dist'), { recursive: true });
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=CDS Test',
+      '-c', 'user.email=cds-test@example.test', ...args], { encoding: 'utf8' }).trim();
+    git('init', '-q');
+    state.updateProject(projectId, { repoPath: repo });
+
+    async function designRevision(revision: number) {
+      const title = `Fixture design V${revision}`;
+      fs.writeFileSync(path.join(source, 'design.json'), JSON.stringify({ project: projectId, title,
+        screens: [{ id: 'main', name: 'Main', route: '#main', viewport: 'desktop', impl: '/fixture/' }],
+        acceptance: [{ id: 'A-1', rule: 'Main loads', how: 'human', slots: ['desktop-light'] }],
+      }));
+      fs.writeFileSync(path.join(source, '思路.md'), '# Goal\nKeep the original design journey.');
+      fs.writeFileSync(path.join(source, 'dist', 'index.html'), `<!doctype html><html><body><h1>${title}</h1></body></html>`);
+      git('add', sourcePath);
+      git('commit', '-qm', title);
+      const sourceCommit = git('rev-parse', 'HEAD');
+      const archive = await readDesignSourceZip(repo, sourceCommit, sourcePath);
+      if (!archive) throw new Error('The local design fixture was not archived');
+      return { sourceCommit, archive };
+    }
+
+    function begin(key = '', agentName = 'Fixture designer') {
+      return credentialCall('POST', approval, key, { designAccess: 'publish', agentName });
+    }
+
+    async function issue(key = '', agentName?: string) {
+      const request = await begin(key, agentName);
+      expect(request.status).toBe(201);
+      const approve = await call('POST', `/api/access-requests/${request.body.requestId}/approve`, owner, {});
+      expect(approve.status).toBe(200);
+      const reply = await fetch(`${base}${approval}/${request.body.requestId}`, { headers: { 'X-Poll-Token': request.body.pollToken } });
+      expect(reply.status).toBe(200);
+      const { authorizationKey } = await reply.json() as { authorizationKey: string };
+      const credential = state.findAgentKeyForAuth(authorizationKey);
+      expect(credential).toMatchObject({ projectId, designAccess: 'publish' });
+      return { key: authorizationKey, keyId: credential!.keyId };
+    }
+
+    function expire(keyId: string) {
+      const entry = state.getAgentKeys(projectId).find(key => key.id === keyId);
+      expect(Boolean(entry?.expiresAt)).toBe(true);
+      entry!.expiresAt = new Date(Date.now() - 1000).toISOString();
+    }
+
+    function publish(key: string, input: Awaited<ReturnType<typeof designRevision>>, requestId: string, intent: Record<string, string>) {
+      const params = new URLSearchParams({ requestId, sourceCommit: input.sourceCommit, sourcePath, ...intent });
+      return fetch(`${base}${designs}/packages?${params}`, { method: 'POST', body: new Uint8Array(input.archive),
+        headers: { 'x-ai-access-key': key, 'Content-Type': 'application/zip' } });
+    }
+
+    const initial = await issue();
+    const first = await publish(initial.key, await designRevision(1), 'design-recovery-first', { intent: 'create', designKey: 'fixture/main' });
+    expect(first.status).toBe(201);
+    const { result: { designId } } = await first.json();
+    expire(initial.keyId);
+    expect((await credentialCall('GET', '/api/credentials/self-check', initial.key)).body.status).toBe('expired');
+    expect((await credentialCall('GET', `${designs}/intake`, initial.key)).status).toBe(401);
+    const outside = await credentialCall('POST', '/api/projects/project-b/access-requests', initial.key, { designAccess: 'publish' });
+    expect([401, 403]).toContain(outside.status);
+    expect(state.countPendingAccessRequests('project-b')).toBe(0);
+
+    const second = await designRevision(2);
+    const reviseFirst = { intent: 'revise', designId, expectedVersion: '1' };
+    const unrelated = await issue();
+    expect((await publish(unrelated.key, second, 'design-recovery-same-name', reviseFirst)).status).toBe(403);
+    const recovered = await issue(initial.key, 'Renamed fixture designer');
+    const recoveredIntake = await credentialCall('GET', `${designs}/intake`, recovered.key);
+    expect.soft(recoveredIntake.body.designs[0]).toMatchObject({ designId, canRevise: true });
+    const renewed = await publish(recovered.key, second, 'design-recovery-renewed', reviseFirst);
+    expect(renewed.status).toBe(201);
+
+    expire(recovered.keyId);
+    const recoveredAgain = await issue(recovered.key);
+    const third = await publish(recoveredAgain.key, await designRevision(3), 'design-recovery-third',
+      { intent: 'revise', designId, expectedVersion: '2' });
+    expect(third.status).toBe(201);
+    const published = await credentialCall('GET', designs, recoveredAgain.key);
+    const versions = published.body.designs.find((design: { id: string }) => design.id === designId).versions;
+    expect(versions.map((version: { version: number }) => version.version)).toEqual([1, 2, 3]);
+    expect(new Set(versions.map((version: { publisher: { id: string } }) => version.publisher.id)).size).toBe(1);
+
+    expire(recoveredAgain.keyId);
+    const pending = await begin(recoveredAgain.key);
+    expect(pending.status).toBe(201);
+    expect((await call('DELETE', `/api/projects/${projectId}/agent-keys/${recoveredAgain.keyId}`, owner)).status).toBe(200);
+    expect((await call('POST', `/api/access-requests/${pending.body.requestId}/approve`, owner, {})).status).toBe(409);
+    expect((await begin(recoveredAgain.key)).status).toBe(403);
   });
 
   it('authorizes a design agent only for the selected project and does not issue broader keys', async () => {

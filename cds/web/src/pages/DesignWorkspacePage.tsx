@@ -6,6 +6,7 @@ import { rememberRouteFocus } from '@/components/layout/RouteMotion';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
+import { requestAgentAccess } from '@/lib/agent-onboarding';
 import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignTheme, DesignVersion, DesignWorkspace } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspace/DesignCanvas';
@@ -14,7 +15,7 @@ import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
 import { DesignRationale } from './design-workspace/DesignRationale';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, DesignMaterialView, FrameworkOverview, type FrameworkTab } from './design-workspace/DesignFramework';
-import { cellNames, designCheckRows, designDate, designFailureGroups, designPath, designStatus, latestDesign, materialNames, openReviews, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
+import { cellNames, designCheckRows, designDate, designFailureGroups, designPath, designSourceNames, designStatus, latestDesign, materialNames, openReviews, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
 import { compareDesignMaterial } from './design-workspace/design-structure';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
@@ -178,7 +179,7 @@ export function DesignWorkspacePage() {
           <h1>{version.title}</h1><span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
           <details className="ep-new dw-info"><summary className="ep-button ep-icon-button" aria-label="稿件信息"><Info /></summary>
             <div><strong>{entry.id}</strong><p>V{version.version} · {version.publisher.label} · {designDate(version.createdAt)}</p>
-              <p>Git <code>{version.sourceCommit.slice(0, 12)}</code> · {version.sourceVerification === 'git' ? '已核验' : '发布声明'}</p>
+              <p>提交 <code>{version.sourceCommit.slice(0, 12)}</code> · {designSourceNames[version.sourceVerification ?? 'declared']}</p>
               <p>评审人 · {entry.reviewers?.map(reviewer => reviewer.label).join('、') || '待指定'}</p>
               {canAssign && <button className="ep-button" type="button" onClick={() => setAssignReviewers(entry.id)}>设置评审人</button>}
               {canFreeze && version.sourceVerification === 'git' && (entry.frozen === version.version || entry.freezes?.some(row => row.version === version.version))
@@ -234,6 +235,7 @@ export function DesignWorkspacePage() {
           <div className="dw-tools dw-right">
             <label className="dw-search"><Search /><input aria-label="搜索稿件" placeholder="搜稿件、标签或 PR" value={search} onChange={event => setSearch(event.target.value)} /></label>
             <details className="ep-new"><summary className="ep-button"><Terminal />CLI</summary><div className="dw-cli"><code>cdscli design list</code><code>cdscli design publish --dir .</code></div></details>
+            <button className="ep-button" type="button" onClick={() => requestAgentAccess('design-publish')}>接入 Agent</button>
             {permissions?.write && <button className="ep-button ep-button--primary" type="button" onClick={() => setUpload(true)}><Upload />发布稿件</button>}
           </div>
         </header>

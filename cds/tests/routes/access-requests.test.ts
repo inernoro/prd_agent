@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { createAccessRequestsRouter } from '../../src/routes/access-requests.js';
+import { resolveEngineeringPlanningAccess } from '../../src/services/engineering-planning-access.js';
 import { StateService } from '../../src/services/state.js';
 import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
 import { isPublicAgentSetupRoute } from '../../src/shared/agent-setup.js';
@@ -122,7 +123,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
       // 默认模拟原始账号的人类 cookie 登录;带 x-local-user 时模拟持久化本地会话;
       // 带 x-machine-key 时模拟「机器密钥通过全局鉴权但不是人」。
       if (req.headers['x-member'] === '1') {
-        (req as any).cdsUser = { username: 'member', isSystemOwner: false, authProvider: 'local' };
+        (req as any).cdsUser = { id: 'member', username: 'member', isSystemOwner: false, authProvider: 'local' };
         (req as any).cdsSession = { id: 'member-session' };
         return next();
       }
@@ -206,6 +207,108 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(res.body.status).toBe('pending');
   });
 
+  it.each(['read', 'feedback', 'publish'] as const)('免密申请设计 %s，所有者批准后只签发同项目同范围凭据', async designAccess => {
+    const endpoint = '/api/projects/proj-a/access-requests';
+    const init = await request(server, 'POST', endpoint, { agentName: 'Design agent', designAccess });
+    expect(init.status).toBe(201);
+    const requestId = init.body.requestId as string;
+    const list = await request(server, 'GET', '/api/access-requests');
+    const row = list.body.requests.find((entry: { id: string }) => entry.id === requestId);
+    expect(row).toMatchObject({ projectId: 'proj-a', designAccess, status: 'pending' });
+    expect(row).not.toHaveProperty('pollTokenHash');
+    expect(row).not.toHaveProperty('issuedKeyPlaintext');
+    expect(stateService.getAgentKeys('proj-a')).toHaveLength(0);
+
+    const approve = await request(server, 'POST', `/api/access-requests/${requestId}/approve`, {}, { 'x-local-user': '1' });
+    expect(approve.status).toBe(200);
+    expect(JSON.stringify(approve.body).includes('cdsp_')).toBe(false);
+    const deliveryPath = `${endpoint}/${requestId}`;
+    expect((await request(server, 'GET', deliveryPath)).status).toBe(403);
+    const pollHeaders = { 'X-Poll-Token': init.body.pollToken };
+    const delivery = await request(server, 'GET', deliveryPath, undefined, pollHeaders);
+    expect(delivery.status).toBe(200);
+    const key = delivery.body.authorizationKey as unknown;
+    expect(typeof key === 'string' && key.startsWith('cdsp_')).toBe(true);
+    const credential = typeof key === 'string' ? stateService.findAgentKeyForAuth(key) : null;
+    expect(credential).toMatchObject({ projectId: 'proj-a', designAccess });
+    expect(credential).not.toHaveProperty('planningAccess');
+    expect(stateService.getAgentKeys('proj-a')).toHaveLength(1);
+    expect(stateService.getProjectGrants()).toHaveLength(0);
+    const repoll = await request(server, 'GET', deliveryPath, undefined, pollHeaders);
+    expect(Object.hasOwn(repoll.body, 'authorizationKey')).toBe(false);
+    expect(repoll.body).toMatchObject({ status: 'approved', delivered: true });
+  });
+
+  it.each([null, '', 'write', ['publish'], 1].map(designAccess => ({ designAccess })))('拒绝无效设计授权范围 %#，留下零申请和零密钥', async ({ designAccess }) => {
+    const result = await request(server, 'POST', '/api/projects/proj-a/access-requests', { designAccess });
+    expect(result.status).toBe(400);
+    expect(stateService.listAccessRequests()).toHaveLength(0);
+    expect(stateService.getAgentKeys('proj-a')).toHaveLength(0);
+  });
+
+  it('持有该项目权限的普通成员和机器均不能批准设计发布申请', async () => {
+    const now = new Date().toISOString();
+    stateService.addPrincipal({ id: 'human:member', name: 'Project member', kind: 'human', status: 'active', createdAt: now });
+    stateService.addProjectGrant({ id: 'member-project', projectId: 'proj-a', principalId: 'human:member', origin: 'approved', grantedAt: now });
+    const init = await request(server, 'POST', '/api/projects/proj-a/access-requests', { designAccess: 'publish' });
+    expect(init.status).toBe(201);
+    const requestId = init.body.requestId as string;
+    const approvalIdentities: Record<string, string>[] = [{ 'x-member': '1' }, { 'x-machine-key': '1' }];
+    for (const headers of approvalIdentities) {
+      const result = await request(server, 'POST', `/api/access-requests/${requestId}/approve`, {}, headers);
+      expect(result.status).toBe(403);
+    }
+    expect(stateService.getAccessRequest(requestId)?.status).toBe('pending');
+    expect(stateService.getAgentKeys('proj-a')).toHaveLength(0);
+    expect(stateService.getProjectGrants().map(grant => grant.id)).toEqual(['member-project']);
+  });
+
+  it('同意已有主体的设计申请时不补发通用项目授权', async () => {
+    const principalId = 'design-request-principal';
+    const now = new Date().toISOString();
+    const identity = 'cdsu_synthetic_design_request_fixture';
+    stateService.addProject({ id: 'proj-b', slug: 'proj-beta', name: 'Beta', kind: 'git', dockerNetwork: 'cds-proj-b',
+      legacyFlag: false, createdAt: now, updatedAt: now });
+    stateService.addPrincipal({ id: principalId, name: 'Design request fixture', kind: 'machine', status: 'active', createdAt: now });
+    stateService.addUserCredential({ id: 'design-request-credential', principalId, createdAt: now,
+      hash: createHash('sha256').update(identity).digest('hex'), expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
+    const init = await request(server, 'POST', '/api/projects/proj-a/access-requests',
+      { designAccess: 'publish' }, { 'X-AI-Access-Key': identity });
+    expect(init.status).toBe(201);
+    const requestId = init.body.requestId as string;
+    expect(stateService.getAccessRequest(requestId)?.principalId).toBe(principalId);
+    expect((await request(server, 'POST', `/api/access-requests/${requestId}/approve`, {}, { 'x-local-user': '1' })).status).toBe(200);
+    expect(stateService.getProjectGrants()).toHaveLength(0);
+    expect(stateService.getAgentKeys('proj-a').map(key => key.designAccess)).toEqual(['publish']);
+    const delivery = await request(server, 'GET', `/api/projects/proj-a/access-requests/${requestId}`, undefined, {
+      'X-Poll-Token': init.body.pollToken,
+    });
+    expect(delivery.status).toBe(200);
+    const key = delivery.body.authorizationKey as unknown;
+    expect(typeof key === 'string' && key.startsWith('cdsp_')).toBe(true);
+    const credential = typeof key === 'string' ? stateService.findAgentKeyForAuth(key) : null;
+    expect(credential).toMatchObject({ projectId: 'proj-a', designAccess: 'publish' });
+    const authenticatedRequest = { cdsProjectKey: credential } as unknown as express.Request;
+    expect(resolveEngineeringPlanningAccess(authenticatedRequest, stateService, 'proj-a', 'design'))
+      .toMatchObject({ kind: 'agent', permissions: ['read', 'write'], gitPublishOnly: true });
+    expect(resolveEngineeringPlanningAccess(authenticatedRequest, stateService, 'proj-a')).toBeNull();
+    expect(resolveEngineeringPlanningAccess(authenticatedRequest, stateService, 'proj-b', 'design')).toBeNull();
+
+    expect(stateService.setPrincipalStatus(principalId, 'disabled')).toBe(true);
+    expect(typeof key === 'string' ? stateService.findAgentKeyForAuth(key) : null).toBeNull();
+    expect(resolveEngineeringPlanningAccess(authenticatedRequest, stateService, 'proj-a', 'design')).toBeNull();
+    expect(stateService.setPrincipalStatus(principalId, 'active')).toBe(true);
+    expect(typeof key === 'string' ? stateService.findAgentKeyForAuth(key) : null).toMatchObject({ projectId: 'proj-a' });
+
+    stateService.addProjectGrant({ id: 'explicit-project-grant', projectId: 'proj-a', principalId, origin: 'approved', grantedAt: now });
+    expect(stateService.revokeProjectGrant('explicit-project-grant')).toBe(true);
+    expect(typeof key === 'string' ? stateService.findAgentKeyForAuth(key) : null).toBeNull();
+    expect(resolveEngineeringPlanningAccess(authenticatedRequest, stateService, 'proj-a', 'design')).toBeNull();
+    expect((await request(server, 'POST', '/api/projects/proj-a/access-requests', { designAccess: 'publish' },
+      { 'X-AI-Access-Key': identity })).status).toBe(403);
+    expect(stateService.listAccessRequests()).toHaveLength(1);
+  });
+
   it('轮询必须带正确 pollToken:无/错 token → 403', async () => {
     const init = await request(server, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'x' });
     const reqId = init.body.requestId as string;
@@ -239,6 +342,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(list.body.requests[0]).not.toHaveProperty('pollTokenHash');
     expect(list.body.requests[0].projectName).toBe('Alpha');
     expect(list.body.requests[0]).not.toHaveProperty('issuedKeyPlaintext');
+    expect(list.body.requests[0]).not.toHaveProperty('designAccess');
 
     // 批准 → 操作员响应不含明文
     const approve = await request(server, 'POST', `/api/access-requests/${reqId}/approve`, {});
@@ -499,20 +603,55 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(res.status).toBe(404);
   });
 
-  // 回归(Cursor):CDS_AUTH_MODE=disabled 本地 dev 全站无鉴权,审批盒所在 dashboard
-  // 用户即操作员,approve/reject/list 必须放行,否则本地 dev 用不了。
-  it('disabled 模式:无 cookie 身份也能列出/批准', async () => {
+  it.each([
+    { label: '普通项目', designAccess: undefined },
+    { label: '设计发布', designAccess: 'publish' },
+  ])('未启用 SSO 的免登录本地模式可列出并批准 $label 申请', async ({ designAccess }) => {
     const app2 = express();
     app2.use(express.json());
-    app2.use((req, _res, next) => { next(); }); // 不 stamp 任何身份(模拟 disabled)
-    app2.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled' }));
+    app2.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled', isSsoEnabled: () => false }));
     const srv2 = app2.listen(0);
     try {
-      const init = await request(srv2, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'disabled' });
+      const init = await request(srv2, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'local approval', designAccess });
       expect(init.status).toBe(201);
       const reqId = init.body.requestId as string;
       expect((await request(srv2, 'GET', '/api/access-requests')).status).toBe(200);
       expect((await request(srv2, 'POST', `/api/access-requests/${reqId}/approve`, {})).status).toBe(200);
+      expect(stateService.getAgentKeys('proj-a').map(key => key.designAccess)).toEqual([designAccess]);
+    } finally {
+      await new Promise<void>((resolve) => srv2.close(() => resolve()));
+    }
+  });
+
+  it('启用 SSO 后，disabled 模式的设计审批仍要求已验证的系统所有者', async () => {
+    let ssoEnabled = false;
+    const app2 = express();
+    app2.use(express.json());
+    app2.use((req, _res, next) => {
+      const approver = req.get('x-fixture-approver');
+      if (approver && approver !== 'anonymous') {
+        Object.assign(req, {
+          cdsUser: { username: approver, isSystemOwner: approver !== 'member', authProvider: approver === 'sso' ? 'sso' : 'local' },
+          cdsSession: { id: `fixture-${approver}-session` },
+        });
+      }
+      next();
+    });
+    app2.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled', isSsoEnabled: () => ssoEnabled }));
+    const srv2 = app2.listen(0);
+    try {
+      const init = await request(srv2, 'POST', '/api/projects/proj-a/access-requests', { designAccess: 'publish' });
+      expect(init.status).toBe(201);
+      const requestId = init.body.requestId as string;
+      const approve = `/api/access-requests/${requestId}/approve`;
+      ssoEnabled = true;
+      for (const approver of ['anonymous', 'member', 'sso']) {
+        expect((await request(srv2, 'POST', approve, {}, { 'x-fixture-approver': approver })).status).toBe(403);
+      }
+      expect(stateService.getAccessRequest(requestId)?.status).toBe('pending');
+      expect(stateService.getAgentKeys('proj-a')).toHaveLength(0);
+      expect((await request(srv2, 'POST', approve, {}, { 'x-fixture-approver': 'owner' })).status).toBe(200);
+      expect(stateService.getAgentKeys('proj-a').map(key => key.designAccess)).toEqual(['publish']);
     } finally {
       await new Promise<void>((resolve) => srv2.close(() => resolve()));
     }
