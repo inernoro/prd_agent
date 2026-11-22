@@ -6351,18 +6351,15 @@ const BranchCard = memo(function BranchCard({
           - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
-      {/* 卡片按实际内容排布，CSS grid 只拉齐同一行；状态和主操作保留固定阅读顺序。 */}
+      {/* 网格按同排最高卡片拉齐，失败摘要最多两行，完整原因在分支详情。 */}
       {showsIssue && !failedPhase ? (
-        <div
-          className={`mx-5 mt-3 flex min-w-0 flex-col gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}
-          title={deployFailureMessage(branch, projectProfileIds)}
-        >
+        <div className={`mx-5 mt-3 flex min-w-0 flex-col gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}>
           <div className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="min-w-0 truncate">{issueLabel}</span>
             <span className="ml-auto shrink-0 whitespace-nowrap font-normal opacity-75">{statusTimeText}</span>
           </div>
-          <div className="break-words text-xs font-normal leading-5 text-foreground/85">
+          <div className="line-clamp-2 break-words text-xs font-normal leading-5 text-foreground/85">
             {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
           </div>
         </div>
@@ -6713,7 +6710,7 @@ const BranchCard = memo(function BranchCard({
       {!showsIssue || failedPhase ? (
         <div className="mx-5 mt-2.5 mb-3 flex min-h-[1.125rem] min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs leading-[1.125rem] text-muted-foreground">
           {failedPhase ? (
-            <span className="min-w-0 truncate text-destructive" title={deployFailureMessage(branch, projectProfileIds)}>
+            <span className="min-w-0 max-w-full truncate text-destructive">
               {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
             </span>
           ) : finishing ? (
@@ -6842,12 +6839,13 @@ const BranchCard = memo(function BranchCard({
                   className="h-8 min-w-0 flex-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/55 focus:ring-2 focus:ring-primary/20"
                   placeholder="输入标签名称"
                 />
-                <button
+                <Button
                   type="submit"
-                  className="inline-flex h-8 shrink-0 items-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                  size="sm"
+                  className="shrink-0 font-semibold"
                 >
                   添加
-                </button>
+                </Button>
               </div>
               {tagDraftError ? <div className="mt-1.5 text-[0.6875rem] text-destructive">{tagDraftError}</div> : null}
             </form></AnchoredPopover>
@@ -6870,9 +6868,11 @@ const BranchCard = memo(function BranchCard({
                 >
                   取消
                 </button>
-                <button
+                <Button
                   type="button"
-                  className="inline-flex h-8 items-center rounded-md bg-destructive px-3 text-xs font-semibold text-destructive-foreground transition-colors hover:bg-destructive/90"
+                  variant="destructive"
+                  size="sm"
+                  className="font-semibold"
                   onClick={() => {
                     const target = tagDeleteTarget;
                     setTagDeleteTarget(null);
@@ -6880,7 +6880,7 @@ const BranchCard = memo(function BranchCard({
                   }}
                 >
                   删除
-                </button>
+                </Button>
               </div>
             </AnchoredPopover>
           ) : null}

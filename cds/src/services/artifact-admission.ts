@@ -1,5 +1,4 @@
 import type { BuildProfile, IShellExecutor } from '../types.js';
-import { randomBytes } from 'node:crypto';
 import type { WorktreeService } from './worktree.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import { configuredImageCacheGovernance, ImageCacheBudgetError } from './image-cache-governance.js';
@@ -23,6 +22,7 @@ export interface VerifiedDeploymentArtifact {
 
 export interface ArtifactInspectionOptions {
   inspectLocalArtifacts?: boolean;
+  /** Identity pinned by the runtime storage admission for this local profile. */
   isComponentUnchangedSince?: ProveFallbackImageInput['isComponentUnchangedSince'];
   remainingMs?: () => number;
 }
@@ -95,12 +95,14 @@ export async function inspectDeploymentArtifacts(
     if (!image || image.includes('${')) return waiting('image-unresolved', [profile.id]);
   }
   if (!required.length) return { state: 'ready', targetCommitSha: target, checkedAt, artifacts: [] };
-  const exec = async (command: string, timeout = 30_000) => {
+  const checkInspection = () => { assertCurrent(); options.remainingMs?.(); };
+  const startCommand = async (command: string, timeout: number, executionLane: 'observation' | 'operation') => {
     assertCurrent();
-    const check = () => { assertCurrent(); options.remainingMs?.(); };
-    const result = await shell.exec(command, { timeout: Math.min(timeout, options.remainingMs?.() ?? timeout), beforeStart: check });
-    check();
-    assertCurrent();
+    return shell.exec(command, { timeout: Math.min(timeout, options.remainingMs?.() ?? timeout), beforeStart: checkInspection, executionLane });
+  };
+  const exec = async (command: string, timeout = 30_000, executionLane: 'observation' | 'operation' = 'observation') => {
+    const result = await startCommand(command, timeout, executionLane);
+    checkInspection();
     return result;
   };
   // 实际Docker daemon平台，不能用Master进程或开发者电脑的架构代替执行器。
@@ -120,21 +122,31 @@ export async function inspectDeploymentArtifacts(
       const cache = configuredImageCacheGovernance();let pin: { token: string } | undefined;
       const digestPinned = /^.+@sha256:[0-9a-f]{64}$/.test(image);
       if (cache) {
-        try { const prepared = await cache.prepare(image, assertCurrent, !needsPull, needsPull && !digestPinned);if (prepared.token) pin = prepared; }
+        try { const prepared = await cache.prepare(image, checkInspection, !needsPull, needsPull && !digestPinned, needsPull);if (prepared.token) pin = prepared; }
         catch (error) { assertCurrent();return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' }; }
       }
-      const completion = pin && needsPull ? `__CDS_PULL_EXIT_${randomBytes(16).toString('hex')}:` : undefined;
-      const command = `docker pull ${shellQuoteArg(image)}` + (completion
-        ? `; cds_pull_status=$?; printf '\\n${completion}%s\\n' "$cds_pull_status"; exit "$cds_pull_status"` : '');
-      const pull = needsPull ? await exec(command, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
-      if (!pull) { assertCurrent(); return { reason: 'verification-unavailable' }; }
-      if (pull.exitCode) {
-        // Only a completed native failure may settle its reservation; unknown leaves a visible pin.
-        const receipt = completion && typeof pull.exitCode === 'number' ? `\n${completion}${pull.exitCode}\n` : undefined;
-        const completed = receipt && pull.stdout.endsWith(receipt);
-        if (pin && completed) await cache!.abort(pin.token, assertCurrent, true).catch(() => undefined);
-        return { reason: pullFailureReason(completed ? pull.stdout.slice(0, -receipt!.length) : pull.stdout, pull.stderr, image) };
+      let failure: ArtifactWaitReason | undefined;
+      if (needsPull && cache) {
+        if (!pin) return { reason: 'verification-unavailable' };
+        const token = pin.token;
+        const pull = await cache.executePull(token, image, checkInspection, options.remainingMs).catch(() => undefined);
+        if (!pull?.recorded) { assertCurrent(); return { reason: 'verification-unavailable' }; }
+        // The native receipt is durable. Try the fast path before rechecking
+        // this caller's deadline. The scheduled pass can finish without it.
+        const settlements = await cache.settlePulls(token).catch(() => []);
+        if (pull.outcome !== 'success') failure = pull.outcome;
+        else if (!settlements.some(row => row.outcome === 'success')) {
+          assertCurrent();return { reason: 'verification-unavailable' };
+        }
+        pin = undefined;
+      } else if (needsPull) {
+        const pull = await startCommand(`docker pull ${shellQuoteArg(image)}`, 90_000, 'operation').catch(() => undefined);
+        if (!pull) { assertCurrent();return { reason: 'verification-unavailable' }; }
+        if (pull.exitCode) failure = pullFailureReason(pull.stdout, pull.stderr, image);
       }
+      try { checkInspection(); }
+      catch { assertCurrent(); return { reason: 'verification-unavailable' }; }
+      if (failure) return { reason: failure };
       const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
       if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }
       const parsed = readJson(inspection.stdout);
