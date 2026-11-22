@@ -18,6 +18,7 @@
  * doc/plan.cds.multi-project-phases.md P2.
  */
 
+import { accountNoticeRetentionMs, accountSignoutDigest, readAccountSignoutProof } from './account-signout-proof.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   AuthStore,
@@ -323,6 +324,7 @@ export class AuthService {
     email?: string | null;
     isSystemOwner?: boolean;
     isAdministrator?: boolean;
+    createdByAccountId?: string;
     externalLoginAllowed?: boolean;
   }): Promise<CdsUser> {
     if (typeof input.password !== 'string' || input.password.length < MIN_PASSWORD_LENGTH) {
@@ -338,6 +340,7 @@ export class AuthService {
       isSystemOwner: input.isSystemOwner ?? false,
       isAdministrator: input.isAdministrator === true && !input.isSystemOwner,
       externalLoginAllowed: input.externalLoginAllowed === true,
+      createdByAccountId: input.createdByAccountId,
     });
   }
 
@@ -354,7 +357,7 @@ export class AuthService {
     }
   }
 
-  async createAccountInvitation(input: Pick<CreateLocalUserInput, 'username' | 'name' | 'isAdministrator' | 'externalLoginAllowed'>) {
+  async createAccountInvitation(input: Pick<CreateLocalUserInput, 'username' | 'name' | 'isAdministrator' | 'externalLoginAllowed' | 'createdByAccountId'>) {
     const invitation = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
     const user = await this.provisionAccount({
@@ -379,7 +382,7 @@ export class AuthService {
     } else verified = proof;
     const now = new Date();
     const recovery = user.invitationForRecovery
-      ? this.sessionRevocation(user, randomUUID(), 'recover-identity', now) : undefined;
+      ? await this.sessionRevocation(user, randomUUID(), 'recover-identity', now) : undefined;
     return this.store.consumeAccountInvitation(user, verified, now, recovery);
   }
 
@@ -503,7 +506,7 @@ export class AuthService {
     const at = new Date();
     const id = randomUUID();
     const changed = await this.store.applyAccountSecurityChange(user, {
-      ...this.sessionRevocation(user, id, 'reset-password', at), passwordHash: hash, passwordSalt: salt,
+      ...await this.sessionRevocation(user, id, 'reset-password', at), passwordHash: hash, passwordSalt: salt,
     }, at);
     if (!changed) throw new LocalAuthError('account_changed', '账号状态已改变，请重新登录后再试');
   }
@@ -536,7 +539,7 @@ export class AuthService {
 
   async detachIdentity(user: CdsUser, provider: AccountIdentityProvider, receipt: string = randomUUID()): Promise<CdsUser | null> {
     const now = new Date();
-    const change = this.sessionRevocation(user, receipt, provider === 'github' ? 'unlink-github' : 'unlink-google', now);
+    const change = await this.sessionRevocation(user, receipt, provider === 'github' ? 'unlink-github' : 'unlink-google', now);
     if (!await this.store.detachIdentity(user, provider, change, now)) return null;
     return this.store.findUserById(user.id);
   }
@@ -547,6 +550,11 @@ export class AuthService {
 
   async countAccountSessions(user: CdsUser): Promise<number> {
     return this.store.countAccountSessions(user, new Date());
+  }
+
+  async accountSessionSnapshot(user: Pick<CdsUser, 'id' | 'sessionRevision'>): Promise<string[]> {
+    const sessions = await this.store.listAccountSessions(user.id, user.sessionRevision, new Date());
+    return sessions.map(row => accountSignoutDigest(row.token)).sort();
   }
 
   /** Track a verified shared system browser with a separate, non-login proof. */
@@ -569,20 +577,26 @@ export class AuthService {
 
   async personalBrowserSessions(user: CdsUser, currentToken: string | null) {
     const sessions = await this.store.listAccountSessions(user.id, user.sessionRevision, new Date());
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+    const cutoff = new Date(Date.now() - accountNoticeRetentionMs).toISOString();
     return {
       sessions: sessions.map(session => ({ ...browserSessionView(session), current: session.token === currentToken })),
       revocations: (user.sessionRevocationNotices ?? []).filter(notice => notice.at >= cutoff)
-        .map(({ action, at }) => ({ action, at })).reverse(),
+        .map(({ action, at, receiptId }) => ({ action, at, receiptId })).reverse(),
     };
   }
 
-  async systemSignInNotice(userId: string, revision: string | undefined, proof: string | undefined) {
-    if (!proof || !this.store.accountActions) return null;
-    const browser = await this.store.findSessionByToken(proof);
-    if (!browser || browser.userId !== userId || browser.sessionRevision === revision) return null;
-    const records = await this.store.accountActions.list({ targetId: userId, action: 'rotate-system-password' }, 100);
-    const event = records.find(item => item.status === 'completed' && (item.targetRevision || undefined) === browser.sessionRevision);
+  async systemSignInNotice(userId: string, revision: string | undefined, proof: string | undefined, browserProof?: string) {
+    if (!this.store.accountActions) return null;
+    const durable = readAccountSignoutProof(browserProof);
+    const browser = proof ? await this.store.findSessionByToken(proof) : undefined;
+    const previous = browser?.userId === userId && browser.sessionRevision !== revision ? browser : undefined;
+    const digest = durable?.accountId === userId ? durable.digest : undefined;
+    if (!previous && !digest) return null;
+    const cutoff = new Date(Date.now() - accountNoticeRetentionMs).toISOString();
+    const records = await this.store.accountActions.list({ targetId: userId, action: 'rotate-system-password', from: cutoff }, 100);
+    const event = records.find(item => item.status === 'completed' && item.decidedAt && item.decidedAt >= cutoff
+      && ((previous && (item.targetRevision || undefined) === previous.sessionRevision)
+        || (digest && item.sessionSnapshot?.includes(digest))));
     return event?.decidedAt ? { action: event.action, at: event.decidedAt, receiptId: event.id } : null;
   }
 
@@ -591,7 +605,7 @@ export class AuthService {
     if (request.action === 'unlink-github' || request.action === 'unlink-google') {
       return Boolean(await this.detachIdentity(user, request.action === 'unlink-github' ? 'github' : 'google', request.id));
     }
-    const change = this.sessionRevocation(user, request.id, request.action, now);
+    const change = await this.sessionRevocation(user, request.id, request.action, now);
     if (request.action === 'disable-user') change.status = 'disabled';
     if (request.action === 'revoke-admin') change.isAdministrator = false;
     if (request.action === 'reset-password') {
@@ -605,25 +619,31 @@ export class AuthService {
     return this.store.applyAccountSecurityChange(user, change, now);
   }
 
-  private sessionRevocation(user: CdsUser, id: string, action: AccountAction, now: Date): AccountSecurityChange {
+  private async sessionRevocation(user: CdsUser, id: string, action: AccountAction, now: Date): Promise<AccountSecurityChange> {
     const at = now.toISOString();
-    const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60_000).toISOString();
+    const cutoff = new Date(now.getTime() - accountNoticeRetentionMs).toISOString();
     const recent = (user.sessionRevocationNotices ?? []).filter(notice => notice.at >= cutoff).slice(-39);
+    const sessions = await this.store.listAccountSessions(user.id, user.sessionRevision, now);
+    const browserProofDigests = sessions.map(session => accountSignoutDigest(session.token));
     return {
       sessionRevision: id, lastAccountAction: { id, action, at },
-      sessionRevocationNotices: [...recent, { previousRevision: user.sessionRevision ?? null, action, at }],
+      sessionRevocationNotices: [...recent, { previousRevision: user.sessionRevision ?? null, action, at, receiptId: id, browserProofDigests }],
     };
   }
 
-  async signInNotice(token: string | null): Promise<{ action: AccountAction; at: string } | null> {
-    if (!token) return null;
-    const session = await this.store.findSessionByToken(token);
-    if (!session) return null;
-    const user = await this.store.findUserById(session.userId);
-    if (!user || session.sessionRevision === user.sessionRevision) return null;
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
-    const notice = user.sessionRevocationNotices?.find(note => note.previousRevision === (session.sessionRevision ?? null) && note.at >= cutoff);
-    return notice ? { action: notice.action, at: notice.at } : null;
+  async signInNotice(token: string | null, browserProof?: string): Promise<{ action: AccountAction; at: string; receiptId?: string } | null> {
+    const proof = readAccountSignoutProof(browserProof);
+    const session = token ? await this.store.findSessionByToken(token) : null;
+    const accountId = session?.userId ?? proof?.accountId;
+    if (!accountId) return null;
+    const user = await this.store.findUserById(accountId);
+    if (!user || (session && session.sessionRevision === user.sessionRevision)) return null;
+    const cutoff = new Date(Date.now() - accountNoticeRetentionMs).toISOString();
+    const notice = user.sessionRevocationNotices?.find(note => note.at >= cutoff && (
+      session ? note.previousRevision === (session.sessionRevision ?? null) : note.browserProofDigests?.includes(proof!.digest)));
+    if (!notice) return null;
+    const receiptId = notice.receiptId ?? (user.lastAccountAction?.at === notice.at ? user.lastAccountAction.id : undefined);
+    return { action: notice.action, at: notice.at, ...(receiptId ? { receiptId } : {}) };
   }
 
   /** Enable/disable an account; disabling also revokes its sessions. */

@@ -4,7 +4,7 @@ import { canDetachAccountIdentity, toPublicUser, type AccountIdentityProvider, t
 import type { AccountOAuthDriver } from '../services/account-oauth.js';
 import { LocalAuthError, type AuthService } from '../services/auth-service.js';
 import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
-import { buildLegacyLogoutCookie, buildSessionCookie, buildSsoLogoutCookie, GH_SESSION_COOKIE } from './auth.js';
+import { buildLegacyLogoutCookie, buildAccountSessionCookies, buildSsoLogoutCookie, GH_SESSION_COOKIE } from './auth.js';
 
 export type { AccountOAuthDriver } from '../services/account-oauth.js';
 
@@ -94,7 +94,7 @@ export function createAccountIdentitiesRouter(options: Options): Router {
       userId: user.id, userLogin: user.username || user.githubLogin, action: 'login', summary: activity,
     });
     res.append('Set-Cookie', [
-      buildSessionCookie(session.token, session.expiresAt, cookieSecure || hostSessionCookies, hostSessionCookies),
+      ...buildAccountSessionCookies(session, cookieSecure || hostSessionCookies, hostSessionCookies),
       buildLegacyLogoutCookie(cookieSecure || hostSessionCookies, hostSessionCookies),
       buildSsoLogoutCookie(cookieSecure || hostSessionCookies, hostSessionCookies),
     ]);

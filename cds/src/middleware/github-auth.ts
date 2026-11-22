@@ -16,7 +16,7 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import type { AuthService } from '../services/auth-service.js';
-import { GH_SESSION_COOKIE, buildSessionCookie } from '../routes/auth.js';
+import { GH_SESSION_COOKIE, buildAccountSessionCookies } from '../routes/auth.js';
 import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
 import { isPublicAgentSetupRoute } from '../shared/agent-setup.js';
 
@@ -204,7 +204,7 @@ export function createGithubAuthMiddleware(deps: {
     // browser copy has to move with it — otherwise the cookie dies first and the
     // user is bounced to /login while a perfectly valid session is still on file.
     if (result.renewed && token) {
-      res.setHeader('Set-Cookie', buildSessionCookie(token, result.session.expiresAt, cookieSecure, hostSessionCookies));
+      res.setHeader('Set-Cookie', buildAccountSessionCookies(result.session, cookieSecure, hostSessionCookies));
     }
 
     // Attach the authenticated user onto the request for downstream handlers.

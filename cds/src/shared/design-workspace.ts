@@ -9,6 +9,7 @@ export type DesignScreen = {
   readySelector?: string;
   entryActions?: string[];
   entryReadySelector?: string;
+  entryTimeoutMs?: number;
 };
 export type DesignRule = {
   id: string; rule: string; how: 'measure' | 'screenshot' | 'human'; priority: 'high' | 'normal';
@@ -106,6 +107,13 @@ export type DesignFeedback = {
   decisions: Array<{ decision: 'close' | 'reopen'; body: string; author: DesignFeedbackAuthor; at: string }>;
 };
 
+export type DesignModuleRef = { systemId: string; moduleId: string };
+export type DesignScope = DesignModuleRef & { related?: DesignModuleRef[] };
+export type DesignSystem = {
+  id: string; name: string; framework?: string;
+  modules: Array<{ id: string; name: string; framework?: string; note?: string }>;
+};
+
 export type DesignVersion = {
   version: number; title: string; sourceCommit: string; sha256: string; prototypeId: string; createdAt: string;
   sourcePath?: string; sourceVerification?: 'git' | 'declared' | 'private-upload'; prototypeSha256?: string;
@@ -113,7 +121,7 @@ export type DesignVersion = {
   rationale: string; spec: DesignMaterial; checks?: Record<string, unknown>; framework?: string; frameworkVersion?: number;
   frameworkCharter?: DesignFrameworkCharter;
   frameworkCheck?: DesignFrameworkCheck;
-  group?: string; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
+  group?: string; scope?: DesignScope; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
   delivery?: DesignDelivery;
 };
@@ -157,6 +165,7 @@ export type DesignReviewNotice = {
 };
 export type DesignEntry = {
   id: string; projectId: string; designKey?: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
+  scope?: DesignScope;
   comments: DesignComment[]; runs: DesignRun[]; feedback?: DesignFeedback[]; reviewRequested?: boolean;
   currentSignoffRunId?: string | null;
   reviewers?: DesignReviewer[];
@@ -192,23 +201,26 @@ export function frameworkInUse(id: string, revision: FrameworkRevision | undefin
 export type DesignRequirement = {
   designKey: string; planId: string; planVersion: number; proposalId: string;
   title: string; requirements: string; sharedAt: string;
+  scope?: DesignScope; owner?: DesignReviewer;
   replies?: Array<{ id: string; author: DesignFeedbackAuthor; body: string; at: string; planVersion: number }>;
 };
 export type DesignIntake = {
   protocolVersion: 1;
   projectId: string;
   permissions: { write: boolean; feedback?: boolean };
+  systems?: DesignSystem[];
   keyFormat: 'module/draft';
   intents: readonly ['create', 'revise'];
   requirements: DesignRequirement[];
   designs: Array<{
     designId: string; designKey?: string; title: string; latestVersion: number;
-    sourceCommit: string; sourcePaths: string[]; canRevise: boolean; openFeedbackCount?: number;
+    sourceCommit: string; sourcePaths: string[]; scope?: DesignScope; canRevise: boolean; openFeedbackCount?: number;
   }>;
-  frameworks: Array<{ id: string; title: string; latestVersion: number }>;
+  frameworks: Array<{ id: string; title: string; latestVersion: number; adoptedVersion?: number }>;
 };
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
   requirements?: DesignRequirement[];
+  systems?: DesignSystem[];
   permissions: { write: boolean; feedback?: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
 };

@@ -269,14 +269,14 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, availableLo
                 onClick={() => void update(selected, { externalLoginAllowed: !selected.externalLoginAllowed })}>
                 {selected.externalLoginAllowed ? '暂停新增绑定' : '开通绑定资格'}
               </Button> : null}
-              {owner && isTarget ? <Button variant="outline" onClick={() => setGrantUser(selected)}>项目授权</Button> : null}
+              {(owner || selected.canManageAccount) && isTarget ? <Button variant="outline" onClick={() => setGrantUser(selected)}>项目授权</Button> : null}
               {owner && canChange && selected.role === 'member' ? (
                 <ConfirmAction scopeKey={selected.id} title="授予管理员"
                   description={`${accountName(selected)} 可管理普通成员和提交账号操作申请。`}
                   confirmLabel="授予管理员" onConfirm={() => update(selected, { role: 'admin' })}
                   trigger={<Button variant="outline">授予管理员</Button>} />
               ) : null}
-              {owner && isTarget && selected.status === 'disabled' ? (
+              {(owner || selected.canManageAccount) && isTarget && selected.status === 'disabled' ? (
                 <ConfirmAction scopeKey={selected.id} title="启用账号" description={`恢复 ${accountName(selected)} 的原项目权限。`}
                   confirmLabel="启用账号" onConfirm={() => update(selected, { status: 'active' })}
                   trigger={<Button variant="outline">启用账号</Button>} />
@@ -395,7 +395,8 @@ function CreateMemberDialog({ owner, durable, onClose, onCreated }: {
 const permissionRows = [
   ['创建普通成员', '可执行', '可执行', '—', '—'],
   ['授予管理员', '可执行', '—', '—', '—'],
-  ['重置他人口令、停用、退出会话', '逐次确认', '对成员提交申请', '—', '授权设备仅在项目内提案'],
+  ['停用无在线会话的成员、恢复账号', '执行并留档', '管理范围内执行', '—', '—'],
+  ['重置他人口令、停用在线账号、退出会话', '逐次确认', '对成员提交申请', '—', '授权设备仅在项目内提案'],
   ['撤销管理员', '逐次确认', '—', '—', '—'],
   ['修改本人口令', '个人账号可用', '可执行', '可执行', '—'],
   ['账号审计', '全部', '本人及发起的申请', '本人', '仅回读本设备提案'],

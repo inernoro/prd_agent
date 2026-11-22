@@ -19,7 +19,8 @@ export function AccountActionFacts({ entry }: { entry: AccountActionEntry }): JS
         ? `全部系统账号会话，已登记 ${entry.affectedSessions} 个` : `${entry.affectedSessions} 个`}</dd></div>
       {entry.requestedBy ? <div><dt className="text-muted-foreground">发起人</dt><dd>{entry.requestedBy}</dd></div> : null}
       {entry.approvedBy ? <div><dt className="text-muted-foreground">批准人</dt><dd>{entry.approvedBy}{entry.requestedBy === entry.approvedBy ? ' · 本人确认' : ''}</dd></div> : null}
-      {entry.executedByAccountId && entry.approvedBy ? <div><dt className="text-muted-foreground">执行人</dt><dd>{entry.approvedBy}</dd></div> : null}
+      {entry.executedByAccountId && (entry.approvedBy || entry.managementMode === 'offline') ? <div><dt className="text-muted-foreground">执行人</dt>
+        <dd>{entry.approvedBy ?? entry.requestedBy}{entry.managementMode === 'offline' ? ' · 停用前无在线会话' : ''}</dd></div> : null}
       {entry.backfill ? <div className="sm:col-span-2"><dt className="text-muted-foreground">
         事后补录 · {entry.backfill.priorApproval === 'missing' ? '原审批缺失' : '已有审批证据'}
       </dt><dd className="mt-1 break-words">{new Date(entry.backfill.occurredAt).toLocaleString()} · {entry.backfill.evidence}</dd></div> : null}
@@ -49,11 +50,13 @@ export function AccountActionDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [impact, setImpact] = useState<number | null>(null);
+  const [canDisableImmediately, setCanDisableImmediately] = useState(false);
   const [impactError, setImpactError] = useState('');
   const [impactAttempt, setImpactAttempt] = useState(0);
 
   const action = 'action' in subject ? subject.action : subject.entry.action;
   const targetName = 'user' in subject ? (subject.user.username || subject.user.githubLogin) : subject.entry.targetName;
+  const directDisable = action === 'disable-user' && canDisableImmediately;
   const canConfirm = owner && entry?.status === 'pending';
   const targetId = 'user' in subject ? subject.user.id : undefined;
 
@@ -61,8 +64,12 @@ export function AccountActionDialog({
     if (!targetId || entry) return;
     const ctrl = new AbortController();
     setImpactError('');
-    apiRequest<{ affectedSessions: number }>(`/api/auth/users/${encodeURIComponent(targetId)}/impact`, { signal: ctrl.signal })
-      .then(result => { if (!ctrl.signal.aborted) setImpact(result.affectedSessions); })
+    apiRequest<{ affectedSessions: number; canDisableImmediately?: boolean }>(`/api/auth/users/${encodeURIComponent(targetId)}/impact`, { signal: ctrl.signal })
+      .then(result => {
+        if (ctrl.signal.aborted) return;
+        setImpact(result.affectedSessions);
+        setCanDisableImmediately(result.canDisableImmediately === true);
+      })
       .catch(() => { if (!ctrl.signal.aborted) setImpactError('暂时无法读取当前会话'); });
     return () => ctrl.abort();
   }, [targetId, entry, impactAttempt]);
@@ -151,7 +158,7 @@ export function AccountActionDialog({
             {!entry || canConfirm ? (
               <Button type="submit" variant={canConfirm && !rejecting ? 'destructive' : 'default'}
                 disabled={busy || (!entry && impact === null) || (canConfirm && !rejecting && typed !== targetName)}>
-                {busy ? '正在保存' : !entry ? owner ? '下一步' : '提交申请' : rejecting ? '退回申请' : '确认并执行'}
+                {busy ? '正在保存' : !entry ? directDisable ? '停用账号' : owner ? '下一步' : '提交申请' : rejecting ? '退回申请' : '确认并执行'}
               </Button>
             ) : null}
             {canConfirm ? <Button type="button" variant="outline" disabled={busy}

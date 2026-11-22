@@ -1,3 +1,4 @@
+export const ACCOUNT_SIGNOUT_PROOF_COOKIE = 'cds_signout_proof';
 export const GH_SESSION_COOKIE = 'cds_gh_session';
 export const LEGACY_SESSION_COOKIE = 'cds_token';
 export const SSO_SESSION_COOKIE = 'cds_sso_session';
@@ -6,7 +7,7 @@ export function sessionCookieName(name: string, hostSessionCookies = false): str
   return hostSessionCookies ? `__Host-${name}` : name;
 }
 
-export const CDS_BROWSER_COOKIE_NAMES = [GH_SESSION_COOKIE, LEGACY_SESSION_COOKIE, SSO_SESSION_COOKIE]
+export const CDS_BROWSER_COOKIE_NAMES = [GH_SESSION_COOKIE, LEGACY_SESSION_COOKIE, SSO_SESSION_COOKIE, ACCOUNT_SIGNOUT_PROOF_COOKIE]
   .flatMap(name => [name, sessionCookieName(name, true)]);
 
 export function readBrowserCookie(header: string | undefined, name: string): string | undefined {

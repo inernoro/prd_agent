@@ -46,6 +46,9 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (!project || !canHumanAccessProject(req, state, project.id)) return false;
       return true;
     };
+    // The account router bounds both the subject and the operation against current administrator grants.
+    if (kind === 'auth' && id === 'users' && segments.length === 4 && segments[3] === 'projects'
+      && (method === 'GET' || method === 'PUT')) { next(); return; }
     if (kind === 'auth' && id === 'users' && segments.length === 5 && segments[3] === 'projects'
       && method === 'POST' && typeof req.body?.previewRequestId === 'string' && checkProject(segments[4])) {
       next(); return;

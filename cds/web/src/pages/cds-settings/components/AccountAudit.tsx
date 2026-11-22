@@ -7,7 +7,7 @@ import { actionLabels, actionStateLabels, listAccountActionAudit, type AccountAc
 import { EmptyBlock, ErrorBlock, Field, LoadingBlock, Section } from '../components';
 import { AccountActionFacts, accountInputClass } from './AccountActionDialog';
 
-export function AccountAudit({ canViewAll }: { canViewAll: boolean }): JSX.Element {
+export function AccountAudit({ canViewAll, canFilterAccounts = false }: { canViewAll: boolean; canFilterAccounts?: boolean }): JSX.Element {
   const [account, setAccount] = useState('');
   const [action, setAction] = useState('');
   const [from, setFrom] = useState('');
@@ -23,7 +23,7 @@ export function AccountAudit({ canViewAll }: { canViewAll: boolean }): JSX.Eleme
   function applyFilter(event: FormEvent): void {
     event.preventDefault();
     const query = new URLSearchParams();
-    if (account.trim() && canViewAll) query.set('targetId', account.trim());
+    if (account.trim() && (canViewAll || canFilterAccounts)) query.set('targetId', account.trim());
     if (action) query.set('action', action);
     if (status) query.set('status', status);
     if (from) query.set('from', new Date(`${from}T00:00:00`).toISOString());
@@ -52,7 +52,7 @@ export function AccountAudit({ canViewAll }: { canViewAll: boolean }): JSX.Eleme
     <Section title="账号审计" description="查阅申请、逐次确认和执行回执。"
       actions={canViewAll ? <Button variant="outline" onClick={() => setBackfillOpen(true)}>补录历史事件</Button> : undefined}>
       <form onSubmit={applyFilter} className="mb-4 flex flex-wrap items-end gap-3">
-        {canViewAll ? <Field label="账号编号">
+        {(canViewAll || canFilterAccounts) ? <Field label="账号编号">
           <input aria-label="账号编号" className={accountInputClass} value={account} onChange={event => setAccount(event.target.value)} />
         </Field> : null}
         <Field label="操作">

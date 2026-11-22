@@ -10,7 +10,7 @@ import type { CdsPasskeyStore } from '../domain/passkey.js';
 import type { AuthService } from '../services/auth-service.js';
 import { readBrowserCookie } from '../services/browser-session-cookies.js';
 import { ExpiringTokens } from '../services/expiring-tokens.js';
-import { buildLegacyLogoutCookie, buildLogoutCookie, buildSessionCookie, buildSsoLogoutCookie, GH_SESSION_COOKIE, sessionCookieName } from './auth.js';
+import { buildLegacyLogoutCookie, buildLogoutCookie, buildAccountSessionCookies, buildSsoLogoutCookie, GH_SESSION_COOKIE, sessionCookieName } from './auth.js';
 
 const CHALLENGE_COOKIE = '__Host-cds-passkey';
 const CHALLENGE_TTL_MS = 2 * 60_000;
@@ -200,7 +200,7 @@ export function createPasskeyRouter({ origin, auth, store, enabled }: PasskeyRou
       userAgent: req.get('user-agent') || null, ipAddress: req.ip || null, passkeyAuthenticated: true,
     });
     await auth.recordActivity({ userId: user.id, userLogin: user.username || user.githubLogin, action: 'passkey.login', summary: '使用通行密钥登录' });
-    res.append('Set-Cookie', [buildSessionCookie(session.token, session.expiresAt, true, true), buildLegacyLogoutCookie(true, true), buildSsoLogoutCookie(true, true)]);
+    res.append('Set-Cookie', [...buildAccountSessionCookies(session, true, true), buildLegacyLogoutCookie(true, true), buildSsoLogoutCookie(true, true)]);
     res.json({ success: true });
   }));
 

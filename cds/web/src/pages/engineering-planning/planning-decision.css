@@ -139,16 +139,8 @@ a.ep-decision-source { color: color-mix(in srgb, var(--ep-info) 77%, var(--ep-fg
   .ep-advancement-board { grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(0, 1fr)); }
 }
 
-@media (700px < width <= 1200px) {
-  .ep-advancement-board {
-    grid-template-columns: repeat(4, minmax(250px, 1fr));
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: 4px;
-    scrollbar-width: thin;
-    scroll-snap-type: x proximity;
-  }
-  .ep-advancement-lane { scroll-snap-align: start; }
+@media (700px < width <= 960px) {
+  .ep-advancement-board { grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 0; }
 }
 
 @media (width <= 700px) {

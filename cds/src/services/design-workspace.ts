@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
-  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignSharePreparation, FrameworkResolutions,
+  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
 import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, frameworkInUse, frameworkMaterialCandidates } from '../shared/design-workspace.js';
@@ -9,8 +9,8 @@ import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
 import {
-  designCommit, designDigest, designId, designPngDimensions, designRecord, designSourcePath, invalidDesign, localDesignPath,
-  parseFrameworkCharter, readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
+  designCommit, designDigest, designId, designPngDimensions, designRecord, designScopeId, designSourcePath, invalidDesign, localDesignPath,
+  parseDesignScope, parseFrameworkCharter, readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
 } from './design-package.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revision-store.js';
@@ -24,21 +24,23 @@ type Receipt = {
 type RequestReceipt = { key: string; fingerprint: string; result: Receipt['result'] };
 export type DesignWorkspaceCommit = {
   projectId: string; revision: number; request: RequestReceipt; assets?: ProjectRevisionAsset[];
-  design?: { id: string; designKey?: string; version?: DesignVersion; comment?: DesignComment; run?: DesignRun; feedback?: DesignFeedback;
+  design?: { id: string; designKey?: string; scope?: DesignScope; version?: DesignVersion; comment?: DesignComment; run?: DesignRun; feedback?: DesignFeedback;
     frozen?: number; freeze?: NonNullable<DesignEntry['freezes']>[number]; unfreeze?: NonNullable<DesignEntry['unfreezes']>[number];
     pullRequest?: number; reviewRequested?: boolean;
     reviewers?: DesignReviewer[]; notifyReviewersAt?: string; sharePreparation?: DesignSharePreparation;
     implementation?: { version: number; screens: DesignImplementation[] } };
   framework?: DesignFramework;
+  system?: DesignSystem;
   brief?: { designKey: string; value: DesignRequirement | null };
 };
-type Changes = Pick<DesignWorkspaceCommit, 'assets' | 'design' | 'framework' | 'brief'>;
+type Changes = Pick<DesignWorkspaceCommit, 'assets' | 'design' | 'framework' | 'system' | 'brief'>;
 type Preview = { commit: string; url: string };
 type WorkspaceState = {
   revision: number; designs: Map<string, DesignEntry>; frameworks: Map<string, DesignFramework>;
   requests: Map<string, RequestReceipt>; assets: Map<string, number>;
   reviewNotices: Map<string, DesignReviewNotice[]>;
   requirements: Map<string, DesignRequirement>;
+  systems: Map<string, DesignSystem>;
   deliveryFiles: Map<string, { archiveId: string; root: string; file: DesignDeliveryFile }>;
 };
 type Context = { projectId: string; actor: DesignActor; state: WorkspaceState; now: string };
@@ -79,11 +81,35 @@ const replace = <T extends { id: string }>(rows: T[], row: T) => {
   else rows[index] = row;
 };
 
+function configuredModule(state: WorkspaceState, scope: DesignScope) {
+  const system = state.systems.get(scope.systemId);
+  const module = system?.modules.find(row => row.id === scope.moduleId);
+  if (!module) return invalidDesign('所选系统或模块未在当前项目登记，请先回读设计接入清单');
+  return { system: system!, module };
+}
+
+function validateScope(state: WorkspaceState, scope: DesignScope) {
+  const configured = configuredModule(state, scope);
+  for (const related of scope.related ?? []) configuredModule(state, related);
+  return configured;
+}
+
+function adoptedFrameworkVersion(framework?: DesignFramework): number | undefined {
+  return framework?.versions.filter(revision => !revision.charter || revision.charter.status === 'adopted').at(-1)?.version;
+}
+
+function visibleRequirements(state: WorkspaceState) {
+  const scopes = new Map([...state.designs.values()].filter(row => row.designKey && row.scope).map(row => [row.designKey, row.scope!]));
+  return structuredClone([...state.requirements.values()].map(row =>
+    !row.scope && scopes.has(row.designKey) ? { ...row, scope: scopes.get(row.designKey) } : row));
+}
+
 function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
   state.revision = commit.revision;
   state.requests.set(commit.request.key, commit.request);
   for (const asset of commit.assets ?? []) state.assets.set(asset.id, commit.revision);
   if (commit.framework) state.frameworks.set(commit.framework.id, commit.framework);
+  if (commit.system) state.systems.set(commit.system.id, commit.system);
   if (commit.brief) {
     if (commit.brief.value) state.requirements.set(commit.brief.designKey, commit.brief.value);
     else state.requirements.delete(commit.brief.designKey);
@@ -95,6 +121,7 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
       : { id: update.id, projectId: commit.projectId, versions: [], comments: [], runs: [] };
     state.designs.set(update.id, design);
     if (update.designKey !== undefined) design.designKey = update.designKey;
+    if (update.scope) design.scope = update.scope;
     if (update.version) {
       design.versions.push(update.version);
       const delivery = update.version.delivery;
@@ -264,7 +291,7 @@ export class DesignWorkspaceService {
     if (base && !commits.length) return base;
     const state: WorkspaceState = { revision: base?.revision ?? 0, requests: new Map(base?.requests),
       designs: new Map(base?.designs), frameworks: new Map(base?.frameworks), assets: new Map(base?.assets), reviewNotices: new Map(base?.reviewNotices),
-      requirements: new Map(base?.requirements), deliveryFiles: new Map(base?.deliveryFiles) };
+      requirements: new Map(base?.requirements), systems: new Map(base?.systems), deliveryFiles: new Map(base?.deliveryFiles) };
     for (const commit of commits) {
       if (commit.projectId !== projectId || commit.revision !== state.revision + 1) throw new Error('Design revision history is inconsistent');
       apply(state, commit);
@@ -326,7 +353,8 @@ export class DesignWorkspaceService {
       if (run !== undefined) entry.currentSignoffRunId = run?.id ?? null;
     }
     return { projectId, designs, frameworks: structuredClone([...state.frameworks.values()]),
-      requirements: structuredClone([...state.requirements.values()]),
+      requirements: visibleRequirements(state),
+      ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
         steward: actor.steward === true, actorId: actor.id } };
@@ -338,17 +366,21 @@ export class DesignWorkspaceService {
     const canWrite = actor.permissions.includes('write');
     return {
       protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor) }, keyFormat: 'module/draft', intents: ['create', 'revise'],
-      requirements: structuredClone([...state.requirements.values()]),
+      requirements: visibleRequirements(state),
+      ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       designs: [...state.designs.values()].map(entry => {
         const latest = entry.versions.at(-1)!;
         return { designId: entry.id, designKey: entry.designKey, title: latest.title, latestVersion: latest.version,
           sourceCommit: latest.sourceCommit, sourcePaths: registeredDesignPaths(entry),
+          ...(entry.scope ? { scope: structuredClone(entry.scope) } : {}),
           canRevise: canWrite && (actor.steward === true || latest.publisher.id === actor.id),
           openFeedbackCount: entry.feedback?.filter(item => item.status !== 'closed').length ?? 0 };
       }),
       frameworks: [...state.frameworks.values()].map(frame => {
         const latest = frame.versions.at(-1)!;
-        return { id: frame.id, title: latest.title, latestVersion: latest.version };
+        const adoptedVersion = adoptedFrameworkVersion(frame);
+        return { id: frame.id, title: latest.title, latestVersion: latest.version,
+          ...(adoptedVersion ? { adoptedVersion } : {}) };
       }),
     };
   }
@@ -441,7 +473,7 @@ export class DesignWorkspaceService {
       catch { return invalidDesign('评审账号须是 JSON 数组'); }
     }
     const archiveId = randomUUID();
-    const frameworkChecks = new Map<number, DesignFrameworkCheck>();
+    const frameworkChecks = new Map<string, DesignFrameworkCheck>();
     // Legacy receipts fingerprinted the ZIP bytes. Intake v1 reuses the Git package's file digest across repacking.
     const packageFingerprint = intent ? loaded.filesSha256 : loaded.sha256;
     return this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: packageFingerprint, resolves,
@@ -475,23 +507,34 @@ export class DesignWorkspaceService {
         }
         if (existing?.versions.some(version => version.sourceCommit === sourceCommit)) conflict('该稿件已经发布过此提交');
         const reviewers = reviewerIds === undefined ? existing?.reviewers : await this.reviewers(projectId, reviewerIds);
-        const revisions = loaded.framework ? state.frameworks.get(loaded.framework)?.versions : undefined;
-        const frameworkVersion = loaded.frameworkVersion ?? (previous?.framework === loaded.framework ? previous?.frameworkVersion : undefined)
-          ?? revisions?.at(-1)?.version;
+        const sharedScope = state.requirements.get(designKey ?? existing?.designKey ?? '')?.scope;
+        const registeredScope = existing?.scope ?? sharedScope;
+        if (loaded.scope && registeredScope && (loaded.scope.systemId !== registeredScope.systemId || loaded.scope.moduleId !== registeredScope.moduleId)) {
+          intakeConflict('稿件已有主归属。请沿用该系统和模块，或请项目管理者调整归属后再续版');
+        }
+        const scope = loaded.scope ?? registeredScope;
+        const configured = scope && validateScope(state, scope);
+        const framework = loaded.framework ?? previous?.framework ?? configured?.module.framework ?? configured?.system.framework;
+        const frame = framework ? state.frameworks.get(framework) : undefined;
+        const revisions = frame?.versions;
+        const inheritedVersion = adoptedFrameworkVersion(frame);
+        const frameworkVersion = loaded.frameworkVersion ?? (previous?.framework === framework ? previous?.frameworkVersion : undefined)
+          ?? (loaded.framework ? revisions?.at(-1)?.version : inheritedVersion);
         const frameworkRevision = revisions?.find(revision => revision.version === frameworkVersion);
-        if (loaded.framework && !frameworkRevision) invalidDesign('稿件引用的框架版本不在当前项目');
+        if (framework && !frameworkRevision) invalidDesign('稿件引用的框架版本不在当前项目');
         if (Object.keys(resolves).some(commentId => !existing?.comments.some(comment => comment.id === commentId && !comment.closed))) {
           invalidDesign('只能声明处理此稿件仍开放的评论');
         }
-        const { title, sha256, rationale, screens, acceptance, spec, checks, framework, group, tags, decisionIds } = loaded;
+        const { title, sha256, rationale, screens, acceptance, spec, checks, group, tags, decisionIds } = loaded;
         const source = !privateUpload && sourcePath && await this.deps.sourcePackage?.(projectId, sourceCommit, sourcePath);
         if (requireGit && !source) rejectPlanning(409, 'design_git_source_required', '项目 Git 尚无法核验此稿件的提交和目录，请同步已提交的稿件再发布。');
         if (source && (await readDesignPackage(source)).filesSha256 !== loaded.filesSha256) conflict('上传内容与项目 Git 中的提交和目录不一致');
         let frameworkCheck: DesignFrameworkCheck | undefined;
         if (framework && frameworkRevision) {
-          frameworkCheck = frameworkChecks.get(frameworkRevision.version) ?? await checkDesignFramework(framework,
+          const key = framework + '/' + frameworkRevision.version;
+          frameworkCheck = frameworkChecks.get(key) ?? await checkDesignFramework(framework,
             frameworkRevision, sourceCommit, loaded.prototype, screens, this.deps.frameworkProbe);
-          frameworkChecks.set(frameworkRevision.version, frameworkCheck);
+          frameworkChecks.set(key, frameworkCheck);
         }
         // Keep one private archive per revision. Preview and screenshot IDs point into
         // this archive, so large packages do not store the same bytes twice.
@@ -511,11 +554,12 @@ export class DesignWorkspaceService {
           prototypeSha256: byPath.get(prototype)!.sha256, delivery,
           sourcePath, sourceVerification: privateUpload ? 'private-upload' : source ? 'git' : 'declared',
           createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
+          ...(scope ? { scope } : {}),
           ...(loaded.frameworkCharter ? { frameworkCharter: loaded.frameworkCharter } : {}),
           ...(frameworkCheck ? { frameworkCheck } : {}),
           ...(loaded.renders.length ? { renders } : {}) };
         return { result: { type: 'package', designId: id, version: version.version },
-          changes: { design: { id, version, reviewers, ...(designKey && !existing?.designKey ? { designKey } : {}),
+          changes: { design: { id, version, reviewers, ...(scope ? { scope } : {}), ...(designKey && !existing?.designKey ? { designKey } : {}),
             reviewRequested: Boolean(reviewers?.length) || params.review === 'true' || Boolean(existing?.frozen),
             ...(reviewers?.length ? { notifyReviewersAt: now } : {}) }, assets } };
       });
@@ -624,6 +668,11 @@ export class DesignWorkspaceService {
       if (!actor.steward) forbidden('请由项目管理者确认将此需求交给设计');
       return this.mutate(projectId, actor, requestId, input, context => this.updateRequirement(type, input, context));
     }
+    if (type === 'scope.register' || type === 'scope.assign') {
+      review(actor);
+      if (!actor.steward) forbidden('请由项目管理者配置设计归属');
+      return this.mutate(projectId, actor, requestId, input, context => this.updateScope(type, input, context));
+    }
     if (type === 'share.prepare') {
       requireProjectRead(actor);
       review(actor);
@@ -701,9 +750,47 @@ export class DesignWorkspaceService {
       changes: { design: { id: entry.id, implementation: { version: version.version, screens } } } };
   }
 
+  private updateScope(type: 'scope.register' | 'scope.assign', input: Record<string, unknown>, { state }: Context): Update {
+    if (type === 'scope.assign') {
+      designRecord(input, '稿件归属', ['type', 'requestId', 'designId', 'systemId', 'moduleId', 'related']);
+      const id = designId(input.designId, '稿件编号');
+      const entry = state.designs.get(id) ?? missing('该稿件不存在');
+      const scope = parseDesignScope({ systemId: input.systemId, moduleId: input.moduleId, related: input.related });
+      validateScope(state, scope);
+      const shared = entry.designKey && state.requirements.get(entry.designKey)?.scope;
+      if (shared && (scope.systemId !== shared.systemId || scope.moduleId !== shared.moduleId)) {
+        conflict('同一接入标识的稿件与已交接需求须归到同一模块');
+      }
+      return { result: { type, designId: id }, changes: { design: { id, scope } } };
+    }
+    designRecord(input, '登记设计归属', ['type', 'requestId', 'systemId', 'systemName', 'moduleId', 'moduleName', 'framework', 'note']);
+    const id = designScopeId(input.systemId, '系统编号');
+    const prior = state.systems.get(id);
+    const name = input.systemName === undefined && prior ? prior.name : planningText(input.systemName, '系统名称', 80);
+    const framework = input.framework == null ? undefined : designId(input.framework, '框架编号');
+    if (framework && adoptedFrameworkVersion(state.frameworks.get(framework)) === undefined) {
+      invalidDesign('默认框架须在当前项目有可采用版本');
+    }
+    const modules = [...(prior?.modules ?? [])];
+    const system: DesignSystem = { id, name, modules, ...(prior?.framework ? { framework: prior.framework } : {}) };
+    if (input.moduleId === undefined) {
+      if (input.moduleName !== undefined || input.note !== undefined) invalidDesign('请提供模块编号');
+      if (input.framework !== undefined) system.framework = framework;
+    } else {
+      const moduleId = designScopeId(input.moduleId, '模块编号');
+      const former = modules.find(row => row.id === moduleId);
+      const moduleName = input.moduleName === undefined && former ? former.name : planningText(input.moduleName, '模块名称', 80);
+      const note = input.note === null ? undefined : optionalText(input.note, '模块适用说明', 1000) ?? former?.note;
+      replace(modules, { id: moduleId, name: moduleName,
+        framework: input.framework === undefined ? former?.framework : framework, ...(note ? { note } : {}) });
+    }
+    return { result: { type, id }, changes: { system } };
+  }
+
   private async updateRequirement(type: 'brief.share' | 'brief.revoke', input: Record<string, unknown>,
-    { projectId, state, now }: Context): Promise<Update> {
-    designRecord(input, '设计需求交接', ['type', 'requestId', 'planId', 'designKey', 'expectedVersion']);
+    { projectId, actor, state, now }: Context): Promise<Update> {
+    designRecord(input, '设计需求交接', ['type', 'requestId', 'planId', 'designKey', 'expectedVersion',
+      ...(type === 'brief.share' ? ['systemId', 'moduleId'] : [])]);
     const designKey = designIntakeKey(input.designKey);
     const planId = designId(input.planId, '计划编号');
     const expectedVersion = number(input.expectedVersion, '计划版本');
@@ -721,8 +808,18 @@ export class DesignWorkspaceService {
     const approved = await this.deps.approvedPlanFor?.(projectId, planId);
     if (!approved) return missing('此项目没有已确认并附原文的计划');
     if (approved.planVersion !== expectedVersion) return conflict('计划已更新，请刷新计划并核对要共享的版本');
-    if (prior?.planVersion === expectedVersion) return { result, changes: {} };
-    return { result, changes: { brief: { designKey, value: { ...prior, designKey, planId, sharedAt: now, ...approved } } } };
+    const draftScope = [...state.designs.values()].find(row => row.designKey === designKey)?.scope;
+    const selected = input.systemId === undefined && input.moduleId === undefined ? undefined
+      : parseDesignScope({ systemId: input.systemId, moduleId: input.moduleId });
+    const scope = selected ?? prior?.scope ?? draftScope;
+    if (scope) validateScope(state, scope);
+    if (draftScope && scope && (scope.systemId !== draftScope.systemId || scope.moduleId !== draftScope.moduleId)) {
+      conflict('同一接入标识的稿件与已交接需求须归到同一模块');
+    }
+    if (prior?.planVersion === expectedVersion && !selected) return { result, changes: {} };
+    return { result, changes: { brief: { designKey, value: { ...prior, ...approved, designKey, planId,
+      sharedAt: prior?.planVersion === expectedVersion ? prior.sharedAt : now, owner: prior?.owner ?? identity(actor),
+      ...(scope ? { scope } : {}) } } } };
   }
 
   private prepareShare(input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {

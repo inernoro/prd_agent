@@ -274,11 +274,11 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
   const titleInput = useRef<HTMLInputElement>(null);
   const { hash } = useLocation();
   useEffect(() => {
-    if (!hash.startsWith('#dw-feedback-')) return;
+    if (hash !== '#dw-delivery-feedback' && !hash.startsWith('#dw-feedback-')) return;
     const target = document.getElementById(hash.slice(1));
-    if (!(target instanceof HTMLDetailsElement)) return;
-    target.open = true;
-    target.scrollIntoView({ block: 'start' });
+    if (target instanceof HTMLDetailsElement) target.open = true;
+    target?.scrollIntoView({ block: 'start' });
+    target?.focus({ preventScroll: true });
   }, [entry.id, hash]);
   const composeForFile = (path: string) => {
     if (!composer.current || !titleInput.current) return;
@@ -331,8 +331,6 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
       </div>}
       {delivery?.warnings.length ? <ul className="dw-delivery-warnings">{delivery.warnings.map(message => <li key={message}>{message}</li>)}</ul> : null}
     </section>
-    <DeliveryChecks version={version} openScreen={openScreen} />
-    <DeliveryFiles entry={entry} version={version} onFeedback={permissions.feedback ? composeForFile : undefined} />
     <section className="dw-surface dw-delivery-card" aria-labelledby="dw-delivery-feedback">
       <header className="dw-delivery-heading"><div><h2 id="dw-delivery-feedback" tabIndex={-1}>实施反馈</h2>
         <small>{pendingFeedback} 条待处理 · 跨版本保留</small></div><MessageSquare /></header>
@@ -356,5 +354,7 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
         busy={busy} command={command} openScreen={openScreen} openVersion={openVersion} />)
         : <p className="dw-muted">还没有实施反馈。</p>}
     </section>
+    <DeliveryChecks version={version} openScreen={openScreen} />
+    <DeliveryFiles entry={entry} version={version} onFeedback={permissions.feedback ? composeForFile : undefined} />
   </div>;
 }

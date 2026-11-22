@@ -631,6 +631,7 @@ export async function listKnowledgeBaseConnections(): Promise<KnowledgeBaseConne
 export type CdsAuthProvider = 'github' | 'local' | 'legacy' | 'sso';
 
 export interface CdsPublicUser {
+  canManageAccount?: boolean;
   id: string;
   username: string | null;
   githubLogin: string;

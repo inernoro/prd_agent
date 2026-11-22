@@ -18,6 +18,8 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import type { CdsSession } from '../domain/auth.js';
+import { buildAccountSignoutCookie } from '../services/account-signout-proof.js';
 import { AuthService, AuthServiceError } from '../services/auth-service.js';
 import { GH_SESSION_COOKIE, LEGACY_SESSION_COOKIE, SSO_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
 export { GH_SESSION_COOKIE, LEGACY_SESSION_COOKIE, SSO_SESSION_COOKIE, sessionCookieName } from '../services/browser-session-cookies.js';
@@ -48,6 +50,11 @@ export function buildSessionCookie(token: string, expiresAt: string, secure: boo
   ];
   if (secure) parts.push('Secure');
   return parts.join('; ');
+}
+
+export function buildAccountSessionCookies(session: CdsSession, secure: boolean, hostSessionCookies = false): string[] {
+  return [buildSessionCookie(session.token, session.expiresAt, secure, hostSessionCookies),
+    buildAccountSignoutCookie(session, secure, hostSessionCookies)];
 }
 
 export function buildLogoutCookie(secure: boolean, hostSessionCookies = false): string {
@@ -135,7 +142,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       });
 
       res.append('Set-Cookie', [
-        buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure, hostSessionCookies),
+        ...buildAccountSessionCookies(result.session, cookieSecure, hostSessionCookies),
         buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
         buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
@@ -226,7 +233,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     // 漏掉的话：服务端过期时间被推后（后续中间件看到「还很新鲜」就不再续期），
     // 而浏览器那份 cookie 仍在原时间点死掉 —— 用户照样掉登录。
     if (result.renewed && token) {
-      res.setHeader('Set-Cookie', buildSessionCookie(token, session.expiresAt, cookieSecure, hostSessionCookies));
+      res.setHeader('Set-Cookie', buildAccountSessionCookies(session, cookieSecure, hostSessionCookies));
     }
     res.json({
       user: {

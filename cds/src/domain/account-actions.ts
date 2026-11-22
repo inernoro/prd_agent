@@ -16,6 +16,8 @@ export interface AccountActionRequest {
   /** Revision of the authentication state at the time of the request. */
   targetRevision?: string;
   affectedSessions: number;
+  sessionSnapshot?: string[];
+  managementMode?: 'offline';
   scope?: 'all-system-sessions';
   reason: string;
   requestedByAccountId: string;
@@ -45,6 +47,7 @@ export interface AccountActionStore {
 
 export interface AccountActionFilter {
   targetId?: string;
+  targetIds?: string[];
   requestedByAccountId?: string;
   action?: AccountAction;
   from?: string;

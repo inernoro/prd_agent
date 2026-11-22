@@ -397,6 +397,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const notificationIdentity = authStatus?.user?.id || authStatus?.user?.username || authStatus?.user?.githubLogin || undefined;
   const previewAccessIdentity = !previewInstance && authStatus?.previewAccessNotices ? notificationIdentity : undefined;
   const designReviewIdentity = !previewInstance && authStatus?.designReviewNotices ? notificationIdentity : undefined;
+  const accountApprovalIdentity = !previewInstance && authStatus?.accountApprovalNotices ? notificationIdentity : undefined;
   const [mirrorSummary, setMirrorSummary] = useState<PreviewMirrorSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -552,7 +553,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
       {canManageSettings || previewAccessIdentity || designReviewIdentity ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}
         onOpenOperatorRequests={() => setOperatorOpenRequest(value => value + 1)}
-        includeOperations={canManageSettings} previewAccessIdentity={previewAccessIdentity} designReviewIdentity={designReviewIdentity} /> : null}
+        includeOperations={canManageSettings} previewAccessIdentity={previewAccessIdentity} designReviewIdentity={designReviewIdentity}
+        accountApprovalIdentity={accountApprovalIdentity} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>

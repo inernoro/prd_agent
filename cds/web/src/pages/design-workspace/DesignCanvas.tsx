@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, ListMinus, MessageSquare, Minus, Moon, Plus,
 import { Link } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import type { DesignComment, DesignEntry, DesignRun, DesignScreen, DesignTheme, DesignVersion } from '../../../../src/shared/design-workspace';
+import previewContract from '../../../../src/shared/design-preview-contract.json';
 import { designAcceptanceTarget, designViewports } from '../../../../src/shared/design-workspace';
 import { designArtifact, designDate, type DesignCommand } from './design-ui';
 import { compareDesignStructure } from './design-structure';
@@ -88,11 +89,38 @@ type FrameProps = {
   onLayout?: (boxes: LayoutBox[]) => void; boxes?: LayoutChange[]; screenshot?: string; decorative?: boolean;
 };
 
+type PreviewReport = { runtime: number; blocked: number; console: number; directives: string[] };
+const entryFailures = {
+  'control-unavailable': '找不到设定的入口控件',
+  'readiness-timeout': '等待画面就绪超时',
+  'prototype-error': '原型脚本出错',
+  'no-response': '原型未返回就绪信息',
+} as const;
+const previewCount = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 99 ? value : 0;
+function previewReport(value: Partial<PreviewReport> | undefined): PreviewReport {
+  return { runtime: previewCount(value?.runtime), blocked: previewCount(value?.blocked), console: previewCount(value?.console),
+    directives: Array.isArray(value?.directives) ? value.directives.slice(0, 6).filter(key => typeof key === 'string' && /^[a-z-]{1,24}$/.test(key)) : [] };
+}
+
 export function DesignFrame({ projectId, version, screen: scene, theme, zoom, comments, pin, placing, onPin, onComment, onScrollFrom, scroll, onKey, onLayout, boxes, screenshot, decorative }: FrameProps) {
   const screen = scene ?? (version && !version.screens.length ? standalonePrototype : undefined);
   const outer = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
-  const [entryWarning, setEntryWarning] = useState(false);
+  const [preview, setPreview] = useState<{ requestId: string; identity: string; report?: PreviewReport; failure?: keyof typeof entryFailures }>();
+  const pendingEntry = useRef<{ id: string; timeout: number }>();
+  const [staticFor, setStaticFor] = useState<string>();
+  const source = screen && version
+    ? `${designArtifact(projectId, version.prototypeId)}?theme=${theme}${screen.route.startsWith('#') ? screen.route : '#' + screen.route}`
+    : null;
+  const identity = source && source + '/' + screen?.id;
+  const fallback = screen && version?.renders?.[screen.id]?.[theme];
+  const check = preview?.identity === identity ? preview : undefined;
+  const cannotFrame = check?.report?.directives.some(value => value === 'frame-src' || value === 'child-src');
+  const useFallback = Boolean(fallback && identity && ((check?.failure || cannotFrame)
+    ? staticFor !== 'live:' + identity : staticFor === identity));
+  const displayed = screenshot ?? (useFallback && fallback ? designArtifact(projectId, fallback.id) : undefined);
+  const errors = (check?.report?.runtime ?? 0) + (check?.report?.console ?? 0);
+  const blocked = check?.report?.blocked ?? 0;
   const peers = screen && version?.screens.filter(row => row.route === screen.route && row.viewport === screen.viewport);
   const legacyLabel = peers && peers.length > 1 && peers[0].id !== screen?.id ? screen?.name : undefined;
   const needsEntry = Boolean(screen?.entryActions?.length || screen?.entryReadySelector || legacyLabel);
@@ -119,7 +147,16 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
         onLayout(data.boxes.filter((box: LayoutBox) => box && typeof box.id === 'string' && box.id.length <= 100
           && typeof box.stamp === 'number' && [box.x, box.y, box.width, box.height].every(sane)));
       }
-      if (data?.type === 'cds-design-entry-result' && typeof data.reached === 'boolean') setEntryWarning(!data.reached);
+      const request = pendingEntry.current;
+      if (request && data?.type === 'cds-design-diagnostics') {
+        setPreview(current => current?.requestId === request.id ? { ...current, report: previewReport(data.diagnostics) } : current);
+      }
+      if (request && data?.type === 'cds-design-entry-result' && data.requestId === request.id && typeof data.reached === 'boolean') {
+        window.clearTimeout(request.timeout);
+        const reason = typeof data.reason === 'string' && Object.hasOwn(entryFailures, data.reason) ? data.reason as keyof typeof entryFailures : 'readiness-timeout';
+        setPreview(current => current?.requestId === request.id ? { ...current, report: previewReport(data.diagnostics),
+          failure: data.reached ? undefined : reason } : current);
+      }
       if (data?.type === 'cds-design-key' && ['ArrowLeft', 'ArrowRight', 'Escape', 'c', 'C'].includes(data.key)) onKey?.(data.key);
     };
     window.addEventListener('message', listen);
@@ -128,25 +165,42 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
   useEffect(() => {
     if (scroll) frame.current?.contentWindow?.postMessage({ type: 'cds-design-scroll', ...scroll }, '*');
   }, [scroll]);
+  useEffect(() => () => {
+    if (pendingEntry.current) window.clearTimeout(pendingEntry.current.timeout);
+    pendingEntry.current = undefined;
+  }, [identity]);
   const place = (event: MouseEvent<HTMLButtonElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const keyboard = event.detail === 0;
     onPin?.({ x: keyboard ? .5 : (event.clientX - rect.left) / rect.width, y: keyboard ? .5 : (event.clientY - rect.top) / rect.height });
   };
-  const source = screen && version
-    ? `${designArtifact(projectId, version.prototypeId)}?theme=${theme}${screen.route.startsWith('#') ? screen.route : '#' + screen.route}`
-    : null;
   return <div className="dw-fit" ref={outer} aria-hidden={decorative || undefined}>
     {source ? <div className="dw-frame" style={{ width: width * scale, height: height * scale, colorScheme: theme }}>
-      {screenshot ? <img className="dw-frame-png" src={screenshot} alt={screen!.name + ' · V' + version!.version} /> :
-        <iframe key={screen!.id} ref={frame} title={screen!.name + ' · V' + version!.version} loading="lazy" src={source} tabIndex={decorative ? -1 : undefined}
+      {displayed && <img className="dw-frame-png" src={displayed} alt={screen!.name + ' · V' + version!.version} />}
+      {!screenshot && <iframe key={identity} ref={frame} title={screen!.name + ' · V' + version!.version} loading="lazy" src={source}
+          tabIndex={decorative ? -1 : undefined} hidden={useFallback}
           onLoad={event => {
-            setEntryWarning(false);
-            if (needsEntry) event.currentTarget.contentWindow?.postMessage({ type: 'cds-design-entry',
+            if (pendingEntry.current) window.clearTimeout(pendingEntry.current.timeout);
+            const id = String(performance.now());
+            const timeoutMs = screen!.entryTimeoutMs ?? previewContract.entryTimeoutMs;
+            setPreview({ requestId: id, identity: identity! });
+            pendingEntry.current = { id, timeout: window.setTimeout(() => {
+              setPreview(current => current?.requestId === id ? { ...current, failure: 'no-response' } : current);
+            }, timeoutMs + 600) };
+            event.currentTarget.contentWindow?.postMessage({ type: 'cds-design-entry', requestId: id, timeoutMs,
               actions: screen!.entryActions, ready: screen!.entryReadySelector, legacyLabel }, '*');
           }}
           sandbox="allow-scripts" referrerPolicy="no-referrer" style={{ width, height, transform: `scale(${scale})`, colorScheme: theme }} />}
-      {needsEntry && entryWarning && !screenshot && <p className="dw-entry-warning" role="status">未自动定位状态。可在画布内切到「{screen!.name}」。</p>}
+      {!decorative && !screenshot && (check?.failure || errors > 0 || blocked > 0) && <div className="dw-entry-warning" role="status">
+        {check?.failure && <span>{entryFailures[check.failure]}。</span>}
+        {errors > 0 && <span>原型报错 {errors} 条。</span>}
+        {blocked > 0 && <span>安全策略拦截 {blocked} 次{check?.report?.directives.length ? '（' + check.report.directives.join('、') + '）' : ''}。</span>}
+        {useFallback && <span>正在看交付包里的截图。</span>}
+        {fallback && <button className="ep-text-button" type="button" onClick={() => setStaticFor(useFallback ? 'live:' + identity : identity!)}>
+          {useFallback ? '看交互原型' : '看交付截图'}
+        </button>}
+        {needsEntry && check?.failure && !useFallback && check.failure !== 'no-response' && <span>可在画布内切换到「{screen!.name}」。</span>}
+      </div>}
       {boxes?.map((box, index) => <span aria-hidden className="dw-difference-box" data-tone={box.tone} key={box.id + index}
         style={{ left: box.x * 100 + '%', top: box.y * 100 + '%', width: box.width * 100 + '%', height: box.height * 100 + '%' }} />)}
       {comments?.map((comment, index) => <button type="button" className="dw-pin" key={comment.id}
@@ -181,16 +235,17 @@ export function CanvasSettings({ theme, onTheme, zoom, onZoom }: { theme: Design
 type CanvasProps = {
   entry: DesignEntry; version: DesignVersion; comparing: boolean; active: boolean; full?: boolean;
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
-  commandBusy: boolean; initialScreenId?: string; initialComparisonVersion?: number; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
+  commandBusy: boolean; initialScreenId?: string; initialCommentId?: string; initialComparisonVersion?: number; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
   const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
   const [zoom, setZoom] = useState<number | null>(null);
   const [selected, select] = useState(initialScreenId ?? version.screens[0]?.id);
   const [left, setLeft] = useState(() => entry.versions.find(row => row.version === initialComparisonVersion && row.version !== version.version)?.version
+    ?? (entry.frozen !== version.version ? entry.frozen : undefined)
     ?? entry.versions.find(row => row.version === version.version - 1)?.version ?? version.version);
   const [right, setRight] = useState<string>(String(version.version));
   const [implementationRun, setImplementationRun] = useState<string>();
@@ -200,8 +255,8 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const [all, showAll] = useState(false);
   const allGallery = useRef<HTMLDivElement>(null);
   const [galleryZoom, setGalleryZoom] = useState(25);
-  const [comments, showComments] = useState(false);
-  const [currentComment, setComment] = useState<string>();
+  const [comments, showComments] = useState(Boolean(initialCommentId));
+  const [currentComment, setComment] = useState(initialCommentId);
   const [placing, setPlacing] = useState(false);
   const [pin, setPin] = useState<Point>();
   const [body, setBody] = useState('');
@@ -224,6 +279,8 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const screen = screens[index];
   const visibleTheme = screen?.themes.includes(theme) ? theme : screen?.themes[0] ?? theme;
   const marks = entry.comments.filter(comment => comment.version === version.version && comment.screenId === screen?.id);
+  const earlierMarks = entry.comments.filter(comment => comment.version !== version.version
+    && (!comment.closed || comment.screenId === screen?.id));
   const focused = marks.find(comment => comment.id === currentComment);
   useEffect(() => {
     if (!all || !allGallery.current) return;
@@ -264,7 +321,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const structure = useMemo(() => compare && leftVersion && rightVersion ? compareDesignStructure(leftVersion, rightVersion) : [],
     [compare, leftVersion, rightVersion]);
   const reported = Object.entries(rightVersion?.resolves ?? {});
-  const commentCount = entry.comments.filter(item => item.version === version.version && !item.closed).length;
+  const commentCount = entry.comments.filter(item => !item.closed).length;
   const useLeftScroll = (next: { left: number; top: number }) => {
     if (next.left !== leftScroll?.left || next.top !== leftScroll?.top) setRightScroll(next);
   };
@@ -422,7 +479,17 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
             </form>}
           </article>;
         })}
-        {!marks.length && !pin && !placing && <p className="dw-muted">此画面还没有评论</p>}
+        {!marks.length && !pin && !placing && <p className="dw-muted">本版此画面还没有评论</p>}
+        {!!earlierMarks.length && <section className="dw-other-comments">
+          <h4>其他版本的画布评论</h4>
+          {earlierMarks.map(comment => <Link className="dw-change-list" key={comment.id}
+            to={'/design?' + new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(comment.version),
+              screen: comment.screenId, comment: comment.id })}>
+            <span>{comment.body.slice(0, 90)}</span><small>V{comment.version}{comment.closed ? ' · 已关闭' : ''}</small>
+          </Link>)}
+        </section>}
+        <Link className="ep-link" to={'/design?' + new URLSearchParams({ project: entry.projectId, design: entry.id,
+          version: String(version.version), tab: 'delivery' }) + '#dw-delivery-feedback'}>查看各版实施反馈</Link>
       </aside>}
     </div>
     {full && <nav className="dw-strip" aria-label="大屏画面列表">{screens.map((item, i) =>

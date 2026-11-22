@@ -23,20 +23,20 @@ import { AuthService, LocalAuthError } from '../services/auth-service.js';
 import {
   buildLegacyLogoutCookie,
   buildLogoutCookie,
-  buildSessionCookie,
+  buildAccountSessionCookies,
   buildSsoLogoutCookie,
   GH_SESSION_COOKIE,
 } from './auth.js';
 import { accountRole, toPublicUser, type AccountIdentityProvider, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
 import { AccountActionError, AccountActionsService, publicAccountAction } from '../services/account-actions.js';
 import type { StateService } from '../services/state.js';
-import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
+import { humanPrincipalId, canManageAccountScope, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
   markHumanProjectGrantRecovery, reconcileHumanAccessRestore, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 
 export interface LegacyLocalLoginResult {
   user: PublicCdsUser;
   setCookie: string;
-  proofCookie?: string;
+  proofCookies?: string[];
 }
 
 import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
@@ -150,7 +150,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         ip: clientIp(req),
       });
       res.setHeader('Set-Cookie', [
-        buildSessionCookie(session.token, session.expiresAt, cookieSecure, hostSessionCookies),
+        ...buildAccountSessionCookies(session, cookieSecure, hostSessionCookies),
         buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
         buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
@@ -185,7 +185,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
           legacy.setCookie,
           buildLogoutCookie(cookieSecure, hostSessionCookies),
           buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
-          ...(legacy.proofCookie ? [legacy.proofCookie] : []),
+          ...(legacy.proofCookies ?? []),
         ]);
         res.json({ user: legacy.user });
         return;
@@ -207,7 +207,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         ip: clientIp(req),
       });
       res.setHeader('Set-Cookie', [
-        buildSessionCookie(session.token, session.expiresAt, cookieSecure, hostSessionCookies),
+        ...buildAccountSessionCookies(session, cookieSecure, hostSessionCookies),
         buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
         buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
@@ -286,7 +286,9 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       const users = await authService.listUsers();
       res.setHeader('Cache-Control', 'private, no-store');
       res.json({
-        users: users.filter(user => me.isSystemOwner || user.id === me.id || accountRole(user) === 'member').map(toPublicUser),
+        users: users.filter(user => me.isSystemOwner || user.id === me.id || accountRole(user) === 'member').map(user => ({
+          ...toPublicUser(user), canManageAccount: canManageAccountScope(deps.stateService, me, user),
+        })),
       });
     } catch {
       res.status(503).json({ error: '账号列表读取失败，请重试' });
@@ -303,7 +305,9 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         res.status(404).json({ error: '当前管理范围内没有该账号' });
         return;
       }
-      res.json({ affectedSessions: await authService.countAccountSessions(user) });
+      const affectedSessions = await authService.countAccountSessions(user);
+      res.json({ affectedSessions, canDisableImmediately: affectedSessions === 0 && accountRole(user) === 'member'
+        && canManageAccountScope(deps.stateService, me, user) });
     } catch {
       res.status(503).json({ error: '会话影响读取失败，请重试' });
     }
@@ -335,6 +339,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         name: typeof name === 'string' ? name : undefined,
         isAdministrator: role === 'admin',
         externalLoginAllowed: externalLoginAllowed === true,
+        createdByAccountId: me.id,
       };
       if (invite === true && (password !== undefined || isSystemOwner === true)) {
         res.status(400).json({ error: '请选择一次性邀请，或填写初始口令创建账号' });
@@ -374,7 +379,8 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     const { status, newPassword, role, externalLoginAllowed } = req.body || {};
     const bindingChange = status === undefined && newPassword === undefined && role === undefined
       && typeof externalLoginAllowed === 'boolean';
-    const me = requireAccountManager(req, res, !bindingChange);
+    const enableMember = status === 'active' && newPassword === undefined && role === undefined && externalLoginAllowed === undefined;
+    const me = requireAccountManager(req, res, !bindingChange && !enableMember);
     if (!me) return;
     try {
       let result: CdsUser | null = await authService.findUserById(targetId);
@@ -431,6 +437,10 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         return;
       }
       if (status === 'active') {
+        if (!me.isSystemOwner && !canManageAccountScope(deps.stateService, me, result)) {
+          res.status(403).json({ error: '管理员只能启用当前管理范围内的普通成员' });
+          return;
+        }
         await setLinkedAccountStatus(deps.stateService, result, me, 'active', async () => {
           result = await authService.setUserStatus(targetId, 'active');
           if (!result) throw new AccountActionError(404, 'account_not_found', '目标账号不存在');
@@ -461,7 +471,8 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   });
 
   const accountActions = new AccountActionsService(authService, (target, actor, apply) =>
-    setLinkedAccountStatus(deps.stateService, target, actor, 'disabled', apply), deps.availableProviders);
+    setLinkedAccountStatus(deps.stateService, target, actor, 'disabled', apply), deps.availableProviders,
+    (actor, target) => canManageAccountScope(deps.stateService, actor, target));
 
   function accountActionRoute(
     ownerOnly: boolean,
@@ -486,6 +497,10 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   router.get('/auth/account-actions', accountActionRoute(false, async (_req, res, actor) => {
     const requests = await accountActions.list(actor);
     res.json({ requests: requests.map(publicAccountAction) });
+  }));
+  router.get('/auth/account-actions/pending', accountActionRoute(true, async (_req, res, actor) => {
+    const requests = await accountActions.list(actor);
+    res.json({ pending: requests.filter(item => item.status === 'pending').length });
   }));
   router.post('/auth/account-actions', accountActionRoute(false, async (req, res, actor) => {
     const request = await accountActions.submit(actor, req.body || {});

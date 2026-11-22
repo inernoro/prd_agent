@@ -11,27 +11,35 @@ export function PlanDesignHandoff({ plan, original }: { plan: PlanningPlan; orig
   const owner = useContext(ConsoleAuthContext).status?.user?.isSystemOwner === true;
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState('');
+  const [systemId, setSystem] = useState('');
+  const [moduleId, setModule] = useState('');
   const [receipt, setReceipt] = useState('');
   const [issue, setIssue] = useState('');
   const [busy, setBusy] = useState(false);
-  const pending = useRef<{ version: number; key: string; requestId: string }>();
+  const pending = useRef<{ version: number; fingerprint: string; requestId: string }>();
   const base = `/api/projects/${encodeURIComponent(plan.projectId)}/design`;
   const intake = usePlanningRead<DesignIntake>(owner ? `${base}/intake` : null, 0);
   const existing = intake.data?.projectId === plan.projectId ? intake.data.requirements?.find(row => row.planId === plan.id) : undefined;
+  const systems = intake.data?.projectId === plan.projectId ? intake.data.systems?.filter(row => row.modules.length) ?? [] : [];
+  const system = systems.find(row => row.id === (systemId || existing?.scope?.systemId));
+  const module = system?.modules.find(row => row.id === (systemId ? moduleId : existing?.scope?.moduleId));
   const selected = existing?.designKey ?? key.trim();
+  const scopeReady = !systems.length || Boolean(system && module);
+  const scope = system && module ? { systemId: system.id, moduleId: module.id } : {};
+  const fingerprint = JSON.stringify([selected, scope]);
   const valid = /^[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(selected);
   if (!owner) return null;
 
   const share = async () => {
-    if (!valid || busy) return;
+    if (!valid || !scopeReady || busy) return;
     setBusy(true);
     setIssue('');
-    if (pending.current?.key !== selected || pending.current.version !== plan.version) {
-      pending.current = { key: selected, version: plan.version, requestId: crypto.randomUUID() };
+    if (pending.current?.fingerprint !== fingerprint || pending.current.version !== plan.version) {
+      pending.current = { fingerprint, version: plan.version, requestId: crypto.randomUUID() };
     }
     try {
       const result = await apiRequest<{ projectId: string; result: { planId: string; designKey: string } }>(`${base}/commands`, {
-        method: 'POST', body: { type: 'brief.share', requestId: pending.current.requestId, planId: plan.id, designKey: selected, expectedVersion: plan.version },
+        method: 'POST', body: { type: 'brief.share', requestId: pending.current.requestId, planId: plan.id, designKey: selected, expectedVersion: plan.version, ...scope },
       });
       if (result.projectId !== plan.projectId || result.result.planId !== plan.id || result.result.designKey !== selected) {
         throw new Error('交接回执和当前计划不符');
@@ -58,13 +66,25 @@ export function PlanDesignHandoff({ plan, original }: { plan: PlanningPlan; orig
               <input value={selected} onChange={event => setKey(event.target.value)} readOnly={!!existing}
                 placeholder="例如 product/account-access" maxLength={129} required />
             </label>
-            <p className="ep-caption">同一模块的稿件和后续修订沿用这个标识。</p>
+            {systems.length > 0 && <>
+              <label className="ep-field">所属系统
+                <select aria-label="所属系统" value={system?.id ?? ''} onChange={event => { setSystem(event.target.value); setModule(''); }} required>
+                  <option value="">选择系统</option>{systems.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
+                </select>
+              </label>
+              <label className="ep-field">所属模块
+                <select aria-label="所属模块" value={module?.id ?? ''} disabled={!system} onChange={event => { setSystem(system!.id); setModule(event.target.value); }} required>
+                  <option value="">选择模块</option>{system?.modules.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
+                </select>
+              </label>
+            </>}
+            <p className="ep-caption">同一需求的稿件和后续修订沿用这个标识。</p>
             {(issue || intake.error) && <p role="alert" className="ep-error">{issue || intake.error}</p>}
           </form>
         </DialogBody>
         <DialogFooter>
           <button type="button" className="ep-button" onClick={() => setOpen(false)} disabled={busy}>取消</button>
-          <button type="submit" form="plan-design-handoff" className="ep-button ep-button--primary" disabled={!valid || busy || intake.loading || !!intake.error}>确认交接</button>
+          <button type="submit" form="plan-design-handoff" className="ep-button ep-button--primary" disabled={!valid || !scopeReady || busy || intake.loading || !!intake.error}>确认交接</button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

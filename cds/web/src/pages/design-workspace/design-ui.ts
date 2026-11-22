@@ -1,3 +1,4 @@
+import type { DesignModuleRef } from '../../../../src/shared/design-workspace';
 import { apiUrl } from '@/lib/api';
 import { currentDesignRun, type DesignEntry, type DesignVersion } from '../../../../src/shared/design-workspace';
 
@@ -52,3 +53,13 @@ export function openReviews(entry: DesignEntry) {
 }
 
 export type DesignCommand = (type: string, fields: Record<string, unknown>) => Promise<boolean>;
+
+export const scopeKey = (ref: DesignModuleRef) => ref.systemId + '/' + ref.moduleId;
+export function scopePath(project: string, ref?: DesignModuleRef, group?: string) {
+  const params = new URLSearchParams({ project });
+  if (ref) {
+    params.set('system', ref.systemId);
+    params.set('module', ref.moduleId);
+  } else if (group) params.set('group', group);
+  return '/design?' + params;
+}

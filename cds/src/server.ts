@@ -144,7 +144,7 @@ import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import {
   buildLegacyLogoutCookie,
   buildLogoutCookie,
-  buildSessionCookie,
+  buildAccountSessionCookies,
   buildSsoLogoutCookie,
   createAuthRouter,
   GH_SESSION_COOKIE,
@@ -161,7 +161,8 @@ import { createPasskeyRouter, isRecentAuthentication, readAuthCookie, trustedAut
 import { createHostedSsoRouter } from './routes/hosted-sso.js';
 import { HostedSso } from './services/hosted-sso.js';
 import { protectControlBrowser } from './middleware/browser-origin.js';
-import { LEGACY_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from './services/browser-session-cookies.js';
+import { buildAccountSignoutCookie } from './services/account-signout-proof.js';
+import { ACCOUNT_SIGNOUT_PROOF_COOKIE, LEGACY_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from './services/browser-session-cookies.js';
 import { toPublicUser, type CdsUser } from './domain/auth.js';
 import {
   TICKET_SSO_COOKIE,
@@ -2969,7 +2970,7 @@ export function createServer(deps: ServerDeps): express.Express {
   const systemProofCookieName = sessionCookieName('cds_system_session_proof', hostSessionCookies);
   const systemProofCookie = (token: string, ttl: number) => `${systemProofCookieName}=${token}; Path=/; Max-Age=${Math.max(0, Math.floor(ttl / 1000))}; SameSite=Lax; HttpOnly${cookieSecure ? '; Secure' : ''}`;
   const systemBrowserProof = (req: express.Request) => readBrowserCookie(req.headers.cookie, systemProofCookieName);
-  const rememberSystemBrowser = async (req: express.Request, fresh = false): Promise<string | undefined> => {
+  const rememberSystemBrowser = async (req: express.Request, fresh = false): Promise<string[] | undefined> => {
     if (!authService || !systemAccount) return undefined;
     // Proof is only recorded after the legacy password or existing login was verified.
     const revision = basicSessionGeneration || undefined;
@@ -2980,7 +2981,8 @@ export function createServer(deps: ServerDeps): express.Express {
         ipAddress: getRemoteAddr(req) ?? null,
       });
       if ((basicSessionGeneration || undefined) !== revision) return undefined;
-      return systemProofCookie(session.token, Date.parse(session.expiresAt) - Date.now());
+      return [systemProofCookie(session.token, Date.parse(session.expiresAt) - Date.now()),
+        buildAccountSignoutCookie(session, cookieSecure, hostSessionCookies)];
     } catch {
       return undefined;
     }
@@ -3199,7 +3201,7 @@ export function createServer(deps: ServerDeps): express.Express {
         const current = await authService.validateSession(token ?? null);
         if (current) {
           user = current.user; session = { createdAt: current.session.createdAt, expiresAt: current.session.expiresAt };
-          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure, hostSessionCookies));
+          if (current.renewed && token) res.setHeader('Set-Cookie', buildAccountSessionCookies(current.session, cookieSecure, hostSessionCookies));
         }
       }
       if (!user && authEnabled && verifyHumanSessionToken(readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)), cdsUser!, browserPassword(), sessionTtlMs)) {
@@ -3247,9 +3249,10 @@ export function createServer(deps: ServerDeps): express.Express {
     res.setHeader('Cache-Control', 'private, no-store');
     try {
       const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
-      const event = await authService?.signInNotice(token ?? null);
+      const browserProof = readBrowserCookie(req.headers.cookie, sessionCookieName(ACCOUNT_SIGNOUT_PROOF_COOKIE, hostSessionCookies));
+      const event = await authService?.signInNotice(token ?? null, browserProof);
       const systemEvent = !event && systemAccount
-        ? await authService?.systemSignInNotice(systemAccount.id, basicSessionGeneration || undefined, systemBrowserProof(req)) : null;
+        ? await authService?.systemSignInNotice(systemAccount.id, basicSessionGeneration || undefined, systemBrowserProof(req), browserProof) : null;
       res.json({ notice: event ?? systemEvent ?? null });
     } catch (error) { next(error); }
   });
@@ -3419,7 +3422,7 @@ export function createServer(deps: ServerDeps): express.Express {
           basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure, hostSessionCookies),
           buildLogoutCookie(cookieSecure, hostSessionCookies),
           buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
-          ...(proof ? [proof] : []),
+          ...(proof ?? []),
         ]);
         res.json({ success: true });
       } else {
@@ -3967,7 +3970,7 @@ export function createServer(deps: ServerDeps): express.Express {
         if (persistedSession.renewed && persistedToken) {
           res.setHeader(
             'Set-Cookie',
-            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure, hostSessionCookies),
+            buildAccountSessionCookies(persistedSession.session, cookieSecure, hostSessionCookies),
           );
         }
         (req as any).cdsUser = persistedSession.user;
@@ -3996,7 +3999,7 @@ export function createServer(deps: ServerDeps): express.Express {
           }
           res.setHeader('Set-Cookie', [
             basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure, hostSessionCookies),
-            ...(proof ? [proof] : []),
+            ...(proof ?? []),
           ]);
           (req as any)._cdsCookieAuth = true;
           (req as any)._cdsBasicHumanAuth = true;
@@ -4114,7 +4117,7 @@ export function createServer(deps: ServerDeps): express.Express {
             cookieSecure,
             hostSessionCookies,
           ),
-          proofCookie: await rememberSystemBrowser(req, true),
+          proofCookies: await rememberSystemBrowser(req, true),
         };
       },
     }));
@@ -4324,6 +4327,7 @@ export function createServer(deps: ServerDeps): express.Express {
       },
       previewAccessNotices: !isPreviewInstance() && Boolean(previewAccessPerson(req)),
       designReviewNotices: !isPreviewInstance() && Boolean(authService && previewAccessPerson(req)),
+      accountApprovalNotices: !isPreviewInstance() && Boolean(authService?.accountActions && isHumanSystemOwner(req)),
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,

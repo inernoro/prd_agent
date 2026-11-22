@@ -46,12 +46,16 @@ describe('human project grants through the production server', () => {
     return { status: res.status, body: await res.json(), cookie: res.headers.get('set-cookie')?.split(';')[0] || '' };
   }
   const grant = (ids: string[]) => call('PUT', `/api/auth/users/${memberId}/projects`, owner, { projectIds: ids });
-  async function requestMemberDisable() {
-    const response = await call('POST', '/api/auth/account-actions', owner, {
+  function submitMemberDisable() {
+    return call('POST', '/api/auth/account-actions', owner, {
       action: 'disable-user', targetId: memberId, reason: 'Verify linked project access in the fixture',
     });
+  }
+  async function requestMemberDisable() {
+    const response = await submitMemberDisable();
     expect(response.status).toBe(201);
     expect(response.body.request).toMatchObject({ id: expect.any(String), targetId: memberId, status: 'pending' });
+    expect(response.body.request.affectedSessions).toBeGreaterThan(0);
     return response.body.request.id as string;
   }
   function confirmMemberDisable(id: string) {
@@ -59,7 +63,16 @@ describe('human project grants through the production server', () => {
   }
   async function setMemberStatus(status: 'active' | 'disabled') {
     if (status === 'active') return call('PATCH', `/api/auth/users/${memberId}`, owner, { status });
-    return confirmMemberDisable(await requestMemberDisable());
+    const response = await submitMemberDisable();
+    if (response.status !== 201) return response;
+    const { request } = response.body;
+    expect(request).toMatchObject({ id: expect.any(String), targetId: memberId });
+    if (request.status === 'completed') {
+      expect(request.affectedSessions).toBe(0);
+      return response;
+    }
+    expect(request.status).toBe('pending');
+    return confirmMemberDisable(request.id);
   }
 
   async function credentialCall(method: string, url: string, key: string, body?: unknown) {
@@ -1077,7 +1090,7 @@ describe('human project grants through the production server', () => {
     expect(await poll()).toMatchObject({ status: 'blocked', recoveryState: 'account-disabled' });
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
     expect((await call('POST', `/api/access-requests/${id}/approve`, owner, {})).status).toBe(200);
-    await setMemberStatus('disabled');
+    expect((await setMemberStatus('disabled')).status).toBe(201);
     expect(await poll()).not.toHaveProperty('authorizationKey');
     expect(state.getAccessRequest(id)!.deliveredAt).toBeUndefined();
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
@@ -1722,7 +1735,7 @@ describe('human project grants through the production server', () => {
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' }); await grant([]);
     expect((await t.poll()).body.status).toBe('blocked'); expect(state.getAgentKeys('project-a')).toHaveLength(0);
     await grant(['project-a']); const first = (await t.poll()).body;
-    await setMemberStatus('disabled');
+    expect((await setMemberStatus('disabled')).status).toBe(201);
     expect((await t.poll()).body.status).toBe('blocked');
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
     expect((await t.poll()).body.authorizationKey).toBe(first.authorizationKey);

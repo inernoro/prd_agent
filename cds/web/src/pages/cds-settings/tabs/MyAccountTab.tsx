@@ -190,7 +190,7 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
 function PersonalSessions(): JSX.Element {
   const [data, setData] = useState<{
     sessions: Array<{ device: string; current: boolean; createdAt: string; lastSeenAt: string }>;
-    revocations: Array<{ action: AccountAction; at: string }>;
+    revocations: Array<{ action: AccountAction; at: string; receiptId?: string }>;
   } | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -215,7 +215,7 @@ function PersonalSessions(): JSX.Element {
           <details className="rounded-md border border-border p-3">
             <summary className="cursor-pointer font-medium">退出或权限变更记录</summary>
             {data.revocations.length ? <ul className="mt-2 space-y-2 text-muted-foreground">
-              {data.revocations.map((event, index) => <li key={`${event.at}-${index}`}>{actionLabels[event.action]} · {new Date(event.at).toLocaleString()}</li>)}
+              {data.revocations.map((event, index) => <li key={`${event.at}-${index}`}>{actionLabels[event.action]} · {new Date(event.at).toLocaleString()}{event.receiptId && <> · <code className="break-all">{event.receiptId}</code></>}</li>)}
             </ul> : <p className="mt-2 text-muted-foreground">近期没有会话变更记录。</p>}
           </details>
         </div>

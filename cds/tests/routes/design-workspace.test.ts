@@ -198,7 +198,8 @@ describe('private CDS design workspace', () => {
     const intake = await (await get('/intake', 'designer')).json();
     expect(intake.requirements).toEqual([{
       designKey: fields.designKey, planId: fields.planId, planVersion: 2, proposalId: 'PRO-fixture', title: 'Approved brief',
-      requirements: 'Original **approved** requirements', sharedAt: clock, replies: [expect.objectContaining({
+      requirements: 'Original **approved** requirements', sharedAt: clock, owner: { id: 'steward', label: 'Fixture steward' },
+      replies: [expect.objectContaining({
         id: (await first.json()).result.id, body: reply.body, planVersion: 2,
       })],
     }]);
@@ -206,6 +207,178 @@ describe('private CDS design workspace', () => {
     expect((await command('brief.revoke', { ...fields, expectedVersion: 1 }, 'steward')).status).toBe(409);
     expect((await command('brief.revoke', fields, 'steward')).status).toBe(201);
     expect((await (await get('/intake', 'designer')).json()).requirements).toEqual([]);
+  });
+
+  describe('project design scope', () => {
+    const system = { systemId: 'ops-hub', systemName: 'Operations hub' };
+    const primary = { systemId: system.systemId, moduleId: 'incident-review' };
+    const linked = { systemId: 'report-hub', moduleId: 'handoff' };
+    const foreign = { systemId: 'foreign-hub', moduleId: 'foreign-module' };
+    const sameSystem = { systemId: system.systemId, moduleId: 'overview' };
+
+    function register(fields: object, project = projectId) {
+      return command('scope.register', fields, 'steward', crypto.randomUUID(), project);
+    }
+
+    async function registerModules() {
+      expect((await register({ ...system, ...primary, moduleName: 'Incident review' })).status).toBe(201);
+      expect((await register({ ...linked, systemName: 'Reports hub', moduleName: 'Handoff' })).status).toBe(201);
+      expect((await register({ ...foreign, systemName: 'Foreign hub', moduleName: 'Foreign module' }, otherProjectId)).status).toBe(201);
+    }
+
+    function scopedPublish(title: string, designKey: string, extra: Record<string, unknown> = {}, revision?: { designId: string; expectedVersion: number }) {
+      return publish(crypto.randomUUID(), draft(title, extra), {
+        sourceMode: 'private', sourcePath: `design/${designKey}`, sourceCommit: revision ? 'b'.repeat(40) : sourceCommit,
+        ...(revision ? { intent: 'revise', designId: revision.designId, expectedVersion: String(revision.expectedVersion) }
+          : { intent: 'create', designKey }),
+      }, { actor: 'git-designer' });
+    }
+
+    it('stores stable systems and modules for project readers and reserves registration for human project stewards', async () => {
+      const created = await register(system);
+      expect(created.status).toBe(201);
+      expect((await (await get()).json()).systems).toEqual([{ id: system.systemId, name: system.systemName, modules: [] }]);
+      const fields = { ...system, ...primary, moduleName: 'Incident review', note: 'Used for project handoff' };
+      expect((await command('scope.register', fields, 'designer')).status).toBe(403);
+      expect((await command('scope.register', fields, 'author')).status).toBe(403);
+      expect((await command('scope.register', fields, 'outside')).status).toBe(404);
+      expect((await register({ ...fields, systemId: 'Invalid/System' })).status).toBe(400);
+      expect((await register({ ...fields, systemId: 'Uppercase' })).status).toBe(400);
+      expect((await register({ ...fields, moduleId: 'invalid module' })).status).toBe(400);
+      expect((await command('scope.register', fields, 'steward', 'register-incident-module')).status).toBe(201);
+      expect((await command('scope.register', fields, 'steward', 'register-incident-module')).status).toBe(200);
+
+      const expected = [{ id: system.systemId, name: system.systemName, modules: [{ id: primary.moduleId,
+        name: fields.moduleName, note: fields.note }] }];
+      expect((await (await get()).json()).systems).toEqual(expected);
+      expect((await (await get('/intake', 'git-designer')).json()).systems).toEqual(expected);
+      expect((await (await get('/intake', 'outside', otherProjectId)).json()).systems ?? []).toEqual([]);
+    });
+
+    it('assigns the same existing draft and retains its published versions while rejecting foreign related modules', async () => {
+      await registerModules();
+      const first = await scopedPublish('Prior unclassified draft', 'ops/prior');
+      expect(first.status).toBe(201);
+      const { designId } = (await first.json()).result;
+      const second = await scopedPublish('Prior unclassified draft updated', 'ops/prior', {}, { designId, expectedVersion: 1 });
+      expect(second.status).toBe(201);
+      const { designs: [before] } = await (await get()).json();
+      expect(before.versions.map((row: { version: number }) => row.version)).toEqual([1, 2]);
+      expect(before.scope).toBeUndefined();
+
+      const scope = { ...primary, related: [linked] };
+      const fields = { designId, ...scope };
+      expect((await command('scope.assign', fields, 'git-designer')).status).toBe(403);
+      expect((await command('scope.assign', fields, 'author')).status).toBe(403);
+      expect([400, 404, 409]).toContain((await command('scope.assign', { ...fields, related: [foreign] }, 'steward')).status);
+      expect([400, 404, 409]).toContain((await command('scope.assign', { ...fields, ...foreign }, 'steward')).status);
+      expect((await (await get()).json()).designs[0].scope).toBeUndefined();
+      expect((await command('scope.assign', fields, 'steward', 'assign-prior-draft')).status).toBe(201);
+      expect((await command('scope.assign', fields, 'steward', 'assign-prior-draft')).status).toBe(200);
+      const { designs: [after] } = await (await get()).json();
+      expect(after).toMatchObject({ id: before.id, projectId, designKey: before.designKey, scope });
+      expect(after.versions).toEqual(before.versions);
+      const reopened = await openApi(openWorkspace());
+      const intake = await fetch(`${reopened}${projectId}/design/intake`, { headers: { 'x-fixture-user': 'git-designer' } });
+      expect(intake.status).toBe(200);
+      expect((await intake.json()).designs).toMatchObject([{ designId, latestVersion: 2, scope }]);
+      const archived = await get(`/artifacts/${before.versions[0].delivery.archiveId}`, 'read-designer');
+      expect(archived.status).toBe(200);
+      expect(createHash('sha256').update(Buffer.from(await archived.arrayBuffer())).digest('hex')).toBe(before.versions[0].sha256);
+    });
+
+    it('validates a manifest scope, retains it on revision and requires an explicit assignment to move it', async () => {
+      expect([400, 404, 409]).toContain((await scopedPublish('Unregistered scope', 'ops/reject', { scope: primary })).status);
+      await registerModules();
+      expect((await register({ ...system, ...sameSystem, moduleName: 'Overview' })).status).toBe(201);
+      expect([400, 404, 409]).toContain((await scopedPublish('Foreign module', 'ops/foreign', { scope: foreign })).status);
+      expect([400, 404, 409]).toContain((await scopedPublish('Foreign relationship', 'ops/foreign-related', {
+        scope: { ...primary, related: [foreign] },
+      })).status);
+      const scope = { ...primary, related: [linked] };
+      const first = await scopedPublish('A scoped draft', 'ops/new', { scope });
+      expect(first.status).toBe(201);
+      const { designId } = (await first.json()).result;
+      const baseline = { designId, expectedVersion: 1 };
+      expect((await scopedPublish('Silent move', 'ops/new', { scope: sameSystem }, baseline)).status).toBe(409);
+      expect((await scopedPublish('Keep scope implicitly', 'ops/new', {}, baseline)).status).toBe(201);
+      const { designs } = await (await get('/intake', 'git-designer')).json();
+      expect(designs).toMatchObject([{ designId, latestVersion: 2, scope }]);
+    });
+
+    it('inherits the module or system framework and pins each publication without overriding an explicit framework', async () => {
+      const systemFramework = 'FW-scope-system';
+      const moduleFramework = 'FW-scope-module';
+      const addFramework = (frameworkId: string, expectedVersion: number, sha: string) => command('framework.import', {
+        frameworkId, expectedVersion, title: `${frameworkId} revision ${expectedVersion + 1}`, sourceCommit: sha.repeat(40),
+        material: { rules: `## R-1 Preserve fixture review heading ${expectedVersion + 1}` },
+        charter: { status: 'adopted', intent: 'Keep fixture headers consistent', problems: [], nonGoals: [],
+          scope: { system: system.systemName, modules: [] }, owner: 'Fixture steward' },
+      }, 'steward');
+      expect((await addFramework(systemFramework, 0, 'c')).status).toBe(201);
+      expect((await addFramework(moduleFramework, 0, 'd')).status).toBe(201);
+      expect((await register({ ...system, framework: systemFramework })).status).toBe(201);
+      expect((await register({ ...system, ...primary, moduleName: 'Incident review', framework: moduleFramework })).status).toBe(201);
+      expect((await register({ ...system, ...sameSystem, moduleName: 'Overview' })).status).toBe(201);
+
+      const first = await scopedPublish('Module default', 'ops/with-module', { scope: primary });
+      const fallback = await scopedPublish('System fallback', 'ops/with-system', { scope: sameSystem });
+      expect(first.status).toBe(201);
+      expect(fallback.status).toBe(201);
+      const { designId } = (await first.json()).result;
+      const fallbackId = (await fallback.json()).result.designId;
+      expect((await addFramework(moduleFramework, 1, 'e')).status).toBe(201);
+      const fresh = await scopedPublish('New publication uses revised default', 'ops/new-framework', { scope: primary });
+      expect(fresh.status).toBe(201);
+      const freshId = (await fresh.json()).result.designId;
+      const explicit = await scopedPublish('Explicit alternate framework', 'ops/with-module', {
+        scope: primary, framework: systemFramework, frameworkVersion: 1,
+      }, { designId, expectedVersion: 1 });
+      expect(explicit.status).toBe(201);
+      const { designs, systems } = await (await get()).json();
+      expect(systems).toMatchObject([{ id: system.systemId, framework: systemFramework,
+        modules: [{ id: primary.moduleId, framework: moduleFramework }, { id: sameSystem.moduleId }] }]);
+      const revisions = (id: string) => designs.find((entry: { id: string }) => entry.id === id).versions;
+      expect(revisions(designId)).toMatchObject([
+        { version: 1, framework: moduleFramework, frameworkVersion: 1 },
+        { version: 2, framework: systemFramework, frameworkVersion: 1 },
+      ]);
+      expect(revisions(fallbackId)).toMatchObject([{ framework: systemFramework, frameworkVersion: 1 }]);
+      expect(revisions(freshId)).toMatchObject([{ framework: moduleFramework, frameworkVersion: 2 }]);
+    });
+
+    it('shows the scoped planning handoff and verified owner to the authorized designer', async () => {
+      await registerModules();
+      const fields = { designKey: 'ops/approved-brief', planId: 'PLN-approved', expectedVersion: 2 };
+      expect((await command('brief.share', { ...fields, ...primary }, 'git-designer')).status).toBe(403);
+      expect((await command('brief.share', { ...fields, ...primary, owner: { id: 'outside', label: 'Forged owner' } }, 'steward')).status).toBe(400);
+      expect([400, 404, 409]).toContain((await command('brief.share', { ...fields, ...foreign }, 'steward')).status);
+      expect((await command('brief.share', { ...fields, ...primary }, 'steward')).status).toBe(201);
+      const expected = { designKey: fields.designKey, planId: fields.planId, planVersion: 2, proposalId: 'PRO-fixture',
+        title: 'Approved brief', requirements: 'Original **approved** requirements', sharedAt: clock,
+        scope: primary, owner: { id: 'steward', label: 'Fixture steward' } };
+      expect((await (await get('/intake', 'git-designer')).json()).requirements).toEqual([expected]);
+      expect((await (await get()).json()).requirements).toEqual([expected]);
+      expect((await (await get('/intake', 'outside', otherProjectId)).json()).requirements).toEqual([]);
+      const draftReceipt = await scopedPublish('Draft for approved handoff', fields.designKey);
+      expect(draftReceipt.status).toBe(201);
+      const { designId } = (await draftReceipt.json()).result;
+      expect((await (await get('/intake', 'git-designer')).json()).designs).toMatchObject([{ designId, scope: primary }]);
+    });
+
+    it('keeps old handoffs readable and infers a matching scope without inventing a historical owner', async () => {
+      const briefing = { designKey: 'ops/legacy-brief', planId: 'PLN-old', planVersion: 1, proposalId: 'PRO-legacy',
+        title: 'Old approved brief', requirements: 'Legacy approved original', sharedAt: clock };
+      const store = new FileProjectRevisionStore<DesignWorkspaceCommit>(directory);
+      expect(await store.append({ projectId, revision: 1,
+        request: { key: 'legacy-brief', fingerprint: 'legacy-brief', result: { type: 'brief.share' } },
+        brief: { designKey: briefing.designKey, value: briefing },
+      })).toBe(true);
+      expect((await (await get('/intake', 'git-designer')).json()).requirements).toEqual([briefing]);
+      await registerModules();
+      expect((await scopedPublish('A newly classified legacy draft', briefing.designKey, { scope: primary })).status).toBe(201);
+      expect((await (await get('/intake', 'git-designer')).json()).requirements).toEqual([{ ...briefing, scope: primary }]);
+    });
   });
 
   describe('private-source publication', () => {

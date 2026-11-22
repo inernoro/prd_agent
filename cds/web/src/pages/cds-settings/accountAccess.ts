@@ -72,6 +72,7 @@ export interface AccountActionEntry {
   targetId: string;
   targetName: string;
   affectedSessions: number;
+  managementMode?: 'offline';
   scope?: 'all-system-sessions';
   reason?: string;
   requestedByAccountId?: string;

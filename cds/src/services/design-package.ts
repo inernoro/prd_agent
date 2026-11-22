@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
+import previewContract from '../shared/design-preview-contract.json' with { type: 'json' };
 import { crc32 } from '../utils/zip.js';
-import { designSlots, designViewports, type DesignDeliveryFile, type DesignFrameworkCharter, type DesignMaterial, type DesignRule, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
+import { designSlots, designViewports, type DesignDeliveryFile, type DesignFrameworkCharter, type DesignMaterial, type DesignRule, type DesignScope, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 
 const mib = 1024 * 1024;
@@ -24,6 +25,24 @@ export function designId(value: unknown, name: string): string {
   const id = planningText(value, name, 120);
   if (!/^[A-Za-z0-9_.-]+$/.test(id) || id === '.' || id === '..' || Object.hasOwn(Object.prototype, id)) invalidDesign(`${name} 不是有效编号`);
   return id;
+}
+
+export function designScopeId(value: unknown, label: string): string {
+  const id = designId(value, label);
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(id) || id.length > 64) return invalidDesign(`${label}须使用小写字母、数字或短横线`);
+  return id;
+}
+
+export function parseDesignScope(value: unknown): DesignScope {
+  const input = designRecord(value, '稿件归属', ['systemId', 'moduleId', 'related']);
+  const ref = (item: Record<string, unknown>) => ({
+    systemId: designScopeId(item.systemId, '系统编号'), moduleId: designScopeId(item.moduleId, '模块编号'),
+  });
+  const primary = ref(input);
+  const related = list(input.related, '关联模块', 12, row => ref(designRecord(row, '关联模块', ['systemId', 'moduleId'])), true);
+  const key = (row: typeof primary) => row.systemId + '/' + row.moduleId;
+  if (related.some(row => key(row) === key(primary))) invalidDesign('关联模块不可重复主归属');
+  return { ...primary, ...(related.length ? { related: unique(related, key, '关联模块').sort((a, b) => key(a).localeCompare(key(b))) } : {}) };
 }
 
 export function designCommit(value: unknown): string {
@@ -198,9 +217,15 @@ function screen(value: unknown): DesignScreen {
   if (!themes.length) invalidDesign('每个画面至少须有一个主题');
   const entryActions = list(input.entryActions, '原型进入操作', 6,
     selector => planningText(selector, '原型进入控件选择器', 300), true);
+  const entryTimeoutMs = input.entryTimeoutMs;
+  if (entryTimeoutMs !== undefined && (typeof entryTimeoutMs !== 'number' || !Number.isInteger(entryTimeoutMs)
+    || entryTimeoutMs < previewContract.minTimeoutMs || entryTimeoutMs > previewContract.maxTimeoutMs)) {
+    return invalidDesign('画面进入超时须在 500–15000 毫秒之间');
+  }
   return { id: designId(input.id, '画面编号'), name, route, viewport, themes,
     impl: input.impl == null ? null : localDesignPath(input.impl),
     ...(entryActions.length ? { entryActions } : {}),
+    ...(entryTimeoutMs === undefined ? {} : { entryTimeoutMs }),
     ...(input.entryReadySelector === undefined ? {} : { entryReadySelector: planningText(input.entryReadySelector, '原型画面就绪选择器', 300) }),
     ...(input.readySelector === undefined ? {} : { readySelector: planningText(input.readySelector, '画面就绪选择器', 300) }) };
 }
@@ -355,7 +380,7 @@ export async function readDesignPackage(bytes: Buffer) {
     prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery,
     frameworkCharter: charter && parseFrameworkCharter(charter),
     checks: json(input.checks ?? 'checks/result.json'),
-    framework, frameworkVersion,
+    framework, frameworkVersion, scope: input.scope === undefined ? undefined : parseDesignScope(input.scope),
     group: input.group === undefined ? undefined : planningText(input.group, '稿件分组', 80),
     tags: unique(list(input.tags, '稿件标签', 30, tag => planningText(tag, '标签', 60), true), row => row, '标签'),
     decisionIds: unique(list(input.decisionIds, '关联决策', 20, id => designId(id, '决策编号'), true), row => row, '关联决策'),

@@ -84,6 +84,7 @@ export interface CdsUser {
    */
   isSystemOwner: boolean;
   isAdministrator?: boolean;
+  createdByAccountId?: string;
   /** Changes atomically with operations that revoke existing login sessions. */
   sessionRevision?: string;
   lastAccountAction?: {
@@ -93,6 +94,8 @@ export interface CdsUser {
   };
   sessionRevocationNotices?: Array<{
     previousRevision: string | null;
+    receiptId?: string;
+    browserProofDigests?: string[];
     action: import('./account-actions.js').AccountAction;
     at: string;
   }>;
@@ -192,6 +195,7 @@ export interface CreateLocalUserInput {
   /** When true the new account is flagged as the system owner. */
   isSystemOwner?: boolean;
   isAdministrator?: boolean;
+  createdByAccountId?: string;
   externalLoginAllowed?: boolean;
   invitationHash?: string;
   invitationExpiresAt?: string;

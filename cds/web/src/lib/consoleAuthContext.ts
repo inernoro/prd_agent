@@ -5,6 +5,7 @@ export type ShellAuthStatus = {
   approvalCapabilities?: ApprovalCapabilities;
   previewAccessNotices?: boolean;
   designReviewNotices?: boolean;
+  accountApprovalNotices?: boolean;
   enabled?: boolean;
   canUsePasskeys?: boolean;
   mode?: string;

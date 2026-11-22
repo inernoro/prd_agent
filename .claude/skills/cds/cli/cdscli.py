@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.14"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.15"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4552,6 +4552,43 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 返回的回复回执与当前设计需求不符")
         ok(receipt)
 
+    if action == "feedback":
+        designs = request("GET").get("designs", [])
+        item = next((row for row in designs if row.get("id") == args.id), None)
+        if not item:
+            die("请先读 design intake 并核对原稿编号")
+        feedback = item.get("feedback") or []
+        if args.version is not None:
+            if all(row.get("version") != args.version for row in item.get("versions", [])):
+                die("原稿没有这一版本")
+            feedback = [row for row in feedback if (row.get("status") != "closed" and row.get("version", 0) < args.version) or row.get("version") == args.version
+                        or any(reply.get("revision") == args.version for reply in row.get("replies", []))
+                        or any(attachment.get("version") == args.version for attachment in row.get("attachments", []))]
+        ok({"projectId": project, "designId": args.id, "items": feedback})
+
+    if action in ("feedback-create", "feedback-reply", "feedback-resolve"):
+        action_type = action.replace("-", ".", 1)
+        command = {"type": action_type, "designId": args.id, "body": args.body}
+        if action == "feedback-create":
+            command.update(version=args.version, category=args.category, title=args.title)
+            for key, value in (("screenId", args.screen), ("filePath", args.file_path), ("evidence", args.evidence)):
+                if value:
+                    command[key] = value
+        else:
+            command["feedbackId"] = args.feedback_id
+            if action == "feedback-reply" and args.revision is not None:
+                command["revision"] = args.revision
+            if action == "feedback-resolve":
+                command["decision"] = args.decision
+        request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        receipt = request("POST", "/feedback", {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if result.get("type") != action_type or result.get("designId") != args.id or not result.get("id"):
+            die("CDS 返回的反馈回执与当前稿件不符")
+        if action != "feedback-create" and result["id"] != args.feedback_id:
+            die("CDS 返回的反馈回执与当前线程不符")
+        ok(receipt)
+
     if action == "attach-evidence":
         file_path = Path(args.file)
         try:
@@ -4791,10 +4828,26 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
     ok(send(command))
 
 
+def cmd_design_preview(args: argparse.Namespace) -> None:
+    from design_preview import serve
+    if not 0 <= args.port <= 65535:
+        die("端口须为 0–65535")
+    try:
+        serve(args.dir, args.screen, args.theme, args.port)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        die(str(error) if type(error) is ValueError else "无法读取或启动本机预览，请检查稿件目录及监听端口")
+
+
 def _register_design_parser(sub: Any) -> None:
     design = sub.add_parser("design", help="设计稿件、版本、评论与做法验收").add_subparsers(dest="design_action", required=True)
+    preview = design.add_parser("preview", help="在本机按 CDS 真实宿主预览原型")
+    preview.set_defaults(func=cmd_design_preview)
+    preview.add_argument("--dir", required=True, help="含 design.json 的稿件目录")
+    preview.add_argument("--screen", help="画面编号，默认第一张")
+    preview.add_argument("--theme", choices=("light", "dark"), default="light")
+    preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("intake", "brief-reply", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
@@ -4809,6 +4862,24 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--request-id")
                 parser.add_argument("--expected-version", type=int, required=True, help="接入清单中的 planVersion")
                 parser.add_argument("--body", required=True, help="对该已交接需求的回复")
+            if action == "feedback":
+                parser.add_argument("--version", type=int, help="按版本查看，仍包括前版未关闭的反馈")
+            if action in ("feedback-create", "feedback-reply", "feedback-resolve"):
+                parser.add_argument("--request-id")
+                parser.add_argument("--body", required=True)
+                if action == "feedback-create":
+                    parser.add_argument("--version", type=int, required=True)
+                    parser.add_argument("--category", choices=("reuse", "implementation", "gap", "constraint", "acceptance"), required=True)
+                    parser.add_argument("--title", required=True)
+                    parser.add_argument("--screen")
+                    parser.add_argument("--file-path")
+                    parser.add_argument("--evidence", action="append")
+                else:
+                    parser.add_argument("--feedback-id", required=True)
+                if action == "feedback-reply":
+                    parser.add_argument("--revision", type=int, help="由此回复发布的稿件版本")
+                if action == "feedback-resolve":
+                    parser.add_argument("--decision", choices=("close", "reopen"), required=True)
             if action == "attach-evidence":
                 parser.add_argument("--request-id")
                 parser.add_argument("--feedback-id", required=True)
@@ -13138,7 +13209,6 @@ def cmd_identity_heal(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     global _TRACE_ID, _HUMAN
     _LOAD_NOTICES.clear()
-    _load_local_credentials()
     parser = _build_parser()
     args = parser.parse_args(argv)
     _TRACE_ID = args.trace or secrets.token_hex(4)
@@ -13147,6 +13217,10 @@ def main(argv: list[str] | None = None) -> None:
     if func is None:
         parser.print_help()
         sys.exit(1)
+    if func is cmd_design_preview:
+        func(args)
+        return
+    _load_local_credentials()
     workspace_connection = func in (cmd_connect, cmd_init) and not getattr(args, "legacy_env", False)
     # Discovery and connection must work even if the selected host is unavailable or unconfigured.
     if args.cmd in ("instance", "connect") and args.instance:

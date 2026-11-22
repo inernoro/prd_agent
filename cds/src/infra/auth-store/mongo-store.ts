@@ -65,8 +65,9 @@ export class MongoAuthStore implements AuthStore {
     return {
       insert: item => actions.insertOne(item),
       get: id => actions.findOne({ id }),
-      list: ({ from, until, ...filter }, limit) => actions.find({
+      list: ({ from, until, targetIds, ...filter }, limit) => actions.find({
         ...filter,
+        ...(targetIds ? { targetId: { $in: targetIds } } : {}),
         ...(from || until ? { createdAt: { ...(from ? { $gte: from } : {}), ...(until ? { $lte: until } : {}) } } : {}),
       }, { sort: { createdAt: -1 }, limit }),
       transition: (item, from) => update({ id: item.id, status: from }, { $set: item }),
@@ -250,6 +251,7 @@ export class MongoAuthStore implements AuthStore {
     return users.updateOneMatched({
       id: user.id,
       status: user.status,
+      lastLoginAt: user.lastLoginAt,
       isSystemOwner: user.isSystemOwner,
       isAdministrator: user.isAdministrator === true ? true : { $ne: true },
       passwordHash: user.passwordHash ?? { $exists: false },
@@ -310,6 +312,7 @@ export class MongoAuthStore implements AuthStore {
       orgsCheckedAt: now.toISOString(),
       isSystemOwner: input.isSystemOwner ?? false,
       ...(input.isAdministrator ? { isAdministrator: true } : {}),
+      ...(input.createdByAccountId ? { createdByAccountId: input.createdByAccountId } : {}),
       ...(input.externalLoginAllowed ? { externalLoginAllowed: true } : {}),
       status: 'active',
       lastLoginAt: null,

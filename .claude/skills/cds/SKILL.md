@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.14
+  version: 0.26.15
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design intake (CDS 设计接入), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.14 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.15 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -432,6 +432,9 @@ $CLI design request-review <稿件编号> --reviewer <成员ID>
 $CLI design publish <稿件编号> --private --intent revise --expected-version <最新版本> --dir design/<目录> --resolves "<评论编号>=如何处理"
 $CLI design list
 $CLI design comments <稿件编号> --open
+$CLI design feedback <稿件编号>
+$CLI design feedback-reply <稿件编号> --feedback-id <反馈编号> --body "核对结果"
+$CLI design preview --dir design/<目录> --screen <画面编号>
 $CLI design diff <稿件编号> 1 2
 $CLI design accept <稿件编号> --pr <PR编号> --commit <完整提交>
 $CLI design record <稿件编号> --run <运行编号> --commit <完整提交> --file <证据.json>

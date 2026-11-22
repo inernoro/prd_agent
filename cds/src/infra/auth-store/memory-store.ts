@@ -182,6 +182,7 @@ export class MemoryAuthStore implements AuthStore {
     get: async id => this.accountRequests.get(id) ?? null,
     list: async (filter, limit) => Array.from(this.accountRequests.values()).reverse()
       .filter(item => (!filter.targetId || filter.targetId === item.targetId) &&
+        (!filter.targetIds || filter.targetIds.includes(item.targetId)) &&
         (!filter.requestedByAccountId || filter.requestedByAccountId === item.requestedByAccountId) &&
         (!filter.action || filter.action === item.action) &&
         (!filter.from || item.createdAt >= filter.from) &&
@@ -355,7 +356,7 @@ export class MemoryAuthStore implements AuthStore {
   async applyAccountSecurityChange(expected: CdsUser, change: AccountSecurityChange, now: Date): Promise<boolean> {
     const user = this.usersById.get(expected.id);
     if (!user || user.sessionRevision !== expected.sessionRevision ||
-        user.status !== expected.status || user.passwordHash !== expected.passwordHash ||
+        user.status !== expected.status || user.lastLoginAt !== expected.lastLoginAt || user.passwordHash !== expected.passwordHash ||
         Boolean(user.isAdministrator) !== Boolean(expected.isAdministrator) ||
         user.isSystemOwner !== expected.isSystemOwner) return false;
     this.usersById.set(user.id, { ...user, ...change, updatedAt: now.toISOString() });
@@ -406,6 +407,7 @@ export class MemoryAuthStore implements AuthStore {
       orgsCheckedAt: now.toISOString(),
       isSystemOwner: input.isSystemOwner ?? false,
       ...(input.isAdministrator ? { isAdministrator: true } : {}),
+      ...(input.createdByAccountId ? { createdByAccountId: input.createdByAccountId } : {}),
       ...(input.externalLoginAllowed ? { externalLoginAllowed: true } : {}),
       status: 'active',
       lastLoginAt: null,

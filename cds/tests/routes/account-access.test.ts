@@ -47,7 +47,7 @@ interface ActionResponse {
 }
 
 interface NoticeResponse {
-  notice: { action: AccountAction; at: string } | null;
+  notice: { action: AccountAction; at: string; receiptId?: string } | null;
 }
 
 describe('account access via the CDS server', () => {
@@ -300,8 +300,9 @@ describe('account access via the CDS server', () => {
       expect(notice.status).toBe(200);
       const noticeBody = notice.json();
       expect(Object.keys(noticeBody)).toEqual(['notice']);
-      expect(Object.keys(noticeBody.notice ?? {}).sort()).toEqual(['action', 'at']);
+      expect(Object.keys(noticeBody.notice ?? {}).sort()).toEqual(['action', 'at', 'receiptId']);
       expect(noticeBody.notice?.action).toBe('reset-password');
+      expect(noticeBody.notice?.receiptId).toBe(request.id);
       expect(typeof noticeBody.notice?.at === 'string' && Number.isFinite(Date.parse(noticeBody.notice.at))).toBe(true);
       await expectNoNotice(activeAfterReset);
       await expectNoNotice(undefined, `${noticePath}?targetId=${member.id}`);
@@ -432,6 +433,34 @@ describe('account access via the CDS server', () => {
       expect(logout.status).toBe(200);
       expect((await me(memberCookie)).status).toBe(401);
       await expectNoNotice(memberCookie);
+    });
+
+    it('retains only the forced sign-in receipt for the revoked browser proof for thirty days', async () => {
+      const signedIn = await login(member.username, memberPassword);
+      expect(signedIn.status).toBe(200);
+      const header = signedIn.cookies.find(value => /^(?:__Host-)?cds_signout_proof=/.test(value));
+      expect(Boolean(header && /;\s*HttpOnly(?:;|$)/i.test(header))).toBe(true);
+      const proof = header!.split(';')[0];
+      await expectNoNotice(proof);
+
+      const request = await submitRequest('revoke-sessions', member.id);
+      expect(await confirm(request.id, member.username)).toMatchObject({ status: 200 });
+      const revokedAt = Date.now();
+      const dayMs = 24 * 60 * 60 * 1000;
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(revokedAt + 8 * dayMs);
+      try {
+        const response = await call<NoticeResponse>('GET', noticePath, proof);
+        expect(response.status).toBe(200);
+        expect(response.json()).toEqual({ notice: { action: 'revoke-sessions', at: expect.any(String), receiptId: request.id } });
+        expect((await me(proof)).status).toBe(401);
+        await expectNoNotice();
+
+        clock.mockReturnValue(revokedAt + 31 * dayMs);
+        await expectNoNotice(proof);
+        expect((await me(proof)).status).toBe(401);
+      } finally {
+        clock.mockRestore();
+      }
     });
 
     it('removes account management access when an admin revocation is confirmed', async () => {

@@ -18,7 +18,7 @@ export function effectiveAccountAction(request: AccountActionRequest, now = new 
 }
 
 export function publicAccountAction(request: AccountActionRequest) {
-  const { targetRevision: _revision, proposalCredentialId: _credential, ...rest } = effectiveAccountAction(request);
+  const { targetRevision: _revision, proposalCredentialId: _credential, sessionSnapshot: _snapshot, ...rest } = effectiveAccountAction(request);
   return rest;
 }
 
@@ -31,6 +31,7 @@ export class AccountActionsService {
     private readonly auth: AuthService,
     private readonly disable: (target: CdsUser, actor: CdsUser, apply: () => Promise<void>) => Promise<void>,
     private readonly availableProviders: Partial<Record<AccountIdentityProvider, boolean>> = {},
+    private readonly canManage: (actor: CdsUser, target: CdsUser) => boolean = actor => actor.isSystemOwner,
   ) {}
 
   private get store() {
@@ -50,20 +51,29 @@ export class AccountActionsService {
     }
     const target = await this.auth.findUserById(body.targetId);
     if (!target) throw new AccountActionError(404, 'account_not_found', '目标账号不存在');
+    if (action === 'disable-user' && target.status === 'disabled' && target.lastAccountAction?.action === action) {
+      const former = await this.store.get(target.lastAccountAction.id);
+      if (former?.managementMode === 'offline' && former.status === 'completed' && former.reason === reason
+        && !proposalCredentialId && former.requestedByAccountId === actor.id && this.canManage(actor, target)) return former;
+    }
     this.checkScope(actor, target, action);
     const now = new Date();
-    const affectedSessions = await this.auth.countAccountSessions(target);
+    const sessionSnapshot = await this.auth.accountSessionSnapshot(target);
+    const affectedSessions = sessionSnapshot.length;
+    const offline = action === 'disable-user' && !proposalCredentialId && target.status === 'active' && accountRole(target) === 'member'
+      && affectedSessions === 0 && this.canManage(actor, target);
     const previous = (await this.store.list({ targetId: target.id, requestedByAccountId: actor.id, action }, 100))
       .find(item => item.reason === reason && item.targetRevision === target.sessionRevision &&
         item.proposalCredentialId === proposalCredentialId &&
         item.targetRole === accountRole(target) && item.targetStatus === target.status &&
-        item.targetName === handle(target) && item.affectedSessions === affectedSessions);
+        item.targetName === handle(target) && item.affectedSessions === affectedSessions
+        && (!item.sessionSnapshot || JSON.stringify(item.sessionSnapshot) === JSON.stringify(sessionSnapshot)));
     if (previous?.status === 'pending' && previous.expiresAt > now.toISOString()) return previous;
     // Identical concurrent submissions converge on the same primary key. A closed
     // or expired request may be followed by another deliberate, auditable attempt.
     const id = createHash('sha256').update(JSON.stringify([
       action, actor.id, target.id, handle(target), reason, target.sessionRevision ?? null,
-      accountRole(target), target.status, affectedSessions, proposalCredentialId ?? null, previous?.id ?? null,
+      accountRole(target), target.status, sessionSnapshot, proposalCredentialId ?? null, previous?.id ?? null,
     ])).digest('hex');
     const request: AccountActionRequest = {
       id,
@@ -74,7 +84,8 @@ export class AccountActionsService {
       targetRole: accountRole(target),
       targetStatus: target.status,
       ...(target.sessionRevision ? { targetRevision: target.sessionRevision } : {}),
-      affectedSessions,
+      affectedSessions, sessionSnapshot,
+      ...(offline ? { managementMode: 'offline' as const } : {}),
       reason,
       requestedByAccountId: actor.id,
       requestedBy: handle(actor),
@@ -86,10 +97,10 @@ export class AccountActionsService {
       await this.store.insert(request);
     } catch (error) {
       const original = await this.store.get(id);
-      if (original) return original;
-      throw error;
+      if (!original) throw error;
+      return original;
     }
-    return request;
+    return offline ? this.execute(actor, target, request) : request;
   }
 
   async list(actor: CdsUser): Promise<AccountActionRequest[]> {
@@ -121,13 +132,16 @@ export class AccountActionsService {
     const own = !filter.targetId || filter.targetId === actor.id
       ? (await this.store.list({ ...filter, targetId: actor.id }, 200)).filter(item => item.status === 'completed' && matchesStatus(item))
       : [];
-    const submitted = actor.isAdministrator ? await this.store.list({ ...filter, requestedByAccountId: actor.id }, 200) : [];
+    const managedIds = actor.isAdministrator && actor.authProvider !== 'sso'
+      ? (await this.auth.listUsers()).filter(target => (!filter.targetId || target.id === filter.targetId)
+        && this.canManage(actor, target) && accountRole(target) === 'member').map(target => target.id) : [];
+    const managed = managedIds.length ? await this.store.list({ ...filter, targetIds: managedIds }, 200) : [];
     return [
       ...own.map(item => ({
         id: item.id, action: item.action, status: item.status, targetId: item.targetId, targetName: item.targetName,
         createdAt: item.createdAt, decidedAt: item.decidedAt, affectedSessions: item.affectedSessions,
       })),
-      ...submitted.filter(matchesStatus).map(publicAccountAction),
+      ...managed.filter(item => item.targetRole === 'member' && matchesStatus(item)).map(publicAccountAction),
     ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 200);
   }
 
@@ -180,25 +194,32 @@ export class AccountActionsService {
     const target = await this.auth.findUserById(request.targetId);
     if (!target || target.sessionRevision !== request.targetRevision || target.status !== request.targetStatus ||
         accountRole(target) !== request.targetRole || handle(target) !== request.targetName ||
-        await this.auth.countAccountSessions(target) > request.affectedSessions) {
+        !await this.sameImpact(target, request)) {
       throw new AccountActionError(409, 'account_impact_changed', '目标账号或受影响会话有变化，请重新发起并确认');
     }
     this.checkScope(actor, target, request.action);
+    return this.execute(actor, target, request, password, true);
+  }
+
+  private async sameImpact(target: CdsUser, request: AccountActionRequest): Promise<boolean> {
+    const current = await this.auth.accountSessionSnapshot(target);
+    return request.sessionSnapshot ? current.every(id => request.sessionSnapshot!.includes(id)) : current.length <= request.affectedSessions;
+  }
+
+  private async execute(actor: CdsUser, target: CdsUser, request: AccountActionRequest, password?: string, approved = false): Promise<AccountActionRequest> {
     const executing = {
       ...request,
       status: 'executing' as const,
-      approvedAt: new Date().toISOString(),
-      approvedByAccountId: actor.id,
-      approvedBy: handle(actor),
+      ...(approved ? { approvedAt: new Date().toISOString(), approvedByAccountId: actor.id, approvedBy: handle(actor) } : {}),
       executedByAccountId: actor.id,
     };
     if (!await this.store.transition(executing, 'pending')) {
-      const current = await this.load(id);
+      const current = await this.load(request.id);
       if (current.status === 'completed') return current;
       throw new AccountActionError(409, 'account_action_conflict', '这条申请已由另一请求处理，请刷新原申请');
     }
     const apply = async () => {
-      if (!await this.auth.applyAccountAction(target, request, password)) {
+      if (!await this.sameImpact(target, request) || !await this.auth.applyAccountAction(target, request, password)) {
         throw new AccountActionError(409, 'account_impact_changed', '账号状态已改变，请重新发起申请');
       }
     };

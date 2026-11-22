@@ -10,12 +10,17 @@ const positiveVersion = z.number().int().positive();
 const version = positiveVersion.optional();
 const designKey = z.string().trim().max(129).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const sourceCommit = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i);
+const scopeId = z.string().regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/).max(64);
+const moduleRef = z.object({ systemId: scopeId, moduleId: scopeId });
+const scope = moduleRef.extend({ related: z.array(moduleRef).max(12).optional() });
 const intakeResult = z.object({
   protocolVersion: z.literal(1), projectId: z.string(), permissions: z.object({ write: z.boolean(), feedback: z.boolean().optional() }),
   designs: z.array(z.object({ designId: id, designKey: designKey.optional(), latestVersion: positiveVersion,
-    sourceCommit, sourcePaths: z.array(z.string()), canRevise: z.boolean() })),
+    sourceCommit, sourcePaths: z.array(z.string()), canRevise: z.boolean(), scope: scope.optional() })),
+  systems: z.array(z.object({ id: scopeId, name: z.string(), framework: id.optional(),
+    modules: z.array(z.object({ id: scopeId, name: z.string(), framework: id.optional(), note: z.string().optional() })) })).optional(),
   requirements: z.array(z.object({ designKey, planId: id, planVersion: positiveVersion, proposalId: id,
-    title: z.string().min(1), requirements: z.string().min(1), sharedAt: z.string() })).optional(),
+    title: z.string().min(1), requirements: z.string().min(1), sharedAt: z.string(), scope: scope.optional() })).optional(),
 });
 const feedbackBase = { requestId: id, designId: id };
 const feedbackBody = z.string().trim().min(1).max(4_000);
@@ -69,7 +74,7 @@ const schemas = {
   }),
 };
 const descriptions = {
-  [readTool]: '用 intake 读取已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。稿件发布前可用 brief.reply 在当前需求下澄清。',
+  [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。稿件发布前可用 brief.reply 在当前需求下澄清。',
   [feedbackTool]: '稿件发布前用 brief.reply 在设计需求下提出问题。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
 };
@@ -144,7 +149,7 @@ export function createDesignBridge(credentials, options = {}) {
         if (args.view === 'feedback') {
           const feedback = item.feedback ?? [];
           return { projectId, id: item.id, items: args.version === undefined ? feedback
-            : feedback.filter(row => row.version === selected.version || row.replies.some(reply => reply.revision === selected.version)
+            : feedback.filter(row => (row.status !== 'closed' && row.version < selected.version) || row.version === selected.version || row.replies.some(reply => reply.revision === selected.version)
               || row.attachments?.some(attachment => attachment.version === selected.version)) };
         }
         if (args.view === 'file') {

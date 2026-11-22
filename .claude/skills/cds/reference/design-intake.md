@@ -47,7 +47,7 @@
 ## 双向反馈
 
 1. 实现方先读 `intake`、固定版 `delivery` 和已有 `feedback`。用 `cds_design_feedback` 的 `feedback.create` 记录复用建议、实施做法、需求缺漏、落地约束或验收建议。提供稿件、版本、分类、标题、理由、改动依据和可核对证据。对整份稿件或特定画面都可以登记。
-2. 设计方读同一线程，调用 `feedback.reply` 回复。需要改稿时按原稿 ID 和最新基线发布，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
+2. 设计方通过 `cdscli design feedback <稿件编号>`（可选择版本，仍含未关闭的旧版反馈）读同一线程，调用 `design feedback-reply` 或 MCP `feedback.reply` 回复。需要改稿时按原稿 ID 和最新基线发布，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
 3. 原反馈者回读新版和同一线程，按证据验证。用 `feedback.resolve` 的 `close` 或 `reopen` 加说明保留复核结果。项目管理者也可处理。发布、反馈、实际做法验收和人类签收各自按项目权限执行。重试沿用原请求编号。
 
 针对交付文件提反馈时，从该版本的 `delivery.files` 读取完整 `path`，用 `feedback.create` 的 `filePath` 关联。服务端核对文件属于所选稿件版本。
@@ -61,3 +61,15 @@
 使用 `cdscli design scaffold --framework <框架ID> --framework-version <版本> --dir <新目录> --title <稿件名>` 复用该版规范。框架初衷可随稿件的 `spec/charter.json` 一并提交，或在框架导入时提供同样的 `charter` 对象。字段包括 `status`、`intent`、`problems`、`nonGoals`、`scope` 和 `owner`。可附示意稿 `example`、规则来源 `ruleSources` 和模块差异 `moduleDiffs`。
 
 从实施基线提取时，先用 `cdscli design extract <稿件ID> --into <框架ID>` 查看候选。采用时把预览里的 `sourceVersion` 传给 `--version`，把 `expectedVersion` 传给 `--expected-version`，并指定要采用的 `--apply` 项。目标框架在用时，用 `--resolve rules=keep` 或 `--resolve tokens=adopt` 逐项确认。
+
+## 按正式宿主预览
+
+`cdscli design preview --dir <稿件目录> --screen <画面编号> --theme dark` 在环回端口打印预览地址。打开地址即可检查就绪状态，控制台和终端同时显示错误摘要。命令只读取稿件目录中的入口，不需要登录。桌面与手机版依照画面声明分别使用 1280×800 和 375×812。
+
+正式画布和本机预览都以 `sandbox="allow-scripts"` 和相同的响应头 CSP 运行原型。原型使用不透明源，不能访问父页、网络接口、浏览器存储或外部资源。子画面用内联 `srcdoc`，把状态存到原型内存中；图片和字体按响应头允许的类型内联。需要自动进入的画面在 `design.json` 声明 `entryActions` 和唯一可见的 `entryReadySelector`，默认等待 8000 毫秒，可为单屏在 `entryTimeoutMs` 指定 500–15000 毫秒。提交前逐项检查两种主题、375 真机宽度以及 Windows 100%、125%、150% 等效视口，并保留对照证据。
+
+## 从系统和模块接入
+
+先读同一项目的 `cdscli design intake` 或 MCP `cds_design_read` 的 `intake`。使用 `systems[].modules` 选择系统和模块。交接需求与原稿会附上 `scope`，已有的 `designKey`、稿件编号和来源路径仍可继续用。若 `design.json` 声明归属，可填 `scope: {"systemId":"<系统>","moduleId":"<模块>","related":[{"systemId":"<系统>","moduleId":"<受影响模块>"}]}`。服务端会校验所有归属在当前项目登记。同一稿件的续版沿用主归属，需调整时由项目管理者先登记变更。
+
+稿件未指定框架时沿用原稿框架；新稿依次查模块和系统的默认框架，使用 `intake.frameworks[].adoptedVersion` 对应的可用版本并在发布时锁定。设计方先读该版框架的范围、示意稿和源码，属于模块的局部差异写在已有稿件反馈或接入需求线程。

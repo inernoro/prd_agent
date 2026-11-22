@@ -19,6 +19,7 @@ interface SystemPasswordDeps {
 export function createSystemPasswordRouter(deps: SystemPasswordDeps): Router {
   const router = Router();
   const { authService, target } = deps;
+  const snapshot = (revision: string) => authService.accountSessionSnapshot({ id: target.id, sessionRevision: revision || undefined });
 
   function ownerRoute(handle: (req: Request, res: Response, user: CdsUser) => Promise<void>) {
     return async (req: Request, res: Response): Promise<void> => {
@@ -58,10 +59,12 @@ export function createSystemPasswordRouter(deps: SystemPasswordDeps): Router {
     const store = requestStore();
     const now = new Date();
     const revision = deps.currentGeneration();
-    const affectedSessions = (await deps.sessions()).length;
+    const sessionSnapshot = await snapshot(revision);
+    const affectedSessions = sessionSnapshot.length;
     const pending = (await store.list({ targetId: target.id, requestedByAccountId: user.id, action: 'rotate-system-password' }, 100))
       .find(item => item.status === 'pending' && item.expiresAt > now.toISOString() && item.targetRevision === revision &&
-        item.reason === reason && item.affectedSessions === affectedSessions);
+        item.reason === reason && item.affectedSessions === affectedSessions
+        && item.sessionSnapshot?.every(digest => sessionSnapshot.includes(digest)));
     const request: AccountActionRequest = pending ?? {
       id: randomUUID(),
       action: 'rotate-system-password',
@@ -71,7 +74,7 @@ export function createSystemPasswordRouter(deps: SystemPasswordDeps): Router {
       targetRole: 'owner',
       targetStatus: 'active',
       targetRevision: revision,
-      affectedSessions,
+      affectedSessions, sessionSnapshot,
       scope: 'all-system-sessions',
       reason,
       requestedByAccountId: user.id,
@@ -131,7 +134,8 @@ export function createSystemPasswordRouter(deps: SystemPasswordDeps): Router {
     if (/[\u0000\r\n]/.test(newPassword) || newPassword === oldPassword) {
       throw new AccountActionError(400, 'invalid_new_password', '请设置不同且不含换行的口令');
     }
-    if ((await deps.sessions()).length > request.affectedSessions) {
+    const currentSessions = await snapshot(deps.currentGeneration());
+    if (request.sessionSnapshot ? currentSessions.some(digest => !request.sessionSnapshot!.includes(digest)) : currentSessions.length > request.affectedSessions) {
       throw new AccountActionError(409, 'account_impact_changed', '系统账号会话有增加，请重新查看影响并发起申请');
     }
     const executing: AccountActionRequest = {
