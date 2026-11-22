@@ -159,6 +159,12 @@ def inspect_image(reference):
   raise ValueError('docker-image-inspect-identity-unconfirmed')
  if reference not in [reference_key(value) for value in refs(row)]:raise ValueError('docker-image-inspect-identity-unconfirmed')
  return row
+def remove_image_reference(reference):
+ try:docker(['image','rm','--no-prune',reference])
+ except ValueError as e:
+  # Docker can finish removing the reference even when the CLI times out.
+  # Only an exact not-found result proves that the mutation took effect.
+  if str(e)!='docker-query-timeout' or inspect_image(reference) is not None:raise
 def containers():
  if local_socket:
   rows=docker_summary('/containers/json?all=1')
@@ -327,12 +333,11 @@ if action=='reconcile':
     if any(v['Image']==identity for v in containers()):raise ValueError('latest-running-or-stopped-reference')
     latest=json.loads(docker(['image','inspect',alias]))[0]
     if latest['Id']!=identity:raise ValueError('alias-was-retargeted')
-    docker(['image','rm','--no-prune',alias])
+    remove_image_reference(alias)
    if not item['aliases']:
     if any(v['Image']==identity for v in containers()):raise ValueError('latest-running-or-stopped-reference')
-    docker(['image','rm','--no-prune',identity])
-   remaining=set(docker(['image','ls','-aq','--no-trunc']).splitlines())
-   if identity in remaining:raise ValueError('image-retirement-still-pending')
+    remove_image_reference(identity)
+   if inspect_image(identity) is not None:raise ValueError('image-retirement-still-pending')
    del state['images'][identity];state['retired'].append({'id':identity,'at':now,'registryAuditId':req.get('registryAuditId')});state['retired']=state['retired'][-1000:];save();out['removed'].append(identity)
   except Exception as e:
    if str(e) in ['cancelled','inspection-budget-exceeded']:
