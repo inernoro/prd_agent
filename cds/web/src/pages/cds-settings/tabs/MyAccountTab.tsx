@@ -4,10 +4,10 @@ import { Github, KeyRound, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { apiRequest, apiUrl, changeMyPassword, type CdsAuthPublicStatus, type CdsPublicUser } from '@/lib/api';
+import { apiRequest, apiUrl, changeMyPassword, listUsers, type CdsAuthPublicStatus, type CdsPublicUser } from '@/lib/api';
 import { ErrorBlock, Field, LoadingBlock, Section } from '../components';
 import { KeyNotifications } from '../components/KeyNotifications';
-import { actionLabels, type AccountAction } from '../accountAccess';
+import { accountLoginMethods, actionLabels, availableAccountLogins, hasAccountLogin, type AccountAction } from '../accountAccess';
 
 type LoginMethods = CdsAuthPublicStatus['loginMethods'];
 type AccountProviders = CdsAuthPublicStatus['accountProviders'];
@@ -19,28 +19,54 @@ export function accountRoleLabel(user: CdsPublicUser): string {
   return user.isSystemOwner ? '系统所有者' : user.role === 'admin' ? '管理员' : '成员';
 }
 
-export function LoginMethodsTab({ loginMethods, accountProviders }: {
-  loginMethods: LoginMethods; accountProviders?: AccountProviders;
+export function LoginMethodsTab({ loginMethods, accountProviders, canListAccounts }: {
+  loginMethods: LoginMethods; accountProviders?: AccountProviders; canListAccounts: boolean;
 }): JSX.Element {
-  const methods = [
-    { name: 'GitHub', detail: '使用已绑定的 GitHub 身份登录。仓库访问权限在 GitHub 集成中管理。', enabled: loginMethods.github, icon: Github },
-    { name: 'Google', detail: '使用已绑定的 Google 账号登录。', enabled: accountProviders?.google, icon: ShieldCheck },
-    { name: '单点登录', detail: '使用本实例配置的上游身份提供方登录。', enabled: loginMethods.sso, icon: ShieldCheck },
-    { name: '账号口令', detail: '使用个人 CDS 用户名和口令登录。', enabled: loginMethods.local, icon: KeyRound },
-  ];
+  const [accounts, setAccounts] = useState<CdsPublicUser[] | null>(null);
+  const [countFailed, setCountFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!canListAccounts) return;
+    const controller = new AbortController();
+    setCountFailed(false);
+    listUsers(controller.signal).then(rows => {
+      if (!controller.signal.aborted) setAccounts(rows);
+    }).catch(() => {
+      if (!controller.signal.aborted) setCountFailed(true);
+    });
+    return () => controller.abort();
+  }, [attempt, canListAccounts]);
+  const available = availableAccountLogins(loginMethods, accountProviders);
+  const methods = {
+    github: { detail: '个人登录使用本实例的 OAuth 应用，回调为 /api/auth/external/github/callback。项目仓库访问在 GitHub 集成中授权。', icon: Github },
+    google: { detail: '个人登录使用本实例的 OAuth 应用，回调为 /api/auth/external/google/callback。', icon: ShieldCheck },
+    sso: { detail: '使用本实例配置的上游身份提供方登录。', icon: ShieldCheck },
+    local: { detail: '使用个人 CDS 用户名和口令登录。', icon: KeyRound },
+  };
   return (
-    <Section title="登录方式" description="当前 CDS 实例开放的登录方式。">
+    <Section title="登录方式" description="账号数量按当前管理范围、实例开通状态和账号状态统计。">
+      {countFailed ? <div className="mb-3 flex flex-wrap items-center gap-2">
+        <ErrorBlock message="暂时无法读取账号数量" />
+        <Button variant="outline" onClick={() => setAttempt(value => value + 1)}>重新读取</Button>
+      </div> : null}
       <ul className="grid gap-3 lg:grid-cols-3">
-        {methods.map(({ name, detail, enabled, icon: Icon }) => (
-          <li key={name} className="min-w-0 rounded-lg border border-border bg-card p-4 text-sm">
+        {accountLoginMethods.map(([id, name]) => {
+          const { detail, icon: Icon } = methods[id];
+          const enabled = available[id];
+          const connected = accounts?.filter(user => hasAccountLogin(user, id)) ?? [];
+          const ready = enabled ? connected.filter(user => user.status === 'active').length : 0;
+          return <li key={id} className="min-w-0 rounded-lg border border-border bg-card p-4 text-sm">
             <div className="flex flex-wrap items-center gap-2">
               <Icon size={16} aria-hidden="true" />
               <strong>{name}</strong>
               <span className={enabled ? 'ml-auto text-ok' : 'ml-auto text-muted-foreground'}>{enabled ? '可用' : '未开通'}</span>
             </div>
-            <p className="mt-2 text-muted-foreground">{detail}</p>
-          </li>
-        ))}
+            <p className="mt-2 break-words text-muted-foreground">{detail}</p>
+            {canListAccounts && accounts && !countFailed ? <p className="mt-2 text-xs text-muted-foreground">
+              {ready} 个可用账号 · {connected.length - ready} 个暂不可用
+            </p> : null}
+          </li>;
+        })}
       </ul>
     </Section>
   );

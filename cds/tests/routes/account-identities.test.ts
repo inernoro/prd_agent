@@ -393,6 +393,11 @@ describe('GitHub and Google account identities', () => {
       const conflict = await fixture.complete('github', 'bind', profile, secondSession);
       const destination = fixture.blockedCallback(conflict.response, 'github', 'identity_taken', '/cds-settings');
       expect([profile.subject, profile.label, conflict.state, conflict.code].every(value => !destination.href.includes(value))).toBe(true);
+      const audit = await fixture.authService.listActivity({ userId: second.id });
+      const refusal = audit.find(row => row.action === 'link-identity-denied');
+      expect(refusal).toMatchObject({ userId: second.id, targetId: second.id });
+      expect([original.id, profile.subject, profile.label, conflict.state, conflict.code].every(value =>
+        !JSON.stringify(refusal).includes(value))).toBe(true);
 
       const login = await fixture.complete('github', 'login', profile);
       await fixture.loggedIn(login.response, original);

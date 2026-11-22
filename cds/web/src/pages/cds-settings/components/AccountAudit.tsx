@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { apiRequest } from '@/lib/api';
+import { ApiError, apiRequest } from '@/lib/api';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { actionLabels, actionStateLabels, listAccountActionAudit, type AccountActionEntry } from '../accountAccess';
 import { EmptyBlock, ErrorBlock, Field, LoadingBlock, Section } from '../components';
@@ -16,6 +16,7 @@ export function AccountAudit({ canViewAll }: { canViewAll: boolean }): JSX.Eleme
   const [filter, setFilter] = useState(new URLSearchParams());
   const [rows, setRows] = useState<AccountActionEntry[] | null>(null);
   const [error, setError] = useState('');
+  const [requestId, setRequestId] = useState<string>();
   const [selected, setSelected] = useState<AccountActionEntry | null>(null);
   const [backfillOpen, setBackfillOpen] = useState(false);
 
@@ -33,10 +34,17 @@ export function AccountAudit({ canViewAll }: { canViewAll: boolean }): JSX.Eleme
   useEffect(() => {
     const controller = new AbortController();
     setError('');
+    setRequestId(undefined);
     setRows(null);
     listAccountActionAudit(filter, controller.signal)
       .then(result => { if (!controller.signal.aborted) setRows(result); })
-      .catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : String(error)); });
+      .catch(error => {
+        if (controller.signal.aborted) return;
+        const id = error instanceof ApiError ? error.requestId : undefined;
+        const details = error instanceof Error ? error.message : String(error);
+        setError(id ? details.replace(` · requestId=${id}`, '') : details);
+        setRequestId(id);
+      });
     return () => controller.abort();
   }, [filter]);
 
@@ -70,6 +78,7 @@ export function AccountAudit({ canViewAll }: { canViewAll: boolean }): JSX.Eleme
       {error ? <div className="space-y-2">
         <ErrorBlock message="账号审计读取失败。读取失败时无法判断是否有操作记录。" />
         <p className="break-all text-xs text-muted-foreground">{error}</p>
+        {requestId ? <p className="break-all text-xs text-muted-foreground">请求编号 <span className="font-mono">{requestId}</span></p> : null}
         <Button variant="outline" onClick={() => setFilter(value => new URLSearchParams(value))}>重新读取</Button>
       </div> : !rows ? <LoadingBlock label="读取账号审计" /> : !rows.length ? (
         <EmptyBlock title="没有符合条件的记录" description="可调整日期或操作筛选，再查询一次。" />

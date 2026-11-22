@@ -18,6 +18,9 @@ const ACTION_LABEL: Record<string, string> = {
   'enable-user': '启用用户',
   'grant-project': '授权项目',
   'revoke-project': '撤销项目授权',
+  'link-identity': '绑定登录身份',
+  'link-identity-denied': '绑定登录身份失败',
+  'unlink-identity': '解除登录身份绑定',
 };
 
 function actionLabel(action: string): string {

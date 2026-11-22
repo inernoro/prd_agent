@@ -231,14 +231,19 @@ export function createAccountIdentitiesRouter(options: Options): Router {
           fail('binding_session_changed');
           return;
         }
+        const providerName = provider === 'github' ? 'GitHub' : 'Google';
         const result = await authService.linkIdentity(user, provider, subject, String(label).trim().slice(0, 160) || provider);
         if (result !== 'linked') {
+          if (result === 'identity_taken') await authService.recordActivity({
+            userId: user.id, userLogin: user.username || user.githubLogin, action: 'link-identity-denied',
+            targetType: 'user', targetId: user.id, summary: `本人绑定 ${providerName} 失败，身份已被绑定`,
+          });
           fail(result);
           return;
         }
         await authService.recordActivity({
           userId: user.id, userLogin: user.username || user.githubLogin, action: 'link-identity', targetType: 'user',
-          targetId: user.id, summary: `本人绑定 ${provider === 'github' ? 'GitHub' : 'Google'} 登录身份`,
+          targetId: user.id, summary: `本人绑定 ${providerName} 登录身份`,
         });
         res.redirect(302, `${ACCOUNT_PATH}?external=bound&provider=${provider}#my-account`);
         return;

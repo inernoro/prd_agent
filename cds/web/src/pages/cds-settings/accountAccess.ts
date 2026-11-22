@@ -1,4 +1,29 @@
-import { apiRequest } from '@/lib/api';
+import { apiRequest, type CdsAuthPublicStatus, type CdsPublicUser } from '@/lib/api';
+
+export const accountLoginMethods = [
+  ['github', 'GitHub'],
+  ['google', 'Google'],
+  ['sso', '单点登录'],
+  ['local', '个人口令'],
+] as const;
+
+type AccountLoginMethod = typeof accountLoginMethods[number][0];
+export type AvailableAccountLogins = Record<AccountLoginMethod, boolean>;
+
+export function availableAccountLogins(
+  loginMethods: CdsAuthPublicStatus['loginMethods'], accountProviders?: CdsAuthPublicStatus['accountProviders'],
+): AvailableAccountLogins {
+  return { github: loginMethods.github, google: accountProviders?.google === true, sso: loginMethods.sso, local: loginMethods.local };
+}
+
+export function hasAccountLogin(user: CdsPublicUser, method: AccountLoginMethod): boolean {
+  switch (method) {
+    case 'github': return user.linkedLogins ? Boolean(user.linkedLogins.github) : user.authProvider === 'github';
+    case 'google': return Boolean(user.linkedLogins?.google);
+    case 'sso': return user.authProvider === 'sso';
+    case 'local': return user.hasPassword ?? user.authProvider === 'local';
+  }
+}
 
 export const accountViews = [
   ['members', '成员'],
@@ -51,9 +76,11 @@ export interface AccountActionEntry {
   reason?: string;
   requestedByAccountId?: string;
   requestedBy?: string;
+  requestedVia?: 'agent';
   createdAt: string;
   expiresAt?: string;
   approvedBy?: string;
+  approvedByAccountId?: string;
   approvedAt?: string;
   executedByAccountId?: string;
   decidedAt?: string;

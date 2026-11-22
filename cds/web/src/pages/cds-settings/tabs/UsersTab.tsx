@@ -7,7 +7,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { consoleAccountIdentity } from '@/lib/consoleIdentity';
 import { apiRequest, createLocalUser, inviteLocalUser, listUsers, updateUser, type CdsPublicUser } from '@/lib/api';
-import { accountViews, actionLabels, actionStateLabels, listAccountActions, type AccountAction, type AccountActionEntry, type AccountView } from '../accountAccess';
+import {
+  accountLoginMethods, accountViews, actionLabels, actionStateLabels, hasAccountLogin, listAccountActions,
+  type AccountAction, type AccountActionEntry, type AccountView, type AvailableAccountLogins,
+} from '../accountAccess';
 import { EmptyBlock, ErrorBlock, Field, LoadingBlock, MetricTile, Section } from '../components';
 import { AccountActionDialog, accountInputClass } from '../components/AccountActionDialog';
 import { IdentityRecoveryPanel } from '../components/IdentityRecoveryPanel';
@@ -20,6 +23,7 @@ import { accountRoleLabel } from './MyAccountTab';
 interface Props {
   onToast: (message: string) => void;
   durableUsers: boolean;
+  availableLogins: AvailableAccountLogins;
   view: AccountView;
   changeView: (view: AccountView, selectedId?: string) => void;
   selectionId?: string;
@@ -29,14 +33,19 @@ function accountName(user: CdsPublicUser): string {
   return user.username || user.githubLogin || user.name;
 }
 
-function accountSource(user: CdsPublicUser): string {
+function accountSource(user: CdsPublicUser, availableLogins: AvailableAccountLogins): string {
   if (user.invitationPending) return '等待激活';
-  if (user.authProvider === 'local') {
-    const methods = [user.hasPassword !== false && '个人口令', user.linkedLogins?.github && 'GitHub', user.linkedLogins?.google && 'Google'];
-    return methods.filter(Boolean).join(' · ') || '没有登录方式';
-  }
   if (user.authProvider === 'legacy') return '系统账号';
-  return user.authProvider === 'github' ? 'GitHub' : '单点登录';
+  return accountLoginMethods.filter(([method]) => availableLogins[method] && hasAccountLogin(user, method))
+    .map(([, label]) => label).join(' · ');
+}
+
+const memberStateLabels = { active: '正常', disabled: '已停用', invited: '等待激活', unavailable: '无可用登录方式' } as const;
+
+function memberState(user: CdsPublicUser, signIn: string): keyof typeof memberStateLabels {
+  if (user.status === 'disabled') return 'disabled';
+  if (user.invitationPending) return 'invited';
+  return signIn ? 'active' : 'unavailable';
 }
 
 export function UsersTab(props: Props): JSX.Element {
@@ -49,7 +58,7 @@ export function UsersTab(props: Props): JSX.Element {
     owner={status.user.isSystemOwner === true} {...props} />;
 }
 
-function AccountManagement({ owner, viewerId, onToast, durableUsers, view, changeView, selectionId }: Props & {
+function AccountManagement({ owner, viewerId, onToast, durableUsers, availableLogins, view, changeView, selectionId }: Props & {
   owner: boolean; viewerId: string;
 }): JSX.Element {
   const [users, setUsers] = useState<CdsPublicUser[] | null>(null);
@@ -83,7 +92,7 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, view, chang
     };
     setReadError('');
     if (view === 'members') {
-      listUsers().then(result => { if (!controller.signal.aborted) setUsers(result); }).catch(onError);
+      listUsers(controller.signal).then(result => { if (!controller.signal.aborted) setUsers(result); }).catch(onError);
       listAccountActions(controller.signal).then(result => { if (!controller.signal.aborted) setRequests(result); }).catch(() => {});
       if (owner) {
         apiRequest<{ sessions: unknown[] }>('/api/auth/system-password', { signal: controller.signal })
@@ -111,12 +120,18 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, view, chang
   }
 
   const needle = query.trim().toLocaleLowerCase();
-  const visibleUsers = users?.filter(user =>
+  const visibleUsers = users?.map(user => {
+    const signIn = accountSource(user, availableLogins);
+    return { user, signIn, state: memberState(user, signIn) };
+  }).filter(({ user, state }) =>
     (!roleFilter || user.role === roleFilter) &&
-    (!stateFilter || (user.invitationPending ? 'invited' : user.status) === stateFilter) &&
+    (!stateFilter || state === stateFilter) &&
     (!needle || [user.username, user.githubLogin, user.name, user.id].some(value => value?.toLocaleLowerCase().includes(needle)))) ?? [];
   const isTarget = selected && selected.id !== viewerId && !selected.isSystemOwner;
   const canChange = isTarget && selected.status === 'active';
+  const selectedSource = selected ? accountSource(selected, availableLogins) : '';
+  const approvals = requests?.filter(entry => entry.status !== 'completed' || entry.requestedVia === 'agent' ||
+    entry.requestedByAccountId !== entry.approvedByAccountId || entry.approvedByAccountId === undefined);
   const title = accountViews.find(([value]) => value === view)?.[1];
 
   return (
@@ -155,7 +170,8 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, view, chang
                     <option value="">全部角色</option><option value="owner">系统所有者</option><option value="admin">管理员</option><option value="member">成员</option>
                   </select>
                   <select aria-label="状态筛选" className={`${accountInputClass} w-auto`} value={stateFilter} onChange={event => setStateFilter(event.target.value)}>
-                    <option value="">全部状态</option><option value="active">正常</option><option value="invited">等待激活</option><option value="disabled">已停用</option>
+                    <option value="">全部状态</option>
+                    {Object.entries(memberStateLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                   <span className="ml-auto text-xs text-muted-foreground">{visibleUsers.length} / {users.length} 个账号</span>
                 </div>
@@ -165,7 +181,7 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, view, chang
                     <span>账号</span><span>角色</span><span>登录方式</span><span>状态</span><span>最近登录</span><span />
                   </div>
                   <ul className="divide-y divide-border">
-                  {visibleUsers.map(user => (
+                  {visibleUsers.map(({ user, signIn, state }) => (
                     <li key={user.id}>
                       <button type="button" data-user-card={user.id}
                         className="account-members-grid w-full items-center px-3 py-3 text-left text-sm hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -177,9 +193,9 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, view, chang
                             <small className="block break-all text-muted-foreground">{accountName(user)}<span className="account-member-mobile"> · {accountRoleLabel(user)}</span></small></span>
                         </span>
                         <span className="account-member-desktop text-muted-foreground">{accountRoleLabel(user)}</span>
-                        <span className="account-member-desktop min-w-0 break-words text-muted-foreground">{accountSource(user)}</span>
-                        <span className={user.status === 'active' && !user.invitationPending ? 'text-ok' : 'text-warn'}>
-                          {user.status === 'disabled' ? '已停用' : user.invitationPending ? '等待激活' : '正常'}
+                        <span className="account-member-desktop min-w-0 break-words text-muted-foreground">{signIn || '—'}</span>
+                        <span className={state === 'active' ? 'text-ok' : 'text-warn'}>
+                          {memberStateLabels[state]}
                         </span>
                         <span className="account-member-desktop text-xs text-muted-foreground">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : '尚未登录'}</span>
                         <ArrowRight size={15} className="account-member-desktop text-muted-foreground" aria-hidden="true" />
@@ -197,11 +213,11 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, view, chang
       {view === 'approvals' && !subject && !readError ? (
         <Section title="待批申请" description={owner ? '逐项核对账号、实际影响及变更原因。执行结果留在原申请。' : '查看你提交的申请及其处理结果。'}
           actions={<Button variant="outline" onClick={refresh}>刷新申请</Button>}>
-          {!requests ? <LoadingBlock label="读取申请" /> : !requests.length ? (
-            <EmptyBlock title="没有账号操作申请" description="成员页的需要确认操作会在这里留下申请和回执。" />
+          {!approvals ? <LoadingBlock label="读取申请" /> : !approvals.length ? (
+            <EmptyBlock title="没有账号操作申请" description="管理员和智能体提交的申请会出现在这里。所有者本人确认的结果可在账号审计查看。" />
           ) : (
             <ul className="divide-y divide-border rounded-lg border border-border">
-              {requests.map(entry => (
+              {approvals.map(entry => (
                 <li key={entry.id}>
                   <button type="button" className="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left text-sm hover:bg-muted/50"
                     onClick={() => { setSubject({ entry }); changeView('approvals', entry.id); }}>
@@ -233,17 +249,20 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, view, chang
       ) : null}
       {view === 'members' && selected ? (
         <Section title={selected.name || accountName(selected)}
-          description={`${accountName(selected)} · ${accountRoleLabel(selected)} · ${selected.status === 'active' ? '正常' : '已停用'}`}
+          description={`${accountName(selected)} · ${accountRoleLabel(selected)} · ${memberStateLabels[memberState(selected, selectedSource)]}`}
           actions={<Button variant="outline" onClick={() => changeView('members')}>返回成员</Button>}>
           <div className="grid gap-4 lg:grid-cols-2">
             <dl className="grid gap-3 rounded-lg border border-border p-4 text-sm">
               <div><dt className="text-muted-foreground">账号编号</dt><dd className="break-all font-mono">{selected.id}</dd></div>
-              <div><dt className="text-muted-foreground">现有登录方式</dt><dd>{accountSource(selected)}</dd></div>
+              <div><dt className="text-muted-foreground">可用登录方式</dt><dd>{selectedSource || '无可用登录方式'}</dd></div>
               <div><dt className="text-muted-foreground">新增身份绑定资格</dt><dd>{selected.externalLoginAllowed ? '已开通' : '未开通'}</dd></div>
               <div><dt className="text-muted-foreground">最近登录</dt><dd>{selected.lastLoginAt ? new Date(selected.lastLoginAt).toLocaleString() : '尚未登录'}</dd></div>
             </dl>
             <section className="space-y-3 rounded-lg border border-border p-4">
             <h3 className="font-semibold">账号操作</h3>
+            {!selectedSource && selected.status === 'active' ? (
+              <p className="text-sm text-muted-foreground">这个成员需要申请身份恢复。<Button variant="link" onClick={() => changeView('recovery')}>查看身份恢复</Button></p>
+            ) : null}
             {editError ? <ErrorBlock message={editError} /> : null}
             <div className="flex flex-wrap gap-2">
               {canChange ? <Button variant="outline"

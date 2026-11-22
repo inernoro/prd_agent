@@ -14,7 +14,7 @@ import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 import { MotionLink, useSurfaceNavigate } from '@/components/layout/RouteMotion';
-import { accountViews, readAccountView, type AccountView } from './cds-settings/accountAccess';
+import { accountViews, availableAccountLogins, readAccountView, type AccountView } from './cds-settings/accountAccess';
 import './status/monitor-frame.css';
 import './cds-settings/account-settings.css';
 
@@ -454,7 +454,7 @@ export function CdsSettingsPage(): JSX.Element {
                 <TabsContent value="auth">
                   {activeTab === 'auth' && authStatus ? (
                     <div className="space-y-6">
-                      <LoginMethodsTab loginMethods={authStatus.loginMethods} accountProviders={authStatus.accountProviders} />
+                      <LoginMethodsTab loginMethods={authStatus.loginMethods} accountProviders={authStatus.accountProviders} canListAccounts={usersVisible} />
                       {canManageSettings ? <AuthTab /> : null}
                     </div>
                   ) : null}
@@ -466,10 +466,11 @@ export function CdsSettingsPage(): JSX.Element {
                   ) : null}
                 </TabsContent>
                 <TabsContent value="users">
-                  {activeTab !== 'users' ? null : usersVisible ? (
+                  {activeTab !== 'users' ? null : usersVisible && authStatus ? (
                     <UsersTab
                       onToast={setToast}
                       durableUsers={authCapabilities?.durableUsers === true}
+                      availableLogins={availableAccountLogins(authStatus.loginMethods, authStatus.accountProviders)}
                       view={accountView}
                       changeView={selectAccountView}
                       selectionId={searchParams.get('accountSelection') ?? undefined}

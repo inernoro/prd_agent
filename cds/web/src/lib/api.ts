@@ -795,8 +795,8 @@ export async function changeMyPassword(input: {
 }
 
 /** List the accounts within the current manager's scope. */
-export async function listUsers(): Promise<CdsPublicUser[]> {
-  const res = await apiRequest<{ users: CdsPublicUser[] }>('/api/auth/users');
+export async function listUsers(signal?: AbortSignal): Promise<CdsPublicUser[]> {
+  const res = await apiRequest<{ users: CdsPublicUser[] }>('/api/auth/users', { signal });
   return res.users;
 }
 
