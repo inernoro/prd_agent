@@ -2867,6 +2867,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
         | 'composeUpdatedAt'
         | 'composeVersion'
         | 'composeSource'
+        | 'openDesignWorkspaceVersions'
       >
     >,
     context: ProjectIdentityActor = { actor: 'unknown' },

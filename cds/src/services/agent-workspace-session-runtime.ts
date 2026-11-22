@@ -191,6 +191,9 @@ export interface WorkspaceTransferRequest {
   maxInputBytes: number;
   maxOutputBytes: number;
   allowedOutputPaths: string[];
+  /** Present only when MAP can distinguish a new task from a saved continuation. */
+  continuingRun?: boolean;
+  previousImageDigest?: string;
 }
 
 export interface OpenDesignModelAuthority {
@@ -231,6 +234,7 @@ const MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA = 'map-design-artifact-quality-v1';
 interface RuntimeHandle {
   kind: 'active';
   sessionId: string;
+  image: string;
   mapRunId: string;
   hostRoot: string;
   workspaceDir: string;
@@ -312,6 +316,16 @@ interface CapabilityProbeResult {
   imageId: string | null;
 }
 
+interface ImageCapabilityState {
+  cache?: CapabilitySnapshot;
+  refresh?: Promise<CapabilityProbeResult>;
+  retryAfter: number;
+  refreshFailed?: boolean;
+  preparation?: Promise<void>;
+  preparationAttemptedAt: number;
+  preparationError?: string;
+}
+
 export interface AgentWorkspaceCreateResult {
   hostRoot: string;
   workspaceDir: string;
@@ -319,6 +333,7 @@ export interface AgentWorkspaceCreateResult {
   networkName: string;
   daemonBaseUrl: string;
   inputFileCount: number;
+  image: string;
 }
 
 export interface AgentWorkspaceExecuteResult {
@@ -1049,6 +1064,12 @@ export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferReq
       'workspaceTransfer.allowedOutputPaths must include index.html and manifest.json',
     );
   }
+  const previousImageDigest = record.previousImageDigest == null ? undefined : record.previousImageDigest;
+  if (previousImageDigest !== undefined && (
+    record.continuingRun !== true || typeof previousImageDigest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(previousImageDigest)
+  )) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspaceTransfer.previousImageDigest requires a continuation and a valid image digest');
+  }
   return {
     schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
     inputPackageUrl: inputPackageUrl.toString(),
@@ -1059,6 +1080,8 @@ export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferReq
     maxInputBytes: boundedInteger(record.maxInputBytes, 'workspaceTransfer.maxInputBytes', 1, 64 * 1024 * 1024),
     maxOutputBytes: boundedInteger(record.maxOutputBytes, 'workspaceTransfer.maxOutputBytes', 1, 128 * 1024 * 1024),
     allowedOutputPaths: [...new Set(allowedOutputPaths)],
+    continuingRun: typeof record.continuingRun === 'boolean' ? record.continuingRun : undefined,
+    previousImageDigest,
   };
 }
 
@@ -1587,17 +1610,12 @@ export class AgentWorkspaceSessionRuntime {
   private readonly cleanupRetryTimers = new Map<string, NodeJS.Timeout>();
   private readonly cleanupRetryAttempts = new Map<string, number>();
   private readonly cleanupInFlight = new Map<string, Promise<void>>();
-  private capabilityCache: CapabilitySnapshot | null = null;
-  private capabilityRefresh: Promise<CapabilityProbeResult> | null = null;
-  private capabilityRetryAfter = 0;
-  private capabilityRefreshError: string | null = null;
+  private readonly imageCapabilities = new Map<string, ImageCapabilityState>();
+  private probeQueue?: Promise<void>;
   private readonly runtimeValidationByImageId = new Map<string, boolean>();
   private hardStoragePolicyValidated = false;
   private hardStoragePolicyFailureCode: string | null = null;
   private hardStoragePolicyDiagnostic: string | null = null;
-  private imagePreparation: Promise<void> | null = null;
-  private imagePreparationAttemptedAt = 0;
-  private imagePreparationError: string | null = null;
   private bootstrapPreparation: Promise<void> | null = null;
   private bootstrapAttempted = false;
   private bootstrapError: string | null = null;
@@ -1643,7 +1661,7 @@ export class AgentWorkspaceSessionRuntime {
     this.probeEventLog = options.serverEventLogStore;
     this.coreImageCache = new CoreImageCache(this.shell,
       path.join(path.dirname(this.rootDir), `${path.basename(this.rootDir)}-core-image-cache`, this.instanceNameScope),
-      this.instanceId, () => !this.bootstrapPreparation && !this.bootstrapError && !this.capabilityRefresh
+      this.instanceId, () => !this.bootstrapPreparation && !this.bootstrapError && !this.probeQueue
         && this.probeGenerations.size === 0 && this.handles.size === 0, this.probeEventLog);
     this.cleanupRetryBaseMs = Math.max(1, options.cleanupRetryBaseMs ?? DEFAULT_CLEANUP_RETRY_BASE_MS);
     this.cleanupRetryMaxMs = Math.max(
@@ -1770,34 +1788,131 @@ export class AgentWorkspaceSessionRuntime {
     }
   }
 
-  async prepareImage(): Promise<void> {
+  get configuredImage(): string {
+    return this.image;
+  }
+
+  /** Check the exact image, including its configured daemon startup, without MAP data or model access. */
+  async verifyVersion(image: string): Promise<AgentWorkspaceRuntimeCapability> {
+    await this.prepareImage(image);
+    const capability = await this.capability(true, image);
+    if (!capability.available || !capability.resourcePolicyEnforcedPerSession) return capability;
+    const unavailable = (reason: string) => ({ available: false, resourcePolicyEnforcedPerSession: false, reason });
+    try {
+      return await this.queueProbe(async () => {
+        this.assertProbeOpen();
+        for (const generation of this.probeGenerations.values()) await this.cleanupProbeGeneration(generation);
+        const config = await this.shell.exec(
+          `docker image inspect ${shellQuote(image)} --format ${shellQuote('[{{json .Config.Entrypoint}},{{json .Config.Cmd}}]')}`,
+          { timeout: 10_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() },
+        );
+        const parts: unknown = config.exitCode === 0 ? JSON.parse(config.stdout) : null;
+        if (!Array.isArray(parts) || parts.length !== 2 || parts.some(part => part !== null && !Array.isArray(part))) {
+          return unavailable('无法读取候选镜像的 OpenDesign 启动配置');
+        }
+        const args: unknown[] = parts.flatMap(part => part ?? []);
+        if (!args.length || !args.every((arg): arg is string => typeof arg === 'string' && !arg.includes('\0'))) {
+          return unavailable('候选镜像缺少有效的 OpenDesign 启动命令');
+        }
+        const health = [
+          "const { readFileSync } = require('node:fs');",
+          "const read = path => { try { return readFileSync('/sys/fs/cgroup/' + path, 'utf8').trim(); } catch { return ''; } };",
+          "const memory = Number(read('memory.max') || read('memory/memory.limit_in_bytes'));",
+          "const [quota, period] = (read('cpu.max') || [read('cpu/cpu.cfs_quota_us'), read('cpu/cpu.cfs_period_us')].join(' ')).split(/\\s+/).map(Number);",
+          "if (!(memory > 0 && memory <= 512 * 1024 * 1024 && quota > 0 && period > 0 && quota / period <= 0.5)) process.exit(42);",
+          "const port = process.env.OD_PORT;",
+          "const deadline = Date.now() + 20000;",
+          "async function check() {",
+          "  try {",
+          "    const response = await fetch('http://127.0.0.1:' + port + '/api/health', {",
+          "      headers: { Authorization: 'Bearer cds-version-probe' }, signal: AbortSignal.timeout(1500), redirect: 'error',",
+          "    });",
+          "    if (response.ok) return;",
+          "  } catch {}",
+          "  if (Date.now() >= deadline) process.exitCode = 1;",
+          "  else setTimeout(check, 250);",
+          "}",
+          "void check();",
+        ].join('\n');
+        const generation = await this.allocateProbeGeneration();
+        try {
+          const result = await this.executeCapabilityProbe(generation, 'runtime-validation', [
+            'docker run --rm',
+            ...DOCKER_LOG_LIMIT_FLAGS,
+            ...this.capabilityProbeOwnership('runtime-validation', generation.id),
+            '--pull never --read-only --network none --security-opt no-new-privileges:true --cap-drop ALL',
+            '--pids-limit 128 --memory 512m --cpus 0.5',
+            '--tmpfs /tmp:rw,noexec,nosuid,size=64m',
+            ...['/workspace', '/app/.od', '/app/design-templates'].map(directory =>
+              `--tmpfs ${shellQuote(`${directory}:rw,noexec,nosuid,size=16m,uid=${this.containerUid},gid=${this.containerGid},mode=0755`)}`),
+            '--env NODE_ENV=production --env OD_BIND_HOST=0.0.0.0 --env OD_DATA_DIR=/app/.od',
+            '--env OD_API_TOKEN=cds-version-probe --env OD_SANDBOX_MODE=1 --env OD_SANDBOX_IMPORT_ALLOWED_ROOTS=/workspace',
+            `--env OD_PORT=${this.daemonPort} --env OD_WEB_PORT=${this.daemonPort}`,
+            '--entrypoint /bin/sh',
+            shellQuote(image),
+            '-c',
+            shellQuote(`"$@" >/tmp/opendesign.log 2>&1 & daemon=$!; trap 'kill "$daemon" 2>/dev/null || true' EXIT; node -e ${shellQuote(health)} && kill -0 "$daemon"`),
+            'cds-version-probe',
+            ...args.map(shellQuote),
+          ].join(' '));
+          if (result.exitCode === 42) return unavailable('当前节点未落实工作区容器的 CPU 或内存限额');
+          return result.exitCode === 0 ? capability : unavailable('候选镜像的 OpenDesign 服务未能启动');
+        } finally {
+          await this.cleanupProbeGeneration(generation);
+        }
+      });
+    } catch {
+      return unavailable('候选镜像的 OpenDesign 服务检查未能完成');
+    }
+  }
+
+  private imageCapabilityState(image: string): ImageCapabilityState {
+    const existing = this.imageCapabilities.get(image);
+    if (existing) return existing;
+    const state = { retryAfter: 0, preparationAttemptedAt: 0 };
+    this.imageCapabilities.set(image, state);
+    return state;
+  }
+
+  private queueProbe<T>(probe: () => Promise<T>): Promise<T> {
+    const next = this.probeQueue ? this.probeQueue.then(probe) : probe();
+    const settled = next.then(() => undefined, () => undefined);
+    this.probeQueue = settled;
+    void settled.then(() => {
+      if (this.probeQueue === settled) this.probeQueue = undefined;
+    });
+    return next;
+  }
+
+  async prepareImage(image = this.image): Promise<void> {
     if (this.probeAbort.signal.aborted) return;
     if (!this.autoPullImage) return;
-    if (this.imagePreparation) return this.imagePreparation;
-    if (this.imagePreparationError && Date.now() - this.imagePreparationAttemptedAt < 60_000) return;
-    this.imagePreparationAttemptedAt = Date.now();
+    const state = this.imageCapabilityState(image);
+    if (state.preparation) return state.preparation;
+    if (state.preparationError && Date.now() - state.preparationAttemptedAt < 60_000) return;
+    state.preparationAttemptedAt = Date.now();
     const preparation = (async () => {
       const docker = await this.shell.exec("docker version --format '{{.Server.Version}}'", { timeout: 5000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() });
       if (docker.exitCode !== 0 || !docker.stdout.trim()) {
         throw new Error('Docker daemon is unavailable');
       }
-      const installed = await this.inspectCapabilityImage('prepare-installed');
+      const installed = await this.inspectCapabilityImage('prepare-installed', image);
       if (installed.exitCode === 0 && installed.stdout.trim()) return;
-      const pulled = await this.shell.exec(`docker pull ${shellQuote(this.image)}`, { timeout: 600_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() });
+      const pulled = await this.shell.exec(`docker pull ${shellQuote(image)}`, { timeout: 600_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() });
       if (pulled.exitCode !== 0) throw new Error(classifyImagePullFailure(pulled.stdout, pulled.stderr));
-      const verified = await this.inspectCapabilityImage('prepare-verified');
+      const verified = await this.inspectCapabilityImage('prepare-verified', image);
       if (verified.exitCode !== 0 || !verified.stdout.trim()) {
         throw new Error('runtime image is still unavailable after pull');
       }
     })()
-      .then(() => { this.imagePreparationError = null; })
+      .then(() => { state.preparationError = undefined; })
       .catch((error) => {
-        this.imagePreparationError = error instanceof Error ? error.message : 'runtime image preparation failed';
+        state.preparationError = error instanceof Error ? error.message : 'runtime image preparation failed';
       })
       .finally(() => {
-        this.imagePreparation = null;
+        state.preparation = undefined;
       });
-    this.imagePreparation = preparation;
+    state.preparation = preparation;
     return preparation;
   }
 
@@ -1805,7 +1920,7 @@ export class AgentWorkspaceSessionRuntime {
    * 默认供 Provider 目录读取：只返回内存快照并在后台刷新，绝不等待最长 45 秒的 Docker 冷探针。
    * force 只供会话创建安全门使用：等待同一个去重刷新，并在探针异常时从严返回不可用。
    */
-  async capability(force = false): Promise<AgentWorkspaceRuntimeCapability> {
+  async capability(force = false, image = this.image): Promise<AgentWorkspaceRuntimeCapability> {
     if (this.probeAbort.signal.aborted) return this.failedCapabilitySnapshot();
     const now = Date.now();
     if (this.bootstrapPreparation) {
@@ -1822,69 +1937,69 @@ export class AgentWorkspaceSessionRuntime {
         reason: `Agent workspace startup recovery failed: ${this.bootstrapError}`,
       };
     }
+    const state = this.imageCapabilityState(image);
     if (force) {
       try {
-        const refreshed = await this.refreshCapability();
+        const refreshed = await this.refreshCapability(image);
         return this.probeAbort.signal.aborted ? this.failedCapabilitySnapshot() : refreshed.value;
       } catch {
         return this.failedCapabilitySnapshot();
       }
     }
-    if (this.capabilityCache && this.capabilityCache.freshUntil > now) {
-      return this.capabilityCache.value;
+    if (state.cache && state.cache.freshUntil > now) {
+      return state.cache.value;
     }
-    if (now >= this.capabilityRetryAfter) void this.refreshCapability().catch(() => undefined);
-    if (this.capabilityCache && this.capabilityCache.staleUntil > now) {
-      return this.capabilityCache.value;
+    if (now >= state.retryAfter) void this.refreshCapability(image).catch(() => undefined);
+    if (state.cache && state.cache.staleUntil > now) {
+      return state.cache.value;
     }
-    return this.pendingCapabilitySnapshot();
+    return this.pendingCapabilitySnapshot(Boolean(state.refreshFailed));
   }
 
-  private refreshCapability(): Promise<CapabilityProbeResult> {
-    if (this.capabilityRefresh) return this.capabilityRefresh;
-    const refresh = (async () => {
+  private refreshCapability(image: string): Promise<CapabilityProbeResult> {
+    const state = this.imageCapabilityState(image);
+    if (state.refresh) return state.refresh;
+    const refresh = this.queueProbe(async () => {
       this.assertProbeOpen();
       for (const generation of this.probeGenerations.values()) await this.cleanupProbeGeneration(generation);
       this.assertProbeOpen();
-      return this.probeCapability();
-    })()
+      return this.probeCapability(image);
+    })
       .then((result) => {
         const now = Date.now();
         const freshFor = result.value.available
           ? this.capabilityCacheMs
           : this.capabilityNegativeCacheMs;
-        this.capabilityCache = {
+        state.cache = {
           value: result.value,
           freshUntil: now + freshFor,
           staleUntil: now + this.capabilityMaxStaleMs,
         };
-        this.capabilityRetryAfter = now + freshFor;
-        this.capabilityRefreshError = null;
+        state.retryAfter = now + freshFor;
+        state.refreshFailed = false;
         return result;
       })
       .catch((error) => {
         const now = Date.now();
-        this.capabilityRefreshError = error instanceof Error
-          ? error.message
-          : 'Docker capability probe failed';
-        this.capabilityRetryAfter = now + this.capabilityNegativeCacheMs;
-        if (this.probeGenerations.size > 0 || this.probeAbort.signal.aborted || !this.capabilityCache || this.capabilityCache.staleUntil <= now) {
-          this.capabilityCache = {
+        state.refreshFailed = true;
+        state.retryAfter = now + this.capabilityNegativeCacheMs;
+        if (this.probeGenerations.size > 0 || this.probeAbort.signal.aborted || !state.cache || state.cache.staleUntil <= now) {
+          state.cache = {
             value: this.failedCapabilitySnapshot(),
-            freshUntil: this.capabilityRetryAfter,
-            staleUntil: this.capabilityRetryAfter,
+            freshUntil: state.retryAfter,
+            staleUntil: state.retryAfter,
           };
         }
         throw error;
       })
       .finally(() => {
-        this.capabilityRefresh = null;
+        state.refresh = undefined;
       });
-    this.capabilityRefresh = refresh;
+    state.refresh = refresh;
     return refresh;
   }
 
-  private async probeCapability(): Promise<CapabilityProbeResult> {
+  private async probeCapability(image: string): Promise<CapabilityProbeResult> {
     const docker = await this.shell.exec("docker version --format '{{.Server.Version}}'", { timeout: 5000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() });
     if (docker.exitCode !== 0 || !docker.stdout.trim()) {
       return {
@@ -1897,12 +2012,12 @@ export class AgentWorkspaceSessionRuntime {
       };
     }
 
-    const image = await this.inspectCapabilityImage('capability');
-    const imageId = image.exitCode === 0 ? image.stdout.trim() : '';
+    const inspected = await this.inspectCapabilityImage('capability', image);
+    const imageId = inspected.exitCode === 0 ? inspected.stdout.trim() : '';
     if (!imageId) {
       if (this.autoPullImage) {
-        void this.prepareImage().then(() => {
-          if (!this.imagePreparationError && !this.probeAbort.signal.aborted) void this.refreshCapability().catch(() => undefined);
+        void this.prepareImage(image).then(() => {
+          if (!this.imageCapabilityState(image).preparationError && !this.probeAbort.signal.aborted) void this.refreshCapability(image).catch(() => undefined);
         });
       }
       return {
@@ -1911,10 +2026,10 @@ export class AgentWorkspaceSessionRuntime {
           available: false,
           resourcePolicyEnforcedPerSession: false,
           reason: !this.autoPullImage
-            ? `OpenDesign image ${this.image} is not installed on this CDS node`
-            : this.imagePreparationError
-              ? `OpenDesign image ${this.image} could not be prepared on this CDS node: ${this.imagePreparationError}`
-              : `OpenDesign image ${this.image} is being prepared on this CDS node`,
+            ? `OpenDesign image ${image} is not installed on this CDS node`
+            : this.imageCapabilityState(image).preparationError
+              ? `OpenDesign image ${image} could not be prepared on this CDS node: ${this.imageCapabilityState(image).preparationError}`
+              : `OpenDesign image ${image} is being prepared on this CDS node`,
         },
       };
     }
@@ -1942,7 +2057,7 @@ export class AgentWorkspaceSessionRuntime {
           '--memory 128m',
           '--cpus 0.25',
           '--entrypoint /bin/sh',
-          shellQuote(this.image),
+          shellQuote(image),
           '-lc',
           shellQuote([
             `test "$(codex --version)" = "codex-cli ${OPEN_DESIGN_CODEX_VERSION}"`,
@@ -1958,7 +2073,7 @@ export class AgentWorkspaceSessionRuntime {
       }
 
       if (runtimeAvailable && !this.hardStoragePolicyValidated) {
-        this.hardStoragePolicyValidated = await this.probeHardStoragePolicy(generation);
+        this.hardStoragePolicyValidated = await this.probeHardStoragePolicy(generation, image);
       }
 
       return {
@@ -1969,7 +2084,7 @@ export class AgentWorkspaceSessionRuntime {
             ? {
               available: false,
               resourcePolicyEnforcedPerSession: false,
-              reason: `OpenDesign image ${this.image} does not contain the required Codex CLI ${OPEN_DESIGN_CODEX_VERSION} and web prototype resources`,
+              reason: `OpenDesign image ${image} does not contain the required Codex CLI ${OPEN_DESIGN_CODEX_VERSION} and web prototype resources`,
             }
             : {
                 available: false,
@@ -1986,11 +2101,11 @@ export class AgentWorkspaceSessionRuntime {
     if (this.probeAbort.signal.aborted) throw new AgentWorkspaceRuntimeError('workspace_runtime_closing', 'Agent runtime is shutting down', true);
   }
 
-  private async inspectCapabilityImage(phase: 'capability' | 'prepare-installed' | 'prepare-verified'): Promise<ExecResult> {
+  private async inspectCapabilityImage(phase: 'capability' | 'prepare-installed' | 'prepare-verified', image: string): Promise<ExecResult> {
     const operationId = crypto.randomUUID().replace(/-/g, '');
     let assignment: ExecAssignment | null = null;
     const result = await this.shell.exec(
-      `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
+      `docker image inspect ${shellQuote(image)} --format ${shellQuote('{{.Id}}')}`,
       { timeout: 10_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen(), onAssigned: value => { assignment = value; } },
     );
     const diagnostic = `${result.stderr}\n${result.stdout}`.toLowerCase();
@@ -2018,7 +2133,11 @@ export class AgentWorkspaceSessionRuntime {
       try {
         await Promise.race([
           (async () => {
-            await Promise.allSettled([this.capabilityRefresh, this.imagePreparation, this.bootstrapPreparation].filter(Boolean));
+            await Promise.allSettled([
+              this.probeQueue,
+              ...Array.from(this.imageCapabilities.values(), state => state.preparation),
+              this.bootstrapPreparation,
+            ]);
             for (const generation of this.probeGenerations.values()) await this.cleanupProbeGeneration(generation);
             if (this.probeRecoveryReceiptUnconfirmed) throw this.probeCleanupError();
           })(),
@@ -2346,7 +2465,7 @@ export class AgentWorkspaceSessionRuntime {
     ];
   }
 
-  private async probeHardStoragePolicy(generation: CapabilityProbeGeneration): Promise<boolean> {
+  private async probeHardStoragePolicy(generation: CapabilityProbeGeneration, image: string): Promise<boolean> {
     const probeOperationId = generation.id;
     const volumeName = `cds-od-storage-probe-${this.instanceNameScope}-${probeOperationId}`;
     const sessionLabel = `capability-${probeOperationId}`;
@@ -2387,7 +2506,7 @@ export class AgentWorkspaceSessionRuntime {
           `--mount ${shellQuote(`type=volume,src=${volumeName},dst=/cds-storage-probe,volume-nocopy`)}`,
           `--tmpfs ${shellQuote(`/cds-direct-storage-probe:rw,noexec,nosuid,size=${STORAGE_CAPABILITY_PROBE_BYTES},nr_inodes=${STORAGE_CAPABILITY_PROBE_INODES},mode=0700`)}`,
           '--entrypoint /bin/sh',
-          shellQuote(this.image),
+          shellQuote(image),
           '-lc',
           // POSIX shells may terminate when a redirection on the special `:`
           // builtin fails. Keep that expected ENOSPC inside a subshell so the
@@ -2415,7 +2534,7 @@ export class AgentWorkspaceSessionRuntime {
           this.hardStoragePolicyFailureCode = `validation_exit_${validation.exitCode}_${category}`;
           this.hardStoragePolicyDiagnostic = runtimeDiagnosticPreview(
             `${validation.stderr}\n${validation.stdout}`,
-            [volumeName, this.image],
+            [volumeName, image],
           ).trim().replace(/\s+/g, ' ').slice(0, 240) || null;
         }
       } else {
@@ -2451,14 +2570,14 @@ export class AgentWorkspaceSessionRuntime {
     ].join(' ');
   }
 
-  private pendingCapabilitySnapshot(): AgentWorkspaceRuntimeCapability {
+  private pendingCapabilitySnapshot(refreshFailed: boolean): AgentWorkspaceRuntimeCapability {
     return {
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: this.capabilityRefreshError
+      reason: refreshFailed
         ? 'Docker capability probe failed; dedicated Agent workspace containers remain disabled'
         : 'OpenDesign capability verification is running on this CDS node',
-      ...(this.capabilityRefreshError ? {} : { verificationPending: true }),
+      ...(refreshFailed ? {} : { verificationPending: true }),
     };
   }
 
@@ -2476,6 +2595,7 @@ export class AgentWorkspaceSessionRuntime {
     policy: AgentWorkspaceResourcePolicy,
     onStage: StageReporter = () => undefined,
     onExpired: (error?: unknown) => void = () => undefined,
+    selectImage?: (mapRunId: string) => Promise<string>,
   ): Promise<AgentWorkspaceCreateResult> {
     if (!SESSION_ID_RE.test(sessionId)) {
       throw new AgentWorkspaceRuntimeError('workspace_session_invalid', 'session id is not safe for container allocation');
@@ -2510,9 +2630,11 @@ export class AgentWorkspaceSessionRuntime {
     // stop() can now mark creation cancelled and wait until the create path has fully cleaned up.
     this.handles.set(sessionId, creatingHandle);
     try {
-      const capability = await this.capability(true);
-      if (!capability.available || !capability.resourcePolicyEnforcedPerSession) {
-        throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
+      if (!selectImage) {
+        const capability = await this.capability(true);
+        if (!capability.available || !capability.resourcePolicyEnforcedPerSession) {
+          throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
+        }
       }
       if (creatingHandle.cancelRequested) {
         throw new AgentWorkspaceRuntimeError(
@@ -2568,6 +2690,27 @@ export class AgentWorkspaceSessionRuntime {
         Math.ceil(transfer.maxInputBytes * 1.5) + MAX_PACKAGE_OVERHEAD_BYTES,
       );
       const workspacePackage = parseWorkspacePackage(packageBytes, transfer);
+      const image = selectImage ? await selectImage(workspacePackage.runId) : this.image;
+      if (creatingHandle.cancelRequested) {
+        throw new AgentWorkspaceRuntimeError('workspace_creation_cancelled', 'OpenDesign workspace creation was cancelled before allocation', false);
+      }
+      if (selectImage) {
+        let capability = await this.capability(true, image);
+        const preparation = this.imageCapabilityState(image).preparation;
+        if (!capability.available && preparation) {
+          await Promise.race([
+            preparation,
+            delay(Math.min(policy.timeoutSeconds * 1_000, 60_000), undefined, { ref: false, signal: creatingHandle.abortController.signal }),
+          ]);
+          if (!this.imageCapabilityState(image).preparationError) capability = await this.capability(true, image);
+        }
+        if (!capability.available || !capability.resourcePolicyEnforcedPerSession) {
+          throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
+        }
+      }
+      if (creatingHandle.cancelRequested) {
+        throw new AgentWorkspaceRuntimeError('workspace_creation_cancelled', 'OpenDesign workspace creation was cancelled before allocation', false);
+      }
       const files = workspacePackage.files;
       const editableSeeds = prepareCurrentArtifactSeeds(files, transfer);
       for (const file of files) {
@@ -2643,7 +2786,7 @@ export class AgentWorkspaceSessionRuntime {
         `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace,volume-nocopy`)}`,
         `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od,volume-nocopy`)}`,
         '--entrypoint /bin/sh',
-        shellQuote(this.image),
+        shellQuote(image),
         '-c',
         shellQuote('while :; do sleep 300; done'),
       ].join(' '), { timeout: 30_000 });
@@ -2711,9 +2854,9 @@ export class AgentWorkspaceSessionRuntime {
         `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace,volume-nocopy`)}`,
         `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od,volume-nocopy`)}`,
         `--env-file ${shellQuote(envFilePath)}`,
-        shellQuote(this.image),
+        shellQuote(image),
       ].join(' ');
-      onStage('container_starting', { image: this.image });
+      onStage('container_starting', { image });
       let started: ExecResult;
       containerCreated = true;
       try {
@@ -2763,7 +2906,7 @@ export class AgentWorkspaceSessionRuntime {
         `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace,volume-nocopy`)}`,
         `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od,volume-nocopy`)}`,
         '--entrypoint /bin/sh',
-        shellQuote(this.image),
+        shellQuote(image),
         '-c',
         shellQuote(`chown ${this.containerUid}:${this.containerGid} /workspace /app/.od`),
       ].join(' '), { timeout: 90_000 });
@@ -2858,6 +3001,7 @@ export class AgentWorkspaceSessionRuntime {
       this.handles.set(sessionId, {
         kind: 'active',
         sessionId,
+        image,
         mapRunId: workspacePackage.runId,
         hostRoot,
         workspaceDir,
@@ -2884,6 +3028,7 @@ export class AgentWorkspaceSessionRuntime {
         networkName,
         daemonBaseUrl,
         inputFileCount: files.length,
+        image,
       };
       } catch (error) {
       const cleanupErrors: string[] = [];
@@ -3593,7 +3738,7 @@ export class AgentWorkspaceSessionRuntime {
       `--label ${shellQuote(`cds.agent.session=${handle.sessionId}`)}`,
       `--env-file ${shellQuote(envFilePath)}`,
       '--entrypoint node',
-      shellQuote(this.image),
+      shellQuote(handle.image),
       '-e',
       shellQuote("eval(Buffer.from(process.env.CDS_EGRESS_PROXY_SCRIPT, 'base64').toString('utf8'))"),
     ].join(' ');
@@ -3735,11 +3880,8 @@ export class AgentWorkspaceSessionRuntime {
       `--env ${shellQuote('CDS_OUTPUT_PREFLIGHT=1')}`,
       `--env ${shellQuote(`CDS_OUTPUT_PREFLIGHT_CONFIG=${config}`)}`,
       '--entrypoint node',
-      // 用这次会话真正在跑的那个镜像，不是编译进来的默认值。能力探测、准备、主会话
-      // 全走 this.image；导出这一步却退回默认镜像，于是「配置的镜像验过了、能跑」
-      // 与「导出时拉的是另一个镜像」可以同时成立——离线节点上表现为整轮跑完、只在
-      // 导出那一刻失败，而失败原因指向一个与本次运行无关的镜像。
-      shellQuote(this.image),
+      // 导出沿用主会话的镜像，版本切换后仍可校验旧会话的产物。
+      shellQuote(handle.image),
       '-e',
       shellQuote(OUTPUT_PREFLIGHT_SCRIPT),
     ].join(' '), { timeout: Math.min(30_000, this.remainingExecutionMs(executionDeadline)) });
