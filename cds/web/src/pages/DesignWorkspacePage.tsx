@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, Folder, Grid2X2, Info, Layers, List, Maximize, MessageSquare, Search, Terminal, Upload, X } from 'lucide-react';
 import { AppShell, TopBar, Workspace } from '@/components/layout/AppShell';
+import { rememberRouteFocus } from '@/components/layout/RouteMotion';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
@@ -27,6 +28,7 @@ const validSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
 
 export function DesignWorkspacePage() {
   const [params, setParams] = useSearchParams();
+  const { key: locationKey } = useLocation();
   const [reload, refresh] = useState(0);
   const refreshWorkspace = useCallback(() => refresh(value => value + 1), []);
   const [busy, setBusy] = useState(false);
@@ -213,6 +215,7 @@ export function DesignWorkspacePage() {
             permissions={permissions} busy={busy} command={command}
             openScreen={(selected, screen, origin) => {
               deliveryReturn.current = { designId: entry.id, version: version.version, origin };
+              rememberRouteFocus(locationKey, origin);
               onChange({ version: String(selected), tab: 'preview', screen });
             }}
             openVersion={selected => onChange({ version: String(selected), tab: 'delivery', screen: '' })} />}
