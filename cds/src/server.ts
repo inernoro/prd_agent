@@ -116,7 +116,8 @@ import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostic
 import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
 import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
 import { createCdsSystemSealedStorageRouter } from './routes/cds-system-sealed-storage.js';
-import { defaultEnvFilePath } from './services/env-file.js';
+import { defaultEnvFilePath, EnvFileBusyError, rotateBasicPasswordInEnv } from './services/env-file.js';
+import { MIN_PASSWORD_LENGTH } from './services/password.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
@@ -690,6 +691,10 @@ function tokenMatches(actual: string | undefined, expected: string): boolean {
   const expectedBytes = Buffer.from(expected, 'utf8');
   return actualBytes.length === expectedBytes.length
     && crypto.timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function isPasswordChangeRequest(req: express.Request): boolean {
+  return req.method === 'POST' && /^\/api\/auth\/change-password\/?$/i.test(req.path);
 }
 
 function normalizedSealedStoragePath(value: unknown): string | null {
@@ -1290,6 +1295,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /branches/:id/service-graph': '分支服务关系图与体检',
     'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
     'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
+    'GET /overview/topology': '全局概览：各项目关系与体检',
     'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
@@ -1373,6 +1379,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/design\/artifacts\/[^/]+$/, '读取设计附件'],
     [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
     [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
+    [/^POST \/projects\/[^/]+\/design\/feedback$/, '保存实施反馈'],
     [/^POST \/projects\/[^/]+\/design\/shares\/[^/]+\/handoff$/, '交接稿件分享'],
     [/^GET \/projects\/[^/]+\/planning\/changes$/, '读取配置变更'],
     [/^GET \/projects\/[^/]+\/planning\/preview\/[^/]+$/, '核对预览访问'],
@@ -1858,14 +1865,18 @@ function presentedAiAccessKey(req: express.Request): string | undefined {
 function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
   if (!key.planningAccess && !key.designAccess) return true;
   if (key.planningAccess && key.designAccess) return false;
+  if (req.method === 'GET' && req.path === '/api/credentials/self-check') return true;
+  if (isPublicAgentSetupRoute(req.method, req.path)) return true;
   const segment = req.path.replace(/^\/_cds\/api\//i, '/api/').split('/')[3];
   try { if (decodeURIComponent(segment) !== key.projectId) return false; }
   catch { return false; }
   const read = req.method === 'GET' || req.method === 'HEAD';
   if (key.designAccess) {
+    if (req.method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(req.path)) return true;
     const route = '/api/projects/:projectId/design';
     const path = normalizedDesignPath(req.path);
-    return read && (path === route || path === `${route}/artifacts/:artifactId`)
+    return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
+      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST' && path === `${route}/feedback`)
       || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
   }
   const path = normalizedPlanningPath(req.path);
@@ -2319,7 +2330,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
     if (/^\/(?:login|preview-access|auth\/sso)\/?$/i.test(req.path)) res.setHeader('Referrer-Policy', 'no-referrer');
-    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
+    if (isPasswordChangeRequest(req) || isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2729,7 +2740,7 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer.unref?.();
     };
     const hostedIdentityTraffic = isHostedIdentityTraffic(req.originalUrl || req.url);
-    const suppressPreviewBody = hostedIdentityTraffic || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
+    const suppressPreviewBody = hostedIdentityTraffic || isPasswordChangeRequest(req) || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
       || /^\/api\/cluster\/identity\//i.test(req.path)
       || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
@@ -2865,7 +2876,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // so existing deployments keep working without an explicit toggle.
   // See doc/design.cds.multi-project.md section 七.
   const cdsUser = process.env.CDS_USERNAME;
-  const cdsPass = process.env.CDS_PASSWORD;
+  let cdsPass = process.env.CDS_PASSWORD;
   const rawAuthMode = (process.env.CDS_AUTH_MODE || '').toLowerCase();
   const authMode: 'disabled' | 'basic' | 'github' =
     rawAuthMode === 'github' ? 'github' :
@@ -2873,7 +2884,8 @@ export function createServer(deps: ServerDeps): express.Express {
     rawAuthMode === 'disabled' ? 'disabled' :
     (cdsUser && cdsPass) ? 'basic' : 'disabled';
   const authEnabled = authMode === 'basic';
-  const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
+  let validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
+  const basicEnvFilePath = authEnabled ? defaultEnvFilePath() : null;
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
   const cookieSecure = publicBaseUrl.startsWith('https://') || hostSessionCookies;
@@ -3936,6 +3948,47 @@ export function createServer(deps: ServerDeps): express.Express {
     } else if (publicTicketSsoConfig(resolveSsoConfig()).enabled) {
       console.log('  Auth: SSO-only mode');
     }
+  }
+
+  if (basicEnvFilePath) {
+    app.post('/api/auth/change-password', (req, res, next) => {
+      if ((req as express.Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth !== true || !cdsUser || !cdsPass) {
+        next();
+        return;
+      }
+      res.setHeader('Cache-Control', 'private, no-store');
+      const { oldPassword, newPassword } = req.body || {};
+      if (typeof oldPassword !== 'string' || !tokenMatches(oldPassword, cdsPass)) {
+        res.status(400).json({ code: 'invalid_credentials', error: '原密码不正确' });
+        return;
+      }
+      if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
+        res.status(400).json({ code: 'password_too_short', error: `新密码长度至少 ${MIN_PASSWORD_LENGTH} 位` });
+        return;
+      }
+      if (/[\x00\r\n]/.test(newPassword) || tokenMatches(newPassword, oldPassword)) {
+        res.status(400).json({ code: 'invalid_new_password', error: '请设置不同且不含换行的密码' });
+        return;
+      }
+      try {
+        if (!rotateBasicPasswordInEnv(basicEnvFilePath, cdsPass, newPassword)) {
+          res.status(409).json({ code: 'system_password_source_mismatch', error: '系统配置中的密码与当前登录配置不一致' });
+          return;
+        }
+      } catch (error) {
+        if (error instanceof EnvFileBusyError) {
+          res.status(409).json({ code: 'system_password_source_busy', error: '系统配置正在更新，请稍后重试' });
+          return;
+        }
+        res.status(503).json({ code: 'system_password_update_failed', error: '系统登录密码保存失败' });
+        return;
+      }
+      cdsPass = newPassword;
+      process.env.CDS_PASSWORD = newPassword;
+      validToken = makeToken(cdsUser, newPassword);
+      res.setHeader('Set-Cookie', buildLegacyLogoutCookie(cookieSecure, hostSessionCookies));
+      res.json({ ok: true });
+    });
   }
 
   // Basic mode now exposes the same persisted local-user routes as GitHub
@@ -5197,7 +5250,11 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
   // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。
-  app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
+  app.use('/api', createAccessRequestsRouter({
+    stateService: deps.stateService,
+    authMode,
+    isSsoEnabled: () => publicTicketSsoConfig(resolveSsoConfig()).enabled,
+  }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
     shell: deps.shell,
@@ -5641,15 +5698,31 @@ export function createServer(deps: ServerDeps): express.Express {
   const stopPlanningSweep = startPlanningSweep({
     projects: () => clusterIdentity.getConfig()?.role === 'member' ? []
       : deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id),
-    sweep: async (projectId, through) => {
+    sweep: async (projectId, through, signal) => {
       await planning.sweepRecordedRemovals(projectId, through);
+      if (signal.aborted) return;
       await planning.scanGithubFileAnchors(projectId);
+      if (signal.aborted) return;
       await planning.sweepDuplicatePairs(projectId, through);
     },
     onError: () => console.warn('[engineering-planning] 功能消失巡检暂不可用，将重试'),
   });
-  const closePlanning = async () => { await stopPlanningSweep(); await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]); };
-  app.once('close', () => { void closePlanning(); });
+  let planningShutdown: Promise<void> | undefined;
+  const closePlanning = () => planningShutdown ??= (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Reserve time in the process shutdown window for the control plane's state flush.
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('工程规划资源退出等待超时')), 2_000);
+    });
+    try {
+      await Promise.race([deadline, stopPlanningSweep().then(async () => {
+        await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]);
+      })]);
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  app.once('close', () => { void closePlanning().catch(() => console.warn('[engineering-planning] 资源收尾未确认')); });
   deps.registerResourceShutdown?.(closePlanning);
 
   const dtsActor = (req: express.Request): DtsActor => {

@@ -25,6 +25,7 @@ function matches(hash: string, candidate: Buffer): boolean {
 /** 已停用的凭据只能证明恢复对象，不能因此获得任何项目操作权限。 */
 export function inspectAccessRecovery(state: StateService, projectId: string, plaintext: string): {
   state: AccessRecoveryState; principalId?: string; kind: 'user' | 'project';
+  design?: { keyId: string; revoked: boolean };
 } | undefined {
   if (!plaintext.startsWith('cdsu_') && !plaintext.startsWith('cdsp_')) return undefined;
   const hash = createHash('sha256').update(plaintext).digest();
@@ -36,15 +37,18 @@ export function inspectAccessRecovery(state: StateService, projectId: string, pl
   if ('projectIds' in credential && credential.projectIds && !credential.projectIds.includes(projectId)) return undefined;
   const principalId = credential.principalId;
   if (kind === 'user' && !principalId) return { state: 'credential-unusable', kind };
+  const design = 'designAccess' in credential && credential.designAccess
+    ? { keyId: credential.id, revoked: Boolean(credential.revokedAt) } : undefined;
+  const identity = { principalId, kind, ...(design ? { design } : {}) } as const;
   if (principalId) {
     const blocked = principalRecoveryBlock(state, principalId, projectId);
-    if (blocked) return { state: blocked, principalId, kind };
+    if (blocked) return { state: blocked, ...identity };
   }
   if (!credentialUsability(credential, principalId ? state.getPrincipal(principalId) : undefined, Date.now(), !!principalId).usable) {
-    return { state: 'credential-unusable', principalId, kind };
+    return { state: 'credential-unusable', ...identity };
   }
   return { state: principalId && !hasActiveGrant(state.getProjectGrants(), principalId, projectId)
-    ? 'approval-required' : 'ready', principalId, kind };
+    ? 'approval-required' : 'ready', ...identity };
 }
 
 export function recoveryMessage(state: AccessRecoveryState): string {

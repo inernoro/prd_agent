@@ -7,6 +7,8 @@ export const designViewports = { desktop: { width: 1280, height: 800 }, phone: {
 export type DesignScreen = {
   id: string; name: string; route: string; viewport: 'desktop' | 'phone'; themes: DesignTheme[]; impl: string | null;
   readySelector?: string;
+  entryActions?: string[];
+  entryReadySelector?: string;
 };
 export type DesignRule = {
   id: string; rule: string; how: 'measure' | 'screenshot' | 'human'; priority: 'high' | 'normal';
@@ -28,14 +30,53 @@ export type DesignFrameworkCheck = {
   }>;
 };
 
+export type DesignDeliveryFile = {
+  id: string;
+  path: string;
+  kind: 'manifest' | 'guide' | 'rationale' | 'document' | 'framework' | 'checks' | 'prototype' | 'render' | 'source' | 'attachment';
+  size: number;
+  sha256: string;
+  text: boolean;
+  headings?: string[];
+};
+export type DesignDelivery = {
+  archiveId: string;
+  archiveRoot: string;
+  files: DesignDeliveryFile[];
+  source?: string;
+  frameworkDraft?: string;
+  prototypeVersion?: number;
+  date?: string;
+  notes?: string;
+  warnings: string[];
+};
+export const designFeedbackCategories = ['reuse', 'implementation', 'gap', 'constraint', 'acceptance'] as const;
+export type DesignFeedbackCategory = typeof designFeedbackCategories[number];
+type DesignFeedbackAuthor = { id: string; label: string };
+export type DesignFeedback = {
+  id: string;
+  version: number;
+  screenId?: string;
+  category: DesignFeedbackCategory;
+  title: string;
+  body: string;
+  evidence: string[];
+  author: DesignFeedbackAuthor;
+  createdAt: string;
+  status: 'open' | 'responded' | 'closed';
+  replies: Array<{ body: string; revision?: number; author: DesignFeedbackAuthor; at: string }>;
+  decisions: Array<{ decision: 'close' | 'reopen'; body: string; author: DesignFeedbackAuthor; at: string }>;
+};
+
 export type DesignVersion = {
   version: number; title: string; sourceCommit: string; sha256: string; prototypeId: string; createdAt: string;
-  sourcePath?: string; sourceVerification?: 'git' | 'declared'; prototypeSha256?: string;
+  sourcePath?: string; sourceVerification?: 'git' | 'declared' | 'private-upload'; prototypeSha256?: string;
   publisher: { id: string; label: string }; note?: string; screens: DesignScreen[]; acceptance: DesignRule[];
   rationale: string; spec: DesignMaterial; checks?: Record<string, unknown>; framework?: string; frameworkVersion?: number;
   frameworkCheck?: DesignFrameworkCheck;
   group?: string; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
+  delivery?: DesignDelivery;
 };
 export type DesignComment = {
   id: string; version: number; screenId: string; body: string; x: number; y: number; createdAt: string;
@@ -65,8 +106,8 @@ export type DesignReviewNotice = {
   createdAt: string; updatedAt: string; occurrences: number;
 };
 export type DesignEntry = {
-  id: string; projectId: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
-  comments: DesignComment[]; runs: DesignRun[]; reviewRequested?: boolean;
+  id: string; projectId: string; designKey?: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
+  comments: DesignComment[]; runs: DesignRun[]; feedback?: DesignFeedback[]; reviewRequested?: boolean;
   currentSignoffRunId?: string | null;
   reviewers?: DesignReviewer[];
   sharePreparations?: DesignSharePreparation[];
@@ -83,7 +124,19 @@ export type FrameworkRevision = {
   from?: { designId: string; version: number }; material: DesignMaterial; note?: string;
 };
 export type DesignFramework = { id: string; projectId: string; versions: FrameworkRevision[] };
+export type DesignIntake = {
+  protocolVersion: 1;
+  projectId: string;
+  permissions: { write: boolean; feedback?: boolean };
+  keyFormat: 'module/draft';
+  intents: readonly ['create', 'revise'];
+  designs: Array<{
+    designId: string; designKey?: string; title: string; latestVersion: number;
+    sourceCommit: string; sourcePaths: string[]; canRevise: boolean; openFeedbackCount?: number;
+  }>;
+  frameworks: Array<{ id: string; title: string; latestVersion: number }>;
+};
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
-  permissions: { write: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
+  permissions: { write: boolean; feedback?: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
 };

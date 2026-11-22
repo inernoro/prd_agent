@@ -1,13 +1,4 @@
-/**
- * 任务台的下半屏：我们欠着什么。
- *
- * 上半屏和下半屏的差别是时态 —— 上面是「我现在要做什么」，下面是「我们欠着什么」。
- * 债务的正文写在仓库 doc/debt.*.md 里（那是它的 SSOT，跟代码同生共死），
- * 这里只补它在仓库里存不住的三样：**谁认领了、什么状态、转成了哪条任务**。
- *
- * 所以这一屏刻意不给正文编辑框：在这儿改了也存不住，下一次同步就被仓库覆盖回去。
- * 要改正文，去改那份 Markdown —— 界面上把文件路径亮出来，就是为了让人知道去哪改。
- */
+/** 任务台展示历史债务快照、认领和已转任务。当前债务在 CDS 工程规划维护。 */
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/lib/toast';
 import { claimDebt, closeDebt, convertDebt, getDebtBoard, releaseDebt } from '@/services/real/activeTasks';
@@ -119,7 +110,7 @@ export function DebtSection({ onConverted }: DebtSectionProps) {
                     {d.status && <p><span className="atb-debt-row__label">现状</span>{d.status}</p>}
                     {d.closeCondition && <p><span className="atb-debt-row__label">补的条件</span>{d.closeCondition}</p>}
                     <p className="atb-debt-row__src">
-                      正文在 <code>{d.sourcePath}</code> 第 {d.num} 条 —— 要改措辞去改那份文档，这里改了存不住
+                      历史来源 <code>{d.sourcePath}</code> 第 {d.num} 条。当前登记和进度可在 CDS 的「规划」中选择项目，再打开「债务」查看。
                     </p>
                   </div>
                 )}

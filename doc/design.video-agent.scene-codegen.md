@@ -56,7 +56,7 @@
 - 执行 Worker：`prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs`。
 - 应用身份：`prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs`。
 - 场景生成知识：`remotion-scene-codegen` 官方技能及其发布目录。
-- 视频运行与素材边界：`design.video-agent.md`、[debt.video-agent.md](./debt.video-agent.md)。
+- 视频运行与素材边界：`design.video-agent.md`、[debt.video-agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.video-agent.md)。
 
 ## 验收标准
 

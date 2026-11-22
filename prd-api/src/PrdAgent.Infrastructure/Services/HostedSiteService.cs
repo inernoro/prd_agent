@@ -601,7 +601,7 @@ public class HostedSiteService : IHostedSiteService
         //（IAssetStorage 只有 Save/Read/Delete/UploadToKey，没有 copy/move，也没有 If-None-Match）。
         // 所以整套撤掉：**先后**两次重试仍由控制器按 SourceRef 查一次挡住（这是真实重试的常态），
         // **叠在一起**的两次会各建一个站 —— 多一个站是浪费，不是坏数据，比上面那些形态都安全。
-        // 真要收敛得先让发布变成单一存储的原子动作，那是新的语义类别，见 doc/debt.platform.md 边界 12。
+        // 真要收敛得先让发布变成单一存储的原子动作，那是新的语义类别，见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md 边界 12。
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
 
         _logger.LogInformation("用户 {UserId} 通过 {SourceType} 创建托管站点 {SiteId}: {Title}",
@@ -2666,7 +2666,7 @@ public class HostedSiteService : IHostedSiteService
     /// 没有请求键时，能分开这两件事的只有**时间距离**：重试是秒级的，新请求不是。
     ///
     /// 容差取五分钟：这个系统里的重试都在秒级，而差到分钟以上的那次，把有效期刷成本次所选
-    /// 才是调用方要的。真正的解法是给这个工具一个 clientRequestId（doc/debt.platform.md 边界 7）。
+    /// 才是调用方要的。真正的解法是给这个工具一个 clientRequestId（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md 边界 7）。
     /// </summary>
     internal static bool ExpiryMeaningfullyChanged(DateTime? current, DateTime? requested)
     {
@@ -2854,7 +2854,7 @@ public class HostedSiteService : IHostedSiteService
             // 没有请求键的时候，能区分这两件事的只有**时间距离**：重试是秒级的，新请求不是。
             // 所以判据是「新算出来的到期时刻，和它现在的到期时刻差得远不远」——
             // 秒级的差算同一件事，几天的差就是又一次新请求。
-            // 真正的解法是给这个工具一个 clientRequestId（doc/debt.platform.md 边界 7），
+            // 真正的解法是给这个工具一个 clientRequestId（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md 边界 7），
             // 那之前，这条时间距离是唯一说得清的判据。
             var expiryChanged = ExpiryMeaningfullyChanged(reuse.ExpiresAt, newExpiresAt);
             if (expiryChanged)

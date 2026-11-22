@@ -20,7 +20,7 @@
 | 现行规则 | 术语、条件、状态、例外和适用对象 | [正式申领规格](./spec.product-agent.version-claims.md) |
 | 决策记忆 | 真实选择、理由、代价、决定依据和重议条件 | [申领变化的补录与下一项问题卡](./pdr.product-agent.002.version-claim-boundary.md) |
 | 可验证实例 | 正常、拒绝、边界、历史兼容和失败恢复的预期 | [场景及证据层次](./spec.product-agent.version-claims.md#三验收实例) |
-| 未完成边界 | 影响、处理触发、责任角色和关闭条件 | [产品治理清单](./debt.product-agent.md#产品结构与决策治理2026-11-06) |
+| 未完成边界 | 影响、处理触发、责任角色和关闭条件 | [产品治理清单](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.product-agent.md#产品结构与决策治理2026-11-06) |
 
 上述入口共同回答“现在怎样、为什么、对谁有效、怎么证明”。它们不必各占一个新文件。原理及八条核心原则见 [ADR 原则](./guide.doc.pri.adr.md#3-八条核心原则)；产品扩展见 [PDR 原则](./guide.doc.pri.pdr.md)。
 

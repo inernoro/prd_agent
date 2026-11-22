@@ -1255,10 +1255,10 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ProductionReleaseSafety_IsPersistedAsRuleDebtAndAgentTrigger()
+    public void ProductionReleaseSafety_RoutesDebtToCdsAndKeepsAgentTrigger()
     {
         var rule = ReadRepoFile("doc/rule.platform.production-release-safety.md");
-        var debt = ReadRepoFile("doc/debt.platform.production-release.md");
+        var debtGuide = ReadRepoFile("doc/guide.doc.pri.debt.md");
         var agentRule = ReadRepoFile(".claude/rules/production-release-safety.md");
         var codexRule = ReadRepoFile(".Codex/rules/production-release-safety.md");
         var agents = ReadRepoFile("AGENTS.md");
@@ -1276,10 +1276,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("`./exec_dep.sh release` 的兼容合同是部署 latest", rule);
         Assert.Contains("自动恢复 previous", rule);
         Assert.Contains("首次把目录设置为 `700` 的具体进程无法从现有证据中确定", rule);
-        Assert.Contains("2026-07-12-atomic-static-release", debt);
-        Assert.Contains("2026-07-12-public-surface-smoke", debt);
-        Assert.Contains("2026-07-12-release-command-compatibility", debt);
-        Assert.Contains("2026-07-12-release-forensic-ledger", debt);
+        Assert.Contains("platform.production-release", agentRule);
+        Assert.Contains("platform.production-release", codexRule);
+        Assert.Contains("platform.production-release", hotfixSkill);
+        Assert.Contains("https://cds.miduo.org/engineering-planning?view=debts", debtGuide);
+        Assert.Contains("2026-07-12-atomic-static-release", rule);
+        Assert.Contains("2026-07-12-public-surface-smoke", rule);
+        Assert.Contains("2026-07-12-release-command-compatibility", rule);
+        Assert.Contains("2026-07-12-release-forensic-ledger", rule);
         foreach (var skill in new[] { hotfixSkill, cdsDeploySkill, smokeSkill, acceptanceSkill })
             Assert.Contains("doc/rule.platform.production-release-safety.md", skill);
         Assert.Contains("| 发布与运维 |", handoffSkill);
@@ -4646,7 +4650,7 @@ public class GatewayDataDomainGuardTests
     /// 所以这两条路径必须各自走同一个共享判定源，任何一条改回去都在这里变红。
     ///
     /// （上游合并那条路径同属这一族，随合并功能一起挪到后续 PR，
-    /// 见 doc/debt.platform.llm-gateway.md「上游合并拆出本 PR」。）
+    /// 见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md「上游合并拆出本 PR」。）
     /// </summary>
     [Fact]
     public void Deletes_NeverOrphanLogicalModelOfferings()

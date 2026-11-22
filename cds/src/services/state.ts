@@ -107,7 +107,7 @@ import {
   selectReleasePreflightsToPrune,
   selectReleaseRunsToPrune,
 } from './release-retention.js';
-import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
+import { credentialUsability, hasProjectKeyGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
 import { isHumanProjectGrantUpdatePending, recoverInterruptedHumanAccessUpdates } from './human-project-access.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
@@ -3939,7 +3939,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           if (isHumanProjectGrantUpdatePending(this, entry.principalId)) continue;
           const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
           if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
-          if (!hasActiveGrant(this.state.projectGrants || [], entry.principalId, project.id)) continue;
+          if (!hasProjectKeyGrant(this.state.projectGrants || [], entry, project.id)) continue;
         }
         try {
           const entryBuf = Buffer.from(entry.hash, 'hex');
@@ -7077,7 +7077,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
        * 一个删不掉的孤儿只占空间，一份读不出来的报告是数据丢失，两者不对等
        *（Codex review 抓到）。
        *
-       * 所以旧版本留着，等一次真正的回收（判据与待办见 doc/debt.cds.md）。
+       * 所以旧版本留着，等一次真正的回收（判据与待办见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md）。
        */
       void previousObjectKey;
       const nextPath = this.reportFilePath(meta);
@@ -7351,7 +7351,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
        * 两者不对等，所以宁可留孤儿（Codex review 抓到）。
        *
        * 这和「改格式时不删旧对象」是同一条判断的两面：任何删除都排在
-       * 元数据落定之后，桶里的孤儿统一等一次回收（判据见 doc/debt.cds.md）。
+       * 元数据落定之后，桶里的孤儿统一等一次回收（判据见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md）。
        */
       void this.reportObjects.remove(orphanKey).catch((err) => {
         // eslint-disable-next-line no-console

@@ -117,7 +117,7 @@
 
 ## 相关
 
-- [debt.frontend.md](./debt.frontend.md) —— 藏书阁的已知边界台账
+- [debt.frontend.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.frontend.md) —— 藏书阁的已知边界台账
 - 规则 `predicate-and-wiring-discipline` —— 形状 3（判据分裂）与形状 6（判据读的不是生效值）
 - 规则 `no-rootless-tree` —— 不许编造
 - 规则 `server-authority` —— 生成不被客户端断开掐断

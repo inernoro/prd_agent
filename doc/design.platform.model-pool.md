@@ -163,4 +163,4 @@ MAP 提交给 LLMGW 的必须始终是逻辑模型的稳定标识（PublicId）�
 - [LLM Gateway 职责边界与调用规则](./rule.platform.llm-gateway.md)
 - [LLM Gateway 故障隔离与恢复计划](./plan.platform.llm-gateway.resilience.md)
 - [LLM Gateway 故障止血与恢复指南](./guide.platform.llm-gateway.incident-recovery.md)
-- [LLM 网关与模型池债务台账](./debt.platform.llm-gateway.md)
+- [LLM 网关与模型池债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)

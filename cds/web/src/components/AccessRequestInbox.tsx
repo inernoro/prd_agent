@@ -2,9 +2,7 @@ import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /*
  * AccessRequestInbox — 被动授权审批提醒(右下角)
  *
- * 背景:agent 免密直接发起授权申请,用户在右下角一键「批准」即派发一把
- * 全权「授权密钥」,agent 凭它做接下来的所有事(含直接拉项目环境变量/参数),用户
- * 再不用反复手动喂参数。授权属于必须由用户决策的高优先级消息:
+ * Agent 发起授权申请，用户在右下角核对范围后批准。
  *   - 有 pending 时默认直接展开首条申请,展示来源、范围和目的
  *   - 用户可主动稍后处理,只收起当前提醒,待审批申请仍留在信息中心
  *   - 卡片上直接提供「批准 / 拒绝」按钮,无需先点开一个小徽章
@@ -43,6 +41,7 @@ interface AccessRequest {
   deliveredAt?: string;
   requestedProject?: { name: string; repository?: string };
   targetBound?: boolean;
+  designAccess?: 'read' | 'feedback' | 'publish';
   createdProject?: { id: string; name: string; createdAt: string };
 }
 
@@ -51,7 +50,21 @@ interface AccessRequestsResponse {
   pendingCount?: number;
 }
 
+const designApprovalLabels = {
+  read: '设计只读',
+  feedback: '实施反馈',
+  publish: '设计发布',
+} as const;
+
+function approveLabel(request: AccessRequest): string {
+  if (request.kind === 'bootstrap') return '批准一次建项目';
+  return request.designAccess ? `批准${designApprovalLabels[request.designAccess]}` : '批准项目访问';
+}
+
 function RequestTarget({ request }: { request: AccessRequest }): JSX.Element | null {
+  if (request.designAccess) {
+    return <p className="mt-2 text-xs text-muted-foreground">申请范围为当前项目的{designApprovalLabels[request.designAccess]}。</p>;
+  }
   if (request.kind !== 'bootstrap') return null;
   return (
     <div className="mt-2 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5 break-all">
@@ -252,7 +265,7 @@ export function AccessRequestInbox({
             disabled={primaryBusy || (primary.kind === 'bootstrap' && !primary.targetBound)}
           >
             {primaryBusy ? <Loader2 className="animate-spin" /> : <KeyRound />}
-            {primary.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
+            {approveLabel(primary)}
           </Button>
         </div>
         {placement === 'floating' ? <Button
@@ -336,7 +349,7 @@ export function AccessRequestInbox({
                       </Button>
                       <Button type="button" variant="default" size="sm" onClick={() => approve(item.id)} disabled={isBusy || (item.kind === 'bootstrap' && !item.targetBound)}>
                         {isBusy ? <Loader2 className="animate-spin" /> : null}
-                        {item.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
+                        {approveLabel(item)}
                       </Button>
                     </div>
                   </div>

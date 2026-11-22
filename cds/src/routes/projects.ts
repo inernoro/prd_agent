@@ -4547,8 +4547,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (body.planningAccess !== undefined && body.planningAccess !== 'read' && body.planningAccess !== 'propose') {
       return res.status(400).json({ error: 'invalid_planning_access', message: '请选择工程规划只读或提案权限' });
     }
-    if (body.designAccess !== undefined && body.designAccess !== 'read' && body.designAccess !== 'publish') {
-      return res.status(400).json({ error: 'invalid_design_access', message: '请选择设计只读或稿件发布权限' });
+    if (body.designAccess !== undefined && body.designAccess !== 'read' && body.designAccess !== 'feedback' && body.designAccess !== 'publish') {
+      return res.status(400).json({ error: 'invalid_design_access', message: '请选择设计只读、实施反馈或稿件发布权限' });
     }
     if (body.planningAccess && body.designAccess) {
       return res.status(400).json({ error: 'invalid_key_scope', message: '请为工程规划和设计分别签发凭据' });

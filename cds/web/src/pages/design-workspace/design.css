@@ -366,3 +366,134 @@
   .dw-list .dw-thumb { width: 104px; }
   .dw-list-group { display: none; }
 }
+
+.dw-delivery-panel {
+  width: min(100%, 1230px);
+  margin: 0 auto;
+  padding: clamp(12px, 2vw, 28px);
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.dw-delivery-card {
+  padding: clamp(12px, 2vw, 22px);
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dw-delivery-card p { margin: 0; }
+.dw-delivery-card summary { cursor: pointer; }
+.dw-delivery-card button.ep-link { background: none; border: 0; padding: 0; text-align: left; }
+.dw-delivery-heading, .dw-delivery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.dw-delivery-heading { justify-content: space-between; }
+.dw-delivery-version { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.dw-delivery-version > div { display: grid; gap: 6px; align-content: start; }
+.dw-delivery-warnings { color: var(--dw-warn); margin: 0; grid-column: 1 / -1; }
+.dw-delivery-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.dw-delivery-metrics > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--dw-line);
+  border-radius: 8px;
+}
+.dw-delivery-metrics strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.dw-delivery-metrics span { color: var(--dw-muted); font-size: 12px; }
+.dw-delivery-browser {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.7fr) minmax(0, 2fr);
+  border: 1px solid var(--dw-line);
+  border-radius: 8px;
+}
+.dw-delivery-filelist {
+  min-width: 0;
+  padding: 10px;
+  border-inline-end: 1px solid var(--dw-line);
+}
+.dw-delivery-files { max-height: 26rem; overflow: auto; margin-top: 8px; }
+.dw-delivery-files button {
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--dw-ink);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px;
+  border-radius: 6px;
+  text-align: left;
+  line-height: 1.35;
+}
+.dw-delivery-files button:hover, .dw-delivery-files button[aria-pressed="true"] {
+  background: var(--dw-sunken);
+  border-color: var(--dw-line);
+}
+.dw-delivery-files svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 2px; }
+.dw-delivery-files small { display: block; margin-top: 3px; }
+.dw-delivery-document { display: grid; gap: 12px; align-content: start; min-width: 0; padding: 12px; }
+.dw-delivery-contents {
+  block-size: clamp(12rem, 42vh, 26rem);
+  min-width: 0;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--dw-line);
+  border-radius: 6px;
+  background: var(--dw-sunken);
+  overscroll-behavior: contain;
+}
+.dw-delivery-contents pre { margin: 0; white-space: pre-wrap; tab-size: 2; }
+.dw-delivery-pagination { min-height: 32px; }
+.dw-delivery-document .dw-notes-table { max-width: 100%; overflow: auto; }
+.dw-delivery-outline ul { margin-bottom: 0; }
+.dw-delivery-thread {
+  border-top: 1px solid var(--dw-line);
+  padding-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+.dw-delivery-thread > summary small { margin-inline-start: 10px; }
+.dw-delivery-thread .dw-delivery-actions { margin: 8px 0; }
+.dw-delivery-replies { border-inline-start: 2px solid var(--dw-line); margin: 10px 0; padding-inline-start: 24px; }
+.dw-delivery-replies li + li { margin-top: 8px; }
+.dw-delivery-form { display: grid; gap: 8px; margin-block: 10px; }
+.dw-delivery-form > button { justify-self: start; }
+.dw-delivery-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.dw-delivery-card label { display: grid; gap: 5px; min-width: 0; }
+.dw-delivery-card :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  color: var(--dw-ink);
+  background: var(--dw-bg);
+  border: 1px solid var(--dw-line);
+  border-radius: 6px;
+}
+.dw-delivery-resolution { margin-top: 8px; }
+@media (max-width: 700px) {
+  .dw-delivery-version, .dw-delivery-browser { grid-template-columns: minmax(0, 1fr); }
+  .dw-delivery-filelist { border-inline-end: 0; border-bottom: 1px solid var(--dw-line); }
+  .dw-delivery-files { max-height: 14rem; }
+  .dw-delivery-metrics, .dw-delivery-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.dw-entry-warning {
+  position: absolute;
+  inset: auto 8px 8px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--dw-line);
+  background: var(--dw-pane);
+  border-radius: 6px;
+  pointer-events: none;
+  color: var(--dw-ink);
+}

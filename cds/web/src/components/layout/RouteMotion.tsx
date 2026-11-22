@@ -14,7 +14,7 @@ export function isConsoleHref(href: string): boolean {
   const scene = loadingSceneForPath(new URL(href, 'https://console.invalid').pathname);
   return !!scene && scene.scope !== 'standalone';
 }
-interface ViewPosition { scroll: Array<{ selector: string; top: number; left: number }>; focus?: string }
+interface ViewPosition { scroll: Array<{ selector: string; top: number; left: number }>; focus?: string; revealFocus?: boolean }
 interface Origin { url: string; key: string; anchor?: string }
 interface Waiter { destination: string; origin?: Origin; finish(): void }
 const positions = new Map<string, ViewPosition>();
@@ -22,6 +22,11 @@ const origins = new Map<string, Origin>();
 const restoring = new Set<string>();
 let waiter: Waiter | undefined;
 let lastSource: Element | null = null;
+export function rememberRouteFocus(key: string, elementId: string): void {
+  const saved = positions.get(key) ?? { scroll: [] };
+  positions.set(key, { ...saved, focus: '#' + CSS.escape(elementId), revealFocus: true });
+}
+
 function selectorFor(element: HTMLElement): string {
   if (element.classList.contains('cds-main')) return '.cds-main';
   const parts: string[] = []; let node: HTMLElement | null = element;
@@ -45,18 +50,23 @@ function restoreVisit(key: string): () => void {
   const restore = () => {
     if (done) return;
     // Wait for actual data instead of clamping a saved position against the skeleton.
-    const ready = saved.scroll.every(entry => { const node = document.querySelector<HTMLElement>(entry.selector); return node && node.scrollHeight - node.clientHeight + 1 >= entry.top; });
     const focus = saved.focus ? document.querySelector<HTMLElement>(saved.focus) : null;
+    const tracked = saved.scroll.map(entry => ({ entry, node: document.querySelector<HTMLElement>(entry.selector) }));
+    const ready = saved.revealFocus ? Boolean(focus?.getClientRects().length)
+      : tracked.every(({ entry, node }) => node && node.scrollHeight - node.clientHeight + 1 >= entry.top);
     if (!ready || saved.focus && !focus) { stableFrames = 0; return; }
-    for (const entry of saved.scroll) { const node = document.querySelector<HTMLElement>(entry.selector)!; node.scrollTop = entry.top; node.scrollLeft = entry.left; }
+    for (const { entry, node } of tracked) {
+      if (!node) continue;
+      node.scrollTop = entry.top;
+      node.scrollLeft = entry.left;
+    }
+    if (saved.revealFocus) focus?.scrollIntoView({ block: 'center' });
     focus?.focus({ preventScroll: true });
     // content-visibility:auto first exposes intrinsic placeholders. Browser scroll
     // anchoring can move the viewport when the real cards paint on the next frame.
     const rect = focus?.getBoundingClientRect();
-    const layout = saved.scroll.map(entry => {
-      const node = document.querySelector<HTMLElement>(entry.selector)!;
-      return [node.scrollHeight, node.clientHeight, node.scrollTop, node.scrollLeft];
-    }).concat(rect ? [[rect.top, rect.height, rect.width, rect.left]] : []).flat().join(':');
+    const layout = tracked.flatMap(({ node }) => node ? [[node.scrollHeight, node.clientHeight, node.scrollTop, node.scrollLeft]] : [])
+      .concat(rect ? [[rect.top, rect.height, rect.width, rect.left]] : []).flat().join(':');
     stableFrames = layout === previousLayout ? stableFrames + 1 : 0;
     previousLayout = layout;
     if (stableFrames >= 3) stop();
@@ -98,7 +108,7 @@ export function useSurfaceNavigate(): NavigateFunction {
     const returning = !options?.replace && options?.state === undefined && origin?.url === url;
     const source = lastSource?.isConnected ? lastSource : document.activeElement;
     const anchor = anchorFor(source);
-    const saved = positions.get(location.key) ?? { scroll: [] }; saved.focus = anchor; positions.set(location.key, saved);
+    const saved = positions.get(location.key) ?? { scroll: [] }; saved.focus = anchor; delete saved.revealFocus; positions.set(location.key, saved);
     const enterSource = source?.closest('[data-project-id],[data-branch-card-id]') || source;
     runSurfaceMotion(() => new Promise<void>(resolve => {
       waiter?.finish();

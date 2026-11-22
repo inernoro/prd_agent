@@ -15,7 +15,7 @@
 | 日期 | 2026-06-01 |
 | 状态 | draft |
 | 模块 | CDS（mini-PaaS）/ 项目接入（onboarding）/ cds-compose 契约 |
-| 关联 | [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md)、[doc/design.cds.agent.runtime-architecture.md](./design.cds.agent.runtime-architecture.md)、[doc/design.cds.agent.api.md](./design.cds.agent.api.md)、[doc/debt.cds.agent.md](./debt.cds.agent.md) |
+| 关联 | [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md)、[doc/design.cds.agent.runtime-architecture.md](./design.cds.agent.runtime-architecture.md)、[doc/design.cds.agent.api.md](./design.cds.agent.api.md)、[doc/debt.cds.agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.agent.md) |
 
 ## 1. 管理摘要（30 秒）
 
@@ -100,7 +100,7 @@ AI 起草开关关闭，或系统侧 CDS Agent 运行时不健康。界面**不�
 
 **真正能发起 LLM 调用的能力在哪里？** 在 prd-api 侧的 CDS Agent 运行时，有两条真实路径：
 
-- **Lite 只读模式（现成、最稳）**：`GatewayReviewRuntimeAdapter` 走 prd-api 的 `ILlmGateway` 默认 chat 池，做有界只读分析，无需任何 Anthropic key 即可跑（见 [doc/debt.cds.agent.md](./debt.cds.agent.md) D1/D2、`prd-api/.../AgentRuntime/GatewayReviewRuntimeAdapter.cs`）。
+- **Lite 只读模式（现成、最稳）**：`GatewayReviewRuntimeAdapter` 走 prd-api 的 `ILlmGateway` 默认 chat 池，做有界只读分析，无需任何 Anthropic key 即可跑（见 [doc/debt.cds.agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.agent.md) D1/D2、`prd-api/.../AgentRuntime/GatewayReviewRuntimeAdapter.cs`）。
 - **官方 `claude-agent-sdk` 模式（商业级、有门禁）**：sidecar 内用官方 `claude-agent-sdk`（解析版本 `0.2.82`，见 [doc/design.cds.agent.official-sdk-adapter.md](./design.cds.agent.official-sdk-adapter.md) §8）跑带工具/审批的 agent loop，但需要有效的 Anthropic / Claude-compatible runtime profile 才放行（债务 D1，未闭合）。
 
 **结论（诚实版）**：CDS **现在不能在自己进程里直接调一个 LLM**。它要触达模型，只能经由「CDS Agent 运行时」这条链路；这条链路的真正模型客户端运行在 prd-api 侧（Lite 用 `ILlmGateway`）或 sidecar 内（官方 SDK）。因此本设计**面向 Lite / ILlmGateway 这条已经可用、零外部 key 依赖的路径来设计**，把官方 SDK 模式列为可选升级。
@@ -224,7 +224,7 @@ POST /api/projects/:id/ai-compose-draft
 - [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md)：cds-compose 字段契约与 `cdscli verify` 规则（评分 / 自愈），草稿必须符合此契约——本设计的「校验」环节即引用它。
 - [doc/design.cds.agent.runtime-architecture.md](./design.cds.agent.runtime-architecture.md)：CDS Agent 运行时架构（控制面 vs sidecar vs runtime pool），本设计借用其运行时。
 - [doc/design.cds.agent.api.md](./design.cds.agent.api.md)：CDS Agent / runtime profile / 会话事件 API 契约，本设计的「询问模型」复用其事件流。
-- [doc/debt.cds.agent.md](./debt.cds.agent.md)：Lite 模式能力边界（D1/D2/D4），本设计默认依赖 Lite 这条已可用路径。
+- [doc/debt.cds.agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.agent.md)：Lite 模式能力边界（D1/D2/D4），本设计默认依赖 Lite 这条已可用路径。
 - `.claude/rules/no-rootless-tree.md`、`.claude/rules/compute-then-send.md`、`.claude/rules/agent-runtime-sdk-boundary.md`、`cds/.claude/rules/scope-naming.md`：本设计遵循的四条规则。
 
 ---

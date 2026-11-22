@@ -58,5 +58,5 @@
 ## 关联
 
 - 设计：[模型路由能力契约与故障域隔离](./design.platform.llm-routing.capability-contract.md)
-- 债务：[LLM 网关与模型池 · 债务台账](./debt.platform.llm-gateway.md)（本次新增三条 `2026-08-17-*`）
+- 债务：[LLM 网关与模型池 · 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)（本次新增三条 `2026-08-17-*`）
 - 既有整改计划：[LLM Gateway 故障隔离与恢复](./plan.platform.llm-gateway.resilience.md)

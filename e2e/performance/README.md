@@ -212,7 +212,7 @@ node e2e/performance/prove.mjs e2e/performance/evidence/user-path/injected-app.r
 | 维度 | 状态与依据 |
 |---|---|
 | 入口 | `run.mjs --ref <提交> --profile normal/all`；用户路径为登录→首页→知识库→文档→编辑保存→刷新 |
-| 文档与决策 | 本节、基线、证据与 `doc/debt.acceptance.system.md` 同步；历史失败未覆盖 |
+| 文档与决策 | 本节、基线、证据与 `https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.acceptance.system.md` 同步；历史失败未覆盖 |
 | 契约与数据 | 浏览器样本和阈值纳入策略 3，旧基线需要重新校准；产品 API/存储未变 |
 | 测试 | 基线三次、全负载、两类负例与新实例恢复已执行；云端 CI 未执行 |
 | 发布与运维 | 既有 Preview Acceptance job 接线完成；每轮独立容器、网络与数据，退出后无本轮残留；无生产部署 |

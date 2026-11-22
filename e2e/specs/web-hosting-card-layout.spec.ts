@@ -497,6 +497,7 @@ test('返回定位的分页外网页移到团队后，不会在个人空间恢�
 // 回归：关联点击只打开当前页模态窗，不能经过列表路由或丢失原阅读现场。
 for (const mode of ['list', 'account-share', 'guest-share'] as const) {
   test(`关联文档当前页预览保留原背景：${mode}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
     const sites = ['source', 'target'].map(id => ({ id, title: id === 'source' ? '来源文档' : '关联目标',
       siteUrl: `https://hosting.example/${id}/index.html`, entryFile: 'index.html', contentShape: 'self-contained-html',
       ownerUserId: 'qa-related-user', sourceType: 'upload', files: [], tags: [], totalSize: 1024,
@@ -542,8 +543,12 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
         const id = url.searchParams.get('siteId') || path.split('/')[3];
         data = { siteId: id, siteUrl: `https://hosting.example/${id}/index.html`, contentType: 'text/html',
           html: `<!doctype html><h1>${id === 'source' ? '来源正文' : '目标正文'}</h1><input aria-label="保留输入"><div style="height:2000px"></div>` };
-      } else if (path.endsWith('/revisions')) data = [];
-      else if (path.endsWith('/comments')) data = { siteId: 'source', commentsEnabled: true, canComment: false, comments: [] };
+      } else if (path.endsWith('/revisions')) data = path.includes('/target/') || path.includes('/qa-visit/')
+        ? [{ id: 'target-v1', siteId: 'target', versionLabel: 'V1', contentVersionKey: '2026-11-05', isCurrent: true,
+          canPreview: true, siteUrl: sites[1].siteUrl, entryFile: 'index.html', contentShape: 'self-contained-html' }] : [];
+      else if (path.endsWith('/comments')) data = { commentsEnabled: true, canComment: false,
+        comments: path.includes('/target/') || path.includes('/qa-visit/') ? [{ id: 'target-comment', siteId: 'target', contentVersion: '2026-11-05',
+          content: '预览文档已有评论', authorUserId: 'reviewer', authorName: '审阅者', createdAt: sites[0].createdAt, canDelete: false }] : [] };
       else if (path === '/api/web-pages/target') data = sites[1];
       await route.fulfill({ json: { success: true, data, error: null } });
     });
@@ -571,11 +576,20 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       : page.getByRole('dialog', { name: '关联目标', exact: true });
     await expect(modal).toBeVisible();
     await expect(modal.locator('iframe').first().contentFrame().getByRole('heading', { name: '目标正文' })).toBeVisible();
+    const discussion = modal.getByRole('button', { name: '批注与讨论' });
+    await expect(discussion).toHaveAttribute('aria-expanded', 'false');
     expect(page.url()).toBe(originalUrl);
     expect(page.context().pages()).toHaveLength(1);
     expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
     if (mode === 'guest-share') expect(apiRequests).not.toContain('/api/web-pages/target');
     if (mode === 'list') {
+      await expect(discussion).toHaveAccessibleDescription('1 条评论');
+      await expect(modal.getByText('预览文档已有评论')).toBeHidden();
+      await discussion.click();
+      await expect(modal.getByText('预览文档已有评论')).toBeVisible();
+      await discussion.click();
+      await expect(discussion).toHaveAttribute('aria-expanded', 'false');
+
       await modal.getByRole('button', { name: '更多', exact: true }).click();
       const open = page.getByRole('menuitem', { name: '新窗口打开', exact: true });
       await expect(open).toBeInViewport();
@@ -584,6 +598,23 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       await expect(external.locator('.share-topbar')).toBeVisible();
       await expect(external.locator('.hosted-ledger,[role="dialog"]')).toHaveCount(0);
       await expect(external.locator('iframe').contentFrame().getByRole('heading', { name: '目标正文' })).toBeVisible();
+      const externalDiscussion = external.getByRole('button', { name: '批注与讨论' });
+      await expect(externalDiscussion).toHaveAccessibleDescription('1 条评论');
+      await expect(externalDiscussion).toHaveAttribute('aria-expanded', 'false');
+      await externalDiscussion.click();
+      await expect(external.getByText('预览文档已有评论')).toBeVisible();
+      await external.reload();
+      await expect(externalDiscussion).toHaveAttribute('aria-expanded', 'false');
+      await external.setViewportSize({ width: 390, height: 844 });
+      const documentTab = external.getByRole('tab', { name: '正文' });
+      await expect(documentTab).toHaveAttribute('aria-selected', 'true');
+      await external.getByRole('tab', { name: '讨论' }).click();
+      await expect(external.getByText('预览文档已有评论')).toBeVisible();
+      await documentTab.click();
+      await external.setViewportSize({ width: 1440, height: 900 });
+      await expect(externalDiscussion).toHaveAttribute('aria-expanded', 'false');
+      await external.goto(new URL('/s/wp/qa-visit?review=current', external.url()).href);
+      await expect(externalDiscussion).toHaveAttribute('aria-expanded', 'true');
       expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
       await external.close();
     }
@@ -597,6 +628,13 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
     await page.keyboard.press('Escape');
     await expect(modal).toHaveCount(0);
     expect(page.url()).toBe(originalUrl);
+    if (mode === 'list') {
+      const card = page.locator('[data-hosted-site-id="target"]');
+      await card.hover();
+      await card.getByRole('button', { name: '更多设置' }).click();
+      await page.getByText('评论管理', { exact: true }).click();
+      await expect(modal.getByText('预览文档已有评论')).toBeVisible();
+    }
     if (sourceFrame) {
       await expect(sourceFrame.getByLabel('保留输入')).toHaveValue('原页面状态');
       expect(await sourceFrame.locator('body').evaluate(el => el.ownerDocument.defaultView!.scrollY)).toBe(200);

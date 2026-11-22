@@ -140,7 +140,7 @@ export function SitePreview({
     <div ref={containerRef} className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
       {/*
         占位符**永远铺在最底层**，而不是「iframe 该显示时就把它拿掉」。
-        跨域 iframe 读不到「画出来了没有」的信号（详见 doc/debt.web-hosting.md 第 21 条），
+        跨域 iframe 读不到「画出来了没有」的信号（详见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md 第 21 条），
         原先靠 1.2s 定时器无条件撤掉占位符，等于拿时间冒充证据：页面真没画出来时，
         用户看到的是一块**纯空白瓦片**——比地球图标更糟，它看起来像内容，其实什么都没有
         （predicate-and-wiring-discipline 形状 8：不成立的证据不能当证据）。

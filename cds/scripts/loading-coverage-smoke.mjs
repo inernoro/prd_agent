@@ -56,8 +56,10 @@ try {
   await page.screenshot({ path: out + '/dark390-reduced.png' });
   await page.setViewportSize({ width: 1360, height: 900 });
   await page.goto(base + '/overview');
-  await page.waitForURL(url => url.pathname === '/project-list');
-  assert.equal(await page.getByRole('link', { name: '概览', exact: true }).count(), 0);
+  const overviewGraph = page.getByRole('region', { name: '跨项目关系画布', exact: true });
+  await overviewGraph.getByText('fixture-project', { exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/overview');
+  assert.equal(await page.getByRole('link', { name: '概览', exact: true }).getAttribute('href'), '/overview');
   await page.goto(base + '/agent-requests/fixture-project');
   await page.locator('[data-agent-requests-skeleton] [data-agent-request-cards-skeleton]').waitFor();
   await page.getByText(/还没有 Agent 请求/).waitFor();
@@ -89,6 +91,6 @@ try {
   await page.getByRole('status', { name: '读取发布健康数据', exact: true }).waitFor();
   await page.getByRole('heading', { name: '探测配置', exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  await fs.writeFile(out + '/result.json', JSON.stringify({ sharedStyles: style, slowWaitClearsOnSceneChange: true, dark390: true, reducedMotion: true, dataErrorRetry: true, agentFirstLoadNoBlank: true, releaseConsoleNoPrematureEmpty: true, notificationNoPrematureFailure: true, healthErrorRetry: true, pageErrors: errors, artificialLatency: 'local synthetic API fixtures only', paidModelRequests: 0 }, null, 2));
-  console.log('PASS shared content skeleton; 6s status; scene cleanup; dark390; reduced motion; data/error/retry; Agent first load; release-console pending/empty separation; no page errors');
+  await fs.writeFile(out + '/result.json', JSON.stringify({ sharedStyles: style, slowWaitClearsOnSceneChange: true, dark390: true, reducedMotion: true, dataErrorRetry: true, overviewBookmarkAndNavigation: true, agentFirstLoadNoBlank: true, releaseConsoleNoPrematureEmpty: true, notificationNoPrematureFailure: true, healthErrorRetry: true, pageErrors: errors, artificialLatency: 'local synthetic API fixtures only', paidModelRequests: 0 }, null, 2));
+  console.log('PASS shared content skeleton; 6s status; scene cleanup; dark390; reduced motion; data/error/retry; Overview bookmark and navigation; Agent first load; release-console pending/empty separation; no page errors');
 } catch (error) { const pages=browser.contexts().flatMap(c=>c.pages()); if(pages[0]) { await fs.writeFile(out+'/failure.html',await pages[0].content()); await pages[0].screenshot({path:out+'/failure.png',fullPage:true}); } throw error; } finally { await browser.close(); }

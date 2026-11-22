@@ -11,11 +11,12 @@ function lastSweepCutoff(now: Date) {
 /** Process the latest Shanghai cutoff on startup, then run once at each daily cutoff. */
 export function startPlanningSweep({ projects, sweep, onError, now = () => new Date() }: {
   projects: () => Iterable<string>;
-  sweep: (project: string, through: Date) => Promise<void>;
+  sweep: (project: string, through: Date, signal: AbortSignal) => Promise<void>;
   onError: () => void;
   now?: () => Date;
 }) {
-  let stopped = false;
+  const shutdown = new AbortController();
+  const { signal } = shutdown;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running: Promise<void>;
   let currentCutoff = 0;
@@ -32,17 +33,17 @@ export function startPlanningSweep({ projects, sweep, onError, now = () => new D
     running = Promise.resolve().then(async () => {
       const through = new Date(cutoff);
       for (const project of projects()) {
-        if (stopped) break;
+        if (signal.aborted) break;
         if (finished.has(project)) continue;
         try {
-          await sweep(project, through);
+          await sweep(project, through, signal);
           finished.add(project);
         } catch {
           retry();
         }
       }
     }).catch(retry).finally(() => {
-      if (stopped) return;
+      if (signal.aborted) return;
       const time = now().getTime();
       const next = failed ? Math.min(cutoff + DAY, time + RETRY) : cutoff + DAY;
       timer = setTimeout(tick, Math.max(0, next - time));
@@ -52,7 +53,7 @@ export function startPlanningSweep({ projects, sweep, onError, now = () => new D
 
   tick();
   return async () => {
-    stopped = true;
+    shutdown.abort();
     clearTimeout(timer);
     await running;
   };

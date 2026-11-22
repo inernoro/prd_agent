@@ -7,7 +7,7 @@
  *     §7.0 决策读者首屏（产品失败与验收失败分开）、§7.1 Verdict 语义分层
  *   - doc/guide.acceptance.report-evidence.md §4 失败首屏红标、颜色契约
  *   - .claude/rules/conclusion-before-numbers.md 第一屏是挂着数字的判断句；建议句相同的卡片合并
- *   - doc/debt.acceptance-center-cds.md「验收报告重复归档」：通过率分母必须只计每个目标的最新版
+ *   - https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.acceptance-center-cds.md「验收报告重复归档」：通过率分母必须只计每个目标的最新版
  */
 import type { AcceptanceReportMeta, BranchTombstone } from '../types.js';
 import { parseReportMetadata, isCodeReviewReport } from '../shared/report-kind.js';

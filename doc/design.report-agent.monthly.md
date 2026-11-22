@@ -57,7 +57,7 @@
 
 ## 六、取舍与已知边界
 
-- 不做 AI 生成、月末提醒、正文插图、导出 Markdown、对外分享链接（记在 [debt.report-agent.md](./debt.report-agent.md)）。
+- 不做 AI 生成、月末提醒、正文插图、导出 Markdown、对外分享链接（记在 [debt.report-agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.report-agent.md)）。
 - 「设为默认登录页」的偏好暂不包含月报标签。
 - 首页「继续上次」不记录月报的打开。
 

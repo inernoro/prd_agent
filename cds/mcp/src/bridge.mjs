@@ -192,6 +192,7 @@ export function createProjectApiClient(credentials, { fetchImpl = fetch, dispatc
       // Keep the status actionable; detailed diagnostics stay in CDS's protected
       // audit log rather than being forwarded into the MCP conversation.
       if (response.status === 409 && parsed.error === 'plan_debt_closed') throw new Error('CDS HTTP 409: 请重新读取债务并选择仍未偿还的记录');
+      if (response.status === 409 && parsed.error === 'design_intake_conflict') throw new Error('CDS HTTP 409: 请重新读取设计接入 intake，核对稿件、Git 目录和最新版本后再决定续版或新建');
       if (response.status === 409 && parsed.error === 'design_git_source_required') throw new Error('CDS HTTP 409: 项目 Git 尚找不到该稿件的提交与目录，请同步提交后重试');
       const details = { 400: '参数不符合要求', 401: '项目凭据无效或已过期', 403: '当前项目无权访问此资源', 404: '任务或报告不存在', 409: '任务状态或幂等键冲突', 413: '上传超过大小限制', 429: '请求过于频繁', 502: '上游服务失败', 503: '服务未配置或不可用' };
       throw new Error(`CDS HTTP ${response.status}: ${details[response.status] ?? '请求失败，请查看 CDS 任务详情'}`);

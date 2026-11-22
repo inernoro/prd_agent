@@ -87,7 +87,7 @@ describe('把调用流水折成「一件事一行」', () => {
    * 根因在后端而不在这个函数：归并键是产物身份，而失败行的 artifact 恒为 null
    * （`RecordFinishedAsync` 的 error 分支不调 `ApplyArtifact`），所以它落单。
    * 要修得让网关在失败时也记下**请求里**的那个 runId —— 那需要一张「工具 → 身份字段」
-   * 的映射，属新增语义类别，见 `doc/debt.platform.md` #32。
+   * 的映射，属新增语义类别，见 `https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md` #32。
    */
   it.fails('入队与它那次失败的轮询应当折成一件事（当前折不上）', () => {
     const { enqueue } = run();

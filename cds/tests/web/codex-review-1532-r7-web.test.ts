@@ -1,5 +1,5 @@
 /**
- * Codex review（PR #1532）第七轮里两条 A 类（第三条判 B，见 doc/debt.cds.md）。
+ * Codex review（PR #1532）第七轮里两条 A 类（第三条判 B，见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md）。
  *
  * 一条是「结论说了一半」：支撑点最多留三条，凑够四条时被切掉的正好是
  * 「有几个项目查不到」那句，于是「查得到的范围里没有不安全的合并」被读成

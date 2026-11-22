@@ -63,7 +63,7 @@ timeline
   - 接入门槛降低：再加工自动从契约列出可用 capabilities，不需要手动维护白名单
   - 形态归一：所有 Agent 返回结构统一，再加工无需 N 套解析逻辑
   - 路由清晰：从一句话 prompt 路由到具体 capability，可解释、可回溯
-- **配套文档**：[doc/debt.agent-universe.md](./debt.agent-universe.md) + [doc/design.prd-agent.reprocess-chat-routing.md](./design.prd-agent.reprocess-chat-routing.md)
+- **配套文档**：[doc/debt.agent-universe.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.agent-universe.md) + [doc/design.prd-agent.reprocess-chat-routing.md](./design.prd-agent.reprocess-chat-routing.md)
 
 ### 3. 多页面新手引导教程系统重构 — 从悬浮图标到页头常驻 pill
 

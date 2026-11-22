@@ -196,14 +196,14 @@ python3 .claude/skills/cds/cli/cdscli.py env set --scope <projectId> --key MYSQL
 - **没有轮换审计**：谁在什么时候换过哪个库的口令，系统里没有记录。
 - **三个预设无认证 + 存量 redis 仍裸奔**：见 §4。
 
-这三条已记入 [doc/debt.cds.md](./debt.cds.md)，代码侧修复另行推进——本 runbook 描述的是**在那之前**如何安全地手工轮换。
+这三条已记入 [doc/debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)，代码侧修复另行推进——本 runbook 描述的是**在那之前**如何安全地手工轮换。
 
 ---
 
 ## 相关
 
 - 跨项目隔离规则 —— 共享密钥通道与历史事故台账（2026-06-12 换 `CDS_JWT_SECRET` 打哑 6 个平台密文）
-- [doc/debt.cds.md](./debt.cds.md) —— 缺口台账（E16 无认证预设 / E17 无轮换路径 / E18 无轮换审计）
+- [doc/debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md) —— 缺口台账（E16 无认证预设 / E17 无轮换路径 / E18 无轮换审计）
 
 ## 实现来源
 

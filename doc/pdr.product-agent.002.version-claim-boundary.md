@@ -71,6 +71,6 @@
 ## 实现来源与历史
 
 - [常规与临时申领、发号及自动推进](../prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs)、[正式版本页面](../prd-admin/src/pages/product-agent/ReleaseWorkflowDetail.tsx)、[公告匹配](../prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductAnnouncementSyncService.cs)。
-- [正式申领针对性测试](../prd-api/tests/PrdAgent.Api.Tests/Services/ProductVersionClaimGuardTests.cs)、[前端申领来源契约](../prd-admin/src/pages/product-agent/versionClaimScope.test.ts)、[模块历史与欠账](./debt.product-agent.md)。
+- [正式申领针对性测试](../prd-api/tests/PrdAgent.Api.Tests/Services/ProductVersionClaimGuardTests.cs)、[前端申领来源契约](../prd-admin/src/pages/product-agent/versionClaimScope.test.ts)、[模块历史与欠账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.product-agent.md)。
 - 2026-11-06：从既有资料、源码和提交历史建立补录；未改动业务逻辑、审批与真实数据。
 - 2026-11-08：补齐已执行检查的证据边界与下一次变更问题卡；状态继续为提议，未新增业务门槛、状态字段或历史迁移。

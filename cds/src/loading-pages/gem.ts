@@ -94,12 +94,11 @@ export function buildGemStorySvg(mineral: ServerGemMineral, sizePx: number, durS
 
 
 /** 等待页沿用品牌组装 / 驻留 / 碎裂动作，仅将中央暗面改为纯黑。 */
-export const WAITING_GEM_CSS = `
+export const WAITING_GEM_DARK_CSS = `
 ${GEM_STORY_CSS}
 .cds-gem-story.cds-waiting-gem{display:block;filter:none}
 .cds-waiting-gem .cds-gem-story-facet{--cds-waiting-face:var(--cds-waiting-face-dark);--cds-waiting-line:#aaaab7;fill:var(--cds-waiting-face);stroke:var(--cds-waiting-line)}
 .cds-waiting-gem .cds-waiting-gem-core{animation-name:cds-waiting-core-black}
-@media(prefers-color-scheme:light){.cds-waiting-gem .cds-gem-story-facet{--cds-waiting-face:var(--cds-waiting-face-light);--cds-waiting-line:#595960}}
 @keyframes cds-waiting-core-black{
   0%{transform:scale(0);opacity:0;fill:var(--cds-waiting-face);stroke:var(--cds-waiting-line)}
   9%{transform:scale(1.1);opacity:1}
@@ -112,6 +111,11 @@ ${GEM_STORY_CSS}
   100%{transform:scale(0);opacity:0}
 }
 @media(prefers-reduced-motion:reduce){.cds-waiting-gem .cds-gem-story-facet{animation:none;transform:none;opacity:1}}
+`.trim();
+
+export const WAITING_GEM_CSS = `
+${WAITING_GEM_DARK_CSS}
+@media(prefers-color-scheme:light){.cds-waiting-gem .cds-gem-story-facet{--cds-waiting-face:var(--cds-waiting-face-light);--cds-waiting-line:#595960}}
 `.trim();
 
 export function buildWaitingGemSvg(sizePx: number): string {

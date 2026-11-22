@@ -21,7 +21,10 @@ const html = '<!doctype html><html><head><meta charset="utf-8"></head><body><h1>
 const permissions = ['read', 'propose', 'write', 'approve'] as const;
 const people = new Map<string, DesignActor>([
   ['designer', { kind: 'agent', id: 'designer', label: 'Fixture designer', permissions }],
+  ['rotated-designer', { kind: 'agent', id: 'designer', label: 'Fixture refreshed key', permissions }],
   ['git-designer', { kind: 'agent', id: 'git-designer', label: 'Fixture restricted designer', permissions, gitPublishOnly: true }],
+  ['read-designer', { kind: 'agent', id: 'read-designer', label: 'Read-only designer', permissions: ['read'] }],
+  ['implementer', { kind: 'agent', id: 'implementer', label: 'Implementation agent', permissions: ['read'], feedback: true }],
   ['author', { kind: 'human', id: 'author', label: 'Fixture reviewer', permissions }],
   ['other', { kind: 'human', id: 'other', label: 'Other member', permissions }],
   ['steward', { kind: 'human', id: 'steward', label: 'Fixture steward', permissions, steward: true }],
@@ -51,6 +54,14 @@ function draft(title = 'Fixture design', extra: Record<string, unknown> = {}, so
   ]);
 }
 
+function withZipComment(bytes: Buffer) {
+  const comment = Buffer.from('Repacked fixture');
+  const archive = Buffer.concat([bytes, comment]);
+  // The end of central directory stores the comment length in its final two bytes.
+  archive.writeUInt16LE(comment.length, bytes.length - 2);
+  return archive;
+}
+
 function png(width: number, height: number) {
   const chunk = (name: string, data: Buffer) => {
     const bytes = Buffer.alloc(12 + data.length);
@@ -71,7 +82,7 @@ function png(width: number, height: number) {
 
 describe('private CDS design workspace', () => {
   let directory: string;
-  let app: Server;
+  let apps: Server[];
   let base: string;
   let activeCommit: string;
   let clock: string;
@@ -79,7 +90,16 @@ describe('private CDS design workspace', () => {
   let revokedReviewers: Set<string>;
   let frameworkMeasurements: DesignFrameworkMeasurement[];
   let enableShareHandoff: boolean;
+  let sources: Map<string, Buffer>;
+  let sourceLookups: number;
   const handoffKey = Buffer.alloc(32, 17);
+  const sourceKey = (project: string, commit: string, sourcePath: string) => JSON.stringify([project, commit, sourcePath]);
+
+  function gitSource(bytes: Buffer, sourcePath: string, sha = 'a', project = projectId) {
+    const sourceCommit = sha.repeat(40);
+    sources.set(sourceKey(project, sourceCommit, sourcePath), bytes);
+    return { sourceCommit, sourcePath };
+  }
 
   function openWorkspace() {
     const dependencies = {
@@ -87,7 +107,11 @@ describe('private CDS design workspace', () => {
       frameworkProbe: async () => frameworkMeasurements,
       resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && [7, 8].includes(pr) && (!commit || commit === activeCommit)
         ? { commit: activeCommit, url: pr === 7 ? 'https://preview.fixture.test/' : 'https://preview.fixture.test/other/' } : undefined,
-      sourcePackage: async (project: string, sha: string, sourcePath: string) => project === projectId && sha === sourceCommit && sourcePath === 'design/fixture' ? draft() : undefined,
+      sourcePackage: async (project: string, sha: string, sourcePath: string) => {
+        sourceLookups++;
+        return sources.get(sourceKey(project, sha, sourcePath))
+          ?? (project === projectId && sha === sourceCommit && sourcePath === 'design/fixture' ? draft() : undefined);
+      },
       reviewer: async (project: string, id: string) => {
         const member = projectActor(project, id);
         if (!revokedReviewers.has(id) && member?.kind === 'human' && member.permissions.includes('read') && member.permissions.includes('approve')) {
@@ -98,15 +122,9 @@ describe('private CDS design workspace', () => {
     return new DesignWorkspaceService(new FileProjectRevisionStore<DesignWorkspaceCommit>(directory), dependencies);
   }
 
-  beforeEach(async () => {
-    directory = await mkdtemp(path.join(tmpdir(), 'cds-design-test-'));
-    activeCommit = previewCommit;
-    clock = '2026-11-21T09:05:00.000Z';
-    revokedReviewers = new Set();
-    frameworkMeasurements = [];
-    service = openWorkspace();
+  async function openApi(workspace: DesignWorkspaceService) {
     const server = express();
-    server.use('/api', createDesignWorkspaceRouter({ service, resolveAccess: (req, project) => projectActor(project, req.get('x-fixture-user') ?? ''),
+    server.use('/api', createDesignWorkspaceRouter({ service: workspace, resolveAccess: (req, project) => projectActor(project, req.get('x-fixture-user') ?? ''),
       mapShareHandoff: () => enableShareHandoff ? {
         issuer: 'https://cds.fixture.test', target: new URL('https://map.fixture.test/platform/'), key: handoffKey,
         resolve: (project: string, _design: string, version: number, user: string) => project === projectId
@@ -114,16 +132,30 @@ describe('private CDS design workspace', () => {
         now: () => new Date(clock),
       } : undefined,
     }));
-    enableShareHandoff = false;
-    app = server.listen(0, '127.0.0.1');
+    const app = server.listen(0, '127.0.0.1');
+    apps.push(app);
     await once(app, 'listening');
     const address = app.address();
     if (!address || typeof address === 'string') throw Error('Missing fixture server');
-    base = `http://127.0.0.1:${address.port}/api/projects/`;
+    return `http://127.0.0.1:${address.port}/api/projects/`;
+  }
+
+  beforeEach(async () => {
+    apps = [];
+    directory = await mkdtemp(path.join(tmpdir(), 'cds-design-test-'));
+    activeCommit = previewCommit;
+    clock = '2026-11-21T09:05:00.000Z';
+    revokedReviewers = new Set();
+    frameworkMeasurements = [];
+    sources = new Map();
+    sourceLookups = 0;
+    enableShareHandoff = false;
+    service = openWorkspace();
+    base = await openApi(service);
   });
 
   afterEach(async () => {
-    if (app) await new Promise<void>(resolve => app.close(() => resolve()));
+    await Promise.all(apps.map(app => new Promise<void>(resolve => app.close(() => resolve()))));
     if (directory) await rm(directory, { force: true, recursive: true });
   });
 
@@ -131,10 +163,11 @@ describe('private CDS design workspace', () => {
     return fetch(`${base}${project}/design${suffix}`, { headers: { 'x-fixture-user': actor } });
   }
 
-  function publish(requestId: string, bytes: Buffer, query: Record<string, string> = {}) {
+  function publish(requestId: string, bytes: Buffer, query: Record<string, string> = {},
+    context: { actor?: string; api?: string; project?: string } = {}) {
     const filters = new URLSearchParams({ requestId, sourceCommit, ...query });
-    return fetch(`${base}${projectId}/design/packages?${filters}`, { method: 'POST', body: new Uint8Array(bytes),
-      headers: { 'x-fixture-user': 'designer', 'Content-Type': 'application/zip' } });
+    return fetch(`${context.api ?? base}${context.project ?? projectId}/design/packages?${filters}`, { method: 'POST', body: new Uint8Array(bytes),
+      headers: { 'x-fixture-user': context.actor ?? 'designer', 'Content-Type': 'application/zip' } });
   }
 
   function command(type: string, fields: object, actor = 'author', requestId: string = crypto.randomUUID(), project = projectId) {
@@ -143,6 +176,460 @@ describe('private CDS design workspace', () => {
       body: JSON.stringify({ type, requestId, ...fields }),
     });
   }
+
+  describe('private-source publication', () => {
+    it('stores and serves exact private archives across versions without Git and keeps human review and sharing gates', async () => {
+      const first = draft('Private version one');
+      const sourcePath = 'design/private-fixture';
+      const firstInput = { sourceMode: 'private', intent: 'create', designKey: 'fixture/private', sourcePath,
+        sourceCommit: '1'.repeat(40), reviewerIds: JSON.stringify(['author']) };
+      const publisher = { actor: 'git-designer' };
+      const published = await publish('private-first', first, firstInput, publisher);
+      expect(published.status).toBe(201);
+      const receipt = await published.json();
+      const { designId } = receipt.result;
+      const replay = await publish('private-first', withZipComment(first), firstInput, { ...publisher, api: await openApi(openWorkspace()) });
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual({ ...receipt, reused: true });
+      const { sourceMode: _private, ...gitInput } = firstInput;
+      const changedMode = await publish('private-first', first, gitInput, publisher);
+      expect(changedMode.status).toBe(409);
+      expect(await changedMode.json()).toMatchObject({ message: expect.stringContaining('同一请求编号') });
+
+      const second = draft('Private version two');
+      const revise = { sourceMode: 'private', intent: 'revise', designId, expectedVersion: '1', sourcePath, sourceCommit: '2'.repeat(40) };
+      expect((await publish('unowned-revision', second, revise, { actor: 'designer' })).status).toBe(403);
+      expect((await publish('read-only-revision', second, revise, { actor: 'read-designer' })).status).toBe(403);
+      expect((await publish('outside-revision', second, revise, { actor: 'outside' })).status).toBe(404);
+      expect((await publish('private-revision', second, revise, publisher)).status).toBe(201);
+      expect((await publish('stale-revision', second, { ...revise, sourceCommit: '3'.repeat(40) }, publisher)).status).toBe(409);
+      expect(sourceLookups).toBe(0);
+      const { designs } = await (await get()).json();
+      const item = designs[0];
+      expect(designs).toHaveLength(1);
+      expect(item).toMatchObject({ id: designId, reviewRequested: true, reviewers: [{ id: 'author' }] });
+      expect(item.versions).toHaveLength(2);
+      expect(item.versions[0].delivery.archiveId).not.toBe(item.versions[1].delivery.archiveId);
+      for (const [index, bytes] of [first, second].entries()) {
+        const version = item.versions[index];
+        expect(version).toMatchObject({ version: index + 1, sourceVerification: 'private-upload', sourcePath,
+          sourceCommit: [firstInput.sourceCommit, revise.sourceCommit][index], sha256: createHash('sha256').update(bytes).digest('hex') });
+        const path = `/artifacts/${version.delivery.archiveId}`;
+        const archive = await get(path, 'read-designer');
+        expect(archive.status).toBe(200);
+        expect(archive.headers.get('cache-control')).toBe('private, no-store');
+        expect(archive.headers.get('content-type')).toContain('application/zip');
+        expect(Buffer.from(await archive.arrayBuffer())).toEqual(bytes);
+        expect((await get(path, 'outside')).status).toBe(404);
+        expect((await get(path, 'author', otherProjectId)).status).toBe(404);
+      }
+      expect((await (await get('/intake')).json()).designs).toEqual([
+        expect.objectContaining({ designId, designKey: firstInput.designKey, latestVersion: 2, sourcePaths: [sourcePath] }),
+      ]);
+      const freeze = { designId, version: 2 };
+      expect((await command('design.freeze', freeze, 'git-designer')).status).toBe(403);
+      expect((await command('design.freeze', freeze, 'other')).status).toBe(403);
+      expect((await command('design.freeze', freeze, 'author')).status).toBe(201);
+      const share = await command('share.prepare', { ...freeze, sourceCommit: revise.sourceCommit,
+        packageSha256: item.versions[1].sha256, audience: 'password', expiresInHours: 24 });
+      expect(share.status).toBe(409);
+      expect(await share.json()).toMatchObject({ message: expect.stringContaining('Git') });
+    });
+
+    it('reserves private directory and design identity across source modes in the same project', async () => {
+      const git = draft('Git verified fixture');
+      const gitPath = 'design/git-owned';
+      const gitResponse = await publish('git-owned', git, { ...gitSource(git, gitPath), requireGit: 'true', intent: 'create', designKey: 'fixture/git' });
+      expect(gitResponse.status).toBe(201);
+      const { designId: gitId } = (await gitResponse.json()).result;
+      const input = { sourceMode: 'private', intent: 'create', designKey: 'fixture/private-owned', sourceCommit: '2'.repeat(40) };
+      const privateBytes = draft('Private upload fixture');
+      const collision = await publish('private-in-git-directory', privateBytes, { ...input, sourcePath: gitPath });
+      expect(collision.status).toBe(409);
+      expect(JSON.stringify(await collision.json())).toContain(gitId);
+
+      const sourcePath = 'design/private-owned';
+      const published = await publish('private-owned', privateBytes, { ...input, sourcePath });
+      expect(published.status).toBe(201);
+      const { designId: privateId } = (await published.json()).result;
+      const keyCollision = await publish('private-key-taken', privateBytes, { ...input, sourcePath: 'design/new-directory' }, { actor: 'git-designer' });
+      expect(keyCollision.status).toBe(409);
+      expect(JSON.stringify(await keyCollision.json())).toContain(privateId);
+      const pathCollision = await publish('private-path-taken', privateBytes, { ...input, sourcePath, designKey: 'fixture/another' }, { actor: 'git-designer' });
+      expect(pathCollision.status).toBe(409);
+      expect(JSON.stringify(await pathCollision.json())).toContain(privateId);
+      const gitCollision = await publish('git-in-private-directory', git, { ...gitSource(git, sourcePath, 'b'),
+        intent: 'create', designKey: 'fixture/another-git', requireGit: 'true' }, { actor: 'git-designer' });
+      expect(gitCollision.status).toBe(409);
+      expect(JSON.stringify(await gitCollision.json())).toContain(privateId);
+      expect(await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0)).toHaveLength(2);
+    });
+
+    it('rejects invalid private source submissions and preserves explicit Git verification', async () => {
+      const bytes = draft('Validated private upload');
+      const sourcePath = 'design/validated-private';
+      const input = { sourceMode: 'private', intent: 'create', designKey: 'fixture/validation', sourcePath, sourceCommit: '3'.repeat(40) };
+      const { intent: _intent, ...missingIntent } = input;
+      const { sourcePath: _path, ...missingPath } = input;
+      for (const [label, fields] of Object.entries({
+        'missing-intent': missingIntent, 'missing-path': missingPath, 'root-path': { ...input, sourcePath: '.' },
+        'absolute-path': { ...input, sourcePath: '/design/private' }, 'traversal-path': { ...input, sourcePath: '../private' },
+        'invalid-sha': { ...input, sourceCommit: 'main' }, 'ambiguous-mode': { ...input, requireGit: 'true' },
+        'unsupported-mode': { ...input, sourceMode: 'arbitrary' },
+      })) {
+        expect((await publish(label, bytes, fields)).status, label).toBe(400);
+      }
+      expect((await publish('malformed-archive', Buffer.from('not a ZIP'), input)).status).toBe(400);
+      expect(await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0)).toEqual([]);
+
+      const { sourceMode: _mode, ...gitInput } = input;
+      const credentials = { actor: 'git-designer' };
+      const absent = await publish('git-source-absent', bytes, gitInput, credentials);
+      expect(absent.status).toBe(409);
+      expect(await absent.json()).toMatchObject({ error: 'design_git_source_required' });
+      const source = gitSource(bytes, sourcePath, '3');
+      expect((await publish('git-bytes-mismatch', draft('Different revision'), { ...gitInput, ...source, requireGit: 'true' }, credentials)).status).toBe(409);
+      expect((await publish('git-bytes-match', bytes, { ...gitInput, ...source, requireGit: 'true' }, credentials)).status).toBe(201);
+      expect((await (await get()).json()).designs[0].versions[0]).toMatchObject({ sourceVerification: 'git' });
+    });
+  });
+
+
+  it('preserves complete delivery files and advice as private versioned material', async () => {
+    const guide = '# 合成交付说明\n核对实现地址和手机画面。\n';
+    const spec = '# 实现契约\n明暗双主题。\n';
+    const bytes = draft('Complete delivery', {
+      source: '原型源码/', frameworkDraft: 'spec/', prototypeVersion: 21, date: '2026-11-21',
+      notes: '验收时核对导航和滚动。', docs: ['设计文档/实现.md', '开发说明/开发说明.md'],
+    }, [
+      { name: 'bundle/交付说明.md', data: Buffer.from(guide) },
+      { name: 'bundle/设计文档/实现.md', data: Buffer.from(spec) },
+      { name: 'bundle/开发说明/开发说明.md', data: Buffer.from('# 开发说明\n合成数据。') },
+      { name: 'bundle/原型源码/build.mjs', data: Buffer.from('console.log("fixture");') },
+      { name: 'bundle/spec/rules.md', data: Buffer.from('# Rules\nMaterial only.') },
+      { name: 'bundle/checks/result.json', data: Buffer.from(JSON.stringify({ total: 1, passed: 1, items: [{ name: 'Synthetic', pass: true }] })) },
+      { name: 'bundle/other/example.dat', data: Buffer.from([0, 255, 100]) },
+    ]);
+    const created = await publish('complete-delivery', bytes, {
+      intent: 'create', designKey: 'fittings/receipt', ...gitSource(bytes, 'design/fittings/receipt'),
+    });
+    expect(created.status).toBe(201);
+    const { result: { designId } } = await created.json();
+    // A separate service reads the durable revision, not a live writer's memory.
+    base = await openApi(openWorkspace());
+    const listing = await (await get('', 'read-designer')).json();
+    const version = listing.designs.find((row: { id: string }) => row.id === designId).versions[0];
+    const delivery = version.delivery;
+    expect(delivery).toMatchObject({ source: '原型源码/', frameworkDraft: 'spec/', prototypeVersion: 21,
+      date: '2026-11-21', notes: '验收时核对导航和滚动。', warnings: [] });
+    expect(delivery.files.map((file: { path: string }) => file.path)).toHaveLength(10);
+    const guideFile = delivery.files.find((file: { path: string }) => file.path === '交付说明.md');
+    expect(guideFile).toMatchObject({ kind: 'guide', sha256: createHash('sha256').update(guide).digest('hex') });
+    expect(delivery.files).toContainEqual(expect.objectContaining({ path: '原型源码/build.mjs', kind: 'source' }));
+    expect(delivery.files).toContainEqual(expect.objectContaining({ path: '设计文档/实现.md', kind: 'document' }));
+    const file = await get(`/artifacts/${guideFile.id}`, 'read-designer');
+    expect(file.headers.get('content-disposition')).toContain('attachment');
+    expect(await file.text()).toBe(guide);
+    const text = await (await get(`/artifacts/${guideFile.id}?view=text&offset=0&limit=5`, 'read-designer')).json();
+    expect(text).toMatchObject({ path: '交付说明.md', offset: 0, nextOffset: 5, text: guide.slice(0, 5), sha256: guideFile.sha256 });
+    const archive = await get(`/artifacts/${delivery.archiveId}`, 'read-designer');
+    expect(archive.headers.get('content-type')).toContain('application/zip');
+    expect(Buffer.from(await archive.arrayBuffer())).toEqual(bytes);
+    expect((await get(`/artifacts/${guideFile.id}`, 'outside', otherProjectId)).status).toBe(404);
+    const preview = await get(`/artifacts/${version.prototypeId}?theme=dark`, 'read-designer');
+    expect(preview.headers.get('content-security-policy')).toBeTruthy();
+    expect(await preview.text()).toContain('Fixture');
+    const rawPrototype = await get(`/artifacts/${version.prototypeId}?download=true`, 'read-designer');
+    expect(rawPrototype.headers.get('content-disposition')).toContain('index.html');
+    expect(await rawPrototype.text()).toBe(html);
+  });
+
+  it('preserves declarative prototype state for screens sharing a route', async () => {
+    const shape = { name: 'Fixture', route: '#workspace', viewport: 'desktop' };
+    const bytes = draft('Screen states', { screens: [
+      { ...shape, id: 'cards' }, { ...shape, id: 'list', name: 'Fixture list',
+        entryActions: ['button[data-view="list"]'], entryReadySelector: '[data-scene="list"]' },
+    ] });
+    expect((await publish('prototype-states', bytes)).status).toBe(201);
+    const result = await (await get()).json();
+    expect(result.designs[0].versions[0].screens[1]).toMatchObject({
+      id: 'list', entryActions: ['button[data-view="list"]'], entryReadySelector: '[data-scene="list"]',
+    });
+  });
+
+  it('lets scoped implementation feedback travel through a revision and back to its author', async () => {
+    const first = draft('Fixture V1');
+    const source = 'design/fittings/feedback';
+    const creation = await publish('feedback-initial', first, { intent: 'create', designKey: 'fittings/feedback', ...gitSource(first, source) });
+    expect(creation.status).toBe(201);
+    const { result: { designId } } = await creation.json();
+    const send = (actor: string, requestId: string, type: string, values: object, project = projectId) =>
+      fetch(`${base}${project}/design/feedback`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-fixture-user': actor },
+        body: JSON.stringify({ type, requestId, designId, ...values }) });
+    const report = { version: 1, category: 'reuse', title: 'Use the shared list',
+      body: 'The current implementation can reuse the shared list component.', screenId: 'members', evidence: ['Shared list component'] };
+    expect((await send('read-designer', 'read-forbidden', 'feedback.create', report)).status).toBe(403);
+    expect((await send('outside', 'project-forbidden', 'feedback.create', report, otherProjectId)).status).toBe(404);
+    const request = await send('implementer', 'reuse-report', 'feedback.create', report);
+    expect(request.status).toBe(201);
+    const { result: { id: feedbackId } } = await request.json();
+    const replay = await send('implementer', 'reuse-report', 'feedback.create', report);
+    expect(replay.status).toBe(200);
+    expect((await replay.json()).result.id).toBe(feedbackId);
+    expect((await send('designer', 'premature-close', 'feedback.resolve', { feedbackId,
+      decision: 'close', body: 'The publisher cannot sign off another author’s finding.' })).status).toBe(403);
+
+    const update = draft('Fixture V2');
+    const publishParams = { intent: 'revise', designId, expectedVersion: '1', ...gitSource(update, source, 'b') };
+    expect((await publish('should-not-publish', update, publishParams, { actor: 'implementer' })).status).toBe(403);
+    expect((await publish('feedback-next', update, publishParams)).status).toBe(201);
+    const reply = await send('designer', 'reuse-response', 'feedback.reply', { feedbackId, body: 'V2 uses the shared list.', revision: 2 });
+    expect(reply.status).toBe(201);
+    expect((await send('implementer', 'confirm-reuse', 'feedback.resolve', { feedbackId, decision: 'close', body: 'Confirmed on V2.' })).status).toBe(201);
+    const context = await (await get('', 'read-designer')).json();
+    const row = context.designs.find((entry: { id: string }) => entry.id === designId);
+    expect(row.feedback).toEqual([expect.objectContaining({ id: feedbackId, version: 1, screenId: 'members',
+      category: 'reuse', status: 'closed', author: expect.objectContaining({ id: 'implementer' }),
+      replies: [expect.objectContaining({ revision: 2, author: expect.objectContaining({ id: 'designer' }) })],
+      decisions: [expect.objectContaining({ decision: 'close', body: 'Confirmed on V2.' })],
+    })]);
+    expect(row.versions.map((version: { version: number }) => version.version)).toEqual([1, 2]);
+  });
+
+  it('lists an intake with Git-verified sources, stable identity and revision rights for the actual caller', async () => {
+    const first = draft('Billing workspace');
+    const firstInput = gitSource(first, 'design/billing');
+    const published = await publish('intake-v1', first, firstInput);
+    expect(published.status).toBe(201);
+    const { designId } = (await published.json()).result;
+    const second = draft('Billing workspace refined');
+    const nextInput = gitSource(second, 'design/billing-v2', 'c');
+    expect((await publish('intake-v2', second, { ...nextInput, designId })).status).toBe(201);
+
+    const projectIntake = await get('/intake', 'designer');
+    expect(projectIntake.status).toBe(200);
+    expect(projectIntake.headers.get('cache-control')).toBe('private, no-store');
+    const ownerIntake = await projectIntake.json();
+    expect(ownerIntake).toMatchObject({ protocolVersion: 1, projectId, permissions: { write: true }, designs: [{
+      designId, latestVersion: 2, sourceCommit: nextInput.sourceCommit, sourcePaths: expect.arrayContaining([firstInput.sourcePath, nextInput.sourcePath]), canRevise: true,
+    }] });
+    expect(ownerIntake.designs[0].sourcePaths).toHaveLength(2);
+    expect(ownerIntake.designs[0]).not.toHaveProperty('designKey');
+    expect((await (await get('/intake', 'rotated-designer')).json()).designs[0].canRevise).toBe(true);
+    expect((await (await get('/intake', 'git-designer')).json()).designs[0].canRevise).toBe(false);
+    const readOnly = await get('/intake', 'read-designer');
+    expect(readOnly.status).toBe(200);
+    expect(await readOnly.json()).toMatchObject({ permissions: { write: false }, designs: [{ designId, canRevise: false }] });
+    expect((await get('/intake', 'outside')).status).toBe(404);
+    expect((await (await get('/intake', 'outside', otherProjectId)).json()).designs).toEqual([]);
+  });
+
+  it('rejects mistaken first publications from either publisher when Git already identifies the draft', async () => {
+    const first = draft('Billing workspace');
+    const source = gitSource(first, 'design/billing');
+    const firstInput = { ...source, intent: 'create', designKey: 'billing/workspace' };
+    const response = await publish('same-request', first, firstInput);
+    expect(response.status).toBe(201);
+    const { designId } = (await response.json()).result;
+    const deniedFirst = await publish('same-request', first, firstInput, { actor: 'git-designer' });
+    expect(deniedFirst.status).toBe(409);
+    expect(JSON.stringify(await deniedFirst.json())).toContain(designId);
+
+    const revised = draft('Billing workspace refreshed');
+    const revisedSource = gitSource(revised, source.sourcePath, 'c');
+    const accidental = await publish('legacy-mistake', revised, revisedSource);
+    expect(accidental.status).toBe(409);
+    expect(JSON.stringify(await accidental.json())).toContain(designId);
+    const alias = draft('Billing workspace refreshed', { id: 'DSN-fixture-alias' });
+    const manifestMistake = await publish('manifest-mistake', alias, gitSource(alias, source.sourcePath, 'd'), { actor: 'git-designer' });
+    expect(manifestMistake.status).toBe(409);
+    expect(JSON.stringify(await manifestMistake.json())).toContain(designId);
+    const explicit = { ...revisedSource, designId, intent: 'revise', expectedVersion: '1' };
+    expect((await publish('explicit-peer', revised, explicit, { actor: 'git-designer' })).status).toBe(403);
+    expect((await publish('old-explicit-peer', revised, { ...revisedSource, designId }, { actor: 'git-designer' })).status).toBe(403);
+    expect((await publish('explicit-viewer', revised, explicit, { actor: 'read-designer' })).status).toBe(403);
+    expect((await publish('explicit-outside', revised, explicit, { actor: 'outside' })).status).toBe(404);
+    const afterRejections = await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0);
+    expect(afterRejections).toHaveLength(1);
+    expect((await publish('explicit-author', revised, explicit, { actor: 'rotated-designer' })).status).toBe(201);
+    const replay = await publish('same-request', first, firstInput, { actor: 'rotated-designer' });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ reused: true, result: { designId, version: 1 } });
+    expect((await publish('same-request', first, { ...firstInput, note: 'Changed request' })).status).toBe(409);
+    expect((await (await get()).json()).designs).toEqual([expect.objectContaining({
+      id: designId, versions: [expect.objectContaining({ version: 1, publisher: expect.objectContaining({ id: 'designer' }) }),
+        expect.objectContaining({ version: 2, publisher: expect.objectContaining({ id: 'designer' }) })],
+    })]);
+  });
+
+  it('admits exactly one first publication for a shared key across two stores and two publishers', async () => {
+    const otherApi = await openApi(openWorkspace());
+    const bytes = draft('Concurrent draft');
+    const key = { intent: 'create', designKey: 'ledger/concurrent' };
+    const firstSource = gitSource(bytes, 'design/ledger/a');
+    const peerSource = gitSource(bytes, 'design/ledger/b');
+    const collision = await Promise.all([
+      publish('same-id', bytes, { ...firstSource, ...key }),
+      publish('same-id', bytes, { ...peerSource, ...key }, { actor: 'git-designer', api: otherApi }),
+    ]);
+    expect(collision.map(row => row.status).sort()).toEqual([201, 409]);
+    const accepted = collision.find(row => row.status === 201)!;
+    const { designId } = (await accepted.json()).result;
+    expect(JSON.stringify(await collision.find(row => row.status === 409)!.json())).toContain(designId);
+    const entries = await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0);
+    expect(entries).toHaveLength(1);
+    const { designs } = await (await get('/intake', 'designer')).json();
+    expect(designs).toHaveLength(1);
+    expect(designs[0]).toMatchObject({ designId, designKey: key.designKey, latestVersion: 1 });
+  });
+
+  it('serializes competing revisions with the same expected version and leaves exact retries safe', async () => {
+    const otherApi = await openApi(openWorkspace());
+    const bytes = draft('Base version');
+    const source = gitSource(bytes, 'design/fixtures/concurrent-version');
+    const input = { ...source, intent: 'create', designKey: 'ledger/version-race' };
+    const first = await Promise.all([publish('first-retry', bytes, input), publish('first-retry', bytes, input, { api: otherApi })]);
+    expect(first.map(row => row.status).sort()).toEqual([200, 201]);
+    const receipts = await Promise.all(first.map(row => row.json()));
+    expect(receipts[0].result).toEqual(receipts[1].result);
+    const { designId } = receipts[0].result;
+    const v2a = draft('Candidate A'), v2b = draft('Candidate B');
+    const revise = { designId, intent: 'revise', expectedVersion: '1' };
+    const results = await Promise.all([
+      publish('v2-a', v2a, { ...gitSource(v2a, source.sourcePath, 'b'), ...revise }),
+      publish('v2-b', v2b, { ...gitSource(v2b, source.sourcePath, 'c'), ...revise }, { api: otherApi }),
+    ]);
+    expect(results.map(row => row.status).sort()).toEqual([201, 409]);
+    expect(await results.find(row => row.status === 201)!.json()).toMatchObject({ result: { designId, version: 2 } });
+    const commits = await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0);
+    expect(commits).toHaveLength(2);
+    expect(commits.map(commit => commit.design?.version?.version)).toEqual([1, 2]);
+  });
+
+  it('reuses an explicit-intent receipt when the same Git files were packaged again', async () => {
+    const bytes = draft('Repacked draft');
+    const repacked = withZipComment(bytes);
+    expect(repacked.equals(bytes)).toBe(false);
+    const input = { ...gitSource(bytes, 'design/repacked'), intent: 'create', designKey: 'ledger/repacked' };
+    const requestId = 'intent-repack';
+    const first = await publish(requestId, bytes, input);
+    expect(first.status).toBe(201);
+    const receipt = await first.json();
+
+    const otherApi = await openApi(openWorkspace());
+    const repeated = await publish(requestId, repacked, input, { api: otherApi });
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toEqual({ ...receipt, reused: true });
+    const changed = await publish(requestId, draft('Different unpacked content'), input);
+    expect(changed.status).toBe(409);
+    expect(await changed.json()).toMatchObject({ message: expect.stringContaining('同一请求编号') });
+
+    const commits = await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0);
+    expect(commits).toHaveLength(1);
+    expect(commits[0].design?.version).toMatchObject({ version: 1, sha256: createHash('sha256').update(bytes).digest('hex') });
+  });
+
+  it('keeps old explicit-ID updates compatible, binds an old draft once and permits independent modules', async () => {
+    const bytes = draft('Same fixture title');
+    const source = gitSource(bytes, 'design/legacy-intake');
+    const first = await publish('legacy-first', bytes, source);
+    expect(first.status).toBe(201);
+    const { designId } = (await first.json()).result;
+    expect((await publish('legacy-v2', bytes, { ...gitSource(bytes, source.sourcePath, 'b'), designId })).status).toBe(201);
+    const designKey = 'legacy/module';
+    const binding = { ...gitSource(bytes, source.sourcePath, 'c'), intent: 'revise', designId, designKey, expectedVersion: '2' };
+    expect((await publish('bind-legacy', bytes, binding)).status).toBe(201);
+    const wouldChangeKey = { ...binding, ...gitSource(bytes, source.sourcePath, 'd'), designKey: 'legacy/another', expectedVersion: '3' };
+    expect((await publish('change-key', bytes, wouldChangeKey)).status).toBe(409);
+
+    const otherSource = gitSource(bytes, 'design/new-module');
+    const reserved = await publish('reserved-source', bytes, { ...source, intent: 'create', designKey: 'other/workspace' });
+    expect(reserved.status).toBe(409);
+    expect((await publish('separate-module', bytes, { ...otherSource, intent: 'create', designKey: 'other/workspace' })).status).toBe(201);
+    const anchor = await get('/intake', 'designer');
+    expect(anchor.status).toBe(200);
+    expect((await anchor.json()).designs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ designId, designKey, latestVersion: 3, sourcePaths: [source.sourcePath] }),
+      expect.objectContaining({ designKey: 'other/workspace', latestVersion: 1, sourcePaths: [otherSource.sourcePath] }),
+    ]));
+    const crossProject = draft('Same fixture title', { project: otherProjectId });
+    const independentlyScoped = { ...gitSource(crossProject, source.sourcePath, 'a', otherProjectId), intent: 'create', designKey };
+    const elsewhere = await publish('outside-independent', crossProject, independentlyScoped, { actor: 'outside', project: otherProjectId });
+    expect(elsewhere.status).toBe(201);
+    expect((await (await get('/intake', 'outside', otherProjectId)).json()).designs).toEqual([
+      expect.objectContaining({ designKey, latestVersion: 1, canRevise: true }),
+    ]);
+  });
+
+  it('prompts legacy agents to choose intent after the first project draft while permitting human first publications', async () => {
+    const bytes = draft('Legacy agent draft');
+    const git = gitSource(bytes, 'design/initial-legacy');
+    const initial = await publish('old-request', bytes, git);
+    expect(initial.status).toBe(201);
+    const { designId } = (await initial.json()).result;
+    const retry = await publish('old-request', bytes, git, { actor: 'rotated-designer' });
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ reused: true, result: { designId, version: 1 } });
+    const other = draft('Another draft with a different title and path');
+    const otherGit = gitSource(other, 'design/different-legacy');
+    expect((await publish('legacy-agent-other', other, otherGit)).status).toBe(409);
+    expect((await publish('legacy-peer-other', other, otherGit, { actor: 'git-designer' })).status).toBe(409);
+    expect(await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0)).toHaveLength(1);
+    expect((await publish('legacy-human-other', other, otherGit, { actor: 'author' })).status).toBe(201);
+    expect((await (await get()).json()).designs).toHaveLength(2);
+    expect((await publish('legacy-human-duplicate', bytes, git, { actor: 'author' })).status).toBe(409);
+  });
+
+  it('blocks a legacy revision from first claiming a different draft’s verified path but preserves historical overlap', async () => {
+    const first = draft('Owned path');
+    const firstGit = gitSource(first, 'design/owned-path');
+    const response = await publish('own-path', first, firstGit);
+    expect(response.status).toBe(201);
+    const { designId: ownerId } = (await response.json()).result;
+    const other = draft('Separate draft');
+    const otherGit = gitSource(other, 'design/separate-path');
+    const separate = await publish('separate-path', other, otherGit, { actor: 'author' });
+    expect(separate.status).toBe(201);
+    const { designId } = (await separate.json()).result;
+    const claimSource = gitSource(other, firstGit.sourcePath, 'b');
+    const rejected = await publish('legacy-path-claim', other, { ...claimSource, designId }, { actor: 'author' });
+    expect(rejected.status).toBe(409);
+    expect(JSON.stringify(await rejected.json())).toContain(ownerId);
+
+    const revisions = new FileProjectRevisionStore<DesignWorkspaceCommit>(directory);
+    const entries = await revisions.read(projectId, 0);
+    expect(entries).toHaveLength(2);
+    const preceding = entries[1].design!.version!;
+    expect(await revisions.append({ projectId, revision: 3,
+      request: { key: 'fixture-historical-overlap', fingerprint: 'fixture', result: { type: 'package', designId, version: 2 } },
+      design: { id: designId, version: { ...preceding, version: 2, ...claimSource } },
+    })).toBe(true);
+    const followup = await publish('legacy-known-path', other, { ...gitSource(other, firstGit.sourcePath, 'c'), designId }, { actor: 'author' });
+    expect(followup.status).toBe(201);
+    expect(await followup.json()).toMatchObject({ result: { designId, version: 3 } });
+  });
+
+  it('requires project Git source and explicit revision parameters for the intake contract', async () => {
+    const bytes = draft('Validated input');
+    const source = gitSource(bytes, 'design/validated-input');
+    const initial = await publish('implicit-base', bytes, source);
+    expect(initial.status).toBe(201);
+    const { designId } = (await initial.json()).result;
+    const create = { intent: 'create', designKey: 'test/another' };
+    const unverified = await publish('no-git', bytes, { ...create, sourcePath: 'design/not-in-git' });
+    expect([400, 409]).toContain(unverified.status);
+    expect((await publish('no-key', bytes, { ...source, intent: 'create' })).status).toBe(400);
+    expect((await publish('bad-key', bytes, { ...source, ...create, designKey: 'Test/NotValid' })).status).toBe(400);
+    const updated = draft('Validated input revised', { id: designId });
+    const complete = { ...gitSource(updated, source.sourcePath, 'b'), intent: 'revise' };
+    expect((await publish('manifest-id-only', updated, { ...complete, expectedVersion: '1' })).status).toBe(400);
+    expect((await publish('no-expected-version', updated, { ...complete, designId })).status).toBe(400);
+    expect((await publish('non-integer-version', updated, { ...complete, designId, expectedVersion: '1.5' })).status).toBe(400);
+    expect((await publish('complete-revision', updated, { ...complete, designId, expectedVersion: '1' })).status).toBe(201);
+    const commits = await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0);
+    expect(commits).toHaveLength(2);
+  });
 
   it('only lets an assigned human reviewer freeze the latest version and inherits reviewers on publish', async () => {
     const published = await publish('assign-first', draft(), { reviewerIds: JSON.stringify(['author']) });
@@ -263,7 +750,7 @@ describe('private CDS design workspace', () => {
     clock = '2026-11-21T10:42:00.000Z';
     expect((await command('design.review', request, 'designer', 'next-hour')).status).toBe(201);
     const secondHour = { ...firstHour, occurrences: 1, updatedAt: clock };
-    const separate = await publish('different-design', draft('Separate fixture design'), { reviewerIds: JSON.stringify(['author']) });
+    const separate = await publish('different-design', draft('Separate fixture design'), { reviewerIds: JSON.stringify(['author']) }, { actor: 'steward' });
     expect(separate.status).toBe(201);
     const separateId = (await separate.json()).result.designId;
     const history = await openWorkspace().reviewNotices(projectId, recipient);
@@ -280,6 +767,7 @@ describe('private CDS design workspace', () => {
     const bytes = draft();
     const responses = await Promise.all([publish('one', bytes), publish('one', bytes)]);
     expect(responses.map(response => response.status).sort()).toEqual([200, 201]);
+    expect((await publish('one', withZipComment(bytes))).status).toBe(409);
     expect((await publish('one', draft('Another title'))).status).toBe(409);
     const { designs } = await (await get()).json();
     expect(designs).toHaveLength(1);
@@ -345,6 +833,25 @@ describe('private CDS design workspace', () => {
     expect(designs[0].versions[1].frameworkCheck.items[0]).toMatchObject({ ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('1 / 2') });
   });
 
+
+  it('keeps framework measurement unverified for shared routes without a verified entry state', async () => {
+    const frameworkId = 'FW-entry-state';
+    const rules = '| R-07 | 375px 手机没有横向溢出 | 自动：实测 |';
+    expect((await command('framework.import', { frameworkId, title: 'Fixture shell',
+      sourceCommit: 'c'.repeat(40), expectedVersion: 0, material: { rules } })).status).toBe(201);
+    const baseScreen = { name: 'Shared route', route: '#shared', viewport: 'phone', themes: ['light'] };
+    const bytes = draft('Fixture alternative states', { framework: frameworkId, frameworkVersion: 1, screens: [
+      { ...baseScreen, id: 'cards' }, { ...baseScreen, id: 'list', entryActions: ['button[data-view="list"]'] },
+    ] });
+    frameworkMeasurements = ['cards', 'list'].map(screenId => ({ screenId, slot: 'phone-light', width: 375, contentWidth: 375 }));
+    expect((await publish('state-unverified', bytes)).status).toBe(201);
+    const { designs } = await (await get()).json();
+    expect(designs[0].versions[0].frameworkCheck.items[0]).toMatchObject({
+      ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('1 / 2'),
+      measurements: [{ screenId: 'cards' }],
+    });
+  });
+
   it('requires container evidence for the complete 375px rule and retains each publication result', async () => {
     const frameworkId = 'FW-mobile-layout';
     const rules = '| R-07 | 375 宽下文档没有横向溢出；只有表格、图表、代码块可以在自身容器里横向滚动 | 自动：比较文档宽度和视口宽度 |';
@@ -377,7 +884,7 @@ describe('private CDS design workspace', () => {
     const source = { sourcePath: 'design/fixture' };
     expect((await publish('fake-source', draft('Modified archive'), source)).status).toBe(409);
     expect((await publish('known-source', draft(), source)).status).toBe(201);
-    expect((await publish('outside-source', draft(), { ...source, sourceCommit: 'f'.repeat(40) })).status).toBe(201);
+    expect((await publish('outside-source', draft(), { sourcePath: 'design/source-not-visible', sourceCommit: 'f'.repeat(40) }, { actor: 'author' })).status).toBe(201);
     const { designs } = await (await get()).json();
     expect(designs.map((entry: any) => entry.versions[0].sourceVerification).sort()).toEqual(['declared', 'git']);
   });

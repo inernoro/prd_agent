@@ -4598,7 +4598,11 @@ export interface AgentKey {
   /** Optional restriction to this project's planning reads or proposal intake. */
   planningAccess?: 'read' | 'propose';
   /** Optional restriction to this project's private design reads or Git-verified publishing. */
-  designAccess?: 'read' | 'publish';
+  designAccess?: 'read' | 'feedback' | 'publish';
+  /** Dedicated design approval grants access without a general project grant. */
+  designAccessRequestId?: string;
+  /** Original publisher identity for a verified design credential replacement. */
+  designPublisherKeyId?: string;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** Verified account that issued the key, when present. */
@@ -4672,6 +4676,10 @@ export interface AccessRequest {
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
+  /** Scoped design permission shown to the approver and applied to the issued project key. */
+  designAccess?: AgentKey['designAccess'];
+  /** Existing design key proved by the applicant and rechecked at approval. */
+  designRecoveryKeyId?: string;
   /** Agent 申报的建项目目标；新审批按规范化仓库和名称绑定一次建项目权限。 */
   requestedProject?: { name: string; repository?: string };
   /** 服务端已验证并将审批限制到目标；旧记录缺省不作绑定声明。 */

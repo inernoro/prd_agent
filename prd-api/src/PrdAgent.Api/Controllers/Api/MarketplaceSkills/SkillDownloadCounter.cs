@@ -16,7 +16,7 @@ namespace PrdAgent.Api.Controllers.Api.MarketplaceSkills;
 ///
 /// 已知边界：去重表在进程内存里，多实例部署时每个实例各有一份，
 /// 分布式调用方仍可绕过。这一层挡的是「单个客户端循环刷」这种最廉价的滥用；
-/// 真正的按 IP 限流是另一件事，见 doc/debt.skill.role-bundle.md。
+/// 真正的按 IP 限流是另一件事，见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.skill.role-bundle.md。
 ///
 /// 两个消费方共用本类，避免两处各写一份去重逻辑而漂移：
 /// - <c>MarketplaceSkillsController</c>（站内）

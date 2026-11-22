@@ -18,7 +18,7 @@
 |---|---|---|---|---|---|---|
 | **A 预览修复** #1356 | `claude/web-hosting-preview-fix`（基于 main） | 100% | 两轮已收口 | 无 | 合并 | 42 条 vitest 守卫全绿；红绿闭环已跑（把 `withPreviewBase` 改回旧写法 → 8 条变红 → 恢复）；CI 全绿 |
 | **B 向我提问** #1358 | `claude/web-hosting-ask`（叠在 A 上） | 95% | 两轮已收口，待真人验收 | **没有任何人用浏览器点开过这个功能**（我的沙箱 Chromium 无外网） | 由人打开预览页点一次提问，看到答案流出来 | 后端 xUnit 守卫；API 层灰度实测；**无真人路径截图** |
-| **C 检索底座** #1357 | `claude/knowledge-embedding-base`（基于 main） | 100%（底座部分） | 两轮已收口 | 检索服务本身缺 embedding 供应商 key（外部输入） | 合并；拿到 key 后续做检索服务 | 切块与跨模型污染守卫；[向量供应商台账](./debt.platform.embedding-provider.md) |
+| **C 检索底座** #1357 | `claude/knowledge-embedding-base`（基于 main） | 100%（底座部分） | 两轮已收口 | 检索服务本身缺 embedding 供应商 key（外部输入） | 合并；拿到 key 后续做检索服务 | 切块与跨模型污染守卫；[向量供应商台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.embedding-provider.md) |
 
 三条线的依赖：C 与 A、B 完全无关，可任意顺序合。B 依赖 A（B 的分享页改动叠在 A 的预览修复之上），**A 先合，B 后合**。
 
@@ -119,7 +119,7 @@ C 永远验不了，但它捆着 A 和 B 一起等，等于让「能验的」陪
 都能被从某个方向证伪。继续调只会在同一个平衡点上来回摆动——这正是熔断规则里
 「连续两轮仍在产生新的语义类别」要拦的形态。
 
-已记入[网页托管债务台账](./debt.web-hosting.md)第 21 条，并写明两条真正的解法（服务端截图，
+已记入[网页托管债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md)第 21 条，并写明两条真正的解法（服务端截图，
 或托管域名放行只读探测端点）。
 
 ## 四、三条线各自的目标与不变量（范围基线）
@@ -160,11 +160,11 @@ C 永远验不了，但它捆着 A 和 B 一起等，等于让「能验的」陪
 
 - **用户最初报的那三个打不开的页面，我从未验证过修好了。** 它们不在我能访问的这套部署里。A 修的是从代码与线上响应头直接读出来的两条根因，与具体站点无关；但「那三个页面现在能打开了」这句话我没有证据。
 - **B 从未被任何人用浏览器点开过。** 我的沙箱 Chromium 没有出网能力，Playwright 连 `example.com` 都打不开。B 在 #1351 期间出过一个「设置抽屉被预览弹窗完全遮住、功能根本打不开」的 z-index 缺陷——那是一次点击就能发现的问题，它的存在本身就说明这条线缺真人验收。
-- 其余逐条欠账记在[网页托管债务台账](./debt.web-hosting.md)；向量供应商的选型结论随 PR-C 一起落台账。
+- 其余逐条欠账记在[网页托管债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md)；向量供应商的选型结论随 PR-C 一起落台账。
 
 ---
 
 ## 六、相关
 
-- 债务：[网页托管](./debt.web-hosting.md)、[知识库](./debt.knowledge-base.md)
+- 债务：[网页托管](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md)、[知识库](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md)
 - 规则：判据与接线纪律（本次 44 条意见里绝大多数属于其中的形状 1/2/3/4）、`AGENTS.md §5.5` Review 范围熔断

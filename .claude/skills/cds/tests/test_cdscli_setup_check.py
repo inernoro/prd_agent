@@ -14,6 +14,11 @@ from pathlib import Path
 
 CLI = Path(__file__).resolve().parents[1] / "cli" / "cdscli.py"
 SECRET = "cdsp_setup_test_secret_never_print"
+POLL_TOKEN = "design_request_fixture_poll_token_never_print"
+DESIGN_SETUP = "/api/agent/setup.json?target=existing&project=proj-a&mission=design-publish"
+DESIGN_INTAKE = "/api/projects/proj-a/design/intake"
+DESIGN_REQUEST = "/api/projects/proj-a/access-requests"
+DESIGN_POLL = DESIGN_REQUEST + "/design-request-fixture"
 SKILLS = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
 
@@ -40,11 +45,23 @@ class SetupCheckTests(unittest.TestCase):
         self.write_bundle_manifest()
         self.project_status = 200
         self.returned_project = "proj-a"
+        self.design_manifest = {"target": {"kind": "existing", "projectId": "proj-a"},
+                                "mission": "design-publish", "designAccess": "publish", "minCliVersion": "0.26.9"}
+        self.design_result = {"projectId": "proj-a", "protocolVersion": 1, "permissions": {"write": True}}
+        self.design_requests = []
+        self.poll_proofs = []
+        self.hold_design_approval = False
         test = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
+
+            def respond(self, status, body):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode())
 
             def do_GET(self):
                 test.requests.append((self.path, self.headers.get("X-AI-Access-Key")))
@@ -57,12 +74,25 @@ class SetupCheckTests(unittest.TestCase):
                 if self.path == "/api/agent/setup.json":
                     body = {"version": "cds-agent-setup.v1", "cliVersion": test.version,
                             "minCliVersion": test.minimum_version}
+                elif self.path == DESIGN_SETUP:
+                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version, **test.design_manifest}
                 elif self.path == "/api/credentials/self-check":
                     body = {"kind": test.kind, "status": test.status}
                     if test.kind == "global":
                         body["keyId"] = "global-current"
                     if test.kind == "project":
                         body["projectId"] = "proj-a"
+                elif self.path == DESIGN_INTAKE:
+                    body = test.design_result
+                elif self.path == DESIGN_POLL:
+                    supplied = self.headers.get("X-Poll-Token") == POLL_TOKEN
+                    test.poll_proofs.append(supplied)
+                    if not supplied:
+                        status, body = 403, {"error": "poll_token_required"}
+                    elif test.hold_design_approval or len(test.poll_proofs) == 1:
+                        body = {"status": "pending"}
+                    else:
+                        body = {"status": "approved", "authorizationKey": SECRET, "designAccess": "publish"}
                 elif self.path == "/api/projects/proj-a":
                     status = test.project_status
                     body = {"project": {"id": test.returned_project}, "secret": SECRET}
@@ -72,10 +102,17 @@ class SetupCheckTests(unittest.TestCase):
                     body = {"secret": SECRET}
                 else:
                     status, body = 404, {"secret": SECRET}
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(body).encode())
+                self.respond(status, body)
+
+            def do_POST(self):
+                test.requests.append((self.path, self.headers.get("X-AI-Access-Key")))
+                if self.path != DESIGN_REQUEST:
+                    self.respond(404, {"error": "unexpected_write"})
+                    return
+                request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                test.design_requests.append(request)
+                self.respond(201, {"requestId": "design-request-fixture", "pollToken": POLL_TOKEN,
+                                   "projectId": "proj-a", "designAccess": "publish", "status": "pending"})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.host = f"http://127.0.0.1:{self.server.server_port}"
@@ -100,13 +137,18 @@ class SetupCheckTests(unittest.TestCase):
             "format": "agent-skills", "version": self.version, "skills": list(SKILLS), "files": files,
         }))
 
-    def run_cli(self, *args, credential_env=None):
+    def run_cli_result(self, *args, credential_env=None):
         env = {key: value for key, value in os.environ.items()
                if key not in ("CDS_HOST", "CDS_PROJECT_ID", "CDS_PROJECT_KEY", "AI_ACCESS_KEY")}
         env.update(credential_env or {})
         result = subprocess.run([sys.executable, str(self.cli), *args],
                                 cwd=self.root, env=env, capture_output=True, text=True, timeout=15)
-        self.assertNotIn(SECRET, result.stdout + result.stderr)
+        self.assertFalse(any(value in result.stdout + result.stderr for value in (SECRET, POLL_TOKEN)),
+                         "CLI exposed a credential or poll token")
+        return result
+
+    def run_cli(self, *args, credential_env=None):
+        result = self.run_cli_result(*args, credential_env=credential_env)
         return result, json.loads(result.stdout)
 
     def run_check(self, *target, host=None, credential_env=None):
@@ -131,6 +173,179 @@ class SetupCheckTests(unittest.TestCase):
         self.assertTrue(all(key == SECRET for _, key in self.requests))
         self.assertEqual(self.credentials.read_bytes(), before)
         self.assertFalse((self.root / ".git/info/exclude").exists())
+
+    def run_design_check(self):
+        return self.run_cli_result("setup-check", "--host", self.host, "--project", "proj-a",
+                                   "--skills", "cds", "--design-access", "publish")
+
+    def run_design_connect(self, *options):
+        return self.run_cli_result("connect", "--host", self.host, "--project", "proj-a",
+                                   "--design-access", "publish", "--agent", "Fixture designer", "--interval", "1", *options)
+
+    def test_design_setup_check_verifies_the_declared_project_and_live_publish_permission(self):
+        before = self.credentials.read_bytes()
+        result = self.run_design_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(payload["data"]["projectId"], "proj-a")
+        self.assertEqual([path for path, _ in self.requests], [
+            DESIGN_SETUP, "/api/credentials/self-check", DESIGN_INTAKE])
+        self.assertTrue(all(key == SECRET for _, key in self.requests[1:]))
+        self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertEqual(self.design_requests, [])
+
+    def test_design_setup_check_accepts_autocrlf_checkout_of_complete_bundle(self):
+        if not shutil.which("git"):
+            self.skipTest("Git is required to reproduce the Windows checkout")
+        source = CLI.parents[2]
+        manifest = CLI.with_name("cds-skill-manifest.json").read_bytes()
+        canonical = {}
+        for name, digest in json.loads(manifest)["files"].items():
+            raw = (source / name).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest:
+                raw = raw.replace(b"\r\n", b"\n")
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), digest, name)
+            target = self.cli.parents[2] / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw)
+            canonical[target] = raw
+        self.bundle_manifest.write_bytes(manifest)
+
+        git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        git_env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+
+        def git(*args):
+            subprocess.run(["git", *args], cwd=self.root, env=git_env, check=True, capture_output=True)
+
+        git("init", "-q")
+        git("config", "core.autocrlf", "true")
+        git("add", "--", ".agents/skills")
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Canonical bundle")
+        for target in canonical:
+            target.unlink()
+        git("checkout", "HEAD", "--", ".agents/skills")
+        self.assertEqual(self.cli.read_bytes(), canonical[self.cli].replace(b"\n", b"\r\n"))
+        self.assertNotEqual(self.cli.read_bytes(), canonical[self.cli])
+        before = self.credentials.read_bytes()
+
+        result = self.run_design_check()
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual([path for path, _ in self.requests],
+                         [DESIGN_SETUP, "/api/credentials/self-check", DESIGN_INTAKE])
+        self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertEqual(self.design_requests, [])
+
+    def test_design_setup_check_rejects_crlf_content_changes_and_non_text(self):
+        reference = self.cli.parents[2] / "cds-release/reference.md"
+        reference.write_bytes(b"# Verified reference\n")
+        binary = self.cli.parents[2] / "cds-release/fixture.bin"
+        binary.write_bytes(b"\x00\x01\n\xff")
+        self.write_bundle_manifest()
+        for path, replacement in (
+            (reference, b"# Modified reference\r\n"),
+            (reference, b"# Verified reference\r"),
+            (binary, b"\x00\x01\r\n\xff"),
+        ):
+            with self.subTest(path=path.name, replacement=replacement):
+                original = path.read_bytes()
+                try:
+                    path.write_bytes(replacement)
+                    result = self.run_design_check()
+                    payload = json.loads(result.stdout)
+                    self.assertEqual(result.returncode, 2, payload)
+                    self.assertFalse(payload["data"]["connected"])
+                    self.assertEqual(payload["data"]["checks"][-1]["reason"], "bundle_content_mismatch")
+                    self.assertEqual(self.requests, [])
+                finally:
+                    path.write_bytes(original)
+
+    def test_design_setup_check_rejects_active_keys_when_intake_cannot_confirm_publish(self):
+        before = self.credentials.read_bytes()
+        for invalid in ({"permissions": {"write": False}}, {"projectId": "proj-b"}, {"protocolVersion": 2}):
+            with self.subTest(invalid=invalid):
+                self.design_result = {"projectId": "proj-a", "protocolVersion": 1, "permissions": {"write": True}, **invalid}
+                self.requests.clear()
+                result = self.run_design_check()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual([path for path, _ in self.requests], [
+                    DESIGN_SETUP, "/api/credentials/self-check", DESIGN_INTAKE])
+                self.assertFalse(json.loads(result.stdout)["data"]["connected"])
+                self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertEqual(self.design_requests, [])
+
+    def test_design_connect_requests_scoped_approval_and_saves_only_a_verified_credential(self):
+        self.credentials.unlink()
+        result = self.run_design_connect()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["data"]["projectId"], "proj-a")
+        calls = [path for path, _ in self.requests]
+        self.assertEqual(calls[:4], [DESIGN_SETUP, DESIGN_REQUEST, DESIGN_POLL, DESIGN_POLL])
+        self.assertEqual(calls[-1], DESIGN_INTAKE)
+        self.assertTrue(set(calls) <= {DESIGN_SETUP, DESIGN_REQUEST, DESIGN_POLL, DESIGN_INTAKE, "/api/credentials/self-check"})
+        self.assertTrue(all(key is None for _, key in self.requests[:4]))
+        self.assertTrue(self.requests[-1][1] == SECRET)
+        self.assertEqual([row.get("designAccess") for row in self.design_requests], ["publish"])
+        self.assertEqual([row.get("agentName") for row in self.design_requests], ["Fixture designer"])
+        self.assertIn("在当前项目发布、续版和读取设计稿件", self.design_requests[0]["purpose"])
+        self.assertEqual(self.poll_proofs, [True, True])
+        binding = json.loads(self.credentials.read_text())
+        self.assertEqual((binding.get("host"), binding.get("projectId")), (self.host, "proj-a"))
+        self.assertTrue(binding.get("projectKey") == SECRET)
+        if os.name == "posix":
+            self.assertEqual(self.credentials.stat().st_mode & 0o777, 0o600)
+
+    def test_design_connect_rejects_untrusted_declarations_before_requesting_approval(self):
+        self.credentials.unlink()
+        invalid_declarations = (
+            {"designAccess": None},
+            {"target": {"kind": "existing", "projectId": "proj-b"}},
+            {"target": {"kind": "new", "projectId": "proj-a"}},
+            {"mission": "branches"},
+            {"version": "cds-agent-setup.v2"},
+            {"cliVersion": "0.26.8", "minCliVersion": "0.26.8"},
+        )
+        for invalid in invalid_declarations:
+            with self.subTest(invalid=invalid):
+                self.design_manifest = {"target": {"kind": "existing", "projectId": "proj-a"},
+                                        "mission": "design-publish", "designAccess": "publish", "minCliVersion": "0.26.9", **invalid}
+                if self.design_manifest.get("designAccess") is None:
+                    self.design_manifest.pop("designAccess")
+                self.requests.clear()
+                result = self.run_design_connect()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual([path for path, _ in self.requests], [DESIGN_SETUP])
+                self.assertFalse(self.credentials.exists())
+                self.assertEqual(self.design_requests, [])
+
+    def test_design_connect_after_timeout_resumes_the_same_approval_without_a_second_post(self):
+        self.credentials.unlink()
+        self.hold_design_approval = True
+        first = self.run_design_connect("--timeout", "10")
+        self.assertNotEqual(first.returncode, 0)
+        self.assertEqual(len(self.design_requests), 1)
+        self.assertTrue(self.poll_proofs and all(self.poll_proofs))
+        self.assertFalse(self.credentials.exists())
+        receipt = self.root / ".cds/design-approval.json"
+        approval = json.loads(receipt.read_text())
+        self.assertEqual((approval["host"], approval["projectId"], approval["designAccess"], approval["requestId"]),
+                         (self.host, "proj-a", "publish", "design-request-fixture"))
+        self.assertTrue(approval.get("pollToken") == POLL_TOKEN)
+        if os.name == "posix":
+            self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+
+        self.hold_design_approval = False
+        self.requests.clear()
+        resumed = self.run_design_connect("--timeout", "10")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        paths = [url for url, _ in self.requests]
+        self.assertEqual(paths[:2], [DESIGN_SETUP, DESIGN_POLL])
+        self.assertEqual(paths[-1], DESIGN_INTAKE)
+        self.assertEqual(len(self.design_requests), 1)
+        self.assertFalse(receipt.exists())
+        self.assertTrue(json.loads(self.credentials.read_text()).get("projectKey") == SECRET)
 
     def test_repository_bundle_passes_without_installing_or_updating(self):
         self.cli = CLI
