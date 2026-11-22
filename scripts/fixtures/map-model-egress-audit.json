@@ -190,13 +190,10 @@
     },
     "prd-api/src/PrdAgent.Api/Controllers/DiagnosticsController.cs": {
       "calls": {
-        "call:ConnectAsync:e9a6aebe3f273c36a34baa74": 2,
-        "call:CreateClient:86be3be12ce50e82474c5315": 2,
-        "call:GetAsync:0ccdd398807e66ec8f29bec6": 1,
-        "call:GetAsync:968da4ad70b31c06c045252b": 1,
-        "new:TcpClient:edac88419cf48464e7bc278a": 2
+        "call:SendAsync:c4d598a39b90d375d8e47200": 1,
+        "new:HttpClient:fa684e1103b5bfb1349a96d1": 1
       },
-      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+      "purpose": "网络自检 HTTP 只发送部署路径下 /health 和 /api/v1/sessions 的无请求体 GET，仅观察状态；不透传查询、片段、凭据或模型内容。使用 MapModelEgressHandler 禁止未授权模型或网关传输，请求禁止重定向，并由诊断连接器绑定已批准的地址快照。匿名入口受现有全局限流，诊断各步骤限时并传播请求取消。"
     },
     "prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs": {
       "calls": {
@@ -799,6 +796,13 @@
         "new:ProcessStartInfo:118a7533d02d903e09a4bce1": 1
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/SafeOutboundDiagnosticConnector.cs": {
+      "calls": {
+        "new:Socket:62eb17fafb731cf7f621b0ef": 1,
+        "new:SocketsHttpHandler:c37d069a97cfe41154f5caf4": 1
+      },
+      "purpose": "仅供网络自检的 TCP、TLS 和 HTTP 健康探测；一次解析并按统一出站地址策略校验全部答案，socket 仅使用快照内 IP，HTTP 再校验主机和端口，且禁止重定向、代理与 Cookie。调用方保留 TLS 域名及默认证书校验，提供取消与时限。无模型内容、凭据或付费请求。"
     },
     "prd-api/src/PrdAgent.Infrastructure/Services/SafeOutboundHttpHandlerFactory.cs": {
       "calls": {
