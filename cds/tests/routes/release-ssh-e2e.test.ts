@@ -13,7 +13,7 @@
  * ReleaseService，没有任何注入）+ **真 express 路由**跑完整链路，只有健康检查是
  * 本地 http 服务器。没有 sshd 时整套跳过，不拖累 CI。
  *
- * 起 sshd 的方式见 doc/debt.cds.release-system.md「尚未取得真实环境证据」一节。
+ * 起 sshd 的方式见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.release-system.md「尚未取得真实环境证据」一节。
  */
 
 import fs from 'node:fs';

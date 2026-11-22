@@ -163,4 +163,4 @@
 | 被卡时间推算 | `cds/src/services/event-loop-lag.ts` |
 | 度量脚本 | `cds/scripts/control-plane-baseline.py` |
 | 守卫与单测 | `cds/tests/services/main-thread-diagnostics.test.ts`、`cds/tests/services/cpu-profile.test.ts`、`cds/tests/routes/cds-system-diagnostics.test.ts` |
-| 历史治理记录 | [debt.cds.performance.md](./debt.cds.performance.md)、[debt.cds.build-gate.md](./debt.cds.build-gate.md) |
+| 历史治理记录 | [debt.cds.performance.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.performance.md)、[debt.cds.build-gate.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.build-gate.md) |

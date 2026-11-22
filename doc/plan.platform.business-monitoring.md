@@ -141,4 +141,4 @@ process.env，API 层没有任何通道能写它。于是「接铃」变成一�
 - 规则 `degradation-must-alarm.md`：这条链的来源；层 1 说的「监控是触发器不是看板」正是 W5 欠的账。
 - 规则 `predicate-and-wiring-discipline.md` 形状 4b（静默空跑）：Q4 是它的用户版表达——不会红的证据比没有证据更糟。
 - 协议 [spec.platform.monitor-discovery.md](./spec.platform.monitor-discovery.md)：W1 的 SSOT，W2/W7 要在它上面加字段。
-- 债务 [debt.cds.md](./debt.cds.md)：公开面板口令、存量监控 environment 回填。
+- 债务 [debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)：公开面板口令、存量监控 environment 回填。

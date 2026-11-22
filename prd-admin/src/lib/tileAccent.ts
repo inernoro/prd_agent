@@ -13,7 +13,7 @@ import type { CSSProperties } from 'react';
  * 见 `lib/__tests__/inkPalette.test.ts` 的 GUARDED（首页 / 移动首页 / 启动器 + 三个色板 lib）。
  * tokens.css 里的 `--semantic-purple-*` / `--semantic-indigo-*` 是**正式语义色槽**，守卫的
  * token 用例显式写明"语义色槽除外"——它们不是漏网，不要去清。把两者混为一谈会引发一次
- * 没有收益的大规模改色，完整台账见 `doc/debt.frontend.md「墨系色带的管辖范围」`。
+ * 没有收益的大规模改色。CDS 工程债务 frontend 模块保留「墨系色带的管辖范围」。
  *
  * 消费方：首页启动器（AgentLauncherPage）+ 百宝箱（ToolCard）+ 移动首页，
  * 三处共用同一份，改一处处处同步（frontend-architecture：SSOT）。

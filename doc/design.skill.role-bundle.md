@@ -107,12 +107,12 @@ API key 只在「往市场上传技能」时才需要，不挡在门口。
 
 ## 七、已知边界
 
-见 [doc/debt.skill.role-bundle.md](./debt.skill.role-bundle.md)。
+见 [doc/debt.skill.role-bundle.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.skill.role-bundle.md)。
 
 ## 八、关联
 
 - [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— 海鲜市场开放接口
 - [doc/design.skill.unified-skill-system.md](./design.skill.unified-skill-system.md) —— 技能系统领域边界
-- [doc/debt.platform.md](./debt.platform.md) —— 对外产物 de-emoji（本次落了第一步）
+- [doc/debt.platform.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md) —— 对外产物 de-emoji（本次落了第一步）
 - `.claude/skills/sdd-init/SKILL.md` —— 入口技能
 - `scripts/skill-bundles.json` —— 角色与套装事实源

@@ -216,7 +216,7 @@ DBA 不应对这两个索引重复执行应用库脚本。若 CDS 改变索引�
 为什么定这条线：在一个已经有数据的集合上建索引可能阻塞写入、拖慢就绪；副本集滚动重启时
 每个实例各建各的；而建失败若没被接住，整个进程起不来。这三种后果都发生在没人盯着的启动路径上。
 （历史上这几条曾在启动时自动建，2026-09-17 起改为只查不建。存量还有一批仍在启动时创建，
-见 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)，逐步搬到本节。）
+见 [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)，逐步搬到本节。）
 
 ### 5.1.1 待办：线路身份索引换键
 

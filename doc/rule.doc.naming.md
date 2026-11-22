@@ -26,7 +26,7 @@ doc/{type}.{topic}.md
 | `rule.` | 规范约定 | 长期规则、约束与门禁 | [rule.platform.app-identity.md](./rule.platform.app-identity.md), [rule.frontend.streaming-text.md](./rule.frontend.streaming-text.md) |
 | `guide.` | 操作指南 | 指南、教程、运行手册 | [guide.platform.quickstart.md](./guide.platform.quickstart.md), [guide.platform.e2e-tests.md](./guide.platform.e2e-tests.md) |
 | `report.` | 周报 | 周报 | [report.2026-W09.md](./report.2026-W09.md) |
-| `debt.` | 技术债务台账 | 模块级未还工程债（已知边界、后续可补、TODO、留尾风险） | [debt.video-agent.md](./debt.video-agent.md), [debt.cds.md](./debt.cds.md) |
+| `debt.` | 历史台账前缀 | 工程债务在 CDS 按项目维护，旧版路径用于追溯 | [债务记录原则](./guide.doc.pri.debt.md) |
 | `adr.` | 架构决策记录 | 架构、技术和工程流程的重要选择及其历史 | [文档位置与分层决策](./adr.doc.002.principle-location.md) |
 | `pdr.` | 产品决策记录 | 产品价值、领域语义、商业边界与重要体验承诺 | [产品根基提议](./pdr.platform.001.product-foundation.md) |
 
@@ -71,7 +71,7 @@ doc/{type}.{topic}.md
 | 类别 | 约定 | 示例 |
 |------|------|------|
 | 周报 | `report.YYYY-WNN.md`，时间即主题 | [report.2026-W13.md](./report.2026-W13.md) |
-| 验收 / 事故报告 | **新增不进 `doc/`** —— 验收报告归验收知识库（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链）；事故 postmortem 的架构教训并入相关 `design.*` / `debt.*`。`doc/` 的 `report.*` 目标收敛到周报（存量被引用者 grandfather，见 §报告/验收/图片不进 doc/） | 知识库分享链，不是 `doc/*.md` |
+| 验收 / 事故报告 | **新增不进 `doc/`** —— 验收报告归验收知识库（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链）；事故复盘的架构教训并入相关 `design.*`，工程欠账登记到 CDS。`doc/` 的 `report.*` 目标收敛到周报（存量被引用者 grandfather，见 §报告/验收/图片不进 doc/） | 知识库分享链，不是 `doc/*.md` |
 | 跨应用 / 平台级（不属单一 app） | 用保留域名段：`platform`（鉴权 / 网关 / 模型池 / 存储）、`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系） | [design.platform.llm-gateway.md](./design.platform.llm-gateway.md)、`rule.frontend.modal.md`、[rule.skill.header.md](./rule.skill.header.md) |
 | 顶层产品文档 | 保留概念名 | [spec.prd.md](./spec.prd.md)、[spec.srs.md](./spec.srs.md)、[spec.project-vision.md](./spec.project-vision.md) |
 
@@ -88,7 +88,7 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 - **三、跨切面保留域**：`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系）
 - **四、顶层产品**（无 appname 段，保留概念名）：`prd` `srs` `project-vision`
 
-> `cds` 已达 100+ 篇（占 doc/ 约三成）。新增 cds 文档前先问能不能并入现有 canonical 文档，别再造「进度剧场」（见 [debt.cds.agent.md](./debt.cds.agent.md) 的收敛计划）。
+> `cds` 已达 100+ 篇（占 doc/ 约三成）。新增 cds 文档前先问能不能并入现有 canonical 文档，别再造「进度剧场」（见 [debt.cds.agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.agent.md) 的收敛计划）。
 
 ### 报告 / 验收 / 图片不进 doc/（2026-06-24 用户强制，最高约束）
 
@@ -96,7 +96,7 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 
 1. **新增报告不进 doc/**：验收 / UAT / 事故 / 审计 / 进度 / 评测样本等一切「报告类临时文件」**一律不再新建到 doc/**。`doc/` 的 `report.*` **目标收敛到只剩周报 `report.YYYY-WNN.md`**。
 2. 这类报告归**验收知识库**（`document_stores`，见 `create-visual-test-to-kb` 技能并出分享链），按主题分流：**MAP（prd-agent 平台自身）主题 → MAP 知识库；其余（CDS 及其他）→ CDS 知识库**。
-3. 事故 postmortem 若有长期架构价值，把结论并入相关 `design.*` / `debt.*`，不单独留 `report.*` 文件。
+3. 事故复盘的长期架构结论并入相关 `design.*`，尚需处理的工程问题登记到 CDS。
 4. **图片 / 插图不进仓库**：文档配图走知识库上传 / 外链，不 commit 进 `doc/` 或 `assets/`。例外：应用 UI 资源（如 `prd-admin/src/assets/**`、favicon、model-avatars）是**代码资源**，不受此限。
 5. **存量 grandfather（非绝对句的关键）**：已存在且**被设计文档 / 脚本 / 后端代码引用**的非周报 `report.*`（如 CDS Agent 阶段验收报告被 `design.cds.agent.commercial-architecture-and-roadmap` 引用、`report.cds.forwarder-success` 被多篇 guide/design 引用）**暂时保留**，待**专项迁移任务**把它们搬去知识库 + 同步更新所有引用后再移除。**在此之前禁止简单删除**——会产生悬挂引用。本规则约束「新增」与「目标」，不要求即刻清空存量。
 
@@ -195,63 +195,8 @@ ADR/PDR 使用上文独立的决策状态，不以「已落地」代替接受，
 
 ---
 
-## debt.* 专项约定
+## 工程债务与历史台账
 
-技术债务台账遵循与其他类型**相同的「appname 优先 + 点分层级」格式**（见 §topic 命名）：`debt.{appname}[.{子模块}].md`。层级选择有**默认值**，不是自由发挥：
+已确认的工程债务登记在 CDS 工程规划，按项目和模块维护。留下问题影响、当时的取舍、偿还触发条件与复核证据。交接和报告引用 CDS 中的正式债务编号，原台账用固定 Git 版本回读。 [债务记录原则](./guide.doc.pri.debt.md)
 
-- **默认：一个模块一册** `debt.{appname}.md`，同模块的债务全部往里追加（如 [debt.cds.md](./debt.cds.md)、[debt.platform.md](./debt.platform.md)、[debt.knowledge-base.md](./debt.knowledge-base.md)、[debt.frontend.md](./debt.frontend.md)）。
-- **例外：单独成册** `debt.{appname}.{子模块}.md`，只在该子模块**同时**满足两条时才拆——(a) 债务量大到夹在模块册里读不下去；(b) 被其他文档反复独立引用（如 [debt.cds.agent.md](./debt.cds.agent.md)、[debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)、[debt.platform.production-release.md](./debt.platform.production-release.md)）。
-
-> 为什么给默认值（2026-07-31 收拢）：一债一文件曾把台账刷到 75 篇，`ls doc/` 里债务淹掉了设计文档，读者要开十几个文件才能看全一个模块欠了什么。本次按上面两条判据合并回 36 篇（11 册吸收 44 篇），并把「默认一册」写成规则——**新增债务先找同模块的册子追加，不要新开文件**。
-
-### 适用场景
-
-- 交付完成时声明的"已知边界 / 后续可补 / 留尾风险"
-- 时间紧赶上线但留了 TODO 的位置
-- 新功能的成本/性能/兼容性等需要观察才能判断是否还的不确定点
-- 别人写的代码你看不顺眼但当下不该改的（先记下，碰到再改）
-
-**不属于 debt.***：
-- 已经有明确实施计划的——用 `plan.*`
-- 设计选型或架构决策——用 `design.*`
-- 团队约定的禁止/必须事项——用 `rule.*`
-
-### 文件结构
-
-```markdown
-# {模块名} · 债务台账
-
-> **版本**：v1.0 | **日期**：2026-07-16 | **状态**：已落地
-
-## 总览
-
-当前 open: N / paid: M / 总计: N+M
-
-## 债务列表
-
-| ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
-|----|--------|---------|------|---------|------|------|
-| 2026-04-26-cost-preview | low | 2026-04-26 | 切到直出 chip 时未显示预估总成本 | 用户开始关心钱时 | open | hover tooltip 即可 |
-| ...(下一条) | | | | | | |
-
-## 已还的债务（归档）
-
-> 修复后从上面表格挪到这里，保留以便复盘
-
-| ID | 修复 PR | 修复日期 | 备注 |
-|----|---------|---------|------|
-```
-
-### 字段约定
-
-- **ID** = `YYYY-MM-DD-{kebab-case 简短描述}`（同日多条用 `-1` `-2` 区分）
-- **严重度** = `critical` / `high` / `medium` / `low`
-- **状态** = `open` / `in-progress` / `paid`
-- **触发条件** = "什么情况下值得还这笔债"——避免把不该现在还的债提前还了
-
-### 与其他系统的关系
-
-- `/handoff` 技能交付时如果有"已知边界"段落，**应主动写入对应 `debt.*` 文件**而不是只留在 commit message
-- `/dev-report` 三段式报告里的"风险/后续事项"同样应固化到 `debt.*`
-- `/weekly` 周报应统计本周 open 数与 paid 数变化（"还了 3 条债，新欠了 2 条"）
-- 还债时：从 open 表挪到"已还的债务"区，commit message 引用债务 ID
+计划、决策和现行约束各自在对应文档维护，通过正式债务编号关联。

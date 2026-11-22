@@ -85,4 +85,4 @@ CDS 只安排核心中的核心子集；正式环境任务独立创建，不以 
 6. 矩阵每列对应一轮，能定位失败项与证据；新增清单版本不抹除旧结果。
 7. 编译与自动化测试通过后仍须真实线上路径验收；未经实际执行，不得填产品功能通过。
 
-已知边界和后续关闭动作见 [验收中心债务台账](debt.acceptance-center-cds.md)。
+已知边界和后续关闭动作见 [验收中心债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.acceptance-center-cds.md)。

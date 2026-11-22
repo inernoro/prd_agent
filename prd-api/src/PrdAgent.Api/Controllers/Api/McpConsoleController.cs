@@ -403,7 +403,7 @@ public class McpConsoleController : ControllerBase
     ///      自己说两种话。
     ///
     /// 代价是：「你还可以再给它写入档」这句话现在说不出来。那要给这个字段带上档位
-    ///（read/write），是新的语义类别 —— 按 §5.5 归后续 PR，见 doc/debt.platform.md #23。
+    ///（read/write），是新的语义类别 —— 按 §5.5 归后续 PR，见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md #23。
     /// </summary>
     private static List<object> MissingCapabilitiesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
     {

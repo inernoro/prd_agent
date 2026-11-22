@@ -61,7 +61,7 @@
 ## 六、关联
 
 - `.claude/rules/cds-first-verification.md` / `closed-loop-acceptance.md` — 验收纪律
-- [doc/debt.cds.performance.md](./debt.cds.performance.md) — too-many-containers 告警(本设计消除其主要来源)
+- [doc/debt.cds.performance.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.performance.md) — too-many-containers 告警(本设计消除其主要来源)
 - [doc/design.cds.self-hosting.md](./design.cds.self-hosting.md) — 预览实例(收割器在预览实例中随后台服务整体跳过)
 - `.claude/rules/cross-project-isolation.md` — 系统级容器免死名单的依据
 

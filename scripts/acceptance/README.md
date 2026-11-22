@@ -5,7 +5,7 @@
 
 ## active-tasks-driver.mjs —— 任务台
 
-关掉 `doc/debt.platform.active-tasks.md` 第 7 条用的那条脚本。它证明的不是「页面打得开」，
+关掉 `https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.active-tasks.md` 第 7 条用的那条脚本。它证明的不是「页面打得开」，
 而是三条从没被真人跑过的链路真的成立：
 
 | 链路 | 判据（机读，不只是截图） |

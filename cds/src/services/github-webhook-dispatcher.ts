@@ -37,7 +37,7 @@ import { decideProjectScope, resolveProjectScope } from './project-scope.js';
  * 2026-06-23 极速版（CI 预构建）—— 负责构建预构建镜像的 GitHub Actions 工作流标识。
  * CDS 只在这个工作流的 workflow_run.completed 到达时才触发拉取部署,避免被 ci.yml /
  * cds.yml 等其它工作流的完成事件误触发（那时镜像还没 push 到 ghcr）。
- * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds.ci-prebuilt.md）。
+ * 后续可做成 project 级配置以泛化到任意 public 仓库（见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.ci-prebuilt.md）。
  */
 export const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
 export const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
@@ -1818,7 +1818,7 @@ export class GitHubWebhookDispatcher {
         branchId, entryForMode.projectId, branchName, repoFullName, commitSha,
       );
       if (claimed) return claimed;
-      // 入口校验（doc/debt.cds.md「CDS 过期分支预览页」 #7，2026-07-09）：进 waiting 前确认
+      // 入口校验（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS 过期分支预览页」 #7，2026-07-09）：进 waiting 前确认
       // 仓库该 commit 下真的有 branch-image.yml。缺文件时 CI 完成事件永远不会来，
       // 与其让分支苦等 15 分钟看门狗超时，不如立即按看门狗同一失败语义归因。
       // API 失败/无凭据 = unknown → fail-open 照旧 waiting（看门狗仍兜底）。

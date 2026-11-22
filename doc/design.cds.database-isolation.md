@@ -342,7 +342,7 @@ CDS 现在有两条彼此独立长出来的数据隔离路径：
 - [CDS 配置树](./design.cds.config-tree.md) —— 项目默认与分支覆盖两层，以及配置检查器的逐 key 溯源
 - [CDS 设置分组与数据分类](./design.cds.settings-taxonomy.md) —— 数据库隔离页签落在「数据」组；库属于「业务数据」类
 - [CDS 数据迁移设计](./design.cds.data-migration.md) —— 跨环境复制库，与本文的同实例内派生是两件事
-- [CDS 多分支跨分支隔离 · 债务台账](./debt.cds.branch-isolation.md) —— 残留库、不重部署等已知边界
+- [CDS 多分支跨分支隔离 · 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.branch-isolation.md) —— 残留库、不重部署等已知边界
 - 跨项目隔离规则（仓库根的架构规则，名为 cross-project-isolation）—— 共享实例的隔离穿透事故台账（通道 4、8）
 
 ## 实现来源

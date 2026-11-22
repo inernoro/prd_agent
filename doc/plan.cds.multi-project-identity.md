@@ -235,6 +235,6 @@ Review 修复提交达 8 个，命中 CLAUDE.md 5.5 的熔断条件。按规则�
 
 ## 七、关联文档
 
-- [debt.cds.multi-project-identity.md](debt.cds.multi-project-identity.md) —— 交付时声明的已知边界固化在这里：一个仓库绑不了第二个项目、作用域只有一类、撤销授权缺界面入口、存量凭据无法归属。
+- [debt.cds.multi-project-identity.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.multi-project-identity.md) —— 交付时声明的已知边界固化在这里：一个仓库绑不了第二个项目、作用域只有一类、撤销授权缺界面入口、存量凭据无法归属。
 
 改动落在哪些文件，读源码与本 PR 的提交记录，本文不再复述 —— 逐文件清单会漂，而且它要求人去核对的正是机器自己就能给出的东西。

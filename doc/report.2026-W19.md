@@ -95,7 +95,7 @@ timeline
 - Claude SDK 执行器：基于 Python sidecar 微服务，三种部署形态（本地进程 / 容器 / 跨服务器 SSE）。
 - CDS-MAP 沙箱配对协议 v1：JSON over HTTP 握手，Token 用常量时间比对（防时序攻击）。
 - 七轮 review 收尾：SSE flush 幂等、环境变量校验、AsyncAnthropic 资源泄漏修复。
-- 文档：[design.cds.agent.sdk-executor.md](./design.cds.agent.sdk-executor.md)、[guide.cds.agent.sdk-quickstart.md](./guide.cds.agent.sdk-quickstart.md)、[debt.cds.agent.sdk-executor.md](./debt.cds.agent.sdk-executor.md)、[spec.cds.map-pairing-protocol.md](./spec.cds.map-pairing-protocol.md)、[guide.infra-sandbox-agent.md](./guide.infra-sandbox-agent.md)。
+- 文档：[design.cds.agent.sdk-executor.md](./design.cds.agent.sdk-executor.md)、[guide.cds.agent.sdk-quickstart.md](./guide.cds.agent.sdk-quickstart.md)、[debt.cds.agent.sdk-executor.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.agent.sdk-executor.md)、[spec.cds.map-pairing-protocol.md](./spec.cds.map-pairing-protocol.md)、[guide.infra-sandbox-agent.md](./guide.infra-sandbox-agent.md)。
 - 相关 PR：#529（20 commits）。
 
 ### 6. CDS 多轮 Bugbot 安全加固 — 30+ 轮审查累计收口

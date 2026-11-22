@@ -45,7 +45,7 @@
 
 原生导航改变了少量可用画布尺寸，60／200 项的分带可能与原稿自然视口不同。独立审核已将原稿引擎放在相同实测空间运行，得到相同规划；该差异作为导航例外的几何后果交用户审核，不归为数据差异，不宣称像素级全部通过。
 
-原稿档位及来源指纹已固化在技能目录的 [规格导出](../.claude/skills/design-replication/exports/cds-monitor-v2/design-spec.md)。该导出是原稿测量，不是实现通过证明。实际能力差异归入 [监控债务台账](./debt.cds.md)。
+原稿档位及来源指纹已固化在技能目录的 [规格导出](../.claude/skills/design-replication/exports/cds-monitor-v2/design-spec.md)。该导出是原稿测量，不是实现通过证明。实际能力差异归入 [监控债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)。
 
 ## 最新设计修复的执行状态
 

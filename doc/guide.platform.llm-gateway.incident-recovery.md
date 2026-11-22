@@ -143,4 +143,4 @@ MAP 应继续显示全部获准池，并对故障池显示风险事实、最近 
 - [LLM Gateway 统一调用设计](./design.platform.llm-gateway.md)
 - [AppCaller 模型池选择与池内调度设计](./design.platform.model-pool.md)
 - [LLM Gateway 故障隔离与恢复计划](./plan.platform.llm-gateway.resilience.md)
-- [LLM 网关与模型池债务台账](./debt.platform.llm-gateway.md)
+- [LLM 网关与模型池债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)
