@@ -217,6 +217,9 @@ describe('private CDS design workspace', () => {
     const preview = await get(`/artifacts/${version.prototypeId}?theme=dark`, 'read-designer');
     expect(preview.headers.get('content-security-policy')).toBeTruthy();
     expect(await preview.text()).toContain('Fixture');
+    const rawPrototype = await get(`/artifacts/${version.prototypeId}?download=true`, 'read-designer');
+    expect(rawPrototype.headers.get('content-disposition')).toContain('index.html');
+    expect(await rawPrototype.text()).toBe(html);
   });
 
   it('preserves declarative prototype state for screens sharing a route', async () => {
@@ -706,6 +709,25 @@ describe('private CDS design workspace', () => {
         items: [{ ruleId: 'R-07', status: 'failed', measurements: [{ contentWidth: 520 }] }, { ruleId: 'R-01', status: 'unverified' }] },
     });
     expect(designs[0].versions[1].frameworkCheck.items[0]).toMatchObject({ ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('1 / 2') });
+  });
+
+
+  it('keeps framework measurement unverified for shared routes without a verified entry state', async () => {
+    const frameworkId = 'FW-entry-state';
+    const rules = '| R-07 | 375px 手机没有横向溢出 | 自动：实测 |';
+    expect((await command('framework.import', { frameworkId, title: 'Fixture shell',
+      sourceCommit: 'c'.repeat(40), expectedVersion: 0, material: { rules } })).status).toBe(201);
+    const baseScreen = { name: 'Shared route', route: '#shared', viewport: 'phone', themes: ['light'] };
+    const bytes = draft('Fixture alternative states', { framework: frameworkId, frameworkVersion: 1, screens: [
+      { ...baseScreen, id: 'cards' }, { ...baseScreen, id: 'list', entryActions: ['button[data-view="list"]'] },
+    ] });
+    frameworkMeasurements = ['cards', 'list'].map(screenId => ({ screenId, slot: 'phone-light', width: 375, contentWidth: 375 }));
+    expect((await publish('state-unverified', bytes)).status).toBe(201);
+    const { designs } = await (await get()).json();
+    expect(designs[0].versions[0].frameworkCheck.items[0]).toMatchObject({
+      ruleId: 'R-07', status: 'unverified', actual: expect.stringContaining('1 / 2'),
+      measurements: [{ screenId: 'cards' }],
+    });
   });
 
   it('requires container evidence for the complete 375px rule and retains each publication result', async () => {

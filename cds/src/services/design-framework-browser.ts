@@ -104,18 +104,33 @@ async function measure(browser: Browser, html: string, screen: DesignScreen, the
         headers: { 'Content-Security-Policy': designPrototypeCsp, 'X-Content-Type-Options': 'nosniff' } });
     });
     await page.goto(target.href, { timeout: pageTimeout, waitUntil: 'load' });
-    if (screen.readySelector) await page.locator(`css=${screen.readySelector}`).first().waitFor({ state: 'visible', timeout: pageTimeout });
+    for (const selector of screen.entryActions ?? []) {
+      const control = page.locator(`css=${selector}`);
+      const canClick = await control.evaluate(node => node.matches('button:not([type=submit]),a[href^="#"],[role=tab],[role=button]')
+        && (!node.matches('a') || node.getAttribute('href')?.startsWith('#'))
+        && !node.matches('[aria-disabled=true],:disabled'), undefined, { timeout: pageTimeout });
+      if (!canClick) return undefined;
+      const active = await control.evaluate(node => ['aria-pressed', 'aria-current', 'aria-selected']
+        .some(attribute => node.getAttribute(attribute) === 'true'), undefined, { timeout: pageTimeout });
+      if (!active) await control.click({ timeout: pageTimeout });
+    }
+    const ready = screen.entryReadySelector ?? screen.readySelector;
+    if (ready) {
+      const locator = page.locator(`css=${ready}`);
+      await (screen.entryReadySelector ? locator : locator.first()).waitFor({ state: 'visible', timeout: pageTimeout });
+    }
+    const expectedDocument = () => screen.entryReadySelector ? page.url().split('#')[0] === entry.href : page.url() === target.href;
     await page.waitForFunction(() => document.body && document.fonts.status === 'loaded'
       && ![...document.querySelectorAll('[data-content-loading], [aria-busy="true"]')].some(element =>
         element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden'), undefined, { timeout: pageTimeout });
-    if (!served || page.url() !== target.href) return undefined;
+    if (!served || !expectedDocument()) return undefined;
     const session = await context.newCDPSession(page);
     const geometry = await session.send('Page.getLayoutMetrics');
     const width = geometry.cssLayoutViewport.clientWidth;
     const contentWidth = Math.max(width, Math.ceil(geometry.cssContentSize.width));
     const nestedScroll = checkNestedScroll && width === designViewports.phone.width && contentWidth === width
       ? await measureNestedScroll(session) : undefined;
-    if (page.url() !== target.href) return undefined;
+    if (!expectedDocument()) return undefined;
     return { screenId: screen.id, slot: `phone-${theme}`, width, contentWidth, ...(nestedScroll ? { nestedScroll } : {}) };
   } catch {
     return undefined;

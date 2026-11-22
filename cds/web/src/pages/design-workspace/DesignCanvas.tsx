@@ -180,11 +180,13 @@ export function CanvasSettings({ theme, onTheme, zoom, onZoom }: { theme: Design
 type CanvasProps = {
   entry: DesignEntry; version: DesignVersion; comparing: boolean; active: boolean; full?: boolean;
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
-  commandBusy: boolean; tabs?: ReactNode; initialScreenId?: string; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
+  commandBusy: boolean; tabs?: ReactNode; initialScreenId?: string; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, tabs, initialScreenId, onReview, onEscape }: CanvasProps) {
-  const [theme, setTheme] = useState<DesignTheme>('light');
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, tabs, initialScreenId, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
+  const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
+  const theme = selectedTheme ?? localTheme;
+  const setTheme = onThemeChange ?? setLocalTheme;
   const [zoom, setZoom] = useState<number | null>(null);
   const [selected, select] = useState(initialScreenId ?? version.screens[0]?.id);
   const [left, setLeft] = useState(entry.versions.find(row => row.version === version.version - 1)?.version ?? version.version);

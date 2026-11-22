@@ -5,7 +5,7 @@ import { AppShell, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
-import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignVersion, DesignWorkspace } from '../../../src/shared/design-workspace';
+import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignTheme, DesignVersion, DesignWorkspace } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
@@ -33,6 +33,8 @@ export function DesignWorkspacePage() {
   const writing = useRef(false);
   const [issue, setIssue] = useState('');
   const [notice, setNotice] = useState('');
+  const [canvasTheme, setCanvasTheme] = useState<DesignTheme>(() =>
+    document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   const [upload, setUpload] = useState(false);
   const [assignReviewers, setAssignReviewers] = useState<string>();
   const [extract, setExtract] = useState(false);
@@ -40,6 +42,7 @@ export function DesignWorkspacePage() {
   const [review, setReview] = useState<ReviewTarget>();
   const [large, setLarge] = useState<LargeTarget>();
   const returnFocus = useRef<HTMLElement | null>(null);
+  const deliveryReturn = useRef<{ designId: string; version: number; origin: string }>();
   const pending = useRef<{ key: string; id: string }>();
   const [search, setSearch] = useState('');
   const [groupBy, setGroupBy] = useState<'phase' | 'area' | 'date'>('phase');
@@ -70,6 +73,21 @@ export function DesignWorkspacePage() {
   const screenParam = params.get('screen') ?? undefined;
   const activeFeedback = (entry?.feedback ?? []).filter(row => row.status !== 'closed').length;
   const canvas = !!entry && (tab === 'preview' || tab === 'diff');
+  useEffect(() => {
+    const source = deliveryReturn.current;
+    if (tab !== 'delivery' || !source || entry?.id !== source.designId || version?.version !== source.version) return;
+    const frame = requestAnimationFrame(() => {
+      const element = document.getElementById(source.origin);
+      if (!element) return;
+      for (let parent = element.closest('details'); parent; parent = parent.parentElement?.closest('details') ?? null) {
+        parent.open = true;
+      }
+      element.scrollIntoView({ block: 'center' });
+      element.focus({ preventScroll: true });
+      deliveryReturn.current = undefined;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [entry?.id, version?.version, tab]);
   const modalEntry = workspace?.designs.find(item => item.id === review?.entryId);
   const reviewComment = modalEntry?.comments.find(item => item.id === review?.commentId);
   const reviewVersion = modalEntry?.versions.find(item => item.version === review?.version);
@@ -84,7 +102,10 @@ export function DesignWorkspacePage() {
     setParams(next);
     setIssue(''); setNotice('');
   };
-  const selectEntry = (id: string) => onChange({ design: id, framework: '', tab: '', version: '', view: '', screen: '' });
+  const selectEntry = (id: string) => {
+    deliveryReturn.current = undefined;
+    onChange({ design: id, framework: '', tab: '', version: '', view: '', screen: '' });
+  };
   const selectFramework = (id: string) => onChange({ design: '', framework: id, tab: '', version: '', view: '' });
   const openReview = (row: DesignEntry, comment: DesignComment, version: DesignVersion) => {
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -137,6 +158,7 @@ export function DesignWorkspacePage() {
   const canvasCommon = {
     command, canComment: Boolean(permissions?.review), canWrite: Boolean(permissions?.write),
     actorId: permissions?.actorId ?? '', steward: Boolean(permissions?.steward), commandBusy: busy,
+    selectedTheme: canvasTheme, onThemeChange: setCanvasTheme,
   };
   return <AppShell active="design" topbar={breadcrumbs} wide>
     <Workspace fluid className="ep-workspace dw-workspace" data-canvas={canvas}>
@@ -167,6 +189,9 @@ export function DesignWorkspacePage() {
             </div>
           </details>
           <div className="dw-tools dw-right">
+            {canvas && deliveryReturn.current?.designId === entry.id && <button className="ep-button" type="button" onClick={() => {
+              onChange({ tab: 'delivery', version: String(deliveryReturn.current!.version), screen: '' });
+            }}><ChevronLeft />返回交付</button>}
             <select value={version.version} aria-label="稿件版本" onChange={event => onChange({ version: event.target.value })}>
               {[...entry.versions].reverse().map(row => <option key={row.version} value={row.version}>V{row.version}{entry.frozen === row.version ? ' · 定稿' : ''}</option>)}
             </select>
@@ -186,7 +211,10 @@ export function DesignWorkspacePage() {
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} onPreviewStale={refreshWorkspace} />}
           {tab === 'delivery' && permissions && <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}
             permissions={permissions} busy={busy} command={command}
-            openScreen={(selected, screen) => onChange({ version: String(selected), tab: 'preview', screen })}
+            openScreen={(selected, screen, origin) => {
+              deliveryReturn.current = { designId: entry.id, version: version.version, origin };
+              onChange({ version: String(selected), tab: 'preview', screen });
+            }}
             openVersion={selected => onChange({ version: String(selected), tab: 'delivery', screen: '' })} />}
           {tab === 'rationale' && <DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
           {tab === 'spec' && <DesignSpec version={version} baseline={pinnedFramework?.material} />}
