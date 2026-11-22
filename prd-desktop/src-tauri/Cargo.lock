@@ -2776,7 +2776,7 @@ dependencies = [
 
 [[package]]
 name = "prd-agent-desktop"
-version = "1.6.0"
+version = "1.9.0"
 dependencies = [
  "base64 0.22.1",
  "futures",

@@ -2187,6 +2187,1044 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the add_defect_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-add-defect-attachment",
+          "markdownDescription": "Enables the add_defect_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the add_document_to_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-add-document-to-session",
+          "markdownDescription": "Enables the add_document_to_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the add_group_member command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-add-group-member",
+          "markdownDescription": "Enables the add_group_member command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the append_preview_ask_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-append-preview-ask-history",
+          "markdownDescription": "Enables the append_preview_ask_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the bind_group_prd command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-bind-group-prd",
+          "markdownDescription": "Enables the bind_group_prd command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_chat_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-chat-run",
+          "markdownDescription": "Enables the cancel_chat_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-stream",
+          "markdownDescription": "Enables the cancel_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_for_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-for-update",
+          "markdownDescription": "Enables the check_for_update command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_all_preview_ask_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-clear-all-preview-ask-history",
+          "markdownDescription": "Enables the clear_all_preview_ask_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_group_context command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-clear-group-context",
+          "markdownDescription": "Enables the clear_group_context command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_preview_ask_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-clear-preview-ask-history",
+          "markdownDescription": "Enables the clear_preview_ask_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the close_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-close-defect",
+          "markdownDescription": "Enables the close_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_chat_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-chat-run",
+          "markdownDescription": "Enables the create_chat_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-defect",
+          "markdownDescription": "Enables the create_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-group",
+          "markdownDescription": "Enables the create_group command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_prd_comment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-prd-comment",
+          "markdownDescription": "Enables the create_prd_comment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-skill",
+          "markdownDescription": "Enables the create_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-defect",
+          "markdownDescription": "Enables the delete_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_prd_comment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-prd-comment",
+          "markdownDescription": "Enables the delete_prd_comment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-skill",
+          "markdownDescription": "Enables the delete_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the dissolve_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-dissolve-group",
+          "markdownDescription": "Enables the dissolve_group command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the execute_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-execute-skill",
+          "markdownDescription": "Enables the execute_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the export_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-export-skill",
+          "markdownDescription": "Enables the export_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_accelerated_manifest command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-accelerated-manifest",
+          "markdownDescription": "Enables the fetch_accelerated_manifest command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_client_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-client-config",
+          "markdownDescription": "Enables the fetch_client_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_desktop_branding command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-desktop-branding",
+          "markdownDescription": "Enables the fetch_desktop_branding command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_update_manifests command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-update-manifests",
+          "markdownDescription": "Enables the fetch_update_manifests command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the generate_skill_from_conversation command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-generate-skill-from-conversation",
+          "markdownDescription": "Enables the generate_skill_from_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the generate_skill_from_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-generate-skill-from-message",
+          "markdownDescription": "Enables the generate_skill_from_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-config",
+          "markdownDescription": "Enables the get_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_default_api_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-default-api-url",
+          "markdownDescription": "Enables the get_default_api_url command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-defect",
+          "markdownDescription": "Enables the get_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_defect_messages command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-defect-messages",
+          "markdownDescription": "Enables the get_defect_messages command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_defect_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-defect-stats",
+          "markdownDescription": "Enables the get_defect_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_desktop_asset_skins command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-desktop-asset-skins",
+          "markdownDescription": "Enables the get_desktop_asset_skins command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-document",
+          "markdownDescription": "Enables the get_document command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_document_content command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-document-content",
+          "markdownDescription": "Enables the get_document_content command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_group_members command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-group-members",
+          "markdownDescription": "Enables the get_group_members command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_group_message_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-group-message-history",
+          "markdownDescription": "Enables the get_group_message_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_groups command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-groups",
+          "markdownDescription": "Enables the get_groups command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_message_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-message-history",
+          "markdownDescription": "Enables the get_message_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_prd_comments command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-prd-comments",
+          "markdownDescription": "Enables the get_prd_comments command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_preview_ask_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-preview-ask-history",
+          "markdownDescription": "Enables the get_preview_ask_history command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_preview_ask_history_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-preview-ask-history-stats",
+          "markdownDescription": "Enables the get_preview_ask_history_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-session",
+          "markdownDescription": "Enables the get_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_skills command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-skills",
+          "markdownDescription": "Enables the get_skills command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_updater_platform_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-updater-platform-info",
+          "markdownDescription": "Enables the get_updater_platform_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the import_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-import-skill",
+          "markdownDescription": "Enables the import_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the join_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-join-group",
+          "markdownDescription": "Enables the join_group command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the leave_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-leave-group",
+          "markdownDescription": "Enables the leave_group command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_defect_templates command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-defect-templates",
+          "markdownDescription": "Enables the list_defect_templates command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_defect_users command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-defect-users",
+          "markdownDescription": "Enables the list_defect_users command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_defects command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-defects",
+          "markdownDescription": "Enables the list_defects command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the login command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-login",
+          "markdownDescription": "Enables the login command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_devtools command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-devtools",
+          "markdownDescription": "Enables the open_devtools command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_group_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-group-session",
+          "markdownDescription": "Enables the open_group_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the polish_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-polish-defect",
+          "markdownDescription": "Enables the polish_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preview_ask_in_section command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preview-ask-in-section",
+          "markdownDescription": "Enables the preview_ask_in_section command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preview_defect_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preview-defect-logs",
+          "markdownDescription": "Enables the preview_defect_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the process_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-process-defect",
+          "markdownDescription": "Enables the process_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reject_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reject-defect",
+          "markdownDescription": "Enables the reject_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_document_from_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remove-document-from-session",
+          "markdownDescription": "Enables the remove_document_from_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resend_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-resend-message",
+          "markdownDescription": "Enables the resend_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resolve_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-resolve-defect",
+          "markdownDescription": "Enables the resolve_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the run_network_diagnostics command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-run-network-diagnostics",
+          "markdownDescription": "Enables the run_network_diagnostics command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-config",
+          "markdownDescription": "Enables the save_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_skill_to_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-skill-to-file",
+          "markdownDescription": "Enables the save_skill_to_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the select_upload_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-select-upload-files",
+          "markdownDescription": "Enables the select_upload_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the send_defect_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-send-defect-message",
+          "markdownDescription": "Enables the send_defect_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the send_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-send-message",
+          "markdownDescription": "Enables the send_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_auth_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-auth-session",
+          "markdownDescription": "Enables the set_auth_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_auth_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-auth-token",
+          "markdownDescription": "Enables the set_auth_token command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the submit_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-submit-defect",
+          "markdownDescription": "Enables the submit_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the subscribe_chat_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-subscribe-chat-run",
+          "markdownDescription": "Enables the subscribe_chat_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the subscribe_group_messages command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-subscribe-group-messages",
+          "markdownDescription": "Enables the subscribe_group_messages command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the suggest_group_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-suggest-group-name",
+          "markdownDescription": "Enables the suggest_group_name command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the switch_role command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-switch-role",
+          "markdownDescription": "Enables the switch_role command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the test_api_connection command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-test-api-connection",
+          "markdownDescription": "Enables the test_api_connection command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_document_title command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-document-title",
+          "markdownDescription": "Enables the update_document_title command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_document_type command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-document-type",
+          "markdownDescription": "Enables the update_document_type command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-skill",
+          "markdownDescription": "Enables the update_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the upload_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-upload-attachment",
+          "markdownDescription": "Enables the upload_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the upload_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-upload-document",
+          "markdownDescription": "Enables the upload_document command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the upload_file_to_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-upload-file-to-session",
+          "markdownDescription": "Enables the upload_file_to_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the verify_fail_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-verify-fail-defect",
+          "markdownDescription": "Enables the verify_fail_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the verify_pass_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-verify-pass-defect",
+          "markdownDescription": "Enables the verify_pass_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Local main-window application commands; file uploads additionally require native selection.",
+          "type": "string",
+          "const": "app-main",
+          "markdownDescription": "Local main-window application commands; file uploads additionally require native selection."
+        },
+        {
+          "description": "Denies the add_defect_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-add-defect-attachment",
+          "markdownDescription": "Denies the add_defect_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_document_to_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-add-document-to-session",
+          "markdownDescription": "Denies the add_document_to_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the add_group_member command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-add-group-member",
+          "markdownDescription": "Denies the add_group_member command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the append_preview_ask_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-append-preview-ask-history",
+          "markdownDescription": "Denies the append_preview_ask_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bind_group_prd command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-bind-group-prd",
+          "markdownDescription": "Denies the bind_group_prd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_chat_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-chat-run",
+          "markdownDescription": "Denies the cancel_chat_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-stream",
+          "markdownDescription": "Denies the cancel_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_for_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-for-update",
+          "markdownDescription": "Denies the check_for_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_all_preview_ask_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-clear-all-preview-ask-history",
+          "markdownDescription": "Denies the clear_all_preview_ask_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_group_context command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-clear-group-context",
+          "markdownDescription": "Denies the clear_group_context command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_preview_ask_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-clear-preview-ask-history",
+          "markdownDescription": "Denies the clear_preview_ask_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the close_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-close-defect",
+          "markdownDescription": "Denies the close_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_chat_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-chat-run",
+          "markdownDescription": "Denies the create_chat_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-defect",
+          "markdownDescription": "Denies the create_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-group",
+          "markdownDescription": "Denies the create_group command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_prd_comment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-prd-comment",
+          "markdownDescription": "Denies the create_prd_comment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-skill",
+          "markdownDescription": "Denies the create_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-defect",
+          "markdownDescription": "Denies the delete_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_prd_comment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-prd-comment",
+          "markdownDescription": "Denies the delete_prd_comment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-skill",
+          "markdownDescription": "Denies the delete_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dissolve_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-dissolve-group",
+          "markdownDescription": "Denies the dissolve_group command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the execute_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-execute-skill",
+          "markdownDescription": "Denies the execute_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-export-skill",
+          "markdownDescription": "Denies the export_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_accelerated_manifest command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-accelerated-manifest",
+          "markdownDescription": "Denies the fetch_accelerated_manifest command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_client_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-client-config",
+          "markdownDescription": "Denies the fetch_client_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_desktop_branding command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-desktop-branding",
+          "markdownDescription": "Denies the fetch_desktop_branding command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_update_manifests command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-update-manifests",
+          "markdownDescription": "Denies the fetch_update_manifests command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_skill_from_conversation command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-generate-skill-from-conversation",
+          "markdownDescription": "Denies the generate_skill_from_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the generate_skill_from_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-generate-skill-from-message",
+          "markdownDescription": "Denies the generate_skill_from_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-config",
+          "markdownDescription": "Denies the get_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_default_api_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-default-api-url",
+          "markdownDescription": "Denies the get_default_api_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-defect",
+          "markdownDescription": "Denies the get_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_defect_messages command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-defect-messages",
+          "markdownDescription": "Denies the get_defect_messages command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_defect_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-defect-stats",
+          "markdownDescription": "Denies the get_defect_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_desktop_asset_skins command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-desktop-asset-skins",
+          "markdownDescription": "Denies the get_desktop_asset_skins command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-document",
+          "markdownDescription": "Denies the get_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_document_content command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-document-content",
+          "markdownDescription": "Denies the get_document_content command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_group_members command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-group-members",
+          "markdownDescription": "Denies the get_group_members command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_group_message_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-group-message-history",
+          "markdownDescription": "Denies the get_group_message_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_groups command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-groups",
+          "markdownDescription": "Denies the get_groups command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_message_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-message-history",
+          "markdownDescription": "Denies the get_message_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_prd_comments command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-prd-comments",
+          "markdownDescription": "Denies the get_prd_comments command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_preview_ask_history command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-preview-ask-history",
+          "markdownDescription": "Denies the get_preview_ask_history command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_preview_ask_history_stats command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-preview-ask-history-stats",
+          "markdownDescription": "Denies the get_preview_ask_history_stats command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-session",
+          "markdownDescription": "Denies the get_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_skills command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-skills",
+          "markdownDescription": "Denies the get_skills command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_updater_platform_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-updater-platform-info",
+          "markdownDescription": "Denies the get_updater_platform_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the import_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-import-skill",
+          "markdownDescription": "Denies the import_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the join_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-join-group",
+          "markdownDescription": "Denies the join_group command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the leave_group command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-leave-group",
+          "markdownDescription": "Denies the leave_group command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_defect_templates command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-defect-templates",
+          "markdownDescription": "Denies the list_defect_templates command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_defect_users command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-defect-users",
+          "markdownDescription": "Denies the list_defect_users command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_defects command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-defects",
+          "markdownDescription": "Denies the list_defects command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the login command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-login",
+          "markdownDescription": "Denies the login command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_devtools command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-devtools",
+          "markdownDescription": "Denies the open_devtools command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_group_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-group-session",
+          "markdownDescription": "Denies the open_group_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the polish_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-polish-defect",
+          "markdownDescription": "Denies the polish_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preview_ask_in_section command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preview-ask-in-section",
+          "markdownDescription": "Denies the preview_ask_in_section command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preview_defect_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preview-defect-logs",
+          "markdownDescription": "Denies the preview_defect_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the process_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-process-defect",
+          "markdownDescription": "Denies the process_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reject_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reject-defect",
+          "markdownDescription": "Denies the reject_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_document_from_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remove-document-from-session",
+          "markdownDescription": "Denies the remove_document_from_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resend_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-resend-message",
+          "markdownDescription": "Denies the resend_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resolve_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-resolve-defect",
+          "markdownDescription": "Denies the resolve_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the run_network_diagnostics command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-run-network-diagnostics",
+          "markdownDescription": "Denies the run_network_diagnostics command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-config",
+          "markdownDescription": "Denies the save_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_skill_to_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-skill-to-file",
+          "markdownDescription": "Denies the save_skill_to_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the select_upload_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-select-upload-files",
+          "markdownDescription": "Denies the select_upload_files command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the send_defect_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-send-defect-message",
+          "markdownDescription": "Denies the send_defect_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the send_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-send-message",
+          "markdownDescription": "Denies the send_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_auth_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-auth-session",
+          "markdownDescription": "Denies the set_auth_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_auth_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-auth-token",
+          "markdownDescription": "Denies the set_auth_token command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the submit_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-submit-defect",
+          "markdownDescription": "Denies the submit_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the subscribe_chat_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-subscribe-chat-run",
+          "markdownDescription": "Denies the subscribe_chat_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the subscribe_group_messages command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-subscribe-group-messages",
+          "markdownDescription": "Denies the subscribe_group_messages command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the suggest_group_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-suggest-group-name",
+          "markdownDescription": "Denies the suggest_group_name command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the switch_role command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-switch-role",
+          "markdownDescription": "Denies the switch_role command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the test_api_connection command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-test-api-connection",
+          "markdownDescription": "Denies the test_api_connection command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_document_title command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-document-title",
+          "markdownDescription": "Denies the update_document_title command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_document_type command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-document-type",
+          "markdownDescription": "Denies the update_document_type command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-skill",
+          "markdownDescription": "Denies the update_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the upload_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-upload-attachment",
+          "markdownDescription": "Denies the upload_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the upload_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-upload-document",
+          "markdownDescription": "Denies the upload_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the upload_file_to_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-upload-file-to-session",
+          "markdownDescription": "Denies the upload_file_to_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the verify_fail_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-verify-fail-defect",
+          "markdownDescription": "Denies the verify_fail_defect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the verify_pass_defect command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-verify-pass-defect",
+          "markdownDescription": "Denies the verify_pass_defect command without any pre-configured scope."
+        },
+        {
           "description": "No features are enabled by default, as we believe\nthe clipboard can be inherently dangerous and it is \napplication specific if read and/or write access is needed.\n\nClipboard interaction needs to be explicitly enabled.\n",
           "type": "string",
           "const": "clipboard-manager:default",

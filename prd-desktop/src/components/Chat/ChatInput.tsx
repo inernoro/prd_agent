@@ -10,7 +10,7 @@ import { ApiResponse, AttachmentInfo, Message, Skill, SkillsResponse } from '../
 import AttachmentPreview from './AttachmentPreview';
 import SkillManagerModal, { type SkillFormData } from './SkillManagerModal';
 import SaveAsSkillModal from './SaveAsSkillModal';
-import { open as tauriDialogOpen } from '@tauri-apps/plugin-dialog';
+import { selectUploadFiles } from '../../lib/fileSelection';
 
 export default function ChatInput() {
   const { sessionId, currentRole, document } = useSessionStore();
@@ -259,18 +259,13 @@ export default function ChatInput() {
   const handleAttachmentClick = async () => {
     if (isUploading || !canChatNow) return;
     try {
-      const selected = await tauriDialogOpen({
-        multiple: true,
-        filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'] }],
-      });
-      if (!selected) return;
-      const paths = Array.isArray(selected) ? selected : [selected];
-      if (paths.length === 0) return;
+      const selected = await selectUploadFiles('attachment');
+      if (!selected.length) return;
 
       setIsUploading(true);
-      for (const filePath of paths) {
+      for (const { selectionId } of selected) {
         try {
-          const resp = await invoke<ApiResponse<AttachmentInfo>>('upload_attachment', { filePath });
+          const resp = await invoke<ApiResponse<AttachmentInfo>>('upload_attachment', { selectionId });
           if (resp?.success && resp.data) {
             setAttachments((prev) => [...prev, resp.data!]);
           }
