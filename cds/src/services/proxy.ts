@@ -15,7 +15,7 @@ import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { isAutoWakeEligible } from './branch-wake-eligibility.js';
 import { computeWaitTiming } from './wait-timing.js';
-import { WAITING_GEM_CSS, buildWaitingGemSvg } from '../loading-pages/gem.js';
+import { WAITING_GEM_CSS, WAITING_GEM_DARK_CSS, buildWaitingGemSvg } from '../loading-pages/gem.js';
 import { resolveProfileForPath } from './route-conventions.js';
 import { isTrustedProbeRequest, stripProbeMarker } from './probe-marker.js';
 import { resolveEffectiveProfile } from './container.js';
@@ -1794,8 +1794,17 @@ h1{font-size:clamp(30px,3.1vw,56px);line-height:1.2;letter-spacing:-.02em;margin
 .links a{color:var(--text);text-decoration:none;text-underline-offset:5px;padding:8px 0}
 .links a:hover{text-decoration:underline}
 a:focus-visible,summary:focus-visible{outline:2px solid var(--text);outline-offset:5px;border-radius:2px}
-${WAITING_GEM_CSS}
-@media(prefers-color-scheme:light){:root{color-scheme:light;--text:#28252d;--muted:#625d69;--surface:#f6f5f7;--veil:246,245,247;--veil-center:.1;--line:rgba(40,37,45,.16);--track:rgba(40,37,45,.18);--ring-line:rgba(86,72,113,.32);--ring-glow:rgba(133,111,176,.2)}.magic-rings-bg{filter:invert(1);opacity:.48}.content{text-shadow:none}.svc-dot{filter:brightness(.55)}.cds-waiting-gem{filter:invert(1)}.summary-dot{box-shadow:none}}
+${isRestarting ? WAITING_GEM_DARK_CSS : WAITING_GEM_CSS}
+${isRestarting ? '' : `
+@media(prefers-color-scheme:light){
+  :root{color-scheme:light;--text:#28252d;--muted:#625d69;--surface:#f6f5f7;--veil:246,245,247;--veil-center:.1;--line:rgba(40,37,45,.16);--track:rgba(40,37,45,.18);--ring-line:rgba(86,72,113,.32);--ring-glow:rgba(133,111,176,.2)}
+  .magic-rings-bg{filter:invert(1);opacity:.48}
+  .content{text-shadow:none}
+  .svc-dot{filter:brightness(.55)}
+  .cds-waiting-gem{filter:invert(1)}
+  .summary-dot{box-shadow:none}
+}
+`}
 @media(max-width:760px){.shell{padding:36px 24px}.brand{gap:12px}.content{width:100%}.subtitle{font-size:14px}.estimate-time{gap:6px 14px}.services{max-height:220px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
