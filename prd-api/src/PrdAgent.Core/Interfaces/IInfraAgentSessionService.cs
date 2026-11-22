@@ -169,7 +169,9 @@ public sealed record InfraAgentWorkspaceTransferRequest(
     [property: JsonPropertyName("maxInputBytes")] long MaxInputBytes,
     [property: JsonPropertyName("maxOutputBytes")] long MaxOutputBytes,
     [property: JsonPropertyName("allowedOutputPaths")] IReadOnlyList<string> AllowedOutputPaths,
-    [property: JsonPropertyName("maxPublicOutputBytes")] long? MaxPublicOutputBytes = null
+    [property: JsonPropertyName("maxPublicOutputBytes")] long? MaxPublicOutputBytes = null,
+    [property: JsonPropertyName("continuingRun"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ContinuingRun = null,
+    [property: JsonPropertyName("previousImageDigest"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PreviousImageDigest = null
 );
 
 public record SendInfraAgentMessageRequest(

@@ -452,6 +452,10 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
             run.RuntimeConnectionId);
         var connection = await FindFrozenCdsConnectionAsync(run.RuntimeConnectionId, ct);
         var workspace = await _workspaceBroker.PrepareAsync(run, currentHtml, CancellationToken.None);
+        bool? continuingRun = run.DeliverySessionContainers
+            ? run.DeliveryCheckpoint != null || run.DeliveryTurnRevision > 0 || run.DeliveryRuntimeExecutions?.Count > 0
+            : null;
+        var previousImageDigest = continuingRun == true ? run.DeliveryRuntimeExecutions?.FirstOrDefault()?.ImageDigest : null;
         var createSessionRequest = new CreateInfraAgentSessionRequest(
             connection.Id,
             InfraAgentRuntimes.OpenDesign,
@@ -500,7 +504,9 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             workspace.MaxInputBytes,
                             workspace.MaxOutputBytes,
                             workspace.AllowedOutputPaths,
-                            workspace.MaxPublicOutputBytes))),
+                            workspace.MaxPublicOutputBytes,
+                            continuingRun,
+                            previousImageDigest))),
                 token), deadline, attemptToken),
                 async providerToken => (await _sessions.ListRuntimeProvidersAsync(
                         run.UserId,

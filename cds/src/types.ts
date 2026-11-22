@@ -3353,6 +3353,7 @@ export interface AgentRequestRecord {
   clientUser: string | null;
   clientApp: string | null;
   runtime: string;
+  runtimeImage?: string | null;
   model: string | null;
   status: string;
   createdAt: string;
@@ -4082,7 +4083,18 @@ export interface PreviewAddressAudit {
   after?: unknown;
 }
 
+export interface OpenDesignWorkspaceVersionState {
+  baselineImage: string;
+  activeImage: string;
+  previousImage?: string;
+  changedAt?: string;
+  /** SHA-256 of the verified MAP run ID → exact image for all its sessions. */
+  runImages: Record<string, string>;
+}
+
 export interface Project {
+  /** Server-owned OpenDesign versions, keyed by the hash of the paired MAP origin. */
+  openDesignWorkspaceVersions?: Record<string, OpenDesignWorkspaceVersionState>;
   /** 定期实测的执行方回填，不能冒充 CDS 主动探测或已验证的通知送达。 */
   monitoringInspections?: ProjectInspection[];
   /** Server-owned address index keyed by Git ref; removed with its branch, never an independent reservation. */

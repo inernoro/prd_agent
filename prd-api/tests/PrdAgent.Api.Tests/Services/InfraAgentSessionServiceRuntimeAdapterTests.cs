@@ -72,6 +72,16 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         payload.GetProperty("maxOutputBytes").GetInt64().ShouldBe(2048);
         payload.GetProperty("allowedOutputPaths")[0].GetString().ShouldBe("index.html");
         payload.TryGetProperty("SchemaVersion", out _).ShouldBeFalse();
+        payload.TryGetProperty("continuingRun", out _).ShouldBeFalse();
+
+        var digest = "sha256:" + new string('a', 64);
+        using var continuation = JsonDocument.Parse(JsonSerializer.Serialize(transfer with
+        {
+            ContinuingRun = true,
+            PreviousImageDigest = digest,
+        }));
+        continuation.RootElement.GetProperty("continuingRun").GetBoolean().ShouldBeTrue();
+        continuation.RootElement.GetProperty("previousImageDigest").GetString().ShouldBe(digest);
     }
 
     [Fact]
