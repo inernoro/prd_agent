@@ -303,6 +303,25 @@ export function updateEnvFileWhileLocked(
   writeEnvFileAtomic(envFilePath, serializeEnvFile(updated));
 }
 
+/** Rotate the startup password only when its authoritative file still contains the active value. */
+export function rotateBasicPasswordInEnv(envFilePath: string, current: string, replacement: string): boolean {
+  return withEnvFileLock(envFilePath, () => {
+    if (!fs.lstatSync(envFilePath, { throwIfNoEntry: false })?.isFile()) return false;
+    const lines = fs.readFileSync(envFilePath, 'utf8').split('\n');
+    const assignments = lines.flatMap((line, index) => {
+      const setting = line.trim().replace(/^export\s+/, '');
+      return setting.startsWith('CDS_PASSWORD=')
+        ? [{ index, entry: parseEnvFile(`export ${setting}`)[0] }]
+        : [];
+    });
+    if (assignments.length !== 1 || assignments[0].entry.value !== current) return false;
+    const [{ index, entry }] = assignments;
+    lines[index] = applyEnvUpdates([entry], { CDS_PASSWORD: replacement })[0].raw;
+    writeEnvFileAtomic(envFilePath, lines.join('\n'));
+    return true;
+  });
+}
+
 /** Startup-only override shared by the loader, server routes and shell entry. */
 export function explicitCdsEnvFilePath(env: NodeJS.ProcessEnv = process.env): string | null {
   const configured = String(env.CDS_ENV_FILE || '').trim();
