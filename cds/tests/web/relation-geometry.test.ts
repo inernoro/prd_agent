@@ -70,7 +70,7 @@ describe('同一侧出线很多（Codex P2，PR #1654）', () => {
     } as RelationPayload;
   };
   // 20 条只测 ≥390：320 宽时右侧走线槽要排 20 条轨道，把这张卡挤到 68px，按 4px 间距排不下 20 个出口，
-  // 那是画布的物理上限（记在 doc/debt.cds.md「关系视图」一节），不是端口分配的缺陷
+  // 那是画布的物理上限（记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「关系视图」一节），不是端口分配的缺陷
   for (const [n, widths] of [[14, [320, 390, 768, 1280, 1920]], [20, [390, 768, 1280, 1920]]] as const) {
     for (const width of widths) {
       it(`${n} 条依赖从同一张卡出发，宽 ${width}：G1–G8 零违规`, () => {

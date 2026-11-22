@@ -9,7 +9,7 @@
 ---
 
 > 关联: [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（测什么 SSOT）、[doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（全量可见报告）、
-> [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)、
+> [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)、
 > `.claude/rules/closed-loop-acceptance.md`（验收必须闭环）、`.claude/skills/create-visual-test-to-kb/`（取证流水线）
 
 ## 1. 管理摘要 + 怎么用
@@ -69,7 +69,7 @@ COS 占位还原 / 生图显示）、模型池健康告警、独立观测前端 
 ## 3. 例外 / 边界清单
 
 每条写「怎么触发 + 预期表现」。触发以桩上游 / 坏 URL 模型 / canned payload 为主（真实失败路径），
-**不依赖** `ModelTestStub.FailureMode`（当前未接入 serving 路径，见 spec §边界 + [debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)）。
+**不依赖** `ModelTestStub.FailureMode`（当前未接入 serving 路径，见 spec §边界 + [debt.platform.llm-gateway.isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)）。
 
 | # | 边界 | 怎么触发 | 预期表现 |
 |---|------|---------|---------|

@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""把 doc/debt.*.md 的债务台账推到任务台。
+"""把归档工作区中的 Markdown 台账同步到旧任务台快照。
 
-为什么是这个方向：债务正文的 SSOT 是仓库 —— 它引用文件路径、判据、事故日期，
-改代码的那个人顺手改它才对，git diff 是它天然的审阅面。任务台存的是仓库存不住的
-那一半：这条债务归谁、什么状态、转成了哪条任务。所以只有「仓库 → 任务台」这一个
-方向，没有回写。
+CDS 工程规划负责登记和维护当前债务。此脚本保留给需要同步历史快照的工作区。
+归档表提供正文和来源，旧任务台快照单独维护归属、状态和转成的任务。
 
 稳定标识：`{模块}#{编号}`，模块 = 文件名去掉 `debt.` 前缀和 `.md`，编号 = 表格里那个 `#`。
 用编号不用标题做标识，因为标题会被改写（措辞优化、补充说明），编号不会。
@@ -200,7 +198,7 @@ def push(base: str, key: str, items: list[dict], batch: int = 200) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="把 doc/debt.*.md 推到任务台的债务区")
+    ap = argparse.ArgumentParser(description="把归档工作区的 Markdown 台账同步到旧任务台快照")
     ap.add_argument("--base", default=os.environ.get("MAP_BASE", ""), help="MAP 站点地址")
     ap.add_argument("--key-env", default="MAP_AGENT_KEY", help="装着 Agent Key 的环境变量名")
     ap.add_argument("--dry-run", action="store_true", help="只打印会推什么，不发请求")
@@ -218,7 +216,7 @@ def main() -> int:
         return 2
 
     if not items:
-        print("没有可推的条目 —— 检查一下 doc/debt.*.md 里的表是不是第一列写着 #")
+        print("未找到可同步的归档台账。当前债务请打开 CDS 工程规划的债务页。")
         return 1
 
     if args.dry_run:

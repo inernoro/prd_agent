@@ -2372,7 +2372,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     /// - 别的项目、别的分支、生产（正则只匹配本项目本分支的 revision 变体）；
     /// - 排队中的任务、正在提交（Committing）的任务；
     /// - 结果已经落定或正在落定的任务（工作区结果包、待写结果、已产出站点/版本、补偿清理中）——
-    ///   这一类「结果已落定却没交付」由 doc/debt.platform.open-design.md 另行登记，保持原样。
+    ///   这一类「结果已落定却没交付」由 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md 另行登记，保持原样。
     ///
     /// <paramref name="now"/> 为 null 时去掉时间条件，只判「是不是本分支上一版的、结果未落定的
     /// 运行中任务」，停止接口用它区分「稍等就会自动结束」与「当前版本无法处理」。

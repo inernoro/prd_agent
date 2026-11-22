@@ -127,8 +127,8 @@ describe('scrubParentSecretsFromEnv', () => {
    *
    * 所以扫描范围就是残留真出现过的那几处，而不是只扫 preview-instance.ts 一个文件
    * —— 只扫它自己的守卫恰好防不住它自己记录的那三次复发（第十四轮指出）。
-   * 覆盖：cds/src 全部源码 + 两份 compose + 隔离规则台账 + debt 台账 + 全部
-   * changelog 碎片。清单里的文件必须存在，改名后覆盖会静默消失。
+   * 覆盖现行指引：cds/src 全部源码、两份 compose、隔离规则、债务登记指南和
+   * changelog 碎片。每个扫描清单项都对应仓库内可读的文件。
    * 红绿闭环：把那段注释改回「必须为它单独生成一把」（或写进上述任一文件），本用例立刻红。
    */
   it('仓库里不许再有「给子实例生成 AI 静态钥匙」的指示', () => {
@@ -138,7 +138,7 @@ describe('scrubParentSecretsFromEnv', () => {
       'cds/cds-compose.selfhost.yml',
       'cds-compose.yml',
       '.claude/rules/cross-project-isolation.md',
-      'doc/debt.cds.md',
+      'doc/guide.doc.pri.debt.md',
     ];
     for (const rel of anchors) {
       expect(fs.existsSync(path.join(repoRoot, rel)), `扫描清单里的 ${rel} 不在了，改名后要同步这里`)

@@ -6606,7 +6606,7 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
       两条已知边界，都是有意接受的：
       其一，这是一次读，挡不住「读完到删之间刚好又提交了一个任务」的竞态——真正不漏的做法是
       线路软删除（留墓碑到引用的任务跑完），那要改动每一处列线路的查询，属于另一件事，已记入
-      doc/debt.platform.llm-gateway.md。这道闸把绝大多数误删挡在门外，不声称它是原子的。
+      https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md。这道闸把绝大多数误删挡在门外，不声称它是原子的。
       其二，任务库是同项目所有分支预览共用的（cross-project-isolation 通道 4），兄弟分支的
       在途任务同样会拦住这次删除。方向是对的那一边：宁可多拦一次让人去看看。
     */
@@ -6685,7 +6685,7 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
 
       还有一条补偿也管不着的缝：删父与删子之间有人新建了一条线路（创建端点校验父存在，
       那一刻父还在）。它删完之后才落库，于是成为孤儿。彻底堵死要靠墓碑，已记入
-      doc/debt.platform.llm-gateway.md 的 2026-09-17-offering-delete-has-no-tombstone。
+      https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md 的 2026-09-17-offering-delete-has-no-tombstone。
     */
     var offeringFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id));
     var offeringCount = childOfferings.Count;

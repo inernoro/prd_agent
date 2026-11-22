@@ -116,7 +116,8 @@ import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostic
 import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
 import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
 import { createCdsSystemSealedStorageRouter } from './routes/cds-system-sealed-storage.js';
-import { defaultEnvFilePath } from './services/env-file.js';
+import { defaultEnvFilePath, EnvFileBusyError, rotateBasicPasswordInEnv } from './services/env-file.js';
+import { MIN_PASSWORD_LENGTH } from './services/password.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
@@ -690,6 +691,10 @@ function tokenMatches(actual: string | undefined, expected: string): boolean {
   const expectedBytes = Buffer.from(expected, 'utf8');
   return actualBytes.length === expectedBytes.length
     && crypto.timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function isPasswordChangeRequest(req: express.Request): boolean {
+  return req.method === 'POST' && /^\/api\/auth\/change-password\/?$/i.test(req.path);
 }
 
 function normalizedSealedStoragePath(value: unknown): string | null {
@@ -2325,7 +2330,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
     if (/^\/(?:login|preview-access|auth\/sso)\/?$/i.test(req.path)) res.setHeader('Referrer-Policy', 'no-referrer');
-    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
+    if (isPasswordChangeRequest(req) || isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2735,7 +2740,7 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer.unref?.();
     };
     const hostedIdentityTraffic = isHostedIdentityTraffic(req.originalUrl || req.url);
-    const suppressPreviewBody = hostedIdentityTraffic || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
+    const suppressPreviewBody = hostedIdentityTraffic || isPasswordChangeRequest(req) || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
       || /^\/api\/cluster\/identity\//i.test(req.path)
       || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
@@ -2871,7 +2876,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // so existing deployments keep working without an explicit toggle.
   // See doc/design.cds.multi-project.md section 七.
   const cdsUser = process.env.CDS_USERNAME;
-  const cdsPass = process.env.CDS_PASSWORD;
+  let cdsPass = process.env.CDS_PASSWORD;
   const rawAuthMode = (process.env.CDS_AUTH_MODE || '').toLowerCase();
   const authMode: 'disabled' | 'basic' | 'github' =
     rawAuthMode === 'github' ? 'github' :
@@ -2879,7 +2884,8 @@ export function createServer(deps: ServerDeps): express.Express {
     rawAuthMode === 'disabled' ? 'disabled' :
     (cdsUser && cdsPass) ? 'basic' : 'disabled';
   const authEnabled = authMode === 'basic';
-  const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
+  let validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
+  const basicEnvFilePath = authEnabled ? defaultEnvFilePath() : null;
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
   const cookieSecure = publicBaseUrl.startsWith('https://') || hostSessionCookies;
@@ -3942,6 +3948,47 @@ export function createServer(deps: ServerDeps): express.Express {
     } else if (publicTicketSsoConfig(resolveSsoConfig()).enabled) {
       console.log('  Auth: SSO-only mode');
     }
+  }
+
+  if (basicEnvFilePath) {
+    app.post('/api/auth/change-password', (req, res, next) => {
+      if ((req as express.Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth !== true || !cdsUser || !cdsPass) {
+        next();
+        return;
+      }
+      res.setHeader('Cache-Control', 'private, no-store');
+      const { oldPassword, newPassword } = req.body || {};
+      if (typeof oldPassword !== 'string' || !tokenMatches(oldPassword, cdsPass)) {
+        res.status(400).json({ code: 'invalid_credentials', error: '原密码不正确' });
+        return;
+      }
+      if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
+        res.status(400).json({ code: 'password_too_short', error: `新密码长度至少 ${MIN_PASSWORD_LENGTH} 位` });
+        return;
+      }
+      if (/[\x00\r\n]/.test(newPassword) || tokenMatches(newPassword, oldPassword)) {
+        res.status(400).json({ code: 'invalid_new_password', error: '请设置不同且不含换行的密码' });
+        return;
+      }
+      try {
+        if (!rotateBasicPasswordInEnv(basicEnvFilePath, cdsPass, newPassword)) {
+          res.status(409).json({ code: 'system_password_source_mismatch', error: '系统配置中的密码与当前登录配置不一致' });
+          return;
+        }
+      } catch (error) {
+        if (error instanceof EnvFileBusyError) {
+          res.status(409).json({ code: 'system_password_source_busy', error: '系统配置正在更新，请稍后重试' });
+          return;
+        }
+        res.status(503).json({ code: 'system_password_update_failed', error: '系统登录密码保存失败' });
+        return;
+      }
+      cdsPass = newPassword;
+      process.env.CDS_PASSWORD = newPassword;
+      validToken = makeToken(cdsUser, newPassword);
+      res.setHeader('Set-Cookie', buildLegacyLogoutCookie(cookieSecure, hostSessionCookies));
+      res.json({ ok: true });
+    });
   }
 
   // Basic mode now exposes the same persisted local-user routes as GitHub

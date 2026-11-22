@@ -195,6 +195,73 @@ class SetupCheckTests(unittest.TestCase):
         self.assertEqual(self.credentials.read_bytes(), before)
         self.assertEqual(self.design_requests, [])
 
+    def test_design_setup_check_accepts_autocrlf_checkout_of_complete_bundle(self):
+        if not shutil.which("git"):
+            self.skipTest("Git is required to reproduce the Windows checkout")
+        source = CLI.parents[2]
+        manifest = CLI.with_name("cds-skill-manifest.json").read_bytes()
+        canonical = {}
+        for name, digest in json.loads(manifest)["files"].items():
+            raw = (source / name).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != digest:
+                raw = raw.replace(b"\r\n", b"\n")
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), digest, name)
+            target = self.cli.parents[2] / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw)
+            canonical[target] = raw
+        self.bundle_manifest.write_bytes(manifest)
+
+        git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        git_env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+
+        def git(*args):
+            subprocess.run(["git", *args], cwd=self.root, env=git_env, check=True, capture_output=True)
+
+        git("init", "-q")
+        git("config", "core.autocrlf", "true")
+        git("add", "--", ".agents/skills")
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Canonical bundle")
+        for target in canonical:
+            target.unlink()
+        git("checkout", "HEAD", "--", ".agents/skills")
+        self.assertEqual(self.cli.read_bytes(), canonical[self.cli].replace(b"\n", b"\r\n"))
+        self.assertNotEqual(self.cli.read_bytes(), canonical[self.cli])
+        before = self.credentials.read_bytes()
+
+        result = self.run_design_check()
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual([path for path, _ in self.requests],
+                         [DESIGN_SETUP, "/api/credentials/self-check", DESIGN_INTAKE])
+        self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertEqual(self.design_requests, [])
+
+    def test_design_setup_check_rejects_crlf_content_changes_and_non_text(self):
+        reference = self.cli.parents[2] / "cds-release/reference.md"
+        reference.write_bytes(b"# Verified reference\n")
+        binary = self.cli.parents[2] / "cds-release/fixture.bin"
+        binary.write_bytes(b"\x00\x01\n\xff")
+        self.write_bundle_manifest()
+        for path, replacement in (
+            (reference, b"# Modified reference\r\n"),
+            (reference, b"# Verified reference\r"),
+            (binary, b"\x00\x01\r\n\xff"),
+        ):
+            with self.subTest(path=path.name, replacement=replacement):
+                original = path.read_bytes()
+                try:
+                    path.write_bytes(replacement)
+                    result = self.run_design_check()
+                    payload = json.loads(result.stdout)
+                    self.assertEqual(result.returncode, 2, payload)
+                    self.assertFalse(payload["data"]["connected"])
+                    self.assertEqual(payload["data"]["checks"][-1]["reason"], "bundle_content_mismatch")
+                    self.assertEqual(self.requests, [])
+                finally:
+                    path.write_bytes(original)
+
     def test_design_setup_check_rejects_active_keys_when_intake_cannot_confirm_publish(self):
         before = self.credentials.read_bytes()
         for invalid in ({"permissions": {"write": False}}, {"projectId": "proj-b"}, {"protocolVersion": 2}):

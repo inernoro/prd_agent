@@ -8,7 +8,7 @@
 
 ## 结论与事实边界
 
-2026-11-11 按用户决定，先使用一段时间，再核验未关闭事项；复验汇总已记入[CDS 债务台账](./debt.cds.md#2026-11-11-代码审查使用观察与暂缓复验)。不设固定日期、不创建定时核验，也不自动启动扫描、投递或部署。本表继续保留 2026-11-10 的事实基线，暂缓不表示已通过或核销。
+2026-11-11 按用户决定，先使用一段时间，再核验未关闭事项；复验汇总已记入[CDS 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md#2026-11-11-代码审查使用观察与暂缓复验)。不设固定日期、不创建定时核验，也不自动启动扫描、投递或部署。本表继续保留 2026-11-10 的事实基线，暂缓不表示已通过或核销。
 
 不能把这轮工作写成“所有要求全部验收通过”。DeepAudit 已部署，代码审查页面、MCP 和 OpenAI 用户 Key 小项目具备证据；大仓完整审查、SMTP 投递、三家供应商真实 Key 以及若干异常/角色路径仍未全部验证。
 
@@ -78,7 +78,7 @@
 | R56 | 设计 | 充分复用开源，流程有用且不过度复杂 | 已采用 | DeepAudit 独立引擎，CDS 负责来源/任务/报告，LLMGW 负责凭据/用量，不再造审查引擎 | 架构与现有入口 |
 | R57 | 设计 | 按 Figma/提示词/用户 Demo 重新设计 | 部分证据 | 用户 HTML Demo 对照及页面实现有证据；未查到可交付的独立 Figma 文件或提示词版本 | 用户附件、历史对照截图 |
 | R58 | 设计 | 列表、阅读、上传页与当前 CDS 调性协调 | 已上线/用户认可 | 历史对照并经用户确认，使用统一导航/颜色/控件，不以测试结论替代主观审美 | 页面图01-07、用户反馈 |
-| R59 | 设计 | 英文与分支字体好看，中文回退无意外 | 部分完成 | Inter/JetBrains Mono 自托管分工保留；中文系统回退和跨系统实测仍有欠账 | 字体审计、[字体欠账](./debt.cds.md) |
+| R59 | 设计 | 英文与分支字体好看，中文回退无意外 | 部分完成 | Inter/JetBrains Mono 自托管分工保留；中文系统回退和跨系统实测仍有欠账 | 字体审计、[字体欠账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md) |
 | R60 | 设计 | 避免线上比截图放大、尊重界面尺度 | 已上线/历史实测 | 已移除按宽度额外放大，80/85/100 密度和多宽度守卫具备；系统/浏览器缩放仍会影响物理大小 | 字体回归、线上版本 |
 | R61 | 设计 | Ajax切换不闪烁，保留已加载内容 | 历史实测 | 切换和返回只有首次一次 document 导航，已有标题/列表保留，面板不反复动画 | BYOK/设计交接 |
 | R62 | 设计 | 修复报告双滚动、正文无法连续滚动 | 已上线/历史实测 | e4b621b64 线上真实报告双向滚轮与末尾可达已通过，移动触摸为浏览器模拟 | 滚动复验与页面图09 |
@@ -119,7 +119,7 @@
 
 ## 可追溯入口
 
-- [使用与维护指南](./guide.cds.code-review.md)、[用户 Key 专项指南](./guide.cds.code-review-user-key.md)、[CDS 已知边界](./debt.cds.md)。
+- [使用与维护指南](./guide.cds.code-review.md)、[用户 Key 专项指南](./guide.cds.code-review-user-key.md)、[CDS 已知边界](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)。
 - [PR1936](https://github.com/inernoro/prd_agent/pull/1936)。
 - [合并提交 CI](https://github.com/inernoro/prd_agent/actions/runs/42819280098)、[CDS CI](https://github.com/inernoro/prd_agent/actions/runs/42819280099)、[主干预构建](https://github.com/inernoro/prd_agent/actions/runs/42819280266)。
 - [阶段验收报告（CDS 登录态）](https://miduo.org/reports?project=prd-agent&folder=42c9eeebd2ea454e8c5e5d3e810da125&report=21a22c30954c407d85c64cd4715945da)：81 项需求、9 张线上新图及覆盖缺口；结论为阶段交付，不能视为全业务验收通过。

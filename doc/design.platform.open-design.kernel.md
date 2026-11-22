@@ -100,4 +100,4 @@
 ## 八、相关
 
 - [OpenDesign 六步实施计划](./plan.platform.open-design.md)
-- [OpenDesign 接入债务台账](./debt.platform.open-design.md)
+- [OpenDesign 接入债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md)

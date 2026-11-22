@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
@@ -41,17 +42,36 @@ def check(label: str, ok: bool, detail: str = "") -> None:
         print(f"  [失败] {label}：{detail}")
 
 
+def read_legacy_fixtures(mod):
+    with tempfile.TemporaryDirectory(prefix="map-legacy-debt-") as directory:
+        mod.DOC_DIR = Path(directory)
+        (mod.DOC_DIR / "debt.fixture-module.md").write_text(
+            "# 历史台账夹具\n\n"
+            "| # | 债务 | 状态 | 影响 |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 1 | 已知边界 | open | 项目内 |\n"
+            "| 2 | 已关闭的边界 | paid | 项目内 |\n\n"
+            "| # | 债务 | 状态 | 影响 |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 1 | 与主表编号相同的历史辅助项 | open | 项目内 |\n",
+            encoding="utf-8",
+        )
+        return mod.collect()
+
+
 def main() -> int:
     if not SCRIPT.exists():
         print(f"[失败] 找不到被测脚本 {SCRIPT}")
         return 1
 
     mod = load()
-    items, notes, clashes = mod.collect()
+    items, _, clashes = read_legacy_fixtures(mod)
 
     # 0. 先确认真的扫到了东西 —— 解析器全线失灵时前三条判据都会「空过」
-    check("扫到了债务条目（防空跑）", len(items) > 0,
-          f"一条都没扫到；仓库里有 {len(list((REPO / 'doc').glob('debt.*.md')))} 份 debt.*.md")
+    check("只读取历史夹具的两条主表记录", len(items) == 2, f"读到 {len(items)} 条")
+    current_ledgers = list((REPO / "doc").glob("debt.*.md"))
+    check("当前工程债务通过 CDS 记录", not current_ledgers,
+          f"当前 doc 中出现了 {len(current_ledgers)} 份文件台账")
     if not items:
         return 1
 
@@ -85,33 +105,14 @@ def main() -> int:
     empty = [i["key"] for i in items if not (i.get("title") or "").strip()]
     check("每条都有标题", not empty, f"{len(empty)} 条无标题，例如 {empty[:3]}")
 
-    # 4.5 表格行不许折行。
-    #     markdown 表格一行必须是一行：中间换一次行，解析器从那行起就停了，
-    #     后面的条目**静默消失**，而上面几条判据全绿（少 7 条既不算空、也不撞车、
-    #     也不缺标题）。2026-09-16 我自己给第 13 条补说明时把一行拆成两行，
-    #     总数从 108 掉到 101，一条判据都没红 —— 这条就是补那个洞的。
-    #     判法：非空行以 | 结尾却不以 | 开头 = 上一行的续行。
-    wrapped = []
-    for path in sorted((REPO / "doc").glob("debt.*.md")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            t = line.strip()
-            if t.endswith("|") and not t.startswith("|"):
-                wrapped.append(f"{path.name}:{lineno}")
-    check("台账里没有折行的表格行", not wrapped,
-          f"{len(wrapped)} 处折行，例如 {wrapped[:3]} —— 折行之后的条目会被静默丢掉")
-
-    # 5. 被测输入都登记进了 CI 的 path filter（形状 7：守卫自己没接上线）。
-    #    被测输入是两样：解析器本身，和它读的那些台账。只登记解析器的话，
-    #    「只改一份台账」的 PR 照样跳过这道闸 —— 而撞车的标识、认不出的表头、
-    #    解析成空，恰恰都是在台账那边长出来的（2026-09-16 Codex 抓到，这条守卫
-    #    自己就有它要防的那个洞）。
+    # 旧解析器的行为回归与新文件台账的拦截都需要由实际输入触发 CI。
     ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     check("解析器登记进了 ci.yml 的 path filter",
           "scripts/sync-debt-ledger.py" in ci,
           "只改 sync-debt-ledger.py 的 PR 不会触发这道闸")
     check("台账本身也登记进了 ci.yml 的 path filter",
           "doc/debt.*.md" in ci,
-          "只改一份 doc/debt.*.md 的 PR 不会触发这道闸，而它正是撞车与表头漂移的来源")
+          "添加 doc/debt.*.md 时必须触发当前文件台账检查")
 
     print(f"\n扫到 {len(items)} 条债务，来自 {len(by_module)} 份台账")
     if failures:

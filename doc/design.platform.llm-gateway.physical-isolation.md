@@ -146,11 +146,11 @@ console Web 既可能挂在根路径，也可能挂在独立子域的子路径�
 
 已落地：MAP 只走独立 serving、独立控制台、网关数据域、协议兼容入口、日志 transport 与配置权威。
 
-`LlmGateway` 类仍在 `PrdAgent.Infrastructure`，但它是 serving 的执行引擎，MAP 不再构造它（源码守卫 `Api_LlmGateway_IsHttpOnly`）。serving 内部的 legacy 配置兜底（未在网关配置的调用方退回 MAP 旧配置选模）仍保留，删除前提记在 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)。
+`LlmGateway` 类仍在 `PrdAgent.Infrastructure`，但它是 serving 的执行引擎，MAP 不再构造它（源码守卫 `Api_LlmGateway_IsHttpOnly`）。serving 内部的 legacy 配置兜底（未在网关配置的调用方退回 MAP 旧配置选模）仍保留，删除前提记在 [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)。
 
 ## 10. 关联文档
 
 - [doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)
 - [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)
-- [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)
+- [doc/debt.platform.llm-gateway.isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)
 - [doc/design.platform.llm-gateway.migration-retrospective.md](./design.platform.llm-gateway.migration-retrospective.md)

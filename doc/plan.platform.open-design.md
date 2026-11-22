@@ -15,7 +15,7 @@
 | 已验收的25项 | 既有PPT、普通网页、资料入口及工作流等原要求已按各自边界收口；工作流同一任务的已保存完整结果已正常恢复、保存和发布，原失败历史保留 | [Stage16：工作流恢复及累计收尾](https://miduo.org/r/691fe54a9de1bd2e02def5c0e099ae6d) |
 | 原18保留差异 | 当前PPT调用方仍可选择经OpenRouter供给的DeepSeek，且共享代码审查也在使用该线路；按用户决定不修改共享配置 | [Stage17：官方上游差异与共享影响](https://miduo.org/r/2d9eba85b3f2458ffaa7d4c77b6c143a) |
 
-保留项按[债务 OD-18](./debt.platform.open-design.md)记录影响、关闭条件和用户决定。验收表、样本、截图与执行证据继续留在验收知识库，本文件只保留结论和报告引用。
+保留项按[债务 OD-18](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md)记录影响、关闭条件和用户决定。验收表、样本、截图与执行证据继续留在验收知识库，本文件只保留结论和报告引用。
 
 下文2026-11-05及更早的段落按原文保留为历史；其中旧的未验收状态、环境阻塞和评分门槛不重新作为本轮追加要求，也不据此重开已闭合项。
 
@@ -331,9 +331,9 @@ MAP 负责输入、进度、权限、预算、文件、版本和发布，必要�
 - [知识驱动设计生成体系设计](./design.platform.design-generation.md)
 - [知识库智能体架构](./design.knowledge-base.agent-architecture.md)
 - [OpenDesign 内核与能力边界](./design.platform.open-design.kernel.md)
-- [OpenDesign 接入债务台账](./debt.platform.open-design.md)
-- [网页托管债务台账](./debt.web-hosting.md)
-- [网关协议保真债务台账](./debt.platform.llm-gateway.protocol-fidelity.md)
+- [OpenDesign 接入债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md)
+- [网页托管债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.web-hosting.md)
+- [网关协议保真债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.protocol-fidelity.md)
 
 ### 2026-11-05：工作流网页报告接线
 

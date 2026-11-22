@@ -259,7 +259,7 @@ The root keeps project entrypoints and top-level documentation. Supporting mater
 | `rule.*` | Current business and engineering constraints | [guide.doc.pri.rule.md](doc/guide.doc.pri.rule.md) |
 | `guide.*` | Task-oriented operating instructions | [guide.doc.pri.guide.md](doc/guide.doc.pri.guide.md) |
 | `report.*` | Time-bounded evidence; new repository reports are weekly reports | [guide.doc.pri.report.md](doc/guide.doc.pri.report.md) |
-| `debt.*` | Known gaps, impact, and closure conditions | [guide.doc.pri.debt.md](doc/guide.doc.pri.debt.md) |
+| CDS engineering debts | Known gaps, impact, repayment criteria, and historical source links | [guide.doc.pri.debt.md](doc/guide.doc.pri.debt.md) |
 | `adr.*` | Important architecture and engineering decisions | [guide.doc.pri.adr.md](doc/guide.doc.pri.adr.md) |
 | `pdr.*` | Important product choices and business commitments | [guide.doc.pri.pdr.md](doc/guide.doc.pri.pdr.md) |
 

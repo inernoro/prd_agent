@@ -99,7 +99,7 @@
 
 - [MAP MCP 连接器设计](./design.platform.map-mcp-connector.md)
 - [MCP 接入指南](./guide.platform.mcp-connector.md)
-- [平台债务台账](./debt.platform.md)
+- [平台债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md)
 
 ## 真实环境验证记录
 
@@ -123,7 +123,7 @@ CDS 使用真实 OpenAI 完成 MCP 生成、去重、历史与资产找回、鉴
 
 真实配置流程发现，逻辑模型的手动创建界面未提供 TTS 用途，而已部署服务端支持该用途。当时没有发起上游合成，不能把 Exchange 保存成功当作真实合成通过。该缺口现已修复并正式发布。
 
-创建界面现在复用服务端的完整用途目录，包含 TTS、ASR 等13种合法用途。切换用途会清除未编辑的默认生图能力，保留用户自定义能力；既有模型类型继续正确展示，Offering 编辑保留原映射、协议和端点。CDS 真实管理员登录后创建并刷新读回独立 TTS 测试模型，测试资源已删除且读回确认；关联已有 Exchange 和编辑映射的表单回归通过。该缺口的关闭进展同步记入[平台债务台账](./debt.platform.md)。
+创建界面现在复用服务端的完整用途目录，包含 TTS、ASR 等13种合法用途。切换用途会清除未编辑的默认生图能力，保留用户自定义能力；既有模型类型继续正确展示，Offering 编辑保留原映射、协议和端点。CDS 真实管理员登录后创建并刷新读回独立 TTS 测试模型，测试资源已删除且读回确认；关联已有 Exchange 和编辑映射的表单回归通过。该缺口的关闭进展同步记入[平台债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md)。
 
 2026-11-08，基于原正式版本3d8ab0dc的最小修复 d370632f7 按既有发布合同上线，发布记录 rel_539fc9ef859c0658 成功；同提交完整CI、六组件镜像和不可变发布产物均通过，正式公网8项及实际网关入口资源复核通过。网关表单回归在 Node20、Node24 均通过，并进入镜像构建检查。
 

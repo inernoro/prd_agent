@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.9"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.10"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -906,40 +906,53 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     if not selected or any(key not in skill_keys for key in selected):
         fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
     skills_root = Path(__file__).resolve().parents[2]
+    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整五技能包，"
+                      "用本机工具解压到当前工作区的技能根，之后复用现有授权重新自检。")
     missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
     if missing:
-        fail("skills", "incomplete_bundle", "完整技能包缺少 " + "、".join(missing) + "；重新安装或运行 cdscli update。")
+        fail("skills", "incomplete_bundle", "完整技能包缺少 " + "、".join(missing) + "。" + install_bundle)
     try:
         bundle = json.loads(Path(__file__).with_name("cds-skill-manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        fail("skills", "bundle_manifest_unavailable", "完整技能包的 manifest 缺失或不可读；重新安装或运行 cdscli update，不重新授权。")
+        fail("skills", "bundle_manifest_unavailable", "完整技能包的 manifest 缺失或不可读。" + install_bundle)
         return
     if (not isinstance(bundle, dict) or bundle.get("format") != "agent-skills"
             or not isinstance(bundle.get("skills"), list)
             or any(not isinstance(key, str) for key in bundle["skills"])
             or set(bundle["skills"]) != set(skill_keys)):
-        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能；重新安装完整包，不重新授权。")
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能。" + install_bundle)
     if bundle.get("version") != VERSION:
-        fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致；统一更新完整五技能包，不只复制核心 CLI。")
+        fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致。" + install_bundle)
     file_hashes = bundle.get("files")
     required_files = [key + "/SKILL.md" for key in skill_keys] + ["cds/cli/cdscli.py"]
     if not isinstance(file_hashes, dict) or any(name not in file_hashes for name in required_files):
-        fail("skills", "invalid_bundle_manifest", "技能包缺少完整文件摘要；重新安装或运行 cdscli update。")
+        fail("skills", "invalid_bundle_manifest", "技能包缺少完整文件摘要。" + install_bundle)
+    accepted_crlf = 0
     for name, digest in file_hashes.items():
         relative = Path(name)
         if (relative.is_absolute() or ".." in relative.parts or len(relative.parts) < 2
                 or relative.parts[0] not in skill_keys or not isinstance(digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", digest)):
-            fail("skills", "invalid_bundle_manifest", "技能包文件摘要无效；重新安装完整包。")
+            fail("skills", "invalid_bundle_manifest", "技能包文件摘要无效。" + install_bundle)
         candidate = skills_root / relative
         try:
             candidate.resolve().relative_to(skills_root.resolve())
-            matches = candidate.is_file() and hashlib.sha256(candidate.read_bytes()).hexdigest() == digest
+            contents = candidate.read_bytes() if candidate.is_file() else None
+            matches = contents is not None and hashlib.sha256(contents).hexdigest() == digest
+            is_text = relative.name == ".gitignore" or relative.suffix in {".md", ".json", ".py", ".mjs"}
+            if not matches and contents is not None and is_text and b"\r\n" in contents and b"\0" not in contents:
+                canonical = contents.replace(b"\r\n", b"\n")
+                contents.decode("utf-8")
+                matches = b"\r" not in canonical and hashlib.sha256(canonical).hexdigest() == digest
+                accepted_crlf += int(matches)
         except (OSError, ValueError):
             matches = False
         if not matches:
-            fail("skills", "bundle_content_mismatch", "技能内容与 manifest 不一致，可能为混装或旧版；统一更新完整五技能包，不重新授权。")
-    checks.append({"stage": "skills", "passed": True, "loadOnly": selected})
+            fail("skills", "bundle_content_mismatch", "技能内容与 manifest 不一致。" + install_bundle)
+    skill_check = {"stage": "skills", "passed": True, "loadOnly": selected}
+    if accepted_crlf:
+        skill_check["lfEquivalentFiles"] = accepted_crlf
+    checks.append(skill_check)
 
     print("接入自检：核对服务端协议与版本。", file=sys.stderr)
     status, manifest, _ = request(_design_setup_path(project) if design_access else "/api/agent/setup.json")
@@ -953,7 +966,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
            for value in (remote_version, minimum_version)):
         fail("version", "version_unavailable", "服务端无法确认技能版本，请恢复技能包分发后重试。")
     if _version_compare(VERSION, remote_version) < 0 or _version_compare(VERSION, minimum_version) < 0:
-        fail("version", "stale_cli", "当前 CLI 版本落后，运行 cdscli update 后重新自检。")
+        fail("version", "stale_cli", "当前 CLI 版本落后。" + install_bundle)
     checks.append({"stage": "version", "passed": True, "local": VERSION, "remote": remote_version})
 
     print("接入自检：验证凭据与目标的真实只读访问。", file=sys.stderr)
@@ -7162,7 +7175,7 @@ _INFRA_TEMPLATES: list[dict] = [
         # NATS 默认任何人都能连、能订阅任何主题。开认证只要 --user/--pass。
         # 与 redis 同一种写法:口令走 ${CDS_*} 占位,由 CDS 在 docker run 前解析。
         # (后端预设那条路把口令留在容器内展开、不进 argv;compose 这条路沿用 redis
-        #  已有的取舍,见 doc/debt.cds.md E49。)
+        #  已有的取舍,见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md E49。)
         "service_command": "--user ${CDS_NATS_USER} --pass ${CDS_NATS_PASSWORD}",
         "global_env": [
             ("CDS_NATS_USER", "app", False, "NATS 账号(CDS 命名空间)"),

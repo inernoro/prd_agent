@@ -11,7 +11,7 @@ namespace PrdAgent.Core.Interfaces;
 /// **已知边界（进程内存，非共享）**：多副本部署时，回调打到别的实例就查不到。
 /// 当前部署形态是「一个作用域一个容器」（与 ChatAgentService.ReconcileInterruptedTurnsAsync
 /// 的前提一致），成立。真要横向扩容，这里必须换成共享存储。
-/// 记在 doc/debt.knowledge-base.md。
+/// 记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md。
 /// </summary>
 public interface IChatAgentOneOffRunRegistry
 {

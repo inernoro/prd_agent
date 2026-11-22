@@ -294,6 +294,6 @@
 - **相关设计与计划文档**：
   - [CDS 基础设施加固计划](./plan.cds.infra-hardening.md)（含三步走看板与当前阻塞）
   - [基建凭据轮换 runbook](./guide.cds.infra-credential-rotation.md)
-  - [跨 MAP 实例数据同步 · 设计](./design.platform.cross-instance-data-sync.md) / [债务台账](./debt.platform.cross-instance-data-sync.md)（逐行实数 27 条，22 条未清；台账顶部总览行已过期）
+  - [跨 MAP 实例数据同步 · 设计](./design.platform.cross-instance-data-sync.md) / [债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.cross-instance-data-sync.md)（逐行实数 27 条，22 条未清；台账顶部总览行已过期）
   - [模型路由能力契约治理 · 状态看板](./plan.platform.llm-routing.capability-contract.md)（含七条可发布判据，当前两条未满足）
   - [模型路由能力契约 · 设计](./design.platform.llm-routing.capability-contract.md)

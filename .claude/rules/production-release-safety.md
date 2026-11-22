@@ -23,7 +23,7 @@ paths:
 5. 发布失败必须指出首个失败阶段，并保存结构化证据和回滚结果。
 6. 未取得公网最终入口证据时，禁止声称生产发布完成。
 
-未偿实现项见 `doc/debt.platform.production-release.md`，不得因本规则已存在而将 open 债务误报为已实现。
+用 CDS 项目债务的 `platform.production-release` 模块读取发布机制未偿实现项，并核对每笔债务的实际状态。
 
 ## 技能路由
 

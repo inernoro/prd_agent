@@ -28,7 +28,7 @@
 |---|---|---|
 | MAP 与 CDS 的知识库、验收报告互传 | 已有 [MAP-KBTP v1](./spec.knowledge-base.transfer-protocol.md)，以知识库条目、报告、内容与血缘标识表达资源；CDS 当前为报告只读源，MAP 可拉取展示 | 这是业务内容协议，不是通用数据库复制协议；不能用它承载原始表、Redis key 或队列消息，也不能因配对成功推导出数据库读写权限 |
 | MAP 跨实例数据同步 | [现有设计](./design.platform.cross-instance-data-sync.md)与实际执行逻辑包含管理员授权、集合白名单、脱敏、只新增、可选覆盖、试跑和进度 | 以 MAP 选定 MongoDB 集合的一次性拉取为主；缺少持续连接、账号创建事件同步和通用五引擎任务 |
-| MAP 同步兼容检查 | 握手检查同步协议版本，并返回构建标识 | 不能据此认定业务字段、索引和数据语义兼容；[已有债务](./debt.platform.cross-instance-data-sync.md)记录共享库多版本和身份冲突问题 |
+| MAP 同步兼容检查 | 握手检查同步协议版本，并返回构建标识 | 不能据此认定业务字段、索引和数据语义兼容；[已有债务](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.cross-instance-data-sync.md)记录共享库多版本和身份冲突问题 |
 | CDS 基础设施备份恢复 | 已有 MongoDB、Redis、MySQL、PostgreSQL、RabbitMQ 等适配、调度与容量保护 | 备份恢复可能带覆盖或清理语义；RabbitMQ 现有备份是 definitions，不含队列消息；不能把恢复入口包装成默认追加同步 |
 | CDS 资源接入 | 已有项目、环境、资源、数据库工作台与临时通行证能力 | 面向外部工具的短期只读通行证不能直接承担长期同步和目标写入；需要任务范围内的读写授权 |
 | CDS 主备统一授权 | 主备已官方升级并启用实时权威校验、四组项目绑定；共用原凭据通过 CLI 核对，成员禁用独立授权 | 首次直接打开备用登录入口发现浏览器跳转问题；修复已通过隔离 HTTPS 验证，仍待统一发布及公开入口复测 |
@@ -202,7 +202,7 @@ MCP 工具发现以服务端实际发布的能力为准，cdscli 同样读取该
 
 ## 事实依据
 
-- 应用现有同步能力与边界：[跨 MAP 实例数据同步设计](./design.platform.cross-instance-data-sync.md)、[对应债务](./debt.platform.cross-instance-data-sync.md)、[数据库隔离设计](./design.cds.database-isolation.md)。本文现状已结合当前源码核实，不把旧文档状态当作线上事实。
+- 应用现有同步能力与边界：[跨 MAP 实例数据同步设计](./design.platform.cross-instance-data-sync.md)、[对应债务](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.cross-instance-data-sync.md)、[数据库隔离设计](./design.cds.database-isolation.md)。本文现状已结合当前源码核实，不把旧文档状态当作线上事实。
 - MongoDB 变更流的部署前提及恢复窗口：[官方说明](https://www.mongodb.com/docs/manual/changestreams/)。
 - Redis 过期、恢复和替换语义：[RESTORE 官方文档](https://redis.io/docs/latest/commands/restore/)。
 - MySQL 复制位置与 GTID：[官方说明](https://dev.mysql.com/doc/refman/8.4/en/replication-gtids.html)。实际支持版本以接入预检为准。
@@ -224,6 +224,6 @@ MCP 工具发现以服务端实际发布的能力为准，cdscli 同样读取该
 | RabbitMQ | 原生管理接口只追加选定持久拓扑；实际节点容量、同版与活动通道检查，冲突阻断且目标配置保留，独立对账通过；源测试消息未被消费，目标无新增消息 | 完整运行服务、三个入口和停止恢复的发布验收；消息副本另行设计 |
 | 主备身份 | 主备均已官方升级并启用同一集群，四组项目绑定已核对，共用原凭据的 CLI 校验通过，两侧禁用独立授权 | 首次登录修复与最新主干整合后统一发布，再完成公开入口普通账号登录、撤权和标准归档 |
 
-首轮默认写入范围保持有界：MongoDB 与 SQL 为文本主键及批准的标量字段，单批最多一万条、八 MiB；Redis 同样限制选定 key 数与传输量，RabbitMQ 首轮每批最多两百个持久拓扑对象、一 MiB；未知容量、结构漂移、版本不兼容或传输结果不明均保持阻断。限制与关闭条件见 [DTS 能力边界](./debt.cds.dts.md)。
+首轮默认写入范围保持有界：MongoDB 与 SQL 为文本主键及批准的标量字段，单批最多一万条、八 MiB；Redis 同样限制选定 key 数与传输量，RabbitMQ 首轮每批最多两百个持久拓扑对象、一 MiB；未知容量、结构漂移、版本不兼容或传输结果不明均保持阻断。限制与关闭条件见 [DTS 能力边界](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.dts.md)。
 
 原生传输运行服务已按检查通过的镜像摘要托管到主站，主备确认五类连接器可用。业务数据环境对和账号资料白名单仍需选定后启用；当前未开启生产业务库复制或定时账号资料规则。

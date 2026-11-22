@@ -71,7 +71,7 @@
 **读完能做什么**：判断当前遇到的现象是已知边界还是新故障，并知道该改哪一处。
 ```
 
-**反例**（本规则上线前 [debt.cds.build-gate.md](./debt.cds.build-gate.md) 的开头，逐字摘录）：
+**反例**（本规则上线前 [debt.cds.build-gate.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.build-gate.md) 的开头，逐字摘录）：
 
 > build-gate 可取消 + holder 身份、极速版跳闸、就绪探测容器活性早退、层内 fan-out allSettled + 共享 abort、
 > manual deploy 合并、run 账本周期收割 + 部署静默期节流心跳……

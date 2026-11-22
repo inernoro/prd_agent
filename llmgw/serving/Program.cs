@@ -344,7 +344,7 @@ builder.Services.AddHostedService<ServingKeyIntegrityCheck>();
   所以这一侧只装平台级契约（TenantId 为空串），带租户的跳过并把条数报给控制台。
   代价是「控制台配的契约在网关这一侧不生效」，这句话必须显示在那一屏上，
   不能让人配完看见「生效 0 条」去查一个没坏的东西（degradation-must-alarm）。
-  把租户维度补进注册表是另一件事，已记台账 doc/debt.platform.llm-gateway.md。
+  把租户维度补进注册表是另一件事，已记台账 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md。
 */
 builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker(
     sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),

@@ -43,7 +43,7 @@ public class GatewayErrorChunkCodeGuardTests
     /// - 「待迁」：确实是网关的流块 / 解析结果 / 响应，码就在手边却没带上。
     ///   它们的失败文案链路目前不读这个码，改造前要逐个确认下游怎么用这句话。
     /// - 「非网关」：`.ErrorMessage` 属于别的领域对象，判据靠文本分不出来，如实记着。
-    /// 对应台账：doc/debt.knowledge-base.md「错误码在转异常时被丢掉」。
+    /// 对应台账：https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md「错误码在转异常时被丢掉」。
     /// </summary>
     private static readonly (string Path, int Count, string Why)[] Ledger =
     [

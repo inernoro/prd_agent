@@ -2,7 +2,7 @@
 """Diagnostic: rules that name a real file in their body but leave it out of `paths`.
 
 Not a CI gate. It enumerates a known, unpaid debt so the list can be regenerated
-instead of going stale in a ledger — see doc/debt.platform.agent-rule-scope.md.
+with historical evidence in CDS engineering debt under platform.agent-rule-scope.
 
 What it catches
 ---------------
