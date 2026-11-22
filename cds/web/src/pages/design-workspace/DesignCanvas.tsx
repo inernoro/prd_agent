@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { ChevronLeft, ChevronRight, ListMinus, MessageSquare, Minus, Moon, Plus, Sun, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -180,12 +180,11 @@ export function CanvasSettings({ theme, onTheme, zoom, onZoom }: { theme: Design
 
 type CanvasProps = {
   entry: DesignEntry; version: DesignVersion; comparing: boolean; active: boolean; full?: boolean;
-  navigation?: ReactNode;
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
   commandBusy: boolean; initialScreenId?: string; initialComparisonVersion?: number; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, navigation, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
   const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
@@ -304,7 +303,6 @@ export function DesignCanvas({ entry, version, comparing, active, full, navigati
     screenshot={readyPixels ? rightShot : undefined} boxes={readyPixels?.boxes ?? (compareMode === 'slide' ? undefined : overlays?.right)} />;
   return <>
     <div className="dw-tabrow dw-canvas-tools">
-      {navigation}
       <div className="dw-tools">
         {full && entry.versions.length > 1 && <button className="ep-button" type="button" aria-pressed={compare} onClick={() => setWithCompare(!compare)}>
           {compare ? '单版' : `对比 V${left}`}</button>}

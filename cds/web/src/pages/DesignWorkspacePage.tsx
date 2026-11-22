@@ -186,7 +186,7 @@ export function DesignWorkspacePage() {
   const breadcrumbs = <TopBar left={<span className="dw-crumb">CDS <span>/</span> <Link to={`/design?project=${encodeURIComponent(project)}`}>设计</Link>
     {framework && <> <span>/</span> <strong>{framework.versions.at(-1)?.title}</strong></>}
   </span>} />;
-  const summaryTabLinks = entry && version && <nav className="dw-tablinks dw-draft-tabs" aria-label="稿件标签">
+  const summaryTabLinks = entry && version && <nav className="dw-tablinks" aria-label="稿件标签">
     {tabs.map(([value, label]) => {
       const count = value === 'preview' ? entry.comments.length : value === 'delivery' ? activeFeedback
         : value === 'log' ? entry.versions.length : value === 'accept' ? entry.runs.at(-1)?.cells.filter(cell => cell.status === 'failed').length : undefined;
@@ -218,8 +218,8 @@ export function DesignWorkspacePage() {
           <div className="dw-draft-heading">
           <button className="ep-button ep-icon-button" type="button" aria-label="返回设计库" onClick={() => selectEntry('')}><ChevronLeft /></button>
           <h1 title={version.title}>{version.title}</h1><div className="dw-draft-marks"><span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
-          {entry.frozen !== undefined && <span className="dw-baseline" data-current={entry.frozen === version.version || undefined}>
-            {entry.frozen === version.version ? `V${version.version} · 实施基线` : `当前 V${currentVersion} · 实施基线 V${entry.frozen}`}</span>}
+          {entry.frozen !== undefined && <span className="dw-baseline" data-current={entry.frozen === version.version || undefined}
+            title={`当前 V${currentVersion} · 实施基线 V${entry.frozen}`}>基线 V{entry.frozen}</span>}
           {version.framework ? <Link className="dw-fw-link" to={`/design?${new URLSearchParams({ project, framework: version.framework, ...(version.frameworkVersion ? { version: String(version.frameworkVersion) } : {}) })}`}>
             <FrameworkBadge id={version.framework} version={version.frameworkVersion} latest={workspace.frameworks.find(row => row.id === version.framework)?.versions.at(-1)?.version} /></Link>
             : <span className="dw-fw-badge" data-missing>未绑定框架</span>}
@@ -238,12 +238,13 @@ export function DesignWorkspacePage() {
                 ...(version.frameworkVersion ? { version: String(version.frameworkVersion) } : {}) })}`}>
                 {version.framework}{version.frameworkVersion ? ` · v${version.frameworkVersion}` : ''}</Link>}
               <p>{version.note || '本版未附发布说明'}</p>
+              {version.tags.length > 0 && <nav className="dw-draft-tags" aria-label="稿件分类">{version.tags.map(tag =>
+                <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, tag })} key={tag}>#{tag}</Link>)}</nav>}
               {version.decisionIds.map(id => <Link className="ep-link" key={id} to={`/engineering-planning?project=${encodeURIComponent(project)}&kind=decision&item=${encodeURIComponent(id)}`}>{id}</Link>)}
             </div>
           </details>
-          {version.tags.length > 0 && <span className="dw-draft-tags" title={version.tags.join('、')}>{version.tags.map(tag =>
-            <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, tag })} key={tag}>#{tag}</Link>)}</span>}
           </div>
+          {summaryTabLinks}
           <div className="dw-tools dw-right">
             {canvas && deliveryReturn.current?.designId === entry.id && <button className="ep-button" type="button" onClick={() => {
               onChange({ tab: 'delivery', version: String(deliveryReturn.current!.version), screen: '' });
@@ -265,10 +266,9 @@ export function DesignWorkspacePage() {
           <button className="ep-text-button" type="button" onClick={() => onChange({ tab: 'diff', compareFrom: String(entry.frozen) })}>和基线对比</button>
         </p>}
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
-        {canvas ? <DesignCanvas key={`${entry.id}/${version.version}/${screenParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon} entry={entry} version={version} active={!large && !review} navigation={summaryTabLinks}
+        {canvas ? <DesignCanvas key={`${entry.id}/${version.version}/${screenParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
           comparing={tab === 'diff'} initialScreenId={screenParam} initialComparisonVersion={compareFrom} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
         : <>
-          <div className="dw-tabrow">{summaryTabLinks}</div>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} onPreviewStale={refreshWorkspace} />}

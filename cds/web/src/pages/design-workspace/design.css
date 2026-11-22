@@ -27,17 +27,17 @@
 .dw-tools svg, .dw-row > svg { width: 15px; height: 15px; flex: none; }
 .dw-right { margin-left: auto; }
 .dw-head { min-height: 52px; margin-bottom: 3px; padding-block: 4px; }
-.dw-head--draft { min-height: 42px; margin: 0; padding-block: 0; column-gap: 10px; border-bottom: 1px solid var(--dw-line); }
-.dw-draft-heading { display: flex; align-items: center; gap: 7px; min-width: 0; flex-shrink: 1; }
+.dw-head--draft { min-height: 42px; margin: 0; padding-block: 0; column-gap: 8px; border-bottom: 1px solid var(--dw-line); }
+.dw-draft-heading { display: flex; align-items: center; gap: 6px; min-width: 0; flex-shrink: 1; }
 .dw-draft-heading h1 { min-width: 0; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dw-draft-heading > :not(h1, .dw-draft-marks, .dw-draft-tags) { flex: none; }
+.dw-draft-heading > :not(h1, .dw-draft-marks) { flex: none; }
 .dw-draft-marks { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
 .dw-draft-marks .dw-status { white-space: nowrap; }
-.dw-draft-tags { display: inline-flex; gap: 6px; min-width: 0; max-width: 12ch; overflow: auto hidden; white-space: nowrap; font-size: 12px; }
-.dw-tablinks.dw-draft-tabs { gap: clamp(10px, 1.1vw, 18px); }
+.dw-draft-tags { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; overflow-wrap: anywhere; }
+.dw-head--draft .dw-tablinks { gap: clamp(10px, 1.1vw, 18px); }
 .dw-head--draft > .dw-tools { padding-block: 3px; }
-.dw-canvas-tools { min-height: 36px; border: 0; }
-.dw-canvas-tools > .dw-tools { margin-inline-start: auto; padding-block: 3px; }
+.dw-canvas-tools { justify-content: flex-end; min-height: 36px; border: 0; }
+.dw-canvas-tools > .dw-tools { padding-block: 3px; }
 .dw-head .dw-info > div { left: 0; right: auto; max-width: min(280px, 82vw); padding: 10px; display: grid; gap: 5px; }
 .dw-workspace .ep-button, .dw-stage .ep-button, .dw-surface .ep-button { min-height: 32px; }
 .dw-workspace .ep-button > svg, .dw-surface .ep-button > svg, .dw-stage .ep-button > svg { width: 14px; height: 14px; }
@@ -358,7 +358,6 @@
   .dw-tablinks { gap: 14px; block-size: 44px; }
   .dw-tabrow { justify-content: start; }
   .dw-tabrow > .dw-tools { justify-content: start; }
-  .dw-canvas-tools > .dw-tools { margin-inline-start: 0; }
   .dw-library { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .dw-side { display: flex; overflow-x: auto; gap: 8px; }
   .dw-side section { flex: 0 0 124px; }
@@ -624,8 +623,9 @@
 }
 
 @media (min-width: 1100px) {
-  .dw-head--draft { display: grid; grid-template-columns: minmax(0, 1fr) max-content; }
-  .dw-tablinks.dw-draft-tabs { gap: 9px; }
+  .dw-head--draft .dw-draft-heading, .dw-head--draft .dw-tablinks { flex: none; max-width: 100%; }
+  .dw-head--draft .dw-tablinks { gap: 6px; }
+  .dw-head--draft .dw-fw-badge > svg { display: none; }
   .dw-draft-marks { flex-wrap: nowrap; }
 }
 
@@ -635,6 +635,6 @@
   .dw-head--draft .dw-draft-heading h1 { max-width: calc(100% - 84px); }
   .dw-draft-heading .dw-info { order: 1; }
   .dw-draft-marks { order: 2; flex-basis: 100%; }
-  .dw-draft-tags { order: 3; max-width: 100%; }
+  .dw-head--draft .dw-tablinks { align-self: center; }
   .dw-head--draft > .dw-tools { flex-basis: 100%; margin-inline-start: 0; }
 }

@@ -163,12 +163,14 @@ describe('工程规划与设计 V2 前端回归', () => {
     expect(html).toContain(unboundTitle);
   });
 
-  it('A-03/A-05 稿件页头公开当前版、实施基线、框架、标签及基线操作', () => {
+  it('A-03/A-05 稿件页头公开当前版、实施基线、框架、页签及基线操作', () => {
     const html = design(`&design=${bound.id}&version=2&tab=preview`);
     const visible = visibleText(html);
-    expect(visible).toMatch(/当前\s*V2.*实施基线\s*V1/);
+    expect(visible).toMatch(/你在看\s*V2.*实施基线是\s*V1/);
     expect(visible).toContain(frameworkId);
-    expect(visible).toContain(tag);
+    expect(html).toContain('aria-label="稿件标签"');
+    expect(html).toContain('aria-label="稿件分类"');
+    expect(html).toContain(`#${tag}`);
     expect(visible).toContain('打开基线');
     expect(visible).toContain('和基线对比');
   });
@@ -192,9 +194,9 @@ describe('工程规划与设计 V2 前端回归', () => {
       const controls = [
         [header.getByRole('heading', { name: longTitle, exact: true }), '标题'],
         [header.locator('.dw-draft-marks .dw-status'), '稿件状态'],
-        [header.getByText(/实施基线\s*V1/), '实施基线'],
+        [header.locator('.dw-draft-marks .dw-baseline'), '实施基线'],
         [header.getByText(new RegExp(frameworkId)), '框架'],
-        [header.getByText(new RegExp(tag)), '标签'],
+        [header.getByRole('navigation', { name: '稿件标签' }), '稿件页签'],
         [header.getByRole('button', { name: '大屏', exact: true }), '大屏入口'],
       ] as const;
       for (const width of [1280, 760]) {
@@ -217,17 +219,17 @@ describe('工程规划与设计 V2 前端回归', () => {
         const actionBox = rest.pop()!;
         if (width === 1280) {
           expect(Math.max(...boxes.map(box => box!.y))).toBeLessThan(Math.min(...boxes.map(box => box!.y + box!.height)));
-          const tabs = await page.getByRole('navigation', { name: '稿件标签' }).boundingBox();
-          const zoom = await page.getByRole('button', { name: '适应画布', exact: true }).boundingBox();
-          expect(tabs!.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
-          expect(zoom!.y).toBeGreaterThan(tabs!.y);
-          expect(zoom!.y).toBeLessThan(tabs!.y + tabs!.height);
-          expect(tabs!.x + tabs!.width).toBeLessThanOrEqual(zoom!.x);
+          const tabs = controls[4][0];
+          const overflow = await tabs.evaluate(element => element.scrollWidth - element.clientWidth);
+          expect(overflow).toBeLessThanOrEqual(1);
         } else {
           expect(titleBox.y + titleBox.height).toBeLessThanOrEqual(Math.min(...rest.map(box => box.y)) + 1);
           expect(Math.max(...rest.map(box => box.y + box.height))).toBeLessThanOrEqual(actionBox.y + 1);
         }
       }
+      await header.getByLabel('稿件信息', { exact: true }).click();
+      const tagLink = header.getByRole('link', { name: `#${tag}`, exact: true });
+      expect(await tagLink.isVisible()).toBe(true);
     });
   }, 15_000);
 
