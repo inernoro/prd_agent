@@ -123,7 +123,7 @@ public partial class WebPagesOpenApiController : ControllerBase
         // **叠在一起**的两次两边都查不到，于是各建一个站。这一点是明知的取舍，不再在应用层收敛：
         // 曾经用「确定性 id + 占坑 + 租约 + 接手补传」去收敛它，连续三轮 review 都在长新洞，
         // 根因是发布要跨对象存储与 Mongo 两套系统做原子动作，而对象存储没有条件写入原语。
-        // 多出一个站是浪费，不是坏数据。收敛方案见 doc/debt.platform.md 边界 12。
+        // 多出一个站是浪费，不是坏数据。收敛方案见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md 边界 12。
         HostedSite site;
         try
         {

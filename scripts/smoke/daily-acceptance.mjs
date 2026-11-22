@@ -849,7 +849,7 @@ function checkStableSmokeFreshness() {
   const latest = items
     // 只认运行器自己的标题格式（scripts/stable-smoke-run.mjs：「核心业务稳定冒烟 <runId>」）。
     // 原先含「稳定冒烟」就算，会把「发布验收 · 核心业务稳定冒烟」这类别的报告当成心跳。
-    // 已知边界：定时与手动运行的报告目前没有字段可区分，见 doc/debt.acceptance.daily-anchors.md
+    // 已知边界：定时与手动运行的报告目前没有字段可区分，见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.acceptance.daily-anchors.md
     .filter((x) => /^核心业务稳定冒烟 stsmk-/.test(x.title || ''))
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
   if (!latest) {

@@ -285,7 +285,7 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     [InlineData("queued")]
     public async Task RetiredRevision_RunWhoseResultHasLanded_IsNeverMisjudgedAsFailed(string shape)
     {
-        // 「结果已落定却没交付」另有台账（doc/debt.platform.open-design.md），本修复只收「执行方丢了任务」这一类。
+        // 「结果已落定却没交付」另有台账（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md），本修复只收「执行方丢了任务」这一类。
         var run = OrphanedGeneration(shape);
         switch (shape)
         {

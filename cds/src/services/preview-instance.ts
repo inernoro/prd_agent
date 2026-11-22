@@ -170,7 +170,7 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   // 库里的哈希去比对的（StateService.findAgentKeyForAuth），而子实例是独立存储、
   // 首启 seed 的，父实例签的 cdsp_ 在它那儿根本不存在。带作用域的自测凭据是**尚未
   // 落地的后续事项**，不是现成绕行；眼下 Agent 免登录自测没有通道，只能由人给口令。
-  // 台账见 doc/debt.cds.md。
+  // 台账见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md。
   const previewPublicBaseUrl = normalizePreviewPublicBaseUrl(env.CDS_PREVIEW_PUBLIC_BASE_URL);
   const previewSso = {
     enabled: env.CDS_PREVIEW_SSO_ENABLED,

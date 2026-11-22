@@ -10,7 +10,7 @@ namespace PrdAgent.Core.Models;
 /// 那任务台存什么：仓库存不住的那一半 —— **这条债务现在归谁、什么状态、转成了哪条任务**。
 /// 这半边放 Markdown 里必然过期，因为没人会为了改一个状态去提一个 commit。
 ///
-/// 为什么不做双向同步：`doc/debt.platform.active-tasks.md` 第 6 条踩过同款坑
+/// 为什么不做双向同步：`https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.active-tasks.md` 第 6 条踩过同款坑
 /// （「与 PmTask 不同步……不要提前做双向同步」）。单向推 + 一个反向链接就够了；
 /// 两份都能写正文，就是 predicate-and-wiring-discipline 形状 3：同一件事两份判据，各自漂移。
 /// </summary>
@@ -42,7 +42,7 @@ public class ActiveTaskDebt
     /// <summary>什么条件下该补（仓库快照）</summary>
     public string? CloseCondition { get; set; }
 
-    /// <summary>台账文件在仓库里的路径，如 <c>doc/debt.platform.active-tasks.md</c></summary>
+    /// <summary>台账文件在仓库里的路径，如 <c>https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.active-tasks.md</c></summary>
     public string SourcePath { get; set; } = string.Empty;
 
     /// <summary>归谁。null = 还没人认领 —— 这正是 Markdown 台账缺的那一格</summary>

@@ -22,7 +22,7 @@
 
 ## 目标与已有事实
 
-前轮已修复缺陷润色、指定移动端布局和预览背景，结果见[前轮排查计划](./plan.defect-agent.submit-reliability.md)。本计划承接[遗留债务](./debt.defect-agent.submit-reliability.md)，不重复计算已完成工作。
+前轮已修复缺陷润色、指定移动端布局和预览背景，结果见[前轮排查计划](./plan.defect-agent.submit-reliability.md)。本计划承接[遗留债务](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.defect-agent.submit-reliability.md)，不重复计算已完成工作。
 
 创建计划时已核对的事实：
 

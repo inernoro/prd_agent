@@ -61,7 +61,7 @@ describe('exec_cds.sh 环境文件共锁守卫', () => {
     // 只看凭据那一段（取锁 到 「已写入」）。init_cmd 后半段的 MongoDB 阶段也有一组
     // 逐键 env_upsert，但那组主干上本来就是这么写的、且值是确定性的（固定 URI、
     // 字面量 mongo-split、容器名），两个 init 并发写出来基本是同一组；
-    // 本 PR 只负责修自己造成的那处回归，那组记在 doc/debt.cds.md。
+    // 本 PR 只负责修自己造成的那处回归，那组记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md。
     const start = body.indexOf('env_lock_acquire');
     const end = body.indexOf('已写入 $ENV_FILE');
     expect(start).toBeGreaterThanOrEqual(0);

@@ -7082,7 +7082,7 @@ public partial class DocumentStoreController : ControllerBase
         await _db.DocumentStoreShareLinks.InsertOneAsync(link, cancellationToken: CancellationToken.None);
         // 数字短链 /s/{seq} 按需懒分配（与网页托管 2026-06-11 同口径）：默认 ShortSeq=0，
         // 对外只给不可枚举的 /s/lib/{token}。无条件分配会让 short_links 集合被每条分享污染，
-        // 且把「全局自增、可从 1 枚举」的地址当成常态发出去（见 doc/debt.platform.md「分享链接安全」）。
+        // 且把「全局自增、可从 1 枚举」的地址当成常态发出去（见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md「分享链接安全」）。
         if (request.AllocateShortLink)
             await TryAllocateDocumentStoreShortSeqAsync(link);
 

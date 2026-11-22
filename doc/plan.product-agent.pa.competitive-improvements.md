@@ -52,4 +52,4 @@
 ## 关联文档
 
 - [doc/spec.product-agent.pa.md](./spec.product-agent.pa.md)
-- [doc/debt.product-agent.md](./debt.product-agent.md)
+- [doc/debt.product-agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.product-agent.md)

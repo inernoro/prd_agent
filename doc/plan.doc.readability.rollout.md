@@ -21,7 +21,7 @@
 | 波 4 设计与计划 | 100% | 已落地 | 无 | — | `design.` 104/104、`plan.` 25/25 全部带导读三行；两篇超长一句话按判据重写 |
 | 波 7 债务台账收拢 | 100% | 已落地 | 无 | — | 75 册 → 36 册（11 册吸收 44 篇，引用改写 49 个文件）；54 行自认已结清的条目移到各册文末「已结清」；「默认一个模块一册」写进 [rule.doc.naming.md](./rule.doc.naming.md) |
 | 波 5 规则与技能文档上闸 | 100% | 已落地 | 无 | — | 52 条规则全部带「一句话 + 什么时候撞上」，14 条重复的 `> 触发：` 行清掉；57 个技能 frontmatter 全部合规；两项进棘轮 + CI 路径过滤覆盖 `.claude/rules/**` 与 `SKILL.md`；红绿闭环已验（删一行导读、把 description 改短，闸门都变红）|
-| 波 6a 正文清实现代码 | 85% | 主体已落地 | 无 | 剩 107 行「成脚本的 shell 块」（6 篇，见 [debt.doc.readability.md](./debt.doc.readability.md) 第 7 条），随改随搬进 `scripts/` | 26 篇 362 行实现语言代码全部换成设计原则，实现语言代码块清零；判据后来把「有效行 >12 或带控制流的 shell 块」也算实现，照见 107 行存量，基线逐篇记账 |
+| 波 6a 正文清实现代码 | 85% | 主体已落地 | 无 | 剩 107 行「成脚本的 shell 块」（6 篇，见 [debt.doc.readability.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.doc.readability.md) 第 7 条），随改随搬进 `scripts/` | 26 篇 362 行实现语言代码全部换成设计原则，实现语言代码块清零；判据后来把「有效行 >12 或带控制流的 shell 块」也算实现，照见 107 行存量，基线逐篇记账 |
 | 波 6b 收敛源码路径 | 81% | 主体已落地 | 无 | 剩 630 处夹在散文里的路径（最终判据口径），随改随清 | 旧口径 698 → 130；判据扩容四次后按新口径计 630 处 / 139 篇，基线逐篇记账 |
 
 ## 波 6 为什么单独成一波
@@ -61,4 +61,4 @@
 
 - 判据：[rule.doc.readability.md](./rule.doc.readability.md)
 - 读者视角：[guide.doc.reading-map.md](./guide.doc.reading-map.md)
-- 欠账台账：[debt.doc.readability.md](./debt.doc.readability.md)
+- 欠账台账：[debt.doc.readability.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.doc.readability.md)

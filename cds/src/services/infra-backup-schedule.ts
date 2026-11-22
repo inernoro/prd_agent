@@ -770,7 +770,7 @@ export const REDIS_CONNECT_LINES: readonly string[] = [
   // 显式 `--set-proc-title no` 才扫得到）。所以它只兜得住关了 proc-title 的实例；
   // 「密码既不在 env、redis 又开着认证」的一般情形仍会走到下面的 exit 22，
   // 那是如实报缺凭据，不是静默拷走旧文件。真正的解法是让 CDS 用自己存的那份
-  // 密码（infraServices 的 secrets）经 stdin 喂进来——见 doc/debt.cds.md E34。
+  // 密码（infraServices 的 secrets）经 stdin 喂进来——见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md E34。
   //
   // PROCDIR 只是给回归留的注入点（容器里没人会设它）。这段 awk 是最容易写错的地方，
   // 必须能拿真 shell 对着真的 NUL 分隔 cmdline 跑一遍，而不是断言「源码里有这行」——

@@ -105,7 +105,7 @@ esac
 
 主仓库常见「feature 分支当天提交、当天/隔天 merge 到 main」。先取主干当日提交（`--first-parent` + 主干 merge commit 的 committer date = 落地时间，口径正确）；若发现当天有 merge commit，用 `git log <merge>^1..<merge>^2 --oneline` 穿透读 PR 真实 commits，以 commit 内容（而非 merge 标题）判断主题归属。**禁止**只读 merge 标题就归类。
 
-**已知边界（committer date 的口径）**：本仓库 PR 全部走 merge commit，merge 的 committer date 即落地日，统计准确。若仓库改用 **fast-forward / rebase 合并**，被合并的提交会保留更早的 committer date，可能让「当天 ff 落地」的提交按更早日期归档（当天显示零活动而实际已发版）。遇到 ff/rebase 流程，需改用 PR 元数据的落地 SHA 日期（参照 `weekly-update-summary` 纪律 3）。本边界已记入 `doc/debt.report-agent.md`。
+**已知边界（committer date 的口径）**：本仓库 PR 全部走 merge commit，merge 的 committer date 即落地日，统计准确。若仓库改用 **fast-forward / rebase 合并**，被合并的提交会保留更早的 committer date，可能让「当天 ff 落地」的提交按更早日期归档（当天显示零活动而实际已发版）。遇到 ff/rebase 流程，需改用 PR 元数据的落地 SHA 日期（参照 `weekly-update-summary` 纪律 3）。本边界已记入 `https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.report-agent.md`。
 
 ### 纪律 4：标题固定格式，库固定名
 
@@ -277,7 +277,7 @@ cut -f1 /tmp/today_real.tsv | sort | uniq -c | sort -rn
 2. 每条脉络判定归属层级（新增/优化/修复），打上权重
 3. 新增方向逐条展开（是什么+解决什么+怎么用）
 4. 优化、修复按主题聚类，修复段做计数 + 安全/数据类点名
-5. 从 `doc/debt.*.md` 与 commit 里的「遗留/TODO/未实现」提取「计划与遗留」
+5. 从已授权项目的 CDS 工程债务与 commit 里的「遗留/TODO/未实现」提取「计划与遗留」。沿用回读的债务编号和状态，Git 历史中的旧台账作为来源证据。
 
 ### Phase 4：生成报告正文
 

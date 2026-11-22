@@ -83,7 +83,7 @@ CI 的 `LLMGW_COMPAT_TARGET` secret 保存目标 JSON，引用 `LLMGW_COMPAT_KEY
 
 Python 回归包含删除 finish_reason、tool id/name/arguments、用量和终止帧的故障探测；任何一次必须被拒绝。固定应答被改成错误内容，以及成功正文冒充“不支持参数”错误，都必须失败；拒绝必须有结构化错误码与失败信封。新 Gemini 固定工具请求包含两段中文 JSON 参数，可直接发现“普通聊天正常，流式工具参数损坏”。
 
-真实验证必须按当次预览版本、项目凭据的实际作用域与任务许可执行。项目存在网关密钥配置，不等于当前调用已获准；AI_ACCESS_KEY 也不是网关调用凭据的替代。未触达真实供应商时只可标为未验收，不能将 simulation 通过当成 provider 通过。原生 Responses 真实配对、旧 compatible 默认丢参边界、全部终止/用量细项的出口保真仍见[协议保真债务](../../doc/debt.platform.llm-gateway.protocol-fidelity.md)。后续由网关维护者用已有模型完成同一部署版本的 provider 报告后，才能对所选范围签署真实兼容结论。
+真实验证必须按当次预览版本、项目凭据的实际作用域与任务许可执行。项目存在网关密钥配置，不等于当前调用已获准；AI_ACCESS_KEY 也不是网关调用凭据的替代。未触达真实供应商时只可标为未验收，不能将 simulation 通过当成 provider 通过。原生 Responses 真实配对、旧 compatible 默认丢参边界、全部终止/用量细项的出口保真仍见[协议保真债务](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.protocol-fidelity.md)。后续由网关维护者用已有模型完成同一部署版本的 provider 报告后，才能对所选范围签署真实兼容结论。
 
 
 ## 隔离旧行为与修复后行为的证明

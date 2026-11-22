@@ -160,5 +160,5 @@ P2 和 P3 可以并行开发，但都依赖 P1 的稳定池身份。P4 必须在
 - [LLM Gateway 职责边界与调用规则](./rule.platform.llm-gateway.md)
 - [LLM Gateway 故障止血与恢复指南](./guide.platform.llm-gateway.incident-recovery.md)
 - [LLM 网关测试矩阵](./spec.platform.llm-gateway.test-matrix.md)
-- [LLM 网关与模型池债务台账](./debt.platform.llm-gateway.md)
+- [LLM 网关与模型池债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)
 - [LLM Gateway 故障隔离与恢复 · 测试环境验收报告](./report.platform.llm-gateway.resilience-acceptance.md)

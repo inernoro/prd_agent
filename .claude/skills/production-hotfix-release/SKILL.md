@@ -15,7 +15,7 @@ description: Performs a production hotfix release by merging a specific branch o
 执行任何生产写操作前必须完整阅读：
 
 - `doc/rule.platform.production-release-safety.md`：生产发布安全唯一规则 SSOT。
-- `doc/debt.platform.production-release.md`：当前尚未偿还的发布机制缺口。
+- 在 CDS 工程债务中按 `platform.production-release` 模块查当前未偿的发布机制缺口。
 
 如果规则要求的原子切换或公网表面 smoke 仍为 open，本技能必须明确风险并使用现有最安全路径，不得把容器/API 健康包装为产品发布完成。
 

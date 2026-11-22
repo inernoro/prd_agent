@@ -148,7 +148,7 @@
 
 ## 关联债务
 
-- [debt.platform.production-release.md](./debt.platform.production-release.md)：记录尚未完成的原子静态切换、发布证据账本、外部监控和命令兼容整改。
+- 在 CDS 工程债务中按 `platform.production-release` 模块查看原子静态切换、发布证据账本、外部监控和命令兼容整改的当前状态。原编号 `2026-07-12-atomic-static-release`、`2026-07-12-public-surface-smoke`、`2026-07-12-release-command-compatibility` 和 `2026-07-12-release-forensic-ledger` 可用于回查迁移来源。 [历史证据](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.production-release.md)
 
 ## 关联技能与闭环
 

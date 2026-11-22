@@ -90,13 +90,13 @@
 
 ## 本期不做
 
-模板编辑器与品牌定制、PDF/Word 导出、协作编辑与评论、用模型补字段、定时或自动发布、访问统计的深度分析。全部进 [debt.knowledge-base.md](./debt.knowledge-base.md)，等真人用过再按呼声排序。
+模板编辑器与品牌定制、PDF/Word 导出、协作编辑与评论、用模型补字段、定时或自动发布、访问统计的深度分析。全部进 [debt.knowledge-base.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md)，等真人用过再按呼声排序。
 
 熔断线：连续 8 个提交无功能净增 / 清单外的东西被接进来（尤其是模型调用）/ 碰到「明确不碰」的部分 / 改动文件数超首轮基线两倍 / 同一份方案被重写第 3 次。命中任意一条停下来找人。
 
 ## 相关
 
-- 债务台账：[debt.knowledge-base.md](./debt.knowledge-base.md)
+- 债务台账：[debt.knowledge-base.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md)
 - 约束这件事的三条规则：产物可见才算完成、等待期与最小惊讶、系统知道的别问用户。
 - 设计稿逐像素还原工程（40 块画板 + 判分流水线 + 看板）：[plan.prd-admin.recording-design-restoration.md](./plan.prd-admin.recording-design-restoration.md)
 

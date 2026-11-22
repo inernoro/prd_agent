@@ -203,7 +203,7 @@ function isWebhookDeploy(req: BranchOperationRequest): boolean {
  * 两轮之间来回的是同一个自由文本解析器，按 AGENTS.md §5.5 的熔断纪律不再加
  * 语义，改回**有限、无歧义**的判据：只认全长相等。代价是短 SHA 的手动部署不
  * 参与并入（少省一次重复拆装，结果仍正确）；要吃到并入收益就传完整 40 位
- * ——webhook 天然是全长。这条边界记在 `doc/debt.cds.performance.md`。
+ * ——webhook 天然是全长。这条边界记在 `https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.performance.md`。
  */
 export function sameCommitIdentity(a?: string | null, b?: string | null): boolean {
   const x = (a || '').trim().toLowerCase();

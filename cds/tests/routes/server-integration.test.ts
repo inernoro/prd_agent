@@ -51,6 +51,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import type { CdsConfig } from '../../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import type { ActiveHttpRequestRecord, HttpActiveRequestFilter, HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
+import { loadCdsEnvFile } from '../../src/load-env.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -966,6 +967,189 @@ describe('Server route ordering (regression)', () => {
       restore('CDS_ENV_FILE', previous.envFile);
       restore('CDS_SECRET_KEY', previous.secret);
     }
+  });
+
+  describe('environment owner password rotation', () => {
+    const owner = 'fixture-environment-owner';
+    const oldPassword = 'Synthetic-before-Q8a61yR!';
+    const newPassword = 'Synthetic-after-X4c73kD!';
+    const unrelatedPassword = 'Synthetic-stale-Z9u65pL!';
+    const member = 'fixture-local-member';
+    const memberPassword = 'Synthetic-member-V7r32gW!';
+    const nextMemberPassword = 'Synthetic-member-next-P6j17nK!';
+    const agentKey = 'cdsp_rotation_synthetic_project_key';
+    const projectId = 'rotation-fixture-project';
+    const rotatePath = '/api/auth/change-password';
+    const agentHeaders = { 'X-AI-Access-Key': agentKey };
+
+    beforeEach(() => {
+      for (const name of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, name).mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    function configure() {
+      const envFile = path.join(tmpDir, 'selected-auth.env');
+      const decoy = path.join(tmpDir, '.cds.env');
+      const content = (password: string) => [
+        '# Synthetic owner configuration',
+        `export CDS_USERNAME="${owner}"`,
+        '',
+        `CDS_PASSWORD='${password}'`,
+        '# Adjacent values retain exact bytes',
+        "export CDS_MODE='standalone'",
+        '',
+      ].join('\n');
+      fs.writeFileSync(envFile, content(oldPassword), { mode: 0o600 });
+      fs.writeFileSync(decoy, content(unrelatedPassword), { mode: 0o600 });
+      vi.stubEnv('CDS_ENV_FILE', envFile);
+      vi.stubEnv('CDS_AUTH_MODE', 'basic');
+      vi.stubEnv('CDS_USERNAME', undefined);
+      vi.stubEnv('CDS_PASSWORD', undefined);
+      vi.stubEnv('CDS_MODE', 'standalone');
+      vi.stubEnv('CDS_SSO_ENABLED', 'false');
+      loadCdsEnvFile();
+      return { envFile, decoy, content };
+    }
+
+    function createFixtureServer(authStore?: MemoryAuthStore) {
+      return startServer(buildRealServerWithEvents([], state => {
+        if (state.getProject(projectId)) return;
+        const now = new Date().toISOString();
+        state.addProject({ id: projectId, slug: projectId, name: 'Synthetic project', kind: 'git', createdAt: now, updatedAt: now });
+        state.addAgentKey(projectId, { id: 'rotation-fixture-key', label: 'synthetic', scope: 'rw',
+          hash: crypto.createHash('sha256').update(agentKey).digest('hex'), createdAt: now });
+      }, authStore));
+    }
+
+    function login(password: string, username = owner, endpoint = '/api/auth/login') {
+      return requestJson(server!, 'POST', endpoint, { username, password });
+    }
+
+    function browserCookie(loginResponse: HttpResponse, name = 'cds_token') {
+      expect(loginResponse.status).toBe(200);
+      const cookie = loginResponse.headers['set-cookie']?.find(value => value.startsWith(`${name}=`))?.split(';')[0];
+      expect(Boolean(cookie), 'expected an authenticated browser cookie').toBe(true);
+      return { Cookie: cookie! };
+    }
+
+    function rotate(before: string, after: string, headers: http.OutgoingHttpHeaders = {}) {
+      return requestJson(server!, 'POST', rotatePath, { oldPassword: before, newPassword: after }, headers);
+    }
+
+    function machineCredential(password: string) {
+      return { 'X-CDS-Token': crypto.createHash('sha256').update(`cds:${owner}:${password}`).digest('hex') };
+    }
+
+    function checkUnmodified(filename: string, expected: string) {
+      expect(fs.readFileSync(filename, 'utf8') === expected, 'configuration bytes were preserved').toBe(true);
+    }
+
+    function errorCode(response: HttpResponse): unknown {
+      try { return JSON.parse(response.body).code; } catch { return undefined; }
+    }
+
+    it('updates only the authoritative password and invalidates prior Basic authentication immediately and after restart', async () => {
+      const { envFile, decoy, content } = configure();
+      const authStore = new MemoryAuthStore();
+      server = await createFixtureServer(authStore);
+      const oldBrowser = browserCookie(await login(oldPassword));
+      const oldLegacyLogin = browserCookie(await login(oldPassword, owner, '/api/login'));
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      const localUser = await requestJson(server, 'POST', '/api/auth/users', { username: member, password: memberPassword }, oldBrowser);
+      expect(localUser.status).toBe(201);
+      const memberBrowser = browserCookie(await login(memberPassword, member), 'cds_gh_session');
+
+      expect((await rotate(oldPassword, newPassword, oldBrowser)).status).toBe(200);
+      const updated = fs.readFileSync(envFile, 'utf8');
+      const passwordAssignment = /^\s*(?:export\s+)?CDS_PASSWORD=/;
+      const withoutPassword = (text: string) => text.split('\n').filter(line => !passwordAssignment.test(line)).join('\n');
+      expect(withoutPassword(updated) === withoutPassword(content(oldPassword)), 'only the password line changed').toBe(true);
+      expect(updated.split('\n').filter(line => passwordAssignment.test(line)).length).toBe(1);
+      expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
+      checkUnmodified(decoy, content(unrelatedPassword));
+      for (const prior of [oldBrowser, oldLegacyLogin]) expect((await request(server, '/api/me', prior)).status).toBe(401);
+      for (const route of ['/api/auth/login', '/api/login']) {
+        expect((await login(oldPassword, owner, route)).status).toBe(401);
+        expect((await request(server, '/api/me', browserCookie(await login(newPassword, owner, route)))).status).toBe(200);
+      }
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(401);
+      expect((await request(server, '/api/projects', machineCredential(newPassword))).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/me', memberBrowser)).status).toBe(200);
+
+      await flushAllJsonStateStores();
+      const previousServer = server;
+      await new Promise<void>(resolve => previousServer.close(() => resolve()));
+      vi.stubEnv('CDS_PASSWORD', undefined);
+      loadCdsEnvFile();
+      server = await createFixtureServer(authStore);
+      expect((await login(oldPassword)).status).toBe(401);
+      expect((await request(server, '/api/me', browserCookie(await login(newPassword)))).status).toBe(200);
+      expect((await request(server, '/api/me', oldBrowser)).status).toBe(401);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/me', memberBrowser)).status).toBe(200);
+    });
+
+    it('rejects anonymous, scoped-key, machine, incorrect and weak attempts and preserves local-account password changes', async () => {
+      const { envFile, content } = configure();
+      server = await createFixtureServer();
+      const cookie = browserCookie(await login(oldPassword));
+      for (const headers of [{}, agentHeaders, machineCredential(oldPassword)]) {
+        expect([401, 403]).toContain((await rotate(oldPassword, newPassword, headers)).status);
+        checkUnmodified(envFile, content(oldPassword));
+      }
+      const wrongPassword = await rotate(unrelatedPassword, newPassword, cookie);
+      expect(wrongPassword.status).toBe(400);
+      expect(errorCode(wrongPassword) === 'invalid_credentials').toBe(true);
+      expect((await rotate(oldPassword, 'weak', cookie)).status).toBe(400);
+      checkUnmodified(envFile, content(oldPassword));
+
+      expect((await requestJson(server, 'POST', '/api/auth/users', {
+        username: member, password: memberPassword, isSystemOwner: true,
+      }, cookie)).status).toBe(201);
+      const local = browserCookie(await login(memberPassword, member), 'cds_gh_session');
+      expect((await request(server, '/api/auth/users', local)).status).toBe(200);
+      expect((await rotate(oldPassword, newPassword, local)).status).toBe(400);
+      expect((await rotate(memberPassword, nextMemberPassword, local)).status).toBe(200);
+      expect((await request(server, '/api/me', local)).status).toBe(401);
+      expect((await login(memberPassword, member)).status).toBe(401);
+      expect((await login(nextMemberPassword, member)).status).toBe(200);
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+      checkUnmodified(envFile, content(oldPassword));
+    });
+
+    it('leaves the externally replaced authority and active sessions intact when the file disagrees', async () => {
+      const { envFile, decoy, content } = configure();
+      server = await createFixtureServer();
+      const cookie = browserCookie(await login(oldPassword));
+      fs.writeFileSync(envFile, content(unrelatedPassword));
+      const denied = await rotate(oldPassword, newPassword, cookie);
+      expect(denied.status).toBe(409);
+      expect(errorCode(denied) === 'system_password_source_mismatch').toBe(true);
+      checkUnmodified(envFile, content(unrelatedPassword));
+      checkUnmodified(decoy, content(unrelatedPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+      expect((await login(oldPassword)).status).toBe(200);
+      expect((await login(newPassword)).status).toBe(401);
+    });
+
+    it('rejects a concurrent writer lock without taking over the selected file', async () => {
+      const { envFile, content } = configure();
+      server = await createFixtureServer();
+      const cookie = browserCookie(await login(oldPassword));
+      const lock = `${envFile}.write.lock`;
+      fs.mkdirSync(lock, { mode: 0o700 });
+      fs.writeFileSync(path.join(lock, 'owner'), `${process.pid}\nsynthetic-owner\n`, { mode: 0o600 });
+      expect([409, 423, 503]).toContain((await rotate(oldPassword, newPassword, cookie)).status);
+      expect(fs.existsSync(path.join(lock, 'owner'))).toBe(true);
+      checkUnmodified(envFile, content(oldPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+    });
   });
 
   it('real createServer gates protected routes when SSO is the only login method', async () => {

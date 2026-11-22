@@ -2195,7 +2195,7 @@ public class InMemoryModelResolver : IModelResolver
     /// 成员发送顺序——**委托给权威判据**，不在这里另写一遍。
     ///
     /// 生产侧的池解析在 2026-09-15 断流后已整体删除，这个内存实现是它留下的化石：
-    /// 150 条用例还挂在它身上，所以暂时留着（债务见 doc/debt.platform.llm-gateway.md）。
+    /// 150 条用例还挂在它身上，所以暂时留着（债务见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md）。
     /// 留着可以，但判据不许再分叉——Id 传补零下标保住原数组顺序。
     /// </summary>
     private static List<ModelGroupItem> OrderMembers(IReadOnlyList<ModelGroupItem>? members)

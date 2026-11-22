@@ -133,6 +133,6 @@ CDS 自己的四条访问路径，逐条查过源码：
 
 ## 关联
 
-- 债务台账：[debt.cds.md](./debt.cds.md)（E17 加认证、E34 备份取凭据）
+- 债务台账：[debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)（E17 加认证、E34 备份取凭据）
 - 轮换步骤：[guide.cds.infra-credential-rotation.md](./guide.cds.infra-credential-rotation.md)
 - 跨项目隔离规则记着已知的共享通道与四次穿透事故，动全局口令前必须对照它列消费方清单

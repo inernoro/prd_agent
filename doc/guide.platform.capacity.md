@@ -10,7 +10,7 @@
 
 CDS 7 月事故的主要增长来自带 SHA 标签的历史镜像；普通悬空镜像清理无法覆盖它们。10 月的源码盘点又发现快照中混有数据库和对象数据，不能把所有未挂载快照都当缓存。MAP 11 月满盘导致 Redis 持久化失败和 MongoDB 退出，清理后的剩余容量仍不足以宣布风险解除。
 
-这些历史证据分别见 [CDS 状态存储债务](./debt.cds.state-json.md)、[CDS 部署源码隔离边界](./debt.cds.md)和[正式机容量恢复边界](./debt.platform.production-release.md)。历史数值不是当前读数；没有新采集就不能外推今天的可用空间。
+这些历史证据分别见 [CDS 状态存储债务](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.state-json.md)、[CDS 部署源码隔离边界](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md)和[正式机容量恢复边界](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.production-release.md)。历史数值不是当前读数；没有新采集就不能外推今天的可用空间。
 
 ## 先确认来源，再决定能否回收
 
@@ -99,7 +99,7 @@ MAP 外发在每条新通知记入本地后读取当前配置，更新配置无�
 
 ## 上线前仍需完成
 
-负责人应先获得当前主机的只读来源盘点，确认采样和告警接收链，再评估是否启用候选探针。业务数据迁移、旧页面资源生命周期、MAP 镜像回滚锚点与跨实例共享仓库仍需要独立方案及恢复验真。参见[正式机容量债务](./debt.platform.production-release.md)；隔离演练通过不能关闭这些线上风险。
+负责人应先获得当前主机的只读来源盘点，确认采样和告警接收链，再评估是否启用候选探针。业务数据迁移、旧页面资源生命周期、MAP 镜像回滚锚点与跨实例共享仓库仍需要独立方案及恢复验真。参见[正式机容量债务](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.production-release.md)；隔离演练通过不能关闭这些线上风险。
 
 
 ## 系统所有者启用真实只读采样
