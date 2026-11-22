@@ -91,6 +91,10 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
   const screen = scene ?? (version && !version.screens.length ? standalonePrototype : undefined);
   const outer = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
+  const [entryWarning, setEntryWarning] = useState(false);
+  const peers = screen && version?.screens.filter(row => row.route === screen.route && row.viewport === screen.viewport);
+  const legacyLabel = peers && peers.length > 1 && peers[0].id !== screen?.id ? screen?.name : undefined;
+  const needsEntry = Boolean(screen?.entryActions?.length || screen?.entryReadySelector || legacyLabel);
   const [space, setSpace] = useState({ width: 0, height: 0 });
   const { width, height } = designViewports[screen?.viewport ?? 'desktop'];
   const fit = space.width ? Math.min(1, space.width / width, space.height ? space.height / height : 1) : .5;
@@ -114,6 +118,7 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
         onLayout(data.boxes.filter((box: LayoutBox) => box && typeof box.id === 'string' && box.id.length <= 100
           && typeof box.stamp === 'number' && [box.x, box.y, box.width, box.height].every(sane)));
       }
+      if (data?.type === 'cds-design-entry-result' && typeof data.reached === 'boolean') setEntryWarning(!data.reached);
       if (data?.type === 'cds-design-key' && ['ArrowLeft', 'ArrowRight', 'Escape', 'c', 'C'].includes(data.key)) onKey?.(data.key);
     };
     window.addEventListener('message', listen);
@@ -133,8 +138,14 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
   return <div className="dw-fit" ref={outer}>
     {source ? <div className="dw-frame" style={{ width: width * scale, height: height * scale, colorScheme: theme }}>
       {screenshot ? <img className="dw-frame-png" src={screenshot} alt={screen!.name + ' · V' + version!.version} /> :
-        <iframe ref={frame} title={screen!.name + ' · V' + version!.version} loading="lazy" src={source}
+        <iframe key={screen!.id} ref={frame} title={screen!.name + ' · V' + version!.version} loading="lazy" src={source}
+          onLoad={event => {
+            setEntryWarning(false);
+            if (needsEntry) event.currentTarget.contentWindow?.postMessage({ type: 'cds-design-entry',
+              actions: screen!.entryActions, ready: screen!.entryReadySelector, legacyLabel }, '*');
+          }}
           sandbox="allow-scripts" referrerPolicy="no-referrer" style={{ width, height, transform: `scale(${scale})`, colorScheme: theme }} />}
+      {needsEntry && entryWarning && !screenshot && <p className="dw-entry-warning" role="status">未自动定位状态。可在画布内切到「{screen!.name}」。</p>}
       {boxes?.map((box, index) => <span aria-hidden className="dw-difference-box" data-tone={box.tone} key={box.id + index}
         style={{ left: box.x * 100 + '%', top: box.y * 100 + '%', width: box.width * 100 + '%', height: box.height * 100 + '%' }} />)}
       {comments?.map((comment, index) => <button type="button" className="dw-pin" key={comment.id}
@@ -169,13 +180,13 @@ export function CanvasSettings({ theme, onTheme, zoom, onZoom }: { theme: Design
 type CanvasProps = {
   entry: DesignEntry; version: DesignVersion; comparing: boolean; active: boolean; full?: boolean;
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
-  commandBusy: boolean; tabs?: ReactNode; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
+  commandBusy: boolean; tabs?: ReactNode; initialScreenId?: string; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, tabs, onReview, onEscape }: CanvasProps) {
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, tabs, initialScreenId, onReview, onEscape }: CanvasProps) {
   const [theme, setTheme] = useState<DesignTheme>('light');
   const [zoom, setZoom] = useState<number | null>(null);
-  const [selected, select] = useState(version.screens[0]?.id);
+  const [selected, select] = useState(initialScreenId ?? version.screens[0]?.id);
   const [left, setLeft] = useState(entry.versions.find(row => row.version === version.version - 1)?.version ?? version.version);
   const [right, setRight] = useState<string>(String(version.version));
   const [implementationRun, setImplementationRun] = useState<string>();

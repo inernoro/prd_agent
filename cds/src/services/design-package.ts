@@ -161,8 +161,12 @@ function screen(value: unknown): DesignScreen {
     return invalidDesign('画面主题须是 light 或 dark');
   }), item => item, '主题');
   if (!themes.length) invalidDesign('每个画面至少须有一个主题');
+  const entryActions = list(input.entryActions, '原型进入操作', 6,
+    selector => planningText(selector, '原型进入控件选择器', 300), true);
   return { id: designId(input.id, '画面编号'), name, route, viewport, themes,
     impl: input.impl == null ? null : localDesignPath(input.impl),
+    ...(entryActions.length ? { entryActions } : {}),
+    ...(input.entryReadySelector === undefined ? {} : { entryReadySelector: planningText(input.entryReadySelector, '原型画面就绪选择器', 300) }),
     ...(input.readySelector === undefined ? {} : { readySelector: planningText(input.readySelector, '画面就绪选择器', 300) }) };
 }
 

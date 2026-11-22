@@ -219,6 +219,19 @@ describe('private CDS design workspace', () => {
     expect(await preview.text()).toContain('Fixture');
   });
 
+  it('preserves declarative prototype state for screens sharing a route', async () => {
+    const shape = { name: 'Fixture', route: '#workspace', viewport: 'desktop' };
+    const bytes = draft('Screen states', { screens: [
+      { ...shape, id: 'cards' }, { ...shape, id: 'list', name: 'Fixture list',
+        entryActions: ['button[data-view="list"]'], entryReadySelector: '[data-scene="list"]' },
+    ] });
+    expect((await publish('prototype-states', bytes)).status).toBe(201);
+    const result = await (await get()).json();
+    expect(result.designs[0].versions[0].screens[1]).toMatchObject({
+      id: 'list', entryActions: ['button[data-view="list"]'], entryReadySelector: '[data-scene="list"]',
+    });
+  });
+
   it('lets scoped implementation feedback travel through a revision and back to its author', async () => {
     const first = draft('Fixture V1');
     const source = 'design/fittings/feedback';

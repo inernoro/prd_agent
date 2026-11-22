@@ -9,6 +9,7 @@ import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, Design
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignFrame, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
+import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
 import { DesignRationale } from './design-workspace/DesignRationale';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, DesignMaterialView, FrameworkOverview, type FrameworkTab } from './design-workspace/DesignFramework';
@@ -17,7 +18,7 @@ import { compareDesignMaterial } from './design-workspace/design-structure';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
 
-const tabs = [['preview','预览'],['diff','对比'],['accept','做法验收'],['rationale','思路'],['spec','规范'],['log','记录']] as const;
+const tabs = [['preview','预览'],['diff','对比'],['delivery','交付'],['accept','做法验收'],['rationale','思路'],['spec','规范'],['log','记录']] as const;
 type ReviewTarget = { entryId: string; commentId: string; version: number };
 type LargeTarget = { entryId: string; version: number };
 type Filter = { kind: 'view' | 'group' | 'tag' | 'framework'; value: string };
@@ -66,6 +67,8 @@ export function DesignWorkspacePage() {
   const tab = tabs.find(([value]) => value === params.get('tab'))?.[0] ?? 'preview';
   const selectedFrameworkTab = params.get('tab') as FrameworkTab;
   const frameworkTab = ['tokens','components','skeleton','rules','history'].includes(selectedFrameworkTab) ? selectedFrameworkTab : 'tokens';
+  const screenParam = params.get('screen') ?? undefined;
+  const activeFeedback = (entry?.feedback ?? []).filter(row => row.status !== 'closed').length;
   const canvas = !!entry && (tab === 'preview' || tab === 'diff');
   const modalEntry = workspace?.designs.find(item => item.id === review?.entryId);
   const reviewComment = modalEntry?.comments.find(item => item.id === review?.commentId);
@@ -81,7 +84,7 @@ export function DesignWorkspacePage() {
     setParams(next);
     setIssue(''); setNotice('');
   };
-  const selectEntry = (id: string) => onChange({ design: id, framework: '', tab: '', version: '', view: '' });
+  const selectEntry = (id: string) => onChange({ design: id, framework: '', tab: '', version: '', view: '', screen: '' });
   const selectFramework = (id: string) => onChange({ design: '', framework: id, tab: '', version: '', view: '' });
   const openReview = (row: DesignEntry, comment: DesignComment, version: DesignVersion) => {
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -104,7 +107,7 @@ export function DesignWorkspacePage() {
     const requestId = pending.current?.key === key ? pending.current.id : crypto.randomUUID();
     pending.current = { key, id: requestId };
     try {
-      const response = await apiRequest<{ projectId: string }>(designPath(project) + '/commands',
+      const response = await apiRequest<{ projectId: string }>(designPath(project) + (type.startsWith('feedback.') ? '/feedback' : '/commands'),
         { method: 'POST', body: { type, requestId, ...fields } });
       if (response.projectId !== project) throw new Error('操作回执与当前项目不符');
       pending.current = undefined;
@@ -122,6 +125,7 @@ export function DesignWorkspacePage() {
   const summaryTabLinks = entry && version && <nav className="dw-tablinks" aria-label="稿件标签">
     {tabs.map(([value, label]) => {
       const extra = value === 'preview' && entry.comments.length ? `${entry.comments.length} 条评论`
+        : value === 'delivery' && activeFeedback ? `${activeFeedback} 条待处理`
         : value === 'log' ? `${entry.versions.length} 版`
         : value === 'accept' && entry.runs.at(-1)?.cells.some(cell => cell.status === 'failed')
           ? `${entry.runs.at(-1)!.cells.filter(cell => cell.status === 'failed').length} 不通过` : '';
@@ -174,12 +178,16 @@ export function DesignWorkspacePage() {
         </header>
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
         {canvas ? <DesignCanvas key={`${entry.id}/${version.version}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
-          comparing={tab === 'diff'} tabs={summaryTabLinks} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
+          comparing={tab === 'diff'} initialScreenId={screenParam} tabs={summaryTabLinks} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
         : <>
           <div className="dw-tabrow">{summaryTabLinks}</div>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} onPreviewStale={refreshWorkspace} />}
+          {tab === 'delivery' && permissions && <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}
+            permissions={permissions} busy={busy} command={command}
+            openScreen={(selected, screen) => onChange({ version: String(selected), tab: 'preview', screen })}
+            openVersion={selected => onChange({ version: String(selected), tab: 'delivery', screen: '' })} />}
           {tab === 'rationale' && <DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
           {tab === 'spec' && <DesignSpec version={version} baseline={pinnedFramework?.material} />}
           {tab === 'log' && <DesignHistory entry={entry}

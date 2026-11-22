@@ -7,6 +7,8 @@ export const designViewports = { desktop: { width: 1280, height: 800 }, phone: {
 export type DesignScreen = {
   id: string; name: string; route: string; viewport: 'desktop' | 'phone'; themes: DesignTheme[]; impl: string | null;
   readySelector?: string;
+  entryActions?: string[];
+  entryReadySelector?: string;
 };
 export type DesignRule = {
   id: string; rule: string; how: 'measure' | 'screenshot' | 'human'; priority: 'high' | 'normal';

@@ -1374,6 +1374,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/design\/artifacts\/[^/]+$/, '读取设计附件'],
     [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
     [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
+    [/^POST \/projects\/[^/]+\/design\/feedback$/, '保存实施反馈'],
     [/^POST \/projects\/[^/]+\/design\/shares\/[^/]+\/handoff$/, '交接稿件分享'],
     [/^GET \/projects\/[^/]+\/planning\/changes$/, '读取配置变更'],
     [/^GET \/projects\/[^/]+\/planning\/preview\/[^/]+$/, '核对预览访问'],
