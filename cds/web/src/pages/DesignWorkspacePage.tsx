@@ -47,7 +47,7 @@ export function DesignWorkspacePage() {
   const [upload, setUpload] = useState(false);
   const [assignReviewers, setAssignReviewers] = useState<string>();
   const [extract, setExtract] = useState(false);
-  const [unfreeze, setUnfreeze] = useState<{ id: string; version: number }>();
+  const [unfreezeTarget, setUnfreeze] = useState<{ id: string; version: number }>();
   const [share, setShare] = useState(false);
   const [review, setReview] = useState<ReviewTarget>();
   const [large, setLarge] = useState<LargeTarget>();
@@ -82,9 +82,18 @@ export function DesignWorkspacePage() {
   const framework = workspace?.frameworks.find(row => row.id === params.get('framework'));
   const frameworkVersion = framework?.versions.find(row => row.version === Number(params.get('version')));
   const frameworkList = params.get('view') === 'frameworks';
-  const version = entry?.versions.find(row => row.version === Number(params.get('version'))) ?? (entry ? latestDesign(entry) : undefined);
+  const versionParam = params.get('version');
+  const version = entry?.versions.find(row => row.version === Number(versionParam)) ?? (entry ? latestDesign(entry) : undefined);
   const canFreeze = permissions?.review && (!entry?.reviewers?.length || entry.reviewers.some(reviewer => reviewer.id === permissions.actorId));
   const canUnfreeze = permissions?.review && (permissions.steward || canFreeze);
+  const panel = params.get('panel');
+  const draftVisible = !requirementKey && !framework && Boolean(entry && version);
+  const requestedBaseline = Number(params.get('baseline'));
+  const linkedUnfreeze = draftVisible && canUnfreeze && panel === 'unfreeze' && entry && entry.frozen === requestedBaseline
+    ? { id: entry.id, version: requestedBaseline } : undefined;
+  const unfreeze = unfreezeTarget ?? linkedUnfreeze;
+  const showCandidates = draftVisible && permissions?.review && entry?.frozen === version?.version
+    && (extract || (panel === 'framework-candidates' && (!versionParam || Number(versionParam) === version?.version)));
   const canAssign = permissions?.write && entry && (permissions.steward || latestDesign(entry).publisher.id === permissions.actorId);
   const pinnedFramework = workspace?.frameworks.find(row => row.id === version?.framework)?.versions.find(row => row.version === version?.frameworkVersion);
   const tab = tabs.find(([value]) => value === params.get('tab'))?.[0] ?? 'preview';
@@ -123,15 +132,23 @@ export function DesignWorkspacePage() {
     setParams(next);
     setIssue(''); setNotice('');
   };
+  const dismissPanel = (name: string) => {
+    if (panel !== name) return;
+    const next = new URLSearchParams(params);
+    next.delete('panel');
+    next.delete('baseline');
+    setParams(next, { replace: true });
+  };
+  const closeUnfreeze = () => { setUnfreeze(undefined); dismissPanel('unfreeze'); };
   const setFilter = (next: Filter) => {
     onChange({ view: '', group: next.kind === 'group' ? next.value : '', tag: next.kind === 'tag' ? next.value : '',
       frameworkFilter: next.kind === 'framework' ? next.value : '', filter: next.kind === 'view' && next.value !== 'all' ? next.value : '' });
   };
   const selectEntry = (id: string) => {
     deliveryReturn.current = undefined;
-    onChange({ design: id, framework: '', tab: '', version: '', view: '', screen: '', compareFrom: '' });
+    onChange({ design: id, framework: '', tab: '', version: '', view: '', screen: '', compareFrom: '', panel: '', baseline: '' });
   };
-  const selectFramework = (id: string) => onChange({ design: '', framework: id, tab: '', version: '', view: '', compareFrom: '' });
+  const selectFramework = (id: string) => onChange({ design: '', framework: id, tab: '', version: '', view: '', compareFrom: '', panel: '', baseline: '' });
   const openReview = (row: DesignEntry, comment: DesignComment, version: DesignVersion) => {
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setReview({ entryId: row.id, commentId: comment.id, version: version.version });
@@ -273,11 +290,15 @@ export function DesignWorkspacePage() {
         <header className="dw-head dw-row">
           <h1>设计</h1>
           <select aria-label="设计项目" value={project} onChange={event => {
-            setSearch(''); onChange({ project: event.target.value, design: '', tab: '', framework: '', version: '', group: '', tag: '', frameworkFilter: '', filter: '', compareFrom: '' });
+            setSearch(''); onChange({ project: event.target.value, design: '', tab: '', framework: '', version: '', group: '', tag: '', frameworkFilter: '', filter: '', compareFrom: '', panel: '', baseline: '' });
           }}>{options.map(option => <option key={option.id} value={option.id}>{option.aliasName || option.name}</option>)}</select>
           <div className="dw-tools dw-right">
             <label className="dw-search"><Search /><input aria-label="搜索稿件" placeholder="搜稿件、标签或 PR" value={search} onChange={event => setSearch(event.target.value)} /></label>
-            <details className="ep-new"><summary className="ep-button" data-action="design-cli"><Terminal />CLI</summary><div className="dw-cli"><code>cdscli design list</code><code>cdscli design publish --dir .</code></div></details>
+            <details className="ep-new" data-design-panel="cli" open={panel === 'cli' || undefined}
+              onToggle={event => { if (!event.currentTarget.open) dismissPanel('cli'); }}>
+              <summary className="ep-button" data-action="design-cli"><Terminal />CLI</summary>
+              <div className="dw-cli"><code>cdscli design list</code><code>cdscli design publish --dir .</code></div>
+            </details>
             <button className="ep-button" type="button" onClick={() => requestAgentAccess('design-publish')}>接入 Agent</button>
             {permissions?.write && <button className="ep-button ep-button--primary" type="button" onClick={() => setUpload(true)}><Upload />发布稿件</button>}
           </div>
@@ -305,17 +326,18 @@ export function DesignWorkspacePage() {
     {modalEntry && reviewComment && reviewVersion && <DesignReviewDialog entry={modalEntry} comment={reviewComment} version={reviewVersion}
       canReview={Boolean(permissions?.review && (permissions.steward || permissions.actorId === reviewComment.author.id))}
       command={command} busy={busy} onClose={closeReview} />}
-    {extract && entry && version && workspace && <ExtractFramework key={`${entry.id}/${version.version}`} entry={entry} version={version} workspace={workspace} command={command}
-      busy={busy} issue={issue} close={() => { setIssue(''); setExtract(false); }} />}
-    {unfreeze && entry?.id === unfreeze.id && <Dialog open onOpenChange={open => { if (!open && !busy) setUnfreeze(undefined); }}>
-      <DialogContent className="dw-modal dw-surface">
+    {showCandidates && entry && version && workspace && <ExtractFramework key={`${entry.id}/${version.version}`} entry={entry} version={version} workspace={workspace} command={command}
+      busy={busy} issue={issue} close={() => { setIssue(''); setExtract(false); dismissPanel('framework-candidates'); }} />}
+    {draftVisible && canUnfreeze && unfreeze && entry?.id === unfreeze.id && entry.frozen === unfreeze.version
+      && <Dialog open onOpenChange={open => { if (!open && !busy) closeUnfreeze(); }}>
+      <DialogContent className="dw-modal dw-surface" data-design-panel="unfreeze">
         <DialogTitle>撤销 V{unfreeze.version} 定稿</DialogTitle>
         <DialogDescription>撤销后这份稿件没有实施基线，实现方会看到「未定稿」。</DialogDescription>
         <ul className="dw-consequences"><li>所有历史版本保留，可以随时重新定稿。</li><li>已有的做法验收和签收仍挂在 V{unfreeze.version} 上，可以追溯。</li><li>撤销记入稿件记录，写明谁在什么时候撤销。</li></ul>
         <footer className="dw-row">
-          <button className="ep-button" type="button" disabled={busy} onClick={() => setUnfreeze(undefined)}>取消</button>
+          <button className="ep-button" type="button" disabled={busy} onClick={closeUnfreeze}>取消</button>
           <button className="ep-button ep-button--primary" type="button" disabled={busy} onClick={async () => {
-            if (await command('design.unfreeze', { designId: unfreeze.id, version: unfreeze.version })) setUnfreeze(undefined);
+            if (await command('design.unfreeze', { designId: unfreeze.id, version: unfreeze.version })) closeUnfreeze();
           }}>确认撤销定稿</button>
         </footer>
       </DialogContent>
@@ -648,13 +670,13 @@ function ExtractFramework({ entry, version, workspace, command, busy, issue, clo
   const choice = selection?.target === target ? selection.values : {};
   const undecided = shared ? conflicts.filter(key => !choice[key]) : [];
   const adopted = keys.filter(key => !shared || !conflicts.includes(key) || choice[key] === 'adopt');
-  if (!candidates.length) return <Dialog open onOpenChange={open => { if (!open) close(); }}><DialogContent className="dw-modal dw-surface">
+  if (!candidates.length) return <Dialog open onOpenChange={open => { if (!open) close(); }}><DialogContent className="dw-modal dw-surface" data-design-panel="framework-candidates">
     <DialogTitle>没有可提取的规范</DialogTitle>
     <DialogDescription>{version.title} V{version.version} 没有附令牌、规则、组件或页面骨架。</DialogDescription>
     <p>在稿件包的 <code>spec/</code> 里加上 <code>tokens.json</code> 或 <code>rules.md</code>，下一版发布后再提取。也可以直接用 CLI 导入 Git 里的规范。</p>
     <footer><button className="ep-button" type="button" onClick={close}>知道了</button></footer>
   </DialogContent></Dialog>;
-  return <Dialog open onOpenChange={open => { if (!open && !busy) close(); }}><DialogContent className="dw-modal dw-surface">
+  return <Dialog open onOpenChange={open => { if (!open && !busy) close(); }}><DialogContent className="dw-modal dw-surface" data-design-panel="framework-candidates">
     <DialogTitle>{step === 1 ? '选择框架' : '确认采用规范'}</DialogTitle>
     <DialogDescription>第 {step} 步，共 2 步 · {version.title} V{version.version} 已自动提取 {candidates.length} 类规范</DialogDescription>
     <form onSubmit={async event => {

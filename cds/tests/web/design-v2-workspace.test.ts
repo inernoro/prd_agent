@@ -121,6 +121,18 @@ async function withLayout(markup: string, cssFiles: string[], check: (page: impo
 }
 
 describe('工程规划与设计 V2 前端回归', () => {
+  it('panel=cli 从设计库链接直接展开 CLI 说明，普通地址保持折叠', () => {
+    function cliDrawer(html: string): string {
+      return html.match(/<details\b[^>]*>\s*<summary\b[^>]*data-action="design-cli"[^>]*>[\s\S]*?<\/details>/)?.[0] ?? '';
+    }
+    const ordinary = cliDrawer(design());
+    const shared = cliDrawer(design('&panel=cli'));
+    expect(ordinary).toContain('cdscli design list');
+    expect(ordinary).not.toMatch(/^<details\b[^>]*\sopen(?:=|[\s>])/);
+    expect(shared).toContain('cdscli design list');
+    expect(shared).toMatch(/^<details\b[^>]*\sopen(?:=|[\s>])/);
+  });
+
   it('A-19 设计库将项目框架和每份稿件的绑定、落后状态一起展示', () => {
     const html = design();
     expect(text(html)).toContain('本项目框架');
