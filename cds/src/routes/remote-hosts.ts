@@ -61,10 +61,12 @@ import {
 import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
+  OPEN_DESIGN_IMAGE,
   normalizeAgentWorkspaceModelBaseUrl,
   normalizeWorkspaceTransfer,
   type WorkspaceTransferRequest,
 } from '../services/agent-workspace-session-runtime.js';
+import { OpenDesignWorkspaceVersions } from '../services/open-design-workspace-versions.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
 
@@ -104,6 +106,20 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       rootDir: process.env.CDS_AGENT_WORKSPACE_ROOT
         || path.join(path.dirname(deps.stateService.getCacheBase()), 'agent-workspaces'),
     }) : undefined);
+  const workspaceVersions = agentWorkspaceSessionRuntime
+    ? new OpenDesignWorkspaceVersions(
+        deps.stateService,
+        agentWorkspaceSessionRuntime.configuredImage ?? OPEN_DESIGN_IMAGE,
+        (image) => agentWorkspaceSessionRuntime.verifyVersion(image),
+      )
+    : null;
+  function pairedMapOrigin(projectId: string): string | null {
+    const origins = new Set(deps.stateService.getActiveCdsConnections()
+      .filter(connection => connection.projectId === projectId && connection.partnerKind === 'map')
+      .map(connection => safeOrigin(connection.partnerBaseUrl))
+      .filter((origin): origin is string => origin !== null));
+    return origins.size === 1 ? origins.values().next().value ?? null : null;
+  }
   if (agentWorkspaceSessionRuntime && typeof agentWorkspaceSessionRuntime.closeCapabilityProbes === 'function') {
     deps.registerResourceShutdown?.(() => agentWorkspaceSessionRuntime.closeCapabilityProbes());
   }
@@ -186,6 +202,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         clientUser: session.clientUser,
         clientApp: session.clientApp,
         runtime: session.runtime,
+        runtimeImage: session.runtimeImage ?? null,
         model: session.model,
         status: session.status,
         createdAt: session.createdAt,
@@ -741,6 +758,38 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
   });
 
+  router.post('/projects/:id/agent-runtime-version', async (req, res) => {
+    if (!isHumanSystemOwner(req)) {
+      res.status(403).json({ error: { code: 'scope_denied', message: 'CDS 系统所有者才能切换工作区版本' } });
+      return;
+    }
+    const project = deps.stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'CDS 项目不存在' } });
+      return;
+    }
+    const origin = pairedMapOrigin(project.id);
+    if (!workspaceVersions || !origin || project.mirror) {
+      res.status(409).json({ error: { code: 'workspace_version_unavailable', message: '当前项目没有可单独切换版本的 MAP 工作区连接' } });
+      return;
+    }
+    const { action, expectedImage, image } = req.body ?? {};
+    if (typeof expectedImage !== 'string' || (action !== 'rollback' && (action !== 'activate' || typeof image !== 'string'))) {
+      res.status(400).json({ error: { code: 'workspace_version_request_invalid', message: '请刷新项目状态并提供候选镜像摘要' } });
+      return;
+    }
+    try {
+      const change = action === 'rollback' ? { action, expectedImage } : { action, expectedImage, image };
+      res.json(await workspaceVersions.change(project.id, origin, change, () =>
+        !deps.stateService.getProject(project.id)?.mirror && pairedMapOrigin(project.id) === origin,
+      ));
+    } catch (error) {
+      const failure = sanitizeAgentWorkspaceRuntimeError(error, []);
+      const status = failure.code === 'workspace_version_image_invalid' ? 422 : failure.retryable ? 503 : 409;
+      res.status(status).json({ error: failure });
+    }
+  });
+
   router.get('/projects/:id/agent-runtime-providers', async (req, res) => {
     const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['instance:read']);
     if (!auth.ok) {
@@ -754,8 +803,10 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
+    const origin = safeOrigin(auth.partnerBaseUrl) ?? pairedMapOrigin(project.id);
+    const activeImage = origin ? workspaceVersions?.view(project.id, origin).activeImage : undefined;
     const workspaceCapability = agentWorkspaceSessionRuntime
-      ? await agentWorkspaceSessionRuntime.capability()
+      ? await agentWorkspaceSessionRuntime.capability(false, activeImage)
       : {
           available: false,
           resourcePolicyEnforcedPerSession: false,
@@ -984,6 +1035,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const hasModelApiKey = Boolean(modelApiKey);
     const resourcePolicy = normalizeAgentResourcePolicy(req.body?.resourcePolicy);
     let workspaceTransfer: WorkspaceTransferRequest | null = null;
+    let workspaceOrigin: string | null = null;
     if (runtime === 'open-design') {
       try {
         workspaceTransfer = normalizeWorkspaceTransfer(req.body?.workspaceTransfer);
@@ -1057,7 +1109,18 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         });
         return;
       }
+      workspaceOrigin = partnerOrigin;
     }
+    const continuingRun = workspaceTransfer?.continuingRun;
+    const previousImageDigest = workspaceTransfer?.previousImageDigest;
+    const admittedImage = workspaceOrigin ? workspaceVersions?.view(project.id, workspaceOrigin).activeImage : undefined;
+    const selectImage = workspaceVersions && workspaceOrigin && typeof continuingRun === 'boolean'
+      ? (mapRunId: string) => workspaceVersions.pin(project.id, workspaceOrigin, mapRunId, {
+          continuing: continuingRun,
+          admittedImage,
+          previousImageDigest,
+        })
+      : undefined;
     const runtimeSource = runtime === 'fake' ? 'fake-runtime' : `${runtime}-runtime`;
     const workerId = runtime === 'fake'
       ? `fake-worker-${req.params.id}`
@@ -1093,6 +1156,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       clientUser: typeof req.body?.clientUser === 'string' ? req.body.clientUser.slice(0, 120) : null,
       clientApp: typeof req.body?.clientApp === 'string' ? req.body.clientApp.slice(0, 120) : null,
       runtime,
+      workspaceOrigin,
       providerId: provider.id,
       workloadKind,
       isolationMode,
@@ -1251,7 +1315,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
     let workspaceCapability: Awaited<ReturnType<AgentWorkspaceSessionRuntime['capability']>> | null = null;
     try {
-      workspaceCapability = runtime === 'open-design' && agentWorkspaceSessionRuntime
+      workspaceCapability = runtime === 'open-design' && agentWorkspaceSessionRuntime && !selectImage
         ? await agentWorkspaceSessionRuntime.capability()
         : null;
     } catch {
@@ -1272,8 +1336,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const resourcePolicyEnforcedPerSession = runtime === 'open-design'
       ? Boolean(
           agentWorkspaceSessionRuntime
-          && workspaceCapability?.available
-          && workspaceCapability.resourcePolicyEnforcedPerSession
+          && (selectImage || (workspaceCapability?.available && workspaceCapability.resourcePolicyEnforcedPerSession))
           && AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
         )
       : AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION;
@@ -1312,6 +1375,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
             persistAgentSession(settledSession);
             recordAgentRequestHistory(settledSession);
           }),
+          selectImage,
         );
         if (creationWasCancelled()) {
           await finishCancelledCreation();
@@ -1319,6 +1383,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         }
         containerName = allocated.containerName;
         session.containerName = allocated.containerName;
+        session.runtimeImage = allocated.image;
         session.workspaceRoot = '/workspace';
         session.updatedAt = new Date().toISOString();
       } catch (error) {
@@ -2251,7 +2316,20 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const all = [...liveSummaries, ...history];
     const users = Array.from(new Set(all.map(x => x.clientUser).filter(Boolean))) as string[];
     const apps = Array.from(new Set(all.map(x => x.clientApp).filter(Boolean))) as string[];
-    res.json({ items, users, apps, liveCount: liveSummaries.length, historyCount: history.length });
+    const origin = pairedMapOrigin(req.params.id);
+    const version = origin ? workspaceVersions?.view(req.params.id, origin) : undefined;
+    const workspaceVersion = version ? {
+      ...version,
+      canUpdate: version.canUpdate && isHumanSystemOwner(req) && !deps.stateService.getProject(req.params.id)?.mirror,
+      drainingCount: [...cdsAgentSessions.values()].filter(session =>
+        session.routerInstanceId === agentSessionRouterInstanceId
+        && session.projectId === req.params.id
+        && session.workspaceOrigin === origin
+        && session.runtimeImage && session.runtimeImage !== version.activeImage
+        && (session.resourceCleanupPending || (session.status !== 'stopped' && session.status !== 'failed')),
+      ).length,
+    } : null;
+    res.json({ items, users, apps, liveCount: liveSummaries.length, historyCount: history.length, workspaceVersion });
   });
 
   router.get('/projects/:projectId/agent-sessions/:sessionId/logs', (req, res) => {
@@ -2899,6 +2977,8 @@ interface CdsAgentSession {
   clientUser: string | null;
   clientApp: string | null;
   runtime: string;
+  runtimeImage?: string;
+  workspaceOrigin: string | null;
   providerId: string;
   workloadKind: AgentWorkloadKind;
   isolationMode: AgentIsolationMode;
@@ -3436,6 +3516,7 @@ function toAgentRequestSummary(session: CdsAgentSession): Record<string, unknown
     clientUser: session.clientUser,
     clientApp: session.clientApp,
     runtime: session.runtime,
+    runtimeImage: session.runtimeImage ?? null,
     model: session.model,
     status: session.status,
     createdAt: session.createdAt,
@@ -3457,6 +3538,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     clientUser: session.clientUser,
     clientApp: session.clientApp,
     runtime: session.runtime,
+    runtimeImage: session.runtimeImage ?? null,
     providerId: session.providerId,
     workloadKind: session.workloadKind,
     isolation: {

@@ -16,6 +16,7 @@ import { useParams } from 'react-router-dom';
 import { ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
 
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
+import { Button } from '@/components/ui/button';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
@@ -26,6 +27,7 @@ interface AgentRequestItem {
   clientUser: string | null;
   clientApp: string | null;
   runtime: string;
+  runtimeImage?: string | null;
   model: string | null;
   status: string;
   createdAt: string;
@@ -43,6 +45,16 @@ interface AgentRequestsResp {
   apps: string[];
   liveCount: number;
   historyCount: number;
+  workspaceVersion?: {
+    origin: string;
+    activeImage: string;
+    previousImage: string | null;
+    changedAt: string | null;
+    checkingImage: string | null;
+    lastFailure: { image: string; reason: string } | null;
+    canUpdate: boolean;
+    drainingCount: number;
+  } | null;
 }
 
 interface AgentEvent {
@@ -88,6 +100,9 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
   const [fApp, setFApp] = useState('');
   const [fStatus, setFStatus] = useState('');
   const [fQ, setFQ] = useState('');
+  const [candidateImage, setCandidateImage] = useState('');
+  const [versionAction, setVersionAction] = useState<'activate' | 'rollback' | null>(null);
+  const [versionError, setVersionError] = useState<{ message: string; target: string | null } | null>(null);
   const [dataScope, setDataScope] = useState('');
   const queryScope = JSON.stringify([fUser, fApp, fStatus, fQ.trim()]);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -203,6 +218,36 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
   const items = currentData?.items ?? [];
   const sseLive = effectiveConnection === 'connected';
   const statusOptions = useMemo(() => ['', 'running', 'idle', 'stopped', 'failed'], []);
+  const version = data?.workspaceVersion;
+  const versionBusy = Boolean(versionAction || version?.checkingImage);
+  const versionErrorMessage = versionError?.target !== version?.activeImage ? versionError?.message : undefined;
+
+  async function changeVersion(action: 'activate' | 'rollback'): Promise<void> {
+    if (!version?.canUpdate || versionBusy) return;
+    const target = action === 'activate' ? candidateImage.trim() : version.previousImage;
+    setVersionAction(action);
+    setVersionError(null);
+    try {
+      await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/agent-runtime-version`, {
+        method: 'POST',
+        body: { action, expectedImage: version.activeImage, ...(action === 'activate' ? { image: target } : {}) },
+      });
+      setCandidateImage('');
+    } catch (failure) {
+      const details = failure instanceof ApiError
+        ? failure.body as { error?: { message?: unknown } } | null
+        : null;
+      setVersionError({
+        message: typeof details?.error?.message === 'string'
+          ? details.error.message
+          : failure instanceof ApiError ? failure.message : '未能确认版本切换，请查看新任务当前使用的版本。',
+        target,
+      });
+    } finally {
+      await load({ silent: true });
+      setVersionAction(null);
+    }
+  }
 
   return (
     // 2026-07-02 布局归一:本页此前游离于 AppShell 之外(无侧栏无顶栏 + 私有
@@ -233,6 +278,62 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
     >
       <Workspace fluid className="flex flex-col gap-4">
       {loading && !data && !error ? <AgentRequestsSkeleton /> : <>
+      {version && (
+        <section aria-labelledby="workspace-version-heading" className="min-w-0 rounded-lg border border-border bg-card p-4">
+          <h2 id="workspace-version-heading" className="text-sm font-semibold">OpenDesign 工作区版本</h2>
+          <p className="mt-1 break-all text-xs text-muted-foreground">{version.origin}</p>
+          <dl className="mt-3 grid gap-2 text-xs">
+            <div>
+              <dt className="text-muted-foreground">新信息传递任务使用</dt>
+              <dd className="break-all font-mono">{version.activeImage}</dd>
+            </div>
+            {version.previousImage && (
+              <div>
+                <dt className="text-muted-foreground">可回滚版本</dt>
+                <dd className="break-all font-mono">{version.previousImage}</dd>
+              </div>
+            )}
+          </dl>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {version.drainingCount} 个旧版工作区仍在运行或清理。已有版本记录的任务补答后沿用原版本。
+            {version.changedAt && ` 最近切换于 ${fmtTime(version.changedAt)}。`}
+          </p>
+          {versionBusy && (
+            <p role="status" className="mt-2 break-all text-xs text-info">
+              正在验证工作区版本{version.checkingImage ? ` ${version.checkingImage}` : ''}，新任务继续使用当前版本。
+            </p>
+          )}
+          {(versionErrorMessage || version.lastFailure) && (
+            <p role="alert" className="mt-2 text-xs text-bad">{versionErrorMessage ?? version.lastFailure?.reason}</p>
+          )}
+          {version.canUpdate && (
+            <form className="mt-3 flex flex-col items-start gap-2 sm:flex-row sm:items-end"
+              onSubmit={event => { event.preventDefault(); void changeVersion('activate'); }}>
+              <label className="flex w-full min-w-0 max-w-3xl flex-col gap-1 text-xs text-muted-foreground">
+                候选镜像的完整摘要
+                <input
+                  type="text"
+                  value={candidateImage}
+                  onChange={event => setCandidateImage(event.target.value)}
+                  placeholder="镜像仓库@sha256:…"
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={versionBusy}
+                  className="h-9 rounded-md border border-border bg-background px-2 font-mono text-xs text-foreground"
+                />
+              </label>
+              <Button size="sm" type="submit" className="shrink-0" disabled={versionBusy || !/@sha256:[a-f0-9]{64}$/.test(candidateImage.trim()) || candidateImage.trim() === version.activeImage}>
+                验证并切换
+              </Button>
+              {version.previousImage && (
+                <Button size="sm" variant="outline" className="shrink-0" type="button" disabled={versionBusy} onClick={() => void changeVersion('rollback')}>
+                  回滚新任务版本
+                </Button>
+              )}
+            </form>
+          )}
+        </section>
+      )}
       {/* 筛选条：按用户 / 按应用 / 状态 / 关键字 */}
       <div className={AGENT_REQUEST_FILTERS_CLASS} data-testid="request-filters">
         <select
@@ -353,6 +454,7 @@ function ProjectAgentRequests({ projectId }: { projectId: string }): JSX.Element
 
               {open && (
                 <div className="border-t border-border px-3 py-2.5 flex flex-col gap-2.5" data-testid="request-detail">
+                  {item.runtimeImage && <p className="break-all text-xs text-muted-foreground">工作区镜像 <code>{item.runtimeImage}</code></p>}
                   <div className="grid gap-2.5 md:grid-cols-2">
                     <div>
                       <div className="text-[0.625rem] font-semibold text-info mb-1">请求内容（messages[0]）</div>
