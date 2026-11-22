@@ -769,6 +769,77 @@ async function checkProjectReviewRegressions(browser) {
   await checkEmptyProjectEntry(browser);
 }
 
+async function checkBranchErrorLayout(browser) {
+  const shortError = '容器自动唤醒失败';
+  const longError = Array.from({ length: 6 }, (_, i) =>
+    `service-${i}: 容器 fixture-${'a'.repeat(100)} 自动唤醒失败（可能已被回收），请改用「重新部署」`,
+  ).join('；');
+  const list = resolveFixture('/api/branches');
+  const evidenceDir = process.env.CDS_BRANCH_ERROR_EVIDENCE;
+  if (evidenceDir) fs.mkdirSync(evidenceDir, { recursive: true });
+  for (const [width, theme] of [[1920, 'light'], [390, 'dark']]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' });
+    try {
+      await context.addInitScript((value) => localStorage.setItem('cds_theme', value), theme);
+      await installFixtures(context);
+      const page = await context.newPage();
+      page.on('pageerror', (error) => { throw error; });
+      let errorMessage = shortError;
+      await page.route((url) => url.pathname === '/api/branches/fixture-branch-beta/failure-diagnosis',
+        (route) => route.fulfill({ json: { failedServices: [] } }));
+      await page.route((url) => url.pathname === '/api/branches', (route) => route.fulfill({ json: {
+        ...list,
+        branches: list.branches.map((branch) => branch.id === 'fixture-branch-beta'
+          ? { ...branch, status: 'error', errorMessage }
+          : branch),
+      } }));
+      const card = page.locator('[data-branch-card-id="fixture-branch-beta"]');
+      const neighbor = page.locator('[data-branch-card-id="fixture-branch-alpha"]');
+      const openList = async () => {
+        await page.goto(`${baseUrl}/branches/${FIXTURE_PROJECT_ID}`);
+        const summary = card.getByText(errorMessage, { exact: true });
+        await summary.waitFor();
+        await page.evaluate(() => document.fonts.ready);
+        return summary;
+      };
+      await openList();
+      const shortCardHeight = await card.evaluate((el) => el.offsetHeight);
+      const shortNeighborHeight = await neighbor.evaluate((el) => el.offsetHeight);
+
+      errorMessage = longError;
+      const summary = await openList();
+      const layout = await summary.evaluate((el) => ({
+        height: el.clientHeight,
+        scrollHeight: el.scrollHeight,
+        lineHeight: parseFloat(getComputedStyle(el).lineHeight),
+        cardHeight: el.closest('article').offsetHeight,
+        nativeTooltip: Boolean(el.closest('[title]')),
+        fitsWidth: el.scrollWidth <= el.clientWidth + 1,
+      }));
+      const label = `${width}px ${theme}`;
+      assertOk(layout.height <= 2 * layout.lineHeight + 1 && layout.scrollHeight > layout.height && layout.fitsWidth,
+        `${label}: 长错误摘要应截在两行以内且无横向溢出`, layout);
+      assertOk(layout.cardHeight <= shortCardHeight + layout.lineHeight + 1
+        && await neighbor.evaluate((el) => el.offsetHeight) <= shortNeighborHeight + layout.lineHeight + 1,
+        `${label}: 长错误最多比单行摘要多占一行高度`, { shortCardHeight, shortNeighborHeight, ...layout });
+      assertOk(!layout.nativeTooltip, `${label}: 长错误原文不应生成原生悬浮提示`);
+
+      const logs = card.getByRole('button', { name: '查看 feature/beta 的部署日志' });
+      const redeploy = card.getByRole('button', { name: '重新部署 feature/beta' });
+      assertOk(await logs.isVisible() && await redeploy.isVisible(), `${label}: 异常卡操作仍可见`);
+      if (evidenceDir) await page.screenshot({ path: `${evidenceDir}/branch-error-${width}-${theme}.png` });
+      await logs.click();
+      const detail = page.getByRole('dialog', { name: '分支详情' });
+      const reason = detail.getByText(longError, { exact: true });
+      await reason.waitFor();
+      assertOk(await reason.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), `${label}: 完整原因在详情中可换行阅读`);
+      console.log(`PASS ${label}: 长错误卡高 ${shortCardHeight} → ${layout.cardHeight}px，详情可读完整原因`);
+    } finally {
+      await context.close();
+    }
+  }
+}
+
 async function main() {
   // 沙箱/CI 里 Playwright 自带的浏览器版本未必与镜像预装的一致，允许显式指定。
   const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
@@ -794,6 +865,9 @@ async function main() {
     } else if (only === 'project-inventory') {
       assertOk(OFFLINE, '项目页失败回归只在离线合成环境运行');
       await checkProjectReviewRegressions(browser);
+    } else if (only === 'branch-error-layout') {
+      assertOk(OFFLINE, '分支卡片长错误回归仅在离线合成环境运行');
+      await checkBranchErrorLayout(browser);
     } else if (only === 'instance-outage') {
       assertOk(OFFLINE, '断线回归仅在离线合成环境运行，不向实际服务注入断线');
       for (const mobile of [true, false]) for (const pinned of [true, false]) await checkInstanceOutage(browser, mobile, pinned);
@@ -801,6 +875,7 @@ async function main() {
     if (OFFLINE && !only) {
       await checkNativeDetailsVisibility(browser);
       await checkProjectReviewRegressions(browser);
+      await checkBranchErrorLayout(browser);
     }
     if (only !== 'task-schedule') {
       const probe = await browser.newPage();
