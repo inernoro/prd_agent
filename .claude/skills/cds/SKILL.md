@@ -398,6 +398,13 @@ $CLI debt stats
 
 收到「请阅读 CDS 设计接入并按规范提交」时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
 
+发布前必须按 [出稿与发布前自查](reference/design-intake.md#出稿与发布前自查) 执行，结果写进交付说明：
+- 逐画面和实施基线对比，每处差异写明有意改动还是回退；
+- 在 CDS 预览容器里自检，零报错（CSP 不允许嵌套 `data:` 页面，原型是不透明源，没有存储）；
+- 按角色和任务亲自走查。
+
+自检通过不代表稿件可用，问题要在用户发现之前由设计方找出。
+
 从 CDS「设计」页的「接入 Agent」复制设计发布口令。新工作区先用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 验证设计接入清单。缺少权限时，由智能体用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者在「项目」页右下角「授权申请」核对项目和智能体，点击「批准设计发布」。智能体领取凭据并在当前工作区重新自检。等待超时用同一命令继续领取。实施反馈和只读任务可分别申请 `feedback` 与 `read`。
 
 从已接入目录启动 `node <CDS 源码>/cds/mcp/src/server.mjs --design`，也可直接使用 CLI。不同 Agent 在稿件的「交付」标签和专用 MCP 上交换资料、实施反馈与修订回执。定稿、签收和固定版本分享由获授权成员处理。
