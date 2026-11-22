@@ -1381,6 +1381,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
     [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
     [/^POST \/projects\/[^/]+\/design\/feedback$/, '保存实施反馈'],
+    [/^POST \/projects\/[^/]+\/design\/feedback\/attachments$/, '保存实施反馈对照图'],
     [/^POST \/projects\/[^/]+\/design\/shares\/[^/]+\/handoff$/, '交接稿件分享'],
     [/^GET \/projects\/[^/]+\/planning\/changes$/, '读取配置变更'],
     [/^GET \/projects\/[^/]+\/planning\/preview\/[^/]+$/, '核对预览访问'],
@@ -1877,7 +1878,8 @@ function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnTy
     const route = '/api/projects/:projectId/design';
     const path = normalizedDesignPath(req.path);
     return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
-      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST' && path === `${route}/feedback`)
+      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST'
+        && (path === `${route}/feedback` || path === `${route}/feedback/attachments`))
       || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
   }
   const path = normalizedPlanningPath(req.path);

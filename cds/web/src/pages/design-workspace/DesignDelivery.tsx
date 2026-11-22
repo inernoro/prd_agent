@@ -1,12 +1,13 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Download, FileText, MessageSquare } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import {
-  designFeedbackCategories, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
+  designFeedbackCategories, designSlots, type DesignDeliveryFile, type DesignFeedbackAttachment, type DesignSlot, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
 } from '../../../../src/shared/design-workspace';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
 import { ReadableNotes } from './DesignMarkdown';
-import { designArtifact, designCheckRows, designDate, designPath, designSourceNames, type DesignCommand } from './design-ui';
+import { designArtifact, designCheckRows, designDate, designPath, designSourceNames, slotNames, type DesignCommand } from './design-ui';
 
 const fileNames: Record<DesignDeliveryFile['kind'], string> = {
   manifest: '稿件清单', guide: '交付说明', rationale: '设计思路', document: '设计与开发文档', framework: '框架材料',
@@ -19,8 +20,11 @@ const feedbackStates: Record<DesignFeedback['status'], string> = { open: '待回
 type FileChunk = { artifactId: string; path: string; sha256: string; offset: number; nextOffset: number | null; text: string };
 type OpenScreen = (version: number, screenId: string, from: string) => void;
 type Permissions = DesignWorkspace['permissions'];
+const threadAnchor = (id: string) => `dw-feedback-${id}`;
 
-function DeliveryFiles({ entry, version }: { entry: DesignEntry; version: DesignVersion }) {
+const kindOrder: DesignDeliveryFile['kind'][] = ['guide', 'rationale', 'document', 'prototype', 'render', 'checks', 'source', 'framework', 'manifest', 'attachment'];
+const size = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`;
+function DeliveryFiles({ entry, version, onFeedback }: { entry: DesignEntry; version: DesignVersion; onFeedback?: (path: string) => void }) {
   const delivery = version.delivery;
   const [query, setQuery] = useState('');
   const [selection, setSelection] = useState(delivery?.files.find(file => file.kind === 'guide')?.id ?? delivery?.files[0]?.id);
@@ -40,25 +44,28 @@ function DeliveryFiles({ entry, version }: { entry: DesignEntry; version: Design
     .some(value => value.toLocaleLowerCase().includes(term)));
   return <section className="dw-surface dw-delivery-card" aria-labelledby="dw-delivery-files">
     <header className="dw-delivery-heading">
-      <div><h2 id="dw-delivery-files">版本资料</h2><small>{delivery.files.length} 个文件 · V{version.version}</small></div>
-      <a className="ep-button" href={designArtifact(entry.projectId, delivery.archiveId)} download><Download />下载原包</a>
+      <div><h2 id="dw-delivery-files">版本资料</h2><small>{delivery.files.length} 个文件 · V{version.version} · 长文件分段阅读</small></div>
     </header>
     <div className="dw-delivery-browser">
       <div className="dw-delivery-filelist">
         <label>查找文件、章节<input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
         <div className="dw-delivery-files" aria-label="版本文件">
-          {files.map(file => <button type="button" key={file.id} aria-pressed={file.id === selection} onClick={() => {
-            setSelection(file.id); setHistory([0]); setRetry(0);
-          }}>
-            <FileText /><span><strong>{file.path}</strong><small>{fileNames[file.kind]}</small></span>
-          </button>)}
+          {kindOrder.filter(kind => files.some(file => file.kind === kind)).map(kind => <div className="dw-delivery-group" key={kind}>
+            <h4>{fileNames[kind]} <small>{files.filter(file => file.kind === kind).length}</small></h4>
+            {files.filter(file => file.kind === kind).map(file => <button type="button" key={file.id} aria-pressed={file.id === selection} onClick={() => {
+              setSelection(file.id); setHistory([0]); setRetry(0);
+            }}>
+              <FileText /><span><strong>{file.path}</strong><small>{size(file.size)} · <code>{file.sha256.slice(0, 8)}</code>{file.text ? '' : ' · 仅下载'}</small></span>
+            </button>)}
+          </div>)}
           {!files.length && <p className="dw-muted">没有匹配文件，试试文件名或章节名称。</p>}
         </div>
       </div>
       {selected && <div className="dw-delivery-document">
         <header className="dw-delivery-heading">
           <div><h3>{selected.path}</h3><small>{fileNames[selected.kind]} · {(selected.size / 1024).toFixed(1)} KiB</small></div>
-          <a className="ep-button" href={designArtifact(entry.projectId, selected.id) + '?download=true'} download={selected.path.split('/').at(-1)}><Download />原文件</a>
+          <span className="dw-row">{onFeedback && <button className="ep-button" type="button" onClick={() => onFeedback(selected.path)}><MessageSquare />对这个文件提反馈</button>}
+          <a className="ep-button" href={designArtifact(entry.projectId, selected.id) + '?download=true'} download={selected.path.split('/').at(-1)}><Download />原文件</a></span>
         </header>
         {selected.headings?.length ? <details className="dw-delivery-outline">
           <summary>章节目录 · {selected.headings.length} 项</summary>
@@ -122,8 +129,76 @@ function DeliveryChecks({ version, openScreen }: { version: DesignVersion; openS
   </section>;
 }
 
-function FeedbackThread({ row, entry, permissions, busy, command, openScreen, openVersion }: {
-  row: DesignFeedback; entry: DesignEntry; permissions: Permissions; busy: boolean; command: DesignCommand;
+function FeedbackAttachmentForm({ entry, row, viewedVersion, submit, busy }: {
+  entry: DesignEntry; row: DesignFeedback; viewedVersion: number; busy: boolean;
+  submit: (fields: { title: string; image: string; version: number; screenId?: string; slot?: DesignSlot }) => Promise<boolean>;
+}) {
+  const [version, setVersion] = useState(viewedVersion);
+  const [screenId, setScreenId] = useState(viewedVersion === row.version ? row.screenId : undefined);
+  const screens = entry.versions.find(item => item.version === version)?.screens ?? [];
+  const screen = screens.find(item => item.id === screenId);
+  const slots = designSlots.filter(slot => screen?.themes.some(theme => slot === screen.viewport + '-' + theme));
+  const [issue, setIssue] = useState('');
+  const [reading, setReading] = useState(false);
+  return <details className="dw-delivery-resolution"><summary>添加对照图</summary>
+    <form className="dw-delivery-form" onSubmit={async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const inputs = new FormData(form);
+      const file = inputs.get('image');
+      if (!(file instanceof File) || file.type !== 'image/png' || file.size === 0 || file.size > 1.5 * 1024 * 1024) {
+        setIssue('请选择 1.5 MiB 以内的 PNG 截图');
+        return;
+      }
+      setReading(true);
+      setIssue('');
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        const slot = slots.find(value => value === inputs.get('slot'));
+        if (await submit({ title: String(inputs.get('title')), image: dataUrl, version, screenId, slot })) form.reset();
+      } catch {
+        setIssue('读取截图失败，请重新选择');
+      } finally {
+        setReading(false);
+      }
+    }}>
+      <div className="dw-delivery-fields">
+        <label>证据版本<select value={version} onChange={event => {
+          const next = Number(event.target.value);
+          setVersion(next);
+          setScreenId(next === row.version ? row.screenId : undefined);
+        }}>{[...entry.versions].reverse().map(item => <option key={item.version} value={item.version}>V{item.version}</option>)}</select></label>
+        <label>证据画面<select value={screenId ?? ''} onChange={event => setScreenId(event.target.value || undefined)}>
+          <option value="">{version === row.version && row.screenId ? '使用反馈画面' : '整版'}</option>
+          {screens.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}
+        </select></label>
+        {!!slots.length && <label>视口与主题<select name="slot" key={version + '/' + screenId}>
+          <option value="">不指定</option>
+          {slots.map(slot => <option value={slot} key={slot}>{slotNames[slot]}</option>)}
+        </select></label>}
+      </div>
+      <label>图片说明<input name="title" required maxLength={180} /></label>
+      <label>对照图<input name="image" type="file" accept="image/png" required /></label>
+      {issue && <p role="alert">{issue}</p>}
+      <button className="ep-button" type="submit" disabled={busy || reading}>保存私有对照图</button>
+    </form>
+  </details>;
+}
+
+function attachmentCaption(entry: DesignEntry, thread: DesignFeedback, shot: DesignFeedbackAttachment) {
+  const revision = shot.version ?? thread.version;
+  const screenId = shot.screenId ?? (revision === thread.version ? thread.screenId : undefined);
+  const screen = entry.versions.find(item => item.version === revision)?.screens.find(item => item.id === screenId);
+  return [shot.title, 'V' + revision, screen?.name, shot.slot && slotNames[shot.slot]].filter(Boolean).join(' · ');
+}
+
+function FeedbackThread({ row, entry, viewedVersion, permissions, busy, command, openScreen, openVersion }: {
+  row: DesignFeedback; entry: DesignEntry; viewedVersion: number; permissions: Permissions; busy: boolean; command: DesignCommand;
   openScreen: OpenScreen; openVersion: (version: number) => void;
 }) {
   const revisions = entry.versions.filter(version => version.version >= row.version &&
@@ -141,7 +216,7 @@ function FeedbackThread({ row, entry, permissions, busy, command, openScreen, op
     if (await command(type, { designId: entry.id, feedbackId: row.id, body: String(data.get('body')),
       ...(revision ? { revision } : {}), ...(type === 'feedback.resolve' ? { decision: row.status === 'closed' ? 'reopen' : 'close' } : {}) })) form.reset();
   }
-  return <details className="dw-delivery-thread" open={row.status !== 'closed' || undefined}>
+  return <details id={threadAnchor(row.id)} className="dw-delivery-thread" open={row.status !== 'closed' || undefined}>
     <summary><strong>{row.title}</strong><small>{feedbackNames[row.category]} · {feedbackStates[row.status]}</small></summary>
     <div className="dw-delivery-actions">
       <small>{row.author.label} · {designDate(row.createdAt)}</small>
@@ -149,8 +224,20 @@ function FeedbackThread({ row, entry, permissions, busy, command, openScreen, op
       {row.screenId && <button id={`delivery-feedback-${row.id}`} className="ep-link" type="button"
         onClick={() => openScreen(row.version, row.screenId!, `delivery-feedback-${row.id}`)}>定位画面</button>}
     </div>
+    {row.filePath && <p className="dw-feedback-path">交付文件 <code>{row.filePath}</code></p>}
     <p>{row.body}</p>
     {row.evidence.length > 0 && <ul>{row.evidence.map((evidence, index) => <li key={index}>{evidence}</li>)}</ul>}
+    {!!row.attachments?.length && <details className="dw-feedback-figures">
+      <summary>查看对照图 ({row.attachments.length})</summary>
+      <div>{row.attachments.map(shot => <figure key={shot.id}>
+        <a href={designArtifact(entry.projectId, shot.id)} target="_blank" rel="noreferrer">
+          <img loading="lazy" src={designArtifact(entry.projectId, shot.id)} alt={shot.title} />
+        </a>
+        <figcaption>{attachmentCaption(entry, row, shot)}</figcaption>
+      </figure>)}</div>
+    </details>}
+    {permissions.feedback && <FeedbackAttachmentForm entry={entry} row={row} viewedVersion={viewedVersion} busy={busy} submit={fields =>
+      command('feedback.attach', { designId: entry.id, feedbackId: row.id, ...fields })} />}
     {history.length > 0 && <ol className="dw-delivery-replies">
       {history.map((item, index) => <li key={index}>
         <small>{item.label} · {item.author.label} · {designDate(item.at)}</small>
@@ -182,18 +269,41 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
   const threads = [...(entry.feedback ?? [])].reverse();
   const delivery = version.delivery;
   const pendingFeedback = threads.filter(thread => thread.status !== 'closed').length;
+  const [filePath, setFilePath] = useState<string>();
+  const composer = useRef<HTMLDetailsElement>(null);
+  const titleInput = useRef<HTMLInputElement>(null);
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash.startsWith('#dw-feedback-')) return;
+    const target = document.getElementById(hash.slice(1));
+    if (!(target instanceof HTMLDetailsElement)) return;
+    target.open = true;
+    target.scrollIntoView({ block: 'start' });
+  }, [entry.id, hash]);
+  const composeForFile = (path: string) => {
+    if (!composer.current || !titleInput.current) return;
+    const prior = filePath ? ('关于 ' + filePath).slice(0, 180) : '';
+    setFilePath(path);
+    if (!titleInput.current.value || titleInput.current.value === prior) titleInput.current.value = ('关于 ' + path).slice(0, 180);
+    composer.current.open = true;
+    composer.current.scrollIntoView({ block: 'start' });
+    titleInput.current.focus({ preventScroll: true });
+  };
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
     const screenId = data.get('screenId');
     if (await command('feedback.create', { designId: entry.id, version: version.version, category: data.get('category'),
-      title: data.get('title'), body: data.get('body'), ...(screenId ? { screenId } : {}),
-      evidence: String(data.get('evidence') ?? '').split(/\r?\n/).map(value => value.trim()).filter(Boolean) })) form.reset();
+      title: data.get('title'), body: data.get('body'), ...(screenId ? { screenId } : {}), ...(filePath ? { filePath } : {}),
+      evidence: String(data.get('evidence') ?? '').split(/\r?\n/).map(value => value.trim()).filter(Boolean) })) {
+      form.reset();
+      setFilePath(undefined);
+    }
   }
   return <div className="dw-delivery-panel">
     <section className="dw-surface dw-delivery-card dw-delivery-version">
-      <div><header className="dw-delivery-heading"><h2>V{version.version} 交付摘要</h2>
+      <div><header className="dw-delivery-heading"><h2>V{version.version} 交付摘要{entry.frozen !== undefined && <span className="dw-baseline">{entry.frozen === version.version ? '实施基线' : `实施基线 V${entry.frozen}`}</span>}</h2>
         <a className="ep-link" href="#dw-delivery-feedback" onClick={event => {
           event.preventDefault();
           const heading = document.getElementById('dw-delivery-feedback');
@@ -212,14 +322,21 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
         {delivery?.frameworkDraft && <small>框架草案 {delivery.frameworkDraft}</small>}
         {delivery?.source && <small>可重建源码 {delivery.source}</small>}
       </div>
+      {delivery && <div className="dw-delivery-facts">
+        <span><strong>{delivery.files.length}</strong><small>文件</small></span>
+        <span><strong>{delivery.warnings.length}</strong><small>警告</small></span>
+        <span><strong>{pendingFeedback}</strong><small>待处理反馈</small></span>
+        <span><code>{version.sha256.slice(0, 12)}</code><small>归档摘要</small></span>
+        <a className="ep-button ep-button--primary" href={designArtifact(entry.projectId, delivery.archiveId)} download><Download />下载原包</a>
+      </div>}
       {delivery?.warnings.length ? <ul className="dw-delivery-warnings">{delivery.warnings.map(message => <li key={message}>{message}</li>)}</ul> : null}
     </section>
     <DeliveryChecks version={version} openScreen={openScreen} />
-    <DeliveryFiles entry={entry} version={version} />
+    <DeliveryFiles entry={entry} version={version} onFeedback={permissions.feedback ? composeForFile : undefined} />
     <section className="dw-surface dw-delivery-card" aria-labelledby="dw-delivery-feedback">
       <header className="dw-delivery-heading"><div><h2 id="dw-delivery-feedback" tabIndex={-1}>实施反馈</h2>
         <small>{pendingFeedback} 条待处理 · 跨版本保留</small></div><MessageSquare /></header>
-      {permissions.feedback && <details><summary>登记实施反馈</summary>
+      {permissions.feedback && <details ref={composer}><summary>登记实施反馈</summary>
         <form className="dw-delivery-form" onSubmit={event => void create(event)}>
           <div className="dw-delivery-fields">
             <label>反馈分类<select name="category" defaultValue="gap">{designFeedbackCategories.map(key =>
@@ -227,13 +344,15 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
             <label>相关画面<select name="screenId" defaultValue=""><option value="">整份 V{version.version} 稿件</option>
               {version.screens.map(screen => <option key={screen.id} value={screen.id}>{screen.name}</option>)}</select></label>
           </div>
-          <label>标题<input name="title" required maxLength={180} /></label>
+          {filePath && <p className="dw-feedback-path">V{version.version} 交付文件 <code>{filePath}</code>{' '}
+            <button className="ep-link" type="button" onClick={() => setFilePath(undefined)}>取消关联</button></p>}
+          <label>标题<input ref={titleInput} name="title" required maxLength={180} /></label>
           <label>问题与建议<textarea name="body" required rows={4} maxLength={4000} /></label>
           <label>证据或代码位置 <small>可选，每行一条，最多八条</small><textarea name="evidence" rows={2} maxLength={8000} /></label>
           <button className="ep-button ep-button--primary" type="submit" disabled={busy}>提交 V{version.version} 反馈</button>
         </form>
       </details>}
-      {threads.length ? threads.map(row => <FeedbackThread key={row.id} row={row} entry={entry} permissions={permissions}
+      {threads.length ? threads.map(row => <FeedbackThread key={row.id} row={row} entry={entry} viewedVersion={version.version} permissions={permissions}
         busy={busy} command={command} openScreen={openScreen} openVersion={openVersion} />)
         : <p className="dw-muted">还没有实施反馈。</p>}
     </section>

@@ -11,8 +11,7 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  min-height: 0;
-  height: max(22rem, calc(100dvh - 266px));
+  min-height: max(22rem, calc(100dvh - 266px));
 }
 
 .ep-advancement-lane {
@@ -62,9 +61,6 @@
   margin: 0;
   padding: 0 2px 2px 0;
   list-style: none;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
-  scrollbar-width: thin;
 }
 
 .ep-advancement-empty { padding: .48rem .28rem; color: var(--ep-muted); font-size: .8rem; }
@@ -157,8 +153,7 @@ a.ep-decision-source { color: color-mix(in srgb, var(--ep-info) 77%, var(--ep-fg
 
 @media (width <= 700px) {
   .ep-advancement { margin-block-start: 8px; }
-  .ep-advancement-board { height: auto; grid-template-columns: minmax(0, 1fr); }
-  .ep-advancement-cards { flex: 0 1 auto; overflow: visible; }
+  .ep-advancement-board { min-height: 0; grid-template-columns: minmax(0, 1fr); }
   .ep-advancement-actions .ep-button { min-height: 2.35rem; }
 }
 

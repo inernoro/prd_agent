@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import { crc32 } from '../utils/zip.js';
-import { designSlots, designViewports, type DesignDeliveryFile, type DesignMaterial, type DesignRule, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
+import { designSlots, designViewports, type DesignDeliveryFile, type DesignFrameworkCharter, type DesignMaterial, type DesignRule, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 
 const mib = 1024 * 1024;
@@ -127,15 +127,17 @@ export async function readArchivedDesignFile(bytes: Buffer, filename: string): P
   return (await zipEntries(bytes, filename)).get(filename);
 }
 
-export async function readDesignFrameworkSource(bytes: Buffer): Promise<DesignMaterial> {
+export async function readDesignFrameworkSource(bytes: Buffer): Promise<{ material: DesignMaterial; charter?: DesignFrameworkCharter }> {
   const files = await zipEntries(bytes);
   const text = (name: string) => {
     const content = files.get(name);
     return content?.length ? decoder.decode(content).replace(/\r\n/g, '\n').trim() : undefined;
   };
   const colors = text('tokens.json');
-  return { tokens: colors ? designRecord(JSON.parse(colors), 'Git 框架令牌') : undefined,
-    rules: text('rules.md'), components: text('components.md'), skeleton: text('skeleton.html') };
+  const charter = text('charter.json') ?? text('spec/charter.json');
+  return { material: { tokens: colors ? designRecord(JSON.parse(colors), 'Git 框架令牌') : undefined,
+    rules: text('rules.md'), components: text('components.md'), skeleton: text('skeleton.html') },
+    ...(charter ? { charter: parseFrameworkCharter(JSON.parse(charter)) } : {}) };
 }
 
 function list<T>(value: unknown, label: string, max: number, parse: (item: unknown) => T, optional = false): T[] {
@@ -147,6 +149,39 @@ function list<T>(value: unknown, label: string, max: number, parse: (item: unkno
 function unique<T>(rows: T[], id: (row: T) => string, name: string) {
   if (new Set(rows.map(id)).size !== rows.length) invalidDesign(`${name} 编号重复`);
   return rows;
+}
+
+export function parseFrameworkCharter(value: unknown): DesignFrameworkCharter {
+  const charter = designRecord(value, '框架初衷与范围', ['status', 'intent', 'problems', 'nonGoals', 'scope', 'owner', 'example', 'ruleSources', 'moduleDiffs']);
+  const status = charter.status;
+  if (status !== 'draft' && status !== 'adopted' && status !== 'deprecated') return invalidDesign('框架状态须为草案、已采用或已停用');
+  const scope = designRecord(charter.scope, '适用范围', ['system', 'modules']);
+  const textList = (value: unknown, label: string) => [...new Set(list(value, label, 24, item => planningText(item, label, 400)))];
+  const result: DesignFrameworkCharter = {
+    status, intent: planningText(charter.intent, '设计初衷', 400),
+    problems: textList(charter.problems, '要解决的问题'), nonGoals: textList(charter.nonGoals, '不解决什么'),
+    scope: { system: planningText(scope.system, '适用系统', 120), modules: textList(scope.modules, '适用模块') },
+    owner: planningText(charter.owner, '维护人', 120),
+  };
+  if (charter.example !== undefined) {
+    const example = designRecord(charter.example, '示意稿', ['designId', 'version']);
+    const version = example.version;
+    if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1) return invalidDesign('示意稿必须指定稿件版本');
+    result.example = { designId: designId(example.designId, '示意稿编号'), version };
+  }
+  if (charter.ruleSources !== undefined) result.ruleSources = list(charter.ruleSources, '规则来源', 60, item => {
+    const row = designRecord(item, '规则来源', ['rule', 'from', 'evidence']);
+    return { rule: planningText(row.rule, '规则', 120), from: planningText(row.from, '来源', 240),
+      evidence: planningText(row.evidence, '依据', 600) };
+  });
+  if (charter.moduleDiffs !== undefined) result.moduleDiffs = list(charter.moduleDiffs, '模块差异', 32, item => {
+    const row = designRecord(item, '模块差异', ['module', 'diff', 'reason', 'decision']);
+    const decision = row.decision;
+    if (decision !== 'module' && decision !== 'framework' && decision !== 'pending') return invalidDesign('模块差异须说明处理结果');
+    return { module: planningText(row.module, '模块', 120), diff: planningText(row.diff, '差异', 600),
+      reason: planningText(row.reason, '差异原因', 600), decision };
+  });
+  return result;
 }
 
 function screen(value: unknown): DesignScreen {
@@ -240,7 +275,7 @@ function describeDesignDelivery(entries: Map<string, Buffer>, root: string, inpu
     if (rendered.has(path)) return 'render';
     if (/^(?:交付说明|handoff|delivery)\.md$/i.test(path)) return 'guide';
     if (docs.has(path)) return 'document';
-    if (within(path, base(frameworkDraft)) || within(path, 'spec')) return 'framework';
+    if (within(path, base(frameworkDraft)) || within(path, 'spec') || path === 'charter.json') return 'framework';
     if (within(path, base(source))) return 'source';
     return 'attachment';
   }
@@ -305,6 +340,7 @@ export async function readDesignPackage(bytes: Buffer) {
   const acceptance = unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项');
   const spec: DesignMaterial = { tokens: json('spec/tokens.json'), rules: utf8('spec/rules.md', 64 * 1024),
     components: utf8('spec/components.md', 64 * 1024), skeleton: utf8('spec/skeleton.html', 64 * 1024) };
+  const charter = json('spec/charter.json') ?? json('charter.json');
   const framework = input.framework == null ? undefined : designId(input.framework, '框架编号');
   const frameworkVersion = input.frameworkVersion;
   if (frameworkVersion !== undefined && (!framework || typeof frameworkVersion !== 'number'
@@ -317,6 +353,7 @@ export async function readDesignPackage(bytes: Buffer) {
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
     sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
     prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery,
+    frameworkCharter: charter && parseFrameworkCharter(charter),
     checks: json(input.checks ?? 'checks/result.json'),
     framework, frameworkVersion,
     group: input.group === undefined ? undefined : planningText(input.group, '稿件分组', 80),

@@ -16,6 +16,38 @@ export type DesignRule = {
   probe?: { type: 'horizontal-overflow'; tolerance?: number };
 };
 export type DesignMaterial = { tokens?: Record<string, unknown>; rules?: string; components?: string; skeleton?: string };
+export const designMaterialKeys = ['tokens', 'rules', 'components', 'skeleton'] as const;
+export type DesignMaterialKey = typeof designMaterialKeys[number];
+export type FrameworkResolutions = Partial<Record<DesignMaterialKey, 'keep' | 'adopt'>>;
+
+export type DesignFrameworkCharter = {
+  status: 'adopted' | 'draft' | 'deprecated';
+  intent: string;
+  problems: string[];
+  nonGoals: string[];
+  scope: { system: string; modules: string[] };
+  owner: string;
+  example?: { designId: string; version: number };
+  ruleSources?: Array<{ rule: string; from: string; evidence: string }>;
+  moduleDiffs?: Array<{ module: string; diff: string; reason: string; decision: 'module' | 'framework' | 'pending' }>;
+};
+
+function comparableMaterial(value: unknown) {
+  if (typeof value === 'string') return value.replace(/\r\n/g, '\n').trim();
+  return JSON.stringify(value, (_key, item: unknown) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    return Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right)));
+  });
+}
+
+export function frameworkMaterialCandidates(proposed: DesignMaterial, existing?: DesignMaterial) {
+  return designMaterialKeys.flatMap(key => {
+    if (proposed[key] === undefined) return [];
+    const state = existing?.[key] === undefined ? 'new'
+      : comparableMaterial(proposed[key]) === comparableMaterial(existing[key]) ? 'same' : 'conflict';
+    return [{ key, state }];
+  });
+}
 export type DesignNestedScroll = { status: 'passed' }
   | { status: 'failed' | 'unverified'; element: string; width: number; contentWidth: number };
 export type DesignFrameworkMeasurement = {
@@ -53,6 +85,10 @@ export type DesignDelivery = {
 export const designFeedbackCategories = ['reuse', 'implementation', 'gap', 'constraint', 'acceptance'] as const;
 export type DesignFeedbackCategory = typeof designFeedbackCategories[number];
 type DesignFeedbackAuthor = { id: string; label: string };
+export type DesignFeedbackAttachment = {
+  id: string; title: string; size: number; sha256: string; author: DesignFeedbackAuthor; at: string;
+  version?: number; screenId?: string; slot?: DesignSlot;
+};
 export type DesignFeedback = {
   id: string;
   version: number;
@@ -64,6 +100,8 @@ export type DesignFeedback = {
   author: DesignFeedbackAuthor;
   createdAt: string;
   status: 'open' | 'responded' | 'closed';
+  filePath?: string;
+  attachments?: DesignFeedbackAttachment[];
   replies: Array<{ body: string; revision?: number; author: DesignFeedbackAuthor; at: string }>;
   decisions: Array<{ decision: 'close' | 'reopen'; body: string; author: DesignFeedbackAuthor; at: string }>;
 };
@@ -73,6 +111,7 @@ export type DesignVersion = {
   sourcePath?: string; sourceVerification?: 'git' | 'declared' | 'private-upload'; prototypeSha256?: string;
   publisher: { id: string; label: string }; note?: string; screens: DesignScreen[]; acceptance: DesignRule[];
   rationale: string; spec: DesignMaterial; checks?: Record<string, unknown>; framework?: string; frameworkVersion?: number;
+  frameworkCharter?: DesignFrameworkCharter;
   frameworkCheck?: DesignFrameworkCheck;
   group?: string; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
@@ -135,8 +174,20 @@ export type FrameworkRevision = {
   version: number; title: string; sourceCommit: string; at: string; by: string;
   sourcePath?: string; sourceVerification?: 'git' | 'declared';
   from?: { designId: string; version: number }; material: DesignMaterial; note?: string;
+  charter?: DesignFrameworkCharter;
+  resolutions?: FrameworkResolutions;
 };
 export type DesignFramework = { id: string; projectId: string; versions: FrameworkRevision[] };
+
+export function frameworkInUse(id: string, revision: FrameworkRevision | undefined, designs: Iterable<DesignEntry>) {
+  if (!revision) return false;
+  if (revision.charter?.status === 'adopted') return true;
+  for (const design of designs) {
+    if (design.versions.at(-1)?.framework === id
+      || design.versions.find(version => version.version === design.frozen)?.framework === id) return true;
+  }
+  return false;
+}
 /** Project members explicitly release one accepted requirement to the design workspace. */
 export type DesignRequirement = {
   designKey: string; planId: string; planVersion: number; proposalId: string;

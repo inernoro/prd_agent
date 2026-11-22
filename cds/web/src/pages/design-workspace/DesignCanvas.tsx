@@ -181,16 +181,17 @@ export function CanvasSettings({ theme, onTheme, zoom, onZoom }: { theme: Design
 type CanvasProps = {
   entry: DesignEntry; version: DesignVersion; comparing: boolean; active: boolean; full?: boolean;
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
-  commandBusy: boolean; initialScreenId?: string; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
+  commandBusy: boolean; initialScreenId?: string; initialComparisonVersion?: number; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
   const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
   const [zoom, setZoom] = useState<number | null>(null);
   const [selected, select] = useState(initialScreenId ?? version.screens[0]?.id);
-  const [left, setLeft] = useState(entry.versions.find(row => row.version === version.version - 1)?.version ?? version.version);
+  const [left, setLeft] = useState(() => entry.versions.find(row => row.version === initialComparisonVersion && row.version !== version.version)?.version
+    ?? entry.versions.find(row => row.version === version.version - 1)?.version ?? version.version);
   const [right, setRight] = useState<string>(String(version.version));
   const [implementationRun, setImplementationRun] = useState<string>();
   const [mode, setMode] = useState<CompareMode>('side');

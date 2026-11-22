@@ -62,7 +62,7 @@ function withZipComment(bytes: Buffer) {
   return archive;
 }
 
-function png(width: number, height: number) {
+function png(width: number, height: number, pixels = Buffer.alloc((width * 3 + 1) * height)) {
   const chunk = (name: string, data: Buffer) => {
     const bytes = Buffer.alloc(12 + data.length);
     bytes.writeUInt32BE(data.length);
@@ -77,7 +77,7 @@ function png(width: number, height: number) {
   header[8] = 8;
   header[9] = 2;
   return Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header),
-    chunk('IDAT', deflateSync(Buffer.alloc((width * 3 + 1) * height))), chunk('IEND', Buffer.alloc(0))]);
+    chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
 }
 
 describe('private CDS design workspace', () => {
@@ -426,6 +426,84 @@ describe('private CDS design workspace', () => {
       decisions: [expect.objectContaining({ decision: 'close', body: 'Confirmed on V2.' })],
     })]);
     expect(row.versions.map((version: { version: number }) => version.version)).toEqual([1, 2]);
+  });
+
+  it('stores private feedback screenshots, preserves the thread and reuses the original attachment receipt', async () => {
+    const created = await publish('attachment-design', draft('Private attachment fixture'), {
+      sourceMode: 'private', intent: 'create', designKey: 'fixture/feedback-attachment', sourcePath: 'design/feedback-attachment-fixture',
+    });
+    expect(created.status).toBe(201);
+    const { result: { designId } } = await created.json();
+    const send = (actor: string, requestId: string, type: string, fields: object) =>
+      fetch(`${base}${projectId}/design/feedback${type === 'feedback.attach' ? '/attachments' : ''}`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-fixture-user': actor },
+        body: JSON.stringify({ type, requestId, designId, ...fields }) });
+    const report = await send('implementer', 'attachment-report', 'feedback.create', {
+      version: 1, screenId: 'members', category: 'acceptance', title: 'Compare the fixture screen',
+      body: 'Review the expected layout against the synthetic implementation.', evidence: ['Existing fixture evidence'],
+    });
+    expect(report.status).toBe(201);
+    const { result: { id: feedbackId } } = await report.json();
+    expect((await send('designer', 'attachment-reply', 'feedback.reply', { feedbackId, body: 'Ready to compare.' })).status).toBe(201);
+    const { designs } = await (await get()).json();
+    const { attachments: initialAttachments, ...before } = designs[0].feedback[0];
+    expect(initialAttachments ?? []).toEqual([]);
+    expect(before.status).toBe('responded');
+
+    const width = 256, height = 128;
+    const rowLength = width * 3 + 1;
+    const pixels = Buffer.alloc(rowLength * height);
+    for (let offset = 0; offset < pixels.length; offset += 32) {
+      createHash('sha256').update(String(offset)).digest().copy(pixels, offset);
+    }
+    for (let offset = 0; offset < pixels.length; offset += rowLength) pixels[offset] = 0;
+    const capture = png(width, height, pixels);
+    const image = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
+    expect(Buffer.byteLength(image(capture))).toBeGreaterThan(48 * 1024);
+    const details = { feedbackId, title: 'Implementation screenshot', image: image(capture) };
+    const attach = (actor: string, requestId: string, fields = details) => send(actor, requestId, 'feedback.attach', fields);
+    const accepted = await attach('implementer', 'attach-implementation');
+    expect(accepted.status).toBe(201);
+    const receipt = await accepted.json();
+    const { artifactId } = receipt.result;
+    expect(receipt).toMatchObject({ projectId, reused: false,
+      result: { type: 'feedback.attach', designId, id: feedbackId, artifactId: expect.any(String) } });
+    const replay = await attach('implementer', 'attach-implementation');
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual({ ...receipt, reused: true });
+    const comparison = png(48, 36);
+    expect((await attach('implementer', 'attach-implementation', { ...details, image: image(comparison) })).status).toBe(409);
+    expect((await attach('read-designer', 'attach-read-only')).status).toBe(403);
+    expect((await attach('implementer', 'attach-malformed', { ...details, image: image(Buffer.from('Not a PNG fixture')) })).status).toBe(400);
+    const fromPublisher = await attach('designer', 'attach-design', { ...details, title: 'Design screenshot', image: image(comparison) });
+    expect(fromPublisher.status).toBe(201);
+    const { result: { id: threadId, artifactId: designArtifactId } } = await fromPublisher.json();
+    expect(threadId).toBe(feedbackId);
+    expect(designArtifactId).not.toBe(artifactId);
+
+    base = await openApi(openWorkspace());
+    const workspace = await get('', 'read-designer');
+    expect(workspace.status).toBe(200);
+    const { designs: reloaded } = await workspace.json();
+    const { attachments, ...retained } = reloaded[0].feedback[0];
+    expect(retained).toEqual(before);
+    expect(attachments).toMatchObject([
+      { id: artifactId, title: details.title, size: capture.length,
+        sha256: createHash('sha256').update(capture).digest('hex'), author: { id: 'implementer' } },
+      { id: designArtifactId, title: 'Design screenshot', size: comparison.length,
+        sha256: createHash('sha256').update(comparison).digest('hex'), author: { id: 'designer' } },
+    ]);
+    expect(JSON.stringify(attachments)).not.toContain('data:image/png;base64,');
+    for (const [id, bytes] of [[artifactId, capture], [designArtifactId, comparison]] as const) {
+      const path = `/artifacts/${id}`;
+      const artifact = await get(path, 'read-designer');
+      expect(artifact.status).toBe(200);
+      expect(artifact.headers.get('content-type')).toContain('image/png');
+      expect(artifact.headers.get('cache-control')).toBe('private, no-store');
+      expect(Buffer.from(await artifact.arrayBuffer())).toEqual(bytes);
+      expect((await get(path, 'author', otherProjectId)).status).toBe(404);
+      expect((await get(path, 'outside')).status).toBe(404);
+    }
   });
 
   it('lists an intake with Git-verified sources, stable identity and revision rights for the actual caller', async () => {

@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type {
   DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
-  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignImplementation, DesignIntake, DesignRequirement, DesignSharePreparation,
+  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignSharePreparation, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designSlots } from '../shared/design-workspace.js';
+import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, frameworkInUse, frameworkMaterialCandidates } from '../shared/design-workspace.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
 import {
   designCommit, designDigest, designId, designPngDimensions, designRecord, designSourcePath, invalidDesign, localDesignPath,
-  readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
+  parseFrameworkCharter, readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
 } from './design-package.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revision-store.js';
@@ -19,7 +19,7 @@ export type DesignActor = PlanningActor & { steward?: boolean; gitPublishOnly?: 
 type Receipt = {
   projectId: string; reused: boolean;
   result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
-    state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string };
+    state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string; artifactId?: string };
 };
 type RequestReceipt = { key: string; fingerprint: string; result: Receipt['result'] };
 export type DesignWorkspaceCommit = {
@@ -218,13 +218,19 @@ function image(value: unknown): ProjectRevisionAsset {
   return { id: randomUUID(), mime: 'image/png', base64: data.toString('base64') };
 }
 
-const materialKeys = ['tokens', 'rules', 'components', 'skeleton'] as const;
 function parseMaterial(value: unknown): DesignMaterial {
-  const input = designRecord(value, '框架材料', [...materialKeys]);
+  const input = designRecord(value, '框架材料', [...designMaterialKeys]);
   const tokens = input.tokens === undefined ? undefined : designRecord(input.tokens, '设计令牌');
   if (tokens && JSON.stringify(tokens).length > 120_000) invalidDesign('设计令牌超过字数限制');
   return { tokens, rules: optionalText(input.rules, '规则', 64 * 1024),
     components: optionalText(input.components, '组件', 64 * 1024), skeleton: optionalText(input.skeleton, '骨架', 64 * 1024) };
+}
+
+function draftCharter(projectId: string, version: DesignVersion): DesignFrameworkCharter | undefined {
+  if (version.frameworkCharter) return version.frameworkCharter;
+  const intent = version.rationale.match(/^#{2,6}[ \t]+这(?:一)?版(?:要)?解决什么[^\r\n]*\r?\n(?:[ \t]*\r?\n)*[ \t]*(?:>[ \t]*)?([^\r\n#][^\r\n]*)/mu)?.[1]?.trim();
+  return intent ? { status: 'draft', intent: intent.slice(0, 400), problems: [], nonGoals: [],
+    scope: { system: projectId, modules: version.group ? [version.group] : [] }, owner: version.publisher.label } : undefined;
 }
 
 function stableJson(value: unknown): string {
@@ -505,6 +511,7 @@ export class DesignWorkspaceService {
           prototypeSha256: byPath.get(prototype)!.sha256, delivery,
           sourcePath, sourceVerification: privateUpload ? 'private-upload' : source ? 'git' : 'declared',
           createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
+          ...(loaded.frameworkCharter ? { frameworkCharter: loaded.frameworkCharter } : {}),
           ...(frameworkCheck ? { frameworkCheck } : {}),
           ...(loaded.renders.length ? { renders } : {}) };
         return { result: { type: 'package', designId: id, version: version.version },
@@ -532,8 +539,8 @@ export class DesignWorkspaceService {
           changes: { brief: { designKey, value: { ...requirement, replies: [...(requirement.replies ?? []), reply] } } } };
       }, writeFeedback);
     }
-    if (type !== 'feedback.create' && type !== 'feedback.reply' && type !== 'feedback.resolve') {
-      return invalidDesign('请选择提交反馈、回复或确认处理');
+    if (type !== 'feedback.create' && type !== 'feedback.reply' && type !== 'feedback.resolve' && type !== 'feedback.attach') {
+      return invalidDesign('请选择提交反馈、回复、附图或确认处理');
     }
     const requestId = designId(input.requestId, '请求编号');
     const designIdValue = designId(input.designId, '稿件编号');
@@ -541,14 +548,17 @@ export class DesignWorkspaceService {
     return this.mutate(projectId, actor, requestId, input, ({ state, now }) => {
       const entry = state.designs.get(designIdValue) ?? missing('该稿件不存在');
       if (type === 'feedback.create') {
-        designRecord(input, '提交设计反馈', [...common, 'version', 'category', 'title', 'body', 'screenId', 'evidence']);
+        designRecord(input, '提交设计反馈', [...common, 'version', 'category', 'title', 'body', 'screenId', 'filePath', 'evidence']);
         const version = versionOf(entry, input.version);
         const category = designFeedbackCategories.find(kind => kind === input.category) ?? invalidDesign('请选择有效的反馈分类');
         const screenId = input.screenId === undefined ? undefined : designId(input.screenId, '反馈画面');
         if (screenId && !version.screens.some(screen => screen.id === screenId)) invalidDesign('所选版本没有这个画面');
+        const filePath = input.filePath === undefined ? undefined : designSourcePath(input.filePath);
+        if (filePath && !version.delivery?.files.some(file => file.path === filePath)) invalidDesign('所选版本没有这个交付文件');
         if (input.evidence !== undefined && (!Array.isArray(input.evidence) || input.evidence.length > 8)) invalidDesign('证据最多八条');
         const evidence = (input.evidence as unknown[] | undefined)?.map(row => planningText(row, '反馈证据', 1_000)) ?? [];
         const feedback: DesignFeedback = { id: `FDB-${randomUUID()}`, version: version.version, screenId, category, evidence,
+          ...(filePath ? { filePath } : {}),
           title: planningText(input.title, '反馈标题', 180), body: planningText(input.body, '反馈正文', 4_000),
           author: identity(actor), createdAt: now, status: 'open', replies: [], decisions: [] };
         return { result: { type, designId: entry.id, id: feedback.id, version: version.version },
@@ -556,6 +566,29 @@ export class DesignWorkspaceService {
       }
       const feedbackId = designId(input.feedbackId, '反馈编号');
       const thread = entry.feedback?.find(item => item.id === feedbackId) ?? missing('该反馈不存在');
+      if (type === 'feedback.attach') {
+        designRecord(input, '添加反馈附件', [...common, 'feedbackId', 'title', 'image', 'version', 'screenId', 'slot']);
+        const attachments = thread.attachments ?? [];
+        const title = planningText(input.title, '附件说明', 180);
+        const version = versionOf(entry, input.version ?? thread.version);
+        const screenId = input.screenId === undefined
+          ? version.version === thread.version ? thread.screenId : undefined
+          : designId(input.screenId, '证据画面');
+        const screen = version.screens.find(row => row.id === screenId);
+        if (screenId && !screen) invalidDesign('所选版本没有这个画面');
+        const slot = input.slot === undefined ? undefined : designSlots.find(value => value === input.slot) ?? invalidDesign('不支持的证据视口和主题');
+        if (slot && (!screen || !screen.themes.some(theme => slot === `${screen.viewport}-${theme}`))) invalidDesign('证据视口和主题不适用于所选画面');
+        const asset = image(input.image);
+        const content = Buffer.from(asset.base64!, 'base64');
+        const sha256 = designDigest(content);
+        const existing = attachments.find(row => row.sha256 === sha256 && row.title === title && (row.version ?? thread.version) === version.version
+          && (row.screenId ?? ((row.version ?? thread.version) === thread.version ? thread.screenId : undefined)) === screenId && row.slot === slot);
+        const result = { type, designId: entry.id, id: feedbackId, version: version.version, artifactId: existing?.id ?? asset.id };
+        if (existing) return { result, changes: {} };
+        if (attachments.length >= 32) conflict('此反馈已有 32 张证据图');
+        return { result, changes: { assets: [asset], design: { id: entry.id, feedback: { ...thread, attachments: [...attachments,
+          { id: asset.id, title, size: content.length, sha256, author: identity(actor), at: now, version: version.version, screenId, slot }] } } } };
+      }
       const body = planningText(input.body, '处理说明', 4_000);
       const feedback = { ...thread };
       if (type === 'feedback.reply') {
@@ -907,50 +940,75 @@ export class DesignWorkspaceService {
     let from: { designId: string; version: number } | undefined;
     let sourceCommit: string;
     let derivedTitle: string | undefined;
+    let charter = current?.charter;
+    const resolutions: FrameworkResolutions = {};
     if (type === 'framework.import') {
-      designRecord(input, '框架导入', ['type', 'requestId', 'frameworkId', 'expectedVersion', 'sourceCommit', 'sourcePath', 'title', 'material', 'note']);
+      designRecord(input, '框架导入', ['type', 'requestId', 'frameworkId', 'expectedVersion', 'sourceCommit', 'sourcePath', 'title', 'material', 'charter', 'note']);
       material = parseMaterial(input.material);
       sourceCommit = designCommit(input.sourceCommit);
+      if (input.charter !== undefined) charter = parseFrameworkCharter(input.charter);
     } else {
-      designRecord(input, '提取框架', ['type', 'requestId', 'frameworkId', 'expectedVersion', 'sourceCommit', 'sourcePath', 'title', 'designId', 'version', 'keys', 'note']);
+      designRecord(input, '提取框架', ['type', 'requestId', 'frameworkId', 'expectedVersion', 'sourceCommit', 'sourcePath', 'title', 'designId', 'version', 'keys', 'resolutions', 'note']);
       const designIdValue = designId(input.designId, '稿件编号');
       const design = state.designs.get(designIdValue) ?? missing('该稿件不存在');
       const version = versionOf(design, input.version);
       if (design.frozen !== version.version) conflict('只能提取定稿版本');
       sourceCommit = input.sourceCommit === undefined ? version.sourceCommit : designCommit(input.sourceCommit);
       derivedTitle = `${version.title.slice(0, 140)}框架`;
-      const keys = input.keys ?? materialKeys;
-      if (!Array.isArray(keys) || !keys.length || keys.some(key => !materialKeys.some(item => item === key))) return invalidDesign('请选择要提取的令牌、组件、规则或骨架');
-      material = { ...current?.material };
-      let changed = false;
-      for (const key of materialKeys) {
-        const proposed = version.spec[key], existing = material[key];
-        const comparable = (value: unknown) => typeof value === 'string' ? value.replace(/\r\n/g, '\n').trim() : stableJson(value);
-        if (!keys.includes(key) || proposed === undefined || comparable(proposed) === comparable(existing)) continue;
-        Object.assign(material, { [key]: version.spec[key] });
-        changed = true;
+      const keys = input.keys ?? designMaterialKeys;
+      if (!Array.isArray(keys) || !keys.length || keys.some(key => !designMaterialKeys.some(item => item === key))) return invalidDesign('请选择要提取的令牌、组件、规则或骨架');
+      const candidates = frameworkMaterialCandidates(version.spec, current?.material);
+      const conflicts = candidates.filter(row => row.state === 'conflict').map(row => row.key);
+      const choices = input.resolutions === undefined ? {} : designRecord(input.resolutions, '候选冲突选择', conflicts);
+      for (const key of conflicts) {
+        const choice = choices[key];
+        if (choice === undefined) continue;
+        if (choice !== 'keep' && choice !== 'adopt') return invalidDesign('请选择保留现有或采用候选');
+        if (choice === 'adopt' && !keys.includes(key)) return invalidDesign('选择采用的冲突项必须包含在本次材料里');
+        resolutions[key] = choice;
       }
-      if (!changed) conflict('勾选的条目已存在，或稿件没有这些材料');
+      if (frameworkInUse(id, current, state.designs.values()) && conflicts.some(key => !resolutions[key])) {
+        conflict('框架正在使用，请逐项确认保留现有或采用候选');
+      }
+      material = { ...current?.material };
+      const selected = candidates.filter(({ key, state }) => state !== 'same' && keys.includes(key) && resolutions[key] !== 'keep');
+      if (!selected.length) conflict('勾选的条目已存在，或稿件没有这些材料');
+      for (const { key } of selected) {
+        Object.assign(material, { [key]: version.spec[key] });
+      }
       from = { designId: designIdValue, version: version.version };
+      if (!current) charter = draftCharter(projectId, version);
     }
     if (previous?.versions.some(version => version.sourceCommit === sourceCommit
       && (input.sourceCommit !== undefined || stableJson(version.material) === stableJson(material)))) {
       conflict('该框架已经导入过此提交');
     }
-    if (!materialKeys.some(key => material[key] !== undefined)) invalidDesign('框架至少需要一种设计材料');
+    if (!designMaterialKeys.some(key => material[key] !== undefined)) invalidDesign('框架至少需要一种设计材料');
     const version = (current?.version ?? 0) + 1;
     const title = planningText(input.title === undefined ? current?.title ?? derivedTitle : input.title, '框架名称', 150);
     const archive = sourcePath && await this.deps.sourcePackage?.(projectId, sourceCommit, sourcePath);
     if (archive) {
-      let reference: DesignMaterial;
+      let reference: Awaited<ReturnType<typeof readDesignFrameworkSource>>;
       try { reference = await readDesignFrameworkSource(archive); }
       catch { return conflict('项目 Git 中的目录缺少可读取的框架材料'); }
       const normalize = (spec: DesignMaterial) => stableJson(Object.fromEntries(Object.entries(spec).map(([key, value]) =>
         [key, typeof value === 'string' ? value.replace(/\r\n/g, '\n').trim() : value])));
-      if (normalize(reference) !== normalize(material)) conflict('框架材料与项目 Git 中的提交和目录不一致');
+      if (normalize(reference.material) !== normalize(material)) conflict('框架材料与项目 Git 中的提交和目录不一致');
+      if (type === 'framework.import') {
+        if (input.charter !== undefined && stableJson(reference.charter) !== stableJson(charter)) {
+          conflict('框架初衷与范围和项目 Git 中的文件不一致');
+        }
+        if (reference.charter) charter = reference.charter;
+      }
+    }
+    const exampleRef = charter?.example;
+    if (exampleRef) {
+      const example = state.designs.get(exampleRef.designId);
+      if (!example?.versions.some(row => row.version === exampleRef.version)) missing('当前项目没有该示意稿版本');
     }
     const revision = { version, title, sourceCommit, sourcePath, sourceVerification: archive ? 'git' as const : 'declared' as const,
-      at: now, by: actor.id, from, material, note };
+      at: now, by: actor.id, from, material, note, ...(charter ? { charter } : {}),
+      ...(Object.keys(resolutions).length ? { resolutions } : {}) };
     return { result: { type, frameworkId: id, version },
       changes: { framework: { id, projectId, versions: [...(previous?.versions ?? []), revision] } } };
   }

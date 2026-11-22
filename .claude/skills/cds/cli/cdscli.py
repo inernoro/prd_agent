@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.11"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.13"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4552,6 +4552,28 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 返回的回复回执与当前设计需求不符")
         ok(receipt)
 
+    if action == "attach-evidence":
+        file_path = Path(args.file)
+        try:
+            with file_path.open("rb") as stream:
+                content = stream.read(1536 * 1024 + 1)
+        except OSError:
+            die("无法读取对照图")
+        if file_path.suffix.lower() != ".png" or len(content) > 1536 * 1024 or not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            die("请提供 1.5 MiB 以内的 PNG 对照图")
+        command = {"type": "feedback.attach", "designId": args.id, "feedbackId": args.feedback_id, "title": args.title,
+                   "image": "data:image/png;base64," + base64.b64encode(content).decode("ascii")}
+        for field, value in (("version", args.version), ("screenId", args.screen), ("slot", args.slot)):
+            if value is not None:
+                command[field] = value
+        request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        receipt = request("POST", "/feedback/attachments", {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if (result.get("type") != command["type"] or result.get("designId") != args.id or result.get("id") != args.feedback_id
+                or not result.get("artifactId") or (args.version is not None and result.get("version") != args.version)):
+            die("CDS 返回的对照图回执与当前反馈不符")
+        ok(receipt)
+
     if action == "publish":
         if args.zip:
             try:
@@ -4605,11 +4627,14 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             ok({"projectId": project, "items": frameworks})
         if action == "import":
             document = read_input(args.file)
-            if not isinstance(document, dict) or not set(document) <= {"tokens", "rules", "components", "skeleton"}:
+            if not isinstance(document, dict) or not set(document) <= {"tokens", "rules", "components", "skeleton", "charter"}:
                 die("框架材料需包含令牌、规则、组件或骨架")
-            ok(send({"type": "framework.import", "frameworkId": args.id, "title": args.title,
-                     "expectedVersion": args.expected_version, "sourceCommit": args.source_commit,
-                     **({"sourcePath": args.source_path} if args.source_path else {}), "material": document}))
+            command = {"type": "framework.import", "frameworkId": args.id, "title": args.title,
+                       "expectedVersion": args.expected_version, "sourceCommit": args.source_commit,
+                       **({"sourcePath": args.source_path} if args.source_path else {})}
+            if "charter" in document:
+                command["charter"] = document.pop("charter")
+            ok(send({**command, "material": document}))
         entry = next((item for item in frameworks if item["id"] == args.id), None)
         if not entry:
             die("当前项目没有该框架")
@@ -4621,8 +4646,11 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         framework = next((item for item in frameworks if item["id"] == args.framework), None)
         if not framework or not framework["versions"]:
             die("当前项目没有该框架版本")
-        latest = framework["versions"][-1]
-        material = latest["material"]
+        revision = framework["versions"][-1] if args.framework_version is None else next(
+            (item for item in framework["versions"] if item["version"] == args.framework_version), None)
+        if revision is None:
+            die("当前项目没有指定的框架版本")
+        material = revision["material"]
         directory = Path(args.dir).resolve()
         if directory.exists():
             die("请为脚手架指定一个新目录")
@@ -4635,24 +4663,24 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         (directory / "dist").mkdir()
         (directory / "checks").mkdir()
         screen = {"id": "home", "name": args.title, "route": "#home", "viewport": "desktop", "themes": ["light", "dark"], "impl": None}
-        manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": latest["version"],
+        manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": revision["version"],
                     "screens": [screen], "acceptance": rules}
-        (directory / "design.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+        (directory / "design.json").write_bytes((json.dumps(manifest, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
         checks = {"total": len(rules), "passed": 0, "items": [{**rule, "status": "unverified"} for rule in rules]}
-        (directory / "checks" / "result.json").write_text(json.dumps(checks, indent=2, ensure_ascii=False) + "\n")
-        (directory / "思路.md").write_text("## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n")
+        (directory / "checks" / "result.json").write_bytes((json.dumps(checks, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+        (directory / "思路.md").write_bytes("## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n".encode("utf-8"))
         for field, name in (("rules", "rules.md"), ("components", "components.md"), ("skeleton", "skeleton.html")):
             if material.get(field):
-                (spec / name).write_text(material[field])
+                (spec / name).write_bytes(material[field].encode("utf-8"))
         if material.get("tokens"):
-            (spec / "tokens.json").write_text(json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n")
+            (spec / "tokens.json").write_bytes((json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
         template = material.get("skeleton") or (
             '<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
             '<style>:root{color-scheme:light dark}body{margin:32px;font:15px system-ui}h1{font-size:20px}</style>'
             '<main id="home"><h1>{{title}}</h1></main></html>'
         )
-        (directory / "dist" / "index.html").write_text(template.replace("{{title}}", html.escape(args.title)))
-        ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": latest["version"]})
+        (directory / "dist" / "index.html").write_bytes(template.replace("{{title}}", html.escape(args.title)).encode("utf-8"))
+        ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": revision["version"]})
 
     design = next((item for item in designs if item["id"] == args.id), None)
     if not design:
@@ -4722,17 +4750,38 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         command.update(type="acceptance.record", runId=args.run, commit=args.commit, cells=cells)
     elif action == "extract":
         framework = next((item for item in frameworks if item["id"] == args.into), None)
-        former = framework["versions"][-1]["material"] if framework and framework["versions"] else {}
-        version = versions.get(args.version or design.get("frozen"))
-        if not version:
+        current = framework["versions"][-1] if framework and framework["versions"] else None
+        former = current["material"] if current else {}
+        source_version = design.get("frozen") if args.version is None else args.version
+        version = versions.get(source_version)
+        if not version or version["version"] != design.get("frozen"):
             die("请选择要提取的定稿版本")
-        proposed = [key for key, value in version["spec"].items() if former.get(key) != value]
+
+        def comparable(value: Any) -> Any:
+            return value.replace("\r\n", "\n").strip() if isinstance(value, str) else value
+
+        proposed = [key for key, value in version["spec"].items()
+                    if value is not None and comparable(former.get(key)) != comparable(value)]
+        conflicts = [key for key in proposed if former.get(key) is not None]
+        expected_version = current["version"] if current else 0
         if not args.apply:
-            ok({"projectId": project, "candidates": proposed, "existing": [key for key in version["spec"] if key not in proposed]})
-        if not args.source_commit:
-            die("确认提取时请提供写入框架材料的完整 Git 提交")
+            ok({"projectId": project, "candidates": proposed, "conflicts": conflicts,
+                "sourceVersion": version["version"], "expectedVersion": expected_version,
+                "existing": [key for key in version["spec"] if key not in proposed]})
+        resolutions = {}
+        for value in args.resolve:
+            key, _, choice = value.partition("=")
+            if key not in conflicts or choice not in ("keep", "adopt") or key in resolutions:
+                die("请按每个冲突项指定 --resolve <类别>=keep 或 --resolve <类别>=adopt")
+            resolutions[key] = choice
+        if (resolutions or args.expected_version is not None) and (args.version is None or args.expected_version is None):
+            die("请按候选预览填写 --version 和 --expected-version")
         command.update(type="framework.extract", frameworkId=args.into, version=version["version"], keys=args.apply,
-                       sourceCommit=args.source_commit, expectedVersion=framework["versions"][-1]["version"] if framework else 0)
+                       expectedVersion=expected_version if args.expected_version is None else args.expected_version)
+        if resolutions:
+            command["resolutions"] = resolutions
+        if args.source_commit:
+            command["sourceCommit"] = args.source_commit
         if args.source_path:
             command["sourcePath"] = args.source_path
         if args.title:
@@ -4745,7 +4794,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
 def _register_design_parser(sub: Any) -> None:
     design = sub.add_parser("design", help="设计稿件、版本、评论与做法验收").add_subparsers(dest="design_action", required=True)
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("intake", "brief-reply", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
@@ -4760,6 +4809,14 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--request-id")
                 parser.add_argument("--expected-version", type=int, required=True, help="接入清单中的 planVersion")
                 parser.add_argument("--body", required=True, help="对该已交接需求的回复")
+            if action == "attach-evidence":
+                parser.add_argument("--request-id")
+                parser.add_argument("--feedback-id", required=True)
+                parser.add_argument("--title", required=True)
+                parser.add_argument("--file", required=True, help="可附到设计反馈的私有 PNG")
+                parser.add_argument("--version", type=int, help="证据所对应的稿件版本")
+                parser.add_argument("--screen", help="证据所对应的画面编号")
+                parser.add_argument("--slot", choices=("desktop-light", "desktop-dark", "phone-light", "phone-dark"))
             if action == "publish":
                 parser.add_argument("id", nargs="?")
                 source = parser.add_mutually_exclusive_group(required=True)
@@ -4797,11 +4854,14 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("version", type=int)
             if action == "scaffold":
                 parser.add_argument("--framework", required=True)
+                parser.add_argument("--framework-version", type=int, help="固定要复用的框架版本")
                 parser.add_argument("--dir", required=True)
                 parser.add_argument("--title", required=True)
             if action == "extract":
                 parser.add_argument("--into", required=True)
                 parser.add_argument("--apply", choices=("tokens", "rules", "components", "skeleton"), action="append")
+                parser.add_argument("--expected-version", type=int, help="候选预览返回的目标框架版本")
+                parser.add_argument("--resolve", action="append", default=[], help="逐项选择，例如 rules=keep 或 tokens=adopt")
                 parser.add_argument("--source-commit")
                 parser.add_argument("--source-path")
                 parser.add_argument("--title")

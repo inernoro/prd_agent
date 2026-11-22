@@ -7,7 +7,7 @@ import { PlanningError, planningId, rejectPlanning } from '../services/engineeri
 import type { DesignReviewer } from '../shared/design-workspace.js';
 
 const route = '/projects/:projectId/design';
-const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|feedback|reviewers|intake|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
+const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|feedback(?:\/attachments)?|reviewers|intake|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
 export function normalizedDesignPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0];
   if (/^(?:\/_cds)?\/api\/auth\/design\/notices\/?$/i.test(path)) return '/api/auth/design/notices';
@@ -61,6 +61,12 @@ export function createDesignWorkspaceRouter(deps: {
     }));
   router.post(`${route}/feedback`, authorized, express.json({ limit: '48kb' }),
     handle(async (req, res, projectId, actor) => {
+      const receipt = await deps.service.feedback(projectId, actor, req.body);
+      res.status(receipt.reused ? 200 : 201).json(receipt);
+    }));
+  router.post(`${route}/feedback/attachments`, authorized, express.json({ limit: '2.1mb', inflate: false }),
+    handle(async (req, res, projectId, actor) => {
+      if (req.body?.type !== 'feedback.attach') return invalidDesign('请提交反馈对照图');
       const receipt = await deps.service.feedback(projectId, actor, req.body);
       res.status(receipt.reused ? 200 : 201).json(receipt);
     }));

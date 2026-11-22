@@ -50,4 +50,14 @@
 2. 设计方读同一线程，调用 `feedback.reply` 回复。需要改稿时按原稿 ID 和最新基线发布，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
 3. 原反馈者回读新版和同一线程，按证据验证。用 `feedback.resolve` 的 `close` 或 `reopen` 加说明保留复核结果。项目管理者也可处理。发布、反馈、实际做法验收和人类签收各自按项目权限执行。重试沿用原请求编号。
 
-HTTP 与 MCP 共用项目级设计接口。反馈写入走 `POST /api/projects/:projectId/design/feedback`。固定版本资料在工作区回读中，原文可以用 `GET /api/projects/:projectId/design/artifacts/:artifactId?view=text` 分段读取。
+针对交付文件提反馈时，从该版本的 `delivery.files` 读取完整 `path`，用 `feedback.create` 的 `filePath` 关联。服务端核对文件属于所选稿件版本。
+
+需要提交对照图时，用 `feedback.attach` 提供原稿 ID、反馈 ID、图片说明、请求编号与工作区内 `imagePath`。CLI 用 `cdscli design attach-evidence <designId> --feedback-id <feedbackId> --title <说明> --file <图片.png>`。要标明截图来源时，加 `--version`、`--screen`、`--slot`，对应 MCP 的 `version`、`screenId`、`slot`。回读 `attachments` 核对回执、版本和截图。已授权成员可查看交付页或读取 `GET /api/projects/:projectId/design/artifacts/:artifactId`。每张 PNG 上限 1.5 MiB。逐规则的验收结论仍由做法验收记录。
+
+正文走 `POST /api/projects/:projectId/design/feedback`，PNG 走 `POST /api/projects/:projectId/design/feedback/attachments`。固定版本资料可用 `GET /api/projects/:projectId/design/artifacts/:artifactId?view=text` 分段读取。
+
+## 固定框架版本
+
+使用 `cdscli design scaffold --framework <框架ID> --framework-version <版本> --dir <新目录> --title <稿件名>` 复用该版规范。框架初衷可随稿件的 `spec/charter.json` 一并提交，或在框架导入时提供同样的 `charter` 对象。字段包括 `status`、`intent`、`problems`、`nonGoals`、`scope` 和 `owner`。可附示意稿 `example`、规则来源 `ruleSources` 和模块差异 `moduleDiffs`。
+
+从实施基线提取时，先用 `cdscli design extract <稿件ID> --into <框架ID>` 查看候选。采用时把预览里的 `sourceVersion` 传给 `--version`，把 `expectedVersion` 传给 `--expected-version`，并指定要采用的 `--apply` 项。目标框架在用时，用 `--resolve rules=keep` 或 `--resolve tokens=adopt` 逐项确认。
