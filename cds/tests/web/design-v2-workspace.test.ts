@@ -184,11 +184,13 @@ describe('工程规划与设计 V2 前端回归', () => {
   });
 
   it('A-03 稿件页头宽屏同行，窄屏依次显示标题、标识和动作', async () => {
-    const markup = design(`&design=${bound.id}&version=2&tab=preview`);
+    const longTitle = 'CDS 工程规划与设计工作台';
+    const longDraft: DesignEntry = { ...bound, versions: bound.versions.map(version => ({ ...version, title: longTitle })) };
+    const markup = design(`&design=${bound.id}&version=2&tab=preview`, { ...workspace, designs: [longDraft] });
     await withLayout(markup, ['web/src/pages/engineering-planning/planning.css', 'web/src/pages/design-workspace/design.css'], async page => {
       const header = page.locator('.dw-head--draft');
       const controls = [
-        [header.getByText(boundTitle, { exact: true }), '标题'],
+        [header.getByRole('heading', { name: longTitle, exact: true }), '标题'],
         [header.locator('.dw-draft-marks .dw-status'), '稿件状态'],
         [header.getByText(/实施基线\s*V1/), '实施基线'],
         [header.getByText(new RegExp(frameworkId)), '框架'],
@@ -197,6 +199,8 @@ describe('工程规划与设计 V2 前端回归', () => {
       ] as const;
       for (const width of [1280, 760]) {
         await page.setViewportSize({ width, height: 800 });
+        const title = await controls[0][0].evaluate(element => ({ available: element.clientWidth, needed: element.scrollWidth }));
+        expect(title.available + 1, `${width} px 时稿件标题需完整显示`).toBeGreaterThanOrEqual(title.needed);
         const boxes = await Promise.all(controls.map(async ([control, label]) => {
           const visible = control.filter({ visible: true });
           expect(await visible.count(), `${width} px 时页头可见的${label}`).toBeGreaterThan(0);
@@ -213,6 +217,12 @@ describe('工程规划与设计 V2 前端回归', () => {
         const actionBox = rest.pop()!;
         if (width === 1280) {
           expect(Math.max(...boxes.map(box => box!.y))).toBeLessThan(Math.min(...boxes.map(box => box!.y + box!.height)));
+          const tabs = await page.getByRole('navigation', { name: '稿件标签' }).boundingBox();
+          const zoom = await page.getByRole('button', { name: '适应画布', exact: true }).boundingBox();
+          expect(tabs!.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+          expect(zoom!.y).toBeGreaterThan(tabs!.y);
+          expect(zoom!.y).toBeLessThan(tabs!.y + tabs!.height);
+          expect(tabs!.x + tabs!.width).toBeLessThanOrEqual(zoom!.x);
         } else {
           expect(titleBox.y + titleBox.height).toBeLessThanOrEqual(Math.min(...rest.map(box => box.y)) + 1);
           expect(Math.max(...rest.map(box => box.y + box.height))).toBeLessThanOrEqual(actionBox.y + 1);

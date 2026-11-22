@@ -186,7 +186,7 @@ export function DesignWorkspacePage() {
   const breadcrumbs = <TopBar left={<span className="dw-crumb">CDS <span>/</span> <Link to={`/design?project=${encodeURIComponent(project)}`}>设计</Link>
     {framework && <> <span>/</span> <strong>{framework.versions.at(-1)?.title}</strong></>}
   </span>} />;
-  const summaryTabLinks = entry && version && <nav className="dw-tablinks" aria-label="稿件标签">
+  const summaryTabLinks = entry && version && <nav className="dw-tablinks dw-draft-tabs" aria-label="稿件标签">
     {tabs.map(([value, label]) => {
       const count = value === 'preview' ? entry.comments.length : value === 'delivery' ? activeFeedback
         : value === 'log' ? entry.versions.length : value === 'accept' ? entry.runs.at(-1)?.cells.filter(cell => cell.status === 'failed').length : undefined;
@@ -244,7 +244,6 @@ export function DesignWorkspacePage() {
           {version.tags.length > 0 && <span className="dw-draft-tags" title={version.tags.join('、')}>{version.tags.map(tag =>
             <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, tag })} key={tag}>#{tag}</Link>)}</span>}
           </div>
-          {summaryTabLinks}
           <div className="dw-tools dw-right">
             {canvas && deliveryReturn.current?.designId === entry.id && <button className="ep-button" type="button" onClick={() => {
               onChange({ tab: 'delivery', version: String(deliveryReturn.current!.version), screen: '' });
@@ -266,9 +265,10 @@ export function DesignWorkspacePage() {
           <button className="ep-text-button" type="button" onClick={() => onChange({ tab: 'diff', compareFrom: String(entry.frozen) })}>和基线对比</button>
         </p>}
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
-        {canvas ? <DesignCanvas key={`${entry.id}/${version.version}/${screenParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
+        {canvas ? <DesignCanvas key={`${entry.id}/${version.version}/${screenParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon} entry={entry} version={version} active={!large && !review} navigation={summaryTabLinks}
           comparing={tab === 'diff'} initialScreenId={screenParam} initialComparisonVersion={compareFrom} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
         : <>
+          <div className="dw-tabrow">{summaryTabLinks}</div>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} onPreviewStale={refreshWorkspace} />}
