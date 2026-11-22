@@ -40,8 +40,11 @@ import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { isHumanSystemOwner } from './services/human-auth.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
-import { ClusterIdentityService, clusterProjectRepository } from './services/cluster-identity.js';
-import { trustedClusterIdentity, type ClusterIdentityContext } from './services/cluster-identity-context.js';
+import {
+  authorityMapConnectionPath, CDS_MAP_CONNECTION_PATH, CLUSTER_MAP_CONNECTION_PATH, CLUSTER_MAP_CONNECTION_PROTOCOL,
+  ClusterIdentityService, clusterProjectRepository,
+} from './services/cluster-identity.js';
+import { trustedClusterIdentity, type ClusterIdentityContext, type ClusterMapConnection } from './services/cluster-identity-context.js';
 import { canHumanAccessProject as clusterHumanProjectAccess } from './services/human-project-access.js';
 import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
@@ -88,7 +91,7 @@ import { releaseMergeBackReader } from './services/release-merge-back.js';
 import { ReleaseTargetHistoryStore } from './services/release-target-history.js';
 import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
-import { sha256Hex } from './services/connection/pairing-service.js';
+import { clusterMapOrigin, sha256Hex, type PairingMember } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostics.js';
 import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
@@ -914,7 +917,8 @@ export interface ActivityEvent {
 /** Map API path patterns to Chinese labels */
 export function resolveApiLabel(method: string, path: string): string {
   // Normalize: remove /api prefix, trim trailing slash
-  const p = path.replace(/^\/api/, '').replace(/\/$/, '');
+  const p = path.replace(/^\/api/, '').replace(/\/$/, '')
+    .replace(/^\/cluster\/identity\/map-connections(?=\/|$)/, '/cds-system/connections');
   if (method === 'PATCH' && /^\/dts\/policies\/[^/]+$/.test(p)) return '调整账号同步规则';
   if (/^\/dts\/runs\/[^/]+(?:\/(?:pause|resume|cancel))?$/.test(p)) return method === 'GET' ? '查看同步进度' : '管理同步任务';
 
@@ -969,6 +973,9 @@ export function resolveApiLabel(method: string, path: string): string {
     // CDS 配对连接（系统级，2026-05-06）
     'POST /cds-system/connections/issue': '生成配对密钥',
     'POST /cds-system/connections/accept': '接受配对请求',
+    'GET /cds-system/connections/authorize': '查看 MAP 授权',
+    'POST /cds-system/connections/authorize': '批准 MAP 配对',
+    'POST /cds-system/connections/token': '兑换 MAP 授权',
     // 项目级资源占用排行（系统级运维视图，2026-06-23）
     'GET /cds-system/resource-usage': '查看资源占用',
     // 自建存活监控 / 状态页（2026-07-27）
@@ -1748,7 +1755,7 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
 }
 
 /** Check if a request is from an approved AI session */
-function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+function resolveAiSession(req: express.Request, stateService?: StateService, member?: PairingMember): ApprovedAiSession | null {
   const cluster = trustedClusterIdentity(req);
   if (cluster) return cluster.aiSession ?? null;
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
@@ -1783,7 +1790,18 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if (stateService && connectionScope) {
       const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
       const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
-      if (connection && connection.scopes.includes(connectionScope)) {
+      const id = connection?.projectId;
+      const local = id && member && Object.hasOwn(member.projects, id) ? member.projects[id] : undefined;
+      const projectPath = /^\/api\/projects\/([^/]+)\/(?:agent-runtime-providers|agent-sessions(?:\/[^/]+)*?)$/.exec(req.path);
+      const partnerBaseUrl = member && connection?.partnerKind === 'map' ? clusterMapOrigin(connection.partnerBaseUrl) : undefined;
+      const mapConnection = connection && id && local && partnerBaseUrl && projectPath?.[1] === encodeURIComponent(local)
+        && stateService.getProject(id)
+        ? { id: connection.id, projectId: id, scopes: connection.scopes, partnerBaseUrl }
+        : undefined;
+      const expires = connection?.longTokenExpiresAt;
+      if (connection && connection.clusterMemberId === member?.nodeId && (!member || mapConnection)
+        && (!expires || Date.parse(expires) > Date.now()) && connection.scopes.includes(connectionScope)) {
+        if (mapConnection) Object.assign(req, { clusterMapConnection: mapConnection });
         // 「最近用过」节流写：每次更新都会把整份状态存一遍，而报告只读放开之后
         // 一轮自动刷新会打出几百个请求。判据见 connection-token-routes.ts。
         const nowIso = new Date().toISOString();
@@ -2772,6 +2790,29 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // Central identity management runs before every local authentication provider.
   // A member cannot issue or accept a separate set of credentials.
+  app.use((req, res, next) => {
+    const pathname = req.path.replace(/\/+$/, '').toLowerCase();
+    if (pathname === CDS_MAP_CONNECTION_PATH || pathname.startsWith(CDS_MAP_CONNECTION_PATH + '/')) {
+      res.locals.cdsSuppressRequestBodyLog = true;
+      res.locals.cdsSuppressRequestDetails = true;
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+    }
+    if (pathname !== CLUSTER_MAP_CONNECTION_PATH && !pathname.startsWith(CLUSTER_MAP_CONNECTION_PATH + '/')) {
+      next(); return;
+    }
+    res.locals.cdsSuppressRequestBodyLog = true;
+    res.locals.cdsSuppressRequestDetails = true;
+    res.setHeader('Cache-Control', 'no-store');
+    if (!clusterIdentity.memberOf(req)) {
+      res.status(401).json({ error: 'cluster_member_rejected' }); return;
+    }
+    const path = authorityMapConnectionPath(req.method, pathname);
+    if (!path) { res.status(404).json({ error: 'cluster_map_connection_route_not_found' }); return; }
+    res.setHeader(CLUSTER_MAP_CONNECTION_PROTOCOL, '1');
+    req.url = path;
+    next();
+  });
   app.use((req, res, next) => { void clusterIdentity.middleware(req, res, next).catch(next); });
 
   // Provider-neutral ticket SSO. Public routes are mounted before either
@@ -2888,18 +2929,20 @@ export function createServer(deps: ServerDeps): express.Express {
       }
       if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
       const legacyMachine = !user && authEnabled && tokenMatches(req.headers['x-cds-token'] as string | undefined, validToken);
-      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService) || (legacyMachine
+      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService, member) || (legacyMachine
         ? { id: 'legacy-machine', agentName: 'AI (legacy machine credential)', token: '', approvedAt: '', expiresAt: '' } : null);
       if (!user && !aiSession) { res.status(401).json({ error: 'cluster_credential_rejected' }); return; }
       const stamps = virtual as express.Request & {
         cdsProjectKey?: ClusterIdentityContext['projectKey']; cdsAccess?: ClusterIdentityContext['access']; cdsPrincipal?: ClusterIdentityContext['principal'];
+        clusterMapConnection?: ClusterMapConnection;
       };
       const humanReq = { cdsUser: user, cdsSession: session, _cdsBasicHumanAuth: basicHuman };
       const context: ClusterIdentityContext = {
         clusterId: config.clusterId, authorityNodeId: config.nodeId, nodeId: member.nodeId,
         ...(user ? { user: toPublicUser(user) as CdsUser, session, basicHuman,
           humanProjects: deps.stateService.getProjects().filter(p => clusterHumanProjectAccess(humanReq, deps.stateService, p.id)).map(p => p.id) } : {}),
-        ...(aiSession ? { aiSession: { ...aiSession, token: '' }, projectKey: stamps.cdsProjectKey, access: stamps.cdsAccess, principal: stamps.cdsPrincipal } : {}),
+        ...(aiSession ? { aiSession: { ...aiSession, token: '' }, projectKey: stamps.cdsProjectKey, access: stamps.cdsAccess,
+          principal: stamps.cdsPrincipal, mapConnection: stamps.clusterMapConnection } : {}),
         ...(stamps.cdsPrincipal ? { principalProjects: deps.stateService.getProjectGrants()
           .filter(g => g.principalId === stamps.cdsPrincipal!.principalId && !g.revokedAt)
           .map(g => g.projectId)
@@ -5037,6 +5080,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createCdsSystemConnectionsRouter({
     stateService: deps.stateService,
     config: deps.config,
+    clusterIdentity,
   }));
   // CDS 网络拓扑（系统级，B'.6），见 routes/cds-system-topology.ts + services/topology-aggregator.ts。
   // 所有 IO（nginx-conf 文件 / forwarder 探测 / admin daemon 探测 / docker discover）
@@ -5314,7 +5358,8 @@ export function createServer(deps: ServerDeps): express.Express {
       ?.partnerBaseUrl || process.env.CDS_MAP_BASE?.trim() || '',
     authenticateMapConnectionToken: (rawToken) => {
       if (!rawToken) return null;
-      return deps.stateService.findActiveCdsConnectionByLongTokenHash(sha256Hex(rawToken)) ?? null;
+      const connection = deps.stateService.findActiveCdsConnectionByLongTokenHash(sha256Hex(rawToken));
+      return connection?.clusterMemberId ? null : connection ?? null;
     },
     isSecretStorageEncrypted: () => isSealingEnabled(),
   }));

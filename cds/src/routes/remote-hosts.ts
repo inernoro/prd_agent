@@ -46,6 +46,7 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
+import { trustedClusterIdentity } from '../services/cluster-identity-context.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import {
@@ -3162,7 +3163,8 @@ function authenticateProjectRequest(
   const token = isConnectionSession
     ? (typeof aiSession?.token === 'string' ? aiSession.token : undefined)
     : extractBearerToken(req.headers.authorization);
-  const connection = pairing.authenticateLongToken(token);
+  const cluster = trustedClusterIdentity(req);
+  const connection = cluster ? cluster.mapConnection : pairing.authenticateLongToken(token);
   if (!connection) {
     return { ok: false, status: 401, code: 'invalid_long_token', message: 'invalid connection token' };
   }
