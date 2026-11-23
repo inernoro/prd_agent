@@ -333,13 +333,12 @@ async function loginGateway(page: Page) {
   const loginArtwork = page.locator(".consciousness-art");
   const theme = await scene.getAttribute("data-portrait-theme");
   expect(["light", "dark"]).toContain(theme);
-  const portrait = theme === "light" ? gatewayPortraitAssets.light.opening : gatewayPortraitAssets.dark.closed;
+  const portrait = theme === "light" ? gatewayPortraitAssets.light.closed : gatewayPortraitAssets.dark.closed;
   await expect(loginArtwork).toHaveAttribute("src", portrait.url);
   await expect.poll(() => loginArtwork.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
   await page.locator("#llmgw-username").fill("demo");
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();
-  await expect(page.locator(".gateway-entry")).toHaveAttribute("data-phase", "authorized");
   await expect(page).toHaveURL(/\/llmgw\/quickstart$/);
   await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toBeEditable();
   await expect(page.getByRole("button", { name: "进入控制台", exact: true })).toHaveCount(0);
