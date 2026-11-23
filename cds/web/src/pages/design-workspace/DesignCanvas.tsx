@@ -395,8 +395,9 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
         <CanvasSettings theme={theme} onTheme={setTheme} zoom={zoom} onZoom={setZoom} />
         {compare ? <button type="button" className="ep-button" aria-expanded={changes} onClick={() => showChanges(!changes)}><ListMinus />
           {real ? '变化详情' : changedOnScreen === undefined ? '本屏待测量' : `本屏 ${changedOnScreen} 处变化`}</button>
-          : <button type="button" className="ep-button" disabled={!screen} aria-expanded={comments} onClick={() => { showComments(!comments); setPlacing(false); }}>
-            <MessageSquare />评论 {commentCount}</button>}
+          : <button type="button" className="ep-button dw-canvas-comments" disabled={!screen} aria-expanded={comments}
+            aria-label={`评论 ${commentCount}`} title={`评论 ${commentCount}`} onClick={() => { showComments(!comments); setPlacing(false); }}>
+            <MessageSquare /><span>评论 {commentCount}</span></button>}
       </div>
     </div>;
 

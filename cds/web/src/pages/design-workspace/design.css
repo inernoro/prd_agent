@@ -905,6 +905,7 @@
 .dw-draft-tabbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 10px; min-width: 0; }
 .dw-draft-tabbar > .dw-tablinks { width: auto; flex: 0 1 auto; gap: clamp(12px, 1.6vw, 22px); overflow: visible; }
 .dw-draft-tabbar .dw-draft-actions { margin-inline-start: auto; }
+.dw-workspace--canvas .dw-draft-tabbar .dw-draft-actions { order: 1; }
 .dw-draft-actions .dw-version-select { width: clamp(132px, 17vw, 180px); }
 .dw-draft-bar .dw-status { flex: none; white-space: nowrap; }
 .dw-draft-bar .dw-canvas-tools { flex: 0 1 auto; }
@@ -953,10 +954,15 @@
   .dw-crumb:not([data-detail]) .dw-crumb-desktop > :not(select) { display: none; }
   .dw-draft-tabbar > .dw-tablinks { gap: 9px; }
   .dw-draft-tabbar .dw-tab { font-size: 13px; }
+  .dw-draft-bar { gap: 4px; }
+  .dw-draft-bar > .dw-draft-heading, .dw-draft-bar > .dw-canvas-tools { min-width: 0; max-width: 100%; }
+  .dw-workspace--canvas .dw-draft-tabbar .dw-draft-actions { order: 0; }
   .dw-draft-tabbar .dw-draft-actions { width: auto; max-width: 100%; }
-  .dw-draft-actions .dw-version-select { width: min(178px, 47vw); }
+  .dw-draft-actions .dw-version-select { width: min(178px, calc(100vw - 120px)); }
   .dw-draft-actions .dw-info-body { width: min(350px, calc(100vw - 34px)); }
   .dw-canvas-tools { justify-content: start; }
+  .dw-canvas-tools > .dw-tools { column-gap: 5px; }
+  .dw-canvas-comments > span { display: none; }
   .dw-card-grid .dw-card-screen { display: none; }
   .dw-history-list > li { grid-template-columns: 2.5rem minmax(0, 1fr); }
   .dw-history-list > li > button { grid-column: 2; justify-self: start; }

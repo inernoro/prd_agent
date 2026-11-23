@@ -358,11 +358,9 @@ function DeliveryFileReader({ entry, version, file, onFeedback, onBack, go }: {
     ? `${designPath(entry.projectId)}/artifacts/${encodeURIComponent(file.id)}?view=text&offset=${offset}` : null, retry);
   const visible = chunk.data?.artifactId === file.id && chunk.data?.offset === offset ? chunk.data : undefined;
   const top = useRef<HTMLHeadingElement>(null);
-  const jump = (heading: string) => {
-    const target = [...(top.current?.closest('.dw-dl-reader')?.querySelectorAll('.dw-notes :is(h1,h2,h3,h4)') ?? [])]
-      .find(node => node.textContent?.trim() === heading.trim());
-    target?.scrollIntoView({ block: 'start' });
-  };
+  const headings = useMemo(() => visible && /\.md$/i.test(file.path)
+    ? marked.lexer(visible.text).flatMap(token => token.type === 'heading' ? [(token as Tokens.Heading).text] : [])
+    : [], [visible, file.path]);
   return <article className="dw-dl-reader" aria-labelledby={`file-${file.id}`}>
     <button type="button" className="ep-link dw-dl-back" onClick={onBack}><ArrowLeft />全部文件</button>
     <header className="dw-dl-detail-head dw-dl-reader-head">
@@ -373,8 +371,11 @@ function DeliveryFileReader({ entry, version, file, onFeedback, onBack, go }: {
         <a className="ep-button" href={designArtifact(entry.projectId, file.id) + '?download=true'} download={file.path.split('/').at(-1)}><Download />原文件</a>
       </span>
     </header>
-    {file.headings?.length ? <nav className="dw-dl-outline" aria-label="章节">{file.headings.map((heading, index) =>
-      <button key={index} type="button" className="ep-link" onClick={() => jump(heading)}>{heading}</button>)}</nav> : null}
+    {headings.length > 0 && <nav className="dw-dl-outline" aria-label="本段章节">{headings.map((heading, index) =>
+      <button key={index} type="button" className="ep-link" onClick={() => {
+        const targets = top.current?.closest('.dw-dl-reader')?.querySelectorAll('.dw-dl-contents .dw-notes > :is(h1,h2,h3,h4,h5,h6)');
+        targets?.[index]?.scrollIntoView({ block: 'start' });
+      }}>{heading}</button>)}</nav>}
     <div className="dw-dl-contents" role="region" aria-label="文件内容">
       {isImage(file) ? <a href={designArtifact(entry.projectId, file.id)} target="_blank" rel="noreferrer"><img className="dw-dl-image" src={designArtifact(entry.projectId, file.id)} alt={file.path} /></a>
         : prototype ? <p className="dw-muted"><button type="button" className="ep-link"

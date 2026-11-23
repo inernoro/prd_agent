@@ -344,7 +344,9 @@ export function DesignWorkspacePage() {
       </div>
       {toolbar}
     </div>
-    <div className="dw-draft-tabbar">{summaryTabLinks}{!(canvas && wideCanvas) && draftActions}</div>
+    <div className="dw-draft-tabbar">
+      {canvas && !wideCanvas && draftActions}{summaryTabLinks}{!canvas && draftActions}
+    </div>
   </header>;
   return <AppShell active="design" topbar={breadcrumbs} wide>
     <Workspace fluid className={`ep-workspace dw-workspace${entry ? ' dw-workspace--detail' : ''}${canvas ? ' cds-workspace--fill dw-workspace--canvas' : ''}`}>
@@ -361,7 +363,7 @@ export function DesignWorkspacePage() {
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
         {canvas ? <DesignCanvas key={`${entry.id}/${version.version}/${screenParam ?? ''}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
           comparing={tab === 'diff'} initialScreenId={screenParam} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
-          renderToolbar={toolbar => wideCanvas ? draftHeader(toolbar) : <>{draftHeader()}{toolbar}</>}
+          renderToolbar={draftHeader}
           draftActions={wideCanvas ? draftActions : undefined}
           onModeChange={(compare, screen, from) => onChange({ tab: compare ? 'diff' : 'preview', screen: screen ?? '', compareFrom: from === undefined ? '' : String(from), from: '' })}
           onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />

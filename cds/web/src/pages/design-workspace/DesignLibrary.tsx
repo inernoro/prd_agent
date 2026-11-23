@@ -12,9 +12,9 @@ export const libraryStatuses = [
   ['all', '全部状态'], ['attention', '等我处理'], ['review', statusNames.review], ['failed', statusNames.failed],
   ['draft', statusNames.draft], ['passed', statusNames.passed],
 ] as const;
-const legacyStatuses = ['active', 'signed', 'frozen'];
+const legacyStatuses: Record<string, string> = { active: '原筛选 · 实现中', signed: '原筛选 · 已验收', frozen: '原筛选 · 已定稿' };
 export const libraryStatus = (value: string | null) =>
-  value && (libraryStatuses.some(([id]) => id === value) || legacyStatuses.includes(value)) ? value : '';
+  value && (libraryStatuses.some(([id]) => id === value) || Object.hasOwn(legacyStatuses, value)) ? value : '';
 
 type LibraryQuery = {
   search: string; group: string; status: string; tag: string; framework: string; system: string; module: string;
@@ -183,7 +183,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
     theme={theme} viewer={viewer} href={draftHref(entry)} onLarge={onLarge} task={tasks.get(entry.id)} />;
   const cardGrid = (rows: DesignEntry[]) => <div className={layout}>{rows.map(renderCard)}</div>;
   const filters = [
-    ['status', query.status && query.status !== 'all' ? libraryStatuses.find(([id]) => id === query.status)?.[1] : ''],
+    ['status', query.status && query.status !== 'all' ? libraryStatuses.find(([id]) => id === query.status)?.[1] ?? legacyStatuses[query.status] : ''],
     ['tag', query.tag && '#' + query.tag],
     ['framework', query.framework && (frameworks.find(row => row.id === query.framework)?.versions.at(-1)?.title ?? query.framework)],
   ].filter(([, label]) => label);
@@ -222,7 +222,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
           onChange={event => onChange({ q: event.target.value })} /></label>
         <select value={query.status || 'all'} aria-label="状态" onChange={event => onChange({ status: event.target.value === 'all' ? '' : event.target.value, filter: '' })}>
           {libraryStatuses.map(([value, label]) => <option key={value} value={value}>{label}{value === 'attention' ? ' ' + (scoped.filter(attention).length + pendingBriefs.length) : ''}</option>)}
-          {legacyStatuses.includes(query.status) && <option value={query.status}>历史筛选</option>}
+          {Object.hasOwn(legacyStatuses, query.status) && <option value={query.status}>{legacyStatuses[query.status]}</option>}
         </select>
         {tags.length > 0 && <select value={query.tag} aria-label="标签" onChange={event => onChange({ tag: event.target.value })}>
           <option value="">标签</option>{tags.map(value => <option key={value}>{value}</option>)}</select>}
