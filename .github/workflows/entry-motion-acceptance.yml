@@ -6,88 +6,67 @@ on:
         type: choice
         options: [visual]
         default: visual
-      release_environment:
-        type: choice
-        options: [test, production]
-        required: true
-      release_commit:
-        type: string
-        required: true
 permissions:
   contents: read
 jobs:
-  released-entry-surfaces:
+  login-baseline:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
+      options: --init --shm-size=1g
+    timeout-minutes: 8
     env:
-      RELEASE_ENVIRONMENT: ${{ inputs.release_environment }}
-      RELEASE_COMMIT: ${{ inputs.release_commit }}
+      VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_commit }}
-      - uses: actions/setup-node@v4
+          ref: e9d4faf27d1b43c5aa362911b89f0dba0afa7b6f
+      - uses: pnpm/action-setup@v4
         with:
-          node-version: '22'
-      - name: Validate public HTML, static assets, health and media
+          version: '10.28.2'
+      - name: Capture live login layouts and measure the existing successful handoff
         run: |
-          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
-          mkdir -p work/entry-release-readback
-          case "$RELEASE_ENVIRONMENT" in
-            test)
-              export MAP_ENTRY=https://main-prd-agent.miduo.org
-              export GATEWAY_ENTRY=https://main-prd-agent-llmgw.miduo.org
-              python3 scripts/prd-agent-public-surface-smoke.py --base "$MAP_ENTRY" \
-                --root-health-path /api/health/ready --llmgw-page-path "$GATEWAY_ENTRY/" --llmgw-console-health-path "$GATEWAY_ENTRY/gw/healthz" \
-                --llmgw-serving-health-path "$GATEWAY_ENTRY/gw/v1/healthz" \
-                --json-out work/entry-release-readback/map.json
-              ;;
-            production)
-              export MAP_ENTRY=https://map.ebcone.net
-              export GATEWAY_ENTRY=https://map.ebcone.net/llmgw
-              python3 scripts/prd-agent-public-surface-smoke.py --base "$MAP_ENTRY" \
-                --expect-commit "$RELEASE_COMMIT" --json-out work/entry-release-readback/map.json
-              ;;
-            *) exit 2 ;;
-          esac
-          python3 scripts/prd-agent-public-surface-smoke.py --base "$GATEWAY_ENTRY" --surface gateway \
-            --expect-commit "$RELEASE_COMMIT" --json-out work/entry-release-readback/gateway.json
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C llmgw/web build
+          pnpm -C llmgw/web preview --host 127.0.0.1 --strictPort --port 8200 &
+          for attempt in $(seq 1 25); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8200/llmgw/login; then break; fi
+            sleep 1
+          done
+          mkdir -p evidence
+          cd e2e
           node --input-type=module <<'JS'
-          import assert from 'node:assert/strict';
-          import { createHash } from 'node:crypto';
-          import { readFile, writeFile } from 'node:fs/promises';
-          import { waitForEntryPreviews } from './e2e/entry-preview-readiness.mjs';
-          const { MAP_ENTRY, GATEWAY_ENTRY, RELEASE_COMMIT, RELEASE_ENVIRONMENT } = process.env;
-          const gatewayAssets = JSON.parse(await readFile('e2e/fixtures/media/gateway-portrait-cdn.json'));
-          const assets = Object.values(gatewayAssets).flatMap(theme => Object.values(theme));
-          const headers = { 'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache' };
-          const get = url => fetch(url, { headers, signal: AbortSignal.timeout(30_000) });
-          const meta = await get(MAP_ENTRY + '/api/version');
-          assert.ok(meta.ok);
-          const version = await meta.json();
-          assert.equal(version.commit ?? version.data?.commit, RELEASE_COMMIT);
-          const conversation = await get(GATEWAY_ENTRY + '/quickstart');
-          assert.ok(conversation.ok);
-          assert.match(await conversation.text(), /LLM Gateway/);
-          const media = await Promise.all(assets.map(async asset => {
-            const response = await get(asset.url);
-            assert.ok(response.ok);
-            assert.equal(response.url, asset.url);
-            const sha256 = createHash('sha256').update(new Uint8Array(await response.arrayBuffer())).digest('hex');
-            assert.equal(sha256, asset.sha256);
-            return { url: asset.url, sha256 };
-          }));
-          const previews = RELEASE_ENVIRONMENT === 'test' ? await waitForEntryPreviews({
-            map: MAP_ENTRY, gateway: GATEWAY_ENTRY, gatewayAssets, expectedCommit: RELEASE_COMMIT,
-            timeoutMs: 90_000, retryMs: 5000
-          }) : null;
-          await writeFile('work/entry-release-readback/entry.json', JSON.stringify({
-            environment: RELEASE_ENVIRONMENT, commit: RELEASE_COMMIT, quickstart: conversation.url, media, previews
-          }, null, 2));
+          import { chromium } from '@playwright/test';
+          import { installOperationsFixtures } from './fixtures/admin-operations.mjs';
+          const browser = await chromium.launch();
+          for (const [app,url] of [['gateway','https://map.ebcone.net/llmgw/login'],['map','https://map.ebcone.net/login']]) {
+            for (const [width,height] of [[1440,900],[390,744]]) {
+              const page = await browser.newPage({ viewport:{width,height},colorScheme:'dark' });
+              try {
+                const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:20000});
+                await page.waitForTimeout(1100);
+                await page.screenshot({path:`../evidence/${app}-${width}.png`});
+                console.log(app,width,response?.status(),await page.title());
+              } finally { await page.close(); }
+            }
+          }
+          const page = await browser.newPage({viewport:{width:1440,height:900},colorScheme:'light'});
+          try {
+            await installOperationsFixtures(page,{quickstart:true});
+            await page.goto('http://127.0.0.1:8200/llmgw/login');
+            await page.locator('#llmgw-username').fill('demo');
+            await page.locator('#llmgw-password').fill('demo');
+            const start=Date.now();
+            await page.getByRole('button',{name:'开始身份确认'}).click();
+            await page.waitForURL(/quickstart$/);
+            const routeMs=Date.now()-start;
+            await page.getByLabel('打开用户菜单',{exact:true}).waitFor({timeout:16000});
+            console.log('baseline routing ms',routeMs,'account menu visible ms',Date.now()-start);
+          } finally { await browser.close(); }
           JS
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: entry-release-readback-${{ inputs.release_environment }}
-          path: work/entry-release-readback/
-          if-no-files-found: error
+          name: fast-login-baseline
+          path: evidence
