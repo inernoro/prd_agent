@@ -1,3 +1,4 @@
+import type { DesignVisualRow } from './design-visual.js';
 import type { DesignVerdict, DesignCellStatus } from '../services/design-acceptance.js';
 
 export const designSlots = ['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark'] as const;
@@ -103,7 +104,7 @@ export type DesignFeedback = {
   status: 'open' | 'responded' | 'closed';
   filePath?: string;
   attachments?: DesignFeedbackAttachment[];
-  replies: Array<{ body: string; revision?: number; author: DesignFeedbackAuthor; at: string }>;
+  replies: Array<{ body: string; revision?: number; author: DesignFeedbackAuthor; at: string; supplement?: true }>;
   decisions: Array<{ decision: 'close' | 'reopen'; body: string; author: DesignFeedbackAuthor; at: string }>;
 };
 
@@ -146,6 +147,7 @@ export type DesignCell = {
 export type DesignRun = {
   id: string; version: number; pullRequest: number; commit: string; createdAt: string;
   cells: DesignCell[]; verdict: DesignVerdict; previewUrl: string;
+  visual?: Record<`${string}/${DesignSlot}`, DesignVisualRow>;
   signed?: { by: string; at: string; verdict: 'passed' | 'conditional' };
   issues: Record<string, { id: string; pending: boolean }>;
 };
@@ -240,5 +242,5 @@ export type DesignWorkspace = {
   requirements?: DesignRequirement[];
   systems?: DesignSystem[];
   viewer?: DesignViewerState;
-  permissions: { write: boolean; feedback?: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
+  permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; visual?: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
 };

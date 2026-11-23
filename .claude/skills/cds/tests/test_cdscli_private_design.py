@@ -1,14 +1,17 @@
 """Use the real CLI parser, local Git, and a loopback publication fixture."""
 
+import base64
 import contextlib
 import importlib.util
 import io
 import json
 import os
+import struct
 import subprocess
 import tempfile
 import threading
 import unittest
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -18,7 +21,8 @@ from zipfile import ZipFile
 CLI = Path(__file__).resolve().parents[1] / 'cli' / 'cdscli.py'
 PROJECT = 'private-design-fixture'
 KEY = 'cdsp_private_fixture_only'
-ROUTE = f'/api/projects/{PROJECT}/design/packages'
+API = f'/api/projects/{PROJECT}/design'
+ROUTE = f'{API}/packages'
 DESIGN = 'DSN-fixture'
 GIT_ENV = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'}
 
@@ -26,11 +30,29 @@ GIT_ENV = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'GIT_CONFIG_NOSYSTEM': '1', 'G
 class PrivatePublishCliTest(unittest.TestCase):
     def setUp(self):
         self.writes = []
+        self.run = {'id': 'RUN-fixture', 'version': 9, 'commit': 'a' * 40, 'pullRequest': 42, 'cells': []}
+        self.returned_slot = None
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
+
+            def respond(self, status, data):
+                response = json.dumps(data).encode()
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def do_GET(self):
+                if urlsplit(self.path).path != API:
+                    self.respond(404, {'error': 'fixture_route_missing'})
+                    return
+                self.respond(200, {'projectId': PROJECT, 'permissions': {'write': True, 'visual': True},
+                                   'frameworks': [], 'designs': [{'projectId': PROJECT, 'id': DESIGN,
+                                   'versions': [{'version': 9, 'title': 'Fixture'}], 'runs': [fixture.run]}]})
 
             def do_POST(self):
                 target = urlsplit(self.path)
@@ -39,13 +61,21 @@ class PrivatePublishCliTest(unittest.TestCase):
                 fixture.writes.append((target.path, self.headers['X-AI-Access-Key'],
                                        self.headers['Content-Type'], query, body))
                 reused = len(fixture.writes) > 1 and fixture.writes[-1] == fixture.writes[0]
-                response = json.dumps({'projectId': PROJECT, 'reused': reused,
-                                       'result': {'type': 'package', 'designId': DESIGN, 'version': 5}}).encode()
-                self.send_response(200 if reused else 201)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Content-Length', str(len(response)))
-                self.end_headers()
-                self.wfile.write(response)
+                result = {'type': 'package', 'designId': DESIGN, 'version': 5}
+                if target.path == f'{API}/commands':
+                    payload = json.loads(body)
+                    result = {**{field: payload[field] for field in ('type', 'designId', 'runId', 'screenId', 'slot')},
+                              'version': fixture.run['version']}
+                    if fixture.returned_slot:
+                        result['slot'] = fixture.returned_slot
+                    if not reused and not fixture.returned_slot:
+                        key = f"{payload['screenId']}/{payload['slot']}"
+                        fixture.run['visual'] = {key: {'checks': payload['checks'], 'imageId': 'art-implementation',
+                                                       'referenceImageId': 'art-reference'}}
+                elif target.path == f'{API}/feedback':
+                    payload = json.loads(body)
+                    result = {'type': payload['type'], 'designId': DESIGN, 'id': payload['feedbackId'], 'version': 8}
+                self.respond(200 if reused else 201, {'projectId': PROJECT, 'reused': reused, 'result': result})
 
         server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
@@ -78,8 +108,11 @@ class PrivatePublishCliTest(unittest.TestCase):
         return subprocess.check_output(['git', *args], cwd=self.repo, env=GIT_ENV)
 
     def call(self, *args, directory=None):
-        cli_path = CLI
-        spec = importlib.util.spec_from_file_location('private_design_cli', cli_path)
+        return self.invoke('publish', DESIGN, '--dir', str(directory or self.directory),
+                           '--intent', 'revise', '--design-key', 'reports/summary', '--expected-version', '4', *args)
+
+    def invoke(self, *args):
+        spec = importlib.util.spec_from_file_location('private_design_cli', CLI)
         cli = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cli)
         base_run = subprocess.run
@@ -96,8 +129,7 @@ class PrivatePublishCliTest(unittest.TestCase):
             os.chdir(self.repo)
             with mock.patch.dict(os.environ, self.env, clear=True), mock.patch.object(cli.subprocess, 'run', record), \
                     contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as ended:
-                cli.main(['design', 'publish', DESIGN, '--dir', str(directory or self.directory),
-                          '--intent', 'revise', '--design-key', 'reports/summary', '--expected-version', '4', *args])
+                cli.main(['design', *args])
         finally:
             os.chdir(previous)
         return ended.exception.code, stdout.getvalue(), stderr.getvalue()
@@ -159,6 +191,57 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn('稿件子目录', output or stderr)
         self.assertEqual(self.writes, [])
+
+
+    def test_visual_record_and_readback_keep_the_exact_row_and_local_images(self):
+        def png(width, height):
+            def chunk(kind, data):
+                return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+
+            header = struct.pack('>IIBBBBB', width, height, 8, 0, 0, 0, 0)
+            pixels = zlib.compress(bytes((width + 1) * height))
+            return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', pixels) + chunk(b'IEND', b'')
+
+        checks = {'V-02': {'status': 'failed', 'evidence': '成员标题顶边 y=212，筛选器 y=208，差 4 px。'}}
+        (self.repo / 'checks.json').write_text(json.dumps(checks, ensure_ascii=False), encoding='utf-8')
+        screenshot = png(1280, 800)
+        for image in ('reference.png', 'implementation.png'):
+            (self.repo / image).write_bytes(screenshot)
+        flags = ('visual', DESIGN, '--run', self.run['id'], '--commit', self.run['commit'], '--screen', 'members',
+                 '--slot', 'desktop-light', '--file', 'checks.json', '--implementation', 'implementation.png',
+                 '--path', '/members/', '--reference', 'reference.png', '--request-id', 'cli-visual-fixture')
+
+        for reused in (False, True):
+            code, output, stderr = self.invoke(*flags)
+            self.assertEqual(code, 0, output or stderr)
+            self.assertIs(json.loads(output)['data']['reused'], reused)
+        self.assertEqual(self.writes[0], self.writes[1])
+        uri, key, content_type, query, body = self.writes[0]
+        self.assertEqual((uri, key, content_type, query), (f'{API}/commands', KEY, 'application/json', {}))
+        data_url = 'data:image/png;base64,' + base64.b64encode(screenshot).decode('ascii')
+        self.assertEqual(json.loads(body), {'type': 'acceptance.visual', 'requestId': 'cli-visual-fixture',
+                                          'designId': DESIGN, 'runId': self.run['id'], 'commit': self.run['commit'],
+                                          'screenId': 'members', 'slot': 'desktop-light', 'checks': checks,
+                                          'image': data_url, 'referenceImage': data_url,
+                                          'measured': {'width': 1280, 'height': 800, 'theme': 'light', 'path': '/members/'}})
+        code, output, stderr = self.invoke('result', DESIGN, '--run', self.run['id'])
+        self.assertEqual(code, 0, output or stderr)
+        self.assertEqual(json.loads(output)['data']['run']['visual']['members/desktop-light']['checks'], checks)
+        self.returned_slot = 'desktop-dark'
+        code, output, stderr = self.invoke(*flags)
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertIn('回执', output or stderr)
+
+    def test_supplement_uses_the_feedback_reply_endpoint(self):
+        body = '## 诉求\n\n回复入口增加补写。\n\n## 怎么算解决\n\n关闭后仍保留往来。'
+        code, output, stderr = self.invoke('feedback-reply', DESIGN, '--feedback-id', 'FDB-previous',
+                                           '--body', body, '--supplement', '--request-id', 'cli-supplement-fixture')
+        self.assertEqual(code, 0, output or stderr)
+        self.assertEqual(len(self.writes), 1)
+        route, key, content_type, _, payload = self.writes[0]
+        self.assertEqual((route, key, content_type), (f'{API}/feedback', KEY, 'application/json'))
+        self.assertEqual(json.loads(payload), {'type': 'feedback.reply', 'requestId': 'cli-supplement-fixture',
+                                             'designId': DESIGN, 'feedbackId': 'FDB-previous', 'body': body, 'supplement': True})
 
 
 if __name__ == '__main__':

@@ -6,6 +6,7 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import {
   designFeedbackCategories, designSlots, type DesignFeedbackAttachment, type DesignSlot, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
 } from '../../../../src/shared/design-workspace';
+import { feedbackSummary } from '../../../../src/shared/design-feedback';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
 import { ReadableNotes } from './DesignMarkdown';
 import { designArtifact, designDate, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, slotNames, type DesignCommand } from './design-ui';
@@ -50,25 +51,6 @@ function groupFiles(files: DesignDeliveryFile[]) {
   }).filter(group => group.files.length);
 }
 
-const partNames: [keyof FeedbackParts, RegExp][] = [
-  ['ask', /^(诉求|建议|希望|期望|要求)/], ['done', /^(怎么算解决|完成标准|验收|解决标准)/],
-  ['basis', /^(证据|依据)/], ['problem', /^(问题|现象|约束|背景|原因)/],
-];
-type FeedbackParts = { ask: string; done: string; problem: string; basis: string };
-export function feedbackParts(body: string): FeedbackParts {
-  const parts: FeedbackParts = { ask: '', done: '', problem: '', basis: '' };
-  let current: keyof FeedbackParts = 'problem';
-  for (const token of marked.lexer(body)) {
-    const heading = token.type === 'heading' ? (token as Tokens.Heading) : undefined;
-    const key = heading && partNames.find(([, pattern]) => pattern.test(heading.text))?.[0];
-    if (key) { current = key; continue; }
-    parts[current] += token.raw;
-  }
-  for (const key of Object.keys(parts) as (keyof FeedbackParts)[]) parts[key] = parts[key].trim();
-  return parts;
-}
-
-
 /* ── 摘要条 ─────────────────────────── */
 /* V5 第三轮（用户反馈：顶部很乱）：版本、基线已经在稿件页头，交付里不再重复。
  * 交付顶部只有两行：
@@ -89,7 +71,7 @@ function DeliveryNote({ version }: { version: DesignVersion }) {
   const note = version.note || delivery?.notes || '本版未附变更说明。';
   return <div className="dw-dl-noteline" data-more={more}>
     <p><span className="dw-dl-note" title={note}><b>本版</b>{note}</span>
-      <button type="button" className="ep-link dw-dl-more" aria-expanded={more} onClick={() => setMore(!more)}>{more ? '收起' : '展开'}</button>
+      <button type="button" className="ep-link dw-dl-more" aria-expanded={more} onClick={() => setMore(!more)}>{more ? '收起' : '全文'}</button>
       <span className="dw-dl-src" title={designSourceNames[version.sourceVerification ?? 'declared']}>提交 <code>{version.sourceCommit.slice(0, 8)}</code></span>
       <span className="dw-dl-src">归档 <code>{version.sha256.slice(0, 12)}</code></span>
       {delivery?.prototypeVersion ? <span className="dw-dl-src">原型第 {delivery.prototypeVersion} 版</span> : null}</p>
@@ -213,23 +195,32 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
 }) {
   const [earlier, setEarlier] = useState(false);
   const [resolving, setResolving] = useState(false);
+  const [supplementing, setSupplementing] = useState(false);
   const revisions = entry.versions.filter(item => item.version >= row.version && (permissions.steward || item.publisher.id === permissions.actorId));
   const canResolve = permissions.feedback && (permissions.steward || row.author.id === permissions.actorId);
+  const canSupplement = canResolve || permissions.feedback && permissions.feedbackSupplement;
   const screens = new Map(entry.versions.flatMap(item => item.screens.map(screen => [screen.id, screen.name] as const)));
   const history = [
-    ...row.replies.map(reply => ({ ...reply, label: '回复' })),
+    ...row.replies.map(reply => ({ ...reply, label: reply.supplement ? '补写诉求和完成标准' : '回复' })),
     ...row.decisions.map(decision => ({ ...decision, revision: undefined, label: decision.decision === 'close' ? '确认关闭' : '重新打开' })),
   ].sort((first, second) => first.at.localeCompare(second.at));
   const hidden = earlier ? 0 : Math.max(0, history.length - 2);
   const figures = figuresOf(row);
-  const parts = feedbackParts(row.body);
-  async function submit(event: FormEvent<HTMLFormElement>, type: 'feedback.reply' | 'feedback.resolve') {
+  const { parts, legacy, supplemented } = feedbackSummary(row);
+  const hasBasis = Boolean(row.evidence.length || figures.length || parts.basis);
+  const leadCount = supplemented ? 2 : 0;
+  async function submit(event: FormEvent<HTMLFormElement>, type: 'feedback.reply' | 'feedback.resolve', supplement = false) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
     const revision = Number(data.get('revision'));
     if (await command(type, { designId: entry.id, feedbackId: row.id, body: String(data.get('body')),
-      ...(revision ? { revision } : {}), ...(type === 'feedback.resolve' ? { decision: row.status === 'closed' ? 'reopen' : 'close' } : {}) })) { form.reset(); setResolving(false); }
+      ...(revision ? { revision } : {}), ...(supplement ? { supplement: true } : {}),
+      ...(type === 'feedback.resolve' ? { decision: row.status === 'closed' ? 'reopen' : 'close' } : {}) })) {
+      form.reset();
+      setResolving(false);
+      setSupplementing(false);
+    }
   }
   return <article className="dw-dl-detail" id={`dw-feedback-${row.id}`} aria-labelledby={`fb-title-${row.id}`}>
     <button type="button" className="ep-link dw-dl-back" onClick={onBack}><ArrowLeft />全部反馈</button>
@@ -242,15 +233,28 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
           onClick={() => openScreen(row.version, row.screenId!, `delivery-feedback-${row.id}`)}>定位画面{screens.get(row.screenId) ? `「${screens.get(row.screenId)}」` : ''}</button>}</p>
     </header>
     {row.filePath && <p className="dw-feedback-path">交付文件 <code>{row.filePath}</code></p>}
-    {/* V5 二次修改（用户反馈：要求不清楚）：按第一性原理，一条反馈就是一个要求。
-      * 一条一条列清楚：① 诉求 ② 怎么算解决 ③ 问题 ④ 依据 ⑤ 往来。诉求和完成标准排在最前，关闭时对照完成标准。 */}
+    {legacy && !supplemented && <div className="dw-dl-legacy">
+      <p>这条反馈登记于诉求格式之前</p>
+      {canSupplement && !supplementing && <button type="button" className="ep-link" onClick={() => setSupplementing(true)}>补写诉求和完成标准</button>}
+    </div>}
+    {supplementing && <form className="dw-delivery-form dw-dl-supplement" onSubmit={event => void submit(event, 'feedback.reply', true)}>
+      <label>补写诉求和完成标准<textarea name="body" rows={6} required maxLength={4000}
+        defaultValue={`## 诉求\n\n${parts.ask}\n\n## 怎么算解决\n\n${parts.done}`} /></label>
+      <div className="dw-dl-compose-actions">
+        <button className="ep-button" type="button" onClick={() => setSupplementing(false)} disabled={busy}>取消</button>
+        <button className="ep-button ep-button--primary" type="submit" disabled={busy}>保存补写</button>
+      </div>
+    </form>}
     <ol className="dw-dl-items">
-      <li data-item="ask" data-missing={!parts.ask || undefined}><h4><b>1</b>诉求<small>希望设计方做什么</small></h4>
-        {parts.ask ? <div className="dw-dl-lead-text"><ReadableNotes source={parts.ask} /></div> : <p className="dw-dl-missing">没写诉求。请提出人在回复里补一句「希望怎么改」，否则设计方没法判断做到什么程度。</p>}</li>
-      <li data-item="done" data-missing={!parts.done || undefined}><h4><b>2</b>怎么算解决<small>关闭时对照这一条</small></h4>
-        {parts.done ? <ReadableNotes source={parts.done} /> : <p className="dw-dl-missing">没写完成标准。关闭前请提出人和设计方在往来里约定。</p>}</li>
-      {parts.problem && <li data-item="problem"><h4><b>3</b>问题<small>现象和原因</small></h4><ReadableNotes source={parts.problem} /></li>}
-      {(row.evidence.length > 0 || figures.length > 0 || parts.basis) && <li data-item="basis"><h4><b>{parts.problem ? 4 : 3}</b>依据<small>证据、代码位置、对照图</small></h4>
+      {supplemented && <>
+        <li data-item="ask"><h4><b>1</b>诉求<small>希望设计方做什么</small></h4>
+          <div className="dw-dl-lead-text"><ReadableNotes source={parts.ask} /></div>
+          {legacy && canResolve && !supplementing && <button type="button" className="ep-link dw-dl-edit-supplement" onClick={() => setSupplementing(true)}>更新补写</button>}
+        </li>
+        <li data-item="done"><h4><b>2</b>怎么算解决<small>关闭时对照这一条</small></h4><ReadableNotes source={parts.done} /></li>
+      </>}
+      {parts.problem && <li data-item="problem"><h4><b>{leadCount + 1}</b>问题<small>现象和原因</small></h4><ReadableNotes source={parts.problem} /></li>}
+      {hasBasis && <li data-item="basis"><h4><b>{leadCount + (parts.problem ? 2 : 1)}</b>依据<small>证据、代码位置、对照图</small></h4>
         {parts.basis && <ReadableNotes source={parts.basis} />}
         {row.evidence.length > 0 && <ul className="dw-dl-evidence">{row.evidence.map((evidence, index) => <li key={index}><code>{evidence}</code></li>)}</ul>}
         {figures.length > 0 && <div className="dw-delivery-shots">
@@ -258,10 +262,10 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
             <img loading="lazy" src={designArtifact(entry.projectId, shot.id)} alt={shot.title} /></a>
             <figcaption>{attachmentCaption(entry, row, shot)}</figcaption></figure>)}
         </div>}</li>}
-      {history.length > 0 && <li data-item="history"><h4><b>{2 + (parts.problem ? 1 : 0) + ((row.evidence.length > 0 || figures.length > 0 || parts.basis) ? 1 : 0) + 1}</b>往来<small>{history.length} 条</small></h4>
+      {history.length > 0 && <li data-item="history"><h4><b>{leadCount + Number(Boolean(parts.problem)) + Number(hasBasis) + 1}</b>往来<small>{history.length} 条</small></h4>
         {hidden > 0 && <button type="button" className="ep-link" data-action="earlier" onClick={() => setEarlier(true)}>显示前面 {hidden} 条</button>}
         <ol className="dw-dl-replies">
-          {history.slice(hidden).map((item, index) => <li key={index} className={item.label === '回复' ? undefined : 'dw-dl-decision'}>
+          {history.slice(hidden).map((item, index) => <li key={index} className={item.label === '确认关闭' || item.label === '重新打开' ? 'dw-dl-decision' : undefined}>
             <small>{item.label} · {designPublisherLabel(item.author.label)} · {designDate(item.at)}</small>
             <ReadableNotes source={item.body} />
             {item.revision && <button type="button" className="ep-link" onClick={() => openVersion(item.revision!)}>查看 V{item.revision} 修订</button>}
@@ -269,7 +273,7 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
         </ol></li>}
     </ol>
     {permissions.feedback && <div className="dw-dl-compose">
-      {row.status !== 'closed' && !resolving && <form className="dw-delivery-form" onSubmit={event => void submit(event, 'feedback.reply')}>
+      {row.status !== 'closed' && !resolving && !supplementing && <form className="dw-delivery-form" onSubmit={event => void submit(event, 'feedback.reply')}>
         <label>回复<textarea name="body" rows={3} required maxLength={4000} placeholder="说明怎么处理；改了稿件就关联版本" /></label>
         <div className="dw-dl-compose-row">
           {revisions.length > 0 && <label>关联本稿版本<select name="revision" defaultValue="">
@@ -281,8 +285,8 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
           </span>
         </div>
       </form>}
-      {canResolve && (resolving || row.status === 'closed') && <form className="dw-delivery-form dw-dl-resolve" onSubmit={event => void submit(event, 'feedback.resolve')}>
-        {row.status !== 'closed' && <div className="dw-dl-criterion"><small>对照「怎么算解决」</small>{parts.done ? <ReadableNotes source={parts.done} /> : <p className="dw-dl-missing">没写完成标准，请在复核说明里写明按什么判断。</p>}</div>}
+      {canResolve && !supplementing && (resolving || row.status === 'closed') && <form className="dw-delivery-form dw-dl-resolve" onSubmit={event => void submit(event, 'feedback.resolve')}>
+        {row.status !== 'closed' && <div className="dw-dl-criterion"><small>对照「怎么算解决」</small>{supplemented ? <ReadableNotes source={parts.done} /> : <p className="dw-dl-missing">没写完成标准，请在复核说明里写明按什么判断。</p>}</div>}
         <label>{row.status === 'closed' ? '重开原因' : '复核说明'}<textarea name="body" rows={2} required maxLength={4000}
           placeholder={row.status === 'closed' ? '说明为什么还没解决' : '写明核对了哪一版、看了什么'} /></label>
         <span className="dw-dl-compose-actions">

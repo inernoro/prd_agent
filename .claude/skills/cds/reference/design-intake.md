@@ -147,13 +147,22 @@
 2. 设计方通过 `cdscli design feedback <稿件编号>`（可选择版本，仍含未关闭的旧版反馈）读同一线程，调用 `design feedback-reply` 或 MCP `feedback.reply` 回复。需要改稿时按原稿 ID 和最新基线发布，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
 3. 原反馈者回读新版和同一线程，按证据验证。用 `feedback.resolve` 的 `close` 或 `reopen` 加说明保留复核结果。项目管理者也可处理。发布、反馈、实际做法验收和人类签收各自按项目权限执行。重试沿用原请求编号。
 
-新反馈的 `body` 用 Markdown 的「## 诉求」和「## 怎么算解决」写清目标与完成标准，可以附「## 问题」。已有反馈可继续在原线程补充标准，保留原正文和回执。
+新反馈的 `body` 用 Markdown 的「## 诉求」和「## 怎么算解决」写清目标与完成标准，可以附「## 问题」。旧反馈由提出人或可访问项目的管理者在原线程补写这两个章节。页面选择「补写诉求和完成标准」，CLI 给 `design feedback-reply` 加 `--supplement`，MCP 的 `feedback.reply` 传 `supplement: true`。补写保留原正文、处理状态和回执。
 
 针对交付文件提反馈时，从该版本的 `delivery.files` 读取完整 `path`，用 `feedback.create` 的 `filePath` 关联。服务端核对文件属于所选稿件版本。
 
 需要提交对照图时，用 `feedback.attach` 提供原稿 ID、反馈 ID、图片说明、请求编号与工作区内 `imagePath`。CLI 用 `cdscli design attach-evidence <designId> --feedback-id <feedbackId> --title <说明> --file <图片.png>`。要标明截图来源时，加 `--version`、`--screen`、`--slot`，对应 MCP 的 `version`、`screenId`、`slot`。回读 `attachments` 核对回执、版本和截图。已授权成员可查看交付页或读取 `GET /api/projects/:projectId/design/artifacts/:artifactId`。每张 PNG 上限 1.5 MiB。逐规则的验收结论仍由做法验收记录。
 
 正文走 `POST /api/projects/:projectId/design/feedback`，PNG 走 `POST /api/projects/:projectId/design/feedback/attachments`。固定版本资料可用 `GET /api/projects/:projectId/design/artifacts/:artifactId?view=text` 分段读取。
+
+## 逐画面对照
+
+稿件附 `设计文档/视觉验收标准.md` 时，实施基线的签收需要所有声明画面的同视口、同主题对照通过。进入稿件「验收 → 逐画面对照」，先看缺图和有问题的行。约定同一状态和数据规模，逐个指出页头、标签、主体、浮层、底部。写对齐误差和溢出等实测数值。标出每个差异及其设计依据。单独一句「一致」按缺证据处理。
+
+1. 从 `cdscli design result <稿件编号>` 或 `cds_design_read` 的 `run` 读取实际运行与提交。确认画面绑定、预览、视口和主题。
+2. 用 `cdscli design visual <稿件编号> --run <运行编号> --commit <提交> --screen <画面> --slot <视口-主题> --file <检查.json>` 记录一行。MCP 调用 `cds_design_acceptance` 的 `acceptance.visual`。检查文件以 V-01 至 V-10 为键，每项提供 `status`（`passed`、`failed` 或 `missing`）和 `evidence`。可分次提交同一组截图的检查。
+3. 实拍用 `--implementation <实现图.png> --path <预览内绑定地址>`，或 MCP 的 `imagePath` 和 `measured`（宽高、主题、相对路径）。未随稿发布的对照图可用 `--reference <对照图.png>` 或 `referenceImagePath` 补交。桌面用 1280×800，手机用 375×812，每张 PNG 不超过 1.5 MiB。符合相同条件的稿件验收项实拍可复用。换图后重新检查。
+4. 回读 `run.visual[画面/视口-主题]`，查两张图及 V-01 至 V-10。补交审核证据使用有验收写权限的项目凭据，单独的设计发布和反馈授权仍用于原有设计流程。重试沿用同一请求编号和内容。签收由有写权限的项目成员确认。
 
 ## 固定框架版本
 

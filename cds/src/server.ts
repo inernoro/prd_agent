@@ -5797,7 +5797,9 @@ export function createServer(deps: ServerDeps): express.Express {
       .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin })),
     resolveAccess: (req, projectId) => {
       const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId, 'design');
-      return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req) } : null;
+      const user = (req as express.Request & { cdsUser?: CdsUser }).cdsUser;
+      return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req),
+        feedbackSupplement: actor.kind === 'human' && user?.isAdministrator === true } : null;
     },
   }));
   app.get('/api/auth/design/notices', async (req, res) => {

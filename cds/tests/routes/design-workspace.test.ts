@@ -13,6 +13,7 @@ import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } 
 import { humanPrincipalId } from '../../src/services/human-project-access.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
 import { StateService } from '../../src/services/state.js';
+import { feedbackSummary } from '../../src/shared/design-feedback.js';
 import type { DesignFrameworkMeasurement } from '../../src/shared/design-workspace.js';
 import { buildZip, crc32 } from '../../src/utils/zip.js';
 
@@ -32,6 +33,8 @@ const people = new Map<string, DesignActor>([
   ['author', { kind: 'human', id: 'author', label: 'Fixture reviewer', permissions }],
   ['other', { kind: 'human', id: 'other', label: 'Other member', permissions }],
   ['steward', { kind: 'human', id: 'steward', label: 'Fixture steward', permissions, steward: true }],
+  ['feedback-admin', { kind: 'human', id: 'feedback-admin', label: 'Fixture administrator', permissions, feedbackSupplement: true }],
+  ['agent-with-supplement-flag', { kind: 'agent', id: 'agent-with-supplement-flag', label: 'Fixture agent', permissions, feedbackSupplement: true }],
   ['outside', { kind: 'human', id: 'outside', label: 'Outside member', permissions }],
   ['without-approval', { kind: 'human', id: 'without-approval', label: 'Cannot approve', permissions: ['read', 'write'] }],
   ['without-read', { kind: 'human', id: 'without-read', label: 'Cannot read', permissions: ['write', 'approve'] }],
@@ -766,6 +769,56 @@ describe('private CDS design workspace', () => {
       decisions: [expect.objectContaining({ decision: 'close', body: 'Confirmed on V2.' })],
     })]);
     expect(row.versions.map((version: { version: number }) => version.version)).toEqual([1, 2]);
+  });
+
+  it('supplements closed legacy feedback without rewriting its original text, version or decisions', async () => {
+    const created = await publish('legacy-feedback-design', draft());
+    expect(created.status).toBe(201);
+    const { result: { designId } } = await created.json();
+    const send = (type: string, fields: object, actor = 'implementer', requestId: string = crypto.randomUUID()) =>
+      fetch(`${base}${projectId}/design/feedback`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-fixture-user': actor },
+        body: JSON.stringify({ type, requestId, designId, ...fields }) });
+    const legacyBody = '旧反馈原文，保留当时的描述。';
+    const report = await send('feedback.create', { version: 1, category: 'gap', title: '补全旧反馈的验收口径', body: legacyBody });
+    expect(report.status).toBe(201);
+    const { result: { id: feedbackId } } = await report.json();
+    const body = '## 诉求\n\n交付页的旧反馈可补写验收口径。\n\n## 怎么算解决\n\n关闭后补写，历史状态保持原样。';
+    const read = async () => (await (await get()).json()).designs[0].feedback;
+    expect((await send('feedback.reply', { feedbackId, body }, 'designer')).status).toBe(201);
+    expect(feedbackSummary((await read())[0])).toMatchObject({ legacy: true, supplemented: false });
+    const closure = { feedbackId, decision: 'close', body: '原反馈已经确认关闭。' };
+    expect((await send('feedback.resolve', closure, 'feedback-admin')).status).toBe(403);
+    expect((await send('feedback.resolve', closure)).status).toBe(201);
+    expect((await send('feedback.reply', { feedbackId, body })).status).toBe(409);
+    const supplemented = { feedbackId, body, supplement: true };
+    expect((await send('feedback.reply', supplemented, 'implementer', 'v9-legacy-supplement')).status).toBe(201);
+    expect((await send('feedback.reply', supplemented, 'implementer', 'v9-legacy-supplement')).status).toBe(200);
+    expect((await send('feedback.reply', supplemented, 'designer')).status).toBe(403);
+    expect((await send('feedback.reply', supplemented, 'agent-with-supplement-flag')).status).toBe(403);
+    expect((await send('feedback.reply', { ...supplemented, body: '## 诉求\n\n验收口径仍缺一部分。' }, 'steward')).status).toBe(400);
+    expect((await send('feedback.reply', supplemented, 'steward')).status).toBe(201);
+    const newerBody = body.replace('关闭后补写', '由管理员补写');
+    expect((await send('feedback.reply', { ...supplemented, body: newerBody }, 'feedback-admin')).status).toBe(201);
+    expect((await (await get('', 'feedback-admin')).json()).permissions).toMatchObject({ feedbackSupplement: true });
+    expect((await (await get('', 'agent-with-supplement-flag')).json()).permissions.feedbackSupplement).not.toBe(true);
+
+    const feedback = await read();
+    expect(feedback).toEqual([expect.objectContaining({
+      id: feedbackId, version: 1, status: 'closed', body: legacyBody,
+      replies: [expect.objectContaining({ body, author: expect.objectContaining({ id: 'designer' }) }),
+        expect.objectContaining({ supplement: true, body, author: expect.objectContaining({ id: 'implementer' }) }),
+        expect.objectContaining({ supplement: true, body, author: expect.objectContaining({ id: 'steward' }) }),
+        expect.objectContaining({ supplement: true, body: newerBody, author: expect.objectContaining({ id: 'feedback-admin' }) })],
+      decisions: [expect.objectContaining({ decision: 'close', body: closure.body })],
+    })]);
+    expect(feedbackSummary(feedback[0])).toMatchObject({ legacy: true, supplemented: true,
+      parts: { ask: '交付页的旧反馈可补写验收口径。', done: '由管理员补写，历史状态保持原样。', problem: legacyBody } });
+
+    const structured = await send('feedback.create', { version: 1, category: 'gap', title: '新版反馈已写明两项', body });
+    expect(structured.status).toBe(201);
+    const { result: { id: structuredId } } = await structured.json();
+    expect((await send('feedback.reply', { ...supplemented, feedbackId: structuredId })).status).toBe(409);
   });
 
   it('stores private feedback screenshots, preserves the thread and reuses the original attachment receipt', async () => {
@@ -1665,8 +1718,10 @@ describe('private CDS design workspace', () => {
     expect((await command('acceptance.record', record)).status).toBe(409);
   });
 
-  async function runWithScreenshot() {
-    const { designId } = (await (await publish('version-for-signoff', draft())).json()).result;
+  async function runWithScreenshot(bytes = draft()) {
+    const published = await publish('version-for-signoff', bytes);
+    expect(published.status).toBe(201);
+    const { designId } = (await published.json()).result;
     expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
     const started = await command('acceptance.start', { designId, version: 1, pullRequest: 7 });
     expect(started.status).toBe(201);
@@ -1676,6 +1731,172 @@ describe('private CDS design workspace', () => {
     expect((await command('acceptance.record', record)).status).toBe(201);
     return { designId, runId, record };
   }
+
+  describe('逐画面视觉验收', () => {
+    const desktopPng = png(1280, 800);
+    const phonePng = png(375, 812);
+    const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
+    const passed = (evidence: string) => ({ status: 'passed', evidence });
+    const checks = {
+      'V-01': passed('页头居顶，标签紧跟页头，主体是成员列表，浮层关闭，底部显示分页。'),
+      'V-02': passed('同排两个按钮 y=212 px，高 28 px，顶边与底边误差 0 px。'),
+      'V-03': passed('抽屉关闭，与工具栏重叠面积 0 px；成员名称完整显示。'),
+      'V-04': passed('文档宽度 1280 px，横向多出 0 px，只有列表主内容滚动。'),
+      'V-05': passed('列表标题、账号列和分页可见文本未出现原始 Markdown、JSON 或凭据。'),
+      'V-06': passed('待评审徽标和成员列表都显示 6 条，两处入口都叫全文。'),
+      'V-07': passed('深色列表正文与背景测得对比 5.2，缩略图未被深色覆盖。'),
+      'V-08': passed('375 px 手机对照图、Windows 125% 和 150% 截图均显示成员标题和分页。'),
+      'V-09': passed('单独的加载行显示骨架，成员清单行加载完成，空态行显示查找入口。'),
+      'V-10': passed('输入 61 条成员记录及 80 字符长标题，列表仍分页且无横向滚动。'),
+    };
+    const bytes = (mobileBound = true) => draft('Visual acceptance fixture', {
+      screens: [
+        { id: 'members', name: 'Members', route: '#members', viewport: 'desktop', themes: ['light'], impl: '/members/', readySelector: 'h1' },
+        { id: 'members-mobile', name: 'Mobile members', route: '#members-mobile', viewport: 'phone', themes: ['dark'],
+          ...(mobileBound ? { impl: '/members/', readySelector: 'h1' } : {}) },
+      ],
+      acceptance: [{ id: 'A-1', screenId: 'members', rule: 'Members load', how: 'human', slots: ['desktop-light'] }],
+    }, [
+      { name: 'bundle/设计文档/视觉验收标准.md', data: Buffer.from('# 逐画面视觉验收标准\n') },
+      { name: 'bundle/screens/members.light.png', data: desktopPng },
+    ]);
+
+    it('blocks signoff when visual proof is still missing despite passing the authored rules', async () => {
+      const { designId, runId } = await runWithScreenshot(bytes());
+      expect((await command('acceptance.sign', { designId, runId })).status).toBe(409);
+      const { designs } = await (await get()).json();
+      expect(designs[0].runs[0]).toMatchObject({ verdict: 'needs_evidence', cells: [{ status: 'passed' }] });
+      expect(designs[0].runs[0].signed).toBeUndefined();
+    });
+
+    it('enables unfinished visual runs to bind missing screens while locking existing locations', async () => {
+      const { designId, runId } = await runWithScreenshot(bytes(false));
+      const visual = { designId, runId, commit: previewCommit, screenId: 'members-mobile', slot: 'phone-dark', checks: {},
+        image: dataUrl(phonePng), measured: { width: 375, height: 812, theme: 'dark', path: '/members-mobile/' } };
+      const bind = (screenId: string, path: string) => command('implementation.bind', { designId, version: 1,
+        screens: [{ screenId, path, readySelector: 'h1' }] });
+      expect((await command('acceptance.visual', visual)).status).toBe(409);
+      expect((await bind('members-mobile', '/members-mobile/')).status).toBe(201);
+      expect((await bind('members', '/changed/')).status).toBe(409);
+      expect((await command('acceptance.visual', visual)).status).toBe(201);
+      const { designs } = await (await get()).json();
+      expect(designs[0].versions[0].screens).toMatchObject([{ impl: '/members/' }, { impl: '/members-mobile/' }]);
+      expect(designs[0].runs[0]).toMatchObject({ id: runId, commit: previewCommit, cells: [{ status: 'passed' }], visual: {
+        'members-mobile/phone-dark': { imageId: expect.any(String), measured: visual.measured },
+      } });
+    });
+
+    it('pins an existing authored-rule screenshot only when its screen, theme, path and size match', async () => {
+      const { designId, runId, record: authored } = await runWithScreenshot(bytes());
+      const visual = { designId, runId, commit: previewCommit, screenId: 'members', slot: 'desktop-light', checks };
+      const otherSize = { ...authored.cells[0], image: dataUrl(png(1200, 800)), measured: { ...authored.cells[0].measured, width: 1200 } };
+      expect((await command('acceptance.record', { ...authored, cells: [{ ...otherSize, measured: { ...otherSize.measured, path: '/another/' } }] })).status).toBe(400);
+      expect((await command('acceptance.record', { ...authored, cells: [otherSize] })).status).toBe(201);
+      expect((await command('acceptance.visual', visual)).status).toBe(201);
+      const read = async () => (await (await get()).json()).designs[0].runs[0];
+      expect((await read()).visual['members/desktop-light'].imageId).toBeUndefined();
+
+      expect((await command('acceptance.record', authored)).status).toBe(201);
+      expect((await command('acceptance.visual', visual)).status).toBe(201);
+      const picked = await read();
+      expect(picked.visual['members/desktop-light']).toMatchObject({ imageId: picked.cells[0].imageId, measured: picked.cells[0].measured });
+      expect((await command('acceptance.record', { ...authored, cells: [otherSize] })).status).toBe(201);
+      expect((await read()).visual['members/desktop-light'].imageId).toBe(picked.cells[0].imageId);
+    });
+
+    it('records private visual evidence by screen and slot and signs only after all applicable rows pass', async () => {
+      const { designId, runId, record: authored } = await runWithScreenshot(bytes());
+      const common = { designId, runId, commit: previewCommit };
+      const desktop = { ...common, screenId: 'members', slot: 'desktop-light', checks,
+        image: dataUrl(desktopPng), measured: { width: 1280, height: 800, theme: 'light', path: '/members/' } };
+      const record = (input: object, actor = 'designer', requestId?: string, project?: string) =>
+        command('acceptance.visual', input, actor, requestId, project);
+      const sign = () => command('acceptance.sign', { designId, runId });
+      const read = async () => (await (await get()).json()).designs[0];
+      const partial = { ...desktop, checks: { 'V-01': checks['V-01'] } };
+      expect((await record(partial, 'designer', 'visual-desktop')).status).toBe(201);
+      expect((await record(partial, 'designer', 'visual-desktop')).status).toBe(200);
+      expect((await record(desktop, 'designer', 'visual-desktop')).status).toBe(409);
+      expect((await sign()).status).toBe(409);
+      expect((await record(desktop, 'read-designer')).status).toBe(403);
+      expect((await record(desktop, 'git-designer')).status).toBe(403);
+      expect((await (await get('', 'git-designer')).json()).permissions).toMatchObject({ write: true, visual: false });
+      expect((await record(desktop, 'anonymous')).status).toBe(404);
+      expect((await record(desktop, 'author', 'cross-project-visual', otherProjectId)).status).toBe(404);
+      for (const invalid of [
+        { ...desktop, slot: 'desktop-dark' },
+        { ...desktop, referenceImage: dataUrl(desktopPng) },
+        { ...desktop, image: dataUrl(phonePng) },
+        { ...desktop, measured: undefined },
+        { ...desktop, measured: { ...desktop.measured, path: '/another/' } },
+        { ...desktop, measured: { ...desktop.measured, theme: 'dark' } },
+        { ...desktop, checks: [] },
+        { ...desktop, checks: { 'V-11': passed('不存在的视觉检查。') } },
+        { ...desktop, checks: { 'V-01': passed('只比对了页头和主体。') } },
+        { ...desktop, checks: { 'V-02': passed('看起来一致') } },
+      ]) expect((await record(invalid)).status).toBe(400);
+
+      const mobileChecks = { ...checks, 'V-04': passed('文档宽度 375 px，与视口相等，只有列表主内容滚动。') };
+      const mobile = { ...common, screenId: 'members-mobile', slot: 'phone-dark', checks: mobileChecks,
+        image: dataUrl(phonePng), measured: { width: 375, height: 812, theme: 'dark', path: '/members/' } };
+      expect((await record({ ...mobile, checks: {}, referenceImage: dataUrl(phonePng), image: undefined, measured: undefined })).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      expect((await record(mobile)).status).toBe(201);
+      const failed = { status: 'failed', evidence: '成员行工具按钮 y=212 px，邀请成员 y=208 px，差 4 px。' };
+      expect((await record({ ...desktop, checks: { ...checks, 'V-02': failed } })).status).toBe(201);
+      expect((await read()).runs[0]).toMatchObject({ verdict: 'failed' });
+      expect((await sign()).status).toBe(409);
+      expect((await record(desktop)).status).toBe(201);
+
+      const beforeNewImage = (await read()).runs[0].visual['members/desktop-light'];
+      const replacementPng = png(1280, 800, Buffer.alloc((1280 * 3 + 1) * 800, 1));
+      expect((await record({ ...desktop, image: dataUrl(replacementPng), checks: {} })).status).toBe(201);
+      const replaced = (await read()).runs[0];
+      expect(replaced.verdict).toBe('needs_evidence');
+      expect(replaced.visual['members/desktop-light'].imageId).not.toBe(beforeNewImage.imageId);
+      expect(replaced.visual['members/desktop-light'].checks).toEqual({});
+      expect((await sign()).status).toBe(409);
+      expect((await record({ ...desktop, image: undefined, measured: undefined })).status).toBe(201);
+
+      const failedRule = { ...authored, cells: [{ ...authored.cells[0], status: 'failed', actual: '成员列表内容未加载完成。' }] };
+      expect((await command('acceptance.record', failedRule)).status).toBe(201);
+      expect((await read()).runs[0]).toMatchObject({ verdict: 'failed', visual: { 'members/desktop-light': { checks } } });
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.record', authored)).status).toBe(201);
+
+      const run = (await read()).runs[0];
+      expect(run).toMatchObject({ verdict: 'passed', visual: {
+        'members/desktop-light': { imageId: replaced.visual['members/desktop-light'].imageId, by: 'Fixture designer', at: clock, checks },
+        'members-mobile/phone-dark': { imageId: expect.any(String), referenceImageId: expect.any(String), checks: mobileChecks },
+      } });
+      const proof = run.visual['members-mobile/phone-dark'];
+      for (const id of [proof.referenceImageId, proof.imageId]) {
+        const response = await get(`/artifacts/${id}`);
+        expect(response.status).toBe(200);
+        expect(response.headers.get('content-type')).toBe('image/png');
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(phonePng);
+        expect((await get(`/artifacts/${id}`, 'anonymous')).status).toBe(404);
+        expect((await get(`/artifacts/${id}`, 'author', otherProjectId)).status).toBe(404);
+      }
+      expect((await sign()).status).toBe(201);
+      expect((await record(desktop)).status).toBe(409);
+      expect((await read()).runs[0]).toMatchObject({ signed: { verdict: 'passed' }, visual: run.visual });
+    });
+
+    it('rejects recording against a superseded preview, PR or run', async () => {
+      const { designId, runId } = await runWithScreenshot(bytes());
+      const fields = { designId, runId, commit: previewCommit, screenId: 'members', slot: 'desktop-light', checks,
+        image: dataUrl(desktopPng), measured: { width: 1280, height: 800, theme: 'light', path: '/members/' } };
+      expect((await command('acceptance.visual', { ...fields, commit: 'd'.repeat(40) })).status).toBe(409);
+      activeCommit = 'd'.repeat(40);
+      expect((await command('acceptance.visual', fields)).status).toBe(409);
+      activeCommit = previewCommit;
+      expect((await command('design.link', { designId, pullRequest: 8 })).status).toBe(201);
+      expect((await command('acceptance.visual', fields)).status).toBe(409);
+      expect((await command('acceptance.start', { designId, version: 1, pullRequest: 7 })).status).toBe(201);
+      expect((await command('acceptance.visual', fields)).status).toBe(409);
+    });
+  });
 
   it('keeps the signature as history when the linked PR deploys a different commit', async () => {
     const { designId, runId } = await runWithScreenshot();

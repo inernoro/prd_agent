@@ -4,6 +4,7 @@ import { createProjectApiClient, localFile } from './bridge.mjs';
 const readTool = 'cds_design_read';
 const publishTool = 'cds_design_publish';
 const feedbackTool = 'cds_design_feedback';
+const acceptanceTool = 'cds_design_acceptance';
 const fileLimit = 4 * 1024 * 1024;
 const id = z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_.@+-]+$/);
 const positiveVersion = z.number().int().positive();
@@ -24,12 +25,16 @@ const intakeResult = z.object({
 });
 const feedbackBase = { requestId: id, designId: id };
 const feedbackBody = z.string().trim().min(1).max(4_000);
+const slot = z.enum(['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark']);
+const imagePath = z.string().trim().min(1).max(1200);
+const checkId = z.string().regex(/^V-(?:0[1-9]|10)$/);
 const schemas = {
   [readTool]: z.discriminatedUnion('view', [
     z.object({ view: z.literal('intake') }).strict(),
     z.object({ view: z.literal('designs') }).strict(),
     z.object({ view: z.literal('frameworks') }).strict(),
     z.object({ view: z.literal('design'), id, version }).strict(),
+    z.object({ view: z.literal('run'), id, runId: id.optional() }).strict(),
     z.object({ view: z.literal('framework'), id, version }).strict(),
     z.object({ view: z.literal('delivery'), id, version }).strict(),
     z.object({ view: z.literal('feedback'), id, version }).strict(),
@@ -45,13 +50,19 @@ const schemas = {
       title: z.string().trim().min(1).max(180), body: feedbackBody, screenId: id.optional(), filePath: z.string().trim().min(1).max(400).optional(),
       evidence: z.array(z.string().trim().min(1).max(1_000)).max(8).optional() }).strict(),
     z.object({ ...feedbackBase, type: z.literal('feedback.reply'), feedbackId: id, body: feedbackBody,
-      revision: version }).strict(),
+      revision: version, supplement: z.literal(true).optional() }).strict(),
     z.object({ ...feedbackBase, type: z.literal('feedback.attach'), feedbackId: id, title: z.string().trim().min(1).max(180),
-      imagePath: z.string().trim().min(1).max(1200), version, screenId: id.optional(),
-      slot: z.enum(['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark']).optional() }).strict(),
+      imagePath, version, screenId: id.optional(), slot: slot.optional() }).strict(),
     z.object({ ...feedbackBase, type: z.literal('feedback.resolve'), feedbackId: id, body: feedbackBody,
       decision: z.enum(['close', 'reopen']) }).strict(),
   ]),
+  [acceptanceTool]: z.object({
+    ...feedbackBase, type: z.literal('acceptance.visual'), runId: id, commit: sourceCommit, screenId: id, slot,
+    checks: z.record(checkId, z.object({ status: z.enum(['passed', 'failed', 'missing']), evidence: z.string().max(2000) }).strict()),
+    imagePath: imagePath.optional(), referenceImagePath: imagePath.optional(),
+    measured: z.object({ width: z.number().int().positive(), height: z.number().int().positive(), theme: z.enum(['light', 'dark']),
+      path: z.string().trim().min(1).max(1200) }).strict().optional(),
+  }).strict().refine(args => Boolean(args.imagePath) === Boolean(args.measured), { path: ['measured'], message: '实拍和实拍条件须一起提交' }),
   [publishTool]: z.object({
     requestId: id, designId: id.optional(), zipPath: z.string().trim().min(1).max(1200),
     sourceCommit, sourcePath: z.string().trim().min(1).max(400), sourceMode: z.literal('private').optional(),
@@ -76,8 +87,9 @@ const schemas = {
   }),
 };
 const descriptions = {
-  [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。稿件发布前可用 brief.reply 在当前需求下澄清。',
+  [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。稿件发布前可用 brief.reply 在当前需求下澄清。用 run 回读指定或最新验收运行。',
   [feedbackTool]: '稿件发布前用 brief.claim 认领需求，brief.reply 在原需求下澄清，brief.release 交回未出稿需求。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
+  [acceptanceTool]: '在当前项目的最新验收运行补交逐画面证据。先用 run 回读运行、提交和结果，再为指定画面及视口主题记录十项通用检查的具体证据。可附工作区内的 PNG。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
@@ -112,7 +124,8 @@ export function createDesignBridge(credentials, options = {}) {
     async listTools() {
       const result = await workspace();
       return tools.filter(tool => tool.name === readTool || (tool.name === publishTool && result.permissions.write)
-        || (tool.name === feedbackTool && result.permissions.feedback === true));
+        || (tool.name === feedbackTool && result.permissions.feedback === true)
+        || (tool.name === acceptanceTool && result.permissions.visual === true));
     },
     async call(name, input = {}) {
       if (!Object.hasOwn(schemas, name)) throw new Error('未知 CDS 设计工具');
@@ -133,6 +146,11 @@ export function createDesignBridge(credentials, options = {}) {
             title: item.versions.at(-1)?.title, versions: item.versions.map(row => row.version) })) };
         }
         const item = items.find(row => row.id === args.id);
+        if (args.view === 'run') {
+          const run = args.runId ? item?.runs?.find(row => row.id === args.runId) : item?.runs?.at(-1);
+          if (!run) throw new Error('当前稿件没有对应验收运行；请核对稿件及运行编号');
+          return { projectId, id: item.id, run };
+        }
         const selected = args.version === undefined ? item?.versions.at(-1) : item?.versions.find(row => row.version === args.version);
         if (!item || !selected) {
           throw new Error(`请先通过 ${isFramework ? 'frameworks' : 'intake'} 查询当前项目，再核对编号和版本。无法唯一确定时，先确认本轮基线。`);
@@ -186,6 +204,24 @@ export function createDesignBridge(credentials, options = {}) {
             || (args.version !== undefined && result.version !== args.version)))
           || typeof receipt.reused !== 'boolean' || !id.safeParse(result?.id).success) {
           throw new Error('CDS 返回的反馈回执与本次稿件或操作不符');
+        }
+        return receipt;
+      }
+      if (name === acceptanceTool) {
+        const data = await workspace();
+        if (data.permissions.visual !== true) throw new Error('当前凭据没有验收回填权限，请使用项目实现授权');
+        const { imagePath, referenceImagePath, ...fields } = args;
+        const body = { ...fields };
+        for (const [key, filename] of [['image', imagePath], ['referenceImage', referenceImagePath]]) {
+          if (!filename) continue;
+          const { bytes } = await localFile(credentials, filename, ['.png'], 1.5 * 1024 * 1024);
+          body[key] = `data:image/png;base64,${bytes.toString('base64')}`;
+        }
+        const receipt = await client.request('POST', path + '/commands', body);
+        const result = receipt.result;
+        if (receipt.projectId !== projectId || typeof receipt.reused !== 'boolean'
+          || ['type', 'designId', 'runId', 'screenId', 'slot'].some(key => result?.[key] !== fields[key])) {
+          throw new Error('CDS 返回的逐画面对照回执与当前运行或画面不符');
         }
         return receipt;
       }

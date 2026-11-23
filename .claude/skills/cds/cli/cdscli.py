@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.16"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.17"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4536,6 +4536,17 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         except (OSError, ValueError):
             die("无法读取文件，请提供有效的 JSON")
 
+    def read_design_png(filename: str) -> str:
+        file_path = Path(filename)
+        try:
+            with file_path.open("rb") as stream:
+                content = stream.read(1536 * 1024 + 1)
+        except OSError:
+            die("无法读取对照图")
+        if file_path.suffix.lower() != ".png" or len(content) > 1536 * 1024 or not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            die("请提供 1.5 MiB 以内的 PNG 对照图")
+        return "data:image/png;base64," + base64.b64encode(content).decode("ascii")
+
     action = args.design_action
     if action == "intake":
         intake = request("GET", "/intake")
@@ -4580,8 +4591,11 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
                     command[key] = value
         else:
             command["feedbackId"] = args.feedback_id
-            if action == "feedback-reply" and args.revision is not None:
-                command["revision"] = args.revision
+            if action == "feedback-reply":
+                if args.revision is not None:
+                    command["revision"] = args.revision
+                if args.supplement:
+                    command["supplement"] = True
             if action == "feedback-resolve":
                 command["decision"] = args.decision
         request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -4594,16 +4608,8 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         ok(receipt)
 
     if action == "attach-evidence":
-        file_path = Path(args.file)
-        try:
-            with file_path.open("rb") as stream:
-                content = stream.read(1536 * 1024 + 1)
-        except OSError:
-            die("无法读取对照图")
-        if file_path.suffix.lower() != ".png" or len(content) > 1536 * 1024 or not content.startswith(b"\x89PNG\r\n\x1a\n"):
-            die("请提供 1.5 MiB 以内的 PNG 对照图")
         command = {"type": "feedback.attach", "designId": args.id, "feedbackId": args.feedback_id, "title": args.title,
-                   "image": "data:image/png;base64," + base64.b64encode(content).decode("ascii")}
+                   "image": read_design_png(args.file)}
         for field, value in (("version", args.version), ("screenId", args.screen), ("slot", args.slot)):
             if value is not None:
                 command[field] = value
@@ -4764,6 +4770,29 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("此稿件没有对应验收运行")
         ok({"projectId": project, "run": run})
 
+    if action == "visual":
+        if workspace.get("permissions", {}).get("visual") is not True:
+            die("当前凭据没有验收回填权限，请使用项目实现授权或以有权项目成员登录")
+        if bool(args.implementation) != bool(args.path):
+            die("实拍 --implementation 和预览内实现地址 --path 须一起提交")
+        checks = read_input(args.file)
+        if not isinstance(checks, dict):
+            die("请提供以 V-01 至 V-10 为键的检查结果 JSON 对象")
+        command = {"type": "acceptance.visual", "designId": args.id, "runId": args.run, "commit": args.commit,
+                   "screenId": args.screen, "slot": args.slot, "checks": checks}
+        if args.implementation:
+            viewport, theme = args.slot.split("-", 1)
+            width, height = (1280, 800) if viewport == "desktop" else (375, 812)
+            command.update(image=read_design_png(args.implementation), measured={"width": width, "height": height,
+                           "theme": theme, "path": args.path})
+        if args.reference:
+            command["referenceImage"] = read_design_png(args.reference)
+        receipt = send(command, use_flag=bool(args.request_id))
+        result = receipt.get("result") or {}
+        if any(result.get(field) != command[field] for field in ("type", "designId", "runId", "screenId", "slot")):
+            die("CDS 返回的逐画面对照回执与当前运行或画面不符")
+        ok(receipt)
+
     command = {"designId": args.id}
     if action == "freeze":
         command.update(type="design.freeze", version=args.version)
@@ -4851,7 +4880,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "result", "freeze", "sign", "scaffold", "extract")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
@@ -4860,7 +4889,7 @@ def _register_design_parser(sub: Any) -> None:
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
             if action not in ("intake", "list", "publish", "reviewers", "scaffold"):
                 parser.add_argument("id")
-            if action in ("publish", "request-review", "accept", "record", "freeze", "sign", "extract", "import"):
+            if action in ("publish", "request-review", "accept", "record", "visual", "freeze", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
             if action in ("brief-reply", "brief-claim", "brief-release"):
                 parser.add_argument("--request-id")
@@ -4883,6 +4912,7 @@ def _register_design_parser(sub: Any) -> None:
                     parser.add_argument("--feedback-id", required=True)
                 if action == "feedback-reply":
                     parser.add_argument("--revision", type=int, help="由此回复发布的稿件版本")
+                    parser.add_argument("--supplement", action="store_true", help="为旧反馈补写诉求和完成标准")
                 if action == "feedback-resolve":
                     parser.add_argument("--decision", choices=("close", "reopen"), required=True)
             if action == "attach-evidence":
@@ -4921,11 +4951,17 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--pr", type=int)
                 parser.add_argument("--commit")
                 parser.add_argument("--start-only", action="store_true", help="只创建验收运行，后续由人工补充证据")
-            if action in ("record", "result", "sign"):
+            if action in ("record", "visual", "result", "sign"):
                 parser.add_argument("--run", required=action != "result")
-            if action == "record":
+            if action in ("record", "visual"):
                 parser.add_argument("--file", required=True)
                 parser.add_argument("--commit", required=True)
+            if action == "visual":
+                parser.add_argument("--screen", required=True, help="稿件画面编号")
+                parser.add_argument("--slot", required=True, choices=("desktop-light", "desktop-dark", "phone-light", "phone-dark"))
+                parser.add_argument("--implementation", help="当前验收提交的实拍 PNG")
+                parser.add_argument("--path", help="实拍所在预览内的相对地址")
+                parser.add_argument("--reference", help="随稿缺图时补交同版本的对照 PNG")
             if action == "freeze":
                 parser.add_argument("version", type=int)
             if action == "scaffold":

@@ -4,7 +4,10 @@ import type {
   DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignViewerState, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
+import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
+import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
+import { concreteVisualEvidence, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
+  visualSlotTheme, type DesignVisualChecks, type DesignVisualRow } from '../shared/design-visual.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
@@ -15,11 +18,11 @@ import {
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revision-store.js';
 
-export type DesignActor = PlanningActor & { steward?: boolean; gitPublishOnly?: boolean; feedback?: boolean };
+export type DesignActor = PlanningActor & { steward?: boolean; feedbackSupplement?: boolean; gitPublishOnly?: boolean; feedback?: boolean };
 type Receipt = {
   projectId: string; reused: boolean;
   result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
-    state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string; artifactId?: string };
+    state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string; artifactId?: string; screenId?: string; slot?: DesignSlot };
 };
 type RequestReceipt = { key: string; fingerprint: string; result: Receipt['result'] };
 export type DesignWorkspaceCommit = {
@@ -248,6 +251,33 @@ function image(value: unknown): ProjectRevisionAsset {
   return { id: randomUUID(), mime: 'image/png', base64: data.toString('base64') };
 }
 
+function parseVisualChecks(value: unknown): DesignVisualChecks {
+  const input = designRecord(value, '逐画面检查', designVisualStandard.map(([id]) => id));
+  const checks: DesignVisualChecks = {};
+  for (const [id] of designVisualStandard) {
+    if (input[id] === undefined) continue;
+    const check = designRecord(input[id], id, ['status', 'evidence']);
+    const { status } = check;
+    if (status !== 'passed' && status !== 'failed' && status !== 'missing') return invalidDesign(`${id} 检查结果无效`);
+    const evidence = status === 'missing' && typeof check.evidence === 'string' && !check.evidence.trim()
+      ? '' : planningText(check.evidence, `${id} 证据`, 2_000);
+    if (status !== 'missing' && !concreteVisualEvidence(id, evidence)) {
+      invalidDesign(`${id} 请写具体区域或测量结果；未核实可标为缺证据`);
+    }
+    checks[id] = { status, evidence };
+  }
+  return checks;
+}
+
+function visualImage(value: unknown, { width, height }: { width: number; height: number }) {
+  const asset = image(value);
+  const dimensions = designPngDimensions(Buffer.from(asset.base64!, 'base64'));
+  if (dimensions?.width !== width || dimensions.height !== height) {
+    invalidDesign(`逐画面图片尺寸须为 ${width} × ${height}`);
+  }
+  return asset;
+}
+
 function parseMaterial(value: unknown): DesignMaterial {
   const input = designRecord(value, '框架材料', [...designMaterialKeys]);
   const tokens = input.tokens === undefined ? undefined : designRecord(input.tokens, '设计令牌');
@@ -359,9 +389,9 @@ export class DesignWorkspaceService {
       requirements: visibleRequirements(state),
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       ...(actor.kind === 'human' ? { viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) } : {}),
-      permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), review: actor.kind === 'human' && actor.permissions.includes('approve'),
+      permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), visual: !actor.gitPublishOnly && actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
-        steward: actor.steward === true, actorId: actor.id } };
+        steward: actor.steward === true, feedbackSupplement: actor.kind === 'human' && actor.feedbackSupplement === true, actorId: actor.id } };
   }
 
   async intake(projectId: string, actor: DesignActor): Promise<DesignIntake> {
@@ -723,15 +753,23 @@ export class DesignWorkspaceService {
       const body = planningText(input.body, '处理说明', 4_000);
       const feedback = { ...thread };
       if (type === 'feedback.reply') {
-        designRecord(input, '回复设计反馈', [...common, 'feedbackId', 'body', 'revision']);
-        if (thread.status === 'closed') conflict('请由反馈者或项目管理者重开后再回复');
-        const revision = input.revision === undefined ? undefined : versionOf(entry, input.revision);
-        if (revision) {
-          authored(actor, revision.publisher);
-          if (revision.version < thread.version) invalidDesign('回复引用的版本不能早于反馈版本');
+        designRecord(input, '回复设计反馈', [...common, 'feedbackId', 'body', 'revision', 'supplement']);
+        if (input.supplement !== undefined) {
+          if (input.supplement !== true || input.revision !== undefined) invalidDesign('补写诉求时请保留反馈原版本');
+          if (actor.kind !== 'human' || !actor.feedbackSupplement) authored(actor, thread.author);
+          if (completeFeedback(feedbackParts(thread.body))) conflict('原反馈已经写明诉求和完成标准');
+          if (!completeFeedback(feedbackParts(body))) invalidDesign('请分别写明「诉求」和「怎么算解决」');
+          feedback.replies = [...thread.replies, { body, supplement: true, author: identity(actor), at: now }];
+        } else {
+          if (thread.status === 'closed') conflict('请由反馈者或项目管理者重开后再回复');
+          const revision = input.revision === undefined ? undefined : versionOf(entry, input.revision);
+          if (revision) {
+            authored(actor, revision.publisher);
+            if (revision.version < thread.version) invalidDesign('回复引用的版本不能早于反馈版本');
+          }
+          feedback.replies = [...thread.replies, { body, revision: revision?.version, author: identity(actor), at: now }];
+          if (actor.id !== thread.author.id) feedback.status = 'responded';
         }
-        feedback.replies = [...thread.replies, { body, revision: revision?.version, author: identity(actor), at: now }];
-        if (actor.id !== thread.author.id) feedback.status = 'responded';
       } else {
         designRecord(input, '确认设计反馈', [...common, 'feedbackId', 'body', 'decision']);
         authored(actor, thread.author);
@@ -819,8 +857,11 @@ export class DesignWorkspaceService {
   private bindImplementation(input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {
     review(actor);
     designRecord(input, '实现画面定位', ['type', 'requestId', 'designId', 'version', 'screens']);
-    const version = versionOf(entry, input.version);
-    if (entry.runs.some(run => run.version === version.version)) conflict('已有验收记录，请在新版本更新画面定位');
+    const version = implementationVersion(entry, versionOf(entry, input.version));
+    const runs = entry.runs.filter(run => run.version === version.version);
+    if (runs.length && (!designVisualRequired(version, runs.at(-1)) || runs.some(run => run.signed))) {
+      conflict('已有验收记录，请在新版本更新画面定位');
+    }
     if (!Array.isArray(input.screens) || !input.screens.length || input.screens.length > version.screens.length) {
       return invalidDesign('请选择这一版的画面并填写实际页面地址');
     }
@@ -829,7 +870,8 @@ export class DesignWorkspaceService {
       const row = designRecord(value, '实现画面', ['screenId', 'path', 'readySelector']);
       const screenId = designId(row.screenId, '画面编号');
       if (seen.has(screenId)) invalidDesign('同一次操作不能重复指定画面');
-      if (!version.screens.some(screen => screen.id === screenId)) missing('该版本没有此画面');
+      const screen = version.screens.find(screen => screen.id === screenId) ?? missing('该版本没有此画面');
+      if (runs.length && screen.impl) conflict('已有验收记录，只能补充尚未绑定的画面');
       seen.add(screenId);
       return { screenId, path: localDesignPath(row.path), readySelector: planningText(row.readySelector, '画面就绪选择器', 300), by: actor.label, at: now };
     });
@@ -989,11 +1031,65 @@ export class DesignWorkspaceService {
     return { result: { type, designId: entry.id, id: comment.id }, changes: { design: { id: entry.id, comment } } };
   }
 
+  private async recordVisual(input: Record<string, unknown>, context: Context, entry: DesignEntry, version: DesignVersion,
+    run: DesignRun, assets: ProjectRevisionAsset[]) {
+    if (context.actor.gitPublishOnly) forbidden('请使用具备验收写权限的项目凭据');
+    designRecord(input, '逐画面验收回填', ['type', 'requestId', 'designId', 'runId', 'commit', 'screenId', 'slot',
+      'checks', 'image', 'referenceImage', 'measured']);
+    if (run.id !== entry.runs.at(-1)?.id || run.pullRequest !== entry.pullRequest || run.version !== entry.frozen) {
+      conflict('请对当前实施基线与 PR 的最新验收运行补证据');
+    }
+    if (designCommit(input.commit) !== run.commit) conflict('实拍提交与验收运行不符');
+    const current = await this.deps.resolvePreview?.(context.projectId, run.pullRequest, run.commit);
+    if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览已经变化，请对新提交重跑');
+
+    const screenId = designId(input.screenId, '验收画面');
+    const screen = version.screens.find(row => row.id === screenId) ?? missing('此版本没有该画面');
+    const slot = designVisualSlots(screen).find(value => value === input.slot) ?? invalidDesign('此画面未声明所选视口和主题');
+    const theme = visualSlotTheme(slot);
+    const dimensions = designViewports[screen.viewport];
+    const key = designVisualKey(screenId, slot);
+    const former = run.visual?.[key];
+    const checks = parseVisualChecks(input.checks);
+    const replacingImages = input.image !== undefined || input.referenceImage !== undefined;
+    if (!replacingImages && !Object.keys(checks).length) invalidDesign('请提交截图或至少一项检查结果');
+    const row: DesignVisualRow = { ...former, checks: replacingImages ? checks : { ...former?.checks, ...checks },
+      by: context.actor.label, at: context.now };
+    if (input.referenceImage !== undefined) {
+      if (version.renders?.[screenId]?.[theme]) invalidDesign('该画面已有随稿发布的对照图');
+      const reference = visualImage(input.referenceImage, dimensions);
+      assets.push(reference);
+      row.referenceImageId = reference.id;
+    }
+    if (input.image !== undefined) {
+      if (!screen.impl) conflict('请为画面绑定实现地址后重跑');
+      const measured = designRecord(input.measured, '实拍条件', ['width', 'height', 'theme', 'path']);
+      if (measured.width !== dimensions.width || measured.height !== dimensions.height
+        || measured.theme !== theme || localDesignPath(measured.path) !== screen.impl) {
+        invalidDesign('实拍路径、视口或主题与画面声明不符');
+      }
+      const screenshot = visualImage(input.image, dimensions);
+      assets.push(screenshot);
+      row.imageId = screenshot.id;
+      row.measured = { ...dimensions, theme, path: screen.impl! };
+    } else {
+      if (input.measured !== undefined) invalidDesign('请同时提交实拍图片和实拍条件');
+      if (!row.imageId) {
+        const evidence = designVisualRuleShot(version, screen, slot, run);
+        if (evidence) { row.imageId = evidence.imageId; row.measured = evidence.measured; }
+      }
+    }
+
+    run.visual = { ...run.visual, [key]: row };
+    return { screenId, slot, version: run.version };
+  }
+
   private async acceptance(type: string, input: Record<string, unknown>, context: Context, entry: DesignEntry): Promise<Update> {
     const { actor, projectId, now } = context;
     const id = entry.id;
     let run: DesignRun;
     const assets: ProjectRevisionAsset[] = [];
+    let visualTarget: { screenId: string; slot: DesignSlot; version: number } | undefined;
     if (type === 'acceptance.start') {
       designRecord(input, '发起验收请求', ['type', 'requestId', 'designId', 'version', 'pullRequest', 'commit']);
       const version = implementationVersion(entry, versionOf(entry, input.version));
@@ -1068,6 +1164,8 @@ export class DesignWorkspaceService {
           cell.debtId = status === 'passed' ? undefined : debtId;
           cell.status = status;
         }
+      } else if (type === 'acceptance.visual') {
+        visualTarget = await this.recordVisual(input, context, entry, version, run, assets);
       } else if (type === 'acceptance.debt') {
         designRecord(input, '记债请求', ['type', 'requestId', 'designId', 'runId', 'itemId']);
         const itemId = designId(input.itemId, '验收项编号');
@@ -1096,6 +1194,9 @@ export class DesignWorkspaceService {
         }
         const current = await this.deps.resolvePreview?.(projectId, run.pullRequest, run.commit);
         if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览提交已经变化，请重跑后签收');
+        if (designVisualRequired(version, run) && designVisualSummary(version, run).remaining) {
+          conflict('还有画面缺少同条件对照图、实拍或检查证据，完成逐画面对照后再签收');
+        }
         if (run.verdict !== 'passed' && run.verdict !== 'conditional') return conflict('验收通过或有条件通过后才能签收');
         for (const cell of run.cells) {
           if (cell.debtId && !(await this.deps.findDebt?.(projectId, cell.debtId, `${id}/${run.id}/${cell.itemId}`))) {
@@ -1106,8 +1207,13 @@ export class DesignWorkspaceService {
       } else return invalidDesign('不支持的验收命令');
       run.verdict = evaluateDesignAcceptance(version.acceptance.map(rule => ({ id: rule.id, priority: rule.priority,
         cells: run.cells.filter(cell => cell.itemId === rule.id).map(cell => ({ ...cell, applicable: true })) })));
+      if (designVisualRequired(version, run)) {
+        const visual = designVisualSummary(version, run);
+        if (visual.failed) run.verdict = 'failed';
+        else if (visual.remaining && run.verdict !== 'failed') run.verdict = 'needs_evidence';
+      }
     }
-    return { result: { type, designId: id, runId: run.id }, changes: {
+    return { result: { type, designId: id, runId: run.id, ...visualTarget }, changes: {
       assets, design: { id, run, ...(type === 'acceptance.start' ? { pullRequest: run.pullRequest } : {}) },
     } };
   }

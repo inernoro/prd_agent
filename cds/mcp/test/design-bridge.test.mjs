@@ -195,3 +195,68 @@ test('intake conflicts direct the agent to the authoritative baseline without ec
     return true;
   });
 });
+
+test('visual acceptance is limited to the bound project and validates the exact returned row', async t => {
+  const projectId = 'fixture-visual';
+  const designId = 'DSN-visual';
+  const runId = 'RUN-visual';
+  const projectKey = 'cdsp_fixture_visual';
+  const root = await mkdtemp(path.join(tmpdir(), 'cds-design-visual-'));
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII=', 'base64');
+  await writeFile(path.join(root, 'implementation.png'), bytes);
+  const route = `/api/projects/${projectId}/design`;
+  const run = { id: runId, version: 9, pullRequest: 42, commit: 'a'.repeat(40), createdAt: '2026-11-23T00:00:00.000Z',
+    verdict: 'needs_evidence', cells: [], previewUrl: 'https://preview.example.test/', issues: {} };
+  const command = { type: 'acceptance.visual', designId, requestId: 'visual-fixture', runId, commit: run.commit,
+    screenId: 'members', slot: 'desktop-light', checks: { 'V-01': { status: 'passed', evidence: '页头、标签、主体、浮层和底部依次核对' } },
+    imagePath: 'implementation.png', measured: { width: 1280, height: 800, theme: 'light', path: '/members' } };
+  let canRecord = false;
+  let returnedSlot = command.slot;
+  const writes = [];
+  const bridge = createDesignBridge({ root, projectId, projectKey, host: 'https://cds.example.test' }, {
+    fetchImpl: async (url, options) => {
+      assert.equal(options.headers['X-AI-Access-Key'], projectKey);
+      const parsed = new URL(url);
+      if (options.method === 'GET') {
+        assert.equal(parsed.pathname, route);
+        return Response.json({ projectId, permissions: { write: true, visual: canRecord }, frameworks: [],
+          designs: [{ projectId, id: designId, versions: [{ version: 9 }], runs: [run] }] });
+      }
+      assert.equal(options.method, 'POST');
+      assert.equal(parsed.pathname, `${route}/commands`);
+      const body = JSON.parse(options.body);
+      writes.push(body);
+      return Response.json({ projectId, reused: writes.length > 1,
+        result: { type: command.type, designId, runId, version: 9, screenId: command.screenId, slot: returnedSlot } });
+    },
+  });
+  t.after(async () => {
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const tool = 'cds_design_acceptance';
+  assert(!(await bridge.listTools()).some(row => row.name === tool));
+  await assert.rejects(bridge.call(tool, command), /权限|授权/);
+  assert.equal(writes.length, 0);
+
+  canRecord = true;
+  assert((await bridge.listTools()).some(row => row.name === tool));
+  assert.deepEqual(await bridge.call('cds_design_read', { view: 'run', id: designId, runId }), { projectId, id: designId, run });
+  assert.deepEqual(await bridge.call('cds_design_read', { view: 'run', id: designId }), { projectId, id: designId, run });
+  await assert.rejects(bridge.call('cds_design_read', { view: 'run', id: designId, runId: 'RUN-other' }));
+  for (const invalid of [
+    { ...command, projectId: 'another-project' },
+    { ...command, checks: { 'V-11': { status: 'passed', evidence: 'Fixture check' } } },
+    { ...command, imagePath: '../outside.png' },
+  ]) await assert.rejects(bridge.call(tool, invalid));
+  assert.equal(writes.length, 0);
+
+  const { imagePath: _localOnly, ...fields } = command;
+  const expectedBody = { ...fields, image: `data:image/png;base64,${bytes.toString('base64')}` };
+  assert.equal((await bridge.call(tool, command)).reused, false);
+  assert.equal((await bridge.call(tool, command)).reused, true);
+  assert.deepEqual(writes, [expectedBody, expectedBody]);
+  returnedSlot = 'phone-dark';
+  await assert.rejects(bridge.call(tool, command), /回执/);
+});

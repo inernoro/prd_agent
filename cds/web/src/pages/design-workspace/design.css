@@ -983,7 +983,82 @@
 .dw-rationale--v6 details > summary::-webkit-details-marker { display: none; }
 .dw-rationale--v6 details > summary h4 { margin: 0 0 2px -34px; display: flex; align-items: baseline; gap: 10px; font-size: 16px; font-weight: 700; }
 .dw-rationale--v6 details > summary h4 small { font-size: 12px; font-weight: 500; color: var(--dw-muted); }
-.dw-rationale--v6 details > summary h4::after { content: '展开'; font-size: 12px; font-weight: 500; color: hsl(var(--primary)); }
+.dw-rationale--v6 details > summary h4::after { content: '全文'; font-size: 12px; font-weight: 500; color: hsl(var(--primary)); }
 .dw-rationale--v6 details[open] > summary h4::after { content: '收起'; }
 .dw-rationale--v6 details > summary h4 b { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--dw-sunken); font-size: 13px; }
 .dw-rationale--v6 .dw-notes h3 { font-size: 14.5px; margin: 14px 0 6px; }
+
+.dw-dl-legacy { display: flex; align-items: baseline; flex-wrap: wrap; gap: .25rem .75rem; color: var(--dw-muted); font-size: .8125rem; }
+.dw-dl-legacy p { margin: 0; }
+.dw-dl-edit-supplement { justify-self: start; }
+.dw-dl-supplement { border-block-end: 1px solid var(--dw-line); padding-block-end: .75rem; }
+
+.dw-vs-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.dw-vs-tools .dw-segments { flex-wrap: wrap; }
+.dw-vs-table { display: grid; min-width: 0; border: 1px solid var(--dw-line); border-radius: .5rem; overflow: hidden; }
+.dw-vs-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) repeat(2, minmax(0, 1fr)) minmax(5.6rem, .75fr);
+  gap: .75rem; align-items: center; padding: .625rem .75rem; border-block-start: 1px solid var(--dw-line); }
+.dw-vs-head { border: 0; background: var(--dw-sunken); color: var(--dw-muted); font-size: .75rem; font-weight: 650; }
+.dw-vs-row[data-verdict=failed] { box-shadow: inset .1875rem 0 0 var(--dw-danger); }
+.dw-vs-row:is([data-verdict=no_image], [data-verdict=no_reference], [data-verdict=missing]) { box-shadow: inset .1875rem 0 0 var(--dw-warn); }
+.dw-vs-name, .dw-vs-verdict { display: grid; gap: .25rem; min-width: 0; justify-items: start; }
+.dw-vs-name strong { font-size: .875rem; }
+.dw-vs-method { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .375rem; min-width: 0; }
+.dw-vs-method small { flex-basis: 100%; }
+.dw-vs-method .dw-vs-fail { color: var(--dw-danger); }
+.dw-vs-chip { font-family: var(--font-mono, ui-monospace); font-size: .75rem; padding: .0625rem .375rem; border-radius: .25rem; background: var(--dw-sunken); }
+.dw-vs-chip[data-status=failed] { color: var(--dw-danger); background: hsl(var(--destructive) / .12); }
+.dw-vs-chip[data-status=passed] { color: var(--dw-ok); background: hsl(var(--ok) / .14); }
+.dw-vs-shot { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 10; padding: 0; overflow: hidden;
+  border: 1px solid var(--dw-line); border-radius: .375rem; background: var(--dw-sunken); color: var(--dw-muted); font-size: .8125rem; cursor: zoom-in; }
+.dw-vs-shot:focus-visible { outline: 2px solid var(--dw-accent); outline-offset: 2px; }
+.dw-vs-shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.dw-vs-shot[data-missing] { border-style: dashed; color: var(--dw-warn); font-weight: 600; }
+.dw-vs-muted { margin: 0; color: var(--dw-muted); font-size: .8125rem; }
+
+.dw-modal.dw-vc { max-width: none; padding: 0; }
+.dw-vc > div:first-child { gap: .625rem; padding: clamp(.8125rem, 3vw, 2.4rem); overflow-wrap: anywhere; }
+.dw-vc [role=group] { flex-shrink: 0; }
+.dw-vc [data-state] { min-width: 0; }
+.dw-vc h2 { padding-inline-end: 1.25rem; }
+.dw-vc-mode, .dw-vc-standard { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
+.dw-vc-mode, .dw-vc-standard { justify-content: space-between; }
+.dw-modal.dw-vc .dw-vc-mix { display: flex; align-items: center; gap: .5rem; font-size: .8125rem; }
+.dw-vc-mix input { accent-color: var(--dw-accent); max-width: 35vw; }
+.dw-vc-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: .75rem; }
+.dw-vc-pair figure { display: grid; gap: .25rem; margin: 0; }
+.dw-vc-pair figcaption { color: var(--dw-muted); font-size: .8125rem; font-weight: 650; }
+.dw-vc-pair a { display: block; }
+.dw-vc-pair img, .dw-vc-overlay img { display: block; width: 100%; height: auto; border: 1px solid var(--dw-line); border-radius: .375rem; }
+.dw-vc-overlay { position: relative; width: 100%; max-width: 54rem; margin-inline: auto; }
+.dw-vc-overlay img + img { position: absolute; inset: 0; }
+.dw-vc-empty { display: grid; place-items: center; padding: .5rem; border: 1px dashed var(--dw-line); border-radius: .375rem;
+  color: var(--dw-muted); text-align: center; font-size: .8125rem; }
+.dw-vc h4 { margin: .25rem 0 0; font-size: .875rem; font-weight: 650; }
+.dw-vc-checks { display: grid; margin: 0; padding: 0; gap: .375rem; list-style: none; }
+.dw-vc-checks > li { display: grid; grid-template-columns: 3.125rem minmax(0, 1fr) auto; align-items: start;
+  gap: .5rem; padding: .4375rem .5rem; border-radius: .375rem; font-size: .8125rem; }
+.dw-vc-checks > li[data-status=failed] { background: hsl(var(--destructive) / .08); }
+.dw-vc-checks > li[data-status=missing] { background: hsl(var(--warn) / .07); }
+.dw-vc-checks strong { display: block; }
+.dw-vc-checks small { display: block; color: var(--dw-muted); font-size: .75rem; }
+.dw-vc-checks strong small { display: inline; margin-inline-start: .25rem; font-weight: 500; }
+.dw-vc-checks p { margin: .1875rem 0; white-space: pre-line; }
+.dw-vc-editor { padding: .625rem; border: 1px solid var(--dw-line); border-radius: .375rem; }
+.dw-vc-editor p { margin: 0; font-size: .8125rem; }
+.dw-vc-editor [role=alert] { color: var(--dw-danger); }
+.dw-vc-editor label { min-width: 0; }
+.dw-vc-editor label input { width: 100%; }
+.dw-vc-editor .dw-vc-checks label { margin-block-start: .375rem; }
+
+@media (max-width: 56.1875rem) {
+  .dw-vs-head { display: none; }
+  .dw-vs-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dw-vs-name, .dw-vs-method { grid-column: 1 / -1; }
+  .dw-vs-verdict { grid-column: 1 / -1; grid-auto-flow: column; justify-content: start; align-items: center; gap: .5rem; }
+}
+@media (max-width: 30rem) {
+  .dw-vc > div:first-child { padding: .8125rem; }
+  .dw-vc-checks > li { grid-template-columns: 2.5rem minmax(0, 1fr); }
+  .dw-vc-checks > li > :last-child { grid-column: 2; justify-self: start; }
+}
