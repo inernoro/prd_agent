@@ -125,6 +125,10 @@ public class GatewayRequest
     /// </summary>
     public bool IncludeThinking { get; init; } = false;
 
+    /// <summary>流式转发上游已经返回的思考内容，不请求额外推理或要求模型具备该能力。</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ForwardAvailableThinking { get; init; }
+
     /// <summary>
     /// 额外的请求上下文（可选）
     /// 用于日志记录的补充信息

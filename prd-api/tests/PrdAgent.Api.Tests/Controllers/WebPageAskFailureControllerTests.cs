@@ -170,10 +170,11 @@ public sealed class WebPageAskFailureControllerTests
     public async Task NormalAnswer_StillTypesThenCompletesAndPersists(bool share)
     {
         await using var fixture = await AskFixture.CreateAsync(share,
-            [GatewayStreamChunk.Text("本页的完整答案"), GatewayStreamChunk.Done("stop", null)]);
+            [GatewayStreamChunk.Thinking("正在核对原文"), GatewayStreamChunk.Text("本页的完整答案"), GatewayStreamChunk.Done("stop", null)]);
         var events = await fixture.RunAsync();
 
-        Assert.Single(events, e => e.Type == "typing");
+        Assert.Equal("正在核对原文", Assert.Single(events, e => e.Type == "thinking").Data.GetProperty("text").GetString());
+        Assert.Equal(new[] { "thinking", "typing", "done" }, events.Where(e => e.Type is "thinking" or "typing" or "done").Select(e => e.Type));
         Assert.Single(events, e => e.Type == "done");
         Assert.DoesNotContain(events, e => e.Type == "error");
         fixture.AssertInvocationAndRefund(0);
@@ -370,7 +371,9 @@ public sealed class WebPageAskFailureControllerTests
 
         public void AssertInvocationAndRefund(int refunds, int calls = 1)
         {
-            _gateway.Verify(g => g.StreamAsync(It.IsAny<GatewayRequest>(), CancellationToken.None), Times.Exactly(calls));
+            _gateway.Verify(g => g.StreamAsync(
+                It.Is<GatewayRequest>(request => request.ForwardAvailableThinking && !request.IncludeThinking),
+                CancellationToken.None), Times.Exactly(calls));
             _quota.Verify(q => q.RefundAsync(_decision, Site.Id, CancellationToken.None), Times.Exactly(refunds));
             _openers.VerifyNoOtherCalls();
             Assert.NotNull(_request);

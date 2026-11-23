@@ -646,7 +646,7 @@ public class WebPageAskController : ControllerBase
                 AppCallerCode = AppCallerRegistry.Admin.WebHosting.Ask,
                 ModelType = ModelTypes.Chat,
                 Stream = true,
-                IncludeThinking = false,
+                ForwardAvailableThinking = true,
                 // Context 必须显式填。网关跑在 http 模式（生产主路径）时请求要跨进程，
                 // 进程内的 LlmRequestContext 过不去——serving 侧拿不到 UserId，
                 // 访问控制会以 "User not found" 的形式拒掉整条请求（llm-gateway 规则记着这个坑）。
@@ -692,12 +692,22 @@ public class WebPageAskController : ControllerBase
                     model = chunk.Resolution.ActualModel;
                     platform = chunk.Resolution.ActualPlatformName;
                     await WriteSseAsync("model", new { model, platform });
-                    await WriteSseAsync("phase", new { phase = "answering", message = "正在回答…" });
+                }
+                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    try { await WriteSseAsync("thinking", new { text = chunk.Content }); }
+                    catch (ObjectDisposedException) { /* 客户端走了，继续完成正文并落库 */ }
                 }
                 else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
+                    var firstText = answer.Length == 0;
                     answer.Append(chunk.Content);
-                    try { await WriteSseAsync("typing", new { text = chunk.Content }); }
+                    try
+                    {
+                        if (firstText)
+                            await WriteSseAsync("phase", new { phase = "answering", message = "正在回答…" });
+                        await WriteSseAsync("typing", new { text = chunk.Content });
+                    }
                     catch (ObjectDisposedException) { /* 客户端走了，继续攒完整答案并落库 */ }
                 }
                 else if (chunk.Type == GatewayChunkType.Error)
@@ -885,7 +895,7 @@ public class WebPageAskController : ControllerBase
     ///
     /// 两件事一起做：
     ///   1. `heartbeat` 事件保活连接（前端 switch 走 default 忽略它，不需要改前端）
-    ///   2. `phase` 事件带上已等待秒数，让用户看到「在动」而不是一个静止的「正在思考」
+    ///   2. `phase` 事件更新等待阶段，耗时由前端统一展示
     ///
     /// 首字一到就停：答案开始流了，再推 phase 会把面板上的状态行反复覆盖。
     /// </summary>
@@ -906,7 +916,7 @@ public class WebPageAskController : ControllerBase
                     await WriteSseAsync("phase", new
                     {
                         phase = "waiting",
-                        message = $"模型正在思考…已等待 {seconds} 秒",
+                        message = "模型正在思考…",
                         elapsedSeconds = seconds,
                     });
                 }
