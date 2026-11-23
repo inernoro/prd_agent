@@ -3,6 +3,7 @@ import { observeNativeAudio, nativeAudioEvidence } from '../fixtures/admin-opera
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   installOperationsFixtures,
+  installEntryMediaFixture,
   target,
   targetName,
   run,
@@ -11,6 +12,9 @@ import {
 const gatewayPortraitAssets = JSON.parse(
   readFileSync(new URL('../fixtures/media/gateway-portrait-cdn.json', import.meta.url), 'utf8'),
 ) as typeof import('../fixtures/media/gateway-portrait-cdn.json');
+const shortEntryAssets = JSON.parse(
+  readFileSync(new URL('../fixtures/media/entry-short-motion.json', import.meta.url), 'utf8'),
+) as typeof import('../fixtures/media/entry-short-motion.json');
 
 test.beforeEach(async ({ browser, page }, testInfo) => {
   page.on("pageerror", (error) =>
@@ -812,10 +816,11 @@ test('登录请求期间保留表单，日景素材慢加载也能直接使用�
 
 test('短片在背景播放时仍可输入和打开账号菜单，片尾不打断操作', async ({ page }) => {
   const origin = process.env.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN?.trim();
-  test.skip(!origin, '短片 CDN 未配置');
+  if (!origin) return test.skip(true, '短片 CDN 未配置');
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
   await installOperationsFixtures(page, { quickstart: true });
+  await installEntryMediaFixture(page, new URL(shortEntryAssets.light.path, origin).href, shortEntryAssets.light);
   await page.goto('http://127.0.0.1:8200/llmgw/login');
   await page.locator('#llmgw-username').fill('demo');
   await page.locator('#llmgw-password').fill('demo');

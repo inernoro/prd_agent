@@ -58,7 +58,6 @@ export function ArrivalVideo({ src }: { src: string }) {
       if (finished) return;
       finished = true;
       window.clearTimeout(timer);
-      video.removeEventListener('canplaythrough', play);
       video.removeEventListener('playing', playing);
       video.removeEventListener('ended', fade);
       video.removeEventListener('error', finish);
@@ -69,10 +68,6 @@ export function ArrivalVideo({ src }: { src: string }) {
       video.dataset.playback = 'leaving';
       timer = window.setTimeout(finish, FADE_DURATION);
     };
-    const play = () => {
-      video.removeEventListener('canplaythrough', play);
-      void video.play().catch(finish);
-    };
     const playing = () => {
       if (video.dataset.playback !== 'loading') return;
       video.dataset.playback = 'playing';
@@ -80,13 +75,12 @@ export function ArrivalVideo({ src }: { src: string }) {
       timer = window.setTimeout(fade, PLAYBACK_TIMEOUT);
     };
     video.dataset.playback = 'loading';
-    video.addEventListener('canplaythrough', play, { once: true });
     video.addEventListener('playing', playing);
     video.addEventListener('ended', fade);
     video.addEventListener('error', finish);
     host.append(video);
     timer = window.setTimeout(finish, LOAD_TIMEOUT);
-    if (video.readyState >= video.HAVE_ENOUGH_DATA) play();
+    void video.play().catch(finish);
 
     return finish;
   }, [src]);
