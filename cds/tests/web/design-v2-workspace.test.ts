@@ -349,6 +349,13 @@ async function measureDraftHeader(page: Page, title: string) {
     const titleElement = element.querySelector('h1')!;
     const statusElement = element.querySelector('.dw-status')!;
     const tabsElement = element.querySelector<HTMLElement>('nav[aria-label="稿件标签"]')!;
+    const versions = element.querySelector<HTMLSelectElement>('select[aria-label="稿件版本"]')!;
+    const versionStyle = getComputedStyle(versions);
+    const textMeter = document.createElement('canvas').getContext('2d')!;
+    textMeter.font = `${versionStyle.fontWeight} ${versionStyle.fontSize} ${versionStyle.fontFamily}`;
+    const labelWidth = Math.ceil(textMeter.measureText(versions.selectedOptions[0].textContent!.trim()).width);
+    const versionTextWidth = Math.floor(versions.clientWidth - parseFloat(versionStyle.paddingLeft)
+      - parseFloat(versionStyle.paddingRight) - 20);
     const titleStyle = getComputedStyle(titleElement);
     const textLines = (node: Element) => {
       const range = document.createRange();
@@ -368,6 +375,7 @@ async function measureDraftHeader(page: Page, title: string) {
       titleTooltip: titleElement.getAttribute('title'), titleEllipsis: titleStyle.textOverflow,
       titleLines: textLines(titleElement), statusLines: textLines(statusElement),
       tabOverflow: tabsElement.scrollWidth - tabsElement.clientWidth, tabOverflowMode: getComputedStyle(tabsElement).overflowX,
+      labelWidth, versionTextWidth,
     };
   });
   return { ...metrics, headerBox, tabsBox, titleGroup, actionGroup, information };
@@ -384,6 +392,7 @@ function checkDraftBounds(metrics: Awaited<ReturnType<typeof measureDraftHeader>
   expect.soft(metrics.nestedOverflow, `${viewportWidth}px 页头局部横向溢出`).toEqual([]);
   expect.soft(metrics.titleLines, `${viewportWidth}px 标题文字行数`).toBe(1);
   expect.soft(metrics.statusLines, `${viewportWidth}px 状态文字行数`).toBe(1);
+  expect.soft(metrics.versionTextWidth, `${viewportWidth}px 完整显示版本和实施基线`).toBeGreaterThanOrEqual(metrics.labelWidth);
   const left = Math.max(0, metrics.headerBox.x);
   const right = Math.min(metrics.width, metrics.headerBox.x + metrics.headerBox.width);
   for (const [index, box] of [...metrics.titleGroup, ...metrics.actionGroup, metrics.tabsBox].entries()) {

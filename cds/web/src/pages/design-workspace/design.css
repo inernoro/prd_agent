@@ -906,7 +906,7 @@
 .dw-draft-tabbar > .dw-tablinks { width: auto; flex: 0 1 auto; gap: clamp(12px, 1.6vw, 22px); overflow: visible; }
 .dw-draft-tabbar .dw-draft-actions { margin-inline-start: auto; }
 .dw-workspace--canvas .dw-draft-tabbar .dw-draft-actions { order: 1; }
-.dw-draft-actions .dw-version-select { width: clamp(132px, 17vw, 180px); }
+.dw-draft-actions .dw-version-select { width: 180px; }
 .dw-draft-bar .dw-status { flex: none; white-space: nowrap; }
 .dw-draft-bar .dw-canvas-tools { flex: 0 1 auto; }
 .dw-canvas-tools > .dw-tools { row-gap: 4px; }
