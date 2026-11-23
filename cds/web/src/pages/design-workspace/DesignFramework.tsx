@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { ArrowUpRight, ChevronLeft, Copy, Layers, Terminal } from 'lucide-react';
+import { ArrowUpRight, Copy, Layers, Terminal } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { DesignEntry, DesignFramework as Framework, DesignMaterial, DesignMaterialKey, FrameworkRevision } from '../../../../src/shared/design-workspace';
 import { designFrameworkRules } from '../../../../src/shared/design-framework-rules';
 import { designDate, designStatus, latestDesign, materialNames, statusNames } from './design-ui';
+import { describeDesignValue } from './design-structure';
 import { ReadableNotes } from './DesignMarkdown';
 
 export const frameworkTabs = ['overview', 'tokens', 'components', 'skeleton', 'rules', 'adoption', 'history'] as const;
@@ -147,7 +148,9 @@ export function DesignMaterialView({ material, tab }: { material: DesignMaterial
       {!!layout.length && <section><h3>页面骨架</h3><dl className="dw-surface dw-token-list">{layout.map(([name, value]) =>
         <div key={name}><dt>{name === 'pageHeader' ? '页头' : name === 'scrollbarGutter' ? '滚动条留白' : name}</dt><dd>{value}</dd></div>)}</dl></section>}
       {!colors.length && !typography.length && !fonts.length && !gaps.length && !radii.length && !layout.length
-        && <pre className="dw-surface">{JSON.stringify(material.tokens, null, 2)}</pre>}
+        && <dl className="dw-surface dw-token-list">{Object.entries(material.tokens).map(([name, value]) => <div key={name}>
+          <dt>{name}</dt><dd>{describeDesignValue(value)}</dd>
+        </div>)}</dl>}
     </div> : <p className="dw-placeholder">没有附加令牌。</p>;
   }
   const detail = material[tab];
@@ -169,8 +172,8 @@ export function DesignMaterialView({ material, tab }: { material: DesignMaterial
   return <div className="dw-markdown dw-surface"><ReadableNotes source={detail} /></div>;
 }
 
-export function DesignFrameworkView({ framework, revision, tab, onTab, back, designs = [] }: {
-  framework: Framework; revision?: FrameworkRevision; tab: FrameworkTab; onTab: (tab: FrameworkTab) => void; back: () => void; designs?: DesignEntry[];
+export function DesignFrameworkView({ framework, revision, tab, onTab, designs = [] }: {
+  framework: Framework; revision?: FrameworkRevision; tab: FrameworkTab; onTab: (tab: FrameworkTab) => void; designs?: DesignEntry[];
 }) {
   const [copied, setCopied] = useState(false);
   const current = revision ?? framework.versions.at(-1)!;
@@ -180,7 +183,6 @@ export function DesignFrameworkView({ framework, revision, tab, onTab, back, des
   const cli = `cdscli design scaffold --framework ${framework.id} --framework-version ${current.version} --dir design/new-draft --title "新稿件"`;
   return <>
     <header className="dw-head dw-row">
-      <button type="button" className="ep-button ep-icon-button" aria-label="返回设计库" onClick={back}><ChevronLeft /></button>
       <div className="dw-fw-head">
         <div className="dw-row"><FrameworkBadge id={framework.id} version={current.version} compact /><h1>{current.title}</h1><FrameworkStatus revision={current} /></div>
         <small>{charter ? `${charter.scope.system} · ${charter.scope.modules.join('、')} · ` : ''}{used.length} 份稿件在用{outdated ? `，${outdated} 份可升级` : ''} · {designDate(current.at)} 更新</small>

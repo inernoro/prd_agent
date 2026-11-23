@@ -82,9 +82,6 @@ export function DesignRequirementView({ project, requirement, workspace, command
     if (body.trim() && await command('brief.reply', { ...ref, body: body.trim() })) setBody('');
   };
   return <div className="dw-brief">
-    <nav className="dw-row" aria-label="设计需求归属">
-      <Link className="ep-link" to={scopePath(project)}>设计库</Link><span>/</span><Link className="ep-link" to={back}>{folder}</Link>
-    </nav>
     <header className="dw-row">
       <h1>{title}</h1>
       <span className="ep-badge">{draft ? '已出稿' : '待出稿'}</span>

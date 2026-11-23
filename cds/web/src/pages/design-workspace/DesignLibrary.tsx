@@ -1,15 +1,20 @@
 import { Folder, Grid2X2, Layers, List, Maximize, MessageSquare, Search, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import type { DesignComment, DesignEntry, DesignModuleRef, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../../src/shared/design-workspace';
 import { DesignFrame } from './DesignCanvas';
 import { charterOf, FrameworkBadge, FrameworkOverview, FrameworkStatus, frameworkUses } from './DesignFramework';
 import { DesignRequirementList } from './DesignRequirements';
 import { latestDesignFeedbackAt } from '../../../../src/shared/design-workspace';
-import { designArtifact, designDate, designFailureGroups, designStatus, isNewDesignRequirement, latestDesign, legacyRequirementGroup, newDesignLabel, openReviews, scopeKey, statusNames } from './design-ui';
+import { designArtifact, designDate, designFeedbackAwaitsViewer, designPublisherLabel, designStatus, failedBaseline, isNewDesignRequirement, latestDesign, legacyRequirementGroup, newDesignLabel, openReviews, scopeKey, statusNames } from './design-ui';
 
 export const libraryStatuses = [
-  ['all', '全部状态'], ['attention', '等我处理'], ['review', '待评审'], ['active', '实现中'], ['signed', '已验收'], ['draft', '设计中'], ['frozen', '已定稿'],
+  ['all', '全部状态'], ['attention', '等我处理'], ['review', statusNames.review], ['failed', statusNames.failed],
+  ['draft', statusNames.draft], ['passed', statusNames.passed],
 ] as const;
+const legacyStatuses = ['active', 'signed', 'frozen'];
+export const libraryStatus = (value: string | null) =>
+  value && (libraryStatuses.some(([id]) => id === value) || legacyStatuses.includes(value)) ? value : '';
 
 type LibraryQuery = {
   search: string; group: string; status: string; tag: string; framework: string; system: string; module: string;
@@ -34,61 +39,53 @@ type CardProps = {
 };
 type CardTask = { label: string; href: string } | { label: string; open: () => void };
 
-function failedBaseline(entry: DesignEntry): number | undefined {
-  if (entry.frozen === undefined || !entry.pullRequest) return undefined;
-  const run = entry.runs.filter(row => row.version === entry.frozen && row.pullRequest === entry.pullRequest).at(-1);
-  return run?.verdict === 'failed' ? run.version : undefined;
-}
-
 function DesignCard({ entry, workspace, viewer, theme, href, onLarge, task }: CardProps) {
   const version = latestDesign(entry);
   const status = designStatus(entry);
   const failed = failedBaseline(entry);
   const action = task ?? (failed === undefined ? undefined : { label: '验收未通过', href: href + '&tab=accept&version=' + failed });
-  const failedRules = designFailureGroups(version);
+  const target = action && 'href' in action ? action.href : href;
   const unread = newDesignLabel(entry, viewer);
   const unreadFeedback = latestDesignFeedbackAt(entry) > (viewer.designs?.[entry.id]?.feedbackAt ?? viewer.firstVisitAt ?? viewer.lastVisitAt ?? '');
   const framework = workspace.frameworks.find(row => row.id === version.framework);
   return <article className="dw-design-card" data-state={status}>
     <div className="dw-thumb">
       <DesignCover projectId={workspace.projectId} version={version} theme={theme} />
-      <Link className="dw-card-cover" to={href} aria-label={'打开稿件 ' + version.title} />
-      {action && ('href' in action
-        ? <Link className="dw-thumb-action" to={action.href}>{action.label}</Link>
-        : <button className="dw-thumb-action" type="button" onClick={action.open}>{action.label}</button>)}
+      {action && 'open' in action
+        ? <button className="dw-card-cover" type="button" aria-label={'打开稿件 ' + version.title} aria-description={action.label} onClick={action.open} />
+        : <Link className="dw-card-cover" to={target}
+          aria-label={'打开稿件 ' + version.title} aria-description={action?.label} />}
+      {unread ? <span className="dw-card-new">{unread}</span>
+        : unreadFeedback && <Link className="dw-card-new" to={href + '&tab=delivery&part=feedback'}>新反馈</Link>}
       <button className="ep-button dw-card-screen" type="button" aria-label={'大屏查看 ' + version.title}
         onClick={() => onLarge(entry, version)}><Maximize />大屏</button>
     </div>
-    <footer data-rule-findings={failedRules.length ? true : undefined}>
+    <footer>
       <div className="dw-card-heading">
-        {unread && <span className="dw-card-new">{unread}</span>}
-        <Link className="dw-card-title" to={href} title={version.title}>{version.title}</Link>
-        <span className="dw-status" data-state={status}>{statusNames[status]}</span>
+        <Link className="dw-card-title" to={target} title={version.title}>{version.title}</Link>
       </div>
       <div className="dw-card-meta">
-        <span className="dw-card-person" title={version.publisher.label}>{version.publisher.label.slice(0, 1)}</span>
-        <code>V{version.version}</code><small>{designDate(version.createdAt)}</small>
+        <span className="dw-status" data-state={status}>{statusNames[status]}</span>
+        <time dateTime={version.createdAt}>{designDate(version.createdAt)}</time>
+      </div>
+      <div className="dw-card-provenance">
+        <span className="dw-card-person" title={designPublisherLabel(version.publisher.label)}>{designPublisherLabel(version.publisher.label).slice(0, 1)}</span>
+        <code>V{version.version}</code>
         {entry.comments.length > 0 && <small className="dw-card-comments"><MessageSquare />{entry.comments.length}</small>}
-        {unreadFeedback && <Link className="ep-text-button" to={href + '&tab=delivery'}>新反馈</Link>}
         <span className="dw-card-framework">{framework
           ? <FrameworkBadge id={framework.id} version={version.frameworkVersion} latest={framework.versions.at(-1)?.version} />
           : <span className="dw-fw-badge" data-missing>未绑定框架</span>}</span>
       </div>
-      {!!failedRules.length && <Link className="ep-text-button dw-card-rule-findings" to={href + '&tab=spec'}>
-        {failedRules.map(group => <div key={group.label}>
-          <strong>{group.label}</strong>
-          <ul>{group.rules.map((row, index) => <li key={row.id + '-' + index}><code>{row.id}</code> {row.name}</li>)}</ul>
-        </div>)}
-      </Link>}
     </footer>
   </article>;
 }
 
-export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer, frameworkList, onFramework, onReview, onLarge }: {
+export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer, frameworkList, onFramework, onReview, onLarge, headerActions }: {
   workspace: DesignWorkspace; query: LibraryQuery; onChange: (fields: Record<string, string>) => void;
   mode: 'cards' | 'list'; theme: DesignTheme; viewer: DesignViewerState; frameworkList: boolean;
   onFramework: (id: string) => void;
   onReview: (entry: DesignEntry, comment: DesignComment, version: DesignVersion) => void; onLarge: CardProps['onLarge'];
+  headerActions?: ReactNode;
 }) {
   const { frameworks, permissions, projectId } = workspace;
   const systems = workspace.systems ?? [];
@@ -118,8 +115,8 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
     const failed = canManage ? failedBaseline(entry) : undefined;
     if (review) tasks.set(entry.id, { label: '核对评审回复', open: () => onReview(entry, review.comment, review.version) });
     else if (canReview) tasks.set(entry.id, { label: '评审 V' + head.version, href });
-    else if (canManage && entry.feedback?.some(row => row.status === 'open' && row.author.id !== permissions.actorId)) {
-      tasks.set(entry.id, { label: '待回复反馈', href: href + '&tab=delivery' });
+    else if (permissions.feedback && entry.feedback?.some(row => designFeedbackAwaitsViewer(entry, row, permissions.actorId))) {
+      tasks.set(entry.id, { label: '处理反馈', href: href + '&tab=delivery' });
     } else if (failed !== undefined) tasks.set(entry.id, { label: '验收未通过', href: href + '&tab=accept&version=' + failed });
   }
   const attention = (entry: DesignEntry) => tasks.has(entry.id);
@@ -145,7 +142,12 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
   const scoped = drafts.filter(inScope);
   const selected = scoped.filter(row => {
     const head = latestDesign(row);
-    const matchesStatus = query.status === 'attention' ? attention(row) : !query.status || query.status === 'all' || designStatus(row) === query.status;
+    const state = designStatus(row);
+    const matchesStatus = query.status === 'attention' ? attention(row)
+      : query.status === 'active' ? Boolean(row.pullRequest && state !== 'review' && state !== 'passed')
+      : query.status === 'frozen' ? row.frozen !== undefined
+      : query.status === 'signed' ? state === 'passed'
+      : !query.status || query.status === 'all' || state === query.status;
     return matchesStatus && (!query.group || groupOf(row) === query.group || folderOf(row) === query.group)
       && (!query.tag || head.tags.includes(query.tag)) && (!query.framework || head.framework === query.framework)
       && normalize([head.title, row.id, groupOf(row), folders.get(folderOf(row))?.name, ...head.tags,
@@ -203,10 +205,9 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
   return <>
     <div className="dw-library-bar dw-row">
       <div className="dw-row">
-        {frameworkList ? <><button type="button" className="ep-text-button" onClick={() => onChange({ view: '' })}>设计库</button><strong>框架</strong></>
-          : <><button type="button" className="ep-text-button" onClick={() => onChange({ group: '', module: '', view: '' })}>全部文件夹</button>
-            {(module || query.group) ? <strong>/ {module?.name ?? folderTitle(query.group)}</strong>
-              : <small>{populatedFolders.length} 个文件夹 · {scoped.length} 份稿件</small>}</>}
+        <h1>{frameworkList ? '框架' : module?.name ?? (query.group ? folderTitle(query.group) : '设计')}</h1>
+        {!frameworkList && (module || query.group) && <button type="button" className="ep-text-button"
+          onClick={() => onChange({ group: '', module: '', view: '' })}>全部文件夹</button>}
         {systems.length > 0 && <select value={query.system} aria-label="所属系统" onChange={event => onChange({ system: event.target.value, module: '', group: '' })}>
           <option value="">全部系统</option>{systems.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
         </select>}
@@ -221,6 +222,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
           onChange={event => onChange({ q: event.target.value })} /></label>
         <select value={query.status || 'all'} aria-label="状态" onChange={event => onChange({ status: event.target.value === 'all' ? '' : event.target.value, filter: '' })}>
           {libraryStatuses.map(([value, label]) => <option key={value} value={value}>{label}{value === 'attention' ? ' ' + (scoped.filter(attention).length + pendingBriefs.length) : ''}</option>)}
+          {legacyStatuses.includes(query.status) && <option value={query.status}>历史筛选</option>}
         </select>
         {tags.length > 0 && <select value={query.tag} aria-label="标签" onChange={event => onChange({ tag: event.target.value })}>
           <option value="">标签</option>{tags.map(value => <option key={value}>{value}</option>)}</select>}
@@ -228,6 +230,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
           <button aria-pressed={mode === 'cards'} type="button" onClick={() => onChange({ mode: '' })} aria-label="卡片墙"><Grid2X2 /></button>
           <button aria-pressed={mode === 'list'} type="button" onClick={() => onChange({ mode: 'list' })} aria-label="列表"><List /></button>
         </div>
+        {headerActions}
       </div>}
       {!frameworkList && filters.length > 0 && <div className="dw-filter-chips" aria-label="已选筛选">
         {filters.map(([field, label]) => <button type="button" key={field} onClick={() => onChange(field === 'framework'
@@ -247,13 +250,14 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
               {pending.map(renderCard)}
               {pendingBriefs.map(brief => <Link className="dw-design-card dw-brief-card" key={brief.designKey}
                 to={'/design?' + new URLSearchParams({ project: projectId, brief: brief.designKey })}>
-                <span className="dw-thumb"><span className="dw-thumb-action" aria-hidden>待出稿</span><code>{brief.designKey}</code></span>
+                <span className="dw-thumb">
+                  {isNewDesignRequirement(brief, viewer) && <small className="dw-card-new">新需求</small>}
+                  <Folder size={24} aria-hidden />
+                </span>
                 <footer>
-                  <div className="dw-card-heading">
-                    {isNewDesignRequirement(brief, viewer) && <small className="dw-card-new">新需求</small>}
-                    <strong className="dw-card-title">{brief.title}</strong><span className="dw-status">待出稿</span>
-                  </div>
-                  <div className="dw-card-meta"><small>{designDate(brief.sharedAt)}交接 · {brief.assignee?.label ?? '等设计方认领'}</small></div>
+                  <div className="dw-card-heading"><strong className="dw-card-title">{brief.title}</strong></div>
+                  <div className="dw-card-meta"><span className="dw-status">待出稿</span><time dateTime={brief.sharedAt}>{designDate(brief.sharedAt)}</time></div>
+                  <div className="dw-card-provenance"><small>{brief.assignee?.label ?? '等设计方认领'}</small></div>
                 </footer>
               </Link>)}
             </div> : <p className="dw-muted">没有等你处理的事项。</p>}
@@ -262,7 +266,6 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
           {home && populatedFolders.length > 0 && <section aria-label="文件夹">
             <h2>文件夹 <small>{populatedFolders.length}</small></h2>
             <div className="dw-card-grid">{populatedFolders.map(([key, folder]) => {
-              const active = folder.entries.filter(row => !['signed', 'frozen'].includes(designStatus(row))).length;
               const waiting = folder.entries.filter(attention).length;
               const waitingDraft = folderRequirements(key).filter(awaitingDraft).length;
               const newVersions = folder.entries.filter(row => newDesignLabel(row, viewer)).length;
@@ -270,12 +273,11 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
                 <span className="dw-folder-art" data-count={Math.min(4, folder.entries.length)}>
                   {folder.entries.slice(0, 4).map(row => <span key={row.id}><DesignCover projectId={projectId} version={latestDesign(row)} theme={theme} thumbnail /></span>)}
                   {!folder.entries.length && <span className="dw-mini-empty"><Folder size={20} /></span>}
-                  {!!waiting && <small>{waiting} 件等我处理</small>}
+                  {newVersions > 0 && <small className="dw-card-new">{newVersions} 份有新版本</small>}
                 </span>
                 <span className="dw-folder-title"><Folder size={15} /><strong>{folder.name}</strong><small>{folder.entries.length} 份</small></span>
-                <span className="dw-folder-meta">{active > 0 && <small>{active} 份进行中</small>}
+                <span className="dw-folder-meta">{waiting > 0 && <small>{waiting} 件等我处理</small>}
                   {waitingDraft > 0 && <small>{waitingDraft} 份待出稿</small>}
-                  {newVersions > 0 && <small className="dw-new-text">{newVersions} 份有新版本</small>}
                   {folder.entries[0] && <small>{designDate(latestDesign(folder.entries[0]).createdAt)}更新</small>}</span>
               </button>;
             })}</div>

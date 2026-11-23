@@ -655,6 +655,7 @@ describe('private CDS design workspace', () => {
   it('preserves complete delivery files and advice as private versioned material', async () => {
     const guide = '# 合成交付说明\n核对实现地址和手机画面。\n';
     const spec = '# 实现契约\n明暗双主题。\n';
+    const comparison = png(640, 480);
     const bytes = draft('Complete delivery', {
       source: '原型源码/', frameworkDraft: 'spec/', prototypeVersion: 21, date: '2026-11-21',
       notes: '验收时核对导航和滚动。', docs: ['设计文档/实现.md', '开发说明/开发说明.md'],
@@ -666,6 +667,8 @@ describe('private CDS design workspace', () => {
       { name: 'bundle/spec/rules.md', data: Buffer.from('# Rules\nMaterial only.') },
       { name: 'bundle/checks/result.json', data: Buffer.from(JSON.stringify({ total: 1, passed: 1, items: [{ name: 'Synthetic', pass: true }] })) },
       { name: 'bundle/other/example.dat', data: Buffer.from([0, 255, 100]) },
+      { name: 'bundle/compare/flow.png', data: comparison },
+      { name: 'bundle/compare/unrecognized.png', data: Buffer.from([0, 255, 100]) },
     ]);
     const created = await publish('complete-delivery', bytes, {
       intent: 'create', designKey: 'fittings/receipt', ...gitSource(bytes, 'design/fittings/receipt'),
@@ -679,7 +682,7 @@ describe('private CDS design workspace', () => {
     const delivery = version.delivery;
     expect(delivery).toMatchObject({ source: '原型源码/', frameworkDraft: 'spec/', prototypeVersion: 21,
       date: '2026-11-21', notes: '验收时核对导航和滚动。', warnings: [] });
-    expect(delivery.files.map((file: { path: string }) => file.path)).toHaveLength(10);
+    expect(delivery.files.map((file: { path: string }) => file.path)).toHaveLength(12);
     const guideFile = delivery.files.find((file: { path: string }) => file.path === '交付说明.md');
     expect(guideFile).toMatchObject({ kind: 'guide', sha256: createHash('sha256').update(guide).digest('hex') });
     expect(delivery.files).toContainEqual(expect.objectContaining({ path: '原型源码/build.mjs', kind: 'source' }));
@@ -693,6 +696,17 @@ describe('private CDS design workspace', () => {
     expect(archive.headers.get('content-type')).toContain('application/zip');
     expect(Buffer.from(await archive.arrayBuffer())).toEqual(bytes);
     expect((await get(`/artifacts/${guideFile.id}`, 'outside', otherProjectId)).status).toBe(404);
+    const comparisonFile = delivery.files.find((row: { path: string }) => row.path === 'compare/flow.png');
+    const inlineImage = await get(`/artifacts/${comparisonFile.id}`, 'read-designer');
+    expect(inlineImage.headers.get('content-type')).toBe('image/png');
+    expect(inlineImage.headers.get('content-disposition')).toBeNull();
+    expect(Buffer.from(await inlineImage.arrayBuffer())).toEqual(comparison);
+    expect((await get(`/artifacts/${comparisonFile.id}?download=true`, 'read-designer')).headers.get('content-disposition')).toContain('attachment');
+    expect((await get(`/artifacts/${comparisonFile.id}`, 'outside', otherProjectId)).status).toBe(404);
+    const unrecognized = delivery.files.find((row: { path: string }) => row.path === 'compare/unrecognized.png');
+    const raw = await get(`/artifacts/${unrecognized.id}`, 'read-designer');
+    expect(raw.headers.get('content-type')).toBe('application/octet-stream');
+    expect(raw.headers.get('content-disposition')).toContain('attachment');
     const preview = await get(`/artifacts/${version.prototypeId}?theme=dark`, 'read-designer');
     expect(preview.headers.get('content-security-policy')).toBeTruthy();
     expect(await preview.text()).toContain('Fixture');

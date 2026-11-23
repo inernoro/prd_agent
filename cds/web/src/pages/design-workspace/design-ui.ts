@@ -9,8 +9,12 @@ export const designSourceNames: Record<NonNullable<DesignVersion['sourceVerifica
   git: 'Git 已核验', 'private-upload': 'CDS 私有归档', declared: '发布者声明来源',
 };
 export const designDate = (value: string) => new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' }).format(new Date(value));
+export function designPublisherLabel(value: string): string {
+  if (!value.startsWith('授权密钥')) return value;
+  return value.match(/^授权密钥\s*\(申请\s+[^·]+·\s*(.+)\)$/)?.[1]?.trim() || '设计智能体';
+}
 export const materialNames = { tokens: '令牌', components: '组件', skeleton: '页面骨架', rules: '规则' } as const;
-export const statusNames = { review: '待评审', active: '实现中', draft: '设计中', frozen: '已定稿', signed: '已验收' } as const;
+export const statusNames = { review: '待评审', failed: '未通过', draft: '设计中', passed: '已通过' } as const;
 export const verdictNames = { passed: '通过', conditional: '有条件通过', failed: '不通过', needs_evidence: '待补证据' } as const;
 export const cellNames = { passed: '通过', failed: '不通过', missing: '证据缺失', unverified: '未验证' } as const;
 export const slotNames = { 'desktop-light': '桌面浅色', 'desktop-dark': '桌面深色', 'phone-light': '手机浅色', 'phone-dark': '手机深色' } as const;
@@ -39,9 +43,20 @@ export function designFailureGroups(version: DesignVersion) {
 export function designStatus(entry: DesignEntry): keyof typeof statusNames {
   if (entry.reviewRequested) return 'review';
   const run = currentDesignRun(entry);
-  if (run?.signed && (entry.currentSignoffRunId === undefined || entry.currentSignoffRunId === run.id)) return 'signed';
-  if (entry.pullRequest) return 'active';
-  return entry.frozen ? 'frozen' : 'draft';
+  if (run?.signed && (entry.currentSignoffRunId === undefined || entry.currentSignoffRunId === run.id)) return 'passed';
+  if (failedBaseline(entry) !== undefined) return 'failed';
+  return 'draft';
+}
+
+export function failedBaseline(entry: DesignEntry): number | undefined {
+  if (entry.frozen === undefined || !entry.pullRequest) return;
+  const run = entry.runs.filter(row => row.version === entry.frozen && row.pullRequest === entry.pullRequest).at(-1);
+  return run?.verdict === 'failed' ? run.version : undefined;
+}
+
+export function designFeedbackAwaitsViewer(entry: DesignEntry, feedback: NonNullable<DesignEntry['feedback']>[number], actorId?: string): boolean {
+  if (feedback.status === 'responded') return feedback.author.id === actorId;
+  return feedback.status === 'open' && feedback.author.id !== actorId && entry.versions.some(version => version.publisher.id === actorId);
 }
 
 export function openReviews(entry: DesignEntry) {

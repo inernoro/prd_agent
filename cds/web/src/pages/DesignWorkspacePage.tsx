@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Info, Layers, Maximize, Terminal, Upload, X } from 'lucide-react';
+import { ChevronLeft, Layers, Maximize, MoreHorizontal, Terminal, Upload, X } from 'lucide-react';
 import { AppShell, TopBar, Workspace } from '@/components/layout/AppShell';
-import { rememberRouteFocus } from '@/components/layout/RouteMotion';
+import { MotionLink, rememberRouteFocus } from '@/components/layout/RouteMotion';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
@@ -15,15 +15,17 @@ import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel'
 import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
 import { DesignRationale } from './design-workspace/DesignRationale';
 import { DesignRequirementView } from './design-workspace/DesignRequirements';
-import { DesignLibrary, libraryStatuses } from './design-workspace/DesignLibrary';
+import { DesignLibrary, libraryStatus } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, DesignMaterialView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
-import { cellNames, designCheckRows, designDate, designFailureGroups, designPath, designSourceNames, designStatus, emptyDesignViewer, latestDesign, materialNames, scopePath, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
-import { compareDesignMaterial } from './design-workspace/design-structure';
+import { cellNames, designDate, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, scopePath, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
+import { compareDesignMaterial, describeMaterialChange } from './design-workspace/design-structure';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
 
-const tabs = [['preview','预览'],['diff','对比'],['delivery','交付'],['accept','做法验收'],['rationale','思路'],['spec','规范'],['log','记录']] as const;
+const tabs = [['preview', '画面'], ['delivery', '交付'], ['accept', '验收'], ['rationale', '说明'], ['log', '记录']] as const;
+const legacyTabs = new Set(['diff', 'spec']);
+const deliveryQuery = { part: '', fb: '', file: '', about: '' };
 type ReviewTarget = { entryId: string; commentId: string; version: number };
 type LargeTarget = { entryId: string; version: number };
 const validSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
@@ -42,6 +44,14 @@ export function DesignWorkspacePage() {
   const writing = useRef(false);
   const [issue, setIssue] = useState('');
   const [notice, setNotice] = useState('');
+  const [wideCanvas, setWideCanvas] = useState(false);
+  useEffect(() => {
+    const width = window.matchMedia('(min-width: 1000px)');
+    const update = () => setWideCanvas(width.matches);
+    update();
+    width.addEventListener('change', update);
+    return () => width.removeEventListener('change', update);
+  }, []);
   const [canvasTheme, setCanvasTheme] = useState<DesignTheme>(() =>
     document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   const [upload, setUpload] = useState(false);
@@ -61,7 +71,7 @@ export function DesignWorkspacePage() {
   const system = params.get('system') ?? '';
   const module = params.get('module') ?? '';
   const search = params.get('q') ?? '';
-  const status = libraryStatuses.find(([value]) => value === (params.get('status') ?? params.get('filter')))?.[0] ?? '';
+  const status = libraryStatus(params.get('status') ?? params.get('filter'));
   const frameworkId = params.get('framework');
   const libraryFilter = params.get('view') === 'library' || Boolean((group || tag || status || search) && !params.has('tab') && !params.has('version'));
   const frameworkFilter = params.get('frameworkFilter') || (libraryFilter ? frameworkId : null) || '';
@@ -98,13 +108,17 @@ export function DesignWorkspacePage() {
     && (extract || (panel === 'framework-candidates' && (!versionParam || Number(versionParam) === version?.version)));
   const canAssign = permissions?.write && entry && (permissions.steward || latestDesign(entry).publisher.id === permissions.actorId);
   const pinnedFramework = workspace?.frameworks.find(row => row.id === version?.framework)?.versions.find(row => row.version === version?.frameworkVersion);
-  const tab = tabs.find(([value]) => value === params.get('tab'))?.[0] ?? 'preview';
+  const requestedTab = params.get('tab') ?? '';
+  const tab = requestedTab === 'delivery' && params.get('part') === 'checks' ? 'accept'
+    : requestedTab === 'notes' ? 'rationale'
+    : legacyTabs.has(requestedTab) ? requestedTab : tabs.find(([value]) => value === requestedTab)?.[0] ?? 'preview';
+  const activeTab = tab === 'diff' ? 'preview' : tab === 'spec' ? 'rationale' : tab;
   const frameworkTab = frameworkTabs.find(value => value === params.get('tab')) ?? 'overview';
   const screenParam = params.get('screen') ?? undefined;
   const commentParam = params.get('comment') ?? undefined;
-  const compareFrom = Number(params.get('compareFrom')) || undefined;
+  const compareFrom = Number(params.get('compareFrom') ?? params.get('from')) || undefined;
   const currentVersion = entry ? latestDesign(entry).version : undefined;
-  const activeFeedback = (entry?.feedback ?? []).filter(row => row.status !== 'closed').length;
+  const activeFeedback = permissions?.feedback ? entry?.feedback?.filter(row => designFeedbackAwaitsViewer(entry, row, permissions.actorId)).length : 0;
   const readKey = permissions?.actorId && project + '/' + permissions.actorId;
   const [read, setRead] = useState<{ key: string; viewer: DesignViewerState }>();
   const viewer = read?.key === readKey && read ? read.viewer : workspace?.viewer ?? emptyDesignViewer;
@@ -142,8 +156,9 @@ export function DesignWorkspacePage() {
     }).catch(() => {});
     return () => controller.abort();
   }, [readKey, project, serverReading, viewedDesign, viewedVersion, viewedFeedback, viewedBrief, viewedBriefAt, viewingLibrary]);
-  const draftSystem = workspace?.systems?.find(row => row.id === entry?.scope?.systemId);
-  const draftModule = draftSystem?.modules.find(row => row.id === entry?.scope?.moduleId);
+  const objectScope = entry?.scope ?? requirement?.scope;
+  const objectSystem = workspace?.systems?.find(row => row.id === objectScope?.systemId);
+  const objectModule = objectSystem?.modules.find(row => row.id === objectScope?.moduleId);
   const canvas = !!entry && (tab === 'preview' || tab === 'diff');
   useEffect(() => {
     const source = deliveryReturn.current;
@@ -184,7 +199,7 @@ export function DesignWorkspacePage() {
   const closeUnfreeze = () => { setUnfreeze(undefined); dismissPanel('unfreeze'); };
   const selectEntry = (id: string) => {
     deliveryReturn.current = undefined;
-    onChange({ design: id, framework: '', brief: '', tab: '', version: '', view: '', screen: '', comment: '', compareFrom: '', panel: '', baseline: '',
+    onChange({ design: id, framework: '', brief: '', tab: '', version: '', view: '', screen: '', comment: '', compareFrom: '', from: '', panel: '', baseline: '', ...deliveryQuery,
       ...(!id && !module && !group && entry ? (entry.scope ? { system: entry.scope.systemId, module: entry.scope.moduleId }
         : { group: latestDesign(entry).group ?? '' }) : {}) });
   };
@@ -227,21 +242,42 @@ export function DesignWorkspacePage() {
     finally { writing.current = false; setBusy(false); }
   };
 
-  const breadcrumbs = <TopBar left={<span className="dw-crumb">CDS <span>/</span> <Link to={`/design?project=${encodeURIComponent(project)}`}>设计</Link>
-    {draftVisible && draftSystem && draftModule && <> <span>/</span>
-      <Link to={scopePath(project, entry!.scope)}>{draftSystem.name} · {draftModule.name}</Link></>}
-    {framework && <> <span>/</span> <strong>{framework.versions.at(-1)?.title}</strong></>}
-  </span>} />;
+  const libraryPath = scopePath(project);
+  const folder = version?.group ?? (requirement && workspace ? legacyRequirementGroup(requirement, workspace.designs) : undefined);
+  const parent = framework ? { name: '框架', href: libraryPath + '&view=frameworks' }
+    : objectModule && objectScope ? { name: objectModule.name, href: scopePath(project, objectScope) }
+    : folder && folder !== '未分组' ? { name: folder, href: scopePath(project, undefined, folder) }
+    : undefined;
+  const inDetail = Boolean(entry || requirementKey || framework || frameworkList || group || module);
+  const projectSwitcher = options.length > 0 && <select className="dw-crumb-project" aria-label="设计项目" value={project}
+    onChange={event => setParams(new URLSearchParams({ project: event.target.value }))}>
+    {options.map(option => <option key={option.id} value={option.id}>{option.aliasName || option.name}</option>)}
+  </select>;
+  const breadcrumbs = <TopBar left={<nav className="dw-crumb" aria-label="位置" data-detail={inDetail || undefined}>
+    <span className="dw-crumb-desktop"><MotionLink to="/project-list">CDS</MotionLink><span aria-hidden="true">/</span>
+      {inDetail ? <MotionLink to={libraryPath}>设计</MotionLink> : <span>设计</span>}<span aria-hidden="true">/</span>
+      {projectSwitcher}
+      {parent && <><span aria-hidden="true">/</span><MotionLink className="dw-crumb-parent" to={parent.href}>{parent.name}</MotionLink></>}
+    </span>
+    {inDetail && <MotionLink className="dw-crumb-mobile" to={parent?.href ?? libraryPath}><ChevronLeft size={15} />{parent?.name ?? '设计'}</MotionLink>}
+  </nav>} />;
   const versionRun = entry?.runs.filter(run => run.version === version?.version).at(-1);
+  const failingVersion = entry && failedBaseline(entry);
+  const acceptanceAlerts = (entry && failingVersion && !versionRun
+    ? entry.runs.filter(run => run.version === failingVersion && run.pullRequest === entry.pullRequest).at(-1)
+    : versionRun)?.cells.filter(cell => cell.status === 'failed') ?? [];
   const summaryTabLinks = entry && version && <nav className="dw-tablinks" aria-label="稿件标签">
     {tabs.map(([value, label]) => {
-      const count = value === 'preview' ? entry.comments.length : value === 'delivery' ? activeFeedback
-        : value === 'log' ? entry.versions.length : value === 'accept' ? versionRun?.cells.filter(cell => cell.status === 'failed').length : undefined;
-      const details = value === 'preview' ? '条评论' : value === 'delivery' ? '条待处理' : value === 'log' ? '版' : '项不通过';
-      return <button type="button" className="dw-tab" key={value} aria-current={tab === value}
-        aria-label={count ? label + ' ' + count + ' ' + details : undefined} onClick={() => onChange({ tab: value, compareFrom: '' })}>
-        {label}{count ? <small className={value === 'accept' || value === 'delivery' ? 'dw-tab-todo' : undefined}
-          data-negative={value === 'accept'} title={count + ' ' + details}>{count}{value === 'accept' ? ' 不通过' : value === 'delivery' ? ' 待处理' : ''}</small> : null}
+      const count = value === 'delivery' ? activeFeedback
+        : value === 'accept' ? acceptanceAlerts.length : undefined;
+      const oldFailure = value === 'accept' && !versionRun && failingVersion && failingVersion !== version.version && count;
+      const details = value === 'delivery' ? '条待处理' : `项不通过${oldFailure ? ` · 基线 V${failingVersion}` : ''}`;
+      return <button type="button" className="dw-tab" key={value} aria-current={activeTab === value}
+        aria-label={count ? label + ' ' + count + ' ' + details : undefined} onClick={() => {
+          if (activeTab !== value) onChange({ tab: value === 'rationale' ? 'notes' : value, compareFrom: '', from: '', run: '', panel: '',
+            ...(oldFailure ? { version: String(failingVersion) } : {}), ...deliveryQuery });
+        }}>
+        {label}{count ? <small className="dw-tab-todo" data-negative={value === 'accept'} title={count + ' ' + details}>{count}</small> : null}
       </button>;
     })}
   </nav>;
@@ -250,6 +286,66 @@ export function DesignWorkspacePage() {
     actorId: permissions?.actorId ?? '', steward: Boolean(permissions?.steward), commandBusy: busy,
     selectedTheme: canvasTheme, onThemeChange: setCanvasTheme,
   };
+  const draftActions = entry && version && <div className="dw-tools dw-draft-actions">
+    {canvas && deliveryReturn.current?.designId === entry.id && <button className="ep-button dw-delivery-back" type="button"
+      aria-label="返回交付" title="返回交付" onClick={() => onChange({ tab: 'delivery', version: String(deliveryReturn.current!.version), screen: '' })}>
+      <ChevronLeft /><span>返回交付</span>
+    </button>}
+    {!(canvas && wideCanvas && tab === 'diff') && <select className="dw-version-select" value={version.version} aria-label="稿件版本"
+      onChange={event => onChange({ version: event.target.value, compareFrom: '', from: '', run: '', panel: '', ...deliveryQuery })}>
+      {[...entry.versions].reverse().map(row => {
+        const label = `V${row.version}${row.version === currentVersion ? ' · 最新' : ''}${entry.frozen === row.version ? ' · 实施基线'
+          : row.version === version.version && entry.frozen !== undefined ? ` · 基线 V${entry.frozen}` : ''}`;
+        return <option key={row.version} value={row.version}>{label}</option>;
+      })}
+    </select>}
+    <button className="ep-button ep-icon-button" type="button" aria-label="大屏" title="大屏" onClick={() => openLarge(entry, version)}><Maximize /></button>
+    <details className="ep-new dw-info" data-design-panel="design-info" open={panel === 'design-info' || undefined}
+      onToggle={event => { if (!event.currentTarget.open) dismissPanel('design-info'); }}>
+      <summary className="ep-button ep-icon-button" aria-label="更多稿件操作" title="稿件信息和更多操作" data-action="design-info"><MoreHorizontal /></summary>
+      <div className="dw-info-body">
+        <header className="dw-row"><strong>{entry.id}</strong><small>V{version.version} · {designDate(version.createdAt)}</small></header>
+        <dl>
+          <dt>发布</dt><dd>{designPublisherLabel(version.publisher.label)}</dd>
+          <dt>来源</dt><dd><code>{version.sourceCommit.slice(0, 12)}</code> · {designSourceNames[version.sourceVerification ?? 'declared']}</dd>
+          <dt>基线</dt><dd>{entry.frozen === undefined ? '尚未定稿' : `实施基线 V${entry.frozen}`}。同一稿件可以继续发布新版本。</dd>
+          <dt>需求</dt><dd>{workspace?.requirements?.some(row => row.designKey === entry.designKey)
+            ? <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, brief: entry.designKey! })}>查看来源需求</Link> : '无交接记录'}</dd>
+          <dt>框架</dt><dd>{version.framework ? <Link className="ep-link" to={frameworkVersionPath(project, version)}>
+            <FrameworkBadge id={version.framework} version={version.frameworkVersion}
+              latest={workspace?.frameworks.find(row => row.id === version.framework)?.versions.at(-1)?.version} />
+          </Link> : '未绑定框架'}</dd>
+          <dt>评审人</dt><dd>{entry.reviewers?.map(reviewer => reviewer.label).join('、') || '待指定'}</dd>
+          <dt>说明</dt><dd>{version.note || '本版未附发布说明'}
+            {version.tags.length > 0 && <nav className="dw-draft-tags" aria-label="稿件分类">{version.tags.map(tag =>
+              <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, tag })} key={tag}>#{tag}</Link>)}</nav>}</dd>
+          <dt>决策</dt><dd className="dw-draft-tags">{version.decisionIds.length ? version.decisionIds.map(id =>
+            <Link className="ep-link" key={id} to={`/engineering-planning?project=${encodeURIComponent(project)}&kind=decision&item=${encodeURIComponent(id)}`}>{id}</Link>) : '未关联决策'}</dd>
+        </dl>
+        <footer className="dw-row">
+          {canFreeze && entry.frozen !== version.version && version.version === currentVersion
+            && <button className="ep-button" type="button" disabled={busy} data-action="freeze" onClick={() => setFreezeTarget({ id: entry.id, version: version.version })}>定为实施基线</button>}
+          {permissions?.review && entry.frozen === version.version
+            && <button className="ep-button" type="button" data-action="extract-framework" onClick={() => { setIssue(''); setExtract(true); }}><Layers />框架候选</button>}
+          {canAssign && <button className="ep-button" type="button" onClick={() => setAssignReviewers(entry.id)}>设置评审人</button>}
+          {canFreeze && version.sourceVerification === 'git' && (entry.frozen === version.version || entry.freezes?.some(row => row.version === version.version))
+            && <button className="ep-button" type="button" onClick={() => setShare(true)}>固定版本分享</button>}
+          {canUnfreeze && entry.frozen !== undefined && <button className="ep-button dw-revoke-baseline" type="button" data-action="unfreeze"
+            onClick={() => setUnfreeze({ id: entry.id, version: entry.frozen! })}>撤销定稿</button>}
+        </footer>
+      </div>
+    </details>
+  </div>;
+  const draftHeader = (toolbar?: ReactNode) => entry && version && <header className="dw-head dw-head--draft">
+    <div className="dw-draft-bar">
+      <div className="dw-draft-heading">
+        <h1 title={version.title}>{version.title}</h1>
+        <span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
+      </div>
+      {toolbar}
+    </div>
+    <div className="dw-draft-tabbar">{summaryTabLinks}{!(canvas && wideCanvas) && draftActions}</div>
+  </header>;
   return <AppShell active="design" topbar={breadcrumbs} wide>
     <Workspace fluid className={`ep-workspace dw-workspace${entry ? ' dw-workspace--detail' : ''}${canvas ? ' cds-workspace--fill dw-workspace--canvas' : ''}`}>
       {issue && <div className="dw-message ep-error" role="alert">{issue}</div>}
@@ -260,116 +356,51 @@ export function DesignWorkspacePage() {
         : <p className="dw-placeholder">当前没有可查看的设计项目。</p>
       : requirementKey ? <DesignRequirementView key={`${project}/${requirementKey}`} project={project} requirement={requirement} workspace={workspace} command={command} busy={busy} startOpen={panel === 'brief-start'} />
       : framework ? <DesignFrameworkView key={framework.id} framework={framework} revision={frameworkVersion} tab={frameworkTab} designs={workspace.designs}
-        onTab={value => onChange({ tab: value })} back={() => onChange({ framework: '', tab: '', version: '', view: 'frameworks' })} />
+        onTab={value => onChange({ tab: value })} />
       : entry && version ? <>
-        <header className="dw-head dw-head--draft">
-          <div className="dw-draft-bar">
-            <div className="dw-draft-heading">
-              <button className="ep-button ep-icon-button" type="button" aria-label="返回设计库" onClick={() => selectEntry('')}><ChevronLeft /></button>
-              <h1 title={version.title}>{version.title}</h1>
-              <div className="dw-draft-marks">
-                <span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
-                {version.framework ? <Link className="dw-fw-link" to={frameworkVersionPath(project, version)}>
-                  <FrameworkBadge id={version.framework} version={version.frameworkVersion} compact
-                    latest={workspace.frameworks.find(row => row.id === version.framework)?.versions.at(-1)?.version} />
-                </Link> : <span className="dw-fw-badge" data-missing>未绑定框架</span>}
-              </div>
-            </div>
-            <div className="dw-tools dw-draft-actions">
-              {canvas && deliveryReturn.current?.designId === entry.id && <button className="ep-button dw-delivery-back" type="button"
-                aria-label="返回交付" title="返回交付" onClick={() => onChange({ tab: 'delivery', version: String(deliveryReturn.current!.version), screen: '' })}>
-                <ChevronLeft /><span>返回交付</span>
-              </button>}
-              <select value={version.version} aria-label="稿件版本" onChange={event => onChange({ version: event.target.value, compareFrom: '' })}>
-                {[...entry.versions].reverse().map(row => <option key={row.version} value={row.version}>V{row.version}
-                  {row.version === currentVersion ? ' · 最新' : ''}{entry.frozen === row.version ? ' · 实施基线' : ''}</option>)}
-              </select>
-              <button className="ep-button" type="button" onClick={() => openLarge(entry, version)}><Maximize />大屏</button>
-              {permissions?.review && entry.frozen === version.version
-                && <button className="ep-button" type="button" data-action="extract-framework" onClick={() => { setIssue(''); setExtract(true); }}><Layers />框架候选</button>}
-              <details className="ep-new dw-info" data-design-panel="design-info" open={panel === 'design-info' || undefined}
-                onToggle={event => { if (!event.currentTarget.open) dismissPanel('design-info'); }}>
-                <summary className="ep-button ep-icon-button" aria-label="稿件信息" data-action="design-info"><Info /></summary>
-                <div className="dw-info-body">
-                  <header className="dw-row"><strong>{entry.id}</strong><small>{designDate(version.createdAt)}</small></header>
-                  <dl>
-                    <dt>发布</dt><dd>V{version.version} · {version.publisher.label}</dd>
-                    <dt>来源</dt><dd><code>{version.sourceCommit.slice(0, 12)}</code> · {designSourceNames[version.sourceVerification ?? 'declared']}</dd>
-                    <dt>基线</dt><dd>{entry.frozen === undefined ? '尚未定稿' : `实施基线 V${entry.frozen}`}。同一稿件可以继续发布新版本。
-                    {canFreeze && entry.frozen !== version.version && version.version === currentVersion
-                      && <button className="ep-button" type="button" disabled={busy} data-action="freeze" onClick={() => setFreezeTarget({ id: entry.id, version: version.version })}>定为实施基线</button>}
-                    </dd>
-                    <dt>需求</dt><dd>{workspace.requirements?.some(row => row.designKey === entry.designKey)
-                      ? <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, brief: entry.designKey! })}>查看来源需求</Link> : '无交接记录'}</dd>
-                    <dt>框架</dt><dd>{version.framework ? <Link className="ep-link" to={frameworkVersionPath(project, version)}>
-                      <FrameworkBadge id={version.framework} version={version.frameworkVersion}
-                        latest={workspace.frameworks.find(row => row.id === version.framework)?.versions.at(-1)?.version} />
-                    </Link> : '未绑定框架'}</dd>
-                    <dt>评审人</dt><dd>{entry.reviewers?.map(reviewer => reviewer.label).join('、') || '待指定'}</dd>
-                    <dt>说明</dt><dd>{version.note || '本版未附发布说明'}
-                      {version.tags.length > 0 && <nav className="dw-draft-tags" aria-label="稿件分类">{version.tags.map(tag =>
-                        <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, tag })} key={tag}>#{tag}</Link>)}</nav>}</dd>
-                    <dt>决策</dt><dd className="dw-draft-tags">{version.decisionIds.length ? version.decisionIds.map(id =>
-                      <Link className="ep-link" key={id} to={`/engineering-planning?project=${encodeURIComponent(project)}&kind=decision&item=${encodeURIComponent(id)}`}>{id}</Link>) : '未关联决策'}</dd>
-                  </dl>
-                  <footer className="dw-row">
-                    {canAssign && <button className="ep-button" type="button" onClick={() => setAssignReviewers(entry.id)}>设置评审人</button>}
-                    {canFreeze && version.sourceVerification === 'git' && (entry.frozen === version.version || entry.freezes?.some(row => row.version === version.version))
-                      && <button className="ep-button" type="button" onClick={() => setShare(true)}>固定版本分享</button>}
-                    {canUnfreeze && entry.frozen !== undefined && <button className="ep-button dw-revoke-baseline" type="button" data-action="unfreeze"
-                      onClick={() => setUnfreeze({ id: entry.id, version: entry.frozen! })}>撤销定稿</button>}
-                  </footer>
-                </div>
-              </details>
-            </div>
-          </div>
-          {summaryTabLinks}
-        </header>
-        {entry.frozen !== undefined && entry.frozen !== version.version && <p className="dw-baseline-note" role="status">
-          你在看 V{version.version}。实施基线是 V{entry.frozen}，{version.version > entry.frozen ? `V${entry.frozen + 1}${version.version > entry.frozen + 1 ? `–V${version.version}` : ''} 是定稿之后的新版本，实现仍按基线` : '这一版早于基线'}。续版不会移动基线，只有重新定稿才会。
-          <button className="ep-text-button" type="button" onClick={() => onChange({ version: String(entry.frozen), tab: 'preview', compareFrom: '' })}>打开基线 V{entry.frozen}</button>
-          <button className="ep-text-button" type="button" onClick={() => onChange({ tab: 'diff', compareFrom: String(entry.frozen) })}>和基线 V{entry.frozen} 对比</button>
-        </p>}
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
         {canvas ? <DesignCanvas key={`${entry.id}/${version.version}/${screenParam ?? ''}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
-          comparing={tab === 'diff'} initialScreenId={screenParam} initialCommentId={commentParam} initialComparisonVersion={compareFrom} onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
+          comparing={tab === 'diff'} initialScreenId={screenParam} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
+          renderToolbar={toolbar => wideCanvas ? draftHeader(toolbar) : <>{draftHeader()}{toolbar}</>}
+          draftActions={wideCanvas ? draftActions : undefined}
+          onModeChange={(compare, screen, from) => onChange({ tab: compare ? 'diff' : 'preview', screen: screen ?? '', compareFrom: from === undefined ? '' : String(from), from: '' })}
+          onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
         : <>
+          {draftHeader()}
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
-            canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))} command={command} onPreviewStale={refreshWorkspace} />}
+            canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))}
+            onSetBaseline={canFreeze && version.version === currentVersion ? () => setFreezeTarget({ id: entry.id, version: version.version }) : undefined}
+            command={command} onPreviewStale={refreshWorkspace} />}
           {tab === 'delivery' && permissions && <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}
             permissions={permissions} busy={busy} command={command}
             openScreen={(selected, screen, origin) => {
               deliveryReturn.current = { designId: entry.id, version: version.version, origin };
               rememberRouteFocus(locationKey, origin);
-              onChange({ version: String(selected), tab: 'preview', screen });
+              const thread = origin.startsWith('delivery-feedback-') ? origin.slice('delivery-feedback-'.length) : undefined;
+              onChange({ version: String(selected), tab: 'preview', screen, ...(thread ? { part: 'feedback', fb: thread } : {}) });
             }}
-            openVersion={selected => onChange({ version: String(selected), tab: 'delivery', screen: '' })} />}
-          {tab === 'rationale' && <DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
-          {tab === 'spec' && <DesignSpec key={`${entry.id}/${version.version}`} version={version} baseline={pinnedFramework?.material} />}
-          {tab === 'log' && <DesignHistory entry={entry}
+            openVersion={selected => onChange({ version: String(selected), tab: 'delivery', screen: '',
+              part: 'files', fb: '', file: '', about: '' })} />}
+          {activeTab === 'rationale' && <DesignNotes focusSpec={tab === 'spec'}
+            why={<DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
+            rules={<DesignSpec key={`${entry.id}/${version.version}`} version={version} baseline={pinnedFramework?.material} />} />}
+          {tab === 'log' && <DesignHistory entry={entry} version={version}
             onVersion={selected => onChange({ version: String(selected), tab: 'preview', run: '' })}
             onRun={(selected, run) => onChange({ version: String(selected), tab: 'accept', run })} />}
         </>}
       </> : <>
-        <header className="dw-head dw-row dw-library-heading">
-          <h1>设计</h1>
-          <select aria-label="设计项目" value={project} onChange={event => setParams(new URLSearchParams({ project: event.target.value }))}>
-            {options.map(option => <option key={option.id} value={option.id}>{option.aliasName || option.name}</option>)}
-          </select>
-          <div className="dw-tools dw-right">
-            <details className="ep-new" data-design-panel="cli" open={panel === 'cli' || undefined}
-              onToggle={event => { if (!event.currentTarget.open) dismissPanel('cli'); }}>
-              <summary className="ep-button" data-action="design-cli"><Terminal />CLI</summary>
-              <div className="dw-cli"><code>cdscli design list</code><code>cdscli design preview --dir .</code><code>cdscli design publish --dir .</code></div>
-            </details>
-            <button className="ep-button" type="button" onClick={() => requestAgentAccess('design-publish')}>接入 Agent</button>
-            {permissions?.write && <button className="ep-button ep-button--primary" type="button" onClick={() => setUpload(true)}><Upload />发布稿件</button>}
-          </div>
-        </header>
         <DesignLibrary workspace={workspace} query={query} onChange={changeLibrary} mode={mode} theme={canvasTheme}
           viewer={viewer} frameworkList={frameworkList} onFramework={selectFramework}
-          onReview={openReview} onLarge={openLarge} />
+          onReview={openReview} onLarge={openLarge} headerActions={<>
+            <details className="ep-new" data-design-panel="cli" open={panel === 'cli' || undefined}
+              onToggle={event => { if (!event.currentTarget.open) dismissPanel('cli'); }}>
+              <summary className="ep-button" data-action="design-cli"><Terminal />接入</summary>
+              <div className="dw-cli"><button className="ep-button" type="button" onClick={() => requestAgentAccess('design-publish')}>接入 Agent</button>
+                <code>cdscli design intake</code><code>cdscli design list</code><code>cdscli design preview --dir .</code><code>cdscli design publish --dir .</code></div>
+            </details>
+            {permissions?.write && <button className="ep-button ep-button--primary" type="button" onClick={() => setUpload(true)}><Upload />发布稿件</button>}
+          </>} />
       </>}
     </Workspace>
     {upload && <DesignUpload project={project} entries={workspace?.designs ?? []} close={() => setUpload(false)}
@@ -430,82 +461,116 @@ export function DesignWorkspacePage() {
 
 const recordTime = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 type DesignHistoryRow = {
-  key: string; at: string; title: string; details: string; note?: string; failedRules?: string[]; action: () => void; label: string; state: string;
+  key: string; at: string; version: number; title: string; details: string; note?: string; action: () => void; label: string; state: string;
 };
 
-function DesignHistory({ entry, onVersion, onRun }: { entry: DesignEntry; onVersion: (version: number) => void; onRun: (version: number, run: string) => void }) {
+function DesignHistory({ entry, version: viewing, onVersion, onRun }: { entry: DesignEntry; version: DesignVersion; onVersion: (version: number) => void; onRun: (version: number, run: string) => void }) {
+  const [filter, setFilter] = useState<'all' | 'versions' | 'reviews'>('all');
   const rows: DesignHistoryRow[] = [
-    ...entry.versions.map(version => {
-      const resolved = Object.keys(version.resolves);
-      const checks = version.checks;
-      const failedRules = designFailureGroups(version).map(group =>
-        `${group.label} · ${group.rules.map(row => `${row.id} ${row.name}`).join('、')}`);
-      return { key: `v${version.version}`, at: version.createdAt, title: `V${version.version} · ${version.note || '发布稿件'}`,
-        details: `${version.publisher.label} · ${version.sourceCommit.slice(0, 8)}`,
-        note: [resolved.length ? `声明处理 ${resolved.length} 条评论` : '', typeof checks?.total === 'number' && typeof checks.passed === 'number'
-          ? `自检 ${checks.passed}/${checks.total}` : '本版未附自检结果'].filter(Boolean).join(' · '),
-        failedRules,
-        action: () => onVersion(version.version), label: '查看版本', state: 'release' };
-    }),
-    ...(entry.freezes ?? []).map((freeze, index) => ({ key: `freeze-${index}`, at: freeze.at, title: `定稿 V${freeze.version}`, details: freeze.by,
+    ...entry.versions.map(version => ({ key: `v${version.version}`, at: version.createdAt, version: version.version,
+      title: version.note || '发布稿件', details: `${designPublisherLabel(version.publisher.label)} · ${version.sourceCommit.slice(0, 8)}`,
+      action: () => onVersion(version.version), label: '查看版本', state: 'release' })),
+    ...(entry.freezes ?? []).map((freeze, index) => ({ key: `freeze-${index}`, at: freeze.at, version: freeze.version, title: `定稿 V${freeze.version}`, details: freeze.by,
       action: () => onVersion(freeze.version), label: '查看定稿', state: 'freeze' })),
-    ...(entry.unfreezes ?? []).map((event, index) => ({ key: `unfreeze-${index}`, at: event.at, title: `撤销 V${event.version} 定稿`, details: event.by,
+    ...(entry.unfreezes ?? []).map((event, index) => ({ key: `unfreeze-${index}`, at: event.at, version: event.version, title: `撤销 V${event.version} 定稿`, details: event.by,
       action: () => onVersion(event.version), label: '查看版本', state: 'unfreeze' })),
-    ...entry.comments.flatMap(comment => comment.reviews.map((review, index) => ({ key: `${comment.id}/${index}`, at: review.at,
+    ...entry.comments.flatMap(comment => comment.reviews.map((review, index) => ({ key: `${comment.id}/${index}`, at: review.at, version: review.version,
       title: review.decision === 'resolved' ? `确认评论已处理 · V${review.version}` : `退回评论 · V${review.version}`,
       details: comment.body, note: review.body, action: () => onVersion(comment.version), label: '查看原版', state: review.decision }))),
     ...entry.runs.flatMap(run => {
       const details = `V${run.version} · PR #${run.pullRequest} · ${run.commit.slice(0, 8)}`;
       const action = () => onRun(run.version, run.id);
-      const started = { key: run.id, at: run.createdAt, title: `做法验收 · ${verdictNames[run.verdict]}`, details, action, label: '查看证据', state: run.verdict };
-      return run.signed ? [started, { key: `signed-${run.id}`, at: run.signed.at, title: `签收 · ${verdictNames[run.signed.verdict]}`,
+      const started = { key: run.id, at: run.createdAt, version: run.version, title: `做法验收 · ${verdictNames[run.verdict]}`, details, action, label: '查看证据', state: run.verdict };
+      return run.signed ? [started, { key: `signed-${run.id}`, at: run.signed.at, version: run.version, title: `签收 · ${verdictNames[run.signed.verdict]}`,
         details, action, label: '查看签收', state: 'signed' }] : [started];
     }),
   ].sort((a, b) => b.at.localeCompare(a.at));
-  return <section className="dw-surface dw-history-card"><h3>记录</h3><ol className="dw-design-timeline">
-    {rows.map(row => <li key={row.key} data-result={row.state}>
-      <div><div className="dw-history-summary"><strong>{row.title}</strong><time dateTime={row.at}>{recordTime.format(new Date(row.at))}</time></div>
-        <small>{row.details}</small>{row.note && <p>{row.note}</p>}
-        {row.failedRules?.map(failure => <p key={failure}>{failure}</p>)}</div>
-      <button type="button" className="ep-text-button" onClick={row.action}>{row.label}</button>
-    </li>)}
-  </ol></section>;
+  const latest = latestDesign(entry).version;
+  const lastRun = entry.runs.at(-1);
+  const visibleRows = filter === 'all' ? rows : rows.filter(row => (row.state === 'release') === (filter === 'versions'));
+  return <section className="dw-surface dw-history-card">
+    <h2>概况</h2>
+    <dl className="dw-history-overview">
+      <div><dt>你在看</dt><dd>V{viewing.version}</dd></div>
+      <div><dt>最新</dt><dd>V{latest}</dd></div>
+      <div><dt>实施基线</dt><dd>{entry.frozen === undefined ? '尚未定稿' : `V${entry.frozen}`}</dd></div>
+      {lastRun && <div><dt>最近验收</dt><dd>V{lastRun.version} · {verdictNames[lastRun.verdict]}</dd></div>}
+    </dl>
+    <div className="dw-row dw-history-heading"><h2>时间线</h2>
+      <div className="dw-segments" role="group" aria-label="筛选记录">
+        {([['all', '全部'], ['versions', '版本'], ['reviews', '评审和验收']] as const).map(([key, title]) =>
+          <button key={key} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>{title}</button>)}
+      </div>
+    </div>
+    <ol className="dw-history-list">
+      {visibleRows.map(row => {
+        const sentence = row.title.split(/(?<=[。！？])|\n/, 1)[0];
+        const caption = sentence.length > 48 ? sentence.slice(0, 48) + '…' : sentence;
+        const status = row.state === 'release' && [
+          row.version === entry.frozen ? '实施基线' : '', row.version === viewing.version ? '你在看' : '',
+          row.version === latest ? '最新' : '',
+        ].filter(Boolean).join(' · ');
+        return <li key={row.key} data-result={row.state}>
+          <strong className="dw-history-version">V{row.version}</strong>
+          <div className="dw-history-content">
+            <div className="dw-history-summary"><strong>{caption}</strong>
+              <time dateTime={row.at}>{recordTime.format(new Date(row.at))}</time></div>
+            <small>{row.details}</small>{status && <small>{status}</small>}
+            {caption !== row.title && <details><summary>展开说明</summary><p>{row.title}</p></details>}
+            {row.note && <p>{row.note}</p>}
+          </div>
+          <button type="button" className="ep-text-button" onClick={row.action}>{row.label}</button>
+        </li>;
+      })}
+    </ol>
+    {!visibleRows.length && <p className="dw-muted">当前没有评审和验收记录。</p>}
+  </section>;
+}
+
+function DesignNotes({ why, rules, focusSpec }: { why: ReactNode; rules: ReactNode; focusSpec: boolean }) {
+  const spec = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (focusSpec) spec.current?.scrollIntoView({ block: 'start' });
+  }, [focusSpec]);
+  return <div className="dw-notes-page">
+    <nav className="dw-notes-jump" aria-label="说明目录">
+      <a className="ep-link" href="#notes-why">为什么这样设计</a>
+      <a className="ep-link" href="#notes-spec">实现时遵守什么</a>
+    </nav>
+    <section id="notes-why" aria-labelledby="notes-why-title"><h2 id="notes-why-title">为什么这样设计</h2>{why}</section>
+    <section id="notes-spec" ref={spec} aria-labelledby="notes-spec-title"><h2 id="notes-spec-title">实现时遵守什么</h2>{rules}</section>
+  </div>;
 }
 
 function DesignSpec({ version, baseline }: { version: DesignVersion; baseline?: DesignMaterial }) {
-  const [tab, select] = useState<keyof typeof materialNames>(version.spec.tokens ? 'tokens' : 'rules');
-  const changes = compareDesignMaterial(baseline ?? {}, version.spec).filter(row => row.kind !== '移除');
-  const unresolved = designCheckRows(version).filter(row => row.status !== '通过');
+  const changes = compareDesignMaterial(baseline ?? {}, version.spec).flatMap(row => {
+    const details = row.kind === '移除' ? undefined : describeMaterialChange(row);
+    return details ? [{ id: row.id, kind: row.kind, ...details }] : [];
+  });
   const frameworkCheck = version.frameworkCheck;
-  return <>
-    <div className="dw-row dw-spec-tabs" role="group" aria-label="规范资料">{Object.entries(materialNames).map(([key, name]) => <button type="button" className="ep-button" aria-pressed={tab === key}
-      onClick={() => select(key as keyof typeof materialNames)} key={key}>{name}</button>)}</div>
-    <DesignMaterialView material={version.spec} tab={tab} />
-    <div className="dw-spec-cards">
-      {!!frameworkCheck?.items.length && <section className="dw-surface dw-markdown"><h3>发布规则检查</h3>
-        <small>{frameworkCheck.framework} · v{frameworkCheck.frameworkVersion}</small>
-        <ul>{frameworkCheck.items.map(row => <li key={row.ruleId}>
-          <strong>{cellNames[row.status]}</strong> · <code>{row.ruleId}</code> {row.name}
-          <small>{row.actual}</small>
-        </li>)}</ul>
-      </section>}
-      {version.checks && <section className="dw-surface dw-markdown"><h3>规则检查与自检</h3>
-        {typeof version.checks.passed === 'number' && typeof version.checks.total === 'number' && <p>已报告通过 {version.checks.passed} / {version.checks.total}</p>}
-        {!!unresolved.length && <ul>{unresolved.map(row => <li key={row.id}><strong>{row.status}</strong> · <code>{row.id}</code> {row.name}</li>)}</ul>}
-      </section>}
-      <section className="dw-surface dw-markdown"><h3>相对框架的规范变化</h3>
-        <small>{baseline ? `${version.framework} · v${version.frameworkVersion}` : '本版未绑定已验证的框架版本，显示稿件声明'}</small>
-        {changes.length ? <ul>{changes.map(row => <li key={row.id}><b>{row.kind} · {row.label}</b> {row.text.slice(0, 200)}</li>)}</ul> : <p>本版没有单独附加或修改的规则、组件、骨架或令牌。</p>}
-      </section>
-      <section className="dw-surface dw-markdown"><h3>画面清单</h3>{version.screens.length ? <div className="dw-notes-table" role="region" aria-label="画面清单" tabIndex={0}>
-        <table><thead><tr><th scope="col">画面</th><th scope="col">视口</th><th scope="col">原型路由</th><th scope="col">实现地址</th></tr></thead>
-          <tbody>{version.screens.map(screen => <tr key={screen.id}><td>{screen.name}</td><td>{screen.viewport === 'phone' ? '手机' : '桌面'}</td>
-            <td><code>{screen.route}</code></td><td>{screen.impl ? <code>{screen.impl}</code> : '未声明'}</td></tr>)}</tbody></table>
-      </div> : <p>本版未声明画面，预览可打开独立原型。</p>}</section>
-      <section className="dw-surface dw-markdown"><h3>验收项</h3>{version.acceptance.length ? <ul>{version.acceptance.map(rule =>
-        <li key={rule.id}><code>{rule.id}</code> {rule.rule}</li>)}</ul> : <p>本版未声明验收项。</p>}</section>
-    </div>
-  </>;
+  const pendingRules = frameworkCheck?.items.filter(row => row.status !== 'passed') ?? [];
+  const material = { ...baseline, ...version.spec };
+  return <ol className="dw-dl-items dw-surface">
+    <li data-item="framework-diff"><h4><b>1</b>相对框架的规范变化</h4>
+      <small>{baseline ? `${version.framework} · v${version.frameworkVersion}` : '显示稿件单独声明的规范'}</small>
+      {changes.length ? <ul className="dw-dl-plain">{changes.map(row => <li key={row.id}>
+        <strong>{row.kind} · {row.label}</strong><p>{row.detail.slice(0, 240)}</p>
+      </li>)}</ul> : <p>本版没有单独附加或修改的规范。</p>}
+    </li>
+    <li data-item="tokens"><h4><b>2</b>令牌</h4><DesignMaterialView material={material} tab="tokens" /></li>
+    <li data-item="rules"><h4><b>3</b>规则、组件和页面骨架</h4>
+      {(['rules', 'components', 'skeleton'] as const).map(key => <details key={key} className="dw-dl-rulegroup" open={key === 'rules' || undefined}>
+        <summary>{materialNames[key]}</summary><DesignMaterialView material={material} tab={key} />
+      </details>)}
+    </li>
+    {!!frameworkCheck?.items.length && <li data-item="framework-check"><h4><b>4</b>发布规则检查
+      <small>{pendingRules.length ? `${pendingRules.length} 条待核对` : '已核对'}</small></h4>
+      <small>{frameworkCheck.framework} · v{frameworkCheck.frameworkVersion}</small>
+      <ul className="dw-dl-plain">{[...pendingRules, ...frameworkCheck.items.filter(row => row.status === 'passed')].map(row => <li key={row.ruleId}>
+        <strong>{cellNames[row.status]} · {row.ruleId} {row.name}</strong><p>{row.actual}</p>
+      </li>)}</ul>
+    </li>}
+  </ol>;
 }
 
 function DesignUpload({ project, entries, close, onPublished }: {
@@ -611,7 +676,7 @@ function ExtractFramework({ entry, version, workspace, command, busy, issue, clo
 }) {
   const derivedId = `fw-${entry.id.toLowerCase()}`;
   const [step, setStep] = useState(1);
-  const [id, setId] = useState(derivedId);
+  const [id, setId] = useState(() => workspace.frameworks.some(row => row.id === version.framework) ? version.framework! : derivedId);
   const [title, setTitle] = useState(`${version.title.slice(0, 140)}框架`);
   const [excluded, setExcluded] = useState<DesignMaterialKey[]>([]);
   const current = workspace.frameworks.find(row => row.id === id)?.versions.at(-1);

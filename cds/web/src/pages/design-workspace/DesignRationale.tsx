@@ -4,22 +4,31 @@ import type { DesignEntry, DesignVersion, FrameworkRevision } from '../../../../
 import { designFrameworkRules } from '../../../../src/shared/design-framework-rules';
 import { InlineDesignNotes, ReadableNotes } from './DesignMarkdown';
 
-type RationaleSection = { heading: string; body: string };
-const rationaleHeadings = new Map([
-  ['目标', 'goal'], ['关键取舍', 'choices'], ['依据的框架规则', 'rules'], ['依据的规则', 'rules'],
-  ['待定', 'open'], ['待定问题', 'open'],
-]);
+type Section = { heading: string; body: string };
+type Slot = 'goal' | 'choices' | 'changes' | 'rules' | 'open';
+const slots: [Slot, string, string, RegExp][] = [
+  ['goal', '目标', '这一版要解决什么', /^(目标|这一版解决什么|解决什么|为什么|背景与目标)/],
+  ['choices', '关键取舍', '选了什么、没选什么、为什么', /取舍|选择与理由/],
+  ['changes', '本版改动', '和上一版相比改了哪里', /^(本版改动|改动|修改|改了什么|改动的源码|变化)/],
+  ['rules', '依据的规则', '引用的框架规则和原则', /^(依据|依据的框架规则|依据的规则|规则)/],
+  ['open', '待定', '还没确定、需要谁决定', /^(待定|待定问题|还没确定|待确认|未确定|还没核实)/],
+];
+const folded = /回顾|历史|以前|旧版/;
 
-function rationaleSections(source: string) {
-  const sections: RationaleSection[] = [{ heading: '', body: '' }];
+function sectionsOf(source: string) {
+  const sections: Section[] = [];
+  let title = '';
+  let meta = '';
+  let current: Section | undefined;
   for (const token of marked.lexer(source)) {
-    if (token.type === 'heading' && (token as Tokens.Heading).depth <= 2) {
-      sections.push({ heading: (token as Tokens.Heading).text.trim(), body: '' });
-    } else {
-      sections[sections.length - 1].body += token.raw;
-    }
+    if (token.type === 'space' && !current) continue;
+    if (token.type === 'heading' && (token as Tokens.Heading).depth === 1 && !title && !current) { title = (token as Tokens.Heading).text.trim(); continue; }
+    if (token.type === 'blockquote' && !current) { meta += (token as Tokens.Blockquote).text.trim() + '\n'; continue; }
+    if (token.type === 'heading' && (token as Tokens.Heading).depth <= 2) { current = { heading: (token as Tokens.Heading).text.trim(), body: '' }; sections.push(current); continue; }
+    if (!current) { current = { heading: '', body: '' }; sections.push(current); }
+    current.body += token.raw;
   }
-  return sections;
+  return { title, meta: meta.trim(), sections: sections.filter(section => section.body.trim() || section.heading) };
 }
 
 function Tradeoffs({ source }: { source: string }) {
@@ -59,26 +68,47 @@ function FrameworkReferences({ source, href, baseline }: { source: string; href?
 export function DesignRationale({ entry, version, baseline }: { entry: DesignEntry; version: DesignVersion; baseline?: FrameworkRevision }) {
   const authorVersion = [...entry.versions].reverse().find(row => row.version <= version.version && row.rationale?.trim());
   if (!authorVersion) return <p className="dw-placeholder">这版尚未附设计思路。</p>;
-  const sections = rationaleSections(authorVersion.rationale);
-  const recognized = sections.some(section => rationaleHeadings.has(section.heading));
-  if (!recognized) return <div className="dw-surface dw-markdown"><ReadableNotes source={authorVersion.rationale} /></div>;
-  const content = (key: string) => sections.filter(section => rationaleHeadings.get(section.heading) === key)
-    .map(section => section.body.trim()).filter(Boolean).join('\n\n');
+  const { title, meta, sections } = sectionsOf(authorVersion.rationale);
   const frameworkUrl = baseline && version.framework && authorVersion.version === version.version
     ? '/design?' + new URLSearchParams({ project: entry.projectId, framework: version.framework, version: String(baseline.version), tab: 'rules' })
     : undefined;
-  const more = sections.filter(section => !rationaleHeadings.has(section.heading) && section.body.trim());
-  return <div className="dw-rationale">
-    {authorVersion.version !== version.version && <p className="dw-muted">沿用 V{authorVersion.version} 的思路。</p>}
-    <section className="dw-rationale-goal"><h2>目标</h2><ReadableNotes source={content('goal')} /></section>
-    <section><h2>关键取舍</h2><Tradeoffs source={content('choices')} /></section>
-    <div className="dw-rationale-details">
-      <section><h2>依据的框架规则</h2><FrameworkReferences source={content('rules')} href={frameworkUrl} baseline={baseline} /></section>
-      <section><h2>待定</h2><ReadableNotes source={content('open')} /></section>
-    </div>
-    {more.map((section, index) => <section key={index}>
-      {section.heading && section.heading !== '设计思路' && <h2><InlineDesignNotes source={section.heading} /></h2>}
-      <ReadableNotes source={section.body} />
-    </section>)}
+  /* 每个小节按标题归类；同一类有多节时按出现顺序合在一起；归不了类的放在后面，保持作者的顺序 */
+  const slotOf = (section: Section) => folded.test(section.heading) ? undefined : slots.find(([, , , pattern]) => pattern.test(section.heading))?.[0];
+  const ordered = [
+    ...slots.flatMap(([key, label, purpose]) => {
+      const own = sections.filter(section => slotOf(section) === key);
+      return own.length ? [{ key, label, purpose, parts: own, fold: false }] : [];
+    }),
+    ...sections.filter(section => !slotOf(section) && (section.heading || section.body.trim()))
+      .map((section, index) => ({ key: `more-${index}`, label: section.heading || '说明', purpose: '', parts: [section], fold: folded.test(section.heading) })),
+  ];
+  const missing = slots.filter(([key]) => key === 'goal' || key === 'choices').filter(([key]) => !ordered.some(item => item.key === key));
+  const anchor = (key: string) => `rationale-${key}`;
+  return <div className="dw-rationale dw-rationale--v6">
+    <header className="dw-rationale-head">
+      {authorVersion.version !== version.version && <p className="dw-muted">沿用 V{authorVersion.version} 的思路。</p>}
+      {title && <h2>{title.replace(/^设计思路\s*[·:：]\s*/, '')}</h2>}
+      {meta && <p className="dw-dl-factline">{meta.split(/\n+/).map((line, index) => <span key={index}><InlineDesignNotes source={line} /></span>)}</p>}
+      <nav className="dw-dl-outline" aria-label="思路目录">{ordered.map((item, index) =>
+        <a key={item.key} className="ep-link" href={`#${anchor(item.key)}`} onClick={event => {
+          event.preventDefault();
+          const target = document.getElementById(anchor(item.key));
+          if (target instanceof HTMLDetailsElement) target.open = true;
+          target?.scrollIntoView({ block: 'start' });
+        }}>{index + 1} {item.label}</a>)}</nav>
+    </header>
+    {missing.length > 0 && <p className="dw-dl-missing">没写{missing.map(([, label]) => `「${label}」`).join('')}。思路至少要回答这一版解决什么、取舍了什么。</p>}
+    <ol className="dw-dl-items dw-surface">
+      {ordered.map((item, index) => {
+        const body = item.parts.map(part => item.parts.length > 1 && part.heading ? `### ${part.heading}\n\n${part.body}` : part.body).join('\n\n').trim();
+        const content = item.key === 'choices' ? <Tradeoffs source={body} />
+          : item.key === 'rules' ? <FrameworkReferences source={body} href={frameworkUrl} baseline={baseline} />
+          : <ReadableNotes source={body} />;
+        const heading = <h4><b>{index + 1}</b><InlineDesignNotes source={item.label} />{item.purpose && <small>{item.purpose}</small>}</h4>;
+        return item.fold
+          ? <li key={item.key} data-item={item.key}><details id={anchor(item.key)}><summary>{heading}</summary>{content}</details></li>
+          : <li key={item.key} id={anchor(item.key)} data-item={item.key}>{heading}{content}</li>;
+      })}
+    </ol>
   </div>;
 }

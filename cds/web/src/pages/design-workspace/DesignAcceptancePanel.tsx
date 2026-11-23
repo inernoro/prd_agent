@@ -3,7 +3,7 @@ import { Check, FileCheck2, RefreshCw, ScrollText } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { designAcceptanceTarget, designSlots, type DesignCell, type DesignEntry, type DesignRun, type DesignVersion } from '../../../../src/shared/design-workspace';
-import { cellNames, designArtifact, designDate, ruleModes, slotNames, verdictNames, type DesignCommand } from './design-ui';
+import { cellNames, designArtifact, designCheckRows, designDate, ruleModes, slotNames, verdictNames, type DesignCommand } from './design-ui';
 import { planningPath, usePlanningRead } from '../engineering-planning/planning-ui';
 
 function BindImplementation({ version, preferred, busy, close, bind }: {
@@ -38,9 +38,9 @@ function BindImplementation({ version, preferred, busy, close, bind }: {
   </DialogContent></Dialog>;
 }
 
-export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, canSign, command, onPreviewStale }: {
+export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, canSign, command, onSetBaseline, onPreviewStale }: {
   entry: DesignEntry; version: DesignVersion; busy: boolean; canWrite: boolean; canReview: boolean; canSign: boolean;
-  command: DesignCommand; onPreviewStale: () => void;
+  command: DesignCommand; onSetBaseline?: () => void; onPreviewStale: () => void;
 }) {
   const [params] = useSearchParams();
   const [runId, setRunId] = useState(params.get('run') ?? '');
@@ -91,93 +91,139 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const sign = async () => {
     if (run && !(await send('acceptance.sign', { runId: run.id }))) refreshPreview(value => value + 1);
   };
-  return <section className="dw-acceptance">
-    <div className="dw-baseline">基准 V{entry.frozen ?? '未定稿'}{run && <> · PR #{run.pullRequest} · 提交 <code>{run.commit.slice(0, 8)}</code></>}</div>
-    <section className="dw-surface dw-verdict">
-      <div>
-        <strong className="dw-status" data-state={stale ? 'needs_evidence' : state}>{linkedChanged ? '针对旧 PR' : stale ? '针对旧提交' : run ? verdictNames[state] : '等待运行'}</strong>
-        <h2>{run ? `PR #${run.pullRequest} ${linkedChanged ? '关联已变更' : stale ? '预览已更新' : `${signable ? '可以' : run.signed ? '已按' : '暂不能按'} V${version.version} 签收`}` : '尚无真实页面验收证据'}</h2>
-        <p>{linkedChanged ? '请对当前关联的 PR 重新运行，本次验收保留在记录里。'
-          : stale ? `当前预览为 ${activeCommit?.slice(0, 8)}。请对当前提交重新运行，本次验收保留在记录里。`
-          : run?.signed ? `签收于 ${designDate(run.signed.at)} · 提交 ${run.commit.slice(0, 8)}`
-          : run && preview.loading ? '正在核对当前预览提交。'
-          : run && !activeCommit ? '暂时无法核对当前预览提交，请确认预览已部署。'
-          : failures.length ? `有 ${failures.length} 项发现问题。修复后重跑，或把普通问题记成债务。`
-          : pending.length ? `还有 ${pending.length} 个场景需要证据。`
-          : entry.frozen !== version.version ? '定稿后，可用关联的 PR 预览开始验收。' : '请选择当前项目已部署的 PR。'}</p>
-        {run && <small><code>{run.id.slice(0, 16)}</code> · {designDate(run.createdAt)} · <a href={run.previewUrl} target="_blank" rel="noreferrer">打开真实预览</a></small>}
-      </div>
-      <div className="dw-verdict-actions">
-        <dl>{counts.map(([label, count]) => <div key={label} data-status={label}><dt>{label}</dt><dd>{count}</dd></div>)}</dl>
-        <div className="dw-row">
+  const isBaseline = entry.frozen === version.version;
+  const bound = version.screens.filter(screen => screen.impl && screen.readySelector).length;
+  const verdictWord = linkedChanged ? '针对旧 PR' : stale ? '针对旧提交' : run?.signed ? '已签收' : run ? verdictNames[state] : '还没开始';
+  const lead = linkedChanged ? '关联的 PR 已经换了，这次结果只针对旧 PR。请对当前 PR 重新运行。'
+    : stale ? `预览已经更新到 ${activeCommit?.slice(0, 8)}，这次结果只针对旧提交。请重新运行。`
+    : run?.signed ? `已按 V${version.version} 签收（${designDate(run.signed.at)}）。`
+    : !isBaseline ? `正式验收使用登记的实施基线${entry.frozen === undefined ? '。当前尚未定稿。' : ` V${entry.frozen}。当前查看 V${version.version}。`}`
+    : run ? (failures.length || pending.length ? `还差 ${[failures.length ? `${failures.length} 项要修` : '', pending.length ? `${pending.length} 处待补证据` : ''].filter(Boolean).join('、')}。`
+      : state === 'conditional' ? '已有附条件的验收结果，请查看关联债务。' : state === 'passed' ? '所有验收项已通过。' : '还需补齐验收证据。')
+    : '尚无真实页面验收证据。用关联 PR 的预览运行验收。';
+  type Step = { key: string; title: string; detail: string; done: boolean; action?: JSX.Element };
+  const steps: Step[] = [
+    { key: 'baseline', title: '定为实施基线', done: isBaseline,
+      detail: isBaseline ? `V${version.version} 是实施基线` : entry.frozen === undefined
+        ? '请有权评审人选择正式对照稿。' : `登记基线 V${entry.frozen}，当前查看 V${version.version}。`,
+      action: !isBaseline && onSetBaseline ? <button type="button" className="ep-button" onClick={onSetBaseline}>定为实施基线</button>
+        : !isBaseline && entry.frozen !== undefined ? <Link className="ep-button" to={`/design?${new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(entry.frozen), tab: 'accept' })}`}>打开基线 V{entry.frozen} 的验收</Link> : undefined },
+    { key: 'bind', title: '绑定实现画面', done: bound > 0 || version.screens.length === 0 || runs.length > 0,
+      detail: runs.length && bound < version.screens.length ? `${bound}/${version.screens.length} 个画面已绑定；运行后不能再改，没绑的画面会缺证据` : `${bound}/${version.screens.length} 个画面写了预览内地址和就绪选择器；实拍按这个定位`,
+      action: canReview && !!version.screens.length && !runs.length ? <button className="ep-button" type="button" onClick={() => setBinding(true)}>绑定实现画面</button> : undefined },
+    { key: 'run', title: run ? '重新运行验收' : '运行验收', done: !!run && !stale,
+      detail: run ? `PR #${run.pullRequest} · 提交 ${run.commit.slice(0, 8)} · ${designDate(run.createdAt)}` : '填写关联 PR 编号，用它的预览逐条实拍',
+      action: canWrite ? <form className="dw-row" onSubmit={event => { event.preventDefault(); void start(); }}>
+        <input aria-label="关联 PR 编号" placeholder="PR 编号" type="number" min={1} required value={pr} onChange={event => setPr(event.target.value)} />
+        <button className="ep-button" disabled={busy || !isBaseline || !items.length}><RefreshCw />{run ? '重新运行' : '运行验收'}</button>
+      </form> : undefined },
+    { key: 'fix', title: '修问题、补证据', done: !!run && !failures.length && !pending.length,
+      detail: run ? (failures.length || pending.length ? `${failures.length} 项要修，${pending.length} 处待补证据` : '没有要修的') : '运行后才知道' },
+    { key: 'sign', title: '签收', done: !!run?.signed,
+      detail: run?.signed ? `签收于 ${designDate(run.signed.at)}` : '全部通过或有条件通过后签收',
+      action: canSign ? <button className="ep-button" type="button" disabled={busy || !signable} onClick={() => void sign()}><Check />签收</button> : undefined },
+  ];
+  const current = steps.findIndex(step => !step.done);
+  const statusOf = (itemId: string) => {
+    const cells = run?.cells.filter(cell => cell.itemId === itemId) ?? [];
+    if (cells.some(cell => cell.status === 'failed')) return 'failed';
+    if (cells.some(cell => (cell.status === 'missing' || cell.status === 'unverified') && !cell.debtId)) return 'missing';
+    if (cells.length && cells.every(cell => cell.status === 'passed')) return 'passed';
+    if (cells.some(cell => cell.debtId)) return 'debt';
+    return 'unverified';
+  };
+  const groups = ([['failed', '不通过'], ['missing', '待补证据'], ['debt', '已记债'], ['unverified', '未验证'], ['passed', '通过']] as const)
+    .map(([key, label]) => [key, label, items.filter(item => statusOf(item.id) === key)] as const).filter(([, , list]) => list.length);
+  const selfChecks = designCheckRows(version);
+  const selfFailed = selfChecks.filter(row => row.status !== '通过');
+  const origins = new Map<string, typeof version.screens>();
+  for (const screen of version.screens) { const key = `${screen.viewport}:${screen.route}`; origins.set(key, [...(origins.get(key) ?? []), screen]); }
+  const shared = [...origins.values()].filter(list => list.length > 1);
+  const ruleNumber = 3 + Number(failures.length > 0) + Number(pending.length > 0);
+  return <section className="dw-acceptance dw-ac">
+    <ol className="dw-dl-items dw-surface dw-ac-items">
+      <li data-item="verdict"><h4><b>1</b>结论</h4>
+        <p className="dw-dl-lead-text"><span className="dw-status" data-state={stale ? 'needs_evidence' : run?.signed ? 'passed' : run ? state : 'draft'}>{verdictWord}</span> {lead}</p>
+        <p className="dw-dl-factline">
+          {!isBaseline && onSetBaseline && entry.frozen !== undefined &&
+            <Link className="ep-link" to={`/design?${new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(entry.frozen), tab: 'accept' })}`}>查看基线 V{entry.frozen} 的验收</Link>}
+          {run && counts.filter(([, count]) => count > 0).map(([label, count]) => <span key={label} data-status={label}>{label} {count}</span>)}
+          {run && <a className="ep-link" href={run.previewUrl} target="_blank" rel="noreferrer">打开真实预览</a>}
           {runs.length > 1 && <select aria-label="查看历史运行" value={run?.id ?? ''} onChange={event => setRunId(event.target.value)}>
             {[...runs].reverse().map(row => <option key={row.id} value={row.id}>{row.commit.slice(0, 8)}{row.signed ? row.id === runs.at(-1)?.id ? ' · 已签收' : ' · 历史签收' : ' · ' + verdictNames[row.verdict]}</option>)}
           </select>}
-          {canWrite && <form className="dw-row" onSubmit={event => { event.preventDefault(); void start(); }}>
-            <input aria-label="关联 PR 编号" placeholder="PR 编号" type="number" min={1} required value={pr} onChange={event => setPr(event.target.value)} />
-            <button className="ep-button" disabled={busy || entry.frozen !== version.version || !items.length}><RefreshCw />{run ? '重新运行' : '运行验收'}</button>
-          </form>}
-          {canSign && <button className="ep-button" type="button" disabled={busy || !signable} onClick={() => void sign()}>
-            <Check />签收</button>}
-        </div>
-      </div>
-    </section>
-    <section className="dw-surface dw-delivery-card">
-      <header className="dw-delivery-heading">
-        <div><h3>真实页面定位</h3><p>{version.screens.filter(screen => screen.impl).length} / {version.screens.length} 个画面已绑定</p></div>
-        {!runs.length && canReview && !!version.screens.length && <button className="ep-button" type="button" onClick={() => setBinding(true)}>绑定实现画面</button>}
-      </header>
-      {!runs.length && <p className="dw-muted">运行验收后，这里绑定的画面用于定位实拍。每条规则需要能定位到对应页面。</p>}
-    </section>
+        </p>
+        {run && !run.signed && !stale && (preview.loading ? <p className="dw-dl-missing" role="status">正在核对当前预览提交。</p>
+          : !activeCommit ? <p className="dw-dl-missing" role="status">暂时无法核对当前预览提交，请确认预览已部署；核对上之前不能补证据、不能签收。</p> : null)}</li>
+      <li data-item="steps"><h4><b>2</b>下一步</h4>
+        <ol className="dw-ac-steps">{steps.map((step, index) => <li key={step.key} data-state={step.done ? 'done' : index === current ? 'current' : 'later'}>
+          <span className="dw-ac-step-mark">{step.done ? <Check /> : index + 1}</span>
+          <div><strong>{step.title}</strong><small>{step.detail}</small>
+            {step.key === 'bind' && !!version.screens.length && <details className="dw-ac-screens" open={(index === current && bound < version.screens.length) || undefined}><summary>画面和实现地址 {version.screens.length}</summary>
+              <ul>{version.screens.map(screen => <li key={screen.id}><span><Link className="ep-link" to={`/design?${new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(version.version), tab: 'preview', screen: screen.id })}`}>{screen.name}</Link><small> · {screen.viewport === 'phone' ? '手机' : '桌面'}</small></span>
+                <code>{screen.route}</code><span>{screen.impl ? <code>{screen.impl}</code> : <em>未绑定</em>}</span></li>)}</ul></details>}</div>
+          {index === current && step.action ? <div className="dw-ac-step-action" data-primary>{step.action}</div>
+            : step.done ? ((step.key === 'run' || step.key === 'bind' && bound < version.screens.length) && step.action
+              ? <div className="dw-ac-step-action">{step.action}</div> : null)
+            : current >= 0 && index > current && step.action ? <small className="dw-ac-step-wait">先完成第 {current + 1} 步</small> : null}
+        </li>)}</ol></li>
+      {!!failures.length && <li data-item="fix"><h4><b>3</b>要修的问题<small>{failures.length} 项 · 修复后重跑，或把普通问题记成债务</small></h4>
+        <div className="dw-issues">{failures.map(item => {
+          const unmatched = run!.cells.filter(cell => cell.itemId === item.id && cell.status !== 'passed');
+          const cells = unmatched.filter(cell => cell.status === 'failed');
+          const evidence = cells.find(cell => cell.imageId);
+          const issue = run!.issues[item.id];
+          const needsLink = issue && unmatched.some(cell => cell.debtId !== issue.id);
+          return <article className="dw-issue dw-surface" key={item.id}>
+            <button className="dw-issue-shot" type="button" aria-label={`查看 ${item.id} 证据`} disabled={!evidence} onClick={() => setSelected(evidence)}>
+              {evidence?.imageId ? <img src={designArtifact(entry.projectId, evidence.imageId)} alt={item.rule} /> : '缺少截图'}
+            </button>
+            <div><small>{item.id} · {ruleModes[item.how]} · {item.priority === 'high' ? '高级别' : '普通'}</small>
+              <h4>{item.rule}</h4>
+              <div className="dw-row">{cells.map(cell => <span className="ep-badge" key={cell.slot}>{slotNames[cell.slot]}</span>)}</div>
+              <dl className="dw-details"><dt>实测</dt><dd>{cells.map(cell => cell.actual).join(' · ')}</dd><dt>期望</dt><dd>{item.expected ?? item.rule}</dd></dl>
+              <div className="dw-row">
+                {canWrite && !run!.signed && <button className="ep-button" disabled={busy || !!issue && !issue.pending && !needsLink} type="button"
+                  onClick={() => void send('acceptance.debt', { runId: run!.id, itemId: item.id })}>
+                  <ScrollText />{issue ? issue.pending ? '核对待确认提案' : needsLink ? '重新关联债务' : '已记债' : '记成债务'}</button>}
+                {issue && !issue.pending && <Link className="ep-link" to={`/engineering-planning?project=${encodeURIComponent(entry.projectId)}&view=debts&kind=debt&item=${encodeURIComponent(issue.id)}`}>{issue.id}</Link>}
+                {evidence && <button className="ep-text-button" type="button" onClick={() => setSelected(evidence)}>看证据</button>}
+              </div>
+            </div>
+          </article>;
+        })}</div></li>}
+      {!!pending.length && <li data-item="evidence"><h4><b>{failures.length ? 4 : 3}</b>待补证据<small>{pending.length} 处 · 上传实拍并写判断依据</small></h4>
+        <div className="dw-pending">{pending.map(cell => {
+          const item = items.find(row => row.id === cell.itemId)!;
+          return <div className="dw-pending-row" key={`${cell.itemId}-${cell.slot}`}><span className="dw-status" data-state="needs_evidence">{cellNames[cell.status]}</span>
+            <div><strong><code>{item.id}</code> {item.rule}</strong><small>{slotNames[cell.slot]} · {cell.actual}</small></div>
+            {evidenceWritable && <button type="button" className="ep-button" onClick={() => setSelected(cell)}>{item.how === 'human' ? '人工核对' : '补充证据'}</button>}
+          </div>;
+        })}</div></li>}
+      <li data-item="rules"><h4><b>{ruleNumber}</b>全部验收项<small>{items.length} 条 · 按状态分组</small></h4>
+        {!items.length && <p className="dw-dl-missing">这版稿件未声明验收项。</p>}
+        {groups.map(([key, label, list]) => <details key={key} className="dw-dl-rulegroup" open={key === 'failed' || key === 'missing' || undefined}>
+          <summary><span className="dw-status" data-state={key === 'missing' ? 'needs_evidence' : key === 'unverified' ? 'draft' : key}>{label}</span> <small>{list.length}</small></summary>
+          <ul className="dw-dl-rules">{list.map(item => <li key={item.id}><code>{item.id}</code><span><strong>{item.rule}</strong>
+            <small>{ruleModes[item.how]}{item.priority === 'high' ? ' · 高级别' : ''}{item.expected ? ` · 预期：${item.expected}` : ''}</small>
+            <span className="dw-ac-slots">{designSlots.filter(slot => item.slots.includes(slot)).map(slot => {
+              const cell = run?.cells.find(value => value.itemId === item.id && value.slot === slot);
+              return cell ? <button key={slot} type="button" className="dw-status" data-state={cell.status} onClick={() => setSelected(cell)}>{slotNames[slot]} · {cellNames[cell.status]}</button>
+                : <span key={slot} className="dw-ac-slot">{slotNames[slot]}</span>;
+            })}</span></span></li>)}</ul>
+        </details>)}</li>
+      {(shared.length > 0 || selfChecks.length > 0 || version.checks) && <li data-item="more"><h4><b>{ruleNumber + 1}</b>原型检查</h4>
+        {!selfChecks.length && version.checks && <p className="dw-dl-factline">
+          <span>作者自检{typeof version.checks.passed === 'number' && typeof version.checks.total === 'number'
+            ? ` ${version.checks.passed}/${version.checks.total}` : ''}（未附明细）</span>
+        </p>}
+        {selfChecks.length > 0 && <details className="dw-dl-rulegroup"><summary>作者自检 <small>{selfChecks.length - selfFailed.length}/{selfChecks.length} 通过 · 作者发布时自己记录的，不是稿件状态</small></summary>
+          <ul className="dw-dl-plain">{[...selfFailed, ...selfChecks.filter(row => row.status === '通过')].map((row, index) => <li key={`${row.id}/${index}`}>{row.name} <small>· {row.status}</small></li>)}</ul></details>}
+        {shared.length > 0 && <details className="dw-dl-rulegroup"><summary>共用原型入口的画面 <small>{shared.length} 组</small></summary>
+          <ul className="dw-dl-plain">{shared.map(items => <li key={items[0].id}>{items.map(screen => screen.name).join('、')} <code>{items[0].route}</code> · 在画布内切换状态</li>)}</ul></details>}</li>}
+    </ol>
     {binding && <BindImplementation version={version} preferred={params.get('screen')} busy={busy}
       close={() => setBinding(false)} bind={fields => send('implementation.bind', { version: version.version, ...fields })} />}
-    {!!failures.length && <section><h3>要修的问题 <small>{failures.length}</small></h3>
-      <div className="dw-issues">{failures.map(item => {
-        const unmatched = run!.cells.filter(cell => cell.itemId === item.id && cell.status !== 'passed');
-        const cells = unmatched.filter(cell => cell.status === 'failed');
-        const evidence = cells.find(cell => cell.imageId);
-        const issue = run!.issues[item.id];
-        const needsLink = issue && unmatched.some(cell => cell.debtId !== issue.id);
-        return <article className="dw-issue dw-surface" key={item.id}>
-          <button className="dw-issue-shot" type="button" aria-label={`查看 ${item.id} 证据`} disabled={!evidence} onClick={() => setSelected(evidence)}>
-            {evidence?.imageId ? <img src={designArtifact(entry.projectId, evidence.imageId)} alt={item.rule} /> : '缺少截图'}
-          </button>
-          <div><small>{item.id} · {ruleModes[item.how]} · {item.priority === 'high' ? '高级别' : '普通'}</small>
-            <h4>{item.rule}</h4>
-            <div className="dw-row">{cells.map(cell => <span className="ep-badge" key={cell.slot}>{slotNames[cell.slot]}</span>)}</div>
-            <dl className="dw-details"><dt>实测</dt><dd>{cells.map(cell => cell.actual).join(' · ')}</dd><dt>期望</dt><dd>{item.expected ?? item.rule}</dd></dl>
-            <div className="dw-row">
-              {canWrite && !run!.signed && <button className="ep-button" disabled={busy || !!issue && !issue.pending && !needsLink} type="button"
-                onClick={() => void send('acceptance.debt', { runId: run!.id, itemId: item.id })}>
-                <ScrollText />{issue ? issue.pending ? '核对待确认提案' : needsLink ? '重新关联债务' : '已记债' : '记成债务'}</button>}
-              {issue && !issue.pending && <Link className="ep-link" to={`/engineering-planning?project=${encodeURIComponent(entry.projectId)}&view=debts&kind=debt&item=${encodeURIComponent(issue.id)}`}>{issue.id}</Link>}
-              {evidence && <button className="ep-text-button" type="button" onClick={() => setSelected(evidence)}>看证据</button>}
-            </div>
-          </div>
-        </article>;
-      })}</div>
-    </section>}
-    {!!pending.length && <section><h3>待补证据 <small>{pending.length}</small></h3>
-      <div className="dw-surface dw-pending">{pending.map(cell => {
-        const item = items.find(item => item.id === cell.itemId)!;
-        return <div className="dw-pending-row" key={`${cell.itemId}-${cell.slot}`}><span className="dw-status" data-state="needs_evidence">{cellNames[cell.status]}</span>
-          <div><strong>{item.rule}</strong><small>{slotNames[cell.slot]} · {cell.actual}</small></div>
-          {evidenceWritable && <button type="button" className="ep-button" onClick={() => setSelected(cell)}>{item.how === 'human' ? '人工核对' : '补充证据'}</button>}
-        </div>;
-      })}</div>
-    </section>}
-    <section><h3>全部验收项 <small>{items.length}</small></h3>
-      <div className="dw-surface dw-matrix" role="region" aria-label="做法验收矩阵" tabIndex={0}><table><thead><tr><th>验收项</th>{designSlots.map(slot => <th key={slot}>{slotNames[slot]}</th>)}</tr></thead>
-        <tbody>{items.map(item => <tr key={item.id}><th scope="row"><code>{item.id}</code> {item.rule}</th>
-          {designSlots.map(slot => {
-            const cell = run?.cells.find(value => value.itemId === item.id && value.slot === slot);
-            return <td key={slot}>{!item.slots.includes(slot) ? '—' : cell
-              ? <button className="dw-status" data-state={cell.status} onClick={() => setSelected(cell)}>{cellNames[cell.status]}</button> : '未验证'}</td>;
-          })}
-        </tr>)}</tbody></table>
-        {!items.length && <p>这版稿件未声明验收项。</p>}
-      </div>
-    </section>
     {run && selected && <DesignEvidenceDialog entry={entry} run={run} cell={selected} version={version} command={command}
       canWrite={evidenceWritable} canReview={canReview} busy={busy} close={() => setSelected(undefined)} />}
   </section>;

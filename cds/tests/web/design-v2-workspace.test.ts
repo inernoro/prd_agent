@@ -112,6 +112,31 @@ const historyDraft: DesignEntry = {
 };
 const historyWorkspace: DesignWorkspace = { ...workspace, designs: [historyDraft] };
 
+describe('设计 V8 的导航与状态', () => {
+  it('在五个标签下保留旧预览、对比、说明和交付验收入口', () => {
+    const tabs = { preview: '画面', diff: '画面', delivery: '交付', accept: '验收', rationale: '说明', spec: '说明', notes: '说明', log: '记录' };
+    for (const [legacy, label] of Object.entries(tabs)) {
+      const html = design(`&design=${historyDraft.id}&version=2&tab=${legacy}`, historyWorkspace);
+      const navigation = html.match(/<nav\b[^>]*aria-label="稿件标签"[^>]*>(.*?)<\/nav>/)?.[1] ?? '';
+      expect([...navigation.matchAll(/<button\b/g)]).toHaveLength(5);
+      expect(navigation).toMatch(new RegExp(`aria-current="true"[^>]*>${label}`));
+    }
+    const oldChecks = design(`&design=${historyDraft.id}&version=2&tab=delivery&part=checks`, historyWorkspace);
+    expect(oldChecks).toContain('data-item="steps"');
+  });
+
+  it('展示 V2 与登记基线 V1 的关系，当前稿只读时仍可回看基线', () => {
+    const url = `&design=${historyDraft.id}&version=2`;
+    const html = design(url, historyWorkspace);
+    expect(html).toContain('V2 · 最新 · 基线 V1');
+    expect(html).not.toContain('实现仍按基线');
+    expect(html).toContain('aria-label="更多稿件操作"');
+    const reader = design(url, { ...historyWorkspace, permissions: { ...workspace.permissions, review: false, steward: false } });
+    expect(reader).not.toContain('data-action="freeze"');
+    expect(reader).toContain('实施基线');
+  });
+});
+
 function render(Page: ComponentType, url: string, input = workspace): string {
   vi.stubGlobal('document', { documentElement: { dataset: { theme: 'light' } } });
   vi.mocked(usePlanningRead).mockImplementation(endpoint => {
@@ -219,7 +244,7 @@ async function withDesignBrowser(input: () => DesignWorkspace,
         }
         return route.fulfill({ json: { projectId, viewer } });
       }
-      if (url.pathname === `${designPath}/commands` && route.request().method() === 'POST') {
+      if ([`${designPath}/commands`, `${designPath}/feedback`].includes(url.pathname) && route.request().method() === 'POST') {
         commands.push(route.request().postDataJSON());
         return route.fulfill({ json: { projectId } });
       }
@@ -297,30 +322,27 @@ const requirementWorkspace: DesignWorkspace = {
   viewer: viewerBeforeChanges,
 };
 
-async function measureDraftHeader(page: Page, title: string, primaryAction?: string) {
+async function measureDraftHeader(page: Page, title: string) {
   const header = page.locator('.dw-head--draft');
   const heading = header.getByRole('heading', { name: title, exact: true });
   const tabs = header.getByRole('navigation', { name: '稿件标签' });
   const controls = {
-    back: header.getByRole('button', { name: '返回设计库', exact: true }),
     heading,
     status: header.locator('.dw-status'),
-    framework: header.getByRole('link', { name: new RegExp(frameworkId) }),
     version: header.getByRole('combobox', { name: '稿件版本' }),
     screen: header.getByRole('button', { name: '大屏', exact: true }),
-    information: header.getByLabel('稿件信息', { exact: true }),
+    information: header.getByLabel('更多稿件操作', { exact: true }),
   };
   async function box(name: string, locator: typeof heading) {
     const rect = await locator.boundingBox({ timeout: 900 });
     if (!rect) throw new Error(`稿件页头缺少可见控件 ${name}，宽度 ${page.viewportSize()?.width}`);
     return rect;
   }
-  const [back, head, status, framework, version, screen, information] = await Promise.all(
+  const [head, status, version, screen, information] = await Promise.all(
     Object.entries(controls).map(([name, locator]) => box(name, locator)),
   );
-  const titleGroup = [back, head, status, framework];
+  const titleGroup = [head, status];
   const actionGroup = [version, screen, information];
-  if (primaryAction) actionGroup.push(await box(primaryAction, header.getByRole('button', { name: primaryAction, exact: true })));
   const headerBox = await box('页头', header);
   const tabsBox = await box('页签', tabs);
   const metrics = await header.evaluate(element => {
@@ -405,13 +427,13 @@ async function measureDraftInfo(popover: Locator) {
         centerOffset: Math.abs((Math.min(...label.map(box => box.left)) + Math.max(...label.map(box => box.right))) / 2 - (rect.left + rect.right) / 2),
       };
     }
-    const freeze = [...panel.querySelectorAll<HTMLButtonElement>('dd button')].find(button => button.textContent?.trim() === '定为实施基线');
+    const freeze = panel.querySelector<HTMLButtonElement>('footer button[data-action="freeze"]');
     const revoke = panel.querySelector<HTMLButtonElement>('footer button[data-action="unfreeze"]');
     return {
       width: panel.clientWidth, scrollWidth: panel.scrollWidth, clippedGroups,
       freeze: freeze && {
         ...measureLabel(freeze),
-        lineGap: freeze.getBoundingClientRect().top - Math.max(...textRects(freeze.closest('dd')!, freeze).map(box => box.bottom)),
+        lineGap: freeze.getBoundingClientRect().top - panel.querySelector('dl')!.getBoundingClientRect().bottom,
       },
       revoke: revoke && { ...measureLabel(revoke), footerWidth: revoke.closest('footer')!.getBoundingClientRect().width },
     };
@@ -500,6 +522,7 @@ describe('工程规划与设计 V2 前端回归', () => {
         layout: [...document.querySelectorAll<HTMLElement>('.dw-library, .dw-library-bar')]
           .filter(element => element.scrollWidth > element.clientWidth + 1).map(element => element.className),
         cardFacts: [...document.querySelectorAll<HTMLElement>('.dw-design-card footer > div > *')].flatMap(element => {
+          if (!element.getClientRects().length) return [];
           const footer = element.closest('footer')!.getBoundingClientRect();
           const box = element.getBoundingClientRect();
           return box.left < footer.left - 1 || box.right > footer.right + 1 ? [element.textContent?.trim()] : [];
@@ -554,16 +577,18 @@ describe('工程规划与设计 V2 前端回归', () => {
       }
 
       const failedCard = firstSection.getByRole('article').filter({ hasText: failedTitle });
-      const failure = failedCard.getByRole('link', { name: '验收未通过', exact: true });
+      const failure = failedCard.getByRole('link', { name: '打开稿件 ' + failedTitle, exact: true });
       expect.soft(await failure.count(), '已续版的稿件仍把实施基线验收失败放在待办图卡').toBe(1);
       if (await failure.count() === 1) {
         expect.soft(await failedCard.innerText()).not.toMatch(/\d+\s+不通过/);
-        await failure.click();
+        const title = failedCard.getByRole('link', { name: failedTitle, exact: true });
+        expect(await failure.getAttribute('href')).toBe(await title.getAttribute('href'));
+        await title.click();
         await page.waitForURL(url => url.searchParams.get('design') === failedDraft.id && url.searchParams.get('tab') === 'accept');
         expect(new URL(page.url()).searchParams.get('version')).toBe('2');
         expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
-        expect(await page.getByRole('button', { name: /^做法验收/ }).getAttribute('aria-current')).toBe('true');
-        expect(await page.getByRole('heading', { name: /^PR #41 .*V2/ }).isVisible()).toBe(true);
+        expect(await page.getByRole('button', { name: /^验收/ }).getAttribute('aria-current')).toBe('true');
+        expect(await page.locator('.dw-ac-steps').getByText(/PR #41 · 提交/).isVisible()).toBe(true);
       }
 
       await page.goto(browserDesignUrl({ group: libraryFolder }));
@@ -581,9 +606,9 @@ describe('工程规划与设计 V2 前端回归', () => {
       const brief = page.locator('.dw-brief');
       const heading = brief.getByRole('heading', { name: awaitingBrief.title });
       await heading.waitFor();
-      const nav = brief.getByRole('navigation', { name: /需求(?:位置|归属)/ });
+      const nav = page.getByRole('navigation', { name: '位置' }).locator('.dw-crumb-desktop');
       const parent = nav.getByRole('link', { name: libraryFolder });
-      expect.soft(await nav.getByRole('link', { name: '设计库' }).count()).toBe(1);
+      expect.soft(await nav.getByRole('link', { name: '设计', exact: true }).count()).toBe(1);
       expect.soft(await parent.count()).toBe(1);
       if (await parent.count() === 1) {
         const href = new URL((await parent.getAttribute('href'))!, browserDesignOrigin);
@@ -679,7 +704,7 @@ describe('工程规划与设计 V2 前端回归', () => {
     const folderOnly = design(`&${new URLSearchParams({ group: libraryFolder })}`, libraryWorkspace);
     expect.soft(titles(folderOnly).sort()).toEqual(['其他分类稿件', '另一套框架稿件', '实现阶段稿件', '目标稿件']);
     expect.soft(headings(folderOnly).some(heading => heading.startsWith('待评审'))).toBe(true);
-    expect.soft(headings(folderOnly).some(heading => heading.startsWith('实现中'))).toBe(true);
+    expect.soft(headings(folderOnly).some(heading => heading.startsWith('设计中'))).toBe(true);
   });
 
   it('A-20 框架默认进入初衷与范围', () => {
@@ -742,24 +767,40 @@ describe('工程规划与设计 V2 前端回归', () => {
   it('A-03/A-05 稿件页头公开当前版、实施基线、框架、页签及基线操作', () => {
     const html = design(`&design=${bound.id}&version=2&tab=preview`);
     const visible = visibleText(html);
-    expect(visible).toMatch(/你在看\s*V2.*实施基线是\s*V1/);
-    expect(visible).toContain(frameworkId);
+    expect(visible).toContain('V2 · 最新 · 基线 V1');
+    expect(html).toContain(frameworkId);
     expect(html).toContain('aria-label="稿件标签"');
     expect(html).toContain('aria-label="稿件分类"');
     expect(html).toContain(`#${tag}`);
-    expect(visible).toContain('打开基线');
-    expect(visible).toMatch(/和基线(?:\s+V1\s+)?对比/);
+    expect(visible).not.toContain('实现仍按基线');
+    expect(html).toContain('data-action="freeze"');
   });
 
   it('A-12 有权限时在当前文件区域展示反馈入口', () => {
-    const route = `&design=${bound.id}&version=2&tab=delivery`;
+    const route = `&design=${bound.id}&version=2&tab=delivery&part=files&file=artifact-doc`;
     const html = design(route);
-    const fileHeader = html.match(/<header\b[^>]*class="dw-delivery-heading"[^>]*>((?:(?!<\/header>)[\s\S])*?<h3>[^<]*<\/h3>[\s\S]*?)<\/header>/)?.[1];
+    const fileHeader = html.match(/<header\b[^>]*class="dw-dl-detail-head dw-dl-reader-head"[^>]*>([\s\S]*?)<\/header>/)?.[1];
     expect(text(fileHeader ?? '')).toContain(deliveryPath);
     expect(text(fileHeader ?? '')).toContain('对这个文件提反馈');
     const readOnly = { ...workspace, permissions: { ...workspace.permissions, feedback: false, write: false } };
     expect(visibleText(design(route, readOnly))).not.toContain('对这个文件提反馈');
   });
+
+  it('A-40 对文件的反馈带当前版路径，保存诉求和验收标准', async () => {
+    await withDesignBrowser(() => workspace, async (page, commands) => {
+      await page.goto(browserDesignUrl({ design: bound.id, version: '2', tab: 'delivery', part: 'files', file: 'artifact-doc' }));
+      await page.getByRole('button', { name: '对这个文件提反馈' }).click();
+      const form = page.locator('.dw-dl-detail form');
+      await form.locator('textarea[name="ask"]').fill('可以直接读到交付说明的结尾');
+      await form.locator('textarea[name="done"]').fill('下一段打开后看到文档尾注');
+      await form.getByRole('button', { name: '提交反馈' }).click();
+      await expect.poll(() => commands.length).toBe(1);
+      expect(commands[0]).toMatchObject({
+        type: 'feedback.create', designId: bound.id, version: 2, filePath: deliveryPath,
+        body: '## 诉求\n\n可以直接读到交付说明的结尾\n\n## 怎么算解决\n\n下一段打开后看到文档尾注',
+      });
+    });
+  }, 15_000);
 
   it('默认打开最新版，历史评论链接回原版的原画面，两版交付都显示实施反馈', async () => {
     const origin = 'https://cds-layout.fixture.invalid';
@@ -805,17 +846,15 @@ describe('工程规划与设计 V2 前端回归', () => {
       for (const viewed of [1, 2]) {
         if (viewed === 2) await renderAddress(new URL('/design?' + new URLSearchParams({ ...draftParams, tab: 'delivery' }), origin));
         expect(await version.inputValue()).toBe(String(viewed));
-        const sections = page.locator('.dw-delivery-panel > section');
-        expect(await sections.nth(0).getByRole('heading').innerText()).toMatch(new RegExp(`^V${viewed} 交付摘要`));
-        const feedback = sections.nth(1);
-        expect(await feedback.getByRole('heading', { name: '实施反馈', exact: true }).isVisible()).toBe(true);
         for (const thread of [previousFeedback, currentFeedback]) {
-          const item = feedback.locator('details.dw-delivery-thread').filter({ hasText: thread.title });
+          await renderAddress(new URL('/design?' + new URLSearchParams({ ...draftParams, version: String(viewed),
+            tab: 'delivery', part: 'feedback', fb: thread.id }), origin));
+          const item = page.locator('.dw-dl-detail');
           expect(await item.count()).toBe(1);
           expect(await item.getByRole('button', { name: `V${thread.version} 资料`, exact: true }).isVisible()).toBe(true);
           expect(await item.getByText(thread.body, { exact: true }).isVisible()).toBe(true);
+          if (thread.replies.length) expect(await item.getByText(thread.replies[0].body, { exact: true }).isVisible()).toBe(true);
         }
-        expect(await feedback.getByText(previousFeedback.replies[0].body, { exact: true }).isVisible()).toBe(true);
       }
     });
   }, 30_000);
@@ -826,7 +865,8 @@ describe('工程规划与设计 V2 前端回归', () => {
         { decision: 'close', body: '已按原版画面复核关闭', author, at: '2026-11-21T00:00:00.000Z' },
       ] };
     let feedback = [previousFeedback, currentFeedback, closed];
-    await withDesignBrowser(() => ({ ...historyWorkspace, viewer: viewerBeforeChanges, designs: [{ ...historyDraft, feedback }] }), async page => {
+    const seen = { ...viewerBeforeChanges, designs: { [historyDraft.id]: { version: 2 } } };
+    await withDesignBrowser(() => ({ ...historyWorkspace, viewer: seen, designs: [{ ...historyDraft, feedback }] }), async page => {
       const newFeedback = page.locator('.dw-design-card').filter({ hasText: boundTitle }).getByRole('link', { name: '新反馈' });
       const draftPath = { design: historyDraft.id };
       await page.goto(browserDesignUrl());
@@ -836,16 +876,17 @@ describe('工程规划与设计 V2 前端回归', () => {
       await page.goto(browserDesignUrl());
       await newFeedback.click();
       await page.waitForURL(url => url.searchParams.get('tab') === 'delivery');
-      const section = page.getByRole('region', { name: '实施反馈' });
-      const closedThread = section.locator('details').filter({ has: page.locator('summary strong', { hasText: closed.title }) });
-      await section.getByRole('heading', { name: '实施反馈' }).waitFor();
-      expect(await section.innerText()).toContain('2 条待处理');
-      expect(await section.getByText(previousFeedback.body, { exact: true }).isVisible()).toBe(true);
-      expect(await section.getByText(currentFeedback.body, { exact: true }).isVisible()).toBe(true);
-      expect(await closedThread.getByText(closed.body, { exact: true }).isVisible()).toBe(false);
-      await section.getByText(closed.title, { exact: true }).click();
-      expect(await closedThread.getByText(closed.decisions[0].body, { exact: true }).isVisible()).toBe(true);
-      expect(await closedThread.getByRole('button', { name: 'V1 资料' }).isVisible()).toBe(true);
+      const list = page.locator('[aria-label="反馈列表"]');
+      const detail = page.locator('.dw-dl-detail');
+      expect(await list.innerText()).toContain('待处理 2');
+      for (const thread of [previousFeedback, currentFeedback]) {
+        await list.getByRole('button', { name: new RegExp(thread.title) }).click();
+        expect(await detail.getByText(thread.body, { exact: true }).isVisible()).toBe(true);
+        expect(await detail.count()).toBe(1);
+      }
+      await list.getByRole('button', { name: '全部 3', exact: true }).click();
+      await list.getByRole('button', { name: new RegExp(closed.title) }).click();
+      expect(await detail.getByText(closed.decisions[0].body, { exact: true }).isVisible()).toBe(true);
 
       await page.goto(browserDesignUrl());
       await page.locator('.dw-design-card').filter({ hasText: boundTitle }).waitFor();
@@ -855,28 +896,26 @@ describe('工程规划与设计 V2 前端回归', () => {
         { author, at: '2026-11-22T00:00:00.000Z', body: reply }] }, currentFeedback, closed];
       await page.reload();
       await newFeedback.click();
-      await section.getByText(reply, { exact: true }).waitFor();
+      await list.getByRole('button', { name: new RegExp(previousFeedback.title) }).click();
+      await detail.getByText(reply, { exact: true }).waitFor();
       expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
-      expect(await section.innerText()).toContain('2 条待处理');
+      expect(await list.innerText()).toContain('待处理 2');
     });
   }, 20_000);
 
-  it('A-03 V3 桌面稿件页头第一行保留标题和完整动作组，第二行只放页签', async () => {
-    const cases = [[4, undefined], [2, '框架候选']] as const;
-    for (const [version, action] of cases) {
+  it('A-03 稿件页头的标题、页签和操作可达', async () => {
+    for (const version of [4, 2]) {
       const markup = design(`&design=${layoutDraft.id}&version=${version}&tab=preview`, { ...workspace, designs: [layoutDraft] });
       await withLayout(markup, draftStyles, async page => {
         for (const [width, height] of desktopSizes) {
           await page.setViewportSize({ width, height });
-          const metrics = await measureDraftHeader(page, boundTitle, action);
-          const row = [...metrics.titleGroup, ...metrics.actionGroup];
+          const metrics = await measureDraftHeader(page, boundTitle);
           const description = `${width}px V${version}`;
           checkDraftBounds(metrics, width);
-          expect.soft(shareRow(row), `${description} 标题组和动作组同排`).toBe(true);
-          expect.soft(Math.max(...metrics.titleGroup.map(box => box.x + box.width)), `${description} 标题组在动作组左侧`)
-            .toBeLessThanOrEqual(Math.min(...metrics.actionGroup.map(box => box.x)) + 1);
-          expect.soft(metrics.tabsBox.y, `${description} 页签独占第二行`)
-            .toBeGreaterThanOrEqual(Math.max(...row.map(box => box.y + box.height)) - 1);
+          expect.soft(shareRow(metrics.titleGroup), `${description} 标题和状态同排`).toBe(true);
+          expect.soft(shareRow(metrics.actionGroup), `${description} 版本和操作同排`).toBe(true);
+          expect.soft(metrics.tabsBox.y, `${description} 标签位于标题下方`)
+            .toBeGreaterThanOrEqual(Math.max(...metrics.titleGroup.map(box => box.y + box.height)) - 1);
           expect.soft(metrics.headerBox.height, `${description} 页头总高`).toBeLessThanOrEqual(100);
           if (version === 4) {
             expect.soft(await page.getByRole('button', { name: '定为实施基线', exact: true }).count(), `${description} 页头没有常驻定基线动作`).toBe(0);
@@ -886,7 +925,7 @@ describe('工程规划与设计 V2 前端回归', () => {
     }
   }, 15_000);
 
-  it('A-26 V3 长稿名在 1280px 完整显示，在 853px 省略并保留全名提示', async () => {
+  it('A-26 长稿名保持单行并保留操作与全名提示', async () => {
     const longDraft: DesignEntry = {
       ...layoutDraft, id: 'DSN-fixture-long', frozen: undefined, reviewRequested: true,
       versions: [{ ...first }, { ...second, title: longTitle }],
@@ -898,11 +937,10 @@ describe('工程规划与设计 V2 前端回归', () => {
         const metrics = await measureDraftHeader(page, longTitle);
         checkDraftBounds(metrics, width);
         expect.soft(metrics.titleAvailable, `${width}px 长标题仍有可见正文`).toBeGreaterThan(0);
-        expect.soft(shareRow([...metrics.titleGroup, ...metrics.actionGroup]), `${width}px 长标题不挤掉动作组`).toBe(true);
+        expect.soft(shareRow(metrics.actionGroup), `${width}px 长标题不挤掉动作组`).toBe(true);
         if (width === 1280) {
           expect.soft(metrics.titleMeasured, '1280px 长标题需完整看到').toBeLessThanOrEqual(metrics.titleAvailable + 1);
         } else {
-          expect.soft(metrics.titleMeasured, '853px 长标题需要局部省略').toBeGreaterThan(metrics.titleAvailable + 1);
           expect.soft(metrics.titleEllipsis, '853px 截断的长标题显示省略号').toBe('ellipsis');
           expect.soft(metrics.titleTooltip, '853px 标题悬停可回读原全名').toBe(longTitle);
         }
@@ -921,11 +959,11 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(await right.inputValue()).toBe('4');
       expect(await page.getByRole('combobox', { name: '稿件版本' }).locator('option:checked').textContent()).toContain('V4 · 最新');
       expect(await page.getByRole('combobox', { name: '稿件版本' }).locator('option[value="2"]').textContent()).toContain('V2 · 实施基线');
-      const trigger = page.getByLabel('稿件信息', { exact: true });
+      const trigger = page.getByLabel('更多稿件操作', { exact: true });
       await trigger.click();
       const info = trigger.locator('xpath=..');
-      const baseline = info.locator('dt').filter({ hasText: /^基线$/ }).locator('xpath=following-sibling::dd[1]');
-      expect(await baseline.getByRole('button', { name: '定为实施基线', exact: true }).isVisible()).toBe(true);
+      expect(await info.locator('dt').filter({ hasText: /^基线$/ }).isVisible()).toBe(true);
+      expect(await info.getByRole('button', { name: '定为实施基线', exact: true }).isVisible()).toBe(true);
       expect(await info.getByRole('button', { name: '撤销定稿', exact: true }).isVisible()).toBe(true);
       expect(await info.getByRole('link', { name: `#${tag}`, exact: true }).isVisible()).toBe(true);
       const popover = info.locator('.dw-info-body');
@@ -952,12 +990,13 @@ describe('工程规划与设计 V2 前端回归', () => {
       await page.goto(browserDesignUrl({ design: layoutDraft.id }));
       await version.waitFor();
       expect(await version.inputValue()).toBe('4');
-      await page.getByRole('button', { name: /^和基线(?:\s+V2\s+)?对比$/ }).click();
+      await page.getByRole('button', { name: '对比', exact: true }).click();
+      await page.getByRole('button', { name: '和基线 V2 对比', exact: true }).click();
       await page.waitForURL(url => url.searchParams.get('compareFrom') === '2');
       expect(await page.getByRole('combobox', { name: '对比左侧版本' }).inputValue()).toBe('2');
       expect(await page.getByRole('combobox', { name: '对比右侧版本' }).inputValue()).toBe('4');
       const action = page.getByRole('button', { name: /^定为实施基线(?:[.…]+)?$/ });
-      const info = page.getByLabel('稿件信息', { exact: true });
+      const info = page.getByLabel('更多稿件操作', { exact: true });
       const modal = page.getByRole('dialog', { name: /V4.*定为实施基线/ });
       expect(await action.isVisible()).toBe(false);
       await info.click();
@@ -971,7 +1010,7 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(commands).toEqual([]);
       await modal.getByRole('button', { name: '取消', exact: true }).click();
       await modal.waitFor({ state: 'hidden' });
-      expect(await version.locator('option[value="2"]').innerText()).toContain('实施基线');
+      expect(await page.getByRole('combobox', { name: '对比左侧版本' }).inputValue()).toBe('2');
       expect(commands).toEqual([]);
       if (!(await action.isVisible())) await info.click();
       await action.click();
@@ -990,7 +1029,7 @@ describe('工程规划与设计 V2 前端回归', () => {
     await withLayout(markup, draftStyles, async page => {
       await page.setViewportSize({ width: 1280, height: 800 });
       expect(await page.locator('.dw-draft-heading').innerText()).not.toContain('可升级到');
-      const info = page.getByLabel('稿件信息', { exact: true });
+      const info = page.getByLabel('更多稿件操作', { exact: true });
       await info.click();
       const popover = info.locator('xpath=..').locator('.dw-info-body');
       const groupNames = await popover.locator('dt').allTextContents();
@@ -1023,7 +1062,7 @@ describe('工程规划与设计 V2 前端回归', () => {
     });
   }, 15_000);
 
-  it('A-28 V3 在 375px 触控视口保留标题、动作、页签三行，只有页签可横滑', async () => {
+  it('A-28 在 375px 触控视口可操作五个页签，无横向滚动', async () => {
     const markup = design(`&design=${layoutDraft.id}&version=4&tab=preview`, { ...workspace, designs: [layoutDraft] });
     await withLayout(markup, draftStyles, async page => {
       const metrics = await measureDraftHeader(page, boundTitle);
@@ -1033,28 +1072,13 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect.soft(shareRow(metrics.actionGroup), '手机动作组各项同排').toBe(true);
       expect.soft(Math.min(...metrics.actionGroup.map(box => box.y)), '手机动作组完整排在标题组之后')
         .toBeGreaterThanOrEqual(Math.max(...metrics.titleGroup.map(box => box.y + box.height)) - 1);
-      expect.soft(metrics.tabsBox.y, '手机页签独立于动作组')
-        .toBeGreaterThanOrEqual(Math.max(...metrics.actionGroup.map(box => box.y + box.height)) - 1);
       expect.soft(metrics.information.x + metrics.information.width, '手机稿件信息位于动作行右侧')
         .toBeGreaterThanOrEqual(metrics.headerBox.x + metrics.headerBox.width - 6);
-      expect.soft(['auto', 'scroll'], '只有页签使用横向滚动').toContain(metrics.tabOverflowMode);
-      expect.soft(metrics.tabOverflow, '真实带计数的页签提供可横滑的内容').toBeGreaterThan(1);
-      expect.soft(await page.getByRole('button', { name: '定为实施基线', exact: true }).count(), '手机没有常驻定基线动作').toBe(0);
-
-      if (metrics.tabOverflow > 1) {
-        const y = Math.round(metrics.tabsBox.y + metrics.tabsBox.height / 2);
-        const left = metrics.tabsBox.x;
-        const right = left + metrics.tabsBox.width;
-        const session = await page.context().newCDPSession(page);
-        for (const [type, x] of [
-          ['touchStart', right - 15], ['touchMove', right - 65], ['touchMove', left + 30], ['touchEnd', left],
-        ] as const) {
-          await session.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x: Math.round(x), y }] });
-        }
-        const tabs = page.getByRole('navigation', { name: '稿件标签' });
-        await expect.poll(() => tabs.evaluate(element => element.scrollLeft), { timeout: 1200 }).toBeGreaterThan(0);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(376);
-      }
+      expect.soft(metrics.tabOverflow, '五个页签完整可见').toBeLessThanOrEqual(1);
+      const more = page.getByLabel('更多稿件操作', { exact: true });
+      expect(await page.getByRole('button', { name: '定为实施基线', exact: true }).isVisible()).toBe(false);
+      await more.click();
+      expect(await page.getByRole('button', { name: '定为实施基线', exact: true }).isVisible()).toBe(true);
     }, { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
   }, 15_000);
 
@@ -1131,7 +1155,7 @@ describe('工程规划与设计 V2 前端回归', () => {
     expect(olderCard).toBeDefined();
     expect(olderCard).not.toMatch(/新 V|新稿|新反馈/);
     expect(newerCard).toContain('新 V2');
-    expect(newerCard).toContain('新反馈');
+    expect(newerCard).not.toContain('新反馈');
 
     const briefRows = [...html.matchAll(/<a\b[^>]*href="[^"]*\bbrief=[^"]+"[^>]*>([\s\S]*?)<\/a>/g)]
       .map(([, row]) => text(row));

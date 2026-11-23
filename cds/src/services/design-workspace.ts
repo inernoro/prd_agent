@@ -490,7 +490,9 @@ export class DesignWorkspaceService {
     const content = await readArchivedDesignFile(bytes, archived.root + file.path);
     if (!content || designDigest(content) !== file.sha256) return missing('该版本附件不可读');
     if (file.kind === 'prototype') return { mime: 'text/html; charset=utf-8', bytes: content, file };
-    if (file.kind === 'render') return { mime: 'image/png', bytes: content, file };
+    if (file.kind === 'render' || (/\.png$/i.test(file.path) && designPngDimensions(content))) {
+      return { mime: 'image/png', bytes: content, file };
+    }
     return { mime: file.text ? 'text/plain; charset=utf-8' : 'application/octet-stream', bytes: content, file,
       attachment: file.path.split('/').at(-1)! };
   }

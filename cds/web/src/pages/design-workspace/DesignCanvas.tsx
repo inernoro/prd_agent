@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { ChevronLeft, ChevronRight, ListMinus, MessageSquare, Minus, Moon, Plus, Sun, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { ChevronLeft, ChevronRight, ListMinus, MessageSquare, Moon, Plus, Sun, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import type { DesignComment, DesignEntry, DesignRun, DesignScreen, DesignTheme, DesignVersion } from '../../../../src/shared/design-workspace';
@@ -219,16 +219,13 @@ function Segments<T extends string>({ options, value, onChange }: { options: rea
 
 export function CanvasSettings({ theme, onTheme, zoom, onZoom }: { theme: DesignTheme; onTheme: (theme: DesignTheme) => void;
   zoom: number | null; onZoom: (zoom: number | null) => void }) {
+  const themeAction = theme === 'light' ? '切换为深色' : '切换为浅色';
   return <>
-    <div className="dw-segments" aria-label="缩放">
-      <button type="button" aria-label="缩小" disabled={zoom === 25} onClick={() => onZoom(Math.max(25, (zoom ?? 100) - 25))}><Minus /></button>
-      <button type="button" aria-label="适应画布" onClick={() => onZoom(null)}>{zoom === null ? '适应' : `${zoom}%`}</button>
-      <button type="button" aria-label="放大" disabled={zoom === 150} onClick={() => onZoom(Math.min(150, (zoom ?? 100) + 25))}><Plus /></button>
-    </div>
-    <div className="dw-segments" aria-label="画布主题">
-      <button type="button" aria-pressed={theme === 'light'} onClick={() => onTheme('light')}><Sun />浅色</button>
-      <button type="button" aria-pressed={theme === 'dark'} onClick={() => onTheme('dark')}><Moon />深色</button>
-    </div>
+    <select className="dw-canvas-zoom" aria-label="缩放" value={zoom ?? ''} onChange={event => onZoom(Number(event.target.value) || null)}>
+      <option value="">适应</option>{[25, 50, 75, 100, 125, 150].map(value => <option key={value} value={value}>{value}%</option>)}
+    </select>
+    <button type="button" className="ep-button ep-icon-button" aria-label={themeAction} title={themeAction}
+      onClick={() => onTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Sun /> : <Moon />}</button>
   </>;
 }
 
@@ -236,9 +233,12 @@ type CanvasProps = {
   entry: DesignEntry; version: DesignVersion; comparing: boolean; active: boolean; full?: boolean;
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
   commandBusy: boolean; initialScreenId?: string; initialCommentId?: string; initialComparisonVersion?: number; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
+  renderToolbar?: (tools: ReactNode) => ReactNode;
+  draftActions?: ReactNode;
+  onModeChange?: (compare: boolean, screen?: string, from?: number) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape }: CanvasProps) {
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape, renderToolbar, draftActions, onModeChange }: CanvasProps) {
   const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
@@ -360,11 +360,12 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   </div> : <DesignFrame projectId={entry.projectId} version={rightVersion} screen={rightScreen} theme={visibleTheme} zoom={zoom}
     scroll={rightScroll} onScrollFrom={useRightScroll} onKey={key} onLayout={boxes => setRightLayout({ key: layoutKey, boxes })}
     screenshot={readyPixels ? rightShot : undefined} boxes={readyPixels?.boxes ?? (compareMode === 'slide' ? undefined : overlays?.right)} />;
-  return <>
-    <div className="dw-tabrow dw-canvas-tools">
+  const tools = <div className="dw-tabrow dw-canvas-tools" aria-label="画布工具">
       <div className="dw-tools">
-        {full && entry.versions.length > 1 && <button className="ep-button" type="button" aria-pressed={compare} onClick={() => setWithCompare(!compare)}>
-          {compare ? '单版' : `对比 V${left}`}</button>}
+        {(onModeChange || full) && <button className="ep-button" type="button" onClick={() => {
+          if (onModeChange) onModeChange(!compare, screen?.id);
+          else setWithCompare(!compare);
+        }}>{compare ? '单版' : '对比'}</button>}
         {compare ? <>
           <select aria-label="对比左侧版本" value={left} onChange={event => setLeft(Number(event.target.value))}>
             {entry.versions.map(row => <option key={row.version} value={row.version}>V{row.version}</option>)}
@@ -383,17 +384,26 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
             <button type="button" aria-pressed={compareMode === 'slide'} onClick={() => setMode('slide')}>滑动</button>
             <button type="button" aria-pressed={compareMode === 'diff'} onClick={() => setMode('diff')} disabled={real}>差异</button>
           </div>
-        </> : version.screens.length ? <Segments options={ [['one','单个'], ['all',`全部 ${version.screens.length}`]] as const } value={all ? 'all' : 'one'}
+          {entry.frozen !== undefined && entry.frozen !== version.version &&
+            <button type="button" className="ep-button" onClick={() => {
+              setLeft(entry.frozen!);
+              setRight(String(version.version));
+              onModeChange?.(true, screen?.id, entry.frozen);
+            }}>和基线 V{entry.frozen} 对比</button>}
+        </> : version.screens.length ? <Segments options={ [['one','单屏'], ['all',`全部 ${version.screens.length} 屏`]] as const } value={all ? 'all' : 'one'}
           onChange={value => { showAll(value === 'all'); setPlacing(false); setPin(undefined); }} /> : null}
         <CanvasSettings theme={theme} onTheme={setTheme} zoom={zoom} onZoom={setZoom} />
-        {compare ? <button type="button" className="ep-button" aria-expanded={changes} onClick={() => showChanges(!changes)}><ListMinus />声明变化 {structure.length + reported.length}
-          {!real && <small> · {changedOnScreen === undefined ? '本屏待测量' : '本屏 ' + changedOnScreen + ' 处'}</small>}</button>
+        {compare ? <button type="button" className="ep-button" aria-expanded={changes} onClick={() => showChanges(!changes)}><ListMinus />
+          {real ? '变化详情' : changedOnScreen === undefined ? '本屏待测量' : `本屏 ${changedOnScreen} 处变化`}</button>
           : <button type="button" className="ep-button" disabled={!screen} aria-expanded={comments} onClick={() => { showComments(!comments); setPlacing(false); }}>
             <MessageSquare />评论 {commentCount}</button>}
       </div>
-    </div>
+    </div>;
 
+  return <>
+    {renderToolbar ? renderToolbar(tools) : tools}
     <div className="dw-canvas" data-full={full} data-panel={compare ? changes : comments}>
+      {draftActions && <div className="dw-corner-actions">{draftActions}</div>}
       {compare && compareMode === 'diff' && <p className="dw-canvas-note">
         {readyPixels ? `像素差异 ${readyPixels.area.toFixed(2)}% · ${readyPixels.boxes.length} 个标记区`
           : pixelKey && pixels?.key !== pixelKey ? '正在比对两版截图'
