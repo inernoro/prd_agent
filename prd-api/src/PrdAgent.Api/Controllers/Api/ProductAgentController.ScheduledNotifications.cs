@@ -26,12 +26,17 @@ public partial class ProductAgentController
     {
         var denied = RequireProductOperationsAdmin();
         if (denied != null) return denied;
-        if (!ProductScheduledNotificationWorker.CanManage(configuration))
-            return Ok(ApiResponse<object>.Ok(new { canManage = false, items = Array.Empty<object>() }));
+        var canManage = ProductScheduledNotificationWorker.CanManage(configuration);
+        var preview = DeploymentAuthority.IsCdsBranchPreview(configuration);
+        var managementBlockedReason = canManage ? null : preview
+            ? "预览环境不读取或管理正式定时通知。版本申领通知请进入设置查看。"
+            : "当前实例未启用定时通知后台任务，仅可查看记录；这与版本申领通知是两条独立链路。请联系管理员检查部署授权。";
+        if (preview || DeploymentAuthority.HasOptedOutOfSharedState(configuration))
+            return Ok(ApiResponse<object>.Ok(new { canManage = false, managementBlockedReason, items = Array.Empty<object>() }));
 
         var items = await _db.ProductScheduledNotifications.Find(FilterDefinition<ProductScheduledNotification>.Empty)
             .SortByDescending(x => x.UpdatedAt).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { canManage = true, items = items.Select(ScheduledNotificationView) }));
+        return Ok(ApiResponse<object>.Ok(new { canManage, managementBlockedReason, items = items.Select(ScheduledNotificationView) }));
     }
 
     [HttpPost("settings/scheduled-notifications")]

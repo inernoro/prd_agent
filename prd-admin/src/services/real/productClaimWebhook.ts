@@ -14,5 +14,8 @@ export const getClaimWebhook = () => apiRequest<ClaimWebhookConfig>('/api/produc
 export const saveClaimWebhook = (body: Pick<ClaimWebhookConfig, 'enabled' | 'notifyInternal' | 'notifyFormal'> & { url?: string; debugMode?: boolean }) =>
   apiRequest<{ saved: boolean }>('/api/product/claim-webhook', { method: 'PUT', body });
 export const getClaimNotices = () => apiRequest<{ items: ClaimNoticeRow[] }>('/api/product/claim-webhook/notifications');
-export const retryClaimNotice = (kind: string, id: string) => apiRequest<{ queued: boolean }>(`/api/product/claim-webhook/notifications/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/retry`, { method: 'POST' });
-export const debugClaimNotice = (kind: string, id: string) => apiRequest<{ queued: boolean }>(`/api/product/claim-webhook/notifications/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/debug`, { method: 'POST' });
+export const retryClaimNotice = (kind: string, id: string) => apiRequest<{ queued: boolean; sent?: boolean; status?: string; message?: string }>(`/api/product/claim-webhook/notifications/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/retry`, { method: 'POST', timeoutMs: 20_000 });
+export const debugClaimNotice = (kind: string, id: string) => apiRequest<{ queued: boolean; sent?: boolean; status?: string; message?: string }>(`/api/product/claim-webhook/notifications/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/debug`, { method: 'POST', timeoutMs: 20_000 });
+
+export const resendClaimNotice = (kind: string, id: string) =>
+  apiRequest<{ sent: boolean; status: string; message?: string }>(`/api/product/claim-webhook/notifications/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/resend`, { method: 'POST', timeoutMs: 20_000 });

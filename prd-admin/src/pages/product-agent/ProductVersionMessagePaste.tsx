@@ -3,10 +3,11 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { parseProductVersionMessage } from '@/services/real/productAgent';
 import type { VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
 
-export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVersion, prepareText }: {
+export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVersion, getPlanUrlEditVersion, prepareText }: {
   kind: 'internal' | 'formal';
-  onParsed: (result: VersionRegistrationMessageParseResult, editVersion?: number) => void;
+  onParsed: (result: VersionRegistrationMessageParseResult, editVersion?: number, urlEditVersion?: number) => void;
   getPlanNameEditVersion?: () => number;
+  getPlanUrlEditVersion?: () => number;
   prepareText?: (text: string) => { text: string; linkCount: number };
 }) {
   const [text, setText] = useState('');
@@ -27,6 +28,7 @@ export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVers
     }
     const currentId = ++requestId.current;
     const editVersion = getPlanNameEditVersion?.();
+    const urlEditVersion = getPlanUrlEditVersion?.();
     const timer = window.setTimeout(async () => {
       const prepared = latestPrepareText.current?.(text) ?? { text, linkCount: 0 };
       const linkHint = prepared.linkCount ? `已识别 ${prepared.linkCount} 条 TAPD 链接` : '';
@@ -48,7 +50,7 @@ export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVers
           setHint(linkHint ? `${linkHint}，请核对回填内容。` : '没有识别到可回填的字段，现有内容保持不变');
           return;
         }
-        latestOnParsed.current(result, editVersion);
+        latestOnParsed.current(result, editVersion, urlEditVersion);
         setHint(`已识别 ${result.matchedFields.length} 项${linkHint ? `和 ${prepared.linkCount} 条 TAPD 链接` : ''}，请核对回填内容。`);
       } catch {
         if (requestId.current === currentId) setHint(linkHint ? `${linkHint}，其他字段暂时无法识别。` : '暂时无法识别，现有内容保持不变');
@@ -60,7 +62,7 @@ export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVers
       window.clearTimeout(timer);
       requestId.current += 1;
     };
-  }, [kind, text, pasteVersion, getPlanNameEditVersion]);
+  }, [kind, text, pasteVersion, getPlanNameEditVersion, getPlanUrlEditVersion]);
 
   return (
     <div className="rounded-xl border border-token-subtle bg-token-nested p-3 sm:col-span-2">

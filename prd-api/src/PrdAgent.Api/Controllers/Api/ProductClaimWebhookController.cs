@@ -16,7 +16,7 @@ namespace PrdAgent.Api.Controllers.Api;
 
 [ApiController, Authorize, Route("api/product/claim-webhook")]
 [AdminController("product-agent", AdminPermissionCatalog.ProductAgentUse)]
-public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionProvider protection, IConfiguration configuration) : ControllerBase
+public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionProvider protection, IConfiguration configuration, IServiceProvider? deliveryServices = null) : ControllerBase
 {
     public const string ProtectionPurpose = "ProductAgent.ClaimWebhook.v1";
     private const string MaskedWebhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=********";
@@ -113,44 +113,70 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
     [HttpPost("notifications/{kind}/{id}/debug")]
     public async Task<IActionResult> DebugNotify(string kind, string id)
     {
-        if (ProductClaimNotificationQueue.GetDeploymentBlockReason(configuration) is not null)
-            return BadRequest(ApiResponse<object>.Fail("PREVIEW_READ_ONLY", "请在正式环境手工推送调试通知"));
         var actor = this.GetRequiredUserId();
         var admin = await IsMapAdminAsync();
         var config = (await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync())?.ClaimWebhook;
-        if (config?.Enabled != true || string.IsNullOrEmpty(config.ProtectedUrl) || (kind == "T" ? !config.NotifyInternal : !config.NotifyFormal))
-            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "请先启用对应的申领通知开关"));
-        async Task<long> Queue<T>(IMongoCollection<T> collection)
-        {
-            var f = Builders<T>.Filter;
-            var permitted = f.Eq("_id", id) & f.Eq("IsDeleted", false) & f.Ne("Status", "voided");
-            if (!admin) permitted &= f.Eq("CreatedBy", actor);
-            var state = f.Eq("ClaimNotification.Status", "debug_pending");
-            if (config.DebugMode) state |= f.Eq("ClaimNotification.Status", "pending") | f.Eq("ClaimNotification.Status", "waiting_identity");
-            return (await collection.UpdateOneAsync(permitted & state & f.Ne("ClaimNotification.ManualDispatchApproved", true),
-                Builders<T>.Update.Set("ClaimNotification.Status", "pending").Set("ClaimNotification.ManualDispatchApproved", true)
-                    .Set("ClaimNotification.Error", (string?)null).Set("ClaimNotification.NextAttemptAt", DateTime.UtcNow), cancellationToken: CancellationToken.None)).ModifiedCount;
-        }
-        var count = kind switch { "T" => await Queue(db.ProductInitiations), "V" => await Queue(db.ProductReleases), _ => 0 };
-        return count == 1 ? Ok(ApiResponse<object>.Ok(new { queued = true }))
-            : Conflict(ApiResponse<object>.Fail("INVALID_STATE", "该通知不可推送或已提交推送；仅申请人本人或MAP管理员可操作，请刷新核对，勿重复点击"));
+        var record = await ReadNoticeAsync(kind, id);
+        if (record.Notification == null || (!admin && record.CreatedBy != actor)
+            || (record.Notification.Status != "debug_pending"
+                && !(config?.DebugMode == true && record.Notification.Status is "pending" or "waiting_identity")))
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "该通知不可调试或已发送；仅申请人本人或MAP管理员可操作，请刷新核对。"));
+        return await DeliverAsync(kind, id);
+    }
+
+    [HttpPost("notifications/{kind}/{id}/resend")]
+    public async Task<IActionResult> Resend(string kind, string id)
+    {
+        if (!await IsMapAdminAsync()) return StatusCode(403);
+        var record = await ReadNoticeAsync(kind, id);
+        if (record.Notification?.Status is not ("pending" or "debug_pending" or "waiting_identity" or "failed"))
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "仅待发送或明确失败的通知可补发；结果未知请先核对群消息，已发送和历史停用记录不会重复发送。"));
+        return await DeliverAsync(kind, id);
     }
 
     [HttpPost("notifications/{kind}/{id}/retry")]
     public async Task<IActionResult> Retry(string kind, string id)
     {
         if (!await IsMapAdminAsync()) return StatusCode(403);
-        if (DeploymentAuthority.IsCdsBranchPreview(configuration))
-            return BadRequest(ApiResponse<object>.Fail("PREVIEW_READ_ONLY", "预览不能重发真实群通知"));
-        long count;
-        if (kind == "T") count = (await db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.ClaimNotification != null && x.ClaimNotification.Status == "failed",
-            Builders<ProductInitiation>.Update.Set(x => x.ClaimNotification!.Status, "pending").Set(x => x.ClaimNotification!.Error, null), cancellationToken: CancellationToken.None)).ModifiedCount;
-        else if (kind == "V") count = (await db.ProductReleases.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.ClaimNotification != null && x.ClaimNotification.Status == "failed",
-            Builders<ProductRelease>.Update.Set(x => x.ClaimNotification!.Status, "pending").Set(x => x.ClaimNotification!.Error, null), cancellationToken: CancellationToken.None)).ModifiedCount;
-        else return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "不支持的通知类型"));
-        return count == 1 ? Ok(ApiResponse<object>.Ok(new { queued = true }))
-            : Conflict(ApiResponse<object>.Fail("INVALID_STATE", "仅明确失败的通知可重试；发送结果未知时请先核对企微群，避免重复消息"));
+        if ((await ReadNoticeAsync(kind, id)).Notification?.Status != "failed")
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "仅明确失败的通知可重试；发送结果未知时请先核对企微群，避免重复消息"));
+        return await DeliverAsync(kind, id);
     }
+
+    private async Task<(ProductClaimNotification? Notification, string? CreatedBy)> ReadNoticeAsync(string kind, string id)
+    {
+        if (kind == "T")
+        {
+            var record = await db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted && x.Status != "voided").FirstOrDefaultAsync();
+            return (record?.ClaimNotification, record?.CreatedBy);
+        }
+        if (kind == "V")
+        {
+            var record = await db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted && x.Status != "voided").FirstOrDefaultAsync();
+            return (record?.ClaimNotification, record?.CreatedBy);
+        }
+        return (null, null);
+    }
+
+    private async Task<IActionResult> DeliverAsync(string kind, string id)
+    {
+        if (ProductClaimNotificationQueue.GetDeploymentBlockReason(configuration) is { } blocked)
+            return BadRequest(ApiResponse<object>.Fail("DELIVERY_DISABLED", ProductClaimNotificationQueue.DescribeDeploymentBlock(blocked)));
+        try
+        {
+            var notice = await ProductClaimWebhookWorker.DispatchRecordAsync(kind, id,
+                deliveryServices ?? HttpContext.RequestServices, manualDispatch: true);
+            if (notice?.Status == "sent")
+                return Ok(ApiResponse<object>.Ok(new { queued = true, sent = true, status = notice.Status, message = "通知已发送到企微群。" }));
+            return Conflict(ApiResponse<object>.Fail("DELIVERY_NOT_CONFIRMED", notice?.Error
+                ?? (notice?.Status == "sending" ? "通知正在发送，请刷新状态，勿重复点击。" : "本次未发送，请刷新状态并检查通知配置。")));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DELIVERY_DISABLED", ex.Message));
+        }
+    }
+
 }
 
 public record ClaimNoticeRow(string Kind, string Id, string Code, string? OwnerName, DateTime CreatedAt, ProductClaimNotification Notification);

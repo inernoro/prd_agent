@@ -754,7 +754,7 @@ public partial class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先粘贴企微登记内容"));
         if (request.Kind is not (VersionRegistrationKind.Internal or VersionRegistrationKind.Formal))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择内部或正式版本"));
-        var result = VersionRegistrationMessageParser.Parse(request.Text, request.Kind);
+        var result = ProductVersionNoticeParser.Parse(request.Text, request.Kind);
         if (!string.IsNullOrWhiteSpace(result.PlanName) || !string.IsNullOrWhiteSpace(result.TCode))
         {
             var scope = await GetAccessibleProductIdsAsync(GetUserId());
@@ -784,7 +784,7 @@ public partial class ProductAgentController : ControllerBase
                 if (matched != null)
                 {
                     result.PlanName = matched.PlanName;
-                    result.PlanUrl = matched.PlanUrl;
+                    if (!string.IsNullOrWhiteSpace(matched.PlanUrl)) result.PlanUrl = matched.PlanUrl.Trim();
                     result.DemandSource = matched.DemandSource;
                     result.ProjectType = matched.ProjectType;
                     result.VersionType = matched.VersionType;
@@ -1223,6 +1223,7 @@ public partial class ProductAgentController : ControllerBase
             canNotify: notificationBlock is null, deploymentBlock: notificationBlock);
         if (updated == null)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已处理，请刷新查看现有 T 号，不要重复提交"));
+        updated.ClaimNotification = await TrySendIssuedClaimAsync("T", updated.Id, updated.ClaimNotification);
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -1511,7 +1512,8 @@ public partial class ProductAgentController : ControllerBase
             SystemName = initiation?.SystemName ?? productSystemName,
             AppName = initiation?.AppName ?? productAppName,
             ProjectType = projectType,
-            PlanUrl = request.IsTemporaryOptimization ? request.PlanUrl?.Trim() : initiation!.PlanUrl,
+            PlanUrl = request.IsTemporaryOptimization || string.IsNullOrWhiteSpace(initiation!.PlanUrl)
+                ? request.PlanUrl?.Trim() : initiation!.PlanUrl!.Trim(),
             DepartmentName = request.IsTemporaryOptimization ? request.DepartmentName?.Trim() : initiation!.DepartmentName,
             DemandSource = request.IsTemporaryOptimization ? request.DemandSource?.Trim() : initiation!.DemandSource,
             RequirementDescription = request.IsTemporaryOptimization ? request.RequirementDescription?.Trim() : initiation!.RequirementDescription,
@@ -1552,6 +1554,7 @@ public partial class ProductAgentController : ControllerBase
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, userId,
             item.IsTemporaryOptimization ? "临时优化需求已上线" : $"版本申领完成（{item.VCode}），自动流转到已上线");
+        item.ClaimNotification = await TrySendIssuedClaimAsync("V", item.Id, item.ClaimNotification);
         return Ok(ApiResponse<object>.Ok(item));
     }
 

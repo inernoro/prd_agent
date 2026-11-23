@@ -182,3 +182,18 @@ describe('定时通知真实组件交互', () => {
     expect(host.textContent).toContain('发送成功');
   });
 });
+
+describe('生产通知只读状态', () => {
+  it('显示后台任务停用原因和已有记录，提供版本申领通知入口而不开放发送操作', async () => {
+    api.list.mockResolvedValue({ success: true, data: { canManage: false, managementBlockedReason: '当前实例未启用定时通知后台任务，仅可查看记录。', items: [completed] } });
+    await render();
+    expect(host.textContent).toContain('仅可查看记录');
+    expect(host.textContent).toContain('原通知');
+    expect(host.textContent).not.toContain('请在正式环境管理定时通知');
+    expect(buttons('新建任务')).toHaveLength(0);
+    expect(buttons('编辑')).toHaveLength(0);
+    expect(buttons('立即调试')).toHaveLength(0);
+    expect(host.querySelector('a')?.getAttribute('href')).toBe('/product-agent?section=settings&settingsCat=webhook');
+    expect(api.debug).not.toHaveBeenCalled();
+  });
+});

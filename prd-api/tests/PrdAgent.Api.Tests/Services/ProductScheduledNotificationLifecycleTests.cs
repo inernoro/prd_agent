@@ -289,6 +289,25 @@ public class ProductScheduledNotificationLifecycleTests
         Assert.Equal(2, fixture.Http.Bodies.Count);
     }
 
+    [Fact]
+    public async Task ProductionWithoutScheduledAuthorityCanReadButCannotMutateOrSend()
+    {
+        await using var f = new Fixture();
+        var task = f.Task();
+        await f.Db.ProductScheduledNotifications.InsertOneAsync(task);
+        var before = await f.Saved(task.Id);
+        f.Configuration[PrdAgent.Infrastructure.Security.DeploymentAuthority.SharedScheduledWorkEnabledKey] = "false";
+        var result = Assert.IsType<OkObjectResult>(await f.Controller().ListScheduledNotifications(f.Configuration));
+        var json = JsonSerializer.Serialize(result.Value, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        Assert.Contains("仅可查看记录", json);
+        Assert.Contains(task.Id, json);
+        Assert.DoesNotContain(TestUrl, json);
+        Assert.IsType<ConflictObjectResult>(await f.Controller().CreateScheduledNotification(f.Input(), f.Protection, f.Configuration));
+        Assert.False(ProductScheduledNotificationWorker.CanManage(f.Configuration));
+        Assert.Empty(f.Http.Bodies);
+        Assert.Equal(before.NextRunAt, (await f.Saved(task.Id)).NextRunAt);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly MongoClient client;

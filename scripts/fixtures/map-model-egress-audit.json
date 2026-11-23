@@ -409,7 +409,7 @@
     "prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductClaimWebhookWorker.cs": {
       "calls": {
         "call:CreateClient:c781d8df0074531b48c58bda": 1,
-        "call:PostAsync:f1c3f3fb730c28de5f50fd0b": 1
+        "call:PostAsync:ea08a042c586600ee0423f07": 1
       },
       "purpose": "产品申领企微文本通知；目标限HTTPS企微webhook路径，使用安全出站工厂，结果未知不自动重试，不调用模型"
     },

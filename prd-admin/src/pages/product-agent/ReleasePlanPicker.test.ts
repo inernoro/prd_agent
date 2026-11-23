@@ -46,6 +46,6 @@ describe('正式申领按方案选择应用', () => {
     expect(workflow).toContain('sequence !== loadSequence.current');
     expect(workflow).toContain('setManifest([]); setBaselineManifest([]); setPreviousReleaseId(null)');
     expect(workflow).toContain('parsed.matchedInitiationId');
-    expect(workflow).toContain('chooseInitiation(source.id, source)');
+    expect(workflow).toContain('chooseInitiation(source.id, source, fillUrl)');
   });
 });

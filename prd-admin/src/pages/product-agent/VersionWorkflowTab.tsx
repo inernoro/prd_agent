@@ -309,6 +309,9 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [pendingApplicationId, setPendingApplicationId] = useState<string | null>(null);
   const planNameDraft = useVersionPlanName(seed?.planName ?? '');
   const planName = planNameDraft.value;
+  const [planUrl, setPlanUrl] = useState(seed?.planUrl ?? '');
+  const planUrlEdit = useRef(0);
+  const getPlanUrlEditVersion = useCallback(() => planUrlEdit.current, []);
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
   const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
   const [isAiPoc, setIsAiPoc] = useState(seed ? (seed.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no') : 'yes');
@@ -517,7 +520,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     demandSource: demandSource.trim(),
     ownerId: ownerId || undefined,
     planName,
-    planUrl: item?.planUrl ?? undefined,
+    planUrl: planUrl.trim() || undefined,
     requirementDescription: item?.requirementDescription ?? undefined,
     projectMemberNames: item?.projectMemberNames,
     plannedProjectAt: plannedProjectAt ? new Date(`${plannedProjectAt}T00:00:00+08:00`).toISOString() : undefined,
@@ -702,7 +705,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     }
   };
 
-  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
+  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number, urlEditVersion?: number) => {
     cancelReviewApplicationLookup();
     if (parsed.projectType) setProjectType(parsed.projectType);
     if (parsed.versionType) setVersionType(parsed.versionType);
@@ -717,6 +720,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       else if (parsed.matchedApplicationId) setPendingApplicationId(parsed.matchedApplicationId);
       else if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
     }
+    if (parsed.planUrl && (urlEditVersion == null || urlEditVersion === planUrlEdit.current)) setPlanUrl(parsed.planUrl);
     if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
     if (parsed.needUiDesign != null) setNeedUiDesign(parsed.needUiDesign ? 'yes' : 'no');
     if (parsed.isAiPoc != null) setIsAiPoc(parsed.isAiPoc ? 'yes' : 'no');
@@ -783,12 +787,13 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
           <section className="space-y-3 border-t border-token-subtle pt-4" aria-labelledby={`${formId}-basic`}>
             <h4 id={`${formId}-basic`} className="text-sm font-semibold text-token-primary">基础信息</h4>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {!editingIssued && <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />}
+              {!editingIssued && <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} getPlanUrlEditVersion={getPlanUrlEditVersion} />}
               <Field label="所属应用 *" full>
                 <ItemSearchSelect value={linkedProductId} onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }} options={productOptions} disabled={busy || editingIssued} placeholder="搜索应用名称或编号" countUnit="个应用" emptyText="暂无可选应用" />
                 {reviewApplicationMatching && <p role="status" className="mt-1.5 flex items-center gap-2 text-xs text-token-muted"><MapSpinner size={14} />正在识别方案所属应用，也可手动选择。</p>}
               </Field>
               <Field label="方案名称 *" full><InitiationInput value={planName} onChange={(e) => { cancelReviewApplicationLookup(); planNameDraft.setManual(e.target.value); }} /></Field>
+              <Field label="方案地址" full><InitiationInput aria-label="方案地址" value={planUrl} onChange={(e) => { planUrlEdit.current += 1; setPlanUrl(e.target.value); }} placeholder="粘贴识别后自动回填，也可填写方案链接" /></Field>
               <Field label="项目类别"><InitiationSelect value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></InitiationSelect></Field>
               <Field label="版本级别"><InitiationSelect disabled={editingIssued && !item?.canChangeVersionType} value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</InitiationSelect>{editingIssued && !item?.canChangeVersionType && <span className="mt-1 block text-xs text-token-muted">仅全局最新且无下游关联的记录可改版本级别。</span>}</Field>
               {projectType === 'custom' && <Field label="客户来源 *"><InitiationInput value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
