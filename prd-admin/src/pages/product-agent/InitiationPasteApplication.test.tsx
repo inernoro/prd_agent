@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InitiationWizard } from './VersionWorkflowTab';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const api = vi.hoisted(() => ({ parse: vi.fn() }));
+const api = vi.hoisted(() => ({ parse: vi.fn(), create: vi.fn() }));
 vi.mock('@/services/real/productAgent', async (original) => ({
   ...await original<typeof import('@/services/real/productAgent')>(),
   parseProductVersionMessage: api.parse,
+  createInitiation: api.create,
   listProductVersionReviewSources: async () => ({ success: true, data: { items: [{ id: 'review', title: '品牌商后台基础T（扫码风控优化二期）', fileName: '方案.md' }], canUseAllReviews: false } }),
   getInitiationPlanDefaults: async () => ({ success: true, data: { meetingDraftCount: 1 } }),
 }));
@@ -43,7 +44,8 @@ async function paste(text = notice) {
   await act(async () => vi.advanceTimersByTimeAsync(650));
 }
 beforeEach(() => {
-  vi.useFakeTimers(); api.parse.mockReset(); api.parse.mockResolvedValue(result());
+  vi.useFakeTimers(); api.parse.mockReset(); api.parse.mockResolvedValue(result()); api.create.mockReset();
+  api.create.mockResolvedValue({ success: false, error: { message: '合成测试已捕获 T 申领参数' } });
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });
@@ -98,5 +100,37 @@ describe('通知识别应用与目录先后到达', () => {
     await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'review');
     await render([brand, other]);
     expect(application().value).toBe('brand-app');
+  });
+});
+
+describe('T方案名称与链接直接回填', () => {
+  it.each(['dark', 'light'])('%s主题识别结果直接呈现在输入框并随确认保存', async (theme) => {
+    document.documentElement.setAttribute('data-theme', theme);
+    const response = { success: true, data: { result: { ...result().data.result, planUrl: 'https://example.test/t-plan' } } };
+    api.parse.mockResolvedValue(response);
+    await render([brand, other]); await paste();
+    const name = [...host.querySelectorAll('label')].find(node => node.querySelector('span')?.textContent === '方案名称 *')!.querySelector('input')!;
+    expect(name.value).toBe(response.data.result.planName);
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="方案地址"]')?.value).toBe('https://example.test/t-plan');
+    await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'review');
+    await act(async () => vi.advanceTimersByTimeAsync(700));
+    const confirm = [...host.querySelectorAll('button')].find(button => button.textContent === '确认申领')!;
+    expect(confirm.disabled).toBe(false);
+    await act(async () => confirm.click());
+    expect(api.create).toHaveBeenCalledWith('brand-app', expect.objectContaining({
+      planName: response.data.result.planName, planUrl: 'https://example.test/t-plan',
+    }));
+    document.documentElement.removeAttribute('data-theme');
+  });
+
+  it('识别响应较晚时保留手动填写的链接，并继续回填方案名称', async () => {
+    let finish!: (value: unknown) => void;
+    api.parse.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    await render([brand, other]); await paste();
+    await change(host.querySelector<HTMLInputElement>('input[aria-label="方案地址"]')!, 'https://example.test/manual');
+    await act(async () => finish({ success: true, data: { result: { ...result().data.result, planUrl: 'https://example.test/old-response' } } }));
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="方案地址"]')?.value).toBe('https://example.test/manual');
+    const name = [...host.querySelectorAll('label')].find(node => node.querySelector('span')?.textContent === '方案名称 *')!.querySelector('input')!;
+    expect(name.value).toBe(result().data.result.planName);
   });
 });

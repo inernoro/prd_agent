@@ -161,6 +161,9 @@ describe('完整正式申领弹窗的原文回填', () => {
     api.createRelease.mockResolvedValue({ success: false, error: { message: '合成测试已捕获申领请求' } });
     await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
     await paste();
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="方案名称"]')?.value).toBe(matched.planName);
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="方案地址"]')?.value).toBe(expected);
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="方案地址"]')?.readOnly).toBe(Boolean(storedUrl?.trim()));
     const noTapd = document.querySelector<HTMLInputElement>('section[aria-label="TAPD 需求"] input[type="checkbox"]')!;
     await act(async () => noTapd.click());
     const confirm = [...document.querySelectorAll('button')].find(button => button.textContent === '确认并获取正式版本号')!;
@@ -169,6 +172,28 @@ describe('完整正式申领弹窗的原文回填', () => {
     expect(api.createRelease).toHaveBeenCalledTimes(1);
     expect(api.createRelease).toHaveBeenCalledWith('platform', expect.objectContaining({ initiationId: matched.id, planUrl: expected }));
     expect(matched.planUrl).toBe(storedUrl);
+  });
+
+
+  it('方案地址在识别期间手动修改后不会被迟到响应覆盖', async () => {
+    let finish!: (value: unknown) => void;
+    const matched = { ...source, planUrl: undefined };
+    api.listInitiations.mockResolvedValue({ success: true, data: { items: [matched] } });
+    api.parseProductVersionMessage.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
+    await paste();
+    const address = document.querySelector<HTMLInputElement>('input[aria-label="方案地址"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(address, 'https://example.test/manual-v');
+      address.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => finish({ success: true, data: { result: {
+      planName: matched.planName, matchedInitiationId: matched.id, matchedApplicationId: matched.productId,
+      candidateInitiationIds: [matched.id], initiationCandidates: [matched], matchedFields: ['planName', 'planUrl'],
+      planUrl: 'https://example.test/old-v-response',
+    } } }));
+    expect(address.value).toBe('https://example.test/manual-v');
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="方案名称"]')?.value).toBe(matched.planName);
   });
 
   it('未匹配到已有T时保留原文，不转为手工输入或允许无源申领', async () => {

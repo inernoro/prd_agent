@@ -584,6 +584,26 @@ public class ProductClaimWebhookTests
         Assert.Contains("方案地址：" + expectedUrl, copy);
     }
 
+
+    [Theory]
+    [InlineData("internal")]
+    [InlineData("formal")]
+    public async Task ProductEndpointRecognizesMultilinePlanFieldsWithoutSendingOrIssuing(string kind)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        var response = Assert.IsType<OkObjectResult>(await f.ProductController().ParseProductVersionMessage(
+            new ParseProductVersionMessageRequest { Kind = kind,
+                Text = "**产品方案名称**：\n[方案识别回归](https://example.test/title)\n**方案地址：**\nhttps://example.test/explicit" }));
+        var result = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(response.Value).Data,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("result");
+        Assert.Equal("方案识别回归", result.GetProperty("planName").GetString());
+        Assert.Equal("https://example.test/explicit", result.GetProperty("planUrl").GetString());
+        Assert.Equal(0, await f.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await f.Db.ProductReleases.CountDocumentsAsync(_ => true));
+        Assert.Empty(f.Http.Bodies);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly MongoClient client;

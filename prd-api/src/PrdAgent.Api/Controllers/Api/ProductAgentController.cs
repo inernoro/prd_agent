@@ -754,7 +754,7 @@ public partial class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先粘贴企微登记内容"));
         if (request.Kind is not (VersionRegistrationKind.Internal or VersionRegistrationKind.Formal))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择内部或正式版本"));
-        var result = VersionRegistrationMessageParser.Parse(request.Text, request.Kind);
+        var result = ProductVersionNoticeParser.Parse(request.Text, request.Kind);
         if (!string.IsNullOrWhiteSpace(result.PlanName) || !string.IsNullOrWhiteSpace(result.TCode))
         {
             var scope = await GetAccessibleProductIdsAsync(GetUserId());

@@ -83,13 +83,13 @@ describe('培训分钟与方案回填契约', () => {
     expect(workflow).toContain('预计培训时长（分钟）*');
     expect(workflow).not.toContain('plannedTrainingAt');
     expect(workflow).toContain('parsed.initiationCandidates ?? []');
-    expect(workflow).toContain('chooseInitiation(source.id, source)');
+    expect(workflow).toContain('chooseInitiation(source.id, source, fillUrl)');
     expect(workflow).toContain('if (!source) {');
     expect(workflow).toContain('匹配到 ${candidates.length} 个相近方案');
     expect(workflow).toContain('查看全部方案');
     expect(workflow).toContain('<UserSearchSelect value=""');
     expect(workflow).toContain('if (id && !selected.includes(id))');
-    expect(paste).toContain('latestOnParsed.current(result, editVersion)');
+    expect(paste).toContain('latestOnParsed.current(result, editVersion, urlEditVersion)');
   });
   it('手填名称不再失焦重写，企微回填受编辑版本保护', () => {
     expect(initiation).not.toContain('planNameRef.current !== entered');

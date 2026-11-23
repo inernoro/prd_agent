@@ -150,6 +150,8 @@ export function ReleaseWorkflowDetail({
   const planNameDraft = useVersionPlanName();
   const planName = planNameDraft.value;
   const [planUrl, setPlanUrl] = useState('');
+  const planUrlEdit = useRef(0);
+  const getPlanUrlEditVersion = useCallback(() => planUrlEdit.current, []);
   const [demandSource, setDemandSource] = useState('');
   const [requirementDescription, setRequirementDescription] = useState('');
   const [departmentName, setDepartmentName] = useState('');
@@ -409,7 +411,7 @@ export function ReleaseWorkflowDetail({
     }
     onApplicationProductChange(id);
   };
-  const chooseInitiation = (id: string, matchedSource?: ProductInitiation) => {
+  const chooseInitiation = (id: string, matchedSource?: ProductInitiation, fillUrl = true) => {
     setPastedPlanCandidates([]); setPlanMatchHint('');
     setInitiationId(id);
     const source = matchedSource ?? approved.find((item) => item.id === id);
@@ -417,7 +419,7 @@ export function ReleaseWorkflowDetail({
       changeApplication(source?.productId ?? '');
     }
     if (!source) {
-      planNameDraft.setSource(''); setPlanUrl(''); setDemandSource(''); setRequirementDescription('');
+      planNameDraft.setSource(''); if (fillUrl) setPlanUrl(''); setDemandSource(''); setRequirementDescription('');
       setDepartmentName(''); setOwnerName('');
       if (temporary) setProjectMembers('');
       return;
@@ -425,7 +427,7 @@ export function ReleaseWorkflowDetail({
     setProjectType(source.projectType);
     setVersionType(source.versionType);
     planNameDraft.setSource(source.planName);
-    setPlanUrl(source.planUrl ?? '');
+    if (fillUrl || source.planUrl?.trim()) setPlanUrl(source.planUrl ?? '');
     setDemandSource(source.demandSource ?? '');
     setRequirementDescription(source.requirementDescription ?? '');
     setDepartmentName(source.departmentName ?? '');
@@ -442,7 +444,8 @@ export function ReleaseWorkflowDetail({
     return { text: extracted.text, linkCount: extracted.links.length };
   };
 
-  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
+  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number, urlEditVersion?: number) => {
+    const fillUrl = urlEditVersion == null || urlEditVersion === planUrlEdit.current;
     const parsedInitiations = parsed.initiationCandidates ?? [];
     const source = !temporary && parsed.matchedInitiationId ? parsedInitiations.find((item) => item.id === parsed.matchedInitiationId)
       ?? approved.find((item) => item.id === parsed.matchedInitiationId) : undefined;
@@ -451,7 +454,7 @@ export function ReleaseWorkflowDetail({
       const candidates = parsed.candidateInitiationIds ?? [];
       setPastedPlanCandidates(candidates);
       if (source) {
-        chooseInitiation(source.id, source);
+        chooseInitiation(source.id, source, fillUrl);
         setPlanMatchHint(`已匹配立项 ${source.tCode}，按已有方案资料回填。`);
       } else if (candidates.length) {
         setInitiationId(''); changeApplication(parsed.matchedApplicationId ?? '');
@@ -469,7 +472,7 @@ export function ReleaseWorkflowDetail({
       if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
       if (parsed.departmentName) setDepartmentName(parsed.departmentName);
     }
-    if (parsed.planUrl && !source?.planUrl?.trim()) setPlanUrl(parsed.planUrl);
+    if (fillUrl && parsed.planUrl && !source?.planUrl?.trim()) setPlanUrl(parsed.planUrl);
     if (source) planNameDraft.setPasted(source.planName, editVersion);
     else if (parsed.planName) planNameDraft.setPasted(parsed.planName, editVersion);
     if (!source && parsed.ownerName) {
@@ -824,7 +827,7 @@ export function ReleaseWorkflowDetail({
         <div className={isNew && !temporary ? 'space-y-6' : 'space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5'}>
           {isNew ? (
             <>
-              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion}
+              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} getPlanUrlEditVersion={getPlanUrlEditVersion}
                 prepareText={temporary ? undefined : prepareReleaseNotice} />
               {temporary ? <>
                 {ownerField}
@@ -851,6 +854,10 @@ export function ReleaseWorkflowDetail({
                       {pastedPlanCandidates.length > 0 && <button type="button" className="ml-2 hover:underline" onClick={() => { setPastedPlanCandidates([]); setPlanMatchHint(''); }}>查看全部方案</button>}
                     </p>}
                   </div>
+                  <Field label="方案名称"><Input aria-label="方案名称" value={planName} readOnly placeholder="识别或选择 T 方案后回填" /></Field>
+                  <Field label="方案地址"><Input aria-label="方案地址" value={planUrl} readOnly={Boolean(selectedInitiation?.planUrl?.trim())}
+                    onChange={(e) => { planUrlEdit.current += 1; setPlanUrl(e.target.value); }} placeholder="识别后自动回填，也可补充方案链接" /></Field>
+                  {selectedInitiation?.planUrl?.trim() && <p className="text-xs text-token-muted">方案地址沿用已选 T 方案。</p>}
                   {ownerField}
                   {memberField}
                 </section>
