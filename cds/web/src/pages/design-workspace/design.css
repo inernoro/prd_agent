@@ -1110,6 +1110,12 @@
 .dw-ac-evidence-head { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .625rem; font-size: .875rem; }
 .dw-ac-evidence-head > span:not(.dw-ac-state):last-child { color: var(--dw-muted); font-size: .8125rem; }
 .dw-ac-evidence-list :is(.ep-button, .ep-link), .dw-ac-next-link { justify-self: start; }
+@media (min-width: 56.25rem) {
+  .dw-ac > [role=tabpanel] { margin-block-start: .5rem; }
+  .dw-ac-mrow { min-block-size: 3.0625rem; }
+  .dw-ac-mrow > span:nth-child(2), .dw-ac-mrow code { font-size: .9375rem; }
+  .dw-ac-crow { min-block-size: 2.9375rem; }
+}
 @media (max-width: 56.1875rem) {
   .dw-ac-mrow { grid-template-columns: minmax(0, 1fr) auto; gap: .1875rem .5rem; }
   .dw-ac-mrow > :nth-child(2), .dw-ac-mrow > code { grid-column: 1 / -1; }

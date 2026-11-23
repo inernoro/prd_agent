@@ -15,12 +15,12 @@ export const designDimensions = {
 export type DesignDimension = keyof typeof designDimensions;
 
 export const designMethods = [
-  ['mece', 'MECE 覆盖', '验收项有没有覆盖六个维度', 'risk-matrix、acceptance-test-design'],
-  ['compare', '对照图', '实现和稿件逐画面是否一致', 'design-replication、cds-skeleton-review'],
-  ['visual', '视觉', '位置、对齐、遮挡、深色和视口是否符合要求', 'create-visual-test-to-kb、issues-visual-run'],
-  ['flow', '流程', '按角色走完关键任务，每一步结果是否正确', 'acceptance-scenario-orchestrator、flow-trace'],
-  ['human', '人工', '需要人判断的验收项，按清单逐项核对', 'acceptance-checklist、human-verify'],
-  ['smoke', '冒烟', '关键页面和接口能否正常打开和返回', 'smoke-test、stable-smoke'],
+  ['mece', 'MECE 覆盖', '验收项有没有覆盖六个维度', 'risk-matrix · acceptance-test-design'],
+  ['compare', '对照图', '实现和稿件逐画面是否一致', 'design-replication · cds-skeleton-review'],
+  ['visual', '视觉', '位置、对齐、遮挡、深色和视口是否符合要求', 'create-visual-test-to-kb · issues-visual-run'],
+  ['flow', '流程', '按角色走完关键任务，每一步结果是否正确', 'acceptance-scenario-orchestrator · flow-trace'],
+  ['human', '人工', '需要人判断的验收项，按清单逐项核对', 'acceptance-checklist · human-verify'],
+  ['smoke', '冒烟', '关键页面和接口能否正常打开和返回', 'smoke-test · stable-smoke'],
   ['debt', '验收债务', '哪些声明缺少测量方法，有哪些问题已记债', 'acceptance-debt-loop'],
 ] as const;
 export type DesignMethodId = typeof designMethods[number][0];
