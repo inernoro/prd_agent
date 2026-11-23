@@ -1,3 +1,4 @@
+import type { DesignAcceptancePlan, DesignDimension, DesignFlow, DesignSmoke } from './design-methods.js';
 import type { DesignVisualRow } from './design-visual.js';
 import type { DesignVerdict, DesignCellStatus } from '../services/design-acceptance.js';
 
@@ -14,7 +15,7 @@ export type DesignScreen = {
 };
 export type DesignRule = {
   id: string; rule: string; how: 'measure' | 'screenshot' | 'human'; priority: 'high' | 'normal';
-  slots: readonly DesignSlot[]; screenId?: string; expected?: string;
+  slots: readonly DesignSlot[]; screenId?: string; expected?: string; dimension?: DesignDimension;
   probe?: { type: 'horizontal-overflow'; tolerance?: number };
 };
 export type DesignMaterial = { tokens?: Record<string, unknown>; rules?: string; components?: string; skeleton?: string };
@@ -124,6 +125,7 @@ export type DesignVersion = {
   frameworkCheck?: DesignFrameworkCheck;
   group?: string; scope?: DesignScope; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
+  acceptancePlan?: DesignAcceptancePlan;
   delivery?: DesignDelivery;
 };
 
@@ -148,6 +150,8 @@ export type DesignRun = {
   id: string; version: number; pullRequest: number; commit: string; createdAt: string;
   cells: DesignCell[]; verdict: DesignVerdict; previewUrl: string;
   visual?: Record<`${string}/${DesignSlot}`, DesignVisualRow>;
+  flows?: DesignFlow[];
+  smoke?: DesignSmoke[];
   signed?: { by: string; at: string; verdict: 'passed' | 'conditional' };
   issues: Record<string, { id: string; pending: boolean }>;
 };

@@ -28,6 +28,11 @@ const feedbackBody = z.string().trim().min(1).max(4_000);
 const slot = z.enum(['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark']);
 const imagePath = z.string().trim().min(1).max(1200);
 const checkId = z.string().regex(/^V-(?:0[1-9]|10)$/);
+const acceptanceBase = { ...feedbackBase, runId: id, commit: sourceCommit };
+const evidenceRecord = { id, title: z.string().trim().min(1).max(180),
+  dimension: z.enum(['correctness', 'compatibility', 'performance', 'security', 'operations', 'experience']) };
+const observation = { expected: z.string().trim().min(1).max(800), actual: z.string().trim().min(1).max(1200),
+  status: z.enum(['passed', 'failed', 'missing']) };
 const schemas = {
   [readTool]: z.discriminatedUnion('view', [
     z.object({ view: z.literal('intake') }).strict(),
@@ -56,13 +61,20 @@ const schemas = {
     z.object({ ...feedbackBase, type: z.literal('feedback.resolve'), feedbackId: id, body: feedbackBody,
       decision: z.enum(['close', 'reopen']) }).strict(),
   ]),
-  [acceptanceTool]: z.object({
-    ...feedbackBase, type: z.literal('acceptance.visual'), runId: id, commit: sourceCommit, screenId: id, slot,
-    checks: z.record(checkId, z.object({ status: z.enum(['passed', 'failed', 'missing']), evidence: z.string().max(2000) }).strict()),
-    imagePath: imagePath.optional(), referenceImagePath: imagePath.optional(),
-    measured: z.object({ width: z.number().int().positive(), height: z.number().int().positive(), theme: z.enum(['light', 'dark']),
-      path: z.string().trim().min(1).max(1200) }).strict().optional(),
-  }).strict().refine(args => Boolean(args.imagePath) === Boolean(args.measured), { path: ['measured'], message: '实拍和实拍条件须一起提交' }),
+  [acceptanceTool]: z.discriminatedUnion('type', [
+    z.object({ ...acceptanceBase, type: z.literal('acceptance.visual'), screenId: id, slot,
+      checks: z.record(checkId, z.object({ status: z.enum(['passed', 'failed', 'missing']), evidence: z.string().max(2000) }).strict()),
+      imagePath: imagePath.optional(), referenceImagePath: imagePath.optional(),
+      measured: z.object({ width: z.number().int().positive(), height: z.number().int().positive(), theme: z.enum(['light', 'dark']),
+        path: z.string().trim().min(1).max(1200) }).strict().optional(),
+    }).strict().refine(args => Boolean(args.imagePath) === Boolean(args.measured), { path: ['measured'], message: '实拍和实拍条件须一起提交' }),
+    z.object({ ...acceptanceBase, type: z.literal('acceptance.flow'),
+      flow: z.object({ ...evidenceRecord, role: z.string().trim().min(1).max(120),
+        steps: z.array(z.object({ action: z.string().trim().min(1).max(600), ...observation }).strict()).min(1).max(20) }).strict() }).strict(),
+    z.object({ ...acceptanceBase, type: z.literal('acceptance.smoke'),
+      smoke: z.object({ ...evidenceRecord, ...observation, target: z.enum(['page', 'api']),
+        path: z.string().trim().min(1).max(1200).regex(/^\/(?!\/)[^\\\r\n]*$/) }).strict() }).strict(),
+  ]),
   [publishTool]: z.object({
     requestId: id, designId: id.optional(), zipPath: z.string().trim().min(1).max(1200),
     sourceCommit, sourcePath: z.string().trim().min(1).max(400), sourceMode: z.literal('private').optional(),
@@ -89,7 +101,7 @@ const schemas = {
 const descriptions = {
   [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。稿件发布前可用 brief.reply 在当前需求下澄清。用 run 回读指定或最新验收运行。',
   [feedbackTool]: '稿件发布前用 brief.claim 认领需求，brief.reply 在原需求下澄清，brief.release 交回未出稿需求。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
-  [acceptanceTool]: '在当前项目的最新验收运行补交逐画面证据。先用 run 回读运行、提交和结果，再为指定画面及视口主题记录十项通用检查的具体证据。可附工作区内的 PNG。重试沿用 requestId。',
+  [acceptanceTool]: '回填当前项目、当前运行的逐画面视觉、流程和冒烟证据。先用 run 回读运行和真实提交。逐画面可附工作区内的 PNG；流程按角色写逐步结果；冒烟写关键页面或接口的结果。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
@@ -160,7 +172,7 @@ export function createDesignBridge(credentials, options = {}) {
           const renders = selected.renders ?? {};
           return { projectId, id: item.id, version: selected.version, delivery: selected.delivery ?? null,
             sourceCommit: selected.sourceCommit, sourcePath: selected.sourcePath, sourceVerification: selected.sourceVerification,
-            sha256: selected.sha256, screens, acceptance: selected.acceptance, checks: selected.checks,
+            sha256: selected.sha256, screens, acceptance: selected.acceptance, acceptancePlan: selected.acceptancePlan, checks: selected.checks,
             summary: { screenCount: screens.length, withImplementation: screens.filter(screen => screen.impl).length,
               screenshotSlots: screens.reduce((sum, screen) => sum + screen.themes.length, 0),
               submittedScreenshots: Object.values(renders).reduce((sum, captures) => sum + Object.keys(captures).length, 0),
@@ -210,18 +222,25 @@ export function createDesignBridge(credentials, options = {}) {
       if (name === acceptanceTool) {
         const data = await workspace();
         if (data.permissions.visual !== true) throw new Error('当前凭据没有验收回填权限，请使用项目实现授权');
-        const { imagePath, referenceImagePath, ...fields } = args;
-        const body = { ...fields };
-        for (const [key, filename] of [['image', imagePath], ['referenceImage', referenceImagePath]]) {
-          if (!filename) continue;
-          const { bytes } = await localFile(credentials, filename, ['.png'], 1.5 * 1024 * 1024);
-          body[key] = `data:image/png;base64,${bytes.toString('base64')}`;
+        let body = args;
+        const expected = { type: args.type, designId: args.designId, runId: args.runId };
+        if (args.type === 'acceptance.visual') {
+          Object.assign(expected, { screenId: args.screenId, slot: args.slot });
+          const { imagePath, referenceImagePath, ...fields } = args;
+          body = { ...fields };
+          for (const [key, filename] of [['image', imagePath], ['referenceImage', referenceImagePath]]) {
+            if (!filename) continue;
+            const { bytes } = await localFile(credentials, filename, ['.png'], 1.5 * 1024 * 1024);
+            body[key] = `data:image/png;base64,${bytes.toString('base64')}`;
+          }
+        } else {
+          expected.id = (args.flow ?? args.smoke).id;
         }
         const receipt = await client.request('POST', path + '/commands', body);
         const result = receipt.result;
         if (receipt.projectId !== projectId || typeof receipt.reused !== 'boolean'
-          || ['type', 'designId', 'runId', 'screenId', 'slot'].some(key => result?.[key] !== fields[key])) {
-          throw new Error('CDS 返回的逐画面对照回执与当前运行或画面不符');
+          || Object.entries(expected).some(([key, value]) => result?.[key] !== value)) {
+          throw new Error('CDS 返回的验收回执与当前运行、画面或记录不符');
         }
         return receipt;
       }

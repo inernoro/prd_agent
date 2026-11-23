@@ -32,6 +32,8 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.writes = []
         self.run = {'id': 'RUN-fixture', 'version': 9, 'commit': 'a' * 40, 'pullRequest': 42, 'cells': []}
         self.returned_slot = None
+        self.returned_record_id = None
+        self.can_record = True
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -50,7 +52,7 @@ class PrivatePublishCliTest(unittest.TestCase):
                 if urlsplit(self.path).path != API:
                     self.respond(404, {'error': 'fixture_route_missing'})
                     return
-                self.respond(200, {'projectId': PROJECT, 'permissions': {'write': True, 'visual': True},
+                self.respond(200, {'projectId': PROJECT, 'permissions': {'write': True, 'visual': fixture.can_record},
                                    'frameworks': [], 'designs': [{'projectId': PROJECT, 'id': DESIGN,
                                    'versions': [{'version': 9, 'title': 'Fixture'}], 'runs': [fixture.run]}]})
 
@@ -60,18 +62,24 @@ class PrivatePublishCliTest(unittest.TestCase):
                 query = {key: values[0] for key, values in parse_qs(target.query).items()}
                 fixture.writes.append((target.path, self.headers['X-AI-Access-Key'],
                                        self.headers['Content-Type'], query, body))
-                reused = len(fixture.writes) > 1 and fixture.writes[-1] == fixture.writes[0]
+                reused = fixture.writes[-1] in fixture.writes[:-1]
                 result = {'type': 'package', 'designId': DESIGN, 'version': 5}
                 if target.path == f'{API}/commands':
                     payload = json.loads(body)
-                    result = {**{field: payload[field] for field in ('type', 'designId', 'runId', 'screenId', 'slot')},
+                    result = {**{field: payload[field] for field in ('type', 'designId', 'runId')},
                               'version': fixture.run['version']}
-                    if fixture.returned_slot:
-                        result['slot'] = fixture.returned_slot
-                    if not reused and not fixture.returned_slot:
-                        key = f"{payload['screenId']}/{payload['slot']}"
-                        fixture.run['visual'] = {key: {'checks': payload['checks'], 'imageId': 'art-implementation',
-                                                       'referenceImageId': 'art-reference'}}
+                    action = payload['type'].split('.', 1)[-1]
+                    if action == 'visual':
+                        result.update(screenId=payload['screenId'], slot=fixture.returned_slot or payload['slot'])
+                        if not reused and not fixture.returned_slot:
+                            key = f"{payload['screenId']}/{payload['slot']}"
+                            fixture.run['visual'] = {key: {'checks': payload['checks'], 'imageId': 'art-implementation',
+                                                           'referenceImageId': 'art-reference'}}
+                    elif action in ('flow', 'smoke'):
+                        record = payload[action]
+                        result['id'] = fixture.returned_record_id or record['id']
+                        if not reused and not fixture.returned_record_id:
+                            fixture.run['flows' if action == 'flow' else action] = [record]
                 elif target.path == f'{API}/feedback':
                     payload = json.loads(body)
                     result = {'type': payload['type'], 'designId': DESIGN, 'id': payload['feedbackId'], 'version': 8}
@@ -192,7 +200,6 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.assertIn('稿件子目录', output or stderr)
         self.assertEqual(self.writes, [])
 
-
     def test_visual_record_and_readback_keep_the_exact_row_and_local_images(self):
         def png(width, height):
             def chunk(kind, data):
@@ -242,6 +249,57 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.assertEqual((route, key, content_type), (f'{API}/feedback', KEY, 'application/json'))
         self.assertEqual(json.loads(payload), {'type': 'feedback.reply', 'requestId': 'cli-supplement-fixture',
                                              'designId': DESIGN, 'feedbackId': 'FDB-previous', 'body': body, 'supplement': True})
+
+    def test_flow_and_smoke_records_reuse_acceptance_permissions_and_verify_the_returned_id(self):
+        records = {
+            'flow': {'id': 'new-member', 'title': '成员初始化', 'dimension': 'correctness', 'role': '成员',
+                     'steps': [{'action': '进入成员页面', 'expected': '显示成员列表',
+                                'actual': '显示夹具中的三条记录', 'status': 'passed'}]},
+            'smoke': {'id': 'members-api', 'title': '成员 API 冒烟', 'dimension': 'operations',
+                      'target': 'api', 'path': '/api/members', 'expected': '返回成员列表',
+                      'actual': '返回夹具数据，状态 200', 'status': 'passed'},
+        }
+        record_path = self.repo / 'record.json'
+        for action, record in records.items():
+            with self.subTest(action=action):
+                self.writes.clear()
+                self.returned_record_id = None
+                flags = (action, DESIGN, '--run', self.run['id'], '--commit', self.run['commit'],
+                         '--file', record_path.name, '--request-id', f'cli-{action}-fixture')
+                record_path.write_text(json.dumps(record, ensure_ascii=False), encoding='utf-8')
+                self.can_record = False
+                code, output, stderr = self.invoke(*flags)
+                self.assertNotEqual(code, 0, output or stderr)
+                self.assertIn('权限', output or stderr)
+                self.assertEqual(self.writes, [])
+
+                self.can_record = True
+                record_path.write_text('[]', encoding='utf-8')
+                code, output, stderr = self.invoke(*flags)
+                self.assertNotEqual(code, 0, output or stderr)
+                self.assertEqual(self.writes, [])
+                record_path.write_text(json.dumps(record, ensure_ascii=False), encoding='utf-8')
+
+                for reused in (False, True):
+                    code, output, stderr = self.invoke(*flags)
+                    self.assertEqual(code, 0, output or stderr)
+                    receipt = json.loads(output)['data']
+                    self.assertIs(receipt['reused'], reused)
+                    self.assertEqual(receipt['result']['id'], record['id'])
+                self.assertEqual(self.writes[0], self.writes[1])
+                route, key, content_type, query, payload = self.writes[0]
+                self.assertEqual((route, key, content_type, query), (f'{API}/commands', KEY, 'application/json', {}))
+                self.assertEqual(json.loads(payload), {'type': f'acceptance.{action}', 'requestId': f'cli-{action}-fixture',
+                                                      'designId': DESIGN, 'runId': self.run['id'], 'commit': self.run['commit'],
+                                                      action: record})
+                code, output, stderr = self.invoke('result', DESIGN, '--run', self.run['id'])
+                self.assertEqual(code, 0, output or stderr)
+                self.assertEqual(json.loads(output)['data']['run']['flows' if action == 'flow' else action], [record])
+
+                self.returned_record_id = 'wrong-record'
+                code, output, stderr = self.invoke(*flags)
+                self.assertNotEqual(code, 0, output or stderr)
+                self.assertIn('回执', output or stderr)
 
 
 if __name__ == '__main__':

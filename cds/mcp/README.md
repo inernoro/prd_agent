@@ -142,7 +142,7 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 | `cds_design_read` | `view` 使用 `intake`、`designs`、`frameworks`、`design`、`framework`、`delivery`、`file`、`feedback` 或 `run` | 读取项目接入清单，发现稿件和框架，或回读固定版本。`intake` 由项目 API 提供，含 `protocolVersion`、稿件接入标识、已核验 Git 目录和续版权限。 |
 | `cds_design_publish` | 公共字段 `zipPath`、`sourceCommit`、`sourcePath`、`requestId`，可选 `note`。新稿传 `intent=create` 与 `designKey`，续版传 `intent=revise`、`designId` 与 `expectedVersion` | 从已同步项目 Git 导出 ZIP 并发布。服务器在同一项目内核对稳定标识、可信目录、基线版本和发布身份。 |
 | `cds_design_feedback` | 指定稿件、请求编号和反馈动作。提交时提供固定版，回复或处理时提供反馈 ID | 同稿件的提问、答复、修订关联及复核 |
-| `cds_design_acceptance` | `acceptance.visual` 指定运行、提交、画面、视口主题与 V-01 至 V-10 的证据 | 同一运行回填画面证据，按 `permissions.visual` 提供 |
+| `cds_design_acceptance` | `acceptance.visual`、`acceptance.flow`、`acceptance.smoke` 指定运行、提交和对应记录 | 同一运行回填画面、流程与冒烟证据，按 `permissions.visual` 提供 |
 
 先从 `intake` 识别同稿、基线和权限，再确定写入目标。信息有歧义时在制作前一次澄清。`designKey` 是 `module/draft`，新模块使用新的模块段，同稿一直沿用稿件 ID。回执用于固定版回读，超时沿用原请求和内容重试。
 
@@ -151,3 +151,4 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 - `cds_design_read` 的 `delivery` 回读指定稿件版本、文件索引、Git 证明、画面和验收缺项。用 `file` 指定稿件、版本和相对路径来分段读取 UTF-8 原文，使用返回的 `nextOffset` 继续。原 ZIP 和二进制文件可从「交付」页下载。
 - `cds_design_read` 的 `feedback` 回读同稿及指定版本相关线程。实施反馈和发布权限都支持 `cds_design_feedback`。用 `feedback.create` 提交，用 `feedback.reply` 回复并可引用自己发布的版本，用 `feedback.resolve` 关闭或重开自己的反馈。项目管理者可复核。使用项目级权限，不在消息或反馈中传递凭据。
 - 用 `cds_design_read` 的 `run` 回读 `run.visual`。项目写授权可回填检查结果，可附工作区内的 `imagePath` 和 `referenceImagePath`。标准与补图边界见 [逐画面对照](../../.claude/skills/cds/reference/design-intake.md#逐画面对照)。
+- 分手段验收的流程和冒烟分别写入 `run.flows` 和 `run.smoke`。各结果按当前运行和稳定编号回读，输入字段见 [按手段验收](../../.claude/skills/cds/reference/design-intake.md#按手段验收)。

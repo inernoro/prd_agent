@@ -5,6 +5,7 @@ import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import previewContract from '../shared/design-preview-contract.json' with { type: 'json' };
 import { crc32 } from '../utils/zip.js';
 import { designSlots, designViewports, type DesignDeliveryFile, type DesignFrameworkCharter, type DesignMaterial, type DesignRule, type DesignScope, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
+import { designDimensions, designMethods, type DesignAcceptancePlan, type DesignDimension } from '../shared/design-methods.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 
 const mib = 1024 * 1024;
@@ -230,6 +231,24 @@ function screen(value: unknown): DesignScreen {
     ...(input.readySelector === undefined ? {} : { readySelector: planningText(input.readySelector, '画面就绪选择器', 300) }) };
 }
 
+export function parseDesignDimension(value: unknown): DesignDimension {
+  if (typeof value !== 'string' || !Object.hasOwn(designDimensions, value)) return invalidDesign('请选择有效的验收覆盖维度');
+  return value as DesignDimension;
+}
+
+function parseAcceptancePlan(value: unknown): DesignAcceptancePlan {
+  const input = designRecord(value, '验收手段', designMethods.map(([id]) => id));
+  const plan: DesignAcceptancePlan = {};
+  for (const [id, name] of designMethods) {
+    if (input[id] === undefined) continue;
+    const method = designRecord(input[id], name, ['applicable', 'reason']);
+    if (typeof method.applicable !== 'boolean') return invalidDesign(`${name} 须声明是否适用`);
+    const reason = method.reason === undefined && method.applicable ? undefined : planningText(method.reason, `${name} 的适用说明`, 600);
+    plan[id] = { applicable: method.applicable, ...(reason ? { reason } : {}) };
+  }
+  return plan;
+}
+
 function rule(value: unknown, screens: DesignScreen[]): DesignRule {
   const input = designRecord(value, '验收项');
   const how = input.how;
@@ -252,7 +271,8 @@ function rule(value: unknown, screens: DesignScreen[]): DesignRule {
     probe = { type: method.type, tolerance: method.tolerance as number | undefined };
   }
   return { id: designId(input.id, '验收编号'), rule: planningText(input.rule, '验收规则', 600), how, priority, slots,
-    screenId, probe, expected: input.expected === undefined ? undefined : planningText(input.expected, '验收期望', 800) };
+    screenId, probe, expected: input.expected === undefined ? undefined : planningText(input.expected, '验收期望', 800),
+    ...(input.dimension === undefined ? {} : { dimension: parseDesignDimension(input.dimension) }) };
 }
 
 const deliveryText = /\.(?:md|mdx|txt|json|ya?ml|html?|css|[cm]?js|ts|tsx|jsx|csv|toml|xml|svg)$/i;
@@ -378,6 +398,7 @@ export async function readDesignPackage(bytes: Buffer) {
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
     sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
     prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery,
+    acceptancePlan: input.acceptancePlan === undefined ? undefined : parseAcceptancePlan(input.acceptancePlan),
     frameworkCharter: charter && parseFrameworkCharter(charter),
     checks: json(input.checks ?? 'checks/result.json'),
     framework, frameworkVersion, scope: input.scope === undefined ? undefined : parseDesignScope(input.scope),

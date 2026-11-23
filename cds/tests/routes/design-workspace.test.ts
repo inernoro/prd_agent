@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
+import { EngineeringPlanningService, FileEngineeringPlanningStore } from '../../src/services/engineering-planning.js';
 import { humanPrincipalId } from '../../src/services/human-project-access.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
 import { StateService } from '../../src/services/state.js';
@@ -21,6 +22,7 @@ const projectId = 'fixture-design-a';
 const otherProjectId = 'fixture-design-b';
 const sourceCommit = 'a'.repeat(40);
 const previewCommit = 'b'.repeat(40);
+const previewUrl = 'https://preview.fixture.test/';
 const html = '<!doctype html><html><head><meta charset="utf-8"></head><body><h1>Fixture</h1></body></html>';
 const permissions = ['read', 'propose', 'write', 'approve'] as const;
 const people = new Map<string, DesignActor>([
@@ -92,6 +94,7 @@ describe('private CDS design workspace', () => {
   let apps: Server[];
   let base: string;
   let activeCommit: string;
+  let activePreviewUrl: string;
   let clock: string;
   let approvedPlanVersion: number;
   let service: DesignWorkspaceService;
@@ -109,14 +112,14 @@ describe('private CDS design workspace', () => {
     return { sourceCommit, sourcePath };
   }
 
-  function openWorkspace() {
+  function openWorkspace(planning?: EngineeringPlanningService) {
     const dependencies = {
       now: () => new Date(clock),
       approvedPlanFor: async (project: string, plan: string) => project === projectId && plan === 'PLN-approved'
         ? { planVersion: approvedPlanVersion, proposalId: 'PRO-fixture', title: 'Approved brief', requirements: 'Original **approved** requirements' } : undefined,
       frameworkProbe: async () => frameworkMeasurements,
       resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && [7, 8].includes(pr) && (!commit || commit === activeCommit)
-        ? { commit: activeCommit, url: pr === 7 ? 'https://preview.fixture.test/' : 'https://preview.fixture.test/other/' } : undefined,
+        ? { commit: activeCommit, url: pr === 7 ? activePreviewUrl : 'https://preview.fixture.test/other/' } : undefined,
       sourcePackage: async (project: string, sha: string, sourcePath: string) => {
         sourceLookups++;
         return sources.get(sourceKey(project, sha, sourcePath))
@@ -129,7 +132,20 @@ describe('private CDS design workspace', () => {
         }
       },
     };
-    return new DesignWorkspaceService(new FileProjectRevisionStore<DesignWorkspaceCommit>(directory), dependencies);
+    return new DesignWorkspaceService(new FileProjectRevisionStore<DesignWorkspaceCommit>(directory), {
+      ...dependencies,
+      ...(planning ? {
+        findDebt: async (project, debtId, sourceRef) => await planning.designAcceptanceDebt(project, debtId, sourceRef) === debtId,
+        resolveDebtProposal: (project, proposalId, sourceRef) => planning.designAcceptanceDebt(project, proposalId, sourceRef),
+        createDebt: async ({ projectId: project, actor, sourceRef, title, actual, expected }) => {
+          const { result } = await planning.command(project, actor, { type: 'proposal.submit', requestId: 'fixture-design-debt',
+            kind: 'debt', source: { type: 'test', ref: sourceRef },
+            draft: { title, summary: actual, priority: 'mid', criteria: [expected] } }, { designSourceRef: sourceRef });
+          const { id } = result as { id: string };
+          return { id, pending: await planning.designAcceptanceDebt(project, id, sourceRef) !== id };
+        },
+      } : {}),
+    });
   }
 
   async function openApi(workspace: DesignWorkspaceService, projectAccess?: StateService) {
@@ -163,6 +179,7 @@ describe('private CDS design workspace', () => {
     apps = [];
     directory = await mkdtemp(path.join(tmpdir(), 'cds-design-test-'));
     activeCommit = previewCommit;
+    activePreviewUrl = previewUrl;
     clock = '2026-11-21T09:05:00.000Z';
     approvedPlanVersion = 2;
     revokedReviewers = new Set();
@@ -1732,23 +1749,24 @@ describe('private CDS design workspace', () => {
     return { designId, runId, record };
   }
 
+  const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
+  const passed = (evidence: string) => ({ status: 'passed', evidence });
+  const checks = {
+    'V-01': passed('页头居顶，标签紧跟页头，主体是成员列表，浮层关闭，底部显示分页。'),
+    'V-02': passed('同排两个按钮 y=212 px，高 28 px，顶边与底边误差 0 px。'),
+    'V-03': passed('抽屉关闭，与工具栏重叠面积 0 px；成员名称完整显示。'),
+    'V-04': passed('文档宽度 1280 px，横向多出 0 px，只有列表主内容滚动。'),
+    'V-05': passed('列表标题、账号列和分页可见文本未出现原始 Markdown、JSON 或凭据。'),
+    'V-06': passed('待评审徽标和成员列表都显示 6 条，两处入口都叫全文。'),
+    'V-07': passed('深色列表正文与背景测得对比 5.2，缩略图未被深色覆盖。'),
+    'V-08': passed('375 px 手机、Windows 125% 和 150% 实拍均显示成员标题和分页。'),
+    'V-09': passed('单独的加载行显示骨架，成员清单行加载完成，空态行显示查找入口。'),
+    'V-10': passed('输入 61 条成员记录及 80 字符长标题，列表仍分页且无横向滚动。'),
+  };
+
   describe('逐画面视觉验收', () => {
     const desktopPng = png(1280, 800);
     const phonePng = png(375, 812);
-    const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
-    const passed = (evidence: string) => ({ status: 'passed', evidence });
-    const checks = {
-      'V-01': passed('页头居顶，标签紧跟页头，主体是成员列表，浮层关闭，底部显示分页。'),
-      'V-02': passed('同排两个按钮 y=212 px，高 28 px，顶边与底边误差 0 px。'),
-      'V-03': passed('抽屉关闭，与工具栏重叠面积 0 px；成员名称完整显示。'),
-      'V-04': passed('文档宽度 1280 px，横向多出 0 px，只有列表主内容滚动。'),
-      'V-05': passed('列表标题、账号列和分页可见文本未出现原始 Markdown、JSON 或凭据。'),
-      'V-06': passed('待评审徽标和成员列表都显示 6 条，两处入口都叫全文。'),
-      'V-07': passed('深色列表正文与背景测得对比 5.2，缩略图未被深色覆盖。'),
-      'V-08': passed('375 px 手机对照图、Windows 125% 和 150% 截图均显示成员标题和分页。'),
-      'V-09': passed('单独的加载行显示骨架，成员清单行加载完成，空态行显示查找入口。'),
-      'V-10': passed('输入 61 条成员记录及 80 字符长标题，列表仍分页且无横向滚动。'),
-    };
     const bytes = (mobileBound = true) => draft('Visual acceptance fixture', {
       screens: [
         { id: 'members', name: 'Members', route: '#members', viewport: 'desktop', themes: ['light'], impl: '/members/', readySelector: 'h1' },
@@ -1839,6 +1857,9 @@ describe('private CDS design workspace', () => {
       const mobileChecks = { ...checks, 'V-04': passed('文档宽度 375 px，与视口相等，只有列表主内容滚动。') };
       const mobile = { ...common, screenId: 'members-mobile', slot: 'phone-dark', checks: mobileChecks,
         image: dataUrl(phonePng), measured: { width: 375, height: 812, theme: 'dark', path: '/members/' } };
+      expect((await record(desktop)).status).toBe(201);
+      expect((await record(mobile)).status).toBe(201);
+      expect((await sign()).status).toBe(409);
       expect((await record({ ...mobile, checks: {}, referenceImage: dataUrl(phonePng), image: undefined, measured: undefined })).status).toBe(201);
       expect((await sign()).status).toBe(409);
       expect((await record(mobile)).status).toBe(201);
@@ -1895,6 +1916,231 @@ describe('private CDS design workspace', () => {
       expect((await command('acceptance.visual', fields)).status).toBe(409);
       expect((await command('acceptance.start', { designId, version: 1, pullRequest: 7 })).status).toBe(201);
       expect((await command('acceptance.visual', fields)).status).toBe(409);
+    });
+  });
+
+  describe('V11 验收手段', () => {
+    const plan = {
+      mece: { applicable: false, reason: '隔离夹具只核对流程和冒烟回填。' },
+      compare: { applicable: false, reason: '该夹具没有外观改动。' },
+      visual: { applicable: false, reason: '没有新增或改动画面。' },
+      human: { applicable: false, reason: '已有自动断言覆盖。' },
+    };
+    const rule = { id: 'A-1', screenId: 'members', rule: '成员列表能够打开', how: 'measure',
+      slots: ['desktop-light'], dimension: 'correctness' };
+    const standard = { name: 'bundle/设计文档/验收手段.md', data: Buffer.from('# 验收手段\n\n逐项验证。\n') };
+    const visualStandard = { name: 'bundle/设计文档/视觉验收标准.md', data: Buffer.from('# 逐画面视觉验收标准\n') };
+    const flow = { id: 'member-list', title: '管理员打开成员清单', dimension: 'correctness', role: '管理员', steps: [
+      { action: '进入成员管理入口', expected: '显示成员清单', actual: '成员清单显示 3 条记录', status: 'passed' },
+      { action: '点开在用记录', expected: '打开成员详情', actual: '已打开当前成员详情', status: 'passed' },
+    ] };
+    const smoke = { id: 'members-api', title: '成员清单接口', dimension: 'operations', target: 'api', path: '/api/members',
+      expected: '请求返回 200 和成员数组', actual: 'HTTP 200，返回 3 条成员记录', status: 'passed' };
+    const planned = () => draft('验收手段夹具', { acceptancePlan: plan, acceptance: [rule] }, [visualStandard]);
+
+    it('validates the method plan, exceptions and rule dimension before publishing', async () => {
+      const invalidPackages = [
+        { acceptancePlan: [] },
+        { acceptancePlan: { unknown: { applicable: true } } },
+        { acceptancePlan: { flow: { applicable: 'false', reason: '类型必须是布尔值。' } } },
+        { acceptancePlan: { smoke: { applicable: false } } },
+        { acceptancePlan: { human: { applicable: false, reason: '   ' } } },
+        { acceptance: [{ ...rule, dimension: 'not-a-dimension' }] },
+      ];
+      for (const [index, fields] of invalidPackages.entries()) {
+        expect((await publish(`bad-v11-plan-${index}`, draft('应拒绝的验收计划', fields))).status).toBe(400);
+      }
+      const response = await publish('valid-v11-plan', planned());
+      expect(response.status).toBe(201);
+      const { designs } = await (await get()).json();
+      expect(designs[0].versions[0]).toMatchObject({ acceptancePlan: plan, acceptance: [rule] });
+    });
+
+    it('defaults methods to applicable for V11 packages with only the private acceptance document', async () => {
+      const { designId, runId } = await runWithScreenshot(draft('标准携带夹具', { acceptance: [rule] }, [standard]));
+      expect((await command('acceptance.sign', { designId, runId })).status).toBe(409);
+      const { designs } = await (await get()).json();
+      expect(designs[0].runs[0]).toMatchObject({ verdict: 'needs_evidence', cells: [{ status: 'passed' }] });
+      const material = designs[0].versions[0].delivery.files.find((file: { path: string }) => file.path === '设计文档/验收手段.md');
+      expect(material).toBeDefined();
+      const path = `/artifacts/${material.id}?view=text`;
+      expect((await (await get(path)).json()).text).toBe(standard.data.toString('utf8'));
+      expect((await get(path, 'anonymous')).status).toBe(404);
+      expect((await get(path, 'author', otherProjectId)).status).toBe(404);
+    });
+
+    it('updates flow and smoke results by id, and signs only when every applicable method passes', async () => {
+      const { designId, runId, record: authored } = await runWithScreenshot(planned());
+      const context = { designId, runId, commit: previewCommit };
+      const failedStep = { ...flow.steps[1], actual: '点击后详情没有打开', status: 'failed' };
+      const failedFlow = { ...flow, steps: [flow.steps[0], failedStep] };
+      const sign = () => command('acceptance.sign', { designId, runId });
+      const read = async () => (await (await get()).json()).designs[0].runs[0];
+      expect((await command('acceptance.flow', { ...context, flow: failedFlow }, 'designer', 'v11-flow-first')).status).toBe(201);
+      expect((await command('acceptance.flow', { ...context, flow: failedFlow }, 'designer', 'v11-flow-first')).status).toBe(200);
+      expect((await command('acceptance.flow', { ...context, flow }, 'designer', 'v11-flow-first')).status).toBe(409);
+      expect((await read()).flows).toEqual([expect.objectContaining({ ...failedFlow, status: 'failed', by: 'Fixture designer', at: clock })]);
+      expect((await sign()).status).toBe(409);
+
+      expect((await command('acceptance.flow', { ...context, flow }, 'designer')).status).toBe(201);
+      expect((await read()).flows).toEqual([expect.objectContaining({ ...flow, status: 'passed' })]);
+      expect((await sign()).status).toBe(409);
+      const brokenSmoke = { ...smoke, actual: 'HTTP 503，成员列表接口暂不可用', status: 'failed' };
+      expect((await command('acceptance.smoke', { ...context, smoke: brokenSmoke }, 'designer')).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.smoke', { ...context, smoke }, 'designer', 'v11-smoke')).status).toBe(201);
+      expect((await command('acceptance.smoke', { ...context, smoke }, 'designer', 'v11-smoke')).status).toBe(200);
+      expect((await read()).smoke).toEqual([expect.objectContaining({ ...smoke, by: 'Fixture designer', at: clock })]);
+      expect((await command('acceptance.record', { ...authored, cells: [{ ...authored.cells[0], status: 'failed', actual: '成员列表打开后仍报错。' }] })).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.record', authored)).status).toBe(201);
+      expect((await read()).visual).toBeUndefined();
+      expect((await sign()).status).toBe(201);
+      expect((await read()).signed).toMatchObject({ verdict: 'passed' });
+      expect((await command('acceptance.flow', { ...context, flow })).status).toBe(409);
+      expect((await command('acceptance.smoke', { ...context, smoke })).status).toBe(409);
+    });
+
+    it('requires a human reviewer and a real screenshot for the applicable manual method', async () => {
+      const acceptancePlan = { ...plan, human: { applicable: true }, flow: plan.mece, smoke: plan.mece };
+      const response = await publish('v11-human-review', draft('人工方法夹具', { acceptancePlan, acceptance: [{ ...rule, how: 'human' }] }));
+      expect(response.status).toBe(201);
+      const { result: { designId } } = await response.json();
+      expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+      const started = await command('acceptance.start', { designId, version: 1, pullRequest: 7 });
+      expect(started.status).toBe(201);
+      const { result: { runId } } = await started.json();
+      const sign = () => command('acceptance.sign', { designId, runId });
+      const cell = { itemId: 'A-1', slot: 'desktop-light', status: 'passed', actual: '逐个点开 3 个成员详情，信息与列表一致。' };
+      const evidence = { ...cell, image: `data:image/png;base64,${png(1280, 800).toString('base64')}`,
+        measured: { width: 1280, height: 800, theme: 'light', path: '/members/' } };
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.record', { designId, runId, commit: previewCommit, cells: [evidence] }, 'designer')).status).toBe(403);
+      expect((await command('acceptance.record', { designId, runId, commit: previewCommit, cells: [cell] })).status).toBe(400);
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.record', { designId, runId, commit: previewCommit, cells: [evidence] })).status).toBe(201);
+      expect((await sign()).status).toBe(201);
+    });
+
+    it('requires both images and a recorded comparison without forcing inapplicable visual checks', async () => {
+      const acceptancePlan = { ...plan, compare: { applicable: true }, flow: plan.mece, smoke: plan.mece };
+      const { designId, runId } = await runWithScreenshot(draft('对照图方法夹具', { acceptancePlan, acceptance: [rule],
+        screens: [{ id: 'members', name: 'Members', route: '#members', viewport: 'desktop', themes: ['light'], impl: '/members/' }],
+      }, [visualStandard]));
+      const sign = () => command('acceptance.sign', { designId, runId });
+      const context = { designId, runId, commit: previewCommit, screenId: 'members', slot: 'desktop-light' };
+      const failed = { status: 'failed', evidence: '页头和标签位置一致，主体往下偏了 40 px，浮层关闭，底部已移出画面。' };
+      const passed = { status: 'passed', evidence: '页头居顶，标签跟随页头，两图主体对齐，浮层关闭，底部都显示分页。' };
+      const recordComparison = (check: object) => command('acceptance.visual', { ...context, checks: { 'V-01': check } });
+      expect((await recordComparison(passed)).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      const referenceImage = `data:image/png;base64,${png(1280, 800).toString('base64')}`;
+      expect((await command('acceptance.visual', { ...context, checks: {}, referenceImage })).status).toBe(201);
+      const { designs } = await (await get()).json();
+      expect(designs[0].runs[0].visual['members/desktop-light']).toMatchObject({ referenceImageId: expect.any(String),
+        imageId: expect.any(String), checks: {} });
+      expect((await sign()).status).toBe(409);
+      expect((await recordComparison(failed)).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      expect((await recordComparison(passed)).status).toBe(201);
+      expect((await sign()).status).toBe(201);
+    });
+
+    it('allows visual-only acceptance with all checks and a matching implementation capture, without a reference image', async () => {
+      const acceptancePlan = { ...plan, visual: { applicable: true }, flow: plan.mece, smoke: plan.mece };
+      const { designId, runId, record: authored } = await runWithScreenshot(draft('只做视觉验收夹具', { acceptancePlan, acceptance: [rule],
+        screens: [{ id: 'members', name: 'Members', route: '#members', viewport: 'desktop', themes: ['light'], impl: '/members/' }],
+      }, [visualStandard]));
+      const sign = () => command('acceptance.sign', { designId, runId });
+      const [cell] = authored.cells;
+      const otherSize = { ...cell, image: dataUrl(png(1200, 800)), measured: { ...cell.measured, width: 1200 } };
+      expect((await command('acceptance.record', { ...authored, cells: [otherSize] })).status).toBe(201);
+      const visual = { designId, runId, commit: previewCommit, screenId: 'members', slot: 'desktop-light', checks };
+      expect((await command('acceptance.visual', visual)).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.visual', { ...visual, image: cell.image, measured: cell.measured })).status).toBe(201);
+      expect((await sign()).status).toBe(201);
+    });
+
+    it('does not pair an older comparison with an implementation image that arrives later', async () => {
+      const acceptancePlan = { ...plan, compare: { applicable: true }, flow: plan.mece, smoke: plan.mece };
+      const { designId, runId, record: authored } = await runWithScreenshot(draft('对照时序夹具', { acceptancePlan, acceptance: [rule],
+        screens: [{ id: 'members', name: 'Members', route: '#members', viewport: 'desktop', themes: ['light'], impl: '/members/' }],
+      }, [{ name: 'bundle/screens/members.light.png', data: png(1280, 800) }]));
+      const sign = () => command('acceptance.sign', { designId, runId });
+      expect((await command('acceptance.record', { ...authored, cells: [{ itemId: 'A-1', slot: 'desktop-light',
+        status: 'missing', actual: '实拍需要替换。' }] })).status).toBe(201);
+      const context = { designId, runId, commit: previewCommit, screenId: 'members', slot: 'desktop-light' };
+      const evidence = { 'V-01': { status: 'passed', evidence: '页头和标签都在顶部，主体居中，浮层关闭，底部显示分页。' } };
+      expect((await command('acceptance.visual', { ...context, checks: evidence })).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.record', authored)).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.visual', { ...context, checks: { 'V-02': { status: 'passed', evidence: '两图按钮顶边都是 86 px。' } } })).status).toBe(201);
+      expect((await sign()).status).toBe(409);
+      expect((await command('acceptance.visual', { ...context, checks: evidence })).status).toBe(201);
+      expect((await sign()).status).toBe(201);
+    });
+
+    it('permits conditional V11 signoff only after the normal-priority finding becomes formal project debt', async () => {
+      const planning = new EngineeringPlanningService(new FileEngineeringPlanningStore(path.join(directory, 'project-debt')), () => new Date(clock));
+      base = await openApi(openWorkspace(planning));
+      const { designId, runId, record: authored } = await runWithScreenshot(planned());
+      const context = { designId, runId, commit: previewCommit };
+      const sign = () => command('acceptance.sign', { designId, runId });
+      const read = async () => (await (await get()).json()).designs[0].runs[0];
+      const failed = { ...authored.cells[0], status: 'failed', actual: '成员清单能打开，但列表尾部提示缺少翻页。' };
+      expect((await command('acceptance.record', { ...authored, cells: [failed] })).status).toBe(201);
+      expect((await command('acceptance.flow', { ...context, flow }, 'designer')).status).toBe(201);
+      expect((await command('acceptance.smoke', { ...context, smoke }, 'designer')).status).toBe(201);
+      expect((await command('acceptance.record', { ...authored, cells: [{ ...failed, debtId: 'made-up-debt' }] })).status).toBe(400);
+      expect((await sign()).status).toBe(409);
+
+      const issue = { designId, runId, itemId: failed.itemId };
+      expect((await command('acceptance.debt', issue, 'designer')).status).toBe(201);
+      const pending = (await read()).issues[failed.itemId];
+      expect(pending).toMatchObject({ pending: true });
+      expect((await planning.debts(projectId)).items).toEqual([]);
+      expect((await sign()).status).toBe(409);
+
+      const { result } = await planning.command(projectId, people.get('author')!, { type: 'proposal.accept', as: 'new',
+        requestId: 'fixture-confirm-v11-debt', proposalId: pending.id });
+      const { result: { id: debtId } } = result as { result: { id: string } };
+      expect((await planning.debt(projectId, debtId)).debt).toMatchObject({ id: debtId, source: { type: 'test', ref: `${designId}/${runId}/${failed.itemId}` } });
+      expect((await command('acceptance.debt', issue, 'designer')).status).toBe(201);
+      expect((await read()).issues[failed.itemId]).toEqual({ id: debtId, pending: false });
+      expect((await sign()).status).toBe(201);
+      expect((await read()).signed).toMatchObject({ verdict: 'conditional' });
+    });
+
+    it('rejects invalid evidence and writes outside the current project and preview run', async () => {
+      const { designId, runId } = await runWithScreenshot(planned());
+      const context = { designId, runId, commit: previewCommit };
+      for (const actor of ['reading-member', 'read-designer', 'git-designer']) {
+        expect((await command('acceptance.flow', { ...context, flow }, actor)).status).toBe(403);
+        expect((await command('acceptance.smoke', { ...context, smoke }, actor)).status).toBe(403);
+      }
+      expect((await command('acceptance.smoke', { ...context, smoke }, 'anonymous')).status).toBe(404);
+      expect((await command('acceptance.flow', { ...context, flow }, 'author', 'cross-project-flow', otherProjectId)).status).toBe(404);
+      for (const invalidFlow of [{ ...flow, dimension: 'unknown' }, { ...flow, steps: [] }, { ...flow, status: 'passed' },
+        { ...flow, steps: [{ ...flow.steps[0], actual: ' ' }] }, { ...flow, steps: [{ ...flow.steps[0], status: 'unknown' }] }]) {
+        expect((await command('acceptance.flow', { ...context, flow: invalidFlow })).status).toBe(400);
+      }
+      for (const invalidSmoke of [{ ...smoke, path: 'https://outside.fixture.test/api' },
+        { ...smoke, target: 'unknown' }, { ...smoke, status: 'unknown' }, { ...smoke, by: 'other' }]) {
+        expect((await command('acceptance.smoke', { ...context, smoke: invalidSmoke })).status).toBe(400);
+      }
+      expect((await command('acceptance.flow', { ...context, flow, commit: 'd'.repeat(40) })).status).toBe(409);
+      activeCommit = 'd'.repeat(40);
+      expect((await command('acceptance.smoke', { ...context, smoke })).status).toBe(409);
+      activeCommit = previewCommit;
+      activePreviewUrl = `${previewUrl}moved/`;
+      expect((await command('acceptance.flow', { ...context, flow })).status).toBe(409);
+      activePreviewUrl = previewUrl;
+      expect((await command('design.link', { designId, pullRequest: 8 })).status).toBe(201);
+      expect((await command('acceptance.flow', { ...context, flow })).status).toBe(409);
+      expect((await command('acceptance.start', { designId, version: 1, pullRequest: 7 })).status).toBe(201);
+      expect((await command('acceptance.smoke', { ...context, smoke })).status).toBe(409);
     });
   });
 

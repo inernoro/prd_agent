@@ -260,3 +260,70 @@ test('visual acceptance is limited to the bound project and validates the exact 
   returnedSlot = 'phone-dark';
   await assert.rejects(bridge.call(tool, command), /回执/);
 });
+
+test('flow and smoke records share project-scoped acceptance tools and match their returned identifiers', async t => {
+  const projectId = 'fixture-execution';
+  const projectKey = 'cdsp_fixture_execution';
+  const designId = 'DSN-execution';
+  const runId = 'RUN-execution';
+  const commit = 'b'.repeat(40);
+  const route = `/api/projects/${projectId}/design`;
+  const flow = { id: 'new-member', title: '新成员流程', dimension: 'correctness', role: '成员',
+    steps: [{ action: '打开本项目的成员页', expected: '显示成员列表', actual: '显示 3 个夹具成员', status: 'passed' }] };
+  const smoke = { id: 'members-page', title: '成员页冒烟', dimension: 'experience', target: 'page', path: '/members/',
+    expected: '显示页面标题', actual: '显示成员管理', status: 'passed' };
+  const recordFlow = { type: 'acceptance.flow', requestId: 'flow-fixture', designId, runId, commit, flow };
+  const recordSmoke = { type: 'acceptance.smoke', requestId: 'smoke-fixture', designId, runId, commit, smoke };
+  const run = { id: runId, version: 11, commit, cells: [] };
+  const writes = [];
+  let canRecord = false;
+  let overrideReceipt = {};
+  const bridge = createDesignBridge({ projectId, projectKey, host: 'https://cds.example.test' }, {
+    fetchImpl: async (url, options) => {
+      assert.equal(options.headers['X-AI-Access-Key'], projectKey);
+      const parsed = new URL(url);
+      if (options.method === 'GET') {
+        assert.equal(parsed.pathname, route);
+        return Response.json({ projectId, permissions: { write: true, visual: canRecord }, frameworks: [],
+          designs: [{ projectId, id: designId, versions: [{ version: 11 }], runs: [run] }] });
+      }
+      assert.equal(options.method, 'POST');
+      assert.equal(parsed.pathname, `${route}/commands`);
+      const body = JSON.parse(options.body);
+      writes.push(body);
+      if (body.flow) run.flows = [body.flow];
+      if (body.smoke) run.smoke = [body.smoke];
+      return Response.json({ projectId, reused: false,
+        result: { type: body.type, designId, runId, version: run.version, id: (body.flow ?? body.smoke).id, ...overrideReceipt } });
+    },
+  });
+  t.after(async () => { await bridge.close(); });
+
+  const tool = 'cds_design_acceptance';
+  assert(!(await bridge.listTools()).some(row => row.name === tool));
+  await assert.rejects(bridge.call(tool, recordFlow), /权限|授权/);
+  await assert.rejects(bridge.call(tool, recordSmoke), /权限|授权/);
+  canRecord = true;
+  assert((await bridge.listTools()).some(row => row.name === tool));
+  for (const invalid of [
+    { ...recordFlow, projectId: 'another-project' },
+    { ...recordFlow, flow: { ...flow, dimension: 'other' } },
+    { ...recordFlow, flow: { ...flow, steps: [{ ...flow.steps[0], status: 'unverified' }] } },
+    { ...recordSmoke, smoke: { ...smoke, target: 'browser' } },
+    { ...recordSmoke, smoke: { ...smoke, path: 'https://legacy.example.test/' } },
+    { ...recordSmoke, flow },
+  ]) await assert.rejects(bridge.call(tool, invalid));
+  assert.equal(writes.length, 0);
+
+  assert.equal((await bridge.call(tool, recordFlow)).result.id, flow.id);
+  assert.equal((await bridge.call(tool, recordSmoke)).result.id, smoke.id);
+  assert.deepEqual(writes, [recordFlow, recordSmoke]);
+  assert.deepEqual(await bridge.call('cds_design_read', { view: 'run', id: designId, runId }), {
+    projectId, id: designId, run: { id: runId, version: 11, commit, cells: [], flows: [flow], smoke: [smoke] },
+  });
+  overrideReceipt = { id: 'another-check' };
+  await assert.rejects(bridge.call(tool, recordFlow), /回执/);
+  await assert.rejects(bridge.call(tool, recordSmoke), /回执/);
+  overrideReceipt = { runId: 'RUN-another' };
+  await assert.rejects(bridge.call(tool, recordSmoke), /回执/);
+});

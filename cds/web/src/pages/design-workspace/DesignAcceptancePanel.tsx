@@ -5,6 +5,9 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { designAcceptanceTarget, designSlots, type DesignCell, type DesignEntry, type DesignRun, type DesignVersion } from '../../../../src/shared/design-workspace';
 import { designVisualRequired, designVisualSummary } from '../../../../src/shared/design-visual';
+import { designMethodPlanEnabled, designMethodsState, type DesignMethodStatus } from '../../../../src/shared/design-methods';
+import { AcceptanceMethodDetails, AcceptanceMethodIntro, AcceptanceMethodOverview, AcceptanceMethodTabs,
+  type AcceptanceCheck } from './DesignAcceptanceMethods';
 import { DesignVisualAcceptance } from './DesignVisualAcceptance';
 import { cellNames, designArtifact, designCheckRows, designDate, ruleModes, slotNames, verdictNames, type DesignCommand } from './design-ui';
 import { planningPath, usePlanningRead } from '../engineering-planning/planning-ui';
@@ -46,7 +49,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   entry: DesignEntry; version: DesignVersion; busy: boolean; canWrite: boolean; canReview: boolean; canSign: boolean;
   command: DesignCommand; onSetBaseline?: () => void; onPreviewStale: () => void;
 }) {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [runId, setRunId] = useState(params.get('run') ?? '');
   const [pr, setPr] = useState(String(entry.pullRequest ?? ''));
   const [selected, setSelected] = useState<DesignCell>();
@@ -55,7 +58,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const runs = entry.runs.filter(row => row.version === version.version);
   const run = runs.find(row => row.id === runId) ?? runs.at(-1);
   const previewPath = run ? `${planningPath(entry.projectId)}/preview/${run.pullRequest}` : null;
-  const preview = usePlanningRead<{ projectId: string; commit?: string }>(previewPath, previewRevision);
+  const preview = usePlanningRead<{ projectId: string; commit?: string; url?: string }>(previewPath, previewRevision);
   useEffect(() => {
     if (!previewPath) return;
     const refresh = () => { if (document.visibilityState === 'visible') refreshPreview(value => value + 1); };
@@ -75,16 +78,35 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     ['待补证据', pending.length],
     ['已记债', new Set(run?.cells.flatMap(cell => cell.debtId ? [cell.debtId] : [])).size],
   ] as const;
-  const requiresVisual = designVisualRequired(version, run);
+  const methodData = designMethodPlanEnabled(version) ? designMethodsState(version, run) : undefined;
+  const activeMethod = methodData?.methods.find(method => method.id === params.get('check'));
+  const check: AcceptanceCheck = activeMethod?.id ?? 'overview';
+  const go = (next: AcceptanceCheck) => setParams(former => {
+    const value = new URLSearchParams(former);
+    if (next === 'overview') value.delete('check');
+    else value.set('check', next);
+    return value;
+  });
+  const showOverview = check === 'overview';
+  const showRules = !methodData || check === 'mece' && activeMethod?.status !== 'not_applicable';
+  const comparisonSkipped = methodData?.methods.some(method => method.id === 'compare' && method.status === 'not_applicable');
+  const visualOnly = comparisonSkipped === true && check === 'visual' && activeMethod?.status !== 'not_applicable';
+  const showComparison = version.screens.length > 0 && (!methodData || visualOnly || check === 'compare' && activeMethod?.status !== 'not_applicable');
+  const blockers = methodData?.blockers ?? [];
+  const requiresVisual = !methodData && designVisualRequired(version, run);
   const visualRemaining = requiresVisual && run && !run.signed ? designVisualSummary(version, run).remaining : 0;
-  const state = run?.verdict ?? 'needs_evidence';
+  const recordedState = run?.verdict ?? 'needs_evidence';
+  const state = run?.signed ? recordedState
+    : blockers.some(method => method.status === 'failed') ? 'failed'
+      : blockers.length && recordedState !== 'failed' ? 'needs_evidence' : recordedState;
   const activeCommit = preview.data?.projectId === entry.projectId ? preview.data.commit : undefined;
   const linkedChanged = !!run && run.pullRequest !== entry.pullRequest;
-  const stale = !!run && (linkedChanged || (!!activeCommit && activeCommit !== run.commit));
+  const locationChanged = !!run && preview.data?.projectId === entry.projectId && Boolean(preview.data.url && preview.data.url !== run.previewUrl);
+  const stale = !!run && (linkedChanged || locationChanged || (!!activeCommit && activeCommit !== run.commit));
   const staleSignature = stale && !!run && entry.currentSignoffRunId === run.id;
   useEffect(() => { if (staleSignature) onPreviewStale(); }, [staleSignature, onPreviewStale]);
   const evidenceWritable = canWrite && !!run && !run.signed && !stale && activeCommit === run.commit && !preview.loading;
-  const signable = run && !run.signed && !visualRemaining && entry.frozen === version.version && run.id === entry.runs.at(-1)?.id
+  const signable = run && !run.signed && !visualRemaining && !blockers.length && entry.frozen === version.version && run.id === entry.runs.at(-1)?.id
     && !stale && activeCommit === run.commit && !preview.loading
     && (state === 'passed' || state === 'conditional') && version.version === entry.versions.at(-1)?.version;
   const send = (action: string, fields: Record<string, unknown>) => command(action, { designId: entry.id, ...fields });
@@ -98,17 +120,22 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     if (run && !(await send('acceptance.sign', { runId: run.id }))) refreshPreview(value => value + 1);
   };
   const isBaseline = entry.frozen === version.version;
+  const allBindingsRequired = requiresVisual || methodData?.required.some(method => method.id === 'compare' || method.id === 'visual');
+  const workDone = !!run && (state === 'passed' || state === 'conditional') && !visualRemaining && !blockers.length;
   const bound = version.screens.filter(screen => screen.impl).length;
-  const canBindMissing = requiresVisual && runs.length > 0 && !runs.some(row => row.signed) && version.screens.some(screen => !screen.impl);
+  const canBindMissing = (requiresVisual || methodData) && runs.length > 0 && !runs.some(row => row.signed) && version.screens.some(screen => !screen.impl);
   const visualWritable = evidenceWritable && isBaseline && run?.id === entry.runs.at(-1)?.id;
-  const verdictWord = linkedChanged ? '针对旧 PR' : stale ? '针对旧提交' : run?.signed ? '已签收' : run ? verdictNames[state] : '还没开始';
+  const verdictWord = linkedChanged ? '针对旧 PR' : locationChanged ? '针对旧预览' : stale ? '针对旧提交' : run?.signed ? '已签收' : run ? verdictNames[state] : '还没开始';
   const lead = linkedChanged ? '关联的 PR 已经换了，这次结果只针对旧 PR。请对当前 PR 重新运行。'
+    : locationChanged ? '预览地址已经变化，这次证据对应原预览。请重新运行。'
     : stale ? `预览已经更新到 ${activeCommit?.slice(0, 8)}，这次结果只针对旧提交。请重新运行。`
     : run?.signed ? `已按 V${version.version} 签收（${designDate(run.signed.at)}）。`
     : !isBaseline ? `正式验收使用登记的实施基线${entry.frozen === undefined ? '。当前尚未定稿。' : ` V${entry.frozen}。当前查看 V${version.version}。`}`
+    : run && blockers.length ? `还有 ${blockers.length} 个验收手段待通过。`
     : visualRemaining ? `还有 ${visualRemaining} 行逐画面对照待处理。`
+    : run && state === 'conditional' ? '已有附条件的验收结果。可查看关联债务。'
     : run ? (failures.length || pending.length ? `还差 ${[failures.length ? `${failures.length} 项要修` : '', pending.length ? `${pending.length} 处待补证据` : ''].filter(Boolean).join('、')}。`
-      : state === 'conditional' ? '已有附条件的验收结果，请查看关联债务。' : state === 'passed' ? '所有验收项已通过。' : '还需补齐验收证据。')
+      : state === 'passed' ? '所有验收项已通过。' : '还需补齐验收证据。')
     : '尚无真实页面验收证据。用关联 PR 的预览运行验收。';
   type Step = { key: string; title: string; detail: string; done: boolean; action?: JSX.Element };
   const steps: Step[] = [
@@ -117,7 +144,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
         ? '请有权评审人选择正式对照稿。' : `登记基线 V${entry.frozen}，当前查看 V${version.version}。`,
       action: !isBaseline && onSetBaseline ? <button type="button" className="ep-button" onClick={onSetBaseline}>定为实施基线</button>
         : !isBaseline && entry.frozen !== undefined ? <Link className="ep-button" to={`/design?${new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(entry.frozen), tab: 'accept' })}`}>打开基线 V{entry.frozen} 的验收</Link> : undefined },
-    { key: 'bind', title: '绑定实现画面', done: bound === version.screens.length || !requiresVisual && (bound > 0 || runs.length > 0),
+    { key: 'bind', title: '绑定实现画面', done: bound === version.screens.length || !allBindingsRequired && (!items.length || bound > 0 || runs.length > 0),
       detail: canBindMissing ? `${bound}/${version.screens.length} 个画面已绑定；可以补充未绑定的画面`
         : runs.length && bound < version.screens.length ? `${bound}/${version.screens.length} 个画面已绑定；运行后不能再改，没绑的画面会缺证据` : `${bound}/${version.screens.length} 个画面已绑定预览内地址；实拍时进入该画面的目标状态`,
       action: canReview && !!version.screens.length && (!runs.length || canBindMissing) ? <button className="ep-button" type="button" onClick={() => setBinding(true)}>绑定实现画面</button> : undefined },
@@ -125,14 +152,18 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
       detail: run ? `PR #${run.pullRequest} · 提交 ${run.commit.slice(0, 8)} · ${designDate(run.createdAt)}` : '填写关联 PR 编号，用它的预览逐条实拍',
       action: canWrite ? <form className="dw-row" onSubmit={event => { event.preventDefault(); void start(); }}>
         <input aria-label="关联 PR 编号" placeholder="PR 编号" type="number" min={1} required value={pr} onChange={event => setPr(event.target.value)} />
-        <button className="ep-button" disabled={busy || !isBaseline || !items.length}><RefreshCw />{run ? '重新运行' : '运行验收'}</button>
+        <button className="ep-button" disabled={busy || !isBaseline || !items.length && !methodData}><RefreshCw />{run ? '重新运行' : '运行验收'}</button>
       </form> : undefined },
-    { key: 'fix', title: '修问题、补证据', done: !!run && !failures.length && !pending.length && !visualRemaining,
-      detail: visualRemaining ? `逐画面对照还有 ${visualRemaining} 行待处理`
-        : run ? (failures.length || pending.length ? `${failures.length} 项要修，${pending.length} 处待补证据` : '没有要修的') : '运行后才知道' },
+    { key: 'fix', title: '修问题、补证据', done: workDone,
+      detail: workDone ? state === 'conditional' ? '有条件通过，相关问题已记债' : '验收证据已齐'
+        : run && blockers.length ? blockers.map(method => method.name).join('、') + '待通过'
+        : visualRemaining ? `逐画面对照还有 ${visualRemaining} 行待处理`
+        : run && state === 'conditional' ? '已有附条件的验收结果。可查看关联债务。'
+    : run ? (failures.length || pending.length ? `${failures.length} 项要修，${pending.length} 处待补证据` : '还有证据待补') : '运行后才知道' },
     { key: 'sign', title: '签收', done: !!run?.signed,
       detail: run?.signed ? `签收于 ${designDate(run.signed.at)}`
-        : requiresVisual ? '稿件验收项达到签收条件，逐画面对照通过后签收' : '全部通过或有条件通过后签收',
+        : methodData ? '所有适用手段通过，稿件验收项达到签收条件后可签收'
+          : requiresVisual ? '稿件验收项达到签收条件，逐画面对照通过后签收' : '全部通过或有条件通过后签收',
       action: canSign ? <button className="ep-button" type="button" disabled={busy || !signable} onClick={() => void sign()}><Check />签收</button> : undefined },
   ];
   const current = steps.findIndex(step => !step.done);
@@ -151,11 +182,23 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const origins = new Map<string, typeof version.screens>();
   for (const screen of version.screens) { const key = `${screen.viewport}:${screen.route}`; origins.set(key, [...(origins.get(key) ?? []), screen]); }
   const shared = [...origins.values()].filter(list => list.length > 1);
-  const visualNumber = Number(version.screens.length > 0);
-  const ruleNumber = 3 + visualNumber + Number(failures.length > 0) + Number(pending.length > 0);
+  const visualNumber = Number(showComparison && !methodData);
+  const issueNumber = 3 + visualNumber + Number(Boolean(methodData));
+  const ruleNumber = methodData ? 3 : issueNumber + Number(failures.length > 0) + Number(pending.length > 0);
+  const moreNumber = methodData ? issueNumber + Number(failures.length > 0) + Number(pending.length > 0) : ruleNumber + 1;
+  const overall: DesignMethodStatus = !run ? 'notrun' : stale ? 'missing'
+    : state === 'failed' ? 'failed' : state === 'needs_evidence' ? 'missing' : 'passed';
   return <section className="dw-acceptance dw-ac">
+    {methodData && <AcceptanceMethodTabs active={check} methods={methodData.methods} overall={overall} go={go} />}
+    <div id={methodData ? 'dw-ac-method-panel' : undefined} role={methodData ? 'tabpanel' : undefined}
+      aria-labelledby={methodData ? `dw-ac-tab-${check}` : undefined}>
     <ol className="dw-dl-items dw-surface dw-ac-items">
-      <li data-item="verdict"><h4><b>1</b>结论</h4>
+      {activeMethod && <AcceptanceMethodIntro method={activeMethod} />}
+      {activeMethod && methodData && activeMethod.status !== 'not_applicable' && <AcceptanceMethodDetails
+        method={activeMethod} data={methodData} version={version} run={run} entry={entry} busy={busy} writable={evidenceWritable}
+        onRule={setSelected} onDebt={itemId => { if (run) void send('acceptance.debt', { runId: run.id, itemId }); }}
+        savedCompare={comparisonSkipped ? undefined : () => go('compare')} />}
+      {showOverview && <li data-item="verdict"><h4><b>1</b>结论</h4>
         <p className="dw-dl-lead-text"><span className="dw-status" data-state={stale ? 'needs_evidence' : run?.signed ? 'passed' : run ? state : 'draft'}>{verdictWord}</span> {lead}</p>
         <p className="dw-dl-factline">
           {!isBaseline && onSetBaseline && entry.frozen !== undefined &&
@@ -167,8 +210,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
           </select>}
         </p>
         {run && !run.signed && !stale && (preview.loading ? <ContentLoading label="核对当前预览提交" variant="inline" className="dw-dl-missing" />
-          : !activeCommit ? <p className="dw-dl-missing" role="status">暂时无法核对当前预览提交，请确认预览已部署；核对上之前不能补证据、不能签收。</p> : null)}</li>
-      <li data-item="steps"><h4><b>2</b>下一步</h4>
+          : !activeCommit ? <p className="dw-dl-missing" role="status">暂时无法核对当前预览提交，请确认预览已部署；核对上之前不能补证据、不能签收。</p> : null)}</li>}
+      {showOverview && methodData && <li data-item="methods"><h4><b>2</b>验收手段<small>每种手段的状态及不适用理由</small></h4>
+        <AcceptanceMethodOverview methods={methodData.methods} go={go} /></li>}
+      {showOverview && <li data-item="steps"><h4><b>{methodData ? 3 : 2}</b>下一步</h4>
         <ol className="dw-ac-steps">{steps.map((step, index) => <li key={step.key} data-state={step.done ? 'done' : index === current ? 'current' : 'later'}>
           <span className="dw-ac-step-mark">{step.done ? <Check /> : index + 1}</span>
           <div><strong>{step.title}</strong><small>{step.detail}</small>
@@ -179,13 +224,13 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
             : step.done ? ((step.key === 'run' || step.key === 'bind' && bound < version.screens.length) && step.action
               ? <div className="dw-ac-step-action">{step.action}</div> : null)
             : current >= 0 && index > current && step.action ? <small className="dw-ac-step-wait">先完成第 {current + 1} 步</small> : null}
-        </li>)}</ol></li>
-      {!!version.screens.length && <li data-item="screens"><h4><b>3</b>逐画面对照
-        <small>{requiresVisual ? '缺实拍或缺证据的画面需补齐后签收' : '选择画面查看同条件下的两张截图'}</small></h4>
+        </li>)}</ol></li>}
+      {showComparison && <li data-item="screens"><h4><b>{methodData && !visualOnly ? 2 : 3}</b>{visualOnly ? '逐画面实拍与检查' : '逐画面对照'}
+        <small>{visualOnly ? '按画面记录实际截图和十项检查' : methodData ? '查看同条件的两张图和对照结论' : requiresVisual ? '缺实拍或缺证据的画面需补齐后签收' : '选择画面查看同条件下的两张截图'}</small></h4>
         <DesignVisualAcceptance key={version.version} entry={entry} version={version} run={run} busy={busy} writable={visualWritable}
-          command={command} onRule={setSelected} />
+          command={command} onRule={setSelected} visualOnly={visualOnly} />
       </li>}
-      {!!failures.length && <li data-item="fix"><h4><b>{3 + visualNumber}</b>要修的问题<small>{failures.length} 项 · 修复后重跑，或把普通问题记成债务</small></h4>
+      {showOverview && !!failures.length && <li data-item="fix"><h4><b>{issueNumber}</b>要修的问题<small>{failures.length} 项 · 修复后重跑，或把普通问题记成债务</small></h4>
         <div className="dw-issues">{failures.map(item => {
           const unmatched = run!.cells.filter(cell => cell.itemId === item.id && cell.status !== 'passed');
           const cells = unmatched.filter(cell => cell.status === 'failed');
@@ -210,7 +255,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
             </div>
           </article>;
         })}</div></li>}
-      {!!pending.length && <li data-item="evidence"><h4><b>{3 + visualNumber + Number(failures.length > 0)}</b>待补证据<small>{pending.length} 处 · 上传实拍并写判断依据</small></h4>
+      {showOverview && !!pending.length && <li data-item="evidence"><h4><b>{issueNumber + Number(failures.length > 0)}</b>待补证据<small>{pending.length} 处 · 上传实拍并写判断依据</small></h4>
         <div className="dw-pending">{pending.map(cell => {
           const item = items.find(row => row.id === cell.itemId)!;
           return <div className="dw-pending-row" key={`${cell.itemId}-${cell.slot}`}><span className="dw-status" data-state="needs_evidence">{cellNames[cell.status]}</span>
@@ -218,7 +263,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
             {evidenceWritable && <button type="button" className="ep-button" onClick={() => setSelected(cell)}>{item.how === 'human' ? '人工核对' : '补充证据'}</button>}
           </div>;
         })}</div></li>}
-      <li data-item="rules"><h4><b>{ruleNumber}</b>全部验收项<small>{items.length} 条 · 按状态分组</small></h4>
+      {showRules && <li data-item="rules"><h4><b>{ruleNumber}</b>全部验收项<small>{items.length} 条 · 按状态分组</small></h4>
         {!items.length && <p className="dw-dl-missing">这版稿件未声明验收项。</p>}
         {groups.map(([key, label, list]) => <details key={key} className="dw-dl-rulegroup" open={key === 'failed' || key === 'missing' || undefined}>
           <summary><span className="dw-status" data-state={key === 'missing' ? 'needs_evidence' : key === 'unverified' ? 'draft' : key}>{label}</span> <small>{list.length}</small></summary>
@@ -229,8 +274,8 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
               return cell ? <button key={slot} type="button" className="dw-status" data-state={cell.status} onClick={() => setSelected(cell)}>{slotNames[slot]} · {cellNames[cell.status]}</button>
                 : <span key={slot} className="dw-ac-slot">{slotNames[slot]}</span>;
             })}</span></span></li>)}</ul>
-        </details>)}</li>
-      {(shared.length > 0 || selfChecks.length > 0 || version.checks) && <li data-item="more"><h4><b>{ruleNumber + 1}</b>原型检查</h4>
+        </details>)}</li>}
+      {showOverview && (shared.length > 0 || selfChecks.length > 0 || version.checks) && <li data-item="more"><h4><b>{moreNumber}</b>原型检查</h4>
         {!selfChecks.length && version.checks && <p className="dw-dl-factline">
           <span>作者自检{typeof version.checks.passed === 'number' && typeof version.checks.total === 'number'
             ? ` ${version.checks.passed}/${version.checks.total}` : ''}（未附明细）</span>
@@ -240,6 +285,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
         {shared.length > 0 && <details className="dw-dl-rulegroup"><summary>共用原型入口的画面 <small>{shared.length} 组</small></summary>
           <ul className="dw-dl-plain">{shared.map(items => <li key={items[0].id}>{items.map(screen => screen.name).join('、')} <code>{items[0].route}</code> · 在画布内切换状态</li>)}</ul></details>}</li>}
     </ol>
+    </div>
     {binding && <BindImplementation version={version} onlyUnbound={runs.length > 0} preferred={params.get('screen')} busy={busy}
       close={() => setBinding(false)} bind={fields => send('implementation.bind', { version: version.version, ...fields })} />}
     {run && selected && <DesignEvidenceDialog entry={entry} run={run} cell={selected} version={version} command={command}

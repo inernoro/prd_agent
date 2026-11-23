@@ -164,6 +164,17 @@
 3. 实拍用 `--implementation <实现图.png> --path <预览内绑定地址>`，或 MCP 的 `imagePath` 和 `measured`（宽高、主题、相对路径）。未随稿发布的对照图可用 `--reference <对照图.png>` 或 `referenceImagePath` 补交。桌面用 1280×800，手机用 375×812，每张 PNG 不超过 1.5 MiB。符合相同条件的稿件验收项实拍可复用。换图后重新检查。
 4. 回读 `run.visual[画面/视口-主题]`，查两张图及 V-01 至 V-10。补交审核证据使用有验收写权限的项目凭据，单独的设计发布和反馈授权仍用于原有设计流程。重试沿用同一请求编号和内容。签收由有写权限的项目成员确认。
 
+## 按手段验收
+
+带有 `设计文档/验收手段.md` 或 `acceptancePlan` 的稿件，使用「验收」下的总览、MECE 覆盖、对照图、视觉、流程、人工、冒烟、验收债务。可用 `check=mece`、`compare`、`visual`、`flow`、`human`、`smoke`、`debt` 固定手段入口。
+
+发布时在 `design.json` 的 `acceptancePlan` 按手段记录 `applicable`。省略的手段默认适用。标为不适用时写明 `reason`，例如 `"smoke": {"applicable": false, "reason": "本稿仅描述离线流程，不涉及页面或接口"}`。在各稿件验收项的 `dimension` 写一个维度。可选值为 `correctness`、`compatibility`、`performance`、`security`、`operations`、`experience`。旧稿未标维度的规则会列出来，由后续续版补齐。
+
+1. **覆盖与取证**。先回读当前运行和真实提交。用 `risk-matrix` 检查六维度，用适用手段对应技能走完整场景。对照图需要同条件双图和 V-01 对照结果，视觉需要当前实拍和 V-01 至 V-10 的结果。可分别登记适用性。人工核对继续写入稿件验收格。
+2. **流程和冒烟**。用 `cdscli design flow <稿件> --run <运行> --commit <提交> --file <记录.json>`，冒烟改用 `design smoke`。MCP 用 `cds_design_acceptance` 的 `acceptance.flow` 或 `acceptance.smoke`。每次写一条稳定 `id`，同运行同编号更新原记录，重试沿用原请求编号。
+3. **输入与回读**。流程提供 `id`、`title`、`dimension`、`role`、`steps`，每步写 `action`、`expected`、`actual`、`status`。冒烟提供 `id`、`title`、`dimension`、`target`（`page` 或 `api`）、`path`、`expected`、`actual`、`status`。状态使用 `passed`、`failed`、`missing`。路径为预览内相对地址。用 `design result` 或 MCP 的 `run` 回读 `flows`、`smoke` 和 `visual`。
+4. **签收**。手段的结果根据这次运行回填的证据汇总，空结果按缺证据。适用手段需通过，验收债务单列。项目成员在页面确认，运行需对应当前实施基线的预览提交。
+
 ## 固定框架版本
 
 使用 `cdscli design scaffold --framework <框架ID> --framework-version <版本> --dir <新目录> --title <稿件名>` 复用该版规范。框架初衷可随稿件的 `spec/charter.json` 一并提交，或在框架导入时提供同样的 `charter` 对象。字段包括 `status`、`intent`、`problems`、`nonGoals`、`scope` 和 `owner`。可附示意稿 `example`、规则来源 `ruleSources` 和模块差异 `moduleDiffs`。

@@ -8,12 +8,14 @@ import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, des
 import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
 import { concreteVisualEvidence, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
   visualSlotTheme, type DesignVisualChecks, type DesignVisualRow } from '../shared/design-visual.js';
+import { designEvidenceStatus, designMethodApplicable, designMethodPlanEnabled, designMethodsState,
+  type DesignEvidenceStatus } from '../shared/design-methods.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
 import {
   designCommit, designDigest, designId, designPngDimensions, designRecord, designScopeId, designSourcePath, invalidDesign, localDesignPath,
-  parseDesignScope, parseFrameworkCharter, readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
+  parseDesignDimension, parseDesignScope, parseFrameworkCharter, readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
 } from './design-package.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revision-store.js';
@@ -249,6 +251,13 @@ function image(value: unknown): ProjectRevisionAsset {
   const data = Buffer.from(encoded[1], 'base64');
   if (!designPngDimensions(data)) return invalidDesign('截图内容不是有效的 PNG');
   return { id: randomUUID(), mime: 'image/png', base64: data.toString('base64') };
+}
+
+function methodResult(row: Record<string, unknown>) {
+  const { status } = row;
+  if (status !== 'passed' && status !== 'failed' && status !== 'missing') return invalidDesign('请选择有效的验收结果');
+  return { status: status as DesignEvidenceStatus, expected: planningText(row.expected, '预期结果', 800),
+    actual: planningText(row.actual, '实际结果或缺失原因', 1200) };
 }
 
 function parseVisualChecks(value: unknown): DesignVisualChecks {
@@ -653,6 +662,7 @@ export class DesignWorkspaceService {
           createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
           ...(scope ? { scope } : {}),
           ...(loaded.frameworkCharter ? { frameworkCharter: loaded.frameworkCharter } : {}),
+          ...(loaded.acceptancePlan ? { acceptancePlan: loaded.acceptancePlan } : {}),
           ...(frameworkCheck ? { frameworkCheck } : {}),
           ...(loaded.renders.length ? { renders } : {}) };
         return { result: { type: 'package', designId: id, version: version.version },
@@ -859,7 +869,7 @@ export class DesignWorkspaceService {
     designRecord(input, '实现画面定位', ['type', 'requestId', 'designId', 'version', 'screens']);
     const version = implementationVersion(entry, versionOf(entry, input.version));
     const runs = entry.runs.filter(run => run.version === version.version);
-    if (runs.length && (!designVisualRequired(version, runs.at(-1)) || runs.some(run => run.signed))) {
+    if (runs.length && (!(designVisualRequired(version, runs.at(-1)) || designMethodPlanEnabled(version)) || runs.some(run => run.signed))) {
       conflict('已有验收记录，请在新版本更新画面定位');
     }
     if (!Array.isArray(input.screens) || !input.screens.length || input.screens.length > version.screens.length) {
@@ -1031,17 +1041,53 @@ export class DesignWorkspaceService {
     return { result: { type, designId: entry.id, id: comment.id }, changes: { design: { id: entry.id, comment } } };
   }
 
-  private async recordVisual(input: Record<string, unknown>, context: Context, entry: DesignEntry, version: DesignVersion,
-    run: DesignRun, assets: ProjectRevisionAsset[]) {
+  private async requireCurrentRun(context: Context, entry: DesignEntry, run: DesignRun, commit: unknown) {
     if (context.actor.gitPublishOnly) forbidden('请使用具备验收写权限的项目凭据');
-    designRecord(input, '逐画面验收回填', ['type', 'requestId', 'designId', 'runId', 'commit', 'screenId', 'slot',
-      'checks', 'image', 'referenceImage', 'measured']);
     if (run.id !== entry.runs.at(-1)?.id || run.pullRequest !== entry.pullRequest || run.version !== entry.frozen) {
       conflict('请对当前实施基线与 PR 的最新验收运行补证据');
     }
-    if (designCommit(input.commit) !== run.commit) conflict('实拍提交与验收运行不符');
+    if (designCommit(commit) !== run.commit) conflict('证据提交与验收运行不符');
     const current = await this.deps.resolvePreview?.(context.projectId, run.pullRequest, run.commit);
     if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览已经变化，请对新提交重跑');
+  }
+
+  private async recordMethod(method: 'flow' | 'smoke', input: Record<string, unknown>, context: Context, entry: DesignEntry,
+    version: DesignVersion, run: DesignRun) {
+    designRecord(input, '验收手段回填', ['type', 'requestId', 'designId', 'runId', 'commit', method]);
+    await this.requireCurrentRun(context, entry, run, input.commit);
+    if (!designMethodPlanEnabled(version)) conflict('该版本尚未采用分手段验收');
+    if (!designMethodApplicable(version, method)) conflict('这个验收手段在当前版本标为不适用');
+
+    const common = ['id', 'title', 'dimension'];
+    const fields = ['expected', 'actual', 'status'];
+    const row = designRecord(input[method], '验收记录', method === 'flow' ? [...common, 'role', 'steps'] : [...common, 'target', 'path', ...fields]);
+    const item = { id: designId(row.id, '验收记录编号'), title: planningText(row.title, '验收标题', 180),
+      dimension: parseDesignDimension(row.dimension), by: context.actor.label, at: context.now };
+    if (method === 'flow') {
+      if (!Array.isArray(row.steps) || !row.steps.length || row.steps.length > 20) return invalidDesign('请提供 1 至 20 个编号流程步骤');
+      const steps = row.steps.map(data => {
+        const step = designRecord(data, '流程步骤', ['action', ...fields]);
+        return { action: planningText(step.action, '步骤操作', 600), ...methodResult(step) };
+      });
+      run.flows ??= [];
+      if (run.flows.length >= 60 && !run.flows.some(value => value.id === item.id)) return invalidDesign('当前运行最多记录 60 条流程');
+      replace(run.flows, { ...item, role: planningText(row.role, '操作角色', 120), steps,
+        status: designEvidenceStatus(steps.map(step => step.status)) });
+    } else {
+      const { target } = row;
+      if (target !== 'page' && target !== 'api') return invalidDesign('请选择页面或接口冒烟');
+      run.smoke ??= [];
+      if (run.smoke.length >= 60 && !run.smoke.some(value => value.id === item.id)) return invalidDesign('当前运行最多记录 60 条冒烟结果');
+      replace(run.smoke, { ...item, ...methodResult(row), target, path: localDesignPath(row.path) });
+    }
+    return item.id;
+  }
+
+  private async recordVisual(input: Record<string, unknown>, context: Context, entry: DesignEntry, version: DesignVersion,
+    run: DesignRun, assets: ProjectRevisionAsset[]) {
+    designRecord(input, '逐画面验收回填', ['type', 'requestId', 'designId', 'runId', 'commit', 'screenId', 'slot',
+      'checks', 'image', 'referenceImage', 'measured']);
+    await this.requireCurrentRun(context, entry, run, input.commit);
 
     const screenId = designId(input.screenId, '验收画面');
     const screen = version.screens.find(row => row.id === screenId) ?? missing('此版本没有该画面');
@@ -1076,7 +1122,11 @@ export class DesignWorkspaceService {
       if (input.measured !== undefined) invalidDesign('请同时提交实拍图片和实拍条件');
       if (!row.imageId) {
         const evidence = designVisualRuleShot(version, screen, slot, run);
-        if (evidence) { row.imageId = evidence.imageId; row.measured = evidence.measured; }
+        if (evidence) {
+          row.imageId = evidence.imageId;
+          row.measured = evidence.measured;
+          row.checks = checks;
+        }
       }
     }
 
@@ -1089,12 +1139,12 @@ export class DesignWorkspaceService {
     const id = entry.id;
     let run: DesignRun;
     const assets: ProjectRevisionAsset[] = [];
-    let visualTarget: { screenId: string; slot: DesignSlot; version: number } | undefined;
+    let target: { screenId?: string; slot?: DesignSlot; version?: number; id?: string } | undefined;
     if (type === 'acceptance.start') {
       designRecord(input, '发起验收请求', ['type', 'requestId', 'designId', 'version', 'pullRequest', 'commit']);
       const version = implementationVersion(entry, versionOf(entry, input.version));
       if (entry.frozen !== version.version) conflict('请先定稿要验收的版本');
-      if (!version.acceptance.length) conflict('这一版尚未声明验收项');
+      if (!version.acceptance.length && !designMethodPlanEnabled(version)) conflict('这一版尚未声明验收项');
       const pullRequest = number(input.pullRequest ?? entry.pullRequest, '拉取请求');
       const commit = input.commit === undefined ? undefined : designCommit(input.commit);
       const preview = await this.deps.resolvePreview?.(projectId, pullRequest, commit);
@@ -1165,7 +1215,10 @@ export class DesignWorkspaceService {
           cell.status = status;
         }
       } else if (type === 'acceptance.visual') {
-        visualTarget = await this.recordVisual(input, context, entry, version, run, assets);
+        target = await this.recordVisual(input, context, entry, version, run, assets);
+      } else if (type === 'acceptance.flow' || type === 'acceptance.smoke') {
+        const method = type === 'acceptance.flow' ? 'flow' : 'smoke';
+        target = { id: await this.recordMethod(method, input, context, entry, version, run), version: run.version };
       } else if (type === 'acceptance.debt') {
         designRecord(input, '记债请求', ['type', 'requestId', 'designId', 'runId', 'itemId']);
         const itemId = designId(input.itemId, '验收项编号');
@@ -1194,7 +1247,10 @@ export class DesignWorkspaceService {
         }
         const current = await this.deps.resolvePreview?.(projectId, run.pullRequest, run.commit);
         if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览提交已经变化，请重跑后签收');
-        if (designVisualRequired(version, run) && designVisualSummary(version, run).remaining) {
+        if (designMethodPlanEnabled(version)) {
+          const { blockers } = designMethodsState(version, run);
+          if (blockers.length) conflict(`以下验收手段尚未通过：${blockers.map(method => method.name).join('、')}`);
+        } else if (designVisualRequired(version, run) && designVisualSummary(version, run).remaining) {
           conflict('还有画面缺少同条件对照图、实拍或检查证据，完成逐画面对照后再签收');
         }
         if (run.verdict !== 'passed' && run.verdict !== 'conditional') return conflict('验收通过或有条件通过后才能签收');
@@ -1207,13 +1263,18 @@ export class DesignWorkspaceService {
       } else return invalidDesign('不支持的验收命令');
       run.verdict = evaluateDesignAcceptance(version.acceptance.map(rule => ({ id: rule.id, priority: rule.priority,
         cells: run.cells.filter(cell => cell.itemId === rule.id).map(cell => ({ ...cell, applicable: true })) })));
-      if (designVisualRequired(version, run)) {
+      if (designMethodPlanEnabled(version)) {
+        const { required, blockers } = designMethodsState(version, run);
+        if (blockers.some(method => method.status === 'failed')) run.verdict = 'failed';
+        else if (blockers.length && run.verdict !== 'failed') run.verdict = 'needs_evidence';
+        else if (!version.acceptance.length && required.length) run.verdict = 'passed';
+      } else if (designVisualRequired(version, run)) {
         const visual = designVisualSummary(version, run);
         if (visual.failed) run.verdict = 'failed';
         else if (visual.remaining && run.verdict !== 'failed') run.verdict = 'needs_evidence';
       }
     }
-    return { result: { type, designId: id, runId: run.id, ...visualTarget }, changes: {
+    return { result: { type, designId: id, runId: run.id, ...target }, changes: {
       assets, design: { id, run, ...(type === 'acceptance.start' ? { pullRequest: run.pullRequest } : {}) },
     } };
   }
