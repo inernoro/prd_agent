@@ -529,6 +529,61 @@ public class ProductClaimWebhookTests
         Assert.Equal("T1.2.3", (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).TCode);
     }
 
+
+    [Theory]
+    [InlineData(null, "automatic")]
+    [InlineData("   ", "automatic")]
+    [InlineData("https://example.test/stored-t-plan", "automatic")]
+    [InlineData(null, "debug")]
+    [InlineData(null, "resend")]
+    public async Task FormalNoticeKeepsRecognizedPlanUrlAcrossParseSaveSnapshotAndDelivery(string? storedUrl, string dispatch)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        if (dispatch != "automatic")
+            await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true, DebugMode = true });
+        var source = new ProductInitiation {
+            Id = "t", ProductId = "product", AppName = "测试应用", TCode = "T1.0.0",
+            PlanName = "测试应用T1.0.0（方案链接回归）", PlanUrl = storedUrl,
+            Status = "approved", CreatedBy = "admin", OwnerId = "owner",
+        };
+        await f.Db.ProductInitiations.InsertOneAsync(source);
+        const string pastedUrl = "https://example.test/pasted-plan?version=1&source=notice";
+        var expectedUrl = string.IsNullOrWhiteSpace(storedUrl) ? pastedUrl : storedUrl.Trim();
+        var controller = f.ProductController();
+        var parsed = Assert.IsType<OkObjectResult>(await controller.ParseProductVersionMessage(
+            new ParseProductVersionMessageRequest { Kind = "formal",
+                Text = $"【版本上线】\n产品方案名称：{source.PlanName}\n方案地址：{pastedUrl}" }));
+        var result = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(parsed.Value).Data,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("result");
+        Assert.Equal("t", result.GetProperty("matchedInitiationId").GetString());
+        Assert.Equal(expectedUrl, result.GetProperty("planUrl").GetString());
+        var savedResponse = Assert.IsType<OkObjectResult>(await controller.CreateRelease("product", new CreateReleaseRequest {
+            InitiationId = "t", PlanUrl = pastedUrl, OwnerId = "owner", TeamMemberIds = new() { "owner" },
+            PlannedReleaseAt = DateTime.UtcNow, PlannedTrainingMinutes = 0, NoTapdLinks = true,
+        }));
+        var release = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(savedResponse.Value).Data);
+        Assert.Equal(expectedUrl, release.PlanUrl);
+        var snapshot = JsonSerializer.Deserialize<ProductRelease>(release.ClaimNotification!.Snapshot)!;
+        Assert.Equal(expectedUrl, snapshot.PlanUrl);
+        Assert.Equal(storedUrl, (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).PlanUrl);
+        if (dispatch != "automatic")
+        {
+            Assert.Empty(f.Http.Bodies);
+            Assert.IsType<OkObjectResult>(dispatch == "debug"
+                ? await f.Controller().DebugNotify("V", release.Id)
+                : await f.Controller().Resend("V", release.Id));
+        }
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        var content = payload.RootElement.GetProperty("text").GetProperty("content").GetString()!;
+        Assert.Contains("方案地址：" + expectedUrl, content);
+        Assert.Contains(release.VCode, content);
+        var copied = Assert.IsType<OkObjectResult>(await controller.GetReleaseCopyTemplate(release.Id));
+        var copy = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(copied.Value).Data,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("text").GetString()!;
+        Assert.Contains("方案地址：" + expectedUrl, copy);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly MongoClient client;

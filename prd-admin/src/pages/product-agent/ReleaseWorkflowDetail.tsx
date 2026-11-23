@@ -466,10 +466,10 @@ export function ReleaseWorkflowDetail({
       if (parsed.projectType) setProjectType(parsed.projectType);
       if (parsed.versionType) setVersionType(parsed.versionType);
       if (parsed.demandSource) setDemandSource(parsed.demandSource);
-      if (parsed.planUrl) setPlanUrl(parsed.planUrl);
       if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
       if (parsed.departmentName) setDepartmentName(parsed.departmentName);
     }
+    if (parsed.planUrl && !source?.planUrl?.trim()) setPlanUrl(parsed.planUrl);
     if (source) planNameDraft.setPasted(source.planName, editVersion);
     else if (parsed.planName) planNameDraft.setPasted(parsed.planName, editVersion);
     if (!source && parsed.ownerName) {

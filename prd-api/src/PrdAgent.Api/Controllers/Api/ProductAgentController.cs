@@ -784,7 +784,7 @@ public partial class ProductAgentController : ControllerBase
                 if (matched != null)
                 {
                     result.PlanName = matched.PlanName;
-                    result.PlanUrl = matched.PlanUrl;
+                    if (!string.IsNullOrWhiteSpace(matched.PlanUrl)) result.PlanUrl = matched.PlanUrl.Trim();
                     result.DemandSource = matched.DemandSource;
                     result.ProjectType = matched.ProjectType;
                     result.VersionType = matched.VersionType;
@@ -1512,7 +1512,8 @@ public partial class ProductAgentController : ControllerBase
             SystemName = initiation?.SystemName ?? productSystemName,
             AppName = initiation?.AppName ?? productAppName,
             ProjectType = projectType,
-            PlanUrl = request.IsTemporaryOptimization ? request.PlanUrl?.Trim() : initiation!.PlanUrl,
+            PlanUrl = request.IsTemporaryOptimization || string.IsNullOrWhiteSpace(initiation!.PlanUrl)
+                ? request.PlanUrl?.Trim() : initiation!.PlanUrl!.Trim(),
             DepartmentName = request.IsTemporaryOptimization ? request.DepartmentName?.Trim() : initiation!.DepartmentName,
             DemandSource = request.IsTemporaryOptimization ? request.DemandSource?.Trim() : initiation!.DemandSource,
             RequirementDescription = request.IsTemporaryOptimization ? request.RequirementDescription?.Trim() : initiation!.RequirementDescription,
