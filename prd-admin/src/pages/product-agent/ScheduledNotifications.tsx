@@ -39,6 +39,7 @@ function notificationStatus(task: ScheduledNotification) {
 export function ScheduledNotifications() {
   const [items, setItems] = useState<ScheduledNotification[]>([]);
   const [canManage, setCanManage] = useState(false);
+  const [managementBlockedReason, setManagementBlockedReason] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
@@ -60,6 +61,7 @@ export function ScheduledNotifications() {
         if (res.success) {
           setItems(res.data.items);
           setCanManage(res.data.canManage);
+          setManagementBlockedReason(res.data.managementBlockedReason ?? null);
           setError('');
           shouldPoll = res.data.canManage && res.data.items.some((task) =>
             (task.enabled && task.nextRunAt !== null) || task.lastResult === 'sending' || task.debugLastResult === 'sending');
@@ -139,13 +141,15 @@ export function ScheduledNotifications() {
           {canManage && <Button size="sm" variant="primary" onClick={() => setEditing({ mode: 'new' })}><Plus size={14} />新建任务</Button>}
         </div>
       </div>
+      {!loading && !error && !canManage && <div role="status" className="rounded-xl border border-token-subtle p-5 text-sm text-token-secondary">
+        <p>{managementBlockedReason || '当前部署未获准管理定时通知，请联系管理员检查部署授权。'}</p>
+        <a className="mt-2 inline-block underline" href="/product-agent?section=settings&settingsCat=webhook">查看版本申领通知及补发</a>
+      </div>}
       {actionMessage && <p role="status" className="text-sm text-token-secondary">{actionMessage}</p>}
       {loading ? <MapSectionLoader text="正在读取通知任务…" /> : error ? (
         <p role="alert" className="text-sm text-token-secondary">{error}</p>
-      ) : !canManage ? (
-        <p className="rounded-xl border border-token-subtle p-5 text-sm text-token-muted">请在正式环境管理定时通知。</p>
       ) : items.length === 0 ? (
-        <p className="rounded-xl border border-token-subtle p-5 text-sm text-token-muted">暂无通知任务。点击「新建任务」设置第一条定时通知。</p>
+        <p className="rounded-xl border border-token-subtle p-5 text-sm text-token-muted">{canManage ? '暂无通知任务。点击「新建任务」设置第一条定时通知。' : '暂无可查看的定时通知任务。'}</p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-token-subtle">
           <table className="w-full text-left text-sm">
@@ -174,6 +178,8 @@ export function ScheduledNotifications() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex whitespace-nowrap gap-1">
+                      {!canManage && <span className="text-token-muted">仅查看</span>}
+                      {canManage && <>
                       <Button size="sm" variant="ghost" disabled={enableActions[task.id]?.pending}
                         onClick={() => void changeEnabled(task, !task.enabled)}>
                         {enableActions[task.id]?.pending ? '保存中…' : task.enabled ? '禁用' : '启用'}
@@ -182,6 +188,7 @@ export function ScheduledNotifications() {
                       {(task.canDebug ?? task.canEdit) && <Button size="sm" variant="ghost" disabled={debugging !== null || task.debugLastResult === 'sending'}
                         onClick={() => void debug(task)}>{debugging === task.id ? '调试发送中…' : '立即调试'}</Button>}
                       <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: 'copy', task })}>复制</Button>
+                      </>}
                     </div>
                     {enableActions[task.id]?.error && <p role="alert" className="mt-1 text-xs text-semantic-danger">
                       {enableActions[task.id].error}

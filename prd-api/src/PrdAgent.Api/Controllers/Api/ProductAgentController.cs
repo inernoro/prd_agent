@@ -1223,6 +1223,7 @@ public partial class ProductAgentController : ControllerBase
             canNotify: notificationBlock is null, deploymentBlock: notificationBlock);
         if (updated == null)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已处理，请刷新查看现有 T 号，不要重复提交"));
+        updated.ClaimNotification = await TrySendIssuedClaimAsync("T", updated.Id, updated.ClaimNotification);
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -1552,6 +1553,7 @@ public partial class ProductAgentController : ControllerBase
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, userId,
             item.IsTemporaryOptimization ? "临时优化需求已上线" : $"版本申领完成（{item.VCode}），自动流转到已上线");
+        item.ClaimNotification = await TrySendIssuedClaimAsync("V", item.Id, item.ClaimNotification);
         return Ok(ApiResponse<object>.Ok(item));
     }
 

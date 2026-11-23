@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.ProductAgent;
@@ -415,10 +416,127 @@ public class ProductClaimWebhookTests
         Assert.DoesNotContain("T3.51.2", payload.RootElement.GetProperty("text").GetProperty("content").GetString()!);
     }
 
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IssuanceControllerSendsAfterPersistenceWithoutRunningWorker(bool formal)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "t", ProductId = "product", AppName = "测试应用", PlanName = "通知链路自测",
+            CreatedBy = "admin", Status = formal ? "approved" : "decision_pending",
+            TCode = formal ? "T1.0.0" : null, ReviewPassed = true, OwnerId = "owner", OwnerName = "负责人",
+        });
+        var controller = f.ProductController();
+        IActionResult response = formal
+            ? await controller.CreateRelease("product", new CreateReleaseRequest {
+                InitiationId = "t", OwnerId = "owner", TeamMemberIds = new() { "owner" },
+                PlannedReleaseAt = DateTime.UtcNow, PlannedTrainingMinutes = 0, NoTapdLinks = true,
+            })
+            : await controller.DecideInitiation("t", new InitiationDecisionRequest { ReviewMeetingRequired = false });
+        var ok = Assert.IsType<OkObjectResult>(response);
+        Assert.Contains("\"sent\"", JsonSerializer.Serialize(ok.Value));
+        Assert.Single(f.Http.Bodies);
+        var saved = formal
+            ? (await f.Db.ProductReleases.Find(_ => true).SingleAsync()).ClaimNotification
+            : (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).ClaimNotification;
+        Assert.Equal("sent", saved!.Status);
+        await f.ProcessTAsync();
+        Assert.Single(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task ProviderFailureDoesNotUndoIssuedNumberAndNeverAutomaticallyRetries()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        f.Http.Body = "{\"errcode\":40031}";
+        await f.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "t", ProductId = "product", AppName = "测试应用", PlanName = "失败保号自测",
+            CreatedBy = "admin", Status = "decision_pending", ReviewPassed = true, OwnerId = "owner",
+        });
+        Assert.IsType<OkObjectResult>(await f.ProductController().DecideInitiation("t", new InitiationDecisionRequest()));
+        var saved = await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync();
+        Assert.False(string.IsNullOrWhiteSpace(saved.TCode));
+        Assert.Equal("failed", saved.ClaimNotification!.Status);
+        Assert.Contains("40031", saved.ClaimNotification.Error);
+        await f.ProcessTAsync();
+        Assert.Single(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task ManualSendWorksWithoutWorkerAndConcurrentClicksOnlyDeliverOnce()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync(); await f.AddPendingAsync();
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => f.Controller().Resend("T", "t")));
+        Assert.Contains(responses, result => result is OkObjectResult);
+        Assert.Single(f.Http.Bodies);
+        var saved = await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync();
+        Assert.Equal("sent", saved.ClaimNotification!.Status);
+        Assert.Equal(1, saved.ClaimNotification.Attempts);
+        Assert.IsType<ConflictObjectResult>(await f.Controller().Resend("T", "t"));
+        await f.ProcessTAsync();
+        Assert.Single(f.Http.Bodies);
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("blocked")]
+    [InlineData("sent")]
+    [InlineData("cancelled")]
+    public async Task ManualSendDoesNotReplayUnsafeOrHistoricalRecords(string status)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync(); await f.AddPendingAsync();
+        await f.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t",
+            Builders<ProductInitiation>.Update.Set(x => x.ClaimNotification!.Status, status));
+        Assert.IsType<ConflictObjectResult>(await f.Controller().Resend("T", "t"));
+        Assert.Empty(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task DirectDebugSendsImmediatelyAndFailedRetryReportsProviderErrorCode()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true, DebugMode = true });
+        await f.AddPendingAsync();
+        f.Http.Body = "{\"errcode\":40031,\"errmsg\":\"sensitive provider detail\"}";
+        var failure = Assert.IsType<ConflictObjectResult>(await f.Controller().DebugNotify("T", "t"));
+        Assert.Contains("40031", JsonSerializer.Serialize(failure.Value));
+        Assert.DoesNotContain("sensitive provider detail", JsonSerializer.Serialize(failure.Value));
+        Assert.Single(f.Http.Bodies);
+        f.Http.Body = "{\"errcode\":0}";
+        Assert.IsType<OkObjectResult>(await f.Controller().Retry("T", "t"));
+        Assert.Equal(2, f.Http.Bodies.Count);
+        Assert.Equal("sent", (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).ClaimNotification!.Status);
+    }
+
+    [Fact]
+    public async Task InvalidProtectionKeyReportsActionableFailureWithoutOutboundRequest()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync(); await f.AddPendingAsync();
+        var otherKey = new EphemeralDataProtectionProvider().CreateProtector(ProductClaimWebhookController.ProtectionPurpose).Protect(TestUrl);
+        await f.Db.ProductAgentSettings.UpdateOneAsync(_ => true,
+            Builders<ProductAgentSettings>.Update.Set(x => x.ClaimWebhook.ProtectedUrl, otherKey));
+        var failed = Assert.IsType<ConflictObjectResult>(await f.Controller().Resend("T", "t"));
+        Assert.Contains("重新保存", JsonSerializer.Serialize(failed.Value, new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+        Assert.Empty(f.Http.Bodies);
+        Assert.Equal("T1.2.3", (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).TCode);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly MongoClient client;
         private readonly string name = "product_webhook_test_" + Guid.NewGuid().ToString("N");
+        private ServiceProvider? deliveryServices;
+        public ServiceProvider Services => deliveryServices ??= new ServiceCollection()
+            .AddSingleton(Db).AddSingleton(Protection).AddSingleton<IHttpClientFactory>(Http)
+            .AddSingleton(BuildConfiguration(false)).BuildServiceProvider();
         public MongoDbContext Db { get; }
         public IDataProtectionProvider Protection { get; } = new EphemeralDataProtectionProvider();
         public FakeHttp Http { get; } = new();
@@ -451,7 +569,7 @@ public class ProductClaimWebhookTests
         public ProductClaimWebhookController Controller(bool admin = true, bool preview = false)
         {
             var configuration = BuildConfiguration(preview);
-            return new(Db, Protection, configuration) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", admin ? "admin" : "member") }, "test")) } } };
+            return new(Db, Protection, configuration, Services) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", admin ? "admin" : "member") }, "test")) } } };
         }
         private static IConfiguration BuildConfiguration(bool preview) => new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -460,6 +578,21 @@ public class ProductClaimWebhookTests
                 [PrdAgent.Infrastructure.Security.DeploymentAuthority.DeploymentIdentityKey] = "claim-webhook:test",
                 [PrdAgent.Infrastructure.Security.DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
             }).Build();
+        public ProductAgentController ProductController() => new(Db, NullLogger<ProductAgentController>.Instance,
+            null!, null!, null!, null!, null!, null!)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    RequestServices = Services,
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[] {
+                        new Claim("sub", "admin"), new Claim("isRoot", "1"),
+                        new Claim("permissions", PrdAgent.Core.Security.AdminPermissionCatalog.Super),
+                    }, "test")),
+                },
+            },
+        };
         public async Task AddPendingAsync()
         {
             var item = new ProductInitiation { Id = "t", TCode = "T1.2.3", OwnerId = "owner", OwnerName = "负责人", PlanName = "测试方案" };
@@ -474,6 +607,7 @@ public class ProductClaimWebhookTests
         }
         public async ValueTask DisposeAsync()
         {
+            deliveryServices?.Dispose();
             await client.DropDatabaseAsync(name);
             if (Directory.Exists(SeedDirectory)) Directory.Delete(SeedDirectory, recursive: true);
         }
@@ -482,12 +616,13 @@ public class ProductClaimWebhookTests
     private sealed class FakeHttp : HttpMessageHandler, IHttpClientFactory
     {
         public List<string> Bodies { get; } = new();
+        public string Body { get; set; } = "{\"errcode\":0}";
         public HttpStatusCode Result { get; set; } = HttpStatusCode.OK;
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
-            return new(Result) { Content = new StringContent("{\"errcode\":0}") };
+            return new(Result) { Content = new StringContent(Body) };
         }
     }
 }

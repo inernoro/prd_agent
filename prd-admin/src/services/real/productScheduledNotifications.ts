@@ -56,7 +56,7 @@ export const removeNotificationGroup = (group: NotificationGroup) =>
   });
 
 export const listScheduledNotifications = (signal?: AbortSignal) =>
-  apiRequest<{ canManage: boolean; items: ScheduledNotification[] }>(endpoint, { signal });
+  apiRequest<{ canManage: boolean; managementBlockedReason?: string | null; items: ScheduledNotification[] }>(endpoint, { signal });
 
 export const saveScheduledNotification = (input: ScheduledNotificationInput, id?: string) =>
   apiRequest<ScheduledNotification>(id ? `${endpoint}/${encodeURIComponent(id)}` : endpoint, {

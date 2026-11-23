@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProductClaimWebhookPanel } from './ProductClaimWebhookPanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const api = vi.hoisted(() => ({ getClaimWebhook: vi.fn(), getClaimNotices: vi.fn(), saveClaimWebhook: vi.fn(), retryClaimNotice: vi.fn(), debugClaimNotice: vi.fn() }));
+const api = vi.hoisted(() => ({ getClaimWebhook: vi.fn(), getClaimNotices: vi.fn(), saveClaimWebhook: vi.fn(), retryClaimNotice: vi.fn(), resendClaimNotice: vi.fn(), debugClaimNotice: vi.fn() }));
 vi.mock('@/services/real/productClaimWebhook', () => api);
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: () => <div>读取配置</div> }));
 const config = { enabled: true, notifyInternal: true, notifyFormal: true, configured: true, maskedUrl: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=********ab12', canEdit: true, canSend: true, identityReadyCount: 3, identityPendingCount: 1 };
@@ -19,7 +19,7 @@ beforeEach(async () => {
   api.saveClaimWebhook.mockResolvedValue({ success: true, data: { saved: true } });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks(); });
 describe('Webhook可视化配置', () => {
   it('管理员可开启调试模式并保存，保存开关本身不发送通知', async () => {
     await act(async () => root.render(<ProductClaimWebhookPanel />)); await settle();
@@ -63,5 +63,106 @@ describe('Webhook可视化配置', () => {
     await act(async () => Array.from(host.querySelectorAll('button')).find(button => button.textContent === '保存配置')!.click());
     expect(api.saveClaimWebhook).toHaveBeenCalledOnce();
     expect(api.retryClaimNotice).not.toHaveBeenCalled();
+  });
+});
+
+describe('通知等待说明和状态刷新', () => {
+  it('待发送没有错误字段时仍说明等待状态，保留旧记录的具体原因', async () => {
+    api.getClaimNotices.mockResolvedValue({ success: true, data: { items: [
+      { kind: 'T', id: 'pending', code: 'T1.2.4', notification: { status: 'pending' } },
+      { kind: 'T', id: 'blocked', code: 'T1.2.3', notification: { status: 'blocked', error: '旧记录被部署授权拦截' } },
+    ] } });
+    await act(async () => root.render(<ProductClaimWebhookPanel />)); await settle();
+    expect(host.textContent).toContain('通知已入队');
+    expect(host.textContent).toContain('后台暂未提供具体等待原因');
+    expect(host.textContent).toContain('无需重新申领版本号');
+    expect(host.textContent).toContain('旧记录被部署授权拦截');
+    expect(host.textContent).toContain('每 5 秒自动刷新');
+    expect(api.retryClaimNotice).not.toHaveBeenCalled();
+    expect(api.debugClaimNotice).not.toHaveBeenCalled();
+  });
+
+  it('只读轮询更新发送结果且不覆盖未保存的配置，完成后停止轮询', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    api.getClaimNotices
+      .mockResolvedValueOnce({ success: true, data: { items: [{ kind: 'T', id: 'pending', code: 'T1.2.4', notification: { status: 'pending' } }] } })
+      .mockResolvedValue({ success: true, data: { items: [{ kind: 'T', id: 'pending', code: 'T1.2.4', notification: { status: 'sent' } }] } });
+    await act(async () => root.render(<ProductClaimWebhookPanel />));
+    await act(async () => host.querySelectorAll<HTMLInputElement>('input[type=checkbox]')[0].click());
+    expect(host.querySelectorAll<HTMLInputElement>('input[type=checkbox]')[0].checked).toBe(false);
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(host.textContent).toContain('已发送');
+    expect(host.textContent).not.toContain('尚未收到后台的发送结果');
+    expect(host.querySelectorAll<HTMLInputElement>('input[type=checkbox]')[0].checked).toBe(false);
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(api.getClaimNotices).toHaveBeenCalledTimes(2);
+    expect(api.saveClaimWebhook).not.toHaveBeenCalled();
+    expect(api.retryClaimNotice).not.toHaveBeenCalled();
+    expect(api.debugClaimNotice).not.toHaveBeenCalled();
+  });
+
+  it('隐藏页面暂停轮询，刷新失败保留待发送事实并显示读取失败原因', async () => {
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    api.getClaimNotices
+      .mockResolvedValueOnce({ success: true, data: { items: [{ kind: 'T', id: 'pending', code: 'T1.2.4', notification: { status: 'pending' } }] } })
+      .mockRejectedValueOnce(new Error('network unavailable'));
+    await act(async () => root.render(<ProductClaimWebhookPanel />));
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(api.getClaimNotices).toHaveBeenCalledTimes(1);
+    visibility.mockReturnValue('visible');
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(host.textContent).toContain('暂时无法刷新通知状态');
+    expect(host.textContent).toContain('待发送');
+    expect(host.textContent).not.toContain('已发送');
+    expect(api.retryClaimNotice).not.toHaveBeenCalled();
+    expect(api.debugClaimNotice).not.toHaveBeenCalled();
+  });
+
+  it('后台未给失败原因时不留白，也不自动重试旧记录', async () => {
+    api.getClaimNotices.mockResolvedValue({ success: true, data: { items: [{ kind: 'T', id: 'failed', code: 'T1.2.3', notification: { status: 'failed' } }] } });
+    await act(async () => root.render(<ProductClaimWebhookPanel />)); await settle();
+    expect(host.textContent).toContain('后台没有返回具体原因');
+    expect(host.textContent).toContain('请管理员检查版本申领通知任务日志');
+    expect(api.retryClaimNotice).not.toHaveBeenCalled();
+    expect(api.debugClaimNotice).not.toHaveBeenCalled();
+  });
+});
+
+describe('逐条手动补发', () => {
+  it('只对待发和明确失败记录提供补发，读取列表不会发送', async () => {
+    api.getClaimNotices.mockResolvedValue({ success: true, data: { items: ['pending', 'debug_pending', 'waiting_identity', 'failed', 'sent', 'unknown', 'blocked'].map((status) =>
+      ({ kind: 'T', id: status, code: status, notification: { status } })) } });
+    await act(async () => root.render(<ProductClaimWebhookPanel />)); await settle();
+    expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent === '补发')).toHaveLength(4);
+    expect(api.resendClaimNotice).not.toHaveBeenCalled();
+  });
+
+  it('点击后实际发送并更新状态，连续点击只请求一次', async () => {
+    api.getClaimNotices.mockResolvedValueOnce({ success: true, data: { items: [{ kind: 'T', id: 'pending', code: 'T1.2.4', notification: { status: 'pending' } }] } })
+      .mockResolvedValue({ success: true, data: { items: [{ kind: 'T', id: 'pending', code: 'T1.2.4', notification: { status: 'sent' } }] } });
+    let finish!: (result: unknown) => void;
+    api.resendClaimNotice.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await act(async () => root.render(<ProductClaimWebhookPanel />)); await settle();
+    const button = Array.from(host.querySelectorAll('button')).find(item => item.textContent === '补发')!;
+    await act(async () => { button.click(); button.click(); });
+    expect(api.resendClaimNotice).toHaveBeenCalledOnce();
+    expect(api.resendClaimNotice).toHaveBeenCalledWith('T', 'pending');
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain('发送中');
+    await act(async () => finish({ success: true, data: { sent: true, status: 'sent' } }));
+    expect(host.textContent).toContain('已发送到企微群');
+    expect(Array.from(host.querySelectorAll('button')).some(item => item.textContent === '补发')).toBe(false);
+  });
+
+  it('补发失败仍刷新记录并显示具体原因，不把排队当成发送成功', async () => {
+    api.getClaimNotices.mockResolvedValue({ success: true, data: { items: [{ kind: 'V', id: 'failed', code: 'V1.2.4', notification: { status: 'failed', error: '企微拒绝通知（错误码 40031）' } }] } });
+    api.resendClaimNotice.mockResolvedValue({ success: false, error: { message: '企微拒绝通知（错误码 40031）' } });
+    await act(async () => root.render(<ProductClaimWebhookPanel />)); await settle();
+    await act(async () => Array.from(host.querySelectorAll('button')).find(item => item.textContent === '补发')!.click());
+    expect(api.getClaimNotices).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toContain('40031');
+    expect(host.textContent).not.toContain('通知已发送到企微群');
   });
 });

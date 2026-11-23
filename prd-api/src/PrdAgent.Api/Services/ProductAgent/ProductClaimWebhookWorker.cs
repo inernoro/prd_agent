@@ -43,30 +43,63 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             // HTTP异常可能带密钥URL，不记录异常正文。
-            catch (Exception) { logger.LogWarning("产品申领通知暂未处理，持久化任务保留"); }
+            catch (Exception ex) { logger.LogWarning("产品申领通知暂未处理，持久化任务保留。异常类型 {ErrorType}", ex.GetType().Name); }
             try { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
         }
     }
 
+    internal static async Task<ProductClaimNotification?> DispatchRecordAsync(
+        string kind, string id, IServiceProvider services, bool manualDispatch)
+    {
+        var configuration = services.GetRequiredService<IConfiguration>();
+        if (ProductClaimNotificationQueue.GetDeploymentBlockReason(configuration) is { } blocked)
+            throw new InvalidOperationException(ProductClaimNotificationQueue.DescribeDeploymentBlock(blocked));
+        var db = services.GetRequiredService<MongoDbContext>();
+        var config = (await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync())?.ClaimWebhook;
+        if (config?.Enabled != true || string.IsNullOrEmpty(config.ProtectedUrl)
+            || (kind == "T" ? !config.NotifyInternal : !config.NotifyFormal))
+            throw new InvalidOperationException("请先启用对应版本的申领通知并保存机器人地址。");
+        if (kind == "T")
+        {
+            await ProcessAsync(db.ProductInitiations, config, false, services, CancellationToken.None,
+                recordId: id, manualDispatch: manualDispatch);
+            return (await db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync())?.ClaimNotification;
+        }
+        if (kind == "V")
+        {
+            await ProcessAsync(db.ProductReleases, config, true, services, CancellationToken.None,
+                recordId: id, manualDispatch: manualDispatch);
+            return (await db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync())?.ClaimNotification;
+        }
+        throw new InvalidOperationException("不支持的通知类型。");
+    }
+
     internal static async Task ProcessAsync<T>(IMongoCollection<T> collection, ProductClaimWebhookConfig config,
-        bool formal, IServiceProvider services, CancellationToken stoppingToken, bool operationNotice = false)
+        bool formal, IServiceProvider services, CancellationToken stoppingToken, bool operationNotice = false,
+        string? recordId = null, bool manualDispatch = false)
     {
         if (formal ? !config.NotifyFormal : !config.NotifyInternal) return;
         var filter = Builders<T>.Filter;
         var update = Builders<T>.Update;
-        await collection.UpdateManyAsync(filter.Eq("ClaimNotification.Status", "sending")
+        var requested = recordId is null ? filter.Empty : filter.Eq("_id", recordId);
+        await collection.UpdateManyAsync(requested & filter.Eq("ClaimNotification.Status", "sending")
             & filter.Lt("ClaimNotification.NextAttemptAt", DateTime.UtcNow),
             update.Set("ClaimNotification.Status", "unknown").Set("ClaimNotification.Error", "投递结果未知，请先在企微群确认，避免重复通知"),
             cancellationToken: CancellationToken.None);
         var lease = Guid.NewGuid().ToString("N");
         var recordScope = operationNotice ? filter.Eq("Formal", formal) : filter.Eq("IsDeleted", false) & filter.Ne("Status", "voided");
-        var eligible = recordScope & (filter.Eq("ClaimNotification.Status", "pending")
-            | (filter.Eq("ClaimNotification.Status", "waiting_identity") & filter.Lte("ClaimNotification.NextAttemptAt", DateTime.UtcNow)));
-        if (config.DebugMode && !operationNotice) eligible &= filter.Eq("ClaimNotification.ManualDispatchApproved", true);
-        var record = await collection.FindOneAndUpdateAsync(eligible,
-            update.Set("ClaimNotification.Status", "sending").Set("ClaimNotification.LeaseId", lease)
-                .Set("ClaimNotification.NextAttemptAt", DateTime.UtcNow.AddMinutes(2)).Inc("ClaimNotification.Attempts", 1),
+        var eligible = requested & recordScope & (manualDispatch
+            ? filter.In("ClaimNotification.Status", new[] { "pending", "debug_pending", "waiting_identity", "failed" })
+            : filter.Eq("ClaimNotification.Status", "pending")
+              | (filter.Eq("ClaimNotification.Status", "waiting_identity") & filter.Lte("ClaimNotification.NextAttemptAt", DateTime.UtcNow)));
+        if (config.DebugMode && !operationNotice && !manualDispatch)
+            eligible &= filter.Eq("ClaimNotification.ManualDispatchApproved", true);
+        var claimUpdate = update.Set("ClaimNotification.Status", "sending").Set("ClaimNotification.LeaseId", lease)
+                .Set("ClaimNotification.Error", (string?)null)
+                .Set("ClaimNotification.NextAttemptAt", DateTime.UtcNow.AddMinutes(2)).Inc("ClaimNotification.Attempts", 1);
+        if (manualDispatch) claimUpdate = claimUpdate.Set("ClaimNotification.ManualDispatchApproved", true);
+        var record = await collection.FindOneAndUpdateAsync(eligible, claimUpdate,
             new FindOneAndUpdateOptions<T>
             {
                 ReturnDocument = ReturnDocument.After,
@@ -123,26 +156,40 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
                 return;
             }
             var client = services.GetRequiredService<IHttpClientFactory>().CreateClient("product-claim-webhook");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
             started = true;
-            using var response = await client.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"), stoppingToken);
-            if (!response.IsSuccessStatusCode) { status = "unknown"; error = "企微响应异常，请确认群消息后再处理，申领编号不受影响"; }
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync(url, content, timeout.Token);
+            if (!response.IsSuccessStatusCode) { status = "unknown"; error = $"企微响应异常（HTTP {(int)response.StatusCode}），请先核对群消息，避免重复发送。"; }
             else
             {
-                using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync(stoppingToken));
+                using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
                 var success = result.RootElement.TryGetProperty("errcode", out var code) && code.TryGetInt32(out var n) && n == 0;
                 status = success ? "sent" : "failed";
                 if (success && mention == null && !operationNotice)
                     services.GetService<ILogger<ProductClaimWebhookWorker>>()?.LogWarning(
                         "产品申领通知已发送，负责人企微身份未同步，本次未艾特。任务租约 {LeaseId}", lease);
-                if (!success) error = operationNotice ? "企微拒绝版本操作通知，请检查Webhook配置" : "企微拒绝通知，请检查Webhook及负责人企微身份，申领编号不受影响";
+                if (!success)
+                {
+                    if (result.RootElement.TryGetProperty("errcode", out var rejected) && rejected.TryGetInt32(out var errorCode))
+                        error = $"企微拒绝通知（错误码 {errorCode}），请检查群机器人配置；版本号不受影响。";
+                    else { status = "unknown"; error = "企微未返回可确认的结果，请先核对群消息，避免重复发送。"; }
+                }
             }
         }
+        catch (System.Security.Cryptography.CryptographicException) when (!started)
+        { error = "当前实例无法解密机器人配置，请在正式环境重新保存 Webhook 地址后，再从本记录补发。"; }
+        catch (JsonException) when (!started)
+        { error = "通知内容无法读取，本次未投递；请联系管理员核对记录，无需重新申领版本号。"; }
+        catch (OperationCanceledException) when (started)
+        { status = "unknown"; error = "通知投递超时或被中断，结果待确认；请先核对企微群消息，避免重复发送。"; }
         catch (InvalidOperationException ex) when (!started) { error = ex.Message; }
         catch (Exception) { status = started ? "unknown" : "failed"; error = started ? "通知投递结果未知，请先检查企微群，避免重复通知" : "通知未发送，请检查Webhook配置"; }
         await collection.UpdateOneAsync(filter.Eq("ClaimNotification.LeaseId", lease)
                 & filter.Eq("ClaimNotification.Status", "sending"),
             update.Set("ClaimNotification.Status", status).Set("ClaimNotification.Error", error)
                 .Set("ClaimNotification.NextAttemptAt", DateTime.UtcNow.AddMinutes(1)), cancellationToken: CancellationToken.None);
-        await Task.Delay(TimeSpan.FromSeconds(4), stoppingToken);
+        if (recordId is null) await Task.Delay(TimeSpan.FromSeconds(4), stoppingToken);
     }
 }
