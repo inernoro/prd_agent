@@ -834,7 +834,7 @@ test('短片在背景播放时仍可输入和打开账号菜单，片尾不打�
   await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
   await expect(page).toHaveURL(/\/quickstart$/);
   const movie = page.locator('video.portrait-arrival');
-  await expect(movie).toHaveAttribute('data-playback', 'playing', { timeout: 1000 });
+  await expect(movie).toHaveAttribute('data-playback', 'playing', { timeout: 2100 });
   const input = page.getByRole('textbox', { name: '我想做什么', exact: true });
   await input.fill('接入知识库');
   await page.getByLabel('打开用户菜单', { exact: true }).click();

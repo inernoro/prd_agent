@@ -1,55 +1,95 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
-const PHASE_TIMEOUT = { loading: 700, playing: 1850, leaving: 140, finished: 0 };
-type Phase = keyof typeof PHASE_TIMEOUT;
+const LOAD_TIMEOUT = 1800;
+const PLAYBACK_TIMEOUT = 1950;
+const FADE_DURATION = 140;
+let prepared: HTMLVideoElement | undefined;
+
+function createVideo(src: string) {
+  const video = document.createElement('video');
+  video.className = 'portrait-arrival';
+  video.setAttribute('aria-hidden', 'true');
+  video.tabIndex = -1;
+  video.preload = 'auto';
+  video.playsInline = true;
+  video.muted = true;
+  video.src = src;
+  return video;
+}
+
+function release(video: HTMLVideoElement) {
+  video.remove();
+  video.removeAttribute('src');
+  video.load();
+}
 
 export function prepareArrivalVideo(src?: string) {
   if (!src || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const preload = document.createElement('video');
-  preload.preload = 'auto';
-  preload.src = src;
-  return () => { preload.removeAttribute('src'); };
+  if (prepared) release(prepared);
+  const video = createVideo(src);
+  prepared = video;
+  video.load();
+  return () => {
+    // Give the destination a chance to take ownership across the route change.
+    window.setTimeout(() => {
+      if (prepared !== video) return;
+      prepared = undefined;
+      release(video);
+    }, LOAD_TIMEOUT);
+  };
 }
 
-/** Decorative video over the settled artwork. The workspace owns its own lifecycle. */
+/** The native decoder moves from login to the decorative layer without restarting its request. */
 export function ArrivalVideo({ src }: { src: string }) {
-  const [initialSrc] = useState(src);
-  const [phase, setPhase] = useState<Phase>('loading');
-  const video = useRef<HTMLVideoElement>(null);
+  const target = useRef<HTMLDivElement>(null);
+  const originalSrc = useRef(src);
+  const themeChanged = useRef(false);
 
   useEffect(() => {
-    const player = video.current;
-    if (!player) return;
-    player.muted = true;
-    void player.play()?.catch(() => setPhase(current => current === 'loading' ? 'finished' : current));
-  }, []);
-  useEffect(() => {
-    if (src !== initialSrc) setPhase('finished');
-  }, [src, initialSrc]);
+    const host = target.current;
+    if (src !== originalSrc.current) themeChanged.current = true;
+    if (!host || themeChanged.current) return;
+    const video = prepared?.getAttribute('src') === src ? prepared : createVideo(src);
+    if (prepared === video) prepared = undefined;
+    let timer: number;
+    let finished = false;
 
-  useEffect(() => {
-    if (phase === 'finished') return;
-    const timer = window.setTimeout(() => {
-      setPhase(current => current === phase ? (phase === 'playing' ? 'leaving' : 'finished') : current);
-    }, PHASE_TIMEOUT[phase]);
-    return () => window.clearTimeout(timer);
-  }, [phase]);
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timer);
+      video.removeEventListener('canplaythrough', play);
+      video.removeEventListener('playing', playing);
+      video.removeEventListener('ended', fade);
+      video.removeEventListener('error', finish);
+      release(video);
+    };
+    const fade = () => {
+      window.clearTimeout(timer);
+      video.dataset.playback = 'leaving';
+      timer = window.setTimeout(finish, FADE_DURATION);
+    };
+    const play = () => {
+      video.removeEventListener('canplaythrough', play);
+      void video.play().catch(finish);
+    };
+    const playing = () => {
+      if (video.dataset.playback !== 'loading') return;
+      video.dataset.playback = 'playing';
+      window.clearTimeout(timer);
+      timer = window.setTimeout(fade, PLAYBACK_TIMEOUT);
+    };
+    video.dataset.playback = 'loading';
+    video.addEventListener('canplaythrough', play, { once: true });
+    video.addEventListener('playing', playing);
+    video.addEventListener('ended', fade);
+    video.addEventListener('error', finish);
+    host.append(video);
+    timer = window.setTimeout(finish, LOAD_TIMEOUT);
+    if (video.readyState >= video.HAVE_ENOUGH_DATA) play();
 
-  if (phase === 'finished' || src !== initialSrc) return null;
-  return (
-    <video
-      ref={video}
-      className="portrait-arrival"
-      data-playback={phase}
-      src={initialSrc}
-      autoPlay
-      muted
-      playsInline
-      aria-hidden="true"
-      tabIndex={-1}
-      onPlaying={() => setPhase(current => current === 'loading' ? 'playing' : current)}
-      onEnded={() => setPhase('leaving')}
-      onError={() => setPhase('finished')}
-    />
-  );
+    return finish;
+  }, [src]);
+
+  return <div ref={target} className="portrait-arrival-slot" aria-hidden="true" />;
 }
