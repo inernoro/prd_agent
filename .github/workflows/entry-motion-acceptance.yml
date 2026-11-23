@@ -154,7 +154,9 @@ jobs:
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
           import { chromium, expect } from '@playwright/test';
-          import { writeFile } from 'node:fs/promises';
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { installEntryMediaFixture } from './fixtures/admin-operations.mjs';
+          const motion = JSON.parse(await readFile('fixtures/media/entry-short-motion.json','utf8')).dark;
           const browser = await chromium.launch();
           const rows = [];
           try {
@@ -183,6 +185,10 @@ jobs:
                   if(path.endsWith('/authz/menu-catalog')) return fulfill({items:[]});
                   return route.fulfill({status:503,json:{success:false,data:null,error:{code:'FIXTURE_OFFLINE',message:'fixture endpoint omitted'}}});
                 });
+                if(skin==='companion') {
+                  const url=new URL(motion.path,process.env.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN).href;
+                  await installEntryMediaFixture(page,url,motion);
+                }
                 try {
                   await page.goto('http://127.0.0.1:8201/login',{waitUntil:'domcontentloaded'});
                   const pass=page.locator('input[autocomplete="current-password"]');
@@ -367,7 +373,7 @@ jobs:
           import assert from 'node:assert/strict';
           import { chromium, firefox, webkit, expect } from '@playwright/test';
           import { readFile, writeFile } from 'node:fs/promises';
-          import { installOperationsFixtures } from './fixtures/admin-operations.mjs';
+          import { installOperationsFixtures, installEntryMediaFixture } from './fixtures/admin-operations.mjs';
           const assets=JSON.parse(await readFile('fixtures/media/entry-short-motion.json','utf8'));
           const output=[];
           const login=async (page) => {
@@ -392,6 +398,8 @@ jobs:
                 });
                 try {
                   await installOperationsFixtures(page,{quickstart:true});
+                  const assetUrl=new URL(assets[theme].path,process.env.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN).href;
+                  await installEntryMediaFixture(page,assetUrl,assets[theme]);
                   await page.addInitScript(()=>{
                     window.playback={start:0,finish:0,duration:0,frames:0};
                     document.addEventListener('playing', e=>{
