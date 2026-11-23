@@ -1,4 +1,4 @@
-name: 正式版本方案链接链路验证
+name: T和V方案字段回填验证
 on:
   push:
     branches: [codex/map-production-readonly-diagnosis-20261119]
@@ -7,42 +7,73 @@ permissions:
   contents: read
 jobs:
   server:
-    name: 复核相同后端的实际编译与链接全链路回归
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            const run=await github.rest.actions.getWorkflowRun({...context.repo,run_id:45151045396});
-            if(run.data.head_sha!=='4c3cd55652899d87adabe21e2ee8c65483d4727d')throw new Error('后端验证来源不一致');
-            for(let attempt=0;attempt<50;attempt++){
-              const {data}=await github.rest.actions.getJobForWorkflowRun({...context.repo,job_id:137612206551});
-              if(data.status==='completed'){
-                if(data.conclusion!=='success')throw new Error('后端编译或真实数据库通知回归未通过');
-                core.info('相同后端候选已通过完整编译、链接全链路回归及出口守卫');return;
-              }
-              await new Promise(resolve=>setTimeout(resolve,15000));
-            }
-            throw new Error('后端验证尚未完成');
-  frontend:
-    name: 正式申领粘贴识别与请求参数验证
-    runs-on: ubuntu-24.04
+    name: 方案链接识别保存快照和三种投递回归
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
+    services:
+      mongodb:
+        image: mongo:8.0
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      MONGODB_TEST_CONNECTION: mongodb://127.0.0.1:27017
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 658328f70e48fe160e4fd3cd55b4d94d91eceb3e
+          ref: 20329b39b9f100391f4efc1f2ee221fc5e6a89ec
           persist-credentials: false
       - name: 装配本次产品方案链接修复并核对源码
         uses: actions/github-script@v7
         with:
           script: |
             const fs=require('fs'), path=require('path'), crypto=require('crypto');
-            const files=[{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs","sha":"ce83c90972ef5ae827fc697829ff9ea02bcbc525"},{"path":"prd-admin/src/pages/product-agent/ReleaseWorkflowDetail.tsx","sha":"f47ff7eb8e07389d28d4c19a2244baa5c6a85e9c"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductClaimWebhookTests.cs","sha":"ecc459f9ae53a3f4ea2384ef63ab5a6916159ec0"},{"path":"prd-admin/src/pages/product-agent/ReleaseNoticeAutofill.test.tsx","sha":"d5a3da14f782272f79cddc83c4c52e2d0cd3ef46"},{"path":"changelogs/2026-11-23_版本通知直接发送与逐条补发.md","sha":"2b3a8cdeb0cd77cd14a3b83da6e11f53158d5c8e"}];
+            const files=[{"path":"prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductVersionNoticeParser.cs","sha":"a1af9a406b3e9d16e20adfd3df78ea2fea43dd3a"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs","sha":"0735db90e010ab045a51565e4d8e9b8031551648"},{"path":"prd-admin/src/pages/product-agent/ProductVersionMessagePaste.tsx","sha":"49677b3c45ea7d55b7788a84606922ce608527b4"},{"path":"prd-admin/src/pages/product-agent/VersionWorkflowTab.tsx","sha":"f993d1ae6fe312e9c5ab5e63d2bf37af36027e78"},{"path":"prd-admin/src/pages/product-agent/ReleaseWorkflowDetail.tsx","sha":"17678fb6631ddeb426d9b450513c43b45393615f"},{"path":"changelogs/2026-11-23_版本通知直接发送与逐条补发.md","sha":"57ba32e1c334fb2b06d91dc06b59e44555976ab5"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductVersionNoticeParserTests.cs","sha":"6a36dd22fb0cd345df098c4eb0c60da4f00ecc48"},{"path":"prd-admin/src/pages/product-agent/InitiationPasteApplication.test.tsx","sha":"8cb72e17b54e2db29259bc58e8811139c294f39a"},{"path":"prd-admin/src/pages/product-agent/ReleaseNoticeAutofill.test.tsx","sha":"01af5f02114ebd28f0ed0150be5ec8353920da1e"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductClaimWebhookTests.cs","sha":"88ca52f4d088cc41524735207399c8ff44c8f491"}];
+            for (const item of files) {
+              const {data}=await github.rest.git.getBlob({...context.repo,file_sha:item.sha});
+              const bytes=Buffer.from(data.content,'base64');
+              const digest=crypto.createHash('sha1').update(Buffer.from('blob '+bytes.length+'\0')).update(bytes).digest('hex');
+              if(digest!==item.sha) throw new Error('候选文件校验不一致 '+item.path);
+              fs.mkdirSync(path.dirname(item.path),{recursive:true});fs.writeFileSync(item.path,bytes);
+            }
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: claim-plan-link-nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: 完整解决方案编译
+        working-directory: prd-api
+        run: |
+          dotnet restore PrdAgent.sln
+          dotnet build PrdAgent.sln -c Release --no-restore
+      - name: 方案链接全链路与既有T资料保护回归
+        working-directory: prd-api
+        run: >-
+          dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj -c Release --no-build --no-restore
+          --filter 'FullyQualifiedName~ProductVersionNoticeParserTests|FullyQualifiedName~ProductClaimWebhookTests|FullyQualifiedName~ProductVersionClaimGuardTests|FullyQualifiedName~ProductVersionCopyTemplateTests'
+          --logger 'console;verbosity=normal'
+      - name: 保持完整出口守卫有效
+        run: python3 scripts/check-map-model-egress.py
+  frontend:
+    name: T和V申领粘贴识别与请求参数验证
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 20329b39b9f100391f4efc1f2ee221fc5e6a89ec
+          persist-credentials: false
+      - name: 装配本次产品方案链接修复并核对源码
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs'), path=require('path'), crypto=require('crypto');
+            const files=[{"path":"prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductVersionNoticeParser.cs","sha":"a1af9a406b3e9d16e20adfd3df78ea2fea43dd3a"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs","sha":"0735db90e010ab045a51565e4d8e9b8031551648"},{"path":"prd-admin/src/pages/product-agent/ProductVersionMessagePaste.tsx","sha":"49677b3c45ea7d55b7788a84606922ce608527b4"},{"path":"prd-admin/src/pages/product-agent/VersionWorkflowTab.tsx","sha":"f993d1ae6fe312e9c5ab5e63d2bf37af36027e78"},{"path":"prd-admin/src/pages/product-agent/ReleaseWorkflowDetail.tsx","sha":"17678fb6631ddeb426d9b450513c43b45393615f"},{"path":"changelogs/2026-11-23_版本通知直接发送与逐条补发.md","sha":"57ba32e1c334fb2b06d91dc06b59e44555976ab5"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductVersionNoticeParserTests.cs","sha":"6a36dd22fb0cd345df098c4eb0c60da4f00ecc48"},{"path":"prd-admin/src/pages/product-agent/InitiationPasteApplication.test.tsx","sha":"8cb72e17b54e2db29259bc58e8811139c294f39a"},{"path":"prd-admin/src/pages/product-agent/ReleaseNoticeAutofill.test.tsx","sha":"01af5f02114ebd28f0ed0150be5ec8353920da1e"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductClaimWebhookTests.cs","sha":"88ca52f4d088cc41524735207399c8ff44c8f491"}];
             for (const item of files) {
               const {data}=await github.rest.git.getBlob({...context.repo,file_sha:item.sha});
               const bytes=Buffer.from(data.content,'base64');
@@ -63,7 +94,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: 真实表单粘贴与申领请求回归
         working-directory: prd-admin
-        run: pnpm test src/pages/product-agent/ReleaseNoticeAutofill.test.tsx src/pages/product-agent/ReleaseApplicationBasicOnly.test.tsx
+        run: pnpm test src/pages/product-agent/InitiationPasteApplication.test.tsx src/pages/product-agent/ReleaseNoticeAutofill.test.tsx src/pages/product-agent/ReleaseApplicationBasicOnly.test.tsx src/pages/product-agent/useVersionPlanName.test.tsx
       - name: 类型和代码检查
         working-directory: prd-admin
         run: |
@@ -83,8 +114,8 @@ jobs:
               return result.flatMap(row=>row.messages).filter(item=>item.severity===1).map(item=>
                 [item.ruleId,item.message,source.split(/\r?\n/)[item.line-1]?.trim()].join('|'));
             }
-            for(const file of ['src/pages/product-agent/ReleaseWorkflowDetail.tsx','src/pages/product-agent/ReleaseNoticeAutofill.test.tsx']){
-              const baseline=cp.execFileSync('git',['show','658328f70e48fe160e4fd3cd55b4d94d91eceb3e:prd-admin/'+file],{encoding:'utf8'});
+            for(const file of ["src/pages/product-agent/ProductVersionMessagePaste.tsx","src/pages/product-agent/VersionWorkflowTab.tsx","src/pages/product-agent/ReleaseWorkflowDetail.tsx","src/pages/product-agent/InitiationPasteApplication.test.tsx","src/pages/product-agent/ReleaseNoticeAutofill.test.tsx"]){
+              const baseline=cp.execFileSync('git',['show','20329b39b9f100391f4efc1f2ee221fc5e6a89ec:prd-admin/'+file],{encoding:'utf8'});
               const before=report(file,baseline), after=report(file,fs.readFileSync(path.join(cwd,file),'utf8'));
               const remaining=new Map();
               for(const key of before)remaining.set(key,(remaining.get(key)||0)+1);
@@ -112,7 +143,7 @@ jobs:
       - uses: actions/github-script@v7
         with:
           script: |
-            const branch='codex/product-claim-delivery-20261123', sha='20329b39b9f100391f4efc1f2ee221fc5e6a89ec', expected='658328f70e48fe160e4fd3cd55b4d94d91eceb3e';
+            const branch='codex/product-claim-delivery-20261123', sha='02c365f9fcfb59806cdab8e4553f91908c528f7c', expected='20329b39b9f100391f4efc1f2ee221fc5e6a89ec';
             const {data}=await github.rest.git.getRef({...context.repo,ref:'heads/'+branch});
             if(data.object.sha!==sha && data.object.sha!==expected) throw new Error('分支已有其他更新，停止保护现有代码');
             if(data.object.sha===expected) await github.rest.git.updateRef({...context.repo,ref:'heads/'+branch,sha,force:false});
