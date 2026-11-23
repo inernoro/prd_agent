@@ -4,7 +4,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [visual, public, map, trim, playback]
+        options: [visual, public, map, trim, playback, map-playback]
         default: visual
       candidate:
         required: true
@@ -123,7 +123,7 @@ jobs:
           name: fast-login-browser-proof
           path: evidence
   fast-map-login:
-    if: inputs.phase == 'map'
+    if: inputs.phase == 'map-playback'
     runs-on: ubuntu-24.04
     container:
       image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
@@ -131,6 +131,7 @@ jobs:
     timeout-minutes: 12
     env:
       VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+      VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -140,7 +141,14 @@ jobs:
           version: '10.28.2'
       - name: Verify authored MAP login with both skins and test permission handoff
         run: |
+          pnpm -C prd-admin install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
+          pnpm -C prd-admin exec vite build
+          pnpm -C prd-admin preview --host 127.0.0.1 --strictPort --port 8201 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8201/login; then break; fi
+            sleep 1
+          done
           mkdir -p evidence
           cd e2e
           node --input-type=module <<'JS'
@@ -176,7 +184,7 @@ jobs:
                   return route.fulfill({status:503,json:{success:false,data:null,error:{code:'FIXTURE_OFFLINE',message:'fixture endpoint omitted'}}});
                 });
                 try {
-                  await page.goto('https://fast-login-entry-codex-prd-agent.miduo.org/login',{waitUntil:'domcontentloaded'});
+                  await page.goto('http://127.0.0.1:8201/login',{waitUntil:'domcontentloaded'});
                   const pass=page.locator('input[autocomplete="current-password"]');
                   await expect(pass).toBeVisible();
                   await expect(page.locator('.identity-scanner, .consciousness-scene video')).toHaveCount(0);
@@ -194,9 +202,15 @@ jobs:
                   if(skin==='companion'){
                     const landing=page.locator('section.consciousness-home');
                     await expect(landing).toBeVisible();
+                    const movie=landing.locator('video.portrait-arrival');
+                    await expect(movie).toHaveAttribute('data-playback','playing',{timeout:1600});
+                    const duration=await movie.evaluate(el=>el.duration);
+                    assert.ok(Math.abs(duration-1.6)<.08);
                     await expect(landing.getByRole('searchbox')).toBeEditable();
                     await landing.getByRole('searchbox').fill('知识库');
-                    await expect(landing.locator('video')).toHaveCount(0);
+                    await expect(movie).toHaveAttribute('data-playback','playing');
+                    await expect(landing.getByRole('searchbox')).toHaveValue('知识库');
+                    await expect(movie).toHaveCount(0,{timeout:2500});
                     await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving','');
                     await page.screenshot({path:`../evidence/map-workspace-${skin}-${width}.png`});
                   }
