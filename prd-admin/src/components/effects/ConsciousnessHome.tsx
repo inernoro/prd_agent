@@ -21,8 +21,8 @@ export function ConsciousnessHome({ query, onQueryChange, results, shortcuts, on
   useEffect(() => { if (arriving) clearConsciousnessArrival(); }, [arriving]);
   const open = (item: ToolboxItem) => { finishEntryArrival(); onOpen(item); };
   return (
-    <section className={`consciousness-home${arriving ? ' is-arriving' : ''}`} aria-label="沉浸首页">
-      <ConsciousnessScene arriving={arriving} />
+    <section className={`consciousness-home${arriving ? ' is-entering' : ''}`} aria-label="沉浸首页">
+      <ConsciousnessScene />
       <ConsciousnessHud />
       <div className="consciousness-home-center">
         <div className="consciousness-home-heading"><span className="consciousness-sigil" aria-hidden="true">M</span><h1>探索未至之境</h1></div>

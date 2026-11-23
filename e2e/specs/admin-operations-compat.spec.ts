@@ -759,42 +759,54 @@ test('网关对话在临界宽度保持首项可点并可折叠侧栏', async ({
   await expect(page.getByRole('button', { name: '打开导航', exact: true })).toHaveAttribute('aria-expanded', 'false');
 });
 
-test('慢加载日景超过首屏保护时限后仍按电影收尾', async ({ page }) => {
+test('登录请求期间保留表单，日景素材慢加载也能直接使用对话', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
   await installOperationsFixtures(page, { quickstart: true });
+  let releaseLogin!: () => void;
+  let loginRequested = false;
+  const loginGate = new Promise<void>(resolve => { releaseLogin = resolve; });
+  await page.route(/\/gw\/auth\/login$/, async route => {
+    loginRequested = true;
+    await loginGate;
+    await route.fallback();
+  });
   let releaseMedia!: () => void;
+  let portraitRequested = false;
   const mediaGate = new Promise<void>(resolve => { releaseMedia = resolve; });
-  await page.route(gatewayPortraitAssets.light.motion.url, async route => {
+  await page.route(gatewayPortraitAssets.light.open.url, async route => {
+    portraitRequested = true;
     await mediaGate;
     await route.continue();
   });
   try {
     await page.goto('http://127.0.0.1:8200/llmgw/login', { waitUntil: 'domcontentloaded' });
     await page.locator('#llmgw-username').fill('demo');
-    await page.locator('#llmgw-password').fill('demo');
-    await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
-    await expect(page).toHaveURL(/\/quickstart$/);
-    const arrivingAt = Date.now();
-    const movie = page.locator('video.portrait-motion');
-    await expect(movie).toHaveJSProperty('currentTime', 0);
-    await page.waitForTimeout(3450);
+    const password = page.locator('#llmgw-password');
+    await password.fill('demo');
+    await password.press('Enter');
+    await expect.poll(() => loginRequested).toBe(true);
+    await expect(page.getByRole('heading', { name: '登录模型网关' })).toBeVisible();
+    await expect(password).toBeFocused();
+    await expect(page.getByRole('button', { name: '正在验证账号…', exact: true })).toBeDisabled();
+    await expect(page.locator('.identity-scanner')).toHaveCount(0);
+    releaseLogin();
+    await expect(page).toHaveURL(/\/quickstart$/, { timeout: 1200 });
+    await expect.poll(() => portraitRequested).toBe(true);
+    await expect(page.locator('.gateway-quickstart-stage .consciousness-art')).toHaveJSProperty('complete', false);
+    const input = page.getByRole('textbox', { name: '我想做什么', exact: true });
+    await input.fill('接入知识库');
+    await expect(input).toHaveValue('接入知识库');
+    await page.getByLabel('打开用户菜单', { exact: true }).click();
+    await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open', '');
+    await expect(page.getByRole('complementary', { name: '主导航', exact: true })).toBeVisible();
+    await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving', '');
+    await expect(page.locator('video.portrait-motion')).toHaveCount(0);
     releaseMedia();
-    await page.waitForFunction(() => {
-      const video = document.querySelector<HTMLVideoElement>('video.portrait-motion');
-      return video && video.currentTime >= 7.15 && !video.ended;
-    });
-    expect(Date.now() - arrivingAt).toBeGreaterThan(10000);
-    const root = page.locator('html');
-    await expect(root).toHaveAttribute('data-entry-arriving', '');
-    const header = page.locator('.lg-console-header');
-    const sidebar = page.locator('.lg-console-sidebar');
-    await expect(header).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
-    await expect(sidebar).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
-    await expect(movie).toHaveJSProperty('ended', true);
-    await expect(root).not.toHaveAttribute('data-entry-arriving', '');
-    await expect(header).toHaveCSS('opacity', '1');
-    await expect(sidebar).toHaveCSS('opacity', '1');
+    await expect(page.locator('.gateway-quickstart-stage .consciousness-art')).toHaveJSProperty('complete', true);
+    await expect(input).toHaveValue('接入知识库');
   } finally {
+    releaseLogin();
     releaseMedia();
   }
 });

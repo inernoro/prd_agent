@@ -1,14 +1,10 @@
 import { gatewayLoginDestination, markQuickstartArrival } from '@/components/entry/quickstartArrival';
 import { ArrowLeft } from 'lucide-react';
-import { ConsciousnessScene, ConsciousnessHud, IdentityScanner } from '@/components/entry/ConsciousnessScene';
-import { preloadPortraitMotion } from '@/components/entry/portraitRenderer';
-import { PORTRAIT_ASSETS } from '@/components/entry/portraitMotionAsset';
-import { readThemePreference, resolveTheme } from '@/lib/theme';
+import { ConsciousnessScene } from '@/components/entry/ConsciousnessScene';
 import './GatewayEntry.css';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { getHealth } from '@/lib/api';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 
 const MAP_SSO_CODE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -37,8 +33,8 @@ export function MapSsoPage() {
   const [code] = useState(readMapSsoCode);
   const [returnTo] = useState(() => takeSafeMapReturnTo(window.location.search));
   const [error, setError] = useState<string | null>(null);
+  const exchange = useRef<ReturnType<typeof loginWithMapCode> | null>(null);
   useLayoutEffect(() => { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); }, []);
-  useEffect(() => { void getHealth().catch(() => {}); }, []);
 
   useEffect(() => {
     let active = true;
@@ -47,10 +43,9 @@ export function MapSsoPage() {
       return () => { active = false; };
     }
 
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      preloadPortraitMotion(PORTRAIT_ASSETS[resolveTheme(readThemePreference())]);
-    }
-    void loginWithMapCode(code).then((result) => {
+    // Keep a one-time code exchange across effect restarts.
+    exchange.current ??= loginWithMapCode(code);
+    void exchange.current.then((result) => {
       if (!active) return;
       if (result.success) {
         const destination = gatewayLoginDestination(returnTo, result.data?.tenant);
@@ -59,18 +54,18 @@ export function MapSsoPage() {
         return;
       }
       setError('安全登录未完成。一次性链接可能已使用或已过期，请从 MAP 重新打开。');
+    }).catch(() => {
+      if (active) setError('暂时无法完成安全登录，请返回 MAP 后重试。');
     });
     return () => { active = false; };
   }, [code, loginWithMapCode, navigate, returnTo]);
 
   return (
-    <main className="gateway-entry cinema-login" data-phase="verifying">
-      <ConsciousnessScene fog />
-      <ConsciousnessHud login />
-      <IdentityScanner phase={error ? 'idle' : 'verifying'} />
-      <section className="gateway-sso-copy" aria-labelledby="map-sso-title">
+    <main className="gateway-entry cinema-login gateway-login" data-phase={error ? 'idle' : 'verifying'}>
+      <ConsciousnessScene stillLogin />
+      <section className="cinema-login-center gateway-sso-copy" aria-labelledby="map-sso-title">
         <h1 id="map-sso-title">{error ? '需要重新发起安全登录' : '正在从 MAP 安全登录'}</h1>
-        <p role={error ? 'alert' : 'status'} aria-live="polite">{error ?? '正在核验身份，工作空间即将展开。'}</p>
+        <p role={error ? 'alert' : 'status'}>{error ?? '正在验证账号…'}</p>
         {error && <a href={resolveMapHomeHref()}><ArrowLeft size={16} />返回 MAP 重新打开</a>}
       </section>
     </main>

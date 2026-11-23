@@ -41,6 +41,18 @@
   background: var(--cinema-paper); color: var(--cinema-ink); font-family: var(--font-body);
 }
 .cinema-login-center { position: relative; z-index: 3; width: 320px; margin: 100px 24px; }
+.map-login-backdrop { background: var(--cinema-paper); }
+.map-login-backdrop .consciousness-art { opacity: .24; }
+.cinema-login.is-companion { padding: 20px 16px; }
+.cinema-login.is-companion > .cinema-login-center {
+  width: min(400px, 100%);
+  margin: 0;
+  padding: clamp(20px, 5vw, 34px);
+  border: 1px solid var(--login-border);
+  border-radius: 18px;
+  background: var(--cinema-paper);
+}
+.map-login-progress { margin: 12px 0 0; min-height: 1.5em; color: var(--text-secondary); font-size: 12px; }
 .cinema-form-content { width: 100%; }
 .cinema-form-index { font: 9px var(--font-mono, monospace); letter-spacing: .22em; text-align: center; margin-bottom: 17px; }
 .cinema-form-index > span { display: inline-block; width: 3px; height: 9px; background: currentColor; margin-right: 9px; vertical-align: middle; }
@@ -84,8 +96,10 @@
 .cinema-login::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: var(--cinema-night); opacity: 0; z-index: 5; }
 .cinema-login[data-phase="entering"]::after { animation: identity-black 820ms cubic-bezier(.65, 0, .35, 1) both; }
 .cinema-login[data-phase="entering"] .consciousness-camera { animation: identity-camera 820ms cubic-bezier(.22, 1, .36, 1) both; }
-.cinema-route-transition::view-transition-old(root) { animation: entry-route-out 420ms linear both; }
-.cinema-route-transition::view-transition-new(root) { animation: entry-route-in 420ms linear both; }
+@media (prefers-reduced-motion: no-preference) {
+  .consciousness-home.is-entering .consciousness-camera { animation: map-backdrop-enter 180ms ease-out; }
+}
+@keyframes map-backdrop-enter { from { opacity: .78; } }
 
 .consciousness-home { flex: 1; min-height: 0; height: 100%; position: relative; isolation: isolate; overflow: hidden; color: var(--cinema-light); background: var(--cinema-night); font-family: var(--font-body); }
 .consciousness-home-center { position: absolute; left: 50%; top: 49%; transform: translate(-50%, -50%); width: min(650px, 64%); z-index: 4; }

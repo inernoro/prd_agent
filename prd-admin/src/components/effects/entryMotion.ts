@@ -1,36 +1,14 @@
-import { flushSync } from 'react-dom';
-import { preloadPortraitMotion } from './portraitRenderer';
 import { PORTRAIT_ASSETS } from './portraitMotionAsset';
-import { prefersReducedMotion } from '@/lib/themeApplier';
 
 let preparation: Promise<unknown> | undefined;
 /** Decode the landing portrait and load the landing chunk before removing the login scene. */
 export function prepareEntryScene() {
-  preloadPortraitMotion();
   if (!preparation) {
     const poster = new Image();
     poster.src = PORTRAIT_ASSETS.open;
     preparation = Promise.allSettled([import('@/pages/AgentLauncherPage'), poster.decode()]);
   }
   return preparation;
-}
-
-type TransitionDocument = Document & {
-  startViewTransition?: (update: () => void | Promise<void>) => { finished: Promise<void> };
-};
-/** One compositor crossfade covers the route commit, including the app shell. */
-export function enterWorkspace(commit: () => void) {
-  const doc = document as TransitionDocument;
-  if (!doc.startViewTransition || prefersReducedMotion()) { commit(); return; }
-  document.documentElement.classList.add('cinema-route-transition');
-  const transition = doc.startViewTransition(async () => {
-    flushSync(commit);
-    // Allow the already-preloaded lazy route to commit before taking its snapshot.
-    await Promise.resolve();
-  });
-  void transition.finished.catch(() => {}).finally(() => {
-    document.documentElement.classList.remove('cinema-route-transition');
-  });
 }
 
 /** Opt-in, local-only frame evidence; contains no account or request data. */

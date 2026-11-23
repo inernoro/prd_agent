@@ -1,6 +1,5 @@
 import { canAccessPage } from '@/lib/access';
 import type { TenantSession } from '@/lib/types';
-import { beginEntryArrival } from './entryArrival';
 import type { EntryAudio } from './entryAudio';
 
 let arrivalUntil = 0;
@@ -19,18 +18,17 @@ export function stopQuickstartArrivalSound() {
   arrivalAudio?.dispose(); arrivalAudio = null;
   arrivalPlayback = null;
 }
-/** One visual handoff; it never delays navigation or stores an auth result. */
+/** A one-time backdrop reveal and audio cue. Workspace controls render immediately. */
 export function markQuickstartArrival(audio?: EntryAudio | null) {
   stopQuickstartArrivalSound();
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { arrivalUntil = 0; return false; }
   arrivalUntil = Date.now() + 10000;
-  beginEntryArrival();
   if (audio) {
     arrivalAudio = audio;
     arrivalPlayback = audio.play('reveal').then(started => started && arrivalAudio === audio && audio.running);
     soundDeadline = setTimeout(stopQuickstartArrivalSound, 2200);
   }
-  return true;
+  return audio !== null;
 }
 export const hasQuickstartArrival = () => Date.now() < arrivalUntil;
 export function consumeQuickstartArrival() { arrivalUntil = 0; }
