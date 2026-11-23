@@ -2314,6 +2314,7 @@ public static class GatewayHttpEndpoints
             EnablePromptCache = request.EnablePromptCache,
             TimeoutSeconds = request.TimeoutSeconds,
             IncludeThinking = request.IncludeThinking,
+            ForwardAvailableThinking = request.ForwardAvailableThinking,
             Context = request.Context,
         };
     }
@@ -5987,6 +5988,7 @@ public static class GatewayHttpEndpoints
             EnablePromptCache = request.EnablePromptCache,
             TimeoutSeconds = request.TimeoutSeconds,
             IncludeThinking = request.IncludeThinking,
+            ForwardAvailableThinking = request.ForwardAvailableThinking,
             Context = new GatewayRequestContext
             {
                 TenantId = ingress.Context?.TenantId,

@@ -140,3 +140,42 @@ it.each(['site', 'share'] as const)('大量原文引用下连续追问保持正�
     expect(hook!.messages.at(-1)?.content).toBe(finalText);
   } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
 });
+
+it('点击重试复用问题气泡与会话，思考增量独立于回答和续问历史', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const stream = (frames: string) => new Response(frames, { headers: { 'Content-Type': 'text/event-stream' } });
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(stream('event: session\ndata: {"sessionId":"same-session"}\n\nevent: error\ndata: {"message":"回答失败，请重试。"}\n\n'))
+    .mockResolvedValueOnce(stream('event: thinking\ndata: {"text":"核对"}\n\nevent: thinking\ndata: {"text":"原文条件"}\n\nevent: done\ndata: {"text":"基于原文的答案"}\n\n'))
+    .mockResolvedValueOnce(stream('event: done\ndata: {"text":"下一轮答案"}\n\n'));
+  vi.stubGlobal('fetch', fetcher);
+  let hook: ReturnType<typeof useAskStream>;
+  function Harness() {
+    hook = useAskStream({ mode: 'site', siteId: 'site' });
+    return <AskThread messages={hook.messages} title="测试页面" openingQuestions={[]}
+      onPick={hook.ask} refusal={null} onLogin={() => {}} onRetry={hook.retry} isBusy={hook.isBusy}
+      phaseMessage={hook.phaseMessage} elapsedSeconds={hook.elapsedSeconds} onCancel={hook.cancel} />;
+  }
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  try {
+    act(() => root.render(<Harness />));
+    await act(async () => { await hook.ask('怎么查？'); });
+    const retry = container.querySelector<HTMLButtonElement>('.ask-response-error button');
+    expect(retry?.textContent).toBe('重试回答');
+    await act(async () => { retry?.click(); retry?.click(); });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ question: '怎么查？', sessionId: 'same-session', history: [] });
+    expect(hook!.messages).toHaveLength(2);
+    expect(hook!.messages.at(-1)?.content).toBe('基于原文的答案');
+    expect(container.querySelector('[aria-label="模型思考内容"]')?.textContent).toBe('核对原文条件');
+    expect(container.querySelector('.ask-response-error')).toBeNull();
+    await act(async () => { await hook.ask('继续'); });
+    expect(JSON.parse(fetcher.mock.calls[2][1].body).history).toEqual([
+      { role: 'user', content: '怎么查？' }, { role: 'assistant', content: '基于原文的答案' },
+    ]);
+  } finally {
+    act(() => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});

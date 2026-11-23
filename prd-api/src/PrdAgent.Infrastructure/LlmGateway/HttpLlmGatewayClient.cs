@@ -124,6 +124,7 @@ public sealed class HttpLlmGatewayClient
             EnablePromptCache = request.EnablePromptCache,
             TimeoutSeconds = request.TimeoutSeconds,
             IncludeThinking = request.IncludeThinking,
+            ForwardAvailableThinking = request.ForwardAvailableThinking,
             Context = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http),
         };
 

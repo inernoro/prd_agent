@@ -17,7 +17,7 @@ afterEach(() => {
 });
 const badge = () => container.querySelector<HTMLAnchorElement>('.ask-citation-badge')!;
 const popup = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="引用原文"]')!;
-const content = '结论[^1]。再次引用[^1]。\n\n[^1]: 原文条件。';
+const content = '结论[^1]。\n\n再次引用[^1]。\n\n[^1]: 原文条件。';
 
 describe('问答来源小标', () => {
   it('中文标签紧邻正文或粗体内部留空格时不外露星号，保留时间与来源小标', () => {
@@ -37,17 +37,17 @@ describe('问答来源小标', () => {
     expect(container.textContent).toContain('**未闭合');
     expect([...container.querySelectorAll('strong')].map((node) => node.textContent)).toEqual(['正常加粗', '粗斜体']);
   });
-  it('句末显示真实网页名称，点击就地查看短摘录，完整片段按需展开', () => {
+  it('段末显示短编号，点击就地查看带网页名称的短摘录，完整片段按需展开', () => {
     const quote = '原文开头。' + '用于核对的原文内容。'.repeat(70) + '仅适用于已审核订单。';
     act(() => root.render(<AskMarkdown sourceTitle="扫码风控架构设计演示文稿" content={`结论[^1]。\n\n[^1]: ${quote}`} />));
     const citations = container.querySelector<HTMLDetailsElement>('.ask-citations')!;
     expect(citations.open).toBe(false);
-    expect(badge().textContent).toBe('扫码风控架构设计演示文稿');
+    expect(badge().textContent).toBe('1');
     expect(container.querySelector('sup')).toBeNull();
     expect(popup()).toBeNull();
     const hash = window.location.hash;
     act(() => badge().click());
-    expect(popup()).not.toBeNull();
+    expect(popup()?.textContent).toContain('扫码风控架构设计演示文稿');
     expect(citations.open).toBe(false);
     expect(Array.from(popup().querySelector('p')!.textContent ?? '').length).toBeLessThanOrEqual(161);
     expect(popup().textContent).not.toContain('仅适用于已审核订单。');
@@ -60,10 +60,11 @@ describe('问答来源小标', () => {
     expect(window.location.hash).toBe(hash);
   });
 
-  it('同一句相邻引用合并为来源 +N，非相邻引用保留在各自句末', () => {
+  it('同段不同句的引用合并到段末，真实片段去重', () => {
     act(() => root.render(<AskMarkdown sourceTitle="本页标题" content={'合并结论[^1] [^2]。另一句[^1]。\n\n[^1]: 第一处原文。\n\n[^2]: 第二处原文。'} />));
-    expect(container.querySelectorAll('.ask-citation-badge')).toHaveLength(2);
-    expect(badge().textContent).toBe('本页标题+1');
+    expect(container.querySelectorAll('.ask-citation-badge')).toHaveLength(1);
+    expect(badge().textContent).toBe('1+1');
+    expect(badge().parentElement?.parentElement?.textContent).toBe('合并结论 。另一句。1+1');
     act(() => badge().click());
     expect(popup().querySelectorAll('.ask-citation-card')).toHaveLength(2);
     expect(popup().textContent).toContain('第一处原文。');
