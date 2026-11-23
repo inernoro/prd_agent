@@ -6,10 +6,13 @@ on:
         type: choice
         options: [visual]
         default: visual
+      candidate:
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
-  login-baseline:
+  fast-login-browser:
     runs-on: ubuntu-24.04
     container:
       image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
@@ -20,11 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: e9d4faf27d1b43c5aa362911b89f0dba0afa7b6f
+          ref: ${{ inputs.candidate }}
       - uses: pnpm/action-setup@v4
         with:
           version: '10.28.2'
-      - name: Capture live login layouts and measure the existing successful handoff
+      - name: Exercise login retry, immediate navigation, and usable controls while artwork is held
         run: |
           pnpm -C llmgw/web install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
@@ -37,36 +40,83 @@ jobs:
           mkdir -p evidence
           cd e2e
           node --input-type=module <<'JS'
-          import { chromium } from '@playwright/test';
+          import assert from 'node:assert/strict';
+          import { chromium, firefox, webkit, expect } from '@playwright/test';
+          import { readFile, writeFile } from 'node:fs/promises';
           import { installOperationsFixtures } from './fixtures/admin-operations.mjs';
-          const browser = await chromium.launch();
-          for (const [app,url] of [['gateway','https://map.ebcone.net/llmgw/login'],['map','https://map.ebcone.net/login']]) {
-            for (const [width,height] of [[1440,900],[390,744]]) {
-              const page = await browser.newPage({ viewport:{width,height},colorScheme:'dark' });
-              try {
-                const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:20000});
-                await page.waitForTimeout(1100);
-                await page.screenshot({path:`../evidence/${app}-${width}.png`});
-                console.log(app,width,response?.status(),await page.title());
-              } finally { await page.close(); }
-            }
+          const assets = JSON.parse(await readFile('fixtures/media/gateway-portrait-cdn.json','utf8'));
+          const results=[];
+          for (const [engine,browserType] of Object.entries({chromium,firefox,webkit})) {
+            const browser = await browserType.launch();
+            try {
+              for (const [theme, width, height] of [['light',1440,900],['dark',390,744]]) {
+                const page = await browser.newPage({viewport:{width,height}, colorScheme:theme});
+                const errors=[];
+                page.on('pageerror', error => errors.push(error.message));
+                let releaseArtwork;
+                let releaseLogin;
+                let loginCount=0;
+                const artwork = new Promise(resolve => { releaseArtwork=resolve; });
+                const secondLogin = new Promise(resolve => { releaseLogin=resolve; });
+                const photo = assets[theme].open.url;
+                try {
+                  await installOperationsFixtures(page,{quickstart:true});
+                  await page.route(photo,async route=>{await artwork; await route.continue().catch(()=>{});});
+                  await page.route(/\/gw\/auth\/login$/, async route=>{
+                    if (++loginCount===1) {
+                      await route.fulfill({json:{success:false,error:{message:'账号或密码不正确，请重试'}}});
+                    } else {
+                      await secondLogin;
+                      await route.fallback();
+                    }
+                  });
+                  await page.goto('http://127.0.0.1:8200/llmgw/login',{waitUntil:'domcontentloaded'});
+                  await expect(page.getByRole('heading',{name:'登录模型网关',exact:true})).toBeVisible();
+                  await expect(page.locator('.identity-scanner,video')).toHaveCount(0);
+                  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),'login overflows horizontally');
+                  await expect.poll(()=>page.locator('.gateway-login-backdrop img').evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
+                  if(engine==='chromium') await page.screenshot({path:`../evidence/login-${theme}-${width}.png`});
+                  await page.locator('#llmgw-username').fill('demo');
+                  const password=page.locator('#llmgw-password');
+                  await password.fill('demo');
+                  await password.press('Enter');
+                  await expect(page.getByRole('alert')).toContainText('账号或密码不正确');
+                  await expect(password).toHaveValue('demo');
+                  await expect(page.getByRole('button',{name:'开始身份确认',exact:true})).toBeEnabled();
+                  await password.press('Enter');
+                  await expect(page.getByRole('button',{name:'正在验证账号…',exact:true})).toBeDisabled();
+                  await expect(password).toBeFocused();
+                  await expect(page.getByRole('heading',{name:'登录模型网关',exact:true})).toBeVisible();
+                  const start=Date.now();
+                  const route=page.waitForURL(/quickstart$/);
+                  releaseLogin();
+                  await route;
+                  const consoleButton=page.getByLabel('打开用户菜单',{exact:true});
+                  const composer=page.getByRole('textbox',{name:'我想做什么',exact:true});
+                  await Promise.all([composer.waitFor({timeout:1600}),consoleButton.waitFor({timeout:1600})]);
+                  const readyMs=Date.now()-start;
+                  await composer.fill('接入知识库');
+                  await consoleButton.click();
+                  await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open','');
+                  await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving','');
+                  await expect(page.locator('video')).toHaveCount(0);
+                  await expect(page.locator('.gateway-quickstart-stage .consciousness-art')).toHaveJSProperty('complete',false);
+                  await consoleButton.click();
+                  releaseArtwork();
+                  await expect.poll(()=>page.locator('.gateway-quickstart-stage .consciousness-art').evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
+                  await expect(composer).toHaveValue('接入知识库');
+                  assert.deepEqual(errors,[]);
+                  if(engine==='chromium') await page.screenshot({path:`../evidence/dialogue-${theme}-${width}.png`});
+                  results.push({engine,theme,width,height,readyMs,failedLoginRecovered:true,typedWhileArtworkPending:true,menuOpened:true,errors});
+                  console.log(JSON.stringify(results.at(-1)));
+                } finally { releaseArtwork(); releaseLogin(); await page.close(); }
+              }
+            } finally { await browser.close(); }
           }
-          const page = await browser.newPage({viewport:{width:1440,height:900},colorScheme:'light'});
-          try {
-            await installOperationsFixtures(page,{quickstart:true});
-            await page.goto('http://127.0.0.1:8200/llmgw/login');
-            await page.locator('#llmgw-username').fill('demo');
-            await page.locator('#llmgw-password').fill('demo');
-            const start=Date.now();
-            await page.getByRole('button',{name:'开始身份确认'}).click();
-            await page.waitForURL(/quickstart$/);
-            const routeMs=Date.now()-start;
-            await page.getByLabel('打开用户菜单',{exact:true}).waitFor({timeout:16000});
-            console.log('baseline routing ms',routeMs,'account menu visible ms',Date.now()-start);
-          } finally { await browser.close(); }
+          await writeFile('../evidence/result.json',JSON.stringify(results,null,2));
           JS
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fast-login-baseline
+          name: fast-login-browser-proof
           path: evidence
