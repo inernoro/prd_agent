@@ -1051,6 +1051,9 @@
 .dw-vc-editor label input { width: 100%; }
 .dw-vc-editor .dw-vc-checks label { margin-block-start: .375rem; }
 
+@media (min-width: 56.25rem) {
+  .dw-vc > div:first-child { gap: 1.0625rem; }
+}
 @media (max-width: 56.1875rem) {
   .dw-vs-head { display: none; }
   .dw-vs-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
