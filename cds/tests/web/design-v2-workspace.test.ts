@@ -125,6 +125,22 @@ describe('设计 V8 的导航与状态', () => {
     expect(oldChecks).toContain('data-item="steps"');
   });
 
+  it('文件夹封面在首屏没有实拍时使用当前版本同主题的可用截图', () => {
+    const overview = historyScreen('cover-overview', '封面首屏');
+    const settings = historyScreen('cover-settings', '封面设置页');
+    const version: DesignVersion = { ...second, screens: [overview, settings], renders: {
+      [overview.id]: { dark: { id: 'fixture-cover-overview-dark', sha256: '4'.repeat(64) } },
+      [settings.id]: { light: { id: 'fixture-cover-settings-light', sha256: '5'.repeat(64) } },
+    } };
+    const library = { ...workspace, designs: [{ ...bound, versions: [first, version] }] };
+    const html = design('', library);
+    const folder = html.match(/<button[^>]*class="dw-folder dw-surface"[^>]*>.*?<\/button>/)?.[0];
+
+    expect(folder).toContain('/artifacts/fixture-cover-settings-light');
+    expect(folder).not.toContain('fixture-cover-overview-dark');
+    expect(folder).not.toContain('<iframe');
+  });
+
   it('展示 V2 与登记基线 V1 的关系，当前稿只读时仍可回看基线', () => {
     const url = `&design=${historyDraft.id}&version=2`;
     const html = design(url, historyWorkspace);
@@ -1000,10 +1016,16 @@ describe('工程规划与设计 V2 前端回归', () => {
       await version.waitFor();
       expect(await version.inputValue()).toBe('4');
       await page.getByRole('button', { name: '对比', exact: true }).click();
-      await page.getByRole('button', { name: '和基线 V2 对比', exact: true }).click();
+      const left = page.getByRole('combobox', { name: '对比左侧版本' });
+      const baselineShortcut = page.getByRole('button', { name: '和基线 V2 对比', exact: true });
+      expect(await left.inputValue()).toBe('2');
+      expect(await baselineShortcut.count()).toBe(0);
+      await left.selectOption('3');
+      await baselineShortcut.click();
       await page.waitForURL(url => url.searchParams.get('compareFrom') === '2');
-      expect(await page.getByRole('combobox', { name: '对比左侧版本' }).inputValue()).toBe('2');
+      expect(await left.inputValue()).toBe('2');
       expect(await page.getByRole('combobox', { name: '对比右侧版本' }).inputValue()).toBe('4');
+      expect(await baselineShortcut.count()).toBe(0);
       const action = page.getByRole('button', { name: /^定为实施基线(?:[.…]+)?$/ });
       const info = page.getByLabel('更多稿件操作', { exact: true });
       const modal = page.getByRole('dialog', { name: /V4.*定为实施基线/ });

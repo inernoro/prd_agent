@@ -26,7 +26,9 @@ function DesignCover({ projectId, version, theme, thumbnail }: {
 }) {
   const screen = version.screens[0];
   const selectedTheme = screen?.themes.includes(theme) ? theme : screen?.themes[0] ?? theme;
-  const render = screen && version.renders?.[screen.id]?.[selectedTheme];
+  const renderedScreen = thumbnail ? version.screens.find(scene => version.renders?.[scene.id]?.[theme]) : undefined;
+  const render = renderedScreen ? version.renders?.[renderedScreen.id]?.[theme]
+    : screen && version.renders?.[screen.id]?.[selectedTheme];
   if (render) return <img src={designArtifact(projectId, render.id)} alt="" loading="lazy" />;
   if (thumbnail) return <span className="dw-mini-empty" aria-hidden><Layers size={16} /></span>;
   return <DesignFrame projectId={projectId} version={version} screen={screen} theme={selectedTheme} zoom={null} decorative />;

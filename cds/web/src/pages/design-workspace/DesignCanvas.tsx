@@ -367,6 +367,13 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
           else setWithCompare(!compare);
         }}>{compare ? '单版' : '对比'}</button>}
         {compare ? <>
+          {entry.frozen !== undefined && entry.frozen !== version.version
+            && (left !== entry.frozen || Number(right) !== version.version) &&
+            <button type="button" className="ep-button" onClick={() => {
+              setLeft(entry.frozen!);
+              setRight(String(version.version));
+              onModeChange?.(true, screen?.id, entry.frozen);
+            }}>和基线 V{entry.frozen} 对比</button>}
           <select aria-label="对比左侧版本" value={left} onChange={event => setLeft(Number(event.target.value))}>
             {entry.versions.map(row => <option key={row.version} value={row.version}>V{row.version}</option>)}
           </select>
@@ -384,12 +391,6 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
             <button type="button" aria-pressed={compareMode === 'slide'} onClick={() => setMode('slide')}>滑动</button>
             <button type="button" aria-pressed={compareMode === 'diff'} onClick={() => setMode('diff')} disabled={real}>差异</button>
           </div>
-          {entry.frozen !== undefined && entry.frozen !== version.version &&
-            <button type="button" className="ep-button" onClick={() => {
-              setLeft(entry.frozen!);
-              setRight(String(version.version));
-              onModeChange?.(true, screen?.id, entry.frozen);
-            }}>和基线 V{entry.frozen} 对比</button>}
         </> : version.screens.length ? <Segments options={ [['one','单屏'], ['all',`全部 ${version.screens.length} 屏`]] as const } value={all ? 'all' : 'one'}
           onChange={value => { showAll(value === 'all'); setPlacing(false); setPin(undefined); }} /> : null}
         <CanvasSettings theme={theme} onTheme={setTheme} zoom={zoom} onZoom={setZoom} />
