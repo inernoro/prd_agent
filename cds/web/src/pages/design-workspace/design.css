@@ -1017,7 +1017,7 @@
 .dw-vs-muted { margin: 0; color: var(--dw-muted); font-size: .8125rem; }
 
 .dw-modal.dw-vc { max-width: none; padding: 0; }
-.dw-vc > div:first-child { gap: .625rem; padding: clamp(.8125rem, 3vw, 2.4rem); overflow-wrap: anywhere; }
+.dw-vc > div:first-child { gap: .625rem; padding: clamp(.8125rem, 3vw, 2.75rem); overflow-wrap: anywhere; }
 .dw-vc [role=group] { flex-shrink: 0; }
 .dw-vc [data-state] { min-width: 0; }
 .dw-vc h2 { padding-inline-end: 1.25rem; }
