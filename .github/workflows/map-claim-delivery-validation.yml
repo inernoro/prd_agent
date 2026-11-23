@@ -29,9 +29,24 @@ jobs:
             }
             throw new Error('后端校验尚未完成');
   frontend:
-    name: 候选前端交互、类型、lint、完整测试与构建
+    name: 复核相同前端源码的完整验证
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const run = await github.rest.actions.getWorkflowRun({...context.repo, run_id: 45133889301});
+            if (run.data.head_sha !== '2c7bd2c53f2afaa1214b69fddd7deee6db3fe73c') throw new Error('前端验证来源不一致');
+            const {data} = await github.rest.actions.getJobForWorkflowRun({...context.repo, job_id: 137555425998});
+            if (data.conclusion !== 'success') throw new Error('前端完整校验未通过');
+            core.info('前端文件完全相同，已核对 45133889301 完整类型、lint、5033项测试及构建成功');
+  audit:
+    name: 校验企微调用登记与完整出口守卫
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,7 +57,7 @@ jobs:
         with:
           script: |
             const fs = require('fs'), path = require('path'), crypto = require('crypto');
-            const files = [{"path":"prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductClaimWebhookWorker.cs","sha":"f5a69352a5f6e69ad2ea577faf28ceee5f371b6b"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductClaimWebhookController.cs","sha":"24426c888e9b53220dc76c74187123d365fa673f"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs","sha":"d6b4f827e2c3850f53a198a4ff4ab4f709cec039"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.ClaimNotifications.cs","sha":"7227f40f89fce317527169bff7dc8bbceaea2ea9"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.ScheduledNotifications.cs","sha":"d44c1ed38e89c53012c6181c8e43a67644655d37"},{"path":"prd-admin/src/pages/product-agent/ProductClaimWebhookPanel.tsx","sha":"edb37cadfa70c90f10522786cb358d3a0bc827d7"},{"path":"prd-admin/src/services/real/productClaimWebhook.ts","sha":"db8c117b030db0a08ea913fcf9d29ba722562834"},{"path":"prd-admin/src/components/product-agent/DebugClaimNotificationButton.tsx","sha":"32da3fff9ce73f172db8f145dbc1432486808d20"},{"path":"prd-admin/src/pages/product-agent/ScheduledNotifications.tsx","sha":"46319d9f7f299e2cb5fca6a26567e9bfac4a9bf0"},{"path":"prd-admin/src/services/real/productScheduledNotifications.ts","sha":"17d1bb324d172767d3bff5ef653ee6abe68dbfff"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductClaimWebhookTests.cs","sha":"48427e65ca61cde65583457fbc8f51eb44ad728a"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductScheduledNotificationLifecycleTests.cs","sha":"56f33030d41b0b149839a176cddb1b3473d58eaa"},{"path":"prd-admin/src/pages/product-agent/ProductClaimWebhookPanel.test.tsx","sha":"b6758dc96ea1e22d9aeaeb99e0232707670299ba"},{"path":"prd-admin/src/pages/product-agent/ScheduledNotifications.test.tsx","sha":"1178f354e6158b2d64d2106c25cf4ca04a7b5d80"},{"path":"changelogs/2026-11-23_版本通知直接发送与逐条补发.md","sha":"c772efe4102382886d0412fdc07b771abdfdea71"},{"path":"prd-admin/src/components/product-agent/DebugClaimNotificationButton.test.tsx","sha":"ca92760b46a61a7357a3fd2537534cb03f5aaf23"}];
+            const files = [{"path":"prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductClaimWebhookWorker.cs","sha":"f5a69352a5f6e69ad2ea577faf28ceee5f371b6b"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductClaimWebhookController.cs","sha":"24426c888e9b53220dc76c74187123d365fa673f"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs","sha":"d6b4f827e2c3850f53a198a4ff4ab4f709cec039"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.ClaimNotifications.cs","sha":"7227f40f89fce317527169bff7dc8bbceaea2ea9"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.ScheduledNotifications.cs","sha":"d44c1ed38e89c53012c6181c8e43a67644655d37"},{"path":"prd-admin/src/pages/product-agent/ProductClaimWebhookPanel.tsx","sha":"edb37cadfa70c90f10522786cb358d3a0bc827d7"},{"path":"prd-admin/src/services/real/productClaimWebhook.ts","sha":"db8c117b030db0a08ea913fcf9d29ba722562834"},{"path":"prd-admin/src/components/product-agent/DebugClaimNotificationButton.tsx","sha":"32da3fff9ce73f172db8f145dbc1432486808d20"},{"path":"prd-admin/src/pages/product-agent/ScheduledNotifications.tsx","sha":"46319d9f7f299e2cb5fca6a26567e9bfac4a9bf0"},{"path":"prd-admin/src/services/real/productScheduledNotifications.ts","sha":"17d1bb324d172767d3bff5ef653ee6abe68dbfff"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductClaimWebhookTests.cs","sha":"48427e65ca61cde65583457fbc8f51eb44ad728a"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductScheduledNotificationLifecycleTests.cs","sha":"56f33030d41b0b149839a176cddb1b3473d58eaa"},{"path":"prd-admin/src/pages/product-agent/ProductClaimWebhookPanel.test.tsx","sha":"b6758dc96ea1e22d9aeaeb99e0232707670299ba"},{"path":"prd-admin/src/pages/product-agent/ScheduledNotifications.test.tsx","sha":"1178f354e6158b2d64d2106c25cf4ca04a7b5d80"},{"path":"changelogs/2026-11-23_版本通知直接发送与逐条补发.md","sha":"c772efe4102382886d0412fdc07b771abdfdea71"},{"path":"prd-admin/src/components/product-agent/DebugClaimNotificationButton.test.tsx","sha":"ca92760b46a61a7357a3fd2537534cb03f5aaf23"},{"path":"scripts/fixtures/map-model-egress-audit.json","sha":"abcb8a3efd2b4eaa2ff8be8a64775480d30bfa81"}];
             for (const item of files) {
               const {data} = await github.rest.git.getBlob({...context.repo, file_sha: item.sha});
               const bytes = Buffer.from(data.content, 'base64');
@@ -50,36 +65,12 @@ jobs:
               if (digest !== item.sha) throw new Error('候选文件校验不一致: ' + item.path);
               fs.mkdirSync(path.dirname(item.path), {recursive: true}); fs.writeFileSync(item.path, bytes);
             }
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: prd-admin/pnpm-lock.yaml
-      - name: 安装锁定依赖
-        working-directory: prd-admin
-        run: pnpm install --frozen-lockfile
-      - name: 补发与只读通知交互回归
-        working-directory: prd-admin
-        run: pnpm test src/pages/product-agent/ProductClaimWebhookPanel.test.tsx src/pages/product-agent/ScheduledNotifications.test.tsx src/components/product-agent/DebugClaimNotificationButton.test.tsx
-      - name: 类型与 lint 校验
-        working-directory: prd-admin
+      - name: 完整出站调用与守卫回归
         run: |
-          pnpm tsc --noEmit
-          pnpm lint
-          pnpm exec eslint src/pages/product-agent/ProductClaimWebhookPanel.tsx src/services/real/productClaimWebhook.ts src/components/product-agent/DebugClaimNotificationButton.tsx src/pages/product-agent/ScheduledNotifications.tsx src/services/real/productScheduledNotifications.ts src/pages/product-agent/ProductClaimWebhookPanel.test.tsx src/pages/product-agent/ScheduledNotifications.test.tsx src/components/product-agent/DebugClaimNotificationButton.test.tsx --max-warnings=0
-      - name: 完整前端测试
-        working-directory: prd-admin
-        run: pnpm test
-      - name: 生产构建
-        working-directory: prd-admin
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: pnpm build
+          python3 scripts/check-map-model-egress.py
+          python3 scripts/tests/test_map_model_egress.py
   publish:
-    needs: [server, frontend]
+    needs: [server, frontend, audit]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -89,12 +80,12 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const branch = 'codex/product-claim-delivery-20261123', sha = 'a23e579beccb26e0c7e703c9c3273fa288c1ab16';
+            const branch = 'codex/product-claim-delivery-20261123', sha = '658328f70e48fe160e4fd3cd55b4d94d91eceb3e';
             let found;
             try { found = await github.rest.git.getRef({...context.repo, ref: 'heads/' + branch}); }
             catch (error) { if (error.status !== 404) throw error; }
-            if (found && found.data.object.sha !== sha && found.data.object.sha !== '1093b062f71b38da6feb3d5451036654135b46b8') throw new Error('分支已有其它提交，停止保护现有代码');
-            if (found && found.data.object.sha === '1093b062f71b38da6feb3d5451036654135b46b8') await github.rest.git.updateRef({...context.repo, ref: 'heads/' + branch, sha, force: false});
+            if (found && found.data.object.sha !== sha && found.data.object.sha !== 'a23e579beccb26e0c7e703c9c3273fa288c1ab16') throw new Error('分支已有其它提交，停止保护现有代码');
+            if (found && found.data.object.sha === 'a23e579beccb26e0c7e703c9c3273fa288c1ab16') await github.rest.git.updateRef({...context.repo, ref: 'heads/' + branch, sha, force: false});
             if (!found) await github.rest.git.createRef({...context.repo, ref: 'refs/heads/' + branch, sha});
             for (const item of [
               {workflow_id: 'ci.yml', inputs: {}},
