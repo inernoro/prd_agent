@@ -4,7 +4,7 @@ import { getClaimWebhook, saveClaimWebhook, getClaimNotices, resendClaimNotice, 
 
 const STATUS: Record<string, { label: string; description?: string; poll?: boolean }> = {
   pending: { label: '待发送', description: '通知已入队，尚未收到后台的发送结果；后台暂未提供具体等待原因。无需重新申领版本号。', poll: true },
-  debug_pending: { label: '待手工推送', description: '该通知需手工推送，请点击“调试通知”。关闭调试模式不会自动补发。', poll: true },
+  debug_pending: { label: '待手工推送', description: '该通知需手工推送，请点击本条“补发”。关闭调试模式不会自动补发。', poll: true },
   sending: { label: '发送中', description: '后台正在投递通知，请稍候，无需重复申领版本号。', poll: true },
   sent: { label: '已发送' },
   blocked: { label: '未发送', description: '通知在发送前被拦截，但后台没有返回具体原因。请管理员检查版本申领通知任务日志。' },
