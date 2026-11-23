@@ -29,6 +29,7 @@ jobs:
           version: '10.28.2'
       - name: Exercise login retry, immediate navigation, and usable controls while artwork is held
         run: |
+          chown "$(id -u):$(id -g)" /github/home
           pnpm -C llmgw/web install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
           pnpm -C llmgw/web build
