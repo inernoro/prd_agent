@@ -4,7 +4,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [visual, public, map, trim]
+        options: [visual, public, map, trim, playback]
         default: visual
       candidate:
         required: true
@@ -319,3 +319,135 @@ jobs:
           name: short-entry-media
           path: work/short-entry
           if-no-files-found: error
+  short-entry-playback:
+    if: inputs.phase == 'playback'
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
+      options: --init --shm-size=1g
+    timeout-minutes: 10
+    env:
+      VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+      VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - name: Verify real playback with usable navigation and capture Chromium
+        run: |
+          chown "$(id -u):$(id -g)" /github/home
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C llmgw/web build
+          pnpm -C llmgw/web preview --host 127.0.0.1 --strictPort --port 8200 &
+          for attempt in $(seq 1 25); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8200/llmgw/login; then break; fi
+            sleep 1
+          done
+          mkdir -p evidence
+          cd e2e
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { chromium, firefox, webkit, expect } from '@playwright/test';
+          import { readFile, writeFile } from 'node:fs/promises';
+          import { installOperationsFixtures } from './fixtures/admin-operations.mjs';
+          const assets=JSON.parse(await readFile('fixtures/media/entry-short-motion.json','utf8'));
+          const output=[];
+          const login=async (page) => {
+            await page.goto('http://127.0.0.1:8200/llmgw/login',{waitUntil:'domcontentloaded'});
+            await expect(page.locator('video.portrait-arrival')).toHaveCount(0);
+            await page.locator('#llmgw-username').fill('demo');
+            await page.locator('#llmgw-password').fill('fixture-only');
+            await page.getByRole('button',{name:'开始身份确认',exact:true}).click();
+            await page.waitForURL(/quickstart$/);
+          };
+          for (const [engine,browserType] of Object.entries({chromium,firefox,webkit})) {
+            const browser=await browserType.launch();
+            try {
+              for (const [theme,width,height] of [['light',1440,900],['dark',390,744]]) {
+                const context=await browser.newContext({viewport:{width,height},colorScheme:theme,
+                  ...(engine==='chromium'?{recordVideo:{dir:'/tmp/short-entry-capture',size:{width,height}}}:{})});
+                const page=await context.newPage();
+                const errors=[];
+                page.on('pageerror',e=>errors.push(e.message));
+                page.on('requestfailed',request=>{
+                  if(request.url().includes('arrival-v1')) console.log('movie request:',request.failure()?.errorText);
+                });
+                try {
+                  await installOperationsFixtures(page,{quickstart:true});
+                  await page.addInitScript(()=>{
+                    window.playback={start:0,finish:0,duration:0,frames:0};
+                    document.addEventListener('playing', e=>{
+                      if(!(e.target instanceof HTMLVideoElement) || !e.target.matches('.portrait-arrival') || window.playback.start) return;
+                      const video=e.target;
+                      window.playback.start=performance.now();
+                      window.playback.duration=video.duration;
+                      if(video.requestVideoFrameCallback){
+                        const count=()=>{window.playback.frames++; if(!video.ended) video.requestVideoFrameCallback(count);};
+                        video.requestVideoFrameCallback(count);
+                      }
+                    },true);
+                    document.addEventListener('ended',e=>{
+                      if(e.target instanceof HTMLVideoElement && e.target.matches('.portrait-arrival')) window.playback.finish=performance.now();
+                    },true);
+                  });
+                  await login(page);
+                  const movie=page.locator('video.portrait-arrival');
+                  await expect(movie).toHaveAttribute('src',new URL(assets[theme].path,process.env.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN).href);
+                  await expect(movie).toHaveAttribute('data-playback','playing',{timeout:1800});
+                  const composer=page.getByRole('textbox',{name:'我想做什么',exact:true});
+                  await composer.fill('接入知识库');
+                  await page.getByLabel('打开用户菜单',{exact:true}).click();
+                  await expect(movie).toHaveAttribute('data-playback','playing');
+                  await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open','');
+                  await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving','');
+                  await expect(movie).toHaveCount(0,{timeout:2400});
+                  await expect(composer).toHaveValue('接入知识库');
+                  await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open','');
+                  const metrics=await page.evaluate(()=>window.playback);
+                  assert.ok(Math.abs(metrics.duration-1.6)<.08);
+                  assert.ok(metrics.finish-metrics.start>1000 && metrics.finish-metrics.start<2000);
+                  assert.deepEqual(errors,[]);
+                  output.push({engine,theme,visiblePlaybackMs:Math.round(metrics.finish-metrics.start),presentedFrames:metrics.frames,menuOpened:true});
+                  console.log(JSON.stringify(output.at(-1)));
+                } finally {
+                  if(engine==='chromium'){
+                    const video=page.video();
+                    await page.close();
+                    await video.saveAs(`../evidence/gateway-${theme}-short-entry.webm`);
+                  }
+                  await context.close();
+                }
+              }
+              const weak=await browser.newPage({colorScheme:'light'});
+              try {
+                await installOperationsFixtures(weak,{quickstart:true});
+                await weak.route('**/*-arrival-v1.mp4',route=>route.abort());
+                await login(weak);
+                await weak.getByRole('textbox',{name:'我想做什么',exact:true}).fill('素材失败时写草稿');
+                await weak.getByLabel('打开用户菜单',{exact:true}).click();
+                await expect(weak.locator('details.lg-user-menu')).toHaveAttribute('open','');
+                await expect(weak.locator('video.portrait-arrival')).toHaveCount(0);
+              } finally { await weak.close(); }
+              const reduced=await browser.newPage({reducedMotion:'reduce'});
+              try {
+                await installOperationsFixtures(reduced,{quickstart:true});
+                let requests=0;
+                reduced.on('request',request=>{if(request.url().includes('arrival-v1')) requests++;});
+                await login(reduced);
+                await expect(reduced.getByRole('textbox',{name:'我想做什么',exact:true})).toBeEditable();
+                await expect(reduced.locator('video.portrait-arrival')).toHaveCount(0);
+                assert.equal(requests,0);
+              } finally { await reduced.close(); }
+            } finally {await browser.close();}
+          }
+          await writeFile('../evidence/playback.json',JSON.stringify(output,null,2));
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: short-entry-browser
+          path: evidence
