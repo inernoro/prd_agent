@@ -4,7 +4,7 @@ import './consciousness-entry.css';
 import { ConsciousnessPortrait } from './ConsciousnessPortrait';
 import { PORTRAIT_ASSETS } from './portraitMotionAsset';
 import { beginEntryArrival } from './entryArrival';
-import { ArrivalVideo } from './ArrivalVideo';
+import { ArrivalVideo, prepareArrivalVideo } from './ArrivalVideo';
 const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export type IdentityPhase = 'idle' | 'verifying' | 'authorized' | 'entering';
@@ -21,6 +21,9 @@ export function isConsciousnessArrival() { return Date.now() < arrivalUntil; }
 export function ConsciousnessScene({ fog = false, stillLogin = false, arriving = false, shortArrival = false, frameTime }: { fog?: boolean; stillLogin?: boolean; arriving?: boolean; shortArrival?: boolean; frameTime?: number }) {
   const { resolved: theme } = useThemePreference();
   const shortMotion = PORTRAIT_ASSETS[theme].shortMotion;
+  useEffect(() => {
+    if (stillLogin) return prepareArrivalVideo(shortMotion);
+  }, [stillLogin, shortMotion]);
   useEffect(() => {
     if (fog || stillLogin) return;
     const alternative = new Image();

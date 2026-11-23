@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import './consciousness-entry.css';
 import { ConsciousnessPortrait } from './ConsciousnessPortrait';
 import { PORTRAIT_ASSETS } from './portraitMotionAsset';
-import { ArrivalVideo } from './ArrivalVideo';
+import { ArrivalVideo, prepareArrivalVideo } from './ArrivalVideo';
 import { prefersReducedMotion } from '@/lib/themeApplier';
 
 export type IdentityPhase = 'idle' | 'verifying' | 'authorized' | 'entering';
@@ -17,6 +17,9 @@ export function clearConsciousnessArrival() { arrivalUntil = 0; }
 export function isConsciousnessArrival() { return Date.now() < arrivalUntil; }
 
 export function ConsciousnessScene({ fog = false, stillLogin = false, arriving = false, shortArrival = false, frameTime }: { fog?: boolean; stillLogin?: boolean; arriving?: boolean; shortArrival?: boolean; frameTime?: number }) {
+  useEffect(() => {
+    if (stillLogin) return prepareArrivalVideo(PORTRAIT_ASSETS.shortMotion);
+  }, [stillLogin]);
   if (stillLogin) return <div className="consciousness-scene map-login-backdrop" aria-hidden="true">
     <img className="consciousness-art" src={PORTRAIT_ASSETS.closed} alt="" fetchPriority="high" />
   </div>;
