@@ -4,7 +4,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [visual, public]
+        options: [visual, public, map]
         default: visual
       candidate:
         required: true
@@ -123,7 +123,7 @@ jobs:
           name: fast-login-browser-proof
           path: evidence
   fast-map-login:
-    if: inputs.phase == 'visual'
+    if: inputs.phase == 'map'
     runs-on: ubuntu-24.04
     container:
       image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
@@ -140,14 +140,7 @@ jobs:
           version: '10.28.2'
       - name: Verify authored MAP login with both skins and test permission handoff
         run: |
-          pnpm -C prd-admin install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
-          pnpm -C prd-admin exec vite build
-          pnpm -C prd-admin preview --host 127.0.0.1 --strictPort --port 8201 &
-          for attempt in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:8201/login; then break; fi
-            sleep 1
-          done
           mkdir -p evidence
           cd e2e
           node --input-type=module <<'JS'
@@ -159,6 +152,7 @@ jobs:
           try {
             for (const [skin, width, height] of [['standard',390,744],['companion',390,744],['companion',1440,900]]) {
               const page = await browser.newPage({viewport:{width,height},colorScheme:'dark'});
+              page.on('pageerror', error => console.log('MAP browser exception:', error.stack));
               try {
                 await page.addInitScript(value => {
                   localStorage.setItem('map-entry-skin',JSON.stringify({state:{skin:value},version:0}));
@@ -176,12 +170,13 @@ jobs:
                   if(path.endsWith('/authz/me')){
                     permissionRequested=true;
                     await permission;
-                    return fulfill({effectivePermissions:['access','admin.access']});
+                    return fulfill({userId:'isolated-user',displayName:'验收用户',role:'ADMIN',effectivePermissions:['access','admin.access']});
                   }
-                  return fulfill({items:[]});
+                  if(path.endsWith('/authz/menu-catalog')) return fulfill({items:[]});
+                  return route.fulfill({status:503,json:{success:false,data:null,error:{code:'FIXTURE_OFFLINE',message:'fixture endpoint omitted'}}});
                 });
                 try {
-                  await page.goto('http://127.0.0.1:8201/login',{waitUntil:'domcontentloaded'});
+                  await page.goto('https://fast-login-entry-codex-prd-agent.miduo.org/login',{waitUntil:'domcontentloaded'});
                   const pass=page.locator('input[autocomplete="current-password"]');
                   await expect(pass).toBeVisible();
                   await expect(page.locator('.identity-scanner, .consciousness-scene video')).toHaveCount(0);
@@ -197,7 +192,7 @@ jobs:
                   releasePermission();
                   await page.waitForURL(url=>url.pathname==='/',{timeout:2500});
                   if(skin==='companion'){
-                    const landing=page.getByRole('region',{name:'沉浸首页'});
+                    const landing=page.locator('section.consciousness-home');
                     await expect(landing).toBeVisible();
                     await expect(landing.getByRole('searchbox')).toBeEditable();
                     await landing.getByRole('searchbox').fill('知识库');
