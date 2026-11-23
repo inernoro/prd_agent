@@ -1186,7 +1186,13 @@ describe('Branch Routes', () => {
     }
 
     it('机器凭据排队重放仍保留极速版限制，不因内部派发失去身份而允许源码回退', async () => {
-      seedGateProject(true); stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      seedGateProject(true);
+      // 源码夹具独立于状态目录，重放快照不会复制正在原子替换的状态文件。
+      const repoPath = path.join(tmpDir, 'replay-repository');
+      fs.mkdirSync(repoPath);
+      stateService.updateProject('proj-a', { repoPath });
+      stateService.getBranch('b1')!.worktreePath = path.join(config.worktreeBase, 'b1');
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
       readyArtifactFixture();
       let release!: () => void, started!: () => void, replayed!: () => void, replayStarted!: () => void;
       const hold = new Promise<void>((resolve) => { release = resolve; }); const start = new Promise<void>((resolve) => { started = resolve; });

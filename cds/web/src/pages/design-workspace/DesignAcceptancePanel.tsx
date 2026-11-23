@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, FileCheck2, RefreshCw, ScrollText } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { designAcceptanceTarget, designSlots, type DesignCell, type DesignEntry, type DesignRun, type DesignVersion } from '../../../../src/shared/design-workspace';
 import { cellNames, designArtifact, designCheckRows, designDate, ruleModes, slotNames, verdictNames, type DesignCommand } from './design-ui';
@@ -153,7 +154,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
             {[...runs].reverse().map(row => <option key={row.id} value={row.id}>{row.commit.slice(0, 8)}{row.signed ? row.id === runs.at(-1)?.id ? ' · 已签收' : ' · 历史签收' : ' · ' + verdictNames[row.verdict]}</option>)}
           </select>}
         </p>
-        {run && !run.signed && !stale && (preview.loading ? <p className="dw-dl-missing" role="status">正在核对当前预览提交。</p>
+        {run && !run.signed && !stale && (preview.loading ? <ContentLoading label="核对当前预览提交" variant="inline" className="dw-dl-missing" />
           : !activeCommit ? <p className="dw-dl-missing" role="status">暂时无法核对当前预览提交，请确认预览已部署；核对上之前不能补证据、不能签收。</p> : null)}</li>
       <li data-item="steps"><h4><b>2</b>下一步</h4>
         <ol className="dw-ac-steps">{steps.map((step, index) => <li key={step.key} data-state={step.done ? 'done' : index === current ? 'current' : 'later'}>
