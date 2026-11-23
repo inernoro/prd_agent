@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Volume2, VolumeX } from 'lucide-react';
+import { getHealth } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 import { ConsciousnessScene } from '@/components/entry/ConsciousnessScene';
@@ -24,6 +25,7 @@ export function LoginPage() {
   const audio = useRef<EntryAudio | null>(null);
   const mounted = useRef(true);
   const pending = useRef(false);
+  useEffect(() => { void getHealth().catch(() => {}); }, []);
   useEffect(() => {
     mounted.current = true;
     audio.current = new EntryAudio();

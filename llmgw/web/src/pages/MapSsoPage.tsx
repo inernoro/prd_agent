@@ -4,6 +4,7 @@ import { ConsciousnessScene } from '@/components/entry/ConsciousnessScene';
 import './GatewayEntry.css';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getHealth } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 
@@ -35,6 +36,7 @@ export function MapSsoPage() {
   const [error, setError] = useState<string | null>(null);
   const exchange = useRef<ReturnType<typeof loginWithMapCode> | null>(null);
   useLayoutEffect(() => { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); }, []);
+  useEffect(() => { void getHealth().catch(() => {}); }, []);
 
   useEffect(() => {
     let active = true;
