@@ -174,7 +174,7 @@ jobs:
                   if(path.endsWith('/authz/me')){
                     permissionRequested=true;
                     await permission;
-                    return fulfill({effectivePermissions:['admin.access']});
+                    return fulfill({effectivePermissions:['access','admin.access']});
                   }
                   return fulfill({items:[]});
                 });
@@ -197,13 +197,16 @@ jobs:
                   if(skin==='companion'){
                     const landing=page.getByRole('region',{name:'沉浸首页'});
                     await expect(landing).toBeVisible();
-                    await expect(landing.getByRole('textbox')).toBeEditable();
-                    await landing.getByRole('textbox').fill('知识库');
+                    await expect(landing.getByRole('searchbox')).toBeEditable();
+                    await landing.getByRole('searchbox').fill('知识库');
                     await expect(landing.locator('video')).toHaveCount(0);
                     await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving','');
                     await page.screenshot({path:`../evidence/map-workspace-${skin}-${width}.png`});
                   }
                   rows.push({skin,width,height,loginStableDuringPermission:true,routeMs:Date.now()-start});
+                } catch (error) {
+                  await page.screenshot({path:`../evidence/map-failure-${skin}-${width}.png`});
+                  throw error;
                 } finally { releasePermission(); }
               } finally { await page.close(); }
             }
