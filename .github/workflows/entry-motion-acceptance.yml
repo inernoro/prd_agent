@@ -4,7 +4,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [visual]
+        options: [visual, public]
         default: visual
       candidate:
         required: true
@@ -13,6 +13,7 @@ permissions:
   contents: read
 jobs:
   fast-login-browser:
+    if: inputs.phase == 'visual'
     runs-on: ubuntu-24.04
     container:
       image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
@@ -122,6 +123,7 @@ jobs:
           name: fast-login-browser-proof
           path: evidence
   fast-map-login:
+    if: inputs.phase == 'visual'
     runs-on: ubuntu-24.04
     container:
       image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
@@ -218,4 +220,63 @@ jobs:
         if: always()
         with:
           name: fast-map-browser-proof
+          path: evidence
+  public-login:
+    if: inputs.phase == 'public'
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
+      options: --init --shm-size=1g
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - name: Verify both public preview login entry points
+        run: |
+          pnpm -C e2e install --frozen-lockfile
+          mkdir -p evidence
+          cd e2e
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { chromium, expect } from '@playwright/test';
+          import { writeFile } from 'node:fs/promises';
+          const links = {
+            map: 'https://fast-login-entry-codex-prd-agent.miduo.org/login',
+            gateway: 'https://fast-login-entry-codex-prd-agent-llmgw.miduo.org/login',
+          };
+          const browser = await chromium.launch();
+          const checks=[];
+          try {
+            for (const [surface,url] of Object.entries(links)) {
+              for (const [theme,width,height] of [['light',1440,900],['dark',390,744]]) {
+                const page=await browser.newPage({viewport:{width,height},colorScheme:theme});
+                try {
+                  const errors=[];
+                  page.on('pageerror', e=>errors.push(e.message));
+                  const response=await page.goto(url,{waitUntil:'domcontentloaded'});
+                  assert.equal(response.status(),200);
+                  await expect(page.getByRole('heading',{name:surface==='map'?'登录 MAP':'登录模型网关',exact:true})).toBeVisible({timeout:15000});
+                  const pass=page.locator('input[autocomplete="current-password"]');
+                  await expect(pass).toBeEditable();
+                  await expect(page.locator('.identity-scanner,.consciousness-scene video')).toHaveCount(0);
+                  if(surface==='gateway') await expect.poll(()=>page.locator('.gateway-login-backdrop img').evaluate(el=>el.naturalWidth),{timeout:12000}).toBeGreaterThan(0);
+                  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+                  assert.deepEqual(errors,[]);
+                  await page.screenshot({path:`../evidence/public-${surface}-${width}.png`});
+                  checks.push({surface,theme,width,height,status:response.status(),errors});
+                } finally { await page.close(); }
+              }
+            }
+          } finally { await browser.close(); }
+          console.log(JSON.stringify(checks));
+          await writeFile('../evidence/public-result.json',JSON.stringify(checks,null,2));
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-fast-login
           path: evidence
