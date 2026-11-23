@@ -4,7 +4,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [visual, public, map]
+        options: [visual, public, map, trim]
         default: visual
       candidate:
         required: true
@@ -275,3 +275,45 @@ jobs:
         with:
           name: published-fast-login
           path: evidence
+  short-entry-media:
+    if: inputs.phase == 'trim'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate }}
+      - name: Render short day and night entries from the approved CDN masters
+        run: |
+          command -v ffmpeg
+          mkdir -p work/short-entry
+          python3 - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          media = json.loads(Path('e2e/fixtures/media/gateway-portrait-cdn.json').read_text())
+          work = Path('work/short-entry')
+          report = {}
+          for theme, split in [('dark', 3.3), ('light', 5.1)]:
+              source = Path(f'/tmp/{theme}-long.mp4')
+              entry = media[theme]['motion']
+              subprocess.run(['curl', '-fsS', '--retry', '2', entry['url'], '-o', str(source)], check=True)
+              assert hashlib.sha256(source.read_bytes()).hexdigest() == entry['sha256']
+              actual = subprocess.check_output(['ffprobe', '-v','error','-select_streams','v:0','-show_entries','stream=duration','-of','csv=p=0',str(source)], text=True).strip()
+              length = float(actual)
+              timing = f"setpts='if(lt(T,{split}),T*{0.82/split},0.82+(T-{split})*{0.78/(length-split)})/TB'"
+              output = work / f'{theme}-arrival-v1.mp4'
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(source),
+                  '-an','-vf',f'{timing},fps=60,scale=1280:-2:flags=lanczos','-c:v','libx264','-preset','medium',
+                  '-crf','24','-pix_fmt','yuv420p','-movflags','+faststart',str(output)], check=True)
+              duration = float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','csv=p=0',str(output)], text=True))
+              assert 1.5 <= duration <= 1.7
+              report[theme] = dict(duration=duration, source=length, bytes=output.stat().st_size, sha256=hashlib.sha256(output.read_bytes()).hexdigest())
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-i',str(output),'-vf','fps=4,scale=320:-2,tile=4x2','-frames:v','1',str(work / f'{theme}-quarter-seconds.jpg')],check=True)
+          print(json.dumps(report,indent=2))
+          (work / 'manifest.json').write_text(json.dumps(report,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: short-entry-media
+          path: work/short-entry
+          if-no-files-found: error
