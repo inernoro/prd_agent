@@ -460,6 +460,26 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 : runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
             EnsureRuntimeProfileCompatibleOrLiteFallback(runtime, runtimeProfile, ResolveSidecarRuntimeAdapter());
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
+            var workspaceTransfer = managedLaunch?.WorkspaceTransfer;
+            if (workspaceTransfer != null)
+            {
+                // A delivery continuation keeps its original TraceId even when it needs a new session.
+                // Retain legacy receipts without a digest so CDS can apply its continuation policy.
+                var previous = await _db.InfraAgentSessions.Find(item =>
+                        item.UserId == userId && item.ConnectionId == session.ConnectionId
+                        && item.CdsProjectId == session.CdsProjectId && item.TraceId == session.TraceId
+                        && item.Runtime == InfraAgentRuntimes.OpenDesign
+                        && item.WorkloadKind == InfraAgentWorkloadKinds.DesignArtifact
+                        && item.StartedAt != null && item.CdsWorkspaceLaunchConfirmed != false)
+                    .SortByDescending(item => item.StartedAt)
+                    .Project(item => new { item.CdsWorkspaceImageDigest })
+                    .FirstOrDefaultAsync(ct);
+                workspaceTransfer = workspaceTransfer with
+                {
+                    ContinuingRun = previous != null,
+                    PreviousImageDigest = previous?.CdsWorkspaceImageDigest
+                };
+            }
             var body = new
             {
                 clientRequestId = startAttemptId,
@@ -474,7 +494,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 modelApiKey,
                 runtimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId,
                 workspaceRoot = session.WorkspaceRoot,
-                workspaceTransfer = managedLaunch?.WorkspaceTransfer,
+                workspaceTransfer,
                 gitRepository = session.GitRepository,
                 gitRef = session.GitRef,
                 resourcePolicy = new
@@ -511,7 +531,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 var cdsSessionId = GetString(item, "id")!;
                 var workerId = GetString(item, "workerId");
                 var containerName = GetString(item, "containerName");
-                var status = (createResponse.Succeeded ?? response.IsSuccessStatusCode)
+                var succeeded = createResponse.Succeeded ?? response.IsSuccessStatusCode;
+                var status = succeeded
                     ? MapCdsStatus(GetString(item, "status"))
                     : InfraAgentSessionStatuses.Failed;
                 now = DateTime.UtcNow;
@@ -534,6 +555,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     .Set(x => x.StartedAt, now)
                     .Set(x => x.UpdatedAt, now)
                     .Set(x => x.LastError, createResponse.ErrorMessage);
+                if (workspaceTransfer != null)
+                {
+                    var imageDigest = ReadCdsWorkspaceImageDigest(item);
+                    if (succeeded || imageDigest != null)
+                        update = update.Set(x => x.CdsWorkspaceLaunchConfirmed, true);
+                    else if (session.StartedAt == null)
+                        update = update.Set(x => x.CdsWorkspaceLaunchConfirmed, false);
+                    if (imageDigest != null)
+                        update = update.Set(x => x.CdsWorkspaceImageDigest, imageDigest);
+                }
                 var persistenceResult = await _db.InfraAgentSessions.UpdateOneAsync(
                     x => x.Id == id
                         && x.UserId == userId
@@ -6758,6 +6789,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     internal static bool ShouldEndCdsFollowOnStatus(string mappedStatus) =>
         mappedStatus is InfraAgentSessionStatuses.Idle or InfraAgentSessionStatuses.Stopped;
+
+    internal static string? ReadCdsWorkspaceImageDigest(JsonElement item)
+    {
+        if (GetString(item, "runtimeImage") is not { } image) return null;
+        var separator = image.LastIndexOf('@');
+        if (separator <= 0) return null;
+        var digest = image[(separator + 1)..];
+        return Regex.IsMatch(digest, @"\Asha256:[a-f0-9]{64}\z", RegexOptions.CultureInvariant) ? digest : null;
+    }
 
     private static string? GetString(JsonElement element, string property)
     {

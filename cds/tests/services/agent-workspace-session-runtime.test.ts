@@ -596,6 +596,37 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(probe?.command).not.toContain('opencode');
   });
 
+  it.each([
+    { daemonExit: 0, reason: null },
+    { daemonExit: 1, reason: '候选镜像的 OpenDesign 服务未能启动' },
+    { daemonExit: 42, reason: '当前节点未落实工作区容器的 CPU 或内存限额' },
+  ])('checks candidate daemon and resource limits (exit $daemonExit) using its exact image', async ({ daemonExit, reason }) => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-version-probe-'));
+    const candidate = `ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:${'b'.repeat(64)}`;
+    const shell = new RecordingShell();
+    const run = shell.exec.bind(shell);
+    const bootCommands: string[] = [];
+    shell.exec = async (command, options) => {
+      if (command.includes('.Config.Entrypoint')) {
+        expect(command).toContain(candidate);
+        return result(JSON.stringify([['/sbin/tini', '--'], ['node', 'apps/daemon/dist/cli.js', '--no-open']]));
+      }
+      if (command.startsWith('docker run --rm') && command.includes('OD_API_TOKEN=cds-version-probe')) {
+        bootCommands.push(command);
+        return probeContainerResult(command, result('', '', daemonExit));
+      }
+      return run(command, options);
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { rootDir, autoPullImage: false });
+    const verified = await runtime.verifyVersion(candidate);
+    expect(verified).toMatchObject({ available: daemonExit === 0, reason });
+    expect(bootCommands).toHaveLength(1);
+    for (const fragment of [candidate, 'apps/daemon/dist/cli.js', '/api/health', 'memory.max', 'cpu.max', '--network none']) {
+      expect(bootCommands[0]).toContain(fragment);
+    }
+    await runtime.closeCapabilityProbes();
+  });
+
   it('fails before starting Codex when the session model configuration cannot be installed', async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-codex-config-test-'));
     const shell = new RecordingShell();
@@ -1009,6 +1040,12 @@ describe('AgentWorkspaceSessionRuntime', () => {
         networkPolicy: 'egress-only',
         autoCleanupMinutes: 5,
       },
+      undefined,
+      undefined,
+      async (runId) => {
+        expect(runId).toBe('map-run-1');
+        return `ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:${'b'.repeat(64)}`;
+      },
     );
 
     expect(fs.readFileSync(path.join(created.workspaceDir, 'knowledge', 'source.md'), 'utf8'))
@@ -1021,7 +1058,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(runCommand?.command).toContain('--tmpfs /tmp:rw,noexec,nosuid,size=128m,nr_inodes=2048');
     expect(runCommand?.command).toContain("--tmpfs '/app/design-templates:rw,noexec,nosuid,size=8m");
     expect(runCommand?.command).toContain('nr_inodes=512');
-    expect(runCommand?.command).toContain(OPEN_DESIGN_IMAGE);
+    expect(runCommand?.command).toContain(created.image);
+    expect(created.image).not.toBe(OPEN_DESIGN_IMAGE);
     expect(runCommand?.command).toContain('type=volume');
     expect(runCommand?.command).not.toContain('type=bind');
     expect(runCommand?.command).toContain("--label 'cds.instance=instance-a'");
@@ -1136,6 +1174,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     });
     const preflightIndex = shell.calls.findIndex((call) => call.command.includes('CDS_OUTPUT_PREFLIGHT=1'));
     const preflightCommand = shell.calls[preflightIndex]?.command || '';
+    expect(preflightCommand).toContain(created.image);
     const pauseIndex = shell.calls.findIndex((call) => call.command.startsWith('docker pause '));
     const unpauseIndex = shell.calls.findIndex((call) => call.command.startsWith('docker unpause '));
     expect(preflightIndex).toBeGreaterThan(-1);
@@ -1436,6 +1475,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
 
     for (const call of sessionResourceCreates) {
       expect(call.command).toContain('cds.instance=instance-a');
+      if (/^docker (?:create|run)/.test(call.command)) expect(call.command).toContain(created.image);
       expect(call.command).not.toContain('model-secret');
     }
     expect(shell.calls.every((call) => !call.command.includes('model-secret'))).toBe(true);

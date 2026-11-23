@@ -305,7 +305,9 @@ export default function InfraServicesPage() {
       .then((res) => {
         if (res.success && res.data?.item) {
           onPasted(res.data.item);
-          toast.success('CDS 长期授权已建立', '系统互联与缺陷转发已一并启用，无需复制任何凭据');
+          toast.success('CDS 长期授权已建立', res.data.item.workspaceOnly
+            ? '已连接指定项目的 OpenDesign 工作区，可以从知识库开始生成'
+            : '系统互联与缺陷转发已启用');
           void loadConnections();
         } else {
           toast.error('CDS 授权连接失败', res.error?.message ?? '请重新发起连接');

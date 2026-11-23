@@ -83,6 +83,25 @@ export function clusterAuthorityPath(pathname: string): boolean {
     || /^\/api\/projects\/[^/]+\/(?:agent-keys|access-status|access-requests)(?:\/|$)/.test(pathname);
 }
 
+export const CDS_MAP_CONNECTION_PATH = '/api/cds-system/connections';
+export const CLUSTER_MAP_CONNECTION_PATH = '/api/cluster/identity/map-connections';
+export const CLUSTER_MAP_CONNECTION_PROTOCOL = 'x-cds-map-connection-protocol';
+
+function isMapConnectionExchange(method: string, pathname: string): boolean {
+  if (!pathname.startsWith(CDS_MAP_CONNECTION_PATH)) return false;
+  const subpath = pathname.slice(CDS_MAP_CONNECTION_PATH.length);
+  if (method === 'POST' && ['/issue', '/accept', '/token'].includes(subpath)) return true;
+  if (method === 'GET' && (!subpath || /^\/conn_[a-f0-9]{16}$/.test(subpath))) return true;
+  return method === 'DELETE' && /^\/conn_[a-f0-9]{16}$/.test(subpath)
+    || method === 'POST' && /^\/conn_[a-f0-9]{16}\/revoke$/.test(subpath);
+}
+
+export function authorityMapConnectionPath(method: string, pathname: string): string | undefined {
+  if (!pathname.startsWith(CLUSTER_MAP_CONNECTION_PATH)) return undefined;
+  const path = CDS_MAP_CONNECTION_PATH + pathname.slice(CLUSTER_MAP_CONNECTION_PATH.length);
+  if (isMapConnectionExchange(method, path)) return path;
+}
+
 /** Every request uses the authority's current decision. No stale local-key fallback. */
 export class ClusterIdentityService {
   private config: ClusterIdentityConfig | undefined;
@@ -144,7 +163,8 @@ export class ClusterIdentityService {
       || (typeof raw.aiSession?.id === 'string' && !!raw.aiSession.id));
     const scopeValid = (!raw?.aiSession?.id.startsWith('projkey:') || !!raw.projectKey)
       && (!raw?.aiSession?.id.startsWith('globalkey:') || !!raw.access)
-      && (!raw?.aiSession?.id.startsWith('principal:') || !!raw.principal);
+      && (!raw?.aiSession?.id.startsWith('principal:') || !!raw.principal)
+      && (raw?.aiSession?.id.startsWith('cds-connection:') === true) === !!raw?.mapConnection;
     if (c?.role !== 'member' || raw.clusterId !== c.clusterId || raw.authorityNodeId !== c.authorityNodeId
       || raw.nodeId !== c.nodeId || !identityValid || !scopeValid
       || (!(reconfigure && owner) && JSON.stringify(Object.entries(raw.projects || {}).sort()) !== JSON.stringify(Object.entries(c.projects).sort()))) {
@@ -161,7 +181,21 @@ export class ClusterIdentityService {
       return local;
     };
     for (const id of Object.keys(c.projects)) mapId(id);
+    const connection = raw.mapConnection;
+    const mapConnectionOrigin = raw.mapConnectionOrigin;
+    if (connection && (raw.user || raw.projectKey || raw.access || raw.principal
+      || raw.aiSession?.id !== `cds-connection:${connection.id}`
+      || !/^conn_[a-f0-9]{16}$/.test(connection.id)
+      || !Array.isArray(connection.scopes) || connection.scopes.some(scope => !CLUSTER_MAP_SCOPES.includes(scope))
+      || !clusterMapOrigin(connection.partnerBaseUrl))) {
+      throw new ClusterIdentityValidationError('cluster_map_connection_invalid');
+    }
+    if (mapConnectionOrigin && (!raw.user?.isSystemOwner || !clusterMapOrigin(mapConnectionOrigin.origin))) {
+      throw new ClusterIdentityValidationError('cluster_map_origin_invalid');
+    }
     return { ...raw,
+      ...(connection ? { mapConnection: { ...connection, projectId: mapId(connection.projectId) } } : {}),
+      ...(mapConnectionOrigin ? { mapConnectionOrigin: { ...mapConnectionOrigin, projectId: mapId(mapConnectionOrigin.projectId) } } : {}),
       ...(raw.projectKey ? { projectKey: { ...raw.projectKey, projectId: mapId(raw.projectKey.projectId) } } : {}),
       ...(raw.humanProjects ? { humanProjects: raw.humanProjects.filter(id => c.projects[id] && this.state.getProject(c.projects[id])).map(mapId) } : {}),
       ...(raw.principalProjects ? { principalProjects: raw.principalProjects.filter(id => c.projects[id] && this.state.getProject(c.projects[id])).map(mapId) } : {}),
@@ -169,7 +203,7 @@ export class ClusterIdentityService {
         projects: raw.access.access.projects === 'all' ? 'all' : raw.access.access.projects.filter(id => c.projects[id]).map(mapId) } } } : {}),
     };
   }
-  private async call(req: Request, pathname: string, body?: unknown, method = 'POST', streamTo?: Response) {
+  private async call(req: Request, pathname: string, body?: unknown, method = 'POST', streamTo?: Response, redactResponse = false) {
     const c = this.config;
     if (c?.role !== 'member') throw new Error('not a member');
     const headers: Record<string, string> = { 'x-cds-cluster-id': c.clusterId, 'x-cds-cluster-node': c.nodeId,
@@ -213,14 +247,15 @@ export class ClusterIdentityService {
       text = Buffer.concat(chunks).toString('utf8'); parseState = 'invalid-json';
       try { json = JSON.parse(text); parseState = 'json'; } catch { /* safe audit below */ }
       decision = response.ok ? 'success' : 'rejected';
-      return { status: response.status, json, text, cookies: response.headers.getSetCookie(), location: response.headers.get('location') };
+      return { status: response.status, json, text, cookies: response.headers.getSetCookie(), location: response.headers.get('location'),
+        mapConnectionProtocol: response.headers.get(CLUSTER_MAP_CONNECTION_PROTOCOL) };
     } finally {
       clearTimeout(timer);
       if (streamTo) streamTo.removeListener('close', stop);
       await audit.record({ peerId: c.authorityNodeId, url: c.authorityUrl + pathname.split('?')[0], method,
         startedAt: new Date(started).toISOString(), durationMs: Date.now() - started, timeoutMs: TIMEOUT_MS,
         responseReceived: !!response, httpStatus: response?.status ?? null, contentType: response?.headers.get('content-type') ?? null,
-        upstreamRequestId: response?.headers.get('x-cds-request-id') ?? null, text,
+        upstreamRequestId: response?.headers.get('x-cds-request-id') ?? null, text: redactResponse ? '' : text,
         // Never audit credential exchange replies, even if an upstream adds a new secret field.
         json: { status: response?.status ?? null, code: (json as { error?: string })?.error, decision },
         parseState, localDecision: decision, secrets });
@@ -260,12 +295,50 @@ export class ClusterIdentityService {
       .map(cookie => cookie.replace(/;\s*Domain=[^;]*/gi, ''));
     if (safe.length) res.setHeader('Set-Cookie', safe);
   }
+  async forwardMapConnection(req: Request, pathname: string, payload?: unknown, method = req.method) {
+    const c = this.config;
+    if (c?.role !== 'member' || !isMapConnectionExchange(method, pathname)) throw new Error('not a member connection route');
+    let body = payload;
+    if (pathname === CDS_MAP_CONNECTION_PATH + '/issue') {
+      const input = payload as { projectId?: unknown } | undefined;
+      const project = Object.entries(c.projects).find(([, local]) => local === input?.projectId);
+      const boundProject = project && this.state.getProject(project[1]) ? project : undefined;
+      body = { ...input, projectId: boundProject?.[0], memberProjectId: boundProject?.[1] };
+    }
+    // An old authority must not interpret a member request as standalone pairing.
+    const { status, json, mapConnectionProtocol } = await this.call(req,
+      CLUSTER_MAP_CONNECTION_PATH + pathname.slice(CDS_MAP_CONNECTION_PATH.length), body, method, undefined, true);
+    if (mapConnectionProtocol !== '1') {
+      return { status: 503, json: { error: { code: 'cluster_map_connection_unsupported', message: '主 CDS 尚未启用集群 MAP 配对' } } };
+    }
+    if (status === 200 && method === 'POST' && ['/accept', '/token'].some(route => pathname === CDS_MAP_CONNECTION_PATH + route)) {
+      const result = json as { projectId?: string } | undefined;
+      const local = result?.projectId && c.projects[result.projectId];
+      if (!local || !this.state.getProject(local)) throw new ClusterIdentityValidationError('cluster_project_binding_mismatch');
+      return { status, json: { ...result, projectId: local, instanceDiscoveryUrl: `/api/projects/${encodeURIComponent(local)}/instances` } };
+    }
+    return { status, json: this.translated(json, false) };
+  }
   async middleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     const c = this.config;
     if (c?.role !== 'member') { next(); return; }
     const pathname = req.path.replace(/\/+$/, '').toLowerCase();
     if (pathname === '/api/projects' && req.method === 'POST') {
       res.status(409).json({ error: 'cluster_authority_required', message: '请在主 CDS 创建项目，再绑定到集群成员；集群成员不会独立签发项目授权。', authorityUrl: c.authorityUrl }); return;
+    }
+    if (isMapConnectionExchange(req.method, pathname)) {
+      res.locals.cdsSuppressRequestBodyLog = true;
+      res.locals.cdsSuppressRequestDetails = true;
+      res.setHeader('Cache-Control', 'no-store');
+      try {
+        const reply = await this.forwardMapConnection(req, pathname, req.method === 'POST' ? req.body : undefined);
+        if (reply.status === 204) res.status(204).end();
+        else res.status(reply.status).json(reply.json ?? { error: 'cluster_identity_invalid_response' });
+      } catch {
+        this.lastErrorAt = new Date().toISOString();
+        failure(res, 'cluster_map_connection_unavailable');
+      }
+      return;
     }
     // Authentication diagnostics and management always reach the same source.
     if (clusterAuthorityPath(req.path)) {
@@ -316,7 +389,8 @@ export class ClusterIdentityService {
     try {
       const reply = await this.call(req, '/api/cluster/identity/resolve', { method: req.method, path: req.url });
       if (reply.status !== 200) {
-        if (reply.status === 401 && req.method === 'GET' && !/^\/api\//i.test(req.path) && req.accepts('html')) {
+        const browserEntry = !/^\/api\//i.test(req.path) || req.path === CDS_MAP_CONNECTION_PATH + '/authorize';
+        if (reply.status === 401 && req.method === 'GET' && browserEntry && req.accepts('html')) {
           res.redirect(302, `/login?redirect=${encodeURIComponent(localReturn(req.originalUrl))}`);
         } else failure(res, 'cluster_identity_rejected', reply.status === 401 ? 401 : 503);
         return true;
@@ -336,6 +410,16 @@ export class ClusterIdentityService {
       } catch { console.warn('[cluster-identity] 本地校验拒绝记录未能持久化'); }
       failure(res, code); return true;
     }
+  }
+  async refreshMapConnectionOrigin(req: Request, projectId: string): Promise<string | null> {
+    if (this.config?.role !== 'member') return null;
+    try {
+      const reply = await this.call(req, '/api/cluster/identity/resolve', { method: req.method, path: req.originalUrl });
+      if (reply.status !== 200) return null;
+      const { mapConnectionOrigin } = this.mapContext(reply.json as Parameters<ClusterIdentityService['mapContext']>[0]);
+      if (mapConnectionOrigin?.projectId === projectId) return mapConnectionOrigin.origin;
+    } catch { /* A fresh authority decision is required to change the active image. */ }
+    return null;
   }
   login(req: Request, res: Response): void {
     const c = this.config;
@@ -363,3 +447,4 @@ export class ClusterIdentityService {
     res.setHeader('Cache-Control', 'no-store'); res.json({ returnTo: ticket.returnTo });
   }
 }
+import { CLUSTER_MAP_SCOPES, clusterMapOrigin } from './connection/pairing-service.js';

@@ -2,6 +2,13 @@ import type { Request } from 'express';
 import type { AgentKeyAccess } from '../types.js';
 import type { CdsUser } from '../domain/auth.js';
 
+export interface ClusterMapConnection {
+  id: string;
+  projectId: string;
+  scopes: string[];
+  partnerBaseUrl: string;
+}
+
 /** Only server-to-server validation can install this context; headers cannot. */
 export interface ClusterIdentityContext {
   clusterId: string;
@@ -16,6 +23,8 @@ export interface ClusterIdentityContext {
   access?: { keyId: string; access: AgentKeyAccess };
   principal?: { principalId: string; credentialId: string };
   principalProjects?: string[];
+  mapConnection?: ClusterMapConnection;
+  mapConnectionOrigin?: { projectId: string; origin: string };
 }
 
 const contexts = new WeakMap<object, ClusterIdentityContext>();
