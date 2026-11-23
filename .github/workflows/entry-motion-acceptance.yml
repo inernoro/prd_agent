@@ -4,7 +4,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [visual, public, map, trim, playback, map-playback]
+        options: [visual, public, map, trim, playback, map-playback, cdn]
         default: visual
       candidate:
         required: true
@@ -465,3 +465,60 @@ jobs:
         with:
           name: short-entry-browser
           path: evidence
+  short-entry-network:
+    if: inputs.phase == 'cdn'
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
+      options: --init --shm-size=1g
+    timeout-minutes: 6
+    env:
+      VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - name: Measure first frame readiness directly against CDN
+        run: |
+          pnpm -C e2e install --frozen-lockfile
+          mkdir -p /tmp/short-cdn-probe
+          printf '%s' '<!doctype html><title>media probe</title>' > /tmp/short-cdn-probe/index.html
+          python3 -m http.server 8800 --bind 127.0.0.1 --directory /tmp/short-cdn-probe &
+          cd e2e
+          node --input-type=module <<'JS'
+          import {chromium} from '@playwright/test';
+          import {readFile} from 'node:fs/promises';
+          const assets=JSON.parse(await readFile('fixtures/media/entry-short-motion.json','utf8'));
+          const browser=await chromium.launch();
+          try {
+            for(const [name,asset] of Object.entries(assets)){
+              const src=new URL(asset.path,process.env.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN).href;
+              const context=await browser.newContext();
+              const page=await context.newPage();
+              const responses=[];
+              const failures=[];
+              page.on('response',response=>{if(response.url()===src) responses.push({status:response.status(),range:response.headers()['content-range'],type:response.headers()['content-type']});});
+              page.on('requestfailed',request=>{if(request.url()===src) failures.push(request.failure());});
+              await page.goto('http://127.0.0.1:8800');
+              const measure=await page.evaluate(src=>new Promise(resolve=>{
+                const started=performance.now();
+                const events=[];
+                const video=document.createElement('video');
+                for(const event of ['loadedmetadata','loadeddata','canplay','playing','waiting','stalled','error','ended']){
+                  video.addEventListener(event,()=>events.push([event,Math.round(performance.now()-started),video.readyState,video.error?.message]));
+                }
+                video.src=src;video.muted=true;video.playsInline=true;
+                document.body.append(video);
+                video.play().catch(error=>events.push([error.name,error.message]));
+                setTimeout(()=>resolve({events,state:video.readyState,mp4:video.canPlayType('video/mp4; codecs="avc1.64001f"')}),5500);
+              }),src);
+              console.log(JSON.stringify({name,responses,failures,measure}));
+              const response=await page.request.get(src,{timeout:8000});
+              console.log(JSON.stringify({http:response.status(),bytes:(await response.body()).byteLength,cdn:src}));
+              await context.close();
+            }
+          } finally {await browser.close();}
+          JS
