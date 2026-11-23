@@ -1,0 +1,132 @@
+name: 产品版本通知投递回归校验
+on:
+  push:
+    branches: [codex/map-production-readonly-diagnosis-20261119]
+    paths: [.github/workflows/map-claim-delivery-validation.yml]
+permissions:
+  contents: read
+jobs:
+  server:
+    name: 候选后端编译与真实数据库通知回归
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    services:
+      mongodb:
+        image: mongo:8.0
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      MONGODB_TEST_CONNECTION: mongodb://127.0.0.1:27017
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a0153152e144d16609e1237c1304446880e8f049
+          persist-credentials: false
+      - name: 装配并校验产品管理候选源码
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs'), path = require('path'), crypto = require('crypto');
+            const files = [{"path":"prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductClaimWebhookWorker.cs","sha":"f5a69352a5f6e69ad2ea577faf28ceee5f371b6b"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductClaimWebhookController.cs","sha":"24426c888e9b53220dc76c74187123d365fa673f"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs","sha":"d6b4f827e2c3850f53a198a4ff4ab4f709cec039"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.ClaimNotifications.cs","sha":"7227f40f89fce317527169bff7dc8bbceaea2ea9"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.ScheduledNotifications.cs","sha":"d44c1ed38e89c53012c6181c8e43a67644655d37"},{"path":"prd-admin/src/pages/product-agent/ProductClaimWebhookPanel.tsx","sha":"ca3c778e05e6a82bfd186b67663979bbc9fbb117"},{"path":"prd-admin/src/services/real/productClaimWebhook.ts","sha":"db8c117b030db0a08ea913fcf9d29ba722562834"},{"path":"prd-admin/src/components/product-agent/DebugClaimNotificationButton.tsx","sha":"32da3fff9ce73f172db8f145dbc1432486808d20"},{"path":"prd-admin/src/pages/product-agent/ScheduledNotifications.tsx","sha":"46319d9f7f299e2cb5fca6a26567e9bfac4a9bf0"},{"path":"prd-admin/src/services/real/productScheduledNotifications.ts","sha":"17d1bb324d172767d3bff5ef653ee6abe68dbfff"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductClaimWebhookTests.cs","sha":"48427e65ca61cde65583457fbc8f51eb44ad728a"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductScheduledNotificationLifecycleTests.cs","sha":"245de2b0d83d4550060134233a1098b55bc5b885"},{"path":"prd-admin/src/pages/product-agent/ProductClaimWebhookPanel.test.tsx","sha":"abe6563a80a1907c0578715b07266a20967632bc"},{"path":"prd-admin/src/pages/product-agent/ScheduledNotifications.test.tsx","sha":"1178f354e6158b2d64d2106c25cf4ca04a7b5d80"},{"path":"changelogs/2026-11-23_版本通知直接发送与逐条补发.md","sha":"c772efe4102382886d0412fdc07b771abdfdea71"}];
+            for (const item of files) {
+              const {data} = await github.rest.git.getBlob({...context.repo, file_sha: item.sha});
+              const bytes = Buffer.from(data.content, 'base64');
+              const digest = crypto.createHash('sha1').update(Buffer.from('blob ' + bytes.length + '\0')).update(bytes).digest('hex');
+              if (digest !== item.sha) throw new Error('候选文件校验不一致: ' + item.path);
+              fs.mkdirSync(path.dirname(item.path), {recursive: true}); fs.writeFileSync(item.path, bytes);
+            }
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: claim-delivery-nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: 恢复依赖与编译整个解决方案
+        working-directory: prd-api
+        run: |
+          dotnet restore PrdAgent.sln
+          dotnet build PrdAgent.sln -c Release --no-restore
+      - name: 实际申领发送、并发补发、失败保号及历史不补发
+        working-directory: prd-api
+        run: >-
+          dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj -c Release --no-build --no-restore
+          --filter 'FullyQualifiedName~ProductClaimWebhookTests|FullyQualifiedName~ProductScheduledNotificationLifecycleTests'
+          --logger 'console;verbosity=normal'
+  frontend:
+    name: 候选前端交互、类型、lint、完整测试与构建
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a0153152e144d16609e1237c1304446880e8f049
+          persist-credentials: false
+      - name: 装配并校验产品管理候选源码
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs'), path = require('path'), crypto = require('crypto');
+            const files = [{"path":"prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductClaimWebhookWorker.cs","sha":"f5a69352a5f6e69ad2ea577faf28ceee5f371b6b"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductClaimWebhookController.cs","sha":"24426c888e9b53220dc76c74187123d365fa673f"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs","sha":"d6b4f827e2c3850f53a198a4ff4ab4f709cec039"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.ClaimNotifications.cs","sha":"7227f40f89fce317527169bff7dc8bbceaea2ea9"},{"path":"prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.ScheduledNotifications.cs","sha":"d44c1ed38e89c53012c6181c8e43a67644655d37"},{"path":"prd-admin/src/pages/product-agent/ProductClaimWebhookPanel.tsx","sha":"ca3c778e05e6a82bfd186b67663979bbc9fbb117"},{"path":"prd-admin/src/services/real/productClaimWebhook.ts","sha":"db8c117b030db0a08ea913fcf9d29ba722562834"},{"path":"prd-admin/src/components/product-agent/DebugClaimNotificationButton.tsx","sha":"32da3fff9ce73f172db8f145dbc1432486808d20"},{"path":"prd-admin/src/pages/product-agent/ScheduledNotifications.tsx","sha":"46319d9f7f299e2cb5fca6a26567e9bfac4a9bf0"},{"path":"prd-admin/src/services/real/productScheduledNotifications.ts","sha":"17d1bb324d172767d3bff5ef653ee6abe68dbfff"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductClaimWebhookTests.cs","sha":"48427e65ca61cde65583457fbc8f51eb44ad728a"},{"path":"prd-api/tests/PrdAgent.Api.Tests/Services/ProductScheduledNotificationLifecycleTests.cs","sha":"245de2b0d83d4550060134233a1098b55bc5b885"},{"path":"prd-admin/src/pages/product-agent/ProductClaimWebhookPanel.test.tsx","sha":"abe6563a80a1907c0578715b07266a20967632bc"},{"path":"prd-admin/src/pages/product-agent/ScheduledNotifications.test.tsx","sha":"1178f354e6158b2d64d2106c25cf4ca04a7b5d80"},{"path":"changelogs/2026-11-23_版本通知直接发送与逐条补发.md","sha":"c772efe4102382886d0412fdc07b771abdfdea71"}];
+            for (const item of files) {
+              const {data} = await github.rest.git.getBlob({...context.repo, file_sha: item.sha});
+              const bytes = Buffer.from(data.content, 'base64');
+              const digest = crypto.createHash('sha1').update(Buffer.from('blob ' + bytes.length + '\0')).update(bytes).digest('hex');
+              if (digest !== item.sha) throw new Error('候选文件校验不一致: ' + item.path);
+              fs.mkdirSync(path.dirname(item.path), {recursive: true}); fs.writeFileSync(item.path, bytes);
+            }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: prd-admin/pnpm-lock.yaml
+      - name: 安装锁定依赖
+        working-directory: prd-admin
+        run: pnpm install --frozen-lockfile
+      - name: 补发与只读通知交互回归
+        working-directory: prd-admin
+        run: pnpm test src/pages/product-agent/ProductClaimWebhookPanel.test.tsx src/pages/product-agent/ScheduledNotifications.test.tsx
+      - name: 类型与 lint 校验
+        working-directory: prd-admin
+        run: |
+          pnpm tsc --noEmit
+          pnpm lint
+          pnpm exec eslint src/pages/product-agent/ProductClaimWebhookPanel.tsx src/services/real/productClaimWebhook.ts src/components/product-agent/DebugClaimNotificationButton.tsx src/pages/product-agent/ScheduledNotifications.tsx src/services/real/productScheduledNotifications.ts src/pages/product-agent/ProductClaimWebhookPanel.test.tsx src/pages/product-agent/ScheduledNotifications.test.tsx --max-warnings=0
+      - name: 完整前端测试
+        working-directory: prd-admin
+        run: pnpm test
+      - name: 生产构建
+        working-directory: prd-admin
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm build
+  publish:
+    needs: [server, frontend]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: 校验全部通过后推送独立分支并构建现有产物
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = 'codex/product-claim-delivery-20261123', sha = '6454e1c9f98166c14a6feeac42c5a30edc86fa5a';
+            let found;
+            try { found = await github.rest.git.getRef({...context.repo, ref: 'heads/' + branch}); }
+            catch (error) { if (error.status !== 404) throw error; }
+            if (found && found.data.object.sha !== sha) throw new Error('分支已有其它提交，停止保护现有代码');
+            if (!found) await github.rest.git.createRef({...context.repo, ref: 'refs/heads/' + branch, sha});
+            for (const item of [
+              {workflow_id: 'ci.yml', inputs: {}},
+              {workflow_id: 'branch-image.yml', inputs: {}},
+              {workflow_id: 'web-latest-pages.yml', inputs: {publish_latest: 'false'}}
+            ]) await github.rest.actions.createWorkflowDispatch({...context.repo, ...item, ref: branch});
+            core.info('已推送产品通知修复分支 ' + branch + ' @ ' + sha);
