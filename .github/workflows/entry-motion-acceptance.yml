@@ -285,7 +285,9 @@ jobs:
           ref: ${{ inputs.candidate }}
       - name: Render short day and night entries from the approved CDN masters
         run: |
-          command -v ffmpeg
+          sudo python3 scripts/ci/normalize-ubuntu-apt-sources.py --root / --mirror princeton
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
           mkdir -p work/short-entry
           python3 - <<'PY'
           import hashlib, json, subprocess
