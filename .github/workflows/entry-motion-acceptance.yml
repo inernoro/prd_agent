@@ -121,3 +121,98 @@ jobs:
         with:
           name: fast-login-browser-proof
           path: evidence
+  fast-map-login:
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble@sha256:b0ab6f3cb99aa7803adbc14d9027ec1785fc6e433b97e134e0f8fe61683b6b53
+      options: --init --shm-size=1g
+    timeout-minutes: 12
+    env:
+      VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - name: Verify authored MAP login with both skins and test permission handoff
+        run: |
+          pnpm -C prd-admin install --frozen-lockfile
+          pnpm -C e2e install --frozen-lockfile
+          pnpm -C prd-admin exec vite build
+          pnpm -C prd-admin preview --host 127.0.0.1 --strictPort --port 8201 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8201/login; then break; fi
+            sleep 1
+          done
+          mkdir -p evidence
+          cd e2e
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { chromium, expect } from '@playwright/test';
+          import { writeFile } from 'node:fs/promises';
+          const browser = await chromium.launch();
+          const rows = [];
+          try {
+            for (const [skin, width, height] of [['standard',390,744],['companion',390,744],['companion',1440,900]]) {
+              const page = await browser.newPage({viewport:{width,height},colorScheme:'dark'});
+              try {
+                await page.addInitScript(value => {
+                  localStorage.setItem('map-entry-skin',JSON.stringify({state:{skin:value},version:0}));
+                },skin);
+                let releasePermission;
+                const permission = new Promise(resolve => {releasePermission=resolve;});
+                let permissionRequested=false;
+                await page.route('**/api/**',async route=>{
+                  const path = new URL(route.request().url()).pathname;
+                  const fulfill = data => route.fulfill({json:{success:true,data,error:null}});
+                  if(path.endsWith('/auth/miduo-planet/options')) return fulfill({items:[],passwordLoginDisabled:false});
+                  if(path.endsWith('/auth/login')){
+                    return fulfill({accessToken:'isolated-map-token',refreshToken:'isolated-map-refresh',sessionKey:'isolated-map-session',user:{userId:'isolated-user',username:'demo',displayName:'验收用户',role:'ADMIN',status:'Active'}});
+                  }
+                  if(path.endsWith('/authz/me')){
+                    permissionRequested=true;
+                    await permission;
+                    return fulfill({effectivePermissions:['admin.access']});
+                  }
+                  return fulfill({items:[]});
+                });
+                try {
+                  await page.goto('http://127.0.0.1:8201/login',{waitUntil:'domcontentloaded'});
+                  const pass=page.locator('input[autocomplete="current-password"]');
+                  await expect(pass).toBeVisible();
+                  await expect(page.locator('.identity-scanner, .consciousness-scene video')).toHaveCount(0);
+                  await expect(page.locator('.consciousness-scene')).toHaveCount(skin==='companion'?1:0);
+                  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+                  await page.screenshot({path:`../evidence/map-login-${skin}-${width}.png`});
+                  await pass.fill('fixture-only');
+                  await page.getByRole('button',{name:'开始身份确认',exact:true}).click();
+                  await expect.poll(()=>permissionRequested).toBe(true);
+                  await expect(pass).toBeVisible();
+                  await expect(page.getByRole('status').filter({hasText:/正在/})).toBeVisible();
+                  const start=Date.now();
+                  releasePermission();
+                  await page.waitForURL(url=>url.pathname==='/',{timeout:2500});
+                  if(skin==='companion'){
+                    const landing=page.getByRole('region',{name:'沉浸首页'});
+                    await expect(landing).toBeVisible();
+                    await expect(landing.getByRole('textbox')).toBeEditable();
+                    await landing.getByRole('textbox').fill('知识库');
+                    await expect(landing.locator('video')).toHaveCount(0);
+                    await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving','');
+                    await page.screenshot({path:`../evidence/map-workspace-${skin}-${width}.png`});
+                  }
+                  rows.push({skin,width,height,loginStableDuringPermission:true,routeMs:Date.now()-start});
+                } finally { releasePermission(); }
+              } finally { await page.close(); }
+            }
+          } finally { await browser.close(); }
+          console.log(JSON.stringify(rows));
+          await writeFile('../evidence/map-result.json',JSON.stringify(rows,null,2));
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fast-map-browser-proof
+          path: evidence
