@@ -11,3 +11,4 @@ export function installOperationsFixtures(page: Page, options?: { quickstart?: b
   setError(value: boolean): void;
   setPreflightPass(value: boolean): void;
 }>;
+export function installEntryMediaFixture(page: Page, url: string, asset: { bytes: number; sha256: string }): Promise<void>;
