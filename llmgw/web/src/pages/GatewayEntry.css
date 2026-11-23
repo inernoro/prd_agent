@@ -146,10 +146,6 @@
 .gateway-quickstart-stage .is-intent .lg-page-body { padding-bottom: 0; }
 .gateway-quickstart-stage .is-intent .lg-qs-ask { min-height: 260px; justify-content: center; padding: 0; }
 .gateway-quickstart-stage .is-intent .lg-qs-ask-inner { width: min(770px, 72%); max-width: 770px; transform: translateY(10%); }
-@media (prefers-reduced-motion: no-preference) {
-  .gateway-quickstart-stage.is-entering .consciousness-camera { animation: gateway-backdrop-enter 180ms ease-out; }
-}
-@keyframes gateway-backdrop-enter { from { opacity: .78; } }
 .gateway-quickstart-stage .gateway-quickstart-shade { background: linear-gradient(90deg, color-mix(in srgb, var(--cinema-night) 80%, transparent), transparent 75%); }
 .gateway-intent-composer { position: relative; width: 100%; border: 1px solid var(--cinema-border); border-radius: 20px; background: color-mix(in srgb, var(--cinema-glass) 68%, transparent); backdrop-filter: blur(24px); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--cinema-light) 7%, transparent), 0 18px 64px color-mix(in srgb, var(--cinema-night) 40%, transparent); }
 .gateway-intent-composer:focus-within { border-color: color-mix(in srgb, var(--cinema-accent) 65%, transparent); }

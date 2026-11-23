@@ -9,7 +9,7 @@ export function GatewayQuickstartStage({ children }: { children: ReactNode }) {
   const [arriving] = useState(hasQuickstartArrival);
   useEffect(() => { if (arriving) consumeQuickstartArrival(); }, [arriving]);
   return <section className={`gateway-entry gateway-quickstart-stage consciousness-home${arriving ? ' is-entering' : ''}`} data-arrival-handoff="direct-scene" aria-label="对话工作空间">
-    <ConsciousnessScene />
+    <ConsciousnessScene shortArrival={arriving} />
     <div className="gateway-quickstart-shade" aria-hidden="true" />
     <GatewayIdentityHud />
     {children}

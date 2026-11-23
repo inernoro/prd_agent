@@ -810,6 +810,46 @@ test('登录请求期间保留表单，日景素材慢加载也能直接使用�
   }
 });
 
+test('短片在背景播放时仍可输入和打开账号菜单，片尾不打断操作', async ({ page }) => {
+  const origin = process.env.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN?.trim();
+  test.skip(!origin, '短片 CDN 未配置');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  await installOperationsFixtures(page, { quickstart: true });
+  await page.goto('http://127.0.0.1:8200/llmgw/login');
+  await page.locator('#llmgw-username').fill('demo');
+  await page.locator('#llmgw-password').fill('demo');
+  const start = await page.evaluateHandle(() => {
+    const state = { started: false, ended: false, duration: 0 };
+    document.addEventListener('playing', event => {
+      if (!(event.target instanceof HTMLVideoElement) || !event.target.matches('.portrait-arrival')) return;
+      state.started = true;
+      state.duration = event.target.duration;
+    }, true);
+    document.addEventListener('ended', event => {
+      if (event.target instanceof HTMLVideoElement && event.target.matches('.portrait-arrival')) state.ended = true;
+    }, true);
+    return state;
+  });
+  await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
+  await expect(page).toHaveURL(/\/quickstart$/);
+  const movie = page.locator('video.portrait-arrival');
+  await expect(movie).toHaveAttribute('data-playback', 'playing', { timeout: 1000 });
+  const input = page.getByRole('textbox', { name: '我想做什么', exact: true });
+  await input.fill('接入知识库');
+  await page.getByLabel('打开用户菜单', { exact: true }).click();
+  await expect(movie).toHaveAttribute('data-playback', 'playing');
+  await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open', '');
+  await expect(page.getByRole('complementary', { name: '主导航', exact: true })).toBeVisible();
+  await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving', '');
+  await expect(movie).toHaveCount(0, { timeout: 2500 });
+  const playback = await start.evaluate(state => state);
+  expect(playback.started && playback.ended).toBe(true);
+  expect(playback.duration).toBeCloseTo(1.6, 1);
+  await expect(input).toHaveValue('接入知识库');
+  await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open', '');
+});
+
 for (const width of [390, 1440])
   for (const theme of ["light", "dark"] as const) {
     test(`${width} ${theme} 电影式接入全流程与账户组织布局`, async ({ page }, testInfo) => {

@@ -96,10 +96,6 @@
 .cinema-login::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: var(--cinema-night); opacity: 0; z-index: 5; }
 .cinema-login[data-phase="entering"]::after { animation: identity-black 820ms cubic-bezier(.65, 0, .35, 1) both; }
 .cinema-login[data-phase="entering"] .consciousness-camera { animation: identity-camera 820ms cubic-bezier(.22, 1, .36, 1) both; }
-@media (prefers-reduced-motion: no-preference) {
-  .consciousness-home.is-entering .consciousness-camera { animation: map-backdrop-enter 180ms ease-out; }
-}
-@keyframes map-backdrop-enter { from { opacity: .78; } }
 
 .consciousness-home { flex: 1; min-height: 0; height: 100%; position: relative; isolation: isolate; overflow: hidden; color: var(--cinema-light); background: var(--cinema-night); font-family: var(--font-body); }
 .consciousness-home-center { position: absolute; left: 50%; top: 49%; transform: translate(-50%, -50%); width: min(650px, 64%); z-index: 4; }
@@ -131,6 +127,9 @@
 .consciousness-portrait { position: absolute; inset: 0; }
 .portrait-material, .portrait-structure { position: absolute; inset: 0; width: 100%; height: 100%; }
 .portrait-motion { object-fit: cover; object-position: right center; }
+.portrait-arrival { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: right center; pointer-events: none; opacity: 0; transition: opacity 120ms ease; }
+.portrait-arrival[data-playback='playing'] { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .portrait-arrival { display: none; } }
 .consciousness-portrait.is-building > .consciousness-art { opacity: 0; }
 .portrait-lines { opacity: var(--portrait-lineOpacity, 1); }
 .portrait-lines path { stroke-dashoffset: 1; }
