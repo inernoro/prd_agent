@@ -193,6 +193,7 @@ import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
 import type { JanitorService } from './services/janitor.js';
 import type { CdsConfig, IShellExecutor, AgentKeyAccess } from './types.js';
+import { isLegacyProjectAgentKey } from './shared/project-agent-key.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
 import {
   bodyPreviewFromUnknown,
@@ -1873,27 +1874,45 @@ function presentedAiAccessKey(req: express.Request): string | undefined {
       })();
 }
 
-function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
-  if (!key.planningAccess && !key.designAccess) return true;
-  if (key.planningAccess && key.designAccess) return false;
+function projectKeyAllowsRequest(
+  req: express.Request,
+  key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>,
+  state: StateService,
+  member?: PairingMember,
+): boolean {
+  if (isLegacyProjectAgentKey(key)) return true;
   if (req.method === 'GET' && req.path === '/api/credentials/self-check') return true;
   if (isPublicAgentSetupRoute(req.method, req.path)) return true;
-  const segment = req.path.replace(/^\/_cds\/api\//i, '/api/').split('/')[3];
-  try { if (decodeURIComponent(segment) !== key.projectId) return false; }
-  catch { return false; }
-  const read = req.method === 'GET' || req.method === 'HEAD';
-  if (key.designAccess) {
-    if (req.method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(req.path)) return true;
+  const hasProjectAccess = key.projectAccess === 'rw' || key.projectAccess === 'admin';
+  const url = req.path.replace(/^\/_cds\/api\//i, '/api/').replace(/\/+$/, '');
+  const projectPath = /^\/api\/projects\/([^/]+)(\/.*)?$/i.exec(url);
+  if (!projectPath) return hasProjectAccess;
+  try {
+    const target = decodeURIComponent(projectPath[1]);
+    if (member ? member.projects[key.projectId] !== target : state.getProject(target)?.id !== key.projectId) return false;
+  } catch { return false; }
+  const suffix = projectPath[2]?.toLowerCase() ?? '';
+  const method = req.method;
+  const read = method === 'GET' || method === 'HEAD';
+  if (/^\/design(?:\/|$)/.test(suffix)) {
+    if (!key.designAccess) return false;
     const route = '/api/projects/:projectId/design';
-    const path = normalizedDesignPath(req.path);
+    const path = normalizedDesignPath(url);
     return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
-      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST' && path === `${route}/feedback`)
-      || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
+      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && method === 'POST' && path === `${route}/feedback`)
+      || (key.designAccess === 'publish' && method === 'POST' && path === `${route}/packages`);
   }
-  const path = normalizedPlanningPath(req.path);
-  if (!path) return false;
-  return read
-    || (key.planningAccess === 'propose' && req.method === 'POST' && path === '/api/projects/:projectId/planning/commands');
+  if (/^\/planning(?:\/|$)/.test(suffix)) {
+    const path = normalizedPlanningPath(url);
+    return Boolean(path && key.planningAccess && (read
+      || (key.planningAccess === 'propose' && method === 'POST' && path === '/api/projects/:projectId/planning/commands')));
+  }
+  if (key.designAccess && method === 'POST' && suffix === '/access-requests') return true;
+  if (/^\/agent-keys(?:\/|$)/.test(suffix)) {
+    return key.projectAccess === 'admin' && (read || method === 'DELETE');
+  }
+  if (suffix === '' && method === 'DELETE') return key.projectAccess === 'admin';
+  return hasProjectAccess;
 }
 
 /** Check if a request is from an approved AI session */
@@ -1978,7 +1997,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService, mem
     if (stateService && headerKey.startsWith('cdsp_')) {
       const match = stateService.findAgentKeyForAuth(headerKey);
       if (match) {
-        if (!projectKeyAllowsRequest(req, match)) return null;
+        if (!projectKeyAllowsRequest(req, match, stateService, member)) return null;
         stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -2362,10 +2381,12 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use((req, res, next) => {
     const key = presentedAiAccessKey(req);
     const match = key?.startsWith('cdsp_') ? deps.stateService.findAgentKeyForAuth(key) : null;
-    if (match && !projectKeyAllowsRequest(req, match)) {
-      res.status(403).set('Cache-Control', 'private, no-store').json(match.designAccess
-        ? { error: 'design_key_scope', message: '此凭据仅限授权项目的设计操作' }
-        : { error: 'planning_key_scope', message: '此凭据仅限授权项目的工程规划操作' });
+    if (match && !projectKeyAllowsRequest(req, match, deps.stateService)) {
+      const error = match.projectAccess || (match.planningAccess && match.designAccess) ? 'project_key_scope'
+        : match.designAccess ? 'design_key_scope' : 'planning_key_scope';
+      res.status(403).set('Cache-Control', 'private, no-store').json({
+        error, message: '当前凭据没有此操作权限，请联系项目负责人签发所需权限的项目密钥。',
+      });
       return;
     }
     next();
@@ -4366,7 +4387,7 @@ export function createServer(deps: ServerDeps): express.Express {
     const h = trustedClusterIdentity(req) ? undefined : presentedAiAccessKey(req);
     if (h && h.startsWith('cdsp_') && !(req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       const match = deps.stateService.findAgentKeyForAuth(h);
-      if (match && projectKeyAllowsRequest(req, match)) {
+      if (match && projectKeyAllowsRequest(req, match, deps.stateService)) {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;

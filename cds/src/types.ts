@@ -1,5 +1,6 @@
 import type { EnvAuditFact } from './shared/engineering-planning.js';
 import type { ProjectInspection } from './shared/project-inspections.js';
+import type { ProjectAgentKeyPermissions } from './shared/project-agent-key.js';
 // ── Cloud Development Suite (CDS) — Core Types ──
 
 import type { SealedSecret } from './infra/secret-seal.js';
@@ -4595,11 +4596,9 @@ export interface Project {
 
 /**
  * A project-scoped Agent Key. Plaintext is never persisted — only the
- * sha256 hash. Scope is always 'rw' in the current implementation;
- * kept as a field so a later read-only tier can slot in without a
- * schema migration.
+ * sha256 hash. The scope marker is retained for older credentials and clients.
  */
-export interface AgentKey {
+export interface AgentKey extends ProjectAgentKeyPermissions {
   /** Random 8-hex id, used for revocation by keyId. */
   id: string;
   /** 明确人工核对的历史凭据归属审计，不按名称推断。 */
@@ -4609,12 +4608,8 @@ export interface AgentKey {
   label: string;
   /** sha256 hex of the plaintext key (`cdsp_<slug>_<base64url suffix>`). */
   hash: string;
-  /** Permission scope. Always 'rw' — a placeholder for future tiers. */
+  /** Legacy scope marker. Independent grants are defined by ProjectAgentKeyPermissions. */
   scope: 'rw';
-  /** Optional restriction to this project's planning reads or proposal intake. */
-  planningAccess?: 'read' | 'propose';
-  /** Optional restriction to this project's private design reads or Git-verified publishing. */
-  designAccess?: 'read' | 'feedback' | 'publish';
   /** Dedicated design approval grants access without a general project grant. */
   designAccessRequestId?: string;
   /** Original publisher identity for a verified design credential replacement. */

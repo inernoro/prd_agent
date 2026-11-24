@@ -56,6 +56,7 @@ import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
+import { isLegacyProjectAgentKey, type ProjectAgentKeyPermissions } from '../../../src/shared/project-agent-key';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
@@ -313,12 +314,9 @@ function defaultOnboardingServices(): AppServiceDraft[] {
   ];
 }
 
-interface AgentKeySummary {
+interface AgentKeySummary extends ProjectAgentKeyPermissions {
   id: string;
   label?: string;
-  scope?: string;
-  planningAccess?: 'read' | 'propose';
-  designAccess?: 'read' | 'feedback' | 'publish';
   access?: AgentKeyScope;
   createdAt?: string;
   createdBy?: string;
@@ -327,10 +325,13 @@ interface AgentKeySummary {
   status?: 'active' | 'revoked';
 }
 
+const agentProjectAccessLabels = { rw: '项目读写', admin: '项目管理员' } as const;
+const agentPlanningAccessLabels = { read: '工程规划只读', propose: '工程规划提案' } as const;
 const agentDesignAccessLabels = { read: '设计只读', feedback: '设计实施反馈', publish: '设计稿件发布' } as const;
 
 interface AgentKeysResponse {
   keys: AgentKeySummary[];
+  canIssueRestrictedPermissions?: boolean;
 }
 
 interface AgentKeySignResponse {
@@ -2298,7 +2299,7 @@ function AgentKeyManagerDialog({
     | { status: 'idle' }
     | { status: 'loading' }
     | { status: 'error'; message: string }
-    | { status: 'ok'; keys: AgentKeySummary[] }
+    | { status: 'ok'; keys: AgentKeySummary[]; canIssueRestrictedPermissions: boolean }
   >({ status: 'idle' });
   const [signOpen, setSignOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<AgentKeySummary | null>(null);
@@ -2308,7 +2309,7 @@ function AgentKeyManagerDialog({
     setState({ status: 'loading' });
     try {
       const data = await apiRequest<AgentKeysResponse>(`/api/projects/${encodeURIComponent(project.id)}/agent-keys`);
-      setState({ status: 'ok', keys: data.keys || [] });
+      setState({ status: 'ok', keys: data.keys || [], canIssueRestrictedPermissions: data.canIssueRestrictedPermissions === true });
     } catch (err) {
       setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -2331,7 +2332,7 @@ function AgentKeyManagerDialog({
           </DialogHeader>
 
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => setSignOpen(true)}>
+            <Button type="button" disabled={state.status !== 'ok'} onClick={() => setSignOpen(true)}>
               <KeyRound />
               签发新 Key
             </Button>
@@ -2357,10 +2358,12 @@ function AgentKeyManagerDialog({
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{key.label || key.id}</span>
                         <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
-                        <CodePill>{key.designAccess ? agentDesignAccessLabels[key.designAccess] : key.scope || 'rw'}</CodePill>
+                        {key.projectAccess ? <CodePill>{agentProjectAccessLabels[key.projectAccess]}</CodePill>
+                          : isLegacyProjectAgentKey(key) ? <CodePill>项目读写</CodePill> : null}
+                        {key.planningAccess && <CodePill>{agentPlanningAccessLabels[key.planningAccess]}</CodePill>}
+                        {key.designAccess && <CodePill>{agentDesignAccessLabels[key.designAccess]}</CodePill>}
                       </div>
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        {key.planningAccess && <span>{key.planningAccess === 'read' ? '工程规划只读' : '工程规划提案'}</span>}
                         <span>签发：{formatDate(key.createdAt)}</span>
                         <span>最近使用：{formatDate(key.lastUsedAt)}</span>
                         {key.createdBy ? <span>签发人：{key.createdBy}</span> : null}
@@ -2388,6 +2391,7 @@ function AgentKeyManagerDialog({
 
       <AgentKeySignDialog
         project={project}
+        canIssueRestrictedPermissions={state.status === 'ok' && state.canIssueRestrictedPermissions}
         open={signOpen}
         onOpenChange={setSignOpen}
         onSigned={async () => {
@@ -2713,20 +2717,50 @@ function GlobalAgentKeyRevokeDialog({
   );
 }
 
+function AgentKeyPermissionGroup<Level extends string>({ name, title, levels, value, onChange, disabled, ownerOnly }: {
+  name: string;
+  title: string;
+  levels: Record<Level, string>;
+  value: Level | undefined;
+  onChange: (value: Level | undefined) => void;
+  disabled: boolean;
+  ownerOnly?: readonly Level[];
+}): JSX.Element {
+  const choices = [undefined, ...Object.keys(levels) as Level[]];
+  return (
+    <fieldset className="min-w-0 rounded-md border border-border px-3 pb-2">
+      <legend className="px-1 text-sm font-medium">{title}</legend>
+      <div className="flex flex-wrap gap-x-4">
+        {choices.map(level => (
+          <label key={level ?? ''} className="flex min-h-9 items-center gap-2 text-sm has-[:disabled]:text-muted-foreground">
+            <input type="radio" name={name} className="accent-primary" checked={value === level}
+              disabled={disabled && level !== undefined && ownerOnly?.includes(level)}
+              onChange={() => onChange(level)} />
+            {level === undefined ? '不授权' : levels[level]}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 function AgentKeySignDialog({
   project,
+  canIssueRestrictedPermissions,
   open,
   onOpenChange,
   onSigned,
   onToast,
 }: {
   project: ProjectSummary | null;
+  canIssueRestrictedPermissions: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSigned: () => Promise<void>;
   onToast: (message: string) => void;
 }): JSX.Element {
   const [label, setLabel] = useState('');
+  const [projectAccess, setProjectAccess] = useState<AgentKeySummary['projectAccess']>('rw');
   const [planningAccess, setPlanningAccess] = useState<AgentKeySummary['planningAccess']>();
   const [designAccess, setDesignAccess] = useState<AgentKeySummary['designAccess']>();
   const [signing, setSigning] = useState(false);
@@ -2736,6 +2770,7 @@ function AgentKeySignDialog({
   useEffect(() => {
     if (!open) {
       setLabel('');
+      setProjectAccess('rw');
       setPlanningAccess(undefined);
       setDesignAccess(undefined);
       setError('');
@@ -2745,7 +2780,7 @@ function AgentKeySignDialog({
   }, [open]);
 
   async function sign(): Promise<void> {
-    if (!project) return;
+    if (!project || !(projectAccess || planningAccess || designAccess)) return;
     setSigning(true);
     setError('');
     try {
@@ -2753,7 +2788,7 @@ function AgentKeySignDialog({
         `/api/projects/${encodeURIComponent(project.id)}/agent-keys`,
         {
           method: 'POST',
-          body: { label: label.trim() || undefined, planningAccess, designAccess },
+          body: { label: label.trim() || undefined, projectAccess, planningAccess, designAccess },
         },
       );
       setSigned(data);
@@ -2809,22 +2844,19 @@ function AgentKeySignDialog({
                 placeholder="例如 Codex 本地调试"
               />
             </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">权限</span>
-              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={designAccess ? 'design-' + designAccess : planningAccess ?? ''}
-                onChange={event => {
-                  const scope = event.target.value;
-                  setPlanningAccess(scope === 'read' || scope === 'propose' ? scope : undefined);
-                  setDesignAccess((Object.keys(agentDesignAccessLabels) as Array<keyof typeof agentDesignAccessLabels>)
-                    .find(access => scope === 'design-' + access));
-                }}>
-                <option value="">项目读写</option>
-                <option value="read">工程规划只读</option>
-                <option value="propose">工程规划提案</option>
-                {Object.entries(agentDesignAccessLabels).map(([access, label]) => <option key={access} value={'design-' + access}>{label}</option>)}
-              </select>
-            </label>
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">可同时授权多个类别。每类选择一个级别。</p>
+              <AgentKeyPermissionGroup name="project-access" title="项目" levels={agentProjectAccessLabels}
+                value={projectAccess} onChange={setProjectAccess} disabled={!canIssueRestrictedPermissions} ownerOnly={['admin']} />
+              <AgentKeyPermissionGroup name="planning-access" title="工程规划" levels={agentPlanningAccessLabels}
+                value={planningAccess} onChange={setPlanningAccess} disabled={!canIssueRestrictedPermissions} ownerOnly={['read', 'propose']} />
+              <AgentKeyPermissionGroup name="design-access" title="设计" levels={agentDesignAccessLabels}
+                value={designAccess} onChange={setDesignAccess} disabled={!canIssueRestrictedPermissions} ownerOnly={['read', 'feedback', 'publish']} />
+              {!canIssueRestrictedPermissions && <p className="text-xs text-muted-foreground">项目管理员、工程规划和设计权限由登录 CDS 的系统所有者签发。</p>}
+              {projectAccess === 'admin' && <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
+                项目管理员可读写和删除当前项目，并查看、吊销项目密钥。
+              </p>}
+            </div>
             <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
               签发后请只交给需要操作此项目的 Agent。用完可在管理列表吊销。
             </div>
@@ -2841,7 +2873,7 @@ function AgentKeySignDialog({
             {signed ? '关闭' : '取消'}
           </Button>
           {!signed ? (
-            <Button type="button" onClick={() => void sign()} disabled={signing}>
+            <Button type="button" onClick={() => void sign()} disabled={signing || !(projectAccess || planningAccess || designAccess)}>
               {signing ? <Loader2 className="animate-spin" /> : <KeyRound />}
               确认签发
             </Button>
