@@ -31,7 +31,7 @@ public sealed partial class ModelUpgradeService
         s.Current = await CurrentAsync(s.TenantId, s.LogicalModelId)
             ?? throw new ModelUpgradeException("CURRENT_REQUIRED", "稳定模型没有启用的物理线路，请先配置当前线路。");
         s.LastCheckedAt = DateTime.UtcNow;
-        var directories = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var directories = new Dictionary<string, Dictionary<string, long?>>(StringComparer.Ordinal);
         s.Discoveries = [];
         var configured = await Providers.Find(Scope(s.TenantId, F.Eq("Enabled", true))).Limit(100).ToListAsync(ct);
         foreach (var p in configured)
@@ -39,7 +39,7 @@ public sealed partial class ModelUpgradeService
             try { ModelUpgradeDiscovery.RequireOfficial(p); } catch (ModelUpgradeException) { continue; }
             var providerId = p.GetStringOrEmpty("_id");
             await RenewLeaseAsync(s);
-            HashSet<string> found;
+            Dictionary<string, long?> found;
             try { found = await discovery.DiscoverAsync(s, p, ct); }
             catch (ModelUpgradeException e)
             {
@@ -50,16 +50,18 @@ public sealed partial class ModelUpgradeService
             directories[providerId] = found;
             var imported = await Models.Find(Scope(s.TenantId, F.Eq("PlatformId", providerId))).Project(new BsonDocument("ModelName", 1)).ToListAsync(ct);
             var existing = imported.Select(x => x.GetStringOrEmpty("ModelName")).ToHashSet(StringComparer.Ordinal);
-            s.Discoveries.AddRange(found.Where(x => !existing.Contains(x)).OrderBy(x => x, StringComparer.Ordinal).Take(100)
+            s.Discoveries.AddRange(found.Keys.Where(x => !existing.Contains(x)).OrderBy(x => x, StringComparer.Ordinal).Take(100)
                 .Select(x => new ModelUpgradeDiscoveryItem { ProviderId = providerId, UpstreamModelId = x }));
         }
         s.Discoveries = s.Discoveries.Take(100).ToList();
-        var relation = s.Policy.Successors.SingleOrDefault(x => x.FromModel == s.Current.UpstreamModelId)
+        var relation = s.Policy.Family is { } family
+            ? FamilySuccessor(s.Current, family, directories, logical)
+            : s.Policy.Successors.SingleOrDefault(x => x.FromModel == s.Current.UpstreamModelId)
             ?? throw new ModelUpgradeException("SUCCESSOR_REQUIRED", "已检查官方目录；当前型号没有明确继任关系。新发现仅待确认，不会按名称猜测或自动切换。");
         var provider = await RequiredAsync(Providers, s.TenantId, relation.ProviderId);
         var names = directories.GetValueOrDefault(relation.ProviderId)
             ?? throw new ModelUpgradeException("DISCOVERY_UNAVAILABLE", "候选 Provider 的目录发现未完成，请核对启用状态、密钥权限和发现诊断后重试。");
-        if (!names.Contains(relation.ToModel)) throw new ModelUpgradeException("CANDIDATE_NOT_DISCOVERED", "官方模型目录尚未发现明确候选，保留当前型号；缺失不代表官方退役。");
+        if (!names.ContainsKey(relation.ToModel)) throw new ModelUpgradeException("CANDIDATE_NOT_DISCOVERED", "官方模型目录尚未发现明确候选，保留当前型号；缺失不代表官方退役。");
         var models = await Models.Find(Scope(s.TenantId, F.And(F.Eq("PlatformId", relation.ProviderId), F.Eq("ModelName", relation.ToModel), F.Eq("Enabled", true)))).Limit(2).ToListAsync(ct);
         if (models.Count != 1) throw new ModelUpgradeException("CANDIDATE_IMPORT_REQUIRED", "请在该官方 Provider 导入并启用唯一候选型号，然后重新检查；不会自动发布未经授权的模型。");
         var model = models[0];
@@ -70,11 +72,14 @@ public sealed partial class ModelUpgradeService
             UpstreamModelId = relation.ToModel, DocumentationUrl = relation.DocumentationUrl, DiscoveredAt = DateTime.UtcNow, Fingerprint = fingerprint,
             ValidatedAt = previous?.Fingerprint == fingerprint ? previous.ValidatedAt : null,
             ValidationRequestId = previous?.Fingerprint == fingerprint ? previous.ValidationRequestId : null,
-            ValidationRoute = previous?.Fingerprint == fingerprint ? previous.ValidationRoute : null };
+            ValidationRoute = previous?.Fingerprint == fingerprint ? previous.ValidationRoute : null,
+            BusinessSmokeSamples = previous?.Fingerprint == fingerprint ? previous.BusinessSmokeSamples : null,
+            BusinessSmokeRejected = previous?.Fingerprint == fingerprint && previous.BusinessSmokeRejected,
+            TrafficTrialPassedAt = previous?.Fingerprint == fingerprint ? previous.TrafficTrialPassedAt : null };
         if (s.Candidate.ValidatedAt is not null)
         {
             try { await ReadValidatedRouteAsync(s, logical, provider, model); }
-            catch (ModelUpgradeException) { s.Candidate.ValidatedAt = null; s.Candidate.ValidationRoute = null; s.ValidationStatus = "not-run"; }
+            catch (ModelUpgradeException) { s.Candidate.ValidatedAt = null; s.Candidate.ValidationRoute = null; s.Candidate.TrafficTrialPassedAt = null; s.ValidationStatus = "not-run"; }
         }
         var currentModel = await RequiredAsync(Models, s.TenantId, s.Current.ModelId);
         var priorBudgetGranted = s.Candidate.ValidatedAt > DateTime.UtcNow.AddHours(-24) && s.Gates.Budget;
@@ -88,7 +93,49 @@ public sealed partial class ModelUpgradeService
         s.PendingAction = ModelUpgradeRules.NextAutomaticAction(s, DateTime.UtcNow);
         if (s.PendingAction == "validate") { s.ValidationMode = "canary"; s.EvidenceRequestId = null; }
         if (s.PendingAction == "promote") s.Message = "现有候选验收仍有效，已排队晋级，不会再次发起付费验收。";
+        else if (s.Candidate.BusinessSmokeRejected) s.Message = "该候选已暂停。请查看最近的验证、灰度或回滚记录。";
+        else if (ModelUpgradeRules.RequiresTapdSmoke(s.Policy)) s.Message = $"TAPD 草稿观察已记录 {(s.Candidate.BusinessSmokeSamples?.Count ?? 0)} 次通过，晋级需要覆盖 48 小时。";
     }
+
+    private static ModelSuccessor FamilySuccessor(ModelUpgradeTarget current, ModelUpgradeFamily family,
+        IReadOnlyDictionary<string, Dictionary<string, long?>> directories, BsonDocument logical)
+    {
+        if (!directories.TryGetValue(family.ProviderId, out var catalog))
+            throw new ModelUpgradeException("DISCOVERY_UNAVAILABLE", "系列上游目录不可用，请查看发现诊断。");
+        var latest = ModelUpgradeRules.LatestFamilyCandidate(family, current, catalog)
+            ?? throw new ModelUpgradeException("NEWER_FAMILY_MODEL_UNCONFIRMED", "目录尚未提供比当前版本更新且时间可核实的唯一同系列候选，继续使用当前版本。");
+        return new ModelSuccessor { ProviderId = family.ProviderId, FromModel = current.UpstreamModelId,
+            ToModel = latest, DocumentationUrl = family.DocumentationUrl, Capabilities = ModelUpgradeRules.Strings(logical, "Capabilities") };
+    }
+
+    private async Task RequireImageSmokeAsync(ModelUpgradeState state, BsonDocument logical)
+    {
+        if (logical.GetStringOrEmpty("ModelType") != "generation" || state.Candidate?.ValidationRoute is not { } route) return;
+        var capabilities = LogicalModelCapabilityPolicy.Normalize("generation", ModelUpgradeRules.Strings(logical, "Capabilities"));
+        foreach (var (capability, caller, referenceRequired) in new[]
+        {
+            ("text2img", "visual-agent.image.text2img::generation", false),
+            ("img2img", "visual-agent.image.img2img::generation", true),
+        })
+        {
+            if (!capabilities.Contains(capability)) continue;
+            var logs = await Logs.Find(Scope(state.TenantId, F.And(F.Eq("AppCallerCode", caller),
+                F.Eq("OfferingId", route.OfferingId), F.Eq("Status", "succeeded"), F.Gte("EndedAt", DateTime.UtcNow.AddHours(-24)))))
+                .Sort(Builders<BsonDocument>.Sort.Descending("EndedAt")).Limit(30).ToListAsync(CancellationToken.None);
+            if (!logs.Any(log => ImageSmokePasses(log, state.TenantId, state.Candidate, route, referenceRequired)))
+                throw new ModelUpgradeException("IMAGE_SMOKE_REQUIRED", referenceRequired
+                    ? "候选缺少近期真实图生图证据。请用参考图生成一张可用图片后再切换。"
+                    : "候选缺少近期真实文生图证据。请通过文生图入口生成一张可用图片后再切换。");
+        }
+    }
+
+    internal static bool ImageSmokePasses(BsonDocument log, string tenantId, ModelUpgradeCandidate candidate,
+        ModelUpgradeRouteSnapshot route, bool referenceRequired)
+        => ModelUpgradeRules.EvidencePasses(log, tenantId, candidate, "generation")
+           && log.GetStringOrEmpty("OfferingId") == route.OfferingId
+           && string.Equals(log.GetStringOrEmpty("Protocol"), route.Protocol, StringComparison.OrdinalIgnoreCase)
+           && log.GetValue("OutputImages", BsonNull.Value) is BsonArray { Count: > 0 }
+           && (referenceRequired == (log.GetValue("ImageReferences", BsonNull.Value) is BsonArray { Count: > 0 }));
 
     private async Task ValidateAsync(ModelUpgradeState s)
     {
@@ -96,6 +143,8 @@ public sealed partial class ModelUpgradeService
         if (!s.Gates.Capabilities) throw new ModelUpgradeException("CAPABILITIES_REQUIRED", "候选能力尚未满足，请重新检查。");
         if (s.ValidationMode == "evidence")
         {
+            if (ModelUpgradeRules.RequiresTapdSmoke(s.Policy))
+                throw new ModelUpgradeException("BUSINESS_SMOKE_REQUIRED", "单条成功日志不能替代 TAPD 草稿专项冒烟。");
             var evidence = await Logs.Find(Scope(s.TenantId, F.Eq("RequestId", s.EvidenceRequestId ?? ""))).Sort(Builders<BsonDocument>.Sort.Descending("EndedAt")).Limit(20).ToListAsync(CancellationToken.None);
             var matching = evidence.Where(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate!, logical.GetStringOrEmpty("ModelType"))).ToList();
             if (matching.Count == 0)
@@ -144,6 +193,11 @@ public sealed partial class ModelUpgradeService
             { "Provider", provider.GetStringOrEmpty("Name") }, { "UnitCostUpperBoundUsd", new Decimal128(estimate.Value) }, { "PricingBasis", model.AsNullableDecimal("PricePerCall") is not null ? "per-call" : "token" },
             { "PriceVersion", model.AsNullableUtcDateTime("UpdatedAt")?.ToString("O") ?? "" }, { "ExecutionRequestedBy", s.ExecutionRequestedBy },
             { "Status", "pending" }, { "CreatedAt", now }, { "UpdatedAt", now }, { "ExpiresAt", now.AddMinutes(10) } };
+        if (ModelUpgradeRules.RequiresTapdSmoke(s.Policy))
+        {
+            var previousSample = s.Candidate.BusinessSmokeSamples?.LastOrDefault(sample => sample.OfferingVersion == s.Candidate.ValidationRoute.OfferingVersion);
+            job["TapdSmokeScenario"] = previousSample is null ? 0 : (previousSample.Scenario + 1) % 3;
+        }
         try { await ValidationRuns.InsertOneAsync(job, cancellationToken: CancellationToken.None); }
         catch
         {
@@ -156,7 +210,9 @@ public sealed partial class ModelUpgradeService
         s.Candidate!.ValidatedAt = DateTime.UtcNow; s.Candidate.ValidationRequestId = requestId;
         s.Gates.Validation = true; s.ValidationStatus = "passed"; s.OutcomeUnknown = false; s.Phase = "validated";
         s.Message = s.Gates.Price ? "候选已有匹配的真实成功输出，可按策略晋级。" : "真实服务验收通过；价格未知或涨幅未通过，只允许管理员明确手动晋级。";
-        if (s.ExecutionRequestedBy == "scheduled" && s.Policy.Mode == "auto" && ModelUpgradeRules.CanPromote(s, true, DateTime.UtcNow)) s.PendingAction = "promote";
+        if (ModelUpgradeRules.RequiresTapdSmoke(s.Policy) && !ModelUpgradeRules.TapdSmokePasses(s.Candidate, DateTime.UtcNow))
+            s.Message = $"本次 TAPD 草稿冒烟通过。已记录 {(s.Candidate.BusinessSmokeSamples?.Count ?? 0)} 次通过，继续观察至覆盖 48 小时。";
+        s.PendingAction = ModelUpgradeRules.NextAutomaticAction(s, DateTime.UtcNow);
     }
     private async Task<bool> ExpireUnsentValidationAsync(ModelUpgradeState s, BsonDocument job, DateTime now)
     {
@@ -200,12 +256,32 @@ public sealed partial class ModelUpgradeService
             throw new ModelUpgradeException("CANARY_OUTCOME_UNKNOWN", "任务可能已被消费，未退还预算且禁止重发；请按原请求 ID 核对日志。");
         }
         var (logical, provider, model) = await CandidateAsync(s);
+        if (logical.GetStringOrEmpty("ModelType") == "generation" && job?.GetStringOrEmpty("FailureKind") == "invalid_output")
+            throw new ModelUpgradeException("CANARY_FAILED", "候选未生成可解码图片，保留当前型号。");
         var logs = await Logs.Find(Scope(s.TenantId, F.Eq("RequestId", id))).Limit(20).ToListAsync(CancellationToken.None);
-        if (s.Candidate!.ValidationRoute is { } wire && logs.Any(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate, logical.GetStringOrEmpty("ModelType")) && ModelUpgradeWire.LogMatches(wire, x)))
+        var tapdSmoke = ModelUpgradeRules.RequiresTapdSmoke(s.Policy);
+        var matchingLog = s.Candidate!.ValidationRoute is { } wire ? logs.FirstOrDefault(x => ModelUpgradeRules.EvidencePasses(x, s.TenantId, s.Candidate, logical.GetStringOrEmpty("ModelType")) && ModelUpgradeWire.LogMatches(wire, x)) : null;
+        if (tapdSmoke && job?.GetValue("TapdSmokePassed", BsonNull.Value) == BsonBoolean.False && matchingLog is not null)
+        {
+            s.Candidate.BusinessSmokeRejected = true;
+            s.Gates.Validation = false;
+            s.OutcomeUnknown = false;
+            throw new ModelUpgradeException("BUSINESS_SMOKE_FAILED", "TAPD 草稿未满足字段正确性检查，已暂停此候选；原线路继续服务。");
+        }
+        if (matchingLog is not null && (!tapdSmoke || status == "succeeded" && job!.GetValue("TapdSmokePassed", BsonNull.Value) == BsonBoolean.True
+            && job.GetValue("TapdSmokeScenario", BsonNull.Value) is BsonInt32 { Value: >= 0 and < 3 }))
         {
             var route = await ReadValidatedRouteAsync(s, logical, provider, model);
             // The finite wire fingerprint excludes health counters, timestamps and priority.
             s.Candidate.ValidationRoute = ModelUpgradeWire.Capture(route, model, provider);
+            if (tapdSmoke && s.Candidate.BusinessSmokeSamples?.Any(sample => sample.RequestId == id) != true)
+            {
+                var routeVersion = s.Candidate.ValidationRoute.OfferingVersion;
+                var passedAt = matchingLog.AsNullableUtcDateTime("EndedAt")!.Value;
+                s.Candidate.BusinessSmokeSamples = (s.Candidate.BusinessSmokeSamples ?? [])
+                    .Where(sample => sample.OfferingVersion == routeVersion && sample.PassedAt >= passedAt.AddHours(-96)).TakeLast(11).ToList();
+                s.Candidate.BusinessSmokeSamples.Add(new(id, routeVersion, job!["TapdSmokeScenario"].AsInt32, passedAt));
+            }
             s.PendingAction = ""; CompleteValidation(s, id); return;
         }
         s.OutcomeUnknown = previouslyUnknown;

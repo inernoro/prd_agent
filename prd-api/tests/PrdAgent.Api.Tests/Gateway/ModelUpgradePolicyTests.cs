@@ -6,6 +6,38 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public class ModelUpgradePolicyTests
 {
+    [Fact]
+    public void RotationOnlyAdoptsNewerUnambiguousCatalogVersions()
+    {
+        var family = new ModelUpgradeFamily("official", "future-text", "https://example.com/models");
+        var catalog = new Dictionary<string, long?> { ["future-text-1"] = 10, ["future-text-2"] = 20,
+            ["future-text-3"] = 30, ["future-text-preview"] = null, ["future-textlite-10"] = 50 };
+        var current = new ModelUpgradeTarget { ProviderId = "official", UpstreamModelId = "future-text-1" };
+        Assert.Equal("future-text-3", ModelUpgradeRules.LatestFamilyCandidate(family, current, catalog));
+        catalog["future-text-3b"] = 30;
+        Assert.Null(ModelUpgradeRules.LatestFamilyCandidate(family, current, catalog));
+        catalog.Remove("future-text-3b");
+        catalog["future-text-3"] = null;
+        Assert.Equal("future-text-2", ModelUpgradeRules.LatestFamilyCandidate(family, current, catalog));
+    }
+
+    [Fact]
+    public void TapdRotationNeeds48HoursOfDistinctEvidenceAndTrafficTrial()
+    {
+        var now = DateTime.UtcNow;
+        var policy = new ModelUpgradePolicy { ValidationAppCallerCode = "tapd-bug-agent.extract::chat", Family = new("official", "future-text", "https://example.com/models") };
+        var candidate = new ModelUpgradeCandidate { ValidatedAt = now, ValidationRoute = new() { OfferingId = "line", OfferingVersion = "wire" } };
+        var state = new ModelUpgradeState { Candidate = candidate, Policy = policy, Gates = new() { Validation = true, Capabilities = true } };
+        candidate.BusinessSmokeSamples = [new("a", "wire", 0, now.AddHours(-47)), new("b", "wire", 1, now.AddHours(-24)), new("c", "wire", 2, now)];
+        Assert.False(ModelUpgradeRules.TapdSmokePasses(candidate, now));
+        candidate.BusinessSmokeSamples[0] = new("a", "wire", 0, now.AddHours(-48));
+        Assert.True(ModelUpgradeRules.TapdSmokePasses(candidate, now));
+        Assert.False(ModelUpgradeRules.CanPromote(state, false, now));
+        candidate.TrafficTrialPassedAt = now;
+        Assert.True(ModelUpgradeRules.CanPromote(state, false, now));
+        candidate.ValidationRoute.OfferingVersion = "other";
+        Assert.False(ModelUpgradeRules.CanPromote(state, false, now));
+    }
     private static BsonDocument Price(decimal input = 5, decimal output = 30) => new()
     { { "PriceCurrency", "USD" }, { "InputPricePerMillion", new Decimal128(input) }, { "OutputPricePerMillion", new Decimal128(output) }, { "PriceObservedAt", DateTime.UtcNow } };
     private static ModelUpgradePolicy Policy() => new() { Enabled = true, Mode = "auto", AutoValidate = true,

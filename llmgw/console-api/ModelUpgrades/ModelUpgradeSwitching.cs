@@ -78,6 +78,7 @@ public sealed partial class ModelUpgradeService
             await ReadValidatedRouteAsync(s, stableLogical, candidateProvider, model);
             if (!ModelUpgradeRules.CanPromote(s, s.ExecutionRequestedBy == "scheduled", DateTime.UtcNow))
                 throw new ModelUpgradeException("GATES_REQUIRED", "验收或自动晋级门禁未通过，原线路未改变。");
+            await RequireImageSmokeAsync(s, stableLogical);
             if (current.ModelId == s.Candidate!.ModelId && current.UpstreamModelId == s.Candidate.UpstreamModelId)
                 throw new ModelUpgradeException("ALREADY_CURRENT", "候选已是当前线路，无需重复晋级。");
             next = old.DeepClone().AsBsonDocument;
@@ -106,8 +107,22 @@ public sealed partial class ModelUpgradeService
             var disabled = await Offerings.UpdateOneAsync(Snapshot(old, s.TenantId) & F.Eq("Enabled", true), Builders<BsonDocument>.Update
                 .Set("Enabled", false).Set("SupersededByOfferingId", "upgrade-retired:" + operation).Set("UpgradeOperationId", operation).Set("UpdatedAt", DateTime.UtcNow), cancellationToken: CancellationToken.None);
             if (disabled.ModifiedCount != 1) throw new ModelUpgradeException("VERSION_CONFLICT", "当前线路已被其他操作修改，正在恢复保留版本，请刷新。");
-            if (rollback) s.LastPromotion!.RolledBack = true;
-            else s.LastPromotion = s.PendingSwitch;
+            if (rollback)
+            {
+                s.LastPromotion!.RolledBack = true;
+                s.NextTrafficCheckAt = null;
+                s.TrafficWatchStartedAt = null;
+                if (ModelUpgradeRules.UsesTrafficTrial(s.Policy) && s.Candidate is { } rejected) rejected.BusinessSmokeRejected = true;
+            }
+            else
+            {
+                s.LastPromotion = s.PendingSwitch;
+                if (ModelUpgradeRules.UsesTrafficTrial(s.Policy))
+                {
+                    s.TrafficWatchStartedAt = DateTime.UtcNow;
+                    s.NextTrafficCheckAt = s.TrafficWatchStartedAt + TrafficCheckInterval;
+                }
+            }
             s.PendingSwitch = null; s.PendingAction = ""; s.Phase = rollback ? "rolled_back" : "promoted";
             s.Message = rollback ? "已切回保留版本；稳定标识与别名保持不变。" : "已晋级到通过验收的候选，旧线路记录已保留以供回滚。";
             s.Current = await CurrentAsync(s.TenantId, s.LogicalModelId);

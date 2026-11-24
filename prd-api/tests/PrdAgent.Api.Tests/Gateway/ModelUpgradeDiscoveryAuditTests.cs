@@ -47,7 +47,7 @@ public class ModelUpgradeDiscoveryAuditTests
         response.Headers.Add("x-request-id", "req_safe_123"); response.Headers.Add("Set-Cookie", "session=" + Secret);
         return response;
     }
-    private static Task<HashSet<string>> Execute(Store store, HttpClient client) => new ModelUpgradeDiscoveryAudit(store.Database.Object,
+    private static Task<Dictionary<string, long?>> Execute(Store store, HttpClient client) => new ModelUpgradeDiscoveryAudit(store.Database.Object,
         new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["GIT_COMMIT"] = "abc123", [ModelUpgradeDeploymentAuthority.WorkerDeploymentKey] = "project::main" }).Build())
         .ExecuteAsync(new() { Id = "policy", TenantId = "tenant", LogicalModelId = "logical", ActorConsoleUserId = "actor", ActorUsername = "admin" },
             new BsonDocument { { "_id", "provider" }, { "UpdatedAt", DateTime.UtcNow } }, new Uri("https://api.openai.com/v1/models"), client, Secret, CancellationToken.None);
@@ -57,7 +57,7 @@ public class ModelUpgradeDiscoveryAuditTests
         var store = new Store(); var handler = new Handler(() => Reply(HttpStatusCode.OK,
             "{\"data\":[{\"id\":\"gpt-image-2.6\",\"access_token\":\"" + Secret + "\",\"nested\":{\"email\":\"private@example.com\"}}]}"));
         using var client = new HttpClient(handler);
-        Assert.Contains("gpt-image-2.6", await Execute(store, client));
+        Assert.Contains("gpt-image-2.6", (await Execute(store, client)).Keys);
         var record = store.Record!; var changes = record["Changes"].AsBsonDocument;
         Assert.Equal("completed", record["State"].AsString); Assert.Equal("actor", record["ActorUserId"].AsString);
         Assert.Equal("provider", changes["providerId"].AsString); Assert.Equal("policy", changes["policyId"].AsString);

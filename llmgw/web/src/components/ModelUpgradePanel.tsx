@@ -19,6 +19,7 @@ const PHASES: Record<ModelUpgradePhase, { label: string; tone: 'ok' | 'warn' | '
   candidate: { label: '发现候选版本', tone: 'info' },
   validating: { label: '正在验证候选版本', tone: 'info', running: true },
   validated: { label: '候选版本已验证', tone: 'ok' },
+  trial: { label: '候选试用中', tone: 'info' },
   blocked: { label: '已阻止升级', tone: 'warn' },
   promoting: { label: '正在切换版本', tone: 'info', running: true },
   promoted: { label: '已升级', tone: 'ok' },
@@ -29,7 +30,7 @@ const PHASES: Record<ModelUpgradePhase, { label: string; tone: 'ok' | 'warn' | '
 const VALIDATION_STATUS: Record<ModelUpgradeView['validationStatus'], string> = { 'not-run': '未执行', pending: '验证中', passed: '通过', failed: '未通过', unknown: '结果未知' };
 const ACTIONS: Record<ModelUpgradeAction, string> = { check: '检查新版本', validate: '验证候选版本', promote: '采用候选版本', rollback: '回滚最近升级' };
 const BUSY_LABELS: Record<string, string> = { ...ACTIONS, save: '正在保存策略', refresh: '正在读取状态' };
-const HISTORY_ACTIONS: Record<string, string> = { check: '检查版本', validate: '验证候选', promote: '采用候选', rollback: '回滚升级', policy: '更新策略', policy_update: '更新策略', 'policy.update': '更新策略' };
+const HISTORY_ACTIONS: Record<string, string> = { check: '检查版本', validate: '验证候选', promote: '采用候选', rollback: '回滚升级', 'start-traffic-trial': '开始灰度试用', 'observe-traffic-trial': '检查灰度结果', 'watch-promotion': '检查升级后表现', policy: '更新策略', policy_update: '更新策略', 'policy.update': '更新策略' };
 const HISTORY_STATUS: Record<string, string> = { queued: '等待执行', running: '执行中', succeeded: '成功', success: '成功', completed: '已完成', failed: '未完成', blocked: '已阻止' };
 
 export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logicalModelId: string; onRoutingChanged?: () => void }) {
@@ -49,7 +50,8 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
   const [busy, setBusy] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [evidenceRequestId, setEvidenceRequestId] = useState('');
-  const [validationMode, setValidationMode] = useState<'evidence' | 'canary'>('evidence');
+  const [selectedValidationMode, setValidationMode] = useState<'evidence' | 'canary'>('evidence');
+  const validationMode = view?.validationModes?.includes(selectedValidationMode) ? selectedValidationMode : view?.validationModes?.[0] ?? selectedValidationMode;
   const [modelLookupFailed, setModelLookupFailed] = useState(false);
   const generation = useRef(0);
   const draftRef = useRef<ModelUpgradePolicy | null>(null);
@@ -139,7 +141,9 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
       if (!await confirm({ title: '验证候选版本？', description, confirmLabel: '开始验证' })) return;
     }
     if (action === 'promote' && !await confirm({ title: '采用已验证的候选版本？', description: `稳定标识 ${view.publicId} 和历史别名保持不变。${view.gates.price ? '后续请求将使用候选版本。' : '候选价格尚未通过检查，自动升级已被阻止；此次手动采用需自行确认费用风险。'}`, confirmLabel: '采用候选版本' })) return;
-    if (action === 'rollback' && !await confirm({ title: '回滚最近一次升级？', description: '将恢复上一次保存的版本配置，稳定标识和历史别名保持不变。之后仍可重新检查候选版本。', confirmLabel: '回滚升级' })) return;
+    if (action === 'rollback' && !await confirm(view.trialPercentage
+      ? { title: '撤回灰度试用？', description: '新的 TAPD 草稿请求会恢复使用现任模型。', confirmLabel: '撤回灰度' }
+      : { title: '回滚最近一次升级？', description: '将恢复上一次保存的版本配置。之后仍可重新检查候选版本。', confirmLabel: '回滚升级' })) return;
     const current = ++generation.current;
     setBusy(action); setError(null); setNotice(null);
     try {
@@ -236,6 +240,20 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
           <label style={FIELD_LABEL}><span>定期检查</span><select aria-label="定期检查" style={FIELD_INPUT} disabled={!canWrite || busy !== null || running} value={String(draft.enabled)} onChange={event => setDraft({ ...draft, enabled: event.target.value === 'true' })}><option value="false">暂停定期检查</option><option value="true">启用定期检查</option></select></label>
           <label style={FIELD_LABEL}><span>检查间隔（小时）</span><input aria-label="检查间隔（小时）" type="number" min={1} step={1} required style={FIELD_INPUT} disabled={!canWrite || busy !== null || running} value={draft.checkIntervalHours} onChange={event => setDraft({ ...draft, checkIntervalHours: Number(event.target.value) })} /></label>
         </FormGrid>
+        {draft.validationAppCallerCode.toLowerCase() === 'tapd-bug-agent.extract::chat' || view.modelType === 'generation' ? <DetailsBlock title="按模型系列发现候选">
+          <label style={FIELD_LABEL}>
+            <span>发现方式</span>
+            <select style={FIELD_INPUT} disabled={!canWrite || busy !== null || running || draft.successors.length > 0} value={draft.family ? 'family' : 'successors'} onChange={event => setDraft({ ...draft, family: event.target.value === 'family' ? { providerId: view.current?.providerId ?? '', modelPrefix: '', documentationUrl: '' } : null })}>
+              <option value="successors">逐版本继任关系</option>
+              <option value="family">官方目录中的同系列版本</option>
+            </select>
+          </label>
+          {draft.family ? <FormGrid>
+            <label style={FIELD_LABEL}><span>系列上游</span><select required style={FIELD_INPUT} disabled={!canWrite || busy !== null || running} value={draft.family.providerId} onChange={event => setDraft({ ...draft, family: { ...draft.family!, providerId: event.target.value } })}><option value="">选择上游</option>{[...providers].map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+            <label style={FIELD_LABEL}><span>模型系列前缀</span><input required style={FIELD_INPUT} disabled={!canWrite || busy !== null || running} value={draft.family.modelPrefix} onChange={event => setDraft({ ...draft, family: { ...draft.family!, modelPrefix: event.target.value } })} /></label>
+            <label style={FIELD_LABEL}><span>系列资料地址</span><input required type="url" style={FIELD_INPUT} disabled={!canWrite || busy !== null || running} value={draft.family.documentationUrl} onChange={event => setDraft({ ...draft, family: { ...draft.family!, documentationUrl: event.target.value } })} /></label>
+          </FormGrid> : null}
+        </DetailsBlock> : null}
         <DetailsBlock title="验证预算与自动升级限制">
           <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
             <label style={{ ...HINT_TEXT, display: 'flex', alignItems: 'center', gap: GAP.tight }}><input type="checkbox" aria-label="允许自动付费验证" disabled={!canWrite || busy !== null || running} checked={draft.autoValidate} onChange={event => setDraft({ ...draft, autoValidate: event.target.checked })} />自动模式允许在预算内发起真实验证</label>
@@ -246,8 +264,8 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
             <span style={HINT_TEXT}>验证场景：{draft.validationAppCallerCode || '尚未设置'}</span>
           </div>
         </DetailsBlock>
-        <section aria-label="版本继任关系" style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}><h3 style={{ ...SECTION_TITLE, margin: 0 }}>版本继任关系</h3>{canWrite ? <Button type="button" size="sm" variant="ghost" disabled={busy !== null || running} onClick={() => editSuccessor(null)}>添加继任版本</Button> : null}</div>
+        {!draft.family ? <section aria-label="版本继任关系" style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}><h3 style={{ ...SECTION_TITLE, margin: 0 }}>版本继任关系</h3>{canWrite && !draft.family ? <Button type="button" size="sm" variant="ghost" disabled={busy !== null || running} onClick={() => editSuccessor(null)}>添加继任版本</Button> : null}</div>
           {draft.successors.length ? draft.successors.map((successor, index) => <div key={`${successor.providerId}:${successor.fromModel}:${successor.toModel}`} style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, paddingBlock: GAP.normal, borderBottom: '1px solid var(--border-subtle)' }}>
             <strong style={{ overflowWrap: 'anywhere' }}>{successor.fromModel} → {successor.toModel}</strong><span style={HINT_TEXT}>{provider(successor.providerId)} · {successor.capabilities.map(capabilityLabel).join(' · ') || '能力待确认'}</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>{safeDocumentUrl(successor.documentationUrl) ? <a href={successor.documentationUrl} target="_blank" rel="noreferrer">官方版本资料</a> : null}{canWrite ? <><Button type="button" size="sm" variant="ghost" disabled={busy !== null || running} onClick={() => editSuccessor(index)}>编辑关系</Button><Button type="button" size="sm" variant="ghost" disabled={busy !== null || running} onClick={() => { setDraft({ ...draft, successors: draft.successors.filter((_, candidateIndex) => candidateIndex !== index) }); setSuccessorDraft(null); }}>移除关系</Button></> : null}</div>
@@ -266,7 +284,7 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
             {successorError ? <InlineAlert tone="error">{successorError}</InlineAlert> : null}
             <div style={{ display: 'flex', gap: GAP.normal }}><Button type="button" size="sm" disabled={busy !== null || running} onClick={stageSuccessor}>加入策略</Button><Button type="button" size="sm" variant="ghost" onClick={() => { setSuccessorDraft(null); setSuccessorError(null); }}>取消关系编辑</Button></div>
           </div> : null}
-        </section>
+        </section> : null}
         {successorDraft ? <span style={HINT_TEXT}>请先加入继任关系或取消编辑，再保存升级策略。</span> : null}
         {canWrite ? <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap' }}><Button type="submit" variant="primary" size="sm" disabled={busy !== null || running || !dirty || successorDraft !== null}>{busy === 'save' ? '保存中…' : '保存升级策略'}</Button><Button type="button" variant="ghost" size="sm" disabled={busy !== null || !dirty} onClick={() => { setDraft(view.policy); draftBasePolicy.current = view.policy; draftVersion.current = view.version; setSuccessorDraft(null); setSuccessorError(null); setError(null); }}>还原修改</Button></div> : null}
       </form>
@@ -275,10 +293,10 @@ export function ModelUpgradePanel({ logicalModelId, onRoutingChanged }: { logica
         <label style={FIELD_LABEL}><span>验证方式</span><select aria-label="验证方式" value={validationMode} style={FIELD_INPUT} disabled={unavailable} onChange={event => setValidationMode(event.target.value as 'evidence' | 'canary')}>{(view.validationModes || ['evidence']).map(mode => <option key={mode} value={mode}>{mode === 'evidence' ? '核对已有真实验证记录' : '在预算内执行一次真实验证'}</option>)}</select></label>
         {validationMode === 'evidence' ? <label style={FIELD_LABEL}><span>已有验证请求编号</span><input aria-label="已有验证请求编号" style={FIELD_INPUT} value={evidenceRequestId} disabled={unavailable} onChange={event => setEvidenceRequestId(event.target.value)} placeholder="填写此候选版本的真实验证记录" /></label> : <span style={HINT_TEXT}>真实验证受系统预算与调用权限保护；未执行或结果未知都不会标记为验证成功。</span>}
         <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap' }}>
-          <Button size="sm" disabled={unavailable} onClick={() => void actOnUpgrade('check')}>检查新版本</Button>
-          <Button size="sm" disabled={unavailable || !view.candidate || (validationMode === 'evidence' && !evidenceRequestId.trim())} onClick={() => void actOnUpgrade('validate')}>验证候选版本</Button>
+          <Button size="sm" disabled={unavailable || Boolean(view.trialPercentage)} onClick={() => void actOnUpgrade('check')}>检查新版本</Button>
+          <Button size="sm" disabled={unavailable || Boolean(view.trialPercentage) || !view.candidate || (validationMode === 'evidence' && !evidenceRequestId.trim())} onClick={() => void actOnUpgrade('validate')}>验证候选版本</Button>
           <Button size="sm" variant="primary" disabled={unavailable || !view.canPromote} title={view.actionDisabledReason || undefined} onClick={() => void actOnUpgrade('promote')}>采用候选版本</Button>
-          <Button size="sm" variant="ghost" disabled={unavailable || !view.canRollback} onClick={() => void actOnUpgrade('rollback')}>回滚最近升级</Button>
+          <Button size="sm" variant="ghost" disabled={unavailable || !view.canRollback} onClick={() => void actOnUpgrade('rollback')}>{view.trialPercentage ? '撤回灰度' : '回滚最近升级'}</Button>
         </div>
       </div> : null}
       {view.discoveries?.length ? <DetailsBlock title={`待确认的新型号（${view.discoveries.length}）`}>

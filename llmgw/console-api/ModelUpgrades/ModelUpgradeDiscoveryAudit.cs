@@ -59,6 +59,13 @@ public sealed class ModelUpgradeDiscoveryAudit(IMongoDatabase database, IConfigu
             {
                 var all = data.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object && x.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String).Select(x => x.GetProperty("id").GetString()!).ToList();
                 evidence["modelIds"] = new BsonArray(all.Take(ModelIdLimit).Select(x => Identifier(x, secret)));
+                evidence["modelCatalogTimes"] = new BsonArray(data.EnumerateArray()
+                    .Where(x => x.ValueKind == JsonValueKind.Object && x.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
+                    .Take(ModelIdLimit).Select(x => new BsonDocument
+                    {
+                        { "id", Identifier(x.GetProperty("id").GetString(), secret) },
+                        { "created", ModelUpgradeDiscovery.CatalogTimestamp(x) is { } time ? new BsonInt64(time) : BsonNull.Value }
+                    }));
                 evidence["modelIdCount"] = all.Count; evidence["modelIdsTruncated"] = all.Count > ModelIdLimit;
                 evidence["invalidModelEntryCount"] = data.GetArrayLength() - all.Count;
             }
@@ -77,7 +84,7 @@ public sealed class ModelUpgradeDiscoveryAudit(IMongoDatabase database, IConfigu
         if (response.Headers.Date is { } date) headers["date"] = date.ToUniversalTime().ToString("O");
         return headers;
     }
-    public async Task<HashSet<string>> ExecuteAsync(ModelUpgradeState state, BsonDocument provider, Uri target, HttpClient client, string key, CancellationToken ct)
+    public async Task<Dictionary<string, long?>> ExecuteAsync(ModelUpgradeState state, BsonDocument provider, Uri target, HttpClient client, string key, CancellationToken ct)
     {
         var id = Guid.NewGuid().ToString("N");
         var started = DateTime.UtcNow;
@@ -95,7 +102,7 @@ public sealed class ModelUpgradeDiscoveryAudit(IMongoDatabase database, IConfigu
         try { await Audits.InsertOneAsync(record, cancellationToken: CancellationToken.None); }
         catch { throw new ModelUpgradeException("DISCOVERY_AUDIT_FAILED", "目录请求审计未能写入，本次未发出请求；请恢复审计存储后重试。"); }
         var watch = Stopwatch.StartNew();
-        Exception? failure = null; HashSet<string>? names = null;
+        Exception? failure = null; Dictionary<string, long?>? models = null;
         using var body = new MemoryStream();
         var truncated = false; var readCompleted = false;
         try
@@ -125,7 +132,7 @@ public sealed class ModelUpgradeDiscoveryAudit(IMongoDatabase database, IConfigu
                 using var parsed = JsonDocument.Parse(body.ToArray());
                 if (parsed.RootElement.ValueKind == JsonValueKind.Object && parsed.RootElement.TryGetProperty("error", out var error) && error.ValueKind != JsonValueKind.Null)
                 { changes["classification"] = "upstream-business-error"; throw new ModelUpgradeException("DISCOVERY_UPSTREAM_ERROR", "官方目录返回业务错误，原线路未改变；请查看脱敏响应审计。", 502); }
-                names = ModelUpgradeDiscovery.ReadModelNames(body.ToArray()); changes["classification"] = "models-parsed";
+                models = ModelUpgradeDiscovery.ReadModels(body.ToArray()); changes["classification"] = "models-parsed";
             }
             catch (JsonException) { changes["classification"] = "invalid-json"; throw new ModelUpgradeException("DISCOVERY_PARSE_FAILED", "官方目录返回无法解析，原线路未改变；请查看脱敏响应审计。", 502); }
             catch (ModelUpgradeException) { if (changes["classification"] != "upstream-business-error") changes["classification"] = "invalid-model-list-shape"; throw; }
@@ -150,6 +157,6 @@ public sealed class ModelUpgradeDiscoveryAudit(IMongoDatabase database, IConfigu
         }
         catch { throw new ModelUpgradeException("DISCOVERY_AUDIT_FAILED", "目录请求已结束，但响应审计未能保存；本次检查已阻止，请恢复审计存储后重试。"); }
         if (failure is not null) throw failure;
-        return names!;
+        return models!;
     }
 }

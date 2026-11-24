@@ -12,7 +12,7 @@ namespace PrdAgent.LlmGw.ModelUpgrades;
 
 public interface IModelUpgradeDiscovery
 {
-    Task<HashSet<string>> DiscoverAsync(ModelUpgradeState state, BsonDocument provider, CancellationToken ct);
+    Task<Dictionary<string, long?>> DiscoverAsync(ModelUpgradeState state, BsonDocument provider, CancellationToken ct);
 }
 
 /// <summary>复用官方预设的 models URL、代理与加密读取。只拉清单，不发送付费推理。</summary>
@@ -28,7 +28,7 @@ public sealed class ModelUpgradeDiscovery(UpstreamProxyService proxies, IConfigu
             ?? throw new ModelUpgradeException("OFFICIAL_PROVIDER_REQUIRED", "此上游地址不属于官方预设，未自动发现或更新。", 400);
     }
 
-    public async Task<HashSet<string>> DiscoverAsync(ModelUpgradeState state, BsonDocument provider, CancellationToken ct)
+    public async Task<Dictionary<string, long?>> DiscoverAsync(ModelUpgradeState state, BsonDocument provider, CancellationToken ct)
     {
         var preset = RequireOfficial(provider);
         if (!preset.SupportsModelDiscovery)
@@ -44,12 +44,17 @@ public sealed class ModelUpgradeDiscovery(UpstreamProxyService proxies, IConfigu
             new Uri(ProviderPresets.ResolveModelsUrl(provider.GetStringOrEmpty("ApiUrl"))), client, key.PlainText!, ct);
     }
 
-    public static HashSet<string> ReadModelNames(byte[] body)
+    public static Dictionary<string, long?> ReadModels(byte[] body)
     {
         using var json = JsonDocument.Parse(body);
         if (json.RootElement.ValueKind != JsonValueKind.Object || !json.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
             throw new ModelUpgradeException("DISCOVERY_SHAPE", "上游未返回模型清单，本次未判断任何型号退役。", 502);
         return data.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object && x.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
-            .Select(x => x.GetProperty("id").GetString()!).ToHashSet(StringComparer.Ordinal);
+            .GroupBy(x => x.GetProperty("id").GetString()!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count() == 1 ? CatalogTimestamp(group.First()) : null, StringComparer.Ordinal);
     }
+
+    internal static long? CatalogTimestamp(JsonElement item)
+        => item.TryGetProperty("created", out var created) && created.ValueKind == JsonValueKind.Number
+           && created.TryGetInt64(out var seconds) && seconds > 0 && seconds <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? seconds : null;
 }

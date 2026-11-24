@@ -81,6 +81,7 @@ export interface ModelLeaderboardEntry {
 
 /** 一个分榜的快照。 */
 export interface ModelLeaderboardSnapshot {
+  trackedEntries?: ModelLeaderboardEntry[];
   board: string;
   /** false = 后台首次同步还没跑完，前端给「正在准备」而不是画空表。 */
   ready: boolean;

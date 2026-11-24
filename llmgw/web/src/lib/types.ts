@@ -1852,9 +1852,11 @@ export type ModelUpgradePolicy = {
   maxPriceIncreasePercent: number | null;
   validationAppCallerCode: string;
   successors: ModelUpgradeSuccessor[];
+  family?: { providerId: string; modelPrefix: string; documentationUrl: string } | null;
 };
-export type ModelUpgradePhase = 'idle' | 'checking' | 'candidate' | 'validating' | 'validated' | 'blocked' | 'promoting' | 'promoted' | 'rolling_back' | 'rolled_back' | 'failed';
+export type ModelUpgradePhase = 'idle' | 'checking' | 'candidate' | 'validating' | 'validated' | 'trial' | 'blocked' | 'promoting' | 'promoted' | 'rolling_back' | 'rolled_back' | 'failed';
 export type ModelUpgradeView = {
+  trialPercentage?: number | null;
   validationMode: 'evidence' | 'canary';
   validationModes: ('evidence' | 'canary')[];
   validationStatus: 'not-run' | 'pending' | 'passed' | 'failed' | 'unknown';

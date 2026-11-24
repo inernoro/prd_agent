@@ -97,6 +97,7 @@ public class ModelLeaderboardController : ControllerBase
             bashMetricLabel = snapshot.Entries.Any(e => e.BashReliability != null) ? "命令可靠性" : "命令恢复",
             totalSessions = snapshot.TotalSessions,
             totalVotes = snapshot.TotalVotes,
+            trackedEntries = snapshot.Entries.Where(entry => ModelLeaderboardCatalog.IsTrackedOrganization(entry.Organization)).Select(Project),
             entries = snapshot.Entries.Take(limit).Select(Project),
         }));
     }

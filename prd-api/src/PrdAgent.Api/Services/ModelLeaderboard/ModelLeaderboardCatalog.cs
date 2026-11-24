@@ -76,4 +76,7 @@ public static class ModelLeaderboardCatalog
         => Boards.FirstOrDefault(b => string.Equals(b.Key, key, StringComparison.OrdinalIgnoreCase));
 
     public static bool Contains(string key) => Find(key) is not null;
+
+    public static bool IsTrackedOrganization(string? organization)
+        => organization?.Trim().ToUpperInvariant() is "OPENAI" or "BYTEDANCE" or "BYTEDANCE SEED" or "DOUBAO" or "字节跳动" or "豆包";
 }

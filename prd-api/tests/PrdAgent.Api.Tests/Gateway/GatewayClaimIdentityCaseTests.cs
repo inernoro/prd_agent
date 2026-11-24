@@ -3,11 +3,15 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
+using PrdAgent.GatewayTransport;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Security;
 using Shouldly;
+using PrdAgent.LlmGw.ModelUpgrades;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Gateway;
@@ -72,6 +76,52 @@ public sealed class GatewayClaimIdentityCaseTests
         result.ActualModel.ShouldBe(DefaultModel);
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task TapdStableModelKeepsIdentityAcrossCanaryAndWithdrawal()
+    {
+        var context = new LLMRequestContextAccessor();
+        await using var env = await ClaimFixture.CreateAsync(context);
+        var tenant = GatewayTenantDefaults.InternalTenantId;
+        const string stable = "tapd-draft-latest";
+        const string logicalId = "gw-logical-claimed-chat";
+        const string caller = ModelRotationRouting.PilotCaller;
+        var database = env.Gateway;
+        var logicals = database.GetCollection<BsonDocument>("llmgw_logical_models");
+        await logicals.UpdateOneAsync(new BsonDocument("_id", logicalId), Builders<BsonDocument>.Update
+            .Set("PublicId", stable).Set("PublicIdNormalized", stable).Set("IdentityKind", "stable")
+            .Set("AllowedAppCallerCodes", new BsonArray { caller }));
+        var route = await database.GetCollection<BsonDocument>("llmgw_model_offerings")
+            .Find(new BsonDocument("_id", "default-chat-offering")).FirstAsync();
+        var policyId = ModelRotationRouting.PolicyId(tenant, logicalId);
+        var states = database.GetCollection<BsonDocument>(ModelRotationRouting.PolicyCollection);
+        await states.InsertOneAsync(new BsonDocument
+        {
+            { "_id", policyId }, { "TenantId", tenant }, { "Policy", new BsonDocument { { "Enabled", true }, { "Mode", "auto" } } },
+            { "Candidate", new BsonDocument { { "ProviderId", PlatformId }, { "UpstreamModelId", DefaultModel },
+                { "ValidationRoute", new BsonDocument("Protocol", "openai") } } },
+            { "TrafficTrial", new BsonDocument { { "Deployment", "prd-agent:production" }, { "Percentage", 5 },
+                { "BaselineOfferingId", "claimed-chat-offering" }, { "CandidateOfferingId", "default-chat-offering" },
+                { "CandidateOfferingVersion", ModelUpgradeWire.Fingerprint(route) }, { "ExpiresAt", DateTime.UtcNow.AddMinutes(15) } } }
+        });
+        var users = Enumerable.Range(1, 1000).Select(i => "pilot-user-" + i).ToList();
+        var candidateUser = users.First(user => ModelRotationRouting.IsTrialUser(policyId, user, 5));
+        var controlUser = users.First(user => !ModelRotationRouting.IsTrialUser(policyId, user, 25));
+        async Task<ModelResolutionResult> Resolve(string user)
+        {
+            using var _ = context.BeginScope(new LlmRequestContext("proof", null, null, user, null, null, null, null, TenantId: tenant));
+            return await env.Resolver.ResolveAsync(caller, ModelTypes.Chat, stable);
+        }
+        var during = await Resolve(candidateUser);
+        Assert.Equal(stable, during.LogicalModelPublicId);
+        Assert.Equal(DefaultModel, during.ActualModel);
+        Assert.Equal(ClaimedModel, (await Resolve(controlUser)).ActualModel);
+        await states.UpdateOneAsync(new BsonDocument("_id", policyId), Builders<BsonDocument>.Update.Unset("TrafficTrial"));
+        var after = await Resolve(candidateUser);
+        Assert.Equal(stable, after.LogicalModelPublicId);
+        Assert.Equal(ClaimedModel, after.ActualModel);
+    }
+
     private sealed class ClaimFixture : IAsyncDisposable
     {
         private const string ClaimedLogicalId = "gw-logical-claimed-chat";
@@ -82,6 +132,7 @@ public sealed class GatewayClaimIdentityCaseTests
         private readonly string _mapDatabaseName;
 
         public ModelResolver Resolver { get; }
+        public IMongoDatabase Gateway => _client.GetDatabase(_gatewayDatabaseName);
 
         private ClaimFixture(
             MongoClient client,
@@ -95,7 +146,7 @@ public sealed class GatewayClaimIdentityCaseTests
             Resolver = resolver;
         }
 
-        public static async Task<ClaimFixture> CreateAsync()
+        public static async Task<ClaimFixture> CreateAsync(ILLMRequestContextAccessor? requestContext = null)
         {
             var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
                                    ?? "mongodb://127.0.0.1:27018";
@@ -209,7 +260,8 @@ public sealed class GatewayClaimIdentityCaseTests
                 mapData,
                 configuration,
                 NullLogger<ModelResolver>.Instance,
-                gatewayData);
+                gatewayData,
+                requestContext);
 
             return new ClaimFixture(client, gatewayDatabaseName, mapDatabaseName, resolver);
         }

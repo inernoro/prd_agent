@@ -1,10 +1,67 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using System.Text.Json;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
 public class TapdBugAgentServiceTests
 {
+    [Fact]
+    public async Task PreviewUsesConfiguredStableIdAndReportsActualModel()
+    {
+        const string stable = "tapd-draft-latest";
+        const string actual = "future-text-3";
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        gateway.Setup(g => g.StreamAsync(It.Is<GatewayRequest>(request => request.ExpectedModel == stable), It.IsAny<CancellationToken>()))
+            .Returns(Respond());
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["TapdBugAgent:ModelPublicId"] = stable }).Build();
+        var service = new TapdBugAgentService(gateway.Object, Mock.Of<IHttpClientFactory>(), NullLogger<TapdBugAgentService>.Instance, configuration);
+        var events = new List<(string Name, JsonElement Value)>();
+        await service.StreamPreviewAsync(new() { NaturalText = "点击筛选后错误 503。" }, (name, payload) =>
+        {
+            events.Add((name, JsonSerializer.SerializeToElement(payload)));
+            return Task.CompletedTask;
+        }, CancellationToken.None);
+        var model = Assert.Single(events, entry => entry.Name == "model").Value;
+        Assert.Equal(stable, model.GetProperty("modelPublicId").GetString());
+        Assert.Equal(actual, model.GetProperty("model").GetString());
+
+        static async IAsyncEnumerable<GatewayStreamChunk> Respond()
+        {
+            await Task.Yield();
+            yield return new() { Type = GatewayChunkType.Start, Resolution = new() { LogicalModelPublicId = stable, ActualModel = actual } };
+            yield return new() { Type = GatewayChunkType.Text, Content = "{\"title\":\"筛选失败\"}" };
+        }
+    }
+
+    [Fact]
+    public void SmokeChecksModelFieldsBeforeDraftFallback()
+    {
+        string Wrap(object draft) => JsonSerializer.Serialize(new { choices = new[] { new { message = new { content = JsonSerializer.Serialize(draft) } } } });
+        Assert.True(TapdDraftSmoke.Passes(0, Wrap(new { title = "门店筛选失败", steps = new[] { "点击筛选" },
+            actualResult = new[] { "错误 503" }, expectedResult = new[] { "只显示北岸门店" } })));
+        Assert.False(TapdDraftSmoke.Passes(0, Wrap(new { title = "出错", actualResult = new[] { "北岸门店 503" } })));
+        Assert.False(TapdDraftSmoke.Passes(0, Wrap(new { title = "出错", steps = new[] { "点击筛选" },
+            actualResult = new[] { "北岸门店" }, expectedResult = new[] { "错误 503" } })));
+    }
+
+    [Fact]
+    public void BoundedSmokeWireOnlyAllowsRegisteredSyntheticCases()
+    {
+        const string caller = "tapd-bug-agent.extract::chat";
+        var messages = TapdDraftSmokeWire.Messages(1);
+        var body = new System.Text.Json.Nodes.JsonObject { ["messages"] = messages, ["max_tokens"] = TapdDraftSmokeWire.MaxOutputTokens, ["stream"] = false };
+        var request = new GatewayRawRequest { AppCallerCode = caller, ModelType = "chat", RequiredOfferingId = "candidate" };
+        bool Allowed(string offering) => PrdAgent.Infrastructure.LlmGateway.LlmGateway.IsBoundedCanaryChatWire(request, offering, "openai", body.ToJsonString());
+        Assert.True(Allowed("candidate"));
+        Assert.False(Allowed("different-line"));
+        messages[1]!["content"] = "tenant input";
+        Assert.False(Allowed("candidate"));
+    }
     [Fact]
     public void NormalizeDraft_ShouldMapChineseEnumsAndDefaultFields()
     {

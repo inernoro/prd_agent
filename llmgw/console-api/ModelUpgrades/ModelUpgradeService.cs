@@ -68,13 +68,17 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
         {
             LogicalModelId = logicalId, PublicId = logical.GetStringOrEmpty("PublicId"), Name = logical.GetStringOrEmpty("Name"),
             ModelType = logical.GetStringOrEmpty("ModelType"), IdentityKind = logical.AsNullableString("IdentityKind") ?? "fixed",
-            Aliases = ModelUpgradeRules.Strings(logical, "Aliases"), Version = s?.Version ?? 0, Policy = policy, ValidationMode = s?.ValidationMode ?? "evidence",
+            Aliases = ModelUpgradeRules.Strings(logical, "Aliases"), Version = s?.Version ?? 0, Policy = policy,
+            ValidationMode = ModelUpgradeRules.RequiresTapdSmoke(policy) && s?.OutcomeUnknown != true ? "canary" : s?.ValidationMode ?? "evidence",
+            ValidationModes = ModelUpgradeRules.RequiresTapdSmoke(policy) && s?.OutcomeUnknown != true ? ["canary"] : ["evidence", "canary"],
             Current = current, Candidate = s?.Candidate, Gates = s?.Gates ?? new(),
             ReferenceCoverage = s?.ReferenceCoverage,
             Discoveries = s?.Discoveries ?? [], ValidationStatus = s?.ValidationStatus ?? "not-run",
+            TrialPercentage = s?.TrafficTrial?.Percentage,
             Phase = s?.Phase ?? "idle", Message = s?.Message ?? "尚未配置自动更新策略。",
             UpdatedAt = s?.UpdatedAt, LastCheckedAt = s?.LastCheckedAt, NextCheckAt = s?.NextCheckAt, History = s?.History ?? [],
-            CanPromote = canPromote, CanRollback = DeploymentBlockReason is null && stable && s?.LastPromotion is { RolledBack: false } && !Busy(s),
+            CanPromote = canPromote, CanRollback = DeploymentBlockReason is null && stable && s is not null
+                && (s.TrafficTrial is not null || s.LastPromotion is { RolledBack: false }) && !Busy(s),
             ActionDisabledReason = DeploymentBlockReason ?? (!stable ? "固定版本标识不参与升级，请配置稳定业务模型。" : s is not null && Busy(s)
                 ? "任务正在执行，请等待状态更新。" : s?.OutcomeUnknown == true ? "上次验收结果未知，请先提供对应真实请求证据；禁止自动重试。" : canPromote ? null : s?.Candidate is { } adopted && current?.ModelId == adopted.ModelId
                     ? "当前已采用此候选版本。" : "候选尚未通过真实验收，原线路保持不变。"),
@@ -107,6 +111,12 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
                 ?? throw new ModelUpgradeException("PROVIDER_NOT_FOUND", "继任关系中的官方 Provider 不存在或不属于本组织。", 400);
             ModelUpgradeDiscovery.RequireOfficial(provider);
         }
+        if (write.Family is { } family)
+        {
+            if (ModelUpgradeRules.UsesTrafficTrial(write) && !IsPilotLogical(logical))
+                throw new ModelUpgradeException("TAPD_PILOT_SCOPE", "TAPD 系列轮换需要草稿专用稳定模型，且未被设为全局默认。");
+            ModelUpgradeDiscovery.RequireOfficial(await RequiredAsync(Providers, actor.TenantId, family.ProviderId));
+        }
         var state = await StateAsync(actor.TenantId, id);
         if (state is null)
         {
@@ -123,12 +133,16 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
         {
             Enabled = write.Enabled, Mode = write.Mode, AutoValidate = write.AutoValidate, CheckIntervalHours = write.CheckIntervalHours,
             MaxValidationCostUsd = write.MaxValidationCostUsd, CanaryUnitCostUpperBoundUsd = write.CanaryUnitCostUpperBoundUsd, MaxDailyCostUsd = write.MaxDailyCostUsd,
-            MaxPriceIncreasePercent = write.MaxPriceIncreasePercent, ValidationAppCallerCode = (write.ValidationAppCallerCode ?? "").Trim(), Successors = write.Successors,
+            MaxPriceIncreasePercent = write.MaxPriceIncreasePercent, ValidationAppCallerCode = (write.ValidationAppCallerCode ?? "").Trim(), Successors = write.Successors, Family = write.Family,
         };
         state.ActorConsoleUserId = actor.UserId; state.ActorUserId = actor.ExternalUserId ?? actor.UserId; state.ActorUsername = actor.Username;
-        if (!state.OutcomeUnknown) { state.Candidate = null; state.Gates = new(); state.Phase = "idle"; }
+        if (!state.OutcomeUnknown)
+        {
+            state.Candidate = null; state.Gates = new(); state.Phase = "idle";
+            state.TrafficTrial = null; state.NextTrafficCheckAt = null; state.TrafficWatchStartedAt = null;
+        }
         state.NextCheckAt = state.Policy.Enabled ? ModelUpgradeRules.NextCheckAt(null, DateTime.UtcNow, state.Policy.CheckIntervalHours) : null;
-        state.Message = "策略已保存；只有明确继任关系与真实验收均满足时才会更新线路。";
+        state.Message = "策略已保存；候选通过所需实测后才会更新线路。";
         History(state, "policy.update", "succeeded", state.Message);
         try { await PersistAsync(state); await AuditCompleteAsync(state, audit, true); }
         catch { await AuditCompleteAsync(state, audit, false); throw; }
@@ -142,13 +156,22 @@ public sealed partial class ModelUpgradeService(IMongoDatabase gateway, IMongoDa
         if (!ModelUpgradeRules.IsStable(logical)) throw new ModelUpgradeException("FIXED_MODEL", "固定版本型号不参与升级。", 400);
         var state = await StateAsync(actor.TenantId, id) ?? throw new ModelUpgradeException("POLICY_REQUIRED", "请先保存更新策略。");
         if (state.Version != request.Version || Busy(state)) throw new ModelUpgradeException("VERSION_CONFLICT", "策略正在执行或已更新，请刷新后重试。");
+        if (state.TrafficTrial is not null && action != "rollback")
+            throw new ModelUpgradeException("TRAFFIC_TRIAL_RUNNING", "候选正在灰度试用，可等待结果或立即撤回灰度。");
         if (state.OutcomeUnknown && !(action == "validate" && request.Mode == "evidence"
                 && !string.IsNullOrWhiteSpace(request.RequestId) && request.RequestId.Trim() == state.Candidate?.ValidationRequestId))
             throw new ModelUpgradeException("OUTCOME_UNKNOWN", "上次验收结果未知，禁止重发。请提供该请求的真实日志 ID 继续核验。");
         if (action is "validate" or "promote" && state.Candidate is null) throw new ModelUpgradeException("CANDIDATE_REQUIRED", "请先检查并确认候选型号。");
+        if (action == "validate" && ModelUpgradeRules.RequiresTapdSmoke(state.Policy) && !state.OutcomeUnknown)
+        {
+            if (request.Mode != "canary")
+                throw new ModelUpgradeException("BUSINESS_SMOKE_REQUIRED", "TAPD 草稿候选须完成受预算的专项冒烟，单条成功日志不计入 48 小时观察。");
+            if (state.Candidate!.BusinessSmokeRejected || state.Candidate.BusinessSmokeSamples?.Any(sample => sample.PassedAt > DateTime.UtcNow.AddHours(-20)) == true)
+                throw new ModelUpgradeException("BUSINESS_SMOKE_NOT_DUE", "候选已因质量失败暂停，或距离上一次冒烟尚未满 20 小时。请查看候选状态。");
+        }
         if (action == "promote" && !ModelUpgradeRules.CanPromote(state, false, DateTime.UtcNow))
             throw new ModelUpgradeException("VALIDATION_REQUIRED", "候选尚未通过近期真实验收，原线路未改变。");
-        if (action == "rollback" && state.LastPromotion is not { RolledBack: false }) throw new ModelUpgradeException("ROLLBACK_UNAVAILABLE", "没有可回滚的本策略晋级版本。");
+        if (action == "rollback" && state.TrafficTrial is null && state.LastPromotion is not { RolledBack: false }) throw new ModelUpgradeException("ROLLBACK_UNAVAILABLE", "没有可回滚的本策略晋级版本。");
         if (request.RequestId?.Length > 200) throw new ModelUpgradeException("INVALID_REQUEST_ID", "请求 ID 过长。", 400);
         if (action == "validate" && (request.Mode is not ("evidence" or "canary") || request.Mode == "evidence" && string.IsNullOrWhiteSpace(request.RequestId)))
             throw new ModelUpgradeException("EVIDENCE_REQUIRED", "请选择真实请求证据并填写请求 ID，或明确选择受预算验收。", 400);

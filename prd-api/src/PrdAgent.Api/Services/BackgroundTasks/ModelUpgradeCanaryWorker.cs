@@ -102,20 +102,23 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
                 probeFields["HttpStatus"] = response.StatusCode;
                 probeFields["FailureKind"] = ClassifyProbeFailure(response.StatusCode, string.IsNullOrWhiteSpace(response.Content) ? response.ErrorMessage : response.Content);
                 status = response.Success && response.StatusCode is >= 200 and < 300 && HasImageOutput(response.Content) ? "succeeded" : "unknown";
-                if (S(job, "Operation") == "binding-test" && response.Success && response.StatusCode is >= 200 and < 300)
+                if (response.Success && response.StatusCode is >= 200 and < 300)
                 {
                     if (!TryDecodeProbeImage(response.Content, out var bytes))
                     { status = "failed"; probeFields["FailureKind"] = "invalid_output"; }
                     else
                     {
                         status = "succeeded";
-                        try
+                        if (S(job, "Operation") == "binding-test")
                         {
-                            var mime = SixLabors.ImageSharp.Image.DetectFormat(bytes).DefaultMimeType;
-                            var asset = await scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>().SaveAsync(bytes, mime, ct);
-                            probeFields["OutputUrl"] = asset.Url;
+                            try
+                            {
+                                var mime = SixLabors.ImageSharp.Image.DetectFormat(bytes).DefaultMimeType;
+                                var asset = await scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>().SaveAsync(bytes, mime, ct);
+                                probeFields["OutputUrl"] = asset.Url;
+                            }
+                            catch { logger.LogWarning("线路测试已收到真实图片，但预览存储未完成；不会重发测试请求。"); }
                         }
-                        catch { logger.LogWarning("线路测试已收到真实图片，但预览存储未完成；不会重发测试请求。"); }
                     }
                 }
             }
@@ -127,6 +130,16 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
                 probeFields["HttpStatus"] = response.StatusCode;
                 probeFields["FailureKind"] = ClassifyProbeFailure(response.StatusCode, string.IsNullOrWhiteSpace(response.Content) ? response.ErrorMessage : response.Content);
                 status = response.Success && response.StatusCode is >= 200 and < 300 && (HasChatOutput(response.Content) || S(job, "Operation") == "binding-test" && HasClaudeProbeOutput(response.Content, S(job, "Protocol"))) ? "succeeded" : "unknown";
+                if (status == "succeeded" && SmokeScenario(job) is { } scenario)
+                {
+                    var passed = TapdDraftSmoke.Passes(scenario, response.Content);
+                    probeFields["TapdSmokePassed"] = passed;
+                    if (!passed)
+                    {
+                        status = "failed";
+                        probeFields["FailureKind"] = "business_smoke_failed";
+                    }
+                }
             }
             if (S(job, "Operation") == "binding-test" && probeFields.TryGetValue("HttpStatus", out var http) && http.ToInt32() >= 400)
             {
@@ -134,6 +147,8 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
 
             }
             message = status == "succeeded" ? "受限验收已完成，等待权威日志核验真实输出。" : "验收未获确定成功结果，仅核查既有日志，不会重发。";
+            if (probeFields.GetValue("TapdSmokePassed", BsonNull.Value) == BsonBoolean.False)
+                message = "TAPD 草稿字段正确性检查失败，等待日志确认实际执行线路。";
             if (S(job, "Operation") == "binding-test") message = status == "succeeded" ? "所选线路已返回真实产物，服务测试通过。" : S(probeFields, "FailureKind") switch {
                 "quota_exhausted" => "余额或额度不足，请补充对应上游账户额度后再发起新测试。",
                 "rate_limited" => "请求受到限流，请稍后发起新测试。",
@@ -190,7 +205,9 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
         var type = S(job, "ModelType");
         var upper = D(job, "UnitCostUpperBoundUsd");
         var perCall = S(job, "PricingBasis") == "per-call";
+        var smokeScenario = SmokeScenario(job);
         if (type is not (ModelTypes.ImageGen or ModelTypes.Chat) || upper is <= 0 or > 10
+            || job.Contains("TapdSmokeScenario") && smokeScenario is null
             || bindingTest && (upper > 1 || S(job, "ExecutionRequestedBy") != "manual" || S(job, "LogicalModelId") != S(offering, "LogicalModelId") || string.IsNullOrWhiteSpace(S(job, "ProbeRequestFingerprint")))
             || perCall && (D(model, "PricePerCall") <= 0 || D(model, "PricePerCall") > upper)
             || !perCall && (D(model, "InputPricePerMillion") <= 0 || D(model, "OutputPricePerMillion") <= 0)
@@ -199,7 +216,7 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
                 D(model, "InputPricePerMillion"), D(model, "OutputPricePerMillion")))) return null;
         return (new TaskBudgetContractPolicy { AuthorizedLimitUsd = upper,
             CanaryUnitCostUpperBoundUsd = type == ModelTypes.ImageGen ? upper : null,
-            ExpectedOfferingId = S(job, "CandidateOfferingId"), MaxOutputTokens = type == ModelTypes.ImageGen ? 1 : bindingTest ? 256 : 16,
+            ExpectedOfferingId = S(job, "CandidateOfferingId"), MaxOutputTokens = type == ModelTypes.ImageGen ? 1 : ChatOutputLimit(job),
             LogicalModelPublicId = S(job, "CandidateLogicalModelPublicId"), Provider = S(job, "Provider"), Model = S(job, "UpstreamModelId"),
             Protocol = S(job, "Protocol"), PriceVersion = S(job, "PriceVersion"), InputUsdPerMillion = D(model, "InputPricePerMillion"),
             OutputUsdPerMillion = D(model, "OutputPricePerMillion"), CachedInputUsdPerMillion = Math.Max(D(model, "CachedInputPricePerMillion"), D(model, "InputPricePerMillion")), CacheWriteUsdPerMillion = Math.Max(D(model, "CacheWritePricePerMillion"), D(model, "InputPricePerMillion")) }, type);
@@ -242,8 +259,17 @@ public sealed class ModelUpgradeCanaryWorker(IServiceScopeFactory scopes, IConfi
             RequiredLogicalModelPublicId = S(job, "CandidateLogicalModelPublicId"), RequiredOfferingId = S(job, "CandidateOfferingId"),
             ExpectedModel = S(job, "CandidateLogicalModelPublicId"), Context = context,
             EndpointPath = S(job, "EndpointPath") is { Length: > 0 } endpoint ? endpoint : GatewayProtocolAliases.IsClaudeProtocol(S(job, "Protocol")) ? "messages" : "chat/completions",
-            RequestBody = new JsonObject { ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "Reply OK." }),
-                ["max_tokens"] = S(job, "Operation") == "binding-test" ? 256 : 16, ["stream"] = false }, TimeoutSeconds = 120 };
+            RequestBody = new JsonObject { ["messages"] = SmokeScenario(job) is { } scenario
+                    ? TapdDraftSmokeWire.Messages(scenario) : new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "Reply OK." }),
+                ["max_tokens"] = ChatOutputLimit(job), ["stream"] = false }, TimeoutSeconds = 120 };
+
+    private static int ChatOutputLimit(BsonDocument job)
+        => SmokeScenario(job) is not null ? TapdDraftSmokeWire.MaxOutputTokens : S(job, "Operation") == "binding-test" ? 256 : 16;
+
+    private static int? SmokeScenario(BsonDocument job)
+        => S(job, "Operation") != "binding-test" && S(job, "ModelType") == ModelTypes.Chat
+           && string.Equals(S(job, "AppCallerCode"), AppCallerRegistry.TapdBugAgent.Extract.Chat, StringComparison.OrdinalIgnoreCase)
+           && job.GetValue("TapdSmokeScenario", BsonNull.Value) is BsonInt32 index && TapdDraftSmokeWire.IsScenario(index.Value) ? index.Value : null;
 
     internal static bool HasChatOutput(string? content)
     {

@@ -85,7 +85,7 @@ const GRID_SCORE = '92px minmax(260px, 560px) minmax(268px, 1fr) 120px 116px 104
 const INITIAL_ROWS = 40;
 const ROWS_STEP = 40;
 
-type RangeKey = 'all' | 'open';
+type RangeKey = 'all' | 'open' | 'tracked';
 
 export default function ModelLeaderboardPage() {
   const isMobile = useIsMobile();
@@ -304,7 +304,7 @@ export default function ModelLeaderboardPage() {
   }, [board, load, loadCatalog]);
 
   const entries = useMemo(
-    () => (snapshot?.entries ?? []).filter((e) => (range === 'open' ? isOpenSource(e) : true)),
+    () => range === 'tracked' ? (snapshot?.trackedEntries ?? []) : (snapshot?.entries ?? []).filter((entry) => range !== 'open' || isOpenSource(entry)),
     [snapshot, range],
   );
 
@@ -427,7 +427,7 @@ export default function ModelLeaderboardPage() {
           role="group"
           aria-label="模型范围"
         >
-          {([{ key: 'all', label: '全部' }, { key: 'open', label: '仅开源' }] as Array<{ key: RangeKey; label: string }>).map((r) => (
+          {([{ key: 'all', label: '全部' }, { key: 'open', label: '仅开源' }, { key: 'tracked', label: 'OpenAI 与豆包' }] as Array<{ key: RangeKey; label: string }>).map((r) => (
             <button
               key={r.key}
               type="button"

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using PrdAgent.GatewayTransport;
 using MongoDB.Driver;
 using System.Collections.Concurrent;
@@ -1436,10 +1437,68 @@ public class ModelResolver : IModelResolver
         }
 
         var selected = resolved[0];
+        if (!readOnlyMetadata && await TryResolveTapdTrialAsync(logical, appCallerCode, expectedModel, selected, allowedGroups, ct) is { } trial)
+            return trial;
         if (resolved.Count > 1)
             selected.RetryCandidates = resolved.Skip(1).ToList();
         return selected;
     }
+
+    private async Task<ModelResolutionResult?> TryResolveTapdTrialAsync(GatewayLogicalModel logical, string caller,
+        string? expectedModel, ModelResolutionResult baseline, IReadOnlyCollection<ModelGroup>? allowedGroups, CancellationToken ct)
+    {
+        if (_gatewayDb is null || logical.IdentityKind != "stable" || logical.IsDefaultForType
+            || logical.AllowedAppCallerCodes is not [var allowedCaller]
+            || !string.Equals(allowedCaller, ModelRotationRouting.PilotCaller, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(caller, ModelRotationRouting.PilotCaller, StringComparison.OrdinalIgnoreCase)
+            || _requestContext?.Current is not { UserId: { Length: > 0 } userId, TaskPermitId: null, IsHealthProbe: not true }) return null;
+
+        try
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(TimeSpan.FromMilliseconds(500));
+            var trialToken = deadline.Token;
+            var database = _gatewayDb.Context.Database;
+            var policyId = ModelRotationRouting.PolicyId(CurrentTenantId, logical.Id);
+            var filter = Builders<BsonDocument>.Filter;
+            var state = await database.GetCollection<BsonDocument>(ModelRotationRouting.PolicyCollection).Find(filter.And(
+                filter.Eq("_id", policyId), filter.Eq("TenantId", CurrentTenantId), filter.Eq("Policy.Enabled", true),
+                filter.Eq("Policy.Mode", "auto"), filter.Eq("TrafficTrial.Deployment", TaskPermitDeployment.Resolve(_config)),
+                filter.Eq("TrafficTrial.BaselineOfferingId", baseline.OfferingId),
+                filter.Gt("TrafficTrial.ExpiresAt", DateTime.UtcNow))).FirstOrDefaultAsync(trialToken);
+            if (state?.GetValue("TrafficTrial", BsonNull.Value) is not BsonDocument trial
+                || trial.GetValue("Percentage", 0) is not BsonInt32 percent
+                || !ModelRotationRouting.IsTrialUser(policyId, userId, percent.Value)
+                || trial.GetValue("CandidateOfferingId", BsonNull.Value) is not BsonString offeringId
+                || state.GetValue("Candidate", BsonNull.Value) is not BsonDocument candidate
+                || candidate.GetValue("ValidationRoute", BsonNull.Value) is not BsonDocument proof) return null;
+
+            var route = await database.GetCollection<BsonDocument>("llmgw_model_offerings").Find(filter.And(
+                filter.Eq("_id", offeringId.Value), filter.Eq("TenantId", CurrentTenantId), filter.Eq("Enabled", true),
+                filter.Exists("SupersededByOfferingId", false))).FirstOrDefaultAsync(trialToken);
+            if (route is null || ModelRotationRouting.Hash(OfferingWirePayload(route)) != trial.GetValue("CandidateOfferingVersion", "").AsString)
+                return null;
+            var offering = BsonSerializer.Deserialize<GatewayModelOffering>(route);
+            if (offering.HealthStatus != ModelHealthStatus.Healthy || offering.TargetKind != "model") return null;
+            var result = await TryBuildLogicalOfferingResolutionAsync(logical, offering, expectedModel ?? logical.PublicId, trialToken);
+            return result is not null && IsLogicalOfferingAllowed(result, allowedGroups)
+                && result.ActualModel == candidate.GetValue("UpstreamModelId", "").AsString
+                && result.ActualPlatformId == candidate.GetValue("ProviderId", "").AsString
+                && string.Equals(result.Protocol ?? result.PlatformType, proof.GetValue("Protocol", "").AsString, StringComparison.OrdinalIgnoreCase)
+                ? result : null;
+        }
+        catch (Exception ex) when (ex is MongoException or TimeoutException or InvalidOperationException or FormatException
+            || ex is OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("TAPD 灰度线路检查未完成，使用现任线路。异常类型 {Type}", ex.GetType().Name);
+            return null;
+        }
+    }
+
+    private static string OfferingWirePayload(BsonDocument route)
+        => new BsonArray { route.GetValue("_id", ""), route.GetValue("LogicalModelId", ""), route.GetValue("TargetKind", "model"),
+            route.GetValue("TargetId", ""), route.GetValue("UpstreamModelId", BsonNull.Value), route.GetValue("Protocol", BsonNull.Value),
+            route.GetValue("EndpointPath", BsonNull.Value), route.GetValue("Enabled", false) }.ToJson();
 
     /// <summary>
     /// 逻辑模型能否服务该 appCaller 的场景。

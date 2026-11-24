@@ -4,6 +4,7 @@ using MongoDB.Bson;
 using PrdAgent.LlmGw.LogicalModels;
 using PrdAgent.LlmGw.Mongo;
 using PrdAgent.LlmGw.Provisioning;
+using PrdAgent.GatewayTransport;
 
 namespace PrdAgent.LlmGw.ModelUpgrades;
 
@@ -17,7 +18,7 @@ public static class ModelUpgradeRules
         return first > now ? first : first.AddDays(1);
     }
     public static string StateId(string tenantId, string logicalId)
-        => "upgrade-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tenantId + "\n" + logicalId))).ToLowerInvariant();
+        => ModelRotationRouting.PolicyId(tenantId, logicalId);
 
     public static void ValidatePolicy(ModelUpgradePolicy p)
     {
@@ -39,6 +40,12 @@ public static class ModelUpgradeRules
                 || s.Capabilities is null || s.Capabilities.Count == 0 || s.Capabilities.Any(c => !LogicalModelCapabilityPolicy.CanonicalCapabilities.Contains(c)))
                 throw new ModelUpgradeException("INVALID_SUCCESSOR", "继任关系必须包含明确前后型号、官方 Provider、HTTPS 文档依据和规范能力声明；系统不会按名称猜测继任。", 400);
         }
+        if (p.Family is { } family && ((!RequiresTapdSmoke(p) && !IsVisualGenerationCaller(p.ValidationAppCallerCode)) || p.Successors.Count != 0
+            || string.IsNullOrWhiteSpace(family.ProviderId) || family.ProviderId.Length > 200
+            || string.IsNullOrWhiteSpace(family.ModelPrefix) || family.ModelPrefix.Length > 100
+            || !family.ModelPrefix.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_')
+            || !Uri.TryCreate(family.DocumentationUrl, UriKind.Absolute, out var docs) || docs.Scheme != "https" || docs.UserInfo.Length != 0))
+            throw new ModelUpgradeException("INVALID_MODEL_FAMILY", "系列发现目前用于 TAPD 草稿和视觉生图。请选择官方上游，填入模型系列前缀和 HTTPS 资料，并清空逐版本继任关系。", 400);
     }
 
     public static bool IsAuthorizedValidationCaller(BsonDocument logical, BsonDocument caller)
@@ -63,6 +70,9 @@ public static class ModelUpgradeRules
             || s.Candidate is null || s.Current?.ModelId == s.Candidate.ModelId || s.OutcomeUnknown
             || !s.Gates.Capabilities || !s.Gates.Price || !s.Gates.Budget) return "";
         if (CanPromote(s, true, now)) return "promote";
+        if (UsesTrafficTrial(s.Policy) && TapdSmokePasses(s.Candidate, now)) return "start-traffic-trial";
+        if (RequiresTapdSmoke(s.Policy) && (s.Candidate.BusinessSmokeRejected
+            || s.Candidate.BusinessSmokeSamples?.Any(sample => sample.PassedAt > now.AddHours(-20)) == true)) return "";
         return s.Policy.AutoValidate ? "validate" : "";
     }
     public static bool IsFixedValidationTarget(BsonDocument logical, string modelType)
@@ -126,7 +136,44 @@ public static class ModelUpgradeRules
            && (state.BudgetDate == now.ToString("yyyy-MM-dd") ? state.ReservedCostUsd : 0) + estimate <= daily;
     public static bool CanPromote(ModelUpgradeState s, bool automatic, DateTime now)
         => !s.OutcomeUnknown && s.Candidate?.ValidationRoute is { OfferingId.Length: > 0, OfferingVersion.Length: > 0 } && s.Candidate.ValidatedAt is { } at && at > now.AddHours(-24)
-           && s.Gates.Capabilities && s.Gates.Validation && (!automatic || s.Gates.Price && s.Gates.Budget);
+           && s.Gates.Capabilities && s.Gates.Validation && (!automatic || s.Gates.Price && s.Gates.Budget)
+           && (!RequiresTapdSmoke(s.Policy) || TapdSmokePasses(s.Candidate, now))
+           && (!UsesTrafficTrial(s.Policy) || s.Candidate.TrafficTrialPassedAt > now.AddHours(-12));
+
+    public static bool RequiresTapdSmoke(ModelUpgradePolicy policy)
+        => AppCallerIdentityPolicy.Comparer.Equals(policy.ValidationAppCallerCode, ModelRotationRouting.PilotCaller);
+
+    public static bool UsesTrafficTrial(ModelUpgradePolicy policy) => policy.Family is not null && RequiresTapdSmoke(policy);
+
+    private static bool IsVisualGenerationCaller(string? caller)
+        => AppCallerIdentityPolicy.Comparer.Equals(caller, "visual-agent.image.text2img::generation")
+            || AppCallerIdentityPolicy.Comparer.Equals(caller, "visual-agent.image.img2img::generation");
+
+    private static bool InFamily(string model, string prefix)
+        => model == prefix || model.StartsWith(prefix + "-", StringComparison.Ordinal) || model.StartsWith(prefix + ".", StringComparison.Ordinal);
+
+    public static string? LatestFamilyCandidate(ModelUpgradeFamily family, ModelUpgradeTarget current, IReadOnlyDictionary<string, long?> catalog)
+    {
+        if (current.ProviderId != family.ProviderId || !InFamily(current.UpstreamModelId, family.ModelPrefix)
+            || catalog.GetValueOrDefault(current.UpstreamModelId) is not { } currentTime) return null;
+        var latest = catalog.Where(entry => entry.Value > currentTime && InFamily(entry.Key, family.ModelPrefix))
+            .OrderByDescending(entry => entry.Value).Take(2).ToArray();
+        return latest.Length == 0 || latest.Length == 2 && latest[0].Value == latest[1].Value ? null : latest[0].Key;
+    }
+
+    public static bool TapdSmokePasses(ModelUpgradeCandidate candidate, DateTime now)
+    {
+        if (candidate.BusinessSmokeRejected || candidate.ValidationRoute is not { } route) return false;
+        var samples = (candidate.BusinessSmokeSamples ?? [])
+            .Where(sample => sample.PassedAt <= now && sample.PassedAt >= now.AddHours(-96)
+                && sample.OfferingVersion == route.OfferingVersion && sample.Scenario is >= 0 and < 3)
+            .OrderBy(sample => sample.PassedAt).ToList();
+        return samples.Select(sample => sample.Scenario).Distinct().Count() == 3
+            && samples.Select(sample => sample.RequestId).Distinct(StringComparer.Ordinal).Count() >= 3
+            && samples[^1].PassedAt > now.AddHours(-24)
+            && samples[^1].PassedAt - samples[0].PassedAt >= TimeSpan.FromHours(48)
+            && samples.Zip(samples.Skip(1)).All(pair => pair.Second.PassedAt - pair.First.PassedAt <= TimeSpan.FromHours(36));
+    }
     public static string Fingerprint(BsonDocument logical, BsonDocument provider, BsonDocument model)
     {
         var snapshot = new BsonArray(new[] { logical, provider, model }.Select(d =>

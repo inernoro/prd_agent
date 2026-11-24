@@ -13,6 +13,8 @@ public sealed class ModelSuccessor
     public List<string> Capabilities { get; set; } = [];
 }
 
+public sealed record ModelUpgradeFamily(string ProviderId, string ModelPrefix, string DocumentationUrl);
+
 public class ModelUpgradePolicy
 {
     public bool Enabled { get; set; }
@@ -29,6 +31,8 @@ public class ModelUpgradePolicy
     public decimal? MaxPriceIncreasePercent { get; set; }
     public string ValidationAppCallerCode { get; set; } = "";
     public List<ModelSuccessor> Successors { get; set; } = [];
+    [BsonIgnoreIfNull]
+    public ModelUpgradeFamily? Family { get; set; }
 }
 
 public sealed class ModelUpgradePolicyWrite : ModelUpgradePolicy { public long Version { get; set; } }
@@ -62,6 +66,25 @@ public sealed class ModelUpgradeCandidate
     public DateTime? ValidatedAt { get; set; }
     public string Fingerprint { get; set; } = "";
     public ModelUpgradeRouteSnapshot? ValidationRoute { get; set; }
+    [BsonIgnoreIfNull]
+    public List<ModelUpgradeSmokeSample>? BusinessSmokeSamples { get; set; }
+    [BsonIgnoreIfDefault]
+    public bool BusinessSmokeRejected { get; set; }
+    [BsonIgnoreIfNull]
+    public DateTime? TrafficTrialPassedAt { get; set; }
+}
+
+public sealed record ModelUpgradeSmokeSample(string RequestId, string OfferingVersion, int Scenario, DateTime PassedAt);
+
+public sealed class ModelUpgradeTrafficTrial
+{
+    public string Deployment { get; set; } = "";
+    public string BaselineOfferingId { get; set; } = "";
+    public string CandidateOfferingId { get; set; } = "";
+    public string CandidateOfferingVersion { get; set; } = "";
+    public int Percentage { get; set; } = 5;
+    public DateTime StartedAt { get; set; }
+    public DateTime ExpiresAt { get; set; }
 }
 public sealed class ModelUpgradeGates
 {
@@ -88,6 +111,7 @@ public sealed class ModelUpgradeDiscoveryItem
 }
 public sealed class ModelUpgradeView
 {
+    public int? TrialPercentage { get; set; }
     public ReferenceCoverage? ReferenceCoverage { get; set; }
     public string LogicalModelId { get; set; } = "";
     public string PublicId { get; set; } = "";
@@ -150,6 +174,9 @@ public sealed class ModelUpgradeState
     public bool OutcomeUnknown { get; set; }
     public ModelUpgradeSwitch? LastPromotion { get; set; }
     public ModelUpgradeSwitch? PendingSwitch { get; set; }
+    public ModelUpgradeTrafficTrial? TrafficTrial { get; set; }
+    public DateTime? NextTrafficCheckAt { get; set; }
+    public DateTime? TrafficWatchStartedAt { get; set; }
 }
 public sealed class ModelUpgradeSwitch
 {

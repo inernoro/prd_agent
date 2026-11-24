@@ -1972,9 +1972,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     && !(allowsReasoningNone && p.Key == "reasoning_effort"))
                 || actualModel is not null && body["model"]?.GetValue<string>() != actualModel
                 || body.ContainsKey("reasoning_effort") && (!allowsReasoningNone || body["reasoning_effort"]?.GetValue<string>() != "none")
-                || body[tokenField] is not JsonValue cap || !cap.TryGetValue<int>(out var max) || max != 16
+                || body[tokenField] is not JsonValue cap || !cap.TryGetValue<int>(out var max)
                 || body["stream"] is JsonValue streaming && (!streaming.TryGetValue<bool>(out var stream) || stream)
-                || body["messages"] is not JsonArray { Count: 1 } messages || messages[0] is not JsonObject message
+                || body["messages"] is not JsonArray messages) return false;
+            if (max == TapdDraftSmokeWire.MaxOutputTokens && TapdDraftSmokeWire.Accepts(request.AppCallerCode, messages)) return true;
+            if (max != 16 || messages.Count != 1 || messages[0] is not JsonObject message
                 || message.Count != 2 || message["role"]?.GetValue<string>() != "user"
                 || message["content"] is not JsonValue content || !content.TryGetValue<string>(out var text)
                 || text.Length is < 1 or > 200) return false;

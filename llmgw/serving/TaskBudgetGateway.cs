@@ -199,7 +199,7 @@ public sealed class TaskBudgetGateway(
                 return GatewayRawResponse.Fail("GATEWAY_CANARY_BUDGET_INACTIVE", "候选验收金额合同已失效，未发送请求。", 409);
             var attempt = new GatewayTaskBudgetRequest(scope.Id, permit.TenantId, permit.ActorUserId,
                 RunId(request.Context), request.AppCallerCode, permit.Id, request.Context?.RequestId ?? "",
-                System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(imageCanary ? (object?)request.CanonicalImageRequest : request.RequestBody).Length, imageCanary ? 1 : 16,
+                System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(imageCanary ? (object?)request.CanonicalImageRequest : request.RequestBody).Length, imageCanary ? 1 : policy.MaxOutputTokens,
                 resolution.LogicalModelPublicId ?? "", resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? "",
                 resolution.ActualModel ?? "", resolution.OfferingId, TaskPermitId: permit.Id,
                 Protocol: resolution.Protocol ?? resolution.PlatformType, BoundedCanaryCall: imageCanary);
@@ -240,7 +240,8 @@ public sealed class TaskBudgetGateway(
 
     internal static bool AllowsBoundedChatCanary(GatewayTaskPermitRecord permit, GatewayRuntimeBudgetScopeRecord? scope,
         GatewayRawRequest request, GatewayModelResolution resolution)
-        => IsBoundedCanaryPermit(permit) && scope is { CanaryUnitCostUpperBoundUsd: null, MaxPhysicalCalls: 1, MaxOutputTokens: 16 }
+        => IsBoundedCanaryPermit(permit) && scope is { CanaryUnitCostUpperBoundUsd: null, MaxPhysicalCalls: 1 }
+           && request.RequestBody?["max_tokens"] is JsonValue cap && cap.TryGetValue<int>(out var max) && max == scope.MaxOutputTokens
            && scope.Status == "active" && scope.ExpiresAt > DateTime.UtcNow
            && scope.ExpectedOfferingId == resolution.OfferingId
            && scope.ExpectedLogicalModelPublicId == resolution.LogicalModelPublicId

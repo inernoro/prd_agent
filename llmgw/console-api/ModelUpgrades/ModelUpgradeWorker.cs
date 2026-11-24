@@ -26,7 +26,8 @@ public sealed partial class ModelUpgradeService
     {
         if (DeploymentBlockReason is not null) return;
         var now = DateTime.UtcNow;
-        var filter = Builders<ModelUpgradeState>.Filter.Where(s => (s.PendingSwitch != null || s.PendingAction != "" || s.Policy.Enabled && s.NextCheckAt <= now)
+        var filter = Builders<ModelUpgradeState>.Filter.Where(s => (s.PendingSwitch != null || s.PendingAction != ""
+            || s.NextTrafficCheckAt <= now || s.TrafficTrial == null && s.TrafficWatchStartedAt == null && s.Policy.Enabled && s.NextCheckAt <= now)
             && (s.LeaseUntil == null || s.LeaseUntil < now));
         var pending = await States.Find(filter).Limit(20).ToListAsync(ct);
         foreach (var snapshot in pending)
@@ -50,7 +51,11 @@ public sealed partial class ModelUpgradeService
                     throw new ModelUpgradeException("INTERRUPTED_SWITCH", "已恢复中断切换的保留版本，请由当前有权限的管理员刷新并重新确认操作。");
                 }
                 await RequireActorAsync(s);
-                if (action.Length == 0) { action = "check"; s.ExecutionRequestedBy = "scheduled"; }
+                if (action.Length == 0)
+                {
+                    action = s.TrafficTrial is not null ? "observe-traffic-trial" : s.TrafficWatchStartedAt is not null ? "watch-promotion" : "check";
+                    s.ExecutionRequestedBy = "scheduled";
+                }
                 if (s.OutcomeUnknown && action != "await-validation" && !(action == "validate" && s.ValidationMode == "evidence" && !string.IsNullOrWhiteSpace(s.EvidenceRequestId)))
                     throw new ModelUpgradeException("OUTCOME_UNKNOWN", "上次验收结果未知，自动操作已停止；请提供原请求真实证据核验，禁止重发。");
                 if (action != "await-validation") audit = await AuditBeginAsync(s, action);
@@ -61,7 +66,13 @@ public sealed partial class ModelUpgradeService
                     case "validate": await ValidateAsync(s); break;
                     case "await-validation": s.PendingAction = action; await PollValidationAsync(s); break;
                     case "promote": await SwitchAsync(s, false); break;
-                    case "rollback": await SwitchAsync(s, true); break;
+                    case "start-traffic-trial": await StartTrafficTrialAsync(s); break;
+                    case "observe-traffic-trial": await PollTrafficTrialAsync(s, ct); break;
+                    case "watch-promotion": await WatchPromotedTrafficAsync(s, ct); break;
+                    case "rollback":
+                        if (s.TrafficTrial is not null) StopTrafficTrial(s, "管理员撤回灰度，所有新请求恢复现任模型。");
+                        else await SwitchAsync(s, true);
+                        break;
                     default: throw new ModelUpgradeException("INVALID_ACTION", "更新动作无效，请重新配置策略。");
                 }
                 if (action == "await-validation" && s.PendingAction != "await-validation") audit = await AuditBeginAsync(s, "validate");
@@ -70,8 +81,12 @@ public sealed partial class ModelUpgradeService
             }
             catch (Exception ex)
             {
+                if (ex is ModelUpgradeException { Code: "POLICY_ACTOR_REVOKED" } && s.TrafficTrial is not null)
+                    StopTrafficTrial(s, "策略授权已失效，所有新请求恢复现任模型。");
+                if (action is "observe-traffic-trial" or "watch-promotion" && s.NextTrafficCheckAt <= now)
+                    s.NextTrafficCheckAt = now + TrafficCheckInterval;
                 var reconciliation = action == "await-validation" && !string.IsNullOrWhiteSpace(s.Candidate?.ValidationRequestId)
-                    && ex is not ModelUpgradeException { Code: "CANARY_EXPIRED_UNSENT" };
+                    && ex is not ModelUpgradeException { Code: "CANARY_EXPIRED_UNSENT" or "BUSINESS_SMOKE_FAILED" };
                 if (reconciliation) { s.OutcomeUnknown = true; s.ValidationStatus = "unknown"; }
                 if (action is "validate" or "await-validation" && !s.OutcomeUnknown && ex is not ModelUpgradeException { Code: "CANARY_EXPIRED_UNSENT" }) s.ValidationStatus = "failed";
                 s.PendingAction = ""; s.Phase = ex is ModelUpgradeException ? "blocked" : "failed";

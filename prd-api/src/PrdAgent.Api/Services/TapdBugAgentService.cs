@@ -33,15 +33,18 @@ public class TapdBugAgentService
     private readonly ILlmGateway _gateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<TapdBugAgentService> _logger;
+    private readonly string? _modelPublicId;
 
     public TapdBugAgentService(
         ILlmGateway gateway,
         IHttpClientFactory httpClientFactory,
-        ILogger<TapdBugAgentService> logger)
+        ILogger<TapdBugAgentService> logger,
+        IConfiguration configuration)
     {
         _gateway = gateway;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _modelPublicId = configuration["TapdBugAgent:ModelPublicId"]?.Trim();
     }
 
     public async Task<TapdBugDraft> StreamPreviewAsync(
@@ -64,11 +67,12 @@ public class TapdBugAgentService
         {
             AppCallerCode = AppCallerRegistry.TapdBugAgent.Extract.Chat,
             ModelType = ModelTypes.Chat,
+            ExpectedModel = string.IsNullOrEmpty(_modelPublicId) ? null : _modelPublicId,
             RequestBody = new JsonObject
             {
                 ["messages"] = new JsonArray
                 {
-                    new JsonObject { ["role"] = "system", ["content"] = BuildSystemPrompt() },
+                    new JsonObject { ["role"] = "system", ["content"] = TapdDraftSmokeWire.SystemPrompt },
                     new JsonObject { ["role"] = "user", ["content"] = BuildUserPrompt(naturalText, userDraft) },
                 },
                 ["temperature"] = 0.2,
@@ -88,7 +92,8 @@ public class TapdBugAgentService
                     await writeEvent("model", new
                     {
                         model = chunk.Resolution.ActualModel,
-                        platform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId
+                        platform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId,
+                        modelPublicId = chunk.Resolution.LogicalModelPublicId,
                     });
                     continue;
                 }
@@ -343,24 +348,6 @@ public class TapdBugAgentService
             Title = FirstNonEmpty(baseDraft.Title, naturalText) ?? "",
             ActualResult = baseDraft.ActualResult.Count > 0 ? baseDraft.ActualResult : NormalizeLines(new[] { naturalText }),
         };
-    }
-
-    private static string BuildSystemPrompt()
-    {
-        return """
-            你是 TAPD 缺陷自动提报智能体，负责把用户口语化缺陷描述整理为标准缺陷草稿。
-            严格规则：
-            1. 只能输出严格 JSON，不要输出 Markdown、解释、代码围栏。
-            2. 必须尽量基于用户原话合理补齐四要素。信息不足时使用“进入出现该问题的页面/执行描述中的操作/观察异常结果/不应出现异常错误”等可核对表述，不要让四要素为空。
-            3. 标题格式为“场景 + 问题现象”，不超过 30 个中文字符。
-            4. 四要素必须拆成数组：preconditions、steps、actualResult、expectedResult。
-            5. 默认 module/versionReport 为“附近门店组件精准筛选”，currentOwner 为“黄卫杰;”。
-            6. severity 只能是 fatal/serious/normal/minor，默认 serious；priority 只能是 urgent/high/medium/low，默认 high。
-            7. bugType 只能是 逻辑错误/不符方案/功能遗漏/历史缺陷/产品缺陷，默认 逻辑错误。
-            返回 JSON 字段：
-            title, module, severity, priority, bugType, currentOwner, versionReport,
-            preconditions, steps, actualResult, expectedResult, missingFields
-            """;
     }
 
     private static string BuildUserPrompt(string naturalText, TapdBugDraft draft)
