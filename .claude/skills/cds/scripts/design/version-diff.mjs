@@ -61,7 +61,8 @@ function materialize(ref, dir) {
   const index = path.join(out, '.index'), dest = path.join(out, 'pkg');
   const env = { ...process.env, GIT_INDEX_FILE: index };
   try { git(['read-tree', `${commit}:${repoPath()}`], { env }); } catch { fail(`git 里找不到 ${ref}（${commit}）`); }
-  git(['checkout-index', '-a', `--prefix=${dest.split(path.sep).join('/')}/`], { env, cwd: top() }); rmSync(index);
+  /* 原样检出：不让 Windows 的 core.autocrlf 把换行改成 CRLF，否则每个文本文件都像改过 */
+  git(['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'checkout-index', '-a', `--prefix=${dest.split(path.sep).join('/')}/`], { env, cwd: top() }); rmSync(index);
   return { label: hit ? `V${hit.version}` : ref, version: hit?.version, commit, dir: dest };
 }
 
@@ -70,7 +71,9 @@ const walk = (root, rel = '') => readdirSync(path.join(root, rel), { withFileTyp
   if (entry.isDirectory()) return ['node_modules', '.git', 'changes'].includes(entry.name) && !rel ? [] : walk(root, sub);
   return [sub];
 });
-const fileMap = root => Object.fromEntries(walk(root).map(rel => [rel, createHash('sha256').update(readFileSync(path.join(root, rel))).digest('hex')]));
+/* 文本文件按 LF 比较：只差换行（CRLF / LF）不算改动，和 CDS 按内容核对的结果一致 */
+const normalized = buffer => buffer.includes(0) ? buffer : Buffer.from(buffer.toString('latin1').replace(/\r\n/g, '\n'), 'latin1');
+const fileMap = root => Object.fromEntries(walk(root).map(rel => [rel, createHash('sha256').update(normalized(readFileSync(path.join(root, rel)))).digest('hex')]));
 const json = (root, rel) => { try { return JSON.parse(readFileSync(path.join(root, rel), 'utf8')); } catch { return undefined; } };
 const byId = list => Object.fromEntries((list ?? []).map(row => [row.id, row]));
 function diffRows(a, b, fields) {
@@ -119,7 +122,7 @@ const sourceFiles = [...new Set([...Object.keys(fa), ...Object.keys(fb)])].filte
 const sourceDiff = sourceFiles.map(rel => {
   const a = fa[rel] ? path.join(from.dir, rel) : empty, b = fb[rel] ? path.join(to.dir, rel) : empty;
   let out = '';
-  try { out = execFileSync('git', ['diff', '--no-index', '--no-color', '-U3', a, b], { maxBuffer: 1 << 28 }).toString('utf8'); }
+  try { out = execFileSync('git', ['diff', '--no-index', '--no-color', '--ignore-cr-at-eol', '-U3', a, b], { maxBuffer: 1 << 28 }).toString('utf8'); }
   catch (error) { out = error.stdout?.toString('utf8') ?? ''; }
   const lines = out.split('\n'); const start = lines.findIndex(line => line.startsWith('@@') || line.startsWith('Binary files'));
   const body = start < 0 ? '' : lines.slice(start).join('\n').replace(/^Binary files .*$/m, `Binary files ${fa[rel] ? `a/${rel}` : '/dev/null'} and ${fb[rel] ? `b/${rel}` : '/dev/null'} differ`);
