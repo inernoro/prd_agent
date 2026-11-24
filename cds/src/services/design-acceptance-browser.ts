@@ -23,6 +23,12 @@ const renderOrigin = 'https://cds-design-implementation.invalid';
 const snapshotLimit = 2 * 1024 * 1024;
 const captureTimeout = 5500;
 const screenshotOptions = { animations: 'disabled', caret: 'hide', timeout: captureTimeout } as const;
+// Rounded subpixel borders can rasterize differently across compositor runs.
+// Use the same software rendering path for the two images and their exact replay.
+const evidenceRenderArgs = [
+  '--disable-gpu', '--disable-gpu-compositing', '--disable-partial-raster',
+  '--disable-skia-runtime-opts', '--force-color-profile=srgb', '--run-all-compositor-stages-before-draw',
+];
 type FixtureSnapshot = { responses: Array<[string, unknown]>; artifacts: Record<string, string> };
 const mimeTypes: Record<string, string> = {
   '.js': 'text/javascript', '.css': 'text/css', '.woff': 'font/woff', '.woff2': 'font/woff2',
@@ -243,7 +249,7 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
     if (!dist || !Number.isFinite(date.valueOf())) return undefined;
     const checkBuild = async () => (await readFile(resolve(dist, '.build-sha'), 'utf8').catch(() => '')).trim() === commit;
     if (!await checkBuild()) return undefined;
-    const browser = await launchDesignBrowser(executable);
+    const browser = await launchDesignBrowser(executable, evidenceRenderArgs);
     const expires = setTimeout(() => { void browser.close().catch(() => {}); }, 24_000);
     try {
       const prior = await readPrototypeScreen(browser, decorateDesignPrototype(prototype.toString('utf8')), screen, theme,

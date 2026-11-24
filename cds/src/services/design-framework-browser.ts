@@ -154,11 +154,11 @@ async function measure(browser: Browser, html: string, screen: DesignScreen, the
   });
 }
 
-export async function launchDesignBrowser(browserPath: string) {
+export async function launchDesignBrowser(browserPath: string, renderArgs: string[] = []) {
   const { chromium } = await import('playwright');
   return chromium.launch({ executablePath: browserPath, chromiumSandbox: true, timeout: 5000,
     env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
-    args: ['--disable-background-networking', '--no-proxy-server'] });
+    args: ['--disable-background-networking', '--no-proxy-server', ...renderArgs] });
 }
 
 async function measurePrototype(browserPath: string, prototype: Buffer, screens: DesignScreen[], checkNestedScroll: boolean) {

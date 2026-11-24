@@ -24,6 +24,27 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
       columns(element?: Element) {
         return element ? getComputedStyle(element).gridTemplateColumns.split(' ').length : 0;
       },
+      controlRows(group: Element) {
+        const controls = Array.from(group.children).flatMap(child => {
+          const control = child.matches('details') ? child.querySelector(':scope > summary')
+            : child.matches('button, a[href], input, select, summary, [role="tab"], [role="button"], label:has(input)') ? child : undefined;
+          if (!control || !dom.visible(control)) return [];
+          const rectangle = control.getBoundingClientRect();
+          return rectangle.width > 0 && rectangle.height > 0 ? [rectangle] : [];
+        });
+        if (controls.length < 2) return [];
+        const layout = getComputedStyle(group);
+        if (['flex', 'inline-flex'].includes(layout.display) && layout.flexDirection.startsWith('row') && layout.flexWrap === 'nowrap') {
+          return [controls];
+        }
+        const rows: DOMRect[][] = [];
+        for (const box of controls.sort((left, right) => left.top - right.top)) {
+          const matching = rows.find(([first]) => Math.min(first.bottom, box.bottom) - Math.max(first.top, box.top) > 0);
+          if (matching) matching.push(box);
+          else rows.push([box]);
+        }
+        return rows.filter(row => row.length > 1);
+      },
     };
     const head = dom.find('.dw-head--draft,.dw-head--v3,.dw-library-top,.dw-library-head,.dw-library-bar');
     const tabs = dom.find('.dw-tablinks');
@@ -33,10 +54,10 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
       dom.read(dom.find('[role=dialog], details[open] .dw-info-panel, .dw-skills[open] > .dw-skill-guide, .dw-overlay')),
       dom.read(dom.find('.dw-draft-footer, main > footer')),
     ];
-    const headerControls = Array.from(document.querySelectorAll('.dw-tablinks > button,.dw-draft-actions > *, .dw-head-actions > *')).filter(dom.visible);
-    const controls = headerControls.map(element => element.getBoundingClientRect());
-    const headerAlignment = controls.length > 1 ? Math.max(dom.spread(controls.map(box => box.top)),
-      dom.spread(controls.map(box => box.bottom)), dom.spread(controls.map(box => box.height))) : null;
+    const headerRows = Array.from(document.querySelectorAll('.dw-tablinks, .dw-draft-actions, .dw-head-actions, .dw-library-bar .dw-tools'))
+      .flatMap(group => dom.controlRows(group));
+    const headerAlignment = headerRows.length ? Math.max(...headerRows.map(row => Math.max(dom.spread(row.map(box => box.top)),
+      dom.spread(row.map(box => box.bottom)), dom.spread(row.map(box => box.height))))) : null;
     const scrolling = Array.from(document.querySelectorAll('main,main *')).filter(element => {
       const style = getComputedStyle(element);
       return ['scroll', 'auto'].includes(style.overflowY) && dom.visible(element) && element.scrollHeight > element.clientHeight + 1;
@@ -111,7 +132,7 @@ export function compareDesignObservations(expected: Observation, actual: Observa
       evidence: `${positions}。相同视口像素差 ${pixelDifference.toFixed(2)}%。${pixelDifference > 0 ? '差异区域待按设计依据核对。' : ''}`,
     },
     'V-02': actual.headerAlignment !== null ? verdict(actual.headerAlignment <= 1,
-      `同一行页头按钮顶边、底边和高度的最大差为 ${actual.headerAlignment.toFixed(1)} px。`) :
+      `各组同排页头控件顶边、底边和高度的最大差为 ${actual.headerAlignment.toFixed(1)} px。`) :
       { status: 'missing', evidence: '未定位可配对的同一行控件。' },
     'V-03': actual.clippedControls > 0 ? verdict(false, `扫描 ${actual.textControls} 个可见控件，${actual.clippedControls} 个出现文字裁切。`) :
       { status: 'missing', evidence: `扫描 ${actual.textControls} 个可见控件，文字裁切 0 处。浮层遮挡和断词待核对。` },
