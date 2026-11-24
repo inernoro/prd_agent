@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DesignEntry, DesignRequirement, DesignRun, DesignVersion } from '../../src/shared/design-workspace';
+import type { DesignCell, DesignEntry, DesignRequirement, DesignRun, DesignVersion } from '../../src/shared/design-workspace';
 import { DesignAcceptancePanel } from '../../web/src/pages/design-workspace/DesignAcceptancePanel';
 import { usePlanningRead } from '../../web/src/pages/engineering-planning/planning-ui';
 
@@ -34,7 +34,7 @@ const requirement: DesignRequirement = { designKey: 'fixture/design', planId: 'P
 function page(check = '', draft: DesignEntry = entry, selected = version, installedAcceptance = false) {
   return renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: [`/design?tab=accept${check ? `&check=${check}` : ''}`],
     children: createElement(DesignAcceptancePanel, { entry: draft, version: selected, busy: false, canWrite: true,
-      canReview: true, canSign: true, command: async () => true, onPreviewStale: () => {}, requirement, installedAcceptance }) }));
+      canReview: true, canSign: true, command: async () => true, onPreviewStale: () => {}, onOpen: () => {}, requirement, installedAcceptance }) }));
 }
 
 describe('V17 项目验收界面', () => {
@@ -80,5 +80,54 @@ describe('V17 项目验收界面', () => {
     expect(usePlanningRead).toHaveBeenCalledWith('/api/projects/fixture/design/installed', 0);
     expect(html).toContain('主用 CDS');
     expect(html).not.toContain('PR #undefined');
+  });
+});
+
+describe('V22 A-64 验收概览', () => {
+  it('旧提交优先，按原因归并大量待补项，卡片只展示摘要、负责方和一个处理动作', () => {
+    const measurements = Array.from({ length: 23 }, (_, index) => `页头宽 ${1154.4375 + index} px`);
+    const scenarios: Pick<DesignCell, 'status' | 'actual'>[] = [
+      ...measurements.map(actual => ({ status: 'unverified' as const, actual })),
+      { status: 'missing', actual: '正式站没有这种状态：新建计划待确认' },
+      { status: 'missing', actual: '正式站没有这种状态：稿件有待回复的评论' },
+      { status: 'missing', actual: '验收规则冲突：页头上限有两种写法' },
+      { status: 'failed', actual: '移动画布被右栏遮挡' },
+      { status: 'passed', actual: '页面成功打开' },
+    ];
+    const latest: DesignVersion = {
+      ...version, version: 22,
+      acceptance: scenarios.map((_, index) => ({ ...version.acceptance[0], id: `A-${String(index + 1).padStart(2, '0')}` })),
+      videos: [{ page: 'accept', file: 'videos/methods.mp4', artifactId: 'fixture-video', title: '验收方法演示', chapters: [] }],
+    };
+    const recentRun: DesignRun = { ...run, version: 22, verdict: 'needs_evidence', cells: latest.acceptance.map((rule, index) => ({
+      ...scenarios[index], itemId: rule.id, slot: 'desktop-light',
+    })) };
+    vi.mocked(usePlanningRead).mockReturnValue({ loading: false, data: { projectId: 'fixture', commit: 'c'.repeat(40), url: run.previewUrl } } as never);
+    const html = page('', { ...entry, frozen: 22, versions: [latest], runs: [recentRun] }, latest);
+    const hero = /<div class="dw-ac-hero">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? '';
+    for (const text of ['暂不能签收', '验收项 28', '通过 1', '不通过 1', '缺证据 26']) expect(hero).toContain(text);
+    const causeList = /<ol class="dw-ac-causes[^"]*"[^>]*>([\s\S]*?)<\/ol>/.exec(html)?.[1] ?? '';
+    const cards = causeList.split(/(?=<li\b[^>]*data-tone=)/).filter(Boolean);
+
+    expect(cards.length).toBeGreaterThan(0);
+    expect(cards.length).toBeLessThanOrEqual(6);
+    expect(cards[0]).toContain('重新运行');
+    expect(cards.find(card => card.includes('用演示数据截'))).toContain('实现方');
+    expect(cards.find(card => card.includes('补证据'))).toContain('实现方');
+    expect(cards.find(card => card.includes('看冲突'))).toContain('设计方');
+    for (const card of cards) {
+      const folded = /<details\b[^>]*>[\s\S]*?<\/details>/.exec(card)?.[0] ?? '';
+      expect(folded).toContain('看清单');
+      expect(folded).not.toMatch(/<details\b[^>]*\bopen\b/);
+      const visible = card.replace(folded, '');
+      const title = /<strong\b[^>]*>([\s\S]*?)<\/strong>/.exec(visible)?.[1] ?? '';
+      expect(title).not.toBe('');
+      expect([...title.replace(/<b\b[^>]*>[\s\S]*?<\/b>|<[^>]*>/g, '').trim()].length).toBeLessThanOrEqual(30);
+      expect(visible).not.toMatch(/页头宽 \d/);
+      expect(visible).toMatch(/实现方|设计方|智能体|验收人|执行人|评审人/);
+      expect(visible.match(/<(?:button|a)\b/g)).toHaveLength(1);
+    }
+    const details = cards.map(card => /<details\b[^>]*>([\s\S]*?)<\/details>/.exec(card)?.[1]).join('\n');
+    for (const measurement of measurements) expect(details).toContain(measurement);
   });
 });

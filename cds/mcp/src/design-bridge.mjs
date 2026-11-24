@@ -78,6 +78,8 @@ const schemas = {
       decision: z.enum(['close', 'reopen']) }).strict(),
   ]),
   [acceptanceTool]: z.discriminatedUnion('type', [
+    z.object({ ...feedbackBase, type: z.literal('acceptance.capture'), runId: id, screenId: id, slot }).strict(),
+    z.object({ ...feedbackBase, type: z.literal('acceptance.recheck'), runId: id, screenId: id, slot }).strict(),
     z.object({ ...acceptanceBase, type: z.literal('acceptance.visual'), screenId: id, slot,
       checks: z.record(checkId, z.object({ status: z.enum(['passed', 'failed', 'missing']), evidence: z.string().max(2000) }).strict()),
       imagePath: imagePath.optional(), referenceImagePath: imagePath.optional(),
@@ -127,7 +129,7 @@ const schemas = {
 const descriptions = {
   [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。用 diff 固定两个版号查询 CDS 计算的画面、验收与文件净变化，调换顺序可查回退。稿件发布前可用 brief.reply 在当前需求下澄清。用 run 回读指定或最新验收运行。',
   [feedbackTool]: '稿件发布前用 brief.claim 认领需求，brief.reply 在原需求下澄清，brief.release 交回未出稿需求。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
-  [acceptanceTool]: '回填当前项目验收证据。先用 run 回读运行和提交。visual 可附工作区内的 PNG，flow 回填逐步结果，smoke 检查页面或接口，coverage 关联维度风险与验收项。known.create 登记有来源的历史易错，regress 回填本轮复查。重试沿用 requestId。',
+  [acceptanceTool]: '先回读运行和提交。程序证据稿件用 acceptance.capture 同条件取证，稿件作者用 acceptance.recheck 独立重跑。旧稿沿用 visual、flow、smoke 和 regress 回填。coverage 关联维度风险与验收项，known.create 登记历史易错。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
@@ -163,7 +165,7 @@ export function createDesignBridge(credentials, options = {}) {
       const result = await workspace();
       return tools.filter(tool => tool.name === readTool || (tool.name === publishTool && result.permissions.write)
         || (tool.name === feedbackTool && result.permissions.feedback === true)
-        || (tool.name === acceptanceTool && result.permissions.visual === true));
+        || (tool.name === acceptanceTool && (result.permissions.visual === true || result.permissions.programRecheck === true)));
     },
     async call(name, input = {}) {
       if (!Object.hasOwn(schemas, name)) throw new Error('未知 CDS 设计工具');
@@ -263,10 +265,15 @@ export function createDesignBridge(credentials, options = {}) {
       }
       if (name === acceptanceTool) {
         const data = await workspace();
-        if (data.permissions.visual !== true) throw new Error('当前凭据没有验收回填权限，请使用项目实现授权');
+        const programRecheck = args.type === 'acceptance.recheck';
+        if (programRecheck ? data.permissions.programRecheck !== true && data.permissions.visual !== true : data.permissions.visual !== true) {
+          throw new Error('当前凭据没有所需验收权限，请使用实施授权或设计复验授权');
+        }
         let body = args;
         const expected = { type: args.type, designId: args.designId, runId: args.runId };
-        if (args.type === 'acceptance.visual') {
+        if (args.type === 'acceptance.capture' || programRecheck) {
+          Object.assign(expected, { screenId: args.screenId, slot: args.slot });
+        } else if (args.type === 'acceptance.visual') {
           Object.assign(expected, { screenId: args.screenId, slot: args.slot });
           const { imagePath, referenceImagePath, ...fields } = args;
           body = { ...fields };
@@ -278,7 +285,7 @@ export function createDesignBridge(credentials, options = {}) {
         } else if (args.type === 'acceptance.coverage') expected.id = args.dimension;
         else if (args.type === 'acceptance.regress') expected.id = args.issueId;
         else if (args.type !== 'known.create') expected.id = (args.flow ?? args.smoke).id;
-        const receipt = await client.request('POST', path + '/commands', body);
+        const receipt = await client.request('POST', path + (programRecheck ? '/acceptance/recheck' : '/commands'), body);
         const result = receipt.result;
         if (receipt.projectId !== projectId || typeof receipt.reused !== 'boolean'
           || (args.type === 'known.create' && !id.safeParse(result?.id).success)

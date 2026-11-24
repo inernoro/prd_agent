@@ -7,6 +7,7 @@ import type { DesignWorkspace } from '../../../../src/shared/design-workspace';
 import previewContract from '../../../../src/shared/design-preview-contract.json';
 import { designAcceptanceTarget, designViewports } from '../../../../src/shared/design-workspace';
 import { designVisualKey } from '../../../../src/shared/design-visual';
+import { designPixelDifference as pixelDifference } from '../../../../src/shared/design-pixels';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
 import { designArtifact, designDate, designDetailPath, type DesignCommand } from './design-ui';
 import { compareDesignStructure } from './design-structure';
@@ -42,46 +43,6 @@ function regionCoverage(changes: LayoutChange[]) {
     }
   }
   return Math.min(100, Math.round(bins.size / (precision * precision) * 100));
-}
-
-async function pixelDifference(before: string, after: string) {
-  async function load(src: string) {
-    const image = new Image();
-    image.src = src;
-    await image.decode();
-    return image;
-  }
-  const [left, right] = await Promise.all([load(before), load(after)]);
-  const { naturalWidth: width, naturalHeight: height } = right;
-  if (left.naturalWidth !== width || left.naturalHeight !== height) throw new Error('Screenshot size differs');
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) throw new Error('Pixel comparison unavailable');
-  context.drawImage(left, 0, 0);
-  const base = context.getImageData(0, 0, width, height).data;
-  context.clearRect(0, 0, width, height);
-  context.drawImage(right, 0, 0);
-  const next = context.getImageData(0, 0, width, height).data;
-  const tileSize = 32, columns = Math.ceil(width / tileSize);
-  const tiles = new Set<number>();
-  let count = 0;
-  for (let offset = 0; offset < next.length; offset += 4) {
-    if (base[offset] === next[offset] && base[offset + 1] === next[offset + 1]
-      && base[offset + 2] === next[offset + 2] && base[offset + 3] === next[offset + 3]) continue;
-    const index = offset / 4;
-    const column = Math.floor((index % width) / tileSize);
-    const row = Math.floor(index / width / tileSize);
-    tiles.add(row * columns + column);
-    count++;
-  }
-  const boxes: LayoutChange[] = [...tiles].map(index => {
-    const x = (index % columns) * tileSize, y = Math.floor(index / columns) * tileSize;
-    return { id: String(index), stamp: 0, tone: 'changed', x: x / width, y: y / height,
-      width: Math.min(tileSize, width - x) / width, height: Math.min(tileSize, height - y) / height };
-  });
-  return { boxes, area: count / (width * height) * 100 };
 }
 
 type FrameProps = {
@@ -194,7 +155,7 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
     onPin?.({ x: keyboard ? .5 : (event.clientX - rect.left) / rect.width, y: keyboard ? .5 : (event.clientY - rect.top) / rect.height });
   };
   return <div className="dw-fit" ref={outer} aria-hidden={decorative || undefined}>
-    {source ? <div className="dw-frame" data-preview-state={still ? 'screenshot' : failure ? 'failed' : live ? 'ready' : 'loading'}
+    {source ? <div className="dw-frame" data-screen={screen?.id} data-preview-state={still ? 'screenshot' : failure ? 'failed' : live ? 'ready' : 'loading'}
       style={{ width: width * scale, height: height * scale, colorScheme: theme }}>
       {displayed && <img className="dw-frame-png" src={displayed} alt={screen!.name + ' · V' + version!.version} />}
       {showFrame && <iframe key={identity} ref={frame} title={screen!.name + ' · V' + version!.version} loading="eager" src={source}
@@ -392,7 +353,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   useEffect(() => {
     if (!pixelKey || !leftShot || !rightShot) return;
     let current = true;
-    void pixelDifference(leftShot, rightShot).then(
+    void pixelDifference({ before: leftShot, after: rightShot }).then(
       value => { if (current) setPixels({ key: pixelKey, value }); },
       () => { if (current) setPixels({ key: pixelKey }); },
     );

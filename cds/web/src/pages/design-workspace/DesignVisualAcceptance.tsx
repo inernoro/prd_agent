@@ -2,7 +2,7 @@ import { useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useTheme } from '@/lib/theme';
-import { designSlots, designViewports, type DesignCell, type DesignEntry, type DesignRun,
+import { designDemoImplementationPath, designSlots, designViewports, type DesignCell, type DesignEntry, type DesignRun,
   type DesignScreen, type DesignSlot, type DesignVersion } from '../../../../src/shared/design-workspace';
 import { designComparisonStatus, designMethodPlanEnabled, designMethodVisualStatus, designObjectivePlanEnabled } from '../../../../src/shared/design-methods';
 import { concreteVisualEvidence, designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRuleShot, designVisualSlots,
@@ -36,9 +36,10 @@ function reviewRow(version: DesignVersion, screen: DesignScreen, slot: DesignSlo
 }
 type ReviewRow = ReturnType<typeof reviewRow>;
 
-export function DesignVisualAcceptance({ entry, version, run, busy, writable, command, onRule, visualOnly = false }: {
+export function DesignVisualAcceptance({ entry, version, run, busy, writable, command, onRule, program, visualOnly = false }: {
   entry: DesignEntry; version: DesignVersion; run?: DesignRun; busy: boolean; writable: boolean;
   command: DesignCommand; onRule: (cell: DesignCell) => void; visualOnly?: boolean;
+  program?: { capture: boolean; recheck: boolean; actor?: string };
 }) {
   const [params, setParams] = useSearchParams();
   const { theme } = useTheme();
@@ -63,7 +64,8 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
   };
   const opener = useRef<HTMLButtonElement | null>(null);
   const rows = version.screens.filter(screen => designVisualSlots(screen).includes(slot)).map(screen => reviewRow(version, screen, slot, visualOnly, run));
-  const pending = rows.filter(row => row.verdict !== 'passed');
+  const pending = rows.filter(row => row.verdict !== 'passed'
+    || program && !run?.programEvidence?.[designVisualKey(row.screen.id, slot)]?.review?.matched);
   const shown = filter === 'todo' ? pending : rows;
   const row = rows.find(row => row.screen.id === opened);
   const snapshot = (artifactId: string) => designArtifact(entry.projectId, artifactId);
@@ -98,9 +100,15 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
     </div>
     {shown.length ? <div className="dw-vs-table" role="table" aria-label="逐画面对照">
       <div className="dw-vs-row dw-vs-head" role="row">{columns.map(label => <span role="columnheader" key={label}>{label}</span>)}</div>
-      {shown.map(row => <div className="dw-vs-row" key={row.screen.id} role="row" data-screen={row.screen.id} data-verdict={row.verdict}>
+      {shown.map(row => {
+        const proof = run?.programEvidence?.[designVisualKey(row.screen.id, slot)];
+        const hasDemo = program && designDemoImplementationPath(row.screen);
+        const action = !proof && program?.capture ? 'acceptance.capture'
+          : proof && !proof.review && program?.recheck && proof.by !== program.actor ? 'acceptance.recheck' : undefined;
+        return <div className="dw-vs-row" key={row.screen.id} role="row" data-screen={row.screen.id} data-verdict={row.verdict}>
         <div role="cell" className="dw-vs-name">
-          <strong>{row.screen.name}</strong><small>{slotNames[slot]} · {row.screen.impl ? <code>{row.screen.impl}</code> : '未绑定实现地址'}</small>
+          <strong>{row.screen.name}</strong><small>{slotNames[slot]} · {row.screen.impl ? <code>{row.screen.impl}</code>
+            : hasDemo ? '演示数据场景' : '未绑定实现地址'}</small>
         </div>
         <div role="cell" className="dw-vs-method">
           {row.rules.map(({ rule, cell }) => <span className="dw-vs-chip" key={rule.id} data-status={cell?.status ?? 'unverified'}
@@ -118,13 +126,18 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
         </button></div>
         <div role="cell" className="dw-vs-verdict">
           <span className="dw-status" data-state={row.verdict}>{verdictNames[row.verdict]}</span>
-          {!row.reference && !visualOnly && <small>对照图由设计方提供</small>}
-          {!row.implementation && <small>{row.screen.impl ? '实现方补实拍' : '实现方绑定画面'}</small>}
+          {!row.reference && !visualOnly && <small>{program ? '待同条件截图' : '对照图由设计方提供'}</small>}
+          {!row.implementation && <small>{row.screen.impl || hasDemo ? program ? '待程序实拍' : '实现方补实拍' : '实现方绑定画面'}</small>}
+          {proof && <small>程序实拍 · {proof.commit.slice(0, 8)} · {proof.review ? proof.review.matched ? '复验一致' : '复验有差异' : '待设计方复验'}</small>}
+          {run && (row.screen.impl || hasDemo) && action && <button type="button" className="ep-text-button" disabled={busy}
+            onClick={() => void command(action, { designId: entry.id, runId: run.id, screenId: row.screen.id, slot })}>
+            {action === 'acceptance.capture' ? '用演示数据截' : '独立复验'}
+          </button>}
           <button type="button" className="ep-text-button" data-action="visual-open" aria-label={`逐项对图 · ${row.screen.name}`}
             aria-haspopup="dialog" aria-expanded={row.screen.id === opened}
             onClick={event => open(event, row.screen.id)}>逐项对图</button>
         </div>
-      </div>)}
+      </div>; })}
     </div> : <p className="dw-vs-muted">{rows.length ? '这一视口和主题的画面均已通过。' : '这一视口和主题没有画面。'}</p>}
     {row && <VisualComparison key={designVisualKey(row.screen.id, slot)} entry={entry} version={version} row={row}
       slot={slot} busy={busy} run={run} writable={writable} command={command} close={close}

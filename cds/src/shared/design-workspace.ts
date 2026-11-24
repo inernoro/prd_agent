@@ -132,6 +132,7 @@ export type DesignVersion = {
   videos?: DesignVideo[];
   acceptancePlan?: DesignAcceptancePlan;
   acceptanceMode?: 'objective';
+  evidenceProtocol?: 'program-v1';
   risks?: DesignCoverageRecord[];
   delivery?: DesignDelivery;
 };
@@ -153,10 +154,30 @@ export type DesignCell = {
   itemId: string; slot: DesignSlot; status: DesignCellStatus; actual: string; imageId?: string; recordedBy?: string;
   debtId?: string; measured?: { width: number; height: number; theme: DesignTheme; path: string };
 };
+export type DesignProgramEvidence = {
+  commit: string;
+  fixtureDigest: string;
+  digest: string;
+  by: string;
+  at: string;
+  review?: { by: string; at: string; matched: boolean; digest: string; fixtureDigest: string };
+};
+
+// The published program-evidence requirement is immutable. Older releases keep their acceptance contract.
+export function designProgramEvidenceRequired(version: DesignVersion): boolean {
+  return version.evidenceProtocol === 'program-v1' || version.acceptance.some(rule => rule.id === 'A-71'
+    && rule.expected?.includes('证据只认程序产生') && rule.expected.includes('独立重跑'));
+}
+
+export function designDemoImplementationPath(screen: DesignScreen): string | undefined {
+  return screen.route.startsWith('#/design?') ? screen.route.slice(1) : undefined;
+}
+
 export type DesignRun = {
   id: string; version: number; pullRequest?: number; target?: 'installed'; commit: string; createdAt: string;
   cells: DesignCell[]; verdict: DesignVerdict; previewUrl: string;
   visual?: Record<`${string}/${DesignSlot}`, DesignVisualRow>;
+  programEvidence?: Partial<Record<`${string}/${DesignSlot}`, DesignProgramEvidence>>;
   flows?: DesignFlow[];
   smoke?: DesignSmoke[];
   coverage?: Partial<Record<DesignDimension, DesignCoverageRecord>>;
@@ -288,5 +309,5 @@ export type DesignWorkspace = {
   systems?: DesignSystem[];
   viewer?: DesignViewerState;
   permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; visual?: boolean; review: boolean; sign?: boolean;
-    installedAcceptance?: boolean; steward: boolean; actorId: string };
+    installedAcceptance?: boolean; programRecheck?: boolean; steward: boolean; actorId: string };
 };

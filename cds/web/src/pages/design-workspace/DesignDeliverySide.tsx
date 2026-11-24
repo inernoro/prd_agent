@@ -63,7 +63,7 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
     const screen = version.screens.find(screen => screen.id === row.screen);
     return screen ? [{ screen, title: row.title || screen.name, tip: row.tip }] : [];
   }) ?? [];
-  const steps = declared.length && !all ? declared : every;
+  const steps = declared.length && !all && (!screenId || declared.some(step => step.screen.id === screenId)) ? declared : every;
   const index = steps.findIndex(step => step.screen.id === screenId);
   const current = steps[Math.max(index, 0)], next = steps[Math.max(index, 0) + 1];
   const thumb = (screen: DesignVersion['screens'][number]) => {
@@ -93,7 +93,7 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
           <h4>{group}<small>{visible.length}</small></h4>
           <ol className="dw-sp-thumbs">{visible.map(step => {
             const image = thumb(step.screen);
-            return <li key={step.screen.id}><button type="button" aria-current={step.screen.id === screenId ? 'step' : undefined}
+            return <li key={step.screen.id}><button type="button" data-screen={step.screen.id} aria-current={step.screen.id === screenId ? 'step' : undefined}
               onClick={() => onScreen(step.screen.id)} title={step.title}>
               <span className="dw-sp-thumb">{image ? <img src={designArtifact(entry.projectId, image)} alt="" loading="lazy" />
                 : <small>{step.screen.viewport === 'phone' ? '手机' : '桌面'}</small>}

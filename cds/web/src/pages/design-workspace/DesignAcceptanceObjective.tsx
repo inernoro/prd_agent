@@ -158,7 +158,7 @@ export function AcceptanceScreens({ version, statusOf, onOpen, thumbnailProject 
   </li>;
 }
 
-type Cause = { key: string; tone: 'block' | 'fail' | 'missing' | 'open' | 'gap'; title: string; detail: string; action?: ReactNode; who?: string };
+type Cause = { key: string; tone: 'block' | 'fail' | 'missing' | 'open' | 'gap'; title: string; detail: ReactNode; action: ReactNode; who: string };
 
 export function acceptanceImpact(items: DesignRule[], version: DesignVersion) {
   const clauses = [...new Set(items.flatMap(rule => rule.requirementRef ? [rule.requirementRef] : []))];
@@ -170,7 +170,7 @@ export function acceptanceImpact(items: DesignRule[], version: DesignVersion) {
 export function EvidenceCauses({ causes }: { causes: Cause[] }) {
   const blocking = causes.filter(cause => cause.tone !== 'gap').length;
   return <>
-    {causes.length > 0 && <ol className="dw-ac-causes dw-ac-cards">{causes.map(({ key, tone, title, detail, action, who }, index) => <li key={key} data-tone={tone}>
+    {causes.length > 0 && <ol className="dw-ac-causes dw-ac-cards">{causes.map(({ key, tone, title, detail, action, who }, index) => <li key={key} data-tone={tone} data-cause={key}>
       <strong><b aria-hidden="true">{index + 1}</b>{title}</strong><span className="dw-ac-arrow" aria-hidden="true">→</span>
       <span className="dw-ac-effect">{who ? <><small>{who}</small><details><summary>看清单</summary>{detail}</details></> : detail}</span>
       {action && <span className="dw-ac-cause-act">{action}</span>}</li>)}</ol>}
@@ -181,7 +181,9 @@ export function EvidenceCauses({ causes }: { causes: Cause[] }) {
 export function groupEvidence(cells: DesignCell[]) {
   const groups = new Map<string, DesignCell[]>();
   for (const cell of cells) {
-    const reason = cell.actual.trim() || '缺少实测证据';
+    // Older runs stored these two reasons as plain text. Keep the original text in the details.
+    const reason = /规则冲突|验收.*互相矛盾/.test(cell.actual) ? 'conflict'
+      : /正式站没有这种状态|需要演示数据/.test(cell.actual) ? 'demo' : 'evidence';
     const list = groups.get(reason) ?? [];
     list.push(cell);
     groups.set(reason, list);

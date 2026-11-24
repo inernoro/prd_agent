@@ -11,11 +11,26 @@ export function designDetailPath(projectId: string, designId: string, version?: 
 }
 export const designArtifact = (projectId: string, artifactId: string) => apiUrl(`${designPath(projectId)}/artifacts/${encodeURIComponent(artifactId)}`);
 export const latestDesign = (entry: DesignEntry): DesignVersion => entry.versions[entry.versions.length - 1];
+export function defaultDesignScreen(version: DesignVersion, requested?: string) {
+  const selected = version.screens.find(screen => screen.id === requested);
+  if (selected) return selected;
+  const demo = version.demo?.flatMap(step => {
+    const screen = version.screens.find(candidate => candidate.id === step.screen);
+    return screen ? [screen] : [];
+  }) ?? [];
+  if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 640px)').matches) {
+    const mobile = demo.find(screen => screen.viewport === 'phone') ?? version.screens.find(screen => screen.viewport === 'phone');
+    if (mobile) return mobile;
+  }
+  return demo[0] ?? version.screens[0];
+}
 export const designSourceNames: Record<NonNullable<DesignVersion['sourceVerification']>, string> = {
   git: 'Git 已核验', 'private-upload': 'CDS 私有归档', declared: '发布者声明来源',
 };
-export const designDate = (value: string) => new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' }).format(new Date(value));
-export function designPublisherLabel(value: string): string {
+export const designDate = (value?: string) => value && Number.isFinite(Date.parse(value))
+  ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' }).format(new Date(value)) : '时间未记录';
+export function designPublisherLabel(value?: string): string {
+  if (!value) return '记录人未登记';
   if (!value.startsWith('授权密钥')) return value;
   return value.match(/^授权密钥\s*\(申请\s+[^·]+·\s*(.+)\)$/)?.[1]?.trim() || '设计智能体';
 }

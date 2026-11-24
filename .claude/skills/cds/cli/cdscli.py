@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.20"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.21"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4883,6 +4883,20 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 返回的验收回执与当前运行或结果不符")
         ok(receipt)
 
+    if action in ("capture", "recheck"):
+        permission = workspace.get("permissions", {})
+        if not (permission.get("visual") or (action == "recheck" and permission.get("programRecheck"))):
+            die("当前凭据没有所需验收权限，请使用实施授权或设计复验授权")
+        command = {"type": f"acceptance.{action}", "designId": args.id, "runId": args.run,
+                   "screenId": args.screen, "slot": args.slot}
+        request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True).encode()).hexdigest()
+        endpoint = "/commands" if action == "capture" else "/acceptance/recheck"
+        receipt = request("POST", endpoint, {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if any(result.get(field) != value for field, value in command.items()):
+            die("CDS 返回的程序取证回执与当前运行或画面不符")
+        ok(receipt)
+
     if action == "visual":
         if workspace.get("permissions", {}).get("visual") is not True:
             die("当前凭据没有验收回填权限，请使用项目实现授权或以有权项目成员登录")
@@ -4999,7 +5013,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
+    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
@@ -5008,7 +5022,7 @@ def _register_design_parser(sub: Any) -> None:
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
             if action not in ("intake", "list", "publish", "reviewers", "scaffold"):
                 parser.add_argument("id")
-            if action in ("publish", "request-review", "accept", "record", "visual", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
+            if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
             if action in ("enable-method", "disable-method"):
                 parser.add_argument("--request-id")
@@ -5080,15 +5094,16 @@ def _register_design_parser(sub: Any) -> None:
                 target.add_argument("--installed", action="store_true", help="锁定当前主用 CDS 构建，只创建验收运行")
                 parser.add_argument("--commit")
                 parser.add_argument("--start-only", action="store_true", help="只创建验收运行，后续由人工补充证据")
-            if action in ("record", "visual", "flow", "smoke", "coverage", "regress", "result", "sign"):
+            if action in ("record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "result", "sign"):
                 parser.add_argument("--run", required=action != "result")
             if action in ("record", "visual", "flow", "smoke", "coverage", "regress"):
                 parser.add_argument("--commit", required=True)
             if action in ("record", "visual", "flow", "smoke", "coverage", "regress", "known-create"):
                 parser.add_argument("--file", required=True)
-            if action == "visual":
+            if action in ("visual", "capture", "recheck"):
                 parser.add_argument("--screen", required=True, help="稿件画面编号")
                 parser.add_argument("--slot", required=True, choices=("desktop-light", "desktop-dark", "phone-light", "phone-dark"))
+            if action == "visual":
                 parser.add_argument("--implementation", help="当前验收提交的实拍 PNG")
                 parser.add_argument("--path", help="实拍所在预览内的相对地址")
                 parser.add_argument("--reference", help="随稿缺图时补交同版本的对照 PNG")

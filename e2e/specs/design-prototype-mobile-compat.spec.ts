@@ -26,6 +26,19 @@ const workspace = {
   permissions: { write: false, review: false, feedback: false, visual: false, actorId: 'fixture-viewer' },
 };
 const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGN49/wuAAV5ArOtKqbJAAAAAElFTkSuQmCC', 'base64');
+const prototype = {
+  contentType: 'text/html',
+  headers: { 'content-security-policy': "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; frame-ancestors 'self'" },
+  body: `<!doctype html><html><head><meta charset="utf-8"></head><body><main ${ready}>合成原型已打开</main><div data-fixture-detail-ready>同路由详情就绪</div><script>
+    document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme');
+    addEventListener('message', event => {
+      if (event.source !== parent || event.data?.type !== 'cds-design-entry') return;
+      const reached = !event.data.legacyLabel && !!document.querySelector(event.data.ready);
+      parent.postMessage({ type: 'cds-design-entry-result', requestId: event.data.requestId,
+        reached, ...(reached ? {} : { reason: 'control-unavailable' }) }, '*');
+    });
+  </script></body></html>`,
+};
 
 test('手机设计原型连续刷新、慢加载、失败重试和截图图库', async ({ browser, browserName }) => {
   test.skip(browserName === 'firefox', 'Firefox Playwright 不支持 isMobile');
@@ -55,19 +68,7 @@ test('手机设计原型连续刷新、慢加载、失败重试和截图图库',
         deferredRequests++;
         await hold;
       }
-      return route.fulfill({
-        contentType: 'text/html',
-        headers: { 'content-security-policy': "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; frame-ancestors 'self'" },
-        body: `<!doctype html><html><head><meta charset="utf-8"></head><body><main ${ready}>合成原型已打开</main><div data-fixture-detail-ready>同路由详情就绪</div><script>
-          document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme');
-          addEventListener('message', event => {
-            if (event.source !== parent || event.data?.type !== 'cds-design-entry') return;
-            const reached = !event.data.legacyLabel && !!document.querySelector(event.data.ready);
-            parent.postMessage({ type: 'cds-design-entry-result', requestId: event.data.requestId,
-              reached, ...(reached ? {} : { reason: 'control-unavailable' }) }, '*');
-          });
-        </script></body></html>`,
-      });
+      return route.fulfill(prototype);
     });
 
     const url = origin + '/design?' + new URLSearchParams({ project: projectId, design, version: '20', screen: screen.id });
@@ -141,6 +142,69 @@ test('手机设计原型连续刷新、慢加载、失败重试和截图图库',
     await expectReady();
   } finally {
     resume();
+    await context.close();
+  }
+});
+
+test('V22 A-72 手机默认进入演示中的第一张手机画面，支持清单后备和显式入口', async ({ browser, browserName }) => {
+  test.skip(browserName === 'firefox', 'Firefox Playwright 不支持 isMobile');
+  const context = await browser.newContext({
+    ...devices['iPhone 12 Mini'], viewport: { width: 375, height: 812 },
+    deviceScaleFactor: 1, colorScheme: 'light', serviceWorkers: 'block',
+  });
+  const page = await context.newPage();
+  const desktop = { ...screen, id: 'desktop', name: '桌面首步', viewport: 'desktop', route: '#/design?design=fixture&pane=deliver' };
+  const phoneInList = { ...screen, route: '#/design?design=fixture&pane=comments' };
+  const phoneInDemo = { ...detail, name: '手机演示首步', route: '#/design?design=fixture&screen=phone-next' };
+  const latest = { ...version, version: 22, screens: [desktop, phoneInList, phoneInDemo] };
+  const desktopDemo = [{ screen: desktop.id, title: desktop.name }];
+  let demo = [...desktopDemo, { screen: phoneInDemo.id, title: phoneInDemo.name }];
+  try {
+    await installOperationsFixtures(page);
+    await page.route(url => url.pathname === api,
+      route => route.fulfill({ json: { ...workspace, designs: [{ ...workspace.designs[0], frozen: 22, versions: [{ ...latest, demo }] }] } }));
+    await page.route(url => url.pathname === api + '/artifacts/' + screenshot.id,
+      route => route.fulfill({ contentType: 'image/png', body: pixel }));
+    await page.route(url => url.pathname === api + '/artifacts/' + latest.prototypeId, route => route.fulfill(prototype));
+    const url = new URL('/design', origin);
+    url.search = new URLSearchParams({ project: projectId, design, version: '22' }).toString();
+    const canvas = page.locator('.dw-deliver .dw-canvas');
+    const frame = canvas.locator('iframe');
+    const currentStep = page.locator('[data-sec="flow"] button[aria-current="step"]');
+    const expectScreen = async (name: string) => {
+      await expect(frame).toHaveAttribute('title', `${name} · V22`);
+      await expect(canvas.locator('[data-preview-state="ready"]')).toHaveCount(1);
+    };
+
+    await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+    await expectScreen(phoneInDemo.name);
+    await expect(currentStep).toHaveAttribute('title', phoneInDemo.name);
+    await expect.poll(async () => (await canvas.locator('.dw-fit .dw-frame').boundingBox())?.height).toBeGreaterThanOrEqual(360);
+    const phoneFrame = await canvas.locator('.dw-fit .dw-frame').boundingBox();
+    expect(phoneFrame!.width / phoneFrame!.height).toBeLessThan(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+
+    const explicit = new URL(url);
+    explicit.searchParams.set('screen', desktop.id);
+    await page.locator('[data-sec="flow"]').getByTitle(desktop.name, { exact: true }).tap();
+    await expect(page).toHaveURL(explicit.href);
+    await expectScreen(desktop.name);
+    await expect(currentStep).toHaveAttribute('title', desktop.name);
+    await page.locator('[data-sec="flow"]').getByTitle(phoneInDemo.name, { exact: true }).tap();
+    await expectScreen(phoneInDemo.name);
+    await expect(currentStep).toHaveAttribute('title', phoneInDemo.name);
+
+    await page.goto(explicit.href, { waitUntil: 'domcontentloaded' });
+    await expectScreen(desktop.name);
+    await expect(currentStep).toHaveAttribute('title', desktop.name);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expectScreen(desktop.name);
+
+    demo = desktopDemo;
+    await page.goto(url.href, { waitUntil: 'domcontentloaded' });
+    await expectScreen(phoneInList.name);
+    await expect(currentStep).toHaveAttribute('title', phoneInList.name);
+  } finally {
     await context.close();
   }
 });

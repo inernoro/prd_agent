@@ -35,6 +35,9 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.returned_slot = None
         self.returned_record_id = None
         self.can_record = True
+        self.can_recheck = False
+        self.program_receipt = {}
+        self.program_receipt_project = PROJECT
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -53,7 +56,8 @@ class PrivatePublishCliTest(unittest.TestCase):
                 if urlsplit(self.path).path != API:
                     self.respond(404, {'error': 'fixture_route_missing'})
                     return
-                self.respond(200, {'projectId': PROJECT, 'permissions': {'write': True, 'visual': fixture.can_record},
+                self.respond(200, {'projectId': PROJECT, 'permissions': {'write': True, 'visual': fixture.can_record,
+                                                                        'programRecheck': fixture.can_recheck},
                                    'frameworks': [], 'designs': [{'projectId': PROJECT, 'id': DESIGN,
                                    'versions': [{'version': 9, 'title': 'Fixture'}], 'runs': [fixture.run]}]})
 
@@ -65,8 +69,9 @@ class PrivatePublishCliTest(unittest.TestCase):
                                        self.headers['Content-Type'], query, body))
                 fixture.cookies.append(self.headers['Cookie'])
                 reused = fixture.writes[-1] in fixture.writes[:-1]
+                project = PROJECT
                 result = {'type': 'package', 'designId': DESIGN, 'version': 5}
-                if target.path == f'{API}/commands':
+                if target.path in (f'{API}/commands', f'{API}/acceptance/recheck'):
                     payload = json.loads(body)
                     action = payload['type'].split('.', 1)[-1]
                     result = {field: payload[field] for field in ('type', 'designId')}
@@ -85,10 +90,14 @@ class PrivatePublishCliTest(unittest.TestCase):
                         result['id'] = fixture.returned_record_id or record['id']
                         if not reused and not fixture.returned_record_id:
                             fixture.run['flows' if action == 'flow' else action] = [record]
+                    elif action in ('capture', 'recheck'):
+                        project = fixture.program_receipt_project
+                        result.update(screenId=payload['screenId'], slot=payload['slot'])
+                        result.update(fixture.program_receipt)
                 elif target.path == f'{API}/feedback':
                     payload = json.loads(body)
                     result = {'type': payload['type'], 'designId': DESIGN, 'id': payload['feedbackId'], 'version': 8}
-                self.respond(200 if reused else 201, {'projectId': PROJECT, 'reused': reused, 'result': result})
+                self.respond(200 if reused else 201, {'projectId': project, 'reused': reused, 'result': result})
 
         server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
@@ -256,6 +265,55 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.assertEqual((route, key, content_type), (f'{API}/feedback', KEY, 'application/json'))
         self.assertEqual(json.loads(payload), {'type': 'feedback.reply', 'requestId': 'cli-supplement-fixture',
                                              'designId': DESIGN, 'feedbackId': 'FDB-previous', 'body': body, 'supplement': True})
+
+    def test_program_recheck_uses_its_own_route_and_keeps_the_same_request_on_retry(self):
+        self.can_record, self.can_recheck = False, True
+        flags = (DESIGN, '--run', self.run['id'], '--screen', 'members', '--slot', 'phone-dark')
+        code, output, stderr = self.invoke('capture', *flags)
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertIn('权限', output or stderr)
+        self.assertEqual(self.writes, [])
+
+        code, output, stderr = self.invoke('recheck', *flags, '--project', 'foreign-fixture')
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertEqual(self.writes, [])
+
+        expected = {'type': 'acceptance.recheck', 'designId': DESIGN, 'runId': self.run['id'],
+                    'screenId': 'members', 'slot': 'phone-dark'}
+        for reused in (False, True):
+            code, output, stderr = self.invoke('recheck', *flags)
+            self.assertEqual(code, 0, output or stderr)
+            self.assertEqual(json.loads(output)['data'], {
+                'projectId': PROJECT, 'reused': reused, 'result': {**expected, 'version': self.run['version']},
+            })
+        self.assertEqual(self.writes[0], self.writes[1])
+        route, key, content_type, query, payload = self.writes[0]
+        self.assertEqual((route, key, content_type, query), (f'{API}/acceptance/recheck', KEY, 'application/json', {}))
+        command = json.loads(payload)
+        self.assertRegex(command.pop('requestId'), r'^[a-f0-9]{64}$')
+        self.assertEqual(command, expected)
+
+    def test_program_capture_rejects_a_receipt_for_another_project_run_screen_or_slot(self):
+        flags = ('capture', DESIGN, '--run', self.run['id'], '--screen', 'members', '--slot', 'desktop-light',
+                 '--request-id', 'cli-program-capture-fixture')
+        code, output, stderr = self.invoke(*flags)
+        self.assertEqual(code, 0, output or stderr)
+        route, key, content_type, query, body = self.writes[0]
+        self.assertEqual((route, key, content_type, query), (f'{API}/commands', KEY, 'application/json', {}))
+        self.assertEqual(json.loads(body), {'type': 'acceptance.capture', 'designId': DESIGN, 'runId': self.run['id'],
+                                          'screenId': 'members', 'slot': 'desktop-light',
+                                          'requestId': 'cli-program-capture-fixture'})
+        for field, value in (('runId', 'RUN-other'), ('screenId', 'other-screen'), ('slot', 'phone-dark')):
+            with self.subTest(field=field):
+                self.program_receipt = {field: value}
+                code, output, stderr = self.invoke(*flags)
+                self.assertNotEqual(code, 0, output or stderr)
+                self.assertIn('回执', output or stderr)
+        self.program_receipt = {}
+        self.program_receipt_project = 'foreign-fixture'
+        code, output, stderr = self.invoke(*flags)
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertIn('当前项目', output or stderr)
 
     def test_member_toggles_acceptance_method_and_checks_receipt(self):
         session = {'Cookie': 'cds_session=fixture-member', 'X-AI-Access-Key': ''}

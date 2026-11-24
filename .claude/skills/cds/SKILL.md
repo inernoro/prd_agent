@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.20
+  version: 0.26.21
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design intake (CDS 设计接入), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.20 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.21 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -27,6 +27,8 @@ CDS 这边您想做什么？
 ```
 
 明确触发词（含"扫描" / "部署" / "认证"）就直接派发，**不要再问**。
+
+按 CDS 左侧入口识别任务。「规划」处理决策、计划和债务，「设计」处理需求交接、稿件、框架、反馈和稿件验收。「设计」下说到实现截图或设计方复验时，先读[逐画面对照](reference/design-intake.md#逐画面对照)，从运行回执取得实际提交和目标画面。
 
 ## 本技能处理 / 不处理
 

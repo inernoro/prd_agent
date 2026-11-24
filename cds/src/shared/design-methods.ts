@@ -1,4 +1,4 @@
-import type { DesignEntry, DesignRule, DesignRun, DesignScreen, DesignSlot, DesignVersion } from './design-workspace.js';
+import { designProgramEvidenceRequired, type DesignEntry, type DesignRule, type DesignRun, type DesignScreen, type DesignSlot, type DesignVersion } from './design-workspace.js';
 import {
   designVisualCheckStatus, designVisualKey, designVisualReference, designVisualSlots,
   designVisualStandard, type DesignVisualCheckId, type DesignVisualStatus,
@@ -87,7 +87,11 @@ export function designMethodApplicable(version: DesignVersion, method: DesignMet
 }
 
 export function designRuleApplicable(version: DesignVersion, rule: DesignRule, entry?: DesignEntry, run?: DesignRun) {
+  const programRule = designProgramEvidenceRequired(version)
+    && (rule.id === 'A-70' && rule.expected?.includes('iPhone Safari')
+      || rule.id === 'A-71' && rule.expected?.includes('证据只认程序产生'));
   return !designObjectivePlanEnabled(version) || rule.how === 'measure'
+    || Boolean(programRule)
     || designMethodApplicable(version, rule.how === 'human' ? 'human' : 'compare', entry, run);
 }
 
@@ -98,7 +102,7 @@ export function designMeasurementGap(version: DesignVersion, rule: DesignRule) {
 
 export function designKnownIssues(entry: DesignEntry | undefined, version: DesignVersion, run?: DesignRun) {
   return (entry?.knownIssues ?? []).filter(issue => (!run?.signed || Object.hasOwn(run.regress ?? {}, issue.id))
-    && (!issue.screenIds.length || issue.screenIds.some(id => version.screens.some(screen => screen.id === id))));
+    && (!issue.screenIds?.length || issue.screenIds.some(id => version.screens.some(screen => screen.id === id))));
 }
 
 export function designCoverage(version: DesignVersion, run?: DesignRun, entry?: DesignEntry) {

@@ -4,9 +4,9 @@ import type {
   DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignUpgrade, DesignViewerState, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
+import { currentDesignRun, designAcceptanceTarget, designDemoImplementationPath, designFeedbackCategories, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
 import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
-import { concreteVisualEvidence, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
+import { concreteVisualEvidence, designProgramStatus, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
   visualSlotTheme, type DesignVisualChecks, type DesignVisualRow } from '../shared/design-visual.js';
 import { designEvidenceStatus, designKnownIssues, designMethodApplicable, designMethodPlanEnabled, designMethodsState,
   designObjectiveMethods, designObjectivePlanEnabled, designRuleApplicable, type DesignEvidenceStatus, type DesignKnownIssue,
@@ -14,6 +14,7 @@ import { designEvidenceStatus, designKnownIssues, designMethodApplicable, design
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import type { DesignReferenceCapture } from './design-framework-browser.js';
+import type { DesignAcceptanceCapture } from './design-acceptance-browser.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
 import { compareDesignVersions } from './design-version-diff.js';
 import {
@@ -393,6 +394,7 @@ export class DesignWorkspaceService {
   private readonly latest = new Map<string, WorkspaceState>();
   private readonly presentations = new Map<string, Promise<DesignPresentation>>();
   private readonly referenceJobs = new Set<string>();
+  private readonly acceptanceJobs = new Set<string>();
   private referenceQueue = Promise.resolve();
 
   constructor(private readonly store: ProjectRevisionStore<DesignWorkspaceCommit>, private readonly deps: {
@@ -400,6 +402,7 @@ export class DesignWorkspaceService {
     sourcePackage?: (projectId: string, commit: string, sourcePath: string) => Promise<Buffer | undefined>;
     frameworkProbe?: DesignFrameworkProbe;
     referenceCapture?: DesignReferenceCapture;
+    captureAcceptance?: DesignAcceptanceCapture;
     resolvePreview?: (projectId: string, pullRequest: number, commit?: string) => Promise<Preview | undefined>;
     resolveInstalled?: (projectId: string, commit?: string) => Promise<Preview | undefined>;
     approvedPlanFor?: (projectId: string, planId: string) => Promise<Omit<DesignRequirement, 'designKey' | 'planId' | 'sharedAt'> | undefined>;
@@ -503,6 +506,7 @@ export class DesignWorkspaceService {
       ...(actor.kind === 'human' ? { viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) } : {}),
       permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), visual: !actor.gitPublishOnly && actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
+        ...((actor.gitPublishOnly || actor.kind === 'human' && actor.permissions.includes('approve')) ? { programRecheck: true } : {}),
         ...(installed ? { installedAcceptance: true } : {}),
         steward: actor.steward === true, feedbackSupplement: actor.kind === 'human' && actor.feedbackSupplement === true, actorId: actor.id } };
   }
@@ -740,6 +744,10 @@ export class DesignWorkspaceService {
         const id = selectedId ?? `DSN-${randomUUID().slice(0, 8).toUpperCase()}`;
         const existing = state.designs.get(id);
         const previous = existing?.versions.at(-1);
+        const programEvidence = Boolean(loaded.evidenceProtocol || previous && designProgramEvidenceRequired(previous));
+        if (programEvidence && !['src/fixtures.ts', 'src/data-design.ts'].every(path => loaded.delivery.index.some(file => file.path === path))) {
+          invalidDesign('原稿使用程序取证，续版需保留两份虚构演示数据源');
+        }
         if (targetId && !existing) missing('需要更新的稿件不存在，请先读设计接入清单');
         if (previous) authored(actor, previous.publisher);
         if (expectedVersion !== undefined && previous?.version !== expectedVersion) {
@@ -821,6 +829,7 @@ export class DesignWorkspaceService {
           ...(loaded.frameworkCharter ? { frameworkCharter: loaded.frameworkCharter } : {}),
           ...(loaded.acceptancePlan ? { acceptancePlan: loaded.acceptancePlan } : {}),
           ...(loaded.acceptanceMode ? { acceptanceMode: loaded.acceptanceMode } : {}),
+          ...(programEvidence ? { evidenceProtocol: 'program-v1' as const } : {}),
           ...(loaded.demo ? { demo: loaded.demo } : {}),
           ...(loaded.videos ? { videos: loaded.videos.map(video => ({ ...video, artifactId: byPath.get(video.file)!.id })) } : {}),
           ...(loaded.risks ? { risks: loaded.risks } : {}),
@@ -1001,6 +1010,9 @@ export class DesignWorkspaceService {
     const input = designRecord(value, '设计命令');
     const type = planningText(input.type, '命令类型', 60);
     const requestId = designId(input.requestId, '请求编号');
+    if (type === 'acceptance.capture' || type === 'acceptance.recheck') {
+      return this.captureProgramAcceptance(type, input, projectId, actor, requestId);
+    }
     if (type === 'reference.generate') {
       designRecord(input, '生成稿件对照图', ['type', 'requestId', 'designId', 'version']);
       review(actor);
@@ -1307,10 +1319,107 @@ export class DesignWorkspaceService {
 
   private async requireCurrentRun(context: Context, entry: DesignEntry, run: DesignRun, commit: unknown) {
     if (context.actor.gitPublishOnly) forbidden('请使用具备验收写权限的项目凭据');
-    requireRunTarget(entry, run);
     if (designCommit(commit) !== run.commit) conflict('证据提交与验收运行不符');
-    const current = await this.resolveRunPreview(context.projectId, run, run.commit);
+    await this.requireCurrentPreview(context.projectId, entry, run);
+  }
+
+  private async requireCurrentPreview(projectId: string, entry: DesignEntry, run: DesignRun) {
+    requireRunTarget(entry, run);
+    const current = await this.resolveRunPreview(projectId, run, run.commit);
     if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览已经变化，请对新提交重跑');
+  }
+
+  private async captureProgramAcceptance(type: 'acceptance.capture' | 'acceptance.recheck', input: Record<string, unknown>,
+    projectId: string, actor: DesignActor, requestId: string): Promise<Receipt> {
+    designRecord(input, '程序取证请求', ['type', 'requestId', 'designId', 'runId', 'screenId', 'slot']);
+    requireProjectRead(actor);
+    const id = designId(input.designId, '稿件编号');
+    const screenId = designId(input.screenId, '画面编号');
+    const slot = designSlots.find(value => value === input.slot) ?? invalidDesign('请选择画面的视口和主题');
+    const recheck = type === 'acceptance.recheck';
+    const capture = this.deps.captureAcceptance;
+    // Limit Chromium work across projects while storage CAS and idempotent request receipts remain authoritative.
+    const key = JSON.stringify([projectId, id, input.runId, screenId, slot]);
+    if (this.acceptanceJobs.size >= 2 || this.acceptanceJobs.has(key)) {
+      return rejectPlanning(503, 'design_capture_busy', '有截图正在生成，请稍候沿用原请求编号重试。');
+    }
+    this.acceptanceJobs.add(key);
+    let result: ReturnType<DesignAcceptanceCapture> | undefined;
+    let binding: string | undefined;
+    try {
+      return await this.mutate(projectId, actor, requestId, input, async ({ state, now }) => {
+        const entry = state.designs.get(id) ?? missing('该稿件不存在');
+        const run = structuredClone(runOf(entry, input.runId));
+        const version = implementationVersion(entry, versionOf(entry, run.version));
+        if (!designProgramEvidenceRequired(version) || run.signed) conflict('请选择要求程序取证的未签收运行');
+        if (recheck) {
+          if (version.publisher.id !== actor.id && !(actor.kind === 'human' && actor.permissions.includes('approve')
+            && entry.reviewers?.some(reviewer => reviewer.id === actor.id))) forbidden('请由稿件作者或受邀评审人独立复验');
+        } else if (actor.gitPublishOnly) forbidden('请使用项目实施权限运行取证');
+        if (designProgramStatus(version, run).invalid) {
+          conflict('本次运行的独立复验出现差异，请创建新运行');
+        }
+        await this.requireCurrentPreview(projectId, entry, run);
+        const screen = version.screens.find(value => value.id === screenId) ?? missing('画面不在当前版本');
+        if (!designVisualSlots(screen).includes(slot)) invalidDesign('视口和主题不在画面清单中');
+        const rowKey = designVisualKey(screenId, slot);
+        const previous = run.programEvidence?.[rowKey];
+        if (recheck && !previous) conflict('实现方需先生成此画面的程序证据');
+        if (recheck && previous?.by === actor.id) forbidden('请由不同身份独立复验');
+        if (!recheck && previous) conflict('此画面已取证，保留原证据供独立复验');
+        if (!capture) return rejectPlanning(503, 'design_capture_unavailable', '本实例的程序取证浏览器暂不可用。请在提供取证的 CDS 构建中运行。');
+        const path = screen.impl ?? designDemoImplementationPath(screen);
+        if (!path) return conflict('请补绑定该画面再取证');
+        if (run.target !== 'installed') conflict('程序取证需要在提供本地构建的主用 CDS 中运行');
+        const rules = version.acceptance.filter(rule => rule.slots.includes(slot)
+          && (rule.screenId === screenId || !rule.screenId && designAcceptanceTarget(version, rule, slot)?.id === screenId));
+        const captureBinding = stableJson([screen, path, rules]);
+        if (!result) {
+          binding = captureBinding;
+          const prototype = await this.artifact(projectId, actor, version.prototypeId);
+          result = capture({ prototype: prototype.bytes, screen: { ...screen, impl: path }, theme: visualSlotTheme(slot), rules, commit: run.commit,
+            version, projectId });
+        }
+        if (binding !== captureBinding) conflict('画面绑定或规则已经变化，请重新取证');
+        const value = await result;
+        await this.requireCurrentPreview(projectId, entry, run);
+        if (!value) return rejectPlanning(422, 'design_capture_incomplete', '未能进入原型和实现的同一画面。请核对绑定和进入状态后重试。');
+        const fixtureDigest = value.fixtureDigest;
+        if (!/^[0-9a-f]{64}$/.test(fixtureDigest)) throw new Error('Invalid program fixture digest');
+        const digest = designDigest(stableJson([run.commit, version.sha256, captureBinding, fixtureDigest,
+          designDigest(value.reference), designDigest(value.implementation), value.checks, value.rules]));
+        const assets: ProjectRevisionAsset[] = [];
+        if (recheck && previous) {
+          if (previous.review) conflict('此画面已有独立复验记录');
+          const matched = previous.commit === run.commit && previous.fixtureDigest === fixtureDigest && previous.digest === digest;
+          run.programEvidence = { ...run.programEvidence, [rowKey]: { ...previous,
+            review: { by: actor.id, at: now, matched, digest, fixtureDigest } } };
+        } else {
+          const dimensions = designViewports[screen.viewport];
+          const measured = { ...dimensions, theme: visualSlotTheme(slot), path };
+          const reference = visualImage(`data:image/png;base64,${value.reference.toString('base64')}`, dimensions);
+          const implementation = visualImage(`data:image/png;base64,${value.implementation.toString('base64')}`, dimensions);
+          assets.push(reference, implementation);
+          run.programEvidence = { ...run.programEvidence, [rowKey]: { commit: run.commit, fixtureDigest, digest, by: actor.id, at: now } };
+          run.visual = { ...run.visual, [rowKey]: { checks: value.checks, imageId: implementation.id,
+            referenceImageId: reference.id, measured, by: 'CDS 程序', at: now } };
+          for (const rule of rules) {
+            const cell = run.cells.find(row => row.itemId === rule.id && row.slot === slot)!;
+            const observed = value.rules[rule.id];
+            cell.status = observed?.status ?? 'unverified';
+            cell.actual = observed?.actual ?? '已生成同条件图证，规则仍待验证';
+            cell.imageId = implementation.id;
+            cell.measured = measured;
+            cell.recordedBy = 'CDS 程序';
+          }
+        }
+        this.evaluateRun(version, run, entry);
+        return { result: { type, designId: id, runId: run.id, version: run.version, screenId, slot },
+          changes: { assets, design: { id, run } } };
+      }, recheck ? requireProjectRead : write);
+    } finally {
+      this.acceptanceJobs.delete(key);
+    }
   }
 
   private setMethod(type: 'acceptance.enable' | 'acceptance.disable', input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {
@@ -1527,6 +1636,10 @@ export class DesignWorkspaceService {
       const version = implementationVersion(entry, versionOf(entry, run.version));
       if (run.signed) conflict('该运行已经签收，请创建新运行');
       requireRunTarget(entry, run);
+      const programRequired = designProgramEvidenceRequired(version);
+      if (programRequired && ['acceptance.record', 'acceptance.visual', 'acceptance.flow', 'acceptance.smoke', 'acceptance.regress'].includes(type)) {
+        conflict('该版本使用程序生成的验收证据。请运行程序取证，补充说明可记在反馈中');
+      }
       if (type === 'acceptance.record') {
         designRecord(input, '验收回填', ['type', 'requestId', 'designId', 'runId', 'commit', 'cells']);
         await this.requireCurrentRun(context, entry, run, input.commit);
@@ -1613,6 +1726,15 @@ export class DesignWorkspaceService {
         if (actor.kind !== 'human') forbidden('此操作需要有写权限的项目成员签收');
         await this.requireCurrentRun(context, entry, run, run.commit);
         this.evaluateRun(version, run, entry);
+        if (programRequired) {
+          const proof = designProgramStatus(version, run);
+          if (proof.invalid) conflict('独立复验出现差异，本次验收已作废');
+          if (!proof.total || proof.captured < proof.total) conflict('还缺程序生成的同条件图证，请完成程序取证');
+          if (proof.reviewed < proof.total) conflict('请由设计方完成相同条件的独立复验');
+          if (designVisualSummary(version, run).remaining || run.verdict !== 'passed') {
+            conflict('请完成逐画面程序检查与适用验收项后签收');
+          }
+        }
         if (designMethodPlanEnabled(version)) {
           const { blockers } = designMethodsState(version, run, entry);
           if (blockers.length) conflict(`以下验收手段尚未通过：${blockers.map(method => method.name).join('、')}`);
@@ -1644,6 +1766,15 @@ export class DesignWorkspaceService {
   }
 
   private evaluateRun(version: DesignVersion, run: DesignRun, entry: DesignEntry) {
+    const proof = designProgramEvidenceRequired(version) ? designProgramStatus(version, run) : undefined;
+    if (proof) {
+      const protocol = version.acceptance.find(rule => rule.id === 'A-71' && rule.expected?.includes('证据只认程序产生'));
+      if (protocol) for (const cell of run.cells.filter(row => row.itemId === protocol.id)) {
+        cell.status = proof.invalid ? 'failed' : proof.total > 0 && proof.reviewed === proof.total ? 'passed' : 'unverified';
+        cell.actual = proof.invalid ? '程序证据或独立复验不一致，整次运行作废'
+          : `已生成 ${proof.captured}/${proof.total} 对同条件图证，独立复验一致 ${proof.reviewed}/${proof.total} 对`;
+      }
+    }
     const rules = version.acceptance.filter(rule => designRuleApplicable(version, rule, entry, run));
     run.verdict = evaluateDesignAcceptance(rules.map(rule => ({ id: rule.id, priority: rule.priority,
       cells: run.cells.filter(cell => cell.itemId === rule.id).map(cell => ({ ...cell, applicable: true })) })));
@@ -1656,6 +1787,12 @@ export class DesignWorkspaceService {
       const visual = designVisualSummary(version, run);
       if (visual.failed) run.verdict = 'failed';
       else if (visual.remaining && run.verdict !== 'failed') run.verdict = 'needs_evidence';
+    }
+    if (proof) {
+      if (proof.invalid) run.verdict = 'failed';
+      else if ((proof.captured !== proof.total || proof.reviewed !== proof.total) && run.verdict !== 'failed') {
+        run.verdict = 'needs_evidence';
+      }
     }
   }
 

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
+import { designProgramEvidenceRequired } from '../../src/shared/design-workspace.js';
 import { buildZip } from '../../src/utils/zip.js';
 
 const projectId = 'design-gate-fixture';
@@ -164,5 +165,56 @@ describe('设计发布门禁', () => {
       acceptanceMode: 'objective', risks: [risk], acceptance: [{ requirementRef: 'R-01' }],
       acceptancePlan: { flow: { applicable: true, enabled: false }, regress: { applicable: true } },
     });
+  });
+
+  it('明确声明程序取证时校验协议和两份演示源码，续版仍保留协议', async () => {
+    const source = fixture();
+    source.json.set('design.json', { ...source.manifest, evidenceProtocol: 'program-v2' });
+    await expect(service.publish(projectId, designer, first, source.zip())).rejects.toMatchObject({
+      status: 400, message: expect.stringContaining('协议'),
+    });
+
+    source.json.set('design.json', { ...source.manifest, evidenceProtocol: 'program-v1' });
+    const fixtureScript = 'export const fixtures = { count: 3 };';
+    const fixtureData = 'export const project = "fixture-demo";';
+    source.files.set('src/fixtures.ts', fixtureScript);
+    await expect(service.publish(projectId, designer, first, source.zip())).rejects.toMatchObject({
+      status: 400, message: expect.stringContaining('演示'),
+    });
+    expect((await service.workspace(projectId, designer)).designs).toEqual([]);
+
+    source.files.set('src/data-design.ts', fixtureData);
+    const created = await service.publish(projectId, designer, first, source.zip());
+    const designId = created.result.designId!;
+    const readPublished = async () => (await service.workspace(projectId, designer)).designs[0].versions;
+    expect((await readPublished())[0]).toMatchObject({ version: 1, evidenceProtocol: 'program-v1' });
+
+    const revision = fixture(2);
+    revision.files.set('src/fixtures.ts', fixtureScript);
+    revision.files.set('src/data-design.ts', fixtureData);
+    await service.publish(projectId, designer, {
+      ...first, designId, sourceCommit: secondCommit, requestId: 'continue-proof-protocol', intent: 'revise', expectedVersion: '1',
+    }, revision.zip());
+    const versions = await readPublished();
+    expect(versions.map(version => [version.version, version.evidenceProtocol])).toEqual([[1, 'program-v1'], [2, 'program-v1']]);
+    expect(versions.every(designProgramEvidenceRequired)).toBe(true);
+  });
+
+  it('兼容了带 A-71 完整证据要求的已发布旧稿，同时保留普通旧稿的原签收契约', async () => {
+    const legacy = fixture();
+    legacy.rule.id = 'A-71';
+    legacy.rule.how = 'human';
+    legacy.rule.expected = '证据只认程序产生的，签收前由设计方独立重跑。';
+    const old = await service.publish(projectId, designer, first, legacy.zip());
+    const plain = await service.publish(projectId, designer, {
+      ...first, requestId: 'create-plain-legacy', designKey: 'fixture/plain', sourcePath: 'design/plain',
+    }, fixture().zip());
+
+    const { designs } = await service.workspace(projectId, designer);
+    const legacyVersion = designs.find(draft => draft.id === old.result.designId)!.versions[0];
+    const plainVersion = designs.find(draft => draft.id === plain.result.designId)!.versions[0];
+    expect(legacyVersion.evidenceProtocol).toBeUndefined();
+    expect(designProgramEvidenceRequired(legacyVersion)).toBe(true);
+    expect(designProgramEvidenceRequired(plainVersion)).toBe(false);
   });
 });

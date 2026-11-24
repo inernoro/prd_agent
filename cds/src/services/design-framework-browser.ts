@@ -85,18 +85,20 @@ async function measureNestedScroll(session: CDPSession): Promise<DesignNestedScr
   }
 }
 
-async function readPrototypeScreen<T>(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
-  read: (page: Page) => Promise<T>): Promise<T | undefined> {
+export async function readPrototypeScreen<T>(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
+  read: (page: Page) => Promise<T>, date?: Date): Promise<T | undefined> {
   const entry = new URL('/prototype', prototypeOrigin);
   entry.searchParams.set('theme', theme);
   const target = new URL(entry);
   target.hash = screen.route;
   const context = await browser.newContext({
     viewport: designViewports[screen.viewport], hasTouch: screen.viewport === 'phone', colorScheme: theme,
+    ...(date ? { locale: 'zh-CN', timezoneId: 'Asia/Shanghai', reducedMotion: 'reduce' } : {}),
     deviceScaleFactor: 1, offline: true, serviceWorkers: 'block',
   });
   try {
     const page = await context.newPage();
+    if (date) await page.clock.setFixedTime(date);
     let served = false;
     await context.route('**/*', async route => {
       const request = route.request();
@@ -111,11 +113,12 @@ async function readPrototypeScreen<T>(browser: Browser, html: string, screen: De
     const remaining = () => deadline - Date.now();
     for (const selector of screen.entryActions ?? []) {
       const control = page.locator(`css=${selector}`);
-      const canClick = await control.evaluate(node => node.matches('button:not([type=submit]),a[href^="#"],[role=tab],[role=button]')
+      const canClick = await control.evaluate(node => node.matches('button:not([type=submit]),a[href^="#"],[role=tab],[role=button],details > summary:first-of-type')
         && (!node.matches('a') || node.getAttribute('href')?.startsWith('#'))
         && !node.matches('[aria-disabled=true],:disabled'), undefined, { timeout: Math.max(1, remaining()) });
       if (!canClick) return undefined;
-      const active = await control.evaluate(node => ['aria-pressed', 'aria-current', 'aria-selected']
+      const active = await control.evaluate(node => (node.matches('details > summary:first-of-type') && node.parentElement?.hasAttribute('open'))
+        || ['aria-pressed', 'aria-current', 'aria-selected']
         .some(attribute => node.getAttribute(attribute) === 'true'), undefined, { timeout: Math.max(1, remaining()) });
       if (!active) await control.click({ timeout: Math.max(1, remaining()) });
     }
@@ -151,7 +154,7 @@ async function measure(browser: Browser, html: string, screen: DesignScreen, the
   });
 }
 
-async function launchDesignBrowser(browserPath: string) {
+export async function launchDesignBrowser(browserPath: string) {
   const { chromium } = await import('playwright');
   return chromium.launch({ executablePath: browserPath, chromiumSandbox: true, timeout: 5000,
     env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
@@ -183,10 +186,14 @@ async function measurePrototype(browserPath: string, prototype: Buffer, screens:
 export type DesignReferenceTarget = { screen: DesignScreen; theme: DesignTheme };
 export type DesignReferenceCapture = (prototype: Buffer, targets: readonly DesignReferenceTarget[]) => AsyncIterable<DesignReferenceTarget & { bytes: Buffer }>;
 
-export function createDesignReferenceBrowser(executablePath?: string): DesignReferenceCapture | undefined {
-  const browserPath = executablePath?.trim() || ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find(path => {
+export function designBrowserPath(executablePath?: string) {
+  return executablePath?.trim() || ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find(path => {
     try { accessSync(path, constants.X_OK); return true; } catch { return false; }
   });
+}
+
+export function createDesignReferenceBrowser(executablePath?: string): DesignReferenceCapture | undefined {
+  const browserPath = designBrowserPath(executablePath);
   if (!browserPath) return undefined;
   return async function* (prototype, targets) {
     const browser = await launchDesignBrowser(browserPath);

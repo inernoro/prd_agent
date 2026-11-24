@@ -69,6 +69,7 @@ import { rejectPlanning } from './services/engineering-planning-input.js';
 import { createDesignWorkspaceRouter, normalizedDesignPath } from './routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignWorkspaceCommit } from './services/design-workspace.js';
 import { createDesignFrameworkBrowser, createDesignReferenceBrowser } from './services/design-framework-browser.js';
+import { createDesignAcceptanceBrowser } from './services/design-acceptance-browser.js';
 import { designShareHandoffConfig } from './services/design-share-handoff.js';
 import { readDesignSourceZip } from './services/design-package.js';
 import { FileProjectRevisionStore, MongoProjectRevisionStore, type ProjectRevisionStore } from './services/project-revision-store.js';
@@ -1414,6 +1415,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/[^/]+\/design\/viewed$/, '记录设计已读'],
     [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
     [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
+    [/^POST \/projects\/[^/]+\/design\/acceptance\/recheck$/, '独立复验设计'],
     [/^POST \/projects\/[^/]+\/design\/feedback$/, '保存实施反馈'],
     [/^POST \/projects\/[^/]+\/design\/feedback\/attachments$/, '保存实施反馈对照图'],
     [/^POST \/projects\/[^/]+\/design\/shares\/[^/]+\/handoff$/, '交接稿件分享'],
@@ -1915,7 +1917,8 @@ function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnTy
       || path === `${route}/artifacts/:artifactId`)
       || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST'
         && (path === `${route}/feedback` || path === `${route}/feedback/attachments`))
-      || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
+      || (key.designAccess === 'publish' && req.method === 'POST'
+        && (path === `${route}/packages` || path === `${route}/acceptance/recheck`));
   }
   const path = normalizedPlanningPath(req.path);
   if (!path) return false;
@@ -5761,6 +5764,8 @@ export function createServer(deps: ServerDeps): express.Express {
     approvedPlanFor: (projectId, planId) => planning.approvedDesignRequirement(projectId, planId),
     frameworkProbe: createDesignFrameworkBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
     referenceCapture: createDesignReferenceBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
+    captureAcceptance: createDesignAcceptanceBrowser(path.join(deps.config.repoRoot, 'cds', 'web', 'dist'),
+      process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
     reviewer: async (projectId, id) => {
       const user = await authService?.findUserById(id);
       return user && activeProjectMember(user, projectId) ? { id, label: user.name || user.username || user.githubLogin } : undefined;

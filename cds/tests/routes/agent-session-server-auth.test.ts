@@ -116,6 +116,37 @@ describe('Agent sessions through the real basic-auth server', () => {
     });
   }
 
+  it('设计发布凭据只在本项目的独立复验入口取得这项验收权限', async () => {
+    vi.stubEnv('CDS_STORAGE_MODE', 'json');
+    function designHeaders(designAccess: 'publish' | 'feedback') {
+      const key = 'cdsp_fixture_' + crypto.randomUUID();
+      state.addAgentKey(projectId, {
+        id: crypto.randomUUID(), label: '合成设计凭据', hash: crypto.createHash('sha256').update(key).digest('hex'),
+        scope: 'rw', designAccess, createdAt: new Date().toISOString(),
+      });
+      return { 'X-AI-Access-Key': key };
+    }
+    const publisher = designHeaders('publish');
+    const feedback = designHeaders('feedback');
+    const server = await start();
+    const own = `/api/projects/${projectId}/design`;
+    const remote = `/api/projects/${otherProjectId}/design`;
+    const recheck = { type: 'acceptance.recheck', requestId: 'design-recheck-fixture',
+      designId: 'DSN-fixture', runId: 'RUN-fixture', screenId: 'main', slot: 'desktop-light' };
+    const allowed = await request(server, 'POST', own + '/acceptance/recheck', publisher, recheck);
+    expect(allowed).toMatchObject({ status: 404, body: { error: 'design_not_found', message: '该稿件不存在' } });
+    expect((await request(server, 'POST', own + '/acceptance/recheck', publisher, { ...recheck, type: 'acceptance.sign' })).status).toBe(400);
+    for (const [endpoint, actor] of [
+      [remote + '/acceptance/recheck', publisher],
+      [own + '/acceptance/recheck', feedback],
+      [own + '/commands', publisher],
+    ] as const) {
+      expect(await request(server, 'POST', endpoint, actor, recheck)).toMatchObject({
+        status: 403, body: { error: 'design_key_scope' },
+      });
+    }
+  });
+
   it.each(['bearer', 'X-AI-Access-Key', 'ai-access-key'])('preserves connection project and principal through %s', async (kind) => {
     const server = await start();
     const foreignCatalog = await request(server, 'GET', `/api/projects/${otherProjectId}/agent-runtime-providers`, headers(kind));

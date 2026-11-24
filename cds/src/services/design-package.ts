@@ -464,6 +464,11 @@ export async function readDesignPackage(bytes: Buffer) {
   const checks = gateField('G-05', '自检结果须为有效的 JSON 对象', () => json(input.checks ?? 'checks/result.json'));
   const acceptanceMode = input.acceptanceMode;
   if (acceptanceMode !== undefined && acceptanceMode !== 'objective') return invalidDesign('不支持的验收模式');
+  const evidenceProtocol = input.evidenceProtocol;
+  if (evidenceProtocol !== undefined && evidenceProtocol !== 'program-v1') return invalidDesign('不支持的程序取证协议');
+  if (evidenceProtocol && !['src/fixtures.ts', 'src/data-design.ts'].every(path => delivery.index.some(row => row.path === path))) {
+    invalidDesign('程序取证须随稿提交虚构演示数据');
+  }
   return {
     packageId: input.id === undefined ? undefined : designId(input.id, '稿件编号'),
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
@@ -471,6 +476,7 @@ export async function readDesignPackage(bytes: Buffer) {
     prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery, ...presentation,
     acceptancePlan: input.acceptancePlan === undefined ? undefined : parseAcceptancePlan(input.acceptancePlan),
     acceptanceMode: acceptanceMode === 'objective' ? 'objective' as const : undefined,
+    evidenceProtocol: evidenceProtocol === 'program-v1' ? evidenceProtocol : undefined,
     risks: input.risks === undefined ? undefined : parseCoverage(input.risks, acceptance),
     frameworkCharter: charter && parseFrameworkCharter(charter),
     checks,

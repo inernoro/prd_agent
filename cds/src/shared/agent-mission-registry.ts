@@ -261,7 +261,7 @@ const MCP_TOOLS_BY_CAPABILITY: Readonly<Partial<Record<string, readonly string[]
   'code-reviews': CODE_REVIEW_MCP_TOOLS,
   dts: DTS_TOOLS,
   'engineering-planning': PLANNING_MCP_TOOLS,
-  'design-workspace': ['cds_design_read', 'cds_design_publish', 'cds_design_feedback'],
+  'design-workspace': ['cds_design_read', 'cds_design_publish', 'cds_design_feedback', 'cds_design_acceptance'],
   'account-proposals': ['cds_account_propose', 'cds_account_receipt'],
 };
 

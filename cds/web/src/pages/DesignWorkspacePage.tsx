@@ -22,7 +22,7 @@ import { DesignRequirementView } from './design-workspace/DesignRequirements';
 import { DesignLibrary, libraryStatus } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
-import { designDate, designDetailPath, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, openReviews, scopePath, statusNames, type DesignCommand } from './design-workspace/design-ui';
+import { defaultDesignScreen, designDate, designDetailPath, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, openReviews, scopePath, statusNames, type DesignCommand } from './design-workspace/design-ui';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
 import './design-workspace/design-v17-delivery.css';
@@ -127,15 +127,14 @@ export function DesignWorkspacePage() {
   const sideClosed = params.get('side') === 'off';
   const pane = params.get('pane');
   const sideTab: SideTab = pane === 'comments' || pane === 'deliver' ? pane : 'demo';
-  const availablePanes = new Set(version?.screens.flatMap(({ route }) => route.startsWith('#/design?')
-    ? new URLSearchParams(route.slice('#/design?'.length)).getAll('pane') : []));
-  const guidedDelivery = availablePanes.has('comments') && availablePanes.has('deliver');
+  const guidedDelivery = Boolean(version?.screens.length);
   const frameworkTab = frameworkTabs.find(value => value === params.get('tab')) ?? 'overview';
   const screenParam = params.get('screen') ?? undefined;
   const commentParam = params.get('comment') ?? undefined;
   const sceneDraft = entry && version ? `${entry.id}/${version.version}/${screenParam ?? ''}` : '';
+  const defaultScene = version && defaultDesignScreen(version, screenParam);
   const scene = selectedScene?.draft === sceneDraft ? selectedScene.screen
-    : version?.screens.find(screen => screen.id === (screenParam ?? version.demo?.[0]?.screen)) ?? version?.screens[0];
+    : defaultScene;
   const rememberScene = useCallback((screen?: DesignScreen) => setScene(current =>
     current?.draft === sceneDraft && current.screen === screen ? current : { draft: sceneDraft, screen }), [sceneDraft]);
   const compareFrom = Number(params.get('compareFrom') ?? params.get('from')) || undefined;
@@ -298,7 +297,7 @@ export function DesignWorkspacePage() {
       {inDetail ? <MotionLink to={libraryPath}>设计</MotionLink> : <span>设计</span>}<span aria-hidden="true">/</span>
       {projectSwitcher}
       {parent && <><span aria-hidden="true">/</span><MotionLink className="dw-crumb-parent" to={parent.href}>{parent.name}</MotionLink></>}
-      {draftVisible && guidedDelivery && entry && version && <><span aria-hidden="true">/</span><span className="dw-crumb-draft" aria-current="page">
+      {draftVisible && entry && version && <><span aria-hidden="true">/</span><span className="dw-crumb-draft" aria-current="page">
         <strong title={version.title}>{version.title}</strong><span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
       </span></>}
     </span>
@@ -350,6 +349,7 @@ export function DesignWorkspacePage() {
       <div className="dw-info-body">
         <header className="dw-row"><strong>{entry.id}</strong><small>V{version.version} · {designDate(version.createdAt)}</small></header>
         <dl>
+          <dt>稿件</dt><dd>{version.title}</dd>
           <dt>发布</dt><dd>{designPublisherLabel(version.publisher.label)}</dd>
           <dt>来源</dt><dd><code>{version.sourceCommit.slice(0, 12)}</code> · {designSourceNames[version.sourceVerification ?? 'declared']}</dd>
           <dt>基线</dt><dd>{entry.frozen === undefined ? '尚未定稿' : `实施基线 V${entry.frozen}`}。同一稿件可以继续发布新版本。</dd>
@@ -392,7 +392,7 @@ export function DesignWorkspacePage() {
       </div>
     </details>
   </div>;
-  const draftHeader = entry && version && <header className={`dw-head dw-head--draft${guidedDelivery ? ' dw-head--v18' : ''}`}>
+  const draftHeader = entry && version && <header className="dw-head dw-head--draft dw-head--v18">
     <div className="dw-draft-bar">
       <div className="dw-draft-heading">
         <h1 title={version.title}>{version.title}</h1>
@@ -402,13 +402,6 @@ export function DesignWorkspacePage() {
     </div>
     <div className="dw-draft-tabbar">
       {summaryTabLinks}
-      {!guidedDelivery && (entry.implementedVersion !== undefined || entry.frozen !== undefined || activeUpgrade) &&
-        <div className="dw-implementation-mark" aria-label="实现进度">
-          {entry.implementedVersion !== undefined ? <span>已实现 V{entry.implementedVersion}</span> : <span>待首次签收</span>}
-          {versionGap?.direction === 'behind' && <span data-gap="behind">落后 {versionGap.count} 版</span>}
-          {versionGap?.direction === 'ahead' && <span data-gap="ahead">待回退 {versionGap.count} 版</span>}
-          {activeUpgrade && <span title="后续稿件不会移动此目标">目标 V{activeUpgrade.targetVersion} 已锁定</span>}
-        </div>}
     </div>
   </header>;
   const messages = <>
@@ -433,7 +426,7 @@ export function DesignWorkspacePage() {
           <div className="dw-canvas-slot" aria-hidden={Boolean(fullView) || undefined}>
             <DesignCanvas key={`${entry.id}/${version.version}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon}
               entry={entry} version={version} active={!large && !review && !fullView}
-              comparing={comparing} initialScreenId={screenParam} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
+              comparing={comparing} initialScreenId={defaultScene?.id} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
               cornerTools onSceneChange={rememberScene}
               onSelectScreen={id => onChange({ screen: id, comment: '' }, true)}
               onModeChange={(compare, screen, from) => onChange({ ...deliveryQuery, tab: 'delivery', compare: compare ? '1' : '',
@@ -476,6 +469,7 @@ export function DesignWorkspacePage() {
         </div> : <>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
+            actorId={permissions?.actorId}
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))}
             installedAcceptance={permissions?.installedAcceptance} requirement={draftRequirement} onOpen={(view, screen) => {
               if (view === 'need') openFull('need');

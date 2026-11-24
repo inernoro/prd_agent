@@ -40,7 +40,20 @@ export function designVisualKey(screenId: string, slot: DesignSlot) {
 }
 
 export function designVisualReference(version: DesignVersion, screenId: string, slot: DesignSlot, row?: DesignVisualRow) {
-  return version.renders?.[screenId]?.[visualSlotTheme(slot)]?.id ?? row?.referenceImageId;
+  return row?.referenceImageId ?? version.renders?.[screenId]?.[visualSlotTheme(slot)]?.id;
+}
+
+export function designProgramStatus(version: DesignVersion, run?: DesignRun) {
+  const keys = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => designVisualKey(screen.id, slot)));
+  const proofs = keys.flatMap(key => {
+    const proof = run?.programEvidence?.[key];
+    return proof ? [proof] : [];
+  });
+  const fixtures = new Set(proofs.map(proof => proof.fixtureDigest));
+  const invalid = fixtures.size > 1 || proofs.some(proof => proof.commit !== run?.commit || proof.review?.matched === false);
+  const reviewed = proofs.filter(proof => proof.review?.matched && proof.review.by !== proof.by
+    && proof.review.digest === proof.digest && proof.review.fixtureDigest === proof.fixtureDigest).length;
+  return { total: keys.length, captured: proofs.length, reviewed, invalid };
 }
 
 export function designVisualRuleShot(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, run?: DesignRun) {
