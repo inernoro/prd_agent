@@ -133,6 +133,23 @@ describe('V22 A-64 验收概览', () => {
 });
 
 describe('V23 A-64 目标达成', () => {
+  it('有目标的验收即使未附影片，也展示八张手段卡片和代码演示', () => {
+    vi.mocked(usePlanningRead).mockReturnValue({ loading: false } as never);
+    const planned: DesignVersion = {
+      ...version, version: 2, acceptanceMode: undefined,
+      acceptancePlan: { flow: { enabled: true }, human: { enabled: true } },
+      goals: [{ id: 'G-01', goal: '成员列表可以打开', doneWhen: '成员表加载完成', items: ['A-01'] }],
+    };
+    const draft = { ...entry, frozen: 2, versions: [planned], runs: [] };
+    const html = page('', draft, planned);
+    const sections = [...html.matchAll(/<li\b[^>]*data-item="([^"]+)"/g)].map(match => match[1]);
+    expect(sections).toEqual(['verdict', 'goals', 'causes', 'trace', 'by-screen', 'methods', 'videos', 'steps']);
+    const cards = /<ul class="dw-ac-mcards"[^>]*>([\s\S]*?)<\/ul>/.exec(html)?.[1] ?? '';
+    expect(cards.match(/<li\b/g)).toHaveLength(8);
+    expect(html).toContain('aria-label="动画：全部验收手段"');
+    expect(page('flow', draft, planned)).toContain('data-item="method-video"');
+  });
+
   it('从验收项推导每个目标的结论，结论后先显示目标，再显示原因', () => {
     const goals = [
       { id: 'G-01', goal: '项目资料能读取', doneWhen: '列表与详情都返回', items: ['A-01', 'A-02'] },

@@ -93,7 +93,7 @@
 .dw-need-table thead th:first-child { width: 3.4rem; }
 .dw-need-table thead th:last-child { width: 5.4rem; }
 .dw-need-n { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--dw-sunken); font-size: 12.5px; }
-.dw-need-table tr[data-status=missing] .dw-need-n { background: hsl(var(--destructive) / .14); color: var(--dw-danger); }
+.dw-need-table tr[data-status=missing] .dw-need-n { background: hsl(var(--destructive) / .14); color: var(--dw-danger-text); }
 .dw-need-covers > span { display: block; }
 .dw-need-covers > span + span { margin-top: 4px; }
 .dw-need-replies { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }

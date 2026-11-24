@@ -8,6 +8,7 @@
   --dw-accent: hsl(var(--primary));
   --dw-warn: hsl(var(--warn));
   --dw-danger: hsl(var(--destructive));
+  --dw-danger-text: color-mix(in srgb, var(--dw-danger) 78%, var(--dw-ink));
   --dw-ok: hsl(var(--ok));
 }
 .cds-workspace.dw-workspace { gap: 0; min-width: 0; min-height: 0; }
@@ -47,7 +48,7 @@
 .dw-info-body dt { color: var(--dw-muted); }
 .dw-info-body dd { margin: 0; overflow-wrap: anywhere; }
 .dw-info-body footer:not(:empty) { border-top: 1px solid var(--dw-line); padding-block-start: 8px; }
-.dw-info-body .dw-revoke-baseline { color: var(--dw-danger); margin-inline-start: auto; }
+.dw-info-body .dw-revoke-baseline { color: var(--dw-danger-text); margin-inline-start: auto; }
 .dw-canvas-tools { justify-content: flex-end; min-height: 36px; border: 0; }
 .dw-canvas-tools > .dw-tools { padding-block: 3px; }
 .dw-workspace .ep-button, .dw-stage .ep-button, .dw-surface .ep-button { min-height: 32px; }
@@ -1009,9 +1010,9 @@
 .dw-vs-name strong { font-size: .875rem; }
 .dw-vs-method { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .375rem; min-width: 0; }
 .dw-vs-method small { flex-basis: 100%; }
-.dw-vs-method .dw-vs-fail { color: var(--dw-danger); }
+.dw-vs-method .dw-vs-fail { color: var(--dw-danger-text); }
 .dw-vs-chip { font-family: var(--font-mono, ui-monospace); font-size: .75rem; padding: .0625rem .375rem; border-radius: .25rem; background: var(--dw-sunken); }
-.dw-vs-chip[data-status=failed] { color: var(--dw-danger); background: hsl(var(--destructive) / .12); }
+.dw-vs-chip[data-status=failed] { color: var(--dw-danger-text); background: hsl(var(--destructive) / .12); }
 .dw-vs-chip[data-status=passed] { color: var(--dw-ok); background: hsl(var(--ok) / .14); }
 .dw-vs-shot { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 10; padding: 0; overflow: hidden;
   border: 1px solid var(--dw-line); border-radius: .375rem; background: var(--dw-sunken); color: var(--dw-muted); font-size: .8125rem; cursor: zoom-in; }

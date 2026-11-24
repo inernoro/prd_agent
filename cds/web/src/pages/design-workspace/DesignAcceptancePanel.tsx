@@ -100,7 +100,8 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const methodOpen = activeMethod?.status !== 'not_applicable' && activeMethod?.status !== 'disabled';
   const check: AcceptanceCheck = activeMethod?.id ?? 'overview';
   const video = version.videos?.find(item => item.page === 'accept');
-  const animation = programRequired && methodData
+  const generateDemo = programRequired || (objective && !video && Boolean(version.goals?.length));
+  const animation = generateDemo && methodData
     ? videoChapters(methodData.methods.map(method => ({ key: method.id, name: method.name }))) : [];
   const hasDemo = Boolean(video || animation.length);
   const go = (next: AcceptanceCheck) => setParams(former => {
