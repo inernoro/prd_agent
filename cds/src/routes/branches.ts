@@ -10,6 +10,7 @@ import { createPreviewAddressRouter } from './preview-address.js';
 import { computePublishedBranchWebEntries, publicPreviewHost } from '../services/branch-web-entrypoints.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
+import { CDS_SKILL_KEYS } from '../shared/agent-setup.js';
 import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget, type SourceStartAdmission } from '../services/deployment-phase-budget.js';
@@ -22806,6 +22807,8 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
   //   skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
   //   skills/cds-release/        — 正式发布、预检与回滚技能
   //   skills/preview-url/        — 真实预览地址技能（必装）
+  //   skills/cds-design/         — 设计入口（/cds-design）
+  //   skills/cds-test/           — 测试入口（/cds-test）
   // 包内不绑定具体 Agent 的安装路径，由接入 Agent 选择当前宿主的项目级目录。
   //
   // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
@@ -22833,7 +22836,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       // 要打包的技能列表
       const skillsToCopy: string[] = useLegacy
         ? ['cds-project-scan']
-        : ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+        : [...CDS_SKILL_KEYS];
 
       let copiedCount = 0;
       for (const skillName of skillsToCopy) {
@@ -22859,12 +22862,12 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`skills/cds-project-scan/\` 复制到当前 Agent 支持的项目级技能目录。\n`
         : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
-包含：cds（主技能）、cds-project-scan（扫描）、cds-deploy-pipeline（部署流水线）、cds-release（正式发布）、preview-url（真实预览地址）。
+包含：cds（主技能）、cds-project-scan（扫描）、cds-deploy-pipeline（部署流水线）、cds-release（正式发布）、preview-url（真实预览地址）、cds-design（设计入口）、cds-test（测试入口）。
 覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 真实预览地址 → 故障诊断 → 正式发布与回滚。
 
 ## 安装
 
-解压后，将 \`skills/\` 下的五个目录复制到当前项目的 Agent Skills 目录；缺少任一目录即视为接入未完成：
+解压后，将 \`skills/\` 下的全部目录复制到当前项目的 Agent Skills 目录；缺少任一目录即视为接入未完成：
 
 | Agent | 项目级目录 |
 |------|-----------|

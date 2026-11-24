@@ -901,12 +901,12 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("project", "project_mismatch", "当前仓库绑定了其他项目，先确认项目范围；尚未发送任何请求。")
     checks.append({"stage": "credentials", "passed": True})
 
-    skill_keys = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+    skill_keys = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url", "cds-design", "cds-test")
     selected = [key.strip() for key in args.skills.split(",")]
     if not selected or any(key not in skill_keys for key in selected):
         fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
     skills_root = Path(__file__).resolve().parents[2]
-    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整五技能包，"
+    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整 CDS 技能包，"
                       "用本机工具解压到当前工作区的技能根，之后复用现有授权重新自检。")
     missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
     if missing:
@@ -920,7 +920,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             or not isinstance(bundle.get("skills"), list)
             or any(not isinstance(key, str) for key in bundle["skills"])
             or set(bundle["skills"]) != set(skill_keys)):
-        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能。" + install_bundle)
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖全部 CDS 技能。" + install_bundle)
     if bundle.get("version") != VERSION:
         fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致。" + install_bundle)
     file_hashes = bundle.get("files")
@@ -11015,7 +11015,7 @@ def cmd_update(args: argparse.Namespace) -> None:
       1. 定位当前技能根（cli/cdscli.py 的父父目录）
       2. 下载 tar.gz 到临时目录
       3. 五个 CDS 技能目录统一备份到当前项目 .cds/skill-backups
-      4. 校验包内五个技能齐全后同步到当前 Agent Skills 根
+      4. 校验包内全部技能齐全后同步到当前 Agent Skills 根
       5. 用户自定义的非 tracked 文件（如用户本地脚本）保留不动
 
     不动：项目凭据 / shell profile / 系统环境变量
@@ -11032,7 +11032,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
     skills_root = os.path.dirname(skill_root)
-    bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
+    bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url", "cds-design", "cds-test"]
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"
@@ -11084,10 +11084,10 @@ def cmd_update(args: argparse.Namespace) -> None:
                 src_skills_dir = root
                 break
         if not src_skills_dir:
-            die("tar.gz 内找不到完整的五技能包。升级失败（已保留备份）。",
+            die("tar.gz 内找不到完整的 CDS 技能包。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
-        # 5. 用内容同步：五个技能统一更新，保留用户自定义的额外文件。
+        # 5. 用内容同步：全部技能统一更新，保留用户自定义的额外文件。
         replaced_files: list[str] = []
         for skill_name in bundle_skills:
             src_skill_dir = os.path.join(src_skills_dir, skill_name)
@@ -11108,7 +11108,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 if os.path.isdir(backup_dir):
                     shutil.copytree(backup_dir, target_dir)
         except Exception as rollback_err:
-            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复五个技能目录 "
+            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复全部技能目录 "
                 f"（原错: {e}; 回滚错: {rollback_err}）", code=3)
         die(f"升级失败，已自动回滚: {e}", code=3)
     finally:

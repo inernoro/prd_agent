@@ -19,6 +19,8 @@ on:
       - ".claude/skills/cds-deploy-pipeline/**"
       - ".claude/skills/cds-release/**"
       - ".claude/skills/preview-url/**"
+      - ".claude/skills/cds-design/**"
+      - ".claude/skills/cds-test/**"
   workflow_dispatch:
     inputs:
       capacity_standard_runtime:
@@ -152,7 +154,7 @@ jobs:
       - name: Stage canonical CDS onboarding skills
         run: |
           mkdir -p cds/agent-skills
-          for skill in cds cds-project-scan cds-deploy-pipeline cds-release preview-url; do
+          for skill in cds cds-project-scan cds-deploy-pipeline cds-release preview-url cds-design cds-test; do
             cp -R ".claude/skills/$skill" "cds/agent-skills/$skill"
           done
 

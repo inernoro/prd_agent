@@ -98,7 +98,7 @@ export type CdsCapabilityAccess = 'public' | 'project' | 'system' | 'human-only'
 export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed' | 'available';
 
 export interface CdsAgentSkillDefinition {
-  id: 'cds' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
+  id: 'cds' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url' | 'cds-design' | 'cds-test';
   label: string;
   role: string;
   required: boolean;
@@ -143,6 +143,8 @@ export const CDS_AGENT_SKILL_DEFINITIONS: readonly CdsAgentSkillDefinition[] = [
   { id: 'cds-deploy-pipeline', label: '部署排障技能', role: '部署、日志、诊断、冒烟和灰度状态', required: true },
   { id: 'cds-release', label: '正式发布技能', role: '生产目标发现、预检、发布、回滚和证据归档', required: true },
   { id: 'preview-url', label: '真实预览地址技能', role: '只读取 CDS API 已发布的公开入口', required: true },
+  { id: 'cds-design', label: '设计入口技能', role: '一句话维护、更新或修复某模块的设计稿，经程序门禁发布并回写 CDS', required: true },
+  { id: 'cds-test', label: '测试入口技能', role: '领取并执行 CDS 上的验收任务，把结果、证据和问题写回 CDS', required: true },
 ] as const;
 
 type CapabilitySeed = readonly [
@@ -554,6 +556,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   'design-publish': {
     id: 'design-publish',
+    requiredSkills: ['cds-design'],
     categoryId: 'deliver',
     scope: 'project',
     connectTargets: ['existing'],
@@ -566,7 +569,8 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     steps: ['读取 CDS 技能的 reference/design-intake.md 和当前项目设计接入清单',
       '按稳定稿件键查重，区分新稿与已有稿件的修订，有歧义先澄清稿件归属',
       '核对当前工作树，只在本地提交用户授权的稿件目录',
-      '用 cds_design_publish 的 sourceMode=private 或 cdscli design publish --private 提交项目私有归档，回读稿件和版本'],
+      '发布前运行 CDS 技能的 scripts/design/release.mjs check，门禁不通过不发布',
+      '用 cds_design_publish 的 sourceMode=private 或 cdscli design publish --private 提交项目私有归档，回读稿件和版本，再用 release.mjs register 登记版本'],
     checks: ['同稿修订使用原稿编号和当前版本', '先核对交付资料、稿件目录和本地提交，缺失时说明需补充的信息',
       '超时使用原请求编号继续，角色权限以该项目的设计接入清单为准'],
     completion: ['在服务端核对项目、来源提交和归档摘要', '同稿修订可读回原编号和新增版本', '返回稿件入口和发布回执'],
@@ -783,6 +787,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   reports: {
     id: 'reports',
+    requiredSkills: ['cds-test'],
     categoryId: 'deliver',
     scope: 'project',
     icon: 'check',

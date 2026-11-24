@@ -107,6 +107,8 @@ jobs:
               - '.claude/skills/cds-deploy-pipeline/**'
               - '.claude/skills/cds-release/**'
               - '.claude/skills/preview-url/**'
+              - '.claude/skills/cds-design/**'
+              - '.claude/skills/cds-test/**'
               # build-scope-ci-parity 守卫的两份被守文件，理由同 cds.yml 的同名条目（形状 7）。
               - 'cds-compose.yml'
               - '.github/workflows/branch-image.yml'
