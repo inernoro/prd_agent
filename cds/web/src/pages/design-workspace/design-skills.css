@@ -66,3 +66,13 @@
 .dw-skills .dw-skill-guide > footer .ep-button { padding-inline: 14px; }
 .dw-skill-guide .dw-sg-copy-status { color: var(--dw-ok); font-size: .75rem; }
 .dw-skill-guide .dw-sg-copy-status[data-result=failed] { color: var(--dw-danger); }
+@media (min-width: 641px) {
+  .dw-draft-actions .dw-info-panel:has(.dw-sg-mini) {
+    width: min(286px, calc(100vw - 34px));
+    max-height: calc(100dvh - 126px);
+    gap: 7px;
+    font-size: .75rem;
+  }
+  .dw-info-panel:has(.dw-sg-mini) dl { gap: 5px 9px; }
+  .dw-info-panel .dw-sg-mini > li { padding: 6px 8px; }
+}

@@ -372,6 +372,7 @@ export function DesignWorkspacePage() {
           <dt>决策</dt><dd className="dw-draft-tags">{version.decisionIds.length ? version.decisionIds.map(id =>
             <Link className="ep-link" key={id} to={`/engineering-planning?project=${encodeURIComponent(project)}&kind=decision&item=${encodeURIComponent(id)}`}>{id}</Link>) : '未关联决策'}</dd>
         </dl>
+        <SkillGuide designId={entry.id} version={version.version} />
         <footer className="dw-row">
           {canFreeze && !activeUpgrade && entry.frozen !== version.version
             && <button className="ep-button" type="button" disabled={busy} data-action="freeze" onClick={() => setFreezeTarget({ id: entry.id, version: version.version })}>定为实施基线</button>}
@@ -390,7 +391,6 @@ export function DesignWorkspacePage() {
           {canUnfreeze && !activeUpgrade && entry.frozen !== undefined && <button className="ep-button dw-revoke-baseline" type="button" data-action="unfreeze"
             onClick={() => setUnfreeze({ id: entry.id, version: entry.frozen! })}>撤销定稿</button>}
         </footer>
-        <SkillGuide designId={entry.id} version={version.version} />
       </div>
     </details>
   </div>;

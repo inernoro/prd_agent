@@ -24,12 +24,12 @@ export async function measureDesignPage(page: Page) {
         return element ? getComputedStyle(element).gridTemplateColumns.split(' ').length : 0;
       },
     };
-    const head = dom.find('.dw-head--draft,.dw-head--v3,.dw-library-top,.dw-library-head');
+    const head = dom.find('.dw-head--draft,.dw-head--v3,.dw-library-top,.dw-library-head,.dw-library-bar');
     const tabs = dom.find('.dw-tablinks');
     const surface = dom.find('.dw-workspace,main');
     const layers = [
       dom.read(head), dom.read(tabs), dom.read(surface),
-      dom.read(dom.find('[role=dialog], details[open] .dw-info-panel, .dw-overlay')),
+      dom.read(dom.find('[role=dialog], details[open] .dw-info-panel, .dw-skills[open] > .dw-skill-guide, .dw-overlay')),
       dom.read(dom.find('.dw-draft-footer, main > footer')),
     ];
     const headerControls = Array.from(document.querySelectorAll('.dw-tablinks > button,.dw-draft-actions > *, .dw-head-actions > *')).filter(dom.visible);

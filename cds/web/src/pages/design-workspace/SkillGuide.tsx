@@ -4,7 +4,7 @@
  *   你说（一句 /cds，能复制）→ 会发生什么（三步，程序做）→ 你会得到（结果的样子）→ 怎么算完成（可核对）→ 没做到会怎样（被拦在哪）。
  * 说法和 CDS 技能的路由表一致（技能 reference/menu-intents.json，由程序核对）。稿件「···」里只列和这份稿件有关的三步，编号自动填好。 */
 import { useEffect, useRef, useState } from 'react';
-import { Activity, ArrowRight, BookOpen, CalendarRange, Check, CheckCircle2, ClipboardCheck, Code2, Copy, PenTool, Rocket, TriangleAlert } from 'lucide-react';
+import { Activity, ArrowRight, CalendarRange, Check, CheckCircle2, ClipboardCheck, Code2, Copy, PenTool, Rocket, Sparkles, TriangleAlert } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { reducedSurfaceMotion } from '@/lib/surfaceMotion';
@@ -85,7 +85,7 @@ export function DesignSkillsMenu({ linked, dismiss, onAccess }: { linked: boolea
       setOpen(visible);
       if (!visible && linked) dismiss();
     }}>
-    <summary className="ep-button" data-action="design-skills"><BookOpen />用技能</summary>
+    <summary className="ep-button" data-action="design-skills"><Sparkles />用技能</summary>
     {(open || linked) && <SkillGuide onAccess={onAccess} />}
   </details>;
 }
