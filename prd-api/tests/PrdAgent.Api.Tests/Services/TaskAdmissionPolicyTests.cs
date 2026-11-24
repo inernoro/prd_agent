@@ -28,6 +28,19 @@ public sealed class TaskAdmissionPolicyTests
     }
 
     [Fact]
+    public void TapdDraftPreview_AdmitsOneDraftCall_AndSubmitHasNoPaidAuthority()
+    {
+        const string controller = "PrdAgent.Api.Controllers.Api.TapdBugAgentController";
+        var policy = TaskAdmissionPolicies.Find(controller, "PreviewStream")!;
+
+        Assert.Equal(new[] { PrdAgent.Core.Models.AppCallerRegistry.TapdBugAgent.Extract.Chat }, policy.AppCallers);
+        Assert.Equal(TaskAdmissionTiming.Middleware, policy.Timing);
+        Assert.Equal(1, policy.InteractiveMaxCalls);
+        Assert.Equal(1, policy.AgentMaxCalls);
+        Assert.Null(TaskAdmissionPolicies.Find(controller, "Submit"));
+    }
+
+    [Fact]
     public void SpeechRun_PersistsTaskAuthorityWithoutExposingItInJson()
     {
         PrdAgent.Core.Interfaces.ITaskAuthorizedRun task = new PrdAgent.Core.Models.SpeechRun { TaskPermitId = "private-permit" };

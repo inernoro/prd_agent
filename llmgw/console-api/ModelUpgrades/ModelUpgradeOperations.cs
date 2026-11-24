@@ -233,13 +233,41 @@ public sealed partial class ModelUpgradeService
             var amount = job.AsNullableDecimal("EstimatedCostUsd");
             if (s.BudgetDate == now.ToString("yyyy-MM-dd") && job.AsNullableUtcDateTime("CreatedAt")?.ToString("yyyy-MM-dd") == s.BudgetDate && amount is > 0)
                 s.ReservedCostUsd = Math.Max(0, s.ReservedCostUsd - amount.Value);
-            History(s, "validate.expire-unused", "succeeded", "已确认排队过期且未发送；对应当日内部预占已释放，可重新验收。", id);
+            History(s, "validate.expire-unused", "succeeded", "已确认未发送上游请求；对应当日内部预占已释放，可重新验收。", id);
         }
         s.OutcomeUnknown = false; s.ValidationStatus = "not-run"; s.Gates.Validation = false; s.Candidate!.ValidatedAt = null;
         await PersistAsync(s);
         await AuditCompleteAsync(s, audit, true);
         return true;
     }
+
+    private async Task<bool> ConfirmUnsentBudgetRejectionAsync(ModelUpgradeState state, BsonDocument job, string requestId)
+    {
+        if (state.TenantId != internalTenantId || job.GetStringOrEmpty("PolicyId") != state.Id
+            || job.GetStringOrEmpty("Status") != "unknown" || job.GetStringOrEmpty("FailureKind") != "rate_limited"
+            || job.GetValue("HttpStatus", BsonNull.Value) != new BsonInt32(429)
+            || job.AsNullableString("AppCallerCode") is not { Length: > 0 } caller)
+            return false;
+
+        // Serving records this exact code only when its atomic budget reservation rejects before an upstream send.
+        var proof = Scope(state.TenantId, F.And(F.Eq("RequestId", requestId), F.Eq("AppCallerCode", caller),
+            F.Eq("Operation", "raw-submit"), F.Eq("Status", "failed"), F.Eq("ErrorCode", "GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED")));
+        var execution = await gateway.GetCollection<BsonDocument>("llmgw_request_executions")
+            .Find(proof).FirstOrDefaultAsync(CancellationToken.None);
+        if (execution is null) return false;
+
+        var now = DateTime.UtcNow;
+        var matchedJob = Scope(state.TenantId, F.And(F.Eq("_id", requestId), F.Eq("PolicyId", state.Id), F.Eq("Status", "unknown")));
+        var confirmed = await ValidationRuns.UpdateOneAsync(matchedJob, Builders<BsonDocument>.Update
+            .Set("Status", "failed").Set("UnsentConfirmed", true).Set("UpdatedAt", now)
+            .Set("Message", "网关预算预占拒绝，已确认未发送上游请求。"),
+            cancellationToken: CancellationToken.None);
+        if (confirmed.ModifiedCount != 1) return false;
+        job["Status"] = "failed";
+        job["UnsentConfirmed"] = true;
+        return await ExpireUnsentValidationAsync(state, job, now);
+    }
+
     private async Task PollValidationAsync(ModelUpgradeState s)
     {
         var id = s.Candidate?.ValidationRequestId ?? "";
@@ -248,6 +276,8 @@ public sealed partial class ModelUpgradeService
         // Reconcile the original job before loading mutable candidate configuration.
         var job = await ValidationRuns.Find(Scope(s.TenantId, F.Eq("_id", id))).FirstOrDefaultAsync(CancellationToken.None);
         var status = job?.GetStringOrEmpty("Status");
+        if (job is not null && status == "unknown" && await ConfirmUnsentBudgetRejectionAsync(s, job, id))
+            throw new ModelUpgradeException("CANARY_BUDGET_REJECTED_UNSENT", "网关预算预占拒绝，已确认未发送上游请求并释放内部预占。请核对测试预算后再发起新验收。");
         if (job is not null && (status == "pending" && job.AsNullableUtcDateTime("ExpiresAt") < DateTime.UtcNow
             || status == "failed" && (job.GetValue("ExpiredUnsent", false) == true || job.GetValue("UnsentConfirmed", false) == true)))
         {

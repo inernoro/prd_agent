@@ -33,6 +33,7 @@ export const streamTapdBugPreviewReal: StreamTapdBugPreviewContract = async (inp
       Accept: 'text/event-stream',
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
+      'Idempotency-Key': crypto.randomUUID(),
       'X-Client': 'admin',
       'X-App-Name': 'tapd-bug-agent',
     },

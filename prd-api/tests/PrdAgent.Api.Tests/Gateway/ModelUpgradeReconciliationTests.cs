@@ -77,6 +77,47 @@ public class ModelUpgradeReconciliationTests
             if (ops.AsBsonDocument.TryGetValue("$unset", out var unset)) foreach (var value in unset.AsBsonDocument) doc.Remove(value.Name);
         }
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OnlyARecordedBudgetRejectionCanReleaseAnUnknownCanary(bool hasProof)
+    {
+        var store = new Store();
+        store.State.OutcomeUnknown = true;
+        var job = new BsonDocument
+        {
+            { "_id", "original-request" }, { "PolicyId", "policy" }, { "Status", "unknown" },
+            { "FailureKind", "rate_limited" }, { "HttpStatus", 429 }, { "AppCallerCode", "tapd-bug-agent.extract::chat" },
+            { "CreatedAt", DateTime.UtcNow }, { "EstimatedCostUsd", new Decimal128(.05m) }
+        };
+        var queue = store.Collection<BsonDocument>(ModelUpgradeService.ValidationCollectionName, _ => new[] { job });
+        queue.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<BsonDocument>>(), It.IsAny<UpdateDefinition<BsonDocument>>(),
+            It.IsAny<UpdateOptions>(), It.IsAny<CancellationToken>())).ReturnsAsync(new UpdateResult.Acknowledged(1, 1, null));
+        store.Collection<BsonDocument>("llmgw_request_executions", filter =>
+        {
+            var proof = filter.Render(new RenderArgs<BsonDocument>(BsonSerializer.LookupSerializer<BsonDocument>(), BsonSerializer.SerializerRegistry));
+            Assert.Equal("tenant", proof["TenantId"].AsString);
+            Assert.Equal("original-request", proof["RequestId"].AsString);
+            Assert.Equal("tapd-bug-agent.extract::chat", proof["AppCallerCode"].AsString);
+            Assert.Equal("raw-submit", proof["Operation"].AsString);
+            Assert.Equal("failed", proof["Status"].AsString);
+            Assert.Equal("GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED", proof["ErrorCode"].AsString);
+            return hasProof ? new[] { new BsonDocument("_id", "execution") } : [];
+        });
+
+        var reconcile = typeof(ModelUpgradeService).GetMethod("ConfirmUnsentBudgetRejectionAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var released = await (Task<bool>)reconcile.Invoke(store.Service, new object[] { store.State, job, "original-request" })!;
+
+        Assert.Equal(hasProof, released);
+        Assert.Equal(!hasProof, store.State.OutcomeUnknown);
+        Assert.Equal(hasProof ? 0 : .05m, store.State.ReservedCostUsd);
+        Assert.Equal("original-request", store.State.Candidate!.ValidationRequestId);
+        Assert.Equal(hasProof, job.GetValue("UnsentConfirmed", false).AsBoolean);
+        queue.Verify(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<BsonDocument>>(), It.IsAny<UpdateDefinition<BsonDocument>>(),
+            It.IsAny<UpdateOptions>(), It.IsAny<CancellationToken>()), hasProof ? Times.Once() : Times.Never());
+    }
+
     [Fact]
     public async Task CandidateChangeRetainsOriginalRequestLockAndConfirmedUnsentCanStillReconcile()
     {

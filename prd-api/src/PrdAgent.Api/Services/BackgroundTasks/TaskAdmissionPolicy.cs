@@ -38,6 +38,8 @@ public static class TaskAdmissionPolicies
             new[] { AppCallerRegistry.Admin.Platforms.Reclassify }, false, 128);
         Register("LlmGatewayOpsCanaryController", "RunAsrCanary",
             new[] { AppCallerRegistry.TranscriptAgent.Transcribe.Audio }, false, 1, 1);
+        Register("TapdBugAgentController", "PreviewStream",
+            new[] { AppCallerRegistry.TapdBugAgent.Extract.Chat }, false, 1, 1);
         Add("MessagesController", "SendMessage ResendMessage", new[] { "prd-agent-desktop.", "prd-agent.guide", "prd-agent.skill-gen" }, root: true);
         Add("ChatRunsController", "CreateRun", new[] { "prd-agent-desktop.", "prd-agent.guide", "prd-agent.skill-gen" }, root: true);
         Register("IntentController", "SuggestGroupName",
