@@ -53,8 +53,8 @@ public sealed class HostedSiteContentTests
     }
 
     [Theory]
-    [InlineData(2 * 1024 * 1024, true)]
-    [InlineData(2 * 1024 * 1024 + 1, false)]
+    [InlineData(16 * 1024 * 1024, true)]
+    [InlineData(16 * 1024 * 1024 + 1, false)]
     public async Task LocalEntryUsesActualStreamSizeInsteadOfTrustingSmallMetadata(int size, bool allowed)
     {
         var dir = Path.Combine(Path.GetTempPath(), "hosted-content-" + Guid.NewGuid().ToString("N"));
@@ -64,7 +64,7 @@ public sealed class HostedSiteContentTests
             var factory = new Mock<IHttpClientFactory>(); factory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(new HttpClient());
             var result = await Controller(Sites(Site(storage.BuildUrlForKey(key), key)).Object, storage, factory.Object).GetSiteContent("site");
             if (allowed) Assert.IsType<OkObjectResult>(result);
-            else Assert.Contains("2MB", JsonSerializer.Serialize(Assert.IsType<BadRequestObjectResult>(result).Value, WebJson));
+            else Assert.Contains("16MB", JsonSerializer.Serialize(Assert.IsType<BadRequestObjectResult>(result).Value, WebJson));
         } finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
 
@@ -78,14 +78,14 @@ public sealed class HostedSiteContentTests
     [Theory]
     [InlineData(null)]
     [InlineData(1L)]
-    public async Task RemoteUnknownOrIncorrectLengthStillStopsAtTheSameTwoMegabyteLimit(long? length)
+    public async Task RemoteUnknownOrIncorrectLengthStillStopsAtTheSameSixteenMegabyteLimit(long? length)
     {
-        var stream = new UnseekableContent(3 * 1024 * 1024);
+        var stream = new UnseekableContent(17 * 1024 * 1024);
         using var client = new HttpClient(new ContentHandler(stream, length));
         var factory = new Mock<IHttpClientFactory>(); factory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(client);
         var result = Assert.IsType<BadRequestObjectResult>(await Controller(Sites(Site("https://assets.example/index.html", "index.html")).Object, new Mock<IAssetStorage>(MockBehavior.Strict).Object, factory.Object).GetSiteContent("site"));
-        Assert.Contains("2MB", JsonSerializer.Serialize(result.Value, WebJson));
-        Assert.InRange(stream.BytesRead, 2 * 1024 * 1024, 2 * 1024 * 1024 + 8192);
+        Assert.Contains("16MB", JsonSerializer.Serialize(result.Value, WebJson));
+        Assert.InRange(stream.BytesRead, 16 * 1024 * 1024, 16 * 1024 * 1024 + 8192);
     }
     private sealed class ContentHandler(Stream stream, long? length) : HttpMessageHandler
     {
