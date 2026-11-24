@@ -78,7 +78,9 @@ test('手机设计原型连续刷新、慢加载、失败重试和截图图库',
       await expect(page).toHaveURL(url);
     };
     await expectReady();
-    expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.innerWidth)).toBe(375);
+    // Linux WebKit reports zero hardware touch points even when Playwright emulates taps.
+    if (browserName === 'chromium') expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
     const topFrameUrls: string[] = [];
     page.on('framenavigated', candidate => {
       if (candidate === page.mainFrame()) topFrameUrls.push(candidate.url());
