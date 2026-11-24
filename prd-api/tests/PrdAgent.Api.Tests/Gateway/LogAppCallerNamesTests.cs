@@ -1,4 +1,10 @@
+using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
+using MongoDB.Driver;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Infrastructure.Database;
+using PrdAgent.LlmGatewayHost;
 using PrdAgent.LlmGw.Logs;
 using Xunit;
 
@@ -54,6 +60,59 @@ public sealed class LogAppCallerNamesTests
         Assert.Null(LogAppCallerNames.RegisteredName(log, [chat, vision]));
         Assert.Null(LogAppCallerNames.RegisteredName(log, [chat, placeholder]));
         Assert.Null(LogAppCallerNames.RegisteredName(log, [placeholder]));
+    }
+
+    [Theory]
+    [InlineData(true, "llmgw-console", "Quickstart 用途推导")]
+    [InlineData(null, "llmgw-console", "Quickstart 用途推导")]
+    [InlineData(false, "llmgw-console", null)]
+    [InlineData(null, "external", null)]
+    public void CodePlaceholderUsesDefaultTitleOnlyForTheOwnedSystemRegistration(
+        bool? systemManaged, string sourceSystem, string? expected)
+    {
+        const string code = "llmgw-console.intent-draft::chat";
+        var log = new BsonDocument { { "AppCallerCode", code }, { "TeamId", "system-team" }, { "RequestType", "chat" } };
+        var caller = new BsonDocument(log) { { "Title", code }, { "SourceSystem", sourceSystem } };
+        if (systemManaged.HasValue) caller["SystemManaged"] = systemManaged.Value;
+
+        Assert.Equal(expected, LogAppCallerNames.RegisteredName(log, [caller]));
+        caller["Title"] = "已登记的用途名";
+        Assert.Equal("已登记的用途名", LogAppCallerNames.RegisteredName(log, [caller]));
+    }
+
+    [Fact, Trait("Category", "Integration")]
+    public async Task ObservingRequestsWithoutAMeaningfulTitlePreservesTheRegisteredName()
+    {
+        var connection = Environment.GetEnvironmentVariable("LLMGW_TRACE_TEST_MONGO")
+            ?? throw new InvalidOperationException("显式指定隔离 Mongo：LLMGW_TRACE_TEST_MONGO");
+        var dbName = "app_caller_names_" + Guid.NewGuid().ToString("N");
+        var data = new LlmGatewayDataContext(connection, dbName);
+        using var services = new ServiceCollection().AddSingleton(data).BuildServiceProvider();
+        var observe = typeof(GatewayHttpEndpoints).GetMethod("RecordDiscoveredAppCallerAsync", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(observe);
+        var callers = data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers");
+        const string code = "example.summary::chat";
+        try
+        {
+            await callers.InsertOneAsync(new GatewayAppCallerRecord
+            {
+                TenantId = "tenant-a", TeamId = "team-a", AppCallerCode = code, RequestType = "chat", Title = "文字摘要",
+            });
+            foreach (var title in new[] { null, code.ToUpperInvariant() })
+            {
+                var ingress = new GatewayIngressRequest
+                {
+                    RequestId = Guid.NewGuid().ToString("N"), IngressProtocol = "gw-native", RequestType = "chat",
+                    AppCallerCode = code, AppCallerTitle = title, Context = new GatewayRequestContext { TenantId = "tenant-a", TeamId = "team-a" },
+                };
+                Assert.True(await (Task<bool>)observe!.Invoke(null, [services, ingress, CancellationToken.None])!);
+                Assert.Equal("文字摘要", (await callers.Find(_ => true).SingleAsync()).Title);
+            }
+        }
+        finally
+        {
+            await data.Database.Client.DropDatabaseAsync(dbName);
+        }
     }
 
     private static BsonDocument Caller(string type, string teamId, string title) => new()

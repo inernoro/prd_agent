@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.LlmGw.AppCallers;
 using PrdAgent.LlmGw.Auth;
 using PrdAgent.LlmGw.Mongo;
 
@@ -31,7 +32,8 @@ public static class LogAppCallerNames
             .Select(code => new BsonRegularExpression($@"\A{Regex.Escape(code)}\z", "i"));
         var callers = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers")
             .Find(TenantAccess.FilterTeamScope(http, filter.In("AppCallerCode", codes)))
-            .Project(projection.Include("AppCallerCode").Include("RequestType").Include("TeamId").Include("Title"))
+            .Project(projection.Include("AppCallerCode").Include("RequestType").Include("TeamId")
+                .Include("Title").Include("SourceSystem").Include("SystemManaged"))
             .ToListAsync(http.RequestAborted);
         var callersByCode = callers.ToLookup(caller => caller.GetStringOrEmpty("AppCallerCode"), StringComparer.OrdinalIgnoreCase);
 
@@ -91,7 +93,7 @@ public static class LogAppCallerNames
                 || string.Equals(caller.AsNullableString("RequestType"), requestType, StringComparison.OrdinalIgnoreCase)))
             .Take(2).ToArray();
         // 早期拒绝日志没有请求类型。只在这个编号能唯一对应可见用途时使用登记名称。
-        return candidates is [var caller] ? MeaningfulName(caller.AsNullableString("Title"), code) : null;
+        return candidates is [var caller] ? MeaningfulName(SystemIntentDraftCaller.ReadTitle(caller), code) : null;
     }
 
     private static string? MeaningfulName(string? value, string? code)
