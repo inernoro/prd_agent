@@ -213,6 +213,8 @@ export function createDesignBridge(credentials, options = {}) {
           const renders = selected.renders ?? {};
           return { projectId, id: item.id, version: selected.version, delivery: selected.delivery ?? null,
             sourceCommit: selected.sourceCommit, sourcePath: selected.sourcePath, sourceVerification: selected.sourceVerification,
+            ...(selected.goals ? { goals: selected.goals } : {}),
+            ...(selected.demoData ? { demoData: selected.demoData } : {}),
             sha256: selected.sha256, screens, acceptance: selected.acceptance, acceptancePlan: selected.acceptancePlan, checks: selected.checks,
             ...(selected.demo ? { demo: selected.demo } : {}), ...(selected.videos ? { videos: selected.videos } : {}),
             ...(item.methodSettings?.[selected.version] ? { methodSettings: item.methodSettings[selected.version] } : {}),

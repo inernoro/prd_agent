@@ -94,7 +94,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   ] as const;
   const methodData = designMethodPlanEnabled(version) ? designMethodsState(version, run, entry) : undefined;
   const objective = methodData?.objective === true;
-  const structuredOverview = Boolean(methodData);
+  const structuredOverview = Boolean(methodData || version.goals?.length);
   const programRequired = designProgramEvidenceRequired(version);
   const proof = designProgramStatus(version, run);
   const activeMethod = methodData?.methods.find(method => method.id === params.get('check'));
@@ -232,12 +232,21 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const current = steps.findIndex(step => !step.done);
   const statusOf = (itemId: string): RuleStatus => {
     const evidence = cells.filter(cell => cell.itemId === itemId);
+    const slots = items.find(item => item.id === itemId)?.slots ?? [];
     if (evidence.some(cell => cell.status === 'failed')) return 'failed';
     if (evidence.some(cell => (cell.status === 'missing' || cell.status === 'unverified') && !cell.debtId)) return 'missing';
-    if (evidence.length && evidence.every(cell => cell.status === 'passed')) return 'passed';
+    if (slots.length && slots.every(slot => evidence.some(cell => cell.slot === slot && cell.status === 'passed'))) return 'passed';
     if (evidence.some(cell => cell.debtId)) return 'debt';
     return 'unverified';
   };
+  const goalStatus = { elsewhere: '在别处', failed: '未达成', passed: '已达成', missing: '待证据' };
+  const goalRows = (version.goals ?? []).map(goal => {
+    const status = goal.items.map(statusOf);
+    const state: keyof typeof goalStatus = !status.length ? 'elsewhere' : status.includes('failed') ? 'failed'
+      : status.every(value => value === 'passed') ? 'passed' : 'missing';
+    return { ...goal, state };
+  });
+  const handoff = version.delivery?.files.find(file => file.path === '交接清单.md');
   const groups = ([['failed', '不通过'], ['missing', '待补证据'], ['debt', '已记债'], ['unverified', '未验证'], ['passed', '通过']] as const)
     .map(([key, label]) => [key, label, items.filter(item => statusOf(item.id) === key)] as const).filter(([, , list]) => list.length);
   const selfChecks = designCheckRows(version);
@@ -259,7 +268,8 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const causes: Cause[] = [];
   if (structuredOverview && showOverview && !run?.signed) {
     if (run && (stale || previewBlocked || !upgradeMatched || programRequired && proof.invalid)) causes.push({ key: 'preview', tone: 'block', who: '实现方',
-      title: programRequired && proof.invalid ? '独立复验有差异，本次作废' : linkedChanged ? '关联的 PR 已变更' : locationChanged ? '预览地址已变更' : stale ? `预览已更新到 ${activeCommit?.slice(0, 8)}`
+      title: programRequired && proof.invalidProvenance ? '图证来源核对失败，本次作废'
+        : programRequired && proof.invalid ? '独立复验有差异，本次作废' : linkedChanged ? '关联的 PR 已变更' : locationChanged ? '预览地址已变更' : stale ? `预览已更新到 ${activeCommit?.slice(0, 8)}`
         : previewBlocked ? '预览提交没核对上' : '运行早于当前升级目标',
       detail: `当前运行的证据和签收暂不可用${pending.length ? `，挡住 ${pending.length} 处待补证据` : ''}。`,
       action: previewBlocked ? <a className="ep-button" href={run.previewUrl} target="_blank" rel="noreferrer">打开真实预览</a>
@@ -318,23 +328,39 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
         savedCompare={comparisonSkipped ? undefined : () => go('compare')} />}
       {showOverview && <li data-item="verdict"><h4><b>1</b>结论{structuredOverview && causes.length > 0 && <small>还不能签收的原因和处理入口</small>}</h4>
         {structuredOverview ? <div className="dw-ac-hero"><strong>{run?.signed ? '已签收' : signable ? '可以签收' : '暂不能签收'}</strong>
+          {goalRows.length > 0 && <span>目标达成 {goalRows.filter(goal => goal.state === 'passed').length}/{goalRows.length}</span>}
           <span>验收项 {applicableItems.length}</span><span>通过 {applicableItems.filter(item => statusOf(item.id) === 'passed').length}</span>
           <span>不通过 {failures.length}</span><span>缺证据 {applicableItems.filter(item => ['missing', 'unverified'].includes(statusOf(item.id))).length}</span>
         </div> : <p className="dw-dl-lead-text"><span className="dw-status" data-state={stale ? 'needs_evidence' : run?.signed ? 'passed' : run ? state : 'draft'}>{verdictWord}</span> {lead}</p>}
-        {structuredOverview && <EvidenceCauses causes={causes} />}
+        {structuredOverview && !goalRows.length && <EvidenceCauses causes={causes} />}
         <p className="dw-dl-factline">
+          {programRequired && proof.total > 0 && <span>程序取证 {proof.captured}/{proof.total} · 复验一致 {proof.reviewed}/{proof.total}</span>}
           {!isBaseline && onSetBaseline && entry.frozen !== undefined &&
             <Link className="ep-link" to={`/design?${new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(entry.frozen), tab: 'accept' })}`}>查看基线 V{entry.frozen} 的验收</Link>}
           {!structuredOverview && run && counts.filter(([, count]) => count > 0).map(([label, count]) => <span key={label} data-status={label}>{label} {count}</span>)}
           {run && <a className="ep-link" href={run.previewUrl} target="_blank" rel="noreferrer">打开真实预览</a>}
+          {handoff && <Link className="ep-link" to={'/design?' + new URLSearchParams({ project: entry.projectId, design: entry.id,
+            version: String(version.version), tab: 'delivery', part: 'files', file: handoff.id })}>查看交接清单</Link>}
           {runs.length > 1 && <select aria-label="查看历史运行" value={run?.id ?? ''} onChange={event => setRunId(event.target.value)}>
             {[...runs].reverse().map(row => <option key={row.id} value={row.id}>{row.commit.slice(0, 8)}{row.signed ? row.id === runs.at(-1)?.id ? ' · 已签收' : ' · 历史签收' : ' · ' + verdictNames[row.verdict]}</option>)}
           </select>}
         </p>
         {run && !run.signed && !stale && (preview.loading ? <ContentLoading label="核对当前预览提交" variant="inline" className="dw-dl-missing" />
           : !objective && !activeCommit ? <p className="dw-dl-missing" role="status">暂时无法核对当前预览提交，请确认预览已部署；核对上之前不能补证据、不能签收。</p> : null)}</li>}
+      {showOverview && goalRows.length > 0 && <li data-item="goals"><h4>目标 → 验收项 → 结论</h4>
+        <ol className="dw-ac-goals" aria-label="目标与验收结果">{goalRows.map(goal => <li key={goal.id} data-state={goal.state}>
+          <div><strong>{goal.goal}</strong><small>{goal.doneWhen}</small></div>
+          <span>{goal.items.length ? goal.items.map(id => <code className="dw-ac-goal-rule" data-state={statusOf(id)} key={id}>{id}</code>)
+            : goal.where && /^DSN-[A-Z0-9]+$/.test(goal.where)
+              ? <Link className="ep-link" to={'/design?' + new URLSearchParams({ project: entry.projectId, design: goal.where })}>{goal.where}</Link>
+              : goal.where}</span>
+          <span className="dw-status" data-state={goal.state}>{goalStatus[goal.state]}</span>
+        </li>)}</ol>
+      </li>}
+      {showOverview && goalRows.length > 0 && causes.length > 0 && <li data-item="causes"><h4>为什么还不能签收</h4>
+        <EvidenceCauses causes={causes} /></li>}
       {showOverview && structuredOverview && <AcceptanceTrace entry={entry} version={version} run={run} requirement={requirement} statusOf={statusOf}
-        onOpen={onOpen} openRules={() => go('mece')} />}
+        onOpen={onOpen} openRules={() => methodData ? go('mece') : jump('dw-ac-rules')} />}
       {showOverview && structuredOverview && <AcceptanceScreens version={version} statusOf={statusOf} onOpen={onOpen}
         thumbnailProject={hasDemo ? entry.projectId : undefined} />}
       {showOverview && methodData && <li data-item="methods"><h4><b>4</b>验收手段<small>{objective ? '按执行顺序排列，已启用的在前' : '每种手段的状态及不适用理由'}</small></h4>
@@ -402,7 +428,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
             {evidenceWritable && <button type="button" className="ep-button" onClick={() => setSelected(cell)}>{item.how === 'human' ? '人工核对' : '补充证据'}</button>}
           </div>;
         })}</div></div>)}</details></li>}
-      {showRules && <li data-item="rules"><h4><b>{ruleNumber}</b>全部验收项<small>{items.length} 条 · 按状态分组</small></h4>
+      {showRules && <li data-item="rules" id="dw-ac-rules"><h4><b>{ruleNumber}</b>全部验收项<small>{items.length} 条 · 按状态分组</small></h4>
         {!items.length && <p className="dw-dl-missing">这版稿件未声明验收项。</p>}
         {groups.map(([key, label, list]) => <details key={key} className="dw-dl-rulegroup" open={key === 'failed' || key === 'missing' || undefined}>
           <summary><span className="dw-status" data-state={key === 'missing' ? 'needs_evidence' : key === 'unverified' ? 'draft' : key}>{label}</span> <small>{list.length}</small></summary>

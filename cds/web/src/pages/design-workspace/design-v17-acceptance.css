@@ -129,6 +129,19 @@
 .dw-disable-dialog textarea { min-height: 6rem; }
 .dw-ac-hero { display: flex; align-items: baseline; flex-wrap: wrap; gap: .55rem 1rem; padding-block: .5rem; color: var(--dw-muted); }
 .dw-ac-hero strong { color: var(--dw-ink); }
+.dw-ac-goals { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.dw-ac-goals > li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(6rem, 18%) auto;
+  align-items: center; gap: .65rem; padding: .55rem 0; border-bottom: 1px solid var(--dw-line); min-width: 0; }
+.dw-ac-goals > li small { display: block; margin-top: .12rem; color: var(--dw-muted); }
+.dw-ac-goal-rule { display: inline-block; margin: .12rem .25rem .12rem 0; padding: .08rem .35rem;
+  border-radius: .25rem; background: var(--dw-sunken); }
+.dw-ac-goal-rule[data-state="passed"] { color: var(--dw-ok); }
+.dw-ac-goal-rule[data-state="failed"] { color: var(--dw-danger); }
+.dw-ac-goals .dw-status { white-space: nowrap; }
+@media (max-width: 640px) {
+  .dw-ac-goals > li { grid-template-columns: minmax(0, 1fr) auto; }
+  .dw-ac-goals > li > div { grid-column: 1 / -1; }
+}
 .dw-ac-mcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
 .dw-ac-mcards button { display: grid; align-content: start; text-align: left; white-space: normal; inline-size: 100%; block-size: 100%; gap: 4px; padding: 10px; }
 .dw-ac-mcards button strong { display: flex; align-items: center; gap: 4px; }

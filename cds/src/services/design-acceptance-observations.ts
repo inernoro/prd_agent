@@ -60,6 +60,7 @@ export async function measureDesignPage(page: Page) {
     const cards = Array.from(document.querySelectorAll('.dw-card-grid .dw-design-card')).filter(dom.visible);
     const currentScreen = dom.find('.dw-frame')?.getAttribute('data-screen');
     const selectedStep = dom.find('.dw-sp-thumbs [aria-current=step]')?.getAttribute('data-screen');
+    const stepNumber = Number(dom.find('[data-sec="flow"] h3 small')?.textContent?.split('/')[0] ?? 0);
     return {
       layers, headerAlignment, width, content, vertical: scrolling.length + Number(document.documentElement.scrollHeight > innerHeight + 1),
       clippedControls, textControls: textControls.length, height: innerHeight,
@@ -67,6 +68,7 @@ export async function measureDesignPage(page: Page) {
       raw: body.split('\n').filter(line => /^\s*(?:#{1,6}\s+|\{\s*"\w+"\s*:|Bearer\s+\S{20,})/.test(line)).length,
       frame: dom.read(dom.find('.dw-frame')), title: dom.read(dom.find('.dw-crumb-draft strong,.dw-crumb-title strong')),
       currentStep: Boolean(currentScreen && selectedStep === currentScreen),
+      stepNumber,
       causes: causeNames.map(name => ({ length: [...name].length, measurement: /\d+(\.\d+)?\s*(px|ms)\b/.test(name) })),
       hero: Boolean(dom.find('.dw-ac-hero')), methods: document.querySelectorAll('.dw-ac-mcards > li').length,
       compare, feedback,
@@ -141,8 +143,9 @@ export function observeDesignRules(rules: DesignRule[], value: Observation) {
       else results[id] = { status: 'unverified', actual: row + '状态和日期的断行仍待核对。' };
     } else if (screenId === 'dsn-open-m' && id === 'A-72' && value.frame) {
       const [, , width, height] = value.frame;
-      put(id, width < height && height >= 360 && value.currentStep,
-        `默认画布 ${width} × ${height} px，演示步骤${value.currentStep ? '已' : '未'}高亮。`);
+      const startsAtFirst = !rule.expected?.includes('demoIndex') || value.stepNumber === 1;
+      put(id, width < height && height >= 360 && value.currentStep && startsAtFirst,
+        `默认画布 ${width} × ${height} px，演示显示第 ${value.stepNumber} 步，当前画面${value.currentStep ? '已' : '未'}高亮。`);
     } else if (screenId === 'dsn-accept' && id === 'A-64') {
       const valid = value.causes.length <= 6 && value.causes.every(cause => cause.length <= 30 && !cause.measurement);
       const text = `原因卡 ${value.causes.length} 张，验收手段 ${value.methods} 个，${value.hero ? '有' : '缺'}总览结论。`;

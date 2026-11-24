@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import previewContract from '../shared/design-preview-contract.json' with { type: 'json' };
 import { crc32 } from '../utils/zip.js';
-import { designSlots, designViewports, type DesignDeliveryFile, type DesignDemoStep, type DesignFrameworkCharter, type DesignMaterial,
+import { designSlots, designViewports, type DesignDeliveryFile, type DesignDemoData, type DesignDemoStep, type DesignFrameworkCharter, type DesignGoal, type DesignMaterial,
   type DesignRule, type DesignScope, type DesignScreen, type DesignTheme, type DesignVideo } from '../shared/design-workspace.js';
 import { designDimensions, designObjectiveMethods, type DesignAcceptancePlan, type DesignCoverageRecord, type DesignDimension } from '../shared/design-methods.js';
 import { rejectDesignGate, validateDesignPublicationGate, type DesignPublicationGateContext } from './design-publication-gate.js';
@@ -135,6 +135,34 @@ function parseDesignPresentation(input: Record<string, unknown>, screens: Design
     return { page: video.page, file: name, title: planningText(video.title, '视频标题', 180), chapters };
   });
   return { demo, videos };
+}
+
+function parseDesignGoals(value: unknown, acceptance: DesignRule[]): DesignGoal[] | undefined {
+  if (value === undefined) return undefined;
+  const available = new Set(acceptance.map(rule => rule.id));
+  return unique(list(value, '目标', 60, input => {
+    const data = designRecord(input, '目标', ['id', 'goal', 'doneWhen', 'items', 'where']);
+    const items = unique(list(data.items, '目标验收项', 60, id => designId(id, '验收项')), id => id, '目标验收项');
+    if (items.some(id => !available.has(id))) invalidDesign('目标引用了本版不存在的验收项');
+    const where = data.where === undefined ? undefined : planningText(data.where, '目标的验收入口', 240);
+    if (!items.length && !where) invalidDesign('目标须关联验收项或说明在哪验收');
+    return { id: designId(data.id, '目标编号'), goal: planningText(data.goal, '目标', 260),
+      doneWhen: planningText(data.doneWhen, '完成条件', 1200), items, ...(where ? { where } : {}) };
+  }), goal => goal.id, '目标');
+}
+
+function parseDesignDemoData(value: unknown, read: (name: string) => string | undefined): DesignDemoData | undefined {
+  if (value === undefined) return undefined;
+  const data = designRecord(value, '演示数据', ['files', 'sha256', 'note']);
+  const files = unique(list(data.files, '演示数据文件', 2, relativeFile), file => file, '演示数据文件');
+  if (files.length !== 2 || !['src/fixtures.ts', 'src/data-design.ts'].every(file => files.includes(file))) {
+    return invalidDesign('演示数据应声明 fixtures.ts 和 data-design.ts 两份源码');
+  }
+  const sources = files.map(name => read(name) ?? invalidDesign('请在稿件包内提供演示数据源码'));
+  const sha256 = designDigest(sources.map(text => text.replace(/\r\n/g, '\n')).join(''));
+  if (data.sha256 !== sha256) return invalidDesign('演示数据声明的摘要与包内源码不符');
+  const note = data.note === undefined ? undefined : planningText(data.note, '演示数据说明', 600);
+  return { files, sha256, ...(note ? { note } : {}) };
 }
 
 async function zipEntries(bytes: Buffer, onlyPath?: string): Promise<Map<string, Buffer>> {
@@ -451,6 +479,8 @@ export async function readDesignPackage(bytes: Buffer) {
   const acceptance = gateField('G-03', '验收项最多 60 条，须使用唯一编号和有效的画面与检查方法', () =>
     unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项'));
   const presentation = parseDesignPresentation(input, screens, file);
+  const goals = parseDesignGoals(input.goals, acceptance);
+  const demoData = parseDesignDemoData(input.demoData, name => utf8(name, 512 * 1024));
   const spec: DesignMaterial = { tokens: json('spec/tokens.json'), rules: utf8('spec/rules.md', 64 * 1024),
     components: utf8('spec/components.md', 64 * 1024), skeleton: utf8('spec/skeleton.html', 64 * 1024) };
   const charter = json('spec/charter.json') ?? json('charter.json');
@@ -473,7 +503,7 @@ export async function readDesignPackage(bytes: Buffer) {
     packageId: input.id === undefined ? undefined : designId(input.id, '稿件编号'),
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
     sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
-    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery, ...presentation,
+    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery, ...presentation, goals, demoData,
     acceptancePlan: input.acceptancePlan === undefined ? undefined : parseAcceptancePlan(input.acceptancePlan),
     acceptanceMode: acceptanceMode === 'objective' ? 'objective' as const : undefined,
     evidenceProtocol: evidenceProtocol === 'program-v1' ? evidenceProtocol : undefined,

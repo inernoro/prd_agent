@@ -86,6 +86,9 @@ export type DesignDelivery = {
   warnings: string[];
 };
 export type DesignDemoStep = { screen: string; title?: string; tip?: string };
+export type DesignGoal = { id: string; goal: string; doneWhen: string; items: string[]; where?: string };
+export type DesignDemoData = { files: string[]; sha256: string; note?: string };
+export type DesignCaptureProvenance = { dataset?: string; commit?: string; capturedBy?: 'cds' };
 export type DesignVideoChapter = { method: DesignMethodId; title: string; start: number };
 export type DesignVideo = { page: 'accept'; file: string; artifactId: string; title: string; chapters: DesignVideoChapter[] };
 export const designFeedbackCategories = ['reuse', 'implementation', 'gap', 'constraint', 'acceptance'] as const;
@@ -129,6 +132,8 @@ export type DesignVersion = {
   group?: string; scope?: DesignScope; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
   demo?: DesignDemoStep[];
+  goals?: DesignGoal[];
+  demoData?: DesignDemoData;
   videos?: DesignVideo[];
   acceptancePlan?: DesignAcceptancePlan;
   acceptanceMode?: 'objective';
@@ -150,11 +155,11 @@ export type DesignComment = {
   replies: Array<{ body: string; createdAt: string; author: { id: string; label: string } }>;
   reviews: Array<{ version: number; decision: 'resolved' | 'rejected'; body: string; by: string; at: string }>;
 };
-export type DesignCell = {
+export type DesignCell = DesignCaptureProvenance & {
   itemId: string; slot: DesignSlot; status: DesignCellStatus; actual: string; imageId?: string; recordedBy?: string;
   debtId?: string; measured?: { width: number; height: number; theme: DesignTheme; path: string };
 };
-export type DesignProgramEvidence = {
+export type DesignProgramEvidence = DesignCaptureProvenance & {
   commit: string;
   fixtureDigest: string;
   digest: string;
@@ -165,8 +170,12 @@ export type DesignProgramEvidence = {
 
 // The published program-evidence requirement is immutable. Older releases keep their acceptance contract.
 export function designProgramEvidenceRequired(version: DesignVersion): boolean {
-  return version.evidenceProtocol === 'program-v1' || version.acceptance.some(rule => rule.id === 'A-71'
+  return Boolean(version.demoData) || version.evidenceProtocol === 'program-v1' || version.acceptance.some(rule => rule.id === 'A-71'
     && rule.expected?.includes('证据只认程序产生') && rule.expected.includes('独立重跑'));
+}
+
+export function designDatasetRequired(version: DesignVersion): boolean {
+  return Boolean(version.demoData) || version.acceptance.some(rule => rule.id === 'A-71' && rule.expected?.includes('demoData.sha256'));
 }
 
 export function designDemoImplementationPath(screen: DesignScreen): string | undefined {

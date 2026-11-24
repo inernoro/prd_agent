@@ -146,7 +146,7 @@ test('手机设计原型连续刷新、慢加载、失败重试和截图图库',
   }
 });
 
-test('V22 A-72 手机默认进入演示中的第一张手机画面，支持清单后备和显式入口', async ({ browser, browserName }) => {
+test('V23 A-72 手机演示先走手机画面，支持清单后备和显式入口', async ({ browser, browserName }) => {
   test.skip(browserName === 'firefox', 'Firefox Playwright 不支持 isMobile');
   const context = await browser.newContext({
     ...devices['iPhone 12 Mini'], viewport: { width: 375, height: 812 },
@@ -156,33 +156,51 @@ test('V22 A-72 手机默认进入演示中的第一张手机画面，支持清�
   const desktop = { ...screen, id: 'desktop', name: '桌面首步', viewport: 'desktop', route: '#/design?design=fixture&pane=deliver' };
   const phoneInList = { ...screen, route: '#/design?design=fixture&pane=comments' };
   const phoneInDemo = { ...detail, name: '手机演示首步', route: '#/design?design=fixture&screen=phone-next' };
-  const latest = { ...version, version: 22, screens: [desktop, phoneInList, phoneInDemo] };
+  const secondPhoneInDemo = { ...screen, id: 'phone-second', name: '手机演示第二步', route: '#/design?design=fixture&screen=phone-second' };
+  const latest = { ...version, version: 23, screens: [desktop, phoneInList, phoneInDemo, secondPhoneInDemo] };
   const desktopDemo = [{ screen: desktop.id, title: desktop.name }];
-  let demo = [...desktopDemo, { screen: phoneInDemo.id, title: phoneInDemo.name }];
+  let demo = [...desktopDemo, { screen: phoneInDemo.id, title: phoneInDemo.name }, { screen: secondPhoneInDemo.id, title: secondPhoneInDemo.name }];
   try {
     await installOperationsFixtures(page);
     await page.route(url => url.pathname === api,
-      route => route.fulfill({ json: { ...workspace, designs: [{ ...workspace.designs[0], frozen: 22, versions: [{ ...latest, demo }] }] } }));
+      route => route.fulfill({ json: { ...workspace, designs: [{ ...workspace.designs[0], frozen: latest.version, versions: [{ ...latest, demo }] }] } }));
     await page.route(url => url.pathname === api + '/artifacts/' + screenshot.id,
       route => route.fulfill({ contentType: 'image/png', body: pixel }));
     await page.route(url => url.pathname === api + '/artifacts/' + latest.prototypeId, route => route.fulfill(prototype));
     const url = new URL('/design', origin);
-    url.search = new URLSearchParams({ project: projectId, design, version: '22' }).toString();
+    url.search = new URLSearchParams({ project: projectId, design, version: String(latest.version) }).toString();
     const canvas = page.locator('.dw-deliver .dw-canvas');
     const frame = canvas.locator('iframe');
-    const currentStep = page.locator('[data-sec="flow"] button[aria-current="step"]');
+    const flow = page.locator('[data-sec="flow"]');
+    const thumbnail = flow.locator('.dw-sp-thumbs button');
+    const currentStep = flow.locator('button[aria-current="step"]');
     const expectScreen = async (name: string) => {
-      await expect(frame).toHaveAttribute('title', `${name} · V22`);
+      await expect(frame).toHaveAttribute('title', `${name} · V${latest.version}`);
       await expect(canvas.locator('[data-preview-state="ready"]')).toHaveCount(1);
     };
 
     await page.goto(url.href, { waitUntil: 'domcontentloaded' });
     await expectScreen(phoneInDemo.name);
     await expect(currentStep).toHaveAttribute('title', phoneInDemo.name);
+    await expect(flow.locator('h3 small')).toHaveText('1 / 3');
+    await expect(thumbnail).toHaveCount(3);
+    for (const [index, step] of [phoneInDemo, secondPhoneInDemo, desktop].entries()) {
+      await expect(thumbnail.nth(index)).toHaveAttribute('title', step.name);
+    }
+    await expect(flow.locator('[data-action="demo-next"]')).toContainText(secondPhoneInDemo.name);
+    await expect(flow.locator('[data-action="demo-restart"]')).toHaveCount(0);
     await expect.poll(async () => (await canvas.locator('.dw-fit .dw-frame').boundingBox())?.height).toBeGreaterThanOrEqual(360);
     const phoneFrame = await canvas.locator('.dw-fit .dw-frame').boundingBox();
     expect(phoneFrame!.width / phoneFrame!.height).toBeLessThan(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+
+    await flow.locator('[data-action="demo-next"]').tap();
+    await expectScreen(secondPhoneInDemo.name);
+    await expect(flow.locator('h3 small')).toHaveText('2 / 3');
+    await expect(flow.locator('[data-action="demo-next"]')).toContainText(desktop.name);
+    await flow.locator('[data-action="demo-restart"]').tap();
+    await expectScreen(phoneInDemo.name);
+    await expect(flow.locator('h3 small')).toHaveText('1 / 3');
 
     const explicit = new URL(url);
     explicit.searchParams.set('screen', desktop.id);
@@ -204,6 +222,7 @@ test('V22 A-72 手机默认进入演示中的第一张手机画面，支持清�
     await page.goto(url.href, { waitUntil: 'domcontentloaded' });
     await expectScreen(phoneInList.name);
     await expect(currentStep).toHaveAttribute('title', phoneInList.name);
+    await expect(flow.locator('h3 small')).toHaveText('1 / 4');
   } finally {
     await context.close();
   }

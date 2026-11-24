@@ -131,3 +131,68 @@ describe('V22 A-64 验收概览', () => {
     for (const measurement of measurements) expect(details).toContain(measurement);
   });
 });
+
+describe('V23 A-64 目标达成', () => {
+  it('从验收项推导每个目标的结论，结论后先显示目标，再显示原因', () => {
+    const goals = [
+      { id: 'G-01', goal: '项目资料能读取', doneWhen: '列表与详情都返回', items: ['A-01', 'A-02'] },
+      { id: 'G-02', goal: '项目权限隔离', doneWhen: '越权入口全部阻断', items: ['A-02', 'A-03', 'A-04'] },
+      { id: 'G-03', goal: '手机可以读验收', doneWhen: '轻量视口证据齐备', items: ['A-01', 'A-04'] },
+      { id: 'G-04', goal: '规划默认时间线', doneWhen: '打开规划看到时间线', items: [], where: '规划稿 DSN-FIXTURE-PLANNING' },
+      { id: 'G-05', goal: '双主题均可读', doneWhen: '浅色和深色测试都通过', items: ['A-05'] },
+    ];
+    const latest: DesignVersion = {
+      ...version, version: 23, goals,
+      acceptance: ['A-01', 'A-02', 'A-03', 'A-04', 'A-05'].map(id => ({
+        ...version.acceptance[0], id, slots: id === 'A-05' ? ['desktop-light', 'desktop-dark'] : ['desktop-light'],
+      })),
+    };
+    const currentRun: DesignRun = {
+      ...run, version: latest.version,
+      cells: [
+        { itemId: 'A-01', slot: 'desktop-light', status: 'passed', actual: '列表已打开' },
+        { itemId: 'A-02', slot: 'desktop-light', status: 'passed', actual: '详情已返回' },
+        { itemId: 'A-03', slot: 'desktop-light', status: 'failed', actual: '角色没有隔离' },
+        { itemId: 'A-05', slot: 'desktop-light', status: 'passed', actual: '浅色可读' },
+      ],
+    };
+    vi.mocked(usePlanningRead).mockReturnValue({ loading: false, data: { projectId: 'fixture', commit: run.commit, url: run.previewUrl } } as never);
+    const currentEntry = { ...entry, frozen: latest.version, versions: [latest], runs: [currentRun] };
+    const html = page('', currentEntry, latest);
+    const heroStart = html.indexOf('dw-ac-hero');
+    const goalStart = html.indexOf('dw-ac-goals');
+    const causeStart = html.indexOf('dw-ac-causes');
+    expect(heroStart).toBeGreaterThanOrEqual(0);
+    expect(goalStart).toBeGreaterThan(heroStart);
+    expect(causeStart).toBeGreaterThan(goalStart);
+    const hero = html.slice(heroStart, goalStart).replace(/<[^>]*>/g, '');
+    expect(hero).toMatch(/目标达成\s*1\s*\/\s*5/);
+    const rows = [...html.slice(goalStart, causeStart).matchAll(/<(li|tr)\b[^>]*>([\s\S]*?)<\/\1>/g)]
+      .map(match => match[2]).filter(row => goals.some(goal => row.includes(goal.goal)));
+    expect(rows).toHaveLength(5);
+    const [passed, failed, pending, external, partial] = rows.map(row => row.replace(/<[^>]*>/g, ''));
+    expect(passed).toMatch(/达成/);
+    expect(passed).not.toMatch(/未达成|没达成|待证据/);
+    expect(passed).toContain('A-01');
+    expect(passed).toContain('A-02');
+    expect(rows[0]).toMatch(/<[^>]+data-state="passed"[^>]*>A-01</);
+    expect(failed).toMatch(/未达成|没达成/);
+    expect(failed).toContain('A-03');
+    expect(failed).toContain('A-04');
+    expect(rows[1]).toMatch(/<[^>]+data-state="failed"[^>]*>A-03</);
+    expect(pending).toContain('待证据');
+    expect(external).toContain('在别处');
+    expect(external).toContain('规划稿 DSN-FIXTURE-PLANNING');
+    expect(partial).toContain('待证据');
+    for (const [index, goal] of goals.entries()) {
+      const row = rows[index];
+      expect(row).toContain(goal.goal);
+      expect(row).toContain(goal.doneWhen);
+    }
+    expect(page('', { ...currentEntry, runs: [] }, latest).replace(/<[^>]*>/g, '')).toMatch(/目标达成\s*0\s*\/\s*5/);
+    const withoutMethodPlan = { ...latest, acceptanceMode: undefined };
+    expect(page('', { ...currentEntry, versions: [withoutMethodPlan] }, withoutMethodPlan).replace(/<[^>]*>/g, ''))
+      .toMatch(/目标达成\s*1\s*\/\s*5/);
+    expect(page()).not.toContain('目标达成');
+  });
+});

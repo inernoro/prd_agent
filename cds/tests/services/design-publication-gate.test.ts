@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -216,5 +216,85 @@ describe('设计发布门禁', () => {
     expect(legacyVersion.evidenceProtocol).toBeUndefined();
     expect(designProgramEvidenceRequired(legacyVersion)).toBe(true);
     expect(designProgramEvidenceRequired(plainVersion)).toBe(false);
+  });
+
+  it('V23 发布校验数据集摘要，Windows 换行与 LF 一致，并保存目标到版本', async () => {
+    const files = ['src/fixtures.ts', 'src/data-design.ts'];
+    const fixtureScript = 'export const fixtures = { count: 3 };\nexport const ready = true;\n';
+    const fixtureData = 'export const project = "fixture-demo";\n';
+    const sha256 = createHash('sha256').update(fixtureScript + fixtureData).digest('hex');
+    const goals = [
+      { id: 'G-01', goal: '入口可用', doneWhen: '用户看到页面主区。', items: ['A-01'] },
+      { id: 'G-02', goal: '项目拥有独立发布规则', doneWhen: '可以查到发布规则。', items: [], where: '门禁 G-08' },
+    ];
+    const demoData = { files, sha256, note: '两边使用同一组演示数据。' };
+    const source = fixture();
+    source.files.set(files[0], fixtureScript.replaceAll('\n', '\r\n'));
+    source.files.set(files[1], fixtureData.replaceAll('\n', '\r\n'));
+    source.json.set('design.json', { ...source.manifest, goals, demoData: { ...demoData, sha256: 'a'.repeat(64) } });
+    await expect(service.publish(projectId, designer, first, source.zip())).rejects.toMatchObject({ status: 400 });
+    source.json.set('design.json', {
+      ...source.manifest, demoData, goals: [{ ...goals[0], items: ['A-unknown'] }, goals[1]],
+    });
+    await expect(service.publish(projectId, designer, first, source.zip())).rejects.toMatchObject({ status: 400 });
+    expect((await service.workspace(projectId, designer)).designs).toEqual([]);
+
+    source.json.set('design.json', { ...source.manifest, goals, demoData });
+    const crlf = await service.publish(projectId, designer, first, source.zip());
+    source.files.set(files[0], fixtureScript);
+    source.files.set(files[1], fixtureData);
+    const lf = await service.publish(projectId, designer, {
+      ...first, requestId: 'same-demo-lf', designKey: 'fixture/lf', sourcePath: 'design/fixture-lf',
+    }, source.zip());
+
+    const { designs } = await service.workspace(projectId, designer);
+    const left = designs.find(draft => draft.id === crlf.result.designId)!.versions[0];
+    const right = designs.find(draft => draft.id === lf.result.designId)!.versions[0];
+    expect(left).toMatchObject({ demoData, goals });
+    expect(right).toMatchObject({ demoData, goals });
+    expect(left.sha256).not.toBe(right.sha256);
+    expect(designProgramEvidenceRequired(left)).toBe(true);
+    expect(designProgramEvidenceRequired(right)).toBe(true);
+
+    const revision = fixture(2);
+    revision.files.set(files[0], fixtureScript);
+    revision.files.set(files[1], fixtureData);
+    await expect(service.publish(projectId, designer, {
+      ...first, designId: crlf.result.designId, sourceCommit: secondCommit, requestId: 'v23-drop-dataset',
+      intent: 'revise', expectedVersion: '1',
+    }, revision.zip())).rejects.toMatchObject({ status: 400, message: expect.stringContaining('演示数据摘要') });
+    expect((await service.workspace(projectId, designer)).designs.find(draft => draft.id === crlf.result.designId)?.versions).toHaveLength(1);
+  });
+
+  it('V23 用旧服务发布时，打开详情从校验过的私有归档补读数据和目标', async () => {
+    const source = fixture();
+    const files = ['src/fixtures.ts', 'src/data-design.ts'];
+    const fixtureScript = 'export const fixtures = { count: 3 };\n';
+    const fixtureData = 'export const active = true;\n';
+    source.files.set(files[0], fixtureScript);
+    source.files.set(files[1], fixtureData);
+    const demoData = { files, sha256: createHash('sha256').update(fixtureScript + fixtureData).digest('hex') };
+    const goals = [{ id: 'G-01', goal: '证据来自程序', doneWhen: '同样条件下的独立复验一致。', items: ['A-71'] }];
+    source.json.set('design.json', {
+      ...source.manifest, demoData, goals, demo: [{ screen: source.screen.id, title: '打开入口' }],
+      acceptance: [{ ...source.rule, id: 'A-71', how: 'human',
+        expected: '证据只认程序产生。按 demoData.sha256 校验并由设计方独立重跑。' }],
+    });
+    const archive = source.zip();
+    const published = await service.publish(projectId, designer, first, archive);
+    const designId = published.result.designId!;
+    const latest = (await service.workspace(projectId, designer)).designs[0].versions[0];
+    const { demoData: _demoData, goals: _goals, evidenceProtocol: _protocol, ...fieldsSavedByOldCds } = latest;
+    const archived = { ...fieldsSavedByOldCds, version: 23 };
+    const store = new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(directory, 'archive-before-upgrade'));
+    await store.append({
+      projectId, revision: 1, request: { key: 'prior-publish', fingerprint: 'prior-publish', result: { type: 'package', designId } },
+      design: { id: designId, version: archived },
+      assets: [{ id: archived.delivery!.archiveId, mime: 'application/zip', base64: archive.toString('base64') }],
+    });
+    const upgraded = new DesignWorkspaceService(store);
+    const detail = await upgraded.workspace(projectId, designer, { designId, version: 23 });
+    expect(detail.designs[0].versions).toMatchObject([{ version: 23, demoData, goals, demo: latest.demo }]);
+    expect((await store.read(projectId, 0))[0].design?.version).toEqual(archived);
   });
 });

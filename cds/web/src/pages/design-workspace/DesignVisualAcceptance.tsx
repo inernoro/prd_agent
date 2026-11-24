@@ -129,6 +129,7 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
           {!row.reference && !visualOnly && <small>{program ? '待同条件截图' : '对照图由设计方提供'}</small>}
           {!row.implementation && <small>{row.screen.impl || hasDemo ? program ? '待程序实拍' : '实现方补实拍' : '实现方绑定画面'}</small>}
           {proof && <small>程序实拍 · {proof.commit.slice(0, 8)} · {proof.review ? proof.review.matched ? '复验一致' : '复验有差异' : '待设计方复验'}</small>}
+          {proof?.dataset && <small title={proof.dataset}>数据集 {proof.dataset.slice(0, 12)}</small>}
           {run && (row.screen.impl || hasDemo) && action && <button type="button" className="ep-text-button" disabled={busy}
             onClick={() => void command(action, { designId: entry.id, runId: run.id, screenId: row.screen.id, slot })}>
             {action === 'acceptance.capture' ? '用演示数据截' : '独立复验'}

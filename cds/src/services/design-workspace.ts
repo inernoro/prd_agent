@@ -4,7 +4,7 @@ import type {
   DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignUpgrade, DesignViewerState, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { currentDesignRun, designAcceptanceTarget, designDemoImplementationPath, designFeedbackCategories, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
+import { currentDesignRun, designAcceptanceTarget, designDatasetRequired, designDemoImplementationPath, designFeedbackCategories, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
 import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
 import { concreteVisualEvidence, designProgramStatus, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
   visualSlotTheme, type DesignVisualChecks, type DesignVisualRow } from '../shared/design-visual.js';
@@ -62,7 +62,7 @@ type Context = { projectId: string; actor: DesignActor; state: WorkspaceState; n
 type Update = { result: Receipt['result']; changes: Changes };
 type DesignArtifact = { bytes: Buffer; mime: string; file?: DesignDeliveryFile; attachment?: string };
 export type DesignWorkspaceRead = { summary: true } | { designId: string; version?: number; fromVersion?: number };
-type DesignPresentation = Pick<DesignVersion, 'demo' | 'videos'>;
+type DesignPresentation = Pick<DesignVersion, 'demo' | 'videos' | 'goals' | 'demoData'>;
 
 const missing = (message: string): never => rejectPlanning(404, 'design_not_found', message);
 const conflict = (message: string): never => rejectPlanning(409, 'design_conflict', message);
@@ -513,8 +513,10 @@ export class DesignWorkspaceService {
 
   private readPresentation(projectId: string, state: WorkspaceState, version: DesignVersion): Promise<DesignPresentation> {
     const delivery = version.delivery;
-    if (version.demo || version.videos || !delivery || !this.store.readAsset) {
-      return Promise.resolve({ demo: version.demo, videos: version.videos });
+    const saved = { demo: version.demo, videos: version.videos, goals: version.goals, demoData: version.demoData };
+    const needsDataset = designDatasetRequired(version) && !version.demoData;
+    if (!delivery || !this.store.readAsset || (!needsDataset && (version.demo || version.videos))) {
+      return Promise.resolve(saved);
     }
     const { archiveId, files } = delivery;
     const revision = state.assets.get(archiveId);
@@ -524,15 +526,17 @@ export class DesignWorkspaceService {
     if (cached) return cached;
     const result = (async () => {
       const asset = await this.store.readAsset!(projectId, revision, archiveId);
-      if (!asset?.base64) return {};
-      const { demo, videos } = await readDesignPackage(Buffer.from(asset.base64, 'base64'));
-      return { demo, videos: videos?.flatMap(video => {
+      if (!asset?.base64) return saved;
+      const bytes = Buffer.from(asset.base64, 'base64');
+      if (designDigest(bytes) !== version.sha256) return saved;
+      const { demo, videos, goals, demoData } = await readDesignPackage(bytes);
+      return { demo: saved.demo ?? demo, goals: saved.goals ?? goals, demoData: saved.demoData ?? demoData, videos: saved.videos ?? videos?.flatMap(video => {
         const artifactId = files.find(file => file.path === video.file)?.id;
         return artifactId ? [{ ...video, artifactId }] : [];
       }) };
     })().catch(() => {
       this.presentations.delete(key);
-      return {};
+      return saved;
     });
     if (this.presentations.size >= 64) this.presentations.delete(this.presentations.keys().next().value!);
     this.presentations.set(key, result);
@@ -744,7 +748,10 @@ export class DesignWorkspaceService {
         const id = selectedId ?? `DSN-${randomUUID().slice(0, 8).toUpperCase()}`;
         const existing = state.designs.get(id);
         const previous = existing?.versions.at(-1);
-        const programEvidence = Boolean(loaded.evidenceProtocol || previous && designProgramEvidenceRequired(previous));
+        const programEvidence = Boolean(loaded.demoData || loaded.evidenceProtocol || previous && designProgramEvidenceRequired(previous));
+        if (previous && designDatasetRequired(previous) && !loaded.demoData) {
+          invalidDesign('原稿已启用演示数据摘要校验，续版须声明本版的演示数据及经校验的摘要');
+        }
         if (programEvidence && !['src/fixtures.ts', 'src/data-design.ts'].every(path => loaded.delivery.index.some(file => file.path === path))) {
           invalidDesign('原稿使用程序取证，续版需保留两份虚构演示数据源');
         }
@@ -830,6 +837,8 @@ export class DesignWorkspaceService {
           ...(loaded.acceptancePlan ? { acceptancePlan: loaded.acceptancePlan } : {}),
           ...(loaded.acceptanceMode ? { acceptanceMode: loaded.acceptanceMode } : {}),
           ...(programEvidence ? { evidenceProtocol: 'program-v1' as const } : {}),
+          ...(loaded.goals ? { goals: loaded.goals } : {}),
+          ...(loaded.demoData ? { demoData: loaded.demoData } : {}),
           ...(loaded.demo ? { demo: loaded.demo } : {}),
           ...(loaded.videos ? { videos: loaded.videos.map(video => ({ ...video, artifactId: byPath.get(video.file)!.id })) } : {}),
           ...(loaded.risks ? { risks: loaded.risks } : {}),
@@ -1329,6 +1338,11 @@ export class DesignWorkspaceService {
     if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览已经变化，请对新提交重跑');
   }
 
+  private async programVersion(projectId: string, state: WorkspaceState, version: DesignVersion): Promise<DesignVersion> {
+    if (!designDatasetRequired(version) || version.demoData) return version;
+    return { ...version, ...await this.readPresentation(projectId, state, version) };
+  }
+
   private async captureProgramAcceptance(type: 'acceptance.capture' | 'acceptance.recheck', input: Record<string, unknown>,
     projectId: string, actor: DesignActor, requestId: string): Promise<Receipt> {
     designRecord(input, '程序取证请求', ['type', 'requestId', 'designId', 'runId', 'screenId', 'slot']);
@@ -1350,8 +1364,9 @@ export class DesignWorkspaceService {
       return await this.mutate(projectId, actor, requestId, input, async ({ state, now }) => {
         const entry = state.designs.get(id) ?? missing('该稿件不存在');
         const run = structuredClone(runOf(entry, input.runId));
-        const version = implementationVersion(entry, versionOf(entry, run.version));
+        const version = await this.programVersion(projectId, state, implementationVersion(entry, versionOf(entry, run.version)));
         if (!designProgramEvidenceRequired(version) || run.signed) conflict('请选择要求程序取证的未签收运行');
+        if (designDatasetRequired(version) && !version.demoData) conflict('稿件演示数据摘要尚未校验，请设计方核对本版私有归档');
         if (recheck) {
           if (version.publisher.id !== actor.id && !(actor.kind === 'human' && actor.permissions.includes('approve')
             && entry.reviewers?.some(reviewer => reviewer.id === actor.id))) forbidden('请由稿件作者或受邀评审人独立复验');
@@ -1386,7 +1401,8 @@ export class DesignWorkspaceService {
         if (!value) return rejectPlanning(422, 'design_capture_incomplete', '未能进入原型和实现的同一画面。请核对绑定和进入状态后重试。');
         const fixtureDigest = value.fixtureDigest;
         if (!/^[0-9a-f]{64}$/.test(fixtureDigest)) throw new Error('Invalid program fixture digest');
-        const digest = designDigest(stableJson([run.commit, version.sha256, captureBinding, fixtureDigest,
+        const provenance = { dataset: version.demoData?.sha256 ?? fixtureDigest, commit: run.commit, capturedBy: 'cds' as const };
+        const digest = designDigest(stableJson([run.commit, version.sha256, ...(version.demoData ? [provenance.dataset] : []), captureBinding, fixtureDigest,
           designDigest(value.reference), designDigest(value.implementation), value.checks, value.rules]));
         const assets: ProjectRevisionAsset[] = [];
         if (recheck && previous) {
@@ -1400,9 +1416,9 @@ export class DesignWorkspaceService {
           const reference = visualImage(`data:image/png;base64,${value.reference.toString('base64')}`, dimensions);
           const implementation = visualImage(`data:image/png;base64,${value.implementation.toString('base64')}`, dimensions);
           assets.push(reference, implementation);
-          run.programEvidence = { ...run.programEvidence, [rowKey]: { commit: run.commit, fixtureDigest, digest, by: actor.id, at: now } };
+          run.programEvidence = { ...run.programEvidence, [rowKey]: { ...provenance, fixtureDigest, digest, by: actor.id, at: now } };
           run.visual = { ...run.visual, [rowKey]: { checks: value.checks, imageId: implementation.id,
-            referenceImageId: reference.id, measured, by: 'CDS 程序', at: now } };
+            referenceImageId: reference.id, measured, by: 'CDS 程序', at: now, ...provenance } };
           for (const rule of rules) {
             const cell = run.cells.find(row => row.itemId === rule.id && row.slot === slot)!;
             const observed = value.rules[rule.id];
@@ -1411,6 +1427,7 @@ export class DesignWorkspaceService {
             cell.imageId = implementation.id;
             cell.measured = measured;
             cell.recordedBy = 'CDS 程序';
+            Object.assign(cell, provenance);
           }
         }
         this.evaluateRun(version, run, entry);
@@ -1611,7 +1628,7 @@ export class DesignWorkspaceService {
     let target: { screenId?: string; slot?: DesignSlot; version?: number; id?: string } | undefined;
     if (type === 'acceptance.start') {
       designRecord(input, '发起验收请求', ['type', 'requestId', 'designId', 'version', 'pullRequest', 'commit', 'target']);
-      const version = implementationVersion(entry, versionOf(entry, input.version));
+      const version = await this.programVersion(projectId, context.state, implementationVersion(entry, versionOf(entry, input.version)));
       if (entry.frozen !== version.version) conflict('请先定稿要验收的版本');
       if (actor.gitPublishOnly) forbidden('请使用具备验收写权限的项目凭据');
       if (!version.acceptance.length && !designMethodPlanEnabled(version)) conflict('这一版尚未声明验收项');
@@ -1633,7 +1650,7 @@ export class DesignWorkspaceService {
         previewUrl: preview.url, createdAt: now, cells, verdict: 'needs_evidence', issues: {}, upgradeId: upgrade.id };
     } else {
       run = structuredClone(runOf(entry, input.runId));
-      const version = implementationVersion(entry, versionOf(entry, run.version));
+      const version = await this.programVersion(projectId, context.state, implementationVersion(entry, versionOf(entry, run.version)));
       if (run.signed) conflict('该运行已经签收，请创建新运行');
       requireRunTarget(entry, run);
       const programRequired = designProgramEvidenceRequired(version);
@@ -1725,9 +1742,11 @@ export class DesignWorkspaceService {
         designRecord(input, '签收请求', ['type', 'requestId', 'designId', 'runId']);
         if (actor.kind !== 'human') forbidden('此操作需要有写权限的项目成员签收');
         await this.requireCurrentRun(context, entry, run, run.commit);
+        if (designDatasetRequired(version) && !version.demoData) conflict('稿件演示数据摘要尚未校验，请设计方核对本版私有归档');
         this.evaluateRun(version, run, entry);
         if (programRequired) {
           const proof = designProgramStatus(version, run);
+          if (proof.invalidProvenance) conflict('程序证据缺少或无法核对数据集、实现提交或取证来源');
           if (proof.invalid) conflict('独立复验出现差异，本次验收已作废');
           if (!proof.total || proof.captured < proof.total) conflict('还缺程序生成的同条件图证，请完成程序取证');
           if (proof.reviewed < proof.total) conflict('请由设计方完成相同条件的独立复验');
@@ -1773,6 +1792,9 @@ export class DesignWorkspaceService {
         cell.status = proof.invalid ? 'failed' : proof.total > 0 && proof.reviewed === proof.total ? 'passed' : 'unverified';
         cell.actual = proof.invalid ? '程序证据或独立复验不一致，整次运行作废'
           : `已生成 ${proof.captured}/${proof.total} 对同条件图证，独立复验一致 ${proof.reviewed}/${proof.total} 对`;
+        if (cell.status === 'passed' && version.demoData) {
+          Object.assign(cell, { dataset: version.demoData.sha256, commit: run.commit, capturedBy: 'cds' });
+        }
       }
     }
     const rules = version.acceptance.filter(rule => designRuleApplicable(version, rule, entry, run));

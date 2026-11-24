@@ -184,6 +184,8 @@ CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 
 
 采用 `evidenceProtocol: "program-v1"` 的稿件，先锁定主用 CDS 的实现提交与实施基线。画面声明实现地址，稿件随包提交 `src/fixtures.ts` 和 `src/data-design.ts`。程序在隔离浏览器中读稿件演示数据，用同一数据运行原型和该提交的真实页面。
 
+- 当前版本带 `demoData` 时，CDS 按声明顺序读取两份源码，将 CRLF 规范为 LF 后拼接验证 SHA-256。逐画面的图证与规则格由服务写入实际数据集、提交和取证来源。更高版本继承数据集校验要求。
+- `goals` 可关联本版验收项，也可引用另一个交付入口。总览对每个目标计算结论。实现者从本版交付资料中的「交接清单」进入，按稿件的验收项编号回写反馈。
 - 实现方运行 `cdscli design capture <稿件> --run <运行> --screen <画面> --slot <视口-主题>`。MCP 对应 `cds_design_acceptance` 的 `acceptance.capture`。
 - 稿件作者或受邀评审人用同一个画面和视口运行 `cdscli design recheck`。MCP 对应 `acceptance.recheck`。设计发布授权可复验自己的稿件。用 `design result` 回读程序取证和复验状态。
 - 独立复验有差异时保留记录，重新创建验收运行。程序尚未覆盖的规则保留待验证，通过评审线程提供具体缺项和复现条件。

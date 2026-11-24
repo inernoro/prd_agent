@@ -63,7 +63,15 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
     const screen = version.screens.find(screen => screen.id === row.screen);
     return screen ? [{ screen, title: row.title || screen.name, tip: row.tip }] : [];
   }) ?? [];
-  const steps = declared.length && !all && (!screenId || declared.some(step => step.screen.id === screenId)) ? declared : every;
+  const listed = declared.length && !all && (!screenId || declared.some(step => step.screen.id === screenId)) ? declared : every;
+  const phone = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches;
+  const phones = phone ? listed.filter(step => step.screen.viewport === 'phone') : [];
+  const desktop = phone ? listed.filter(step => step.screen.viewport !== 'phone') : listed;
+  const steps = [...phones, ...desktop];
+  const groups = [
+    ...(phones.length ? [{ name: '手机画面', steps: phones }] : []),
+    ...demoGroups.map(name => ({ name, steps: desktop.filter(step => demoGroup(step.screen.route) === name) })),
+  ].filter(group => group.steps.length);
   const index = steps.findIndex(step => step.screen.id === screenId);
   const current = steps[Math.max(index, 0)], next = steps[Math.max(index, 0) + 1];
   const thumb = (screen: DesignVersion['screens'][number]) => {
@@ -87,10 +95,8 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
         </div>
       </div>}
       {!steps.length && <p className="dw-ds-empty">这一版没有画面清单，只能整页查看原型。</p>}
-      {demoGroups.map(group => {
-        const visible = steps.filter(step => demoGroup(step.screen.route) === group);
-        return visible.length > 0 && <div className="dw-sp-group" key={group}>
-          <h4>{group}<small>{visible.length}</small></h4>
+      {groups.map(({ name, steps: visible }) => <div className="dw-sp-group" key={name}>
+          <h4>{name}<small>{visible.length}</small></h4>
           <ol className="dw-sp-thumbs">{visible.map(step => {
             const image = thumb(step.screen);
             return <li key={step.screen.id}><button type="button" data-screen={step.screen.id} aria-current={step.screen.id === screenId ? 'step' : undefined}
@@ -101,8 +107,7 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
               <span className="dw-sp-ttitle">{step.title}</span>
             </button></li>;
           })}</ol>
-        </div>;
-      })}
+        </div>)}
       {declared.length > 0 && declared.length < every.length && <button type="button" className="ep-link dw-ds-more" data-action="demo-all"
         aria-expanded={all} onClick={() => setAll(value => !value)}>{all ? `只看演示流程（${declared.length} 步）` : `看全部 ${every.length} 个画面`}</button>}
     </section>

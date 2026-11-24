@@ -24,6 +24,9 @@ const implementation = '/design?screen=main';
 const slot = 'desktop-light';
 const comparison = { screenId: 'main', slot };
 const fixtureDigest = 'f'.repeat(64);
+const dataset = '9'.repeat(64);
+const demoData = { files: ['src/fixtures.ts', 'src/data-design.ts'], sha256: dataset };
+const provenance = { dataset, commit, capturedBy: 'cds' };
 const prototype = Buffer.from('<main data-ready="fixture">合成验收原型</main>');
 const implementer: DesignActor = {
   kind: 'human', id: 'implementer', label: '合成实现成员', permissions: ['read', 'write', 'approve'],
@@ -88,7 +91,7 @@ function published(version: number): DesignVersion {
     id: 'A-1', rule: '主区无横向溢出', how: 'measure', priority: 'high',
     screenId: 'main', slots: ['desktop-light'], expected: '检查：主区宽度不超过视口。',
   }];
-  if (version === 22) acceptance.push({
+  if (version >= 22) acceptance.push({
     id: 'A-71', rule: '对照证据来自程序', how: 'human', priority: 'high',
     screenId: 'main', slots: ['desktop-light'],
     expected: '证据只认程序产生的。同一份演示数据和提交。签收前设计方独立重跑。',
@@ -98,6 +101,7 @@ function published(version: number): DesignVersion {
     prototypeId: 'test-prototype', createdAt: frozenAt, publisher: { id: designer.id, label: designer.label },
     prototypeSha256: createHash('sha256').update(prototype).digest('hex'),
     acceptanceMode: 'objective',
+    ...(version === 23 ? { demoData, goals: [{ id: 'G-01', goal: '完整显示主区', doneWhen: '主区滑动正常。', items: ['A-1'] }] } : {}),
     acceptancePlan: { mece: notApplicable, compare: notApplicable, visual: notApplicable, regress: notApplicable },
     screens: [{ id: 'main', name: '主区', route: '#main', viewport: 'desktop', themes: ['light'], impl: implementation }],
     acceptance, rationale: '合成的验收范围。', spec: {}, tags: [], decisionIds: [], resolves: {},
@@ -116,9 +120,11 @@ async function setup(version = 22, captureAcceptance?: () => Promise<ReturnType<
   const run: DesignRun = {
     id: runId, version, target: 'installed', commit, previewUrl, createdAt: frozenAt, verdict: 'passed', issues: {},
     cells: draft.acceptance.flatMap(rule => rule.slots.map(slot => ({
-      itemId: rule.id, slot, status: 'passed', actual: '合成旧式手工验收结果',
-      recordedBy: implementer.label, imageId: 'manual-shot',
-      measured: { width: 1280, height: 800, theme: slot.endsWith('-light') ? 'light' : 'dark', path: implementation },
+      itemId: rule.id, slot,
+      ...(version === 23 ? { status: 'unverified' as const, actual: '待程序取证。' } : {
+        status: 'passed' as const, actual: '合成旧式手工验收结果', recordedBy: implementer.label, imageId: 'manual-shot',
+        measured: { width: 1280, height: 800, theme: slot.endsWith('-light') ? 'light' as const : 'dark' as const, path: implementation },
+      }),
     }))),
   };
   await store.append({
@@ -331,6 +337,56 @@ describe('程序验收的签收门槛', () => {
     });
     await expect(fixture.command('acceptance.recheck', designer, comparison)).rejects.toMatchObject({ status: 409 });
     expect(capture).toHaveBeenCalledTimes(2);
+    await expect(fixture.command('acceptance.sign')).rejects.toMatchObject({ status: 409 });
+    expect((await fixture.entry()).implementedVersion).toBeUndefined();
+  });
+});
+
+describe('V23 签收使用稿件声明的数据和程序证据', () => {
+  async function captured() {
+    const fixture = await setup(23, async () => observed());
+    await fixture.command('acceptance.capture', implementer, comparison);
+    await fixture.command('acceptance.recheck', designer, comparison);
+    const run = (await fixture.entry()).runs[0];
+    return { fixture, run };
+  }
+
+  it('取证由 CDS 记录数据集、提交和来源，独立复验后可签收', async () => {
+    const { fixture, run } = await captured();
+    expect(run.programEvidence?.['main/desktop-light']).toMatchObject({ ...provenance, fixtureDigest });
+    expect(run.visual?.['main/desktop-light']).toMatchObject(provenance);
+    expect(run.cells.find(cell => cell.itemId === 'A-1')).toMatchObject(provenance);
+    await expect(fixture.command('acceptance.sign')).resolves.toMatchObject({ result: { implementedVersion: 23 } });
+  });
+
+  const differences = [
+    ['dataset', '8'.repeat(64)],
+    ['commit', 'b'.repeat(40)],
+    ['capturedBy', 'manual'],
+  ] as const;
+  const incomplete = differences.flatMap(([field, incorrect]) => [
+    { field, incorrect: undefined, explanation: '缺少' + field },
+    { field, incorrect, explanation: field + '与运行和稿件不符' },
+  ]);
+  const cases = (['规则证据', '画面对照', '程序回执'] as const).flatMap(scope => incomplete.map(value => ({ scope, ...value })));
+
+  it.each(cases)('$scope $explanation 时拒绝签收', async ({ scope, field, incorrect }) => {
+    const { fixture, run } = await captured();
+    const proof = run.programEvidence?.['main/desktop-light'];
+    const visual = run.visual?.['main/desktop-light'];
+    const cell = run.cells.find(row => row.itemId === 'A-1');
+    if (!proof || !visual || !cell) throw new Error('取证夹具未准备好');
+    for (const row of [proof, visual, ...run.cells]) Object.assign(row, provenance);
+    const target = { '规则证据': cell, '画面对照': visual, '程序回执': proof }[scope];
+    if (incorrect === undefined) Reflect.deleteProperty(target, field);
+    else Reflect.set(target, field, incorrect);
+
+    const history = await fixture.store.read(projectId, 0);
+    await fixture.store.append({
+      projectId, revision: history.length + 1,
+      request: { key: 'stored-evidence-fixture', fingerprint: 'fixture', result: { type: 'fixture' } },
+      design: { id: designId, run },
+    });
     await expect(fixture.command('acceptance.sign')).rejects.toMatchObject({ status: 409 });
     expect((await fixture.entry()).implementedVersion).toBeUndefined();
   });

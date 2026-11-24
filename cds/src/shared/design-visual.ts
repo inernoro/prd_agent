@@ -1,4 +1,4 @@
-import { designSlots, designViewports, type DesignCell, type DesignRun, type DesignScreen, type DesignSlot, type DesignTheme, type DesignVersion } from './design-workspace.js';
+import { designDatasetRequired, designSlots, designViewports, type DesignCaptureProvenance, type DesignCell, type DesignRun, type DesignScreen, type DesignSlot, type DesignTheme, type DesignVersion } from './design-workspace.js';
 
 export const designVisualStandard = [
   ['V-01', '位置', '对图', '逐个指出页头、标签、主体、浮层、底部。位置保持一致，有调整时引用依据。'],
@@ -15,7 +15,7 @@ export const designVisualStandard = [
 export type DesignVisualCheckId = typeof designVisualStandard[number][0];
 export type DesignVisualCheck = { status: 'passed' | 'failed' | 'missing'; evidence: string };
 export type DesignVisualChecks = Partial<Record<DesignVisualCheckId, DesignVisualCheck>>;
-export type DesignVisualRow = {
+export type DesignVisualRow = DesignCaptureProvenance & {
   imageId?: string; referenceImageId?: string; measured?: DesignCell['measured'];
   checks: DesignVisualChecks; by: string; at: string;
 };
@@ -50,10 +50,15 @@ export function designProgramStatus(version: DesignVersion, run?: DesignRun) {
     return proof ? [proof] : [];
   });
   const fixtures = new Set(proofs.map(proof => proof.fixtureDigest));
-  const invalid = fixtures.size > 1 || proofs.some(proof => proof.commit !== run?.commit || proof.review?.matched === false);
+  const provenanceMatches = (value?: DesignCaptureProvenance) => Boolean(version.demoData
+    && value?.dataset === version.demoData.sha256 && value.commit === run?.commit && value.capturedBy === 'cds');
+  const invalidProvenance = designDatasetRequired(version) && (
+    keys.some(key => run?.programEvidence?.[key] && (!provenanceMatches(run.programEvidence[key]) || !provenanceMatches(run.visual?.[key])))
+    || run?.cells.some(cell => (cell.imageId || cell.status === 'passed' || cell.status === 'failed') && !provenanceMatches(cell)));
+  const invalid = Boolean(invalidProvenance) || fixtures.size > 1 || proofs.some(proof => proof.commit !== run?.commit || proof.review?.matched === false);
   const reviewed = proofs.filter(proof => proof.review?.matched && proof.review.by !== proof.by
     && proof.review.digest === proof.digest && proof.review.fixtureDigest === proof.fixtureDigest).length;
-  return { total: keys.length, captured: proofs.length, reviewed, invalid };
+  return { total: keys.length, captured: proofs.length, reviewed, invalid, invalidProvenance: Boolean(invalidProvenance) };
 }
 
 export function designVisualRuleShot(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, run?: DesignRun) {
